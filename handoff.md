@@ -36,7 +36,7 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 ## Current state（当前状态）
 
 - **阶段**：设计文档完成（2026-09-13 两份源文档切分核对后删除，内容已并入 `atlas-docs/` 00-13）；**代码未启动**。
-- **仓库**：**非 git 仓库**（根目录仅 `atlas-docs/`）。建议下一步 `git init` + 首提交。
+- **仓库**：git 仓库（`main` 分支），**已推送 GitHub private 仓库 `bayernjf/atlas`**（2026-09-13，3 个原子提交：chore .gitignore + docs atlas-docs + docs 根元文档）。
 - **技术选型**：✅ 已定（Python 3.11+ 引擎 / Go Harness 网关（Demo 可先用 FastAPI 接口）/ TS+React 18 前端 / LangChain+LangGraph / LiteLLM / Playwright / PostgreSQL+pgvector / Redis / NATS（Demo 可缓）/ FastAPI / React Flow+Zustand）；⏳ 待决策 5 项（T1-T5，见 10 文档 §3）。
 - **Demo 依赖清单已就绪**：10 文档 §2 可直接进 `pyproject.toml`（版本号落码时解析）。
 - **关键文件**：目前只有文档。工程骨架规划见 09 文档（`src/atlas/{engine,harness,graph,nodes,memory,skills,collaboration,web}/` + `tests/`）。
@@ -45,8 +45,7 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 
 按优先级降序：
 
-1. ★ **git init + 首提交**（本批元文档：handoff / README / AGENTS / CLAUDE / git-commit-message / CHANGELOG + atlas-docs 全量）。
-2. ★ **技术选型待决策项收口**（10 文档 §3 T1-T5）：模型部署方式（Demo 建议 LiteLLM 对接任一主流 API）、评估层（留接口）、编辑后台前端是否进 Demo 骨架（**建议进**，08 验收标准第 5 条含可视化画布）、NATS 缓做、Go 网关缓做。收口后在 10 文档记录变更。
+1. ★ **技术选型待决策项收口**（10 文档 §3 T1-T5）：模型部署方式（Demo 建议 LiteLLM 对接任一主流 API）、评估层（留接口）、编辑后台前端是否进 Demo 骨架（**建议进**，08 验收标准第 5 条含可视化画布）、NATS 缓做、Go 网关缓做。收口后在 10 文档记录变更。
 3. ★ **W1-W2 基础骨架落地**（08 文档 7.1）：LangGraph 引擎跑通、前端编辑器框架、PostgreSQL 连接。按 09 文档待填项清单建目录与 `pyproject.toml` / `.gitignore`。
 4. 文档缺口登记：`09-工程骨架` 待定项 2/3/4（harness 与 web 边界、是否新增 deployment/、前端工程结构）在落码时一并决策。
 
@@ -54,8 +53,9 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 
 ## Recently shipped（最近变更）
 
-1. **docs: 源文档切分完成并核对（2026-09-13）**——两份原始文档（《产品与总体方案.md》《技术实现设计.md》）按主题切分为 `atlas-docs/` 00-13 共 14 份 AI 导向文档；274 个章节标题全部映射、逐段覆盖率机器核对通过；源文档已删除（血统与治理见 00 文档）。
-2. **docs: 切分核对报告（2026-09-12）**——段落级最长公共子串覆盖率验证，无信息丢失。
+1. **chore/docs: 仓库初始化并推送 GitHub private（2026-09-13）**——`git init -b main`；3 个原子提交：`6fc7728`（chore .gitignore）、`d3c63c6`（docs atlas-docs 00-13）、`2413ab5`（docs 根元文档）；`gh repo create atlas --private` 创建并推送至 `https://github.com/bayernjf/atlas`（PRIVATE，默认分支 main）。
+2. **docs: 源文档切分完成并核对（2026-09-13）**——两份原始文档（《产品与总体方案.md》《技术实现设计.md》）按主题切分为 `atlas-docs/` 00-13 共 14 份 AI 导向文档；274 个章节标题全部映射、逐段覆盖率机器核对通过；源文档已删除（血统与治理见 00 文档）。
+3. **docs: 切分核对报告（2026-09-12）**——段落级最长公共子串覆盖率验证，无信息丢失。
 
 ## Quality gate（质量门）
 
