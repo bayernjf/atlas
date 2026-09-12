@@ -1,0 +1,15 @@
+title = "atlas gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test fixtures and sample plugins that contain obviously-fake secret strings"
+paths = [
+  '''(.*/)?\.github/.*''',
+  '''(.*/)?tests/.*''',
+  '''(.*/)?fixtures/.*''',
+  '''(.*/)?.*\.test\.py$''',
+  '''(.*/)?.*\.sqlite$''',
+  '''(.*/)?\.env\.example$''',
+]
