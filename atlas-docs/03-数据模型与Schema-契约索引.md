@@ -1,0 +1,174 @@
+# Atlas 数据模型与 Schema 契约索引
+
+> **用途**：全部数据结构/接口契约的**位置速查表**——字段定义正文在对应文档中原样保留，本文件只做索引与字段概览，不复制正文。
+> **AI 使用提示**：实现或修改数据结构时，先查本表定位 → 打开对应文档看完整字段定义 → 改动后回填本表。
+
+---
+
+## 契约总览
+
+| Schema | 位置 | 上下文章节 |
+|---|---|---|
+| `node` | 04 / 三、节点组件详细设计 3.2 节点的通用化接口设计 | ### 3.2 节点的通用化接口设计 |
+| `tool` | 04 / 四、工具/适配器组件 4.3 工具定义 Schema | ### 4.3 工具定义 Schema |
+| `node_schema` | 04 / 5.2 节点系统 Schema 示例代码 | ### 5.2 节点系统 Schema 示例代码 |
+| `adapter_schema` | 04 / 5.4 工具/适配器注册 Schema 示例代码 | ### 5.4 工具/适配器注册 Schema 示例代码 |
+| `skill_schema` | 05 / 一、技能（Skill）1.2 技能的数据结构 | ## 1.2 技能的数据结构（示例） |
+| `memory_config` | 05 / 二、记忆（Memory）2.3 记忆策略配置 Schema | ## 2.3 记忆策略配置 Schema（示例） |
+| `collaboration_message` | 05 / 三、智能体协同 3.3 协同通信协议 | ## 3.3 协同通信协议（示例） |
+| `deployment_config` | 05 / 四、部署方式 4.3 部署配置 Schema | ## 4.3 部署配置 Schema（示例） |
+| `interaction_template` | 05 / 五、自定义前端模板 5.3 交互模板 Schema | ## 5.3 交互模板 Schema（示例） |
+| `evaluation_task` | 06 / 9.2 评估 Harness 设计 | ### 9.2 评估 Harness 设计（借鉴 lm-evaluation-harness）代码示例 |
+
+---
+
+### `node` — 字段概览（完整定义见 04-组件设计-编辑后台.md #54，上下文章节：### 3.2 节点的通用化接口设计）
+
+```yaml
+id: string
+type: string
+name: string
+description: string
+config: object          # 节点类型专属配置
+inputs: # 输入映射
+source: string      # 变量名/上下文路径
+required: boolean
+default: any
+outputs: # 输出声明
+type: string
+retry: # 重试策略
+max_retries: number
+backoff: string
+timeout: number
+on_error: string        # 失败处理：stop/continue/跳转节点
+```
+
+### `tool` — 字段概览（完整定义见 04-组件设计-编辑后台.md #103，上下文章节：### 4.3 工具定义 Schema）
+
+```yaml
+id: string
+name: string
+description: string          # 自然语言描述，供LLM理解
+adapter_id: string           # 所属适配器
+action: string               # 具体动作
+input_schema: object         # 输入参数JSON Schema
+output_schema: object        # 输出参数JSON Schema
+permission: string           # 所需权限
+timeout: number
+retry_policy: object
+is_idempotent: boolean       # 是否幂等
+```
+
+### `node_schema` — 字段概览（完整定义见 04-组件设计-编辑后台.md #422，上下文章节：### 5.2 节点系统 Schema 示例代码）
+
+```yaml
+id: string                    # 唯一ID
+type: enum[trigger, ai_decision, tool_call, condition,
+name: string
+description: string
+position: {x, y}
+config: 
+type: object               # 节点类型专属配置
+inputs: 
+source: string           # 变量路径
+required: boolean
+default: any
+outputs: 
+type: string
+retry: 
+max_retries: number
+backoff: string
+timeout: number              # 秒
+on_error: enum[stop, continue, jump_to]
+breakpoint: boolean          # 是否断点
+```
+
+### `adapter_schema` — 字段概览（完整定义见 04-组件设计-编辑后台.md #459，上下文章节：### 5.4 工具/适配器注册 Schema 示例代码）
+
+```yaml
+id: string
+name: string
+type: enum[web, api, mobile, desktop, database, iot, message]
+connection: 
+auth_type: enum[oauth2, api_key, basic, cookie, none]
+config: object
+capabilities: 
+description: string       # 自然语言描述，供LLM理解
+input_schema: object      # JSON Schema
+output_schema: object
+permission: enum[read, write, delete, financial]
+timeout: number
+is_idempotent: boolean
+```
+
+### `skill_schema` — 字段概览（完整定义见 05-组件设计-运营体五项核心.md #20，上下文章节：## 1.2 技能的数据结构（示例））
+
+```yaml
+id: string                      # 唯一ID
+name: string                    # 技能名称
+description: string              # 自然语言描述（供LLM理解和推荐）
+version: string                  # 语义版本号
+category: enum[communication, data_processing, business_logic, integration, repo
+```
+
+### `memory_config` — 字段概览（完整定义见 05-组件设计-运营体五项核心.md #172，上下文章节：## 2.3 记忆策略配置 Schema（示例））
+
+```yaml
+```
+
+### `collaboration_message` — 字段概览（完整定义见 05-组件设计-运营体五项核心.md #323，上下文章节：## 3.3 协同通信协议（示例））
+
+```yaml
+message_id: string          # 唯一消息ID
+from_agent_id: string       # 发送方运营体ID
+to_agent_id: string         # 接收方（可为广播）
+type: enum[
+payload: object             # 消息内容
+context: # 上下文传递
+task_id: string           # 关联任务ID
+business_object: string   # 关联业务对象
+urgent: boolean           # 紧急标志
+timestamp: datetime
+ttl: number                 # 超时时间（秒）
+idempotency_key: string     # 幂等键
+```
+
+### `deployment_config` — 字段概览（完整定义见 05-组件设计-运营体五项核心.md #440，上下文章节：## 4.3 部署配置 Schema（示例））
+
+```yaml
+runtime: 
+environment: enum[cloud, private, edge]
+region: string                 # 运行地域
+concurrency_limit: number      # 最大并发实例数
+timeout_per_run: number        # 单次运行超时
+```
+
+### `interaction_template` — 字段概览（完整定义见 05-组件设计-运营体五项核心.md #552，上下文章节：## 5.3 交互模板 Schema（示例））
+
+```yaml
+id: string
+name: string
+type: enum[approval, form, notification, guide, progress, choice, alert]
+version: string
+```
+
+### `evaluation_task` — 字段概览（完整定义见 06-运行时与质量保障.md #125，上下文章节：### 9.2 评估 Harness 设计（借鉴 lm-evaluation-harness）代码示例）
+
+```yaml
+task_id: "refund_processing"
+description: "处理退款申请"
+test_cases: 
+order_id: "12345"
+reason: "商品破损"
+amount: 299
+expected: 
+action: "approve_refund"
+verify: "refund_status == 'completed'"
+order_id: "12346"
+reason: "不想要了"
+amount: 5000
+expected: 
+action: "request_human_approval"
+verify: "approval_request_created"
+metrics: 
+```
