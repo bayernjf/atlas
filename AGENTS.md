@@ -7,9 +7,11 @@ Atlas 项目的 AI 协作规范。**接手先读 [handoff.md](handoff.md)（状�
 **任务追踪与待办的主入口是 `handoff.md`**（状态、进度、待办、文档索引都在这里）；**方案/设计/规格的全文放 `atlas-docs/` 的编号文档**，handoff 只索引、不复制全文。
 
 - 活跃待办 → `handoff.md`「Active work」区
+- 缓做/低优项 → `atlas-docs/14-缓做事项登记表.md`（每条带触发条件；handoff 只给索引）
 - 方案/设计/规格 → `atlas-docs/00-13`，一个主题一份（单一事实源，入口 `00-文档索引与治理.md`）
 - 文档索引与治理规则 → `atlas-docs/00`（唯一事实源声明 + 改内容流程 + Schema 契约规则）
 - 排期与迭代 → `atlas-docs/08-任务迭代计划.md`（新决策必须在此记录）
+- 环境与分支 → `atlas-docs/15-环境与分支策略.md`（main=PROD / dev=集成 / feature/*=开发）
 
 一句话：handoff = 索引 + 状态 + 待办，atlas-docs = 方案 + 设计 + 明细。接手先读 handoff，再按索引跳转。
 
