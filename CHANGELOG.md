@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### feat / memory（2026-09-13）
+
+- PostgreSQL + pgvector 连接层验证：本地 Docker 运行 `pgvector/pgvector:pg16`（容器 `atlas-pg`），迁移 `db/migrations/001_enable_pgvector.sql` 启用 vector 扩展（0.8.6）；`memory/settings.py`（`DATABASE_URL` 单一读取点，缺失 fail-closed）与 `memory/database.py`（SQLAlchemy 引擎/会话工厂，限定 `postgresql+psycopg` 即 psycopg 3，`ping`/`pgvector_version` 探针）；`tests/test_database_integration.py` 3 个 `integration` 标记用例（连通性、扩展版本、vector 写入与余弦距离排序），默认跳过，经 `ATLAS_RUN_INTEGRATION=1` + `DATABASE_URL` 开启，对容器全绿。`.env.example` 连接串改为 psycopg 3 写法；本地 `.env` 已建且被 gitignore。
+
 ### docs（2026-09-13）
 
 - 项目文档与 W1 实现状态对齐：00 文档地图更新 09/10 描述；12 对齐检查表勾选 LoopState 一致性（实现于 `engine/state.py`）；13 新增 §9 实现进度（后端冒烟用例、前端构建与人工验证）；AGENTS 文档分层范围更正为 00-16；handoff 仓库行反映 dev 分支与未推送状态。

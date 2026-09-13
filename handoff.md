@@ -6,7 +6,7 @@
 
 Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/ Graph（可执行因果图）/ Loop（OODA 主循环）** 三位一体为内核，面向企业流程自动化场景（首个目标场景：企业内部 OA 审批），目标是让非技术人员通过自然语言/拖拽定义流程，由运营体自动执行、自愈与进化。
 
-当前阶段：**W1-W2 基础骨架进行中**。设计文档已完成（`docs/` 00-16 为唯一事实源）；工程骨架已落地——后端包树 + `pyproject.toml`、LangGraph 最小 OODA 循环（3 冒烟用例全绿）、`frontend/` React 编辑器框架（浏览器验证通过）均已就绪（2026-09-13），待补 PostgreSQL 连接与各业务模块。
+当前阶段：**W1-W2 基础骨架已完成，W3-W4 待启动**。设计文档已完成（`docs/` 00-16 为唯一事实源）；工程骨架已落地——后端包树 + `pyproject.toml`、LangGraph 最小 OODA 循环（3 冒烟用例全绿）、`frontend/` React 编辑器框架（浏览器验证通过）、PostgreSQL + pgvector 连接层（集成测试全绿）均已就绪（2026-09-13），待补 Redis/记忆表与各业务模块。
 
 结构：
 - `docs/` — 全部规格文档（入口：`00-文档索引与治理.md`）
@@ -40,45 +40,54 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 
 ## Current state（当前状态）
 
-- **阶段**：W1-W2 基础骨架启动中。设计文档完成（2026-09-13 源文档切分）；2026-09-13 已建工程骨架：`src/atlas/{engine,harness,graph,nodes,memory,skills,collaboration,api,web}/` + `tests/`、`pyproject.toml`（依赖按 10 §2，版本下限取 2026-09-13 PyPI 稳定版，已验证可编辑安装）；后端最小 OODA 循环与 `frontend/` Vite React TS 编辑器框架均已跑通。
+- **阶段**：W1-W2 基础骨架项已完成（2026-09-13）。设计文档完成（2026-09-13 源文档切分）；已建工程骨架：`src/atlas/{engine,harness,graph,nodes,memory,skills,collaboration,api,web}/` + `tests/`、`pyproject.toml`（依赖按 10 §2，版本下限取 2026-09-13 PyPI 稳定版，已验证可编辑安装）；后端最小 OODA 循环、`frontend/` Vite React TS 编辑器框架、PostgreSQL+pgvector 连接层均已跑通，下一步 W3-W4 Harness Web 适配器。
 - **仓库**：git 仓库，**已推送 GitHub private 仓库 `bayernjf/atlas`**（main 为生产分支；当前工作在 `dev` 集成分支，W1 骨架/循环/前端等提交**尚未 push**，分支策略见 15 文档）。
 - **技术选型**：✅ 已全部收口（2026-09-13，T1-T5 见 10 文档 §3）：Python 3.11+ 引擎 / Go Harness 网关为产品化目标、**Demo 用 Python/FastAPI 实现同构接口** / TypeScript + React 19（满足 React 18+）/ LangChain+LangGraph / LiteLLM（Demo 对接主流商业 API，`.env` 切换，不引入 vLLM）/ Playwright / PostgreSQL+pgvector / Redis / **Demo 进程内事件总线替代 NATS** / FastAPI / `@xyflow/react` 12 + Zustand 5 + AntD 6 / 评估优化层仅留接口；剩余 ⏳（vLLM、策略训练、多语言）均为后续阶段范围。
 - **Demo 依赖清单已落码**：后端在 `pyproject.toml`，前端在 `frontend/package.json` / `pnpm-lock.yaml`（版本为 2026-09-13 解析的稳定版）。
-- **关键文件**：后端 `src/atlas/`（9 个包；engine 已有 W1 最小循环）、前端 `frontend/`（Dashboard/Editor + 四组件 + Zustand store）；模块填充顺序见 09 文档待填项清单。
+- **关键文件**：后端 `src/atlas/`（9 个包；engine 已有 W1 最小循环，memory 已有 PostgreSQL 连接层）、`db/migrations/001_enable_pgvector.sql`、前端 `frontend/`（Dashboard/Editor + 四组件 + Zustand store）；模块填充顺序见 09 文档待填项清单。
 
 ## Active work / 待办
 
 按优先级降序：
 
-1. ★ **W1-W2 基础骨架落地**（08 文档 7.1）：✅ 工程骨架与 venv 已就绪（2026-09-13，`.venv` Python 3.11，11 个运行时依赖安装通过）；✅ **LangGraph 最小 OODA 循环已跑通**（`engine/{state,nodes,loop}.py`，确定性占位节点，3 个 pytest 用例全绿，`run_loop` 端到端收敛 completed）；✅ **前端编辑器框架已跑通**（`frontend/` Vite 8 + React 19 + TS + `@xyflow/react` 12 + Zustand 5 + AntD 6；Dashboard/Editor、3 初始节点、节点添加/选中/改名/日志均已浏览器验证，控制台零错误）。剩余：PostgreSQL 连接（+pgvector 扩展验证）。
+1. ★ **W1-W2 基础骨架落地**（08 文档 7.1）：✅ 工程骨架与 venv 已就绪（2026-09-13，`.venv` Python 3.11，11 个运行时依赖安装通过）；✅ **LangGraph 最小 OODA 循环已跑通**（`engine/{state,nodes,loop}.py`，确定性占位节点，3 个 pytest 用例全绿，`run_loop` 端到端收敛 completed）；✅ **前端编辑器框架已跑通**（`frontend/` Vite 8 + React 19 + TS + `@xyflow/react` 12 + Zustand 5 + AntD 6；Dashboard/Editor、3 初始节点、节点添加/选中/改名/日志均已浏览器验证，控制台零错误）；✅ **PostgreSQL + pgvector 连接已验证**（Docker `pgvector/pgvector:pg16`，迁移 001 启用 vector 0.8.6；`memory/{settings,database}.py` 连接层 + 3 个 opt-in 集成测试全绿）。W1-W2 骨架项完成；下一阶段进入 W3-W4（Harness Web 适配器，先决策 harness/web 边界，见待定项 2）。
 2. 文档缺口登记：`09-工程骨架` 待定项 2/3（harness 与 web 边界在 W3-W4 决策、是否新增 deployment/）在落码时一并决策；待定项 1/4 已随 T1-T5 收口。
 
 > 缓做/低优项：统一登记在 [docs/14-缓做事项登记表.md](docs/14-缓做事项登记表.md)（每条带触发条件，条件满足移回本区并标注重启日期）。当前含移动端适配器、策略训练、组件市场、模型路由器、NATS、Go 网关、多租户、运营体市场、BENCHMARK 实测、CI/CD、可观测性等 11 项。
 
 ## Recently shipped（最近变更）
 
-1. **feat(web): 前端编辑器框架跑通（2026-09-13）**——`frontend/` 采用 Vite 8 + React 19 + TS 6 + `@xyflow/react` 12（替代弃用包 `react-flow-renderer`）+ Zustand 5 + AntD 6；页面含 Dashboard/Editor，组件含 FlowCanvas/NodePanel/PropertyPanel/DebugConsole，Zustand 管理 nodes/edges/选中节点/日志；`pnpm build` 通过，浏览器验证初始 3 节点、添加节点、属性编辑与日志，控制台零错误。dev 端口 5174，`/api` 代理 8000。
-2. **feat(engine): LangGraph 最小 OODA 循环跑通（2026-09-13）**——`engine/state.py`（LoopState 按 06 §6.1/12 §1.1 契约，messages/observations 加 add 归约器）、`engine/nodes.py`（observe/orient/decide/act/reflect 五节点 + 三条 conditional 路由，确定性占位、签名不偏离 12 §1.2）、`engine/loop.py`（StateGraph 装配，拓扑同 12 §1.3；`build_graph/initial_state/run_loop`）；`tests/test_engine_loop.py` 3 用例全绿；venv（Python 3.11.15）依赖安装与端到端 `run_loop` 验证通过。
-3. **chore: W1 工程骨架落地（2026-09-13）**——按 09 文档建 `src/atlas/{engine,harness,graph,nodes,memory,skills,collaboration,api,web}/` + `tests/` 包树（`__init__.py` 占位）；`pyproject.toml` 锁定 10 文档 §2 Demo 依赖（Python >=3.11，src layout，版本下限取当日 PyPI 稳定版），已用 Python 3.11 venv 验证可编辑安装；09 文档同步记录 `api/` 包位决策（FastAPI 入口，待定项 5）。
-4. **docs: 技术选型 T1-T5 收口（2026-09-13）**——10 文档 §3 待决策项全部转为正式 ADR（LiteLLM+商业 API / 评估层仅留接口 / 前端进骨架 / 进程内事件总线替代 NATS / FastAPI 实现网关接口），§4 补变更记录；02 选型总览、09 待定项与目录树（含 `frontend/`）、08 §7.2 决策注记三处同步；NATS/Go 网关缓做条目已在 14 文档 D5/D6。
-5. **docs: 移除 LICENSE（2026-09-13，用户指示）**——MIT 许可证不需要，LICENSE 文件删除，README/CONTRIBUTING 的 License 段落改为"暂无（未定）"，handoff 元文档索引与 CHANGELOG 同步清理。
-6. **docs: 补齐 agent-world 惯例规范文档（2026-09-13）**——根目录：`CONTRIBUTING.md`（贡献指南，Python/09 骨架适配）、`MIGRATION_CONVENTION.md`（DB 迁移规范，PostgreSQL 版）、`BENCHMARK.md`（性能基准记录表）、`.gitleaks.toml`（密钥扫描）、`.env.example`（环境变量模板，按 10 文档 Demo 栈）；docs 体系：`14-缓做事项登记表`、`15-环境与分支策略`、`16-反馈工作流`。索引已同步 00 文档地图与 README。
-7. **chore/docs: 仓库初始化并推送 GitHub private（2026-09-13）**——`git init -b main`；3 个原子提交：`6fc7728`（chore .gitignore）、`d3c63c6`（docs 规格文档 00-13，commit 原文为 atlas-docs）、`2413ab5`（docs 根元文档）；`gh repo create atlas --private` 创建并推送至 `https://github.com/bayernjf/atlas`（PRIVATE，默认分支 main）。
-8. **docs: 源文档切分完成并核对（2026-09-13）**——两份原始文档（《产品与总体方案.md》《技术实现设计.md》）按主题切分为 `docs/` 00-13 共 14 份 AI 导向文档；274 个章节标题全部映射、逐段覆盖率机器核对通过；源文档已删除（血统与治理见 00 文档）。
-9. **docs: 切分核对报告（2026-09-12）**——段落级最长公共子串覆盖率验证，无信息丢失。
+1. **feat(memory): PostgreSQL + pgvector 连接层验证（2026-09-13）**——本地 Docker 跑 `pgvector/pgvector:pg16`（容器 `atlas-pg`，5432）；迁移 `db/migrations/001_enable_pgvector.sql` 启用 vector 0.8.6；`memory/settings.py`（环境变量单一读取点，`DATABASE_URL` 缺失 fail-closed）、`memory/database.py`（SQLAlchemy 引擎/会话工厂，强制 `postgresql+psycopg` 即 psycopg 3 驱动，`ping`/`pgvector_version` 探针）；`tests/test_database_integration.py` 3 个 integration 标记用例（ping、扩展版本、vector 类型写入+余弦距离排序），默认跳过，`ATLAS_RUN_INTEGRATION=1` + `DATABASE_URL` 开启，对容器全绿。`.env` 已本地创建（gitignored），`.env.example` 连接串同步为 psycopg 写法。
+2. **feat(web): 前端编辑器框架跑通（2026-09-13）**——`frontend/` 采用 Vite 8 + React 19 + TS 6 + `@xyflow/react` 12（替代弃用包 `react-flow-renderer`）+ Zustand 5 + AntD 6；页面含 Dashboard/Editor，组件含 FlowCanvas/NodePanel/PropertyPanel/DebugConsole，Zustand 管理 nodes/edges/选中节点/日志；`pnpm build` 通过，浏览器验证初始 3 节点、添加节点、属性编辑与日志，控制台零错误。dev 端口 5174，`/api` 代理 8000。
+3. **feat(engine): LangGraph 最小 OODA 循环跑通（2026-09-13）**——`engine/state.py`（LoopState 按 06 §6.1/12 §1.1 契约，messages/observations 加 add 归约器）、`engine/nodes.py`（observe/orient/decide/act/reflect 五节点 + 三条 conditional 路由，确定性占位、签名不偏离 12 §1.2）、`engine/loop.py`（StateGraph 装配，拓扑同 12 §1.3；`build_graph/initial_state/run_loop`）；`tests/test_engine_loop.py` 3 用例全绿；venv（Python 3.11.15）依赖安装与端到端 `run_loop` 验证通过。
+4. **chore: W1 工程骨架落地（2026-09-13）**——按 09 文档建 `src/atlas/{engine,harness,graph,nodes,memory,skills,collaboration,api,web}/` + `tests/` 包树（`__init__.py` 占位）；`pyproject.toml` 锁定 10 文档 §2 Demo 依赖（Python >=3.11，src layout，版本下限取当日 PyPI 稳定版），已用 Python 3.11 venv 验证可编辑安装；09 文档同步记录 `api/` 包位决策（FastAPI 入口，待定项 5）。
+5. **docs: 技术选型 T1-T5 收口（2026-09-13）**——10 文档 §3 待决策项全部转为正式 ADR（LiteLLM+商业 API / 评估层仅留接口 / 前端进骨架 / 进程内事件总线替代 NATS / FastAPI 实现网关接口），§4 补变更记录；02 选型总览、09 待定项与目录树（含 `frontend/`）、08 §7.2 决策注记三处同步；NATS/Go 网关缓做条目已在 14 文档 D5/D6。
+6. **docs: 移除 LICENSE（2026-09-13，用户指示）**——MIT 许可证不需要，LICENSE 文件删除，README/CONTRIBUTING 的 License 段落改为"暂无（未定）"，handoff 元文档索引与 CHANGELOG 同步清理。
+7. **docs: 补齐 agent-world 惯例规范文档（2026-09-13）**——根目录：`CONTRIBUTING.md`（贡献指南，Python/09 骨架适配）、`MIGRATION_CONVENTION.md`（DB 迁移规范，PostgreSQL 版）、`BENCHMARK.md`（性能基准记录表）、`.gitleaks.toml`（密钥扫描）、`.env.example`（环境变量模板，按 10 文档 Demo 栈）；docs 体系：`14-缓做事项登记表`、`15-环境与分支策略`、`16-反馈工作流`。索引已同步 00 文档地图与 README。
+8. **chore/docs: 仓库初始化并推送 GitHub private（2026-09-13）**——`git init -b main`；3 个原子提交：`6fc7728`（chore .gitignore）、`d3c63c6`（docs 规格文档 00-13，commit 原文为 atlas-docs）、`2413ab5`（docs 根元文档）；`gh repo create atlas --private` 创建并推送至 `https://github.com/bayernjf/atlas`（PRIVATE，默认分支 main）。
+9. **docs: 源文档切分完成并核对（2026-09-13）**——两份原始文档（《产品与总体方案.md》《技术实现设计.md》）按主题切分为 `docs/` 00-13 共 14 份 AI 导向文档；274 个章节标题全部映射、逐段覆盖率机器核对通过；源文档已删除（血统与治理见 00 文档）。
+10. **docs: 切分核对报告（2026-09-12）**——段落级最长公共子串覆盖率验证，无信息丢失。
 
 ## Quality gate（质量门）
 
 - **文档侧**：00 文档"切分核对报告"已确认 274 章节全映射、逐段覆盖无丢失。改规格文档必须遵循 00 文档治理规则（唯一事实源 / 改内容流程 / Schema 契约防漂移）。
-- **代码侧**：最小质量门已建立——后端 `.venv/bin/pytest`（当前 3 个 engine 冒烟用例），前端 `cd frontend && pnpm build`（TS 检查 + Vite 构建，当前通过；有 AntD 首包 >500kB 的体积提示，暂不阻塞）。后续按 13 测试用例清单分层：单元 → 集成 → 回放 → 端到端 → AI 评估，上线前过"四道门"。
+- **代码侧**：最小质量门已建立——后端 `.venv/bin/pytest`（默认 3 个 engine 冒烟用例；DB 集成测试标记 integration 默认跳过，本地对 Docker 容器 3 用例全绿），前端 `cd frontend && pnpm build`（TS 检查 + Vite 构建，当前通过；有 AntD 首包 >500kB 的体积提示，暂不阻塞）。后续按 13 测试用例清单分层：单元 → 集成 → 回放 → 端到端 → AI 评估，上线前过"四道门"。
 
 ## How to run
 
 ```bash
 python3.11 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
-.venv/bin/pytest                       # 单元测试
+.venv/bin/pytest                       # 单元测试（integration 标记默认跳过）
 .venv/bin/python -c "from atlas.engine.loop import run_loop; print(run_loop('demo', max_steps=2)['status'])"
+
+# PostgreSQL + pgvector（本地开发）
+docker run -d --name atlas-pg -e POSTGRES_USER=atlas -e POSTGRES_PASSWORD=atlas \
+  -e POSTGRES_DB=atlas -p 5432:5432 pgvector/pgvector:pg16
+cp .env.example .env                   # 填 DATABASE_URL（本地开发库：atlas/atlas）
+docker exec -i atlas-pg psql -U atlas -d atlas < db/migrations/001_enable_pgvector.sql
+DATABASE_URL=postgresql+psycopg://atlas:atlas@localhost:5432/atlas \
+  ATLAS_RUN_INTEGRATION=1 .venv/bin/pytest -m integration
 
 # 前端
 cd frontend
@@ -88,7 +97,7 @@ pnpm build                             # 类型检查 + 生产构建
 ```
 
 Demo 里程碑（08 文档 7.1）：
-- ✅ W1-W2：LangGraph 最小循环与前端编辑器框架均已跑通（2026-09-13）；PostgreSQL 连接待补。
+- ✅ W1-W2：LangGraph 最小循环、前端编辑器框架、PostgreSQL+pgvector 连接均已跑通（2026-09-13）。
 - API 启动命令（后续 W2 实现后可用）：`uvicorn atlas.api.main:app --reload --port 8000`；前端：`cd frontend && pnpm install && pnpm dev`（当前 dev 端口 5174，`/api` 代理到 8000）。
 
 ## Known issues / 注意点
