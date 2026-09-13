@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### feat / web（2026-09-13）
+
+- W1 前端编辑器框架：Vite 8 + React 19 + TypeScript 6，接入 `@xyflow/react` 12（替代已弃用的 `react-flow-renderer`）、Zustand 5、Ant Design 6；实现 Dashboard/Editor 页面与 FlowCanvas/NodePanel/PropertyPanel/DebugConsole，初始 触发→AI决策→工具调用 三节点，支持添加节点、选中编辑名称、连线状态与调试日志。`pnpm build` 通过，浏览器交互验证无控制台错误；dev 端口 5174，`/api` 代理 8000。
+
 ### feat / engine（2026-09-13）
 
 - W1 最小 OODA 循环跑通：`engine/state.py`（LoopState，契约 06 §6.1/12 §1.1）、`engine/nodes.py`（observe/orient/decide/act/reflect 确定性占位节点 + 三条 conditional 路由，签名遵循 12 §1.2）、`engine/loop.py`（StateGraph 拓扑同 12 §1.3，`build_graph/initial_state/run_loop`）；3 个 pytest 冒烟用例全绿，`run_loop` 端到端收敛 `completed`。LLM 决策与 Harness 感知为后续周次接入点。

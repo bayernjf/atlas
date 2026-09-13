@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping build Atlas. This is an AI 运营体（Agent）编排平台 —— Python 引擎 + Go Harness 网关（Demo 阶段暂用 FastAPI 接口）+ React 前端。当前处于**设计文档完成、代码未启动**阶段，本文件为代码启动后的贡献指南。
+Thanks for helping build Atlas. This is an AI 运营体（Agent）编排平台 —— Python 引擎 + Go Harness 网关（Demo 阶段暂用 FastAPI 接口）+ React 前端。当前处于 **W1-W2 基础骨架阶段**：后端最小 OODA 循环与前端编辑器框架已跑通，业务模块待填。
 
 ## Prerequisites
 
@@ -10,7 +10,7 @@ Thanks for helping build Atlas. This is an AI 运营体（Agent）编排平台 �
 - **Node >= 18 + pnpm**（前端 React 18，Demo 含可视化画布时）
 - **Playwright**（Web 操作适配器）
 
-> 具体依赖清单以 10 文档 §2 为准；**T1-T5 待决策项未收口前不要擅自加依赖**（见 [AGENTS.md](AGENTS.md) 技术约束）。
+> 具体依赖清单以 `pyproject.toml`（后端）和 `frontend/package.json`（前端）为准；新增选型必须先按 10 文档 §4 记录 ADR（见 [AGENTS.md](AGENTS.md) 技术约束）。
 
 ## Develop
 
@@ -22,8 +22,9 @@ pip install -e ".[dev]"          # 依赖清单见 pyproject.toml（落码时生
 pytest                            # 单元测试（层级见 13 测试用例清单）
 uvicorn atlas.api.main:app --reload --port 8000
 
-# 前端（Demo 含画布时）
-cd frontend && pnpm install && pnpm dev
+# 前端（Demo 含画布）
+cd frontend && pnpm install && pnpm dev   # http://localhost:5174，/api 代理到 8000
+pnpm build                                # TypeScript 检查 + Vite 生产构建
 ```
 
 > 具体命令以 09 文档与 10 文档锁定后的 `pyproject.toml` / 前端工程为准，本文件落码后同步更新。
@@ -39,6 +40,9 @@ cd frontend && pnpm install && pnpm dev
 - `src/atlas/collaboration` — 智能体协同
 - `src/atlas/web` — Web 操作适配器（Playwright）
 - `tests/` — 单元/集成/端到端测试
+- `frontend/src/components/` — 画布、节点面板、属性面板、调试控制台
+- `frontend/src/pages/` — Dashboard / Editor
+- `frontend/src/store/` — Zustand 编辑器状态
 
 模块职责与接口契约见 09 文档「模块 → 文档映射」表、03 Schema 契约索引、12 API 清单。
 
@@ -52,7 +56,7 @@ cd frontend && pnpm install && pnpm dev
 ## Coding conventions
 
 - **文档是契约**：数据结构与接口签名以 `docs/03`（Schema）与 `12`（API）为基准，实现不得偏离；确需调整先走「改内容流程」（见 [docs/00-文档索引与治理.md](docs/00-文档索引与治理.md)）。
-- **选型未锁不加依赖**：依赖清单以 10 文档 §2 为准；T1-T5 未收口前不擅自拍板。
+- **选型已锁定**：后端依赖清单见 `pyproject.toml`；前端 React 19 + `@xyflow/react` 12（React Flow 现行包名）+ Zustand 5 + AntD 6，见 `frontend/package.json` 与 10 文档 §2/§4。
 - **DB 访问走统一抽象**：数据访问/ORM 层集中管理，禁止在节点/路由里散写裸 SQL（迁移规范见 [MIGRATION_CONVENTION.md](MIGRATION_CONVENTION.md)）。
 - **记忆分层**：短期（Redis）/ 长期（PostgreSQL + pgvector）按 06 文档 6.3 分层实现，不混用。
 - **安全基线**：密钥走环境变量/Vault（见 `.env.example`），代码不落明文密钥。

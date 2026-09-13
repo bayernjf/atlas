@@ -12,7 +12,7 @@ Atlas 是一个 **AI 运营体（Agent）编排平台**：以 **Harness / Graph 
 
 ## 当前阶段
 
-**设计文档已完成，代码未启动**（2026-09-13）。全部规格以 `docs/` 为唯一事实源，共 14 份 AI 导向文档，由两份原始方案文档切分核对而成，零信息丢失。
+**W1-W2 基础骨架进行中**（2026-09-13）。设计文档以 `docs/` 为唯一事实源（00-16 共 17 份）；后端最小 OODA 循环与前端编辑器框架已跑通，PostgreSQL 连接与业务模块待补。
 
 ## 文档导航
 
@@ -30,9 +30,9 @@ Atlas 是一个 **AI 运营体（Agent）编排平台**：以 **Harness / Graph 
 
 ## 技术栈（已定选型）
 
-Python 3.11+（引擎）/ Go（Harness 网关，Demo 可暂用 FastAPI）/ TypeScript + React 18（前端）/ **LangChain + LangGraph** / LiteLLM / Playwright + OmniParser / PostgreSQL + pgvector / Redis / NATS / React Flow + Zustand / FastAPI。
+Python 3.11+（引擎）/ Go（Harness 网关产品化目标，Demo 暂用 FastAPI）/ TypeScript + React 19（满足 React 18+）/ **LangChain + LangGraph** / LiteLLM / Playwright + OmniParser / PostgreSQL + pgvector / Redis / Demo 进程内事件总线（NATS 留 Phase 2）/ `@xyflow/react`（React Flow 12）+ Zustand + Ant Design / FastAPI。
 
-> ⏳ 5 项待决策（模型部署、评估层、前端进 Demo 与否、NATS、Go 网关），见 [10 技术选型决策记录 §3](docs/10-技术选型决策记录.md)。
+> T1-T5 已于 2026-09-13 收口，见 [10 技术选型决策记录 §3](docs/10-技术选型决策记录.md)。
 
 ## 路线图
 

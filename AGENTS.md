@@ -24,15 +24,15 @@ Atlas 项目的 AI 协作规范。**接手先读 [handoff.md](handoff.md)（状�
 
 ## 技术约束
 
-### 选型锁定前不落依赖
+### 选型变更必须先记录
 
-- `pyproject.toml` 依赖清单以 [docs/10-技术选型决策记录.md](docs/10-技术选型决策记录.md) §2 为准（Demo 依赖已就绪，版本号落码时解析）。
-- **10 文档 §3 的 5 项待决策（T1-T5）未收口前**：模型部署方式、评估层、前端是否进 Demo、NATS、Go 网关，不得擅自拍板；确需偏离时先记录到 10 文档（决策变更流程 §4）。
+- 后端依赖以 `pyproject.toml`、前端依赖以 `frontend/package.json` 为准；来源与边界见 [docs/10-技术选型决策记录.md](docs/10-技术选型决策记录.md) §2。
+- T1-T5 已于 2026-09-13 收口（10 文档 §3）：LiteLLM 接商业 API、评估层仅留接口、前端进 Demo、进程内事件总线、Demo 网关用 FastAPI。后续新增/更换选型必须先记录到 10 文档 §4，不擅自拍板。
 - 决策变更必须三处同步：10 文档 ADR 记录 → 02 技术架构选型总览 → 09 工程骨架待填清单。
 
 ### 工程结构按 09 骨架
 
-- 代码目录按 [docs/09-工程骨架与目录结构.md](docs/09-工程骨架与目录结构.md) 组织：`src/atlas/{engine,harness,graph,nodes,memory,skills,collaboration,web}/` + `tests/`。
+- 代码目录按 [docs/09-工程骨架与目录结构.md](docs/09-工程骨架与目录结构.md) 组织：后端 `src/atlas/{engine,harness,graph,nodes,memory,skills,collaboration,api,web}/` + `tests/`，前端 `frontend/`。
 - 模块职责以 09 文档"模块 → 文档映射"表为准；包边界有歧义时（如 harness 与 web 是否合并）先记录决策，不静默二选一。
 
 ### 数据访问与接口
@@ -50,8 +50,10 @@ git commit message 详细规范见 [git-commit-message.md](git-commit-message.md
 
 ## 验证命令
 
-代码未启动，暂无实测命令。落码后按 [docs/13-测试用例清单.md](docs/13-测试用例清单.md) 建立：
+W1 起已有最小验证命令；后续按 [docs/13-测试用例清单.md](docs/13-测试用例清单.md) 扩展：
 
-- 单元测试：`pytest src/atlas/...`（模块级）
+- 后端单元测试：`.venv/bin/pytest`
+- 前端类型检查与构建：`cd frontend && pnpm build`
+- 前端本地预览：`cd frontend && pnpm dev`（http://localhost:5174）
 - 集成/回放/端到端：按 13 文档分层
-- 上线前四道门：见 13 文档（文档阶段结束前不视为可上线）
+- 上线前四道门：见 13 文档（Demo 阶段不视为可上线）
