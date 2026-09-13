@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Edge } from '@xyflow/react'
-import { serializeGraph, type EditorNode } from '../graphSerializer'
+import { deserializeGraph, serializeGraph, type EditorNode } from '../graphSerializer'
 import { defaultConfig, defaultRetry } from '../nodeCatalog'
 import type { GraphVariable } from '../variables'
 
@@ -40,5 +40,18 @@ describe('serializeGraph', () => {
   it('rounds positions to integers', () => {
     const graph = serializeGraph(nodes, edges, variables)
     expect(graph.nodes[0].position).toEqual({ x: 80, y: 101 })
+  })
+})
+
+describe('deserializeGraph', () => {
+  it('rebuilds editor nodes from backend graph JSON with idle status', () => {
+    const graph = serializeGraph(nodes, edges, variables)
+    const { nodes: restored, edges: restoredEdges, variables: restoredVars } = deserializeGraph(graph)
+    expect(restored[0].id).toBe('trigger-1')
+    expect(restored[0].data.kind).toBe('trigger')
+    expect(restored[0].data.status).toBe('idle')
+    expect(restored[0].data.label).toBe('触发')
+    expect(restoredEdges).toEqual([{ id: 'e1', source: 'trigger-1', target: 'tool_call-1' }])
+    expect(restoredVars).toEqual(variables)
   })
 })

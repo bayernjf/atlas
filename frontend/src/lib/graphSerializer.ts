@@ -44,3 +44,34 @@ export function serializeGraph(nodes: EditorNode[], edges: Edge[], variables: Gr
     edges: edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target })),
   }
 }
+
+/**
+ * 后端 Graph JSON（NL 草稿/已保存图）→ 编辑器元素。
+ * 草稿节点统一补 idle 状态，缺省的 retry 由序列化侧保证。
+ */
+export function deserializeGraph(graph: SerializedGraph): {
+  nodes: EditorNode[]
+  edges: Edge[]
+  variables: GraphVariable[]
+} {
+  return {
+    nodes: graph.nodes.map((node) => ({
+      id: node.id,
+      position: node.position,
+      data: {
+        label: node.name,
+        kind: node.type,
+        status: 'idle' as const,
+        description: node.description ?? '',
+        config: node.config,
+        retry: node.retry,
+      },
+    })),
+    edges: graph.edges.map((edge) => ({
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+    })),
+    variables: graph.variables,
+  }
+}
