@@ -16,6 +16,15 @@ Atlas 是一个 **AI 运营体（Agent）编排平台**：以 **Harness / Graph 
 
 ### 本地运行 Demo
 
+Docker 一键启动（Phase 1 种子客户交付形态，只需 Docker）：
+
+```bash
+docker compose up --build        # 编辑器 http://localhost:8000，模拟商家控制台 /demo/shop（demo/demo）
+curl -X POST http://localhost:8000/api/demo/reset   # 重置种子退款单与已保存图
+```
+
+本地开发双进程：
+
 ```bash
 .venv/bin/uvicorn atlas.api.main:app --reload --port 8000   # 后端 API + 模拟商家控制台
 cd frontend && pnpm dev                                     # 编辑器 http://localhost:5174
