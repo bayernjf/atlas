@@ -6,6 +6,11 @@
 
 ### feat / web（2026-09-13）
 
+- W5-W6 编辑器核心功能：`frontend/src/lib/` 新增纯逻辑模块——`variables.ts`（04 §6.3 `{{路径}}` 模板语法：引用提取、插值（缺失引用原样保留）、点号/下标路径解析、变量名校验、全局变量与节点输出路径清单）、`nodeCatalog.ts`（trigger/ai_decision/tool_call 三类节点目录、默认 config/retry、中文实时校验规则）、`graphSerializer.ts`（按 03/04 §3.2 node_schema 契约序列化 Graph JSON，version 1，坐标取整）；`store/editorStore.ts` 重写为类型化 store（`nextId` 扫描已有 id 消除 React Flow 节点 id 碰撞、选中/配置更新/删除级联连线/变量增删/连线日志，种子改为 OA 审批示例）；UI 新增自定义 `AtlasNode`（类型配色 + 校验错误角标）、`VariablesPanel`（变量 CRUD + 标识符校验），重写 `FlowCanvas`（HTML5 拖拽 + screenToFlowPosition 落点）、`NodePanel`（拖拽面板）、`PropertyPanel`（三类节点分类型配置表单、插入 `{{变量}}` 引用、retry 策略、实时校验清单）、`Editor`（节点/变量双 Tab + Graph JSON 导出预览弹窗）；Dashboard 文案同步到 W5-W6 状态。测试：新增 vitest 5（选型 ADR 见 10 文档 §4），4 个测试文件 20 个用例全绿；`pnpm build` 通过；浏览器人工验证拖拽新增、错误角标与属性面板联动、变量插入恢复校验、导出 JSON 结构正确，应用零控制台错误。
+- chore：修复根 `.gitignore` 的 Python 规则 `lib/` 误伤 `frontend/src/lib/`（导致前端逻辑目录被静默忽略），改为 `/lib/`、`/lib64/` 锚定仓库根目录。
+
+### feat / web（2026-09-13）
+
 - W3-W4 Harness Web 适配器：`harness/base.py` 落地 06 §6.4 同构契约（HarnessAdapter 抽象类、ActionRequest/ActionResult/Capability/Observation、ActionStatus 与 Permission 枚举），execute 模板方法内置权限校验与审计回调（I8）；`harness/registry.py` 进程内适配器注册/发现/心跳健康（04 §4.4，TTL 30s）。`web/location.py` 实现三层定位（层1 选择器 3000ms 超时 + 成功选择器缓存，层2 视觉语义置信度严格 >0.7 并回填缓存，层3 全图推理坐标，全失败返回"元素未找到，三层定位均失败"），层 2/3 视觉组件以 Protocol 注入；`web/adapter.py` 为 Playwright sync API 适配器，工具集 navigate/click/type/screenshot，headless 受 `PLAYWRIGHT_HEADLESS` 控制。测试：契约/定位 13 个单元用例（假页面）全绿，`test_web_browser_integration.py` 4 个真实 Chromium 用例（I1 selector、I2 语义层真实坐标、I5 缓存短路、type/observe）全绿；I3/I4 编排由单元测试覆盖，真实视觉模型链路待 LiteLLM 接入。包边界决策（harness=契约/注册、web=Playwright 实现，不合并）记入 09 待定项 2 与 08 §7.2；12 一致性清单勾选 4 项。
 
 ### feat / memory（2026-09-13）
