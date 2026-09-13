@@ -51,9 +51,13 @@ def test_compile_produces_graph_and_runs_in_edge_order():
     assert list(result["outputs"].keys()) == ["trigger-1", "ai_decision-1", "tool_call-1"]
     assert result["outputs"]["trigger-1"]["context"]["webhookUrl"] == "/hooks/approval"
     decision = result["outputs"]["ai_decision-1"]
-    assert decision["decision"] == "auto_approve"
+    assert decision["decision"]["action"] == "request_human_approval"
+    assert decision["decision"]["source"] == "rule"
     assert "公司 Atlas 限额 500 缺失 {{global.missing}}" == decision["prompt_rendered"]
-    assert result["outputs"]["tool_call-1"]["params_rendered"] == "依据 auto_approve 执行"
+    # 未在 Demo 注册表中的适配器 → 结构化失败，不抛异常
+    tool_output = result["outputs"]["tool_call-1"]["result"]
+    assert tool_output["status"] == "FAILED"
+    assert "web-playwright" in tool_output["error"]
     assert result["trace"][0].startswith("trigger-1")
 
 
