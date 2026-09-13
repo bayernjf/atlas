@@ -1,7 +1,7 @@
 # Atlas 前端国际化（i18n）与设计 Token 方案
 
 > **来源**：工程推导文档。需求依据为 [04-组件设计-编辑后台.md](04-组件设计-编辑后台.md) 十、补充项 28「多语言支持」三条（界面多语言中/英切换可扩展、自然语言多语言、组件描述多语言）；01-08 正文为冻结的唯一事实源，本文只做工程化方案，不改写需求。
-> **状态**：方案已定（2026-09-13），**代码尚未落码**。设计 Token 等价替换可在 Phase 1 准备期首个前端迭代执行；i18n 库按触发条件引入（见 §4 落地节奏与 [14-缓做事项登记表](14-缓做事项登记表.md) D12/D13）。
+> **状态**：方案已定（2026-09-13）。**设计 Token 等价替换已于 2026-09-13 落码**（`theme/tokens.ts` + `setup.ts`，全仓零硬编码色值，浏览器三页面零视觉差异）；i18n 库按触发条件引入（见 §4 落地节奏与 [14-缓做事项登记表](14-缓做事项登记表.md) D12/D13）。
 > **AI 使用提示**：前端新增界面文案、颜色/间距/圆角值时必须按本文契约预留（不裸写硬编码、不自创 key 规则）；落码 i18n/token 时以本文为方案依据。
 
 ## 1. 背景与现状
@@ -75,10 +75,11 @@ frontend/src/locales/
 | semantic | 语义角色，组件只引用本层 | `color-bg-canvas`、`color-text-primary`、`color-border`、`color-node-running`、`color-success/warning/danger` |
 | component | AntD 组件级覆盖 | `theme.components.Button.borderRadius` |
 
-### 3.2 单一事实源与消费方式
+### 3.2 单一事实源与消费方式（✅ 2026-09-13 已落码）
 
 ```
 frontend/src/theme/tokens.ts   # token 对象（primitive + semantic），唯一事实源
+frontend/src/theme/setup.ts    # main.tsx 引入一次，把 semantic 注入 :root 为 --atlas-* 变量
 ```
 
 两处派生消费：
@@ -92,7 +93,7 @@ frontend/src/theme/tokens.ts   # token 对象（primitive + semantic），唯一
 
 `--atlas-{类别}-{角色}[-{状态}]`，短横线分层：
 
-- 颜色：`--atlas-color-bg-page` / `--atlas-color-bg-canvas` / `--atlas-color-text-primary` / `--atlas-color-border` / `--atlas-color-success` / `--atlas-color-node-running` / `--atlas-color-node-completed`
+- 颜色：`--atlas-color-bg-page` / `--atlas-color-bg-canvas` / `--atlas-color-text-primary` / `--atlas-color-border` / `--atlas-color-success` / `--atlas-color-node-ai` / `--atlas-color-node-ring-running` / `--atlas-color-node-ring-completed`（运行态光晕为 rgba 派生：ring-running / ring-completed / pulse-soft / pulse-strong，节点边框本身用 `--atlas-color-primary`）
 - 间距：`--atlas-spacing-1..6`（4px 基线）
 - 圆角：`--atlas-radius-sm/md/lg`；字号：`--atlas-font-size-*`；层级：`--atlas-z-header/canvas/modal`
 
@@ -101,15 +102,16 @@ frontend/src/theme/tokens.ts   # token 对象（primitive + semantic），唯一
 - 暗色模式通过 `[data-theme="dark"]` 选择器覆盖 **semantic 层**变量实现；primitive 不动，组件只引用 semantic。
 - 本期只保证分层结构允许该扩展，不产出暗色值、不加切换器。
 
-### 3.5 迁移清单（落码范围，本方案不执行）
+### 3.5 迁移清单（✅ 2026-09-13 已完成等价替换）
 
-| 位置 | 现值 | 替换为 |
+| 位置 | 原值 | 替换为 |
 |---|---|---|
-| `App.tsx` ConfigProvider | `#1677ff` | `antdTheme`（来自 tokens.ts） |
-| `index.css` 头部背景 | `#0f172a` | `--atlas-color-bg-header` |
-| `index.css` 正文/主文字 | `#f5f7fa` / `#1f2937` | `--atlas-color-bg-page` / `--atlas-color-text-primary` |
-| `index.css` 侧栏边框/画布背景 | `#e5e7eb` / `#eef2f7` | `--atlas-color-border` / `--atlas-color-bg-canvas` |
-| `index.css` 节点 running/completed | 脉冲绿/描边绿硬编码 | `--atlas-color-node-running` / `--atlas-color-node-completed` |
+| `App.tsx` ConfigProvider | `#1677ff` | `antdTheme`（来自 tokens.ts）✅ |
+| `index.css` 头部背景 | `#0f172a` | `--atlas-color-bg-header` ✅ |
+| `index.css` 正文/主文字 | `#f5f7fa` / `#1f2937` | `--atlas-color-bg-page` / `--atlas-color-text-primary` ✅ |
+| `index.css` 侧栏边框/画布背景 | `#e5e7eb` / `#eef2f7` | `--atlas-color-border` / `--atlas-color-bg-canvas` ✅ |
+| `index.css` 节点 running/completed | 脉冲绿/描边绿硬编码 | `--atlas-color-node-ring-running` / `--atlas-color-node-ring-completed`（含 pulse soft/strong）✅ |
+| `nodeCatalog.ts` / `FlowCanvas.tsx` | 类型三色/连线 `#1677ff` 内联 | `token('color-*')`（trigger→color-success、ai→color-node-ai、tool/edge→color-primary）✅ |
 
 迁移目标是**零视觉变化**的等价替换（token 值 = 现值 1:1 搬迁），不做视觉改版。
 
@@ -123,7 +125,7 @@ frontend/src/theme/tokens.ts   # token 对象（primitive + semantic），唯一
 
 | 事项 | 时机 | 依据 |
 |---|---|---|
-| 设计 Token 等价替换（tokens.ts + CSS 变量 + AntD theme） | Phase 1 准备期首个前端迭代即可落码（成本低、零新依赖） | §3 |
+| 设计 Token 等价替换（tokens.ts + CSS 变量 + AntD theme） | ✅ 2026-09-13 已落码（本节 §3.5） | §3 |
 | i18n 库引入 + zh-CN 抽取 + en-US 骨架 | 触发式：首个英文使用者/明确出海需求（14 D12） | §2.2 |
 | 完整英文翻译 | 随首个英文客户试用 | §2.3 |
 | 组件/模板描述多语言 | Phase 2 模板库（14 D13） | 04 §28 第 3 条 |

@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### feat / web（2026-09-13）
+
+- 设计 Token 等价替换落地（17 文档 §3）：新增 `frontend/src/theme/tokens.ts`（primitive/semantic 两层，唯一事实源，导出 `antdTheme` 与 `token()`）与 `setup.ts`（main.tsx 引入一次，注入 `--atlas-*` CSS 变量）；`App.tsx` ConfigProvider 改消费 `antdTheme`，`index.css` 全部硬编码色值/rgba 光晕换为语义变量（含 keyframes pulse），`nodeCatalog.ts` 节点三色与 `FlowCanvas.tsx` 连线色改引 `token()`。现值 1:1 搬迁、零新依赖；`pnpm test` 23/23、`pnpm build` 通过，浏览器 computed-style 逐页核对零视觉差异、控制台零错误，src 下硬编码色值仅剩 tokens.ts。
+
 ### docs（2026-09-13）
 
 - 新增 `docs/17-前端国际化与设计Token方案.md`（工程推导，需求依据 04 §补充项 28）：i18n 选型 i18next + react-i18next + AntD locale（T7，触发式引入，当前不落码），冻结 locales 目录/key 命名/后端错误码本地化/金额日期 Intl 格式化/NL 多语言边界等契约；设计 Token 三层模型（primitive/semantic/component），`frontend/src/theme/tokens.ts` 单一事实源派生 AntD theme 与 `--atlas-*` CSS 变量（零新依赖），含硬编码色值迁移清单与零视觉变化验收。10 文档 §1/§4 记 T7 与 token ADR，09 前端树补 `theme/`、`locales/`（待落码），14 文档新增 D12/D13，handoff/00 索引同步。
