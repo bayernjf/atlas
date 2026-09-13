@@ -89,3 +89,32 @@ def test_demo_shop_console_login_and_orders():
     page = client.get("/demo/shop")
     assert page.status_code == 200
     assert "Demo 商家售后控制台" in page.text
+
+
+def test_demo_reset_restores_seed_orders_and_clears_graphs():
+    graph_id = client.post("/api/graphs", json=_refund_graph()).json()["id"]
+    client.post(
+        f"/api/graphs/{graph_id}/run",
+        json={"inputs": {"order_id": "12349", "reason": "尺寸不合适", "amount": 899}},
+    )
+    client.post("/api/demo/shop/login", json={"username": "demo", "password": "demo"})
+    assert all(order["order_id"] != "12349" for order in client.get("/api/demo/shop/orders").json()["orders"])
+    assert client.get(f"/api/graphs/{graph_id}").status_code == 200
+
+    assert client.post("/api/demo/reset").json() == {"reset": True}
+
+    # 重置后登录态恢复，需重新登录
+    assert client.get("/api/demo/shop/orders").status_code == 401
+    client.post("/api/demo/shop/login", json={"username": "demo", "password": "demo"})
+    orders = client.get("/api/demo/shop/orders").json()["orders"]
+    assert any(order["order_id"] == "12349" for order in orders)
+    assert client.get(f"/api/graphs/{graph_id}").status_code == 404
+
+
+def test_frontend_static_served_when_dist_exists():
+    response = client.get("/")
+    if response.status_code == 404:
+        # 仓库未构建前端（frontend/dist 不存在）时不挂载，dev 走 Vite 5174
+        return
+    assert response.status_code == 200
+    assert '<div id="root"></div>' in response.text

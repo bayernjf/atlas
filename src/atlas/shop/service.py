@@ -68,3 +68,8 @@ class DemoShopService:
         order.status = HUMAN_REVIEW
         order.history.append(f"转人工审批：{note}")
         return {"order_id": order_id, "status": HUMAN_REVIEW}
+
+    def reset(self) -> None:
+        """恢复种子数据（种子客户每家从初始状态体验）。"""
+        self.orders = seed_orders()
+        self.logged_in = False
