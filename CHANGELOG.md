@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### feat / web（2026-09-13）
+
+- W3-W4 Harness Web 适配器：`harness/base.py` 落地 06 §6.4 同构契约（HarnessAdapter 抽象类、ActionRequest/ActionResult/Capability/Observation、ActionStatus 与 Permission 枚举），execute 模板方法内置权限校验与审计回调（I8）；`harness/registry.py` 进程内适配器注册/发现/心跳健康（04 §4.4，TTL 30s）。`web/location.py` 实现三层定位（层1 选择器 3000ms 超时 + 成功选择器缓存，层2 视觉语义置信度严格 >0.7 并回填缓存，层3 全图推理坐标，全失败返回"元素未找到，三层定位均失败"），层 2/3 视觉组件以 Protocol 注入；`web/adapter.py` 为 Playwright sync API 适配器，工具集 navigate/click/type/screenshot，headless 受 `PLAYWRIGHT_HEADLESS` 控制。测试：契约/定位 13 个单元用例（假页面）全绿，`test_web_browser_integration.py` 4 个真实 Chromium 用例（I1 selector、I2 语义层真实坐标、I5 缓存短路、type/observe）全绿；I3/I4 编排由单元测试覆盖，真实视觉模型链路待 LiteLLM 接入。包边界决策（harness=契约/注册、web=Playwright 实现，不合并）记入 09 待定项 2 与 08 §7.2；12 一致性清单勾选 4 项。
+
 ### feat / memory（2026-09-13）
 
 - PostgreSQL + pgvector 连接层验证：本地 Docker 运行 `pgvector/pgvector:pg16`（容器 `atlas-pg`），迁移 `db/migrations/001_enable_pgvector.sql` 启用 vector 扩展（0.8.6）；`memory/settings.py`（`DATABASE_URL` 单一读取点，缺失 fail-closed）与 `memory/database.py`（SQLAlchemy 引擎/会话工厂，限定 `postgresql+psycopg` 即 psycopg 3，`ping`/`pgvector_version` 探针）；`tests/test_database_integration.py` 3 个 `integration` 标记用例（连通性、扩展版本、vector 写入与余弦距离排序），默认跳过，经 `ATLAS_RUN_INTEGRATION=1` + `DATABASE_URL` 开启，对容器全绿。`.env.example` 连接串改为 psycopg 3 写法；本地 `.env` 已建且被 gitignore。
