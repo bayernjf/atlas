@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from fastapi.testclient import TestClient
 
 from atlas.api.main import app
@@ -118,3 +120,27 @@ def test_frontend_static_served_when_dist_exists():
         return
     assert response.status_code == 200
     assert '<div id="root"></div>' in response.text
+
+
+def test_feedback_submit_list_and_survives_demo_reset():
+    marker = f"画布上节点不动了-{uuid.uuid4()}"
+    created = client.post(
+        "/api/feedback",
+        json={"type": "bug", "content": marker, "contact": "wechat: trial-user"},
+    )
+    assert created.status_code == 201
+    body = created.json()
+    assert body["id"].startswith("feedback-")
+    assert body["created_at"]
+
+    items = client.get("/api/feedback").json()["items"]
+    assert any(item["content"] == marker and item["type"] == "bug" for item in items)
+
+    # reset 只清 Demo 业务数据，反馈保留
+    client.post("/api/demo/reset")
+    assert any(item["content"] == marker for item in client.get("/api/feedback").json()["items"])
+
+
+def test_feedback_rejects_invalid_type_and_empty_content():
+    assert client.post("/api/feedback", json={"type": "other", "content": "x"}).status_code == 422
+    assert client.post("/api/feedback", json={"type": "bug", "content": ""}).status_code == 422

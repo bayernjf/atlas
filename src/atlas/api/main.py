@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from atlas.graph.dsl import GraphValidationError, parse_graph
 from atlas.graph.loader import compile_graph, run_graph
@@ -205,6 +206,48 @@ def demo_reset() -> dict[str, bool]:
     _demo_shop.reset()
     _store.clear()
     return {"reset": True}
+
+
+class FeedbackRequest(BaseModel):
+    type: Literal["bug", "suggestion"]
+    content: str = Field(min_length=1, max_length=2000)
+    contact: str = Field(default="", max_length=200)
+
+
+class FeedbackStore:
+    """Phase 1 种子反馈：进程内存储（重启清空，与 Demo 同假设）；reset 不清除。"""
+
+    def __init__(self) -> None:
+        self._items: list[dict[str, Any]] = []
+        self._counter = 0
+
+    def add(self, request: FeedbackRequest) -> dict[str, Any]:
+        self._counter += 1
+        item = {
+            "id": f"feedback-{self._counter}",
+            "type": request.type,
+            "content": request.content,
+            "contact": request.contact,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._items.append(item)
+        return item
+
+    def list(self) -> list[dict[str, Any]]:
+        return list(self._items)
+
+
+_feedback_store = FeedbackStore()
+
+
+@app.post("/api/feedback", status_code=201)
+def submit_feedback(request: FeedbackRequest) -> dict[str, Any]:
+    return _feedback_store.add(request)
+
+
+@app.get("/api/feedback")
+def list_feedback() -> dict[str, list[dict[str, Any]]]:
+    return {"items": _feedback_store.list()}
 
 
 _CONSOLE_HTML = """<!doctype html>
