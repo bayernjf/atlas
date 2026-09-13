@@ -186,3 +186,12 @@ body,
   border-radius: 6px;
   font-size: 12px;
 }
+
+.run-result-section {
+  margin-bottom: 12px;
+}
+
+.run-result-section .graph-json-preview {
+  max-height: 260px;
+  margin-top: 6px;
+}
