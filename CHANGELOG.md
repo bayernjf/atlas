@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### chore / scaffold（2026-09-13）
+
+- W1 工程骨架：按 09 文档建 `src/atlas/{engine,harness,graph,nodes,memory,skills,collaboration,api,web}/` + `tests/`（`__init__.py` 占位）；`pyproject.toml`（Python >=3.11、src layout、pytest 配置），依赖按 10 文档 §2 锁定，版本下限取当日 PyPI 稳定版；Python 3.11 venv 可编辑安装验证通过。
+- 09 文档记录包边界决策：新增 `atlas.api` 承载 FastAPI 入口与 REST 路由（待定项 5），harness 保持网关契约。
+
 ### docs（2026-09-13）
 
 - 技术选型 T1-T5 收口为正式 ADR（10 文档 §3/§4）：Demo 模型经 LiteLLM 对接主流商业 API（`.env` 切换，不引入 vLLM）；评估与优化层仅留抽象接口；编辑后台前端进 Demo 骨架（`frontend/`，W1-W2）；进程内事件总线替代 NATS（Phase 2 重启）；Harness 网关 Demo 用 Python/FastAPI 实现同构接口（Go 化留 Phase 2）。02/08/09 同步，14 文档 D5/D6 已登记缓做触发条件。
