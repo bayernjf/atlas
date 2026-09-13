@@ -42,7 +42,7 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 
 - **阶段**：设计文档完成（2026-09-13 两份源文档切分核对后删除，内容已并入 `docs/` 00-13）；**代码未启动**。
 - **仓库**：git 仓库（`main` 分支），**已推送 GitHub private 仓库 `bayernjf/atlas`**（2026-09-13，3 个原子提交：chore .gitignore + docs 规格 + docs 根元文档）。
-- **技术选型**：✅ 已定（Python 3.11+ 引擎 / Go Harness 网关（Demo 可先用 FastAPI 接口）/ TS+React 18 前端 / LangChain+LangGraph / LiteLLM / Playwright / PostgreSQL+pgvector / Redis / NATS（Demo 可缓）/ FastAPI / React Flow+Zustand）；⏳ 待决策 5 项（T1-T5，见 10 文档 §3）。
+- **技术选型**：✅ 已全部收口（2026-09-13，T1-T5 见 10 文档 §3）：Python 3.11+ 引擎 / Go Harness 网关为产品化目标、**Demo 用 Python/FastAPI 实现同构接口** / TS+React 18 前端 / LangChain+LangGraph / LiteLLM（Demo 对接主流商业 API，`.env` 切换，不引入 vLLM）/ Playwright / PostgreSQL+pgvector / Redis / **Demo 进程内事件总线替代 NATS** / FastAPI / React Flow+Zustand / 评估优化层仅留接口；剩余 ⏳（vLLM、策略训练、多语言）均为后续阶段范围。
 - **Demo 依赖清单已就绪**：10 文档 §2 可直接进 `pyproject.toml`（版本号落码时解析）。
 - **关键文件**：目前只有文档。工程骨架规划见 09 文档（`src/atlas/{engine,harness,graph,nodes,memory,skills,collaboration,web}/` + `tests/`）。
 
@@ -50,19 +50,19 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 
 按优先级降序：
 
-1. ★ **技术选型待决策项收口**（10 文档 §3 T1-T5）：模型部署方式（Demo 建议 LiteLLM 对接任一主流 API）、评估层（留接口）、编辑后台前端是否进 Demo 骨架（**建议进**，08 验收标准第 5 条含可视化画布）、NATS 缓做、Go 网关缓做。收口后在 10 文档记录变更。
-3. ★ **W1-W2 基础骨架落地**（08 文档 7.1）：LangGraph 引擎跑通、前端编辑器框架、PostgreSQL 连接。按 09 文档待填项清单建目录与 `pyproject.toml` / `.gitignore`。
-4. 文档缺口登记：`09-工程骨架` 待定项 2/3/4（harness 与 web 边界、是否新增 deployment/、前端工程结构）在落码时一并决策。
+1. ★ **W1-W2 基础骨架落地**（08 文档 7.1）：选型已收口（2026-09-13），可直接开工——按 09 文档建目录树（含 `frontend/`）与 `pyproject.toml`（依赖清单 10 文档 §2，版本号落码时解析）；LangGraph 最小循环跑通、前端编辑器框架、PostgreSQL 连接。
+2. 文档缺口登记：`09-工程骨架` 待定项 2/3（harness 与 web 边界在 W3-W4 决策、是否新增 deployment/）在落码时一并决策；待定项 1/4 已随 T1-T5 收口。
 
 > 缓做/低优项：统一登记在 [docs/14-缓做事项登记表.md](docs/14-缓做事项登记表.md)（每条带触发条件，条件满足移回本区并标注重启日期）。当前含移动端适配器、策略训练、组件市场、模型路由器、NATS、Go 网关、多租户、运营体市场、BENCHMARK 实测、CI/CD、可观测性等 11 项。
 
 ## Recently shipped（最近变更）
 
-1. **docs: 移除 LICENSE（2026-09-13，用户指示）**——MIT 许可证不需要，LICENSE 文件删除，README/CONTRIBUTING 的 License 段落改为"暂无（未定）"，handoff 元文档索引与 CHANGELOG 同步清理。
-2. **docs: 补齐 agent-world 惯例规范文档（2026-09-13）**——根目录：`CONTRIBUTING.md`（贡献指南，Python/09 骨架适配）、`MIGRATION_CONVENTION.md`（DB 迁移规范，PostgreSQL 版）、`BENCHMARK.md`（性能基准记录表）、`.gitleaks.toml`（密钥扫描）、`.env.example`（环境变量模板，按 10 文档 Demo 栈）；docs 体系：`14-缓做事项登记表`、`15-环境与分支策略`、`16-反馈工作流`。索引已同步 00 文档地图与 README。
-2. **chore/docs: 仓库初始化并推送 GitHub private（2026-09-13）**——`git init -b main`；3 个原子提交：`6fc7728`（chore .gitignore）、`d3c63c6`（docs 规格文档 00-13，commit 原文为 atlas-docs）、`2413ab5`（docs 根元文档）；`gh repo create atlas --private` 创建并推送至 `https://github.com/bayernjf/atlas`（PRIVATE，默认分支 main）。
-2. **docs: 源文档切分完成并核对（2026-09-13）**——两份原始文档（《产品与总体方案.md》《技术实现设计.md》）按主题切分为 `docs/` 00-13 共 14 份 AI 导向文档；274 个章节标题全部映射、逐段覆盖率机器核对通过；源文档已删除（血统与治理见 00 文档）。
-3. **docs: 切分核对报告（2026-09-12）**——段落级最长公共子串覆盖率验证，无信息丢失。
+1. **docs: 技术选型 T1-T5 收口（2026-09-13）**——10 文档 §3 待决策项全部转为正式 ADR（LiteLLM+商业 API / 评估层仅留接口 / 前端进骨架 / 进程内事件总线替代 NATS / FastAPI 实现网关接口），§4 补变更记录；02 选型总览、09 待定项与目录树（含 `frontend/`）、08 §7.2 决策注记三处同步；NATS/Go 网关缓做条目已在 14 文档 D5/D6。
+2. **docs: 移除 LICENSE（2026-09-13，用户指示）**——MIT 许可证不需要，LICENSE 文件删除，README/CONTRIBUTING 的 License 段落改为"暂无（未定）"，handoff 元文档索引与 CHANGELOG 同步清理。
+3. **docs: 补齐 agent-world 惯例规范文档（2026-09-13）**——根目录：`CONTRIBUTING.md`（贡献指南，Python/09 骨架适配）、`MIGRATION_CONVENTION.md`（DB 迁移规范，PostgreSQL 版）、`BENCHMARK.md`（性能基准记录表）、`.gitleaks.toml`（密钥扫描）、`.env.example`（环境变量模板，按 10 文档 Demo 栈）；docs 体系：`14-缓做事项登记表`、`15-环境与分支策略`、`16-反馈工作流`。索引已同步 00 文档地图与 README。
+4. **chore/docs: 仓库初始化并推送 GitHub private（2026-09-13）**——`git init -b main`；3 个原子提交：`6fc7728`（chore .gitignore）、`d3c63c6`（docs 规格文档 00-13，commit 原文为 atlas-docs）、`2413ab5`（docs 根元文档）；`gh repo create atlas --private` 创建并推送至 `https://github.com/bayernjf/atlas`（PRIVATE，默认分支 main）。
+5. **docs: 源文档切分完成并核对（2026-09-13）**——两份原始文档（《产品与总体方案.md》《技术实现设计.md》）按主题切分为 `docs/` 00-13 共 14 份 AI 导向文档；274 个章节标题全部映射、逐段覆盖率机器核对通过；源文档已删除（血统与治理见 00 文档）。
+6. **docs: 切分核对报告（2026-09-12）**——段落级最长公共子串覆盖率验证，无信息丢失。
 
 ## Quality gate（质量门）
 
@@ -78,7 +78,7 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 ## Known issues / 注意点
 
 - **文档口径**：01-08 为规格唯一事实源；10-13 为工程化推导文档，与正文冲突时以 01-08 为准（00 文档已声明）。
-- **技术选型锁定前不要写 `pyproject.toml`**：10 文档 T1-T5 未收口，依赖清单以 10 文档 §2 为准，版本号落码时解析。
+- **技术选型已锁定（2026-09-13 T1-T5 收口）**：`pyproject.toml` 可按 10 文档 §2 清单落码（版本号落码时解析）；Demo 不引入 NATS/vLLM/Go 网关/评估层实现，缓做项见 14 文档触发条件。
 - **改 Schema 必须同步所有引用位置**（03 契约索引 + 所在文档正文），防漂移（00 治理规则第 3 条）。
 - **新决策必须回写**：08 任务迭代计划记录 + 10 ADR 记录 + 本文档"Active work"同步，三者一致。
 
