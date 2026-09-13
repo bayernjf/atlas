@@ -97,3 +97,92 @@ body,
   gap: 6px;
   align-items: flex-start;
 }
+
+.editor-header {
+  justify-content: space-between;
+}
+
+.editor-sider .ant-tabs {
+  height: 100%;
+}
+
+.node-palette-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-left: 4px solid #1677ff;
+  border-radius: 6px;
+  cursor: grab;
+  user-select: none;
+}
+
+.node-palette-item:active {
+  cursor: grabbing;
+}
+
+.atlas-node {
+  min-width: 150px;
+  background: #fff;
+  border: 2px solid #1677ff;
+  border-radius: 8px;
+  font-size: 12px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+}
+
+.atlas-node-selected {
+  outline: 2px solid #1677ff;
+  outline-offset: 1px;
+}
+
+.atlas-node-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 8px;
+  color: #fff;
+  border-radius: 5px 5px 0 0;
+  font-weight: 600;
+}
+
+.atlas-node-label {
+  padding: 6px 8px;
+  white-space: nowrap;
+}
+
+.atlas-node-error-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #ff4d4f;
+  color: #fff;
+  font-weight: 700;
+  font-size: 11px;
+}
+
+.property-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
+.property-errors {
+  color: #ff4d4f;
+  font-size: 12px;
+}
+
+.graph-json-preview {
+  max-height: 480px;
+  overflow: auto;
+  padding: 12px;
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: 6px;
+  font-size: 12px;
+}
