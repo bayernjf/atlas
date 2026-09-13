@@ -115,6 +115,7 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 | POST | /api/graphs | 保存 Graph 定义（DSL） | node_schema / graph_definition |
 | GET | /api/graphs/{id} | 读取 Graph | — |
 | POST | /api/graphs/{id}/compile | DSL → LangGraph 编译（08 7.1 W7-W8） | 02 Graph DSL |
+| POST | /api/graphs/{id}/run | 编译并运行，返回状态/节点产出/执行轨迹（W7-W8 落码推导，见 09 待定项 6；W7-W8 执行器为确定性占位） | 02 Graph DSL / LoopState |
 | POST | /api/operators | 创建运营体（镜像） | operator |
 | POST | /api/operators/{id}/run | 启动 Loop | LoopState |
 | GET | /api/operators/{id}/status | 运行状态/进度（验收标准 5：画布实时显示） | LoopState.status |

@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### feat / graph+api（2026-09-13）
+
+- W7-W8 编辑器→DSL→LangGraph→运行链路打通：`src/atlas/graph/dsl.py` 承接前端 Graph JSON（version 1，pydantic GraphDSL/NodeDSL/EdgeDSL）并做静态校验（版本、节点/连线 id 唯一、边端点存在且禁止自环、trigger/ai_decision/tool_call 分类型必填配置、未支持节点类型拒绝），错误聚合为中文列表；`graph/loader.py` 将 DSL 编译为 LangGraph StateGraph（节点 1:1、边按 DSL、START/END 自动接线），`run_graph` 播种全局变量并在运行时执行 04 §6.3 `{{路径}}` 插值（可读上游节点产出，缺失引用原样保留），三类节点为确定性占位执行器（LLM/真实工具待后续接入）。`api/main.py` FastAPI 提供 `GET /api/health`、`POST /api/graphs`、`GET /api/graphs/{id}`、`POST /api/graphs/{id}/compile`、`POST /api/graphs/{id}/run`（进程内图存储，校验失败统一 422）。前端新增 `lib/apiClient.ts`，编辑器新增"编译并运行"按钮（拓扑+产出结果弹窗、422 中文错误 Alert），Dashboard 文案更新至 W7-W8。测试：新增 `test_graph_dsl.py`（7）、`test_graph_loader.py`（5）、`test_api_graphs.py`（TestClient 4）共 16 用例，默认 pytest 32 passed/7 skipped；浏览器对真实 uvicorn 验证三请求链路（`{{global.approval_limit}}` 插值为 500）与 422 错误路径。决策记录：graph_loader 落 `graph/` 包（不进 engine）、进程内图存储、新增 /run 端点（09 待定项 6）；03 新增 graph_definition 契约索引，12 REST 表补 /run。
+
 ### feat / web（2026-09-13）
 
 - W5-W6 编辑器核心功能：`frontend/src/lib/` 新增纯逻辑模块——`variables.ts`（04 §6.3 `{{路径}}` 模板语法：引用提取、插值（缺失引用原样保留）、点号/下标路径解析、变量名校验、全局变量与节点输出路径清单）、`nodeCatalog.ts`（trigger/ai_decision/tool_call 三类节点目录、默认 config/retry、中文实时校验规则）、`graphSerializer.ts`（按 03/04 §3.2 node_schema 契约序列化 Graph JSON，version 1，坐标取整）；`store/editorStore.ts` 重写为类型化 store（`nextId` 扫描已有 id 消除 React Flow 节点 id 碰撞、选中/配置更新/删除级联连线/变量增删/连线日志，种子改为 OA 审批示例）；UI 新增自定义 `AtlasNode`（类型配色 + 校验错误角标）、`VariablesPanel`（变量 CRUD + 标识符校验），重写 `FlowCanvas`（HTML5 拖拽 + screenToFlowPosition 落点）、`NodePanel`（拖拽面板）、`PropertyPanel`（三类节点分类型配置表单、插入 `{{变量}}` 引用、retry 策略、实时校验清单）、`Editor`（节点/变量双 Tab + Graph JSON 导出预览弹窗）；Dashboard 文案同步到 W5-W6 状态。测试：新增 vitest 5（选型 ADR 见 10 文档 §4），4 个测试文件 20 个用例全绿；`pnpm build` 通过；浏览器人工验证拖拽新增、错误角标与属性面板联动、变量插入恢复校验、导出 JSON 结构正确，应用零控制台错误。
