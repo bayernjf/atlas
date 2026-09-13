@@ -56,6 +56,16 @@ export async function nlGenerate(prompt: string): Promise<{ graph: SerializedGra
   return request('/api/nl/generate', { method: 'POST', body: JSON.stringify({ prompt }) })
 }
 
+export type FeedbackType = 'bug' | 'suggestion'
+
+export async function submitFeedback(input: {
+  type: FeedbackType
+  content: string
+  contact?: string
+}): Promise<{ id: string; created_at: string }> {
+  return request('/api/feedback', { method: 'POST', body: JSON.stringify(input) })
+}
+
 /**
  * SSE 流式运行（08 §7.3 验收 5）：节点开始/结束事件实时回调，
  * 最终 result 事件以 RunResult 结束。

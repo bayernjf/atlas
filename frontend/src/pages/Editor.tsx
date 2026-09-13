@@ -5,6 +5,7 @@ import { NodePanel } from '../components/nodePanel/NodePanel'
 import { VariablesPanel } from '../components/variablePanel/VariablesPanel'
 import { PropertyPanel } from '../components/propertyPanel/PropertyPanel'
 import { DebugConsole } from '../components/debugConsole/DebugConsole'
+import { FeedbackButton } from '../components/feedback/FeedbackButton'
 import { useEditorStore } from '../store/editorStore'
 import { serializeGraph } from '../lib/graphSerializer'
 import {
@@ -127,6 +128,7 @@ export function Editor() {
           />
           <Button onClick={() => setNlOpen(true)}>自然语言生成</Button>
           <Button onClick={() => setExportOpen(true)}>导出 Graph JSON</Button>
+          <FeedbackButton />
           <Button type="primary" loading={running} onClick={compileAndRun}>
             编译并运行
           </Button>
