@@ -10,8 +10,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -42,9 +42,10 @@ yarn-error.log*
 .env.*
 !.env.example
 
-# IDE
+# IDE / local agent tooling
 .vscode/
 .idea/
+.claude/
 *.swp
 
 # OS

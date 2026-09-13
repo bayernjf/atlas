@@ -146,13 +146,13 @@ evaluation_task:
 
 ## 8. 接口对齐检查表（AI 落码时逐项确认）
 
-- [ ] LoopState 字段与 06 6.1 一致（含 memory_id/status）
+- [x] LoopState 字段与 06 6.1 一致（含 memory_id/status）——✅ 2026-09-13 核对通过，实现于 `src/atlas/engine/state.py`（七字段一致；messages/observations 加 add 归约器以支持追加语义）
 - [ ] decide_node 置信度阈值 0.6（06 6.2）
-- [ ] Web 点击三层定位顺序（06 6.5），层2 置信度 >0.7
-- [ ] ActionResult.Status 枚举：SUCCESS/PARTIAL/FAILED
+- [x] Web 点击三层定位顺序（06 6.5），层2 置信度 >0.7（W3-W4 落码于 `web/location.py`）
+- [x] ActionResult.Status 枚举：SUCCESS/PARTIAL/FAILED（W3-W4 落码于 `harness/base.py`）
 - [ ] 节点失败处理枚举：stop/continue/jump_to（03 node_schema）
-- [ ] 工具权限枚举：read/write/delete/financial（03 adapter_schema）
-- [ ] 适配器类型枚举：web/api/mobile/desktop/database/iot/message
+- [x] 工具权限枚举：read/write/delete/financial（03 adapter_schema；W3-W4 落码于 `harness/base.py`）
+- [x] 适配器类型枚举：web/api/mobile/desktop/database/iot/message（W3-W4 已用于 `adapter_type` 字段，web 类型已实现）
 - [ ] 记忆检索分层与 memory_config 阈值（05 2.3）
 - [ ] 评估指标三元组（06 9.2 metrics）
 
