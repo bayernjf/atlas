@@ -1,7 +1,7 @@
 :root {
   font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  color: #1f2937;
-  background: #f5f7fa;
+  color: var(--atlas-color-text-primary);
+  background: var(--atlas-color-bg-page);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -29,13 +29,13 @@ body,
 .editor-header {
   display: flex;
   align-items: center;
-  background: #0f172a;
+  background: var(--atlas-color-bg-header);
   padding-inline: 24px;
 }
 
 .page-header .ant-typography,
 .editor-header .ant-typography {
-  color: #fff;
+  color: var(--atlas-color-text-inverse);
   margin: 0;
 }
 
@@ -49,12 +49,12 @@ body,
 .editor-sider {
   padding: 12px;
   overflow: auto;
-  border-inline: 1px solid #e5e7eb;
+  border-inline: 1px solid var(--atlas-color-border);
 }
 
 .editor-content {
   min-width: 0;
-  background: #eef2f7;
+  background: var(--atlas-color-bg-canvas);
 }
 
 .canvas-panel {
@@ -65,8 +65,8 @@ body,
 .editor-footer {
   height: 190px;
   padding: 8px 12px;
-  background: #fff;
-  border-top: 1px solid #e5e7eb;
+  background: var(--atlas-color-bg-container);
+  border-top: 1px solid var(--atlas-color-border);
   overflow: auto;
 }
 
@@ -111,9 +111,9 @@ body,
   align-items: center;
   padding: 8px 10px;
   margin-bottom: 8px;
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-left: 4px solid #1677ff;
+  background: var(--atlas-color-bg-container);
+  border: 1px solid var(--atlas-color-border);
+  border-left: 4px solid var(--atlas-color-primary);
   border-radius: 6px;
   cursor: grab;
   user-select: none;
@@ -125,38 +125,38 @@ body,
 
 .atlas-node {
   min-width: 150px;
-  background: #fff;
-  border: 2px solid #1677ff;
+  background: var(--atlas-color-bg-container);
+  border: 2px solid var(--atlas-color-primary);
   border-radius: 8px;
   font-size: 12px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 1px 4px var(--atlas-shadow-node);
 }
 
 .atlas-node-selected {
-  outline: 2px solid #1677ff;
+  outline: 2px solid var(--atlas-color-primary);
   outline-offset: 1px;
 }
 
 .atlas-node-running {
-  box-shadow: 0 0 0 4px rgba(22, 119, 255, 0.25);
+  box-shadow: 0 0 0 4px var(--atlas-color-node-ring-running);
   animation: atlas-node-pulse 1s ease-in-out infinite;
 }
 
 .atlas-node-completed {
-  box-shadow: 0 0 0 3px rgba(82, 196, 26, 0.35);
+  box-shadow: 0 0 0 3px var(--atlas-color-node-ring-completed);
 }
 
 .atlas-node-status {
   font-size: 10px;
   font-weight: 400;
-  background: rgba(255, 255, 255, 0.25);
+  background: var(--atlas-color-status-pill-bg);
   border-radius: 4px;
   padding: 0 4px;
 }
 
 @keyframes atlas-node-pulse {
-  0%, 100% { box-shadow: 0 0 0 3px rgba(22, 119, 255, 0.18); }
-  50% { box-shadow: 0 0 0 6px rgba(22, 119, 255, 0.35); }
+  0%, 100% { box-shadow: 0 0 0 3px var(--atlas-color-node-pulse-soft); }
+  50% { box-shadow: 0 0 0 6px var(--atlas-color-node-pulse-strong); }
 }
 
 .atlas-node-header {
@@ -164,7 +164,7 @@ body,
   align-items: center;
   justify-content: space-between;
   padding: 3px 8px;
-  color: #fff;
+  color: var(--atlas-color-text-inverse);
   border-radius: 5px 5px 0 0;
   font-weight: 600;
 }
@@ -181,8 +181,8 @@ body,
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: #ff4d4f;
-  color: #fff;
+  background: var(--atlas-color-danger);
+  color: var(--atlas-color-text-inverse);
   font-weight: 700;
   font-size: 11px;
 }
@@ -195,7 +195,7 @@ body,
 }
 
 .property-errors {
-  color: #ff4d4f;
+  color: var(--atlas-color-danger);
   font-size: 12px;
 }
 
@@ -203,8 +203,8 @@ body,
   max-height: 480px;
   overflow: auto;
   padding: 12px;
-  background: #0f172a;
-  color: #e2e8f0;
+  background: var(--atlas-color-bg-header);
+  color: var(--atlas-color-text-on-dark);
   border-radius: 6px;
   font-size: 12px;
 }

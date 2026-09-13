@@ -3,9 +3,10 @@ import { ReactFlow, Background, Controls, MarkerType, ReactFlowProvider, useReac
 import '@xyflow/react/dist/style.css'
 import { useEditorStore, type EditorNode } from '../../store/editorStore'
 import type { NodeKind } from '../../lib/nodeCatalog'
+import { token } from '../../theme/tokens'
 import { AtlasNode } from './AtlasNode'
 
-const edgeColor = '#1677ff'
+const edgeColor = token('color-primary')
 const DND_MIME = 'application/atlas-node'
 
 export function FlowCanvas() {
