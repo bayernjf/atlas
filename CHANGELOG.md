@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### docs（2026-09-13）
+
+- Phase 1 种子验证准备：新增 `docs/18-种子客户验证计划.md`（客户画像与 3-5 家招募标准、对齐 08 §7.3 的三场景试用脚本、Go/No-Go 量化指标、应用内+试用表双反馈机制与边界）与根目录客户向一页纸 `TRIAL.md`（docker compose 启动、12345 自动退款 / 12346 转人工 / NL 生成草稿三场景、reset 用法、5 题反馈表）。08 Phase 1 补准备记录，00 文档地图加 18，AGENTS 文档范围改 00-18，README/handoff 索引同步。
+
 ### feat / api+infra（2026-09-13）
 
 - Phase 1 种子客户一键交付：根目录新增 `Dockerfile`（node:22-slim 多阶段构建前端 → python:3.11-slim 安装后端，dist 拷至 `/app/frontend/dist`，不装 Playwright 浏览器）、`docker-compose.yml`（单服务 8000 端口，`LITELLM_MODEL` 透传）、`.dockerignore`。`api/main.py` 在 `ATLAS_FRONTEND_DIST`（默认 `frontend/dist` 相对于 cwd）存在时用 StaticFiles 同源挂载到 `/`（显式路由优先，dev 仍走 Vite 5174 代理）；新增 `POST /api/demo/reset`（店铺恢复 5 笔种子退款单、清空已保存图与登录态），`DemoShopService.reset()`/`GraphStore.clear()`。测试新增 reset 全链路与静态托管条件用例，后端 60 passed/8 skipped；镜像 `docker compose up --build` 实测编辑器、/api/health、/demo/shop 同源可访问。

@@ -12,7 +12,7 @@ Atlas 是一个 **AI 运营体（Agent）编排平台**：以 **Harness / Graph 
 
 ## 当前阶段
 
-**W1-W10 Demo 已全部完成**（2026-09-13）。电商退款端到端链路跑通（08 §7.3 七条验收全达成）：webhook 退款单 → AI 决策（LiteLLM；未配置 `LITELLM_MODEL` 时规则兜底，对齐 06 §9.2 黄金用例）→ shop 适配器执行退款或转人工，SSE 节点事件实时上屏，自然语言可生成退款流程草稿。设计文档以 `docs/` 为唯一事实源（00-17 共 18 份）。下一步进入 Phase 1 种子客户验证（见 [handoff.md](handoff.md)）。
+**W1-W10 Demo 已全部完成**（2026-09-13）。电商退款端到端链路跑通（08 §7.3 七条验收全达成）：webhook 退款单 → AI 决策（LiteLLM；未配置 `LITELLM_MODEL` 时规则兜底，对齐 06 §9.2 黄金用例）→ shop 适配器执行退款或转人工，SSE 节点事件实时上屏，自然语言可生成退款流程草稿。设计文档以 `docs/` 为唯一事实源（00-18 共 19 份）。下一步进入 Phase 1 种子客户验证（计划见 [docs/18](docs/18-种子客户验证计划.md)，客户向操作指南见 [TRIAL.md](TRIAL.md)，进度见 [handoff.md](handoff.md)）。
 
 ### 本地运行 Demo
 
@@ -22,6 +22,8 @@ Docker 一键启动（Phase 1 种子客户交付形态，只需 Docker）：
 docker compose up --build        # 编辑器 http://localhost:8000，模拟商家控制台 /demo/shop（demo/demo）
 curl -X POST http://localhost:8000/api/demo/reset   # 重置种子退款单与已保存图
 ```
+
+种子客户试用按 [TRIAL.md](TRIAL.md) 一页纸操作（三场景 + 反馈表）。
 
 本地开发双进程：
 

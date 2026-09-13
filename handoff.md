@@ -34,8 +34,9 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 * [docs/15-环境与分支策略.md](docs/15-环境与分支策略.md) — 环境划分（DEV/TEST/PROD）+ 分支→环境映射（main/dev/feature/*）
 * [docs/16-反馈工作流.md](docs/16-反馈工作流.md) — 用户与 AI 协作者的反馈方式（截图+标签 / computer use）
 * [docs/17-前端国际化与设计Token方案.md](docs/17-前端国际化与设计Token方案.md) — i18n（i18next 触发式引入/错误码边界）+ 设计 Token 三层模型（需求依据 04 §28；方案已定，待落码）
+* [docs/18-种子客户验证计划.md](docs/18-种子客户验证计划.md) — Phase 1 种子客户画像/招募标准、三场景试用脚本、Go/No-Go 指标、反馈机制（客户向操作指南见根目录 TRIAL.md）
 
-根目录元文档：[CHANGELOG.md](CHANGELOG.md)（变更日志）/ [CONTRIBUTING.md](CONTRIBUTING.md)（贡献指南）/ [AGENTS.md](AGENTS.md)（AI 行为规范，**新会话必读**）/ [git-commit-message.md](git-commit-message.md)（commit 详细规范）/ [MIGRATION_CONVENTION.md](MIGRATION_CONVENTION.md)（DB 迁移规范）/ [BENCHMARK.md](BENCHMARK.md)（性能基准记录表）/ [.gitleaks.toml](.gitleaks.toml)（密钥扫描配置）/ [.env.example](.env.example)（环境变量模板）
+根目录元文档：[CHANGELOG.md](CHANGELOG.md)（变更日志）/ [CONTRIBUTING.md](CONTRIBUTING.md)（贡献指南）/ [AGENTS.md](AGENTS.md)（AI 行为规范，**新会话必读**）/ [TRIAL.md](TRIAL.md)（种子客户试用一页纸）/ [git-commit-message.md](git-commit-message.md)（commit 详细规范）/ [MIGRATION_CONVENTION.md](MIGRATION_CONVENTION.md)（DB 迁移规范）/ [BENCHMARK.md](BENCHMARK.md)（性能基准记录表）/ [.gitleaks.toml](.gitleaks.toml)（密钥扫描配置）/ [.env.example](.env.example)（环境变量模板）
 
 **代码阶段待补（遵循 agent-world 惯例）**：`.pre-commit-config.yaml`、CI 工作流（`.github/workflows`，见 14 D10）。`Dockerfile` + `docker-compose.yml` + `.dockerignore` 已在 Phase 1 准备期落地（2026-09-13）。`pyproject.toml` 与前端工程已在 W1 创建。
 
@@ -57,7 +58,7 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 4. ✅ **W9-W10 端到端 Demo**（08 文档 7.1，2026-09-13 完成）：电商退款完整链路跑通（LiteLLM 决策 + 规则兜底、shop 退款业务能力、SSE 实时进度、NL 退款草稿、模拟商家控制台），08 §7.3 七条验收逐条达成（映射见 08 W9-W10 落码记录）。
 5. ⏭️ **Demo 之后（Phase 1）**：种子客户试用收集反馈；条件触发时从 docs/14 缓做登记表取回（Redis 短期记忆、11 S1 业务表 DDL 替换进程内存储、web 适配器视觉层接真实 LLM、NATS/Go 网关、条件/循环/并行节点等）。
 6. 文档缺口登记：`09-工程骨架` 待定项 1/2/3/4/5/6 均已收口（待定项 3：不新增 deployment/ 包，Dockerfile + docker-compose.yml 放仓库根，2026-09-13）。新增测试运行器选型 vitest 已记 10 文档 §4 ADR（W5-W6）。
-8. 🐳 **Phase 1 种子客户交付准备（部分完成）**：✅ Docker Compose 一键启动（`Dockerfile` 多阶段 + FastAPI 同源托管 `frontend/dist` + `POST /api/demo/reset` 重置种子数据，镜像实测黄金用例通过，2026-09-13）；⏭️ 种子验证计划文档（docs/18）、试用 runbook、应用内反馈入口待做。
+8. 🐳 **Phase 1 种子客户交付准备（进行中）**：✅ Docker Compose 一键启动（`Dockerfile` 多阶段 + FastAPI 同源托管 `frontend/dist` + `POST /api/demo/reset` 重置种子数据，镜像实测黄金用例通过，2026-09-13）；✅ 种子验证计划 [docs/18](docs/18-种子客户验证计划.md) + 客户向 [TRIAL.md](TRIAL.md)（2026-09-13）；⏭️ 应用内反馈入口待做（编辑器反馈按钮 + 进程内 `POST /api/feedback`）。
 7. 📋 **i18n 与设计 Token 方案已定（2026-09-13，docs/17）**：设计 Token 等价替换**已落码**（`frontend/src/theme/tokens.ts` 单一事实源 + `setup.ts` 注入 `--atlas-*` 变量 + AntD theme，全仓零硬编码色值，浏览器零视觉差异）；i18n 库（i18next+react-i18next）按触发条件引入（14 D12：首个英文使用者/出海需求），组件描述多语言随 Phase 2 模板库（14 D13）。
 
 > 缓做/低优项：统一登记在 [docs/14-缓做事项登记表.md](docs/14-缓做事项登记表.md)（每条带触发条件，条件满足移回本区并标注重启日期）。当前含移动端适配器、策略训练、组件市场、模型路由器、NATS、Go 网关、多租户、运营体市场、BENCHMARK 实测、CI/CD、可观测性、i18n 落码、组件描述多语言等 13 项。
