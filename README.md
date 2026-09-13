@@ -25,7 +25,7 @@ Atlas 是一个 **AI 运营体（Agent）编排平台**：以 **Harness / Graph 
 | 数据结构 / 接口 / 测试 | [03 契约索引](atlas-docs/03-数据模型与Schema-契约索引.md) / [12 API](atlas-docs/12-API与模块接口清单.md) / [13 测试](atlas-docs/13-测试用例清单.md) |
 | 排期与里程碑 | [atlas-docs/08-任务迭代计划.md](atlas-docs/08-任务迭代计划.md) |
 | 缓做事项 / 环境与分支 / 反馈工作流 | [14 缓做登记](atlas-docs/14-缓做事项登记表.md) / [15 环境与分支](atlas-docs/15-环境与分支策略.md) / [16 反馈工作流](atlas-docs/16-反馈工作流.md) |
-| 贡献 / 迁移 / 基准 / 许可 | [CONTRIBUTING.md](CONTRIBUTING.md) / [MIGRATION_CONVENTION.md](MIGRATION_CONVENTION.md) / [BENCHMARK.md](BENCHMARK.md) / [LICENSE](LICENSE) |
+| 贡献 / 迁移 / 基准 | [CONTRIBUTING.md](CONTRIBUTING.md) / [MIGRATION_CONVENTION.md](MIGRATION_CONVENTION.md) / [BENCHMARK.md](BENCHMARK.md) |
 | AI 落码规范 | [AGENTS.md](AGENTS.md) + [09 工程骨架](atlas-docs/09-工程骨架与目录结构.md) |
 
 ## 技术栈（已定选型）
@@ -49,4 +49,5 @@ Demo 里程碑 W1-W10 与验收标准见 [08 任务迭代计划](atlas-docs/08-�
 
 ## License
 
-MIT License（Copyright © 2026 bayernjf），与 agent-world 一致。贡献即视为同意 MIT 授权（见 [CONTRIBUTING.md](CONTRIBUTING.md)）。
+暂无（许可证未定，LICENSE 文件已移除）。
+

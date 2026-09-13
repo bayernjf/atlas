@@ -71,4 +71,4 @@ cd frontend && pnpm install && pnpm dev
 
 ## License
 
-By contributing, you agree your contributions are licensed under the MIT License.
+暂无（许可证未定，LICENSE 文件已移除）。
