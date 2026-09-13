@@ -1,0 +1,19 @@
+# Atlas Demo 一键启动（Phase 1 种子客户交付形态）。
+# 启动：docker compose up --build
+#   编辑器    http://localhost:8000
+#   模拟商家控制台  http://localhost:8000/demo/shop（demo/demo）
+# 重置 Demo 数据（恢复 5 笔种子退款单、清空已保存图）：
+#   curl -X POST http://localhost:8000/api/demo/reset
+#   （或 docker compose restart，进程内状态随重启清空）
+# 接真实 LLM：在 .env 或下方 environment 配 LITELLM_MODEL 与供应商 key（见 .env.example）。
+
+services:
+  atlas:
+    build:
+      context: .
+    image: atlas-demo:latest
+    ports:
+      - "8000:8000"
+    environment:
+      LITELLM_MODEL: ${LITELLM_MODEL:-}
+    restart: unless-stopped

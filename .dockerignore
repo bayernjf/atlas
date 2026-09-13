@@ -1,0 +1,22 @@
+.git
+.gitignore
+.venv
+venv
+**/__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.env
+.env.*
+!.env.example
+
+# 前端依赖与构建产物（镜像内多阶段构建生成）
+frontend/node_modules
+frontend/dist
+
+# 测试与文档（运行时不需要）
+tests
+docs
+*.md
+!README.md
