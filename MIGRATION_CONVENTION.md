@@ -64,7 +64,7 @@ Rules:
 - **Idempotent** — use `IF NOT EXISTS` / `IF EXISTS` / `DROP ... IF EXISTS` so a migration can be re-run safely.
 - Add `COMMENT ON` for every new column and table.
 - Identifiers in `snake_case`; keep statements simple and readable.
-- 向量列使用 `pgvector` 类型时注明 embedding 维度与索引（HNSW/IVFFlat），与 Schema 契约（atlas-docs/03）保持一致。
+- 向量列使用 `pgvector` 类型时注明 embedding 维度与索引（HNSW/IVFFlat），与 Schema 契约（docs/03）保持一致。
 
 ## 5. Example
 
@@ -78,7 +78,7 @@ Rules:
 -- Run: psql -d atlas -f db/migrations/001_create_graphs.sql
 -- =====================================================
 -- Note: Persists executable causal graphs (Harness/Graph/Loop
---       core entity). Aligns with atlas-docs/03 schema index.
+--       core entity). Aligns with docs/03 schema index.
 -- -----------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS graphs (
@@ -102,4 +102,4 @@ COMMENT ON COLUMN graphs.definition IS 'Graph DSL (nodes/edges) JSON payload';
 | Make every statement idempotent | Assume the migration runs only once on a fresh DB |
 | One change per file | Bundle unrelated changes into one file |
 | Flag obsoletes in place or drop in a new file | Delete / rewrite history files |
-| Keep schema in sync with atlas-docs/03 contract index | Let schema drift from docs |
+| Keep schema in sync with docs/03 contract index | Let schema drift from docs |

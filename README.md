@@ -12,27 +12,27 @@ Atlas 是一个 **AI 运营体（Agent）编排平台**：以 **Harness / Graph 
 
 ## 当前阶段
 
-**设计文档已完成，代码未启动**（2026-09-13）。全部规格以 `atlas-docs/` 为唯一事实源，共 14 份 AI 导向文档，由两份原始方案文档切分核对而成，零信息丢失。
+**设计文档已完成，代码未启动**（2026-09-13）。全部规格以 `docs/` 为唯一事实源，共 14 份 AI 导向文档，由两份原始方案文档切分核对而成，零信息丢失。
 
 ## 文档导航
 
 | 想看什么 | 去读 |
 |---|---|
-| 从哪开始 / 治理规则 | [atlas-docs/00-文档索引与治理.md](atlas-docs/00-文档索引与治理.md) |
+| 从哪开始 / 治理规则 | [docs/00-文档索引与治理.md](docs/00-文档索引与治理.md) |
 | 项目当前状态与待办 | [handoff.md](handoff.md) |
-| 产品需求与 Demo 范围 | [atlas-docs/01-PRD-产品需求规格.md](atlas-docs/01-PRD-产品需求规格.md) |
-| 架构与选型 | [atlas-docs/02-技术架构设计.md](atlas-docs/02-技术架构设计.md)（决策记录见 [10](atlas-docs/10-技术选型决策记录.md)）|
-| 数据结构 / 接口 / 测试 | [03 契约索引](atlas-docs/03-数据模型与Schema-契约索引.md) / [12 API](atlas-docs/12-API与模块接口清单.md) / [13 测试](atlas-docs/13-测试用例清单.md) |
-| 排期与里程碑 | [atlas-docs/08-任务迭代计划.md](atlas-docs/08-任务迭代计划.md) |
-| 缓做事项 / 环境与分支 / 反馈工作流 | [14 缓做登记](atlas-docs/14-缓做事项登记表.md) / [15 环境与分支](atlas-docs/15-环境与分支策略.md) / [16 反馈工作流](atlas-docs/16-反馈工作流.md) |
+| 产品需求与 Demo 范围 | [docs/01-PRD-产品需求规格.md](docs/01-PRD-产品需求规格.md) |
+| 架构与选型 | [docs/02-技术架构设计.md](docs/02-技术架构设计.md)（决策记录见 [10](docs/10-技术选型决策记录.md)）|
+| 数据结构 / 接口 / 测试 | [03 契约索引](docs/03-数据模型与Schema-契约索引.md) / [12 API](docs/12-API与模块接口清单.md) / [13 测试](docs/13-测试用例清单.md) |
+| 排期与里程碑 | [docs/08-任务迭代计划.md](docs/08-任务迭代计划.md) |
+| 缓做事项 / 环境与分支 / 反馈工作流 | [14 缓做登记](docs/14-缓做事项登记表.md) / [15 环境与分支](docs/15-环境与分支策略.md) / [16 反馈工作流](docs/16-反馈工作流.md) |
 | 贡献 / 迁移 / 基准 | [CONTRIBUTING.md](CONTRIBUTING.md) / [MIGRATION_CONVENTION.md](MIGRATION_CONVENTION.md) / [BENCHMARK.md](BENCHMARK.md) |
-| AI 落码规范 | [AGENTS.md](AGENTS.md) + [09 工程骨架](atlas-docs/09-工程骨架与目录结构.md) |
+| AI 落码规范 | [AGENTS.md](AGENTS.md) + [09 工程骨架](docs/09-工程骨架与目录结构.md) |
 
 ## 技术栈（已定选型）
 
 Python 3.11+（引擎）/ Go（Harness 网关，Demo 可暂用 FastAPI）/ TypeScript + React 18（前端）/ **LangChain + LangGraph** / LiteLLM / Playwright + OmniParser / PostgreSQL + pgvector / Redis / NATS / React Flow + Zustand / FastAPI。
 
-> ⏳ 5 项待决策（模型部署、评估层、前端进 Demo 与否、NATS、Go 网关），见 [10 技术选型决策记录 §3](atlas-docs/10-技术选型决策记录.md)。
+> ⏳ 5 项待决策（模型部署、评估层、前端进 Demo 与否、NATS、Go 网关），见 [10 技术选型决策记录 §3](docs/10-技术选型决策记录.md)。
 
 ## 路线图
 
@@ -41,7 +41,7 @@ Python 3.11+（引擎）/ Go（Harness 网关，Demo 可暂用 FastAPI）/ TypeS
 - **Phase 3** 平台化适配（3 个月）：开放 Harness 适配器规范，接入电商 + 物联网等异构场景。
 - **Phase 4** 智能体市场与进化（持续）：运营体发布与一键导入，策略飞轮。
 
-Demo 里程碑 W1-W10 与验收标准见 [08 任务迭代计划](atlas-docs/08-任务迭代计划.md)。
+Demo 里程碑 W1-W10 与验收标准见 [08 任务迭代计划](docs/08-任务迭代计划.md)。
 
 ## 给 AI 协作者的说明
 

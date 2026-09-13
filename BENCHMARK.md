@@ -8,7 +8,7 @@ Atlas 性能与容量基准。范围与结果记录表（参照 agent-world 惯�
 
 ## Scope
 
-以下为待测量项（随基准落地更新，依据 [atlas-docs/06-运行时与质量保障.md](atlas-docs/06-运行时与质量保障.md) 与 [atlas-docs/13-测试用例清单.md](atlas-docs/13-测试用例清单.md)）：
+以下为待测量项（随基准落地更新，依据 [docs/06-运行时与质量保障.md](docs/06-运行时与质量保障.md) 与 [docs/13-测试用例清单.md](docs/13-测试用例清单.md)）：
 
 - Loop 主循环吞吐（OODA 循环 / 秒）
 - 决策节点延迟（单步决策 p50/p99）
