@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### docs（2026-09-13）
+
+- 新增 `docs/17-前端国际化与设计Token方案.md`（工程推导，需求依据 04 §补充项 28）：i18n 选型 i18next + react-i18next + AntD locale（T7，触发式引入，当前不落码），冻结 locales 目录/key 命名/后端错误码本地化/金额日期 Intl 格式化/NL 多语言边界等契约；设计 Token 三层模型（primitive/semantic/component），`frontend/src/theme/tokens.ts` 单一事实源派生 AntD theme 与 `--atlas-*` CSS 变量（零新依赖），含硬编码色值迁移清单与零视觉变化验收。10 文档 §1/§4 记 T7 与 token ADR，09 前端树补 `theme/`、`locales/`（待落码），14 文档新增 D12/D13，handoff/00 索引同步。
+- 同步 README/CONTRIBUTING 阶段口径至 W1-W10 Demo 完成，03 契约索引补 W9-W10 运行时 Schema（refund_decision/refund_order/run_event/nl_generate_request）。
+
 ### feat / llm+shop+graph+api+web（2026-09-13）
 
 - W9-W10 电商退款端到端 Demo，08 §7.3 七条验收全部达成。新增 `src/atlas/llm/`：`decision.py` 定义 DecisionClient 协议，配置 `LITELLM_MODEL` 时经 LiteLLM 决策（只取 JSON，解析失败 fail-safe 转人工），未配置时 RuleBasedDecisionClient 按 06 §9.2 黄金规则确定性兜底（质量原因且金额 ≤ 限额 → approve_refund，其余 → request_human_approval）；`nl_generate.py` 自然语言生成 Graph 草稿（LLM 优先、退款模板兜底、无法识别 422）。新增渠道包 `src/atlas/shop/`：`service.py` DemoShopService（五笔种子退款单 12345-12349、登录态、退款/转人工状态流转），`adapter.py` ShopHarnessAdapter（login/list_pending_refunds/execute_refund[financial]/request_human_approval/process_refund 五能力，按上游决策路由，权限门与 StructuredError）。`graph/loader.py` 改为依赖注入（decision_client/registry/emit/trigger_payload），webhook 载荷经 run inputs 进入 trigger `context.payload`（同名键覆盖全局变量），执行事件 node_start/node_end/run_end；dsl 修复 triggerType `schedule` 与 `cron` 均触发 cron 校验（对齐前端取值）。`api/main.py` 新增 `POST /api/graphs/{id}/run/stream`（SSE 实时进度）、`POST /api/nl/generate`、`GET /api/adapters`、Demo 店铺登录/订单接口与 `GET /demo/shop` 模拟商家控制台页面，共享 Demo 服务单例。前端：退款单选择器、SSE 流式运行（节点 running 脉冲/completed 描边 + 调试台事件）、NL 生成弹窗载草稿（deserializeGraph）、种子图改为退款三节点、Dashboard 文案 W9-W10。测试：后端新增 26 用例（决策 6/店铺 8/NL 2/退款端到端 3/Demo API 6/店铺平台集成 1/schedule 1），默认 58 passed/8 skipped，opt-in 集成全绿；前端 vitest 23 全绿、`pnpm build` 通过；浏览器实测 12345 破损→approve_refund→refunded、12346 主观→request_human_approval→human_review、NL 草稿载入、控制台 demo/demo 登录拉单。文档 08（落码记录+验收映射）/09（llm、shop 包树+清单）/12（新端点）/13（W9-W10 测试行）同步；`.env.example` 补 `LITELLM_MODEL`。
