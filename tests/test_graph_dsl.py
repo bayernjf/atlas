@@ -75,6 +75,14 @@ def test_reject_missing_required_config_per_kind():
     assert "Cron" in messages and "提示词" in messages and "工具" in messages
 
 
+def test_schedule_trigger_type_uses_same_cron_rule_as_frontend():
+    raw = make_graph()
+    raw["nodes"][0]["config"] = {"triggerType": "schedule"}
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("Cron" in message for message in exc.value.errors)
+
+
 def test_reject_unknown_version_and_empty_graph():
     with pytest.raises(GraphValidationError) as exc:
         parse_graph(make_graph(version=2, nodes=[]))

@@ -128,7 +128,7 @@ def _validate_node_config(node: NodeDSL) -> list[str]:
     config = node.config
     if node.type == "trigger":
         trigger_type = config.get("triggerType")
-        if trigger_type == "cron" and not config.get("cron"):
+        if trigger_type in ("schedule", "cron") and not config.get("cron"):
             return ["定时触发必须填写 Cron 表达式"]
         if trigger_type == "webhook" and not config.get("webhookUrl"):
             return ["Webhook 触发必须填写 URL"]
