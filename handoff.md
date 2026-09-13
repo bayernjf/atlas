@@ -50,31 +50,39 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 
 按优先级降序：
 
-1. ★ **W1-W2 基础骨架落地**（08 文档 7.1）：选型已收口（2026-09-13），可直接开工——按 09 文档建目录树（含 `frontend/`）与 `pyproject.toml`（依赖清单 10 文档 §2，版本号落码时解析）；LangGraph 最小循环跑通、前端编辑器框架、PostgreSQL 连接。
+1. ★ **W1-W2 基础骨架落地**（08 文档 7.1）：✅ 工程骨架与 venv 已就绪（2026-09-13，`.venv` Python 3.11，11 个运行时依赖安装通过）；✅ **LangGraph 最小 OODA 循环已跑通**（`engine/{state,nodes,loop}.py`，确定性占位节点，3 个 pytest 用例全绿，`run_loop` 端到端收敛 completed）。剩余：前端编辑器框架（`frontend/` pnpm + React 18/React Flow/Zustand）、PostgreSQL 连接（+pgvector 扩展验证）。
 2. 文档缺口登记：`09-工程骨架` 待定项 2/3（harness 与 web 边界在 W3-W4 决策、是否新增 deployment/）在落码时一并决策；待定项 1/4 已随 T1-T5 收口。
 
 > 缓做/低优项：统一登记在 [docs/14-缓做事项登记表.md](docs/14-缓做事项登记表.md)（每条带触发条件，条件满足移回本区并标注重启日期）。当前含移动端适配器、策略训练、组件市场、模型路由器、NATS、Go 网关、多租户、运营体市场、BENCHMARK 实测、CI/CD、可观测性等 11 项。
 
 ## Recently shipped（最近变更）
 
-1. **chore: W1 工程骨架落地（2026-09-13）**——按 09 文档建 `src/atlas/{engine,harness,graph,nodes,memory,skills,collaboration,api,web}/` + `tests/` 包树（`__init__.py` 占位）；`pyproject.toml` 锁定 10 文档 §2 Demo 依赖（Python >=3.11，src layout，版本下限取当日 PyPI 稳定版），已用 Python 3.11 venv 验证可编辑安装；09 文档同步记录 `api/` 包位决策（FastAPI 入口，待定项 5）。
-2. **docs: 技术选型 T1-T5 收口（2026-09-13）**——10 文档 §3 待决策项全部转为正式 ADR（LiteLLM+商业 API / 评估层仅留接口 / 前端进骨架 / 进程内事件总线替代 NATS / FastAPI 实现网关接口），§4 补变更记录；02 选型总览、09 待定项与目录树（含 `frontend/`）、08 §7.2 决策注记三处同步；NATS/Go 网关缓做条目已在 14 文档 D5/D6。
-3. **docs: 移除 LICENSE（2026-09-13，用户指示）**——MIT 许可证不需要，LICENSE 文件删除，README/CONTRIBUTING 的 License 段落改为"暂无（未定）"，handoff 元文档索引与 CHANGELOG 同步清理。
-4. **docs: 补齐 agent-world 惯例规范文档（2026-09-13）**——根目录：`CONTRIBUTING.md`（贡献指南，Python/09 骨架适配）、`MIGRATION_CONVENTION.md`（DB 迁移规范，PostgreSQL 版）、`BENCHMARK.md`（性能基准记录表）、`.gitleaks.toml`（密钥扫描）、`.env.example`（环境变量模板，按 10 文档 Demo 栈）；docs 体系：`14-缓做事项登记表`、`15-环境与分支策略`、`16-反馈工作流`。索引已同步 00 文档地图与 README。
-5. **chore/docs: 仓库初始化并推送 GitHub private（2026-09-13）**——`git init -b main`；3 个原子提交：`6fc7728`（chore .gitignore）、`d3c63c6`（docs 规格文档 00-13，commit 原文为 atlas-docs）、`2413ab5`（docs 根元文档）；`gh repo create atlas --private` 创建并推送至 `https://github.com/bayernjf/atlas`（PRIVATE，默认分支 main）。
-6. **docs: 源文档切分完成并核对（2026-09-13）**——两份原始文档（《产品与总体方案.md》《技术实现设计.md》）按主题切分为 `docs/` 00-13 共 14 份 AI 导向文档；274 个章节标题全部映射、逐段覆盖率机器核对通过；源文档已删除（血统与治理见 00 文档）。
-7. **docs: 切分核对报告（2026-09-12）**——段落级最长公共子串覆盖率验证，无信息丢失。
+1. **feat(engine): LangGraph 最小 OODA 循环跑通（2026-09-13）**——`engine/state.py`（LoopState 按 06 §6.1/12 §1.1 契约，messages/observations 加 add 归约器）、`engine/nodes.py`（observe/orient/decide/act/reflect 五节点 + 三条 conditional 路由，确定性占位、签名不偏离 12 §1.2）、`engine/loop.py`（StateGraph 装配，拓扑同 12 §1.3；`build_graph/initial_state/run_loop`）；`tests/test_engine_loop.py` 3 用例全绿；venv（Python 3.11.15）依赖安装与端到端 `run_loop` 验证通过。
+2. **chore: W1 工程骨架落地（2026-09-13）**——按 09 文档建 `src/atlas/{engine,harness,graph,nodes,memory,skills,collaboration,api,web}/` + `tests/` 包树（`__init__.py` 占位）；`pyproject.toml` 锁定 10 文档 §2 Demo 依赖（Python >=3.11，src layout，版本下限取当日 PyPI 稳定版），已用 Python 3.11 venv 验证可编辑安装；09 文档同步记录 `api/` 包位决策（FastAPI 入口，待定项 5）。
+3. **docs: 技术选型 T1-T5 收口（2026-09-13）**——10 文档 §3 待决策项全部转为正式 ADR（LiteLLM+商业 API / 评估层仅留接口 / 前端进骨架 / 进程内事件总线替代 NATS / FastAPI 实现网关接口），§4 补变更记录；02 选型总览、09 待定项与目录树（含 `frontend/`）、08 §7.2 决策注记三处同步；NATS/Go 网关缓做条目已在 14 文档 D5/D6。
+4. **docs: 移除 LICENSE（2026-09-13，用户指示）**——MIT 许可证不需要，LICENSE 文件删除，README/CONTRIBUTING 的 License 段落改为"暂无（未定）"，handoff 元文档索引与 CHANGELOG 同步清理。
+5. **docs: 补齐 agent-world 惯例规范文档（2026-09-13）**——根目录：`CONTRIBUTING.md`（贡献指南，Python/09 骨架适配）、`MIGRATION_CONVENTION.md`（DB 迁移规范，PostgreSQL 版）、`BENCHMARK.md`（性能基准记录表）、`.gitleaks.toml`（密钥扫描）、`.env.example`（环境变量模板，按 10 文档 Demo 栈）；docs 体系：`14-缓做事项登记表`、`15-环境与分支策略`、`16-反馈工作流`。索引已同步 00 文档地图与 README。
+6. **chore/docs: 仓库初始化并推送 GitHub private（2026-09-13）**——`git init -b main`；3 个原子提交：`6fc7728`（chore .gitignore）、`d3c63c6`（docs 规格文档 00-13，commit 原文为 atlas-docs）、`2413ab5`（docs 根元文档）；`gh repo create atlas --private` 创建并推送至 `https://github.com/bayernjf/atlas`（PRIVATE，默认分支 main）。
+7. **docs: 源文档切分完成并核对（2026-09-13）**——两份原始文档（《产品与总体方案.md》《技术实现设计.md》）按主题切分为 `docs/` 00-13 共 14 份 AI 导向文档；274 个章节标题全部映射、逐段覆盖率机器核对通过；源文档已删除（血统与治理见 00 文档）。
+8. **docs: 切分核对报告（2026-09-12）**——段落级最长公共子串覆盖率验证，无信息丢失。
 
 ## Quality gate（质量门）
 
 - **文档侧**：00 文档"切分核对报告"已确认 274 章节全映射、逐段覆盖无丢失。改规格文档必须遵循 00 文档治理规则（唯一事实源 / 改内容流程 / Schema 契约防漂移）。
-- **代码侧**：暂无（代码未启动）。落码后按 13 测试用例清单建立测试门：单元 → 集成 → 回放 → 端到端 → AI 评估，上线前过"四道门"。
+- **代码侧**：最小质量门已建立——`.venv/bin/pytest`（当前 3 个 engine 冒烟用例）。后续按 13 测试用例清单分层：单元 → 集成 → 回放 → 端到端 → AI 评估，上线前过"四道门"。
 
 ## How to run
 
-代码未启动，暂无运行方式。Demo 里程碑（08 文档 7.1）：
-- W1-W2 跑通 LangGraph 引擎与前端框架后，此处补启动命令。
-- 规划端口/目录见 09 文档与 10 文档 §2。
+```bash
+python3.11 -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+.venv/bin/pytest                       # 单元测试
+.venv/bin/python -c "from atlas.engine.loop import run_loop; print(run_loop('demo', max_steps=2)['status'])"
+```
+
+Demo 里程碑（08 文档 7.1）：
+- ✅ W1-W2：LangGraph 最小循环已跑通（2026-09-13）；前端框架、PostgreSQL 连接待补。
+- API 启动命令（W2 实现后可用）：`uvicorn atlas.api.main:app --reload --port 8000`；前端：`cd frontend && pnpm install && pnpm dev`。
 
 ## Known issues / 注意点
 

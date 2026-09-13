@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### feat / engine（2026-09-13）
+
+- W1 最小 OODA 循环跑通：`engine/state.py`（LoopState，契约 06 §6.1/12 §1.1）、`engine/nodes.py`（observe/orient/decide/act/reflect 确定性占位节点 + 三条 conditional 路由，签名遵循 12 §1.2）、`engine/loop.py`（StateGraph 拓扑同 12 §1.3，`build_graph/initial_state/run_loop`）；3 个 pytest 冒烟用例全绿，`run_loop` 端到端收敛 `completed`。LLM 决策与 Harness 感知为后续周次接入点。
+
 ### chore / scaffold（2026-09-13）
 
 - W1 工程骨架：按 09 文档建 `src/atlas/{engine,harness,graph,nodes,memory,skills,collaboration,api,web}/` + `tests/`（`__init__.py` 占位）；`pyproject.toml`（Python >=3.11、src layout、pytest 配置），依赖按 10 文档 §2 锁定，版本下限取当日 PyPI 稳定版；Python 3.11 venv 可编辑安装验证通过。
