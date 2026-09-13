@@ -24,6 +24,7 @@
 | `refund_order` | `src/atlas/shop/service.py`（W9-W10 Demo 电商数据结构） | —（工程推导契约） |
 | `run_event` | `src/atlas/graph/loader.py`（emit 产出）+ `src/atlas/api/main.py`（SSE 帧，W9-W10） | —（工程推导契约） |
 | `nl_generate_request` | `src/atlas/api/main.py` NLGenerateRequest（W9-W10；响应为 `{graph: graph_definition}`） | —（工程推导契约） |
+| `feedback_item` | `src/atlas/api/main.py` FeedbackRequest（Phase 1；进程内反馈，响应含 id/created_at） | —（工程推导契约） |
 
 ---
 
@@ -240,3 +241,16 @@ prompt: string          # 自然语言流程描述
 graph: graph_definition # 见上 graph_definition（version 1，可直接保存/编译）
 ```
 > 无法识别意图时返回 422；未配置 `LITELLM_MODEL` 时仅退款关键词走规则模板兜底。
+
+### `feedback_item` — 字段概览（Phase 1；`POST/GET /api/feedback`）
+
+```yaml
+# 请求 POST /api/feedback（FeedbackRequest）
+type: "bug" | "suggestion"   # 反馈类型（非法值 422）
+content: string              # 反馈内容，1-2000 字（空串 422）
+contact: string              # 联系方式，选填，最长 200；默认 ""
+# 响应（201；GET 返回 {items: feedback_item[]}）
+id: string                   # feedback-{自增}
+created_at: string           # UTC ISO-8601
+```
+> 进程内存储（重启清空，与 Demo 存储同假设）；`POST /api/demo/reset` 不清除反馈。

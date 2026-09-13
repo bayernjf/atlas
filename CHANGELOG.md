@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### feat / api+web（2026-09-13）
+
+- Phase 1 应用内反馈入口落地（18 文档 §6）：后端新增 `POST /api/feedback`（type=bug/suggestion、content 1-2000 字、contact 选填，201 + id/created_at）与 `GET /api/feedback`（陪同试用导出），进程内 `FeedbackStore`（重启清空，与 Demo 存储同假设；`/api/demo/reset` 不清除反馈）；非法 type/空 content 经 pydantic 校验 422。前端编辑器头部新增"反馈"按钮与弹窗（类型切换、字数计数、联系方式选填、提交成功态、错误回显），`apiClient.submitFeedback`。测试：后端新增 2 用例（62 passed/8 skipped），前端 vitest 23、`pnpm build` 通过；浏览器同源（:8000）实测两类反馈提交与 GET 导出落库，控制台零错误。03 新增 feedback_item 契约、12 REST 表补两端点、13 进度补行。
+
 ### docs（2026-09-13）
 
 - Phase 1 种子验证准备：新增 `docs/18-种子客户验证计划.md`（客户画像与 3-5 家招募标准、对齐 08 §7.3 的三场景试用脚本、Go/No-Go 量化指标、应用内+试用表双反馈机制与边界）与根目录客户向一页纸 `TRIAL.md`（docker compose 启动、12345 自动退款 / 12346 转人工 / NL 生成草稿三场景、reset 用法、5 题反馈表）。08 Phase 1 补准备记录，00 文档地图加 18，AGENTS 文档范围改 00-18，README/handoff 索引同步。

@@ -42,7 +42,7 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 
 ## Current state（当前状态）
 
-- **阶段**：W9-W10 电商退款端到端 Demo 已完成（2026-09-13，08 §7.3 七条验收全达成）。新增 `llm/`（LiteLLM 退款决策 + 规则兜底 + NL 草稿生成）、`shop/`（DemoShopService + ShopHarnessAdapter：login/list_pending_refunds/execute_refund/request_human_approval/process_refund）两个包；`graph/loader.py` 经依赖注入接真实决策/适配器/事件回调；API 新增 SSE 运行流、NL 生成、适配器发现与模拟商家控制台；前端退款单选择、节点实时状态、NL 草稿载入。后端默认 58 单元全绿（+1 店铺集成 opt-in），前端 vitest 23 全绿，浏览器实测 12345→refunded / 12346→human_review。
+- **阶段**：W9-W10 电商退款端到端 Demo 已完成（2026-09-13，08 §7.3 七条验收全达成）。新增 `llm/`（LiteLLM 退款决策 + 规则兜底 + NL 草稿生成）、`shop/`（DemoShopService + ShopHarnessAdapter：login/list_pending_refunds/execute_refund/request_human_approval/process_refund）两个包；`graph/loader.py` 经依赖注入接真实决策/适配器/事件回调；API 新增 SSE 运行流、NL 生成、适配器发现与模拟商家控制台；前端退款单选择、节点实时状态、NL 草稿载入。后端默认 62 单元全绿（W9-W10 后追加 reset/静态托管/反馈 4 用例；+1 店铺集成 opt-in），前端 vitest 23 全绿，浏览器实测 12345→refunded / 12346→human_review。
 - **仓库**：git 仓库，**已推送 GitHub private 仓库 `bayernjf/atlas`**（main 为生产分支；当前工作在 `dev` 集成分支，W1-W10 落码提交**尚未 push**，分支策略见 15 文档）。
 - **技术选型**：✅ 已全部收口（2026-09-13，T1-T5 见 10 文档 §3）：Python 3.11+ 引擎 / Go Harness 网关为产品化目标、**Demo 用 Python/FastAPI 实现同构接口** / TypeScript + React 19（满足 React 18+）/ LangChain+LangGraph / LiteLLM（Demo 对接主流商业 API，`.env` 切换，不引入 vLLM）/ Playwright / PostgreSQL+pgvector / Redis / **Demo 进程内事件总线替代 NATS** / FastAPI / `@xyflow/react` 12 + Zustand 5 + AntD 6 / 评估优化层仅留接口；剩余 ⏳（vLLM、策略训练、多语言）均为后续阶段范围。
 - **Demo 依赖清单已落码**：后端在 `pyproject.toml`，前端在 `frontend/package.json` / `pnpm-lock.yaml`（版本为 2026-09-13 解析的稳定版）。
@@ -58,7 +58,7 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 4. ✅ **W9-W10 端到端 Demo**（08 文档 7.1，2026-09-13 完成）：电商退款完整链路跑通（LiteLLM 决策 + 规则兜底、shop 退款业务能力、SSE 实时进度、NL 退款草稿、模拟商家控制台），08 §7.3 七条验收逐条达成（映射见 08 W9-W10 落码记录）。
 5. ⏭️ **Demo 之后（Phase 1）**：种子客户试用收集反馈；条件触发时从 docs/14 缓做登记表取回（Redis 短期记忆、11 S1 业务表 DDL 替换进程内存储、web 适配器视觉层接真实 LLM、NATS/Go 网关、条件/循环/并行节点等）。
 6. 文档缺口登记：`09-工程骨架` 待定项 1/2/3/4/5/6 均已收口（待定项 3：不新增 deployment/ 包，Dockerfile + docker-compose.yml 放仓库根，2026-09-13）。新增测试运行器选型 vitest 已记 10 文档 §4 ADR（W5-W6）。
-8. 🐳 **Phase 1 种子客户交付准备（进行中）**：✅ Docker Compose 一键启动（`Dockerfile` 多阶段 + FastAPI 同源托管 `frontend/dist` + `POST /api/demo/reset` 重置种子数据，镜像实测黄金用例通过，2026-09-13）；✅ 种子验证计划 [docs/18](docs/18-种子客户验证计划.md) + 客户向 [TRIAL.md](TRIAL.md)（2026-09-13）；⏭️ 应用内反馈入口待做（编辑器反馈按钮 + 进程内 `POST /api/feedback`）。
+8. 🐳 **Phase 1 种子客户交付准备（工程侧已齐）**：✅ Docker Compose 一键启动（`Dockerfile` 多阶段 + FastAPI 同源托管 `frontend/dist` + `POST /api/demo/reset` 重置种子数据，镜像实测黄金用例通过，2026-09-13）；✅ 种子验证计划 [docs/18](docs/18-种子客户验证计划.md) + 客户向 [TRIAL.md](TRIAL.md)（2026-09-13）；✅ 应用内反馈入口（编辑器"反馈"按钮 + `POST/GET /api/feedback`，进程内存储、reset 不清除，后端 62 测试/浏览器实测通过，2026-09-13）。下一步为业务动作：按 docs/18 招募 3-5 家种子客户试用。
 7. 📋 **i18n 与设计 Token 方案已定（2026-09-13，docs/17）**：设计 Token 等价替换**已落码**（`frontend/src/theme/tokens.ts` 单一事实源 + `setup.ts` 注入 `--atlas-*` 变量 + AntD theme，全仓零硬编码色值，浏览器零视觉差异）；i18n 库（i18next+react-i18next）按触发条件引入（14 D12：首个英文使用者/出海需求），组件描述多语言随 Phase 2 模板库（14 D13）。
 
 > 缓做/低优项：统一登记在 [docs/14-缓做事项登记表.md](docs/14-缓做事项登记表.md)（每条带触发条件，条件满足移回本区并标注重启日期）。当前含移动端适配器、策略训练、组件市场、模型路由器、NATS、Go 网关、多租户、运营体市场、BENCHMARK 实测、CI/CD、可观测性、i18n 落码、组件描述多语言等 13 项。
@@ -71,7 +71,7 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 ## Quality gate（质量门）
 
 - **文档侧**：00 文档"切分核对报告"已确认 274 章节全映射、逐段覆盖无丢失。改规格文档必须遵循 00 文档治理规则（唯一事实源 / 改内容流程 / Schema 契约防漂移）。
-- **代码侧**：最小质量门已建立——后端 `.venv/bin/pytest`（当前 58 个单元用例：engine 3 + harness 契约 7 + 三层定位 6 + graph DSL 8 + 编译器 5 + graphs API 4 + 决策 6 + 店铺 8 + NL 2 + 退款端到端 3 + Demo API 6；DB/浏览器/店铺 8 个 integration 用例默认跳过），全量 `ATLAS_RUN_INTEGRATION=1`（+`DATABASE_URL`）含真实 Chromium 与店铺平台集成；前端 `cd frontend && pnpm test`（vitest，23 个单元用例）与 `pnpm build`（TS 检查 + Vite 构建）均通过（有 AntD 首包 >500kB 的体积提示，暂不阻塞）。后续按 13 测试用例清单分层：单元 → 集成 → 回放 → 端到端 → AI 评估，上线前过"四道门"。
+- **代码侧**：最小质量门已建立——后端 `.venv/bin/pytest`（当前 62 个单元用例：engine 3 + harness 契约 7 + 三层定位 6 + graph DSL 8 + 编译器 5 + graphs API 4 + 决策 6 + 店铺 8 + NL 2 + 退款端到端 3 + Demo API 8；DB/浏览器/店铺 8 个 integration 用例默认跳过），全量 `ATLAS_RUN_INTEGRATION=1`（+`DATABASE_URL`）含真实 Chromium 与店铺平台集成；前端 `cd frontend && pnpm test`（vitest，23 个单元用例）与 `pnpm build`（TS 检查 + Vite 构建）均通过（有 AntD 首包 >500kB 的体积提示，暂不阻塞）。后续按 13 测试用例清单分层：单元 → 集成 → 回放 → 端到端 → AI 评估，上线前过"四道门"。
 
 ## How to run
 
