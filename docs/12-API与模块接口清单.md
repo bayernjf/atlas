@@ -146,7 +146,7 @@ evaluation_task:
 
 ## 8. 接口对齐检查表（AI 落码时逐项确认）
 
-- [ ] LoopState 字段与 06 6.1 一致（含 memory_id/status）
+- [x] LoopState 字段与 06 6.1 一致（含 memory_id/status）——✅ 2026-09-13 核对通过，实现于 `src/atlas/engine/state.py`（七字段一致；messages/observations 加 add 归约器以支持追加语义）
 - [ ] decide_node 置信度阈值 0.6（06 6.2）
 - [ ] Web 点击三层定位顺序（06 6.5），层2 置信度 >0.7
 - [ ] ActionResult.Status 枚举：SUCCESS/PARTIAL/FAILED

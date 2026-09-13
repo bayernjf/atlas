@@ -6,7 +6,7 @@
 
 Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/ Graph（可执行因果图）/ Loop（OODA 主循环）** 三位一体为内核，面向企业流程自动化场景（首个目标场景：企业内部 OA 审批），目标是让非技术人员通过自然语言/拖拽定义流程，由运营体自动执行、自愈与进化。
 
-当前阶段：**W1-W2 基础骨架启动中**。设计文档已完成（`docs/` 00-16 为唯一事实源）；工程骨架已落地（`src/atlas/` 包树 + `pyproject.toml`，2026-09-13），业务代码待填。
+当前阶段：**W1-W2 基础骨架进行中**。设计文档已完成（`docs/` 00-16 为唯一事实源）；工程骨架已落地——后端包树 + `pyproject.toml`、LangGraph 最小 OODA 循环（3 冒烟用例全绿）、`frontend/` React 编辑器框架（浏览器验证通过）均已就绪（2026-09-13），待补 PostgreSQL 连接与各业务模块。
 
 结构：
 - `docs/` — 全部规格文档（入口：`00-文档索引与治理.md`）
@@ -41,7 +41,7 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 ## Current state（当前状态）
 
 - **阶段**：W1-W2 基础骨架启动中。设计文档完成（2026-09-13 源文档切分）；2026-09-13 已建工程骨架：`src/atlas/{engine,harness,graph,nodes,memory,skills,collaboration,api,web}/` + `tests/`、`pyproject.toml`（依赖按 10 §2，版本下限取 2026-09-13 PyPI 稳定版，已验证可编辑安装）；后端最小 OODA 循环与 `frontend/` Vite React TS 编辑器框架均已跑通。
-- **仓库**：git 仓库（`main` 分支），**已推送 GitHub private 仓库 `bayernjf/atlas`**（2026-09-13，3 个原子提交：chore .gitignore + docs 规格 + docs 根元文档）。
+- **仓库**：git 仓库，**已推送 GitHub private 仓库 `bayernjf/atlas`**（main 为生产分支；当前工作在 `dev` 集成分支，W1 骨架/循环/前端等提交**尚未 push**，分支策略见 15 文档）。
 - **技术选型**：✅ 已全部收口（2026-09-13，T1-T5 见 10 文档 §3）：Python 3.11+ 引擎 / Go Harness 网关为产品化目标、**Demo 用 Python/FastAPI 实现同构接口** / TypeScript + React 19（满足 React 18+）/ LangChain+LangGraph / LiteLLM（Demo 对接主流商业 API，`.env` 切换，不引入 vLLM）/ Playwright / PostgreSQL+pgvector / Redis / **Demo 进程内事件总线替代 NATS** / FastAPI / `@xyflow/react` 12 + Zustand 5 + AntD 6 / 评估优化层仅留接口；剩余 ⏳（vLLM、策略训练、多语言）均为后续阶段范围。
 - **Demo 依赖清单已落码**：后端在 `pyproject.toml`，前端在 `frontend/package.json` / `pnpm-lock.yaml`（版本为 2026-09-13 解析的稳定版）。
 - **关键文件**：后端 `src/atlas/`（9 个包；engine 已有 W1 最小循环）、前端 `frontend/`（Dashboard/Editor + 四组件 + Zustand store）；模块填充顺序见 09 文档待填项清单。

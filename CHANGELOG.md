@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### docs（2026-09-13）
+
+- 项目文档与 W1 实现状态对齐：00 文档地图更新 09/10 描述；12 对齐检查表勾选 LoopState 一致性（实现于 `engine/state.py`）；13 新增 §9 实现进度（后端冒烟用例、前端构建与人工验证）；AGENTS 文档分层范围更正为 00-16；handoff 仓库行反映 dev 分支与未推送状态。
+
 ### feat / web（2026-09-13）
 
 - W1 前端编辑器框架：Vite 8 + React 19 + TypeScript 6，接入 `@xyflow/react` 12（替代已弃用的 `react-flow-renderer`）、Zustand 5、Ant Design 6；实现 Dashboard/Editor 页面与 FlowCanvas/NodePanel/PropertyPanel/DebugConsole，初始 触发→AI决策→工具调用 三节点，支持添加节点、选中编辑名称、连线状态与调试日志。`pnpm build` 通过，浏览器交互验证无控制台错误；dev 端口 5174，`/api` 代理 8000。
