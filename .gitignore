@@ -42,9 +42,10 @@ yarn-error.log*
 .env.*
 !.env.example
 
-# IDE
+# IDE / local agent tooling
 .vscode/
 .idea/
+.claude/
 *.swp
 
 # OS
