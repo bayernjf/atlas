@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Alert, Button, Layout, Modal, Tabs, Typography } from 'antd'
+import { Alert, Button, Layout, Modal, Select, Space, Tabs, Typography, Input } from 'antd'
 import { FlowCanvas } from '../components/canvas/FlowCanvas'
 import { NodePanel } from '../components/nodePanel/NodePanel'
 import { VariablesPanel } from '../components/variablePanel/VariablesPanel'
@@ -7,39 +7,105 @@ import { PropertyPanel } from '../components/propertyPanel/PropertyPanel'
 import { DebugConsole } from '../components/debugConsole/DebugConsole'
 import { useEditorStore } from '../store/editorStore'
 import { serializeGraph } from '../lib/graphSerializer'
-import { compileGraph, runGraph, saveGraph, type CompileResult, type RunResult } from '../lib/apiClient'
+import {
+  compileGraph,
+  nlGenerate,
+  saveGraph,
+  streamRun,
+  type CompileResult,
+  type RunInputs,
+  type RunResult,
+} from '../lib/apiClient'
 
 const { Header, Sider, Content, Footer } = Layout
+const { TextArea } = Input
+
+const DEMO_ORDERS: Array<{ order_id: string; reason: string; amount: number }> = [
+  { order_id: '12345', reason: '商品破损', amount: 299 },
+  { order_id: '12346', reason: '不想要了', amount: 5000 },
+  { order_id: '12347', reason: '商品有质量瑕疵', amount: 128 },
+  { order_id: '12348', reason: '商家错发商品', amount: 460 },
+  { order_id: '12349', reason: '尺寸不合适', amount: 899 },
+]
 
 export function Editor() {
   const nodes = useEditorStore((state) => state.nodes)
   const edges = useEditorStore((state) => state.edges)
   const variables = useEditorStore((state) => state.variables)
+  const loadGraph = useEditorStore((state) => state.loadGraph)
+  const setNodeStatus = useEditorStore((state) => state.setNodeStatus)
+  const resetRunStatuses = useEditorStore((state) => state.resetRunStatuses)
+  const appendLog = useEditorStore((state) => state.appendLog)
+
   const [exportOpen, setExportOpen] = useState(false)
   const [runOpen, setRunOpen] = useState(false)
+  const [nlOpen, setNlOpen] = useState(false)
   const [running, setRunning] = useState(false)
+  const [nlLoading, setNlLoading] = useState(false)
   const [runError, setRunError] = useState<string | null>(null)
+  const [nlError, setNlError] = useState<string | null>(null)
   const [compileResult, setCompileResult] = useState<CompileResult | null>(null)
   const [runResult, setRunResult] = useState<RunResult | null>(null)
+  const [selectedOrderId, setSelectedOrderId] = useState('12345')
+  const [nlPrompt, setNlPrompt] = useState('帮我做一个电商退款自动审批流程')
 
   const graphJson = JSON.stringify(serializeGraph(nodes, edges, variables), null, 2)
 
   async function compileAndRun() {
+    const order = DEMO_ORDERS.find((item) => item.order_id === selectedOrderId)
+    const inputs: RunInputs | undefined = order
+      ? { order_id: order.order_id, reason: order.reason, amount: order.amount }
+      : undefined
     setRunning(true)
     setRunError(null)
     setCompileResult(null)
     setRunResult(null)
+    resetRunStatuses()
     try {
       const saved = await saveGraph(serializeGraph(nodes, edges, variables))
+      appendLog(`已保存 Graph：${saved.id}`)
       const compiled = await compileGraph(saved.id)
-      const executed = await runGraph(saved.id)
       setCompileResult(compiled)
+      appendLog(`编译成功：入口 ${compiled.entrypoints.join(', ')}`)
+      const executed = await streamRun(saved.id, inputs, (event) => {
+        if (event.type === 'node_start') {
+          setNodeStatus(event.node_id, 'running')
+          appendLog(`▶ 节点开始：${event.node_id}`)
+        } else if (event.type === 'node_end') {
+          setNodeStatus(event.node_id, 'completed')
+          const output = event.output as { decision?: { action?: string }; result?: unknown }
+          const decision = output?.decision
+          if (decision?.action) {
+            appendLog(`✓ ${event.node_id} 决策：${decision.action}`)
+          } else {
+            appendLog(`✓ 节点完成：${event.node_id}`)
+          }
+        }
+      })
+      const toolResult = executed.outputs['tool_call-1'] as { result?: { status?: string } } | undefined
+      appendLog(`运行结束：${toolResult?.result?.status ?? executed.status}`)
       setRunResult(executed)
       setRunOpen(true)
     } catch (error) {
-      setRunError(error instanceof Error ? error.message : String(error))
+      const message = error instanceof Error ? error.message : String(error)
+      setRunError(message)
+      appendLog(`✗ 运行失败：${message}`)
     } finally {
       setRunning(false)
+    }
+  }
+
+  async function generateDraft() {
+    setNlLoading(true)
+    setNlError(null)
+    try {
+      const { graph } = await nlGenerate(nlPrompt)
+      loadGraph(graph)
+      setNlOpen(false)
+    } catch (error) {
+      setNlError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setNlLoading(false)
     }
   }
 
@@ -49,14 +115,22 @@ export function Editor() {
         <Typography.Title level={3} style={{ margin: 0 }}>
           Atlas 流程编辑器
         </Typography.Title>
-        <div>
-          <Button onClick={() => setExportOpen(true)} style={{ marginRight: 8 }}>
-            导出 Graph JSON
-          </Button>
+        <Space>
+          <Select
+            value={selectedOrderId}
+            onChange={setSelectedOrderId}
+            style={{ width: 300 }}
+            options={DEMO_ORDERS.map((order) => ({
+              value: order.order_id,
+              label: `${order.order_id}｜${order.reason}｜¥${order.amount}`,
+            }))}
+          />
+          <Button onClick={() => setNlOpen(true)}>自然语言生成</Button>
+          <Button onClick={() => setExportOpen(true)}>导出 Graph JSON</Button>
           <Button type="primary" loading={running} onClick={compileAndRun}>
             编译并运行
           </Button>
-        </div>
+        </Space>
       </Header>
       <Layout>
         <Sider width={280} theme="light" className="editor-sider">
@@ -110,6 +184,21 @@ export function Editor() {
             <pre className="graph-json-preview">{JSON.stringify(runResult, null, 2)}</pre>
           </div>
         )}
+      </Modal>
+      <Modal
+        title="自然语言生成流程草稿"
+        open={nlOpen}
+        onCancel={() => setNlOpen(false)}
+        onOk={generateDraft}
+        confirmLoading={nlLoading}
+        okText="生成并载入画布"
+      >
+        <TextArea
+          rows={3}
+          value={nlPrompt}
+          onChange={(event) => setNlPrompt(event.target.value)}
+        />
+        {nlError && <Alert type="error" showIcon title={nlError} style={{ marginTop: 12 }} />}
       </Modal>
       {runError && (
         <Alert

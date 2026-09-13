@@ -15,9 +15,10 @@ export function Dashboard({ onOpenEditor }: DashboardProps) {
       <Content className="page-content">
         <Space orientation="vertical" size="large" style={{ width: '100%' }}>
           <Card>
-            <Typography.Title level={4}>W7-W8 编译与运行</Typography.Title>
+            <Typography.Title level={4}>W9-W10 端到端 Demo：电商退款自动化</Typography.Title>
             <Typography.Paragraph>
-              编辑器 Graph JSON 可一键保存到后端、编译为 LangGraph 并运行，查看拓扑与节点产出。
+              选择退款单一键运行：AI 按退款原因与审批限额决策自动退款或转人工，画布实时显示节点进度；
+              也可用自然语言生成退款流程草稿。
             </Typography.Paragraph>
             <Button type="primary" onClick={onOpenEditor}>
               打开流程编辑器
@@ -25,7 +26,7 @@ export function Dashboard({ onOpenEditor }: DashboardProps) {
           </Card>
           <Row gutter={16}>
             <Col span={8}>
-              <Card title="Graph"><Typography.Text>DSL → LangGraph 编译与运行已打通（W7-W8 占位执行器）</Typography.Text></Card>
+              <Card title="Graph"><Typography.Text>退款流程经 DSL → LangGraph 编译运行，节点事件 SSE 实时上屏</Typography.Text></Card>
             </Col>
             <Col span={8}>
               <Card title="Loop"><Typography.Text>OODA 最小循环已跑通</Typography.Text></Card>
