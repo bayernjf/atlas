@@ -115,15 +115,19 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 | POST | /api/graphs | 保存 Graph 定义（DSL） | node_schema / graph_definition |
 | GET | /api/graphs/{id} | 读取 Graph | — |
 | POST | /api/graphs/{id}/compile | DSL → LangGraph 编译（08 7.1 W7-W8） | 02 Graph DSL |
-| POST | /api/graphs/{id}/run | 编译并运行，返回状态/节点产出/执行轨迹（W7-W8 落码推导，见 09 待定项 6；W7-W8 执行器为确定性占位） | 02 Graph DSL / LoopState |
+| POST | /api/graphs/{id}/run | 编译并运行，返回状态/节点产出/执行轨迹；请求体 `{"inputs": {...}}`，inputs 同名键覆盖全局变量且整体作为 trigger 节点 webhook 载荷 `context.payload`（W9-W10 接入真实决策/适配器） | 02 Graph DSL / LoopState |
+| POST | /api/graphs/{id}/run/stream | SSE 流式运行（W9-W10）：事件 `node_start`/`node_end`/最终 `result`，供画布实时进度（验收标准 5） | 08 7.1 |
 | POST | /api/operators | 创建运营体（镜像） | operator |
 | POST | /api/operators/{id}/run | 启动 Loop | LoopState |
 | GET | /api/operators/{id}/status | 运行状态/进度（验收标准 5：画布实时显示） | LoopState.status |
 | POST | /api/operators/{id}/pause / resume | 暂停/恢复（人机协作） | status: paused |
-| GET | /api/adapters | 适配器列表（注册发现） | adapter_schema |
+| GET | /api/adapters | 适配器列表（注册发现；W9-W10 已落码，返回 shop 适配器及其能力/权限/幂等标记） | adapter_schema |
 | POST | /api/adapters/{id}/tools | 工具查询 | tool |
 | GET | /api/operations/{id}/log | 执行日志/审计（06 安全清单） | 审计 |
-| POST | /api/nl/generate | 自然语言 → 流程草稿（验收标准 6） | 08 7.2 |
+| POST | /api/nl/generate | 自然语言 → 流程草稿（验收标准 6；W9-W10 已落码：LLM 优先、退款规则模板兜底，无法识别 422） | 08 7.2 |
+| POST | /api/demo/shop/login | Demo 商家平台登录（demo/demo，W9-W10） | — |
+| GET | /api/demo/shop/orders | Demo 待处理退款单（需登录，W9-W10） | — |
+| GET | /demo/shop | 模拟商家售后控制台 HTML 页面（W9-W10，自动登录/抓取演示目标系统） | — |
 | GET | /api/memories/{operator_id} | 记忆配置读取（05 2.4 配置界面） | memory_config |
 | PUT | /api/memories/{operator_id} | 记忆配置保存 | memory_config |
 
