@@ -41,7 +41,7 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 ## Current state（当前状态）
 
 - **阶段**：W9-W10 电商退款端到端 Demo 已完成（2026-09-13，08 §7.3 七条验收全达成）。新增 `llm/`（LiteLLM 退款决策 + 规则兜底 + NL 草稿生成）、`shop/`（DemoShopService + ShopHarnessAdapter：login/list_pending_refunds/execute_refund/request_human_approval/process_refund）两个包；`graph/loader.py` 经依赖注入接真实决策/适配器/事件回调；API 新增 SSE 运行流、NL 生成、适配器发现与模拟商家控制台；前端退款单选择、节点实时状态、NL 草稿载入。后端默认 58 单元全绿（+1 店铺集成 opt-in），前端 vitest 23 全绿，浏览器实测 12345→refunded / 12346→human_review。
-- **仓库**：git 仓库，**已推送 GitHub private 仓库 `bayernjf/atlas`**（main 为生产分支；当前工作在 `dev` 集成分支，W1 骨架/循环/前端等提交**尚未 push**，分支策略见 15 文档）。
+- **仓库**：git 仓库，**已推送 GitHub private 仓库 `bayernjf/atlas`**（main 为生产分支；当前工作在 `dev` 集成分支，W1-W10 落码提交**尚未 push**，分支策略见 15 文档）。
 - **技术选型**：✅ 已全部收口（2026-09-13，T1-T5 见 10 文档 §3）：Python 3.11+ 引擎 / Go Harness 网关为产品化目标、**Demo 用 Python/FastAPI 实现同构接口** / TypeScript + React 19（满足 React 18+）/ LangChain+LangGraph / LiteLLM（Demo 对接主流商业 API，`.env` 切换，不引入 vLLM）/ Playwright / PostgreSQL+pgvector / Redis / **Demo 进程内事件总线替代 NATS** / FastAPI / `@xyflow/react` 12 + Zustand 5 + AntD 6 / 评估优化层仅留接口；剩余 ⏳（vLLM、策略训练、多语言）均为后续阶段范围。
 - **Demo 依赖清单已落码**：后端在 `pyproject.toml`，前端在 `frontend/package.json` / `pnpm-lock.yaml`（版本为 2026-09-13 解析的稳定版）。
 - **关键文件**：后端 `src/atlas/`（11 个包；engine 最小循环、graph DSL 契约+编译器（W9-W10 注入决策/适配器/事件）、llm 退款决策+NL 生成、shop Demo 店铺服务+适配器、api FastAPI（graphs/SSE/NL/adapters/Demo 控制台）、memory 连接层、harness 契约/注册、web 三层定位适配器）、`db/migrations/001_enable_pgvector.sql`，前端 `frontend/`（Dashboard/Editor + 画布/节点/属性/变量面板 + `lib/` 纯逻辑（变量/节点目录/序列化/API client 含 SSE）+ Zustand store + vitest 单测）；模块填充顺序见 09 文档待填项清单。
