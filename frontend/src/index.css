@@ -137,6 +137,28 @@ body,
   outline-offset: 1px;
 }
 
+.atlas-node-running {
+  box-shadow: 0 0 0 4px rgba(22, 119, 255, 0.25);
+  animation: atlas-node-pulse 1s ease-in-out infinite;
+}
+
+.atlas-node-completed {
+  box-shadow: 0 0 0 3px rgba(82, 196, 26, 0.35);
+}
+
+.atlas-node-status {
+  font-size: 10px;
+  font-weight: 400;
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+@keyframes atlas-node-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(22, 119, 255, 0.18); }
+  50% { box-shadow: 0 0 0 6px rgba(22, 119, 255, 0.35); }
+}
+
 .atlas-node-header {
   display: flex;
   align-items: center;
@@ -185,4 +207,13 @@ body,
   color: #e2e8f0;
   border-radius: 6px;
   font-size: 12px;
+}
+
+.run-result-section {
+  margin-bottom: 12px;
+}
+
+.run-result-section .graph-json-preview {
+  max-height: 260px;
+  margin-top: 6px;
 }

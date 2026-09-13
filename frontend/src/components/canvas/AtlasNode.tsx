@@ -9,12 +9,14 @@ export function AtlasNode({ data, selected }: NodeProps<EditorNode>) {
 
   return (
     <div
-      className={`atlas-node ${selected ? 'atlas-node-selected' : ''}`}
+      className={`atlas-node ${selected ? 'atlas-node-selected' : ''} atlas-node-${data.status}`}
       style={{ borderColor: meta.color }}
     >
       <Handle type="target" position={Position.Left} />
       <div className="atlas-node-header" style={{ backgroundColor: meta.color }}>
         <span>{meta.label}</span>
+        {data.status === 'running' && <span className="atlas-node-status">运行中…</span>}
+        {data.status === 'completed' && <span className="atlas-node-status">✓</span>}
         {invalid && (
           <span className="atlas-node-error-icon" title={errors.join('；')}>
             !

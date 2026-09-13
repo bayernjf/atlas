@@ -12,6 +12,7 @@
 | `node` | 04 / 三、节点组件详细设计 3.2 节点的通用化接口设计 | ### 3.2 节点的通用化接口设计 |
 | `tool` | 04 / 四、工具/适配器组件 4.3 工具定义 Schema | ### 4.3 工具定义 Schema |
 | `node_schema` | 04 / 5.2 节点系统 Schema 示例代码 | ### 5.2 节点系统 Schema 示例代码 |
+| `graph_definition` | 04 / 5.2 节点系统 Schema（节点形状）+ `src/atlas/graph/dsl.py`（GraphDSL 权威实现，W7-W8） | ### 5.2 节点系统 Schema 示例代码 |
 | `adapter_schema` | 04 / 5.4 工具/适配器注册 Schema 示例代码 | ### 5.4 工具/适配器注册 Schema 示例代码 |
 | `skill_schema` | 05 / 一、技能（Skill）1.2 技能的数据结构 | ## 1.2 技能的数据结构（示例） |
 | `memory_config` | 05 / 二、记忆（Memory）2.3 记忆策略配置 Schema | ## 2.3 记忆策略配置 Schema（示例） |
@@ -19,6 +20,10 @@
 | `deployment_config` | 05 / 四、部署方式 4.3 部署配置 Schema | ## 4.3 部署配置 Schema（示例） |
 | `interaction_template` | 05 / 五、自定义前端模板 5.3 交互模板 Schema | ## 5.3 交互模板 Schema（示例） |
 | `evaluation_task` | 06 / 9.2 评估 Harness 设计 | ### 9.2 评估 Harness 设计（借鉴 lm-evaluation-harness）代码示例 |
+| `refund_decision` | `src/atlas/llm/decision.py`（W9-W10 权威实现；规则对齐 06 §9.2 黄金用例） | —（工程推导契约） |
+| `refund_order` | `src/atlas/shop/service.py`（W9-W10 Demo 电商数据结构） | —（工程推导契约） |
+| `run_event` | `src/atlas/graph/loader.py`（emit 产出）+ `src/atlas/api/main.py`（SSE 帧，W9-W10） | —（工程推导契约） |
+| `nl_generate_request` | `src/atlas/api/main.py` NLGenerateRequest（W9-W10；响应为 `{graph: graph_definition}`） | —（工程推导契约） |
 
 ---
 
@@ -82,6 +87,17 @@ timeout: number              # 秒
 on_error: enum[stop, continue, jump_to]
 breakpoint: boolean          # 是否断点
 ```
+
+### `graph_definition` — 字段概览（W7-W8；节点形状权威见上 `node_schema`，容器结构以 `src/atlas/graph/dsl.py` GraphDSL 为准）
+
+```yaml
+version: 1                   # Graph JSON 版本，当前仅支持 1
+variables:                   # 全局变量（GraphVariable: name/type/value/scope=global）
+nodes:                       # node_schema 节点列表；W7-W8 可编译类型仅
+                             #   trigger / ai_decision / tool_call，其余类型校验拒绝
+edges:                       # {id, source, target}，端点必须存在且禁止自环
+```
+> 前端序列化 `frontend/src/lib/graphSerializer.ts`（version 1）；后端解析/校验 `atlas.graph.dsl.parse_graph`，错误一次性聚合；编译执行 `atlas.graph.loader.compile_graph/run_graph`。
 
 ### `adapter_schema` — 字段概览（完整定义见 04-组件设计-编辑后台.md #459，上下文章节：### 5.4 工具/适配器注册 Schema 示例代码）
 
@@ -172,3 +188,55 @@ action: "request_human_approval"
 verify: "approval_request_created"
 metrics: 
 ```
+
+### `refund_decision` — 字段概览（W9-W10；权威实现 `src/atlas/llm/decision.py`）
+
+退款决策客户端 `DecisionClient.decide_refund(reason, amount, limit)` 的输出 dict，ai_decision 节点产出与 shop/process_refund 入参均以此为准：
+
+```yaml
+action: enum[approve_refund, request_human_approval]   # 自动退款 / 转人工审批
+reason: string          # 中文决策说明（写入工具 note / 审批意见）
+confidence: number      # 规则兜底恒为 1.0；LLM 取模型输出，解析失败 0.0
+source: string          # "rule" 或 "llm:{model}"
+```
+> 规则（06 §9.2）：质量原因（破损/质量/错漏发等关键词）且金额 ≤ 限额 → approve_refund；其余及 LLM JSON 解析失败 → request_human_approval（fail-safe）。
+
+### `refund_order` — 字段概览（W9-W10；权威实现 `src/atlas/shop/service.py`）
+
+Demo 电商平台退款单（dataclass；进程内单例，持久化随 11 S1 业务表 DDL 重启）：
+
+```yaml
+order_id: string        # 种子 12345-12349
+reason: string          # 退款原因
+amount: number          # 金额（元）
+status: enum[pending, refunded, human_review]
+history: list[string]   # 操作记录（自动退款/转人工审批）
+```
+
+### `run_event` — 字段概览（W9-W10；`POST /api/graphs/{id}/run/stream` 的 SSE 帧）
+
+`loader.run_graph(emit=...)` 产出事件 dict，API 以 `event: <type>\ndata: <json>` 帧推送；前端 `streamRun` 消费（见 12 文档 REST 表）：
+
+```yaml
+# 节点开始
+type: "node_start"
+node_id: string
+node_type: enum[trigger, ai_decision, tool_call]
+# 节点结束
+type: "node_end"
+node_id: string
+node_type: string
+output: object          # 该节点产出（决策 dict / 工具 ActionResult 输出）
+# 运行结束（SSE 末帧为 event: result，载荷 {id, status, outputs, traces}）
+type: "run_end"         # 随 run_graph 返回值展开
+```
+
+### `nl_generate_request` — 字段概览（W9-W10；`POST /api/nl/generate`）
+
+```yaml
+# 请求
+prompt: string          # 自然语言流程描述
+# 响应
+graph: graph_definition # 见上 graph_definition（version 1，可直接保存/编译）
+```
+> 无法识别意图时返回 422；未配置 `LITELLM_MODEL` 时仅退款关键词走规则模板兜底。

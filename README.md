@@ -12,7 +12,17 @@ Atlas 是一个 **AI 运营体（Agent）编排平台**：以 **Harness / Graph 
 
 ## 当前阶段
 
-**W1-W2 基础骨架进行中**（2026-09-13）。设计文档以 `docs/` 为唯一事实源（00-16 共 17 份）；后端最小 OODA 循环与前端编辑器框架已跑通，PostgreSQL 连接与业务模块待补。
+**W1-W10 Demo 已全部完成**（2026-09-13）。电商退款端到端链路跑通（08 §7.3 七条验收全达成）：webhook 退款单 → AI 决策（LiteLLM；未配置 `LITELLM_MODEL` 时规则兜底，对齐 06 §9.2 黄金用例）→ shop 适配器执行退款或转人工，SSE 节点事件实时上屏，自然语言可生成退款流程草稿。设计文档以 `docs/` 为唯一事实源（00-16 共 17 份）。下一步进入 Phase 1 种子客户验证（见 [handoff.md](handoff.md)）。
+
+### 本地运行 Demo
+
+```bash
+.venv/bin/uvicorn atlas.api.main:app --reload --port 8000   # 后端 API + 模拟商家控制台
+cd frontend && pnpm dev                                     # 编辑器 http://localhost:5174
+```
+
+- 模拟商家售后控制台：http://localhost:8000/demo/shop（demo/demo）
+- 配置 `LITELLM_MODEL`（及供应商 key）即用真实 LLM 决策/生成；不配置时走确定性规则，Demo 离线可跑（见 `.env.example`）
 
 ## 文档导航
 

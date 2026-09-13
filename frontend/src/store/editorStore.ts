@@ -10,6 +10,7 @@ import {
   type NodeKind,
 } from '../lib/nodeCatalog'
 import type { GraphVariable } from '../lib/variables'
+import { deserializeGraph, type SerializedGraph } from '../lib/graphSerializer'
 
 export type EditorNode = Node<EditorNodeData>
 export type { NodeKind }
@@ -30,6 +31,10 @@ type EditorState = {
   onNodesChange: (changes: NodeChange<EditorNode>[]) => void
   onEdgesChange: (changes: EdgeChange<Edge>[]) => void
   onConnect: (connection: Connection) => void
+  loadGraph: (graph: SerializedGraph) => void
+  setNodeStatus: (nodeId: string, status: EditorNodeData['status']) => void
+  resetRunStatuses: () => void
+  appendLog: (message: string) => void
 }
 
 export function nextId(kind: NodeKind, existing: EditorNode[]): string {
@@ -49,11 +54,11 @@ const initialNodes: EditorNode[] = [
     id: 'trigger-1',
     position: { x: 80, y: 180 },
     data: {
-      label: '触发：新审批单',
+      label: '触发：新退款申请',
       kind: 'trigger',
       status: 'idle',
       description: '',
-      config: { ...defaultConfig('trigger'), triggerType: 'webhook', webhookUrl: '/hooks/approval' },
+      config: { ...defaultConfig('trigger'), triggerType: 'webhook', webhookUrl: '/hooks/refund' },
       retry: defaultRetry(),
     },
   },
@@ -61,26 +66,27 @@ const initialNodes: EditorNode[] = [
     id: 'ai_decision-1',
     position: { x: 360, y: 180 },
     data: {
-      label: 'AI 决策：是否通过',
+      label: 'AI 决策：退款还是人工',
       kind: 'ai_decision',
       status: 'idle',
       description: '',
       config: {
         ...defaultConfig('ai_decision'),
-        promptTemplate: '审批单金额 {{global.approval_limit}} 内自动通过，超出转人工',
+        promptTemplate:
+          '退款单 {{trigger-1.context.payload.order_id}}：{{trigger-1.context.payload.reason}}，金额 {{trigger-1.context.payload.amount}}，审批限额 {{global.approval_limit}}',
       },
       retry: defaultRetry(),
     },
   },
   {
     id: 'tool_call-1',
-    position: { x: 660, y: 180 },
+    position: { x: 680, y: 180 },
     data: {
-      label: '工具：提交审批结果',
+      label: '工具：执行退款或转人工',
       kind: 'tool_call',
       status: 'idle',
       description: '',
-      config: { ...defaultConfig('tool_call'), tool: 'web-playwright/click' },
+      config: { ...defaultConfig('tool_call'), tool: 'shop/process_refund' },
       retry: defaultRetry(),
     },
   },
@@ -100,7 +106,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   edges: initialEdges,
   variables: initialVariables,
   selectedNodeId: null,
-  logs: ['编辑器核心已加载：拖拽新增、类型化配置、全局变量 {{路径}} 引用'],
+  logs: ['W9-W10 退款 Demo：选择退款单后「编译并运行」，节点实时高亮；也可用自然语言生成草稿'],
 
   addNodeAt: (kind, position) => {
     const id = nextId(kind, get().nodes)
@@ -186,4 +192,27 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       logs: [...state.logs, `连接节点：${connection.source} → ${connection.target}`],
     }))
   },
+
+  loadGraph: (graph) => {
+    const { nodes, edges, variables } = deserializeGraph(graph)
+    set({ nodes: nodes as EditorNode[], edges, variables, selectedNodeId: null, logs: [`已加载 NL 生成草稿：${nodes.length} 个节点`] })
+  },
+
+  setNodeStatus: (nodeId, status) => {
+    set((state) => ({
+      nodes: state.nodes.map((node) =>
+        node.id === nodeId ? { ...node, data: { ...node.data, status } } : node,
+      ),
+    }))
+  },
+
+  resetRunStatuses: () => {
+    set((state) => ({
+      nodes: state.nodes.map((node) =>
+        node.data.status === 'idle' ? node : { ...node, data: { ...node.data, status: 'idle' as const } },
+      ),
+    }))
+  },
+
+  appendLog: (message) => set((state) => ({ logs: [...state.logs, message] })),
 }))
