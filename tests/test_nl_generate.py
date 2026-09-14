@@ -39,3 +39,26 @@ def test_llm_prompt_advertises_condition_kind_and_config(monkeypatch):
     assert "condition" in system
     assert "branches" in system
     assert "defaultTarget" in system
+
+
+def test_llm_prompt_advertises_loop_kind_and_config(monkeypatch):
+    import litellm
+
+    captured: dict[str, str] = {}
+
+    def _fake_completion(*, model, messages, temperature):  # noqa: ANN001
+        captured["system"] = messages[0]["content"]
+        return {"choices": [{"message": {"content": "{}"}}]}
+
+    monkeypatch.setattr(litellm, "completion", _fake_completion)
+    monkeypatch.setenv("LITELLM_MODEL", "fake-model")
+
+    generate_graph("任意需求")
+    system = captured["system"]
+    assert "loop" in system
+    assert '"mode":"while"' in system
+    assert "continueExpression" in system
+    assert "maxIterations" in system
+    assert "bodyTarget" in system
+    assert "exitTarget" in system
+    assert "回到该 loop 节点的回边" in system
