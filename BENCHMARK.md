@@ -33,6 +33,7 @@ Atlas 性能与容量基准。范围与结果记录表（参照 agent-world 惯�
 | 2026-09-14 | 407812e | Graph compile latency | 3 节点退款图单次编译 p50/p99 (ms) | 1.81 / 2.07 ms | DSL→LangGraph StateGraph 装配，进程内 |
 | 2026-09-14 | 407812e | Refund e2e latency（12345 auto-refund） | 触发→规则决策→shop 执行 p50/p99 (ms) | 2.28 / 2.67 ms | 规则决策路径，不含 LLM 网络时延；`service.reset` 在计时外 |
 | 2026-09-14 | 407812e | Harness call overhead | shop/list_pending_refunds 单次调用 p50/p99 (ms) | 0.002 / 0.003 ms | 权限校验+审计+进程内分发，不含外部平台耗时 |
+| 2026-09-14 | 8cf8dd9 | Parallel fan-out/fan-in latency（N=4 branches） | trigger→parallel→4 只读分支→join 单次运行 p50/p99 (ms) | 8.70 / 20.12 ms | 合成 `__join__` 屏障 + 就绪等待超步（p99 含 wait 超步抖动）；分支均为 list_pending_refunds 只读，CPython 3.11.15，macOS 26.5.2 arm64，300 次 |
 
 数值为单机单次基线，仅作后续回归对比锚点，不代表生产容量；跨环境对比需在同一硬件/负载下重跑脚本并追加行。
 
