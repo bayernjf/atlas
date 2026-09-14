@@ -69,6 +69,7 @@ describe('listVariablePaths', () => {
       { id: 'ai_decision-1', data: { kind: 'ai_decision' } },
       { id: 'tool_call-1', data: { kind: 'tool_call' } },
       { id: 'condition-1', data: { kind: 'condition' } },
+      { id: 'loop-1', data: { kind: 'loop' } },
     ])
     expect(paths).toEqual([
       'global.company_name',
@@ -77,6 +78,7 @@ describe('listVariablePaths', () => {
       'ai_decision-1.decision',
       'tool_call-1.result',
       'condition-1.branch',
+      'loop-1.index',
     ])
   })
 })

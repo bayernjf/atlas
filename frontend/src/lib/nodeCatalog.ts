@@ -8,8 +8,10 @@
 import { token } from '../theme/tokens'
 import { validateExpression } from './conditions'
 
-export const NODE_KINDS = ['trigger', 'ai_decision', 'tool_call', 'condition'] as const
+export const NODE_KINDS = ['trigger', 'ai_decision', 'tool_call', 'condition', 'loop'] as const
 export type NodeKind = (typeof NODE_KINDS)[number]
+
+export const MAX_LOOP_ITERATIONS = 100
 
 export const ON_ERROR_STRATEGIES = ['stop', 'continue', 'jump_to'] as const
 export type OnErrorStrategy = (typeof ON_ERROR_STRATEGIES)[number]
@@ -42,6 +44,12 @@ export type NodeConfig = {
   // condition（04 §5.2；target 存在性/出边覆盖等图级校验由后端 422 兜底）
   branches?: ConditionBranch[]
   defaultTarget?: string
+  // loop（04 §5.3；v1 仅 while 条件循环；回边/出边等图级校验由后端 422 兜底）
+  mode?: 'while'
+  continueExpression?: string
+  maxIterations?: number
+  bodyTarget?: string
+  exitTarget?: string
 }
 
 export type EditorNodeData = {
@@ -58,6 +66,7 @@ export const NODE_CATALOG: Record<NodeKind, { label: string; description: string
   ai_decision: { label: 'AI 决策', description: 'LLM 基于上下文判断下一步', color: token('color-node-ai') },
   tool_call: { label: '工具调用', description: '经 Harness 执行外部平台操作', color: token('color-primary') },
   condition: { label: '条件分支', description: '按规则表达式选择执行路径，默认分支必填', color: token('color-node-condition') },
+  loop: { label: '循环', description: '条件为真时重复执行循环体，达最大次数自动退出', color: token('color-node-loop') },
 }
 
 export function defaultConfig(kind: NodeKind): NodeConfig {
@@ -70,6 +79,14 @@ export function defaultConfig(kind: NodeKind): NodeConfig {
       return { tool: '', params: '' }
     case 'condition':
       return { branches: [{ label: '', expression: '', target: '' }], defaultTarget: '' }
+    case 'loop':
+      return {
+        mode: 'while',
+        continueExpression: '',
+        maxIterations: 10,
+        bodyTarget: '',
+        exitTarget: '',
+      }
   }
 }
 
@@ -129,6 +146,25 @@ export function validateNode(data: EditorNodeData): string[] {
       })
       if (!config.defaultTarget?.trim()) errors.push('必须配置默认分支')
       else if (targets.has(config.defaultTarget)) errors.push('默认分支目标不能与其他分支相同')
+      break
+    }
+    case 'loop': {
+      if (!config.continueExpression?.trim()) {
+        errors.push('必须填写继续条件表达式')
+      } else {
+        for (const exprError of validateExpression(config.continueExpression)) {
+          errors.push(`继续条件表达式${exprError}`)
+        }
+      }
+      const max = config.maxIterations
+      if (max === undefined || !Number.isInteger(max) || max < 1 || max > MAX_LOOP_ITERATIONS) {
+        errors.push(`最大次数需为 1-${MAX_LOOP_ITERATIONS} 的整数`)
+      }
+      if (!config.bodyTarget?.trim()) errors.push('必须选择循环体入口')
+      if (!config.exitTarget?.trim()) errors.push('必须选择退出目标')
+      if (config.bodyTarget && config.bodyTarget === config.exitTarget) {
+        errors.push('循环体入口与退出目标不能相同')
+      }
       break
     }
   }

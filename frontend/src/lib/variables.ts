@@ -78,6 +78,8 @@ function nodeOutputKey(kind: string): string {
       return 'result'
     case 'condition':
       return 'branch'
+    case 'loop':
+      return 'index'
     default:
       return 'output'
   }
