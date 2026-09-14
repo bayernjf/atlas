@@ -119,6 +119,13 @@ def _generate_with_llm(prompt: str, model: str) -> dict[str, Any] | None:
         "onTimeout 仅支持 approve 或 reject（默认 reject，超时后 run 仍继续完成）；"
         "approvedTarget 与 rejectedTarget 必须是已存在、互异且不等于自身的节点 id；"
         "human_approval 节点恰好两条出边，目标分别就是 approvedTarget 与 rejectedTarget，不直连结束。"
+        "tool_call 节点的工具必须从编辑器「可用工具」（GET /api/adapters）中选择，不要凭空捏造："
+        "通用 HTTP 请求用 http/request，config 为 {\"tool\":\"http/request\",\"params\":"
+        "\"{\\\"method\\\":\\\"GET\\\",\\\"url\\\":\\\"/orders\\\",\\\"headers\\\":{...},"
+        "\\\"body\\\":{...}}\"}——params 是 JSON 字符串，支持 {{路径}} 插值，"
+        "任何 HTTP 响应（含 4xx/5xx）均为成功，由后续 condition 按 result.status 分支；"
+        "店铺退款 Demo 的工具为 shop/login、shop/list_pending_refunds、shop/execute_refund、"
+        "shop/request_human_approval、shop/process_refund。"
     )
     response = litellm.completion(
         model=model,
