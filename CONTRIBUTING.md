@@ -71,7 +71,7 @@ pnpm build                                # TypeScript 检查 + Vite 生产构�
 
 - 分支策略：`feature/*`（开发）→ `dev`（集成/准生产）→ `main`（生产稳定版），详见 [docs/15-环境与分支策略.md](docs/15-环境与分支策略.md)。
 - 推送分支并开 PR 到 `dev`（或相关 feature 分支）；PR 描述写明改了什么、为什么、关联文档。
-- CI 质量门（代码阶段建立）：test + lint + typecheck/build 全绿才可合并。
+- CI 质量门（`.github/workflows/ci.yml`，push main/dev 与 PR 触发）：gitleaks 密钥扫描、后端 pytest、前端 oxlint + vitest + build 全绿才可合并；integration 用例不在 CI 内（opt-in，见 [handoff.md](handoff.md)「How to run」）。
 
 ## License
 

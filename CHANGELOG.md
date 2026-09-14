@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### chore / ci（2026-09-14）
+
+- D10a CI 质量门落地：`.github/workflows/ci.yml`（push main/dev 与 PR 触发，同 ref 并发取消）三道门——gitleaks 全历史密钥扫描（沿用根 `.gitleaks.toml`）、后端 Python 3.11 `pytest`（integration 默认跳过）、前端 Node 22 / pnpm 10 `pnpm lint`（oxlint）+ `pnpm test`（vitest 23）+ `pnpm build`。本地等价命令全绿（后端 62 passed/8 skipped、gitleaks 55 commits 无泄漏）；Actions 实跑待 dev 推送后验证。14 D10 拆为 D10a（完成）/D10b（CD，缓做至远程部署目标确定），ADR T8 落 10 文档 §4，08/09/14/handoff 同步。
+
 ### docs（2026-09-14）
 
 - docs/18 新增 §6.1 试用进度跟踪表（C1-C5 一行一客户：决策路径、三场景结果与耗时、黄金用例认同数、意向、反馈分类、跟进项）与每家详细记录模板；handoff 新增「Active feedback」入口区并指向该表，试用反馈按 16 文档流程闭环。
