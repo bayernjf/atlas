@@ -190,4 +190,24 @@ describe('validateNode', () => {
     )
     expect(single.some((message) => message.includes('2-10'))).toBe(true)
   })
+
+  it('defaults wait to a 5 second duration wait', () => {
+    const config = defaultConfig('wait')
+    expect(config.waitType).toBe('duration')
+    expect(config.durationSeconds).toBe(5)
+  })
+
+  it('validates wait duration seconds as integer 1-600', () => {
+    expect(validateNode(node('wait'))).toEqual([])
+
+    for (const durationSeconds of [0, -1, 601, 1.5, undefined]) {
+      const errors = validateNode(node('wait', { config: { waitType: 'duration', durationSeconds } }))
+      expect(errors.some((message) => message.includes('1-600'))).toBe(true)
+    }
+
+    const wrongType = validateNode(
+      node('wait', { config: { waitType: 'event' as 'duration', durationSeconds: 5 } }),
+    )
+    expect(wrongType).toContain('等待类型必须为定时等待')
+  })
 })

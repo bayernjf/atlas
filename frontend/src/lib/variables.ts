@@ -83,6 +83,8 @@ function nodeOutputKey(kind: string): string {
     case 'parallel':
       // result 以分支入口节点 id 为动态键，不列入静态路径清单（04 §5.4）
       return 'status'
+    case 'wait':
+      return 'durationSeconds'
     default:
       return 'output'
   }
