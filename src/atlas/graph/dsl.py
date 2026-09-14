@@ -13,7 +13,9 @@ from pydantic import BaseModel, Field
 
 from atlas.graph.conditions import validate_expression
 
-SUPPORTED_NODE_TYPES = ("trigger", "ai_decision", "tool_call", "condition")
+SUPPORTED_NODE_TYPES = ("trigger", "ai_decision", "tool_call", "condition", "loop")
+
+MAX_LOOP_ITERATIONS = 100
 
 NodeType = str
 
@@ -134,6 +136,17 @@ def validate_graph(graph: GraphDSL) -> list[str]:
         if node.type == "condition":
             errors.extend(_validate_condition_config(node, node_ids, outgoing))
 
+    node_types = {node.id: node.type for node in graph.nodes}
+    loop_backedges: set[tuple[str, str]] = set()
+    for node in graph.nodes:
+        if node.type == "loop":
+            loop_errors, backedges = _validate_loop_config(
+                node, node_ids, node_types, outgoing, incoming
+            )
+            errors.extend(loop_errors)
+            loop_backedges |= backedges
+
+    errors.extend(_validate_illegal_cycles(graph, loop_backedges))
     errors.extend(_validate_reachability(graph, node_ids, outgoing))
 
     return errors
@@ -207,6 +220,178 @@ def _validate_condition_config(
         errors.append(f"{prefix} 到节点 {extra} 的连线未配置分支（每条出边必须被分支或默认分支覆盖）")
 
     return errors
+
+
+def _validate_loop_config(
+    node: NodeDSL,
+    node_ids: set[str],
+    node_types: dict[str, str],
+    outgoing: dict[str, set[str]],
+    incoming: dict[str, set[str]],
+) -> tuple[list[str], set[tuple[str, str]]]:
+    """loop config 与拓扑校验（契约 04 §5.3）；返回错误与本节点的合法回边白名单。"""
+    errors: list[str] = []
+    prefix = f"循环节点 {node.id}"
+    config = node.config
+
+    if config.get("mode", "while") != "while":
+        errors.append(f"{prefix} v1 仅支持条件循环（mode=while）")
+
+    expression = config.get("continueExpression")
+    if not isinstance(expression, str) or not expression.strip():
+        errors.append(f"{prefix} 必须填写继续条件表达式（continueExpression）")
+    else:
+        for expr_error in validate_expression(expression):
+            errors.append(f"{prefix} 继续条件表达式{expr_error}")
+
+    max_iterations = config.get("maxIterations")
+    if isinstance(max_iterations, bool) or not isinstance(max_iterations, int):
+        errors.append(f"{prefix} 最大次数（maxIterations）必须是整数")
+        max_iterations = None
+    elif not 1 <= max_iterations <= MAX_LOOP_ITERATIONS:
+        errors.append(f"{prefix} 最大次数需在 1-{MAX_LOOP_ITERATIONS} 之间")
+
+    body_target = config.get("bodyTarget")
+    exit_target = config.get("exitTarget")
+    if not isinstance(body_target, str) or not body_target.strip():
+        errors.append(f"{prefix} 必须选择循环体入口（bodyTarget）")
+        body_target = None
+    if not isinstance(exit_target, str) or not exit_target.strip():
+        errors.append(f"{prefix} 必须选择退出目标（exitTarget）")
+        exit_target = None
+
+    if body_target is not None:
+        if body_target == node.id:
+            errors.append(f"{prefix} 循环体入口不能指向自身")
+        elif body_target not in node_ids:
+            errors.append(f"{prefix} 循环体入口节点不存在：{body_target}")
+    if exit_target is not None:
+        if exit_target == node.id:
+            errors.append(f"{prefix} 退出目标不能指向自身")
+        elif exit_target not in node_ids:
+            errors.append(f"{prefix} 退出目标节点不存在：{exit_target}")
+    if (
+        body_target is not None
+        and exit_target is not None
+        and body_target in node_ids
+        and exit_target in node_ids
+        and body_target == exit_target
+    ):
+        errors.append(f"{prefix} 循环体入口与退出目标不能相同")
+
+    edge_targets = outgoing.get(node.id, set())
+    configured = {target for target in (body_target, exit_target) if target in node_ids and target != node.id}
+    if not edge_targets and configured:
+        errors.append(f"{prefix} 不允许直连结束节点，循环体与退出目标都必须有出边")
+    for target in configured:
+        if target not in edge_targets:
+            errors.append(f"{prefix} 缺少到目标节点 {target} 的连线")
+    for extra in edge_targets - configured:
+        errors.append(f"{prefix} 到节点 {extra} 的连线未配置（只允许循环体/退出两条出边）")
+
+    backedges: set[tuple[str, str]] = set()
+    if body_target in node_ids and body_target != node.id and exit_target not in (None, node.id):
+        body = _loop_body_set(body_target, node.id, exit_target, outgoing)
+
+        nested_loops = sorted(member for member in body if node_types.get(member) == "loop")
+        for member in nested_loops:
+            errors.append(f"{prefix} v1 不支持嵌套循环，循环体内不能包含循环节点：{member}")
+        body_triggers = sorted(member for member in body if node_types.get(member) == "trigger")
+        for member in body_triggers:
+            errors.append(f"{prefix} 循环体内不能包含触发器节点：{member}")
+
+        if exit_target in node_ids and exit_target in _bfs({body_target}, outgoing, stop={node.id}):
+            errors.append(f"{prefix} 退出路径只能由循环节点出发，循环体不能直接连到退出目标 {exit_target}")
+
+        returners = _reverse_reachable(node.id, exit_target, incoming)
+        stranded = sorted(member for member in body if member not in returners)
+        for member in stranded:
+            errors.append(f"{prefix} 循环体节点 {member} 没有回到循环节点的路径")
+
+        for member in body:
+            if node.id in outgoing.get(member, set()):
+                backedges.add((member, node.id))
+        if not any(source in body for source in incoming.get(node.id, set())):
+            errors.append(f"{prefix} 循环体必须有一条连回循环节点的回边")
+
+    return errors, backedges
+
+
+def _bfs(start: set[str], outgoing: dict[str, set[str]], *, stop: set[str]) -> set[str]:
+    seen: set[str] = set()
+    queue = list(start)
+    while queue:
+        current = queue.pop()
+        if current in seen or current in stop:
+            continue
+        seen.add(current)
+        queue.extend(outgoing.get(current, set()) - seen)
+    return seen
+
+
+def _loop_body_set(
+    body_target: str, loop_id: str, exit_target: str, outgoing: dict[str, set[str]]
+) -> set[str]:
+    """循环体：从入口出发、不穿越 loop 节点与退出目标可达的全部节点。"""
+    return _bfs({body_target}, outgoing, stop={loop_id, exit_target})
+
+
+def _reverse_reachable(loop_id: str, exit_target: str, incoming: dict[str, set[str]]) -> set[str]:
+    """沿反向边求能回到 loop 节点的节点集合；退出目标不展开，防退出路径被算作回路。"""
+    seen = {loop_id}
+    queue = [loop_id]
+    while queue:
+        current = queue.pop()
+        if current == exit_target:
+            continue
+        for predecessor in incoming.get(current, set()):
+            if predecessor not in seen:
+                seen.add(predecessor)
+                queue.append(predecessor)
+    return seen
+
+
+def _validate_illegal_cycles(
+    graph: GraphDSL, whitelist: set[tuple[str, str]]
+) -> list[str]:
+    """U7：移除 loop 白名单回边后，剩余图不允许成环。"""
+    adjacency: dict[str, list[str]] = {}
+    for edge in graph.edges:
+        if (edge.source, edge.target) in whitelist:
+            continue
+        adjacency.setdefault(edge.source, []).append(edge.target)
+
+    gray: set[str] = set()
+    black: set[str] = set()
+    cycle_nodes: list[str] = []
+
+    def visit(node_id: str, stack: list[str]) -> bool:
+        gray.add(node_id)
+        stack.append(node_id)
+        for neighbor in adjacency.get(node_id, []):
+            if neighbor in black:
+                continue
+            if neighbor in gray:
+                start = stack.index(neighbor)
+                cycle_nodes.extend(stack[start:] + [neighbor])
+                return True
+            if visit(neighbor, stack):
+                return True
+        stack.pop()
+        gray.remove(node_id)
+        black.add(node_id)
+        return False
+
+    for node in graph.nodes:
+        if node.id not in gray and node.id not in black:
+            if visit(node.id, []):
+                break
+    if cycle_nodes:
+        return [
+            "检测到非法循环依赖（循环只允许经循环节点的循环体回到自身）："
+            + " → ".join(cycle_nodes)
+        ]
+    return []
 
 
 def _validate_reachability(

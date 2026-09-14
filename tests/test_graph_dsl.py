@@ -57,7 +57,7 @@ def test_reject_edge_referencing_missing_node():
 
 def test_reject_unsupported_node_type_and_empty_name():
     raw = make_graph()
-    raw["nodes"][1]["type"] = "loop"
+    raw["nodes"][1]["type"] = "parallel"
     raw["nodes"][1]["name"] = ""
     with pytest.raises(GraphValidationError) as exc:
         parse_graph(raw)
@@ -183,3 +183,141 @@ def test_reject_unreachable_node():
     with pytest.raises(GraphValidationError) as exc:
         parse_graph(raw)
     assert any("tool-orphan 不可达" in error for error in exc.value.errors)
+
+
+def _trigger(node_id: str = "trigger-1") -> dict:
+    return {
+        "id": node_id, "type": "trigger", "name": "触发", "position": {"x": 0, "y": 0},
+        "config": {"triggerType": "manual", "cron": "", "webhookUrl": ""},
+        "retry": {"max_retries": 0, "backoff": "1s", "timeout": 30, "on_error": "stop"},
+    }
+
+
+def make_loop_graph(**overrides):
+    graph = {
+        "version": 1,
+        "variables": [],
+        "nodes": [
+            _trigger(),
+            {"id": "loop-1", "type": "loop", "name": "重试循环", "position": {"x": 1, "y": 0},
+             "config": {
+                 "mode": "while",
+                 "continueExpression": "{{loop-1.index}} < 3",
+                 "maxIterations": 10,
+                 "bodyTarget": "tool-body",
+                 "exitTarget": "tool-exit",
+             },
+             "retry": {"max_retries": 0, "backoff": "1s", "timeout": 30, "on_error": "stop"}},
+            _tool("tool-body", "循环体操作"),
+            _tool("tool-exit", "退出后操作"),
+        ],
+        "edges": [
+            {"id": "e1", "source": "trigger-1", "target": "loop-1"},
+            {"id": "e2", "source": "loop-1", "target": "tool-body"},
+            {"id": "e3", "source": "tool-body", "target": "loop-1"},
+            {"id": "e4", "source": "loop-1", "target": "tool-exit"},
+        ],
+    }
+    graph.update(overrides)
+    return graph
+
+
+def test_parse_valid_loop_graph_with_back_edge():
+    graph = parse_graph(make_loop_graph())
+    loop = next(node for node in graph.nodes if node.type == "loop")
+    assert loop.config["bodyTarget"] == "tool-body"
+    assert loop.config["exitTarget"] == "tool-exit"
+
+
+def test_reject_loop_without_back_edge():
+    raw = make_loop_graph()
+    raw["edges"] = [edge for edge in raw["edges"] if edge["id"] != "e3"]
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    messages = " ".join(exc.value.errors)
+    assert "连回循环节点的回边" in messages and "tool-body 没有回到循环节点的路径" in messages
+
+
+def test_reject_loop_body_leaking_to_exit_target():
+    raw = make_loop_graph()
+    raw["edges"].append({"id": "e5", "source": "tool-body", "target": "tool-exit"})
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("退出路径只能由循环节点出发" in error for error in exc.value.errors)
+
+
+def test_reject_nested_loop_in_body():
+    raw = make_loop_graph()
+    raw["nodes"].append({
+        "id": "loop-2", "type": "loop", "name": "内层循环", "position": {"x": 2, "y": 0},
+        "config": {"mode": "while", "continueExpression": "{{loop-2.index}} < 2",
+                   "maxIterations": 3, "bodyTarget": "tool-body", "exitTarget": "loop-1"},
+        "retry": {"max_retries": 0, "backoff": "1s", "timeout": 30, "on_error": "stop"},
+    })
+    raw["edges"] = [
+        edge for edge in raw["edges"] if edge["id"] != "e3"
+    ] + [
+        {"id": "e5", "source": "tool-body", "target": "loop-2"},
+        {"id": "e6", "source": "loop-2", "target": "loop-1"},
+    ]
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("不支持嵌套循环" in error and "loop-2" in error for error in exc.value.errors)
+
+
+def test_reject_trigger_inside_loop_body():
+    raw = make_loop_graph()
+    raw["nodes"][2]["id"] = "tool-body"
+    raw["nodes"][1]["config"]["bodyTarget"] = "trigger-1"
+    raw["edges"] = [
+        {"id": "e2", "source": "loop-1", "target": "trigger-1"},
+        {"id": "e3", "source": "trigger-1", "target": "loop-1"},
+        {"id": "e4", "source": "loop-1", "target": "tool-exit"},
+    ]
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("循环体内不能包含触发器" in error for error in exc.value.errors)
+
+
+def test_reject_loop_bad_config_and_missing_edges():
+    raw = make_loop_graph()
+    raw["nodes"][1]["config"] = {
+        "mode": "foreach",
+        "continueExpression": "index >",
+        "maxIterations": 0,
+        "bodyTarget": "tool-exit",
+        "exitTarget": "",
+    }
+    raw["edges"] = [edge for edge in raw["edges"] if edge["id"] not in ("e2", "e4")]
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    messages = " ".join(exc.value.errors)
+    assert "mode=while" in messages
+    assert "语法错误" in messages
+    assert "1-100" in messages
+    assert "退出目标（exitTarget）" in messages
+
+
+def test_reject_extra_loop_out_edge():
+    raw = make_loop_graph()
+    raw["nodes"].append(_tool("tool-extra", "多余出口"))
+    raw["edges"].append({"id": "e5", "source": "loop-1", "target": "tool-extra"})
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("tool-extra 的连线未配置" in error for error in exc.value.errors)
+
+
+def test_reject_illegal_cycle_unrelated_to_loop():
+    raw = {
+        "version": 1,
+        "variables": [],
+        "nodes": [_trigger(), _tool("tool-x", "X"), _tool("tool-y", "Y")],
+        "edges": [
+            {"id": "e1", "source": "trigger-1", "target": "tool-x"},
+            {"id": "e2", "source": "tool-x", "target": "tool-y"},
+            {"id": "e3", "source": "tool-y", "target": "tool-x"},
+        ],
+    }
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("非法循环依赖" in error for error in exc.value.errors)
