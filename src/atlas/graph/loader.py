@@ -25,6 +25,7 @@ from atlas.harness.base import ActionRequest, ActionStatus
 from atlas.harness.registry import AdapterRegistry
 from atlas.llm.decision import get_decision_client
 from atlas.shop.adapter import ShopHarnessAdapter
+from .conditions import ConditionEvalError, evaluate_expression
 from .dsl import GraphDSL, NodeDSL
 
 _TEMPLATE_RE = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
@@ -110,6 +111,7 @@ def _make_executor(
                     "payload": trigger_payload,
                 }
             }
+            message = f"{node.id}({node.type}): executed"
         elif node.type == "ai_decision":
             payload = trigger_payload or {}
             prompt = interpolate(node.config.get("promptTemplate", ""), context)
@@ -123,8 +125,13 @@ def _make_executor(
                 limit=limit,
             )
             output = {"decision": result, "prompt_rendered": prompt}
+            message = f"{node.id}({node.type}): executed"
+        elif node.type == "condition":
+            output = _execute_condition(node, state, context)
+            message = f"{node.id}: branch={output['branch']} → {output['target']}"
         else:
             output = _execute_tool(node, context, registry)
+            message = f"{node.id}({node.type}): executed"
 
         outputs = {**state["outputs"], node.id: output}
         emit({"type": "node_end", "node_id": node.id, "node_type": node.type, "output": output})
@@ -132,10 +139,42 @@ def _make_executor(
             "variables": state["variables"],
             "outputs": outputs,
             "status": "running",
-            "messages": [f"{node.id}({node.type}): executed"],
+            "messages": [message],
         }
 
     return execute
+
+
+def _execute_condition(node: NodeDSL, state: GraphState, context: dict[str, Any]) -> dict[str, Any]:
+    """按 branches 顺序短路求值（04 §5.2）；异常 fail-safe 走 defaultTarget。"""
+    evaluation: list[dict[str, Any]] = []
+    errors: list[str] = []
+    target: str | None = None
+    branch = "__default__"
+    for item in node.config.get("branches", []):
+        label, expression = item["label"], item["expression"]
+        try:
+            result = evaluate_expression(expression, context)
+        except ConditionEvalError as exc:
+            errors.append(f"分支 {label}：{exc}")
+            evaluation.append({"label": label, "expression": expression, "result": None})
+            continue
+        if not isinstance(result, bool):
+            errors.append(f"分支 {label}：表达式结果必须是布尔值，实际为 {type(result).__name__}")
+            evaluation.append({"label": label, "expression": expression, "result": None})
+            continue
+        evaluation.append({"label": label, "expression": expression, "result": result})
+        if result:
+            branch, target = label, item["target"]
+            break
+    if target is None:
+        target = node.config["defaultTarget"]
+    return {
+        "branch": branch,
+        "target": target,
+        "evaluation": evaluation,
+        "expression_errors": errors,
+    }
 
 
 def _execute_tool(
@@ -228,10 +267,22 @@ def compile_graph(
         if node.id not in incoming:
             builder.add_edge(START, node.id)
 
+    condition_ids = {node.id for node in graph.nodes if node.type == "condition"}
+
     outgoing: dict[str, list[str]] = {}
     for edge in graph.edges:
         outgoing.setdefault(edge.source, []).append(edge.target)
-        builder.add_edge(edge.source, edge.target)
+        if edge.source not in condition_ids:
+            # condition 出边全部改走 conditional edges，混用会导致双路激活
+            builder.add_edge(edge.source, edge.target)
+
+    for condition_id in condition_ids:
+        targets = outgoing.get(condition_id, [])
+
+        def route(state: GraphState, cid: str = condition_id) -> str:
+            return state["outputs"][cid]["target"]
+
+        builder.add_conditional_edges(condition_id, route, {target: target for target in targets})
 
     for node in graph.nodes:
         if node.id not in outgoing:
