@@ -795,3 +795,151 @@ def test_reject_human_approval_wrong_edge_count_and_mismatch():
         parse_graph(raw)
     assert any("到节点 tool-other 的连线未配置" in error for error in exc.value.errors)
     assert any("缺少到目标节点 tool-reject 的连线" in error for error in exc.value.errors)
+
+
+def _subgraph_node(node_id: str = "subgraph-1", **config_overrides):
+    config = {
+        "graphId": "graph-7",
+        "inputs": {"order_id": "{{trigger-1.context.payload.order_id}}"},
+    }
+    config.update(config_overrides)
+    return {
+        "id": node_id, "type": "subgraph", "name": "子流程",
+        "position": {"x": 2, "y": 0}, "config": config,
+        "retry": {"max_retries": 0, "backoff": "1s", "timeout": 30, "on_error": "stop"},
+    }
+
+
+def make_subgraph_graph(**overrides):
+    graph = {
+        "version": 1,
+        "variables": [],
+        "nodes": [
+            {"id": "trigger-1", "type": "trigger", "name": "t",
+             "config": {"triggerType": "manual"}},
+            _subgraph_node(),
+            {"id": "tool-after", "type": "tool_call", "name": "后继",
+             "config": {"tool": "op-after"}},
+        ],
+        "edges": [
+            {"id": "e1", "source": "trigger-1", "target": "subgraph-1"},
+            {"id": "e2", "source": "subgraph-1", "target": "tool-after"},
+        ],
+    }
+    graph.update(overrides)
+    return graph
+
+
+def test_parse_valid_subgraph_graph():
+    graph = parse_graph(make_subgraph_graph())
+    node = next(node for node in graph.nodes if node.type == "subgraph")
+    assert node.config["graphId"] == "graph-7"
+    assert node.config["inputs"]["order_id"] == "{{trigger-1.context.payload.order_id}}"
+
+    # inputs 可省略
+    raw = make_subgraph_graph()
+    raw["nodes"][1] = _subgraph_node()
+    raw["nodes"][1]["config"] = {"graphId": "graph-8"}
+    parse_graph(raw)
+
+
+def test_parse_valid_subgraph_inside_loop_body():
+    raw = make_subgraph_graph()
+    raw["nodes"] = [
+        {"id": "trigger-1", "type": "trigger", "name": "t",
+         "config": {"triggerType": "manual"}},
+        {"id": "loop-1", "type": "loop", "name": "重试循环",
+         "config": {"mode": "while", "continueExpression": "{{loop-1.index}} < 2",
+                    "maxIterations": 3, "bodyTarget": "subgraph-1", "exitTarget": "tool-exit"}},
+        _subgraph_node(),
+        {"id": "tool-body", "type": "tool_call", "name": "循环体",
+         "config": {"tool": "op-body"}},
+        {"id": "tool-exit", "type": "tool_call", "name": "退出",
+         "config": {"tool": "op-exit"}},
+    ]
+    raw["edges"] = [
+        {"id": "e1", "source": "trigger-1", "target": "loop-1"},
+        {"id": "e2", "source": "loop-1", "target": "subgraph-1"},
+        {"id": "e3", "source": "subgraph-1", "target": "tool-body"},
+        {"id": "e4", "source": "tool-body", "target": "loop-1"},
+        {"id": "e5", "source": "loop-1", "target": "tool-exit"},
+    ]
+    parse_graph(raw)  # subgraph 在 loop 体内合法，回边白名单不触发非法环
+
+
+def test_reject_subgraph_missing_or_empty_graph_id():
+    raw = make_subgraph_graph()
+    raw["nodes"][1] = _subgraph_node(graphId=None)
+    raw["nodes"][1]["config"].pop("graphId")
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("必须选择引用的已保存子图（graphId）" in error for error in exc.value.errors)
+
+    raw = make_subgraph_graph()
+    raw["nodes"][1] = _subgraph_node(graphId="   ")
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("必须选择引用的已保存子图（graphId）" in error for error in exc.value.errors)
+
+
+def test_reject_subgraph_bad_inputs():
+    raw = make_subgraph_graph()
+    raw["nodes"][1] = _subgraph_node(inputs=[{"k": "v"}])
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("入参映射（inputs）必须是对象" in error for error in exc.value.errors)
+
+    raw = make_subgraph_graph()
+    raw["nodes"][1] = _subgraph_node(inputs={"": "{{trigger-1.x}}"})
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("入参键名不能为空" in error for error in exc.value.errors)
+
+    raw = make_subgraph_graph()
+    raw["nodes"][1] = _subgraph_node(inputs={"order_id": 123})
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("映射值必须是非空文本" in error for error in exc.value.errors)
+
+    raw = make_subgraph_graph()
+    raw["nodes"][1] = _subgraph_node(inputs={"order_id": "  "})
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("映射值必须是非空文本" in error for error in exc.value.errors)
+
+
+def test_reject_subgraph_edge_cases():
+    # 0 条出边：直连 END
+    raw = make_subgraph_graph()
+    raw["edges"] = [edge for edge in raw["edges"] if edge["id"] != "e2"]
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("必须恰好配置 1 条出边（当前 0 条）" in error for error in exc.value.errors)
+
+    # 2 条出边
+    raw = make_subgraph_graph()
+    raw["nodes"].append({"id": "tool-other", "type": "tool_call", "name": "另一后继",
+                         "config": {"tool": "op-other"}})
+    raw["edges"].append({"id": "e3", "source": "subgraph-1", "target": "tool-other"})
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("必须恰好配置 1 条出边（当前 2 条）" in error for error in exc.value.errors)
+
+    # 自环
+    raw = make_subgraph_graph()
+    raw["edges"] = [edge for edge in raw["edges"] if edge["id"] != "e2"] + [
+        {"id": "e-self", "source": "subgraph-1", "target": "subgraph-1"}
+    ]
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("出边不能指向自身" in error for error in exc.value.errors)
+
+    # 指向不存在节点：通用边校验 + 出边计数双重报错
+    raw = make_subgraph_graph()
+    raw["edges"] = [edge for edge in raw["edges"] if edge["id"] != "e2"] + [
+        {"id": "e-ghost", "source": "subgraph-1", "target": "ghost"}
+    ]
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("target 节点不存在：ghost" in error for error in exc.value.errors)
+    assert any("必须恰好配置 1 条出边（当前 0 条）" in error for error in exc.value.errors)

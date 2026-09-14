@@ -22,6 +22,7 @@ const primitive = {
   cyan6: '#08979c',
   magenta6: '#c41d7f',
   orange6: '#fa8c16',
+  indigo6: '#4f46e5',
   gray800: '#1f2937',
   gray200: '#e5e7eb',
   gray100: '#f5f7fa',
@@ -40,6 +41,7 @@ export const semanticTokens = {
   'color-node-loop': primitive.cyan6,
   'color-node-parallel': primitive.magenta6,
   'color-node-wait': primitive.orange6,
+  'color-node-subgraph': primitive.indigo6,
   'color-node-human': primitive.slate900,
   'color-danger': primitive.red5,
   // 文字

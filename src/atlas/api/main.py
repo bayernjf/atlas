@@ -53,23 +53,44 @@ def graph_validation_handler(_request: Request, exc: GraphValidationError) -> JS
 class GraphStore:
     def __init__(self) -> None:
         self._graphs: dict[str, dict[str, Any]] = {}
+        self._updated_at: dict[str, str] = {}
         self._counter = 0
 
     def save(self, raw: dict[str, Any]) -> str:
         self._counter += 1
         graph_id = f"graph-{self._counter}"
         self._graphs[graph_id] = raw
+        self._updated_at[graph_id] = datetime.now(timezone.utc).isoformat()
         return graph_id
 
     def get(self, graph_id: str) -> dict[str, Any] | None:
         return self._graphs.get(graph_id)
 
+    def list(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": graph_id,
+                "node_count": len(raw.get("nodes", [])),
+                "updated_at": self._updated_at[graph_id],
+            }
+            for graph_id, raw in self._graphs.items()
+        ]
+
     def clear(self) -> None:
         self._graphs = {}
+        self._updated_at = {}
         self._counter = 0
 
 
 _store = GraphStore()
+
+
+def _resolve_saved_graph(graph_id: str):
+    """subgraph 节点 graph_resolver（04 §5.7）：按 id 解析已保存图，缺失抛 KeyError。"""
+    raw = _store.get(graph_id)
+    if raw is None:
+        raise KeyError(graph_id)
+    return parse_graph(raw)
 
 
 class SaveGraphResponse(BaseModel):
@@ -118,6 +139,12 @@ def save_graph(raw: dict[str, Any]) -> SaveGraphResponse:
     return SaveGraphResponse(id=graph_id, version=graph.version)
 
 
+@app.get("/api/graphs")
+def list_graphs() -> dict[str, list[dict[str, Any]]]:
+    """列出已保存图（subgraph 节点选择器数据源，04 §5.7）。"""
+    return {"items": _store.list()}
+
+
 @app.get("/api/graphs/{graph_id}")
 def get_graph(graph_id: str) -> dict[str, Any]:
     raw = _store.get(graph_id)
@@ -132,7 +159,7 @@ def compile_saved_graph(graph_id: str) -> CompileResponse:
     if raw is None:
         raise HTTPException(status_code=404, detail=f"Graph 不存在：{graph_id}")
     graph = parse_graph(raw)
-    compile_graph(graph)
+    compile_graph(graph, graph_id=graph_id, graph_resolver=_resolve_saved_graph)
 
     incoming = {edge.target for edge in graph.edges}
     outgoing = {edge.source for edge in graph.edges}
@@ -161,6 +188,7 @@ def run_saved_graph(graph_id: str, payload: dict[str, Any] | None = None) -> Run
         registry=_demo_registry,
         approval_broker=_approval_broker,
         graph_id=graph_id,
+        graph_resolver=_resolve_saved_graph,
     )
     return RunGraphResponse(id=graph_id, **result)
 
@@ -190,6 +218,7 @@ def run_saved_graph_stream(graph_id: str, payload: dict[str, Any] | None = None)
                     approval_broker=_approval_broker,
                     graph_id=graph_id,
                     emit=emit,
+                    graph_resolver=_resolve_saved_graph,
                 )
                 events.put({"__result__": result})
             except Exception as exc:  # 运行期异常经 SSE error 帧下发，不静默吞线程

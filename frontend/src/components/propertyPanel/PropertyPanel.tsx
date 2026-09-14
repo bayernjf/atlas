@@ -21,6 +21,7 @@ import { ConditionConfig } from './ConditionConfig'
 import { LoopConfig } from './LoopConfig'
 import { ParallelConfig } from './ParallelConfig'
 import { WaitConfig } from './WaitConfig'
+import { SubgraphConfig } from './SubgraphConfig'
 import { HumanApprovalConfig } from './HumanApprovalConfig'
 
 export function PropertyPanel() {
@@ -129,6 +130,13 @@ export function PropertyPanel() {
           />
         )}
         {data.kind === 'wait' && <WaitConfig config={config} update={updateSelectedConfig} />}
+        {data.kind === 'subgraph' && (
+          <SubgraphConfig
+            config={config}
+            update={updateSelectedConfig}
+            variablePaths={variablePaths}
+          />
+        )}
         {data.kind === 'human_approval' && (
           <HumanApprovalConfig
             config={config}

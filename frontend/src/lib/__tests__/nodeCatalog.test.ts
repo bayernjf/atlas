@@ -263,3 +263,36 @@ describe('validateNode', () => {
     expect(sameTarget).toContain('通过目标与拒绝目标不能相同')
   })
 })
+
+describe('subgraph', () => {
+  it('defaults to empty graphId and empty inputs mapping', () => {
+    const config = defaultConfig('subgraph')
+    expect(config.graphId).toBe('')
+    expect(config.inputs).toEqual({})
+  })
+
+  it('accepts a fully configured subgraph node', () => {
+    const valid = node('subgraph', {
+      config: {
+        ...defaultConfig('subgraph'),
+        graphId: 'graph-7',
+        inputs: { order_id: '{{trigger-1.context.payload.order_id}}' },
+      },
+    })
+    expect(validateNode(valid)).toEqual([])
+  })
+
+  it('requires graphId and validates inputs keys/values', () => {
+    expect(validateNode(node('subgraph'))).toContain('必须选择引用的已保存子图')
+
+    const emptyKey = node('subgraph', {
+      config: { graphId: 'graph-7', inputs: { '': '{{trigger-1.x}}' } },
+    })
+    expect(validateNode(emptyKey)).toContain('入参键名不能为空')
+
+    const emptyValue = node('subgraph', {
+      config: { graphId: 'graph-7', inputs: { order_id: '  ' } },
+    })
+    expect(validateNode(emptyValue)).toContain('入参 order_id 的映射值不能为空')
+  })
+})

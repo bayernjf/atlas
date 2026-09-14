@@ -69,7 +69,7 @@ is_idempotent: boolean       # 是否幂等
 
 ```yaml
 id: string                    # 唯一ID
-type: enum[trigger, ai_decision, tool_call, condition, loop, parallel, wait, human_approval]
+type: enum[trigger, ai_decision, tool_call, condition, loop, parallel, wait, subgraph, human_approval]
 name: string
 description: string
 position: {x, y}
@@ -90,6 +90,9 @@ type: object               # 节点类型专属配置；condition 节点 config 
                            #   {summary, approver?, timeoutSeconds: 10-3600 整数, onTimeout: approve|reject(默认reject),
                            #    approvedTarget, rejectedTarget}
                            #   唯一权威见 04 §5.6「human_approval 节点 config 契约」
+                           # subgraph 节点 config 形状：
+                           #   {graphId, inputs?: {<子图入参键>: "<父图 {{路径}}/字面量>"}}
+                           #   唯一权威见 04 §5.7「subgraph 节点 config 契约」
 inputs: 
 source: string           # 变量路径
 required: boolean
@@ -110,12 +113,13 @@ breakpoint: boolean          # 是否断点
 version: 1                   # Graph JSON 版本，当前仅支持 1
 variables:                   # 全局变量（GraphVariable: name/type/value/scope=global）
 nodes:                       # node_schema 节点列表；当前可编译类型：
-                             #   trigger / ai_decision / tool_call / condition / loop / parallel / wait / human_approval（Phase 2 起），
-                             #   其余类型校验拒绝；condition 见 04 §5.2，loop 见 04 §5.3，parallel 见 04 §5.4，wait 见 04 §5.5，human_approval 见 04 §5.6
+                             #   trigger / ai_decision / tool_call / condition / loop / parallel / wait / subgraph / human_approval（Phase 2 起），
+                             #   其余类型校验拒绝；condition 见 04 §5.2，loop 见 04 §5.3，parallel 见 04 §5.4，wait 见 04 §5.5，human_approval 见 04 §5.6，subgraph 见 04 §5.7
 edges:                       # {id, source, target}，端点必须存在且禁止自环；
                              #   仅 loop 循环体回到 loop 节点的回边允许成环（白名单见 04 §5.3）；
                              #   parallel 扇出/汇聚为无环菱形（分支区域规则见 04 §5.4）；
                              #   wait 恰好一条出边且不直连 END（见 04 §5.5）；
+                             #   subgraph 恰好一条普通出边且不直连 END，跨图引用经 graph_resolver 编译期解析（禁自引用/环/深度>3，见 04 §5.7）；
                              #   human_approval 恰好两条出边分别对配 approvedTarget/rejectedTarget，均不直连 END（见 04 §5.6）
 ```
 > 前端序列化 `frontend/src/lib/graphSerializer.ts`（version 1）；后端解析/校验 `atlas.graph.dsl.parse_graph`，错误一次性聚合；编译执行 `atlas.graph.loader.compile_graph/run_graph`。
@@ -251,6 +255,19 @@ output: object          # 该节点产出（决策 dict / 工具 ActionResult �
 # 运行结束（SSE 末帧为 event: result，载荷 {id, status, outputs, traces}）
 type: "run_end"         # 随 run_graph 返回值展开
 ```
+> `node_type` 实际已随 Phase 2 扩展为全部可编译类型（含 subgraph）。subgraph 节点内部子图以 `emit=None` 重入执行，**不产生 node_start/node_end/run_end 事件**；子图 trace 与 outputs 收入 subgraph 节点产出（权威形状见 04 §5.7）。
+
+### `subgraph_node_output` — 字段概览（Phase 2 第六项；subgraph 节点 outputs[id]）
+
+```yaml
+mode: "subgraph"
+graphId: string               # 被引用的已保存图 id
+status: "success" | "failed"  # 子图运行期异常 fail-safe 为 failed，父 run 仍 completed
+error: string                 # 仅 failed
+outputs: object               # 子图全部节点 outputs（key 为子图节点 id），父图经 subgraph-x.outputs.<子节点id>.<键> 引用
+trace: [string]               # 子图 trace 行
+```
+> config 契约（graphId/inputs）与引用校验（自引用/环/深度上限 3/递归图校验）权威见 04 §5.7；运行时重入语义见 06 §6。
 
 ### `nl_generate_request` — 字段概览（W9-W10；`POST /api/nl/generate`）
 

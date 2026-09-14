@@ -85,6 +85,9 @@ function nodeOutputKey(kind: string): string {
       return 'status'
     case 'wait':
       return 'durationSeconds'
+    case 'subgraph':
+      // 子图产出以子图节点 id 为动态键，静态清单只给 outputs 根（04 §5.7）
+      return 'outputs'
     case 'human_approval':
       return 'decision'
     default:

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from atlas.graph.dsl import parse_graph
+import pytest
+
+from atlas.graph.dsl import GraphDSL, GraphValidationError, parse_graph
 from atlas.graph.loader import compile_graph, interpolate, resolve_path, run_graph
 
 
@@ -559,3 +561,265 @@ def test_human_approval_node_start_carries_approval_payload_before_continuation(
     human_index = starts.index(human_start)
     reject_start = next(e for e in starts if e["node_id"] == "tool-reject")
     assert human_index < starts.index(reject_start)
+
+
+# ---------- subgraph（04 §5.7，U23/U24） ----------
+
+def _child_graph(child_id: str = "graph-child"):
+    return child_id, parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "child-trigger", "type": "trigger", "name": "子图触发",
+                 "config": {"triggerType": "manual"}},
+                {"id": "child-tool", "type": "tool_call", "name": "子图工具",
+                 "config": {"tool": "op-child"}},
+            ],
+            "edges": [
+                {"id": "ce1", "source": "child-trigger", "target": "child-tool"},
+            ],
+        }
+    )
+
+
+def _parent_subgraph_graph(child_id: str = "graph-child"):
+    return parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "subgraph-1", "type": "subgraph", "name": "子流程",
+                 "config": {
+                     "graphId": child_id,
+                     "inputs": {"order_id": "{{trigger-1.context.payload.order_id}}"},
+                 }},
+                {"id": "tool-after", "type": "tool_call", "name": "后继",
+                 "config": {
+                     "tool": "op-after",
+                     "params": "单号 {{subgraph-1.outputs.child-trigger.context.payload.order_id}}",
+                 }},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "subgraph-1"},
+                {"id": "e2", "source": "subgraph-1", "target": "tool-after"},
+            ],
+        }
+    )
+
+
+def test_subgraph_runs_child_with_mapped_inputs_and_exposes_outputs():
+    child_id, child = _child_graph()
+    store = {child_id: child}
+    events: list[dict] = []
+
+    result = run_graph(
+        _parent_subgraph_graph(child_id),
+        inputs={"order_id": "X-1", "amount": 1},
+        graph_id="graph-parent",
+        graph_resolver=store.get,
+        emit=events.append,
+    )
+
+    assert result["status"] == "completed"
+    node = result["outputs"]["subgraph-1"]
+    assert node["mode"] == "subgraph"
+    assert node["graphId"] == child_id
+    assert node["status"] == "success"
+    # ① 映射入参到达子图 trigger context.payload
+    child_outputs = node["outputs"]
+    assert set(child_outputs) == {"child-trigger", "child-tool"}
+    assert child_outputs["child-trigger"]["context"]["payload"] == {"order_id": "X-1"}
+    # ② 父图后继经 subgraph-x.outputs.<子节点>.<路径> 引用子图产出，单出边后继恰好执行
+    after = result["outputs"]["tool-after"]
+    assert after["params_rendered"] == "单号 X-1"
+    assert any(f"{child_id} success (2 nodes)" in line for line in result["trace"])
+    # ④ 子图事件不外泄
+    leaked = [event for event in events if str(event.get("node_id", "")).startswith("child-")]
+    assert leaked == []
+    parent_ids = {event["node_id"] for event in events if event["type"] == "node_start"}
+    assert parent_ids == {"trigger-1", "subgraph-1", "tool-after"}
+
+
+class _BoomDecisionClient:
+    def decide_refund(self, **kwargs):
+        raise RuntimeError("boom")
+
+
+def test_subgraph_child_runtime_error_fails_safe_but_parent_completes():
+    child = parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "child-trigger", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "child-ai", "type": "ai_decision", "name": "决策",
+                 "config": {"promptTemplate": "x"}},
+            ],
+            "edges": [{"id": "ce1", "source": "child-trigger", "target": "child-ai"}],
+        }
+    )
+    store = {"graph-boom": child}
+    result = run_graph(
+        _parent_subgraph_graph("graph-boom"),
+        inputs={"order_id": "X-2"},
+        graph_id="graph-parent",
+        graph_resolver=store.get,
+        decision_client=_BoomDecisionClient(),
+    )
+    node = result["outputs"]["subgraph-1"]
+    assert node["status"] == "failed"
+    assert "boom" in node["error"]
+    assert node["outputs"] == {}
+    # fail-safe：父 run 仍 completed，唯一后继照常执行
+    assert result["status"] == "completed"
+    assert "tool-after" in result["outputs"]
+    assert any("graph-boom failed: boom" in line for line in result["trace"])
+
+
+def test_subgraph_inside_loop_body_runs_each_iteration():
+    child_id, child = _child_graph()
+    graph = parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "loop-1", "type": "loop", "name": "重试循环",
+                 "config": {"mode": "while", "continueExpression": "{{loop-1.index}} < 2",
+                            "maxIterations": 3, "bodyTarget": "subgraph-1",
+                            "exitTarget": "tool-exit"}},
+                {"id": "subgraph-1", "type": "subgraph", "name": "子流程",
+                 "config": {"graphId": child_id, "inputs": {}}},
+                {"id": "tool-body", "type": "tool_call", "name": "循环体",
+                 "config": {"tool": "op-body"}},
+                {"id": "tool-exit", "type": "tool_call", "name": "退出",
+                 "config": {"tool": "op-exit"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "loop-1"},
+                {"id": "e2", "source": "loop-1", "target": "subgraph-1"},
+                {"id": "e3", "source": "subgraph-1", "target": "tool-body"},
+                {"id": "e4", "source": "tool-body", "target": "loop-1"},
+                {"id": "e5", "source": "loop-1", "target": "tool-exit"},
+            ],
+        }
+    )
+    result = run_graph(
+        graph, graph_id="graph-parent", graph_resolver={child_id: child}.get
+    )
+    assert result["status"] == "completed"
+    assert result["outputs"]["subgraph-1"]["status"] == "success"
+    assert sum(child_id in line and "success" in line for line in result["trace"]) == 2
+
+
+def test_subgraph_compile_rejects_unresolvable_reference():
+    with pytest.raises(GraphValidationError) as exc:
+        compile_graph(_parent_subgraph_graph("graph-missing"),
+                      graph_id="graph-parent", graph_resolver={}.get)
+    assert any("引用的子图不存在：graph-missing" in e for e in exc.value.errors)
+
+
+def test_subgraph_compile_rejects_without_resolver():
+    with pytest.raises(GraphValidationError) as exc:
+        compile_graph(_parent_subgraph_graph(), graph_id="graph-parent")
+    assert any("子图解析器未注入" in e for e in exc.value.errors)
+
+
+def test_subgraph_compile_rejects_direct_self_reference():
+    graph = _parent_subgraph_graph("graph-self")
+    with pytest.raises(GraphValidationError) as exc:
+        compile_graph(graph, graph_id="graph-self", graph_resolver={"graph-self": graph}.get)
+    assert any("不能直接引用自身" in e for e in exc.value.errors)
+
+
+def test_subgraph_compile_rejects_cross_graph_cycle():
+    # A(parent)→B→A：B 内含 subgraph 引用 graph-a
+    _, child_b = _child_graph("graph-b")
+    graph_b = parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "b-trigger", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "b-sub", "type": "subgraph", "name": "引用A",
+                 "config": {"graphId": "graph-a", "inputs": {}}},
+                {"id": "b-tool", "type": "tool_call", "name": "后继",
+                 "config": {"tool": "op-b"}},
+            ],
+            "edges": [
+                {"id": "be1", "source": "b-trigger", "target": "b-sub"},
+                {"id": "be2", "source": "b-sub", "target": "b-tool"},
+            ],
+        }
+    )
+    graph_a = _parent_subgraph_graph("graph-b")
+    store = {"graph-a": graph_a, "graph-b": graph_b}
+    with pytest.raises(GraphValidationError) as exc:
+        compile_graph(graph_a, graph_id="graph-a", graph_resolver=store.get)
+    assert any("跨图引用环" in e and "graph-a → graph-b → graph-a" in e for e in exc.value.errors)
+
+
+def _chain_graph(graph_id: str, ref: str | None):
+    nodes = [
+        {"id": f"{graph_id}-trigger", "type": "trigger", "name": "t",
+         "config": {"triggerType": "manual"}},
+    ]
+    edges: list[dict] = []
+    if ref is not None:
+        nodes.append({"id": f"{graph_id}-sub", "type": "subgraph", "name": "子",
+                      "config": {"graphId": ref, "inputs": {}}})
+        nodes.append({"id": f"{graph_id}-after", "type": "tool_call", "name": "后继",
+                      "config": {"tool": "op"}})
+        edges = [
+            {"id": f"{graph_id}-e1", "source": f"{graph_id}-trigger", "target": f"{graph_id}-sub"},
+            {"id": f"{graph_id}-e2", "source": f"{graph_id}-sub", "target": f"{graph_id}-after"},
+        ]
+    return parse_graph({"version": 1, "variables": [], "nodes": nodes, "edges": edges})
+
+
+def test_subgraph_depth_three_allowed_four_rejected():
+    # g0→g1→g2→g3：深度恰好 3 合法
+    store = {
+        "g1": _chain_graph("g1", "g2"),
+        "g2": _chain_graph("g2", "g3"),
+        "g3": _chain_graph("g3", None),
+    }
+    compile_graph(_chain_graph("g0", "g1"), graph_id="g0", graph_resolver=store.get)
+
+    # 再加一层 g3→g4：g0 编译时在深度 3 的节点引用 g4 被拒
+    store["g3"] = _chain_graph("g3", "g4")
+    store["g4"] = _chain_graph("g4", None)
+    with pytest.raises(GraphValidationError) as exc:
+        compile_graph(_chain_graph("g0", "g1"), graph_id="g0", graph_resolver=store.get)
+    assert any("嵌套深度超过上限 3" in e for e in exc.value.errors)
+
+
+def test_subgraph_compile_aggregates_child_validation_errors():
+    # 手工构造 GraphDSL 级非法图（缺出边的 wait；parse 阶段无法生成）
+    raw_invalid = {
+        "version": 1,
+        "variables": [],
+        "nodes": [
+            {"id": "child-trigger", "type": "trigger", "name": "t",
+             "position": {"x": 0, "y": 0}, "config": {"triggerType": "manual"}},
+            {"id": "child-wait", "type": "wait", "name": "等待",
+             "position": {"x": 1, "y": 0},
+             "config": {"waitType": "duration", "durationSeconds": 2}},
+        ],
+        "edges": [],
+    }
+    bad_child = GraphDSL.model_validate(raw_invalid)
+    store = {"graph-bad-child": bad_child}
+    with pytest.raises(GraphValidationError) as exc:
+        compile_graph(
+            _parent_subgraph_graph("graph-bad-child"),
+            graph_id="graph-parent",
+            graph_resolver=store.get,
+        )
+    assert any(e.startswith("子图 graph-bad-child：") for e in exc.value.errors)

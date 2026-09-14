@@ -104,8 +104,9 @@ def test_llm_prompt_advertises_wait_kind_and_config(monkeypatch):
     generate_graph("任意需求")
     system = captured["system"]
     assert "/wait" in system
+    assert "/subgraph" in system
     assert "/human_approval" in system
-    assert "八类" in system
+    assert "九类" in system
     assert "waitType" in system
     assert "durationSeconds" in system
     assert "1-600 的整数秒" in system
@@ -115,3 +116,26 @@ def test_llm_prompt_advertises_wait_kind_and_config(monkeypatch):
     assert "approvedTarget" in system
     assert "rejectedTarget" in system
     assert "恰好两条出边" in system
+
+
+def test_llm_prompt_advertises_subgraph_kind_and_config(monkeypatch):
+    import litellm
+
+    captured: dict[str, str] = {}
+
+    def _fake_completion(*, model, messages, temperature):  # noqa: ANN001
+        captured["system"] = messages[0]["content"]
+        return {"choices": [{"message": {"content": "{}"}}]}
+
+    monkeypatch.setattr(litellm, "completion", _fake_completion)
+    monkeypatch.setenv("LITELLM_MODEL", "fake-model")
+
+    generate_graph("任意需求")
+    system = captured["system"]
+    assert "/subgraph" in system
+    assert "九类" in system
+    assert "graphId" in system
+    assert "inputs" in system
+    assert "已保存图 id" in system
+    assert "不要凭空捏造 id" in system
+    assert "恰好配置一条出边" in system

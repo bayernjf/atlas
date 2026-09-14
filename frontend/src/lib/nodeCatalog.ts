@@ -8,7 +8,7 @@
 import { token } from '../theme/tokens'
 import { validateExpression } from './conditions'
 
-export const NODE_KINDS = ['trigger', 'ai_decision', 'tool_call', 'condition', 'loop', 'parallel', 'wait', 'human_approval'] as const
+export const NODE_KINDS = ['trigger', 'ai_decision', 'tool_call', 'condition', 'loop', 'parallel', 'wait', 'subgraph', 'human_approval'] as const
 export type NodeKind = (typeof NODE_KINDS)[number]
 
 export const MAX_LOOP_ITERATIONS = 100
@@ -71,6 +71,9 @@ export type NodeConfig = {
   // wait（04 §5.5；v1 仅定时等待，事件等待缓做 docs/14 D19；出边等图级校验由后端 422 兜底）
   waitType?: 'duration'
   durationSeconds?: number
+  // subgraph（04 §5.7；v1 引用已保存图，版本钉版缓做 docs/14 D21；出边等图级校验由后端 422 兜底）
+  graphId?: string
+  inputs?: Record<string, string>
   // human_approval（04 §5.6；v1 进程内审批信号，持久化中断缓做 docs/14 D20；出边等图级校验由后端 422 兜底）
   summary?: string
   approver?: string
@@ -97,6 +100,11 @@ export const NODE_CATALOG: Record<NodeKind, { label: string; description: string
   loop: { label: '循环', description: '条件为真时重复执行循环体，达最大次数自动退出', color: token('color-node-loop') },
   parallel: { label: '并行', description: '同时执行多个分支，汇聚后继续（全部成功/全部完成）', color: token('color-node-parallel') },
   wait: { label: '等待', description: '挂起指定时长后继续（1-600 秒）；事件等待暂不支持', color: token('color-node-wait') },
+  subgraph: {
+    label: '子图',
+    description: '引用一张已保存的图作为子流程执行，可映射入参并引用其产出',
+    color: token('color-node-subgraph'),
+  },
   human_approval: {
     label: '人机协作',
     description: '暂停并请求人工审批，超时自动通过/拒绝（10-3600 秒）',
@@ -133,6 +141,8 @@ export function defaultConfig(kind: NodeKind): NodeConfig {
       }
     case 'wait':
       return { waitType: 'duration', durationSeconds: 5 }
+    case 'subgraph':
+      return { graphId: '', inputs: {} }
     case 'human_approval':
       return {
         summary: '',
@@ -251,6 +261,17 @@ export function validateNode(data: EditorNodeData): string[] {
       if (seconds === undefined || !Number.isInteger(seconds) || seconds < MIN_WAIT_SECONDS || seconds > MAX_WAIT_SECONDS) {
         errors.push(`等待时长需为 ${MIN_WAIT_SECONDS}-${MAX_WAIT_SECONDS} 秒的整数`)
       }
+      break
+    }
+    case 'subgraph': {
+      if (!config.graphId?.trim()) errors.push('必须选择引用的已保存子图')
+      const keys = new Set<string>()
+      Object.entries(config.inputs ?? {}).forEach(([key, value]) => {
+        if (!key.trim()) errors.push('入参键名不能为空')
+        else if (keys.has(key)) errors.push(`入参键名重复：${key}`)
+        else keys.add(key)
+        if (!value.trim()) errors.push(`入参 ${key || '(空键)'} 的映射值不能为空`)
+      })
       break
     }
     case 'human_approval': {
