@@ -62,3 +62,28 @@ def test_llm_prompt_advertises_loop_kind_and_config(monkeypatch):
     assert "bodyTarget" in system
     assert "exitTarget" in system
     assert "回到该 loop 节点的回边" in system
+
+
+def test_llm_prompt_advertises_parallel_kind_and_config(monkeypatch):
+    import litellm
+
+    captured: dict[str, str] = {}
+
+    def _fake_completion(*, model, messages, temperature):  # noqa: ANN001
+        captured["system"] = messages[0]["content"]
+        return {"choices": [{"message": {"content": "{}"}}]}
+
+    monkeypatch.setattr(litellm, "completion", _fake_completion)
+    monkeypatch.setenv("LITELLM_MODEL", "fake-model")
+
+    generate_graph("任意需求")
+    system = captured["system"]
+    assert "parallel" in system
+    assert "joinStrategy" in system
+    assert "all_success" in system
+    assert "all_completed" in system
+    assert "joinTarget" in system
+    assert "2-10 个" in system
+    assert "不直连结束" in system
+    assert "不得交叉" in system
+    assert "不得再嵌套 parallel" in system
