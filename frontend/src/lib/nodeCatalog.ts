@@ -8,10 +8,14 @@
 import { token } from '../theme/tokens'
 import { validateExpression } from './conditions'
 
-export const NODE_KINDS = ['trigger', 'ai_decision', 'tool_call', 'condition', 'loop'] as const
+export const NODE_KINDS = ['trigger', 'ai_decision', 'tool_call', 'condition', 'loop', 'parallel'] as const
 export type NodeKind = (typeof NODE_KINDS)[number]
 
 export const MAX_LOOP_ITERATIONS = 100
+export const MIN_PARALLEL_BRANCHES = 2
+export const MAX_PARALLEL_BRANCHES = 10
+export const PARALLEL_JOIN_STRATEGIES = ['all_success', 'all_completed'] as const
+export type ParallelJoinStrategy = (typeof PARALLEL_JOIN_STRATEGIES)[number]
 
 export const ON_ERROR_STRATEGIES = ['stop', 'continue', 'jump_to'] as const
 export type OnErrorStrategy = (typeof ON_ERROR_STRATEGIES)[number]
@@ -29,6 +33,11 @@ export type ConditionBranch = {
   target: string
 }
 
+export type ParallelBranch = {
+  label: string
+  target: string
+}
+
 export type NodeConfig = {
   // trigger
   triggerType?: 'manual' | 'schedule' | 'webhook'
@@ -42,7 +51,7 @@ export type NodeConfig = {
   tool?: string
   params?: string
   // condition（04 §5.2；target 存在性/出边覆盖等图级校验由后端 422 兜底）
-  branches?: ConditionBranch[]
+  branches?: ConditionBranch[] | ParallelBranch[]
   defaultTarget?: string
   // loop（04 §5.3；v1 仅 while 条件循环；回边/出边等图级校验由后端 422 兜底）
   mode?: 'while'
@@ -50,6 +59,9 @@ export type NodeConfig = {
   maxIterations?: number
   bodyTarget?: string
   exitTarget?: string
+  // parallel（04 §5.4；v1 静态扇出/汇聚；区域拓扑等图级校验由后端 422 兜底）
+  joinStrategy?: ParallelJoinStrategy
+  joinTarget?: string
 }
 
 export type EditorNodeData = {
@@ -67,6 +79,7 @@ export const NODE_CATALOG: Record<NodeKind, { label: string; description: string
   tool_call: { label: '工具调用', description: '经 Harness 执行外部平台操作', color: token('color-primary') },
   condition: { label: '条件分支', description: '按规则表达式选择执行路径，默认分支必填', color: token('color-node-condition') },
   loop: { label: '循环', description: '条件为真时重复执行循环体，达最大次数自动退出', color: token('color-node-loop') },
+  parallel: { label: '并行', description: '同时执行多个分支，汇聚后继续（全部成功/全部完成）', color: token('color-node-parallel') },
 }
 
 export function defaultConfig(kind: NodeKind): NodeConfig {
@@ -86,6 +99,15 @@ export function defaultConfig(kind: NodeKind): NodeConfig {
         maxIterations: 10,
         bodyTarget: '',
         exitTarget: '',
+      }
+    case 'parallel':
+      return {
+        joinStrategy: 'all_success',
+        branches: [
+          { label: '', target: '' },
+          { label: '', target: '' },
+        ],
+        joinTarget: '',
       }
   }
 }
@@ -124,7 +146,7 @@ export function validateNode(data: EditorNodeData): string[] {
       if (!config.tool?.trim()) errors.push('工具调用必须选择工具')
       break
     case 'condition': {
-      const branches = config.branches ?? []
+      const branches = (config.branches ?? []) as ConditionBranch[]
       if (branches.length === 0) errors.push('条件节点至少需要一个分支')
       const labels = new Set<string>()
       const targets = new Set<string>()
@@ -164,6 +186,29 @@ export function validateNode(data: EditorNodeData): string[] {
       if (!config.exitTarget?.trim()) errors.push('必须选择退出目标')
       if (config.bodyTarget && config.bodyTarget === config.exitTarget) {
         errors.push('循环体入口与退出目标不能相同')
+      }
+      break
+    }
+    case 'parallel': {
+      const branches = (config.branches ?? []) as ParallelBranch[]
+      if (branches.length < MIN_PARALLEL_BRANCHES || branches.length > MAX_PARALLEL_BRANCHES) {
+        errors.push(`分支数需为 ${MIN_PARALLEL_BRANCHES}-${MAX_PARALLEL_BRANCHES} 个`)
+      }
+      const labels = new Set<string>()
+      const targets = new Set<string>()
+      branches.forEach((branch, index) => {
+        const tag = branch.label?.trim() || `第 ${index + 1} 个分支`
+        if (!branch.label?.trim()) errors.push(`第 ${index + 1} 个分支名称不能为空`)
+        else if (labels.has(branch.label)) errors.push(`分支名称重复：${branch.label}`)
+        else labels.add(branch.label)
+        if (!branch.target?.trim()) errors.push(`分支 ${tag} 必须选择目标节点`)
+        else if (targets.has(branch.target)) errors.push(`分支目标重复：${branch.target}`)
+        else targets.add(branch.target)
+      })
+      if (!config.joinTarget?.trim()) {
+        errors.push('必须选择汇聚目标')
+      } else if (targets.has(config.joinTarget)) {
+        errors.push('汇聚目标不能与任一分支目标相同')
       }
       break
     }

@@ -321,3 +321,202 @@ def test_reject_illegal_cycle_unrelated_to_loop():
     with pytest.raises(GraphValidationError) as exc:
         parse_graph(raw)
     assert any("非法循环依赖" in error for error in exc.value.errors)
+
+
+def _parallel_node(node_id: str = "parallel-1", **config_overrides) -> dict:
+    config = {
+        "joinStrategy": "all_success",
+        "branches": [{"label": "分支A", "target": "tool-a"}, {"label": "分支B", "target": "tool-b"}],
+        "joinTarget": "tool-join",
+    }
+    config.update(config_overrides)
+    return {
+        "id": node_id, "type": "parallel", "name": "并行", "position": {"x": 1, "y": 0},
+        "config": config,
+        "retry": {"max_retries": 0, "backoff": "1s", "timeout": 30, "on_error": "stop"},
+    }
+
+
+def make_parallel_graph(**overrides):
+    graph = {
+        "version": 1,
+        "variables": [],
+        "nodes": [
+            _trigger(),
+            _parallel_node(),
+            _tool("tool-a", "分支A操作"),
+            _tool("tool-b", "分支B操作"),
+            _tool("tool-join", "汇聚后操作"),
+        ],
+        "edges": [
+            {"id": "e1", "source": "trigger-1", "target": "parallel-1"},
+            {"id": "e2", "source": "parallel-1", "target": "tool-a"},
+            {"id": "e3", "source": "parallel-1", "target": "tool-b"},
+            {"id": "e4", "source": "tool-a", "target": "tool-join"},
+            {"id": "e5", "source": "tool-b", "target": "tool-join"},
+        ],
+    }
+    graph.update(overrides)
+    return graph
+
+
+def test_parse_valid_parallel_graph():
+    graph = parse_graph(make_parallel_graph())
+    parallel = next(node for node in graph.nodes if node.type == "parallel")
+    assert parallel.config["joinTarget"] == "tool-join"
+    assert [branch["target"] for branch in parallel.config["branches"]] == ["tool-a", "tool-b"]
+
+
+def test_parse_valid_parallel_region_with_condition():
+    raw = make_parallel_graph()
+    raw["nodes"][3] = {
+        "id": "cond-b", "type": "condition", "name": "B 内条件", "position": {"x": 2, "y": 1},
+        "config": {
+            "branches": [{"label": "大额", "expression": "{{global.amount}} > 100", "target": "tool-b1"}],
+            "defaultTarget": "tool-b2",
+        },
+        "retry": {"max_retries": 0, "backoff": "1s", "timeout": 30, "on_error": "stop"},
+    }
+    raw["nodes"].extend([_tool("tool-b1", "B1"), _tool("tool-b2", "B2")])
+    raw["edges"] = [
+        edge for edge in raw["edges"] if edge["id"] != "e5"
+    ] + [
+        {"id": "e6", "source": "parallel-1", "target": "cond-b"},
+        {"id": "e7", "source": "cond-b", "target": "tool-b1"},
+        {"id": "e8", "source": "cond-b", "target": "tool-b2"},
+        {"id": "e9", "source": "tool-b1", "target": "tool-join"},
+        {"id": "e10", "source": "tool-b2", "target": "tool-join"},
+    ]
+    # e3 原指向 tool-b，改指 cond-b
+    raw["edges"] = [
+        {"id": "e3", "source": "parallel-1", "target": "cond-b"} if edge["id"] == "e3" else edge
+        for edge in raw["edges"]
+    ]
+    raw["nodes"][1]["config"]["branches"][1]["target"] = "cond-b"
+    parse_graph(raw)  # 不抛异常即可
+
+
+def test_parse_valid_parallel_region_with_self_contained_loop():
+    raw = make_parallel_graph()
+    raw["nodes"] = [node for node in raw["nodes"] if node["id"] != "tool-b"]
+    raw["nodes"].append({
+        "id": "loop-1", "type": "loop", "name": "分支内重试", "position": {"x": 3, "y": 0},
+        "config": {"mode": "while", "continueExpression": "{{loop-1.index}} < 2",
+                   "maxIterations": 3, "bodyTarget": "tool-body", "exitTarget": "tool-join"},
+        "retry": {"max_retries": 0, "backoff": "1s", "timeout": 30, "on_error": "stop"},
+    })
+    raw["nodes"].append(_tool("tool-body", "重试体"))
+    raw["edges"] = [
+        edge for edge in raw["edges"] if edge["id"] != "e5"
+    ] + [
+        {"id": "e6", "source": "parallel-1", "target": "loop-1"},
+        {"id": "e7", "source": "loop-1", "target": "tool-body"},
+        {"id": "e8", "source": "tool-body", "target": "loop-1"},
+        {"id": "e9", "source": "loop-1", "target": "tool-join"},
+    ]
+    raw["edges"] = [
+        {"id": "e3", "source": "parallel-1", "target": "loop-1"} if edge["id"] == "e3" else edge
+        for edge in raw["edges"]
+    ]
+    raw["nodes"][1]["config"]["branches"][1]["target"] = "loop-1"
+    parse_graph(raw)  # 区域内自包含 loop 合法，回边白名单不触发非法环
+
+
+def test_reject_parallel_bad_strategy_count_labels_targets():
+    raw = make_parallel_graph()
+    raw["nodes"][1] = _parallel_node(
+        joinStrategy="any_success",
+        branches=[{"label": "  ", "target": "tool-a"}],
+        joinTarget="tool-a",
+    )
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    messages = " ".join(exc.value.errors)
+    assert "all_success" in messages
+    assert "2-10" in messages
+    assert "名称（label）不能为空" in messages
+    assert "不能与汇聚目标相同" in messages
+
+
+def test_reject_parallel_missing_join_self_join_and_edge_mismatch():
+    raw = make_parallel_graph()
+    raw["nodes"][1]["config"]["joinTarget"] = "parallel-1"
+    raw["edges"].append({"id": "e6", "source": "parallel-1", "target": "tool-join"})
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    messages = " ".join(exc.value.errors)
+    assert "汇聚目标不能指向自身" in messages
+    assert "tool-join 的连线未配置分支" in messages
+
+
+def test_reject_parallel_join_incoming_from_outside_region():
+    # joinTarget 额外接收一条不经过并行区域的旁路：trigger→sibling→join
+    raw = make_parallel_graph()
+    raw["nodes"].append(_tool("tool-sibling", "区域外旁路"))
+    raw["edges"].extend([
+        {"id": "e6", "source": "trigger-1", "target": "tool-sibling"},
+        {"id": "e7", "source": "tool-sibling", "target": "tool-join"},
+    ])
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("只能接收分支区域内的连线" in error and "tool-sibling" in error
+               for error in exc.value.errors)
+
+
+def test_reject_parallel_region_edge_back_to_parallel_node():
+    # 区域内节点回边到 parallel 节点本身：成环且不属于区域合法出口
+    raw = make_parallel_graph()
+    raw["edges"].append({"id": "e6", "source": "tool-a", "target": "parallel-1"})
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("交叉或外泄" in error for error in exc.value.errors)
+
+
+def test_reject_nested_parallel_and_trigger_in_region():
+    nested = make_parallel_graph()
+    nested["nodes"][1]["config"]["branches"][0]["target"] = "parallel-2"
+    nested["nodes"][2]["id"] = "parallel-2"
+    nested["nodes"][2] = _parallel_node("parallel-2", joinTarget="tool-join")
+    nested["edges"] = [
+        {"id": "e2", "source": "parallel-1", "target": "parallel-2"} if e["id"] == "e2" else e
+        for e in nested["edges"]
+    ] + [{"id": "e6", "source": "parallel-2", "target": "tool-a"}]
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(nested)
+    assert any("不支持嵌套并行" in error for error in exc.value.errors)
+
+    triggered = make_parallel_graph()
+    triggered["nodes"][1]["config"]["branches"][0]["target"] = "trigger-2"
+    triggered["nodes"].append({
+        "id": "trigger-2", "type": "trigger", "name": "区内触发", "position": {"x": 2, "y": 0},
+        "config": {"triggerType": "manual", "cron": "", "webhookUrl": ""},
+        "retry": {"max_retries": 0, "backoff": "1s", "timeout": 30, "on_error": "stop"},
+    })
+    triggered["edges"] = [
+        {"id": "e2", "source": "parallel-1", "target": "trigger-2"} if e["id"] == "e2" else e
+        for e in triggered["edges"]
+    ] + [{"id": "e6", "source": "trigger-2", "target": "tool-join"}]
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(triggered)
+    assert any("分支区域内不能包含触发器" in error for error in exc.value.errors)
+
+
+def test_reject_parallel_branch_unable_to_reach_join():
+    raw = make_parallel_graph()
+    raw["edges"] = [edge for edge in raw["edges"] if edge["id"] != "e4"]
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    messages = " ".join(exc.value.errors)
+    assert "tool-a 不存在到达汇聚目标" in messages
+
+
+def test_reject_parallel_duplicate_label_and_target():
+    raw = make_parallel_graph()
+    raw["nodes"][1]["config"]["branches"][1]["label"] = "分支A"
+    raw["nodes"][1]["config"]["branches"][1]["target"] = "tool-a"
+    raw["edges"] = [edge for edge in raw["edges"] if edge["id"] != "e5"]
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    messages = " ".join(exc.value.errors)
+    assert "分支名称重复：分支A" in messages
+    assert "分支目标重复：tool-a" in messages

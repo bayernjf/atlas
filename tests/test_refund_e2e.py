@@ -237,3 +237,64 @@ def test_loop_runs_body_twice_then_refunds_end_to_end():
     assert any("exit (condition_false) after 2 → tool-refund" in line for line in result["trace"])
     assert result["outputs"]["tool-refund"]["result"]["status"] == "refunded"
     assert service.orders["12345"].status == "refunded"
+
+
+def _parallel_shop_graph():
+    """trigger → parallel（拉待处理单 / 转人工审批 两支真实 shop 能力）→ 汇聚节点。"""
+    return parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "新退款申请",
+                 "config": {"triggerType": "webhook", "webhookUrl": "/hooks/refund"}},
+                {"id": "parallel-1", "type": "parallel", "name": "并行处置",
+                 "config": {
+                     "joinStrategy": "all_success",
+                     "branches": [
+                         {"label": "拉待处理单", "target": "tool-list"},
+                         {"label": "转人工审批", "target": "tool-human"},
+                     ],
+                     "joinTarget": "tool-join",
+                 }},
+                {"id": "tool-list", "type": "tool_call", "name": "拉单",
+                 "config": {"tool": "shop/list_pending_refunds"}},
+                {"id": "tool-human", "type": "tool_call", "name": "转人工",
+                 "config": {"tool": "shop/request_human_approval"}},
+                {"id": "tool-join", "type": "tool_call", "name": "汇聚通知",
+                 "config": {"tool": "notify-op"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "parallel-1"},
+                {"id": "e2", "source": "parallel-1", "target": "tool-list"},
+                {"id": "e3", "source": "parallel-1", "target": "tool-human"},
+                {"id": "e4", "source": "tool-list", "target": "tool-join"},
+                {"id": "e5", "source": "tool-human", "target": "tool-join"},
+            ],
+        }
+    )
+
+
+def test_parallel_runs_both_shop_capabilities_and_joins_once():
+    service = DemoShopService()
+    events = []
+    result = run_graph(
+        _parallel_shop_graph(),
+        inputs={"order_id": "12345"},
+        registry=_fresh_service_registry(service),
+        emit=events.append,
+    )
+    assert result["status"] == "completed"
+    starts = [event["node_id"] for event in events if event["type"] == "node_start"]
+    assert starts.count("tool-join") == 1
+    assert set(starts) >= {"trigger-1", "parallel-1", "tool-list", "tool-human", "tool-join"}
+
+    parallel_output = result["outputs"]["parallel-1"]
+    assert parallel_output["status"] == "success"
+    assert set(parallel_output["result"]) == {"tool-list", "tool-human"}
+    # 两支并发：转人工分支可能先把 12345 移出待处理列表，断言一支确定仍在的单
+    pending = result["outputs"]["tool-list"]["result"]["orders"]
+    assert any(order["order_id"] == "12346" for order in pending)
+    assert service.orders["12345"].status == "human_review"
+    assert any("fork 2 branches → tool-list, tool-human" in line for line in result["trace"])
+    assert any("joined (all_success) success" in line for line in result["trace"])

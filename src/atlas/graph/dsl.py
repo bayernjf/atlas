@@ -13,9 +13,19 @@ from pydantic import BaseModel, Field
 
 from atlas.graph.conditions import validate_expression
 
-SUPPORTED_NODE_TYPES = ("trigger", "ai_decision", "tool_call", "condition", "loop")
+SUPPORTED_NODE_TYPES = (
+    "trigger",
+    "ai_decision",
+    "tool_call",
+    "condition",
+    "loop",
+    "parallel",
+)
 
 MAX_LOOP_ITERATIONS = 100
+MIN_PARALLEL_BRANCHES = 2
+MAX_PARALLEL_BRANCHES = 10
+PARALLEL_JOIN_STRATEGIES = ("all_success", "all_completed")
 
 NodeType = str
 
@@ -145,6 +155,12 @@ def validate_graph(graph: GraphDSL) -> list[str]:
             )
             errors.extend(loop_errors)
             loop_backedges |= backedges
+
+    for node in graph.nodes:
+        if node.type == "parallel":
+            errors.extend(
+                _validate_parallel_config(node, node_ids, node_types, outgoing, incoming)
+            )
 
     errors.extend(_validate_illegal_cycles(graph, loop_backedges))
     errors.extend(_validate_reachability(graph, node_ids, outgoing))
@@ -315,6 +331,124 @@ def _validate_loop_config(
             errors.append(f"{prefix} 循环体必须有一条连回循环节点的回边")
 
     return errors, backedges
+
+
+def _validate_parallel_config(
+    node: NodeDSL,
+    node_ids: set[str],
+    node_types: dict[str, str],
+    outgoing: dict[str, set[str]],
+    incoming: dict[str, set[str]],
+) -> list[str]:
+    """parallel config 与扇出/汇聚拓扑校验（契约 04 §5.4）。"""
+    errors: list[str] = []
+    prefix = f"并行节点 {node.id}"
+    config = node.config
+
+    strategy = config.get("joinStrategy")
+    if strategy not in PARALLEL_JOIN_STRATEGIES:
+        errors.append(
+            f"{prefix} 合并策略（joinStrategy）必须是 "
+            f"{' 或 '.join(PARALLEL_JOIN_STRATEGIES)}"
+        )
+
+    join_target = config.get("joinTarget")
+    if not isinstance(join_target, str) or not join_target.strip():
+        errors.append(f"{prefix} 必须选择汇聚目标（joinTarget）")
+        join_target = None
+    elif join_target == node.id:
+        errors.append(f"{prefix} 汇聚目标不能指向自身")
+    elif join_target not in node_ids:
+        errors.append(f"{prefix} 汇聚目标节点不存在：{join_target}")
+
+    branches = config.get("branches")
+    if not isinstance(branches, list):
+        errors.append(f"{prefix} 分支列表（branches）格式不合法")
+        branches = []
+    elif not MIN_PARALLEL_BRANCHES <= len(branches) <= MAX_PARALLEL_BRANCHES:
+        errors.append(
+            f"{prefix} 分支数需在 {MIN_PARALLEL_BRANCHES}-{MAX_PARALLEL_BRANCHES} 个之间"
+            f"（当前 {len(branches)} 个）"
+        )
+
+    labels: set[str] = set()
+    targets: set[str] = set()
+    valid_entries: set[str] = set()
+    for index, branch in enumerate(branches):
+        if not isinstance(branch, dict):
+            errors.append(f"{prefix} 第 {index + 1} 个分支格式不合法")
+            continue
+        label = branch.get("label")
+        target = branch.get("target")
+        if not isinstance(label, str) or not label.strip():
+            errors.append(f"{prefix} 第 {index + 1} 个分支名称（label）不能为空")
+        elif label in labels:
+            errors.append(f"{prefix} 分支名称重复：{label}")
+        else:
+            labels.add(label)
+        if not isinstance(target, str) or not target.strip():
+            errors.append(f"{prefix} 分支 {label or index + 1} 必须选择目标节点")
+            continue
+        if target == node.id:
+            errors.append(f"{prefix} 分支 {label or index + 1} 不能指向自身")
+        elif target not in node_ids:
+            errors.append(f"{prefix} 分支 {label or index + 1} 的目标节点不存在：{target}")
+        if target in targets:
+            errors.append(f"{prefix} 分支目标重复：{target}")
+        else:
+            targets.add(target)
+        if join_target is not None and target == join_target:
+            errors.append(f"{prefix} 分支 {label or index + 1} 的目标不能与汇聚目标相同")
+        if target in node_ids and target != node.id:
+            valid_entries.add(target)
+
+    edge_targets = outgoing.get(node.id, set())
+    configured = {target for target in targets if target in node_ids and target != node.id}
+    if not edge_targets and configured:
+        errors.append(f"{prefix} 不允许直连结束节点，每个分支都必须有出边")
+    for target in configured:
+        if target not in edge_targets:
+            errors.append(f"{prefix} 缺少到分支节点 {target} 的连线")
+    for extra in edge_targets - configured:
+        errors.append(f"{prefix} 到节点 {extra} 的连线未配置分支（出边数必须等于分支数）")
+
+    if (
+        valid_entries
+        and join_target is not None
+        and join_target in node_ids
+        and join_target != node.id
+    ):
+        region = _bfs(valid_entries, outgoing, stop={node.id, join_target})
+
+        nested = sorted(member for member in region if node_types.get(member) == "parallel")
+        for member in nested:
+            errors.append(f"{prefix} v1 不支持嵌套并行，分支区域内不能包含并行节点：{member}")
+        region_triggers = sorted(member for member in region if node_types.get(member) == "trigger")
+        for member in region_triggers:
+            errors.append(f"{prefix} 分支区域内不能包含触发器节点：{member}")
+
+        for member in sorted(region):
+            for leak in outgoing.get(member, set()) - region - {join_target}:
+                errors.append(
+                    f"{prefix} 分支不得交叉或外泄：区域内节点 {member} 连到了区域外节点 {leak}"
+                )
+
+        for entry in sorted(valid_entries):
+            reachable = _bfs({entry}, outgoing, stop={node.id})
+            if join_target not in reachable:
+                errors.append(f"{prefix} 分支 {entry} 不存在到达汇聚目标 {join_target} 的路径")
+
+        outside = sorted(
+            source
+            for source in incoming.get(join_target, set())
+            if source not in region and source != node.id
+        )
+        for source in outside:
+            errors.append(
+                f"{prefix} 汇聚目标 {join_target} 只能接收分支区域内的连线：{source} 不在区域内"
+            )
+
+    return errors
 
 
 def _bfs(start: set[str], outgoing: dict[str, set[str]], *, stop: set[str]) -> set[str]:

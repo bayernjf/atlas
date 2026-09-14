@@ -7,13 +7,14 @@ BENCHMARK.md Results 表的 Markdown 行。覆盖范围：
 - OODA 主循环吞吐（engine.run_loop，确定性占位节点）
 - Graph 编译时延（graph.compile_graph，退款三节点图）
 - 退款端到端时延（graph.run_graph：触发→规则决策→shop 适配器，不含 LLM）
+- 并行扇出/汇聚时延（graph.run_graph：parallel N=4 分支 fan-out/fan-in，只读能力）
 - Harness 调用开销（权限校验 + 审计 + 适配器分发，不含外部平台耗时）
 - DB ping（opt-in：设置 DATABASE_URL 时测 PostgreSQL 连接 + SELECT 1）
 
 边界（BENCHMARK.md Scope 中本次不测）：
 - LLM 决策 p50/p99 随真实供应商接入补测（规则路径零网络）。
 - Redis 短期记忆 / pgvector 记忆表读写随 11 S1 记忆层接入补测。
-- 并行扇出、长流程内存增长随对应节点/引擎落地补测。
+- 长流程内存增长随递归自动化引擎落地补测。
 
 用法：.venv/bin/python scripts/benchmark.py [--iterations 300]
 """
@@ -62,6 +63,41 @@ def _refund_graph():
             ],
         }
     )
+
+
+def _fanout_graph(branches: int = 4):
+    """trigger → parallel → N 个单节点只读分支 → join 汇聚（04 §5.4）。"""
+    branch_nodes = [
+        {"id": f"tool-b{i}", "type": "tool_call", "name": f"分支 {i}",
+         "config": {"tool": "shop/list_pending_refunds"}}
+        for i in range(1, branches + 1)
+    ]
+    nodes = [
+        {"id": "trigger-1", "type": "trigger", "name": "手动触发",
+         "config": {"triggerType": "manual"}},
+        {"id": "parallel-1", "type": "parallel", "name": "并行扇出",
+         "config": {
+             "joinStrategy": "all_success",
+             "branches": [
+                 {"label": f"分支 {i}", "target": f"tool-b{i}"}
+                 for i in range(1, branches + 1)
+             ],
+             "joinTarget": "tool-join",
+         }},
+        *branch_nodes,
+        {"id": "tool-join", "type": "tool_call", "name": "汇聚后节点",
+         "config": {"tool": "shop/list_pending_refunds"}},
+    ]
+    edges = [{"id": "e-trigger", "source": "trigger-1", "target": "parallel-1"}]
+    edges += [
+        {"id": f"e-fork-{i}", "source": "parallel-1", "target": f"tool-b{i}"}
+        for i in range(1, branches + 1)
+    ]
+    edges += [
+        {"id": f"e-join-{i}", "source": f"tool-b{i}", "target": "tool-join"}
+        for i in range(1, branches + 1)
+    ]
+    return parse_graph({"version": 1, "variables": [], "nodes": nodes, "edges": edges})
 
 
 def _measure(fn: Callable[[], None], iterations: int) -> list[float]:
@@ -147,6 +183,25 @@ def _benchmark_scenarios(iterations: int) -> list[dict[str, str]]:
         "metric": "触发→规则决策→shop 执行 p50/p99 (ms)",
         "value": f"{med:.2f} / {_p99(samples):.2f} ms",
         "notes": "规则决策路径，不含 LLM 网络时延；service.reset 在计时外",
+    })
+
+    fanout_graph = _fanout_graph(branches=4)
+
+    def fanout_once() -> None:
+        service.reset()
+        run_graph(
+            fanout_graph,
+            decision_client=RuleBasedDecisionClient(),
+            registry=registry,
+        )
+
+    samples = _measure(fanout_once, iterations)
+    med = statistics.median(samples)
+    rows.append({
+        "scenario": "Parallel fan-out/fan-in latency (N=4 branches)",
+        "metric": "trigger→parallel→4 只读分支→join 单次运行 p50/p99 (ms)",
+        "value": f"{med:.2f} / {_p99(samples):.2f} ms",
+        "notes": "合成 __join__ 屏障 + 就绪等待超步；分支均为 list_pending_refunds 只读",
     })
 
     adapter = ShopHarnessAdapter(

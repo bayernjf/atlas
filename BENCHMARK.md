@@ -23,7 +23,7 @@ Atlas 性能与容量基准。范围与结果记录表（参照 agent-world 惯�
 - 端到端流程时延（典型审批流程：触发 → AI 决策 → 工具调用 → 完成）
 - 长流程内存/事件日志增长（递归自动化引擎）
 
-2026-09-14 首版基线覆盖：Loop 主循环吞吐、Graph 编译时延、退款端到端时延、Harness 调用开销（+ 可选 DB ping）。**暂不可测、待接入后补**：LLM 决策延迟（随真实供应商，`LITELLM_MODEL`）、Graph 并行扇出（随条件/循环/并行节点，Phase 2）、Redis/pgvector 记忆读写（随 11 S1 记忆层；当前 DB 层仅有 ping 探针）、长流程内存增长（随递归自动化引擎）。
+2026-09-14 首版基线覆盖：Loop 主循环吞吐、Graph 编译时延、退款端到端时延、Harness 调用开销（+ 可选 DB ping）。**暂不可测、待接入后补**：LLM 决策延迟（随真实供应商，`LITELLM_MODEL`）、Redis/pgvector 记忆读写（随 11 S1 记忆层；当前 DB 层仅有 ping 探针）、长流程内存增长（随递归自动化引擎）。**并行扇出节点（parallel）已于 2026-09-14 端到端落地**（04 §5.4），N=4 分支 fan-out/fan-in 基准场景已补入 `scripts/benchmark.py`（见 Results）。
 
 ## Results
 
@@ -33,6 +33,7 @@ Atlas 性能与容量基准。范围与结果记录表（参照 agent-world 惯�
 | 2026-09-14 | 407812e | Graph compile latency | 3 节点退款图单次编译 p50/p99 (ms) | 1.81 / 2.07 ms | DSL→LangGraph StateGraph 装配，进程内 |
 | 2026-09-14 | 407812e | Refund e2e latency（12345 auto-refund） | 触发→规则决策→shop 执行 p50/p99 (ms) | 2.28 / 2.67 ms | 规则决策路径，不含 LLM 网络时延；`service.reset` 在计时外 |
 | 2026-09-14 | 407812e | Harness call overhead | shop/list_pending_refunds 单次调用 p50/p99 (ms) | 0.002 / 0.003 ms | 权限校验+审计+进程内分发，不含外部平台耗时 |
+| 2026-09-14 | 8cf8dd9 | Parallel fan-out/fan-in latency（N=4 branches） | trigger→parallel→4 只读分支→join 单次运行 p50/p99 (ms) | 8.70 / 20.12 ms | 合成 `__join__` 屏障 + 就绪等待超步（p99 含 wait 超步抖动）；分支均为 list_pending_refunds 只读，CPython 3.11.15，macOS 26.5.2 arm64，300 次 |
 
 数值为单机单次基线，仅作后续回归对比锚点，不代表生产容量；跨环境对比需在同一硬件/负载下重跑脚本并追加行。
 

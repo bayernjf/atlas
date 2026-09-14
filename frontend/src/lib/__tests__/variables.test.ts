@@ -70,6 +70,7 @@ describe('listVariablePaths', () => {
       { id: 'tool_call-1', data: { kind: 'tool_call' } },
       { id: 'condition-1', data: { kind: 'condition' } },
       { id: 'loop-1', data: { kind: 'loop' } },
+      { id: 'parallel-1', data: { kind: 'parallel' } },
     ])
     expect(paths).toEqual([
       'global.company_name',
@@ -79,6 +80,7 @@ describe('listVariablePaths', () => {
       'tool_call-1.result',
       'condition-1.branch',
       'loop-1.index',
+      'parallel-1.status',
     ])
   })
 })
