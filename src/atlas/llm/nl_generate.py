@@ -84,10 +84,10 @@ def _generate_with_llm(prompt: str, model: str) -> dict[str, Any] | None:
     system = (
         "你是 Atlas 流程编排助手。把用户的中文需求转成 Graph JSON（只输出 JSON，不要解释）。"
         "结构：{\"version\":1,\"variables\":[{\"name\",\"type\",\"value\",\"scope\":\"global\"}],"
-        "\"nodes\":[{\"id\",\"type\"(trigger/ai_decision/tool_call/condition/loop/parallel),\"name\",\"description\","
+        "\"nodes\":[{\"id\",\"type\"(trigger/ai_decision/tool_call/condition/loop/parallel/wait),\"name\",\"description\","
         "\"position\":{\"x\",\"y\"},\"config\":{...},\"retry\":{\"max_retries\":0,"
         "\"backoff\":\"1s\",\"timeout\":30,\"on_error\":\"stop\"}}],\"edges\":[{\"id\",\"source\",\"target\"}]}。"
-        "节点支持 trigger/ai_decision/tool_call/condition/loop/parallel 六类，流程从触发器开始。"
+        "节点支持 trigger/ai_decision/tool_call/condition/loop/parallel/wait 七类，流程从触发器开始。"
         "condition 节点的 config 为 {\"branches\":[{\"label\",\"expression\",\"target\"}],"
         "\"defaultTarget\"}：branches 按顺序短路，expression 仅支持 {{路径}} 变量引用、"
         "比较运算（> >= < <= == !=）、逻辑运算（&& || !）、括号与数字/字符串/true/false/null 字面量，"
@@ -106,6 +106,9 @@ def _generate_with_llm(prompt: str, model: str) -> dict[str, Any] | None:
         "parallel 节点的出边数恰好等于分支数且目标就是各 branch target，不直连结束；"
         "每个分支沿其内部连线最终必须能到达 joinTarget（分支末端连到 joinTarget），"
         "分支之间不得交叉连线，parallel 区域内不得再嵌套 parallel 节点。"
+        "wait 节点（定时等待）的 config 为 {\"waitType\":\"duration\",\"durationSeconds\"}："
+        "waitType 仅支持 duration（事件等待不支持），durationSeconds 为 1-600 的整数秒常量；"
+        "wait 节点恰好配置一条出边，指向已存在的后继节点，不直连结束。"
     )
     response = litellm.completion(
         model=model,
