@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import os
+import queue
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -19,6 +21,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from atlas.collaboration.approvals import ApprovalBroker
 from atlas.graph.dsl import GraphValidationError, parse_graph
 from atlas.graph.loader import compile_graph, run_graph
 from atlas.harness.base import Permission
@@ -38,6 +41,8 @@ _demo_registry.register(
         granted_permissions={Permission.READ, Permission.WRITE, Permission.DELETE, Permission.FINANCIAL},
     )
 )
+# human_approval 节点的进程内审批信号单例（04 §5.6）
+_approval_broker = ApprovalBroker()
 
 
 @app.exception_handler(GraphValidationError)
@@ -150,32 +155,84 @@ def _load_graph_or_404(graph_id: str):
 @app.post("/api/graphs/{graph_id}/run", response_model=RunGraphResponse)
 def run_saved_graph(graph_id: str, payload: dict[str, Any] | None = None) -> RunGraphResponse:
     graph = _load_graph_or_404(graph_id)
-    result = run_graph(graph, inputs=(payload or {}).get("inputs"), registry=_demo_registry)
+    result = run_graph(
+        graph,
+        inputs=(payload or {}).get("inputs"),
+        registry=_demo_registry,
+        approval_broker=_approval_broker,
+        graph_id=graph_id,
+    )
     return RunGraphResponse(id=graph_id, **result)
 
 
 @app.post("/api/graphs/{graph_id}/run/stream")
 def run_saved_graph_stream(graph_id: str, payload: dict[str, Any] | None = None) -> StreamingResponse:
-    """SSE：node_start/node_end/run_end 实时推送到画布（08 §7.3 验收 5）。"""
+    """SSE：node_start/node_end/run_end 实时推送到画布（08 §7.3 验收 5）。
+
+    run_graph 在后台线程执行、事件经 queue 实时下发（真流式）；
+    human_approval 节点依赖 node_start 在阻塞前到达，前端凭 token 调决策端点放行。
+    """
     graph = _load_graph_or_404(graph_id)
+    inputs = (payload or {}).get("inputs")
 
     def event_stream():
-        queue: list[dict[str, Any]] = []
+        events: queue.Queue[dict[str, Any] | None] = queue.Queue()
 
         def emit(event: dict[str, Any]) -> None:
-            queue.append(event)
+            events.put(event)
 
-        result = run_graph(
-            graph,
-            inputs=(payload or {}).get("inputs"),
-            registry=_demo_registry,
-            emit=emit,
-        )
-        for event in queue:
+        def worker() -> None:
+            try:
+                result = run_graph(
+                    graph,
+                    inputs=inputs,
+                    registry=_demo_registry,
+                    approval_broker=_approval_broker,
+                    graph_id=graph_id,
+                    emit=emit,
+                )
+                events.put({"__result__": result})
+            except Exception as exc:  # 运行期异常经 SSE error 帧下发，不静默吞线程
+                events.put({"__error__": f"{type(exc).__name__}: {exc}"})
+
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+        while True:
+            event = events.get()
+            if event is None:
+                continue
+            if "__result__" in event:
+                yield (
+                    f"event: result\ndata: "
+                    f"{json.dumps({'id': graph_id, **event['__result__']}, ensure_ascii=False)}\n\n"
+                )
+                break
+            if "__error__" in event:
+                yield f"event: error\ndata: {json.dumps({'detail': event['__error__']}, ensure_ascii=False)}\n\n"
+                break
             yield f"event: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
-        yield f"event: result\ndata: {json.dumps({'id': graph_id, **result}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+class ApprovalDecisionRequest(BaseModel):
+    decision: Literal["approved", "rejected"]
+    comment: str = Field(default="", max_length=500)
+
+
+@app.get("/api/approvals")
+def list_approvals() -> dict[str, list[dict[str, Any]]]:
+    """列出当前 pending 的人工审批请求（进程内单例，重启即失）。"""
+    return {"items": _approval_broker.list_pending()}
+
+
+@app.post("/api/approvals/{token}/decision")
+def decide_approval(token: str, request: ApprovalDecisionRequest) -> dict[str, Any]:
+    if _approval_broker.get(token) is None:
+        raise HTTPException(status_code=404, detail=f"审批请求不存在或已清理：{token}")
+    if not _approval_broker.resolve(token, request.decision, comment=request.comment):
+        raise HTTPException(status_code=409, detail="该审批请求已有决策，重复提交不生效")
+    return {"token": token, "decision": request.decision, "resolvedBy": "human"}
 
 
 @app.post("/api/nl/generate")
@@ -202,9 +259,10 @@ def demo_shop_orders() -> dict[str, Any]:
 
 @app.post("/api/demo/reset")
 def demo_reset() -> dict[str, bool]:
-    """重置 Demo 数据（店铺恢复 5 笔种子退款单、清空已保存图），供种子客户从头体验。"""
+    """重置 Demo 数据（店铺恢复 5 笔种子退款单、清空已保存图、释放 pending 审批），供种子客户从头体验。"""
     _demo_shop.reset()
     _store.clear()
+    _approval_broker.reset()
     return {"reset": True}
 
 
