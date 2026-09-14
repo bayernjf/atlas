@@ -72,6 +72,7 @@ describe('listVariablePaths', () => {
       { id: 'loop-1', data: { kind: 'loop' } },
       { id: 'parallel-1', data: { kind: 'parallel' } },
       { id: 'wait-1', data: { kind: 'wait' } },
+      { id: 'human-1', data: { kind: 'human_approval' } },
     ])
     expect(paths).toEqual([
       'global.company_name',
@@ -83,6 +84,7 @@ describe('listVariablePaths', () => {
       'loop-1.index',
       'parallel-1.status',
       'wait-1.durationSeconds',
+      'human-1.decision',
     ])
   })
 })

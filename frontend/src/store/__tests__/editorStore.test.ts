@@ -168,6 +168,38 @@ describe('editorStore addNodeAt / variables', () => {
     useEditorStore.getState().deleteSelectedNode()
     expect(useEditorStore.getState().nodes[0].data.config.joinTarget).toBe('')
   })
+
+  it('clears human approval targets pointing at a deleted node', () => {
+    const human: EditorNode = {
+      id: 'human-1',
+      position: { x: 0, y: 0 },
+      data: {
+        label: '人工审批',
+        kind: 'human_approval',
+        status: 'idle',
+        config: {
+          summary: '退款审批',
+          approver: '客服主管',
+          timeoutSeconds: 300,
+          onTimeout: 'reject',
+          approvedTarget: 'tool-approve',
+          rejectedTarget: 'tool-reject',
+        },
+        retry: defaultRetry(),
+      },
+    }
+    useEditorStore.setState({
+      nodes: [human, stubNode('tool-approve'), stubNode('tool-reject')],
+      edges: [],
+      variables: [],
+      selectedNodeId: 'tool-reject',
+      logs: [],
+    })
+    useEditorStore.getState().deleteSelectedNode()
+    const updated = useEditorStore.getState().nodes[0]
+    expect(updated.data.config.approvedTarget).toBe('tool-approve')
+    expect(updated.data.config.rejectedTarget).toBe('')
+  })
 })
 
 describe('editorStore W9-W10 run status and draft loading', () => {

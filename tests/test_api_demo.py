@@ -144,3 +144,135 @@ def test_feedback_submit_list_and_survives_demo_reset():
 def test_feedback_rejects_invalid_type_and_empty_content():
     assert client.post("/api/feedback", json={"type": "other", "content": "x"}).status_code == 422
     assert client.post("/api/feedback", json={"type": "bug", "content": ""}).status_code == 422
+
+
+def _human_approval_graph() -> dict:
+    return {
+        "version": 1,
+        "variables": [],
+        "nodes": [
+            {"id": "trigger-1", "type": "trigger", "name": "t",
+             "position": {"x": 0, "y": 0},
+             "config": {"triggerType": "webhook", "webhookUrl": "/hooks/refund"}},
+            {"id": "human-1", "type": "human_approval", "name": "人工审批",
+             "position": {"x": 0, "y": 0},
+             "config": {
+                 "summary": "订单 {{trigger-1.context.payload.order_id}} 退款审批",
+                 "approver": "客服主管",
+                 "timeoutSeconds": 10,
+                 "onTimeout": "reject",
+                 "approvedTarget": "tool-approve",
+                 "rejectedTarget": "tool-reject",
+             }},
+            {"id": "tool-approve", "type": "tool_call", "name": "通过侧",
+             "position": {"x": 0, "y": 0}, "config": {"tool": "op-approve"}},
+            {"id": "tool-reject", "type": "tool_call", "name": "拒绝侧",
+             "position": {"x": 0, "y": 0}, "config": {"tool": "op-reject"}},
+        ],
+        "edges": [
+            {"id": "e1", "source": "trigger-1", "target": "human-1"},
+            {"id": "e2", "source": "human-1", "target": "tool-approve"},
+            {"id": "e3", "source": "human-1", "target": "tool-reject"},
+        ],
+    }
+
+
+def test_run_with_preset_approval_runs_rejected_branch():
+    graph_id = client.post("/api/graphs", json=_human_approval_graph()).json()["id"]
+    response = client.post(
+        f"/api/graphs/{graph_id}/run",
+        json={"inputs": {"order_id": "20001", "approvals": {"human-1": "rejected"}}},
+    )
+    assert response.status_code == 200
+    outputs = response.json()["outputs"]
+    assert outputs["human-1"]["decision"] == "rejected"
+    assert outputs["human-1"]["resolvedBy"] == "input"
+    assert "tool-reject" in outputs
+    assert "tool-approve" not in outputs
+
+
+def test_live_stream_human_approval_decision_unblocks_run():
+    import json as _json
+    import threading
+    import time
+
+    from fastapi.testclient import TestClient
+
+    graph_id = client.post("/api/graphs", json=_human_approval_graph()).json()["id"]
+
+    def decide_when_pending() -> None:
+        with TestClient(app) as decider:
+            token = None
+            for _ in range(100):
+                items = decider.get("/api/approvals").json()["items"]
+                if items:
+                    token = items[0]["token"]
+                    break
+                time.sleep(0.02)
+            assert token is not None
+            response = decider.post(
+                f"/api/approvals/{token}/decision",
+                json={"decision": "approved", "comment": "同意"},
+            )
+            assert response.status_code == 200
+
+    decider_thread = threading.Thread(target=decide_when_pending)
+    decider_thread.start()
+
+    saw_approval_start = False
+    result_body: dict = {}
+    with client.stream(
+        "POST",
+        f"/api/graphs/{graph_id}/run/stream",
+        json={"inputs": {"order_id": "20002"}},
+    ) as response:
+        assert response.status_code == 200
+        for line in response.iter_lines():
+            if not line.startswith("data:"):
+                continue
+            payload = _json.loads(line[len("data:"):].strip())
+            if "approval" in payload:
+                assert payload["approval"]["summary"] == "订单 20002 退款审批"
+                assert payload["approval"]["timeoutSeconds"] == 10
+                saw_approval_start = True
+            if "outputs" in payload:
+                result_body = payload
+
+    decider_thread.join(timeout=5)
+    assert saw_approval_start is True
+    assert result_body["outputs"]["human-1"]["decision"] == "approved"
+    assert result_body["outputs"]["human-1"]["resolvedBy"] == "human"
+    assert "tool-approve" in result_body["outputs"]
+    assert "tool-reject" not in result_body["outputs"]
+
+
+def test_approval_decision_endpoint_404_409_422_and_reset():
+    from atlas.api.main import _approval_broker
+
+    assert client.post(
+        "/api/approvals/unknown-token/decision", json={"decision": "approved"}
+    ).status_code == 404
+
+    token = _approval_broker.request(
+        node_id="human-x",
+        graph_id="graph-x",
+        summary="测试审批",
+        approver="tester",
+        timeout_seconds=30,
+    )
+    pending = client.get("/api/approvals").json()["items"]
+    assert any(item["token"] == token for item in pending)
+
+    bad = client.post(f"/api/approvals/{token}/decision", json={"decision": "maybe"})
+    assert bad.status_code == 422
+
+    assert client.post(
+        f"/api/approvals/{token}/decision", json={"decision": "rejected"}
+    ).status_code == 200
+    conflict = client.post(
+        f"/api/approvals/{token}/decision", json={"decision": "approved"}
+    )
+    assert conflict.status_code == 409
+    assert client.get("/api/approvals").json()["items"] == []
+
+    client.post("/api/demo/reset")

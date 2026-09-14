@@ -21,6 +21,7 @@ import { ConditionConfig } from './ConditionConfig'
 import { LoopConfig } from './LoopConfig'
 import { ParallelConfig } from './ParallelConfig'
 import { WaitConfig } from './WaitConfig'
+import { HumanApprovalConfig } from './HumanApprovalConfig'
 
 export function PropertyPanel() {
   const nodes = useEditorStore((state) => state.nodes)
@@ -128,6 +129,14 @@ export function PropertyPanel() {
           />
         )}
         {data.kind === 'wait' && <WaitConfig config={config} update={updateSelectedConfig} />}
+        {data.kind === 'human_approval' && (
+          <HumanApprovalConfig
+            config={config}
+            update={updateSelectedConfig}
+            variablePaths={variablePaths}
+            targetOptions={targetOptions}
+          />
+        )}
         {data.kind === 'tool_call' && (
           <ToolCallConfig
             config={config}

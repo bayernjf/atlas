@@ -85,6 +85,8 @@ function nodeOutputKey(kind: string): string {
       return 'status'
     case 'wait':
       return 'durationSeconds'
+    case 'human_approval':
+      return 'decision'
     default:
       return 'output'
   }

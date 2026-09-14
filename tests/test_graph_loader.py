@@ -417,3 +417,145 @@ def test_wait_after_condition_default_branch_passes_through(monkeypatch):
     result = run_graph(graph)
     assert set(result["outputs"]) == {"trigger-1", "condition-1", "wait-1", "tool-b"}
     assert result["outputs"]["wait-1"]["mode"] == "wait"
+
+
+def _human_graph(**config_overrides):
+    config = {
+        "summary": "订单 {{trigger-1.context.payload.order_id}} 退款审批",
+        "approver": "客服主管",
+        "timeoutSeconds": 300,
+        "onTimeout": "reject",
+        "approvedTarget": "tool-approve",
+        "rejectedTarget": "tool-reject",
+    }
+    config.update(config_overrides)
+    return parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "webhook", "webhookUrl": "/hooks/refund"}},
+                {"id": "human-1", "type": "human_approval", "name": "人工审批",
+                 "config": config},
+                {"id": "tool-approve", "type": "tool_call", "name": "通过侧",
+                 "config": {"tool": "op-approve"}},
+                {"id": "tool-reject", "type": "tool_call", "name": "拒绝侧",
+                 "config": {"tool": "op-reject"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "human-1"},
+                {"id": "e2", "source": "human-1", "target": "tool-approve"},
+                {"id": "e3", "source": "human-1", "target": "tool-reject"},
+            ],
+        }
+    )
+
+
+def test_human_approval_preset_approved_runs_only_approved_branch():
+    graph = _human_graph()
+    result = run_graph(
+        graph,
+        inputs={"order_id": "12345", "approvals": {"human-1": "approved"}},
+    )
+    assert result["status"] == "completed"
+    assert "tool-approve" in result["outputs"]
+    assert "tool-reject" not in result["outputs"]
+
+    output = result["outputs"]["human-1"]
+    assert output["mode"] == "human_approval"
+    assert output["decision"] == "approved"
+    assert output["target"] == "tool-approve"
+    assert output["resolvedBy"] == "input"
+    assert output["summary"] == "订单 12345 退款审批"
+    assert output["approver"] == "客服主管"
+    assert len(output["token"]) == 32
+    assert any("approved (input) → tool-approve" in line for line in result["trace"])
+
+
+def test_human_approval_preset_rejected_runs_only_rejected_branch():
+    result = run_graph(
+        _human_graph(),
+        inputs={"order_id": "12346", "approvals": {"human-1": "rejected"}},
+    )
+    assert "tool-reject" in result["outputs"]
+    assert "tool-approve" not in result["outputs"]
+    assert result["outputs"]["human-1"]["decision"] == "rejected"
+    assert result["outputs"]["human-1"]["target"] == "tool-reject"
+
+
+def test_human_approval_timeout_routes_by_on_timeout(monkeypatch):
+    from atlas.collaboration.approvals import ApprovalBroker
+
+    broker = ApprovalBroker()
+    monkeypatch.setattr(broker, "wait", lambda token: None)  # 立即超时，无真实等待
+
+    rejected = run_graph(
+        _human_graph(),
+        inputs={"order_id": "12347"},
+        approval_broker=broker,
+    )
+    assert rejected["outputs"]["human-1"]["decision"] == "rejected"
+    assert rejected["outputs"]["human-1"]["resolvedBy"] == "timeout"
+    assert "tool-reject" in rejected["outputs"]
+    assert "tool-approve" not in rejected["outputs"]
+
+    broker2 = ApprovalBroker()
+    monkeypatch.setattr(broker2, "wait", lambda token: None)
+    approved = run_graph(
+        _human_graph(onTimeout="approve"),
+        inputs={"order_id": "12348"},
+        approval_broker=broker2,
+    )
+    assert approved["outputs"]["human-1"]["decision"] == "approved"
+    assert approved["outputs"]["human-1"]["resolvedBy"] == "timeout"
+    assert "tool-approve" in approved["outputs"]
+
+
+def test_human_approval_resolved_from_other_thread_routes_approved():
+    import threading
+    import time as time_mod
+
+    from atlas.collaboration.approvals import ApprovalBroker
+
+    broker = ApprovalBroker()
+    captured: dict = {}
+
+    def emit(event):
+        if event.get("type") == "node_start" and event.get("node_id") == "human-1":
+            captured["approval"] = event["approval"]
+
+    def decide_later():
+        time_mod.sleep(0.05)
+        token = captured["approval"]["token"]
+        assert broker.resolve(token, "approved", comment="同意退款") is True
+
+    thread = threading.Thread(target=decide_later)
+    thread.start()
+    result = run_graph(
+        _human_graph(),
+        inputs={"order_id": "12349"},
+        approval_broker=broker,
+        emit=emit,
+    )
+    thread.join(timeout=2)
+    assert result["outputs"]["human-1"]["resolvedBy"] == "human"
+    assert result["outputs"]["human-1"]["decision"] == "approved"
+    assert "tool-approve" in result["outputs"]
+    assert captured["approval"]["timeoutSeconds"] == 300
+    assert broker.list_pending() == []
+
+
+def test_human_approval_node_start_carries_approval_payload_before_continuation():
+    events = []
+    run_graph(
+        _human_graph(),
+        inputs={"order_id": "12350", "approvals": {"human-1": "rejected"}},
+        emit=events.append,
+    )
+    starts = [e for e in events if e["type"] == "node_start"]
+    human_start = next(e for e in starts if e["node_id"] == "human-1")
+    assert set(human_start["approval"]) == {"token", "summary", "approver", "timeoutSeconds"}
+    human_index = starts.index(human_start)
+    reject_start = next(e for e in starts if e["node_id"] == "tool-reject")
+    assert human_index < starts.index(reject_start)

@@ -8,7 +8,7 @@
 import { token } from '../theme/tokens'
 import { validateExpression } from './conditions'
 
-export const NODE_KINDS = ['trigger', 'ai_decision', 'tool_call', 'condition', 'loop', 'parallel', 'wait'] as const
+export const NODE_KINDS = ['trigger', 'ai_decision', 'tool_call', 'condition', 'loop', 'parallel', 'wait', 'human_approval'] as const
 export type NodeKind = (typeof NODE_KINDS)[number]
 
 export const MAX_LOOP_ITERATIONS = 100
@@ -16,6 +16,10 @@ export const MIN_PARALLEL_BRANCHES = 2
 export const MAX_PARALLEL_BRANCHES = 10
 export const MIN_WAIT_SECONDS = 1
 export const MAX_WAIT_SECONDS = 600
+export const MIN_APPROVAL_TIMEOUT = 10
+export const MAX_APPROVAL_TIMEOUT = 3600
+export const APPROVAL_TIMEOUT_ACTIONS = ['approve', 'reject'] as const
+export type ApprovalTimeoutAction = (typeof APPROVAL_TIMEOUT_ACTIONS)[number]
 export const PARALLEL_JOIN_STRATEGIES = ['all_success', 'all_completed'] as const
 export type ParallelJoinStrategy = (typeof PARALLEL_JOIN_STRATEGIES)[number]
 
@@ -67,6 +71,13 @@ export type NodeConfig = {
   // wait（04 §5.5；v1 仅定时等待，事件等待缓做 docs/14 D19；出边等图级校验由后端 422 兜底）
   waitType?: 'duration'
   durationSeconds?: number
+  // human_approval（04 §5.6；v1 进程内审批信号，持久化中断缓做 docs/14 D20；出边等图级校验由后端 422 兜底）
+  summary?: string
+  approver?: string
+  timeoutSeconds?: number
+  onTimeout?: ApprovalTimeoutAction
+  approvedTarget?: string
+  rejectedTarget?: string
 }
 
 export type EditorNodeData = {
@@ -86,6 +97,11 @@ export const NODE_CATALOG: Record<NodeKind, { label: string; description: string
   loop: { label: '循环', description: '条件为真时重复执行循环体，达最大次数自动退出', color: token('color-node-loop') },
   parallel: { label: '并行', description: '同时执行多个分支，汇聚后继续（全部成功/全部完成）', color: token('color-node-parallel') },
   wait: { label: '等待', description: '挂起指定时长后继续（1-600 秒）；事件等待暂不支持', color: token('color-node-wait') },
+  human_approval: {
+    label: '人机协作',
+    description: '暂停并请求人工审批，超时自动通过/拒绝（10-3600 秒）',
+    color: token('color-node-human'),
+  },
 }
 
 export function defaultConfig(kind: NodeKind): NodeConfig {
@@ -117,6 +133,15 @@ export function defaultConfig(kind: NodeKind): NodeConfig {
       }
     case 'wait':
       return { waitType: 'duration', durationSeconds: 5 }
+    case 'human_approval':
+      return {
+        summary: '',
+        approver: '',
+        timeoutSeconds: 300,
+        onTimeout: 'reject',
+        approvedTarget: '',
+        rejectedTarget: '',
+      }
   }
 }
 
@@ -225,6 +250,30 @@ export function validateNode(data: EditorNodeData): string[] {
       const seconds = config.durationSeconds
       if (seconds === undefined || !Number.isInteger(seconds) || seconds < MIN_WAIT_SECONDS || seconds > MAX_WAIT_SECONDS) {
         errors.push(`等待时长需为 ${MIN_WAIT_SECONDS}-${MAX_WAIT_SECONDS} 秒的整数`)
+      }
+      break
+    }
+    case 'human_approval': {
+      if (!config.summary?.trim()) errors.push('审批说明必填')
+      const timeout = config.timeoutSeconds
+      if (
+        timeout === undefined ||
+        !Number.isInteger(timeout) ||
+        timeout < MIN_APPROVAL_TIMEOUT ||
+        timeout > MAX_APPROVAL_TIMEOUT
+      ) {
+        errors.push(`超时时长需为 ${MIN_APPROVAL_TIMEOUT}-${MAX_APPROVAL_TIMEOUT} 秒的整数`)
+      }
+      if (config.onTimeout && !APPROVAL_TIMEOUT_ACTIONS.includes(config.onTimeout)) {
+        errors.push('超时策略必须为自动通过或自动拒绝')
+      }
+      if (!config.approvedTarget?.trim()) errors.push('必须选择通过目标')
+      if (!config.rejectedTarget?.trim()) errors.push('必须选择拒绝目标')
+      if (
+        config.approvedTarget &&
+        config.approvedTarget === config.rejectedTarget
+      ) {
+        errors.push('通过目标与拒绝目标不能相同')
       }
       break
     }

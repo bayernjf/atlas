@@ -30,9 +30,28 @@ export function AtlasNode({ data, selected }: NodeProps<EditorNode>) {
         <LoopHandles />
       ) : data.kind === 'parallel' ? (
         <ParallelHandles data={data} />
+      ) : data.kind === 'human_approval' ? (
+        <HumanApprovalHandles />
       ) : (
         <Handle type="source" position={Position.Right} />
       )}
+    </div>
+  )
+}
+
+function HumanApprovalHandles() {
+  const items = [
+    { id: 'approved', label: '通过' },
+    { id: 'rejected', label: '拒绝' },
+  ]
+  return (
+    <div className="atlas-node-branches">
+      {items.map((item) => (
+        <div key={item.id} className="atlas-node-branch">
+          <span className="atlas-node-branch-label">{item.label}</span>
+          <Handle id={item.id} type="source" position={Position.Right} title={item.label} />
+        </div>
+      ))}
     </div>
   )
 }

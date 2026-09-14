@@ -49,6 +49,13 @@ function FlowCanvasInner() {
         for (const branch of node.data.config.branches ?? []) {
           if (branch.target) labels.set(`${node.id}->${branch.target}`, branch.label || branch.target)
         }
+      } else if (node.data.kind === 'human_approval') {
+        if (node.data.config.approvedTarget) {
+          labels.set(`${node.id}->${node.data.config.approvedTarget}`, '通过')
+        }
+        if (node.data.config.rejectedTarget) {
+          labels.set(`${node.id}->${node.data.config.rejectedTarget}`, '拒绝')
+        }
       }
     }
     return labels

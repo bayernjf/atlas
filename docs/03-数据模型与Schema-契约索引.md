@@ -69,7 +69,7 @@ is_idempotent: boolean       # 是否幂等
 
 ```yaml
 id: string                    # 唯一ID
-type: enum[trigger, ai_decision, tool_call, condition, loop, parallel, wait]
+type: enum[trigger, ai_decision, tool_call, condition, loop, parallel, wait, human_approval]
 name: string
 description: string
 position: {x, y}
@@ -86,6 +86,10 @@ type: object               # 节点类型专属配置；condition 节点 config 
                            # wait 节点 config 形状：
                            #   {waitType:"duration", durationSeconds: 1-600 整数}
                            #   唯一权威见 04 §5.5「wait 节点 config 契约」
+                           # human_approval 节点 config 形状：
+                           #   {summary, approver?, timeoutSeconds: 10-3600 整数, onTimeout: approve|reject(默认reject),
+                           #    approvedTarget, rejectedTarget}
+                           #   唯一权威见 04 §5.6「human_approval 节点 config 契约」
 inputs: 
 source: string           # 变量路径
 required: boolean
@@ -106,12 +110,13 @@ breakpoint: boolean          # 是否断点
 version: 1                   # Graph JSON 版本，当前仅支持 1
 variables:                   # 全局变量（GraphVariable: name/type/value/scope=global）
 nodes:                       # node_schema 节点列表；当前可编译类型：
-                             #   trigger / ai_decision / tool_call / condition / loop / parallel / wait（Phase 2 起），
-                             #   其余类型校验拒绝；condition 见 04 §5.2，loop 见 04 §5.3，parallel 见 04 §5.4，wait 见 04 §5.5
+                             #   trigger / ai_decision / tool_call / condition / loop / parallel / wait / human_approval（Phase 2 起），
+                             #   其余类型校验拒绝；condition 见 04 §5.2，loop 见 04 §5.3，parallel 见 04 §5.4，wait 见 04 §5.5，human_approval 见 04 §5.6
 edges:                       # {id, source, target}，端点必须存在且禁止自环；
                              #   仅 loop 循环体回到 loop 节点的回边允许成环（白名单见 04 §5.3）；
                              #   parallel 扇出/汇聚为无环菱形（分支区域规则见 04 §5.4）；
-                             #   wait 恰好一条出边且不直连 END（见 04 §5.5）
+                             #   wait 恰好一条出边且不直连 END（见 04 §5.5）；
+                             #   human_approval 恰好两条出边分别对配 approvedTarget/rejectedTarget，均不直连 END（见 04 §5.6）
 ```
 > 前端序列化 `frontend/src/lib/graphSerializer.ts`（version 1）；后端解析/校验 `atlas.graph.dsl.parse_graph`，错误一次性聚合；编译执行 `atlas.graph.loader.compile_graph/run_graph`。
 

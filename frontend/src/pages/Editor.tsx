@@ -10,9 +10,11 @@ import { useEditorStore } from '../store/editorStore'
 import { serializeGraph } from '../lib/graphSerializer'
 import {
   compileGraph,
+  decideApproval,
   nlGenerate,
   saveGraph,
   streamRun,
+  type ApprovalRequest,
   type CompileResult,
   type RunInputs,
   type RunResult,
@@ -47,6 +49,11 @@ export function Editor() {
   const [nlError, setNlError] = useState<string | null>(null)
   const [compileResult, setCompileResult] = useState<CompileResult | null>(null)
   const [runResult, setRunResult] = useState<RunResult | null>(null)
+  const [pendingApprovals, setPendingApprovals] = useState<
+    Array<ApprovalRequest & { nodeId: string }>
+  >([])
+  const [approvalBusy, setApprovalBusy] = useState(false)
+  const [approvalError, setApprovalError] = useState<string | null>(null)
   const [selectedOrderId, setSelectedOrderId] = useState('12345')
   const [nlPrompt, setNlPrompt] = useState('帮我做一个电商退款自动审批流程')
 
@@ -61,6 +68,8 @@ export function Editor() {
     setRunError(null)
     setCompileResult(null)
     setRunResult(null)
+    setPendingApprovals([])
+    setApprovalError(null)
     resetRunStatuses()
     try {
       const saved = await saveGraph(serializeGraph(nodes, edges, variables))
@@ -72,6 +81,11 @@ export function Editor() {
         if (event.type === 'node_start') {
           setNodeStatus(event.node_id, 'running')
           appendLog(`▶ 节点开始：${event.node_id}`)
+          if (event.approval) {
+            const approval = event.approval
+            setPendingApprovals((items) => [...items, { ...approval, nodeId: event.node_id }])
+            appendLog(`⏸ ${event.node_id} 等待人工审批：${approval.summary}`)
+          }
         } else if (event.type === 'node_end') {
           setNodeStatus(event.node_id, 'completed')
           const output = event.output as {
@@ -83,11 +97,23 @@ export function Editor() {
             target?: string
             status?: string
             durationSeconds?: number
+            resolvedBy?: string
             branches?: Array<{ label: string; target: string; status: string; error: string }>
             result?: unknown
           }
           const decision = output?.decision
-          if (decision?.action) {
+          if (output?.mode === 'human_approval') {
+            const humanDecision = output.decision as unknown as 'approved' | 'rejected'
+            const decisionLabel = humanDecision === 'approved' ? '通过' : '拒绝'
+            const sourceLabel =
+              { human: '人工', timeout: '超时', input: '预置' }[output.resolvedBy ?? ''] ??
+              output.resolvedBy
+            appendLog(
+              `✓ ${event.node_id} 人工审批：${decisionLabel}（${sourceLabel}）→ ${output.target}`,
+            )
+            setPendingApprovals((items) => items.filter((item) => item.nodeId !== event.node_id))
+            setApprovalError(null)
+          } else if (decision?.action) {
             appendLog(`✓ ${event.node_id} 决策：${decision.action}`)
           } else if (output?.branch) {
             const branchLabel = output.branch === '__default__' ? '默认' : output.branch
@@ -153,6 +179,29 @@ export function Editor() {
     } finally {
       setNlLoading(false)
     }
+  }
+
+  const currentApproval = pendingApprovals[0] ?? null
+
+  async function resolveCurrentApproval(decision: 'approved' | 'rejected') {
+    if (!currentApproval) return
+    setApprovalBusy(true)
+    setApprovalError(null)
+    try {
+      await decideApproval(currentApproval.token, decision)
+      setPendingApprovals((items) => items.filter((item) => item.token !== currentApproval.token))
+    } catch (error) {
+      // 409：等待期间已超时自动决策；404：已被 reset 清理——保留弹窗供确认关闭
+      setApprovalError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setApprovalBusy(false)
+    }
+  }
+
+  function dismissCurrentApproval() {
+    if (!currentApproval) return
+    setApprovalError(null)
+    setPendingApprovals((items) => items.filter((item) => item.token !== currentApproval.token))
   }
 
   return (
@@ -246,6 +295,53 @@ export function Editor() {
           onChange={(event) => setNlPrompt(event.target.value)}
         />
         {nlError && <Alert type="error" showIcon title={nlError} style={{ marginTop: 12 }} />}
+      </Modal>
+      <Modal
+        title="人工审批请求"
+        open={currentApproval !== null}
+        onCancel={dismissCurrentApproval}
+        mask={{ closable: false }}
+        width={520}
+        footer={[
+          <Button
+            key="reject"
+            danger
+            loading={approvalBusy}
+            onClick={() => resolveCurrentApproval('rejected')}
+          >
+            拒绝
+          </Button>,
+          <Button
+            key="approve"
+            type="primary"
+            loading={approvalBusy}
+            onClick={() => resolveCurrentApproval('approved')}
+          >
+            同意
+          </Button>,
+        ]}
+      >
+        {currentApproval && (
+          <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+            <div>
+              <Typography.Text type="secondary">节点</Typography.Text>
+              <div>{currentApproval.nodeId}</div>
+            </div>
+            <div>
+              <Typography.Text type="secondary">审批说明</Typography.Text>
+              <div>{currentApproval.summary}</div>
+            </div>
+            <div>
+              <Typography.Text type="secondary">审批人</Typography.Text>
+              <div>{currentApproval.approver || '未指定'}</div>
+            </div>
+            <Typography.Text type="secondary">
+              等待 {currentApproval.timeoutSeconds} 秒后按超时策略自动决策；关闭弹窗后仍可在等待期内由
+              API 放行。
+            </Typography.Text>
+            {approvalError && <Alert type="error" showIcon title={approvalError} />}
+          </Space>
+        )}
       </Modal>
       {runError && (
         <Alert
