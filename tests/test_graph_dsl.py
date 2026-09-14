@@ -622,3 +622,176 @@ def test_reject_wait_with_two_outgoing_edges():
     with pytest.raises(GraphValidationError) as exc:
         parse_graph(raw)
     assert any("必须恰好配置 1 条出边（当前 2 条）" in error for error in exc.value.errors)
+
+
+def _human_node(node_id: str = "human-1", **config_overrides):
+    config = {
+        "summary": "订单 {{trigger-1.context.payload.order_id}} 退款审批",
+        "approver": "客服主管",
+        "timeoutSeconds": 300,
+        "onTimeout": "reject",
+        "approvedTarget": "tool-approve",
+        "rejectedTarget": "tool-reject",
+    }
+    config.update(config_overrides)
+    return {
+        "id": node_id, "type": "human_approval", "name": "人工审批",
+        "position": {"x": 2, "y": 0}, "config": config,
+        "retry": {"max_retries": 0, "backoff": "1s", "timeout": 30, "on_error": "stop"},
+    }
+
+
+def make_human_approval_graph(**overrides):
+    graph = {
+        "version": 1,
+        "variables": [],
+        "nodes": [
+            {"id": "trigger-1", "type": "trigger", "name": "t",
+             "config": {"triggerType": "manual"}},
+            _human_node(),
+            {"id": "tool-approve", "type": "tool_call", "name": "通过侧",
+             "config": {"tool": "op-approve"}},
+            {"id": "tool-reject", "type": "tool_call", "name": "拒绝侧",
+             "config": {"tool": "op-reject"}},
+        ],
+        "edges": [
+            {"id": "e1", "source": "trigger-1", "target": "human-1"},
+            {"id": "e2", "source": "human-1", "target": "tool-approve"},
+            {"id": "e3", "source": "human-1", "target": "tool-reject"},
+        ],
+    }
+    graph.update(overrides)
+    return graph
+
+
+def test_parse_valid_human_approval_graph():
+    graph = parse_graph(make_human_approval_graph())
+    human = next(node for node in graph.nodes if node.type == "human_approval")
+    assert human.config["approvedTarget"] == "tool-approve"
+    assert human.config["rejectedTarget"] == "tool-reject"
+    assert human.config["onTimeout"] == "reject"
+
+
+def test_human_approval_default_on_timeout_when_omitted():
+    raw = make_human_approval_graph()
+    raw["nodes"][1] = _human_node(onTimeout=None)
+    raw["nodes"][1]["config"].pop("onTimeout")
+    parse_graph(raw)  # 默认 reject 由前端/loader 兜底，DSL 缺省视为合法默认
+
+
+def test_parse_valid_human_approval_inside_loop_body():
+    raw = make_human_approval_graph()
+    raw["nodes"] = [
+        {"id": "trigger-1", "type": "trigger", "name": "t",
+         "config": {"triggerType": "manual"}},
+        {"id": "loop-1", "type": "loop", "name": "重试循环",
+         "config": {"mode": "while", "continueExpression": "{{loop-1.index}} < 2",
+                    "maxIterations": 3, "bodyTarget": "human-1", "exitTarget": "tool-exit"}},
+        _human_node(),
+        {"id": "tool-approve", "type": "tool_call", "name": "通过侧",
+         "config": {"tool": "op-approve"}},
+        {"id": "tool-reject", "type": "tool_call", "name": "拒绝侧",
+         "config": {"tool": "op-reject"}},
+        {"id": "tool-exit", "type": "tool_call", "name": "退出",
+         "config": {"tool": "op-exit"}},
+    ]
+    raw["edges"] = [
+        {"id": "e1", "source": "trigger-1", "target": "loop-1"},
+        {"id": "e2", "source": "loop-1", "target": "human-1"},
+        {"id": "e3", "source": "human-1", "target": "tool-approve"},
+        {"id": "e4", "source": "human-1", "target": "tool-reject"},
+        {"id": "e5", "source": "tool-approve", "target": "loop-1"},
+        {"id": "e6", "source": "tool-reject", "target": "loop-1"},
+        {"id": "e7", "source": "loop-1", "target": "tool-exit"},
+    ]
+    parse_graph(raw)  # 双出口在 loop 体内合法，两支回边均白名单
+
+
+@pytest.mark.parametrize(
+    "config, expected",
+    [
+        ({"summary": "  "}, "审批说明（summary）"),
+        ({"summary": None}, "审批说明（summary）"),
+        ({"timeoutSeconds": "300"}, "必须是整数秒"),
+        ({"timeoutSeconds": True}, "必须是整数秒"),
+        ({"timeoutSeconds": 9}, "需在 10-3600 秒之间"),
+        ({"timeoutSeconds": 3601}, "需在 10-3600 秒之间"),
+        ({"onTimeout": "retry"}, "超时策略（onTimeout）必须是 approve 或 reject"),
+    ],
+)
+def test_reject_human_approval_bad_summary_timeout_ontimeout(config, expected):
+    raw = make_human_approval_graph()
+    raw["nodes"][1] = _human_node(**config)
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any(expected in error for error in exc.value.errors)
+
+
+def test_reject_human_approval_missing_and_same_targets():
+    raw = make_human_approval_graph()
+    raw["nodes"][1] = _human_node(approvedTarget=None)
+    raw["nodes"][1]["config"].pop("approvedTarget")
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("通过目标（approvedTarget）" in error for error in exc.value.errors)
+
+    raw = make_human_approval_graph()
+    raw["nodes"][1] = _human_node(rejectedTarget="tool-approve")
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("通过目标与拒绝目标不能相同" in error for error in exc.value.errors)
+
+
+def test_reject_human_approval_nonexistent_and_self_target():
+    raw = make_human_approval_graph()
+    raw["nodes"][1] = _human_node(approvedTarget="ghost")
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("通过目标节点不存在：ghost" in error for error in exc.value.errors)
+
+    raw = make_human_approval_graph()
+    raw["nodes"][1] = _human_node(rejectedTarget="human-1")
+    raw["edges"] = [
+        edge for edge in raw["edges"] if edge["id"] != "e3"
+    ] + [{"id": "e-self", "source": "human-1", "target": "human-1"}]
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("拒绝目标不能指向自身" in error for error in exc.value.errors)
+
+
+def test_reject_human_approval_wrong_edge_count_and_mismatch():
+    # 0 条出边：直连 END
+    raw = make_human_approval_graph()
+    raw["edges"] = [edge for edge in raw["edges"] if edge["id"] == "e1"]
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("必须恰好配置 2 条出边（当前 0 条）" in error for error in exc.value.errors)
+
+    # 1 条出边
+    raw = make_human_approval_graph()
+    raw["edges"] = [edge for edge in raw["edges"] if edge["id"] != "e3"]
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("必须恰好配置 2 条出边（当前 1 条）" in error for error in exc.value.errors)
+
+    # 3 条出边
+    raw = make_human_approval_graph()
+    raw["nodes"].append({"id": "tool-other", "type": "tool_call", "name": "第三后继",
+                         "config": {"tool": "op-other"}})
+    raw["edges"].append({"id": "e4", "source": "human-1", "target": "tool-other"})
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("必须恰好配置 2 条出边（当前 3 条）" in error for error in exc.value.errors)
+
+    # 2 条出边但与配置目标不一致
+    raw = make_human_approval_graph()
+    raw["nodes"].append({"id": "tool-other", "type": "tool_call", "name": "第三后继",
+                         "config": {"tool": "op-other"}})
+    raw["edges"] = [edge for edge in raw["edges"] if edge["id"] not in {"e2", "e3"}] + [
+        {"id": "e4", "source": "human-1", "target": "tool-approve"},
+        {"id": "e5", "source": "human-1", "target": "tool-other"},
+    ]
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("到节点 tool-other 的连线未配置" in error for error in exc.value.errors)
+    assert any("缺少到目标节点 tool-reject 的连线" in error for error in exc.value.errors)

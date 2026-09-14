@@ -21,6 +21,7 @@ SUPPORTED_NODE_TYPES = (
     "loop",
     "parallel",
     "wait",
+    "human_approval",
 )
 
 MAX_LOOP_ITERATIONS = 100
@@ -29,6 +30,9 @@ MAX_PARALLEL_BRANCHES = 10
 PARALLEL_JOIN_STRATEGIES = ("all_success", "all_completed")
 MIN_WAIT_SECONDS = 1
 MAX_WAIT_SECONDS = 600
+MIN_APPROVAL_TIMEOUT = 10
+MAX_APPROVAL_TIMEOUT = 3600
+APPROVAL_TIMEOUT_ACTIONS = ("approve", "reject")
 
 NodeType = str
 
@@ -168,6 +172,10 @@ def validate_graph(graph: GraphDSL) -> list[str]:
     for node in graph.nodes:
         if node.type == "wait":
             errors.extend(_validate_wait_config(node, node_ids, outgoing))
+
+    for node in graph.nodes:
+        if node.type == "human_approval":
+            errors.extend(_validate_human_approval_config(node, node_ids, outgoing))
 
     errors.extend(_validate_illegal_cycles(graph, loop_backedges))
     errors.extend(_validate_reachability(graph, node_ids, outgoing))
@@ -491,6 +499,82 @@ def _validate_wait_config(
             errors.append(f"{prefix} 出边不能指向自身")
         elif target not in node_ids:
             errors.append(f"{prefix} 后继节点不存在：{target}")
+
+    return errors
+
+
+def _validate_human_approval_config(
+    node: NodeDSL, node_ids: set[str], outgoing: dict[str, set[str]]
+) -> list[str]:
+    """human_approval config 与双出边拓扑校验（契约 04 §5.6）。"""
+    errors: list[str] = []
+    prefix = f"人机协作节点 {node.id}"
+    config = node.config
+
+    summary = config.get("summary")
+    if not isinstance(summary, str) or not summary.strip():
+        errors.append(f"{prefix} 必须填写审批说明（summary）")
+
+    approver = config.get("approver", "")
+    if approver != "" and not isinstance(approver, str):
+        errors.append(f"{prefix} 审批人（approver）必须是文本")
+
+    seconds = config.get("timeoutSeconds")
+    if isinstance(seconds, bool) or not isinstance(seconds, int):
+        errors.append(f"{prefix} 超时时长（timeoutSeconds）必须是整数秒")
+    elif not MIN_APPROVAL_TIMEOUT <= seconds <= MAX_APPROVAL_TIMEOUT:
+        errors.append(
+            f"{prefix} 超时时长需在 {MIN_APPROVAL_TIMEOUT}-{MAX_APPROVAL_TIMEOUT} 秒之间"
+            f"（当前 {seconds}）"
+        )
+
+    on_timeout = config.get("onTimeout", "reject")
+    if on_timeout not in APPROVAL_TIMEOUT_ACTIONS:
+        errors.append(
+            f"{prefix} 超时策略（onTimeout）必须是 "
+            f"{' 或 '.join(APPROVAL_TIMEOUT_ACTIONS)}"
+        )
+
+    approved_target = config.get("approvedTarget")
+    rejected_target = config.get("rejectedTarget")
+    if not isinstance(approved_target, str) or not approved_target.strip():
+        errors.append(f"{prefix} 必须选择通过目标（approvedTarget）")
+        approved_target = None
+    if not isinstance(rejected_target, str) or not rejected_target.strip():
+        errors.append(f"{prefix} 必须选择拒绝目标（rejectedTarget）")
+        rejected_target = None
+
+    for label, target in (("通过", approved_target), ("拒绝", rejected_target)):
+        if target is not None:
+            if target == node.id:
+                errors.append(f"{prefix} {label}目标不能指向自身")
+            elif target not in node_ids:
+                errors.append(f"{prefix} {label}目标节点不存在：{target}")
+    if (
+        approved_target is not None
+        and rejected_target is not None
+        and approved_target in node_ids
+        and rejected_target in node_ids
+        and approved_target == rejected_target
+    ):
+        errors.append(f"{prefix} 通过目标与拒绝目标不能相同")
+
+    edge_targets = outgoing.get(node.id, set())
+    configured = {
+        target
+        for target in (approved_target, rejected_target)
+        if target in node_ids and target != node.id
+    }
+    if len(edge_targets) != 2:
+        errors.append(
+            f"{prefix} 必须恰好配置 2 条出边（当前 {len(edge_targets)} 条），且不能直连结束"
+        )
+    elif configured:
+        for target in configured:
+            if target not in edge_targets:
+                errors.append(f"{prefix} 缺少到目标节点 {target} 的连线")
+        for extra in edge_targets - configured:
+            errors.append(f"{prefix} 到节点 {extra} 的连线未配置（只允许通过/拒绝两条出边）")
 
     return errors
 
