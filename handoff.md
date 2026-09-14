@@ -60,11 +60,12 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 6. 文档缺口登记：`09-工程骨架` 待定项 1/2/3/4/5/6 均已收口（待定项 3：不新增 deployment/ 包，Dockerfile + docker-compose.yml 放仓库根，2026-09-13）。新增测试运行器选型 vitest 已记 10 文档 §4 ADR（W5-W6）。
 8. 🐳 **Phase 1 种子客户交付准备（工程侧已齐）**：✅ Docker Compose 一键启动（`Dockerfile` 多阶段 + FastAPI 同源托管 `frontend/dist` + `POST /api/demo/reset` 重置种子数据，镜像实测黄金用例通过，2026-09-13）；✅ 种子验证计划 [docs/18](docs/18-种子客户验证计划.md) + 客户向 [TRIAL.md](TRIAL.md)（2026-09-13）；✅ 应用内反馈入口（编辑器"反馈"按钮 + `POST/GET /api/feedback`，进程内存储、reset 不清除，后端 62 测试/浏览器实测通过，2026-09-13）。下一步为业务动作：按 docs/18 招募 3-5 家种子客户试用，逐客户进度回填 docs/18 §6.1 跟踪表与详细记录，反馈导出后未解决项进本区「Active feedback」（16 文档流程）。
 9. ✅ **D10a CI 质量门（2026-09-14 完成）**：14 D10 拆分后 CI 部分提前触发（ADR T8 见 10 文档 §4，08 Phase 1 已记录）。`.github/workflows/ci.yml` 三道门——gitleaks 全历史密钥扫描、后端 pytest（Python 3.11，integration 默认跳过）、前端 oxlint + vitest + `pnpm build`（Node 22 / pnpm 10）；main/dev 推送与 PR 触发，重复运行并发取消。本地等价命令全绿（62 passed/8 skipped、23 vitest、build 通过、gitleaks 55 commits 无泄漏）；**GitHub Actions 实际运行待 dev 推送后验证**（本分支未 push）。CD 留 14 D10b（远程部署目标确定后）。
+10. 🔧 **D9 BENCHMARK 实测（2026-09-14 重启，进行中）**：触发条件"引擎可跑后"已满足。落独立基准脚本（stdlib 零新依赖）测量 OODA 循环吞吐、Graph 编译延迟、退款端到端时延（规则路径）、Harness 调用开销，回填 BENCHMARK.md Results 首份基线（含 commit/环境注记）；LLM 决策延迟与记忆层读写随接入补测。
 
 **Active feedback**：暂无（种子试用开始后，由 docs/18 §6.1 跟进项迁移至此，解决后留痕 Recently shipped；流程见 16 文档）。
 7. 📋 **i18n 与设计 Token 方案已定（2026-09-13，docs/17）**：设计 Token 等价替换**已落码**（`frontend/src/theme/tokens.ts` 单一事实源 + `setup.ts` 注入 `--atlas-*` 变量 + AntD theme，全仓零硬编码色值，浏览器零视觉差异）；i18n 库（i18next+react-i18next）按触发条件引入（14 D12：首个英文使用者/出海需求），组件描述多语言随 Phase 2 模板库（14 D13）。
 
-> 缓做/低优项：统一登记在 [docs/14-缓做事项登记表.md](docs/14-缓做事项登记表.md)（每条带触发条件，条件满足移回本区并标注重启日期）。当前含移动端适配器、策略训练、组件市场、模型路由器、NATS、Go 网关、多租户、运营体市场、BENCHMARK 实测、CD 自动化部署、可观测性、i18n 落码、组件描述多语言等项（D10a CI 已于 2026-09-14 移出）。
+> 缓做/低优项：统一登记在 [docs/14-缓做事项登记表.md](docs/14-缓做事项登记表.md)（每条带触发条件，条件满足移回本区并标注重启日期）。当前含移动端适配器、策略训练、组件市场、模型路由器、NATS、Go 网关、多租户、运营体市场、CD 自动化部署、可观测性、i18n 落码、组件描述多语言等项（D10a CI 已于 2026-09-14 完成移出，D9 BENCHMARK 同日重启进行中）。
 
 ## Recently shipped（最近变更）
 
