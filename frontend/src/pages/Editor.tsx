@@ -74,17 +74,29 @@ export function Editor() {
           appendLog(`▶ 节点开始：${event.node_id}`)
         } else if (event.type === 'node_end') {
           setNodeStatus(event.node_id, 'completed')
-          const output = event.output as { decision?: { action?: string }; result?: unknown }
+          const output = event.output as {
+            decision?: { action?: string }
+            branch?: string
+            target?: string
+            result?: unknown
+          }
           const decision = output?.decision
           if (decision?.action) {
             appendLog(`✓ ${event.node_id} 决策：${decision.action}`)
+          } else if (output?.branch) {
+            const branchLabel = output.branch === '__default__' ? '默认' : output.branch
+            appendLog(`✓ ${event.node_id} 分支：${branchLabel} → ${output.target}`)
           } else {
             appendLog(`✓ 节点完成：${event.node_id}`)
           }
         }
       })
-      const toolResult = executed.outputs['tool_call-1'] as { result?: { status?: string } } | undefined
-      appendLog(`运行结束：${toolResult?.result?.status ?? executed.status}`)
+      const toolOutputs = Object.values(executed.outputs).filter(
+        (output): output is { result?: { status?: string } } =>
+          typeof output === 'object' && output !== null && 'result' in output,
+      )
+      const finalStatus = toolOutputs.find((output) => output.result?.status)?.result?.status
+      appendLog(`运行结束：${finalStatus ?? executed.status}`)
       setRunResult(executed)
       setRunOpen(true)
     } catch (error) {

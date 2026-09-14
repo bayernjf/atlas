@@ -157,7 +157,26 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const selectedId = get().selectedNodeId
     if (!selectedId) return
     set((state) => ({
-      nodes: state.nodes.filter((node) => node.id !== selectedId),
+      nodes: state.nodes
+        .filter((node) => node.id !== selectedId)
+        .map((node) => {
+          if (node.data.kind !== 'condition') return node
+          const config = node.data.config
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              config: {
+                ...config,
+                branches: config.branches?.map((branch) => ({
+                  ...branch,
+                  target: branch.target === selectedId ? '' : branch.target,
+                })),
+                defaultTarget: config.defaultTarget === selectedId ? '' : config.defaultTarget,
+              },
+            },
+          }
+        }),
       edges: state.edges.filter(
         (edge) => edge.source !== selectedId && edge.target !== selectedId,
       ),

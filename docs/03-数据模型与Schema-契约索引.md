@@ -73,8 +73,10 @@ type: enum[trigger, ai_decision, tool_call, condition,
 name: string
 description: string
 position: {x, y}
-config: 
-type: object               # 节点类型专属配置
+config:
+type: object               # 节点类型专属配置；condition 节点 config 形状：
+                           #   {branches:[{label,expression,target}], defaultTarget}
+                           #   唯一权威见 04 §5.2「condition 节点 config 契约」，表达式白名单见 04 §5.1
 inputs: 
 source: string           # 变量路径
 required: boolean
@@ -94,8 +96,9 @@ breakpoint: boolean          # 是否断点
 ```yaml
 version: 1                   # Graph JSON 版本，当前仅支持 1
 variables:                   # 全局变量（GraphVariable: name/type/value/scope=global）
-nodes:                       # node_schema 节点列表；W7-W8 可编译类型仅
-                             #   trigger / ai_decision / tool_call，其余类型校验拒绝
+nodes:                       # node_schema 节点列表；当前可编译类型：
+                             #   trigger / ai_decision / tool_call / condition（Phase 2 起），
+                             #   其余类型校验拒绝；condition config 契约见 04 §5.2
 edges:                       # {id, source, target}，端点必须存在且禁止自环
 ```
 > 前端序列化 `frontend/src/lib/graphSerializer.ts`（version 1）；后端解析/校验 `atlas.graph.dsl.parse_graph`，错误一次性聚合；编译执行 `atlas.graph.loader.compile_graph/run_graph`。

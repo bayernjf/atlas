@@ -54,4 +54,25 @@ describe('deserializeGraph', () => {
     expect(restoredEdges).toEqual([{ id: 'e1', source: 'trigger-1', target: 'tool_call-1' }])
     expect(restoredVars).toEqual(variables)
   })
+
+  it('round-trips condition branch config unchanged', () => {
+    const conditionNode: EditorNode = {
+      id: 'condition-1',
+      position: { x: 0, y: 0 },
+      data: {
+        label: '金额路由',
+        kind: 'condition',
+        status: 'idle',
+        config: {
+          branches: [{ label: '大额', expression: '{{amount}} > 1000', target: 'tool-human' }],
+          defaultTarget: 'tool-auto',
+        },
+        retry: defaultRetry(),
+      },
+    }
+    const graph = serializeGraph([conditionNode], [], [])
+    const { nodes: restored } = deserializeGraph(graph)
+    expect(restored[0].data.kind).toBe('condition')
+    expect(restored[0].data.config).toEqual(conditionNode.data.config)
+  })
 })

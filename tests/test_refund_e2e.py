@@ -88,3 +88,86 @@ def test_variables_flow_between_nodes_via_payload():
     )
     rendered = result["outputs"]["ai_decision-1"]["prompt_rendered"]
     assert "商品有质量瑕疵" in rendered and "128" in rendered
+
+
+def _amount_routing_graph():
+    """trigger → condition（金额>1000）→ 转人工 / 自动退款（04 §5.2）。"""
+    return parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "新退款申请",
+                 "config": {"triggerType": "webhook", "webhookUrl": "/hooks/refund"}},
+                {"id": "condition-1", "type": "condition", "name": "金额路由",
+                 "config": {
+                     "branches": [
+                         {"label": "大额",
+                          "expression": "{{trigger-1.context.payload.amount}} > 1000",
+                          "target": "tool-human"},
+                     ],
+                     "defaultTarget": "tool-auto",
+                 }},
+                {"id": "tool-human", "type": "tool_call", "name": "转人工审批",
+                 "config": {"tool": "shop/request_human_approval"}},
+                {"id": "tool-auto", "type": "tool_call", "name": "自动退款",
+                 "config": {"tool": "shop/execute_refund"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "condition-1"},
+                {"id": "e2", "source": "condition-1", "target": "tool-human"},
+                {"id": "e3", "source": "condition-1", "target": "tool-auto"},
+            ],
+        }
+    )
+
+
+def _fresh_service_registry(service: DemoShopService):
+    registry = build_demo_registry()
+    registry.unregister("shop")
+    from atlas.shop.adapter import ShopHarnessAdapter
+    from atlas.harness.base import Permission
+
+    registry.register(
+        ShopHarnessAdapter(service=service, granted_permissions={Permission.READ, Permission.WRITE, Permission.FINANCIAL})
+    )
+    return registry
+
+
+def test_condition_routes_large_amount_to_human_review():
+    service = DemoShopService()
+    result = run_graph(
+        _amount_routing_graph(),
+        inputs={"order_id": "12346", "amount": 1500},
+        registry=_fresh_service_registry(service),
+    )
+    assert set(result["outputs"].keys()) == {"trigger-1", "condition-1", "tool-human"}
+    assert result["outputs"]["condition-1"]["branch"] == "大额"
+    assert result["outputs"]["tool-human"]["result"]["status"] == "human_review"
+    assert service.orders["12346"].status == "human_review"
+
+
+def test_condition_routes_small_amount_to_auto_refund():
+    service = DemoShopService()
+    result = run_graph(
+        _amount_routing_graph(),
+        inputs={"order_id": "12347", "amount": 800},
+        registry=_fresh_service_registry(service),
+    )
+    assert set(result["outputs"].keys()) == {"trigger-1", "condition-1", "tool-auto"}
+    assert result["outputs"]["condition-1"]["branch"] == "__default__"
+    assert result["outputs"]["tool-auto"]["result"]["status"] == "refunded"
+    assert service.orders["12347"].status == "refunded"
+
+
+def test_condition_missing_amount_fails_safe_to_default():
+    service = DemoShopService()
+    result = run_graph(
+        _amount_routing_graph(),
+        inputs={"order_id": "12348"},
+        registry=_fresh_service_registry(service),
+    )
+    routed = result["outputs"]["condition-1"]
+    assert routed["branch"] == "__default__" and routed["expression_errors"]
+    assert "tool-auto" in result["outputs"] and "tool-human" not in result["outputs"]
+    assert service.orders["12348"].status == "refunded"

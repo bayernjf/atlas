@@ -76,6 +76,8 @@ function nodeOutputKey(kind: string): string {
       return 'decision'
     case 'tool_call':
       return 'result'
+    case 'condition':
+      return 'branch'
     default:
       return 'output'
   }

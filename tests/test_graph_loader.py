@@ -81,3 +81,97 @@ def test_run_with_runtime_inputs_overrides_global():
     )
     result = run_graph(graph, inputs={"limit": "999"})
     assert result["outputs"]["ai_decision-1"]["prompt_rendered"] == "限额 999"
+
+
+def _condition_graph():
+    return parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "退款单进入",
+                 "config": {"triggerType": "webhook", "webhookUrl": "/hooks/refund"}},
+                {"id": "condition-1", "type": "condition", "name": "金额路由",
+                 "config": {
+                     "branches": [
+                         {"label": "大额",
+                          "expression": "{{trigger-1.context.payload.amount}} > 1000",
+                          "target": "tool-human"},
+                     ],
+                     "defaultTarget": "tool-auto",
+                 }},
+                {"id": "tool-human", "type": "tool_call", "name": "转人工",
+                 "config": {"tool": "human-review"}},
+                {"id": "tool-auto", "type": "tool_call", "name": "自动退款",
+                 "config": {"tool": "auto-refund"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "condition-1"},
+                {"id": "e2", "source": "condition-1", "target": "tool-human"},
+                {"id": "e3", "source": "condition-1", "target": "tool-auto"},
+            ],
+        }
+    )
+
+
+def test_condition_routes_to_matching_branch_only():
+    result = run_graph(_condition_graph(), inputs={"amount": 1500, "order_id": "12346"})
+    assert set(result["outputs"].keys()) == {"trigger-1", "condition-1", "tool-human"}
+    routed = result["outputs"]["condition-1"]
+    assert routed["branch"] == "大额"
+    assert routed["target"] == "tool-human"
+    assert routed["evaluation"][0]["result"] is True
+    assert routed["expression_errors"] == []
+    assert result["trace"][1] == "condition-1: branch=大额 → tool-human"
+
+
+def test_condition_falls_back_to_default_branch():
+    result = run_graph(_condition_graph(), inputs={"amount": 500, "order_id": "12345"})
+    assert set(result["outputs"].keys()) == {"trigger-1", "condition-1", "tool-auto"}
+    routed = result["outputs"]["condition-1"]
+    assert routed["branch"] == "__default__"
+    assert routed["target"] == "tool-auto"
+    assert routed["evaluation"][0]["result"] is False
+
+
+def test_condition_runtime_error_fails_safe_to_default():
+    result = run_graph(_condition_graph(), inputs={"order_id": "x"})  # 缺 amount
+    assert set(result["outputs"].keys()) == {"trigger-1", "condition-1", "tool-auto"}
+    routed = result["outputs"]["condition-1"]
+    assert routed["branch"] == "__default__"
+    assert routed["evaluation"][0]["result"] is None
+    assert routed["expression_errors"]
+
+
+def test_condition_stops_at_first_true_branch():
+    graph = parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "condition-1", "type": "condition", "name": "c",
+                 "config": {
+                     "branches": [
+                         {"label": "first", "expression": "true", "target": "tool-a"},
+                         {"label": "broken", "expression": "{{missing}} > 1", "target": "tool-b"},
+                     ],
+                     "defaultTarget": "tool-c",
+                 }},
+                {"id": "tool-a", "type": "tool_call", "name": "A", "config": {"tool": "a"}},
+                {"id": "tool-b", "type": "tool_call", "name": "B", "config": {"tool": "b"}},
+                {"id": "tool-c", "type": "tool_call", "name": "C", "config": {"tool": "c"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "condition-1"},
+                {"id": "e2", "source": "condition-1", "target": "tool-a"},
+                {"id": "e3", "source": "condition-1", "target": "tool-b"},
+                {"id": "e4", "source": "condition-1", "target": "tool-c"},
+            ],
+        }
+    )
+    result = run_graph(graph)
+    assert set(result["outputs"].keys()) == {"trigger-1", "condition-1", "tool-a"}
+    assert result["outputs"]["condition-1"]["branch"] == "first"
+    assert result["outputs"]["condition-1"]["expression_errors"] == []

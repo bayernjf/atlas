@@ -28,6 +28,20 @@ function FlowCanvasInner() {
 
   const nodeTypes = useMemo(() => ({ atlasNode: AtlasNode }), [])
 
+  const conditionEdgeLabels = useMemo(() => {
+    const labels = new Map<string, string>()
+    for (const node of nodes) {
+      if (node.data.kind !== 'condition') continue
+      for (const branch of node.data.config.branches ?? []) {
+        if (branch.target) labels.set(`${node.id}->${branch.target}`, branch.label || branch.target)
+      }
+      if (node.data.config.defaultTarget) {
+        labels.set(`${node.id}->${node.data.config.defaultTarget}`, '默认')
+      }
+    }
+    return labels
+  }, [nodes])
+
   const onDragOver = useCallback((event: React.DragEvent) => {
     event.preventDefault()
     event.dataTransfer.dropEffect = 'move'
@@ -48,11 +62,18 @@ function FlowCanvasInner() {
       <ReactFlow
         nodes={nodes.map((node: EditorNode) => ({ ...node, type: 'atlasNode' }))}
         nodeTypes={nodeTypes}
-        edges={edges.map((edge) => ({
-          ...edge,
-          markerEnd: { type: MarkerType.ArrowClosed, color: edgeColor },
-          style: { stroke: edgeColor },
-        }))}
+        edges={edges.map((edge) => {
+          const branchLabel = conditionEdgeLabels.get(`${edge.source}->${edge.target}`)
+          return {
+            ...edge,
+            label: branchLabel,
+            labelBgPadding: [6, 2] as [number, number],
+            labelBgBorderRadius: 4,
+            labelStyle: { fontSize: 11, fill: edgeColor },
+            markerEnd: { type: MarkerType.ArrowClosed, color: edgeColor },
+            style: { stroke: edgeColor },
+          }
+        })}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}

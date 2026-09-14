@@ -11,7 +11,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-SUPPORTED_NODE_TYPES = ("trigger", "ai_decision", "tool_call")
+from atlas.graph.conditions import validate_expression
+
+SUPPORTED_NODE_TYPES = ("trigger", "ai_decision", "tool_call", "condition")
 
 NodeType = str
 
@@ -98,7 +100,7 @@ def validate_graph(graph: GraphDSL) -> list[str]:
         if node.type not in SUPPORTED_NODE_TYPES:
             errors.append(
                 f"节点 {node.id} 类型暂不支持：{node.type}"
-                f"（W7-W8 支持 {', '.join(SUPPORTED_NODE_TYPES)}）"
+                f"（当前支持 {', '.join(SUPPORTED_NODE_TYPES)}）"
             )
             continue
         errors.extend(_validate_node_config(node))
@@ -121,7 +123,108 @@ def validate_graph(graph: GraphDSL) -> list[str]:
             errors.append(f"全局变量名重复：{variable.name}")
         var_names.add(variable.name)
 
+    outgoing: dict[str, set[str]] = {}
+    incoming: dict[str, set[str]] = {}
+    for edge in graph.edges:
+        if edge.source in node_ids and edge.target in node_ids:
+            outgoing.setdefault(edge.source, set()).add(edge.target)
+            incoming.setdefault(edge.target, set()).add(edge.source)
+
+    for node in graph.nodes:
+        if node.type == "condition":
+            errors.extend(_validate_condition_config(node, node_ids, outgoing))
+
+    errors.extend(_validate_reachability(graph, node_ids, outgoing))
+
     return errors
+
+
+def _validate_condition_config(
+    node: NodeDSL, node_ids: set[str], outgoing: dict[str, set[str]]
+) -> list[str]:
+    """condition config 图级校验（契约 04 §5.2）。"""
+    errors: list[str] = []
+    prefix = f"条件节点 {node.id}"
+    config = node.config
+
+    branches = config.get("branches")
+    if not isinstance(branches, list) or not branches:
+        errors.append(f"{prefix} 至少需要一个分支（branches）")
+        branches = []
+
+    default_target = config.get("defaultTarget")
+    if not isinstance(default_target, str) or not default_target.strip():
+        errors.append(f"{prefix} 必须配置默认分支（defaultTarget）")
+        default_target = None
+
+    labels: set[str] = set()
+    targets: set[str] = set()
+    for index, branch in enumerate(branches):
+        if not isinstance(branch, dict):
+            errors.append(f"{prefix} 第 {index + 1} 个分支格式不合法")
+            continue
+        label = branch.get("label")
+        expression = branch.get("expression")
+        target = branch.get("target")
+        if not isinstance(label, str) or not label.strip():
+            errors.append(f"{prefix} 第 {index + 1} 个分支名称（label）不能为空")
+        elif label in labels:
+            errors.append(f"{prefix} 分支名称重复：{label}")
+        else:
+            labels.add(label)
+        if not isinstance(expression, str) or not expression.strip():
+            errors.append(f"{prefix} 分支 {label or index + 1} 的表达式不能为空")
+        else:
+            for expr_error in validate_expression(expression):
+                errors.append(f"{prefix} 分支 {label or index + 1} 表达式{expr_error}")
+        if not isinstance(target, str) or not target.strip():
+            errors.append(f"{prefix} 分支 {label or index + 1} 必须选择目标节点")
+        else:
+            if target == node.id:
+                errors.append(f"{prefix} 分支 {label or index + 1} 不能指向自身")
+            elif target not in node_ids:
+                errors.append(f"{prefix} 分支 {label or index + 1} 的目标节点不存在：{target}")
+            if target in targets:
+                errors.append(f"{prefix} 分支目标重复：{target}")
+            else:
+                targets.add(target)
+            if default_target is not None and target == default_target:
+                errors.append(f"{prefix} 分支 {label or index + 1} 的目标不能与默认分支相同")
+
+    if default_target is not None:
+        if default_target == node.id:
+            errors.append(f"{prefix} 默认分支不能指向自身")
+        elif default_target not in node_ids:
+            errors.append(f"{prefix} 默认分支目标节点不存在：{default_target}")
+
+    edge_targets = outgoing.get(node.id, set())
+    if not edge_targets and (branches or default_target):
+        errors.append(f"{prefix} 不允许直连结束节点，每个分支都必须有出边")
+    for target in targets | ({default_target} if default_target else set()):
+        if target in node_ids and target != node.id and target not in edge_targets:
+            errors.append(f"{prefix} 缺少到目标节点 {target} 的连线")
+    for extra in edge_targets - targets - ({default_target} if default_target else set()):
+        errors.append(f"{prefix} 到节点 {extra} 的连线未配置分支（每条出边必须被分支或默认分支覆盖）")
+
+    return errors
+
+
+def _validate_reachability(
+    graph: GraphDSL, node_ids: set[str], outgoing: dict[str, set[str]]
+) -> list[str]:
+    """从 trigger 节点 BFS（04 补充项 1：不可达节点检测）；无 trigger 时跳过。"""
+    roots = [node.id for node in graph.nodes if node.type == "trigger" and node.id in node_ids]
+    if not roots:
+        return []
+    reachable: set[str] = set()
+    queue = list(roots)
+    while queue:
+        current = queue.pop()
+        if current in reachable:
+            continue
+        reachable.add(current)
+        queue.extend(outgoing.get(current, set()) - reachable)
+    return [f"节点 {node.id} 不可达（没有任何入边路径能到达它）" for node in graph.nodes if node.id not in reachable]
 
 
 def _validate_node_config(node: NodeDSL) -> list[str]:

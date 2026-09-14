@@ -20,3 +20,22 @@ def test_unknown_intent_without_llm_raises(monkeypatch):
     monkeypatch.delenv("LITELLM_MODEL", raising=False)
     with pytest.raises(ValueError):
         generate_graph("帮我管管日历日程")
+
+
+def test_llm_prompt_advertises_condition_kind_and_config(monkeypatch):
+    import litellm
+
+    captured: dict[str, str] = {}
+
+    def _fake_completion(*, model, messages, temperature):  # noqa: ANN001
+        captured["system"] = messages[0]["content"]
+        return {"choices": [{"message": {"content": "{}"}}]}
+
+    monkeypatch.setattr(litellm, "completion", _fake_completion)
+    monkeypatch.setenv("LITELLM_MODEL", "fake-model")
+
+    generate_graph("任意需求")
+    system = captured["system"]
+    assert "condition" in system
+    assert "branches" in system
+    assert "defaultTarget" in system

@@ -73,4 +73,35 @@ describe('validateNode', () => {
       ),
     ).toEqual([])
   })
+
+  it('validates condition branches and default target within node config', () => {
+    expect(validateNode(node('condition'))).toContain('第 1 个分支名称不能为空')
+    const valid = node('condition', {
+      config: {
+        branches: [
+          { label: '大额', expression: '{{trigger-1.context.payload.amount}} > 1000', target: 'tool-human' },
+        ],
+        defaultTarget: 'tool-auto',
+      },
+    })
+    expect(validateNode(valid)).toEqual([])
+  })
+
+  it('rejects duplicate labels, bad expressions and target/default collision', () => {
+    const errors = validateNode(
+      node('condition', {
+        config: {
+          branches: [
+            { label: 'x', expression: 'amount >', target: 'a' },
+            { label: 'x', expression: '{{ok}} == null', target: 'a' },
+          ],
+          defaultTarget: 'a',
+        },
+      }),
+    )
+    expect(errors.some((message) => message.includes('分支名称重复'))).toBe(true)
+    expect(errors.some((message) => message.includes('语法错误'))).toBe(true)
+    expect(errors.some((message) => message.includes('分支目标重复'))).toBe(true)
+    expect(errors).toContain('默认分支目标不能与其他分支相同')
+  })
 })
