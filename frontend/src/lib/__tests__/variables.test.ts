@@ -72,6 +72,7 @@ describe('listVariablePaths', () => {
       { id: 'loop-1', data: { kind: 'loop' } },
       { id: 'parallel-1', data: { kind: 'parallel' } },
       { id: 'wait-1', data: { kind: 'wait' } },
+      { id: 'subgraph-1', data: { kind: 'subgraph' } },
       { id: 'human-1', data: { kind: 'human_approval' } },
     ])
     expect(paths).toEqual([
@@ -84,6 +85,7 @@ describe('listVariablePaths', () => {
       'loop-1.index',
       'parallel-1.status',
       'wait-1.durationSeconds',
+      'subgraph-1.outputs',
       'human-1.decision',
     ])
   })

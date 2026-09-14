@@ -47,8 +47,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T
 }
 
+export type SavedGraphSummary = {
+  id: string
+  node_count: number
+  updated_at: string
+}
+
 export async function saveGraph(graph: SerializedGraph): Promise<{ id: string; version: number }> {
   return request('/api/graphs', { method: 'POST', body: JSON.stringify(graph) })
+}
+
+export async function listGraphs(): Promise<SavedGraphSummary[]> {
+  const body = await request<{ items: SavedGraphSummary[] }>('/api/graphs')
+  return body.items
 }
 
 export async function compileGraph(id: string): Promise<CompileResult> {
