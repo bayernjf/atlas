@@ -17,6 +17,8 @@ dependencies = [
     "fastapi>=0.141",
     "uvicorn>=0.52",
     "pydantic>=2.13,<3",
+    # Generic HTTP API adapter (04 §4.6; ADR T9 in 10 doc §4)
+    "httpx>=0.28,<0.29",
     # Web adapter (W3-W4)
     "playwright>=1.62",
     # Memory layers: short-term Redis, long-term PostgreSQL + pgvector (06 §6.3)
