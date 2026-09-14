@@ -9,11 +9,15 @@ NL 生成草稿、适配器发现、模拟商家售后控制台。
 from __future__ import annotations
 
 import json
-from typing import Any
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
-from pydantic import BaseModel
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from atlas.graph.dsl import GraphValidationError, parse_graph
 from atlas.graph.loader import compile_graph, run_graph
@@ -54,6 +58,10 @@ class GraphStore:
 
     def get(self, graph_id: str) -> dict[str, Any] | None:
         return self._graphs.get(graph_id)
+
+    def clear(self) -> None:
+        self._graphs = {}
+        self._counter = 0
 
 
 _store = GraphStore()
@@ -192,6 +200,56 @@ def demo_shop_orders() -> dict[str, Any]:
     return {"orders": _demo_shop.list_pending_refunds()}
 
 
+@app.post("/api/demo/reset")
+def demo_reset() -> dict[str, bool]:
+    """重置 Demo 数据（店铺恢复 5 笔种子退款单、清空已保存图），供种子客户从头体验。"""
+    _demo_shop.reset()
+    _store.clear()
+    return {"reset": True}
+
+
+class FeedbackRequest(BaseModel):
+    type: Literal["bug", "suggestion"]
+    content: str = Field(min_length=1, max_length=2000)
+    contact: str = Field(default="", max_length=200)
+
+
+class FeedbackStore:
+    """Phase 1 种子反馈：进程内存储（重启清空，与 Demo 同假设）；reset 不清除。"""
+
+    def __init__(self) -> None:
+        self._items: list[dict[str, Any]] = []
+        self._counter = 0
+
+    def add(self, request: FeedbackRequest) -> dict[str, Any]:
+        self._counter += 1
+        item = {
+            "id": f"feedback-{self._counter}",
+            "type": request.type,
+            "content": request.content,
+            "contact": request.contact,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._items.append(item)
+        return item
+
+    def list(self) -> list[dict[str, Any]]:
+        return list(self._items)
+
+
+_feedback_store = FeedbackStore()
+
+
+@app.post("/api/feedback", status_code=201)
+def submit_feedback(request: FeedbackRequest) -> dict[str, Any]:
+    return _feedback_store.add(request)
+
+
+@app.get("/api/feedback")
+def list_feedback() -> dict[str, list[dict[str, Any]]]:
+    return {"items": _feedback_store.list()}
+
+
 _CONSOLE_HTML = """<!doctype html>
 <html lang="zh-CN">
 <head><meta charset="utf-8"><title>Demo 商家售后控制台</title>
@@ -225,3 +283,17 @@ async function loadOrders(){
 @app.get("/demo/shop", response_class=HTMLResponse)
 def demo_shop_console() -> str:
     return _CONSOLE_HTML
+
+
+def _frontend_dist() -> Path | None:
+    configured = os.getenv("ATLAS_FRONTEND_DIST", "frontend/dist")
+    path = Path(configured)
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    return path if (path / "index.html").is_file() else None
+
+
+_dist = _frontend_dist()
+if _dist is not None:
+    # 生产形态（Docker）：FastAPI 同源托管编辑器构建产物；dev 仍用 Vite 5174 代理
+    app.mount("/", StaticFiles(directory=_dist, html=True), name="frontend")

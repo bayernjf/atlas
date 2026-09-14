@@ -4,6 +4,39 @@
 
 ## [Unreleased]
 
+### chore / bench（2026-09-14）
+
+- D9 BENCHMARK 首版落地：新增 `scripts/benchmark.py`（纯 stdlib，零新依赖；10% warmup + 300 次/场景，p50/p99，输出 BENCHMARK Results 格式 Markdown，`DATABASE_URL` 时追加 DB ping）。场景：OODA 循环吞吐、退款 3 节点图编译时延、12345 自动退款端到端时延（规则决策路径）、Harness 进程内调用开销。首份基线（commit 407812e，CPython 3.11.15 / macOS arm64）：OODA 2.05ms p50（≈488 loops/s）/ 编译 1.81ms / 退款端到端 2.28ms / Harness 0.002ms；LLM 决策、记忆层读写、并行扇出、长流程内存增长在 BENCHMARK Scope 标注待接入补测。09 目录树补 `scripts/`，08/14/handoff 同步。
+
+### chore / ci（2026-09-14）
+
+- D10a CI 质量门落地：`.github/workflows/ci.yml`（push main/dev 与 PR 触发，同 ref 并发取消）三道门——gitleaks 全历史密钥扫描（沿用根 `.gitleaks.toml`）、后端 Python 3.11 `pytest`（integration 默认跳过）、前端 Node 22 / pnpm 10 `pnpm lint`（oxlint）+ `pnpm test`（vitest 23）+ `pnpm build`。本地等价命令全绿（后端 62 passed/8 skipped、gitleaks 55 commits 无泄漏）；Actions 实跑待 dev 推送后验证。14 D10 拆为 D10a（完成）/D10b（CD，缓做至远程部署目标确定），ADR T8 落 10 文档 §4，08/09/14/handoff 同步。
+
+### docs（2026-09-14）
+
+- docs/18 新增 §6.1 试用进度跟踪表（C1-C5 一行一客户：决策路径、三场景结果与耗时、黄金用例认同数、意向、反馈分类、跟进项）与每家详细记录模板；handoff 新增「Active feedback」入口区并指向该表，试用反馈按 16 文档流程闭环。
+
+### feat / api+web（2026-09-13）
+
+- Phase 1 应用内反馈入口落地（18 文档 §6）：后端新增 `POST /api/feedback`（type=bug/suggestion、content 1-2000 字、contact 选填，201 + id/created_at）与 `GET /api/feedback`（陪同试用导出），进程内 `FeedbackStore`（重启清空，与 Demo 存储同假设；`/api/demo/reset` 不清除反馈）；非法 type/空 content 经 pydantic 校验 422。前端编辑器头部新增"反馈"按钮与弹窗（类型切换、字数计数、联系方式选填、提交成功态、错误回显），`apiClient.submitFeedback`。测试：后端新增 2 用例（62 passed/8 skipped），前端 vitest 23、`pnpm build` 通过；浏览器同源（:8000）实测两类反馈提交与 GET 导出落库，控制台零错误。03 新增 feedback_item 契约、12 REST 表补两端点、13 进度补行。
+
+### docs（2026-09-13）
+
+- Phase 1 种子验证准备：新增 `docs/18-种子客户验证计划.md`（客户画像与 3-5 家招募标准、对齐 08 §7.3 的三场景试用脚本、Go/No-Go 量化指标、应用内+试用表双反馈机制与边界）与根目录客户向一页纸 `TRIAL.md`（docker compose 启动、12345 自动退款 / 12346 转人工 / NL 生成草稿三场景、reset 用法、5 题反馈表）。08 Phase 1 补准备记录，00 文档地图加 18，AGENTS 文档范围改 00-18，README/handoff 索引同步。
+
+### feat / api+infra（2026-09-13）
+
+- Phase 1 种子客户一键交付：根目录新增 `Dockerfile`（node:22-slim 多阶段构建前端 → python:3.11-slim 安装后端，dist 拷至 `/app/frontend/dist`，不装 Playwright 浏览器）、`docker-compose.yml`（单服务 8000 端口，`LITELLM_MODEL` 透传）、`.dockerignore`。`api/main.py` 在 `ATLAS_FRONTEND_DIST`（默认 `frontend/dist` 相对于 cwd）存在时用 StaticFiles 同源挂载到 `/`（显式路由优先，dev 仍走 Vite 5174 代理）；新增 `POST /api/demo/reset`（店铺恢复 5 笔种子退款单、清空已保存图与登录态），`DemoShopService.reset()`/`GraphStore.clear()`。测试新增 reset 全链路与静态托管条件用例，后端 60 passed/8 skipped；镜像 `docker compose up --build` 实测编辑器、/api/health、/demo/shop 同源可访问。
+
+### feat / web（2026-09-13）
+
+- 设计 Token 等价替换落地（17 文档 §3）：新增 `frontend/src/theme/tokens.ts`（primitive/semantic 两层，唯一事实源，导出 `antdTheme` 与 `token()`）与 `setup.ts`（main.tsx 引入一次，注入 `--atlas-*` CSS 变量）；`App.tsx` ConfigProvider 改消费 `antdTheme`，`index.css` 全部硬编码色值/rgba 光晕换为语义变量（含 keyframes pulse），`nodeCatalog.ts` 节点三色与 `FlowCanvas.tsx` 连线色改引 `token()`。现值 1:1 搬迁、零新依赖；`pnpm test` 23/23、`pnpm build` 通过，浏览器 computed-style 逐页核对零视觉差异、控制台零错误，src 下硬编码色值仅剩 tokens.ts。
+
+### docs（2026-09-13）
+
+- 新增 `docs/17-前端国际化与设计Token方案.md`（工程推导，需求依据 04 §补充项 28）：i18n 选型 i18next + react-i18next + AntD locale（T7，触发式引入，当前不落码），冻结 locales 目录/key 命名/后端错误码本地化/金额日期 Intl 格式化/NL 多语言边界等契约；设计 Token 三层模型（primitive/semantic/component），`frontend/src/theme/tokens.ts` 单一事实源派生 AntD theme 与 `--atlas-*` CSS 变量（零新依赖），含硬编码色值迁移清单与零视觉变化验收。10 文档 §1/§4 记 T7 与 token ADR，09 前端树补 `theme/`、`locales/`（待落码），14 文档新增 D12/D13，handoff/00 索引同步。
+- 同步 README/CONTRIBUTING 阶段口径至 W1-W10 Demo 完成，03 契约索引补 W9-W10 运行时 Schema（refund_decision/refund_order/run_event/nl_generate_request）。
+
 ### feat / llm+shop+graph+api+web（2026-09-13）
 
 - W9-W10 电商退款端到端 Demo，08 §7.3 七条验收全部达成。新增 `src/atlas/llm/`：`decision.py` 定义 DecisionClient 协议，配置 `LITELLM_MODEL` 时经 LiteLLM 决策（只取 JSON，解析失败 fail-safe 转人工），未配置时 RuleBasedDecisionClient 按 06 §9.2 黄金规则确定性兜底（质量原因且金额 ≤ 限额 → approve_refund，其余 → request_human_approval）；`nl_generate.py` 自然语言生成 Graph 草稿（LLM 优先、退款模板兜底、无法识别 422）。新增渠道包 `src/atlas/shop/`：`service.py` DemoShopService（五笔种子退款单 12345-12349、登录态、退款/转人工状态流转），`adapter.py` ShopHarnessAdapter（login/list_pending_refunds/execute_refund[financial]/request_human_approval/process_refund 五能力，按上游决策路由，权限门与 StructuredError）。`graph/loader.py` 改为依赖注入（decision_client/registry/emit/trigger_payload），webhook 载荷经 run inputs 进入 trigger `context.payload`（同名键覆盖全局变量），执行事件 node_start/node_end/run_end；dsl 修复 triggerType `schedule` 与 `cron` 均触发 cron 校验（对齐前端取值）。`api/main.py` 新增 `POST /api/graphs/{id}/run/stream`（SSE 实时进度）、`POST /api/nl/generate`、`GET /api/adapters`、Demo 店铺登录/订单接口与 `GET /demo/shop` 模拟商家控制台页面，共享 Demo 服务单例。前端：退款单选择器、SSE 流式运行（节点 running 脉冲/completed 描边 + 调试台事件）、NL 生成弹窗载草稿（deserializeGraph）、种子图改为退款三节点、Dashboard 文案 W9-W10。测试：后端新增 26 用例（决策 6/店铺 8/NL 2/退款端到端 3/Demo API 6/店铺平台集成 1/schedule 1），默认 58 passed/8 skipped，opt-in 集成全绿；前端 vitest 23 全绿、`pnpm build` 通过；浏览器实测 12345 破损→approve_refund→refunded、12346 主观→request_human_approval→human_review、NL 草稿载入、控制台 demo/demo 登录拉单。文档 08（落码记录+验收映射）/09（llm、shop 包树+清单）/12（新端点）/13（W9-W10 测试行）同步；`.env.example` 补 `LITELLM_MODEL`。

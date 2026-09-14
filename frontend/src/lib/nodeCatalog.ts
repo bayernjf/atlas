@@ -5,6 +5,8 @@
  * condition/loop/parallel 等类型随后续周次在同一目录注册。
  */
 
+import { token } from '../theme/tokens'
+
 export const NODE_KINDS = ['trigger', 'ai_decision', 'tool_call'] as const
 export type NodeKind = (typeof NODE_KINDS)[number]
 
@@ -42,9 +44,9 @@ export type EditorNodeData = {
 }
 
 export const NODE_CATALOG: Record<NodeKind, { label: string; description: string; color: string }> = {
-  trigger: { label: '触发器', description: '流程入口：定时 / Webhook / 手动', color: '#52c41a' },
-  ai_decision: { label: 'AI 决策', description: 'LLM 基于上下文判断下一步', color: '#722ed1' },
-  tool_call: { label: '工具调用', description: '经 Harness 执行外部平台操作', color: '#1677ff' },
+  trigger: { label: '触发器', description: '流程入口：定时 / Webhook / 手动', color: token('color-success') },
+  ai_decision: { label: 'AI 决策', description: 'LLM 基于上下文判断下一步', color: token('color-node-ai') },
+  tool_call: { label: '工具调用', description: '经 Harness 执行外部平台操作', color: token('color-primary') },
 }
 
 export function defaultConfig(kind: NodeKind): NodeConfig {
