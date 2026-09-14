@@ -6,7 +6,7 @@
 
 Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/ Graph（可执行因果图）/ Loop（OODA 主循环）** 三位一体为内核，面向企业流程自动化场景（首个目标场景：企业内部 OA 审批），目标是让非技术人员通过自然语言/拖拽定义流程，由运营体自动执行、自愈与进化。
 
-当前阶段：**W1-W10 Demo 全部完成（W9-W10 电商退款端到端 Demo 于 2026-09-13 跑通，08 §7.3 七条验收全部达成）**。退款链路：webhook 退款单 → AI 决策（LiteLLM；未配置 `LITELLM_MODEL` 时规则兜底，对齐 06 §9.2 黄金用例）→ shop 适配器执行退款或转人工；SSE 节点事件实时上屏，自然语言可生成退款流程草稿。下一步进入 Phase 1 种子客户验证与缓做项触发（Redis 短期记忆、业务表 DDL、web 视觉 LLM、Go 网关等，见 docs/14）。
+当前阶段：**Phase 1 沙盘假定通过，进入 Phase 2 排期（2026-09-14，用户指示的假定，非真实试用结论）**。W1-W10 Demo 全部完成（W9-W10 电商退款端到端 Demo 于 2026-09-13 跑通，08 §7.3 七条验收全部达成）。退款链路：webhook 退款单 → AI 决策（LiteLLM；未配置 `LITELLM_MODEL` 时规则兜底，对齐 06 §9.2 黄金用例）→ shop 适配器执行退款或转人工；SSE 节点事件实时上屏，自然语言可生成退款流程草稿。Phase 1 种子验证工程侧齐备（Docker 一键交付/reset/反馈入口/docs 18+TRIAL），但**无真实 C1-C5 试用数据**，Go 结论为沙盘假定（18 文档 §8）；真实试用若 No-Go 需回退。下一步按 08 Phase 2：条件/循环/并行节点、API/DB/消息适配器、模板库、多租户（14 D7）等，首项待用户拍板。
 
 结构：
 - `docs/` — 全部规格文档（入口：`00-文档索引与治理.md`）
@@ -43,7 +43,7 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 ## Current state（当前状态）
 
 - **阶段**：W9-W10 电商退款端到端 Demo 已完成（2026-09-13，08 §7.3 七条验收全达成）。新增 `llm/`（LiteLLM 退款决策 + 规则兜底 + NL 草稿生成）、`shop/`（DemoShopService + ShopHarnessAdapter：login/list_pending_refunds/execute_refund/request_human_approval/process_refund）两个包；`graph/loader.py` 经依赖注入接真实决策/适配器/事件回调；API 新增 SSE 运行流、NL 生成、适配器发现与模拟商家控制台；前端退款单选择、节点实时状态、NL 草稿载入。后端默认 62 单元全绿（W9-W10 后追加 reset/静态托管/反馈 4 用例；+1 店铺集成 opt-in），前端 vitest 23 全绿，浏览器实测 12345→refunded / 12346→human_review。
-- **仓库**：git 仓库，**已推送 GitHub private 仓库 `bayernjf/atlas`**（main 为生产分支；当前工作在 `dev` 集成分支，W1-W10 落码提交**尚未 push**，分支策略见 15 文档）。
+- **仓库**：git 仓库，**已推送 GitHub private 仓库 `bayernjf/atlas`**（main 为生产分支、dev 为集成分支，分支策略见 15 文档）。PR #3（dev→main，W9-W10 后全部 Phase 1 工作：设计 Token/Docker/反馈/CI/benchmark，19 提交）已于 2026-09-14 合并（merge `f069b53`），main CI 全绿。
 - **技术选型**：✅ 已全部收口（2026-09-13，T1-T5 见 10 文档 §3）：Python 3.11+ 引擎 / Go Harness 网关为产品化目标、**Demo 用 Python/FastAPI 实现同构接口** / TypeScript + React 19（满足 React 18+）/ LangChain+LangGraph / LiteLLM（Demo 对接主流商业 API，`.env` 切换，不引入 vLLM）/ Playwright / PostgreSQL+pgvector / Redis / **Demo 进程内事件总线替代 NATS** / FastAPI / `@xyflow/react` 12 + Zustand 5 + AntD 6 / 评估优化层仅留接口；剩余 ⏳（vLLM、策略训练、多语言）均为后续阶段范围。
 - **Demo 依赖清单已落码**：后端在 `pyproject.toml`，前端在 `frontend/package.json` / `pnpm-lock.yaml`（版本为 2026-09-13 解析的稳定版）。
 - **关键文件**：后端 `src/atlas/`（11 个包；engine 最小循环、graph DSL 契约+编译器（W9-W10 注入决策/适配器/事件）、llm 退款决策+NL 生成、shop Demo 店铺服务+适配器、api FastAPI（graphs/SSE/NL/adapters/Demo 控制台）、memory 连接层、harness 契约/注册、web 三层定位适配器）、`db/migrations/001_enable_pgvector.sql`，前端 `frontend/`（Dashboard/Editor + 画布/节点/属性/变量面板 + `lib/` 纯逻辑（变量/节点目录/序列化/API client 含 SSE）+ Zustand store + vitest 单测）；模块填充顺序见 09 文档待填项清单。
@@ -56,10 +56,10 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 2. ✅ **W5-W6 编辑器核心功能**（08 文档 7.1，2026-09-13 完成）：拖拽画布、3 种节点类型化配置 + 实时校验、全局变量与 `{{路径}}` 引用、Graph JSON 导出；vitest 20 个单测全绿。
 3. ✅ **W7-W8 编译与运行**（08 文档 7.1，2026-09-13 完成）：Graph DSL 契约 + 静态校验、DSL→LangGraph 编译/运行、FastAPI graphs 保存/读取/编译/运行、编辑器一键"编译并运行"；后端新增 16 个用例。
 4. ✅ **W9-W10 端到端 Demo**（08 文档 7.1，2026-09-13 完成）：电商退款完整链路跑通（LiteLLM 决策 + 规则兜底、shop 退款业务能力、SSE 实时进度、NL 退款草稿、模拟商家控制台），08 §7.3 七条验收逐条达成（映射见 08 W9-W10 落码记录）。
-5. ⏭️ **Demo 之后（Phase 1）**：种子客户试用收集反馈；条件触发时从 docs/14 缓做登记表取回（Redis 短期记忆、11 S1 业务表 DDL 替换进程内存储、web 适配器视觉层接真实 LLM、NATS/Go 网关、条件/循环/并行节点等）。
+5. ⏭️ **Phase 2 启动（2026-09-14，沙盘假定 Go）**：18 文档 §8 记录假定验证通过。08 Phase 2 范围——新增节点（条件分支、循环、并行、等待、子图、人机协作）、API/DB/消息适配器、模板库、操作录制、单步调试断点、基础监控告警、多租户权限（14 D7 触发条件随假定满足，待立项取回）；首项任务待用户拍板。缓做触发：D6 Go 网关触发条件字面为"进入 Phase 2"，但建议待多实例部署需求明确再启动（与 D5 NATS/D10b CD 同批）。
 6. 文档缺口登记：`09-工程骨架` 待定项 1/2/3/4/5/6 均已收口（待定项 3：不新增 deployment/ 包，Dockerfile + docker-compose.yml 放仓库根，2026-09-13）。新增测试运行器选型 vitest 已记 10 文档 §4 ADR（W5-W6）。
-8. 🐳 **Phase 1 种子客户交付准备（工程侧已齐）**：✅ Docker Compose 一键启动（`Dockerfile` 多阶段 + FastAPI 同源托管 `frontend/dist` + `POST /api/demo/reset` 重置种子数据，镜像实测黄金用例通过，2026-09-13）；✅ 种子验证计划 [docs/18](docs/18-种子客户验证计划.md) + 客户向 [TRIAL.md](TRIAL.md)（2026-09-13）；✅ 应用内反馈入口（编辑器"反馈"按钮 + `POST/GET /api/feedback`，进程内存储、reset 不清除，后端 62 测试/浏览器实测通过，2026-09-13）。下一步为业务动作：按 docs/18 招募 3-5 家种子客户试用，逐客户进度回填 docs/18 §6.1 跟踪表与详细记录，反馈导出后未解决项进本区「Active feedback」（16 文档流程）。
-9. ✅ **D10a CI 质量门（2026-09-14 完成）**：14 D10 拆分后 CI 部分提前触发（ADR T8 见 10 文档 §4，08 Phase 1 已记录）。`.github/workflows/ci.yml` 三道门——gitleaks 全历史密钥扫描、后端 pytest（Python 3.11，integration 默认跳过）、前端 oxlint + vitest + `pnpm build`（Node 22 / pnpm 10）；main/dev 推送与 PR 触发，重复运行并发取消。本地等价命令全绿（62 passed/8 skipped、23 vitest、build 通过、gitleaks 55 commits 无泄漏）；**GitHub Actions 实际运行待 dev 推送后验证**（本分支未 push）。CD 留 14 D10b（远程部署目标确定后）。
+8. ✅ **Phase 1 种子客户交付准备（工程侧已齐，试用为沙盘假定）**：Docker Compose 一键启动（`Dockerfile` 多阶段 + FastAPI 同源托管 `frontend/dist` + `POST /api/demo/reset` 重置种子数据，镜像实测黄金用例通过，2026-09-13）、种子验证计划 [docs/18](docs/18-种子客户验证计划.md) + 客户向 [TRIAL.md](TRIAL.md)（2026-09-13）、应用内反馈入口（编辑器"反馈"按钮 + `POST/GET /api/feedback`，进程内存储、reset 不清除，后端 62 测试/浏览器实测通过，2026-09-13）。业务动作（招募 3-5 家、回填 18 §6.1）在沙盘假定下标记完成但无真实数据；若真实试用启动，仍按 18 文档执行并以实测覆盖假定。
+9. ✅ **D10a CI 质量门（2026-09-14 完成并验证）**：14 D10 拆分后 CI 部分提前触发（ADR T8 见 10 文档 §4，08 Phase 1 已记录）。`.github/workflows/ci.yml` 三道门——gitleaks 全历史密钥扫描、后端 pytest（Python 3.11，integration 默认跳过）、前端 oxlint + vitest + `pnpm build`（Node 22 / pnpm 10）；main/dev 推送与 PR 触发，重复运行并发取消。PR #3 实跑发现 gitleaks 在 pull_request 事件需 `pull-requests: read`（403，commit `247372e` 修复），修复后 PR 全绿、合并后 main（f069b53）CI success。CD 留 14 D10b（远程部署目标确定后）。
 10. ✅ **D9 BENCHMARK 实测（2026-09-14 完成）**：新增 `scripts/benchmark.py`（纯 stdlib，零新依赖：10% warmup + 300 次/场景，p50/p99，输出 Markdown 行，DATABASE_URL 时追加 DB ping）；[BENCHMARK.md](BENCHMARK.md) 填首份基线（commit 407812e，macOS arm64 / CPython 3.11.15）：OODA 循环 2.05ms / ~488 loops/s、3 节点图编译 1.81ms、退款端到端（规则路径）2.28ms、Harness 进程内调用 0.002ms。LLM 决策延迟、记忆层读写、并行扇出、长流程内存增长在 BENCHMARK Scope 标注待接入补测。
 
 **Active feedback**：暂无（种子试用开始后，由 docs/18 §6.1 跟进项迁移至此，解决后留痕 Recently shipped；流程见 16 文档）。
@@ -79,7 +79,7 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 ## Quality gate（质量门）
 
 - **文档侧**：00 文档"切分核对报告"已确认 274 章节全映射、逐段覆盖无丢失。改规格文档必须遵循 00 文档治理规则（唯一事实源 / 改内容流程 / Schema 契约防漂移）。
-- **代码侧**：最小质量门已建立——GitHub Actions CI（`.github/workflows/ci.yml`，2026-09-14 落地；push main/dev 与 PR 触发）：gitleaks 全历史扫描 + 后端 pytest + 前端 oxlint/vitest/build；本地后端 `.venv/bin/pytest`（当前 62 个单元用例：engine 3 + harness 契约 7 + 三层定位 6 + graph DSL 8 + 编译器 5 + graphs API 4 + 决策 6 + 店铺 8 + NL 2 + 退款端到端 3 + Demo API 8；DB/浏览器/店铺 8 个 integration 用例默认跳过），全量 `ATLAS_RUN_INTEGRATION=1`（+`DATABASE_URL`）含真实 Chromium 与店铺平台集成；前端 `cd frontend && pnpm test`（vitest，23 个单元用例）与 `pnpm build`（TS 检查 + Vite 构建）均通过（有 AntD 首包 >500kB 的体积提示，暂不阻塞）。后续按 13 测试用例清单分层：单元 → 集成 → 回放 → 端到端 → AI 评估，上线前过"四道门"。
+- **代码侧**：最小质量门已建立——GitHub Actions CI（`.github/workflows/ci.yml`，2026-09-14 落地；push main/dev 与 PR 触发）：gitleaks 全历史扫描 + 后端 pytest + 前端 oxlint/vitest/build；**PR #3 与合并后 main 均已实跑全绿**（gitleaks 初版 403 经补 `pull-requests: read` 修复）。本地后端 `.venv/bin/pytest`（当前 62 个单元用例：engine 3 + harness 契约 7 + 三层定位 6 + graph DSL 8 + 编译器 5 + graphs API 4 + 决策 6 + 店铺 8 + NL 2 + 退款端到端 3 + Demo API 8；DB/浏览器/店铺 8 个 integration 用例默认跳过），全量 `ATLAS_RUN_INTEGRATION=1`（+`DATABASE_URL`）含真实 Chromium 与店铺平台集成；前端 `cd frontend && pnpm test`（vitest，23 个单元用例）与 `pnpm build`（TS 检查 + Vite 构建）均通过（有 AntD 首包 >500kB 的体积提示，暂不阻塞）。后续按 13 测试用例清单分层：单元 → 集成 → 回放 → 端到端 → AI 评估，上线前过"四道门"。
 
 ## How to run
 

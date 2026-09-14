@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### docs（2026-09-14）
+
+- 沙盘假定 Phase 1 种子验证 Go、进入 Phase 2（用户指示，非真实试用结论）：docs/18 文首加假定声明、新增 §8 验证结论表（注明无 §5 实测值、无 §6.1 C1-C5 记录，真实试用 No-Go 时回退）；08 Phase 1 补假定结论并记 PR #3（dev→main，19 提交，merge f069b53，main CI 全绿）；handoff 阶段口径、仓库状态（PR 已合并）、Active work（Phase 2 范围与 D6/D7 触发提示）、Quality gate（gitleaks 403 修复、PR/main 实跑全绿）同步。
+
 ### chore / bench（2026-09-14）
 
 - D9 BENCHMARK 首版落地：新增 `scripts/benchmark.py`（纯 stdlib，零新依赖；10% warmup + 300 次/场景，p50/p99，输出 BENCHMARK Results 格式 Markdown，`DATABASE_URL` 时追加 DB ping）。场景：OODA 循环吞吐、退款 3 节点图编译时延、12345 自动退款端到端时延（规则决策路径）、Harness 进程内调用开销。首份基线（commit 407812e，CPython 3.11.15 / macOS arm64）：OODA 2.05ms p50（≈488 loops/s）/ 编译 1.81ms / 退款端到端 2.28ms / Harness 0.002ms；LLM 决策、记忆层读写、并行扇出、长流程内存增长在 BENCHMARK Scope 标注待接入补测。09 目录树补 `scripts/`，08/14/handoff 同步。
