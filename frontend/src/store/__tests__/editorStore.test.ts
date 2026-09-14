@@ -26,6 +26,10 @@ describe('nextId', () => {
   it('starts at 1 for new kinds and ignores unrelated prefixes', () => {
     expect(nextId('tool_call', [stubNode('trigger-9')])).toBe('tool_call-1')
   })
+
+  it('numbers condition nodes with the condition- prefix', () => {
+    expect(nextId('condition', [stubNode('trigger-1')])).toBe('condition-1')
+  })
 })
 
 describe('editorStore addNodeAt / variables', () => {
@@ -63,6 +67,38 @@ describe('editorStore addNodeAt / variables', () => {
     useEditorStore.getState().deleteSelectedNode()
     const remaining = useEditorStore.getState().edges.map((edge) => edge.id)
     expect(remaining).toEqual(['c'])
+  })
+
+  it('clears condition branch targets pointing at a deleted node', () => {
+    const condition: EditorNode = {
+      id: 'condition-1',
+      position: { x: 0, y: 0 },
+      data: {
+        label: '路由',
+        kind: 'condition',
+        status: 'idle',
+        config: {
+          branches: [
+            { label: '大额', expression: '{{amount}} > 1000', target: 'tool-human' },
+            { label: '其他', expression: '{{amount}} > 100', target: 'tool-review' },
+          ],
+          defaultTarget: 'tool-human',
+        },
+        retry: defaultRetry(),
+      },
+    }
+    useEditorStore.setState({
+      nodes: [condition, stubNode('tool-review')],
+      edges: [],
+      variables: [],
+      selectedNodeId: 'tool-review',
+      logs: [],
+    })
+    useEditorStore.getState().deleteSelectedNode()
+    const updated = useEditorStore.getState().nodes[0]
+    expect(updated.data.config.branches?.[0].target).toBe('tool-human')
+    expect(updated.data.config.branches?.[1].target).toBe('')
+    expect(updated.data.config.defaultTarget).toBe('tool-human')
   })
 })
 
