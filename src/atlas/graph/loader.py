@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import operator
 import re
+import time
 from typing import Annotated, Any, Callable, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -158,6 +159,11 @@ def _make_executor(
             output = _parallel_running_output(node)
             targets = [branch["target"] for branch in node.config.get("branches", [])]
             message = f"{node.id}: fork {len(targets)} branches → {', '.join(targets)}"
+        elif node.type == "wait":
+            seconds = int(node.config["durationSeconds"])
+            time.sleep(seconds)
+            output = {"mode": "wait", "waitType": "duration", "durationSeconds": seconds}
+            message = f"{node.id}: waited {seconds}s"
         else:
             output = _execute_tool(node, context, registry)
             message = f"{node.id}({node.type}): executed"

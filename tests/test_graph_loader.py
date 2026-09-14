@@ -346,3 +346,74 @@ def test_parallel_all_completed_marks_success_despite_failed_branch():
     assert any(branch["status"] == "failed" for branch in parallel_output["branches"])
     assert "tool-join" in result["outputs"]
     assert any("joined (all_completed) success" in line for line in result["trace"])
+
+
+def _wait_graph():
+    return parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "wait-1", "type": "wait", "name": "等待 2 秒",
+                 "config": {"waitType": "duration", "durationSeconds": 2}},
+                {"id": "tool-after", "type": "tool_call", "name": "后继",
+                 "config": {"tool": "op-after"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "wait-1"},
+                {"id": "e2", "source": "wait-1", "target": "tool-after"},
+            ],
+        }
+    )
+
+
+def test_wait_sleeps_then_continues_to_single_successor(monkeypatch):
+    slept: list[int] = []
+    monkeypatch.setattr("atlas.graph.loader.time.sleep", lambda seconds: slept.append(seconds))
+
+    result = run_graph(_wait_graph())
+    assert result["status"] == "completed"
+    assert slept == [2]
+
+    wait_output = result["outputs"]["wait-1"]
+    assert wait_output == {"mode": "wait", "waitType": "duration", "durationSeconds": 2}
+    assert "tool-after" in result["outputs"]
+    assert any("waited 2s" in line for line in result["trace"])
+
+
+def test_wait_after_condition_default_branch_passes_through(monkeypatch):
+    monkeypatch.setattr("atlas.graph.loader.time.sleep", lambda seconds: None)
+    graph = parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "condition-1", "type": "condition", "name": "c",
+                 "config": {
+                     "branches": [
+                         {"label": "大额", "expression": "1 == 2", "target": "tool-a"},
+                     ],
+                     "defaultTarget": "wait-1",
+                 }},
+                {"id": "wait-1", "type": "wait", "name": "等待",
+                 "config": {"waitType": "duration", "durationSeconds": 1}},
+                {"id": "tool-a", "type": "tool_call", "name": "A",
+                 "config": {"tool": "op-a"}},
+                {"id": "tool-b", "type": "tool_call", "name": "B",
+                 "config": {"tool": "op-b"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "condition-1"},
+                {"id": "e2", "source": "condition-1", "target": "tool-a"},
+                {"id": "e3", "source": "condition-1", "target": "wait-1"},
+                {"id": "e4", "source": "wait-1", "target": "tool-b"},
+            ],
+        }
+    )
+    result = run_graph(graph)
+    assert set(result["outputs"]) == {"trigger-1", "condition-1", "wait-1", "tool-b"}
+    assert result["outputs"]["wait-1"]["mode"] == "wait"
