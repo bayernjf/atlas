@@ -104,9 +104,14 @@ def test_llm_prompt_advertises_wait_kind_and_config(monkeypatch):
     generate_graph("任意需求")
     system = captured["system"]
     assert "/wait" in system
-    assert "七类" in system
+    assert "/human_approval" in system
+    assert "八类" in system
     assert "waitType" in system
     assert "durationSeconds" in system
     assert "1-600 的整数秒" in system
     assert "事件等待不支持" in system
     assert "恰好配置一条出边" in system
+    assert "10-3600 的整数秒" in system
+    assert "approvedTarget" in system
+    assert "rejectedTarget" in system
+    assert "恰好两条出边" in system
