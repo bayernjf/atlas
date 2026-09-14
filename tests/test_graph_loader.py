@@ -175,3 +175,70 @@ def test_condition_stops_at_first_true_branch():
     assert set(result["outputs"].keys()) == {"trigger-1", "condition-1", "tool-a"}
     assert result["outputs"]["condition-1"]["branch"] == "first"
     assert result["outputs"]["condition-1"]["expression_errors"] == []
+
+
+def _loop_graph(expression: str, max_iterations: int = 10):
+    return parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "loop-1", "type": "loop", "name": "重试循环",
+                 "config": {
+                     "mode": "while",
+                     "continueExpression": expression,
+                     "maxIterations": max_iterations,
+                     "bodyTarget": "tool-body",
+                     "exitTarget": "tool-exit",
+                 }},
+                {"id": "tool-body", "type": "tool_call", "name": "循环体",
+                 "config": {"tool": "body-op"}},
+                {"id": "tool-exit", "type": "tool_call", "name": "退出",
+                 "config": {"tool": "exit-op"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "loop-1"},
+                {"id": "e2", "source": "loop-1", "target": "tool-body"},
+                {"id": "e3", "source": "tool-body", "target": "loop-1"},
+                {"id": "e4", "source": "loop-1", "target": "tool-exit"},
+            ],
+        }
+    )
+
+
+def test_loop_runs_body_until_condition_false():
+    result = run_graph(_loop_graph("{{loop-1.index}} < 3"))
+    assert result["status"] == "completed"
+    body_runs = sum(1 for line in result["trace"] if line.startswith("tool-body"))
+    assert body_runs == 3
+    assert set(result["outputs"].keys()) == {"trigger-1", "loop-1", "tool-body", "tool-exit"}
+    loop_output = result["outputs"]["loop-1"]
+    assert loop_output["iterations"] == 3
+    assert loop_output["index"] == 3
+    assert loop_output["exitReason"] == "condition_false"
+    assert loop_output["target"] == "tool-exit"
+    assert any("continue (3/10) → tool-body" in line for line in result["trace"])
+    assert any("exit (condition_false) after 3 → tool-exit" in line for line in result["trace"])
+
+
+def test_loop_fail_safe_exit_at_max_iterations():
+    result = run_graph(_loop_graph("true", max_iterations=3))
+    body_runs = sum(1 for line in result["trace"] if line.startswith("tool-body"))
+    assert body_runs == 3
+    loop_output = result["outputs"]["loop-1"]
+    assert loop_output["exitReason"] == "max_iterations"
+    assert loop_output["target"] == "tool-exit"
+    assert loop_output["expression_errors"]
+    assert "tool-exit" in result["outputs"]
+
+
+def test_loop_expression_error_exits_immediately():
+    result = run_graph(_loop_graph("{{missing.path}} > 1"))
+    assert "tool-body" not in result["outputs"]
+    assert set(result["outputs"].keys()) == {"trigger-1", "loop-1", "tool-exit"}
+    loop_output = result["outputs"]["loop-1"]
+    assert loop_output["iterations"] == 0
+    assert loop_output["exitReason"] == "expression_error"
+    assert loop_output["expression_errors"]

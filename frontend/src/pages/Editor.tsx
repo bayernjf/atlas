@@ -77,6 +77,9 @@ export function Editor() {
           const output = event.output as {
             decision?: { action?: string }
             branch?: string
+            mode?: string
+            iterations?: number
+            exitReason?: string | null
             target?: string
             result?: unknown
           }
@@ -86,6 +89,19 @@ export function Editor() {
           } else if (output?.branch) {
             const branchLabel = output.branch === '__default__' ? '默认' : output.branch
             appendLog(`✓ ${event.node_id} 分支：${branchLabel} → ${output.target}`)
+          } else if (output?.mode === 'while') {
+            if (output.exitReason === null) {
+              appendLog(`✓ ${event.node_id} 继续循环：第 ${output.iterations} 轮 → ${output.target}`)
+            } else {
+              const reasonLabel = {
+                condition_false: '条件不满足',
+                max_iterations: '达到最大次数',
+                expression_error: '表达式异常',
+              }[output.exitReason ?? ''] ?? output.exitReason
+              appendLog(
+                `✓ ${event.node_id} 退出循环：${reasonLabel}，共 ${output.iterations} 轮 → ${output.target}`,
+              )
+            }
           } else {
             appendLog(`✓ 节点完成：${event.node_id}`)
           }

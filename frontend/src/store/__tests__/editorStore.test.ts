@@ -100,6 +100,37 @@ describe('editorStore addNodeAt / variables', () => {
     expect(updated.data.config.branches?.[1].target).toBe('')
     expect(updated.data.config.defaultTarget).toBe('tool-human')
   })
+
+  it('clears loop body/exit targets pointing at a deleted node', () => {
+    const loop: EditorNode = {
+      id: 'loop-1',
+      position: { x: 0, y: 0 },
+      data: {
+        label: '重试循环',
+        kind: 'loop',
+        status: 'idle',
+        config: {
+          mode: 'while',
+          continueExpression: '{{loop-1.index}} < 3',
+          maxIterations: 10,
+          bodyTarget: 'tool-body',
+          exitTarget: 'tool-exit',
+        },
+        retry: defaultRetry(),
+      },
+    }
+    useEditorStore.setState({
+      nodes: [loop, stubNode('tool-body'), stubNode('tool-exit')],
+      edges: [],
+      variables: [],
+      selectedNodeId: 'tool-exit',
+      logs: [],
+    })
+    useEditorStore.getState().deleteSelectedNode()
+    const updated = useEditorStore.getState().nodes[0]
+    expect(updated.data.config.bodyTarget).toBe('tool-body')
+    expect(updated.data.config.exitTarget).toBe('')
+  })
 })
 
 describe('editorStore W9-W10 run status and draft loading', () => {

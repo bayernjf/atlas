@@ -24,9 +24,30 @@ export function AtlasNode({ data, selected }: NodeProps<EditorNode>) {
         )}
       </div>
       <div className="atlas-node-label">{data.label}</div>
-      {data.kind === 'condition' ? <ConditionHandles data={data} /> : (
+      {data.kind === 'condition' ? (
+        <ConditionHandles data={data} />
+      ) : data.kind === 'loop' ? (
+        <LoopHandles />
+      ) : (
         <Handle type="source" position={Position.Right} />
       )}
+    </div>
+  )
+}
+
+function LoopHandles() {
+  const items = [
+    { id: 'body', label: '循环体' },
+    { id: 'exit', label: '退出' },
+  ]
+  return (
+    <div className="atlas-node-branches">
+      {items.map((item) => (
+        <div key={item.id} className="atlas-node-branch">
+          <span className="atlas-node-branch-label">{item.label}</span>
+          <Handle id={item.id} type="source" position={Position.Right} title={item.label} />
+        </div>
+      ))}
     </div>
   )
 }

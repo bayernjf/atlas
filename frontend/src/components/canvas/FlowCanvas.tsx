@@ -28,15 +28,23 @@ function FlowCanvasInner() {
 
   const nodeTypes = useMemo(() => ({ atlasNode: AtlasNode }), [])
 
-  const conditionEdgeLabels = useMemo(() => {
+  const routingEdgeLabels = useMemo(() => {
     const labels = new Map<string, string>()
     for (const node of nodes) {
-      if (node.data.kind !== 'condition') continue
-      for (const branch of node.data.config.branches ?? []) {
-        if (branch.target) labels.set(`${node.id}->${branch.target}`, branch.label || branch.target)
-      }
-      if (node.data.config.defaultTarget) {
-        labels.set(`${node.id}->${node.data.config.defaultTarget}`, '默认')
+      if (node.data.kind === 'condition') {
+        for (const branch of node.data.config.branches ?? []) {
+          if (branch.target) labels.set(`${node.id}->${branch.target}`, branch.label || branch.target)
+        }
+        if (node.data.config.defaultTarget) {
+          labels.set(`${node.id}->${node.data.config.defaultTarget}`, '默认')
+        }
+      } else if (node.data.kind === 'loop') {
+        if (node.data.config.bodyTarget) {
+          labels.set(`${node.id}->${node.data.config.bodyTarget}`, '循环体')
+        }
+        if (node.data.config.exitTarget) {
+          labels.set(`${node.id}->${node.data.config.exitTarget}`, '退出')
+        }
       }
     }
     return labels
@@ -63,7 +71,7 @@ function FlowCanvasInner() {
         nodes={nodes.map((node: EditorNode) => ({ ...node, type: 'atlasNode' }))}
         nodeTypes={nodeTypes}
         edges={edges.map((edge) => {
-          const branchLabel = conditionEdgeLabels.get(`${edge.source}->${edge.target}`)
+          const branchLabel = routingEdgeLabels.get(`${edge.source}->${edge.target}`)
           return {
             ...edge,
             label: branchLabel,

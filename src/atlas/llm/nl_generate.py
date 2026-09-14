@@ -84,15 +84,20 @@ def _generate_with_llm(prompt: str, model: str) -> dict[str, Any] | None:
     system = (
         "你是 Atlas 流程编排助手。把用户的中文需求转成 Graph JSON（只输出 JSON，不要解释）。"
         "结构：{\"version\":1,\"variables\":[{\"name\",\"type\",\"value\",\"scope\":\"global\"}],"
-        "\"nodes\":[{\"id\",\"type\"(trigger/ai_decision/tool_call/condition),\"name\",\"description\","
+        "\"nodes\":[{\"id\",\"type\"(trigger/ai_decision/tool_call/condition/loop),\"name\",\"description\","
         "\"position\":{\"x\",\"y\"},\"config\":{...},\"retry\":{\"max_retries\":0,"
         "\"backoff\":\"1s\",\"timeout\":30,\"on_error\":\"stop\"}}],\"edges\":[{\"id\",\"source\",\"target\"}]}。"
-        "节点支持 trigger/ai_decision/tool_call/condition 四类，流程从触发器开始。"
+        "节点支持 trigger/ai_decision/tool_call/condition/loop 五类，流程从触发器开始。"
         "condition 节点的 config 为 {\"branches\":[{\"label\",\"expression\",\"target\"}],"
         "\"defaultTarget\"}：branches 按顺序短路，expression 仅支持 {{路径}} 变量引用、"
         "比较运算（> >= < <= == !=）、逻辑运算（&& || !）、括号与数字/字符串/true/false/null 字面量，"
         "禁止算术与函数；每个 branch 的 target 与 defaultTarget 都必须是已存在的节点 id，"
         "且每个目标都要有对应 edge，defaultTarget 必填。"
+        "loop 节点（v1 仅条件循环）的 config 为 {\"mode\":\"while\",\"continueExpression\","
+        "\"maxIterations\":10,\"bodyTarget\",\"exitTarget\"}：continueExpression 语法同 condition 表达式，"
+        "为真时进入/再次进入循环体；maxIterations 为 1-100 的整数；bodyTarget 与 exitTarget 必须是已存在的节点 id；"
+        "循环体末端节点必须连一条回到该 loop 节点的回边，exitTarget 另连一条出边，"
+        "loop 节点恰好两条出边且不允许嵌套循环。"
     )
     response = litellm.completion(
         model=model,

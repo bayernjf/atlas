@@ -6,6 +6,10 @@
 
 ### feat / graph+frontend+llm（2026-09-14）
 
+- Phase 2 第二项「循环节点（loop）」端到端落地，v1 仅条件循环 while。契约（04 §5.3 权威 blockquote，Graph JSON 仍为 version 1、EdgeDSL 不变）：节点 config 挂 `{mode:"while", continueExpression, maxIterations(1-100, 默认10), bodyTarget, exitTarget}`，恰好两条出边对配循环体/退出目标；循环体由 BFS 界定，体→同 loop 的回边是**唯一合法环**（DSL 摘除白名单回边后对余图 DFS 环检测，调和 U7），体内禁嵌套 loop/trigger、禁泄漏 exitTarget、无回边/游离体分支均中文聚合报错。运行时：可重入执行器每轮重求 continueExpression（首轮播种 `{{loop-x.index}}`，从 1 起），为真进体、为假退 `condition_false`；达最大次数与表达式异常均 **fail-safe 退出**（路由 exitTarget、`exitReason=max_iterations/expression_error`、运行仍 completed）；出边全 conditional，`recursion_limit` 按循环体规模派生。产出 `{mode,iterations,index,target,exitReason,expression_errors}` 与 continue/exit trace 行。前端新增 LoopConfig（表达式实时校验/变量插入/最大次数/体·退出目标）、双出口 Handle 与「循环体」「退出」边标签、删除目标清理、SSE 日志中文化（条件不满足/达到最大次数/表达式异常），节点配色 cyan6；NL 生成 prompt 枚举补 loop。测试：后端 97 passed/8 skipped（+DSL 8/loader 3/退款 e2e 1/NL 1），前端 vitest 34；浏览器对真实后端实测三场景——`{{loop-1.index}} < 2` 体执行 2 轮后条件不满足退出、恒真 3 轮撞上限 fail-safe、坏变量 0 轮表达式异常退出。遍历循环（foreach/item/聚合）与 break/continue 缓做（14 D16/D17），嵌套循环 v1 拒绝。
+
+### feat / graph+frontend+llm（2026-09-14）
+
 - Phase 2 首项「条件分支节点（condition）」端到端落地。契约（04 §5.1/§5.2，Graph JSON 仍为 version 1、EdgeDSL 不变）：节点 config 挂 `branches:[{label,expression,target}]` + 必填 `defaultTarget`，按序短路；label/target 节点内唯一、target≠default、每个目标须有出边且每条出边须被分支覆盖、不允许直连 END。后端新增 `atlas.graph.conditions`（纯 stdlib 手写递归下降表达式：`{{路径}}`、比较 `> >= < <= == !=`、逻辑 `&& || !`、括号、数字/字符串/true/false/null；禁 eval/算术/函数；校验期报语法与纯字面量类型错误，运行时错误 fail-safe 走 defaultTarget），`dsl.py` 增 condition 图级校验与 trigger 根可达 BFS，`loader.py` condition 出边全部 `add_conditional_edges`（执行一次写 outputs，router 只读 target），产出 `{branch,target,evaluation,expression_errors}` 与 trace 行。前端新增 ConditionConfig 属性面板（实时中文校验/变量插入/目标 Select）、节点多出口 Handle 与出边分支标签、删除目标自动清引用、运行 trace 分支行；`lib/conditions.ts` 为后端同构的 TS 校验。NL 生成 prompt 枚举补 condition。测试：后端 84 passed/8 skipped，前端 vitest 32；浏览器实测 12346（¥5000）单侧转人工 human_review、12347（¥128）默认分支 refunded。LLM 判断分支、函数库/算术缓做（14 D14/D15）。
 
 ### docs（2026-09-14）

@@ -18,6 +18,7 @@ import {
 } from '../../lib/nodeCatalog'
 import { listVariablePaths } from '../../lib/variables'
 import { ConditionConfig } from './ConditionConfig'
+import { LoopConfig } from './LoopConfig'
 
 export function PropertyPanel() {
   const nodes = useEditorStore((state) => state.nodes)
@@ -103,6 +104,14 @@ export function PropertyPanel() {
         )}
         {data.kind === 'condition' && (
           <ConditionConfig
+            config={config}
+            update={updateSelectedConfig}
+            variablePaths={variablePaths}
+            targetOptions={targetOptions}
+          />
+        )}
+        {data.kind === 'loop' && (
+          <LoopConfig
             config={config}
             update={updateSelectedConfig}
             variablePaths={variablePaths}

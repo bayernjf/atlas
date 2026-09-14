@@ -104,4 +104,39 @@ describe('validateNode', () => {
     expect(errors.some((message) => message.includes('分支目标重复'))).toBe(true)
     expect(errors).toContain('默认分支目标不能与其他分支相同')
   })
+
+  it('validates loop expression, iteration cap and body/exit targets', () => {
+    expect(validateNode(node('loop'))).toEqual(
+      expect.arrayContaining([
+        '必须填写继续条件表达式',
+        '必须选择循环体入口',
+        '必须选择退出目标',
+      ]),
+    )
+    const valid = node('loop', {
+      config: {
+        mode: 'while',
+        continueExpression: '{{loop-1.index}} < 3',
+        maxIterations: 10,
+        bodyTarget: 'tool-body',
+        exitTarget: 'tool-exit',
+      },
+    })
+    expect(validateNode(valid)).toEqual([])
+
+    const errors = validateNode(
+      node('loop', {
+        config: {
+          mode: 'while',
+          continueExpression: 'index >',
+          maxIterations: 0,
+          bodyTarget: 'same',
+          exitTarget: 'same',
+        },
+      }),
+    )
+    expect(errors.some((message) => message.includes('语法错误'))).toBe(true)
+    expect(errors.some((message) => message.includes('1-100'))).toBe(true)
+    expect(errors).toContain('循环体入口与退出目标不能相同')
+  })
 })

@@ -26,7 +26,7 @@ from atlas.harness.registry import AdapterRegistry
 from atlas.llm.decision import get_decision_client
 from atlas.shop.adapter import ShopHarnessAdapter
 from .conditions import ConditionEvalError, evaluate_expression
-from .dsl import GraphDSL, NodeDSL
+from .dsl import GraphDSL, NodeDSL, _loop_body_set
 
 _TEMPLATE_RE = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
 _PATH_SEGMENT_RE = re.compile(r"[^.[\]]+|\[\d+\]")
@@ -129,6 +129,18 @@ def _make_executor(
         elif node.type == "condition":
             output = _execute_condition(node, state, context)
             message = f"{node.id}: branch={output['branch']} → {output['target']}"
+        elif node.type == "loop":
+            output = _execute_loop(node, state, context)
+            if output["exitReason"] is None:
+                message = (
+                    f"{node.id}: continue ({output['iterations']}/"
+                    f"{node.config.get('maxIterations')}) → {output['target']}"
+                )
+            else:
+                message = (
+                    f"{node.id}: exit ({output['exitReason']}) after "
+                    f"{output['iterations']} → {output['target']}"
+                )
         else:
             output = _execute_tool(node, context, registry)
             message = f"{node.id}({node.type}): executed"
@@ -174,6 +186,56 @@ def _execute_condition(node: NodeDSL, state: GraphState, context: dict[str, Any]
         "target": target,
         "evaluation": evaluation,
         "expression_errors": errors,
+    }
+
+
+def _execute_loop(node: NodeDSL, state: GraphState, context: dict[str, Any]) -> dict[str, Any]:
+    """条件循环重入求值（04 §5.3）；达上限/求值异常 fail-safe 走 exitTarget。"""
+    config = node.config
+    body_target = config["bodyTarget"]
+    exit_target = config["exitTarget"]
+    max_iterations = int(config.get("maxIterations", 10))
+
+    previous = state["outputs"].get(node.id, {})
+    iterations = int(previous.get("iterations", 0)) if isinstance(previous, dict) else 0
+
+    expression_errors: list[str] = []
+    exit_reason: str | None = None
+
+    if iterations >= max_iterations:
+        target = exit_target
+        exit_reason = "max_iterations"
+        expression_errors.append(f"已达最大次数 {max_iterations}，强制退出循环")
+    else:
+        # 首轮自身产出尚不存在；播种 index 供 {{loop-x.index}} 求值
+        loop_context = {**context, node.id: {"index": iterations, "iterations": iterations}}
+        try:
+            result = evaluate_expression(config["continueExpression"], loop_context)
+        except ConditionEvalError as exc:
+            target = exit_target
+            exit_reason = "expression_error"
+            expression_errors.append(str(exc))
+        else:
+            if not isinstance(result, bool):
+                target = exit_target
+                exit_reason = "expression_error"
+                expression_errors.append(
+                    f"继续条件结果必须是布尔值，实际为 {type(result).__name__}"
+                )
+            elif result:
+                iterations += 1
+                target = body_target
+            else:
+                target = exit_target
+                exit_reason = "condition_false"
+
+    return {
+        "mode": "while",
+        "iterations": iterations,
+        "index": iterations,
+        "target": target,
+        "exitReason": exit_reason,
+        "expression_errors": expression_errors,
     }
 
 
@@ -270,12 +332,15 @@ def compile_graph(
             builder.add_edge(START, node.id)
 
     condition_ids = {node.id for node in graph.nodes if node.type == "condition"}
+    loop_ids = {node.id for node in graph.nodes if node.type == "loop"}
+    conditional_ids = condition_ids | loop_ids
 
     outgoing: dict[str, list[str]] = {}
     for edge in graph.edges:
         outgoing.setdefault(edge.source, []).append(edge.target)
-        if edge.source not in condition_ids:
-            # condition 出边全部改走 conditional edges，混用会导致双路激活
+        if edge.source not in conditional_ids:
+            # condition/loop 出边全部改走 conditional edges，混用会导致双路激活；
+            # 循环回边 source 在循环体内，作为普通边装配。
             builder.add_edge(edge.source, edge.target)
 
     for condition_id in condition_ids:
@@ -285,6 +350,16 @@ def compile_graph(
             return state["outputs"][cid]["target"]
 
         builder.add_conditional_edges(condition_id, route, {target: target for target in targets})
+
+    for loop in graph.nodes:
+        if loop.type != "loop":
+            continue
+        targets = outgoing.get(loop.id, [])
+
+        def route_loop(state: GraphState, cid: str = loop.id) -> str:
+            return state["outputs"][cid]["target"]
+
+        builder.add_conditional_edges(loop.id, route_loop, {target: target for target in targets})
 
     for node in graph.nodes:
         if node.id not in outgoing:
@@ -300,6 +375,21 @@ def initial_state(graph: GraphDSL, *, inputs: dict[str, Any] | None = None) -> G
     if inputs:
         variables["global"] = {**variables.get("global", {}), **inputs}
     return {"variables": variables, "outputs": {}, "messages": [], "status": "running"}
+
+
+def _recursion_limit(graph: GraphDSL) -> int:
+    """按循环体规模派生 LangGraph recursion_limit（04 §5.3），默认 25 会中断长循环。"""
+    outgoing: dict[str, set[str]] = {}
+    for edge in graph.edges:
+        outgoing.setdefault(edge.source, set()).add(edge.target)
+    loop_steps = 0
+    for node in graph.nodes:
+        if node.type == "loop":
+            body = _loop_body_set(
+                node.config["bodyTarget"], node.id, node.config["exitTarget"], outgoing
+            )
+            loop_steps += int(node.config.get("maxIterations", 10)) * (len(body) + 1)
+    return 2 * len(graph.nodes) + 2 * loop_steps + 10
 
 
 def run_graph(
@@ -322,7 +412,10 @@ def run_graph(
         emit=emit,
         trigger_payload=inputs,
     )
-    final_state = compiled.invoke(initial_state(graph, inputs=inputs))
+    final_state = compiled.invoke(
+        initial_state(graph, inputs=inputs),
+        config={"recursion_limit": _recursion_limit(graph)},
+    )
     result = {
         "status": "completed",
         "outputs": final_state["outputs"],
