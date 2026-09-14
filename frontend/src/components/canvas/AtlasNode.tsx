@@ -24,7 +24,27 @@ export function AtlasNode({ data, selected }: NodeProps<EditorNode>) {
         )}
       </div>
       <div className="atlas-node-label">{data.label}</div>
-      <Handle type="source" position={Position.Right} />
+      {data.kind === 'condition' ? <ConditionHandles data={data} /> : (
+        <Handle type="source" position={Position.Right} />
+      )}
+    </div>
+  )
+}
+
+function ConditionHandles({ data }: { data: EditorNodeData }) {
+  const branches = data.config.branches ?? []
+  const items = [
+    ...branches.map((branch, index) => ({ id: `b${index}`, label: branch.label || `分支 ${index + 1}` })),
+    { id: 'default', label: '默认' },
+  ]
+  return (
+    <div className="atlas-node-branches">
+      {items.map((item) => (
+        <div key={item.id} className="atlas-node-branch">
+          <span className="atlas-node-branch-label">{item.label}</span>
+          <Handle id={item.id} type="source" position={Position.Right} title={item.label} />
+        </div>
+      ))}
     </div>
   )
 }

@@ -17,6 +17,7 @@ import {
   type NodeConfig,
 } from '../../lib/nodeCatalog'
 import { listVariablePaths } from '../../lib/variables'
+import { ConditionConfig } from './ConditionConfig'
 
 export function PropertyPanel() {
   const nodes = useEditorStore((state) => state.nodes)
@@ -41,6 +42,9 @@ export function PropertyPanel() {
   const errors = validateNode(data)
   const config = data.config
   const variablePaths = listVariablePaths(variables, nodes)
+  const targetOptions = nodes
+    .filter((node) => node.id !== selectedNode.id)
+    .map((node) => ({ value: node.id, label: `${node.data.label}（${node.id}）` }))
 
   const insertVariable = (path: string) => {
     if (!path) return
@@ -95,6 +99,14 @@ export function PropertyPanel() {
             update={updateSelectedConfig}
             variablePaths={variablePaths}
             onInsert={insertVariable}
+          />
+        )}
+        {data.kind === 'condition' && (
+          <ConditionConfig
+            config={config}
+            update={updateSelectedConfig}
+            variablePaths={variablePaths}
+            targetOptions={targetOptions}
           />
         )}
         {data.kind === 'tool_call' && (
