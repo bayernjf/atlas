@@ -20,6 +20,7 @@ import { listVariablePaths } from '../../lib/variables'
 import { ConditionConfig } from './ConditionConfig'
 import { LoopConfig } from './LoopConfig'
 import { ParallelConfig } from './ParallelConfig'
+import { WaitConfig } from './WaitConfig'
 
 export function PropertyPanel() {
   const nodes = useEditorStore((state) => state.nodes)
@@ -126,6 +127,7 @@ export function PropertyPanel() {
             targetOptions={targetOptions}
           />
         )}
+        {data.kind === 'wait' && <WaitConfig config={config} update={updateSelectedConfig} />}
         {data.kind === 'tool_call' && (
           <ToolCallConfig
             config={config}

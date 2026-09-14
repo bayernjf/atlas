@@ -20,12 +20,15 @@ SUPPORTED_NODE_TYPES = (
     "condition",
     "loop",
     "parallel",
+    "wait",
 )
 
 MAX_LOOP_ITERATIONS = 100
 MIN_PARALLEL_BRANCHES = 2
 MAX_PARALLEL_BRANCHES = 10
 PARALLEL_JOIN_STRATEGIES = ("all_success", "all_completed")
+MIN_WAIT_SECONDS = 1
+MAX_WAIT_SECONDS = 600
 
 NodeType = str
 
@@ -161,6 +164,10 @@ def validate_graph(graph: GraphDSL) -> list[str]:
             errors.extend(
                 _validate_parallel_config(node, node_ids, node_types, outgoing, incoming)
             )
+
+    for node in graph.nodes:
+        if node.type == "wait":
+            errors.extend(_validate_wait_config(node, node_ids, outgoing))
 
     errors.extend(_validate_illegal_cycles(graph, loop_backedges))
     errors.extend(_validate_reachability(graph, node_ids, outgoing))
@@ -447,6 +454,43 @@ def _validate_parallel_config(
             errors.append(
                 f"{prefix} 汇聚目标 {join_target} 只能接收分支区域内的连线：{source} 不在区域内"
             )
+
+    return errors
+
+
+def _validate_wait_config(
+    node: NodeDSL, node_ids: set[str], outgoing: dict[str, set[str]]
+) -> list[str]:
+    """wait config 与单出边拓扑校验（契约 04 §5.5）。"""
+    errors: list[str] = []
+    prefix = f"等待节点 {node.id}"
+    config = node.config
+
+    wait_type = config.get("waitType")
+    if wait_type != "duration":
+        if wait_type == "event":
+            errors.append(f"{prefix} 事件等待（event）暂不支持，v1 仅支持定时等待（duration）")
+        else:
+            errors.append(f"{prefix} 等待类型（waitType）必须是 duration")
+
+    seconds = config.get("durationSeconds")
+    if isinstance(seconds, bool) or not isinstance(seconds, int):
+        errors.append(f"{prefix} 等待时长（durationSeconds）必须是整数秒")
+    elif not MIN_WAIT_SECONDS <= seconds <= MAX_WAIT_SECONDS:
+        errors.append(
+            f"{prefix} 等待时长需在 {MIN_WAIT_SECONDS}-{MAX_WAIT_SECONDS} 秒之间"
+            f"（当前 {seconds}）"
+        )
+
+    targets = outgoing.get(node.id, set())
+    if len(targets) != 1:
+        errors.append(f"{prefix} 必须恰好配置 1 条出边（当前 {len(targets)} 条），且不能直连结束")
+    else:
+        target = next(iter(targets))
+        if target == node.id:
+            errors.append(f"{prefix} 出边不能指向自身")
+        elif target not in node_ids:
+            errors.append(f"{prefix} 后继节点不存在：{target}")
 
     return errors
 

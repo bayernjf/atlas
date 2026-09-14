@@ -82,6 +82,7 @@ export function Editor() {
             exitReason?: string | null
             target?: string
             status?: string
+            durationSeconds?: number
             branches?: Array<{ label: string; target: string; status: string; error: string }>
             result?: unknown
           }
@@ -116,6 +117,8 @@ export function Editor() {
                 `✓ ${event.node_id} 退出循环：${reasonLabel}，共 ${output.iterations} 轮 → ${output.target}`,
               )
             }
+          } else if (output?.mode === 'wait') {
+            appendLog(`✓ ${event.node_id} 等待完成：${output.durationSeconds} 秒`)
           } else {
             appendLog(`✓ 节点完成：${event.node_id}`)
           }

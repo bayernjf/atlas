@@ -520,3 +520,105 @@ def test_reject_parallel_duplicate_label_and_target():
     messages = " ".join(exc.value.errors)
     assert "分支名称重复：分支A" in messages
     assert "分支目标重复：tool-a" in messages
+
+
+def _wait_node(node_id: str = "wait-1", **config_overrides):
+    config = {"waitType": "duration", "durationSeconds": 2}
+    config.update(config_overrides)
+    if config.get("durationSeconds") is None:
+        config.pop("durationSeconds", None)
+    return {
+        "id": node_id, "type": "wait", "name": "等待",
+        "position": {"x": 2, "y": 0}, "config": config,
+        "retry": {"max_retries": 0, "backoff": "1s", "timeout": 30, "on_error": "stop"},
+    }
+
+
+def make_wait_graph(**overrides):
+    graph = {
+        "version": 1,
+        "variables": [],
+        "nodes": [
+            {"id": "trigger-1", "type": "trigger", "name": "t",
+             "config": {"triggerType": "manual"}},
+            _wait_node(),
+            {"id": "tool-after", "type": "tool_call", "name": "后继",
+             "config": {"tool": "op-after"}},
+        ],
+        "edges": [
+            {"id": "e1", "source": "trigger-1", "target": "wait-1"},
+            {"id": "e2", "source": "wait-1", "target": "tool-after"},
+        ],
+    }
+    graph.update(overrides)
+    return graph
+
+
+def test_parse_valid_wait_graph():
+    graph = parse_graph(make_wait_graph())
+    wait = next(node for node in graph.nodes if node.type == "wait")
+    assert wait.config["waitType"] == "duration"
+    assert wait.config["durationSeconds"] == 2
+
+
+def test_parse_valid_wait_inside_loop_body():
+    raw = make_wait_graph()
+    raw["nodes"] = [
+        {"id": "trigger-1", "type": "trigger", "name": "t",
+         "config": {"triggerType": "manual"}},
+        {"id": "loop-1", "type": "loop", "name": "重试循环",
+         "config": {"mode": "while", "continueExpression": "{{loop-1.index}} < 2",
+                    "maxIterations": 3, "bodyTarget": "wait-1", "exitTarget": "tool-exit"}},
+        _wait_node(),
+        {"id": "tool-body", "type": "tool_call", "name": "循环体",
+         "config": {"tool": "op-body"}},
+        {"id": "tool-exit", "type": "tool_call", "name": "退出",
+         "config": {"tool": "op-exit"}},
+    ]
+    raw["edges"] = [
+        {"id": "e1", "source": "trigger-1", "target": "loop-1"},
+        {"id": "e2", "source": "loop-1", "target": "wait-1"},
+        {"id": "e3", "source": "wait-1", "target": "tool-body"},
+        {"id": "e4", "source": "tool-body", "target": "loop-1"},
+        {"id": "e5", "source": "loop-1", "target": "tool-exit"},
+    ]
+    parse_graph(raw)  # wait 在 loop 体内合法，回边白名单不触发非法环
+
+
+@pytest.mark.parametrize(
+    "config, expected",
+    [
+        ({"waitType": "event", "durationSeconds": 2}, "事件等待（event）暂不支持"),
+        ({"waitType": "until", "durationSeconds": 2}, "等待类型（waitType）必须是 duration"),
+        ({"waitType": "duration", "durationSeconds": "2"}, "必须是整数秒"),
+        ({"waitType": "duration", "durationSeconds": True}, "必须是整数秒"),
+        ({"waitType": "duration", "durationSeconds": None}, "必须是整数秒"),
+        ({"waitType": "duration", "durationSeconds": 0}, "需在 1-600 秒之间"),
+        ({"waitType": "duration", "durationSeconds": -1}, "需在 1-600 秒之间"),
+        ({"waitType": "duration", "durationSeconds": 601}, "需在 1-600 秒之间"),
+    ],
+)
+def test_reject_wait_bad_type_and_duration(config, expected):
+    raw = make_wait_graph()
+    raw["nodes"][1] = _wait_node(**config)
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any(expected in error for error in exc.value.errors)
+
+
+def test_reject_wait_without_outgoing_edge():
+    raw = make_wait_graph()
+    raw["edges"] = [edge for edge in raw["edges"] if edge["id"] != "e2"]
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("必须恰好配置 1 条出边" in error for error in exc.value.errors)
+
+
+def test_reject_wait_with_two_outgoing_edges():
+    raw = make_wait_graph()
+    raw["nodes"].append({"id": "tool-other", "type": "tool_call", "name": "另一后继",
+                         "config": {"tool": "op-other"}})
+    raw["edges"].append({"id": "e3", "source": "wait-1", "target": "tool-other"})
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("必须恰好配置 1 条出边（当前 2 条）" in error for error in exc.value.errors)
