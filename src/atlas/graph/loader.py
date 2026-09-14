@@ -28,7 +28,14 @@ from atlas.harness.registry import AdapterRegistry
 from atlas.llm.decision import get_decision_client
 from atlas.shop.adapter import ShopHarnessAdapter
 from .conditions import ConditionEvalError, evaluate_expression
-from .dsl import GraphDSL, NodeDSL, _loop_body_set
+from .dsl import (
+    MAX_SUBGRAPH_DEPTH,
+    GraphDSL,
+    GraphValidationError,
+    NodeDSL,
+    _loop_body_set,
+    validate_graph,
+)
 
 _TEMPLATE_RE = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
 _PATH_SEGMENT_RE = re.compile(r"[^.[\]]+|\[\d+\]")
@@ -117,6 +124,8 @@ def _make_executor(
     approval_broker: ApprovalBroker,
     graph_id: str,
     emit: EventCallback,
+    graph_resolver: Callable[[str], GraphDSL] | None,
+    subgraph_depth: int,
 ):
     def execute(state: GraphState) -> dict:
         context = {"global": state["variables"].get("global", {}), **state["outputs"]}
@@ -191,6 +200,16 @@ def _make_executor(
                 trigger_payload=trigger_payload,
                 broker=approval_broker,
             )
+        elif node.type == "subgraph":
+            output, message = _execute_subgraph(
+                node,
+                context=context,
+                registry=registry,
+                decision_client=decision_client,
+                approval_broker=approval_broker,
+                resolver=graph_resolver,
+                depth=subgraph_depth,
+            )
         else:
             output = _execute_tool(node, context, registry)
             message = f"{node.id}({node.type}): executed"
@@ -264,6 +283,110 @@ def _await_human_approval(
     }
     message = f"{node.id}: {decision} ({resolved_by}) → {target}"
     return output, message
+
+
+def _execute_subgraph(
+    node: NodeDSL,
+    *,
+    context: dict[str, Any],
+    registry: AdapterRegistry | None,
+    decision_client: Any,
+    approval_broker: ApprovalBroker,
+    resolver: Callable[[str], GraphDSL] | None,
+    depth: int,
+) -> tuple[dict[str, Any], str]:
+    """进程内重入执行被引用子图（04 §5.7）；任何异常 fail-safe 为 failed，父 run 仍 completed。"""
+    graph_ref = str(node.config.get("graphId", ""))
+    mapping = node.config.get("inputs") or {}
+    child_inputs = {key: interpolate(str(value), context) for key, value in mapping.items()}
+    try:
+        if resolver is None:
+            raise RuntimeError("子图解析器未注入")
+        if depth + 1 > MAX_SUBGRAPH_DEPTH:
+            raise RuntimeError(f"子图嵌套深度超过上限 {MAX_SUBGRAPH_DEPTH}")
+        child = resolver(graph_ref)
+        result = run_graph(
+            child,
+            inputs=child_inputs,
+            decision_client=decision_client,
+            registry=registry,
+            approval_broker=approval_broker,
+            graph_id=graph_ref,
+            emit=None,
+            graph_resolver=resolver,
+            _subgraph_depth=depth + 1,
+        )
+    except Exception as exc:
+        output = {
+            "mode": "subgraph",
+            "graphId": graph_ref,
+            "status": "failed",
+            "error": str(exc),
+            "outputs": {},
+            "trace": [],
+        }
+        return output, f"{node.id}: {graph_ref} failed: {exc}"
+
+    output = {
+        "mode": "subgraph",
+        "graphId": graph_ref,
+        "status": "success",
+        "outputs": result["outputs"],
+        "trace": result["trace"],
+    }
+    return output, f"{node.id}: {graph_ref} success ({len(child.nodes)} nodes)"
+
+
+def _validate_subgraph_refs(
+    graph: GraphDSL,
+    resolver: Callable[[str], GraphDSL] | None,
+    graph_id: str,
+    *,
+    chain: tuple[str, ...],
+    depth: int,
+) -> list[str]:
+    """编译期跨图递归校验（04 §5.7）：可解析、禁自引用/跨图环、深度≤3、子图递归过图校验。"""
+    errors: list[str] = []
+    for node in graph.nodes:
+        if node.type != "subgraph":
+            continue
+        ref = node.config.get("graphId")
+        prefix = f"子图节点 {node.id}"
+        if not isinstance(ref, str) or not ref.strip():
+            errors.append(f"{prefix} 必须选择引用的已保存子图（graphId）")
+            continue
+        if resolver is None:
+            errors.append(f"{prefix} 子图解析器未注入（graphId={ref}）")
+            continue
+        if ref == graph_id:
+            errors.append(f"{prefix} 子图不能直接引用自身：{ref}")
+            continue
+        if ref in chain:
+            errors.append(
+                f"{prefix} 检测到跨图引用环：{' → '.join((*chain, ref))}"
+            )
+            continue
+        if depth + 1 > MAX_SUBGRAPH_DEPTH:
+            errors.append(
+                f"{prefix} 子图嵌套深度超过上限 {MAX_SUBGRAPH_DEPTH}（引用链：{' → '.join((*chain, ref))}）"
+            )
+            continue
+        try:
+            child = resolver(ref)
+        except KeyError:
+            errors.append(f"{prefix} 引用的子图不存在：{ref}")
+            continue
+        if child is None:
+            errors.append(f"{prefix} 引用的子图不存在：{ref}")
+            continue
+        for child_error in validate_graph(child):
+            errors.append(f"子图 {ref}：{child_error}")
+        errors.extend(
+            _validate_subgraph_refs(
+                child, resolver, ref, chain=(*chain, ref), depth=depth + 1
+            )
+        )
+    return errors
 
 
 def _parallel_running_output(node: NodeDSL) -> dict[str, Any]:
@@ -540,6 +663,8 @@ def compile_graph(
     graph_id: str = "adhoc",
     emit: EventCallback | None = None,
     trigger_payload: dict[str, Any] | None = None,
+    graph_resolver: Callable[[str], GraphDSL] | None = None,
+    _subgraph_depth: int = 0,
 ):
     decision_client = decision_client or get_decision_client()
     registry = registry if registry is not None else build_demo_registry()
@@ -547,6 +672,12 @@ def compile_graph(
     noop_emit: EventCallback = lambda event: None
     emit = emit or noop_emit
     payload = trigger_payload or {}
+
+    ref_errors = _validate_subgraph_refs(
+        graph, graph_resolver, graph_id, chain=(graph_id,), depth=_subgraph_depth
+    )
+    if ref_errors:
+        raise GraphValidationError(ref_errors)
 
     builder = StateGraph(GraphState)
     for node in graph.nodes:
@@ -560,6 +691,8 @@ def compile_graph(
                 approval_broker=approval_broker,
                 graph_id=graph_id,
                 emit=emit,
+                graph_resolver=graph_resolver,
+                subgraph_depth=_subgraph_depth,
             ),
         )
 
@@ -698,12 +831,15 @@ def run_graph(
     approval_broker: ApprovalBroker | None = None,
     graph_id: str = "adhoc",
     emit: EventCallback | None = None,
+    graph_resolver: Callable[[str], GraphDSL] | None = None,
+    _subgraph_depth: int = 0,
 ) -> dict[str, Any]:
     """编译并执行，返回状态/节点产出/轨迹。
 
     Webhook 载荷（退款单 order_id/reason/amount）经 inputs 传入，
     作为 trigger 节点 context.payload 供下游引用。
     inputs.approvals 可预置 {<human 节点 id>: "approved"|"rejected"} 秒过审批（04 §5.6）。
+    graph_resolver 按 subgraph 节点 config.graphId 解析已保存子图（04 §5.7）。
     """
     compiled = compile_graph(
         graph,
@@ -713,6 +849,8 @@ def run_graph(
         graph_id=graph_id,
         emit=emit,
         trigger_payload=inputs,
+        graph_resolver=graph_resolver,
+        _subgraph_depth=_subgraph_depth,
     )
     final_state = compiled.invoke(
         initial_state(graph, inputs=inputs),
