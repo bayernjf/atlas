@@ -20,8 +20,15 @@ export type RunResult = {
 
 export type RunInputs = Record<string, string | number>
 
+export type ApprovalRequest = {
+  token: string
+  summary: string
+  approver: string
+  timeoutSeconds: number
+}
+
 export type RunEvent =
-  | { type: 'node_start'; node_id: string; node_type: string }
+  | { type: 'node_start'; node_id: string; node_type: string; approval?: ApprovalRequest }
   | { type: 'node_end'; node_id: string; node_type: string; output: unknown }
   | ({ type: 'run_end' } & Partial<RunResult>)
 
@@ -54,6 +61,17 @@ export async function runGraph(id: string, inputs?: RunInputs): Promise<RunResul
 
 export async function nlGenerate(prompt: string): Promise<{ graph: SerializedGraph }> {
   return request('/api/nl/generate', { method: 'POST', body: JSON.stringify({ prompt }) })
+}
+
+export async function decideApproval(
+  token: string,
+  decision: 'approved' | 'rejected',
+  comment = '',
+): Promise<{ token: string; decision: string; resolvedBy: string }> {
+  return request(`/api/approvals/${token}/decision`, {
+    method: 'POST',
+    body: JSON.stringify({ decision, comment }),
+  })
 }
 
 export type FeedbackType = 'bug' | 'suggestion'
