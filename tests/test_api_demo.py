@@ -276,3 +276,76 @@ def test_approval_decision_endpoint_404_409_422_and_reset():
     assert client.get("/api/approvals").json()["items"] == []
 
     client.post("/api/demo/reset")
+
+
+def _subgraph_child_graph() -> dict:
+    return {
+        "version": 1,
+        "variables": [],
+        "nodes": [
+            {"id": "child-trigger", "type": "trigger", "name": "子图触发",
+             "position": {"x": 0, "y": 0}, "config": {"triggerType": "manual"}},
+            {"id": "child-tool", "type": "tool_call", "name": "子图工具",
+             "position": {"x": 0, "y": 0}, "config": {"tool": "op-child"}},
+        ],
+        "edges": [
+            {"id": "ce1", "source": "child-trigger", "target": "child-tool"},
+        ],
+    }
+
+
+def _subgraph_parent_graph(child_id: str) -> dict:
+    return {
+        "version": 1,
+        "variables": [],
+        "nodes": [
+            {"id": "trigger-1", "type": "trigger", "name": "t",
+             "position": {"x": 0, "y": 0}, "config": {"triggerType": "manual"}},
+            {"id": "subgraph-1", "type": "subgraph", "name": "子流程",
+             "position": {"x": 0, "y": 0},
+             "config": {"graphId": child_id,
+                        "inputs": {"order_id": "{{trigger-1.context.payload.order_id}}"}}},
+            {"id": "tool-after", "type": "tool_call", "name": "后继",
+             "position": {"x": 0, "y": 0}, "config": {"tool": "op-after"}},
+        ],
+        "edges": [
+            {"id": "e1", "source": "trigger-1", "target": "subgraph-1"},
+            {"id": "e2", "source": "subgraph-1", "target": "tool-after"},
+        ],
+    }
+
+
+def test_list_graphs_returns_saved_items_with_node_count():
+    client.post("/api/demo/reset")
+    saved = client.post("/api/graphs", json=_subgraph_child_graph()).json()
+    items = client.get("/api/graphs").json()["items"]
+    item = next(item for item in items if item["id"] == saved["id"])
+    assert item["node_count"] == 2
+    assert isinstance(item["updated_at"], str) and item["updated_at"]
+
+
+def test_subgraph_parent_runs_saved_child_through_resolver():
+    client.post("/api/demo/reset")
+    child_id = client.post("/api/graphs", json=_subgraph_child_graph()).json()["id"]
+    parent_id = client.post("/api/graphs", json=_subgraph_parent_graph(child_id)).json()["id"]
+
+    assert client.post(f"/api/graphs/{parent_id}/compile").status_code == 200
+    response = client.post(
+        f"/api/graphs/{parent_id}/run", json={"inputs": {"order_id": "X-9"}}
+    )
+    assert response.status_code == 200
+    outputs = response.json()["outputs"]
+    node = outputs["subgraph-1"]
+    assert node["status"] == "success"
+    assert node["graphId"] == child_id
+    assert node["outputs"]["child-trigger"]["context"]["payload"] == {"order_id": "X-9"}
+    assert "tool-after" in outputs
+
+
+def test_subgraph_missing_reference_compile_returns_422():
+    client.post("/api/demo/reset")
+    parent_id = client.post("/api/graphs", json=_subgraph_parent_graph("graph-ghost")).json()["id"]
+    response = client.post(f"/api/graphs/{parent_id}/compile")
+    assert response.status_code == 422
+    assert any("引用的子图不存在：graph-ghost" in detail for detail in response.json()["detail"])
+    client.post("/api/demo/reset")
