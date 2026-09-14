@@ -22,6 +22,7 @@ from typing import Annotated, Any, Callable, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from atlas.collaboration.approvals import ApprovalBroker
 from atlas.harness.base import ActionRequest, ActionStatus
 from atlas.harness.registry import AdapterRegistry
 from atlas.llm.decision import get_decision_client
@@ -36,6 +37,9 @@ EventCallback = Callable[[dict[str, Any]], None]
 
 # 编译期注入的汇聚网关节点名前缀（04 §5.4）；该节点事件不下发。
 JOIN_GATE_PREFIX = "__join__"
+
+# 进程内审批信号单例（04 §5.6）；API/测试可注入自己的实例。
+_default_approval_broker = ApprovalBroker()
 
 
 def _merge_outputs(left: dict, right: dict) -> dict:
@@ -110,11 +114,27 @@ def _make_executor(
     trigger_payload: dict[str, Any],
     decision_client: Any,
     registry: AdapterRegistry | None,
+    approval_broker: ApprovalBroker,
+    graph_id: str,
     emit: EventCallback,
 ):
     def execute(state: GraphState) -> dict:
-        emit({"type": "node_start", "node_id": node.id, "node_type": node.type})
         context = {"global": state["variables"].get("global", {}), **state["outputs"]}
+        start_event: dict[str, Any] = {
+            "type": "node_start",
+            "node_id": node.id,
+            "node_type": node.type,
+        }
+
+        if node.type == "human_approval":
+            start_event["approval"] = _register_approval(
+                node,
+                context=context,
+                trigger_payload=trigger_payload,
+                broker=approval_broker,
+                graph_id=graph_id,
+            )
+        emit(start_event)
 
         if node.type == "trigger":
             output = {
@@ -164,6 +184,13 @@ def _make_executor(
             time.sleep(seconds)
             output = {"mode": "wait", "waitType": "duration", "durationSeconds": seconds}
             message = f"{node.id}: waited {seconds}s"
+        elif node.type == "human_approval":
+            output, message = _await_human_approval(
+                node,
+                token=start_event["approval"]["token"],
+                trigger_payload=trigger_payload,
+                broker=approval_broker,
+            )
         else:
             output = _execute_tool(node, context, registry)
             message = f"{node.id}({node.type}): executed"
@@ -176,6 +203,67 @@ def _make_executor(
         }
 
     return execute
+
+
+def _register_approval(
+    node: NodeDSL,
+    *,
+    context: dict[str, Any],
+    trigger_payload: dict[str, Any],
+    broker: ApprovalBroker,
+    graph_id: str,
+) -> dict[str, Any]:
+    """登记 pending 审批请求并返回随 node_start 下发的 approval 载荷（04 §5.6）。"""
+    config = node.config
+    summary = interpolate(str(config.get("summary", "")), context)
+    approver = interpolate(str(config.get("approver", "")), context) if config.get("approver") else ""
+    token = broker.request(
+        node_id=node.id,
+        graph_id=graph_id,
+        summary=summary,
+        approver=approver,
+        timeout_seconds=int(config["timeoutSeconds"]),
+    )
+    return {
+        "token": token,
+        "summary": summary,
+        "approver": approver,
+        "timeoutSeconds": int(config["timeoutSeconds"]),
+    }
+
+
+def _await_human_approval(
+    node: NodeDSL,
+    *,
+    token: str,
+    trigger_payload: dict[str, Any],
+    broker: ApprovalBroker,
+) -> tuple[dict[str, Any], str]:
+    """阻塞等待审批结果（预置 inputs/人工放行/超时），返回节点产出与 trace 行。"""
+    config = node.config
+    preset = (trigger_payload.get("approvals") or {}).get(node.id)
+    if preset in ("approved", "rejected"):
+        broker.resolve(token, preset, resolved_by="input")
+
+    decision = broker.wait(token)
+    if decision is None:
+        fallback = "approved" if config.get("onTimeout", "reject") == "approve" else "rejected"
+        decision, resolved_by = broker.complete_timeout(token, fallback)
+    else:
+        resolved_by = broker.get(token)["resolvedBy"]
+
+    target = config["approvedTarget"] if decision == "approved" else config["rejectedTarget"]
+    output = {
+        "mode": "human_approval",
+        "decision": decision,
+        "target": target,
+        "token": token,
+        "summary": broker.get(token)["summary"],
+        "approver": broker.get(token)["approver"],
+        "resolvedBy": resolved_by,
+    }
+    message = f"{node.id}: {decision} ({resolved_by}) → {target}"
+    return output, message
 
 
 def _parallel_running_output(node: NodeDSL) -> dict[str, Any]:
@@ -448,11 +536,14 @@ def compile_graph(
     *,
     decision_client: Any | None = None,
     registry: AdapterRegistry | None = None,
+    approval_broker: ApprovalBroker | None = None,
+    graph_id: str = "adhoc",
     emit: EventCallback | None = None,
     trigger_payload: dict[str, Any] | None = None,
 ):
     decision_client = decision_client or get_decision_client()
     registry = registry if registry is not None else build_demo_registry()
+    approval_broker = approval_broker or _default_approval_broker
     noop_emit: EventCallback = lambda event: None
     emit = emit or noop_emit
     payload = trigger_payload or {}
@@ -466,6 +557,8 @@ def compile_graph(
                 trigger_payload=payload,
                 decision_client=decision_client,
                 registry=registry,
+                approval_broker=approval_broker,
+                graph_id=graph_id,
                 emit=emit,
             ),
         )
@@ -493,8 +586,9 @@ def compile_graph(
 
     condition_ids = {node.id for node in graph.nodes if node.type == "condition"}
     loop_ids = {node.id for node in graph.nodes if node.type == "loop"}
+    human_ids = {node.id for node in graph.nodes if node.type == "human_approval"}
     parallel_ids = set(metas)
-    conditional_ids = condition_ids | loop_ids | parallel_ids
+    conditional_ids = condition_ids | loop_ids | human_ids | parallel_ids
 
     for edge in graph.edges:
         if edge.source in conditional_ids:
@@ -503,7 +597,8 @@ def compile_graph(
         # 循环回边 source 在循环体内，作为普通边装配。
         builder.add_edge(edge.source, retarget.get((edge.source, edge.target), edge.target))
 
-    for condition_id in condition_ids:
+    for condition_id in condition_ids | human_ids:
+        # condition/human_approval 同构：执行器写 outputs[id].target，双（多）出口全部 conditional。
         targets = outgoing.get(condition_id, [])
 
         def route(state: GraphState, cid: str = condition_id) -> str:
@@ -567,7 +662,9 @@ def initial_state(graph: GraphDSL, *, inputs: dict[str, Any] | None = None) -> G
     # 且整体作为 webhook 载荷进入 trigger 节点 context.payload。
     variables = _seed_variables(graph)
     if inputs:
-        variables["global"] = {**variables.get("global", {}), **inputs}
+        # approvals 是运行控制键（human_approval 预置决策），不进入全局变量。
+        overrides = {key: value for key, value in inputs.items() if key != "approvals"}
+        variables["global"] = {**variables.get("global", {}), **overrides}
     return {"variables": variables, "outputs": {}, "messages": [], "status": "running"}
 
 
@@ -598,17 +695,22 @@ def run_graph(
     inputs: dict[str, Any] | None = None,
     decision_client: Any | None = None,
     registry: AdapterRegistry | None = None,
+    approval_broker: ApprovalBroker | None = None,
+    graph_id: str = "adhoc",
     emit: EventCallback | None = None,
 ) -> dict[str, Any]:
     """编译并执行，返回状态/节点产出/轨迹。
 
     Webhook 载荷（退款单 order_id/reason/amount）经 inputs 传入，
     作为 trigger 节点 context.payload 供下游引用。
+    inputs.approvals 可预置 {<human 节点 id>: "approved"|"rejected"} 秒过审批（04 §5.6）。
     """
     compiled = compile_graph(
         graph,
         decision_client=decision_client,
         registry=registry,
+        approval_broker=approval_broker,
+        graph_id=graph_id,
         emit=emit,
         trigger_payload=inputs,
     )
