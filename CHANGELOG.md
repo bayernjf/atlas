@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### feat / graph+frontend+llm（2026-09-14）
+
+- Phase 2 首项「条件分支节点（condition）」端到端落地。契约（04 §5.1/§5.2，Graph JSON 仍为 version 1、EdgeDSL 不变）：节点 config 挂 `branches:[{label,expression,target}]` + 必填 `defaultTarget`，按序短路；label/target 节点内唯一、target≠default、每个目标须有出边且每条出边须被分支覆盖、不允许直连 END。后端新增 `atlas.graph.conditions`（纯 stdlib 手写递归下降表达式：`{{路径}}`、比较 `> >= < <= == !=`、逻辑 `&& || !`、括号、数字/字符串/true/false/null；禁 eval/算术/函数；校验期报语法与纯字面量类型错误，运行时错误 fail-safe 走 defaultTarget），`dsl.py` 增 condition 图级校验与 trigger 根可达 BFS，`loader.py` condition 出边全部 `add_conditional_edges`（执行一次写 outputs，router 只读 target），产出 `{branch,target,evaluation,expression_errors}` 与 trace 行。前端新增 ConditionConfig 属性面板（实时中文校验/变量插入/目标 Select）、节点多出口 Handle 与出边分支标签、删除目标自动清引用、运行 trace 分支行；`lib/conditions.ts` 为后端同构的 TS 校验。NL 生成 prompt 枚举补 condition。测试：后端 84 passed/8 skipped，前端 vitest 32；浏览器实测 12346（¥5000）单侧转人工 human_review、12347（¥128）默认分支 refunded。LLM 判断分支、函数库/算术缓做（14 D14/D15）。
+
 ### docs（2026-09-14）
 
 - 沙盘假定 Phase 1 种子验证 Go、进入 Phase 2（用户指示，非真实试用结论）：docs/18 文首加假定声明、新增 §8 验证结论表（注明无 §5 实测值、无 §6.1 C1-C5 记录，真实试用 No-Go 时回退）；08 Phase 1 补假定结论并记 PR #3（dev→main，19 提交，merge f069b53，main CI 全绿）；handoff 阶段口径、仓库状态（PR 已合并）、Active work（Phase 2 范围与 D6/D7 触发提示）、Quality gate（gitleaks 403 修复、PR/main 实跑全绿）同步。
