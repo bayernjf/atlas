@@ -80,6 +80,9 @@ function nodeOutputKey(kind: string): string {
       return 'branch'
     case 'loop':
       return 'index'
+    case 'parallel':
+      // result 以分支入口节点 id 为动态键，不列入静态路径清单（04 §5.4）
+      return 'status'
     default:
       return 'output'
   }

@@ -131,6 +131,43 @@ describe('editorStore addNodeAt / variables', () => {
     expect(updated.data.config.bodyTarget).toBe('tool-body')
     expect(updated.data.config.exitTarget).toBe('')
   })
+
+  it('clears parallel branch and join targets pointing at a deleted node', () => {
+    const parallel: EditorNode = {
+      id: 'parallel-1',
+      position: { x: 0, y: 0 },
+      data: {
+        label: '并行',
+        kind: 'parallel',
+        status: 'idle',
+        config: {
+          joinStrategy: 'all_success',
+          branches: [
+            { label: 'A', target: 'tool-a' },
+            { label: 'B', target: 'tool-b' },
+          ],
+          joinTarget: 'tool-join',
+        },
+        retry: defaultRetry(),
+      },
+    }
+    useEditorStore.setState({
+      nodes: [parallel, stubNode('tool-a'), stubNode('tool-b'), stubNode('tool-join')],
+      edges: [],
+      variables: [],
+      selectedNodeId: 'tool-b',
+      logs: [],
+    })
+    useEditorStore.getState().deleteSelectedNode()
+    const updated = useEditorStore.getState().nodes[0]
+    expect(updated.data.config.branches?.[0].target).toBe('tool-a')
+    expect(updated.data.config.branches?.[1].target).toBe('')
+    expect(updated.data.config.joinTarget).toBe('tool-join')
+
+    useEditorStore.setState({ selectedNodeId: 'tool-join' })
+    useEditorStore.getState().deleteSelectedNode()
+    expect(useEditorStore.getState().nodes[0].data.config.joinTarget).toBe('')
+  })
 })
 
 describe('editorStore W9-W10 run status and draft loading', () => {

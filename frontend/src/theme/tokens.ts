@@ -20,6 +20,7 @@ const primitive = {
   red5: '#ff4d4f',
   gold6: '#faad14',
   cyan6: '#08979c',
+  magenta6: '#c41d7f',
   gray800: '#1f2937',
   gray200: '#e5e7eb',
   gray100: '#f5f7fa',
@@ -36,6 +37,7 @@ export const semanticTokens = {
   'color-node-ai': primitive.purple6,
   'color-node-condition': primitive.gold6,
   'color-node-loop': primitive.cyan6,
+  'color-node-parallel': primitive.magenta6,
   'color-danger': primitive.red5,
   // 文字
   'color-text-primary': primitive.gray800,

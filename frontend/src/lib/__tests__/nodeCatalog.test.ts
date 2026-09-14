@@ -139,4 +139,55 @@ describe('validateNode', () => {
     expect(errors.some((message) => message.includes('1-100'))).toBe(true)
     expect(errors).toContain('循环体入口与退出目标不能相同')
   })
+
+  it('defaults parallel to two branches and all_success strategy', () => {
+    const config = defaultConfig('parallel')
+    expect(config.joinStrategy).toBe('all_success')
+    expect(config.branches).toHaveLength(2)
+    expect(config.joinTarget).toBe('')
+  })
+
+  it('validates parallel branches and join target', () => {
+    expect(validateNode(node('parallel'))).toEqual(
+      expect.arrayContaining([
+        '第 1 个分支名称不能为空',
+        '分支 第 1 个分支 必须选择目标节点',
+        '第 2 个分支名称不能为空',
+        '分支 第 2 个分支 必须选择目标节点',
+        '必须选择汇聚目标',
+      ]),
+    )
+    const valid = node('parallel', {
+      config: {
+        joinStrategy: 'all_completed',
+        branches: [
+          { label: 'A', target: 'tool-a' },
+          { label: 'B', target: 'tool-b' },
+        ],
+        joinTarget: 'tool-join',
+      },
+    })
+    expect(validateNode(valid)).toEqual([])
+
+    const errors = validateNode(
+      node('parallel', {
+        config: {
+          joinStrategy: 'all_success',
+          branches: [
+            { label: '同', target: 'tool-x' },
+            { label: '同', target: 'tool-x' },
+          ],
+          joinTarget: 'tool-x',
+        },
+      }),
+    )
+    expect(errors).toContain('分支名称重复：同')
+    expect(errors).toContain('分支目标重复：tool-x')
+    expect(errors).toContain('汇聚目标不能与任一分支目标相同')
+
+    const single = validateNode(
+      node('parallel', { config: { joinStrategy: 'all_success', branches: [{ label: 'A', target: 'a' }], joinTarget: 'j' } }),
+    )
+    expect(single.some((message) => message.includes('2-10'))).toBe(true)
+  })
 })

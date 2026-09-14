@@ -15,7 +15,7 @@ type Props = {
 const EMPTY_BRANCH: ConditionBranch = { label: '', expression: '', target: '' }
 
 export function ConditionConfig({ config, update, variablePaths, targetOptions }: Props) {
-  const branches = config.branches ?? []
+  const branches = (config.branches ?? []) as ConditionBranch[]
 
   const patchBranch = (index: number, patch: Partial<ConditionBranch>) => {
     update({

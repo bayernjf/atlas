@@ -191,6 +191,23 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               },
             }
           }
+          if (node.data.kind === 'parallel') {
+            const config = node.data.config
+            return {
+              ...node,
+              data: {
+                ...node.data,
+                config: {
+                  ...config,
+                  branches: config.branches?.map((branch) => ({
+                    ...branch,
+                    target: branch.target === selectedId ? '' : branch.target,
+                  })),
+                  joinTarget: config.joinTarget === selectedId ? '' : config.joinTarget,
+                },
+              },
+            }
+          }
           return node
         }),
       edges: state.edges.filter(
