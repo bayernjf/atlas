@@ -424,7 +424,7 @@ def _make_join_gate(node: NodeDSL, meta: dict[str, Any]):
             "result": result,
             "joinTarget": meta["join_target"],
         }
-        if failed:
+        if overall == "failed":
             detail = ", ".join(f"{label}（{error}）" for label, error in failed)
             message = f"{node.id}: joined ({strategy}) failed: {detail}"
         else:

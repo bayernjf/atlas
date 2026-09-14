@@ -242,3 +242,96 @@ def test_loop_expression_error_exits_immediately():
     assert loop_output["iterations"] == 0
     assert loop_output["exitReason"] == "expression_error"
     assert loop_output["expression_errors"]
+
+
+def _parallel_graph(strategy: str = "all_success", b_tool: str = "op-b"):
+    return parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "parallel-1", "type": "parallel", "name": "并行",
+                 "config": {
+                     "joinStrategy": strategy,
+                     "branches": [
+                         {"label": "短支", "target": "tool-a"},
+                         {"label": "长支", "target": "tool-b"},
+                     ],
+                     "joinTarget": "tool-join",
+                 }},
+                {"id": "tool-a", "type": "tool_call", "name": "A",
+                 "config": {"tool": "op-a"}},
+                {"id": "tool-b", "type": "tool_call", "name": "B",
+                 "config": {"tool": b_tool}},
+                {"id": "tool-mid", "type": "tool_call", "name": "长支中段",
+                 "config": {"tool": "op-mid"}},
+                {"id": "tool-join", "type": "tool_call", "name": "汇聚",
+                 "config": {"tool": "op-join", "params": "状态={{parallel-1.status}}"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "parallel-1"},
+                {"id": "e2", "source": "parallel-1", "target": "tool-a"},
+                {"id": "e3", "source": "parallel-1", "target": "tool-b"},
+                {"id": "e4", "source": "tool-a", "target": "tool-join"},
+                {"id": "e5", "source": "tool-b", "target": "tool-mid"},
+                {"id": "e6", "source": "tool-mid", "target": "tool-join"},
+            ],
+        }
+    )
+
+
+def test_parallel_fan_out_runs_all_branches_and_joins_once():
+    events: list[dict] = []
+    result = run_graph(_parallel_graph(), emit=events.append)
+    assert result["status"] == "completed"
+
+    starts = [event["node_id"] for event in events if event["type"] == "node_start"]
+    assert {node: starts.count(node) for node in set(starts)} == {
+        "trigger-1": 1,
+        "parallel-1": 1,
+        "tool-a": 1,
+        "tool-b": 1,
+        "tool-mid": 1,
+        "tool-join": 1,
+    }
+    assert not any(node.startswith("__join__") for node in starts)
+
+    parallel_output = result["outputs"]["parallel-1"]
+    assert parallel_output["mode"] == "parallel"
+    assert parallel_output["status"] == "success"
+    assert set(parallel_output["result"]) == {"tool-a", "tool-b"}
+    assert {branch["label"] for branch in parallel_output["branches"]} == {"短支", "长支"}
+    assert result["outputs"]["tool-join"]["params_rendered"] == "状态=success"
+    assert any("fork 2 branches → tool-a, tool-b" in line for line in result["trace"])
+    assert any("joined (all_success) success" in line for line in result["trace"])
+
+
+def test_parallel_all_success_fail_safe_join_on_failed_branch():
+    events: list[dict] = []
+    result = run_graph(_parallel_graph(b_tool="bogus/x"), emit=events.append)
+    assert result["status"] == "completed"
+
+    starts = [event["node_id"] for event in events if event["type"] == "node_start"]
+    assert starts.count("tool-join") == 1
+
+    parallel_output = result["outputs"]["parallel-1"]
+    assert parallel_output["status"] == "failed"
+    failed = {branch["target"]: branch for branch in parallel_output["branches"]
+              if branch["status"] == "failed"}
+    assert set(failed) == {"tool-b"}
+    assert "适配器未注册" in failed["tool-b"]["error"]
+    assert result["outputs"]["tool-join"]["params_rendered"] == "状态=failed"
+    assert any("joined (all_success) failed: 长支（适配器未注册：bogus）" in line
+               for line in result["trace"])
+
+
+def test_parallel_all_completed_marks_success_despite_failed_branch():
+    result = run_graph(_parallel_graph(strategy="all_completed", b_tool="bogus/x"))
+    parallel_output = result["outputs"]["parallel-1"]
+    assert parallel_output["status"] == "success"
+    assert parallel_output["joinStrategy"] == "all_completed"
+    assert any(branch["status"] == "failed" for branch in parallel_output["branches"])
+    assert "tool-join" in result["outputs"]
+    assert any("joined (all_completed) success" in line for line in result["trace"])
