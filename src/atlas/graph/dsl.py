@@ -21,6 +21,7 @@ SUPPORTED_NODE_TYPES = (
     "loop",
     "parallel",
     "wait",
+    "subgraph",
     "human_approval",
 )
 
@@ -30,6 +31,7 @@ MAX_PARALLEL_BRANCHES = 10
 PARALLEL_JOIN_STRATEGIES = ("all_success", "all_completed")
 MIN_WAIT_SECONDS = 1
 MAX_WAIT_SECONDS = 600
+MAX_SUBGRAPH_DEPTH = 3
 MIN_APPROVAL_TIMEOUT = 10
 MAX_APPROVAL_TIMEOUT = 3600
 APPROVAL_TIMEOUT_ACTIONS = ("approve", "reject")
@@ -176,6 +178,10 @@ def validate_graph(graph: GraphDSL) -> list[str]:
     for node in graph.nodes:
         if node.type == "human_approval":
             errors.extend(_validate_human_approval_config(node, node_ids, outgoing))
+
+    for node in graph.nodes:
+        if node.type == "subgraph":
+            errors.extend(_validate_subgraph_config(node, node_ids, outgoing))
 
     errors.extend(_validate_illegal_cycles(graph, loop_backedges))
     errors.extend(_validate_reachability(graph, node_ids, outgoing))
@@ -489,6 +495,46 @@ def _validate_wait_config(
             f"{prefix} 等待时长需在 {MIN_WAIT_SECONDS}-{MAX_WAIT_SECONDS} 秒之间"
             f"（当前 {seconds}）"
         )
+
+    targets = outgoing.get(node.id, set())
+    if len(targets) != 1:
+        errors.append(f"{prefix} 必须恰好配置 1 条出边（当前 {len(targets)} 条），且不能直连结束")
+    else:
+        target = next(iter(targets))
+        if target == node.id:
+            errors.append(f"{prefix} 出边不能指向自身")
+        elif target not in node_ids:
+            errors.append(f"{prefix} 后继节点不存在：{target}")
+
+    return errors
+
+
+def _validate_subgraph_config(
+    node: NodeDSL, node_ids: set[str], outgoing: dict[str, set[str]]
+) -> list[str]:
+    """subgraph config 与单出边拓扑校验（契约 04 §5.7）；跨图引用校验在 loader 编译期。"""
+    errors: list[str] = []
+    prefix = f"子图节点 {node.id}"
+    config = node.config
+
+    graph_id = config.get("graphId")
+    if not isinstance(graph_id, str) or not graph_id.strip():
+        errors.append(f"{prefix} 必须选择引用的已保存子图（graphId）")
+
+    inputs = config.get("inputs", {})
+    if not isinstance(inputs, dict):
+        errors.append(f"{prefix} 子图入参映射（inputs）必须是对象")
+    else:
+        input_keys: set[str] = set()
+        for key, value in inputs.items():
+            if not isinstance(key, str) or not key.strip():
+                errors.append(f"{prefix} 入参键名不能为空")
+            elif key in input_keys:
+                errors.append(f"{prefix} 入参键名重复：{key}")
+            else:
+                input_keys.add(key)
+            if not isinstance(value, str) or not value.strip():
+                errors.append(f"{prefix} 入参 {key} 的映射值必须是非空文本（父图 {{路径}} 或字面量）")
 
     targets = outgoing.get(node.id, set())
     if len(targets) != 1:
