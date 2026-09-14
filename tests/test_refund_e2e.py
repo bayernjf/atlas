@@ -171,3 +171,69 @@ def test_condition_missing_amount_fails_safe_to_default():
     assert routed["branch"] == "__default__" and routed["expression_errors"]
     assert "tool-auto" in result["outputs"] and "tool-human" not in result["outputs"]
     assert service.orders["12348"].status == "refunded"
+
+
+def _retry_loop_graph():
+    """trigger → AI 决策 → loop（index<2 重试两轮）→ 循环体回边 → 退出后执行退款（04 §5.3）。"""
+    return parse_graph(
+        {
+            "version": 1,
+            "variables": [
+                {"name": "approval_limit", "type": "number", "value": "500", "scope": "global"}
+            ],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "新退款申请",
+                 "config": {"triggerType": "webhook", "webhookUrl": "/hooks/refund"}},
+                {"id": "ai_decision-1", "type": "ai_decision", "name": "退款决策",
+                 "config": {"promptTemplate": "退款 {{trigger-1.context.payload.reason}}"}},
+                {"id": "loop-1", "type": "loop", "name": "重试循环",
+                 "config": {
+                     "mode": "while",
+                     "continueExpression": "{{loop-1.index}} < 2",
+                     "maxIterations": 5,
+                     "bodyTarget": "tool-retry",
+                     "exitTarget": "tool-refund",
+                 }},
+                {"id": "tool-retry", "type": "tool_call", "name": "重试准备",
+                 "config": {"tool": "retry-op"}},
+                {"id": "tool-refund", "type": "tool_call", "name": "执行退款",
+                 "config": {"tool": "shop/process_refund"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "ai_decision-1"},
+                {"id": "e2", "source": "ai_decision-1", "target": "loop-1"},
+                {"id": "e3", "source": "loop-1", "target": "tool-retry"},
+                {"id": "e4", "source": "tool-retry", "target": "loop-1"},
+                {"id": "e5", "source": "loop-1", "target": "tool-refund"},
+            ],
+        }
+    )
+
+
+def test_loop_runs_body_twice_then_refunds_end_to_end():
+    service = DemoShopService()
+    events = []
+    result = run_graph(
+        _retry_loop_graph(),
+        inputs={"order_id": "12345", "reason": "商品破损", "amount": 299},
+        decision_client=RuleBasedDecisionClient(),
+        registry=_fresh_service_registry(service),
+        emit=events.append,
+    )
+    assert result["status"] == "completed"
+    assert set(result["outputs"].keys()) == {
+        "trigger-1", "ai_decision-1", "loop-1", "tool-retry", "tool-refund"
+    }
+    loop_output = result["outputs"]["loop-1"]
+    assert loop_output["iterations"] == 2
+    assert loop_output["exitReason"] == "condition_false"
+    body_starts = [event["node_id"] for event in events if event["type"] == "node_start"]
+    assert body_starts.count("tool-retry") == 2
+    assert body_starts == [
+        "trigger-1", "ai_decision-1", "loop-1", "tool-retry",
+        "loop-1", "tool-retry", "loop-1", "tool-refund",
+    ]
+    assert any("continue (2/5) → tool-retry" in line for line in result["trace"])
+    assert any("exit (condition_false) after 2 → tool-refund" in line for line in result["trace"])
+    assert result["outputs"]["tool-refund"]["result"]["status"] == "refunded"
+    assert service.orders["12345"].status == "refunded"
