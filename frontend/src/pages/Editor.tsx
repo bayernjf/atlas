@@ -98,6 +98,8 @@ export function Editor() {
             status?: string
             durationSeconds?: number
             resolvedBy?: string
+            graphId?: string
+            error?: string
             branches?: Array<{ label: string; target: string; status: string; error: string }>
             result?: unknown
           }
@@ -145,6 +147,12 @@ export function Editor() {
             }
           } else if (output?.mode === 'wait') {
             appendLog(`✓ ${event.node_id} 等待完成：${output.durationSeconds} 秒`)
+          } else if (output?.mode === 'subgraph') {
+            if (output.status === 'failed') {
+              appendLog(`✓ ${event.node_id} 子图完成：${output.graphId}（失败：${output.error ?? '未知错误'}）`)
+            } else {
+              appendLog(`✓ ${event.node_id} 子图完成：${output.graphId}（成功）`)
+            }
           } else {
             appendLog(`✓ 节点完成：${event.node_id}`)
           }
