@@ -298,6 +298,17 @@ def test_parallel_fan_out_runs_all_branches_and_joins_once():
     }
     assert not any(node.startswith("__join__") for node in starts)
 
+    # 汇聚网关在聚合完成时以 parallel 节点自身补发一次 node_end（fork 时为 running）
+    parallel_ends = [
+        event for event in events
+        if event["type"] == "node_end" and event["node_id"] == "parallel-1"
+    ]
+    assert len(parallel_ends) == 2
+    assert [event["output"]["status"] for event in parallel_ends] == ["running", "success"]
+    assert not any(
+        event.get("node_id", "").startswith("__join__") for event in events
+    )
+
     parallel_output = result["outputs"]["parallel-1"]
     assert parallel_output["mode"] == "parallel"
     assert parallel_output["status"] == "success"

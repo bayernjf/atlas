@@ -372,7 +372,7 @@ def _node_failure(output: dict[str, Any]) -> str | None:
     return None
 
 
-def _make_join_gate(node: NodeDSL, meta: dict[str, Any]):
+def _make_join_gate(node: NodeDSL, meta: dict[str, Any], emit: EventCallback):
     """汇聚网关（04 §5.4）：所有分支末端都有产出时聚合一次，否则空转等下超步。"""
 
     config = node.config
@@ -429,6 +429,9 @@ def _make_join_gate(node: NodeDSL, meta: dict[str, Any]):
             message = f"{node.id}: joined ({strategy}) failed: {detail}"
         else:
             message = f"{node.id}: joined ({strategy}) success"
+        # 汇聚完成时以 parallel 节点自身补发一次 node_end（fork 时产出为 running），
+        # 供 SSE 画布展示最终汇聚结果；等待超步不发事件。
+        emit({"type": "node_end", "node_id": node.id, "node_type": "parallel", "output": output})
         return {"outputs": {node.id: output}, "messages": [message]}
 
     return gate
@@ -472,7 +475,7 @@ def compile_graph(
     retarget: dict[tuple[str, str], str] = {}
     for node in parallels:
         meta = metas[node.id]
-        builder.add_node(meta["gate"], _make_join_gate(node, meta))
+        builder.add_node(meta["gate"], _make_join_gate(node, meta, emit))
         for source in meta["region"]:
             if meta["join_target"] in outgoing.get(source, []):
                 retarget[(source, meta["join_target"])] = meta["gate"]
