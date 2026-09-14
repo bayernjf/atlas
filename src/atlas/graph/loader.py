@@ -208,6 +208,8 @@ def _execute_tool(
             "action": decision["action"],
             "note": decision.get("reason", ""),
         }
+    elif capability_name in ("execute_refund", "request_human_approval"):
+        parameters = {"order_id": trigger_payload.get("order_id", ""), "note": params_text}
     elif capability_name == "login":
         # Demo 平台固定账号；真实渠道凭据走环境变量与凭据库（Phase 2）
         parameters = {"username": "demo", "password": "demo"}
