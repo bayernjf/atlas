@@ -53,6 +53,24 @@ export type SavedGraphSummary = {
   updated_at: string
 }
 
+export type AdapterToolInfo = {
+  name: string
+  description: string
+  permission: string
+  idempotent: boolean
+}
+
+export type AdapterInfo = {
+  id: string
+  type: string
+  healthy: boolean
+  tools: AdapterToolInfo[]
+}
+
+export async function listAdapters(): Promise<AdapterInfo[]> {
+  return request<AdapterInfo[]>('/api/adapters')
+}
+
 export async function saveGraph(graph: SerializedGraph): Promise<{ id: string; version: number }> {
   return request('/api/graphs', { method: 'POST', body: JSON.stringify(graph) })
 }
