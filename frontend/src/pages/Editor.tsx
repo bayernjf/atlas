@@ -81,6 +81,8 @@ export function Editor() {
             iterations?: number
             exitReason?: string | null
             target?: string
+            status?: string
+            branches?: Array<{ label: string; target: string; status: string; error: string }>
             result?: unknown
           }
           const decision = output?.decision
@@ -89,6 +91,18 @@ export function Editor() {
           } else if (output?.branch) {
             const branchLabel = output.branch === '__default__' ? '默认' : output.branch
             appendLog(`✓ ${event.node_id} 分支：${branchLabel} → ${output.target}`)
+          } else if (output?.mode === 'parallel') {
+            if (output.status === 'running') {
+              appendLog(`✓ ${event.node_id} 并行启动 ${output.branches?.length ?? 0} 个分支`)
+            } else if (output.status === 'failed') {
+              const failed = (output.branches ?? []).filter((branch) => branch.status === 'failed')
+              const detail = failed.map((branch) => `${branch.label}（${branch.error}）`).join('，')
+              appendLog(
+                `✓ ${event.node_id} 并行汇聚：${failed.length} 个分支失败：${detail}（汇聚节点仍执行）`,
+              )
+            } else {
+              appendLog(`✓ ${event.node_id} 并行汇聚：全部成功`)
+            }
           } else if (output?.mode === 'while') {
             if (output.exitReason === null) {
               appendLog(`✓ ${event.node_id} 继续循环：第 ${output.iterations} 轮 → ${output.target}`)

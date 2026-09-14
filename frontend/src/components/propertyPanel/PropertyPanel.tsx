@@ -19,6 +19,7 @@ import {
 import { listVariablePaths } from '../../lib/variables'
 import { ConditionConfig } from './ConditionConfig'
 import { LoopConfig } from './LoopConfig'
+import { ParallelConfig } from './ParallelConfig'
 
 export function PropertyPanel() {
   const nodes = useEditorStore((state) => state.nodes)
@@ -115,6 +116,13 @@ export function PropertyPanel() {
             config={config}
             update={updateSelectedConfig}
             variablePaths={variablePaths}
+            targetOptions={targetOptions}
+          />
+        )}
+        {data.kind === 'parallel' && (
+          <ParallelConfig
+            config={config}
+            update={updateSelectedConfig}
             targetOptions={targetOptions}
           />
         )}

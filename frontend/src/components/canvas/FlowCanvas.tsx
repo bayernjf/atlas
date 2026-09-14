@@ -45,6 +45,10 @@ function FlowCanvasInner() {
         if (node.data.config.exitTarget) {
           labels.set(`${node.id}->${node.data.config.exitTarget}`, '退出')
         }
+      } else if (node.data.kind === 'parallel') {
+        for (const branch of node.data.config.branches ?? []) {
+          if (branch.target) labels.set(`${node.id}->${branch.target}`, branch.label || branch.target)
+        }
       }
     }
     return labels

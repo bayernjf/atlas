@@ -28,6 +28,8 @@ export function AtlasNode({ data, selected }: NodeProps<EditorNode>) {
         <ConditionHandles data={data} />
       ) : data.kind === 'loop' ? (
         <LoopHandles />
+      ) : data.kind === 'parallel' ? (
+        <ParallelHandles data={data} />
       ) : (
         <Handle type="source" position={Position.Right} />
       )}
@@ -52,8 +54,24 @@ function LoopHandles() {
   )
 }
 
-function ConditionHandles({ data }: { data: EditorNodeData }) {
+function ParallelHandles({ data }: { data: EditorNodeData }) {
   const branches = data.config.branches ?? []
+  return (
+    <div className="atlas-node-branches">
+      {branches.map((branch, index) => {
+        const label = branch.label || `分支 ${index + 1}`
+        return (
+          <div key={`b${index}`} className="atlas-node-branch">
+            <span className="atlas-node-branch-label">{label}</span>
+            <Handle id={`b${index}`} type="source" position={Position.Right} title={label} />
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function ConditionHandles({ data }: { data: EditorNodeData }) {  const branches = data.config.branches ?? []
   const items = [
     ...branches.map((branch, index) => ({ id: `b${index}`, label: branch.label || `分支 ${index + 1}` })),
     { id: 'default', label: '默认' },
