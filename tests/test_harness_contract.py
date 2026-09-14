@@ -97,6 +97,17 @@ def test_heartbeat_ttl_marks_unhealthy():
     assert registry.is_healthy("fake")
 
 
+def test_list_adapters_refreshes_in_process_heartbeat():
+    clock = {"now": 100.0}
+    registry = AdapterRegistry(ttl_seconds=30, clock=lambda: clock["now"])
+    registry.register(_FakeAdapter())
+    clock["now"] += 31
+    assert registry.is_healthy("fake") is False
+
+    assert registry.list_adapters()[0]["healthy"] is True
+    assert registry.is_healthy("fake") is True
+
+
 def test_unregister_and_unknown_health():
     registry = AdapterRegistry()
     registry.register(_FakeAdapter())

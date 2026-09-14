@@ -59,7 +59,14 @@ class AdapterRegistry:
         return self._clock() - record.last_heartbeat <= self._ttl
 
     def list_adapters(self) -> list[dict]:
-        """发现接口：供编辑后台查询可用适配器与工具（04 §4.4）。"""
+        """发现接口：供编辑后台查询可用适配器与工具（04 §4.4）。
+
+        注册表内为进程内适配器，被发现即可达：列举前统一续心跳，
+        避免 30 秒 TTL 把常驻单例误判不可用；TTL 置灰留给远程注册（D6）。
+        """
+        now = self._clock()
+        for record in self._adapters.values():
+            record.last_heartbeat = now
         return [
             {
                 "id": record.adapter.adapter_id,
