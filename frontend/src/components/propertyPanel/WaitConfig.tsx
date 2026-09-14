@@ -1,4 +1,4 @@
-import { InputNumber, Radio, Tooltip, Typography } from 'antd'
+import { Button, InputNumber, Radio, Space, Tooltip, Typography } from 'antd'
 import { MAX_WAIT_SECONDS, MIN_WAIT_SECONDS, type NodeConfig } from '../../lib/nodeCatalog'
 
 type Props = {
@@ -30,16 +30,18 @@ export function WaitConfig({ config, update }: Props) {
       </label>
       <label className="property-field">
         <Typography.Text type="secondary">等待时长</Typography.Text>
-        <InputNumber
-          min={MIN_WAIT_SECONDS}
-          max={MAX_WAIT_SECONDS}
-          step={1}
-          precision={0}
-          addonAfter="秒"
-          value={seconds}
-          status={outOfRange ? 'error' : undefined}
-          onChange={(value) => update({ durationSeconds: value ?? undefined })}
-        />
+        <Space.Compact>
+          <InputNumber
+            min={MIN_WAIT_SECONDS}
+            max={MAX_WAIT_SECONDS}
+            step={1}
+            precision={0}
+            value={seconds}
+            status={outOfRange ? 'error' : undefined}
+            onChange={(value) => update({ durationSeconds: value ?? undefined })}
+          />
+          <Button disabled>秒</Button>
+        </Space.Compact>
         {outOfRange && (
           <Typography.Text type="danger">
             等待时长需为 {MIN_WAIT_SECONDS}-{MAX_WAIT_SECONDS} 秒的整数
