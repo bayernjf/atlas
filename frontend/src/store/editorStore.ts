@@ -208,6 +208,20 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               },
             }
           }
+          if (node.data.kind === 'human_approval') {
+            const config = node.data.config
+            return {
+              ...node,
+              data: {
+                ...node.data,
+                config: {
+                  ...config,
+                  approvedTarget: config.approvedTarget === selectedId ? '' : config.approvedTarget,
+                  rejectedTarget: config.rejectedTarget === selectedId ? '' : config.rejectedTarget,
+                },
+              },
+            }
+          }
           return node
         }),
       edges: state.edges.filter(

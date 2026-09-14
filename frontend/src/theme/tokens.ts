@@ -40,6 +40,7 @@ export const semanticTokens = {
   'color-node-loop': primitive.cyan6,
   'color-node-parallel': primitive.magenta6,
   'color-node-wait': primitive.orange6,
+  'color-node-human': primitive.slate900,
   'color-danger': primitive.red5,
   // 文字
   'color-text-primary': primitive.gray800,

@@ -210,4 +210,56 @@ describe('validateNode', () => {
     )
     expect(wrongType).toContain('等待类型必须为定时等待')
   })
+
+  it('defaults human_approval to 300s reject timeout with empty targets', () => {
+    const config = defaultConfig('human_approval')
+    expect(config.timeoutSeconds).toBe(300)
+    expect(config.onTimeout).toBe('reject')
+    expect(config.approvedTarget).toBe('')
+    expect(config.rejectedTarget).toBe('')
+  })
+
+  it('accepts a fully configured human_approval node', () => {
+    const valid = node('human_approval', {
+      config: {
+        ...defaultConfig('human_approval'),
+        summary: '订单 {{trigger-1.context.payload.id}} 退款审批',
+        approver: '客服主管',
+        timeoutSeconds: 300,
+        onTimeout: 'reject',
+        approvedTarget: 'tool-approve',
+        rejectedTarget: 'tool-reject',
+      },
+    })
+    expect(validateNode(valid)).toEqual([])
+  })
+
+  it('validates human_approval summary, timeout range, targets', () => {
+    const base = {
+      ...defaultConfig('human_approval'),
+      summary: '退款审批',
+      approvedTarget: 'tool-approve',
+      rejectedTarget: 'tool-reject',
+    }
+
+    expect(
+      validateNode(node('human_approval', { config: { ...base, summary: '  ' } })),
+    ).toContain('审批说明必填')
+
+    for (const timeoutSeconds of [9, 3601, 1.5, undefined]) {
+      const errors = validateNode(node('human_approval', { config: { ...base, timeoutSeconds } }))
+      expect(errors.some((message) => message.includes('10-3600'))).toBe(true)
+    }
+
+    const noTargets = validateNode(
+      node('human_approval', { config: { ...base, approvedTarget: '', rejectedTarget: '' } }),
+    )
+    expect(noTargets).toContain('必须选择通过目标')
+    expect(noTargets).toContain('必须选择拒绝目标')
+
+    const sameTarget = validateNode(
+      node('human_approval', { config: { ...base, rejectedTarget: 'tool-approve' } }),
+    )
+    expect(sameTarget).toContain('通过目标与拒绝目标不能相同')
+  })
 })
