@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### docs（2026-09-14）
+
+- docs/18 新增 §6.1 试用进度跟踪表（C1-C5 一行一客户：决策路径、三场景结果与耗时、黄金用例认同数、意向、反馈分类、跟进项）与每家详细记录模板；handoff 新增「Active feedback」入口区并指向该表，试用反馈按 16 文档流程闭环。
+
 ### feat / api+web（2026-09-13）
 
 - Phase 1 应用内反馈入口落地（18 文档 §6）：后端新增 `POST /api/feedback`（type=bug/suggestion、content 1-2000 字、contact 选填，201 + id/created_at）与 `GET /api/feedback`（陪同试用导出），进程内 `FeedbackStore`（重启清空，与 Demo 存储同假设；`/api/demo/reset` 不清除反馈）；非法 type/空 content 经 pydantic 校验 422。前端编辑器头部新增"反馈"按钮与弹窗（类型切换、字数计数、联系方式选填、提交成功态、错误回显），`apiClient.submitFeedback`。测试：后端新增 2 用例（62 passed/8 skipped），前端 vitest 23、`pnpm build` 通过；浏览器同源（:8000）实测两类反馈提交与 GET 导出落库，控制台零错误。03 新增 feedback_item 契约、12 REST 表补两端点、13 进度补行。
