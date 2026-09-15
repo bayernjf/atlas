@@ -94,6 +94,7 @@ export function Monitoring({ onBack }: MonitoringProps) {
   }, [])
 
   useEffect(() => {
+    // eslint-disable-next-line react/set-state-in-effect -- 首帧拉取外部 API，setState 均在 await 之后
     refresh()
     const timer = setInterval(refresh, 5000)
     return () => clearInterval(timer)
@@ -263,7 +264,11 @@ export function Monitoring({ onBack }: MonitoringProps) {
             </Col>
             <Col span={4}>
               <Card>
-                <Statistic title="健康" value={metrics.healthy} valueStyle={{ color: '#3f8600' }} />
+                <Statistic
+                  title="健康"
+                  value={metrics.healthy}
+                  styles={{ content: { color: '#3f8600' } }}
+                />
               </Card>
             </Col>
             <Col span={4}>
@@ -271,7 +276,7 @@ export function Monitoring({ onBack }: MonitoringProps) {
                 <Statistic
                   title="不健康"
                   value={metrics.unhealthy}
-                  valueStyle={{ color: metrics.unhealthy ? '#cf1322' : undefined }}
+                  styles={{ content: { color: metrics.unhealthy ? '#cf1322' : undefined } }}
                 />
               </Card>
             </Col>
@@ -373,7 +378,7 @@ export function Monitoring({ onBack }: MonitoringProps) {
                         consecutive_failures: { ...rules.consecutive_failures, threshold: value },
                       })
                     }
-                    addonAfter="次"
+                    suffix="次"
                   />
                 </Space>
                 <Space>
@@ -399,7 +404,7 @@ export function Monitoring({ onBack }: MonitoringProps) {
                         failure_rate: { ...rules.failure_rate, window: value },
                       })
                     }
-                    addonAfter="次"
+                    suffix="次"
                   />
                   <span>最少样本</span>
                   <InputNumber
