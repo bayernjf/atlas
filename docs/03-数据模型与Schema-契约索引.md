@@ -28,6 +28,7 @@
 | `http_request_params` | 04 / 四、工具/适配器组件 4.6 API 适配器（通用 HTTP）v1 契约（权威 blockquote）+ `src/atlas/httpapi/{service,adapter}.py` | ### 4.6 API 适配器（通用 HTTP）v1 契约 |
 | `db_sql_params` | 04 / 四、工具/适配器组件 4.7 数据适配器（通用 SQL）v1 契约（权威 blockquote）+ `src/atlas/database/{service,adapter}.py`（query/execute 两能力） | ### 4.7 数据适配器（通用 SQL）v1 契约 |
 | `message_send_params` | 04 / 四、工具/适配器组件 4.8 消息适配器（进程内消息服务）v1 契约（权威 blockquote）+ `src/atlas/message/{service,adapter}.py`（单能力 message/send） | ### 4.8 消息适配器（进程内消息服务）v1 契约 |
+| `template_catalog` | 04 / 五、逻辑组件 5.10 流程模板库（内置只读）v1 契约（权威 blockquote）+ `src/atlas/template/catalog.py`（5 个内置模板元数据与 graph） | ### 5.10 流程模板库（内置只读） |
 
 ---
 
@@ -294,3 +295,20 @@ id: string                   # feedback-{自增}
 created_at: string           # UTC ISO-8601
 ```
 > 进程内存储（重启清空，与 Demo 存储同假设）；`POST /api/demo/reset` 不清除反馈。
+
+### `template_catalog` — 字段概览（Phase 2 能力项，2026-09-15；`GET /api/templates`、`GET /api/templates/{id}`）
+
+```yaml
+# 模板元数据（权威实现 src/atlas/template/catalog.py 的 TemplateMeta）
+id: string                 # kebab-case 目录内唯一，随代码稳定（refund-auto / http-orders-branch /
+                           # sql-query-notify / sql-approval-write / approval-timeout-reject）
+name: string               # 展示名
+description: string        # 一句话场景
+tags: [string]             # 展示标签
+graph: graph_definition    # 完整 version 1 Graph JSON，节点 id 固定，加载不重映射
+# GET /api/templates 列表投影（不含 graph）
+items: [{id, name, description, tags, node_count}]
+node_count: int            # graph.nodes 数量（服务端投影）
+# GET /api/templates/{id} 返回完整 TemplateMeta（含 graph）；未知 id 404
+```
+> 只读内置目录：随代码版本发布，无 DB、无 CRUD、`/api/demo/reset` 不影响；「从模板新建」为客户端整画布替换，保存后为普通 graph-N 与模板无关。权威契约见 04 §5.10，REST 见 12 §5。
