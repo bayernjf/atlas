@@ -67,7 +67,7 @@ export function Login({ onLoggedIn }: LoginProps) {
             登录
           </Button>
         </Form>
-        <Space direction="vertical" size={4} style={{ marginTop: 20, width: '100%' }}>
+        <Space orientation="vertical" size={4} style={{ marginTop: 20, width: '100%' }}>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             Demo 种子账号（明文仅用于演示）：
           </Typography.Text>
