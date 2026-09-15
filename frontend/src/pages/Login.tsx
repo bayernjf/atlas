@@ -36,7 +36,7 @@ export function Login({ onLoggedIn }: LoginProps) {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: '#f0f2f5',
+        background: 'var(--atlas-color-bg-page)',
         padding: 16,
       }}
     >
