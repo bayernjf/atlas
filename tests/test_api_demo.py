@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 import uuid
 
 from fastapi.testclient import TestClient
@@ -650,3 +651,153 @@ def test_templates_survive_demo_reset():
     client.post("/api/demo/reset")
     assert len(client.get("/api/templates").json()["items"]) == 5
     assert client.get("/api/templates/refund-auto").status_code == 200
+
+
+# ---------- I16：操作录制与回放（04 §5.11，06 §6.9） ----------
+
+def _record_approval_timeout_case() -> tuple[str, dict, dict]:
+    """跑 approval-timeout-reject（预置 rejected）→ 录制入库；返回 (case_id, graph, run result)。"""
+    client.post("/api/demo/reset")
+    graph = client.get("/api/templates/approval-timeout-reject").json()["graph"]
+    graph_id = client.post("/api/graphs", json=graph).json()["id"]
+    run = client.post(
+        f"/api/graphs/{graph_id}/run",
+        json={"inputs": {"approvals": {"approval-1": "rejected"}}},
+    )
+    assert run.status_code == 200
+    result = run.json()
+    node_types = {node["id"]: node["type"] for node in graph["nodes"]}
+    steps = [
+        {"node_id": node_id, "node_type": node_types[node_id], "output": output}
+        for node_id, output in result["outputs"].items()
+    ]
+    response = client.post(
+        "/api/recordings",
+        json={
+            "name": "审批超时模板回放用例",
+            "graph_id": graph_id,
+            "inputs": {"approvals": {"approval-1": "rejected"}},
+            "steps": steps,
+            "status": result["status"],
+        },
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["id"], graph, result
+
+
+def test_recording_create_projection_detail_validation_and_404():
+    case_id, graph, result = _record_approval_timeout_case()
+
+    detail = client.get(f"/api/recordings/{case_id}")
+    assert detail.status_code == 200
+    case = detail.json()
+    assert case["id"] == case_id and case["id"].startswith("rec-")
+    assert case["graph"] == graph  # 图快照即入库时原始 JSON
+    assert case["status"] == result["status"] == "completed"
+    assert {step["node_id"] for step in case["steps"]} == {
+        "trigger-1", "approval-1", "rejected-msg"
+    }
+
+    items = client.get("/api/recordings").json()["items"]
+    mine = next(item for item in items if item["id"] == case_id)
+    assert set(mine) == {"id", "name", "node_count", "step_count", "status", "created_at"}
+    assert mine["node_count"] == 4 and mine["step_count"] == 3
+
+    assert client.post(
+        "/api/recordings",
+        json={"name": "x", "graph_id": "graph-missing", "steps": [
+            {"node_id": "a", "node_type": "trigger", "output": {}}
+        ], "status": "completed"},
+    ).status_code == 404
+    saved_graph_id = client.post("/api/graphs", json=graph).json()["id"]
+    invalid = [
+        {"name": "", "graph_id": saved_graph_id, "steps": [{"node_id": "a", "node_type": "trigger", "output": {}}], "status": "completed"},
+        {"name": "x" * 101, "graph_id": saved_graph_id, "steps": [{"node_id": "a", "node_type": "trigger", "output": {}}], "status": "completed"},
+        {"name": "无步骤", "graph_id": saved_graph_id, "steps": [], "status": "completed"},
+        {"name": "坏步骤", "graph_id": saved_graph_id, "steps": [{"node_id": "a"}], "status": "completed"},
+    ]
+    for payload in invalid:
+        assert client.post("/api/recordings", json=payload).status_code == 422, payload
+
+    assert client.get("/api/recordings/rec-missing").status_code == 404
+
+
+def test_recording_replay_matches_with_approval_preset_and_normalization():
+    case_id, _, _ = _record_approval_timeout_case()
+
+    start = time.perf_counter()
+    response = client.post(f"/api/recordings/{case_id}/replay")
+    elapsed = time.perf_counter() - start
+    assert response.status_code == 200
+    report = response.json()
+    assert elapsed < 5  # 预置决策秒回，不等待模板的 10 秒超时
+    assert report["matches"] is True
+    assert report["baseline_status"] == report["replay_status"] == "completed"
+    rows = {row["node_id"]: row for row in report["steps"]}
+    assert set(rows) == {"trigger-1", "approval-1", "rejected-msg"}
+    assert all(row["match"] for row in rows.values())
+    # 回放中的审批同样来自 inputs 预置（token 被归一化但 resolvedBy 保留）
+    replay_detail = client.post(f"/api/recordings/{case_id}/replay").json()
+    assert replay_detail["matches"] is True  # 可重复回放
+
+
+def test_recording_replay_detects_tampered_output():
+    case_id, graph, result = _record_approval_timeout_case()
+    node_types = {node["id"]: node["type"] for node in graph["nodes"]}
+    tampered_steps = [
+        {"node_id": node_id, "node_type": node_types[node_id], "output": output}
+        for node_id, output in result["outputs"].items()
+    ]
+    target = next(step for step in tampered_steps if step["node_id"] == "rejected-msg")
+    target["output"]["result"]["body"] = "被篡改的正文"
+    graph_id = client.post("/api/graphs", json=graph).json()["id"]
+    tampered_id = client.post("/api/recordings", json={
+        "name": "篡改用例", "graph_id": graph_id,
+        "inputs": {"approvals": {"approval-1": "rejected"}},
+        "steps": tampered_steps, "status": "completed",
+    }).json()["id"]
+
+    report = client.post(f"/api/recordings/{tampered_id}/replay").json()
+    assert report["matches"] is False
+    row = next(row for row in report["steps"] if row["node_id"] == "rejected-msg")
+    assert row["match"] is False
+    assert "result" in row["diff_keys"]
+
+
+def test_recordings_survive_reset_but_delete_removes_them():
+    case_id, _, _ = _record_approval_timeout_case()
+    client.post("/api/demo/reset")  # GraphStore 清空，但用例图已快照
+    assert client.get(f"/api/recordings/{case_id}").status_code == 200
+    report = client.post(f"/api/recordings/{case_id}/replay")
+    assert report.status_code == 200
+    assert report.json()["matches"] is True
+
+    assert client.delete(f"/api/recordings/{case_id}").status_code == 200
+    assert client.get(f"/api/recordings/{case_id}").status_code == 404
+    assert client.delete(f"/api/recordings/{case_id}").status_code == 404
+    assert client.post(f"/api/recordings/{case_id}/replay").status_code == 404
+
+
+def test_recording_replay_folds_missing_subgraph_reference():
+    client.post("/api/demo/reset")
+    child_id = client.post("/api/graphs", json=_subgraph_child_graph()).json()["id"]
+    parent = _subgraph_parent_graph(child_id)
+    parent_id = client.post("/api/graphs", json=parent).json()["id"]
+    result = client.post(f"/api/graphs/{parent_id}/run", json={"inputs": {"order_id": "X-1"}}).json()
+    node_types = {node["id"]: node["type"] for node in parent["nodes"]}
+    steps = [
+        {"node_id": node_id, "node_type": node_types[node_id], "output": output}
+        for node_id, output in result["outputs"].items()
+    ]
+    case_id = client.post("/api/recordings", json={
+        "name": "子图引用用例", "graph_id": parent_id, "inputs": {"order_id": "X-1"},
+        "steps": steps, "status": result["status"],
+    }).json()["id"]
+
+    client.post("/api/demo/reset")  # 子图/父图均被清空，快照内 graphId 不可解析
+    response = client.post(f"/api/recordings/{case_id}/replay")
+    assert response.status_code == 200  # 折叠为报告而非 500
+    report = response.json()
+    assert report["matches"] is False
+    assert report["replay_status"] == "failed"
+    assert report["baseline_status"] == "completed"
