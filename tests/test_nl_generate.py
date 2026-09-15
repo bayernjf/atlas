@@ -158,4 +158,8 @@ def test_llm_prompt_advertises_registered_tools(monkeypatch):
     assert "/api/adapters" in system
     assert "http/request" in system
     assert "params 是 JSON 字符串" in system
+    assert "database/query" in system
+    assert "database/execute" in system
+    assert "绑定参数" in system
+    assert "message/send" in system
     assert "shop/process_refund" in system
