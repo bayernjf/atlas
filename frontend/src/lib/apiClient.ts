@@ -301,3 +301,104 @@ export async function streamRun(
   if (!result) throw new Error('SSE 流缺少最终运行结果')
   return result
 }
+
+// --- 基础监控告警（04 §5.13） ---------------------------------------------
+
+export type NodeResult = {
+  node_id: string
+  node_type: string
+  status: 'success' | 'failed'
+  error: string | null
+}
+
+export type RunRecord = {
+  id: string
+  graph_id: string
+  mode: 'sync' | 'stream'
+  status: 'completed' | 'error'
+  started_at: string
+  finished_at: string
+  duration_ms: number
+  nodes: NodeResult[]
+  error: string | null
+}
+
+export type MetricsStats = {
+  total: number
+  healthy: number
+  unhealthy: number
+  success_rate: number | null
+  p50: number | null
+  p95: number | null
+}
+
+export type FailedNodeRow = {
+  node_id: string
+  node_type: string
+  count: number
+  last_error: string | null
+  last_seen: string
+}
+
+export type MetricsSummary = MetricsStats & {
+  per_graph: Array<{ graph_id: string } & MetricsStats>
+  failed_nodes: FailedNodeRow[]
+}
+
+export type RuleId = 'run_error' | 'node_failed' | 'consecutive_failures' | 'failure_rate'
+
+export type AlertStatus = 'open' | 'acknowledged' | 'resolved'
+
+export type AlertItem = {
+  id: string
+  rule_id: RuleId
+  graph_id: string
+  severity: 'critical' | 'warning'
+  message: string
+  first_seen: string
+  last_seen: string
+  count: number
+  status: AlertStatus
+  last_run_id: string
+}
+
+export type RuleConfig = {
+  run_error: { enabled: boolean }
+  node_failed: { enabled: boolean }
+  consecutive_failures: { enabled: boolean; threshold: number }
+  failure_rate: { enabled: boolean; window: number; min_samples: number; rate: number }
+}
+
+export async function getMetrics(): Promise<MetricsSummary> {
+  return request('/api/monitoring/metrics')
+}
+
+export async function getRuns(graphId?: string, limit = 50): Promise<RunRecord[]> {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (graphId) params.set('graph_id', graphId)
+  const body = await request<{ items: RunRecord[] }>(`/api/monitoring/runs?${params}`)
+  return body.items
+}
+
+export async function getRules(): Promise<RuleConfig> {
+  return request('/api/monitoring/rules')
+}
+
+export async function updateRules(rules: RuleConfig): Promise<RuleConfig> {
+  return request('/api/monitoring/rules', { method: 'PUT', body: JSON.stringify(rules) })
+}
+
+export async function listAlerts(status?: AlertStatus): Promise<AlertItem[]> {
+  const body = await request<{ items: AlertItem[] }>(
+    `/api/alerts${status ? `?status=${status}` : ''}`,
+  )
+  return body.items
+}
+
+export async function acknowledgeAlert(id: string): Promise<AlertItem> {
+  return request(`/api/alerts/${id}/acknowledge`, { method: 'POST' })
+}
+
+export async function resolveAlert(id: string): Promise<AlertItem> {
+  return request(`/api/alerts/${id}/resolve`, { method: 'POST' })
+}

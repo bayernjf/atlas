@@ -4,9 +4,10 @@ const { Content, Header } = Layout
 
 type DashboardProps = {
   onOpenEditor: () => void
+  onOpenMonitoring: () => void
 }
 
-export function Dashboard({ onOpenEditor }: DashboardProps) {
+export function Dashboard({ onOpenEditor, onOpenMonitoring }: DashboardProps) {
   return (
     <Layout className="page-layout">
       <Header className="page-header">
@@ -20,9 +21,12 @@ export function Dashboard({ onOpenEditor }: DashboardProps) {
               选择退款单一键运行：AI 按退款原因与审批限额决策自动退款或转人工，画布实时显示节点进度；
               也可用自然语言生成退款流程草稿。
             </Typography.Paragraph>
-            <Button type="primary" onClick={onOpenEditor}>
-              打开流程编辑器
-            </Button>
+            <Space>
+              <Button type="primary" onClick={onOpenEditor}>
+                打开流程编辑器
+              </Button>
+              <Button onClick={onOpenMonitoring}>监控告警</Button>
+            </Space>
           </Card>
           <Row gutter={16}>
             <Col span={8}>
