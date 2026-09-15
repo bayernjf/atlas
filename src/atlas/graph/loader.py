@@ -24,10 +24,14 @@ from typing import Annotated, Any, Callable, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from atlas.collaboration.approvals import ApprovalBroker
+from atlas.database.adapter import DatabaseHarnessAdapter
+from atlas.database.service import DatabaseClient, demo_engine
 from atlas.harness.base import ActionRequest, ActionStatus
 from atlas.harness.registry import AdapterRegistry
 from atlas.httpapi.adapter import HttpApiHarnessAdapter
 from atlas.llm.decision import get_decision_client
+from atlas.message.adapter import MessageHarnessAdapter
+from atlas.message.service import MessageService
 from atlas.shop.adapter import ShopHarnessAdapter
 from .conditions import ConditionEvalError, evaluate_expression
 from .dsl import (
@@ -93,12 +97,26 @@ def resolve_path(path: str, context: dict[str, Any]) -> Any:
     return current
 
 
+# params 插值后为 JSON 对象、整体透传给适配器的通用通道（04 §4.6-4.8）；
+# 其余适配器（shop）走下方按能力硬编码装配。
+GENERIC_JSON_ADAPTERS = frozenset({"http", "database", "message"})
+
+
 def build_demo_registry() -> AdapterRegistry:
-    """Demo 默认适配器注册表：shop 与 http 均授予 read/write/delete/financial（仅 Demo）。"""
+    """Demo 默认适配器注册表：shop/http/database/message 均授予全四权限（仅 Demo）。"""
     registry = AdapterRegistry()
     permissions = {"read", "write", "delete", "financial"}
     registry.register(ShopHarnessAdapter(granted_permissions=permissions))
     registry.register(HttpApiHarnessAdapter(granted_permissions=permissions))
+    registry.register(
+        DatabaseHarnessAdapter(
+            client=DatabaseClient(demo_engine(), demo=True),
+            granted_permissions=permissions,
+        )
+    )
+    registry.register(
+        MessageHarnessAdapter(service=MessageService(), granted_permissions=permissions)
+    )
     return registry
 
 
@@ -502,8 +520,8 @@ def _execute_tool(
     except KeyError:
         return {"result": {"status": "FAILED", "error": f"适配器未注册：{adapter_id}"}}
 
-    if adapter_id == "http":
-        # 通用 HTTP 通道（04 §4.6）：params 插值后直接作为 JSON 参数透传
+    if adapter_id in GENERIC_JSON_ADAPTERS:
+        # 通用 JSON 通道（04 §4.6-4.8）：params 插值后必须是 JSON 对象并整体透传
         try:
             parameters = json.loads(params_text) if params_text.strip() else {}
         except json.JSONDecodeError:
