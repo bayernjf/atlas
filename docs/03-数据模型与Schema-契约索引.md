@@ -31,6 +31,7 @@
 | `template_catalog` | 04 / 五、逻辑组件 5.10 流程模板库（内置只读）v1 契约（权威 blockquote）+ `src/atlas/template/catalog.py`（5 个内置模板元数据与 graph） | ### 5.10 流程模板库（内置只读） |
 | `recording_case` | 04 / 五、逻辑组件 5.11 操作录制与回放 v1 契约（权威 blockquote）+ `src/atlas/recording/cases.py`（录制用例模型与进程内存储） | ### 5.11 操作录制与回放 |
 | `debug_session` | 04 / 五、逻辑组件 5.12 单步调试与断点 v1 契约（权威 blockquote）+ `src/atlas/debug/{sessions,controller}.py`（运行期调试会话、暂停状态机、paused/stopped 帧） | ### 5.12 单步调试与断点 |
+| `monitoring` | 04 / 五、逻辑组件 5.13 基础监控告警 v1 契约（权威 blockquote）+ `src/atlas/monitoring/{records,metrics,alerts}.py`（运行记录 ring、指标聚合、规则求值与告警状态机） | ### 5.13 基础监控告警 |
 
 ---
 
@@ -364,3 +365,48 @@ reason: "user_stop"
 # GET /api/debug → {items:[{token, node_id, node_type, graph_id, reason}]}
 ```
 > 进程内会话（threading.Event，重启即失，持久化中断随 11 S1/14 D19/D20）；未知 token 404、重复 resume 409；`/api/demo/reset` 按 stop 释放全部暂停；parallel 暂停串行化、`__join__` 网关与 subgraph 内部不暂停。权威契约见 04 §5.12，REST 见 12 §5。
+
+### `monitoring` — 字段概览（Phase 2 能力项，2026-09-15；`/api/monitoring*`、`/api/alerts*`）
+
+```yaml
+# RunRecord（GET /api/monitoring/runs 列表元素；metrics 基于全部保留记录聚合）
+id: string                 # run-{自增}
+graph_id: string
+mode: "sync" | "stream"    # 仅真实运行；debug/回放/子图重入不记录
+status: "completed" | "error"   # 未捕获异常=error；节点 FAILED 是数据不是异常
+started_at: string         # ISO 8601 UTC
+finished_at: string
+duration_ms: number
+nodes:
+  - node_id: string
+    node_type: string
+    status: "success" | "failed"   # output.status=="failed" 或 output.result.status=="FAILED"
+    error: string?                 # 优先 error / result.message / result.code
+error: string?
+# GET /api/monitoring/metrics
+total: integer
+healthy: integer                 # completed 且无失败节点
+unhealthy: integer
+success_rate: number | null      # 空集 null
+p50: number | null               # duration_ms nearest-rank 百分位
+p95: number | null
+per_graph: [{graph_id, total, healthy, unhealthy, success_rate, p50, p95}]
+failed_nodes: [{node_id, node_type, count, last_error, last_seen}]  # count 降序
+# RuleConfig（GET/PUT /api/monitoring/rules，PUT 全量替换，非法中文 422）
+run_error:            {enabled: boolean}
+node_failed:          {enabled: boolean}
+consecutive_failures: {enabled: boolean, threshold: 1..200 整数}
+failure_rate:         {enabled: boolean, window: 1..200, min_samples: 1..200, rate: 0..1}
+# Alert（GET /api/alerts?status=；POST /api/alerts/{id}/acknowledge|resolve）
+id: string                 # alt-{自增}
+rule_id: "run_error" | "node_failed" | "consecutive_failures" | "failure_rate"
+graph_id: string
+severity: "critical" | "warning"
+message: string
+first_seen: string
+last_seen: string
+count: integer             # 同 (rule_id, graph_id) 合并非 resolved 最新告警
+status: "open" | "acknowledged" | "resolved"
+last_run_id: string
+```
+> 进程内 ring buffer（200 条，满则丢最旧）+ 单锁同步评估（写运行→按图 streak→四规则），重启即失；`/api/demo/reset` 清空运行/告警并恢复默认规则（持久化随 11 S1/D11/D28）。未知告警 404、重复状态迁移 409。权威契约见 04 §5.13，内部接口见 12 §3.9，REST 见 12 §5。

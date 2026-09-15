@@ -12,6 +12,7 @@ import json
 import os
 import queue
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -35,6 +36,7 @@ from atlas.httpapi.service import HttpApiClient
 from atlas.llm.nl_generate import generate_graph
 from atlas.message.adapter import MessageHarnessAdapter
 from atlas.message.service import MessageService
+from atlas.monitoring import RUN_RING_SIZE, MonitoringStore, extract_node_results
 from atlas.recording import (
     RecordingCreateRequest,
     RecordingStore,
@@ -88,6 +90,8 @@ _demo_registry.register(
 _approval_broker = ApprovalBroker()
 # 单步调试会话单例（04 §5.12；进程内、重启即失，持久化随 14 D27）
 _debug_broker = DebuggerBroker()
+# 基础监控告警单例（04 §5.13；进程内 ring 200，重启/reset 清空）
+_monitoring = MonitoringStore()
 
 
 @app.exception_handler(GraphValidationError)
@@ -397,13 +401,36 @@ def run_saved_graph(graph_id: str, payload: dict[str, Any] | None = None) -> Run
     graph = _load_graph_or_404(graph_id)
     if (payload or {}).get("debug") is not None:
         raise HTTPException(status_code=422, detail="单步调试仅支持流式运行 /run/stream")
-    result = run_graph(
-        graph,
-        inputs=(payload or {}).get("inputs"),
-        registry=_demo_registry,
-        approval_broker=_approval_broker,
+    graph_view = {"nodes": [{"id": node.id, "type": node.type} for node in graph.nodes]}
+    started_at = datetime.now(timezone.utc).isoformat()
+    started = time.monotonic()
+    try:
+        result = run_graph(
+            graph,
+            inputs=(payload or {}).get("inputs"),
+            registry=_demo_registry,
+            approval_broker=_approval_broker,
+            graph_id=graph_id,
+            graph_resolver=_resolve_saved_graph,
+        )
+    except Exception as exc:
+        _monitoring.record_run(
+            graph_id=graph_id,
+            mode="sync",
+            status="error",
+            started_at=started_at,
+            duration_ms=(time.monotonic() - started) * 1000,
+            nodes=[],
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        raise
+    _monitoring.record_run(
         graph_id=graph_id,
-        graph_resolver=_resolve_saved_graph,
+        mode="sync",
+        status="completed",
+        started_at=started_at,
+        duration_ms=(time.monotonic() - started) * 1000,
+        nodes=extract_node_results(graph_view, result["outputs"]),
     )
     return RunGraphResponse(id=graph_id, **result)
 
@@ -418,6 +445,7 @@ def run_saved_graph_stream(graph_id: str, payload: dict[str, Any] | None = None)
     graph = _load_graph_or_404(graph_id)
     inputs = (payload or {}).get("inputs")
     debug = (payload or {}).get("debug")
+    graph_view = {"nodes": [{"id": node.id, "type": node.type} for node in graph.nodes]}
     debug_session = None
     if debug is not None:
         breakpoints = _validate_debug(graph, debug)
@@ -432,8 +460,18 @@ def run_saved_graph_stream(graph_id: str, payload: dict[str, Any] | None = None)
         debug_controller = (
             DebugController(debug_session, emit) if debug_session is not None else None
         )
+        # debug 会话不是真实运行，全程不埋点（04 §5.13）
+        monitored = debug_controller is None
+        collected: dict[str, Any] = {}
+
+        def recording_emit(event: dict[str, Any]) -> None:
+            if event.get("type") == "node_end":
+                collected[event["node_id"]] = event.get("output")
+            emit(event)
 
         def worker() -> None:
+            started_at = datetime.now(timezone.utc).isoformat()
+            started = time.monotonic()
             try:
                 result = run_graph(
                     graph,
@@ -441,14 +479,33 @@ def run_saved_graph_stream(graph_id: str, payload: dict[str, Any] | None = None)
                     registry=_demo_registry,
                     approval_broker=_approval_broker,
                     graph_id=graph_id,
-                    emit=emit,
+                    emit=recording_emit if monitored else emit,
                     graph_resolver=_resolve_saved_graph,
                     debug_controller=debug_controller,
                 )
+                if monitored:
+                    _monitoring.record_run(
+                        graph_id=graph_id,
+                        mode="stream",
+                        status="completed",
+                        started_at=started_at,
+                        duration_ms=(time.monotonic() - started) * 1000,
+                        nodes=extract_node_results(graph_view, result["outputs"]),
+                    )
                 events.put({"__result__": result})
             except DebugStopped as exc:
                 events.put({"__stopped__": exc.node_id})
             except Exception as exc:  # 运行期异常经 SSE error 帧下发，不静默吞线程
+                if monitored:
+                    _monitoring.record_run(
+                        graph_id=graph_id,
+                        mode="stream",
+                        status="error",
+                        started_at=started_at,
+                        duration_ms=(time.monotonic() - started) * 1000,
+                        nodes=extract_node_results(graph_view, collected),
+                        error=f"{type(exc).__name__}: {exc}",
+                    )
                 events.put({"__error__": f"{type(exc).__name__}: {exc}"})
 
         thread = threading.Thread(target=worker, daemon=True)
@@ -522,6 +579,68 @@ def resume_debug(token: str, request: ResumeDebugRequest) -> dict[str, str]:
     return {"token": token, "action": request.action}
 
 
+@app.get("/api/monitoring/metrics")
+def monitoring_metrics() -> dict[str, Any]:
+    """运行指标聚合：全局 + 按图 + 失败节点 Top（04 §5.13）。"""
+    return _monitoring.snapshot_metrics()
+
+
+@app.get("/api/monitoring/runs")
+def monitoring_runs(graph_id: str | None = None, limit: int = 50) -> dict[str, list[dict[str, Any]]]:
+    """最近运行（新→旧，默认 50、上限 200；04 §5.13）。"""
+    if limit < 1 or limit > RUN_RING_SIZE:
+        raise HTTPException(status_code=422, detail=f"limit 必须是 1-{RUN_RING_SIZE} 之间的整数")
+    runs = _monitoring.list_runs(graph_id=graph_id, limit=limit)
+    return {"items": [run.model_dump() for run in runs]}
+
+
+@app.get("/api/monitoring/rules")
+def monitoring_get_rules() -> dict[str, Any]:
+    return _monitoring.get_rules().model_dump()
+
+
+@app.put("/api/monitoring/rules")
+def monitoring_update_rules(raw: dict[str, Any]) -> dict[str, Any]:
+    """全量替换规则配置；校验失败聚合为中文 422。"""
+    try:
+        rules = _monitoring.update_rules(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return rules.model_dump()
+
+
+@app.get("/api/alerts")
+def list_alerts(status: str | None = None) -> dict[str, list[dict[str, Any]]]:
+    """告警列表（新→旧，可按 open/acknowledged/resolved 过滤；04 §5.13）。"""
+    if status is not None and status not in ("open", "acknowledged", "resolved"):
+        raise HTTPException(
+            status_code=422,
+            detail="status 只允许 open、acknowledged、resolved",
+        )
+    alerts = _monitoring.list_alerts(status=status)
+    return {"items": [alert.model_dump() for alert in alerts]}
+
+
+@app.post("/api/alerts/{alert_id}/acknowledge")
+def acknowledge_alert(alert_id: str) -> dict[str, Any]:
+    alert = _monitoring.acknowledge_alert(alert_id)
+    if alert is None:
+        raise HTTPException(status_code=404, detail=f"告警不存在：{alert_id}")
+    if alert is False:
+        raise HTTPException(status_code=409, detail="该告警已确认或已关闭，不能重复确认")
+    return alert.model_dump()
+
+
+@app.post("/api/alerts/{alert_id}/resolve")
+def resolve_alert(alert_id: str) -> dict[str, Any]:
+    alert = _monitoring.resolve_alert(alert_id)
+    if alert is None:
+        raise HTTPException(status_code=404, detail=f"告警不存在：{alert_id}")
+    if alert is False:
+        raise HTTPException(status_code=409, detail="该告警已关闭，重复提交不生效")
+    return alert.model_dump()
+
+
 @app.post("/api/nl/generate")
 def nl_generate(request: NLGenerateRequest) -> dict[str, Any]:
     try:
@@ -572,7 +691,8 @@ def demo_messages() -> dict[str, Any]:
 
 @app.post("/api/demo/reset")
 def demo_reset() -> dict[str, bool]:
-    """重置 Demo 数据（店铺恢复 5 笔种子退款单、清空已保存图、释放 pending 审批、清空消息、重建 demo 订单库）。
+    """重置 Demo 数据（店铺恢复 5 笔种子退款单、清空已保存图、释放 pending 审批、清空消息、重建 demo 订单库、
+    清空监控运行/告警并恢复默认规则）。
 
     反馈与录制用例为测试资产，不在此清除（04 §5.11；用例图已快照进自身）。
     """
@@ -580,6 +700,7 @@ def demo_reset() -> dict[str, bool]:
     _store.clear()
     _approval_broker.reset()
     _debug_broker.reset()
+    _monitoring.reset()
     _message_service.reset()
     _db_client.reseed_demo()
     return {"reset": True}

@@ -254,6 +254,69 @@ def run_graph(graph, *, ..., debug_controller=None): ...
 # _execute_subgraph 重入 run_graph 时不传 debug_controller（子图整段执行，内部不暂停）
 ```
 
+### 3.9 基础监控告警（04 §5.13，06 §6.11）
+
+```python
+# src/atlas/monitoring/records.py
+class NodeResult(BaseModel):
+    node_id: str
+    node_type: str
+    status: Literal["success", "failed"]
+    error: str | None = None
+
+class RunRecord(BaseModel):
+    id: str                     # "run-N"
+    graph_id: str
+    mode: Literal["sync", "stream"]
+    status: Literal["completed", "error"]
+    started_at: str             # ISO 8601 UTC
+    finished_at: str
+    duration_ms: float
+    nodes: list[NodeResult]
+    error: str | None = None    # 仅运行级异常
+
+class MonitoringStore:          # 进程内单例；重启清空（持久化随 11 S1/14 D28）
+    def record_run(self, *, graph_id, mode, status, started_at,
+                   nodes: list[NodeResult], error: str | None = None) -> RunRecord: ...
+    # 单锁内：deque(maxlen=200) 追加 → 健康（completed 且无失败节点）判定 →
+    # 按图 streak 维护（健康归零）→ evaluate_rules → 同 (rule_id,graph_id)
+    # 合并非 resolved 最新告警（count++/last_seen/last_run_id）否则新建
+    def list_runs(self, graph_id: str | None = None, limit: int = 50) -> list[RunRecord]: ...
+    def list_alerts(self, status: str | None = None) -> list[Alert]: ...     # 新→旧
+    def acknowledge_alert(self, alert_id: str) -> Alert | Literal[False] | None: ...
+    # None=未知 id；False=非 open（重复迁移）；open→acknowledged
+    def resolve_alert(self, alert_id: str) -> Alert | Literal[False] | None: ...
+    # None=未知 id；False=已 resolved；open/acknowledged→resolved
+    def get_rules(self) -> RuleConfig: ...
+    def update_rules(self, raw: dict) -> RuleConfig: ...   # validate_rules 聚合错误，非法 ValueError
+    def reset(self) -> None: ...                           # 清空 runs/alerts/streak，规则恢复默认
+
+# src/atlas/monitoring/metrics.py（纯函数）
+def extract_node_results(graph: dict, outputs: dict) -> list[NodeResult]: ...
+# node_id→type 取自图定义；失败两形状：output.status=="failed"（parallel/subgraph 折叠）
+# 或 output.result.status=="FAILED"（ActionResult）；error 取 error/result.message/result.code
+def percentile(values: list[float], p: float) -> float | None: ...   # nearest-rank，空集 None
+def summarize(runs: list[RunRecord]) -> dict: ...
+# {total, healthy, unhealthy, success_rate, p50, p95,
+#  per_graph:[{graph_id, ...同口径}], failed_nodes:[{node_id,node_type,count,last_error,last_seen}]}
+
+# src/atlas/monitoring/alerts.py（纯函数 + 模型）
+class RuleConfig(BaseModel):
+    run_error:            RuleToggle
+    node_failed:          RuleToggle
+    consecutive_failures: ConsecutiveRule      # enabled + threshold(1..200, 默认 3)
+    failure_rate:         FailureRateRule       # enabled + window(默认 20)/min_samples(默认 5)/rate(默认 0.5)
+
+def validate_rules(raw: dict) -> list[str]: ...           # 中文错误信息（enabled bool、整数 1-200、rate 0-1）
+def evaluate_rules(*, record, healthy, recent_by_graph: list[RunRecord],
+                   rules: RuleConfig, streak: int) -> list[AlertEvent]: ...
+# 触发意图（不含合并）：run_error（status=="error"，critical）；node_failed（有失败节点，warning）；
+# consecutive_failures（streak 达 threshold 且规则启用，critical；首达后每次失败继续意图→由 store 合并）；
+# failure_rate（该图近 window 次含本次样本≥min_samples 且不健康占比≥rate，critical）
+```
+
+埋点只在 `src/atlas/api/main.py`：sync `/run` 包装（异常记录 error 后原样 raise，保持 500），`/run/stream` worker 非 debug 时以 emit 包装收集 node_end output，`__result__` 记 completed、`__error__` 记 error（部分节点）、`__stopped__`（debug）不记。录制 replay 端点与 subgraph 重入零改动。
+
 ## 4. 记忆检索接口（依据 06 6.2 / 05 2.3）
 
 ```python
@@ -280,6 +343,13 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 | POST | /api/recordings/{id}/replay | 回放用例：对快照走标准 run_graph（审批决策从 baseline 抽为 inputs.approvals 预置，不挂起），比对操作序列与逐节点归一化产出；返回 `{matches, baseline_status, replay_status, steps:[{node_id,match,note,diff_keys?}]}`；回放异常折叠 replay_status="failed"/matches=false（不抛 500）；未知用例 404 | recording_case |
 | POST | /api/debug/{token}/resume | 恢复调试暂停（Phase 2 能力项）：请求体 `{action:"step"|"continue"|"stop"}`；step=执行当前节点并在下一节点前再停、continue=退出逐节点仅断点停、stop=取消运行（随后收到 stopped 帧、无 result）；首决生效 200，未知 token 404、对已恢复暂停重复提交 409；进程内会话重启即失 | debug_session |
 | GET | /api/debug | 列出当前活动调试暂停：`{items:[{token, node_id, node_type, graph_id, reason}]}`（Phase 2 能力项，进程内） | debug_session |
+| GET | /api/monitoring/metrics | 监控指标聚合（Phase 2 能力项）：`{total,healthy,unhealthy,success_rate,p50,p95,per_graph:[{graph_id,…}],failed_nodes:[{node_id,node_type,count,last_error,last_seen}]}`；口径=ring 内全部保留运行（≤200），空集 success_rate/p50/p95 为 null；进程内、重启即失 | monitoring |
+| GET | /api/monitoring/runs | 运行记录列表：`?graph_id=&limit=`（默认 50、1-200 截断，新→旧），返回 `{items:[RunRecord]}`；仅真实运行（debug/回放/子图重入不计） | monitoring |
+| GET | /api/monitoring/rules | 读取四内置规则当前配置 RuleConfig（默认全开，连续阈值 3、窗口 20/最小样本 5/失败率 0.5） | monitoring |
+| PUT | /api/monitoring/rules | 全量替换规则配置；非法值（enabled 非 bool、阈值/窗口/样本非 1-200 整数、rate 非 0-1）422 中文聚合错误；`/api/demo/reset` 恢复默认 | monitoring |
+| GET | /api/alerts | 告警列表：`?status=open\|acknowledged\|resolved`（缺省全部），`{items:[Alert]}` 新→旧 | monitoring |
+| POST | /api/alerts/{id}/acknowledge | 确认告警（open→acknowledged）；未知 id 404、非 open 状态 409，中文 detail | monitoring |
+| POST | /api/alerts/{id}/resolve | 关闭告警（open/acknowledged→resolved）；未知 id 404、已 resolved 409，中文 detail | monitoring |
 | POST | /api/graphs/{id}/compile | DSL → LangGraph 编译（08 7.1 W7-W8） | 02 Graph DSL |
 | POST | /api/graphs/{id}/run | 编译并运行，返回状态/节点产出/执行轨迹；请求体 `{"inputs": {...}}`，inputs 同名键覆盖全局变量且整体作为 trigger 节点 webhook 载荷 `context.payload`（W9-W10 接入真实决策/适配器）；**不支持调试**——请求体含 `debug` 返回 422「单步调试仅支持流式运行 /run/stream」（Phase 2 能力项） | 02 Graph DSL / LoopState |
 | POST | /api/graphs/{id}/run/stream | SSE 流式运行（W9-W10）：事件 `node_start`/`node_end`/最终 `result`，供画布实时进度（验收标准 5）；condition 节点的 node_end 事件 data 含 `{branch, target, evaluation, expression_errors}`（契约 04 §5.2），loop 节点含 `{mode, iterations, index, target, exitReason, expression_errors}`（契约 04 §5.3），parallel 节点扇出时 data 为 running 占位、joinTarget 的 node_end 前该产出被覆盖为终态 `{mode, joinStrategy, status, branches, result, joinTarget}`（契约 04 §5.4），wait 节点的 node_end 事件 data 含 `{mode:"wait", waitType:"duration", durationSeconds}`（契约 04 §5.5；node_start 后同步阻塞等待），human_approval 节点的 node_start 事件 data 含 `approval:{token, summary, approver, timeoutSeconds}`、node_end 含 `{mode:"human_approval", decision, target, token, summary, approver, resolvedBy}`（契约 04 §5.6），subgraph 节点 node_end 含 `{mode:"subgraph", graphId, status, error?, outputs, trace}` 但**子图内部不产生事件**（emit=None 重入，契约 04 §5.7）；**Phase 2 第五项起本端点为真流式**——run_graph 在后台线程执行、事件经 queue 实时下发（旧实现先跑完再回放，human_approval 会因收不到 node_start 而死锁）；**Phase 2 能力项（单步调试）**请求体可选 `debug:{breakpoints:[{node_id, expression?}]}`——存在时启动即 step 模式（首个节点 node_start 后、逻辑前发 `paused` 帧），断点会话级、不落 Graph JSON，未知 node_id/表达式校验失败 422（中文聚合）；新增帧 `paused`（`{token, node_id, node_type, reason:"step"|"breakpoint"|"condition", globals, outputs}` 深拷贝只读快照）与 `stopped`（resume action=stop 后 `{node_id, reason:"user_stop"}`，流结束且无 result 帧），恢复走 POST /api/debug/{token}/resume；子图内部不产生 paused（契约 04 §5.12） | 08 7.1 |
@@ -308,7 +378,7 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 | POST | /api/nl/generate | 自然语言 → 流程草稿（验收标准 6；W9-W10 已落码：LLM 优先、退款规则模板兜底，无法识别 422） | 08 7.2 |
 | POST | /api/demo/shop/login | Demo 商家平台登录（demo/demo，W9-W10） | — |
 | GET | /api/demo/shop/orders | Demo 待处理退款单（需登录，W9-W10） | — |
-| POST | /api/demo/reset | 重置 Demo 数据（店铺恢复 5 笔种子退款单、清空已保存图与登录态、清空 pending 审批请求，Phase 1 种子客户体验，W10 后；Phase 2 第三项起清空进程内消息记录并重建内置 SQLite demo 订单库——显式 `ATLAS_DATABASE_URL` 配置的外部库不被触碰；内置流程模板目录为代码常量，不受 reset 影响；录制用例为测试资产同样**不被 reset 清除**——其图已快照进用例，GraphStore 清空不影响回放；Phase 2 能力项起 reset 同时把全部**活动调试暂停按 stop 放行**（会话 cancelled + Event set），阻塞在 paused 的运行线程经 DebugStopped 收敛结束，不留悬挂线程；调试会话本身为进程内临时态，不构成需保留的数据） | — |
+| POST | /api/demo/reset | 重置 Demo 数据（店铺恢复 5 笔种子退款单、清空已保存图与登录态、清空 pending 审批请求，Phase 1 种子客户体验，W10 后；Phase 2 第三项起清空进程内消息记录并重建内置 SQLite demo 订单库——显式 `ATLAS_DATABASE_URL` 配置的外部库不被触碰；内置流程模板目录为代码常量，不受 reset 影响；录制用例为测试资产同样**不被 reset 清除**——其图已快照进用例，GraphStore 清空不影响回放；Phase 2 能力项起 reset 同时把全部**活动调试暂停按 stop 放行**（会话 cancelled + Event set），阻塞在 paused 的运行线程经 DebugStopped 收敛结束，不留悬挂线程；调试会话本身为进程内临时态，不构成需保留的数据）；**Phase 2 能力项（基础监控告警）起 reset 同时清空监控运行记录与告警（ring、streak、Alert 列表）并把规则阈值恢复默认**（运行时数据，同消息记录；重启本就清空，持久化随 11 S1/14 D28） | — |
 | GET | /api/approvals | 列出当前 pending 审批请求（`{items:[{token, summary, approver, timeoutSeconds, node_id, graph_id}]}`，进程内单例，重启即失；Phase 2 第五项） | human_approval |
 | POST | /api/approvals/{token}/decision | 人工审批决策，请求体 `{decision: "approved"|"rejected", comment?}`（comment v1 仅接收不展示）；首决生效，200 返回决策结果；未知 token 404、已决重复提交 409；Phase 2 第五项 | human_approval |
 | POST | /api/feedback | 提交种子试用反馈（type=bug/suggestion、content、contact 选填，201；进程内存储，reset 不清除；Phase 1） | feedback_item |
