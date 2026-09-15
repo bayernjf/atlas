@@ -867,7 +867,7 @@ def test_i17_debug_step_pauses_follow_node_order_with_snapshots():
     event_names, frames, _ = _drive_debug_stream(
         graph_id,
         {"inputs": {"order_id": "DBG-1", "reason": "测试", "amount": 128},
-         "debug": {"breakpoints": [{"node_id": "tool_call-1"}]}},
+         "debug": {"breakpoints": []}},
         lambda item: "step",
     )
 
@@ -987,7 +987,7 @@ def test_i17_debug_422_unknown_node_bad_expression_empty_and_sync_run():
 
     empty = client.post(
         f"/api/graphs/{graph_id}/run/stream",
-        json={"inputs": {}, "debug": {"breakpoints": []}},
+        json={"inputs": {}, "debug": {"breakpoints": "not-a-list"}},
     )
     assert empty.status_code == 422
 

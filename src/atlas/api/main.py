@@ -364,8 +364,8 @@ def _validate_debug(graph, debug: Any) -> list[dict[str, Any]]:
     if not isinstance(debug, dict):
         raise HTTPException(status_code=422, detail="debug 必须为对象：{breakpoints: [...]}")
     raw_points = debug.get("breakpoints", [])
-    if not isinstance(raw_points, list) or not raw_points:
-        raise HTTPException(status_code=422, detail="debug.breakpoints 必须为非空数组")
+    if not isinstance(raw_points, list):
+        raise HTTPException(status_code=422, detail="debug.breakpoints 必须为数组")
     node_ids = {node.id for node in graph.nodes}
     normalized: list[dict[str, Any]] = []
     errors: list[str] = []
