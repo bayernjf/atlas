@@ -63,7 +63,7 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 10. ✅ **D9 BENCHMARK 实测（2026-09-14 完成）**：新增 `scripts/benchmark.py`（纯 stdlib，零新依赖：10% warmup + 300 次/场景，p50/p99，输出 Markdown 行，DATABASE_URL 时追加 DB ping）；[BENCHMARK.md](BENCHMARK.md) 填首份基线（commit 407812e，macOS arm64 / CPython 3.11.15）：OODA 循环 2.05ms / ~488 loops/s、3 节点图编译 1.81ms、退款端到端（规则路径）2.28ms、Harness 进程内调用 0.002ms。LLM 决策延迟、记忆层读写、并行扇出、长流程内存增长在 BENCHMARK Scope 标注待接入补测。
 
 **Active feedback**：暂无（种子试用开始后，由 docs/18 §6.1 跟进项迁移至此，解决后留痕 Recently shipped；流程见 16 文档）。
-7. 📋 **i18n 与设计 Token 方案已定（2026-09-13，docs/17）**：设计 Token 等价替换**已落码**（`frontend/src/theme/tokens.ts` 单一事实源 + `setup.ts` 注入 `--atlas-*` 变量 + AntD theme，三页面主体零视觉差异；2026-09-16 核实存量零星硬编码登记在 17 §3.5 收尾清单，触碰相关文件时顺手清）；i18n 库（i18next+react-i18next）按触发条件引入（14 D12：首个英文使用者/出海需求），组件描述多语言随 Phase 2 模板库（14 D13）。
+7. 📋 **i18n 与设计 Token 方案已定（2026-09-13，docs/17）**：设计 Token 等价替换**已落码**（`frontend/src/theme/tokens.ts` 单一事实源 + `setup.ts` 注入 `--atlas-*` 变量 + AntD theme，三页面主体零视觉差异；2026-09-16 17 §3.5 收尾清单五项已全部清零，`frontend/src` 仅 tokens.ts primitive 定义含 hex，浏览器逐项核对）；i18n 库（i18next+react-i18next）按触发条件引入（14 D12：首个英文使用者/出海需求），组件描述多语言随 Phase 2 模板库（14 D13）。
 
 > 缓做/低优项：统一登记在 [docs/14-缓做事项登记表.md](docs/14-缓做事项登记表.md)（每条带触发条件，条件满足移回本区并标注重启日期）。当前含移动端适配器、策略训练、组件市场、模型路由器、NATS、Go 网关、多租户 v2（真实账号/节点级权限/审计/跨租户共享，v1 端点级 RBAC+分区已落，见 14 D7 边界注记）、运营体市场、CD 自动化部署、可观测性、i18n 落码、组件描述多语言等项（D10a CI、D9 BENCHMARK 均于 2026-09-14 完成移出）。
 

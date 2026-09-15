@@ -1,7 +1,7 @@
 # Atlas 前端国际化（i18n）与设计 Token 方案
 
 > **来源**：工程推导文档。需求依据为 [04-组件设计-编辑后台.md](04-组件设计-编辑后台.md) 十、补充项 28「多语言支持」三条（界面多语言中/英切换可扩展、自然语言多语言、组件描述多语言）；01-08 正文为冻结的唯一事实源，本文只做工程化方案，不改写需求。
-> **状态**：方案已定（2026-09-13，2026-09-16 补 D7 多租户认证界面契约）。**设计 Token 等价替换已于 2026-09-13 落码**（`theme/tokens.ts` + `setup.ts`，三页面主体零视觉差异；存量零星硬编码见 §3.5 收尾清单）；i18n 库按触发条件引入（见 §4 落地节奏与 [14-缓做事项登记表](14-缓做事项登记表.md) D12/D13）。
+> **状态**：方案已定（2026-09-13，2026-09-16 补 D7 多租户认证界面契约）。**设计 Token 等价替换已于 2026-09-13 落码**（`theme/tokens.ts` + `setup.ts`，三页面主体零视觉差异；2026-09-16 §3.5 收尾清单五项已全部清零，`src` 下仅 tokens.ts primitive 定义含 hex）；i18n 库按触发条件引入（见 §4 落地节奏与 [14-缓做事项登记表](14-缓做事项登记表.md) D12/D13）。
 > **AI 使用提示**：前端新增界面文案、颜色/间距/圆角值时必须按本文契约预留（不裸写硬编码、不自创 key 规则）；落码 i18n/token 时以本文为方案依据。
 
 ## 1. 背景与现状
@@ -118,14 +118,14 @@ frontend/src/theme/setup.ts    # main.tsx 引入一次，把 semantic 注入 :ro
 
 迁移目标是**零视觉变化**的等价替换（token 值 = 现值 1:1 搬迁），不做视觉改版。
 
-**收尾清单（2026-09-16 核实，触碰相关文件时顺手清，不专门立项）**：
+**收尾清单（2026-09-16 已全部清零，浏览器逐项核对）**：
 
 | 位置 | 现状 | 处理 |
 |---|---|---|
-| `index.css` paused 节点光晕 | `var(--atlas-color-node-ring-paused, #d48806)`——semantic token 未定义，长期走 fallback | 在 `tokens.ts` 补 `color-node-ring-paused`（值取 `#d48806` 同构 rgba 或直接 hex），去掉 fallback |
-| `index.css:185` | `background: #fff` | 改 `var(--atlas-color-bg-container)` |
-| `Editor.tsx` 两处占位框边框 | `var(--color-border, #d9d9d9)`——变量名缺 `--atlas-` 前缀，恒走 fallback | 改 `var(--atlas-color-border)`（值需对齐现视觉 `#d9d9d9` 或确认可用现有 border token） |
-| `Monitoring.tsx` Statistic 健康色 | 内联 `#3f8600` / `#cf1322` | 改引 `--atlas-color-success` / `--atlas-color-danger`（经 CSS var 或 tokens 导出；色差以浏览器对比确认） |
+| `index.css` paused 节点光晕 | 已补 token，零视觉变化 | ✅ 2026-09-16：tokens.ts 补 primitive `gold7 #d48806` + semantic `color-node-ring-paused`，index.css 去 fallback；探针实算 `rgb(212,136,6) 0 0 0 4px` |
+| `index.css:185` | 已替换 | ✅ 2026-09-16：改 `var(--atlas-color-bg-container)`（断点圆点实算 rgb(255,255,255)） |
+| `Editor.tsx` 两处占位框边框 | 已替换 | ✅ 2026-09-16：改 `var(--atlas-color-border)`，卡片边框对齐语义边框 #e5e7eb（原恒走 fallback #d9d9d9；模板 Modal 五张卡 + 录制卡实算 rgb(229,231,235)，色差不可察） |
+| `Monitoring.tsx` Statistic 健康色 | 已替换 | ✅ 2026-09-16：改 CSS var `--atlas-color-success`/`--atlas-color-danger`（实算 rgb(82,196,26)/rgb(255,77,79)；较旧深色字 #3f8600/#cf1322 略亮，为 AntD 标准状态色、白底可读性已在浏览器确认） |
 | `Login.tsx` 页面底色 | 已于 2026-09-16 改 `var(--atlas-color-bg-page)` ✅ | — |
 
 ### 3.6 验收（落码时）
