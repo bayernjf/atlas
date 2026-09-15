@@ -1,5 +1,17 @@
 import { useState } from 'react'
-import { Alert, Button, Layout, Modal, Select, Space, Tabs, Typography, Input, Tag } from 'antd'
+import {
+  Alert,
+  Button,
+  Layout,
+  Modal,
+  Popconfirm,
+  Select,
+  Space,
+  Tabs,
+  Typography,
+  Input,
+  Tag,
+} from 'antd'
 import { FlowCanvas } from '../components/canvas/FlowCanvas'
 import { NodePanel } from '../components/nodePanel/NodePanel'
 import { VariablesPanel } from '../components/variablePanel/VariablesPanel'
@@ -8,16 +20,24 @@ import { DebugConsole } from '../components/debugConsole/DebugConsole'
 import { FeedbackButton } from '../components/feedback/FeedbackButton'
 import { useEditorStore } from '../store/editorStore'
 import { serializeGraph } from '../lib/graphSerializer'
+import { toSteps } from '../lib/recordings'
 import {
   compileGraph,
   decideApproval,
+  deleteRecording,
   getTemplate,
+  listRecordings,
   listTemplates,
   nlGenerate,
+  replayRecording,
   saveGraph,
+  saveRecording,
   streamRun,
   type ApprovalRequest,
   type CompileResult,
+  type RecordingSummary,
+  type ReplayReport,
+  type RunEvent,
   type RunInputs,
   type RunResult,
   type TemplateSummary,
@@ -64,10 +84,19 @@ export function Editor() {
   const [approvalError, setApprovalError] = useState<string | null>(null)
   const [selectedOrderId, setSelectedOrderId] = useState('12345')
   const [nlPrompt, setNlPrompt] = useState('帮我做一个电商退款自动审批流程')
+  const [recordingOpen, setRecordingOpen] = useState(false)
+  const [recordings, setRecordings] = useState<RecordingSummary[]>([])
+  const [recordingsLoading, setRecordingsLoading] = useState(false)
+  const [recordingError, setRecordingError] = useState<string | null>(null)
+  const [caseName, setCaseName] = useState('')
+  const [recordBusy, setRecordBusy] = useState(false)
+  const [replayBusyId, setReplayBusyId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [reports, setReports] = useState<Record<string, ReplayReport>>({})
 
   const graphJson = JSON.stringify(serializeGraph(nodes, edges, variables), null, 2)
 
-  async function compileAndRun() {
+  async function compileAndRun(shouldRecord = false) {
     const order = DEMO_ORDERS.find((item) => item.order_id === selectedOrderId)
     const inputs: RunInputs | undefined = order
       ? { order_id: order.order_id, reason: order.reason, amount: order.amount }
@@ -79,6 +108,7 @@ export function Editor() {
     setPendingApprovals([])
     setApprovalError(null)
     resetRunStatuses()
+    const collected: RunEvent[] = []
     try {
       const saved = await saveGraph(serializeGraph(nodes, edges, variables))
       appendLog(`已保存 Graph：${saved.id}`)
@@ -86,6 +116,7 @@ export function Editor() {
       setCompileResult(compiled)
       appendLog(`编译成功：入口 ${compiled.entrypoints.join(', ')}`)
       const executed = await streamRun(saved.id, inputs, (event) => {
+        collected.push(event)
         if (event.type === 'node_start') {
           setNodeStatus(event.node_id, 'running')
           appendLog(`▶ 节点开始：${event.node_id}`)
@@ -185,12 +216,27 @@ export function Editor() {
       appendLog(`运行结束：${finalStatus ?? executed.status}`)
       setRunResult(executed)
       setRunOpen(true)
+      if (shouldRecord) {
+        const name = caseName.trim() || `录制 ${saved.id} ${new Date().toLocaleString()}`
+        const savedCase = await saveRecording({
+          name,
+          graph_id: saved.id,
+          inputs: inputs ?? null,
+          steps: toSteps(collected),
+          status: executed.status,
+        })
+        appendLog(`已保存录制用例：${savedCase.id}（${savedCase.steps.length} 个步骤）`)
+        setRecordings(await listRecordings())
+        setCaseName(`录制 ${new Date().toLocaleString()}`)
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       setRunError(message)
+      if (shouldRecord) setRecordingError(message)
       appendLog(`✗ 运行失败：${message}`)
     } finally {
       setRunning(false)
+      setRecordBusy(false)
     }
   }
 
@@ -237,6 +283,57 @@ export function Editor() {
     }
   }
 
+  async function openRecordings() {
+    setRecordingOpen(true)
+    setRecordingError(null)
+    if (!caseName) setCaseName(`录制 ${new Date().toLocaleString()}`)
+    setRecordingsLoading(true)
+    try {
+      setRecordings(await listRecordings())
+    } catch (error) {
+      setRecordingError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setRecordingsLoading(false)
+    }
+  }
+
+  async function recordCurrentRun() {
+    setRecordingError(null)
+    setRecordBusy(true)
+    await compileAndRun(true)
+  }
+
+  async function runReplay(caseId: string) {
+    setRecordingError(null)
+    setReplayBusyId(caseId)
+    try {
+      const report = await replayRecording(caseId)
+      setReports((prev) => ({ ...prev, [caseId]: report }))
+    } catch (error) {
+      setRecordingError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setReplayBusyId(null)
+    }
+  }
+
+  async function removeRecording(caseId: string) {
+    setRecordingError(null)
+    setDeletingId(caseId)
+    try {
+      await deleteRecording(caseId)
+      setRecordings(await listRecordings())
+      setReports((prev) => {
+        const next = { ...prev }
+        delete next[caseId]
+        return next
+      })
+    } catch (error) {
+      setRecordingError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
   const currentApproval = pendingApprovals[0] ?? null
 
   async function resolveCurrentApproval(decision: 'approved' | 'rejected') {
@@ -278,9 +375,10 @@ export function Editor() {
           />
           <Button onClick={() => setNlOpen(true)}>自然语言生成</Button>
           <Button onClick={openTemplateBrowser}>从模板新建</Button>
+          <Button onClick={openRecordings}>录制与回放</Button>
           <Button onClick={() => setExportOpen(true)}>导出 Graph JSON</Button>
           <FeedbackButton />
-          <Button type="primary" loading={running} onClick={compileAndRun}>
+          <Button type="primary" loading={running} onClick={() => compileAndRun()}>
             编译并运行
           </Button>
         </Space>
@@ -404,6 +502,114 @@ export function Editor() {
           ))}
         </Space>
         {templateError && <Alert type="error" showIcon title={templateError} style={{ marginTop: 12 }} />}
+      </Modal>
+      <Modal
+        title="操作录制与回放"
+        open={recordingOpen}
+        onCancel={() => setRecordingOpen(false)}
+        footer={null}
+        width={720}
+      >
+        <Space orientation="vertical" size={12} style={{ width: '100%' }}>
+          <Space orientation="vertical" size={4} style={{ width: '100%' }}>
+            <Input
+              value={caseName}
+              onChange={(event) => setCaseName(event.target.value)}
+              placeholder="用例名称"
+            />
+            <Space size={8} wrap>
+              <Button type="primary" loading={recordBusy} onClick={recordCurrentRun}>
+                录制当前画布一次运行
+              </Button>
+              <Typography.Text type="secondary">
+                按当前订单入参真实运行一次（审批弹窗照常交互），结束时冻结 Graph 快照入库
+              </Typography.Text>
+            </Space>
+          </Space>
+          {recordingError && <Alert type="error" showIcon title={recordingError} />}
+          <Typography.Text strong>已录制用例（{recordings.length}）</Typography.Text>
+          {recordingsLoading && <Typography.Text type="secondary">加载中…</Typography.Text>}
+          {!recordingsLoading && recordings.length === 0 && (
+            <Typography.Text type="secondary">暂无录制用例。</Typography.Text>
+          )}
+          {recordings.map((rec) => {
+            const report = reports[rec.id]
+            return (
+              <div
+                key={rec.id}
+                style={{
+                  padding: 12,
+                  border: '1px solid var(--color-border, #d9d9d9)',
+                  borderRadius: 8,
+                }}
+              >
+                <div
+                  style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}
+                >
+                  <div>
+                    <Space size={8} wrap style={{ marginBottom: 4 }}>
+                      <Typography.Text strong>{rec.name}</Typography.Text>
+                      <Tag color={rec.status === 'completed' ? 'green' : 'default'}>
+                        {rec.status}
+                      </Tag>
+                    </Space>
+                    <div>
+                      <Typography.Text type="secondary">
+                        {rec.node_count} 节点 · {rec.step_count} 步骤 ·{' '}
+                        {new Date(rec.created_at).toLocaleString()}
+                      </Typography.Text>
+                    </div>
+                  </div>
+                  <Space>
+                    <Button
+                      type="link"
+                      loading={replayBusyId === rec.id}
+                      onClick={() => runReplay(rec.id)}
+                    >
+                      回放
+                    </Button>
+                    <Popconfirm
+                      title="确认删除该录制用例？"
+                      okText="删除"
+                      okButtonProps={{ danger: true }}
+                      cancelText="取消"
+                      onConfirm={() => removeRecording(rec.id)}
+                    >
+                      <Button type="link" danger loading={deletingId === rec.id}>
+                        删除
+                      </Button>
+                    </Popconfirm>
+                  </Space>
+                </div>
+                {report && (
+                  <div style={{ marginTop: 8 }}>
+                    <Space size={8} wrap>
+                      <Tag color={report.matches ? 'green' : 'red'}>
+                        {report.matches ? '匹配' : '不匹配'}
+                      </Tag>
+                      <Typography.Text type="secondary">
+                        基线 {report.baseline_status} → 回放 {report.replay_status}
+                      </Typography.Text>
+                    </Space>
+                    <div style={{ marginTop: 4 }}>
+                      {report.steps.map((row) => (
+                        <div key={row.node_id}>
+                          <Typography.Text type={row.match ? undefined : 'danger'}>
+                            {row.match ? '✓' : '✗'} {row.node_id}
+                            {row.note ? `：${row.note}` : ''}
+                            {row.diff_keys && row.diff_keys.length > 0
+                              ? `（差异键：${row.diff_keys.join(', ')}）`
+                              : ''}
+                          </Typography.Text>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </Space>
       </Modal>
       <Modal
         title="人工审批请求"
