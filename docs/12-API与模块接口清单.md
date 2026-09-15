@@ -211,6 +211,49 @@ def compare(baseline, replay_steps, *, tools_by_node, baseline_status, replay_st
 def collect_steps() -> tuple[Callable, Callable]: ...  # 返回 (emit, take_steps)；回放 run_graph 收集 node_end 保末
 ```
 
+### 3.8 单步调试与断点（04 §5.12，06 §6.10）
+
+```python
+# src/atlas/debug/sessions.py
+class DebugStopped(Exception):
+    node_id: str            # resume action=stop / reset 时，从暂停点冒泡终止 run
+
+class DebugSession:
+    session_id: str         # "dbg-<uuid4>"，同时是暂停 token（同会话同时刻仅一个活动暂停）
+    graph_id: str
+    breakpoints: dict[str, str | None]   # node_id -> 条件表达式（None=无条件断点）
+    step_mode: bool         # 初始 True；resume continue 置 False
+    cancelled: bool         # resume stop 或 broker.reset 置 True
+    last_condition_error: str | None     # 条件断点最近一次求值异常（fail-safe 不命中，不抛出）
+    # 暂停原语（会话锁串行化 parallel 同时到达）：
+    def request_pause(self, *, node_id, node_type, reason, globals, outputs) -> str: ...  # 深拷贝快照、清 Event、返 token
+    def wait(self, timeout: float | None = None) -> str: ...   # 阻塞至 resolve；返 action
+    def resolve(self, token: str, action: str) -> bool: ...    # "step"|"continue"|"stop"，首决生效；未知/已决 False
+    def get(self, token: str) -> dict | None: ...              # 暂停投影（token/node_id/node_type/reason）
+
+class DebuggerBroker:       # 进程内单例；重启清空（持久化随 11 S1/14 D19/D20）
+    def create(self, *, graph_id: str, breakpoints: list[dict]) -> DebugSession: ...
+    def list_pending(self) -> list[dict]: ...                  # 当前活动暂停投影（GET /api/debug）
+    def get_session(self, token: str) -> DebugSession | None: ...
+    def reset(self) -> None: ...                               # 全部会话 cancelled=True + set Event 放行
+
+# src/atlas/debug/controller.py
+class DebugController:
+    def __init__(self, session: DebugSession, emit: Callable): ...
+    def before_node(self, node, state) -> None: ...
+    # 统一执行器在 emit(node_start) 之后、节点分派之前调用：
+    # cancelled -> raise DebugStopped；step_mode -> reason="step"；
+    # 否则查断点表：无表达式 "breakpoint"；有表达式经 evaluate_expression(expr, {"global": globals, **outputs})
+    # 求值 True -> "condition"；求值异常记录 last_condition_error 且不暂停（fail-safe）；
+    # 命中 -> emit paused 帧（含深拷贝 globals/outputs）-> wait ->
+    # step 保持 / continue 清 step_mode / stop 置 cancelled 并 raise DebugStopped；唤醒后复检 cancelled。
+
+# graph/loader.py 注入（默认 None = 零开销，非调试/回放路径不变）
+def compile_graph(graph, *, ..., debug_controller=None): ...
+def run_graph(graph, *, ..., debug_controller=None): ...
+# _execute_subgraph 重入 run_graph 时不传 debug_controller（子图整段执行，内部不暂停）
+```
+
 ## 4. 记忆检索接口（依据 06 6.2 / 05 2.3）
 
 ```python
@@ -235,9 +278,11 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 | GET | /api/recordings/{id} | 录制用例详情：完整 RecordingCase（含 graph 快照与 steps）；未知 id 404 | recording_case |
 | DELETE | /api/recordings/{id} | 删除录制用例；未知 id 404 | recording_case |
 | POST | /api/recordings/{id}/replay | 回放用例：对快照走标准 run_graph（审批决策从 baseline 抽为 inputs.approvals 预置，不挂起），比对操作序列与逐节点归一化产出；返回 `{matches, baseline_status, replay_status, steps:[{node_id,match,note,diff_keys?}]}`；回放异常折叠 replay_status="failed"/matches=false（不抛 500）；未知用例 404 | recording_case |
+| POST | /api/debug/{token}/resume | 恢复调试暂停（Phase 2 能力项）：请求体 `{action:"step"|"continue"|"stop"}`；step=执行当前节点并在下一节点前再停、continue=退出逐节点仅断点停、stop=取消运行（随后收到 stopped 帧、无 result）；首决生效 200，未知 token 404、对已恢复暂停重复提交 409；进程内会话重启即失 | debug_session |
+| GET | /api/debug | 列出当前活动调试暂停：`{items:[{token, node_id, node_type, graph_id, reason}]}`（Phase 2 能力项，进程内） | debug_session |
 | POST | /api/graphs/{id}/compile | DSL → LangGraph 编译（08 7.1 W7-W8） | 02 Graph DSL |
-| POST | /api/graphs/{id}/run | 编译并运行，返回状态/节点产出/执行轨迹；请求体 `{"inputs": {...}}`，inputs 同名键覆盖全局变量且整体作为 trigger 节点 webhook 载荷 `context.payload`（W9-W10 接入真实决策/适配器） | 02 Graph DSL / LoopState |
-| POST | /api/graphs/{id}/run/stream | SSE 流式运行（W9-W10）：事件 `node_start`/`node_end`/最终 `result`，供画布实时进度（验收标准 5）；condition 节点的 node_end 事件 data 含 `{branch, target, evaluation, expression_errors}`（契约 04 §5.2），loop 节点含 `{mode, iterations, index, target, exitReason, expression_errors}`（契约 04 §5.3），parallel 节点扇出时 data 为 running 占位、joinTarget 的 node_end 前该产出被覆盖为终态 `{mode, joinStrategy, status, branches, result, joinTarget}`（契约 04 §5.4），wait 节点的 node_end 事件 data 含 `{mode:"wait", waitType:"duration", durationSeconds}`（契约 04 §5.5；node_start 后同步阻塞等待），human_approval 节点的 node_start 事件 data 含 `approval:{token, summary, approver, timeoutSeconds}`、node_end 含 `{mode:"human_approval", decision, target, token, summary, approver, resolvedBy}`（契约 04 §5.6），subgraph 节点 node_end 含 `{mode:"subgraph", graphId, status, error?, outputs, trace}` 但**子图内部不产生事件**（emit=None 重入，契约 04 §5.7）；**Phase 2 第五项起本端点为真流式**——run_graph 在后台线程执行、事件经 queue 实时下发（旧实现先跑完再回放，human_approval 会因收不到 node_start 而死锁） | 08 7.1 |
+| POST | /api/graphs/{id}/run | 编译并运行，返回状态/节点产出/执行轨迹；请求体 `{"inputs": {...}}`，inputs 同名键覆盖全局变量且整体作为 trigger 节点 webhook 载荷 `context.payload`（W9-W10 接入真实决策/适配器）；**不支持调试**——请求体含 `debug` 返回 422「单步调试仅支持流式运行 /run/stream」（Phase 2 能力项） | 02 Graph DSL / LoopState |
+| POST | /api/graphs/{id}/run/stream | SSE 流式运行（W9-W10）：事件 `node_start`/`node_end`/最终 `result`，供画布实时进度（验收标准 5）；condition 节点的 node_end 事件 data 含 `{branch, target, evaluation, expression_errors}`（契约 04 §5.2），loop 节点含 `{mode, iterations, index, target, exitReason, expression_errors}`（契约 04 §5.3），parallel 节点扇出时 data 为 running 占位、joinTarget 的 node_end 前该产出被覆盖为终态 `{mode, joinStrategy, status, branches, result, joinTarget}`（契约 04 §5.4），wait 节点的 node_end 事件 data 含 `{mode:"wait", waitType:"duration", durationSeconds}`（契约 04 §5.5；node_start 后同步阻塞等待），human_approval 节点的 node_start 事件 data 含 `approval:{token, summary, approver, timeoutSeconds}`、node_end 含 `{mode:"human_approval", decision, target, token, summary, approver, resolvedBy}`（契约 04 §5.6），subgraph 节点 node_end 含 `{mode:"subgraph", graphId, status, error?, outputs, trace}` 但**子图内部不产生事件**（emit=None 重入，契约 04 §5.7）；**Phase 2 第五项起本端点为真流式**——run_graph 在后台线程执行、事件经 queue 实时下发（旧实现先跑完再回放，human_approval 会因收不到 node_start 而死锁）；**Phase 2 能力项（单步调试）**请求体可选 `debug:{breakpoints:[{node_id, expression?}]}`——存在时启动即 step 模式（首个节点 node_start 后、逻辑前发 `paused` 帧），断点会话级、不落 Graph JSON，未知 node_id/表达式校验失败 422（中文聚合）；新增帧 `paused`（`{token, node_id, node_type, reason:"step"|"breakpoint"|"condition", globals, outputs}` 深拷贝只读快照）与 `stopped`（resume action=stop 后 `{node_id, reason:"user_stop"}`，流结束且无 result 帧），恢复走 POST /api/debug/{token}/resume；子图内部不产生 paused（契约 04 §5.12） | 08 7.1 |
 
 > condition 节点（Phase 2 首版）运行结果写入 `outputs[condition_id] = {branch, target, evaluation:[{label,expression,result}], expression_errors:[string]}`（默认分支 `branch="__default__"`）；执行轨迹 messages 增一行 `condition-x: branch=… → target`。短路求值与 fail-safe 语义见 04 §5.2、06 §6.1。
 >
@@ -263,7 +308,7 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 | POST | /api/nl/generate | 自然语言 → 流程草稿（验收标准 6；W9-W10 已落码：LLM 优先、退款规则模板兜底，无法识别 422） | 08 7.2 |
 | POST | /api/demo/shop/login | Demo 商家平台登录（demo/demo，W9-W10） | — |
 | GET | /api/demo/shop/orders | Demo 待处理退款单（需登录，W9-W10） | — |
-| POST | /api/demo/reset | 重置 Demo 数据（店铺恢复 5 笔种子退款单、清空已保存图与登录态、清空 pending 审批请求，Phase 1 种子客户体验，W10 后；Phase 2 第三项起清空进程内消息记录并重建内置 SQLite demo 订单库——显式 `ATLAS_DATABASE_URL` 配置的外部库不被触碰；内置流程模板目录为代码常量，不受 reset 影响；录制用例为测试资产同样**不被 reset 清除**——其图已快照进用例，GraphStore 清空不影响回放） | — |
+| POST | /api/demo/reset | 重置 Demo 数据（店铺恢复 5 笔种子退款单、清空已保存图与登录态、清空 pending 审批请求，Phase 1 种子客户体验，W10 后；Phase 2 第三项起清空进程内消息记录并重建内置 SQLite demo 订单库——显式 `ATLAS_DATABASE_URL` 配置的外部库不被触碰；内置流程模板目录为代码常量，不受 reset 影响；录制用例为测试资产同样**不被 reset 清除**——其图已快照进用例，GraphStore 清空不影响回放；Phase 2 能力项起 reset 同时把全部**活动调试暂停按 stop 放行**（会话 cancelled + Event set），阻塞在 paused 的运行线程经 DebugStopped 收敛结束，不留悬挂线程；调试会话本身为进程内临时态，不构成需保留的数据） | — |
 | GET | /api/approvals | 列出当前 pending 审批请求（`{items:[{token, summary, approver, timeoutSeconds, node_id, graph_id}]}`，进程内单例，重启即失；Phase 2 第五项） | human_approval |
 | POST | /api/approvals/{token}/decision | 人工审批决策，请求体 `{decision: "approved"|"rejected", comment?}`（comment v1 仅接收不展示）；首决生效，200 返回决策结果；未知 token 404、已决重复提交 409；Phase 2 第五项 | human_approval |
 | POST | /api/feedback | 提交种子试用反馈（type=bug/suggestion、content、contact 选填，201；进程内存储，reset 不清除；Phase 1） | feedback_item |

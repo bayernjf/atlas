@@ -30,6 +30,7 @@
 | `message_send_params` | 04 / 四、工具/适配器组件 4.8 消息适配器（进程内消息服务）v1 契约（权威 blockquote）+ `src/atlas/message/{service,adapter}.py`（单能力 message/send） | ### 4.8 消息适配器（进程内消息服务）v1 契约 |
 | `template_catalog` | 04 / 五、逻辑组件 5.10 流程模板库（内置只读）v1 契约（权威 blockquote）+ `src/atlas/template/catalog.py`（5 个内置模板元数据与 graph） | ### 5.10 流程模板库（内置只读） |
 | `recording_case` | 04 / 五、逻辑组件 5.11 操作录制与回放 v1 契约（权威 blockquote）+ `src/atlas/recording/cases.py`（录制用例模型与进程内存储） | ### 5.11 操作录制与回放 |
+| `debug_session` | 04 / 五、逻辑组件 5.12 单步调试与断点 v1 契约（权威 blockquote）+ `src/atlas/debug/{sessions,controller}.py`（运行期调试会话、暂停状态机、paused/stopped 帧） | ### 5.12 单步调试与断点 |
 
 ---
 
@@ -336,3 +337,30 @@ replay_status: string      # 回放异常（如子图引用缺失）折叠为 "f
 steps: [{node_id, match, note, diff_keys?}]  # diff_keys 为归一化后差异顶层键
 ```
 > 进程内存储（重启清空，持久化随 11 S1）；`/api/demo/reset` 不清除（测试资产，同 feedback）。回放从 human_approval 步骤抽解决策预置为 inputs.approvals，不挂起；比对前递归剔除 token/sent_at、消息记录 uuid id、HTTP headers date。权威契约见 04 §5.11，REST 见 12 §5。
+
+### `debug_session` — 字段概览（Phase 2 能力项，2026-09-15；`/api/debug*` 与 /run/stream 的 debug 入参）
+
+```yaml
+# POST /api/graphs/{id}/run/stream 请求体可选 debug 字段
+debug:
+  breakpoints:
+    - node_id: string          # 必须是本图节点（未知 422）
+      expression: string?      # 可选，§5.1 白名单表达式；校验失败 422，运行时求值异常 fail-safe 不命中
+# 启动即 step 模式（每个节点执行前暂停）；断点不进 Graph JSON、会话级。
+# SSE event: paused
+type: "paused"
+token: string                  # dbg-<uuid>，resume 凭据
+node_id: string                # 暂停在该节点 node_start 之后、逻辑之前
+node_type: string
+reason: "step" | "breakpoint" | "condition"
+globals: object                # 当前全局变量快照（深拷贝，只读）
+outputs: object                # 截至暂停点全部已完成节点终态产出（深拷贝，只读）
+# POST /api/debug/{token}/resume 请求体
+action: "step" | "continue" | "stop"   # step=下一节点再停；continue=关逐节点仅断点停；stop=取消运行
+# SSE event: stopped（无 result 帧）
+type: "stopped"
+node_id: string
+reason: "user_stop"
+# GET /api/debug → {items:[{token, node_id, node_type, graph_id, reason}]}
+```
+> 进程内会话（threading.Event，重启即失，持久化中断随 11 S1/14 D19/D20）；未知 token 404、重复 resume 409；`/api/demo/reset` 按 stop 释放全部暂停；parallel 暂停串行化、`__join__` 网关与 subgraph 内部不暂停。权威契约见 04 §5.12，REST 见 12 §5。
