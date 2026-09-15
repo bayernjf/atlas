@@ -1,7 +1,7 @@
 # Atlas 前端国际化（i18n）与设计 Token 方案
 
 > **来源**：工程推导文档。需求依据为 [04-组件设计-编辑后台.md](04-组件设计-编辑后台.md) 十、补充项 28「多语言支持」三条（界面多语言中/英切换可扩展、自然语言多语言、组件描述多语言）；01-08 正文为冻结的唯一事实源，本文只做工程化方案，不改写需求。
-> **状态**：方案已定（2026-09-13）。**设计 Token 等价替换已于 2026-09-13 落码**（`theme/tokens.ts` + `setup.ts`，全仓零硬编码色值，浏览器三页面零视觉差异）；i18n 库按触发条件引入（见 §4 落地节奏与 [14-缓做事项登记表](14-缓做事项登记表.md) D12/D13）。
+> **状态**：方案已定（2026-09-13，2026-09-16 补 D7 多租户认证界面契约）。**设计 Token 等价替换已于 2026-09-13 落码**（`theme/tokens.ts` + `setup.ts`，三页面主体零视觉差异；存量零星硬编码见 §3.5 收尾清单）；i18n 库按触发条件引入（见 §4 落地节奏与 [14-缓做事项登记表](14-缓做事项登记表.md) D12/D13）。
 > **AI 使用提示**：前端新增界面文案、颜色/间距/圆角值时必须按本文契约预留（不裸写硬编码、不自创 key 规则）；落码 i18n/token 时以本文为方案依据。
 
 ## 1. 背景与现状
@@ -42,6 +42,8 @@ frontend/src/locales/
 └── en-US/                   # 同构镜像（触发落码时随 zh-CN 同步建空骨架）
 ```
 
+> D7（2026-09-16）新增的认证界面文案落码时归入 **common.json**，不新建 namespace：登录页（标题/用户名/密码/提交/错误提示/种子账号提示）用 `auth.login.*`；`lib/auth.ts` 的 `ROLE_LABELS` 用 `common.role.viewer|operator|admin`；UserBadge 的租户名/显示名分隔与「退出登录」用 `auth.session.*`；后端 401/403/404 提示用 `error.auth.*`（见 §2.4）。种子账号提示为 Demo 专用，可放 `auth.login.seedHint` 单键整体翻译。
+
 - key 用语义层级命名：`editor.run.compile`、`demo.order.select`，**禁止用中文原文作 key**。
 - namespace 按页面/域拆分（common/editor/dashboard/demo），与组件目录对应。
 - 默认语言 `zh-CN`；用户选择存 `localStorage`，首次访问回退 `navigator.language`（非受支持语言回退 zh-CN）。
@@ -52,6 +54,7 @@ frontend/src/locales/
 - API 继续返回**结构化错误码 + message**：`StructuredError(code, message)` 模式已存在（如 `AUTH_FAILED / ORDER_NOT_FOUND / MISSING_PARAMETER / INVALID_ACTION / UNKNOWN_CAPABILITY`，见 `harness/base.py`、`shop/adapter.py`），Graph DSL 校验返回 422 + 中文错误列表。
 - 前端按 **code 映射本地文案**（`locales/*/common.json` 的 `error.{code}` 键），后端 message 仅写入调试日志/控制台，不直接面向最终用户渲染。
 - 约束：Demo 阶段后端新增错误码时，必须同步前端错误码表（code 是契约，message 是日志）。
+- D7 认证端点（`/api/auth/login`、`iam/deps.py` 的 401/403、跨租户 404）当前只返回中文 `detail`、**无 code 字段**，属 i18n 触发时的第一批债：触发落码须先在后端补结构化 code（建议 `AUTH_INVALID_CREDENTIALS / AUTH_UNAUTHENTICATED / AUTH_FORBIDDEN / AUTH_NOT_FOUND`），前端再按 `error.auth.*` 映射；在此之前这些中文 detail 直接上屏是被允许的过渡状态（仅 Demo、无英文使用者）。
 
 ### 2.5 格式化与"不翻译"边界
 
@@ -114,6 +117,16 @@ frontend/src/theme/setup.ts    # main.tsx 引入一次，把 semantic 注入 :ro
 | `nodeCatalog.ts` / `FlowCanvas.tsx` | 类型三色/连线 `#1677ff` 内联 | `token('color-*')`（trigger→color-success、ai→color-node-ai、tool/edge→color-primary）✅ |
 
 迁移目标是**零视觉变化**的等价替换（token 值 = 现值 1:1 搬迁），不做视觉改版。
+
+**收尾清单（2026-09-16 核实，触碰相关文件时顺手清，不专门立项）**：
+
+| 位置 | 现状 | 处理 |
+|---|---|---|
+| `index.css` paused 节点光晕 | `var(--atlas-color-node-ring-paused, #d48806)`——semantic token 未定义，长期走 fallback | 在 `tokens.ts` 补 `color-node-ring-paused`（值取 `#d48806` 同构 rgba 或直接 hex），去掉 fallback |
+| `index.css:185` | `background: #fff` | 改 `var(--atlas-color-bg-container)` |
+| `Editor.tsx` 两处占位框边框 | `var(--color-border, #d9d9d9)`——变量名缺 `--atlas-` 前缀，恒走 fallback | 改 `var(--atlas-color-border)`（值需对齐现视觉 `#d9d9d9` 或确认可用现有 border token） |
+| `Monitoring.tsx` Statistic 健康色 | 内联 `#3f8600` / `#cf1322` | 改引 `--atlas-color-success` / `--atlas-color-danger`（经 CSS var 或 tokens 导出；色差以浏览器对比确认） |
+| `Login.tsx` 页面底色 | 已于 2026-09-16 改 `var(--atlas-color-bg-page)` ✅ | — |
 
 ### 3.6 验收（落码时）
 
