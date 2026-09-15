@@ -22,6 +22,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from atlas.collaboration.approvals import ApprovalBroker
+from atlas.database.adapter import DatabaseHarnessAdapter
+from atlas.database.service import DatabaseClient, demo_engine
 from atlas.graph.dsl import GraphValidationError, parse_graph
 from atlas.graph.loader import compile_graph, run_graph
 from atlas.harness.base import Permission
@@ -29,6 +31,8 @@ from atlas.harness.registry import AdapterRegistry
 from atlas.httpapi.adapter import HttpApiHarnessAdapter
 from atlas.httpapi.service import HttpApiClient
 from atlas.llm.nl_generate import generate_graph
+from atlas.message.adapter import MessageHarnessAdapter
+from atlas.message.service import MessageService
 from atlas.shop.adapter import ShopHarnessAdapter
 from atlas.shop.service import DemoShopService
 
@@ -38,6 +42,13 @@ app = FastAPI(title="Atlas API", version="0.0.1")
 _demo_shop = DemoShopService()
 # 通用 HTTP 适配器：默认连接配置来自 ATLAS_HTTPAPI_* 环境变量（04 §4.6）
 _http_client = HttpApiClient.from_env()
+# 数据适配器：ATLAS_DATABASE_URL 出站连接（与平台 DATABASE_URL 隔离）；
+# 未配置时回退内置 SQLite demo 订单库（04 §4.7）
+_db_client = DatabaseClient.from_env()
+if _db_client is None:
+    _db_client = DatabaseClient(demo_engine(), demo=True)
+# 消息适配器：进程内消息服务，仅记录不真实投递（04 §4.8）
+_message_service = MessageService()
 _demo_registry = AdapterRegistry()
 _demo_registry.register(
     ShopHarnessAdapter(
@@ -48,6 +59,18 @@ _demo_registry.register(
 _demo_registry.register(
     HttpApiHarnessAdapter(
         client=_http_client,
+        granted_permissions={Permission.READ, Permission.WRITE, Permission.DELETE, Permission.FINANCIAL},
+    )
+)
+_demo_registry.register(
+    DatabaseHarnessAdapter(
+        client=_db_client,
+        granted_permissions={Permission.READ, Permission.WRITE, Permission.DELETE, Permission.FINANCIAL},
+    )
+)
+_demo_registry.register(
+    MessageHarnessAdapter(
+        service=_message_service,
         granted_permissions={Permission.READ, Permission.WRITE, Permission.DELETE, Permission.FINANCIAL},
     )
 )
@@ -316,12 +339,20 @@ def demo_mock_receipt(order_id: str, body: dict[str, Any] | None = None) -> dict
     return {"order_id": order_id, "body": body or {}, "received": True}
 
 
+@app.get("/api/demo/messages")
+def demo_messages() -> dict[str, Any]:
+    """消息适配器演示查看（04 §4.8）：进程内已记录消息，重启/reset 清空，无真实投递。"""
+    return {"items": _message_service.list()}
+
+
 @app.post("/api/demo/reset")
 def demo_reset() -> dict[str, bool]:
     """重置 Demo 数据（店铺恢复 5 笔种子退款单、清空已保存图、释放 pending 审批），供种子客户从头体验。"""
     _demo_shop.reset()
     _store.clear()
     _approval_broker.reset()
+    _message_service.reset()
+    _db_client.reseed_demo()
     return {"reset": True}
 
 

@@ -117,6 +117,45 @@ class HttpApiClient:
 #   缺 url/坏 method/坏 headers/坏 timeout → MISSING_PARAMETER/INVALID_PARAMETER
 ```
 
+### 3.5 数据适配器 / 消息适配器（04 §4.7/§4.8，06 §6.7）
+
+```python
+# src/atlas/database/service.py（进程内，channel 包 database，adapter_id="database"）
+class DatabaseAdapterError(Exception):  # .code: DB_NOT_CONFIGURED / DB_SQL_ERROR / MISSING_PARAMETER / INVALID_PARAMETER
+
+class DatabaseClient:
+    def __init__(self, engine: Engine, url: str = "", demo: bool = False)
+    @classmethod
+    def from_env(cls)             # ATLAS_DATABASE_URL；scheme 白名单 postgresql+psycopg/sqlite；未配置返 None
+    @staticmethod
+    def demo_engine(seed: bool = True)  # sqlite:///:memory: + StaticPool，建 orders 表 seed 两笔
+    def query(self, sql, params=None, limit=500) -> dict
+    # → {"columns": [...], "rows": [{...}], "row_count": int, "truncated": bool}
+    # PG: execution_options(postgresql_readonly=True)，结束 rollback；SQLAlchemyError → DB_SQL_ERROR（URL 脱敏）
+    def execute(self, sql, params=None) -> dict   # commit → {"rowcount": int}
+    @property
+    def masked_url(self) -> str                  # render_as_string(hide_password=True)
+
+# adapter.py：DatabaseHarnessAdapter(HarnessAdapter)
+#   双能力 database/query（read, is_idempotent=true）/ database/execute（write）
+#   节点 config.params 插值后为 JSON：query {sql,params?,limit?} / execute {sql,params?}
+
+# src/atlas/message/service.py（channel 包 message，adapter_id="message"）
+class MessageSendError(Exception):  # .code: MISSING_PARAMETER / INVALID_PARAMETER
+
+class MessageService:
+    def send(self, channel: str, to, subject: str, body: str) -> dict
+    # to 展平为数组（字符串或数组，上限 20；channel=="email" 须含 @）
+    # → {"id": uuid4, "channel", "to": [...], "subject", "body", "sent_at": iso8601}；仅记录，不投递
+    def list(self) -> list[dict]
+    def reset(self) -> None
+    # 进程内列表，重启即失
+
+# adapter.py：MessageHarnessAdapter(HarnessAdapter)
+#   单能力 message/send（permission=write, is_idempotent=false）
+#   节点 config.params 插值后为 JSON：{channel,to,subject,body}
+```
+
 ## 4. 记忆检索接口（依据 06 6.2 / 05 2.3）
 
 ```python
@@ -153,7 +192,8 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 | POST | /api/operators/{id}/run | 启动 Loop | LoopState |
 | GET | /api/operators/{id}/status | 运行状态/进度（验收标准 5：画布实时显示） | LoopState.status |
 | POST | /api/operators/{id}/pause / resume | 暂停/恢复（人机协作） | status: paused |
-| GET | /api/adapters | 适配器列表（注册发现；W9-W10 已落码，返回 shop 适配器及其能力/权限/幂等标记；Phase 2 API 适配器起增加 http 适配器单能力 http/request） | adapter_schema |
+| GET | /api/adapters | 适配器列表（注册发现；W9-W10 已落码，返回 shop 适配器及其能力/权限/幂等标记；Phase 2 起增加 http（单能力 http/request）、database（database/query 只读幂等 + database/execute 写）、message（单能力 message/send 写）三个适配器） | adapter_schema |
+| GET | /api/demo/messages | 消息适配器演示查看（Phase 2 第三项）：返回进程内 MessageService 已记录消息 `{items:[{id,channel,to,subject,body,sent_at}]}`，重启/reset 清空，不产生真实投递 | message_send_params |
 | GET | /api/demo/mock/orders | API 适配器演示目标（Phase 2 API 适配器）：要求请求头 `X-Demo-Token: demo-token`，缺失/错误 401 JSON；成功返回演示订单数组。进程内无状态 | http_request_params |
 | POST | /api/demo/mock/orders/{id}/receipt | API 适配器演示目标：回显 JSON 请求体并返回 `{"received": true}`，供 POST/body/插值端到端验证 | http_request_params |
 | POST | /api/adapters/{id}/tools | 工具查询 | tool |
@@ -161,7 +201,7 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 | POST | /api/nl/generate | 自然语言 → 流程草稿（验收标准 6；W9-W10 已落码：LLM 优先、退款规则模板兜底，无法识别 422） | 08 7.2 |
 | POST | /api/demo/shop/login | Demo 商家平台登录（demo/demo，W9-W10） | — |
 | GET | /api/demo/shop/orders | Demo 待处理退款单（需登录，W9-W10） | — |
-| POST | /api/demo/reset | 重置 Demo 数据（店铺恢复 5 笔种子退款单、清空已保存图与登录态、清空 pending 审批请求，Phase 1 种子客户体验，W10 后） | — |
+| POST | /api/demo/reset | 重置 Demo 数据（店铺恢复 5 笔种子退款单、清空已保存图与登录态、清空 pending 审批请求，Phase 1 种子客户体验，W10 后；Phase 2 第三项起清空进程内消息记录并重建内置 SQLite demo 订单库——显式 `ATLAS_DATABASE_URL` 配置的外部库不被触碰） | — |
 | GET | /api/approvals | 列出当前 pending 审批请求（`{items:[{token, summary, approver, timeoutSeconds, node_id, graph_id}]}`，进程内单例，重启即失；Phase 2 第五项） | human_approval |
 | POST | /api/approvals/{token}/decision | 人工审批决策，请求体 `{decision: "approved"|"rejected", comment?}`（comment v1 仅接收不展示）；首决生效，200 返回决策结果；未知 token 404、已决重复提交 409；Phase 2 第五项 | human_approval |
 | POST | /api/feedback | 提交种子试用反馈（type=bug/suggestion、content、contact 选填，201；进程内存储，reset 不清除；Phase 1） | feedback_item |
@@ -197,7 +237,7 @@ evaluation_task:
 - [x] ActionResult.Status 枚举：SUCCESS/PARTIAL/FAILED（W3-W4 落码于 `harness/base.py`）
 - [ ] 节点失败处理枚举：stop/continue/jump_to（03 node_schema）
 - [x] 工具权限枚举：read/write/delete/financial（03 adapter_schema；W3-W4 落码于 `harness/base.py`）
-- [x] 适配器类型枚举：web/api/mobile/desktop/database/iot/message（W3-W4 已用于 `adapter_type` 字段；web 类型已实现；api 类型 2026-09-15 随 `httpapi/` 通用 HTTP 适配器落地，契约 04 §4.6）
+- [x] 适配器类型枚举：web/api/mobile/desktop/database/iot/message（W3-W4 已用于 `adapter_type` 字段；web 类型已实现；api 类型 2026-09-15 随 `httpapi/` 通用 HTTP 适配器落地，契约 04 §4.6；**database 与 message 类型 2026-09-15 随 `database/`（query/execute 双能力）、`message/`（message/send 进程内 sink）落地，契约 04 §4.7/§4.8**）
 - [ ] 记忆检索分层与 memory_config 阈值（05 2.3）
 - [ ] 评估指标三元组（06 9.2 metrics）
 

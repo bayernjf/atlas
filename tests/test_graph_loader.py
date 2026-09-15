@@ -931,3 +931,76 @@ def test_build_demo_registry_contains_http_request():
     registry = build_demo_registry()
 
     assert [c.name for c in registry.get("http").list_capabilities()] == ["request"]
+
+
+def test_database_tool_json_passthrough_with_interpolated_bound_params():
+    registry = build_demo_registry()
+    node = NodeDSL(
+        id="tool-db",
+        type="tool_call",
+        name="DB",
+        config={
+            "tool": "database/query",
+            "params": json.dumps(
+                {
+                    "sql": "SELECT order_id FROM orders WHERE amount > :min ORDER BY order_id",
+                    "params": {"min": "{{trigger-1.context.payload.min_amount}}"},
+                }
+            ),
+        },
+    )
+    context = {"trigger-1": {"context": {"payload": {"min_amount": 1000}}}}
+
+    output = _execute_tool(node, context, registry)
+
+    assert output["action_status"] == "SUCCESS"
+    assert output["result"]["rows"] == [{"order_id": "12346"}]
+
+
+def test_database_tool_bad_json_is_failed_invalid_parameter():
+    node = NodeDSL(
+        id="tool-db",
+        type="tool_call",
+        name="DB",
+        config={"tool": "database/query", "params": "{not json"},
+    )
+
+    output = _execute_tool(node, {}, build_demo_registry())
+
+    assert output["action_status"] == "FAILED"
+    assert output["result"]["code"] == "INVALID_PARAMETER"
+
+
+def test_message_tool_json_passthrough_records_message():
+    registry = build_demo_registry()
+    node = NodeDSL(
+        id="tool-msg",
+        type="tool_call",
+        name="MSG",
+        config={
+            "tool": "message/send",
+            "params": json.dumps(
+                {
+                    "channel": "email",
+                    "to": ["ops@example.com"],
+                    "subject": "订单 {{trigger-1.context.payload.order_id}}",
+                    "body": "请处理",
+                }
+            ),
+        },
+    )
+    context = {"trigger-1": {"context": {"payload": {"order_id": "12346"}}}}
+
+    output = _execute_tool(node, context, registry)
+
+    assert output["action_status"] == "SUCCESS"
+    assert output["result"]["to"] == ["ops@example.com"]
+    assert output["result"]["subject"] == "订单 12346"
+    assert registry.get("message").service.count == 1
+
+
+def test_build_demo_registry_contains_database_and_message():
+    registry = build_demo_registry()
+
+    assert [c.name for c in registry.get("database").list_capabilities()] == ["query", "execute"]
+    assert [c.name for c in registry.get("message").list_capabilities()] == ["send"]

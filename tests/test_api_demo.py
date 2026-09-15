@@ -504,3 +504,97 @@ def test_http_request_401_still_success_with_status(monkeypatch):
     assert outputs["tool-get"]["action_status"] == "SUCCESS"
     assert outputs["tool-get"]["result"]["status"] == 401
     client.post("/api/demo/reset")
+
+
+def _single_tool_graph(tool: str, params: str) -> dict:
+    return {
+        "version": 1,
+        "variables": [],
+        "nodes": [
+            {"id": "trigger-1", "type": "trigger", "name": "触发",
+             "position": {"x": 0, "y": 0},
+             "config": {"triggerType": "webhook", "webhookUrl": "/hooks/demo"}},
+            {"id": "tool-1", "type": "tool_call", "name": "工具",
+             "position": {"x": 0, "y": 0}, "config": {"tool": tool, "params": params}},
+        ],
+        "edges": [{"id": "e1", "source": "trigger-1", "target": "tool-1"}],
+    }
+
+
+def test_adapters_lists_database_and_message_capabilities():
+    body = client.get("/api/adapters").json()
+
+    database = next(item for item in body if item["id"] == "database")
+    assert database["type"] == "database"
+    assert {tool["name"] for tool in database["tools"]} == {"query", "execute"}
+
+    message = next(item for item in body if item["id"] == "message")
+    assert message["type"] == "message"
+    assert [tool["name"] for tool in message["tools"]] == ["send"]
+
+
+def test_database_query_against_demo_sqlite_end_to_end():
+    client.post("/api/demo/reset")
+    params = json.dumps({"sql": "SELECT order_id, amount FROM orders ORDER BY order_id"})
+    graph_id = client.post("/api/graphs", json=_single_tool_graph("database/query", params)).json()["id"]
+
+    outputs = client.post(f"/api/graphs/{graph_id}/run", json={}).json()["outputs"]
+
+    node = outputs["tool-1"]
+    assert node["action_status"] == "SUCCESS"
+    assert node["result"]["row_count"] == 2
+    assert node["result"]["rows"][0] == {"order_id": "12345", "amount": 299}
+    client.post("/api/demo/reset")
+
+
+def test_database_execute_visible_to_query_and_reset_reseeds():
+    client.post("/api/demo/reset")
+    insert_params = json.dumps(
+        {
+            "sql": "INSERT INTO orders (order_id, reason, amount, status) "
+                   "VALUES (:order_id, :reason, :amount, :status)",
+            "params": {"order_id": "12350", "reason": "测试插入", "amount": 1, "status": "pending_refund"},
+        }
+    )
+    graph_id = client.post("/api/graphs", json=_single_tool_graph("database/execute", insert_params)).json()["id"]
+    outputs = client.post(f"/api/graphs/{graph_id}/run", json={}).json()["outputs"]
+    assert outputs["tool-1"]["result"] == {"rowcount": 1}
+
+    query_params = json.dumps({"sql": "SELECT COUNT(*) AS n FROM orders"})
+    query_id = client.post("/api/graphs", json=_single_tool_graph("database/query", query_params)).json()["id"]
+    before_reset = client.post(f"/api/graphs/{query_id}/run", json={}).json()["outputs"]
+    assert before_reset["tool-1"]["result"]["rows"][0]["n"] == 3
+
+    client.post("/api/demo/reset")
+    query_id = client.post("/api/graphs", json=_single_tool_graph("database/query", query_params)).json()["id"]
+    after_reset = client.post(f"/api/graphs/{query_id}/run", json={}).json()["outputs"]
+    assert after_reset["tool-1"]["result"]["rows"][0]["n"] == 2
+
+
+def test_message_send_visible_and_reset_clears():
+    client.post("/api/demo/reset")
+    assert client.get("/api/demo/messages").json()["items"] == []
+
+    params = json.dumps(
+        {
+            "channel": "email",
+            "to": ["ops@example.com", "boss@example.com"],
+            "subject": "订单 {{trigger-1.context.payload.order_id}} 待审批",
+            "body": "请处理",
+        }
+    )
+    graph_id = client.post("/api/graphs", json=_single_tool_graph("message/send", params)).json()["id"]
+    outputs = client.post(
+        f"/api/graphs/{graph_id}/run", json={"inputs": {"order_id": "12346"}}
+    ).json()["outputs"]
+
+    assert outputs["tool-1"]["action_status"] == "SUCCESS"
+    items = client.get("/api/demo/messages").json()["items"]
+    assert len(items) == 1
+    assert items[0]["channel"] == "email"
+    assert items[0]["to"] == ["ops@example.com", "boss@example.com"]
+    assert items[0]["subject"] == "订单 12346 待审批"
+    assert items[0]["sent_at"]
+
+    client.post("/api/demo/reset")
+    assert client.get("/api/demo/messages").json()["items"] == []

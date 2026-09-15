@@ -45,6 +45,23 @@ export function ToolCallConfig({ config, update, variablePaths, onInsert }: Prop
   )
 
   const toolMissing = !config.tool?.trim()
+
+  const paramsPlaceholder = useMemo(() => {
+    const tool = config.tool
+    if (tool?.startsWith('http/')) {
+      return '{"method":"GET","url":"/orders","headers":{"X-Demo-Token":"demo-token"}}'
+    }
+    if (tool === 'database/query') {
+      return '{"sql":"SELECT order_id, amount FROM orders WHERE amount > :min","params":{"min":1000},"limit":500}'
+    }
+    if (tool === 'database/execute') {
+      return '{"sql":"UPDATE orders SET status = :status WHERE order_id = :id","params":{"status":"refunded","id":"12345"}}'
+    }
+    if (tool === 'message/send') {
+      return '{"channel":"email","to":["ops@example.com"],"subject":"订单 {{trigger-1.context.payload.order_id}} 待审批","body":"请处理"}'
+    }
+    return '{"element_desc": "提交按钮"}'
+  }, [config.tool])
   // 已保存图里的工具（如未注册适配器）不在发现列表时补一条，保证 Select 能显示当前值
   const selectGroups = useMemo(() => {
     if (config.tool && !knownValues.has(config.tool)) {
@@ -82,11 +99,7 @@ export function ToolCallConfig({ config, update, variablePaths, onInsert }: Prop
       <Field label="参数映射（支持 {{路径}} 引用）">
         <Input.TextArea
           rows={4}
-          placeholder={
-            config.tool?.startsWith('http/')
-              ? '{"method":"GET","url":"/orders","headers":{"X-Demo-Token":"demo-token"}}'
-              : '{"element_desc": "提交按钮"}'
-          }
+          placeholder={paramsPlaceholder}
           value={config.params}
           onChange={(event) => update({ params: event.target.value })}
         />
