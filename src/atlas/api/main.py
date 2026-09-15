@@ -26,6 +26,8 @@ from atlas.graph.dsl import GraphValidationError, parse_graph
 from atlas.graph.loader import compile_graph, run_graph
 from atlas.harness.base import Permission
 from atlas.harness.registry import AdapterRegistry
+from atlas.httpapi.adapter import HttpApiHarnessAdapter
+from atlas.httpapi.service import HttpApiClient
 from atlas.llm.nl_generate import generate_graph
 from atlas.shop.adapter import ShopHarnessAdapter
 from atlas.shop.service import DemoShopService
@@ -34,10 +36,18 @@ app = FastAPI(title="Atlas API", version="0.0.1")
 
 # Demo 单例：控制台页面与编译运行的图共享同一份店铺状态
 _demo_shop = DemoShopService()
+# 通用 HTTP 适配器：默认连接配置来自 ATLAS_HTTPAPI_* 环境变量（04 §4.6）
+_http_client = HttpApiClient.from_env()
 _demo_registry = AdapterRegistry()
 _demo_registry.register(
     ShopHarnessAdapter(
         service=_demo_shop,
+        granted_permissions={Permission.READ, Permission.WRITE, Permission.DELETE, Permission.FINANCIAL},
+    )
+)
+_demo_registry.register(
+    HttpApiHarnessAdapter(
+        client=_http_client,
         granted_permissions={Permission.READ, Permission.WRITE, Permission.DELETE, Permission.FINANCIAL},
     )
 )
@@ -284,6 +294,26 @@ def demo_shop_orders() -> dict[str, Any]:
     if not _demo_shop.logged_in:
         raise HTTPException(status_code=401, detail="未登录")
     return {"orders": _demo_shop.list_pending_refunds()}
+
+
+_MOCK_ORDERS = [
+    {"order_id": "12345", "reason": "商品破损", "amount": 299},
+    {"order_id": "12346", "reason": "不想要了", "amount": 5000},
+]
+
+
+@app.get("/api/demo/mock/orders")
+def demo_mock_orders(request: Request) -> dict[str, Any]:
+    """API 适配器演示目标（04 §4.6 / 12 §5）：要求 X-Demo-Token: demo-token。"""
+    if request.headers.get("x-demo-token") != "demo-token":
+        raise HTTPException(status_code=401, detail="缺少或错误的 X-Demo-Token 请求头")
+    return {"orders": _MOCK_ORDERS}
+
+
+@app.post("/api/demo/mock/orders/{order_id}/receipt")
+def demo_mock_receipt(order_id: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+    """API 适配器演示目标：回显 JSON 请求体，供 POST/body/插值端到端验证。"""
+    return {"order_id": order_id, "body": body or {}, "received": True}
 
 
 @app.post("/api/demo/reset")

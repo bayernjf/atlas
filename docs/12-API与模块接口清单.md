@@ -98,6 +98,25 @@ click(element_desc, selector=None):
   全部失败 → failed("元素未找到，三层定位均失败")
 ```
 
+### 3.4 API 适配器（通用 HTTP，04 §4.6 / 06 §6.6）
+
+```python
+# src/atlas/httpapi/service.py（进程内，channel 包 httpapi，adapter_id="http"）
+class HttpApiClient:
+    def __init__(self, base_url="", default_headers=None, client: httpx.Client | None=None)
+    @classmethod
+    def from_env(cls)  # ATLAS_HTTPAPI_BASE_URL / _HEADERS(JSON) / _TOKEN(Bearer)
+    def request(self, method="GET", url="", headers=None, body=None,
+                timeout=30.0) -> dict
+    # → {"status": int, "headers": dict, "body": object|str}
+    # 传输层异常 → StructuredError HTTP_TIMEOUT / HTTP_CONNECT_ERROR（不抛出）
+
+# adapter.py：HttpApiHarnessAdapter(HarnessAdapter)
+#   单能力 request（permission=write, is_idempotent=false）
+#   节点 config.params 插值后为 JSON：{method,url,headers,body,timeout}
+#   缺 url/坏 method/坏 headers/坏 timeout → MISSING_PARAMETER/INVALID_PARAMETER
+```
+
 ## 4. 记忆检索接口（依据 06 6.2 / 05 2.3）
 
 ```python
@@ -134,7 +153,9 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 | POST | /api/operators/{id}/run | 启动 Loop | LoopState |
 | GET | /api/operators/{id}/status | 运行状态/进度（验收标准 5：画布实时显示） | LoopState.status |
 | POST | /api/operators/{id}/pause / resume | 暂停/恢复（人机协作） | status: paused |
-| GET | /api/adapters | 适配器列表（注册发现；W9-W10 已落码，返回 shop 适配器及其能力/权限/幂等标记） | adapter_schema |
+| GET | /api/adapters | 适配器列表（注册发现；W9-W10 已落码，返回 shop 适配器及其能力/权限/幂等标记；Phase 2 API 适配器起增加 http 适配器单能力 http/request） | adapter_schema |
+| GET | /api/demo/mock/orders | API 适配器演示目标（Phase 2 API 适配器）：要求请求头 `X-Demo-Token: demo-token`，缺失/错误 401 JSON；成功返回演示订单数组。进程内无状态 | http_request_params |
+| POST | /api/demo/mock/orders/{id}/receipt | API 适配器演示目标：回显 JSON 请求体并返回 `{"received": true}`，供 POST/body/插值端到端验证 | http_request_params |
 | POST | /api/adapters/{id}/tools | 工具查询 | tool |
 | GET | /api/operations/{id}/log | 执行日志/审计（06 安全清单） | 审计 |
 | POST | /api/nl/generate | 自然语言 → 流程草稿（验收标准 6；W9-W10 已落码：LLM 优先、退款规则模板兜底，无法识别 422） | 08 7.2 |
@@ -176,7 +197,7 @@ evaluation_task:
 - [x] ActionResult.Status 枚举：SUCCESS/PARTIAL/FAILED（W3-W4 落码于 `harness/base.py`）
 - [ ] 节点失败处理枚举：stop/continue/jump_to（03 node_schema）
 - [x] 工具权限枚举：read/write/delete/financial（03 adapter_schema；W3-W4 落码于 `harness/base.py`）
-- [x] 适配器类型枚举：web/api/mobile/desktop/database/iot/message（W3-W4 已用于 `adapter_type` 字段，web 类型已实现）
+- [x] 适配器类型枚举：web/api/mobile/desktop/database/iot/message（W3-W4 已用于 `adapter_type` 字段；web 类型已实现；api 类型 2026-09-15 随 `httpapi/` 通用 HTTP 适配器落地，契约 04 §4.6）
 - [ ] 记忆检索分层与 memory_config 阈值（05 2.3）
 - [ ] 评估指标三元组（06 9.2 metrics）
 

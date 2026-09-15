@@ -15,6 +15,7 @@ W9-W10 执行器：
 
 from __future__ import annotations
 
+import json
 import operator
 import re
 import time
@@ -25,6 +26,7 @@ from langgraph.graph import END, START, StateGraph
 from atlas.collaboration.approvals import ApprovalBroker
 from atlas.harness.base import ActionRequest, ActionStatus
 from atlas.harness.registry import AdapterRegistry
+from atlas.httpapi.adapter import HttpApiHarnessAdapter
 from atlas.llm.decision import get_decision_client
 from atlas.shop.adapter import ShopHarnessAdapter
 from .conditions import ConditionEvalError, evaluate_expression
@@ -92,10 +94,11 @@ def resolve_path(path: str, context: dict[str, Any]) -> Any:
 
 
 def build_demo_registry() -> AdapterRegistry:
-    """Demo 默认适配器注册表：shop 适配器授予 read/write/financial（仅 Demo）。"""
+    """Demo 默认适配器注册表：shop 与 http 均授予 read/write/delete/financial（仅 Demo）。"""
     registry = AdapterRegistry()
     permissions = {"read", "write", "delete", "financial"}
     registry.register(ShopHarnessAdapter(granted_permissions=permissions))
+    registry.register(HttpApiHarnessAdapter(granted_permissions=permissions))
     return registry
 
 
@@ -498,6 +501,33 @@ def _execute_tool(
         adapter = registry.get(adapter_id)
     except KeyError:
         return {"result": {"status": "FAILED", "error": f"适配器未注册：{adapter_id}"}}
+
+    if adapter_id == "http":
+        # 通用 HTTP 通道（04 §4.6）：params 插值后直接作为 JSON 参数透传
+        try:
+            parameters = json.loads(params_text) if params_text.strip() else {}
+        except json.JSONDecodeError:
+            return {
+                "result": {"status": "FAILED", "code": "INVALID_PARAMETER", "message": "params 不是合法 JSON"},
+                "action_status": "FAILED",
+            }
+        if not isinstance(parameters, dict):
+            return {
+                "result": {"status": "FAILED", "code": "INVALID_PARAMETER", "message": "params 必须是 JSON 对象"},
+                "action_status": "FAILED",
+            }
+        result = adapter.execute(ActionRequest(capability_name=capability_name, parameters=parameters))
+        if result.status == ActionStatus.SUCCESS:
+            return {"result": result.output, "action_status": result.status.value}
+        error = result.error
+        return {
+            "result": {
+                "status": "FAILED",
+                "code": error.code if error else "UNKNOWN",
+                "message": error.message if error else "",
+            },
+            "action_status": result.status.value,
+        }
 
     trigger_payload: dict[str, Any] = {}
     for output in context.values():

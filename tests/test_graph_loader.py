@@ -2,10 +2,24 @@
 
 from __future__ import annotations
 
+import json
+
+import httpx
 import pytest
 
-from atlas.graph.dsl import GraphDSL, GraphValidationError, parse_graph
-from atlas.graph.loader import compile_graph, interpolate, resolve_path, run_graph
+from atlas.graph.dsl import GraphDSL, GraphValidationError, NodeDSL, parse_graph
+from atlas.graph.loader import (
+    _execute_tool,
+    build_demo_registry,
+    compile_graph,
+    interpolate,
+    resolve_path,
+    run_graph,
+)
+from atlas.harness.registry import AdapterRegistry
+from atlas.httpapi.adapter import HttpApiHarnessAdapter
+from atlas.httpapi.service import HttpApiClient
+from atlas.shop.adapter import ShopHarnessAdapter
 
 
 def _sample_graph():
@@ -823,3 +837,97 @@ def test_subgraph_compile_aggregates_child_validation_errors():
             graph_resolver=store.get,
         )
     assert any(e.startswith("子图 graph-bad-child：") for e in exc.value.errors)
+
+
+def _http_registry(handler):
+    transport = httpx.MockTransport(handler)
+    client = HttpApiClient(base_url="http://demo.test", client=httpx.Client(transport=transport))
+    registry = AdapterRegistry()
+    registry.register(HttpApiHarnessAdapter(client=client, granted_permissions={"write"}))
+    return registry
+
+
+def test_http_tool_params_json_assembled_and_interpolated():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["x-order"] = request.headers.get("x-order")
+        return httpx.Response(200, json=[{"id": "o-1"}], request=request)
+
+    node = NodeDSL(
+        id="tool-x",
+        type="tool_call",
+        name="HTTP",
+        config={
+            "tool": "http/request",
+            "params": json.dumps(
+                {
+                    "url": "{{trigger-1.context.payload.path}}",
+                    "headers": {"X-Order": "{{trigger-1.context.payload.order_id}}"},
+                }
+            ),
+        },
+    )
+    context = {"trigger-1": {"context": {"payload": {"path": "/orders", "order_id": "o-1"}}}}
+
+    output = _execute_tool(node, context, _http_registry(handler))
+
+    assert output["action_status"] == "SUCCESS"
+    assert output["result"]["status"] == 200
+    assert output["result"]["body"] == [{"id": "o-1"}]
+    assert seen["url"] == "http://demo.test/orders"
+    assert seen["x-order"] == "o-1"
+
+
+def test_http_tool_bad_json_params_is_failed_invalid_parameter():
+    node = NodeDSL(
+        id="tool-x",
+        type="tool_call",
+        name="HTTP",
+        config={"tool": "http/request", "params": '{"url": '},
+    )
+
+    output = _execute_tool(node, {}, _http_registry(lambda r: httpx.Response(200)))
+
+    assert output["action_status"] == "FAILED"
+    assert output["result"]["code"] == "INVALID_PARAMETER"
+
+
+def test_http_tool_non_object_params_is_failed_invalid_parameter():
+    node = NodeDSL(
+        id="tool-x",
+        type="tool_call",
+        name="HTTP",
+        config={"tool": "http/request", "params": "[1, 2]"},
+    )
+
+    output = _execute_tool(node, {}, _http_registry(lambda r: httpx.Response(200)))
+
+    assert output["action_status"] == "FAILED"
+    assert output["result"]["code"] == "INVALID_PARAMETER"
+
+
+def test_shop_dispatch_and_simulated_path_not_regressed():
+    registry = AdapterRegistry()
+    registry.register(ShopHarnessAdapter(granted_permissions={"read", "write", "financial"}))
+    login_node = NodeDSL(
+        id="tool-login",
+        type="tool_call",
+        name="login",
+        config={"tool": "shop/login", "params": "ignored"},
+    )
+
+    output = _execute_tool(login_node, {}, registry)
+
+    assert output["action_status"] == "SUCCESS"
+    assert output["result"] == {"logged_in": True}
+
+    simulated_node = NodeDSL(id="tool-x", type="tool_call", name="x", config={"tool": "web/click"})
+    assert _execute_tool(simulated_node, {}, None)["result"]["status"] == "SIMULATED"
+
+
+def test_build_demo_registry_contains_http_request():
+    registry = build_demo_registry()
+
+    assert [c.name for c in registry.get("http").list_capabilities()] == ["request"]

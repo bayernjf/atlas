@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 
 from fastapi.testclient import TestClient
@@ -348,4 +349,158 @@ def test_subgraph_missing_reference_compile_returns_422():
     response = client.post(f"/api/graphs/{parent_id}/compile")
     assert response.status_code == 422
     assert any("引用的子图不存在：graph-ghost" in detail for detail in response.json()["detail"])
+    client.post("/api/demo/reset")
+
+
+def test_adapters_lists_http_request_capability():
+    body = client.get("/api/adapters").json()
+    http = next(item for item in body if item["id"] == "http")
+    assert http["type"] == "api"
+    assert [tool["name"] for tool in http["tools"]] == ["request"]
+
+
+def test_mock_orders_requires_demo_token():
+    assert client.get("/api/demo/mock/orders").status_code == 401
+    ok = client.get("/api/demo/mock/orders", headers={"X-Demo-Token": "demo-token"})
+    assert ok.status_code == 200
+    assert len(ok.json()["orders"]) == 2
+
+
+def test_mock_receipt_echoes_body():
+    response = client.post(
+        "/api/demo/mock/orders/12345/receipt",
+        json={"note": "自动处理", "amount": 299},
+    )
+    assert response.status_code == 200
+    assert response.json() == {
+        "order_id": "12345",
+        "body": {"note": "自动处理", "amount": 299},
+        "received": True,
+    }
+
+
+def _http_mock_graph() -> dict:
+    return {
+        "version": 1,
+        "nodes": [
+            {"id": "trigger-1", "type": "trigger", "name": "触发",
+             "position": {"x": 0, "y": 0},
+             "config": {"triggerType": "webhook", "webhookUrl": "/hooks/mock"}},
+            {"id": "tool-get", "type": "tool_call", "name": "拉单",
+             "position": {"x": 0, "y": 0},
+             "config": {
+                 "tool": "http/request",
+                 "params": json.dumps(
+                     {"url": "/api/demo/mock/orders",
+                      "headers": {"X-Demo-Token": "demo-token"}}
+                 ),
+             }},
+            {"id": "tool-post", "type": "tool_call", "name": "回单",
+             "position": {"x": 0, "y": 0},
+             "config": {
+                 "tool": "http/request",
+                 "params": json.dumps(
+                     {"method": "POST",
+                      "url": "/api/demo/mock/orders/{{trigger-1.context.payload.order_id}}/receipt",
+                      "body": {"note": "{{trigger-1.context.payload.note}}"}}
+                 ),
+             }},
+        ],
+        "edges": [
+            {"id": "e1", "source": "trigger-1", "target": "tool-get"},
+            {"id": "e2", "source": "tool-get", "target": "tool-post"},
+        ],
+    }
+
+
+def _live_server_base_url() -> str:
+    """同步 httpx 不能用 ASGITransport；在回环口起一次性 uvicorn 供 http 适配器真打 mock 端点。"""
+    global _live_server_url
+    if _live_server_url is not None:
+        return _live_server_url
+    import socket
+    import threading
+
+    import uvicorn
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    import httpx
+
+    for _ in range(100):
+        try:
+            if httpx.get(f"http://127.0.0.1:{port}/api/health", timeout=1).status_code == 200:
+                break
+        except httpx.RequestError:
+            pass
+    else:
+        raise RuntimeError("live uvicorn server did not become ready")
+    _live_server_url = f"http://127.0.0.1:{port}"
+    return _live_server_url
+
+
+_live_server_url: str | None = None
+
+
+def _registry_with_http(monkeypatch, base_url: str):
+    from atlas.api import main as main_module
+    from atlas.harness.registry import AdapterRegistry
+    from atlas.httpapi.adapter import HttpApiHarnessAdapter
+    from atlas.httpapi.service import HttpApiClient
+
+    registry = AdapterRegistry()
+    registry.register(
+        HttpApiHarnessAdapter(
+            client=HttpApiClient(base_url=base_url),
+            granted_permissions={"read", "write", "delete", "financial"},
+        )
+    )
+    monkeypatch.setattr(main_module, "_demo_registry", registry)
+
+
+def test_http_request_against_mock_endpoints_end_to_end(monkeypatch):
+    _registry_with_http(monkeypatch, _live_server_base_url())
+
+    client.post("/api/demo/reset")
+    graph_id = client.post("/api/graphs", json=_http_mock_graph()).json()["id"]
+    response = client.post(
+        f"/api/graphs/{graph_id}/run",
+        json={"inputs": {"order_id": "12345", "note": "自动签收"}},
+    )
+
+    assert response.status_code == 200
+    outputs = response.json()["outputs"]
+    assert outputs["tool-get"]["action_status"] == "SUCCESS"
+    assert outputs["tool-get"]["result"]["status"] == 200
+    assert outputs["tool-get"]["result"]["body"]["orders"][0]["order_id"] == "12345"
+    post_result = outputs["tool-post"]["result"]
+    assert post_result["status"] == 200
+    assert post_result["body"]["order_id"] == "12345"
+    assert post_result["body"]["body"] == {"note": "自动签收"}
+    assert post_result["body"]["received"] is True
+    client.post("/api/demo/reset")
+
+
+def test_http_request_401_still_success_with_status(monkeypatch):
+    _registry_with_http(monkeypatch, _live_server_base_url())
+
+    graph = _http_mock_graph()
+    # 去掉鉴权头：mock 端点返回 401，但 HTTP 适配器仍判 SUCCESS 带 status
+    graph["nodes"] = graph["nodes"][:2]
+    graph["edges"] = [graph["edges"][0]]
+    graph["nodes"][1]["config"]["params"] = json.dumps({"url": "/api/demo/mock/orders"})
+
+    client.post("/api/demo/reset")
+    graph_id = client.post("/api/graphs", json=graph).json()["id"]
+    outputs = client.post(f"/api/graphs/{graph_id}/run", json={}).json()["outputs"]
+
+    assert outputs["tool-get"]["action_status"] == "SUCCESS"
+    assert outputs["tool-get"]["result"]["status"] == 401
     client.post("/api/demo/reset")

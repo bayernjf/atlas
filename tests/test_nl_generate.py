@@ -139,3 +139,23 @@ def test_llm_prompt_advertises_subgraph_kind_and_config(monkeypatch):
     assert "已保存图 id" in system
     assert "不要凭空捏造 id" in system
     assert "恰好配置一条出边" in system
+
+
+def test_llm_prompt_advertises_registered_tools(monkeypatch):
+    import litellm
+
+    captured: dict[str, str] = {}
+
+    def _fake_completion(*, model, messages, temperature):  # noqa: ANN001
+        captured["system"] = messages[0]["content"]
+        return {"choices": [{"message": {"content": "{}"}}]}
+
+    monkeypatch.setattr(litellm, "completion", _fake_completion)
+    monkeypatch.setenv("LITELLM_MODEL", "fake-model")
+
+    generate_graph("任意需求")
+    system = captured["system"]
+    assert "/api/adapters" in system
+    assert "http/request" in system
+    assert "params 是 JSON 字符串" in system
+    assert "shop/process_refund" in system

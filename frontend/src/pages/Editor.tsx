@@ -101,7 +101,8 @@ export function Editor() {
             graphId?: string
             error?: string
             branches?: Array<{ label: string; target: string; status: string; error: string }>
-            result?: unknown
+            action_status?: string
+            result?: { status?: unknown; code?: string; message?: string }
           }
           const decision = output?.decision
           if (output?.mode === 'human_approval') {
@@ -152,6 +153,16 @@ export function Editor() {
               appendLog(`✓ ${event.node_id} 子图完成：${output.graphId}（失败：${output.error ?? '未知错误'}）`)
             } else {
               appendLog(`✓ ${event.node_id} 子图完成：${output.graphId}（成功）`)
+            }
+          } else if (output?.action_status) {
+            if (output.action_status === 'SUCCESS') {
+              const httpStatus =
+                typeof output.result?.status === 'number' ? `（HTTP ${output.result.status}）` : ''
+              appendLog(`✓ ${event.node_id} 工具调用：SUCCESS${httpStatus}`)
+            } else {
+              appendLog(
+                `✗ ${event.node_id} 工具调用：FAILED（${output.result?.code ?? 'UNKNOWN'} ${output.result?.message ?? ''}）`,
+              )
             }
           } else {
             appendLog(`✓ 节点完成：${event.node_id}`)

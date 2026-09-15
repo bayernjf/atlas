@@ -23,6 +23,7 @@ import { ParallelConfig } from './ParallelConfig'
 import { WaitConfig } from './WaitConfig'
 import { SubgraphConfig } from './SubgraphConfig'
 import { HumanApprovalConfig } from './HumanApprovalConfig'
+import { ToolCallConfig } from './ToolCallConfig'
 
 export function PropertyPanel() {
   const nodes = useEditorStore((state) => state.nodes)
@@ -284,37 +285,6 @@ function DecisionConfig({ config, update, variablePaths, onInsert }: VariableIns
           step={0.05}
           value={config.confidenceThreshold}
           onChange={(value) => update({ confidenceThreshold: value ?? 0.6 })}
-        />
-      </Field>
-    </>
-  )
-}
-
-function ToolCallConfig({ config, update, variablePaths, onInsert }: VariableInsertProps) {
-  return (
-    <>
-      <Field label="工具（适配器能力，如 web-playwright/click）">
-        <Input
-          value={config.tool}
-          status={!config.tool?.trim() ? 'error' : undefined}
-          onChange={(event) => update({ tool: event.target.value })}
-        />
-      </Field>
-      <Field label="参数映射（支持 {{路径}} 引用）">
-        <Input.TextArea
-          rows={3}
-          placeholder='{"element_desc": "提交按钮"}'
-          value={config.params}
-          onChange={(event) => update({ params: event.target.value })}
-        />
-      </Field>
-      <Field label="插入变量引用">
-        <Select
-          style={{ width: '100%' }}
-          value={undefined}
-          placeholder="选择后追加到参数"
-          onChange={onInsert}
-          options={variablePaths.map((path) => ({ value: path, label: `{{${path}}}` }))}
         />
       </Field>
     </>
