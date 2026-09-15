@@ -17,15 +17,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from atlas.collaboration.approvals import ApprovalBroker
 from atlas.database.adapter import DatabaseHarnessAdapter
 from atlas.database.service import DatabaseClient, demo_engine
-from atlas.debug import DebugController, DebugStopped, DebuggerBroker
+from atlas.debug import DebugController, DebugStopped
 from atlas.graph.conditions import validate_expression
 from atlas.graph.dsl import GraphValidationError, parse_graph
 from atlas.graph.loader import compile_graph, run_graph
@@ -33,13 +32,14 @@ from atlas.harness.base import Permission
 from atlas.harness.registry import AdapterRegistry
 from atlas.httpapi.adapter import HttpApiHarnessAdapter
 from atlas.httpapi.service import HttpApiClient
+from atlas.iam.deps import get_principal, require, services_for, session_store, tenant_registry
+from atlas.iam.principals import Principal, authenticate
+from atlas.iam.registry import TenantServices
 from atlas.llm.nl_generate import generate_graph
 from atlas.message.adapter import MessageHarnessAdapter
-from atlas.message.service import MessageService
-from atlas.monitoring import RUN_RING_SIZE, MonitoringStore, extract_node_results
+from atlas.monitoring import RUN_RING_SIZE, extract_node_results
 from atlas.recording import (
     RecordingCreateRequest,
-    RecordingStore,
     collect_steps,
     compare as compare_recording,
     preset_approvals,
@@ -59,39 +59,30 @@ _http_client = HttpApiClient.from_env()
 _db_client = DatabaseClient.from_env()
 if _db_client is None:
     _db_client = DatabaseClient(demo_engine(), demo=True)
-# 消息适配器：进程内消息服务，仅记录不真实投递（04 §4.8）
-_message_service = MessageService()
+# Demo 全局基础设施（04 §5.14）：店铺/出向连接/适配器注册不按租户分区；
+# 图/录制/反馈/消息/审批/调试/监控每租户一套，由 iam.TenantRegistry 惰性装配。
+_FULL_PERMISSIONS = {Permission.READ, Permission.WRITE, Permission.DELETE, Permission.FINANCIAL}
 _demo_registry = AdapterRegistry()
 _demo_registry.register(
     ShopHarnessAdapter(
         service=_demo_shop,
-        granted_permissions={Permission.READ, Permission.WRITE, Permission.DELETE, Permission.FINANCIAL},
+        granted_permissions=_FULL_PERMISSIONS,
     )
 )
 _demo_registry.register(
     HttpApiHarnessAdapter(
         client=_http_client,
-        granted_permissions={Permission.READ, Permission.WRITE, Permission.DELETE, Permission.FINANCIAL},
+        granted_permissions=_FULL_PERMISSIONS,
     )
 )
 _demo_registry.register(
     DatabaseHarnessAdapter(
         client=_db_client,
-        granted_permissions={Permission.READ, Permission.WRITE, Permission.DELETE, Permission.FINANCIAL},
+        granted_permissions=_FULL_PERMISSIONS,
     )
 )
-_demo_registry.register(
-    MessageHarnessAdapter(
-        service=_message_service,
-        granted_permissions={Permission.READ, Permission.WRITE, Permission.DELETE, Permission.FINANCIAL},
-    )
-)
-# human_approval 节点的进程内审批信号单例（04 §5.6）
-_approval_broker = ApprovalBroker()
-# 单步调试会话单例（04 §5.12；进程内、重启即失，持久化随 14 D27）
-_debug_broker = DebuggerBroker()
-# 基础监控告警单例（04 §5.13；进程内 ring 200，重启/reset 清空）
-_monitoring = MonitoringStore()
+# 全局注册表里的 message 实例仅供适配器发现；执行期注册表替换为租户消息服务
+_demo_registry.register(MessageHarnessAdapter(granted_permissions=_FULL_PERMISSIONS))
 
 
 @app.exception_handler(GraphValidationError)
@@ -131,15 +122,30 @@ class GraphStore:
         self._counter = 0
 
 
-_store = GraphStore()
+def _tenant_graph_resolver(services: TenantServices):
+    """subgraph 节点 graph_resolver（04 §5.7）：在当前租户 GraphStore 内按 id 解析，缺失抛 KeyError。"""
+
+    def resolve(graph_id: str):
+        raw = services.graph_store.get(graph_id)
+        if raw is None:
+            raise KeyError(graph_id)
+        return parse_graph(raw)
+
+    return resolve
 
 
-def _resolve_saved_graph(graph_id: str):
-    """subgraph 节点 graph_resolver（04 §5.7）：按 id 解析已保存图，缺失抛 KeyError。"""
-    raw = _store.get(graph_id)
-    if raw is None:
-        raise KeyError(graph_id)
-    return parse_graph(raw)
+def _runtime_registry(services: TenantServices) -> AdapterRegistry:
+    """执行期适配器注册表：沿用全局 shop/http/database 适配器实例，
+    message 适配器替换为当前租户消息服务（04 §5.14 分区；06 §6.12）。"""
+    registry = AdapterRegistry()
+    for item in _demo_registry.list_adapters():
+        adapter = _demo_registry.get(item["id"])
+        if item["id"] == "message":
+            adapter = MessageHarnessAdapter(
+                service=services.message_service, granted_permissions=_FULL_PERMISSIONS
+            )
+        registry.register(adapter)
+    return registry
 
 
 class SaveGraphResponse(BaseModel):
@@ -176,34 +182,82 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    token: str
+    principal: Principal
+
+
+def _bearer_token(request: Request) -> str | None:
+    header = request.headers.get("authorization", "")
+    return header[7:].strip() if header[:7].lower() == "bearer " else None
+
+
+@app.post("/api/auth/login", response_model=LoginResponse)
+def login(request: LoginRequest) -> LoginResponse:
+    """账号登录换进程内 sess-token（04 §5.14）；坏凭证 401，不区分用户名/密码错误。"""
+    principal = authenticate(request.username, request.password)
+    if principal is None:
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+    token = session_store.issue(principal)
+    # 触发租户装配，登录后该租户即有独立服务实例
+    tenant_registry.get(principal.tenant_id)
+    return LoginResponse(token=token, principal=principal)
+
+
+@app.get("/api/auth/me", response_model=LoginResponse)
+def me(request: Request, principal: Principal = Depends(get_principal)) -> LoginResponse:
+    return LoginResponse(token=_bearer_token(request) or "", principal=principal)
+
+
+@app.post("/api/auth/logout")
+def logout(request: Request, principal: Principal = Depends(get_principal)) -> dict[str, bool]:
+    token = _bearer_token(request)
+    if token:
+        session_store.revoke(token)
+    return {"logged_out": True}
+
+
 @app.get("/api/adapters")
-def list_adapters() -> list[dict[str, Any]]:
+def list_adapters(principal: Principal = Depends(require("read"))) -> list[dict[str, Any]]:
     return _demo_registry.list_adapters()
 
 
 @app.post("/api/graphs", response_model=SaveGraphResponse)
-def save_graph(raw: dict[str, Any]) -> SaveGraphResponse:
+def save_graph(
+    raw: dict[str, Any], principal: Principal = Depends(require("operate"))
+) -> SaveGraphResponse:
+    services = services_for(principal)
     graph = parse_graph(raw)
-    graph_id = _store.save(raw)
+    graph_id = services.graph_store.save(raw)
     return SaveGraphResponse(id=graph_id, version=graph.version)
 
 
 @app.get("/api/graphs")
-def list_graphs() -> dict[str, list[dict[str, Any]]]:
-    """列出已保存图（subgraph 节点选择器数据源，04 §5.7）。"""
-    return {"items": _store.list()}
+def list_graphs(principal: Principal = Depends(require("read"))) -> dict[str, list[dict[str, Any]]]:
+    """列出已保存图（subgraph 节点选择器数据源，04 §5.7；按租户分区，04 §5.14）。"""
+    return {"items": services_for(principal).graph_store.list()}
 
 
 @app.get("/api/graphs/{graph_id}")
-def get_graph(graph_id: str) -> dict[str, Any]:
-    raw = _store.get(graph_id)
+def get_graph(
+    graph_id: str, principal: Principal = Depends(require("read"))
+) -> dict[str, Any]:
+    raw = services_for(principal).graph_store.get(graph_id)
     if raw is None:
+        # 跨租户访问同样 404，不泄漏资源存在性（04 §5.14）
         raise HTTPException(status_code=404, detail=f"Graph 不存在：{graph_id}")
     return raw
 
 
 @app.get("/api/templates")
-def list_catalog_templates() -> dict[str, list[dict[str, Any]]]:
+def list_catalog_templates(
+    principal: Principal = Depends(require("read")),
+) -> dict[str, list[dict[str, Any]]]:
     """列出内置流程模板（列表投影不含 graph，04 §5.10；12 §3.6）。"""
     return {
         "items": [
@@ -220,7 +274,9 @@ def list_catalog_templates() -> dict[str, list[dict[str, Any]]]:
 
 
 @app.get("/api/templates/{template_id}")
-def get_catalog_template(template_id: str) -> dict[str, Any]:
+def get_catalog_template(
+    template_id: str, principal: Principal = Depends(require("read"))
+) -> dict[str, Any]:
     """返回模板完整元数据（含 graph），未知 id 404（04 §5.10）。"""
     template = get_template(template_id)
     if template is None:
@@ -228,16 +284,16 @@ def get_catalog_template(template_id: str) -> dict[str, Any]:
     return template.model_dump()
 
 
-_recording_store = RecordingStore()
-
-
 @app.post("/api/recordings", status_code=201)
-def create_recording(request: RecordingCreateRequest) -> dict[str, Any]:
+def create_recording(
+    request: RecordingCreateRequest, principal: Principal = Depends(require("operate"))
+) -> dict[str, Any]:
     """录制用例入库：按 graph_id 取已保存图原始 JSON 作快照，不重新执行（04 §5.11）。"""
-    raw = _store.get(request.graph_id)
+    services = services_for(principal)
+    raw = services.graph_store.get(request.graph_id)
     if raw is None:
         raise HTTPException(status_code=404, detail=f"Graph 不存在：{request.graph_id}")
-    case = _recording_store.add(
+    case = services.recording_store.add(
         name=request.name,
         graph=raw,
         inputs=request.inputs,
@@ -248,8 +304,10 @@ def create_recording(request: RecordingCreateRequest) -> dict[str, Any]:
 
 
 @app.get("/api/recordings")
-def list_recordings() -> dict[str, list[dict[str, Any]]]:
-    """录制用例列表投影（不含 graph/steps）。"""
+def list_recordings(
+    principal: Principal = Depends(require("read")),
+) -> dict[str, list[dict[str, Any]]]:
+    """录制用例列表投影（不含 graph/steps）；按租户分区（04 §5.14）。"""
     return {
         "items": [
             {
@@ -260,34 +318,41 @@ def list_recordings() -> dict[str, list[dict[str, Any]]]:
                 "status": case.status,
                 "created_at": case.created_at,
             }
-            for case in _recording_store.list()
+            for case in services_for(principal).recording_store.list()
         ]
     }
 
 
 @app.get("/api/recordings/{case_id}")
-def get_recording(case_id: str) -> dict[str, Any]:
-    case = _recording_store.get(case_id)
+def get_recording(
+    case_id: str, principal: Principal = Depends(require("read"))
+) -> dict[str, Any]:
+    case = services_for(principal).recording_store.get(case_id)
     if case is None:
         raise HTTPException(status_code=404, detail=f"录制用例不存在：{case_id}")
     return case.model_dump()
 
 
 @app.delete("/api/recordings/{case_id}")
-def delete_recording(case_id: str) -> dict[str, bool]:
-    if not _recording_store.delete(case_id):
+def delete_recording(
+    case_id: str, principal: Principal = Depends(require("operate"))
+) -> dict[str, bool]:
+    if not services_for(principal).recording_store.delete(case_id):
         raise HTTPException(status_code=404, detail=f"录制用例不存在：{case_id}")
     return {"deleted": True}
 
 
 @app.post("/api/recordings/{case_id}/replay")
-def replay_recording(case_id: str) -> dict[str, Any]:
+def replay_recording(
+    case_id: str, principal: Principal = Depends(require("operate"))
+) -> dict[str, Any]:
     """回放冻结快照：标准 run_graph + 审批决策预置，比对操作序列与逐节点产出。
 
     回放期异常（如快照内 subgraph 引用的 graphId 已被 reset 删除）折叠为
     replay_status="failed"/matches=false，不抛 500（04 §5.11，06 §6.9）。
     """
-    case = _recording_store.get(case_id)
+    services = services_for(principal)
+    case = services.recording_store.get(case_id)
     if case is None:
         raise HTTPException(status_code=404, detail=f"录制用例不存在：{case_id}")
 
@@ -303,11 +368,11 @@ def replay_recording(case_id: str) -> dict[str, Any]:
         result = run_graph(
             graph,
             inputs=inputs,
-            registry=_demo_registry,
-            approval_broker=_approval_broker,
+            registry=_runtime_registry(services),
+            approval_broker=services.approval_broker,
             graph_id=f"replay-{case.id}",
             emit=emit,
-            graph_resolver=_resolve_saved_graph,
+            graph_resolver=_tenant_graph_resolver(services),
         )
         replay_steps = take_steps()
         tools_by_node = {
@@ -338,12 +403,15 @@ def replay_recording(case_id: str) -> dict[str, Any]:
 
 
 @app.post("/api/graphs/{graph_id}/compile", response_model=CompileResponse)
-def compile_saved_graph(graph_id: str) -> CompileResponse:
-    raw = _store.get(graph_id)
+def compile_saved_graph(
+    graph_id: str, principal: Principal = Depends(require("operate"))
+) -> CompileResponse:
+    services = services_for(principal)
+    raw = services.graph_store.get(graph_id)
     if raw is None:
         raise HTTPException(status_code=404, detail=f"Graph 不存在：{graph_id}")
     graph = parse_graph(raw)
-    compile_graph(graph, graph_id=graph_id, graph_resolver=_resolve_saved_graph)
+    compile_graph(graph, graph_id=graph_id, graph_resolver=_tenant_graph_resolver(services))
 
     incoming = {edge.target for edge in graph.edges}
     outgoing = {edge.source for edge in graph.edges}
@@ -356,8 +424,8 @@ def compile_saved_graph(graph_id: str) -> CompileResponse:
     )
 
 
-def _load_graph_or_404(graph_id: str):
-    raw = _store.get(graph_id)
+def _load_graph_or_404(services: TenantServices, graph_id: str):
+    raw = services.graph_store.get(graph_id)
     if raw is None:
         raise HTTPException(status_code=404, detail=f"Graph 不存在：{graph_id}")
     return parse_graph(raw)
@@ -397,24 +465,30 @@ def _validate_debug(graph, debug: Any) -> list[dict[str, Any]]:
 
 
 @app.post("/api/graphs/{graph_id}/run", response_model=RunGraphResponse)
-def run_saved_graph(graph_id: str, payload: dict[str, Any] | None = None) -> RunGraphResponse:
-    graph = _load_graph_or_404(graph_id)
+def run_saved_graph(
+    graph_id: str,
+    payload: dict[str, Any] | None = None,
+    principal: Principal = Depends(require("operate")),
+) -> RunGraphResponse:
+    services = services_for(principal)
+    graph = _load_graph_or_404(services, graph_id)
     if (payload or {}).get("debug") is not None:
         raise HTTPException(status_code=422, detail="单步调试仅支持流式运行 /run/stream")
     graph_view = {"nodes": [{"id": node.id, "type": node.type} for node in graph.nodes]}
     started_at = datetime.now(timezone.utc).isoformat()
     started = time.monotonic()
+    monitoring = services.monitoring
     try:
         result = run_graph(
             graph,
             inputs=(payload or {}).get("inputs"),
-            registry=_demo_registry,
-            approval_broker=_approval_broker,
+            registry=_runtime_registry(services),
+            approval_broker=services.approval_broker,
             graph_id=graph_id,
-            graph_resolver=_resolve_saved_graph,
+            graph_resolver=_tenant_graph_resolver(services),
         )
     except Exception as exc:
-        _monitoring.record_run(
+        monitoring.record_run(
             graph_id=graph_id,
             mode="sync",
             status="error",
@@ -424,7 +498,7 @@ def run_saved_graph(graph_id: str, payload: dict[str, Any] | None = None) -> Run
             error=f"{type(exc).__name__}: {exc}",
         )
         raise
-    _monitoring.record_run(
+    monitoring.record_run(
         graph_id=graph_id,
         mode="sync",
         status="completed",
@@ -436,20 +510,32 @@ def run_saved_graph(graph_id: str, payload: dict[str, Any] | None = None) -> Run
 
 
 @app.post("/api/graphs/{graph_id}/run/stream")
-def run_saved_graph_stream(graph_id: str, payload: dict[str, Any] | None = None) -> StreamingResponse:
+def run_saved_graph_stream(
+    graph_id: str,
+    payload: dict[str, Any] | None = None,
+    principal: Principal = Depends(require("operate")),
+) -> StreamingResponse:
     """SSE：node_start/node_end/run_end 实时推送到画布（08 §7.3 验收 5）。
 
     run_graph 在后台线程执行、事件经 queue 实时下发（真流式）；
     human_approval 节点依赖 node_start 在阻塞前到达，前端凭 token 调决策端点放行。
+    租户服务 bundle 在请求线程解析后显式透传 worker（06 §6.12，无线程上下文变量）。
     """
-    graph = _load_graph_or_404(graph_id)
+    services = services_for(principal)
+    graph = _load_graph_or_404(services, graph_id)
     inputs = (payload or {}).get("inputs")
     debug = (payload or {}).get("debug")
     graph_view = {"nodes": [{"id": node.id, "type": node.type} for node in graph.nodes]}
     debug_session = None
     if debug is not None:
         breakpoints = _validate_debug(graph, debug)
-        debug_session = _debug_broker.create(graph_id=graph_id, breakpoints=breakpoints)
+        debug_session = services.debug_broker.create(graph_id=graph_id, breakpoints=breakpoints)
+
+    # worker 启动前固定当前租户的分区对象，避免跨租户串用
+    registry = _runtime_registry(services)
+    approval_broker = services.approval_broker
+    graph_resolver = _tenant_graph_resolver(services)
+    monitoring = services.monitoring
 
     def event_stream():
         events: queue.Queue[dict[str, Any] | None] = queue.Queue()
@@ -476,15 +562,15 @@ def run_saved_graph_stream(graph_id: str, payload: dict[str, Any] | None = None)
                 result = run_graph(
                     graph,
                     inputs=inputs,
-                    registry=_demo_registry,
-                    approval_broker=_approval_broker,
+                    registry=registry,
+                    approval_broker=approval_broker,
                     graph_id=graph_id,
                     emit=recording_emit if monitored else emit,
-                    graph_resolver=_resolve_saved_graph,
+                    graph_resolver=graph_resolver,
                     debug_controller=debug_controller,
                 )
                 if monitored:
-                    _monitoring.record_run(
+                    monitoring.record_run(
                         graph_id=graph_id,
                         mode="stream",
                         status="completed",
@@ -497,7 +583,7 @@ def run_saved_graph_stream(graph_id: str, payload: dict[str, Any] | None = None)
                 events.put({"__stopped__": exc.node_id})
             except Exception as exc:  # 运行期异常经 SSE error 帧下发，不静默吞线程
                 if monitored:
-                    _monitoring.record_run(
+                    monitoring.record_run(
                         graph_id=graph_id,
                         mode="stream",
                         status="error",
@@ -545,16 +631,24 @@ class ApprovalDecisionRequest(BaseModel):
 
 
 @app.get("/api/approvals")
-def list_approvals() -> dict[str, list[dict[str, Any]]]:
-    """列出当前 pending 的人工审批请求（进程内单例，重启即失）。"""
-    return {"items": _approval_broker.list_pending()}
+def list_approvals(
+    principal: Principal = Depends(require("read")),
+) -> dict[str, list[dict[str, Any]]]:
+    """列出当前租户 pending 的人工审批请求（进程内 broker，重启即失）。"""
+    return {"items": services_for(principal).approval_broker.list_pending()}
 
 
 @app.post("/api/approvals/{token}/decision")
-def decide_approval(token: str, request: ApprovalDecisionRequest) -> dict[str, Any]:
-    if _approval_broker.get(token) is None:
+def decide_approval(
+    token: str,
+    request: ApprovalDecisionRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    broker = services_for(principal).approval_broker
+    if broker.get(token) is None:
+        # 跨租户 token 同样 404，不泄漏存在性（04 §5.14）
         raise HTTPException(status_code=404, detail=f"审批请求不存在或已清理：{token}")
-    if not _approval_broker.resolve(token, request.decision, comment=request.comment):
+    if not broker.resolve(token, request.decision, comment=request.comment):
         raise HTTPException(status_code=409, detail="该审批请求已有决策，重复提交不生效")
     return {"token": token, "decision": request.decision, "resolvedBy": "human"}
 
@@ -564,14 +658,21 @@ class ResumeDebugRequest(BaseModel):
 
 
 @app.get("/api/debug")
-def list_debug_pauses() -> dict[str, list[dict[str, Any]]]:
-    """列出当前活动调试暂停（04 §5.12；进程内，重启即失）。"""
-    return {"items": _debug_broker.list_pending()}
+def list_debug_pauses(
+    principal: Principal = Depends(require("read")),
+) -> dict[str, list[dict[str, Any]]]:
+    """列出当前租户活动调试暂停（04 §5.12；进程内，重启即失）。"""
+    return {"items": services_for(principal).debug_broker.list_pending()}
 
 
 @app.post("/api/debug/{token}/resume")
-def resume_debug(token: str, request: ResumeDebugRequest) -> dict[str, str]:
-    session = _debug_broker.get_session(token)
+def resume_debug(
+    token: str,
+    request: ResumeDebugRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, str]:
+    broker = services_for(principal).debug_broker
+    session = broker.get_session(token)
     if session is None:
         raise HTTPException(status_code=404, detail=f"调试暂停不存在或已恢复：{token}")
     if not session.resolve(token, request.action):
@@ -580,50 +681,65 @@ def resume_debug(token: str, request: ResumeDebugRequest) -> dict[str, str]:
 
 
 @app.get("/api/monitoring/metrics")
-def monitoring_metrics() -> dict[str, Any]:
-    """运行指标聚合：全局 + 按图 + 失败节点 Top（04 §5.13）。"""
-    return _monitoring.snapshot_metrics()
+def monitoring_metrics(
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """运行指标聚合：租户内全局 + 按图 + 失败节点 Top（04 §5.13/§5.14）。"""
+    return services_for(principal).monitoring.snapshot_metrics()
 
 
 @app.get("/api/monitoring/runs")
-def monitoring_runs(graph_id: str | None = None, limit: int = 50) -> dict[str, list[dict[str, Any]]]:
-    """最近运行（新→旧，默认 50、上限 200；04 §5.13）。"""
+def monitoring_runs(
+    graph_id: str | None = None,
+    limit: int = 50,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, list[dict[str, Any]]]:
+    """最近运行（新→旧，默认 50、上限 200；04 §5.13；按租户分区）。"""
     if limit < 1 or limit > RUN_RING_SIZE:
         raise HTTPException(status_code=422, detail=f"limit 必须是 1-{RUN_RING_SIZE} 之间的整数")
-    runs = _monitoring.list_runs(graph_id=graph_id, limit=limit)
+    runs = services_for(principal).monitoring.list_runs(graph_id=graph_id, limit=limit)
     return {"items": [run.model_dump() for run in runs]}
 
 
 @app.get("/api/monitoring/rules")
-def monitoring_get_rules() -> dict[str, Any]:
-    return _monitoring.get_rules().model_dump()
+def monitoring_get_rules(
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    return services_for(principal).monitoring.get_rules().model_dump()
 
 
 @app.put("/api/monitoring/rules")
-def monitoring_update_rules(raw: dict[str, Any]) -> dict[str, Any]:
-    """全量替换规则配置；校验失败聚合为中文 422。"""
+def monitoring_update_rules(
+    raw: dict[str, Any], principal: Principal = Depends(require("administer"))
+) -> dict[str, Any]:
+    """全量替换本租户规则配置；校验失败聚合为中文 422（admin only，04 §5.14）。"""
     try:
-        rules = _monitoring.update_rules(raw)
+        rules = services_for(principal).monitoring.update_rules(raw)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return rules.model_dump()
 
 
 @app.get("/api/alerts")
-def list_alerts(status: str | None = None) -> dict[str, list[dict[str, Any]]]:
-    """告警列表（新→旧，可按 open/acknowledged/resolved 过滤；04 §5.13）。"""
+def list_alerts(
+    status: str | None = None, principal: Principal = Depends(require("read"))
+) -> dict[str, list[dict[str, Any]]]:
+    """告警列表（新→旧，可按 open/acknowledged/resolved 过滤；04 §5.13；按租户分区）。"""
     if status is not None and status not in ("open", "acknowledged", "resolved"):
         raise HTTPException(
             status_code=422,
             detail="status 只允许 open、acknowledged、resolved",
         )
-    alerts = _monitoring.list_alerts(status=status)
+    alerts = services_for(principal).monitoring.list_alerts(status=status)
     return {"items": [alert.model_dump() for alert in alerts]}
 
 
 @app.post("/api/alerts/{alert_id}/acknowledge")
-def acknowledge_alert(alert_id: str) -> dict[str, Any]:
-    alert = _monitoring.acknowledge_alert(alert_id)
+def acknowledge_alert(
+    alert_id: str, principal: Principal = Depends(require("operate"))
+) -> dict[str, Any]:
+    monitoring = services_for(principal).monitoring
+    alert = monitoring.acknowledge_alert(alert_id)
     if alert is None:
         raise HTTPException(status_code=404, detail=f"告警不存在：{alert_id}")
     if alert is False:
@@ -632,8 +748,11 @@ def acknowledge_alert(alert_id: str) -> dict[str, Any]:
 
 
 @app.post("/api/alerts/{alert_id}/resolve")
-def resolve_alert(alert_id: str) -> dict[str, Any]:
-    alert = _monitoring.resolve_alert(alert_id)
+def resolve_alert(
+    alert_id: str, principal: Principal = Depends(require("operate"))
+) -> dict[str, Any]:
+    monitoring = services_for(principal).monitoring
+    alert = monitoring.resolve_alert(alert_id)
     if alert is None:
         raise HTTPException(status_code=404, detail=f"告警不存在：{alert_id}")
     if alert is False:
@@ -642,7 +761,9 @@ def resolve_alert(alert_id: str) -> dict[str, Any]:
 
 
 @app.post("/api/nl/generate")
-def nl_generate(request: NLGenerateRequest) -> dict[str, Any]:
+def nl_generate(
+    request: NLGenerateRequest, principal: Principal = Depends(require("operate"))
+) -> dict[str, Any]:
     try:
         return {"graph": generate_graph(request.prompt)}
     except ValueError as exc:
@@ -684,24 +805,25 @@ def demo_mock_receipt(order_id: str, body: dict[str, Any] | None = None) -> dict
 
 
 @app.get("/api/demo/messages")
-def demo_messages() -> dict[str, Any]:
-    """消息适配器演示查看（04 §4.8）：进程内已记录消息，重启/reset 清空，无真实投递。"""
-    return {"items": _message_service.list()}
+def demo_messages(
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """消息适配器演示查看（04 §4.8）：本租户进程内已记录消息，重启/reset 清空，无真实投递。"""
+    return {"items": services_for(principal).message_service.list()}
 
 
 @app.post("/api/demo/reset")
-def demo_reset() -> dict[str, bool]:
-    """重置 Demo 数据（店铺恢复 5 笔种子退款单、清空已保存图、释放 pending 审批、清空消息、重建 demo 订单库、
-    清空监控运行/告警并恢复默认规则）。
+def demo_reset(
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, bool]:
+    """重置本租户 Demo 数据（清空已保存图、释放 pending 审批/调试、清空消息、
+    清空监控运行/告警并恢复默认规则）；共享 demo 店铺与 demo SQLite 种子同步重建。
 
-    反馈与录制用例为测试资产，不在此清除（04 §5.11；用例图已快照进自身）。
+    admin only（04 §5.14）。反馈与录制用例为测试资产，按租户保留不在此清除
+    （04 §5.11；用例图已快照进自身）。
     """
+    tenant_registry.reset_tenant(principal.tenant_id)
     _demo_shop.reset()
-    _store.clear()
-    _approval_broker.reset()
-    _debug_broker.reset()
-    _monitoring.reset()
-    _message_service.reset()
     _db_client.reseed_demo()
     return {"reset": True}
 
@@ -735,17 +857,20 @@ class FeedbackStore:
         return list(self._items)
 
 
-_feedback_store = FeedbackStore()
-
-
 @app.post("/api/feedback", status_code=201)
-def submit_feedback(request: FeedbackRequest) -> dict[str, Any]:
-    return _feedback_store.add(request)
+def submit_feedback(
+    request: FeedbackRequest, principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    """反馈入口对全部登录角色开放（viewer 可提交，04 §5.14）；按租户分区。"""
+    return services_for(principal).feedback_store.add(request)
 
 
 @app.get("/api/feedback")
-def list_feedback() -> dict[str, list[dict[str, Any]]]:
-    return {"items": _feedback_store.list()}
+def list_feedback(
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, list[dict[str, Any]]]:
+    """反馈列表 admin only（04 §5.14）；只列本租户。"""
+    return {"items": services_for(principal).feedback_store.list()}
 
 
 _CONSOLE_HTML = """<!doctype html>
