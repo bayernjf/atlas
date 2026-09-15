@@ -147,7 +147,7 @@ body,
 }
 
 .atlas-node-paused {
-  box-shadow: 0 0 0 4px var(--atlas-color-node-ring-paused, #d48806);
+  box-shadow: 0 0 0 4px var(--atlas-color-node-ring-paused);
 }
 
 .atlas-node-breakpoint {
@@ -182,7 +182,7 @@ body,
   width: 4px;
   height: 4px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--atlas-color-bg-container);
 }
 
 .atlas-node-status {

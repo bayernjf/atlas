@@ -317,6 +317,57 @@ def evaluate_rules(*, record, healthy, recent_by_graph: list[RunRecord],
 
 埋点只在 `src/atlas/api/main.py`：sync `/run` 包装（异常记录 error 后原样 raise，保持 500），`/run/stream` worker 非 debug 时以 emit 包装收集 node_end output，`__result__` 记 completed、`__error__` 记 error（部分节点）、`__stopped__`（debug）不记。录制 replay 端点与 subgraph 重入零改动。
 
+### 3.10 多租户与权限（04 §5.14，06 §6.12）
+
+```python
+# src/atlas/iam/principals.py
+class Role(str, Enum):
+    VIEWER = "viewer"; OPERATOR = "operator"; ADMIN = "admin"
+
+class Principal(BaseModel):
+    tenant_id: str            # "t1" | "t2"（v1 种子）
+    tenant_name: str
+    username: str
+    display_name: str
+    role: Role
+
+SEED_TENANTS: dict[str, Tenant]            # t1 演示企业 A / t2 演示企业 B
+SEED_USERS: list[TenantUser]               # admin-a/operator-a/viewer-a/admin-b，明文密码仅 Demo
+def authenticate(username: str, password: str) -> Principal | None: ...
+def can(role: Role, capability: Literal["read", "operate", "administer"]) -> bool: ...
+# viewer: read；operator: read+operate；admin: read+operate+administer；feedback 提交对全部登录者放行
+
+# src/atlas/iam/sessions.py
+class SessionStore:                         # 进程内单锁；重启即失
+    def issue(self, principal: Principal) -> str: ...          # "sess-"+uuid4().hex
+    def principal_for_token(self, token: str) -> Principal | None: ...
+    def revoke(self, token: str) -> None: ...
+    def reset(self) -> None: ...
+
+# src/atlas/iam/registry.py
+class TenantServices(BaseModel):           # 每租户一套进程内实例（id 计数各自从 1 起）
+    graph_store: GraphStore
+    recording_store: RecordingStore
+    feedback_store: FeedbackStore
+    message_service: MessageService
+    approval_broker: ApprovalBroker
+    debug_broker: DebuggerBroker
+    monitoring: MonitoringStore
+
+class TenantRegistry:
+    def get(self, tenant_id: str) -> TenantServices: ...       # 惰性创建
+    def reset_tenant(self, tenant_id: str) -> None: ...
+    # graph.clear + broker/debug/monitoring/message reset（规则回默认、计数器不重置）；
+    # recording_store/feedback_store 不动（沿用「reset 不清除」）
+
+# src/atlas/iam/deps.py（FastAPI 依赖，非中间件）
+def get_principal(request: Request) -> Principal: ...          # Bearer 解析失败 → 401「缺少或无效的登录凭证」
+def require(*capabilities) -> Callable: ...                    # 角色不足 → 403「当前角色无权执行此操作」
+def services_for(principal: Principal) -> TenantServices: ...  # = TenantRegistry.get(principal.tenant_id)
+```
+
+全局单例（不分区，基础设施层）：模板目录、AdapterRegistry 与 demo 适配器实例、HttpApiClient/DatabaseClient 出向连接、DemoShopService、demo SQLite 种子。SSE worker 线程在请求线程内解析 TenantServices 后显式传入，不使用线程上下文变量。
+
 ## 4. 记忆检索接口（依据 06 6.2 / 05 2.3）
 
 ```python
@@ -328,9 +379,14 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 ## 5. 后端服务 API（依据 08 7.2 /api/main.py FastAPI 入口）
 
 > 以下路径为按 Demo 需求推导的 REST 端点清单，字段以 03/04/05 Schema 为准；正式定义待落码时随 OpenAPI 生成。
+>
+> **鉴权四档（2026-09-16，04 §5.14）**：除标注「公开」者外，端点必须携带 `Authorization: Bearer <sess-token>`，缺失/无效 → 401「缺少或无效的登录凭证」；角色不足 → 403「当前角色无权执行此操作」；访问不存在于本租户的对象（含他租户审批/调试 token）→ 404。**公开**：`POST /api/auth/login`、`GET /api/health`、静态托管、`GET /demo/shop`、`/api/demo/**`（模拟外部系统，沿用 X-Demo-Token/demo 登录自带认证，不经平台鉴权）。**viewer+**（全部登录角色可读）：所有 GET 业务端点（graphs/templates/adapters/recordings/monitoring/alerts/approvals/debug/messages）+ `POST /api/feedback`（人人可提交）。**operator+**：POST/PUT/DELETE/POST 运行类——graphs 保存、compile、run、run/stream、nl/generate、recordings 写/删/replay、approvals 决策、debug resume、alerts acknowledge/resolve。**admin only**：`PUT /api/monitoring/rules`、`POST /api/demo/reset`、`GET /api/feedback`。所有业务数据按 token 推断的租户分区（03 各结构租户注记）。
 
 | 方法 | 路径 | 功能 | 关联 |
 |---|---|---|---|
+| POST | /api/auth/login | 登录换会话（公开）：请求体 `{username, password}`，坏凭证 401「用户名或密码错误」；200 返回 `{token:"sess-<uuid hex>", principal:{tenant_id, tenant_name, username, display_name, role}}`（identity_session） | identity_session |
+| GET | /api/auth/me | 回显当前 Bearer 会话的 Principal（viewer+） | identity_session |
+| POST | /api/auth/logout | 吊销当前 token（viewer+；幂等，204/200） | identity_session |
 | POST | /api/graphs | 保存 Graph 定义（DSL） | node_schema / graph_definition |
 | GET | /api/graphs | 列出已保存图（`{items:[{id, node_count, updated_at}]}`，进程内存储；Phase 2 第六项，供 subgraph 节点选择器） | graph_definition |
 | GET | /api/graphs/{id} | 读取 Graph | — |
@@ -378,11 +434,11 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 | POST | /api/nl/generate | 自然语言 → 流程草稿（验收标准 6；W9-W10 已落码：LLM 优先、退款规则模板兜底，无法识别 422） | 08 7.2 |
 | POST | /api/demo/shop/login | Demo 商家平台登录（demo/demo，W9-W10） | — |
 | GET | /api/demo/shop/orders | Demo 待处理退款单（需登录，W9-W10） | — |
-| POST | /api/demo/reset | 重置 Demo 数据（店铺恢复 5 笔种子退款单、清空已保存图与登录态、清空 pending 审批请求，Phase 1 种子客户体验，W10 后；Phase 2 第三项起清空进程内消息记录并重建内置 SQLite demo 订单库——显式 `ATLAS_DATABASE_URL` 配置的外部库不被触碰；内置流程模板目录为代码常量，不受 reset 影响；录制用例为测试资产同样**不被 reset 清除**——其图已快照进用例，GraphStore 清空不影响回放；Phase 2 能力项起 reset 同时把全部**活动调试暂停按 stop 放行**（会话 cancelled + Event set），阻塞在 paused 的运行线程经 DebugStopped 收敛结束，不留悬挂线程；调试会话本身为进程内临时态，不构成需保留的数据）；**Phase 2 能力项（基础监控告警）起 reset 同时清空监控运行记录与告警（ring、streak、Alert 列表）并把规则阈值恢复默认**（运行时数据，同消息记录；重启本就清空，持久化随 11 S1/14 D28） | — |
+| POST | /api/demo/reset | 【admin only】重置**调用方租户**的 Demo 数据（2026-09-16，04 §5.14：角色不足 403；作用域为本租户 graph/approval/debug/monitoring/message，录制与反馈按租户保留不清；跨租户数据不动）：本租户店铺——全局 demo 店铺恢复 5 笔种子退款单、清空已保存图与登录态、清空 pending 审批请求，Phase 1 种子客户体验，W10 后；Phase 2 第三项起清空进程内消息记录并重建内置 SQLite demo 订单库（全局共享模拟基础设施，仍随 reset 重建）——显式 `ATLAS_DATABASE_URL` 配置的外部库不被触碰；内置流程模板目录为代码常量，不受 reset 影响；录制用例为测试资产同样**不被 reset 清除**——其图已快照进用例，GraphStore 清空不影响回放；Phase 2 能力项起 reset 同时把全部**活动调试暂停按 stop 放行**（会话 cancelled + Event set），阻塞在 paused 的运行线程经 DebugStopped 收敛结束，不留悬挂线程；调试会话本身为进程内临时态，不构成需保留的数据；Phase 2 能力项（基础监控告警）起 reset 同时清空**本租户**监控运行记录与告警（ring、streak、Alert 列表）并把规则阈值恢复默认（运行计数不重置；运行时数据，同消息记录；重启本就清空，持久化随 11 S1/14 D28） | — |
 | GET | /api/approvals | 列出当前 pending 审批请求（`{items:[{token, summary, approver, timeoutSeconds, node_id, graph_id}]}`，进程内单例，重启即失；Phase 2 第五项） | human_approval |
 | POST | /api/approvals/{token}/decision | 人工审批决策，请求体 `{decision: "approved"|"rejected", comment?}`（comment v1 仅接收不展示）；首决生效，200 返回决策结果；未知 token 404、已决重复提交 409；Phase 2 第五项 | human_approval |
 | POST | /api/feedback | 提交种子试用反馈（type=bug/suggestion、content、contact 选填，201；进程内存储，reset 不清除；Phase 1） | feedback_item |
-| GET | /api/feedback | 导出全部反馈（陪同试用收集用，`{items: [...]}`，Phase 1） | feedback_item |
+| GET | /api/feedback | 导出反馈（陪同试用收集用，`{items: [...]}`，Phase 1；2026-09-16 起 **admin only** 且只列本租户，04 §5.14） | feedback_item |
 | GET | /demo/shop | 模拟商家售后控制台 HTML 页面（W9-W10，自动登录/抓取演示目标系统） | — |
 | GET | / 及静态资源 | 生产形态（Docker）FastAPI 同源托管 `frontend/dist` 构建产物（`ATLAS_FRONTEND_DIST` 指向目录时挂载，html=True；dev 仍用 Vite 5174 代理） | — |
 | GET | /api/memories/{operator_id} | 记忆配置读取（05 2.4 配置界面） | memory_config |

@@ -1,17 +1,22 @@
 import { Button, Card, Col, Layout, Row, Space, Typography } from 'antd'
+import { UserBadge } from '../components/UserBadge'
+import type { Principal } from '../lib/auth'
 
 const { Content, Header } = Layout
 
 type DashboardProps = {
+  principal: Principal
+  onLogout: () => void
   onOpenEditor: () => void
   onOpenMonitoring: () => void
 }
 
-export function Dashboard({ onOpenEditor, onOpenMonitoring }: DashboardProps) {
+export function Dashboard({ principal, onLogout, onOpenEditor, onOpenMonitoring }: DashboardProps) {
   return (
     <Layout className="page-layout">
-      <Header className="page-header">
+      <Header className="page-header" style={{ justifyContent: 'space-between' }}>
         <Typography.Title level={3}>Atlas 运营体编排平台</Typography.Title>
+        <UserBadge principal={principal} onLogout={onLogout} />
       </Header>
       <Content className="page-content">
         <Space orientation="vertical" size="large" style={{ width: '100%' }}>

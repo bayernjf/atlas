@@ -19,6 +19,8 @@ import { VariablesPanel } from '../components/variablePanel/VariablesPanel'
 import { PropertyPanel } from '../components/propertyPanel/PropertyPanel'
 import { DebugConsole } from '../components/debugConsole/DebugConsole'
 import { FeedbackButton } from '../components/feedback/FeedbackButton'
+import { UserBadge } from '../components/UserBadge'
+import { roleCan, type Principal } from '../lib/auth'
 import { useEditorStore } from '../store/editorStore'
 import { serializeGraph } from '../lib/graphSerializer'
 import { toSteps } from '../lib/recordings'
@@ -59,7 +61,8 @@ const DEMO_ORDERS: Array<{ order_id: string; reason: string; amount: number }> =
   { order_id: '12349', reason: '尺寸不合适', amount: 899 },
 ]
 
-export function Editor() {
+export function Editor({ principal, onLogout }: { principal: Principal; onLogout: () => void }) {
+  const canOperate = roleCan(principal.role, 'operate')
   const nodes = useEditorStore((state) => state.nodes)
   const edges = useEditorStore((state) => state.edges)
   const variables = useEditorStore((state) => state.variables)
@@ -411,9 +414,12 @@ export function Editor() {
   return (
     <Layout className="editor-layout">
       <Header className="editor-header">
-        <Typography.Title level={3} style={{ margin: 0 }}>
-          Atlas 流程编辑器
-        </Typography.Title>
+        <Space align="center">
+          <Typography.Title level={3} style={{ margin: 0 }}>
+            Atlas 流程编辑器
+          </Typography.Title>
+          <UserBadge principal={principal} onLogout={onLogout} />
+        </Space>
         <Space>
           <Select
             value={selectedOrderId}
@@ -424,17 +430,21 @@ export function Editor() {
               label: `${order.order_id}｜${order.reason}｜¥${order.amount}`,
             }))}
           />
-          <Button onClick={() => setNlOpen(true)}>自然语言生成</Button>
+          {canOperate && <Button onClick={() => setNlOpen(true)}>自然语言生成</Button>}
           <Button onClick={openTemplateBrowser}>从模板新建</Button>
-          <Button onClick={openRecordings}>录制与回放</Button>
+          {canOperate && <Button onClick={openRecordings}>录制与回放</Button>}
           <Button onClick={() => setExportOpen(true)}>导出 Graph JSON</Button>
           <FeedbackButton />
-          <Button loading={running} onClick={() => compileAndRun(false, true)}>
-            调试
-          </Button>
-          <Button type="primary" loading={running} onClick={() => compileAndRun()}>
-            编译并运行
-          </Button>
+          {canOperate && (
+            <>
+              <Button loading={running} onClick={() => compileAndRun(false, true)}>
+                调试
+              </Button>
+              <Button type="primary" loading={running} onClick={() => compileAndRun()}>
+                编译并运行
+              </Button>
+            </>
+          )}
         </Space>
       </Header>
       <Layout>
@@ -528,7 +538,7 @@ export function Editor() {
                 justifyContent: 'space-between',
                 gap: 12,
                 padding: 12,
-                border: '1px solid var(--color-border, #d9d9d9)',
+                border: '1px solid var(--atlas-color-border)',
                 borderRadius: 8,
               }}
             >
@@ -593,7 +603,7 @@ export function Editor() {
                 key={rec.id}
                 style={{
                   padding: 12,
-                  border: '1px solid var(--color-border, #d9d9d9)',
+                  border: '1px solid var(--atlas-color-border)',
                   borderRadius: 8,
                 }}
               >

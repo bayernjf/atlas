@@ -1,6 +1,14 @@
 /**
  * Graph DSL 后端 API 客户端（docs/12 §5；dev 经 Vite /api 代理到 8000）。
  */
+import {
+  clearSession,
+  getToken,
+  handleUnauthorized,
+  saveSession,
+  type LoginResponse,
+  type Principal,
+} from './auth'
 import type { SerializedGraph } from './graphSerializer'
 
 export type CompileResult = {
@@ -72,12 +80,17 @@ export type RunEvent =
   | StoppedFrame
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
-    headers: { 'Content-Type': 'application/json' },
-    ...init,
-  })
+  const headers = new Headers(init?.headers)
+  headers.set('Content-Type', 'application/json')
+  const token = getToken()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  const response = await fetch(path, { ...init, headers })
   const body = await response.json().catch(() => null)
   if (!response.ok) {
+    if (response.status === 401) {
+      // 登录端点的 401 是「用户名或密码错误」，不触发会话失效跳转
+      if (path !== '/api/auth/login') handleUnauthorized()
+    }
     const detail = body?.detail
     throw new Error(
       Array.isArray(detail) ? detail.join('；') : detail || `请求失败：${response.status}`,
@@ -85,6 +98,37 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   return body as T
 }
+
+// --- 认证会话（04 §5.14） -------------------------------------------------
+
+export async function login(username: string, password: string): Promise<LoginResponse> {
+  const response = await fetch('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  })
+  const body = await response.json().catch(() => null)
+  if (!response.ok) {
+    throw new Error(body?.detail || `登录失败：${response.status}`)
+  }
+  const session = body as LoginResponse
+  saveSession(session.token, session.principal)
+  return session
+}
+
+export async function me(): Promise<LoginResponse> {
+  return request<LoginResponse>('/api/auth/me')
+}
+
+export async function logout(): Promise<void> {
+  try {
+    if (getToken()) await request('/api/auth/logout', { method: 'POST' })
+  } finally {
+    clearSession()
+  }
+}
+
+export type { Principal }
 
 export type SavedGraphSummary = {
   id: string
@@ -261,13 +305,17 @@ export async function streamRun(
   onEvent: (event: RunEvent) => void,
   debug?: DebugRequest,
 ): Promise<RunResult> {
+  const headers = new Headers({ 'Content-Type': 'application/json' })
+  const token = getToken()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
   const response = await fetch(`/api/graphs/${id}/run/stream`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(debug ? { inputs, debug } : { inputs }),
   })
   if (!response.ok || !response.body) {
     const body = await response.json().catch(() => null)
+    if (response.status === 401) handleUnauthorized()
     throw new Error(body?.detail || `流式运行失败：${response.status}`)
   }
 

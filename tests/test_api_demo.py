@@ -11,6 +11,8 @@ from fastapi.testclient import TestClient
 
 from atlas.api.main import app
 
+from tests.conftest import DEFAULT_AUTH_HEADER
+
 client = TestClient(app)
 
 
@@ -204,7 +206,7 @@ def test_live_stream_human_approval_decision_unblocks_run():
     graph_id = client.post("/api/graphs", json=_human_approval_graph()).json()["id"]
 
     def decide_when_pending() -> None:
-        with TestClient(app) as decider:
+        with TestClient(app, headers=DEFAULT_AUTH_HEADER) as decider:
             token = None
             for _ in range(100):
                 items = decider.get("/api/approvals").json()["items"]
@@ -250,7 +252,8 @@ def test_live_stream_human_approval_decision_unblocks_run():
 
 
 def test_approval_decision_endpoint_404_409_422_and_reset():
-    from atlas.api.main import _approval_broker
+    from atlas.iam.deps import tenant_registry
+    _approval_broker = tenant_registry.get("t1").approval_broker
 
     assert client.post(
         "/api/approvals/unknown-token/decision", json={"decision": "approved"}
@@ -824,7 +827,7 @@ def _drive_debug_stream(graph_id, payload, action_for):
     finished = threading.Event()
 
     def decider() -> None:
-        with TestClient(app) as ctl:
+        with TestClient(app, headers=DEFAULT_AUTH_HEADER) as ctl:
             while not finished.is_set():
                 for item in ctl.get("/api/debug").json()["items"]:
                     if item["token"] in seen:
@@ -1009,7 +1012,7 @@ def test_i17_debug_reset_releases_paused_run_and_new_run_works():
     stream_errors: list[Exception] = []
 
     def watch_pending() -> None:
-        with TestClient(app) as ctl:
+        with TestClient(app, headers=DEFAULT_AUTH_HEADER) as ctl:
             while not watcher_done.is_set():
                 if ctl.get("/api/debug").json()["items"]:
                     pending.set()
@@ -1060,7 +1063,8 @@ def test_i17_debug_reset_releases_paused_run_and_new_run_works():
 # （04 §5.13；每个用例先 _monitoring.reset()，与套件中其他运行隔离）
 # ---------------------------------------------------------------------------
 
-from atlas.api.main import _monitoring  # noqa: E402
+from atlas.iam.deps import tenant_registry  # noqa: E402
+_monitoring = tenant_registry.get("t1").monitoring
 
 
 def _sql_template_graph() -> dict:

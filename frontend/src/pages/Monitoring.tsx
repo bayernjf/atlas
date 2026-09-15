@@ -31,6 +31,8 @@ import {
   type RuleConfig,
   type RunRecord,
 } from '../lib/apiClient'
+import { roleCan, type Principal } from '../lib/auth'
+import { UserBadge } from '../components/UserBadge'
 import {
   ALERT_STATUS_COLORS,
   ALERT_STATUS_LABELS,
@@ -44,6 +46,8 @@ import {
 const { Content, Header } = Layout
 
 type MonitoringProps = {
+  principal: Principal
+  onLogout: () => void
   onBack: () => void
 }
 
@@ -62,7 +66,9 @@ function rateText(rate: number | null): string {
   return rate === null ? '—' : `${(rate * 100).toFixed(1)}%`
 }
 
-export function Monitoring({ onBack }: MonitoringProps) {
+export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
+  const canOperate = roleCan(principal.role, 'operate')
+  const canAdmin = roleCan(principal.role, 'administer')
   const [metrics, setMetrics] = useState<MetricsSummary>(EMPTY_METRICS)
   const [alerts, setAlerts] = useState<AlertItem[]>([])
   const [runs, setRuns] = useState<RunRecord[]>([])
@@ -172,26 +178,27 @@ export function Monitoring({ onBack }: MonitoringProps) {
       title: '操作',
       key: 'actions',
       width: 140,
-      render: (_, alert) => (
-        <Space>
-          <Button
-            size="small"
-            disabled={alert.status !== 'open'}
-            onClick={() => mutateAlert(acknowledgeAlert, alert.id)}
-          >
-            确认
-          </Button>
-          <Button
-            size="small"
-            type="primary"
-            ghost
-            disabled={alert.status === 'resolved'}
-            onClick={() => mutateAlert(resolveAlert, alert.id)}
-          >
-            关闭
-          </Button>
-        </Space>
-      ),
+      render: (_, alert) =>
+        canOperate ? (
+          <Space>
+            <Button
+              size="small"
+              disabled={alert.status !== 'open'}
+              onClick={() => mutateAlert(acknowledgeAlert, alert.id)}
+            >
+              确认
+            </Button>
+            <Button
+              size="small"
+              type="primary"
+              ghost
+              disabled={alert.status === 'resolved'}
+              onClick={() => mutateAlert(resolveAlert, alert.id)}
+            >
+              关闭
+            </Button>
+          </Space>
+        ) : null,
     },
   ]
 
@@ -249,6 +256,7 @@ export function Monitoring({ onBack }: MonitoringProps) {
               <Button onClick={refresh}>刷新</Button>
             </Badge>
             <Button onClick={onBack}>返回 Dashboard</Button>
+            <UserBadge principal={principal} onLogout={onLogout} />
           </Space>
         </Space>
       </Header>
@@ -267,7 +275,7 @@ export function Monitoring({ onBack }: MonitoringProps) {
                 <Statistic
                   title="健康"
                   value={metrics.healthy}
-                  styles={{ content: { color: '#3f8600' } }}
+                  styles={{ content: { color: 'var(--atlas-color-success)' } }}
                 />
               </Card>
             </Col>
@@ -276,7 +284,7 @@ export function Monitoring({ onBack }: MonitoringProps) {
                 <Statistic
                   title="不健康"
                   value={metrics.unhealthy}
-                  styles={{ content: { color: metrics.unhealthy ? '#cf1322' : undefined } }}
+                  styles={{ content: { color: metrics.unhealthy ? 'var(--atlas-color-danger)' : undefined } }}
                 />
               </Card>
             </Col>
@@ -328,8 +336,8 @@ export function Monitoring({ onBack }: MonitoringProps) {
             />
           </Card>
 
-          {rules && (
-            <Card title="告警规则（阈值调整即时生效，进程内保存）">
+          {rules && canAdmin && (
+            <Card title="告警规则（仅管理员可改，阈值调整即时生效，进程内保存）">
               {ruleError && (
                 <Alert type="error" showIcon message="规则保存失败" description={ruleError} style={{ marginBottom: 12 }} />
               )}
