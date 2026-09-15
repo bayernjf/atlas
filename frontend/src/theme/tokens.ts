@@ -19,6 +19,7 @@ const primitive = {
   purple6: '#722ed1',
   red5: '#ff4d4f',
   gold6: '#faad14',
+  gold7: '#d48806',
   cyan6: '#08979c',
   magenta6: '#c41d7f',
   orange6: '#fa8c16',
@@ -60,6 +61,7 @@ export const semanticTokens = {
   'color-node-pulse-soft': 'rgba(22, 119, 255, 0.18)',
   'color-node-pulse-strong': 'rgba(22, 119, 255, 0.35)',
   'color-node-ring-completed': 'rgba(82, 196, 26, 0.35)',
+  'color-node-ring-paused': primitive.gold7,
   'color-status-pill-bg': 'rgba(255, 255, 255, 0.25)',
   // 阴影
   'shadow-node': 'rgba(0, 0, 0, 0.1)',

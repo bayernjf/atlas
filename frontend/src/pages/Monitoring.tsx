@@ -275,7 +275,7 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
                 <Statistic
                   title="健康"
                   value={metrics.healthy}
-                  styles={{ content: { color: '#3f8600' } }}
+                  styles={{ content: { color: 'var(--atlas-color-success)' } }}
                 />
               </Card>
             </Col>
@@ -284,7 +284,7 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
                 <Statistic
                   title="不健康"
                   value={metrics.unhealthy}
-                  styles={{ content: { color: metrics.unhealthy ? '#cf1322' : undefined } }}
+                  styles={{ content: { color: metrics.unhealthy ? 'var(--atlas-color-danger)' : undefined } }}
                 />
               </Card>
             </Col>

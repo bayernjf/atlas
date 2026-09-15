@@ -538,7 +538,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                 justifyContent: 'space-between',
                 gap: 12,
                 padding: 12,
-                border: '1px solid var(--color-border, #d9d9d9)',
+                border: '1px solid var(--atlas-color-border)',
                 borderRadius: 8,
               }}
             >
@@ -603,7 +603,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                 key={rec.id}
                 style={{
                   padding: 12,
-                  border: '1px solid var(--color-border, #d9d9d9)',
+                  border: '1px solid var(--atlas-color-border)',
                   borderRadius: 8,
                 }}
               >
