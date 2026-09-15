@@ -366,7 +366,7 @@ export function Editor() {
           title="加载模板将整体替换当前画布，未保存的修改会丢失。"
           style={{ marginBottom: 12 }}
         />
-        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+        <Space orientation="vertical" size={12} style={{ width: '100%' }}>
           {templatesLoading && <Typography.Text type="secondary">模板加载中…</Typography.Text>}
           {templates.map((template) => (
             <div
