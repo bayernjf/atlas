@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### feat / database+message+graph+api+frontend+llm（2026-09-15，dev 未推送）
+
+- Phase 2 适配器方向第二、三项「DB 适配器（通用 SQL）」「消息适配器（进程内消息服务）」端到端落地，适配器清单（API/DB/消息/Web）完成三类。契约：04 §4.7/§4.8 两个权威 blockquote，03 新增 `db_sql_params`/`message_send_params`，06 §6.7 运行时，09 目录树/模块映射/待定项 8 收口，10 §4 ADR T10（自建 engine 工厂、env 隔离、无新依赖），12 §3.5 接口与 REST，13 U26/I12-I14，14 新增 D23（DB：JDBC/ODBC/数仓驱动、只读账号、SQL 审查、schema 表单、审计分页）与 D24（消息：SMTP/IM/短信/webhook、OAuth、模板、reply、入站、限流重试）。新包 `src/atlas/database/`（adapter_id/type=`database`，`database/query` read·幂等返 `{columns,rows,row_count,truncated}`，limit 1-1000 缺省 500；`database/execute` write 返 `{rowcount}`，DDL 允许）与 `src/atlas/message/`（adapter_id/type=`message`，`message/send` write 非幂等，`{channel,to,subject,body}` 全必填、to ≤20、email 须含 `@`，零真实投递）。四项用户拍板：① DB 双能力映射 READ/WRITE 权限门；② 适配器专用 `ATLAS_DATABASE_URL`（scheme 白名单 postgresql+psycopg/sqlite，独立 engine 工厂与平台 DATABASE_URL 物理隔离），未配置且未注入时 fail-closed DB_NOT_CONFIGURED，api/main 与 build_demo_registry 显式注入 StaticPool SQLite 内存 demo（seed 两笔 orders，reset 重建；显式配置的外部 PG 不被 reset 触碰），DB_SQL_ERROR URL 经 hide_password 脱敏，PG 查询连接 readonly+rollback；③ 消息 v1 仅进程内 sink，`GET /api/demo/messages` 查看，重启/reset 清空；④ 模板复用 `{{路径}}` 插值。loader 通用 JSON 通道扩为 `GENERIC_JSON_ADAPTERS={http,database,message}`；前端零功能改动（选择器由 /api/adapters 驱动），ToolCallConfig 占位符扩四类 JSON 示例；NL prompt 广告三工具并强调绑定参数。`.env.example` 补 ATLAS_DATABASE_URL 段。测试：后端 273 passed/8 skipped（+database 35/message 21/loader 4/Demo API 4，全部 SQLite 内存/进程内零真实外呼），前端 vitest 49（6 文件）不变；浏览器对真实 :8000+:5174 实测选择器分组与权限标记、query 两笔订单、execute INSERT 后可见且 reset 复原、send 消息 /api/demo/messages 可见且 reset 清空、坏 JSON FAILED，控制台零应用错误。8 提交 b24c9c5..（docs 契约起）；PR 待用户推送 dev 后发起。
+
 ### docs / 发布同步（2026-09-15）
 
 - Phase 2 全部在途工作经 PR #4-#10 合并 main：#4 condition、#5 loop、#6 parallel、#7 wait、#8 human_approval、#9 subgraph（2026-09-14）、#10 通用 HTTP API 适配器（2026-09-15，merge `4385a00`，9 提交 3c60f3d..8a9ddc3）；每个 PR 与合并后 main 的 GitHub Actions CI（gitleaks/后端 pytest/前端 oxlint+vitest+build）均实跑全绿。handoff 仓库状态与质量门、docs/08 落码 blockquote 同步；本地 main 快进至 `4385a00`。
