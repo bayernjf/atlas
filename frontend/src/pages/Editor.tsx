@@ -142,6 +142,7 @@ export function Editor() {
         if (event.type === 'paused') {
           setNodeStatus(event.node_id, 'paused')
           setPausedFrame(event)
+          setResumeBusy(null)
           setVarFilter('')
           const reasonLabel = { step: '单步', breakpoint: '断点', condition: '条件' }[event.reason]
           appendLog(`⏸ 调试暂停：${event.node_id}（${reasonLabel}）`)
