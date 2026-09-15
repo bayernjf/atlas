@@ -11,14 +11,26 @@ from .cases import RecordStep
 _VOLATILE_KEYS = ("token", "sent_at")
 
 
-def normalize(value: Any, tool: str | None = None) -> Any:
+def normalize(
+    value: Any, tool: str | None = None, node_type: str | None = None
+) -> Any:
     """深拷贝后递归剔除运行时易变值。
 
     - 任意层级删除 ``token`` 与 ``sent_at``；
     - 同层含 ``sent_at`` 的 dict（message/send 记录）额外删除 uuid ``id``；
-    - tool == "http/request" 的节点产出删除 ``result.headers.date``。
+    - tool == "http/request" 的节点产出删除 ``result.headers.date``；
+    - human_approval 产出删除 ``resolvedBy``（回放经 inputs.approvals 预置，
+      决策来源 input/timeout/human 属运行时来源，不是业务结果）；
+    - trigger 产出删除 ``context.payload.approvals``（预置通道随载荷回显）。
     业务键（order_id 等）不受影响。
     """
+    if node_type == "human_approval" and isinstance(value, dict):
+        value = {k: v for k, v in value.items() if k != "resolvedBy"}
+    elif node_type == "trigger" and isinstance(value, dict):
+        context = value.get("context")
+        if isinstance(context, dict) and isinstance(context.get("payload"), dict):
+            payload = {k: v for k, v in context["payload"].items() if k != "approvals"}
+            value = {**value, "context": {**context, "payload": payload}}
     return _normalize(value, tool)
 
 
@@ -94,8 +106,8 @@ def compare(
             all_match = False
             continue
         tool = tools_by_node.get(step.node_id)
-        expected = normalize(step.output, tool)
-        actual = normalize(replayed.output, tool)
+        expected = normalize(step.output, tool, step.node_type)
+        actual = normalize(replayed.output, tool, step.node_type)
         notes: list[str] = []
         if step.node_type != replayed.node_type:
             notes.append(f"节点类型不一致（baseline={step.node_type}，replay={replayed.node_type}）")

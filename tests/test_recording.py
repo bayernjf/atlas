@@ -122,6 +122,65 @@ def test_http_steps_with_different_dates_normalize_equal():
     assert a == b
 
 
+def test_normalize_trigger_strips_injected_approvals_preset_but_keeps_payload():
+    raw = {
+        "context": {
+            "triggerType": "webhook",
+            "cron": "",
+            "webhookUrl": "/hooks/x",
+            "payload": {
+                "order_id": "12345",
+                "approvals": {"approval-1": "rejected"},
+            },
+        }
+    }
+    out = normalize(raw, node_type="trigger")
+    payload = out["context"]["payload"]
+    assert "approvals" not in payload
+    assert payload["order_id"] == "12345"
+    assert "approvals" in raw["context"]["payload"]
+
+
+def test_normalize_human_approval_strips_resolved_by_provenance():
+    out = normalize(_human_step("human-1", "rejected").output, node_type="human_approval")
+    assert "resolvedBy" not in out
+    assert out["decision"] == "rejected"
+    assert out["target"] == "tool-x"
+
+
+def test_compare_matches_when_replay_uses_preset_approval_channel():
+    # 浏览器实测场景：录制时人工超时决策，回放经 inputs.approvals 预置：
+    # trigger 载荷回显 approvals、approval 节点 resolvedBy 由 timeout 变 input。
+    trigger_base = RecordStep(
+        node_id="trigger-1",
+        node_type="trigger",
+        output={"context": {"triggerType": "webhook", "payload": {"order_id": "12345"}}},
+    )
+    trigger_replay = RecordStep(
+        node_id="trigger-1",
+        node_type="trigger",
+        output={
+            "context": {
+                "triggerType": "webhook",
+                "payload": {"order_id": "12345", "approvals": {"approval-1": "rejected"}},
+            }
+        },
+    )
+    human_base = _human_step("approval-1", "rejected", token="tok-a")
+    human_base.output["resolvedBy"] = "timeout"
+    human_replay = _human_step("approval-1", "rejected", token="tok-b")
+    human_replay.output["resolvedBy"] = "input"
+    report = compare(
+        [trigger_base, human_base],
+        [trigger_replay, human_replay],
+        tools_by_node={},
+        baseline_status="completed",
+        replay_status="completed",
+    )
+    assert report["matches"] is True
+    assert all(row["match"] for row in report["steps"])
+
+
 # ---------- preset_approvals ----------
 
 def test_preset_approvals_extracts_mixed_decisions():
