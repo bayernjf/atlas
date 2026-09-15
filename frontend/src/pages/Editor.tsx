@@ -2,6 +2,7 @@ import { useState } from 'react'
 import {
   Alert,
   Button,
+  Card,
   Layout,
   Modal,
   Popconfirm,
@@ -33,8 +34,12 @@ import {
   saveGraph,
   saveRecording,
   streamRun,
+  resumeDebug,
+  DebugRunStoppedError,
   type ApprovalRequest,
   type CompileResult,
+  type DebugAction,
+  type PausedFrame,
   type RecordingSummary,
   type ReplayReport,
   type RunEvent,
@@ -62,6 +67,7 @@ export function Editor() {
   const setNodeStatus = useEditorStore((state) => state.setNodeStatus)
   const resetRunStatuses = useEditorStore((state) => state.resetRunStatuses)
   const appendLog = useEditorStore((state) => state.appendLog)
+  const breakpoints = useEditorStore((state) => state.breakpoints)
 
   const [exportOpen, setExportOpen] = useState(false)
   const [runOpen, setRunOpen] = useState(false)
@@ -93,13 +99,26 @@ export function Editor() {
   const [replayBusyId, setReplayBusyId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [reports, setReports] = useState<Record<string, ReplayReport>>({})
+  const [pausedFrame, setPausedFrame] = useState<PausedFrame | null>(null)
+  const [resumeBusy, setResumeBusy] = useState<DebugAction | null>(null)
+  const [varFilter, setVarFilter] = useState('')
 
   const graphJson = JSON.stringify(serializeGraph(nodes, edges, variables), null, 2)
 
-  async function compileAndRun(shouldRecord = false) {
+  async function compileAndRun(shouldRecord = false, debugMode = false) {
     const order = DEMO_ORDERS.find((item) => item.order_id === selectedOrderId)
     const inputs: RunInputs | undefined = order
       ? { order_id: order.order_id, reason: order.reason, amount: order.amount }
+      : undefined
+    const debugRequest = debugMode
+      ? {
+          breakpoints: Object.entries(breakpoints)
+            .filter(([nodeId]) => nodes.some((node) => node.id === nodeId))
+            .map(([node_id, breakpoint]) => {
+              const expression = breakpoint.expression?.trim()
+              return expression ? { node_id, expression } : { node_id }
+            }),
+        }
       : undefined
     setRunning(true)
     setRunError(null)
@@ -107,6 +126,9 @@ export function Editor() {
     setRunResult(null)
     setPendingApprovals([])
     setApprovalError(null)
+    setPausedFrame(null)
+    setResumeBusy(null)
+    setVarFilter('')
     resetRunStatuses()
     const collected: RunEvent[] = []
     try {
@@ -117,7 +139,16 @@ export function Editor() {
       appendLog(`编译成功：入口 ${compiled.entrypoints.join(', ')}`)
       const executed = await streamRun(saved.id, inputs, (event) => {
         collected.push(event)
-        if (event.type === 'node_start') {
+        if (event.type === 'paused') {
+          setNodeStatus(event.node_id, 'paused')
+          setPausedFrame(event)
+          setVarFilter('')
+          const reasonLabel = { step: '单步', breakpoint: '断点', condition: '条件' }[event.reason]
+          appendLog(`⏸ 调试暂停：${event.node_id}（${reasonLabel}）`)
+        } else if (event.type === 'stopped') {
+          setPausedFrame(null)
+          setNodeStatus(event.node_id, 'idle')
+        } else if (event.type === 'node_start') {
           setNodeStatus(event.node_id, 'running')
           appendLog(`▶ 节点开始：${event.node_id}`)
           if (event.approval) {
@@ -207,7 +238,7 @@ export function Editor() {
             appendLog(`✓ 节点完成：${event.node_id}`)
           }
         }
-      })
+      }, debugRequest)
       const toolOutputs = Object.values(executed.outputs).filter(
         (output): output is { result?: { status?: string } } =>
           typeof output === 'object' && output !== null && 'result' in output,
@@ -215,6 +246,7 @@ export function Editor() {
       const finalStatus = toolOutputs.find((output) => output.result?.status)?.result?.status
       appendLog(`运行结束：${finalStatus ?? executed.status}`)
       setRunResult(executed)
+      setPausedFrame(null)
       setRunOpen(true)
       if (shouldRecord) {
         const name = caseName.trim() || `录制 ${saved.id} ${new Date().toLocaleString()}`
@@ -230,13 +262,19 @@ export function Editor() {
         setCaseName(`录制 ${new Date().toLocaleString()}`)
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      setRunError(message)
-      if (shouldRecord) setRecordingError(message)
-      appendLog(`✗ 运行失败：${message}`)
+      if (error instanceof DebugRunStoppedError) {
+        appendLog(`调试已停止：${error.nodeId}（无运行结果）`)
+      } else {
+        const message = error instanceof Error ? error.message : String(error)
+        setRunError(message)
+        if (shouldRecord) setRecordingError(message)
+        appendLog(`✗ 运行失败：${message}`)
+      }
     } finally {
       setRunning(false)
       setRecordBusy(false)
+      setResumeBusy(null)
+      setPausedFrame(null)
     }
   }
 
@@ -357,6 +395,18 @@ export function Editor() {
     setPendingApprovals((items) => items.filter((item) => item.token !== currentApproval.token))
   }
 
+  async function resumeCurrentDebug(action: DebugAction) {
+    const frame = pausedFrame
+    if (!frame) return
+    setResumeBusy(action)
+    try {
+      await resumeDebug(frame.token, action)
+    } catch (error) {
+      appendLog(`✗ 调试放行失败：${error instanceof Error ? error.message : String(error)}`)
+      setResumeBusy(null)
+    }
+  }
+
   return (
     <Layout className="editor-layout">
       <Header className="editor-header">
@@ -378,6 +428,9 @@ export function Editor() {
           <Button onClick={openRecordings}>录制与回放</Button>
           <Button onClick={() => setExportOpen(true)}>导出 Graph JSON</Button>
           <FeedbackButton />
+          <Button loading={running} onClick={() => compileAndRun(false, true)}>
+            调试
+          </Button>
           <Button type="primary" loading={running} onClick={() => compileAndRun()}>
             编译并运行
           </Button>
@@ -669,6 +722,80 @@ export function Editor() {
           style={{ position: 'fixed', top: 72, right: 24, zIndex: 1000, width: 420 }}
         />
       )}
+      {pausedFrame && (
+        <Card
+          size="small"
+          className="debug-toolbar"
+          title={
+            <Space size={8} wrap>
+              <span>调试暂停于</span>
+              <Tag color="orange">{pausedFrame.node_id}</Tag>
+              <Tag>
+                {{ step: '单步', breakpoint: '断点', condition: '条件' }[pausedFrame.reason]}
+              </Tag>
+            </Space>
+          }
+        >
+          <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+            <Space size={8} wrap>
+              <Button
+                size="small"
+                type="primary"
+                loading={resumeBusy === 'step'}
+                disabled={resumeBusy !== null}
+                onClick={() => resumeCurrentDebug('step')}
+              >
+                下一步
+              </Button>
+              <Button
+                size="small"
+                loading={resumeBusy === 'continue'}
+                disabled={resumeBusy !== null}
+                onClick={() => resumeCurrentDebug('continue')}
+              >
+                继续
+              </Button>
+              <Button
+                size="small"
+                danger
+                loading={resumeBusy === 'stop'}
+                disabled={resumeBusy !== null}
+                onClick={() => resumeCurrentDebug('stop')}
+              >
+                停止
+              </Button>
+            </Space>
+            <Input
+              size="small"
+              allowClear
+              placeholder="按键过滤变量"
+              value={varFilter}
+              onChange={(event) => setVarFilter(event.target.value)}
+            />
+            <div>
+              <Typography.Text type="secondary">全局变量 globals（只读快照）</Typography.Text>
+              <pre className="debug-toolbar-json">
+                {JSON.stringify(filterSnapshot(pausedFrame.globals, varFilter), null, 2)}
+              </pre>
+            </div>
+            <div>
+              <Typography.Text type="secondary">节点产出 outputs（只读快照）</Typography.Text>
+              <pre className="debug-toolbar-json">
+                {JSON.stringify(filterSnapshot(pausedFrame.outputs, varFilter), null, 2)}
+              </pre>
+            </div>
+          </Space>
+        </Card>
+      )}
     </Layout>
   )
+}
+
+function filterSnapshot(
+  snapshot: Record<string, unknown>,
+  keyword: string,
+): Record<string, unknown> {
+  const kw = keyword.trim()
+  if (!kw) return snapshot
+  return Object.fromEntries(Object.entries(snapshot).filter(([key]) => key.includes(kw)))
 }

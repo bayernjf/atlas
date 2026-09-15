@@ -86,7 +86,7 @@ export type NodeConfig = {
 export type EditorNodeData = {
   label: string
   kind: NodeKind
-  status: 'idle' | 'running' | 'completed'
+  status: 'idle' | 'running' | 'completed' | 'paused'
   description?: string
   config: NodeConfig
   retry: RetryConfig
