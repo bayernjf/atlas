@@ -13,7 +13,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from .alerts import Alert, AlertEvent, RuleConfig, evaluate_rules, rules_from_raw, validate_rules
-from .metrics import is_healthy
+from .metrics import NodeResult, is_healthy
 
 RUN_RING_SIZE = 200
 
@@ -26,7 +26,7 @@ class RunRecord(BaseModel):
     started_at: str
     finished_at: str
     duration_ms: float
-    nodes: list
+    nodes: list[NodeResult]
     error: str | None = None
 
 

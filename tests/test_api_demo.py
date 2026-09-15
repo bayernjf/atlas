@@ -6,6 +6,7 @@ import json
 import time
 import uuid
 
+import pytest
 from fastapi.testclient import TestClient
 
 from atlas.api.main import app
@@ -1052,3 +1053,243 @@ def test_i17_debug_reset_releases_paused_run_and_new_run_works():
     ) as response:
         events = [line for line in response.iter_lines() if line.startswith("event:")]
     assert events[-1] == "event: result"
+
+
+# ---------------------------------------------------------------------------
+# I18：基础监控告警 —— metrics/runs/rules/alerts 端点与两个运行入口埋点
+# （04 §5.13；每个用例先 _monitoring.reset()，与套件中其他运行隔离）
+# ---------------------------------------------------------------------------
+
+from atlas.api.main import _monitoring  # noqa: E402
+
+
+def _sql_template_graph() -> dict:
+    return client.get("/api/templates/sql-query-notify").json()["graph"]
+
+
+def _stream_run(graph_id: str, payload: dict | None = None):
+    """非 debug 流式运行，返回 (event_names, data_frames)。"""
+    event_names: list[str] = []
+    data_frames: list[dict] = []
+    pending_event = None
+    with client.stream("POST", f"/api/graphs/{graph_id}/run/stream", json=payload or {}) as response:
+        assert response.status_code == 200
+        for line in response.iter_lines():
+            if line.startswith("event:"):
+                pending_event = line[len("event:"):].strip()
+                event_names.append(pending_event)
+            elif line.startswith("data:"):
+                data_frames.append(json.loads(line[len("data:"):].strip()))
+    return event_names, data_frames
+
+
+def _alerts_by_rule(status: str | None = None) -> dict[str, dict]:
+    return {a["rule_id"]: a for a in client.get(
+        "/api/alerts" + (f"?status={status}" if status else "")
+    ).json()["items"]}
+
+
+def test_i18_sync_healthy_run_metrics_and_run_projection():
+    client.post("/api/demo/reset")  # 重新播种待退款订单
+    graph_id = client.post("/api/graphs", json=_refund_graph()).json()["id"]
+    response = client.post(
+        f"/api/graphs/{graph_id}/run",
+        json={"inputs": {"order_id": "12345", "reason": "监控健康用例", "amount": 128}},
+    )
+    assert response.status_code == 200
+
+    metrics = client.get("/api/monitoring/metrics").json()
+    assert metrics["total"] == 1 and metrics["healthy"] == 1 and metrics["unhealthy"] == 0
+    assert metrics["success_rate"] == 1.0
+    assert metrics["p50"] is not None and metrics["p95"] is not None
+    assert metrics["per_graph"][0]["graph_id"] == graph_id
+
+    runs = client.get(f"/api/monitoring/runs?graph_id={graph_id}").json()["items"]
+    assert len(runs) == 1
+    run = runs[0]
+    assert run["graph_id"] == graph_id and run["mode"] == "sync" and run["status"] == "completed"
+    assert run["nodes"] and all(node["status"] == "success" for node in run["nodes"])
+    assert run["error"] is None and run["duration_ms"] >= 0
+    assert client.get("/api/alerts").json()["items"] == []
+
+
+def test_i18_stream_failed_node_creates_node_failed_alert():
+    _monitoring.reset()
+    graph_id = client.post("/api/graphs", json=_sql_template_graph()).json()["id"]
+    event_names, frames = _stream_run(graph_id, {"inputs": {}})
+    assert event_names[-1] == "result"
+
+    runs = client.get("/api/monitoring/runs").json()["items"]
+    run = runs[0]
+    assert run["mode"] == "stream" and run["status"] == "completed"
+    failed = [node for node in run["nodes"] if node["status"] == "failed"]
+    assert [node["node_id"] for node in failed] == ["query-1"]
+    assert failed[0]["node_type"] == "tool_call" and failed[0]["error"]
+
+    alerts = _alerts_by_rule()
+    assert "node_failed" in alerts
+    alert = alerts["node_failed"]
+    assert alert["severity"] == "warning" and alert["status"] == "open"
+    assert alert["count"] == 1 and alert["last_run_id"] == run["id"]
+    assert "query-1" in alert["message"]
+
+
+def test_i18_sync_and_stream_error_runs_record_run_error(monkeypatch):
+    import atlas.api.main as main
+
+    _monitoring.reset()
+    graph_id = client.post("/api/graphs", json=_refund_graph()).json()["id"]
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("监控异常用例 boom")
+
+    monkeypatch.setattr(main, "run_graph", boom)
+
+    with pytest.raises(RuntimeError):  # 同步入口异常照常冒泡（TestClient 外为 500）
+        client.post(f"/api/graphs/{graph_id}/run", json={})
+
+    event_names, frames = _stream_run(graph_id)
+    assert event_names[-1] == "error"
+    assert "RuntimeError" in frames[-1]["detail"]
+
+    runs = client.get("/api/monitoring/runs").json()["items"]
+    assert {run["status"] for run in runs} == {"error"}
+    assert {run["mode"] for run in runs} == {"sync", "stream"}
+    assert all("RuntimeError: 监控异常用例 boom" in run["error"] for run in runs)
+    alerts = _alerts_by_rule()
+    assert "run_error" in alerts and alerts["run_error"]["severity"] == "critical"
+
+
+def test_i18_consecutive_failures_merge_then_healthy_resets_streak():
+    _monitoring.reset()
+    graph_id = client.post("/api/graphs", json=_sql_template_graph()).json()["id"]
+    failed_ids: list[str] = []
+    for _ in range(3):
+        response = client.post(f"/api/graphs/{graph_id}/run", json={"inputs": {}})
+        assert response.status_code == 200
+        latest = client.get(f"/api/monitoring/runs?graph_id={graph_id}").json()["items"][0]["id"]
+        failed_ids.append(latest)
+
+    alerts = _alerts_by_rule()
+    assert alerts["consecutive_failures"]["severity"] == "critical"
+    assert alerts["consecutive_failures"]["count"] == 1
+    assert alerts["node_failed"]["count"] == 3
+    assert alerts["node_failed"]["last_run_id"] == failed_ids[-1]
+
+    # 同图一次健康运行重置 streak：再连续失败 threshold-1 次不产生新连续告警
+    assert client.post(
+        f"/api/graphs/{graph_id}/run", json={"inputs": {"min_amount": 0}}
+    ).status_code == 200
+    for _ in range(2):
+        client.post(f"/api/graphs/{graph_id}/run", json={"inputs": {}})
+    consecutive = [
+        a for a in client.get("/api/alerts").json()["items"]
+        if a["rule_id"] == "consecutive_failures"
+    ]
+    assert len(consecutive) == 1
+
+
+def test_i18_runs_filter_limit_and_alerts_status_filter():
+    client.post("/api/demo/reset")  # 重新播种 + 清空监控与图
+    bad = client.post("/api/graphs", json=_sql_template_graph()).json()["id"]
+    good = client.post("/api/graphs", json=_refund_graph()).json()["id"]
+    client.post(f"/api/graphs/{bad}/run", json={"inputs": {}})
+    client.post(
+        f"/api/graphs/{good}/run",
+        json={"inputs": {"order_id": "12345", "reason": "x", "amount": 64}},
+    )
+
+    only_good = client.get(f"/api/monitoring/runs?graph_id={good}").json()["items"]
+    assert [run["graph_id"] for run in only_good] == [good]
+    limited = client.get("/api/monitoring/runs?limit=1").json()["items"]
+    assert len(limited) == 1
+    bad_limit = client.get("/api/monitoring/runs?limit=999")
+    assert bad_limit.status_code == 422 and "limit" in bad_limit.json()["detail"]
+
+    open_alerts = client.get("/api/alerts?status=open").json()["items"]
+    assert open_alerts and all(a["status"] == "open" for a in open_alerts)
+    bad_status = client.get("/api/alerts?status=closed")
+    assert bad_status.status_code == 422
+
+
+def test_i18_rules_get_put_validation_and_threshold_takes_effect():
+    _monitoring.reset()
+    defaults = client.get("/api/monitoring/rules").json()
+    assert defaults["consecutive_failures"]["threshold"] == 3
+    assert defaults["failure_rate"] == {"enabled": True, "window": 20, "min_samples": 5, "rate": 0.5}
+
+    invalid = client.put("/api/monitoring/rules", json={
+        "run_error": {"enabled": "yes"},
+        "node_failed": {"enabled": False},
+        "consecutive_failures": {"enabled": True, "threshold": 0},
+        "failure_rate": {"enabled": True, "window": 20, "min_samples": 5, "rate": 2},
+    })
+    assert invalid.status_code == 422
+    detail = invalid.json()["detail"]
+    assert "run_error.enabled" in detail and "threshold" in detail and "rate" in detail
+
+    saved = client.put("/api/monitoring/rules", json={
+        "run_error": {"enabled": True},
+        "node_failed": {"enabled": False},
+        "consecutive_failures": {"enabled": True, "threshold": 1},
+        "failure_rate": {"enabled": False, "window": 20, "min_samples": 5, "rate": 0.5},
+    })
+    assert saved.status_code == 200
+    graph_id = client.post("/api/graphs", json=_sql_template_graph()).json()["id"]
+    client.post(f"/api/graphs/{graph_id}/run", json={"inputs": {}})
+    rule_ids = {a["rule_id"] for a in client.get("/api/alerts").json()["items"]}
+    assert "node_failed" not in rule_ids  # 规则已关闭
+    assert "consecutive_failures" in rule_ids  # 阈值改为 1，首次失败即触发
+
+
+def test_i18_alert_acknowledge_resolve_404_and_409():
+    _monitoring.reset()
+    graph_id = client.post("/api/graphs", json=_sql_template_graph()).json()["id"]
+    client.post(f"/api/graphs/{graph_id}/run", json={"inputs": {}})
+    alert_id = client.get("/api/alerts?status=open").json()["items"][0]["id"]
+
+    assert client.post(f"/api/alerts/alt-missing/acknowledge").status_code == 404
+    acked = client.post(f"/api/alerts/{alert_id}/acknowledge")
+    assert acked.status_code == 200 and acked.json()["status"] == "acknowledged"
+    assert client.post(f"/api/alerts/{alert_id}/acknowledge").status_code == 409
+
+    assert client.post("/api/alerts/alt-missing/resolve").status_code == 404
+    resolved = client.post(f"/api/alerts/{alert_id}/resolve")
+    assert resolved.status_code == 200 and resolved.json()["status"] == "resolved"
+    assert client.post(f"/api/alerts/{alert_id}/resolve").status_code == 409
+    assert client.get("/api/alerts?status=open").json()["items"] == []
+
+
+def test_i18_demo_reset_clears_monitoring_and_restores_rules():
+    _monitoring.reset()
+    graph_id = client.post("/api/graphs", json=_sql_template_graph()).json()["id"]
+    client.post(f"/api/graphs/{graph_id}/run", json={"inputs": {}})
+    client.put("/api/monitoring/rules", json={
+        "run_error": {"enabled": True},
+        "node_failed": {"enabled": False},
+        "consecutive_failures": {"enabled": True, "threshold": 9},
+        "failure_rate": {"enabled": True, "window": 10, "min_samples": 3, "rate": 0.9},
+    })
+    assert client.get("/api/monitoring/metrics").json()["total"] == 1
+
+    assert client.post("/api/demo/reset").status_code == 200
+    assert client.get("/api/monitoring/metrics").json()["total"] == 0
+    assert client.get("/api/monitoring/runs").json()["items"] == []
+    assert client.get("/api/alerts").json()["items"] == []
+    rules = client.get("/api/monitoring/rules").json()
+    assert rules["node_failed"]["enabled"] is True
+    assert rules["consecutive_failures"]["threshold"] == 3
+
+
+def test_i18_debug_run_is_not_recorded():
+    _monitoring.reset()
+    graph_id = client.post("/api/graphs", json=_refund_graph()).json()["id"]
+    event_names, _, _ = _drive_debug_stream(
+        graph_id,
+        {"inputs": {"order_id": "MON-DBG", "reason": "调试不记录", "amount": 128},
+         "debug": {"breakpoints": [{"node_id": "trigger-1"}]}},
+        lambda item: "stop",
+    )
+    assert event_names[-1] == "stopped"
+    assert client.get("/api/monitoring/runs").json()["items"] == []
+    assert client.get("/api/monitoring/metrics").json()["total"] == 0
