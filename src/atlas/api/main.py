@@ -33,6 +33,13 @@ from atlas.httpapi.service import HttpApiClient
 from atlas.llm.nl_generate import generate_graph
 from atlas.message.adapter import MessageHarnessAdapter
 from atlas.message.service import MessageService
+from atlas.recording import (
+    RecordingCreateRequest,
+    RecordingStore,
+    collect_steps,
+    compare as compare_recording,
+    preset_approvals,
+)
 from atlas.shop.adapter import ShopHarnessAdapter
 from atlas.shop.service import DemoShopService
 from atlas.template import get_template, list_templates
@@ -213,6 +220,115 @@ def get_catalog_template(template_id: str) -> dict[str, Any]:
     return template.model_dump()
 
 
+_recording_store = RecordingStore()
+
+
+@app.post("/api/recordings", status_code=201)
+def create_recording(request: RecordingCreateRequest) -> dict[str, Any]:
+    """录制用例入库：按 graph_id 取已保存图原始 JSON 作快照，不重新执行（04 §5.11）。"""
+    raw = _store.get(request.graph_id)
+    if raw is None:
+        raise HTTPException(status_code=404, detail=f"Graph 不存在：{request.graph_id}")
+    case = _recording_store.add(
+        name=request.name,
+        graph=raw,
+        inputs=request.inputs,
+        steps=request.steps,
+        status=request.status,
+    )
+    return case.model_dump()
+
+
+@app.get("/api/recordings")
+def list_recordings() -> dict[str, list[dict[str, Any]]]:
+    """录制用例列表投影（不含 graph/steps）。"""
+    return {
+        "items": [
+            {
+                "id": case.id,
+                "name": case.name,
+                "node_count": len(case.graph.get("nodes", [])),
+                "step_count": len(case.steps),
+                "status": case.status,
+                "created_at": case.created_at,
+            }
+            for case in _recording_store.list()
+        ]
+    }
+
+
+@app.get("/api/recordings/{case_id}")
+def get_recording(case_id: str) -> dict[str, Any]:
+    case = _recording_store.get(case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail=f"录制用例不存在：{case_id}")
+    return case.model_dump()
+
+
+@app.delete("/api/recordings/{case_id}")
+def delete_recording(case_id: str) -> dict[str, bool]:
+    if not _recording_store.delete(case_id):
+        raise HTTPException(status_code=404, detail=f"录制用例不存在：{case_id}")
+    return {"deleted": True}
+
+
+@app.post("/api/recordings/{case_id}/replay")
+def replay_recording(case_id: str) -> dict[str, Any]:
+    """回放冻结快照：标准 run_graph + 审批决策预置，比对操作序列与逐节点产出。
+
+    回放期异常（如快照内 subgraph 引用的 graphId 已被 reset 删除）折叠为
+    replay_status="failed"/matches=false，不抛 500（04 §5.11，06 §6.9）。
+    """
+    case = _recording_store.get(case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail=f"录制用例不存在：{case_id}")
+
+    try:
+        graph = parse_graph(case.graph)
+        emit, take_steps = collect_steps()
+        inputs = dict(case.inputs or {})
+        presets = preset_approvals(case.steps)
+        if presets:
+            approvals = dict(inputs.get("approvals") or {})
+            approvals.update(presets)
+            inputs["approvals"] = approvals
+        result = run_graph(
+            graph,
+            inputs=inputs,
+            registry=_demo_registry,
+            approval_broker=_approval_broker,
+            graph_id=f"replay-{case.id}",
+            emit=emit,
+            graph_resolver=_resolve_saved_graph,
+        )
+        replay_steps = take_steps()
+        tools_by_node = {
+            node.id: (node.config.get("tool") if node.type == "tool_call" else None)
+            for node in graph.nodes
+        }
+        return compare_recording(
+            case.steps,
+            replay_steps,
+            tools_by_node=tools_by_node,
+            baseline_status=case.status,
+            replay_status=result["status"],
+        )
+    except Exception as exc:  # 回放失败折叠为报告而非 500
+        return {
+            "matches": False,
+            "baseline_status": case.status,
+            "replay_status": "failed",
+            "steps": [
+                {
+                    "node_id": step.node_id,
+                    "match": False,
+                    "note": f"回放执行异常，未取得该节点产出：{type(exc).__name__}: {exc}",
+                }
+                for step in case.steps
+            ],
+        }
+
+
 @app.post("/api/graphs/{graph_id}/compile", response_model=CompileResponse)
 def compile_saved_graph(graph_id: str) -> CompileResponse:
     raw = _store.get(graph_id)
@@ -374,7 +490,10 @@ def demo_messages() -> dict[str, Any]:
 
 @app.post("/api/demo/reset")
 def demo_reset() -> dict[str, bool]:
-    """重置 Demo 数据（店铺恢复 5 笔种子退款单、清空已保存图、释放 pending 审批），供种子客户从头体验。"""
+    """重置 Demo 数据（店铺恢复 5 笔种子退款单、清空已保存图、释放 pending 审批、清空消息、重建 demo 订单库）。
+
+    反馈与录制用例为测试资产，不在此清除（04 §5.11；用例图已快照进自身）。
+    """
     _demo_shop.reset()
     _store.clear()
     _approval_broker.reset()

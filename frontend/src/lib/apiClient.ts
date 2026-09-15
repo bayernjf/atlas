@@ -129,13 +129,74 @@ export async function decideApproval(
 }
 
 export type FeedbackType = 'bug' | 'suggestion'
-
 export async function submitFeedback(input: {
   type: FeedbackType
   content: string
   contact?: string
 }): Promise<{ id: string; created_at: string }> {
   return request('/api/feedback', { method: 'POST', body: JSON.stringify(input) })
+}
+
+export type RecordStep = {
+  node_id: string
+  node_type: string
+  output: Record<string, unknown>
+}
+
+export type RecordingSummary = {
+  id: string
+  name: string
+  node_count: number
+  step_count: number
+  status: string
+  created_at: string
+}
+
+export type RecordingCase = {
+  id: string
+  name: string
+  graph: SerializedGraph
+  inputs: RunInputs | null
+  steps: RecordStep[]
+  status: string
+  created_at: string
+}
+
+export type ReplayStepRow = {
+  node_id: string
+  match: boolean
+  note: string
+  diff_keys?: string[]
+}
+
+export type ReplayReport = {
+  matches: boolean
+  baseline_status: string
+  replay_status: string
+  steps: ReplayStepRow[]
+}
+
+export async function listRecordings(): Promise<RecordingSummary[]> {
+  const body = await request<{ items: RecordingSummary[] }>('/api/recordings')
+  return body.items
+}
+
+export async function saveRecording(input: {
+  name: string
+  graph_id: string
+  inputs: RunInputs | null
+  steps: RecordStep[]
+  status: string
+}): Promise<RecordingCase> {
+  return request('/api/recordings', { method: 'POST', body: JSON.stringify(input) })
+}
+
+export async function deleteRecording(id: string): Promise<void> {
+  await request(`/api/recordings/${id}`, { method: 'DELETE' })
+}
+
+export async function replayRecording(id: string): Promise<ReplayReport> {
+  return request(`/api/recordings/${id}/replay`, { method: 'POST' })
 }
 
 /**

@@ -29,6 +29,7 @@
 | `db_sql_params` | 04 / 四、工具/适配器组件 4.7 数据适配器（通用 SQL）v1 契约（权威 blockquote）+ `src/atlas/database/{service,adapter}.py`（query/execute 两能力） | ### 4.7 数据适配器（通用 SQL）v1 契约 |
 | `message_send_params` | 04 / 四、工具/适配器组件 4.8 消息适配器（进程内消息服务）v1 契约（权威 blockquote）+ `src/atlas/message/{service,adapter}.py`（单能力 message/send） | ### 4.8 消息适配器（进程内消息服务）v1 契约 |
 | `template_catalog` | 04 / 五、逻辑组件 5.10 流程模板库（内置只读）v1 契约（权威 blockquote）+ `src/atlas/template/catalog.py`（5 个内置模板元数据与 graph） | ### 5.10 流程模板库（内置只读） |
+| `recording_case` | 04 / 五、逻辑组件 5.11 操作录制与回放 v1 契约（权威 blockquote）+ `src/atlas/recording/cases.py`（录制用例模型与进程内存储） | ### 5.11 操作录制与回放 |
 
 ---
 
@@ -312,3 +313,26 @@ node_count: int            # graph.nodes 数量（服务端投影）
 # GET /api/templates/{id} 返回完整 TemplateMeta（含 graph）；未知 id 404
 ```
 > 只读内置目录：随代码版本发布，无 DB、无 CRUD、`/api/demo/reset` 不影响；「从模板新建」为客户端整画布替换，保存后为普通 graph-N 与模板无关。权威契约见 04 §5.10，REST 见 12 §5。
+
+### `recording_case` — 字段概览（Phase 2 能力项，2026-09-15；`/api/recordings*`）
+
+```yaml
+# 请求 POST /api/recordings（RecordingCreateRequest）
+name: string               # 用例名，1-100 字
+graph_id: string           # 已保存图 id（服务端据此取图快照；未知 404）
+inputs: object | null      # 录制时的运行入参（trigger payload）
+steps: [{node_id, node_type, output}]  # 至少 1 步；node_id 重复时服务端保末
+status: string             # 录制运行终态
+# 响应 201 / GET 详情（RecordingCase）
+id: string                 # rec-{自增}
+graph: graph_definition    # 录制时的图快照（冻结，非 graph_id 活引用）
+created_at: string         # UTC ISO-8601
+# GET /api/recordings 列表投影（不含 graph/steps）
+items: [{id, name, node_count, step_count, status, created_at}]
+# POST /api/recordings/{id}/replay 响应（ReplayReport）
+matches: boolean           # 操作序列与逐节点归一化产出全部一致
+baseline_status: string
+replay_status: string      # 回放异常（如子图引用缺失）折叠为 "failed"
+steps: [{node_id, match, note, diff_keys?}]  # diff_keys 为归一化后差异顶层键
+```
+> 进程内存储（重启清空，持久化随 11 S1）；`/api/demo/reset` 不清除（测试资产，同 feedback）。回放从 human_approval 步骤抽解决策预置为 inputs.approvals，不挂起；比对前递归剔除 token/sent_at、消息记录 uuid id、HTTP headers date。权威契约见 04 §5.11，REST 见 12 §5。
