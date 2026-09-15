@@ -27,10 +27,49 @@ export type ApprovalRequest = {
   timeoutSeconds: number
 }
 
+export type DebugAction = 'step' | 'continue' | 'stop'
+
+export type DebugBreakpoint = {
+  node_id: string
+  expression?: string
+}
+
+export type DebugRequest = {
+  breakpoints: DebugBreakpoint[]
+}
+
+export type PausedFrame = {
+  type: 'paused'
+  token: string
+  node_id: string
+  node_type: string
+  reason: 'step' | 'breakpoint' | 'condition'
+  globals: Record<string, unknown>
+  outputs: Record<string, unknown>
+}
+
+export type StoppedFrame = {
+  type: 'stopped'
+  node_id: string
+  reason: 'user_stop'
+}
+
+/** 调试运行被「停止」结束（stopped 帧）；无 result，属正常终止而非请求失败。 */
+export class DebugRunStoppedError extends Error {
+  nodeId: string
+  constructor(nodeId: string) {
+    super(`调试已停止：${nodeId}`)
+    this.name = 'DebugRunStoppedError'
+    this.nodeId = nodeId
+  }
+}
+
 export type RunEvent =
   | { type: 'node_start'; node_id: string; node_type: string; approval?: ApprovalRequest }
   | { type: 'node_end'; node_id: string; node_type: string; output: unknown }
   | ({ type: 'run_end' } & Partial<RunResult>)
+  | PausedFrame
+  | StoppedFrame
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -128,6 +167,16 @@ export async function decideApproval(
   })
 }
 
+export async function resumeDebug(
+  token: string,
+  action: DebugAction,
+): Promise<{ token: string; action: DebugAction }> {
+  return request(`/api/debug/${token}/resume`, {
+    method: 'POST',
+    body: JSON.stringify({ action }),
+  })
+}
+
 export type FeedbackType = 'bug' | 'suggestion'
 export async function submitFeedback(input: {
   type: FeedbackType
@@ -202,16 +251,20 @@ export async function replayRecording(id: string): Promise<ReplayReport> {
 /**
  * SSE 流式运行（08 §7.3 验收 5）：节点开始/结束事件实时回调，
  * 最终 result 事件以 RunResult 结束。
+ *
+ * 传 debug 时为调试运行（04 §5.12）：收到 paused 帧回调后由调用方经
+ * resumeDebug 放行；action=stop 收尾为 stopped 帧并抛 DebugRunStoppedError。
  */
 export async function streamRun(
   id: string,
   inputs: RunInputs | undefined,
   onEvent: (event: RunEvent) => void,
+  debug?: DebugRequest,
 ): Promise<RunResult> {
   const response = await fetch(`/api/graphs/${id}/run/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ inputs }),
+    body: JSON.stringify(debug ? { inputs, debug } : { inputs }),
   })
   if (!response.ok || !response.body) {
     const body = await response.json().catch(() => null)
@@ -222,6 +275,7 @@ export async function streamRun(
   const decoder = new TextDecoder()
   let buffer = ''
   let result: RunResult | null = null
+  let stoppedNodeId: string | null = null
 
   while (true) {
     const { done, value } = await reader.read()
@@ -235,11 +289,15 @@ export async function streamRun(
       const payload = JSON.parse(dataLine.slice(6))
       if (payload.id && payload.outputs) {
         result = payload as RunResult
+      } else if (payload.type === 'stopped') {
+        stoppedNodeId = payload.node_id
+        onEvent(payload as StoppedFrame)
       } else {
         onEvent(payload as RunEvent)
       }
     }
   }
+  if (stoppedNodeId !== null) throw new DebugRunStoppedError(stoppedNodeId)
   if (!result) throw new Error('SSE 流缺少最终运行结果')
   return result
 }

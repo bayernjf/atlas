@@ -15,12 +15,16 @@ import { deserializeGraph, type SerializedGraph } from '../lib/graphSerializer'
 export type EditorNode = Node<EditorNodeData>
 export type { NodeKind }
 
+// 会话级断点：键存在即启用；expression 非空为条件断点。不落 Graph JSON，刷新即失（04 §5.12）。
+export type Breakpoint = { expression?: string }
+
 type EditorState = {
   nodes: EditorNode[]
   edges: Edge[]
   variables: GraphVariable[]
   selectedNodeId: string | null
   logs: string[]
+  breakpoints: Record<string, Breakpoint>
   addNodeAt: (kind: NodeKind, position: { x: number; y: number }) => void
   selectNode: (nodeId: string | null) => void
   updateSelectedNode: (patch: Partial<EditorNodeData>) => void
@@ -35,6 +39,9 @@ type EditorState = {
   setNodeStatus: (nodeId: string, status: EditorNodeData['status']) => void
   resetRunStatuses: () => void
   appendLog: (message: string) => void
+  toggleBreakpoint: (nodeId: string) => void
+  setBreakpointExpression: (nodeId: string, expression: string) => void
+  clearBreakpoints: () => void
 }
 
 export function nextId(kind: NodeKind, existing: EditorNode[]): string {
@@ -107,6 +114,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   variables: initialVariables,
   selectedNodeId: null,
   logs: ['W9-W10 退款 Demo：选择退款单后「编译并运行」，节点实时高亮；也可用自然语言生成草稿'],
+  breakpoints: {},
 
   addNodeAt: (kind, position) => {
     const id = nextId(kind, get().nodes)
@@ -228,6 +236,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         (edge) => edge.source !== selectedId && edge.target !== selectedId,
       ),
       selectedNodeId: null,
+      breakpoints: Object.fromEntries(
+        Object.entries(state.breakpoints).filter(([nodeId]) => nodeId !== selectedId),
+      ),
       logs: [...state.logs, `删除节点：${selectedId}`],
     }))
   },
@@ -261,7 +272,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   loadGraph: (graph) => {
     const { nodes, edges, variables } = deserializeGraph(graph)
-    set({ nodes: nodes as EditorNode[], edges, variables, selectedNodeId: null, logs: [`已加载 NL 生成草稿：${nodes.length} 个节点`] })
+    set({
+      nodes: nodes as EditorNode[],
+      edges,
+      variables,
+      selectedNodeId: null,
+      breakpoints: {},
+      logs: [`已加载 NL 生成草稿：${nodes.length} 个节点`],
+    })
   },
 
   setNodeStatus: (nodeId, status) => {
@@ -281,4 +299,25 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   appendLog: (message) => set((state) => ({ logs: [...state.logs, message] })),
+
+  toggleBreakpoint: (nodeId) =>
+    set((state) => {
+      const next = { ...state.breakpoints }
+      if (nodeId in next) {
+        delete next[nodeId]
+      } else {
+        next[nodeId] = {}
+      }
+      return { breakpoints: next }
+    }),
+
+  setBreakpointExpression: (nodeId, expression) =>
+    set((state) => ({
+      breakpoints: {
+        ...state.breakpoints,
+        [nodeId]: { ...state.breakpoints[nodeId], expression },
+      },
+    })),
+
+  clearBreakpoints: () => set({ breakpoints: {} }),
 }))

@@ -246,3 +246,50 @@ describe('editorStore W9-W10 run status and draft loading', () => {
     expect(state.variables[0].name).toBe('approval_limit')
   })
 })
+
+describe('editorStore session breakpoints (04 §5.12)', () => {
+  it('toggles breakpoint keys and stores a conditional expression', () => {
+    useEditorStore.setState({ breakpoints: {} })
+    const store = useEditorStore.getState()
+    store.toggleBreakpoint('tool_call-1')
+    expect(useEditorStore.getState().breakpoints).toEqual({ 'tool_call-1': {} })
+    store.toggleBreakpoint('tool_call-1')
+    expect(useEditorStore.getState().breakpoints).toEqual({})
+
+    store.toggleBreakpoint('ai_decision-1')
+    store.setBreakpointExpression('ai_decision-1', '{{trigger-1.x}} > 1')
+    expect(useEditorStore.getState().breakpoints['ai_decision-1']).toEqual({
+      expression: '{{trigger-1.x}} > 1',
+    })
+    useEditorStore.getState().clearBreakpoints()
+    expect(useEditorStore.getState().breakpoints).toEqual({})
+  })
+
+  it('clears breakpoints when deleting the node or loading another graph', () => {
+    useEditorStore.setState({
+      nodes: [stubNode('trigger-1'), stubNode('tool_call-1')],
+      edges: [],
+      variables: [],
+      selectedNodeId: 'trigger-1',
+      logs: [],
+      breakpoints: { 'trigger-1': {}, 'tool_call-1': { expression: 'x' } },
+    })
+    useEditorStore.getState().deleteSelectedNode()
+    expect(useEditorStore.getState().breakpoints).toEqual({ 'tool_call-1': { expression: 'x' } })
+
+    useEditorStore.getState().loadGraph({
+      version: 1,
+      variables: [],
+      nodes: [
+        {
+          id: 'trigger-1', type: 'trigger', name: '触发', description: '',
+          position: { x: 0, y: 0 },
+          config: { triggerType: 'manual' },
+          retry: defaultRetry(),
+        },
+      ],
+      edges: [],
+    })
+    expect(useEditorStore.getState().breakpoints).toEqual({})
+  })
+})

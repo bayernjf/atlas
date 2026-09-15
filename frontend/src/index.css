@@ -146,6 +146,45 @@ body,
   box-shadow: 0 0 0 3px var(--atlas-color-node-ring-completed);
 }
 
+.atlas-node-paused {
+  box-shadow: 0 0 0 4px var(--atlas-color-node-ring-paused, #d48806);
+}
+
+.atlas-node-breakpoint {
+  position: absolute;
+  left: -10px;
+  top: 18px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 1px solid var(--atlas-color-danger);
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.atlas-node:hover .atlas-node-breakpoint,
+.atlas-node-breakpoint.is-active {
+  opacity: 1;
+}
+
+.atlas-node-breakpoint.is-active {
+  background: var(--atlas-color-danger);
+}
+
+.atlas-node-breakpoint-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #fff;
+}
+
 .atlas-node-status {
   font-size: 10px;
   font-weight: 400;
@@ -236,4 +275,24 @@ body,
 .run-result-section .graph-json-preview {
   max-height: 260px;
   margin-top: 6px;
+}
+
+.debug-toolbar {
+  position: fixed;
+  right: 16px;
+  bottom: 198px;
+  z-index: 50;
+  width: 400px;
+  max-height: 480px;
+  overflow: auto;
+}
+
+.debug-toolbar-json {
+  max-height: 140px;
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  overflow: auto;
+  background: var(--atlas-color-bg-canvas);
+  border-radius: 4px;
+  font-size: 11px;
 }

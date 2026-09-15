@@ -6,6 +6,7 @@ import {
   InputNumber,
   Select,
   Space,
+  Switch,
   Tag,
   Typography,
 } from 'antd'
@@ -17,6 +18,7 @@ import {
   type NodeConfig,
 } from '../../lib/nodeCatalog'
 import { listVariablePaths } from '../../lib/variables'
+import { validateExpression } from '../../lib/conditions'
 import { ConditionConfig } from './ConditionConfig'
 import { LoopConfig } from './LoopConfig'
 import { ParallelConfig } from './ParallelConfig'
@@ -32,6 +34,11 @@ export function PropertyPanel() {
   const updateSelectedNode = useEditorStore((state) => state.updateSelectedNode)
   const updateSelectedConfig = useEditorStore((state) => state.updateSelectedConfig)
   const deleteSelectedNode = useEditorStore((state) => state.deleteSelectedNode)
+  const breakpoints = useEditorStore((state) => state.breakpoints)
+  const toggleBreakpoint = useEditorStore((state) => state.toggleBreakpoint)
+  const setBreakpointExpression = useEditorStore(
+    (state) => state.setBreakpointExpression,
+  )
 
   const selectedNode = nodes.find((node) => node.id === selectedNodeId)
 
@@ -153,6 +160,42 @@ export function PropertyPanel() {
             variablePaths={variablePaths}
             onInsert={insertVariable}
           />
+        )}
+
+        <Typography.Text strong>调试（04 §5.12 会话级断点）</Typography.Text>
+        <Field label="执行到此节点前暂停">
+          <Switch
+            checked={selectedNode.id in breakpoints}
+            onChange={() => toggleBreakpoint(selectedNode.id)}
+          />
+        </Field>
+        {selectedNode.id in breakpoints && (
+          <Field label="条件表达式（可空；为真才暂停）">
+            <Input
+              value={breakpoints[selectedNode.id]?.expression ?? ''}
+              placeholder="{{trigger-1.context.payload.amount}} > 1000"
+              status={
+                breakpoints[selectedNode.id]?.expression?.trim() &&
+                validateExpression(breakpoints[selectedNode.id]!.expression!.trim()).length > 0
+                  ? 'error'
+                  : undefined
+              }
+              onChange={(event) =>
+                setBreakpointExpression(selectedNode.id, event.target.value)
+              }
+            />
+            {breakpoints[selectedNode.id]?.expression?.trim() &&
+              validateExpression(breakpoints[selectedNode.id]!.expression!.trim()).map(
+                (message) => (
+                  <Typography.Text key={message} type="danger">
+                    {message}
+                  </Typography.Text>
+                ),
+              )}
+            <Typography.Text type="secondary">
+              断点仅本会话有效，不随 Graph 保存；异常表达式 fail-safe 视为不命中。
+            </Typography.Text>
+          </Field>
         )}
 
         <Typography.Text strong>重试与失败处理（04 §3.2 retry）</Typography.Text>

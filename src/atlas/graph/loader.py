@@ -147,6 +147,7 @@ def _make_executor(
     emit: EventCallback,
     graph_resolver: Callable[[str], GraphDSL] | None,
     subgraph_depth: int,
+    debug_controller: Any = None,
 ):
     def execute(state: GraphState) -> dict:
         context = {"global": state["variables"].get("global", {}), **state["outputs"]}
@@ -156,15 +157,32 @@ def _make_executor(
             "node_type": node.type,
         }
 
+        approval_payload = None
         if node.type == "human_approval":
-            start_event["approval"] = _register_approval(
-                node,
-                context=context,
-                trigger_payload=trigger_payload,
-                broker=approval_broker,
-                graph_id=graph_id,
-            )
+            # 调试运行时审批登记推迟到暂停放行之后（04 §5.12：先暂停再进审批等待）。
+            if debug_controller is None:
+                approval_payload = _register_approval(
+                    node,
+                    context=context,
+                    trigger_payload=trigger_payload,
+                    broker=approval_broker,
+                    graph_id=graph_id,
+                )
+                start_event["approval"] = approval_payload
         emit(start_event)
+
+        if debug_controller is not None:
+            debug_controller.before_node(node, state)
+            if node.type == "human_approval":
+                approval_payload = _register_approval(
+                    node,
+                    context=context,
+                    trigger_payload=trigger_payload,
+                    broker=approval_broker,
+                    graph_id=graph_id,
+                )
+                # 第二个 node_start 携带 approval 载荷，前端据此打开审批 Modal。
+                emit({**start_event, "approval": approval_payload})
 
         if node.type == "trigger":
             output = {
@@ -217,7 +235,7 @@ def _make_executor(
         elif node.type == "human_approval":
             output, message = _await_human_approval(
                 node,
-                token=start_event["approval"]["token"],
+                token=approval_payload["token"],
                 trigger_payload=trigger_payload,
                 broker=approval_broker,
             )
@@ -713,6 +731,7 @@ def compile_graph(
     trigger_payload: dict[str, Any] | None = None,
     graph_resolver: Callable[[str], GraphDSL] | None = None,
     _subgraph_depth: int = 0,
+    debug_controller: Any = None,
 ):
     decision_client = decision_client or get_decision_client()
     registry = registry if registry is not None else build_demo_registry()
@@ -741,6 +760,7 @@ def compile_graph(
                 emit=emit,
                 graph_resolver=graph_resolver,
                 subgraph_depth=_subgraph_depth,
+                debug_controller=debug_controller,
             ),
         )
 
@@ -881,6 +901,7 @@ def run_graph(
     emit: EventCallback | None = None,
     graph_resolver: Callable[[str], GraphDSL] | None = None,
     _subgraph_depth: int = 0,
+    debug_controller: Any = None,
 ) -> dict[str, Any]:
     """编译并执行，返回状态/节点产出/轨迹。
 
@@ -888,6 +909,8 @@ def run_graph(
     作为 trigger 节点 context.payload 供下游引用。
     inputs.approvals 可预置 {<human 节点 id>: "approved"|"rejected"} 秒过审批（04 §5.6）。
     graph_resolver 按 subgraph 节点 config.graphId 解析已保存子图（04 §5.7）。
+    debug_controller 注入时在每个节点 node_start 后/逻辑前暂停（04 §5.12）；
+    subgraph 重入不传控制器，子图整段执行。
     """
     compiled = compile_graph(
         graph,
@@ -899,6 +922,7 @@ def run_graph(
         trigger_payload=inputs,
         graph_resolver=graph_resolver,
         _subgraph_depth=_subgraph_depth,
+        debug_controller=debug_controller,
     )
     final_state = compiled.invoke(
         initial_state(graph, inputs=inputs),

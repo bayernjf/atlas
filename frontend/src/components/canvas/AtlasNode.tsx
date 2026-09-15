@@ -1,11 +1,14 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { NODE_CATALOG, validateNode, type EditorNodeData } from '../../lib/nodeCatalog'
 import type { EditorNode } from '../../store/editorStore'
+import { useEditorStore } from '../../store/editorStore'
 
-export function AtlasNode({ data, selected }: NodeProps<EditorNode>) {
+export function AtlasNode({ id, data, selected }: NodeProps<EditorNode>) {
   const meta = NODE_CATALOG[data.kind]
   const errors = validateNode(data)
   const invalid = errors.length > 0
+  const breakpoint = useEditorStore((state) => state.breakpoints[id])
+  const toggleBreakpoint = useEditorStore((state) => state.toggleBreakpoint)
 
   return (
     <div
@@ -13,9 +16,28 @@ export function AtlasNode({ data, selected }: NodeProps<EditorNode>) {
       style={{ borderColor: meta.color }}
     >
       <Handle type="target" position={Position.Left} />
+      <button
+        type="button"
+        className={`atlas-node-breakpoint ${breakpoint ? 'is-active' : ''}`}
+        title={
+          breakpoint?.expression?.trim()
+            ? `条件断点：${breakpoint.expression}`
+            : breakpoint
+              ? '节点断点（点击取消）'
+              : '在此节点前设断点（调试运行）'
+        }
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation()
+          toggleBreakpoint(id)
+        }}
+      >
+        {breakpoint?.expression?.trim() ? <span className="atlas-node-breakpoint-dot" /> : null}
+      </button>
       <div className="atlas-node-header" style={{ backgroundColor: meta.color }}>
         <span>{meta.label}</span>
         {data.status === 'running' && <span className="atlas-node-status">运行中…</span>}
+        {data.status === 'paused' && <span className="atlas-node-status">已暂停</span>}
         {data.status === 'completed' && <span className="atlas-node-status">✓</span>}
         {invalid && (
           <span className="atlas-node-error-icon" title={errors.join('；')}>
