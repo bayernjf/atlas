@@ -175,6 +175,42 @@ def get_template(template_id: str) -> TemplateMeta | None: ...   # 未知 id 返
 #            + http/sql/审批四个模板图构造函数；每个模板 graph 必须过 parse_graph/validate_graph
 ```
 
+### 3.7 操作录制与回放（04 §5.11，06 §6.9）
+
+```python
+# src/atlas/recording/cases.py
+class RecordStep(BaseModel):
+    node_id: str
+    node_type: str
+    output: dict           # 该节点最后一次 node_end 产出
+
+class RecordingCase(BaseModel):
+    id: str                # "rec-{自增}"
+    name: str              # 1-100 字
+    graph: dict            # 录制时图快照（graph_definition version 1，冻结）
+    inputs: dict | None
+    steps: list[RecordStep]
+    status: str
+    created_at: str        # ISO8601 UTC
+
+class RecordingStore:  # 进程内单例；重启清空（11 S1 持久化），reset 不清除（同 feedback）
+    def add(self, *, name, graph, inputs, steps, status) -> RecordingCase: ...
+    def list(self) -> list[RecordingCase]: ...
+    def get(self, case_id: str) -> RecordingCase | None: ...
+    def delete(self, case_id: str) -> bool: ...
+
+# src/atlas/recording/replay.py（纯函数）
+def normalize(value, tool: str | None = None): ...
+    # 深拷贝后递归剔除易变值：token、sent_at；同层含 sent_at 的 dict 删 uuid id；
+    # tool == "http/request" 时 result.headers 删 date
+def preset_approvals(steps) -> dict: ...           # {node_id: "approved"|"rejected"}，合并进回放 inputs.approvals
+def dedupe_steps(steps) -> list[RecordStep]: ...   # node_id 重复保末（parallel 双 node_end/loop 重访）
+def compare(baseline, replay_steps, *, tools_by_node, baseline_status, replay_status) -> dict: ...
+    # {matches, baseline_status, replay_status,
+    #  steps: [{node_id, match, note, diff_keys?}]}；序列先比对，值按 normalize 后深等
+def collect_steps() -> tuple[Callable, Callable]: ...  # 返回 (emit, take_steps)；回放 run_graph 收集 node_end 保末
+```
+
 ## 4. 记忆检索接口（依据 06 6.2 / 05 2.3）
 
 ```python
@@ -194,6 +230,11 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 | GET | /api/graphs/{id} | 读取 Graph | — |
 | GET | /api/templates | 内置流程模板目录列表（Phase 2 能力项，只读代码常量；返回 `{items:[{id,name,description,tags,node_count}]}`，不含 graph；不受 reset 影响） | template_catalog |
 | GET | /api/templates/{id} | 模板详情：完整 TemplateMeta 含 `graph`（可直接载入画布/保存为新图）；未知 id 404 | template_catalog / graph_definition |
+| POST | /api/recordings | 录制用例入库（Phase 2 能力项）：请求体 `{name(1-100), graph_id, inputs, steps:[{node_id,node_type,output}], status}`，服务端按 graph_id 取已保存图原始 JSON 作**快照**存入（不重新执行；graph 未知 404、steps 形状非法 422、空 steps 422），201 返回完整 RecordingCase | recording_case |
+| GET | /api/recordings | 录制用例列表：`{items:[{id,name,node_count,step_count,status,created_at}]}` 投影（不含 graph/steps）；进程内存储，reset 不清除 | recording_case |
+| GET | /api/recordings/{id} | 录制用例详情：完整 RecordingCase（含 graph 快照与 steps）；未知 id 404 | recording_case |
+| DELETE | /api/recordings/{id} | 删除录制用例；未知 id 404 | recording_case |
+| POST | /api/recordings/{id}/replay | 回放用例：对快照走标准 run_graph（审批决策从 baseline 抽为 inputs.approvals 预置，不挂起），比对操作序列与逐节点归一化产出；返回 `{matches, baseline_status, replay_status, steps:[{node_id,match,note,diff_keys?}]}`；回放异常折叠 replay_status="failed"/matches=false（不抛 500）；未知用例 404 | recording_case |
 | POST | /api/graphs/{id}/compile | DSL → LangGraph 编译（08 7.1 W7-W8） | 02 Graph DSL |
 | POST | /api/graphs/{id}/run | 编译并运行，返回状态/节点产出/执行轨迹；请求体 `{"inputs": {...}}`，inputs 同名键覆盖全局变量且整体作为 trigger 节点 webhook 载荷 `context.payload`（W9-W10 接入真实决策/适配器） | 02 Graph DSL / LoopState |
 | POST | /api/graphs/{id}/run/stream | SSE 流式运行（W9-W10）：事件 `node_start`/`node_end`/最终 `result`，供画布实时进度（验收标准 5）；condition 节点的 node_end 事件 data 含 `{branch, target, evaluation, expression_errors}`（契约 04 §5.2），loop 节点含 `{mode, iterations, index, target, exitReason, expression_errors}`（契约 04 §5.3），parallel 节点扇出时 data 为 running 占位、joinTarget 的 node_end 前该产出被覆盖为终态 `{mode, joinStrategy, status, branches, result, joinTarget}`（契约 04 §5.4），wait 节点的 node_end 事件 data 含 `{mode:"wait", waitType:"duration", durationSeconds}`（契约 04 §5.5；node_start 后同步阻塞等待），human_approval 节点的 node_start 事件 data 含 `approval:{token, summary, approver, timeoutSeconds}`、node_end 含 `{mode:"human_approval", decision, target, token, summary, approver, resolvedBy}`（契约 04 §5.6），subgraph 节点 node_end 含 `{mode:"subgraph", graphId, status, error?, outputs, trace}` 但**子图内部不产生事件**（emit=None 重入，契约 04 §5.7）；**Phase 2 第五项起本端点为真流式**——run_graph 在后台线程执行、事件经 queue 实时下发（旧实现先跑完再回放，human_approval 会因收不到 node_start 而死锁） | 08 7.1 |
@@ -222,7 +263,7 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 | POST | /api/nl/generate | 自然语言 → 流程草稿（验收标准 6；W9-W10 已落码：LLM 优先、退款规则模板兜底，无法识别 422） | 08 7.2 |
 | POST | /api/demo/shop/login | Demo 商家平台登录（demo/demo，W9-W10） | — |
 | GET | /api/demo/shop/orders | Demo 待处理退款单（需登录，W9-W10） | — |
-| POST | /api/demo/reset | 重置 Demo 数据（店铺恢复 5 笔种子退款单、清空已保存图与登录态、清空 pending 审批请求，Phase 1 种子客户体验，W10 后；Phase 2 第三项起清空进程内消息记录并重建内置 SQLite demo 订单库——显式 `ATLAS_DATABASE_URL` 配置的外部库不被触碰；内置流程模板目录为代码常量，同样不受 reset 影响） | — |
+| POST | /api/demo/reset | 重置 Demo 数据（店铺恢复 5 笔种子退款单、清空已保存图与登录态、清空 pending 审批请求，Phase 1 种子客户体验，W10 后；Phase 2 第三项起清空进程内消息记录并重建内置 SQLite demo 订单库——显式 `ATLAS_DATABASE_URL` 配置的外部库不被触碰；内置流程模板目录为代码常量，不受 reset 影响；录制用例为测试资产同样**不被 reset 清除**——其图已快照进用例，GraphStore 清空不影响回放） | — |
 | GET | /api/approvals | 列出当前 pending 审批请求（`{items:[{token, summary, approver, timeoutSeconds, node_id, graph_id}]}`，进程内单例，重启即失；Phase 2 第五项） | human_approval |
 | POST | /api/approvals/{token}/decision | 人工审批决策，请求体 `{decision: "approved"|"rejected", comment?}`（comment v1 仅接收不展示）；首决生效，200 返回决策结果；未知 token 404、已决重复提交 409；Phase 2 第五项 | human_approval |
 | POST | /api/feedback | 提交种子试用反馈（type=bug/suggestion、content、contact 选填，201；进程内存储，reset 不清除；Phase 1） | feedback_item |
