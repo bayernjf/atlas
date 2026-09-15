@@ -24,6 +24,8 @@ from pydantic import BaseModel, Field
 from atlas.collaboration.approvals import ApprovalBroker
 from atlas.database.adapter import DatabaseHarnessAdapter
 from atlas.database.service import DatabaseClient, demo_engine
+from atlas.debug import DebugController, DebugStopped, DebuggerBroker
+from atlas.graph.conditions import validate_expression
 from atlas.graph.dsl import GraphValidationError, parse_graph
 from atlas.graph.loader import compile_graph, run_graph
 from atlas.harness.base import Permission
@@ -84,6 +86,8 @@ _demo_registry.register(
 )
 # human_approval 节点的进程内审批信号单例（04 §5.6）
 _approval_broker = ApprovalBroker()
+# 单步调试会话单例（04 §5.12；进程内、重启即失，持久化随 14 D27）
+_debug_broker = DebuggerBroker()
 
 
 @app.exception_handler(GraphValidationError)
@@ -355,9 +359,44 @@ def _load_graph_or_404(graph_id: str):
     return parse_graph(raw)
 
 
+def _validate_debug(graph, debug: Any) -> list[dict[str, Any]]:
+    """校验 /run/stream 的 debug.breakpoints，返回规范化列表；错误聚合成中文 422。"""
+    if not isinstance(debug, dict):
+        raise HTTPException(status_code=422, detail="debug 必须为对象：{breakpoints: [...]}")
+    raw_points = debug.get("breakpoints", [])
+    if not isinstance(raw_points, list) or not raw_points:
+        raise HTTPException(status_code=422, detail="debug.breakpoints 必须为非空数组")
+    node_ids = {node.id for node in graph.nodes}
+    normalized: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for index, point in enumerate(raw_points):
+        if not isinstance(point, dict) or not isinstance(point.get("node_id"), str):
+            errors.append(f"第 {index + 1} 个断点缺少 node_id 字符串")
+            continue
+        node_id = point["node_id"]
+        if node_id not in node_ids:
+            errors.append(f"断点节点不存在：{node_id}")
+        expression = point.get("expression")
+        if expression is not None:
+            if not isinstance(expression, str):
+                errors.append(f"断点 {node_id} 的 expression 必须为字符串")
+                continue
+            if expression.strip():
+                errors.extend(
+                    f"断点 {node_id} 表达式：{message}"
+                    for message in validate_expression(expression)
+                )
+        normalized.append({"node_id": node_id, "expression": expression})
+    if errors:
+        raise HTTPException(status_code=422, detail="；".join(errors))
+    return normalized
+
+
 @app.post("/api/graphs/{graph_id}/run", response_model=RunGraphResponse)
 def run_saved_graph(graph_id: str, payload: dict[str, Any] | None = None) -> RunGraphResponse:
     graph = _load_graph_or_404(graph_id)
+    if (payload or {}).get("debug") is not None:
+        raise HTTPException(status_code=422, detail="单步调试仅支持流式运行 /run/stream")
     result = run_graph(
         graph,
         inputs=(payload or {}).get("inputs"),
@@ -378,12 +417,21 @@ def run_saved_graph_stream(graph_id: str, payload: dict[str, Any] | None = None)
     """
     graph = _load_graph_or_404(graph_id)
     inputs = (payload or {}).get("inputs")
+    debug = (payload or {}).get("debug")
+    debug_session = None
+    if debug is not None:
+        breakpoints = _validate_debug(graph, debug)
+        debug_session = _debug_broker.create(graph_id=graph_id, breakpoints=breakpoints)
 
     def event_stream():
         events: queue.Queue[dict[str, Any] | None] = queue.Queue()
 
         def emit(event: dict[str, Any]) -> None:
             events.put(event)
+
+        debug_controller = (
+            DebugController(debug_session, emit) if debug_session is not None else None
+        )
 
         def worker() -> None:
             try:
@@ -395,8 +443,11 @@ def run_saved_graph_stream(graph_id: str, payload: dict[str, Any] | None = None)
                     graph_id=graph_id,
                     emit=emit,
                     graph_resolver=_resolve_saved_graph,
+                    debug_controller=debug_controller,
                 )
                 events.put({"__result__": result})
+            except DebugStopped as exc:
+                events.put({"__stopped__": exc.node_id})
             except Exception as exc:  # 运行期异常经 SSE error 帧下发，不静默吞线程
                 events.put({"__error__": f"{type(exc).__name__}: {exc}"})
 
@@ -410,6 +461,17 @@ def run_saved_graph_stream(graph_id: str, payload: dict[str, Any] | None = None)
                 yield (
                     f"event: result\ndata: "
                     f"{json.dumps({'id': graph_id, **event['__result__']}, ensure_ascii=False)}\n\n"
+                )
+                break
+            if "__stopped__" in event:
+                yield (
+                    "event: stopped\ndata: "
+                    + json.dumps(
+                        {"type": "stopped", "node_id": event["__stopped__"],
+                         "reason": "user_stop"},
+                        ensure_ascii=False,
+                    )
+                    + "\n\n"
                 )
                 break
             if "__error__" in event:
@@ -438,6 +500,26 @@ def decide_approval(token: str, request: ApprovalDecisionRequest) -> dict[str, A
     if not _approval_broker.resolve(token, request.decision, comment=request.comment):
         raise HTTPException(status_code=409, detail="该审批请求已有决策，重复提交不生效")
     return {"token": token, "decision": request.decision, "resolvedBy": "human"}
+
+
+class ResumeDebugRequest(BaseModel):
+    action: Literal["step", "continue", "stop"]
+
+
+@app.get("/api/debug")
+def list_debug_pauses() -> dict[str, list[dict[str, Any]]]:
+    """列出当前活动调试暂停（04 §5.12；进程内，重启即失）。"""
+    return {"items": _debug_broker.list_pending()}
+
+
+@app.post("/api/debug/{token}/resume")
+def resume_debug(token: str, request: ResumeDebugRequest) -> dict[str, str]:
+    session = _debug_broker.get_session(token)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"调试暂停不存在或已恢复：{token}")
+    if not session.resolve(token, request.action):
+        raise HTTPException(status_code=409, detail="该调试暂停已恢复，重复提交不生效")
+    return {"token": token, "action": request.action}
 
 
 @app.post("/api/nl/generate")
@@ -497,6 +579,7 @@ def demo_reset() -> dict[str, bool]:
     _demo_shop.reset()
     _store.clear()
     _approval_broker.reset()
+    _debug_broker.reset()
     _message_service.reset()
     _db_client.reseed_demo()
     return {"reset": True}

@@ -801,3 +801,254 @@ def test_recording_replay_folds_missing_subgraph_reference():
     assert report["matches"] is False
     assert report["replay_status"] == "failed"
     assert report["baseline_status"] == "completed"
+
+
+
+# ---------------------------------------------------------------------------
+# I17：单步调试与断点 v1 —— debug 流式帧、resume、422/404/409、reset 释放
+#
+# TestClient 的流式请求在 portal.call 内整段跑完、SSE 帧假脱机后才回到主线程，
+# 故 resume 决策必须由独立线程轮询 GET /api/debug 驱动（同人工审批测试模式）。
+# ---------------------------------------------------------------------------
+
+def _drive_debug_stream(graph_id, payload, action_for):
+    """action_for(projection) -> "step"|"continue"|"stop"，按暂停出现顺序调用。
+
+    返回 (event_names, data_frames, projections)；event_names 含全部 SSE 事件名。
+    """
+    import threading
+
+    seen: set[str] = set()
+    projections: list[dict] = []
+    finished = threading.Event()
+
+    def decider() -> None:
+        with TestClient(app) as ctl:
+            while not finished.is_set():
+                for item in ctl.get("/api/debug").json()["items"]:
+                    if item["token"] in seen:
+                        continue
+                    seen.add(item["token"])
+                    projections.append(item)
+                    ctl.post(
+                        f"/api/debug/{item['token']}/resume",
+                        json={"action": action_for(item)},
+                    )
+                time.sleep(0.005)
+
+    thread = threading.Thread(target=decider, daemon=True)
+    thread.start()
+
+    event_names: list[str] = []
+    data_frames: list[dict] = []
+    pending_event = None
+    with client.stream(
+        "POST", f"/api/graphs/{graph_id}/run/stream", json=payload
+    ) as response:
+        assert response.status_code == 200
+        for line in response.iter_lines():
+            if line.startswith("event:"):
+                pending_event = line[len("event:"):].strip()
+                event_names.append(pending_event)
+            elif line.startswith("data:"):
+                data_frames.append(json.loads(line[len("data:"):].strip()))
+
+    finished.set()
+    thread.join(timeout=5)
+    return event_names, data_frames, projections
+
+
+def _paused(data_frames):
+    return [f for f in data_frames if f.get("type") == "paused"]
+
+
+def test_i17_debug_step_pauses_follow_node_order_with_snapshots():
+    graph_id = client.post("/api/graphs", json=_refund_graph()).json()["id"]
+    event_names, frames, _ = _drive_debug_stream(
+        graph_id,
+        {"inputs": {"order_id": "DBG-1", "reason": "测试", "amount": 128},
+         "debug": {"breakpoints": [{"node_id": "tool_call-1"}]}},
+        lambda item: "step",
+    )
+
+    paused = _paused(frames)
+    assert [f["node_id"] for f in paused] == [
+        "trigger-1", "ai_decision-1", "tool_call-1"
+    ]
+    assert [f["node_type"] for f in paused] == [
+        "trigger", "ai_decision", "tool_call"
+    ]
+    assert all(f["reason"] == "step" and f["token"].startswith("dbg-") for f in paused)
+    assert paused[0]["outputs"] == {}
+    assert "trigger-1" in paused[1]["outputs"]
+    assert event_names[-1] == "result"
+    assert frames[-1]["id"] == graph_id
+
+
+def test_i17_debug_continue_then_unconditional_breakpoint_pauses():
+    graph_id = client.post("/api/graphs", json=_refund_graph()).json()["id"]
+    event_names, frames, projections = _drive_debug_stream(
+        graph_id,
+        {"inputs": {"order_id": "DBG-2", "reason": "测试", "amount": 128},
+         "debug": {"breakpoints": [{"node_id": "tool_call-1"}]}},
+        lambda item: "continue",
+    )
+
+    paused = _paused(frames)
+    assert [f["node_id"] for f in paused] == ["trigger-1", "tool_call-1"]
+    assert [f["reason"] for f in paused] == ["step", "breakpoint"]
+    assert [p["reason"] for p in projections] == ["step", "breakpoint"]
+    assert event_names[-1] == "result"
+
+
+def test_i17_debug_conditional_breakpoint_true_and_false_paths():
+    expression = "{{trigger-1.context.payload.amount}} > 1000"
+
+    def run(amount):
+        graph_id = client.post("/api/graphs", json=_refund_graph()).json()["id"]
+        return _drive_debug_stream(
+            graph_id,
+            {"inputs": {"order_id": f"DBG-{amount}", "reason": "测试", "amount": amount},
+             "debug": {"breakpoints": [
+                 {"node_id": "tool_call-1", "expression": expression}]}},
+            lambda item: "continue",
+        )
+
+    _, hit_frames, _ = run(1500)
+    hit = _paused(hit_frames)
+    assert [f["node_id"] for f in hit] == ["trigger-1", "tool_call-1"]
+    assert hit[1]["reason"] == "condition"
+
+    _, miss_frames, _ = run(1)
+    missed = _paused(miss_frames)
+    assert [f["node_id"] for f in missed] == ["trigger-1"]
+    assert "tool_call-1" in miss_frames[-1]["outputs"]
+
+
+def test_i17_debug_stop_emits_stopped_frame_without_result():
+    graph_id = client.post("/api/graphs", json=_refund_graph()).json()["id"]
+    event_names, frames, projections = _drive_debug_stream(
+        graph_id,
+        {"inputs": {"order_id": "DBG-STOP", "reason": "测试", "amount": 128},
+         "debug": {"breakpoints": [{"node_id": "trigger-1"}]}},
+        lambda item: "stop",
+    )
+
+    assert "result" not in event_names
+    assert event_names[-1] == "stopped"
+    assert len(projections) == 1
+    assert projections[0]["node_id"] == "trigger-1"
+    assert frames[-1] == {"type": "stopped", "node_id": "trigger-1",
+                         "reason": "user_stop"}
+
+
+def test_i17_debug_get_endpoint_shape_404_and_409():
+    assert client.post(
+        "/api/debug/dbg-does-not-exist/resume", json={"action": "step"}
+    ).status_code == 404
+
+    graph_id = client.post("/api/graphs", json=_refund_graph()).json()["id"]
+    _, frames, projections = _drive_debug_stream(
+        graph_id,
+        {"inputs": {"order_id": "DBG-409", "reason": "测试", "amount": 128},
+         "debug": {"breakpoints": [{"node_id": "trigger-1"}]}},
+        lambda item: "continue",
+    )
+
+    item = projections[0]
+    assert set(item) == {"token", "node_id", "node_type", "graph_id", "reason"}
+    assert item["node_id"] == "trigger-1"
+    assert item["node_type"] == "trigger"
+    assert item["graph_id"] == graph_id
+
+    token = _paused(frames)[0]["token"]
+    conflict = client.post(f"/api/debug/{token}/resume", json={"action": "stop"})
+    assert conflict.status_code == 409
+    assert client.get("/api/debug").json()["items"] == []
+
+
+def test_i17_debug_422_unknown_node_bad_expression_empty_and_sync_run():
+    graph_id = client.post("/api/graphs", json=_refund_graph()).json()["id"]
+
+    unknown = client.post(
+        f"/api/graphs/{graph_id}/run/stream",
+        json={"inputs": {}, "debug": {"breakpoints": [{"node_id": "missing-1"}]}},
+    )
+    assert unknown.status_code == 422
+    assert "断点节点不存在" in unknown.json()["detail"]
+
+    bad_expr = client.post(
+        f"/api/graphs/{graph_id}/run/stream",
+        json={"inputs": {}, "debug": {"breakpoints": [
+            {"node_id": "trigger-1", "expression": "{{trigger-1.("}]}},
+    )
+    assert bad_expr.status_code == 422
+    assert "表达式" in bad_expr.json()["detail"]
+
+    empty = client.post(
+        f"/api/graphs/{graph_id}/run/stream",
+        json={"inputs": {}, "debug": {"breakpoints": []}},
+    )
+    assert empty.status_code == 422
+
+    sync = client.post(
+        f"/api/graphs/{graph_id}/run",
+        json={"inputs": {}, "debug": {"breakpoints": [{"node_id": "trigger-1"}]}},
+    )
+    assert sync.status_code == 422
+    assert "/run/stream" in sync.json()["detail"]
+
+
+def test_i17_debug_reset_releases_paused_run_and_new_run_works():
+    import threading
+
+    graph_id = client.post("/api/graphs", json=_refund_graph()).json()["id"]
+    pending = threading.Event()
+    watcher_done = threading.Event()
+    stream_errors: list[Exception] = []
+
+    def watch_pending() -> None:
+        with TestClient(app) as ctl:
+            while not watcher_done.is_set():
+                if ctl.get("/api/debug").json()["items"]:
+                    pending.set()
+                    return
+                time.sleep(0.01)
+
+    def paused_stream() -> None:
+        try:
+            with client.stream(
+                "POST",
+                f"/api/graphs/{graph_id}/run/stream",
+                json={"inputs": {"order_id": "DBG-RESET", "reason": "测试",
+                                 "amount": 128},
+                      "debug": {"breakpoints": [{"node_id": "trigger-1"}]}},
+            ) as response:
+                names = [
+                    line for line in response.iter_lines()
+                    if line.startswith("event:")
+                ]
+            assert names[-1] == "event: stopped"
+        except Exception as exc:  # noqa: BLE001 - 主线程断言
+            stream_errors.append(exc)
+
+    watcher = threading.Thread(target=watch_pending, daemon=True)
+    stream_thread = threading.Thread(target=paused_stream, daemon=True)
+    watcher.start()
+    stream_thread.start()
+    assert pending.wait(timeout=5)
+
+    client.post("/api/demo/reset")
+    stream_thread.join(timeout=5)
+    watcher_done.set()
+    watcher.join(timeout=5)
+    assert not stream_thread.is_alive(), "reset 后调试流线程悬挂"
+    assert stream_errors == []
+
+    new_id = client.post("/api/graphs", json=_refund_graph()).json()["id"]
+    with client.stream(
+        "POST", f"/api/graphs/{new_id}/run/stream",
+        json={"inputs": {"order_id": "AFTER-RESET", "reason": "测试", "amount": 128}},
+    ) as response:
+        events = [line for line in response.iter_lines() if line.startswith("event:")]
+    assert events[-1] == "event: result"

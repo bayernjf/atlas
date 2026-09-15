@@ -82,9 +82,7 @@ class DebugSession:
         return action or "stop"
 
     def end_pause(self, token: str) -> None:
-        with self._state:
-            if self._pause is not None and self._pause.token == token:
-                self._pause = None
+        # 保留已决暂停供重复 resume 判定 409（投影已隐藏已决项）；下次暂停覆盖 _pause。
         self._gate.release()
 
     def resolve(self, token: str, action: DebugAction) -> bool:
