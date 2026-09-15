@@ -598,3 +598,55 @@ def test_message_send_visible_and_reset_clears():
 
     client.post("/api/demo/reset")
     assert client.get("/api/demo/messages").json()["items"] == []
+
+
+def test_template_list_returns_projection_without_graph():
+    client.post("/api/demo/reset")
+    items = client.get("/api/templates").json()["items"]
+    assert len(items) == 5
+    for item in items:
+        assert set(item) == {"id", "name", "description", "tags", "node_count"}
+        assert "graph" not in item
+        assert item["tags"]
+        assert item["node_count"] >= 1
+    assert [item["id"] for item in items] == [
+        "refund-auto",
+        "http-orders-branch",
+        "sql-query-notify",
+        "sql-approval-write",
+        "approval-timeout-reject",
+    ]
+
+
+def test_template_detail_includes_graph_and_unknown_id_404():
+    detail = client.get("/api/templates/sql-query-notify")
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["id"] == "sql-query-notify"
+    assert set(body) == {"id", "name", "description", "tags", "graph"}
+    assert body["graph"]["nodes"]
+
+    assert client.get("/api/templates/nope").status_code == 404
+
+
+def test_template_detail_graph_saves_and_compiles():
+    client.post("/api/demo/reset")
+    for template_id in (
+        "refund-auto",
+        "http-orders-branch",
+        "sql-query-notify",
+        "sql-approval-write",
+        "approval-timeout-reject",
+    ):
+        graph = client.get(f"/api/templates/{template_id}").json()["graph"]
+        saved = client.post("/api/graphs", json=graph)
+        assert saved.status_code == 200, template_id
+        graph_id = saved.json()["id"]
+        assert client.post(f"/api/graphs/{graph_id}/compile").status_code == 200, template_id
+    client.post("/api/demo/reset")
+
+
+def test_templates_survive_demo_reset():
+    client.post("/api/demo/reset")
+    assert len(client.get("/api/templates").json()["items"]) == 5
+    assert client.get("/api/templates/refund-auto").status_code == 200

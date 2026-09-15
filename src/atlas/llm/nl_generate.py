@@ -12,59 +12,9 @@ import os
 import re
 from typing import Any
 
+from atlas.template.graphs import refund_template_graph
+
 _REFUND_KEYWORDS = ("退款", "退货", "售后")
-
-
-def refund_template_graph() -> dict[str, Any]:
-    """电商退款审批三节点模板（与 01 §4.2 场景 A、06 §9.2 用例一致）。"""
-    return {
-        "version": 1,
-        "variables": [
-            {"name": "approval_limit", "type": "number", "value": "500", "scope": "global"}
-        ],
-        "nodes": [
-            {
-                "id": "trigger-1",
-                "type": "trigger",
-                "name": "触发：新退款申请",
-                "description": "",
-                "position": {"x": 80, "y": 180},
-                "config": {"triggerType": "webhook", "webhookUrl": "/hooks/refund"},
-                "retry": {"max_retries": 0, "backoff": "1s", "timeout": 30, "on_error": "stop"},
-            },
-            {
-                "id": "ai_decision-1",
-                "type": "ai_decision",
-                "name": "AI 决策：退款还是人工",
-                "description": "",
-                "position": {"x": 360, "y": 180},
-                "config": {
-                    "promptTemplate": (
-                        "退款单 {{trigger-1.context.payload.order_id}}："
-                        "{{trigger-1.context.payload.reason}}，"
-                        "金额 {{trigger-1.context.payload.amount}}，"
-                        "审批限额 {{global.approval_limit}}"
-                    ),
-                    "model": "",
-                    "confidenceThreshold": 0.6,
-                },
-                "retry": {"max_retries": 0, "backoff": "1s", "timeout": 30, "on_error": "stop"},
-            },
-            {
-                "id": "tool_call-1",
-                "type": "tool_call",
-                "name": "工具：执行退款或转人工",
-                "description": "",
-                "position": {"x": 660, "y": 180},
-                "config": {"tool": "shop/process_refund", "params": ""},
-                "retry": {"max_retries": 0, "backoff": "1s", "timeout": 30, "on_error": "stop"},
-            },
-        ],
-        "edges": [
-            {"id": "e-trigger-decision", "source": "trigger-1", "target": "ai_decision-1"},
-            {"id": "e-decision-action", "source": "ai_decision-1", "target": "tool_call-1"},
-        ],
-    }
 
 
 def generate_graph(prompt: str) -> dict[str, Any]:

@@ -92,6 +92,31 @@ export async function nlGenerate(prompt: string): Promise<{ graph: SerializedGra
   return request('/api/nl/generate', { method: 'POST', body: JSON.stringify({ prompt }) })
 }
 
+export type TemplateSummary = {
+  id: string
+  name: string
+  description: string
+  tags: string[]
+  node_count: number
+}
+
+export type TemplateDetail = {
+  id: string
+  name: string
+  description: string
+  tags: string[]
+  graph: SerializedGraph
+}
+
+export async function listTemplates(): Promise<TemplateSummary[]> {
+  const body = await request<{ items: TemplateSummary[] }>('/api/templates')
+  return body.items
+}
+
+export async function getTemplate(id: string): Promise<TemplateDetail> {
+  return request(`/api/templates/${id}`)
+}
+
 export async function decideApproval(
   token: string,
   decision: 'approved' | 'rejected',

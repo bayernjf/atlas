@@ -35,6 +35,7 @@ from atlas.message.adapter import MessageHarnessAdapter
 from atlas.message.service import MessageService
 from atlas.shop.adapter import ShopHarnessAdapter
 from atlas.shop.service import DemoShopService
+from atlas.template import get_template, list_templates
 
 app = FastAPI(title="Atlas API", version="0.0.1")
 
@@ -184,6 +185,32 @@ def get_graph(graph_id: str) -> dict[str, Any]:
     if raw is None:
         raise HTTPException(status_code=404, detail=f"Graph 不存在：{graph_id}")
     return raw
+
+
+@app.get("/api/templates")
+def list_catalog_templates() -> dict[str, list[dict[str, Any]]]:
+    """列出内置流程模板（列表投影不含 graph，04 §5.10；12 §3.6）。"""
+    return {
+        "items": [
+            {
+                "id": template.id,
+                "name": template.name,
+                "description": template.description,
+                "tags": template.tags,
+                "node_count": len(template.graph["nodes"]),
+            }
+            for template in list_templates()
+        ]
+    }
+
+
+@app.get("/api/templates/{template_id}")
+def get_catalog_template(template_id: str) -> dict[str, Any]:
+    """返回模板完整元数据（含 graph），未知 id 404（04 §5.10）。"""
+    template = get_template(template_id)
+    if template is None:
+        raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
+    return template.model_dump()
 
 
 @app.post("/api/graphs/{graph_id}/compile", response_model=CompileResponse)

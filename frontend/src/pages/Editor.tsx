@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Alert, Button, Layout, Modal, Select, Space, Tabs, Typography, Input } from 'antd'
+import { Alert, Button, Layout, Modal, Select, Space, Tabs, Typography, Input, Tag } from 'antd'
 import { FlowCanvas } from '../components/canvas/FlowCanvas'
 import { NodePanel } from '../components/nodePanel/NodePanel'
 import { VariablesPanel } from '../components/variablePanel/VariablesPanel'
@@ -11,6 +11,8 @@ import { serializeGraph } from '../lib/graphSerializer'
 import {
   compileGraph,
   decideApproval,
+  getTemplate,
+  listTemplates,
   nlGenerate,
   saveGraph,
   streamRun,
@@ -18,6 +20,7 @@ import {
   type CompileResult,
   type RunInputs,
   type RunResult,
+  type TemplateSummary,
 } from '../lib/apiClient'
 
 const { Header, Sider, Content, Footer } = Layout
@@ -43,8 +46,13 @@ export function Editor() {
   const [exportOpen, setExportOpen] = useState(false)
   const [runOpen, setRunOpen] = useState(false)
   const [nlOpen, setNlOpen] = useState(false)
+  const [templateOpen, setTemplateOpen] = useState(false)
   const [running, setRunning] = useState(false)
   const [nlLoading, setNlLoading] = useState(false)
+  const [templates, setTemplates] = useState<TemplateSummary[]>([])
+  const [templatesLoading, setTemplatesLoading] = useState(false)
+  const [applyingTemplateId, setApplyingTemplateId] = useState<string | null>(null)
+  const [templateError, setTemplateError] = useState<string | null>(null)
   const [runError, setRunError] = useState<string | null>(null)
   const [nlError, setNlError] = useState<string | null>(null)
   const [compileResult, setCompileResult] = useState<CompileResult | null>(null)
@@ -200,6 +208,35 @@ export function Editor() {
     }
   }
 
+  async function openTemplateBrowser() {
+    setTemplateOpen(true)
+    setTemplateError(null)
+    if (templates.length > 0) return
+    setTemplatesLoading(true)
+    try {
+      setTemplates(await listTemplates())
+    } catch (error) {
+      setTemplateError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setTemplatesLoading(false)
+    }
+  }
+
+  async function applyTemplate(templateId: string) {
+    setApplyingTemplateId(templateId)
+    setTemplateError(null)
+    try {
+      const detail = await getTemplate(templateId)
+      loadGraph(detail.graph)
+      appendLog(`已加载模板：${detail.name}（${detail.id}），画布已整体替换`)
+      setTemplateOpen(false)
+    } catch (error) {
+      setTemplateError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setApplyingTemplateId(null)
+    }
+  }
+
   const currentApproval = pendingApprovals[0] ?? null
 
   async function resolveCurrentApproval(decision: 'approved' | 'rejected') {
@@ -240,6 +277,7 @@ export function Editor() {
             }))}
           />
           <Button onClick={() => setNlOpen(true)}>自然语言生成</Button>
+          <Button onClick={openTemplateBrowser}>从模板新建</Button>
           <Button onClick={() => setExportOpen(true)}>导出 Graph JSON</Button>
           <FeedbackButton />
           <Button type="primary" loading={running} onClick={compileAndRun}>
@@ -314,6 +352,58 @@ export function Editor() {
           onChange={(event) => setNlPrompt(event.target.value)}
         />
         {nlError && <Alert type="error" showIcon title={nlError} style={{ marginTop: 12 }} />}
+      </Modal>
+      <Modal
+        title="从模板新建"
+        open={templateOpen}
+        onCancel={() => setTemplateOpen(false)}
+        footer={null}
+        width={680}
+      >
+        <Alert
+          type="warning"
+          showIcon
+          title="加载模板将整体替换当前画布，未保存的修改会丢失。"
+          style={{ marginBottom: 12 }}
+        />
+        <Space orientation="vertical" size={12} style={{ width: '100%' }}>
+          {templatesLoading && <Typography.Text type="secondary">模板加载中…</Typography.Text>}
+          {templates.map((template) => (
+            <div
+              key={template.id}
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                gap: 12,
+                padding: 12,
+                border: '1px solid var(--color-border, #d9d9d9)',
+                borderRadius: 8,
+              }}
+            >
+              <div>
+                <Space size={8} wrap style={{ marginBottom: 4 }}>
+                  <Typography.Text strong>{template.name}</Typography.Text>
+                  {template.tags.map((tag) => (
+                    <Tag key={tag}>{tag}</Tag>
+                  ))}
+                  <Typography.Text type="secondary">{template.node_count} 个节点</Typography.Text>
+                </Space>
+                <div>
+                  <Typography.Text type="secondary">{template.description}</Typography.Text>
+                </div>
+              </div>
+              <Button
+                type="link"
+                loading={applyingTemplateId === template.id}
+                disabled={applyingTemplateId !== null}
+                onClick={() => applyTemplate(template.id)}
+              >
+                使用此模板
+              </Button>
+            </div>
+          ))}
+        </Space>
+        {templateError && <Alert type="error" showIcon title={templateError} style={{ marginTop: 12 }} />}
       </Modal>
       <Modal
         title="人工审批请求"
