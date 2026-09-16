@@ -15,6 +15,7 @@
 | `node_data_schema` | 04 / §4.9 前端 MetaSchema 扩展（`x-*` keyword 权威）+ `frontend/src/lib/schemas/`（M1 新增） | ### 4.9 Capability JSON Schema 子集与发现投影（v1） |
 | `diagnostic` | 04 / §6.5 结构化诊断 blockquote（M2 2026-09-16 立项并同日落码，234a95f→fbd9f77）+ `frontend/src/lib/validation/`（落码承载） | ### 6.5 拓扑作用域与 L2 模板引用校验（v1） |
 | `graph_definition` | 04 / 5.2 节点系统 Schema（节点形状）+ `src/atlas/graph/dsl.py`（GraphDSL 权威实现，W7-W8） | ### 5.2 节点系统 Schema 示例代码 |
+| `form_renderer` | 04 / §4.10 Schema 驱动表单渲染（M3 2026-09-16 立项未开工）+ `frontend/src/lib/forms/`（落码承载） | ### 4.10 Schema 驱动表单渲染（M3 立项，2026-09-16，未开工） |
 | `adapter_schema` | 04 / 5.4 工具/适配器注册 Schema 示例代码 | ### 5.4 工具/适配器注册 Schema 示例代码 |
 | `skill_schema` | 05 / 一、技能（Skill）1.2 技能的数据结构 | ## 1.2 技能的数据结构（示例） |
 | `memory_config` | 05 / 二、记忆（Memory）2.3 记忆策略配置 Schema | ## 2.3 记忆策略配置 Schema（示例） |
@@ -172,6 +173,31 @@ type Diagnostic = {
 // validateGraph 聚合单节点 L1（l1.ts schema 解释器 + 手写跨字段）与 L2（scope.ts）；PropertyPanel/AtlasNode 角标共用，消费 Diagnostic[].message
 ```
 > 后端 compile 422 形状微调（见 12 `/api/graphs/{id}/compile`、06 §6.13）：`detail: string[]`（中文文案/顺序/状态码不变）之外增稀疏侧车 `locations?: Array<{ index: number; nodeId?: string; pointer?: string }>`，index 对齐 detail 下标；图级错误（version/空图/连线/重复 id/全局变量）不出条目。不引入 Python 版 schema 解释器；运行期插值 fail-soft 不变。U37（前端）/U38（后端侧车）为候选用例。
+
+
+### `form_renderer` — 字段概览（M3 2026-09-16 立项、未开工；权威见 08 M3 立项条与 04 §4.10，落码承载 `frontend/src/lib/forms/`；ADR T17 见 10 §4）
+
+```ts
+// lib/forms/WidgetRegistry.ts
+type WidgetProps = {           // 19 §1.3.4 的 M3 子集；不含 uiSchema（UISchema 随 M4）
+  value: unknown
+  onChange(next: unknown): void
+  schema: JsonSchemaFragment   // 当前字段 schema 片段（MetaSchema/Capability 白名单子集）
+  scope: { visibleAt(nodeId: string, kind?: string): VarEntry[] }  // 复用 M0 scope 索引
+  diagnostics: Diagnostic[]    // M2 Diagnostic[]，pointer 命中本字段时传入
+}
+// WidgetRegistry：name -> Component；内置 text/number/select/textarea/switch/json/expression/variable-input
+// registerWidget(name, comp)：扩展点导出，M3 不注册业务自定义控件（D29）
+// resolveWidget(schema)：x-widget（仅节点 schema）→ 类型结构默认（enum/const、boolean、integer/number、
+//   object.properties 递归分组、array.items 增删行、additionalProperties-only 键值行、string）
+//   → 降级 json：oneOf / 无 type 无 properties（含空 {}）/ 当前值非 JSON 对象（含裸 {{}} 整串）
+// lib/forms/FormRenderer.tsx：schema+值 → 控件树；不可变更新 onChange 产出下一整个 params 对象
+// 写回：JSON.stringify(next) → config.params（Graph v1 不变，params 永远是 JSON 字符串，后端零改动）
+// SchemaRegistry 第二来源：/api/adapters tools[].input_schema，键 `<adapter>/<tool>`，持发现快照引用
+//   未注册工具/发现失败/空 schema → 旧 JSON TextArea
+// M3 只迁 ToolCallConfig；其余 7 个手写 Config M4 起逐个原子迁移
+```
+> 验收候选用例 **U39**（13 文档；registry/resolveWidget/降级、不可变写回与字符串回写、第二来源、variable-input+诊断+NL paramWarnings、九工具表单生成与 sql-query-notify 金链、浏览器双路径）。oneOf 等白名单外结构以 JSON 文本降级承接，T16 不重开；重开判据与 M4/M8 边界见 10 §4 T17、04 §4.10。
 
 ### `adapter_schema` — 字段概览（完整定义见 04-组件设计-编辑后台.md #459，上下文章节：### 5.4 工具/适配器注册 Schema 示例代码）
 
