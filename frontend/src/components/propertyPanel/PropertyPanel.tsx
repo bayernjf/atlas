@@ -167,6 +167,7 @@ export function PropertyPanel() {
             update={updateSelectedConfig}
             variablePaths={variablePaths}
             onInsert={insertVariable}
+            nodeId={selectedNode.id}
           />
         )}
 

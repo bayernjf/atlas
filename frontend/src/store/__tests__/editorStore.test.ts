@@ -293,3 +293,15 @@ describe('editorStore session breakpoints (04 §5.12)', () => {
     expect(useEditorStore.getState().breakpoints).toEqual({})
   })
 })
+
+describe('NL 参数警告（M3 表单化展示）', () => {
+  it('setNlWarnings 写入，loadGraph 换图时清空', () => {
+    useEditorStore
+      .getState()
+      .setNlWarnings(['节点「query-1」工具 database/query 参数缺少必填字段：sql'])
+    expect(useEditorStore.getState().nlWarnings).toHaveLength(1)
+
+    useEditorStore.getState().loadGraph({ version: 1, variables: [], nodes: [], edges: [] })
+    expect(useEditorStore.getState().nlWarnings).toEqual([])
+  })
+})

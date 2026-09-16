@@ -70,6 +70,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
   const setNodeStatus = useEditorStore((state) => state.setNodeStatus)
   const resetRunStatuses = useEditorStore((state) => state.resetRunStatuses)
   const appendLog = useEditorStore((state) => state.appendLog)
+  const setNlWarnings = useEditorStore((state) => state.setNlWarnings)
   const breakpoints = useEditorStore((state) => state.breakpoints)
 
   const [exportOpen, setExportOpen] = useState(false)
@@ -288,6 +289,8 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
     try {
       const { graph, paramWarnings } = await nlGenerate(nlPrompt)
       loadGraph(graph)
+      // loadGraph 会清空警告，故在其后写入；M3 表单化后按节点归到 params 根（04 §4.10）
+      setNlWarnings(paramWarnings ?? [])
       setNlOpen(false)
       paramWarnings?.forEach((warning) => appendLog(`⚠ NL 参数提示：${warning}`))
     } catch (error) {

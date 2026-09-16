@@ -428,3 +428,16 @@ export function validateNodeFields(kind: string, config: NodeConfig): Diagnostic
   )
   return [...schemaDiagnostics, ...handFieldDiagnostics(kind, config)]
 }
+
+/**
+ * 工具 input_schema 的字段诊断（M3，08 M3 立项条④ / 04 §4.10 校验条）。
+ *
+ * pointer 相对 params 对象根（`/sql`、`/headers/X`），供 FormRenderer 命中字段；
+ * 工具 schema 没有节点种类文案表，中文统一走 FIELD_* 兜底文案。仅设计态提示：
+ * 保存/编译/运行的权威仍是后端 L3，本函数不参与 validateGraph 聚合。
+ */
+export function validateParamFields(schema: MetaSchema, params: unknown): Diagnostic[] {
+  return validateSchemaFields(schema, params).map((finding) =>
+    fieldDiag(finding.code, FALLBACK_MESSAGES[finding.code] ?? '字段校验未通过', finding.pointer),
+  )
+}
