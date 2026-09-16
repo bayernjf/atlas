@@ -9,6 +9,7 @@ import { triggerSchema } from './nodes/trigger.schema'
 import { aiDecisionSchema } from './nodes/ai_decision.schema'
 import { toolCallSchema } from './nodes/tool_call.schema'
 import { waitSchema } from './nodes/wait.schema'
+import { conditionSchema } from './nodes/condition.schema'
 
 export const SCHEMA_VERSION = 'v1'
 
@@ -16,6 +17,7 @@ const SCHEMAS: Record<string, Record<string, NodeConfigSchema>> = {
   trigger: { [SCHEMA_VERSION]: triggerSchema },
   ai_decision: { [SCHEMA_VERSION]: aiDecisionSchema },
   tool_call: { [SCHEMA_VERSION]: toolCallSchema },
+  condition: { [SCHEMA_VERSION]: conditionSchema },
   wait: { [SCHEMA_VERSION]: waitSchema },
 }
 

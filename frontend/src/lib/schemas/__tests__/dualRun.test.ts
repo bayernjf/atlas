@@ -31,7 +31,13 @@ describe('schemaRegistry', () => {
   })
 
   it('registers only migrated kinds during the M1 rollout', () => {
-    expect(schemaRegistry.registeredKinds()).toEqual(['trigger', 'ai_decision', 'tool_call', 'wait'])
+    expect(schemaRegistry.registeredKinds()).toEqual([
+      'trigger',
+      'ai_decision',
+      'tool_call',
+      'condition',
+      'wait',
+    ])
   })
 })
 
@@ -121,6 +127,39 @@ describe('wait dual-run equivalence (U36)', () => {
   it('non-duration waitType fails waitType on both', () => {
     expect(
       compareNodeL1WithSchema('wait', { waitType: 'event' as 'duration', durationSeconds: 5 }),
+    ).toBeNull()
+  })
+})
+
+describe('condition dual-run equivalence (U36)', () => {
+  it('default single empty branch fails the three item fields and defaultTarget on both', () => {
+    expect(compareNodeL1WithSchema('condition', defaultConfig('condition'))).toBeNull()
+  })
+
+  it('zero branches fails branches on both', () => {
+    expect(compareNodeL1WithSchema('condition', { branches: [], defaultTarget: '' })).toBeNull()
+  })
+
+  it('configured node passes both', () => {
+    expect(
+      compareNodeL1WithSchema('condition', {
+        branches: [
+          { label: '大额', expression: '{{trigger-1.context.payload.amount}} > 1000', target: 'tool-human' },
+        ],
+        defaultTarget: 'tool-auto',
+      }),
+    ).toBeNull()
+  })
+
+  it('uniqueness, collision and expression syntax stay hand-written-only and do not diverge', () => {
+    expect(
+      compareNodeL1WithSchema('condition', {
+        branches: [
+          { label: 'x', expression: 'amount >', target: 'a' },
+          { label: 'x', expression: '{{ok}} == null', target: 'a' },
+        ],
+        defaultTarget: 'a',
+      }),
     ).toBeNull()
   })
 })
