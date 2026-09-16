@@ -138,7 +138,7 @@ function GroupView({ node, ctx }: { node: FormGroupNode; ctx: ViewContext }): Re
 function ArrayView({ node, ctx }: { node: FormArrayNode; ctx: ViewContext }): ReactElement {
   const itemSchema = node.schema.items ?? {}
   return (
-    <div className="form-array" style={{ marginBottom: 8 }}>
+    <div className="property-field form-array" style={{ marginBottom: 8 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Typography.Text type="secondary">
           {node.label}
@@ -171,7 +171,7 @@ function ArrayView({ node, ctx }: { node: FormArrayNode; ctx: ViewContext }): Re
 function KeyValueView({ node, ctx }: { node: FormKeyValueNode; ctx: ViewContext }): ReactElement {
   const keys = node.entries.map((entry) => entry.key)
   return (
-    <div className="form-keyvalue" style={{ marginBottom: 8 }}>
+    <div className="property-field form-keyvalue" style={{ marginBottom: 8 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Typography.Text type="secondary">
           {node.label}
