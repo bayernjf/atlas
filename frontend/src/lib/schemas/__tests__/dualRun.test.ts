@@ -40,6 +40,7 @@ describe('schemaRegistry', () => {
       'parallel',
       'wait',
       'subgraph',
+      'human_approval',
     ])
   })
 })
@@ -279,6 +280,60 @@ describe('subgraph dual-run equivalence (U36)', () => {
   it('blank inputs value fails inputs.<key> on both', () => {
     expect(
       compareNodeL1WithSchema('subgraph', { graphId: 'graph-7', inputs: { order_id: '  ' } }),
+    ).toBeNull()
+  })
+})
+
+describe('human_approval dual-run equivalence (U36)', () => {
+  it('default config fails summary and both targets on both', () => {
+    expect(compareNodeL1WithSchema('human_approval', defaultConfig('human_approval'))).toBeNull()
+  })
+
+  it('configured node passes both', () => {
+    expect(
+      compareNodeL1WithSchema('human_approval', {
+        ...defaultConfig('human_approval'),
+        summary: '订单 {{trigger-1.context.payload.id}} 退款审批',
+        approver: '客服主管',
+        approvedTarget: 'tool-approve',
+        rejectedTarget: 'tool-reject',
+      }),
+    ).toBeNull()
+  })
+
+  it.each([
+    ['below min', 9],
+    ['above max', 3601],
+    ['non-integer', 1.5],
+    ['undefined', undefined],
+  ])('timeout %s fails timeoutSeconds on both', (_name, timeoutSeconds) => {
+    expect(
+      compareNodeL1WithSchema('human_approval', {
+        summary: '审批',
+        timeoutSeconds: timeoutSeconds as number,
+        onTimeout: 'reject',
+        approvedTarget: 'a',
+        rejectedTarget: 'r',
+      }),
+    ).toBeNull()
+  })
+
+  it('missing targets fail on both and equal targets stay hand-written-only', () => {
+    expect(
+      compareNodeL1WithSchema('human_approval', {
+        ...defaultConfig('human_approval'),
+        summary: 'x',
+        approvedTarget: '',
+        rejectedTarget: '',
+      }),
+    ).toBeNull()
+    expect(
+      compareNodeL1WithSchema('human_approval', {
+        ...defaultConfig('human_approval'),
+        summary: 'x',
+        approvedTarget: 'same',
+        rejectedTarget: 'same',
+      }),
     ).toBeNull()
   })
 })

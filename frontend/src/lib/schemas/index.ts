@@ -13,6 +13,7 @@ import { conditionSchema } from './nodes/condition.schema'
 import { loopSchema } from './nodes/loop.schema'
 import { parallelSchema } from './nodes/parallel.schema'
 import { subgraphSchema } from './nodes/subgraph.schema'
+import { humanApprovalSchema } from './nodes/human_approval.schema'
 
 export const SCHEMA_VERSION = 'v1'
 
@@ -25,6 +26,7 @@ const SCHEMAS: Record<string, Record<string, NodeConfigSchema>> = {
   parallel: { [SCHEMA_VERSION]: parallelSchema },
   wait: { [SCHEMA_VERSION]: waitSchema },
   subgraph: { [SCHEMA_VERSION]: subgraphSchema },
+  human_approval: { [SCHEMA_VERSION]: humanApprovalSchema },
 }
 
 for (const versions of Object.values(SCHEMAS)) {
