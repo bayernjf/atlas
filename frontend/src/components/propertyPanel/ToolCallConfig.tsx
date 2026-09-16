@@ -1,6 +1,9 @@
 import { useMemo } from 'react'
 import { AutoComplete, Input, Select, Typography } from 'antd'
 import { buildToolOptions } from '../../lib/adapters'
+import { FormRenderer } from '../../lib/forms/FormRenderer'
+import { paramsToText, parseParamsObject } from '../../lib/forms/params'
+import { buildToolSchemaTable, isFormRenderable } from '../../lib/forms/toolSchemas'
 import { useAdapters } from '../../lib/useScope'
 import type { NodeConfig } from '../../lib/nodeCatalog'
 
@@ -30,6 +33,20 @@ export function ToolCallConfig({ config, update, variablePaths, onInsert }: Prop
   )
 
   const toolMissing = !config.tool?.trim()
+
+  // M3 第二来源：工具 input_schema 取自 /api/adapters 发现快照（04 §4.10）。
+  const toolSchema = useMemo(() => {
+    if (!config.tool) return null
+    return buildToolSchemaTable(adapters)[config.tool] ?? null
+  }, [adapters, config.tool])
+
+  // params 仍是 JSON 字符串：可解析为对象 + 工具 schema 可表单化 → 表单路径；
+  // 未注册工具、发现失败、空 schema、不可解析文本（含裸 {{}} 整串）→ 旧 JSON 文本框。
+  const parsedParams = useMemo(() => parseParamsObject(config.params), [config.params])
+  const formSource =
+    parsedParams !== null && isFormRenderable(toolSchema)
+      ? { schema: toolSchema, value: parsedParams }
+      : null
 
   const paramsPlaceholder = useMemo(() => {
     const tool = config.tool
@@ -82,22 +99,33 @@ export function ToolCallConfig({ config, update, variablePaths, onInsert }: Prop
         )}
       </Field>
       <Field label="参数映射（支持 {{路径}} 引用）">
-        <Input.TextArea
-          rows={4}
-          placeholder={paramsPlaceholder}
-          value={config.params}
-          onChange={(event) => update({ params: event.target.value })}
-        />
+        {formSource ? (
+          <FormRenderer
+            key={config.tool}
+            schema={formSource.schema}
+            value={formSource.value}
+            onChange={(next) => update({ params: paramsToText(next) })}
+          />
+        ) : (
+          <Input.TextArea
+            rows={4}
+            placeholder={paramsPlaceholder}
+            value={config.params}
+            onChange={(event) => update({ params: event.target.value })}
+          />
+        )}
       </Field>
-      <Field label="插入变量引用">
-        <Select
-          style={{ width: '100%' }}
-          value={undefined}
-          placeholder="选择后追加到参数"
-          onChange={onInsert}
-          options={variablePaths.map((path) => ({ value: path, label: `{{${path}}}` }))}
-        />
-      </Field>
+      {!formSource && (
+        <Field label="插入变量引用">
+          <Select
+            style={{ width: '100%' }}
+            value={undefined}
+            placeholder="选择后追加到参数"
+            onChange={onInsert}
+            options={variablePaths.map((path) => ({ value: path, label: `{{${path}}}` }))}
+          />
+        </Field>
+      )}
     </>
   )
 }
