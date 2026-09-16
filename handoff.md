@@ -35,6 +35,7 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 * [docs/16-反馈工作流.md](docs/16-反馈工作流.md) — 用户与 AI 协作者的反馈方式（截图+标签 / computer use）
 * [docs/17-前端国际化与设计Token方案.md](docs/17-前端国际化与设计Token方案.md) — i18n（i18next 触发式引入/错误码边界）+ 设计 Token 三层模型（需求依据 04 §28；Token 已落码，i18n 触发式引入，存量零星硬编码见 17 §3.5）
 * [docs/18-种子客户验证计划.md](docs/18-种子客户验证计划.md) — Phase 1 种子客户画像/招募标准、三场景试用脚本、Go/No-Go 指标、反馈机制（客户向操作指南见根目录 TRIAL.md）
+* [docs/19-Schema驱动配置内核与多智能体端到端方案.md](docs/19-Schema驱动配置内核与多智能体端到端方案.md) — 题述设计方案（2026-09-16）：Schema 驱动前端配置内核（SchemaRegistry/Widget 注册表/拓扑作用域索引/三级校验/性能）与多智能体协同/交互模板/部署灰度回滚/可观测端到端，逐节标注 Atlas 现状与缺口；**提案未立项**，落码前先走 10 ADR/08/03 流程
 
 根目录元文档：[CHANGELOG.md](CHANGELOG.md)（变更日志）/ [CONTRIBUTING.md](CONTRIBUTING.md)（贡献指南）/ [AGENTS.md](AGENTS.md)（AI 行为规范，**新会话必读**）/ [TRIAL.md](TRIAL.md)（种子客户试用一页纸）/ [git-commit-message.md](git-commit-message.md)（commit 详细规范）/ [MIGRATION_CONVENTION.md](MIGRATION_CONVENTION.md)（DB 迁移规范）/ [BENCHMARK.md](BENCHMARK.md)（性能基准记录表）/ [.gitleaks.toml](.gitleaks.toml)（密钥扫描配置）/ [.env.example](.env.example)（环境变量模板）
 
