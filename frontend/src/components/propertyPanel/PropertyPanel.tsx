@@ -14,10 +14,10 @@ import { useEditorStore } from '../../store/editorStore'
 import {
   NODE_CATALOG,
   ON_ERROR_STRATEGIES,
-  validateNode,
   type NodeConfig,
 } from '../../lib/nodeCatalog'
 import { useScopeIndex, useToolOutputSchemas } from '../../lib/useScope'
+import { validateNodeDiagnostics } from '../../lib/validation/validateGraph'
 import { validateExpression } from '../../lib/conditions'
 import { ConditionConfig } from './ConditionConfig'
 import { LoopConfig } from './LoopConfig'
@@ -56,7 +56,11 @@ export function PropertyPanel() {
 
   const { data } = selectedNode
   const meta = NODE_CATALOG[data.kind]
-  const errors = validateNode(data, { selfId: selectedNode.id, scope, toolOutputSchemas })
+  const diagnostics = validateNodeDiagnostics(selectedNode.id, data, {
+    selfId: selectedNode.id,
+    scope,
+    toolOutputSchemas,
+  })
   const config = data.config
   const variablePaths = scope.listPathsAt(selectedNode.id, toolOutputSchemas)
   const targetOptions = nodes
@@ -230,10 +234,10 @@ export function PropertyPanel() {
           />
         </Field>
 
-        {errors.length > 0 ? (
+        {diagnostics.length > 0 ? (
           <div className="property-errors">
-            {errors.map((error) => (
-              <div key={error}>• {error}</div>
+            {diagnostics.map((diagnostic, index) => (
+              <div key={`${diagnostic.code}-${index}`}>• {diagnostic.message}</div>
             ))}
           </div>
         ) : (

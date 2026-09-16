@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { defaultConfig, defaultRetry, validateNode, type EditorNodeData } from '../nodeCatalog'
+import { defaultConfig, defaultRetry, type EditorNodeData } from '../nodeCatalog'
+import { validateNodeDiagnostics } from '../validation/validateGraph'
+
+// 结构化 Diagnostic[] 的 message 视图（M2 起 validateNode:string[] 已下线）。
+function validateNode(data: EditorNodeData): string[] {
+  return validateNodeDiagnostics('test-node', data).map((diagnostic) => diagnostic.message)
+}
 
 function node(kind: EditorNodeData['kind'], patch: Partial<EditorNodeData> = {}): EditorNodeData {
   return {

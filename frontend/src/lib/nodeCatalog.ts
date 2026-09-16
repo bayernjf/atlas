@@ -7,7 +7,7 @@
 
 import { token } from '../theme/tokens'
 import type { JsonSchema, ScopeIndex } from './scope'
-import { validateNodeFields, type ApprovalTimeoutAction } from './validation/l1'
+import type { ApprovalTimeoutAction } from './validation/l1'
 
 export {
   MAX_LOOP_ITERATIONS,
@@ -164,39 +164,11 @@ export function defaultRetry(): RetryConfig {
 }
 
 /**
- * L2 跨节点模板引用校验上下文（04 §6.5）；缺省时只做 L1 字段校验。
+ * L2 跨节点模板引用校验上下文（04 §6.5）；结构化校验由
+ * lib/validation/validateGraph 的 validateNodeDiagnostics 统一聚合。
  */
 export type RefValidationContext = {
   selfId: string
   scope: ScopeIndex
   toolOutputSchemas?: Record<string, JsonSchema>
-}
-
-
-/**
- * 实时校验（04 §3.3：缺失必填项高亮提示；04 §6.5：L2 模板引用校验）。
- * 返回错误消息数组，空数组表示通过。M2 起 L1 由 lib/validation/l1 扶正后的
- * schema 解释器 + 保留的手写跨字段规则产出（结构化 Diagnostic 的 message 视图）；
- * 结构化消费（Diagnostic[]）由 validateGraph 聚合入口提供。
- */
-export function validateNode(
-  data: EditorNodeData,
-  refContext?: RefValidationContext,
-): string[] {
-  const errors: string[] = []
-  if (!data.label.trim()) errors.push('节点名称必填')
-
-  errors.push(...validateNodeFields(data.kind, data.config).map((diagnostic) => diagnostic.message))
-
-  if (refContext) {
-    for (const diagnostic of refContext.scope.validateRefsAt(
-      refContext.selfId,
-      data.kind,
-      data.config,
-      refContext.toolOutputSchemas,
-    )) {
-      errors.push(diagnostic.message)
-    }
-  }
-  return errors
 }
