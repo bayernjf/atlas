@@ -7,12 +7,14 @@
 import { assertNodeConfigSchema, type NodeConfigSchema } from './metaSchema'
 import { triggerSchema } from './nodes/trigger.schema'
 import { aiDecisionSchema } from './nodes/ai_decision.schema'
+import { toolCallSchema } from './nodes/tool_call.schema'
 
 export const SCHEMA_VERSION = 'v1'
 
 const SCHEMAS: Record<string, Record<string, NodeConfigSchema>> = {
   trigger: { [SCHEMA_VERSION]: triggerSchema },
   ai_decision: { [SCHEMA_VERSION]: aiDecisionSchema },
+  tool_call: { [SCHEMA_VERSION]: toolCallSchema },
 }
 
 for (const versions of Object.values(SCHEMAS)) {

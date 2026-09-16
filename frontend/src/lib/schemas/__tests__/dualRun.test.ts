@@ -31,7 +31,7 @@ describe('schemaRegistry', () => {
   })
 
   it('registers only migrated kinds during the M1 rollout', () => {
-    expect(schemaRegistry.registeredKinds()).toEqual(['trigger', 'ai_decision'])
+    expect(schemaRegistry.registeredKinds()).toEqual(['trigger', 'ai_decision', 'tool_call'])
   })
 })
 
@@ -83,5 +83,18 @@ describe('ai_decision dual-run equivalence (U36)', () => {
 
   it.each(cases)('%s', (_name, config) => {
     expect(compareNodeL1WithSchema('ai_decision', config)).toBeNull()
+  })
+})
+
+describe('tool_call dual-run equivalence (U36)', () => {
+  const cases: Array<[string, NodeConfig]> = [
+    ['default config fails tool on both', defaultConfig('tool_call')],
+    ['whitespace tool fails on both', { ...defaultConfig('tool_call'), tool: ' ' }],
+    ['selected tool passes both', { ...defaultConfig('tool_call'), tool: 'web/click', params: '{"x":1}' }],
+    ['template params do not affect the result', { tool: 'message/send', params: '{{trigger-1.context.payload}}' }],
+  ]
+
+  it.each(cases)('%s', (_name, config) => {
+    expect(compareNodeL1WithSchema('tool_call', config)).toBeNull()
   })
 })
