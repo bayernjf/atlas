@@ -13,6 +13,7 @@
 | `tool` | 04 / 四、工具/适配器组件 4.3 工具定义 Schema | ### 4.3 工具定义 Schema |
 | `node_schema` | 04 / 5.2 节点系统 Schema 示例代码 | ### 5.2 节点系统 Schema 示例代码 |
 | `node_data_schema` | 04 / §4.9 前端 MetaSchema 扩展（`x-*` keyword 权威）+ `frontend/src/lib/schemas/`（M1 新增） | ### 4.9 Capability JSON Schema 子集与发现投影（v1） |
+| `diagnostic` | 04 / §6.5 结构化诊断 blockquote（M2 立项，2026-09-16，未开工）+ `frontend/src/lib/validation/`（落码承载） | ### 6.5 拓扑作用域与 L2 模板引用校验（v1） |
 | `graph_definition` | 04 / 5.2 节点系统 Schema（节点形状）+ `src/atlas/graph/dsl.py`（GraphDSL 权威实现，W7-W8） | ### 5.2 节点系统 Schema 示例代码 |
 | `adapter_schema` | 04 / 5.4 工具/适配器注册 Schema 示例代码 | ### 5.4 工具/适配器注册 Schema 示例代码 |
 | `skill_schema` | 05 / 一、技能（Skill）1.2 技能的数据结构 | ## 1.2 技能的数据结构（示例） |
@@ -149,7 +150,28 @@ edges:                       # {id, source, target}，端点必须存在且禁�
   x-outputSchema: object         # 节点 outputs 形状声明；M1 须与 lib/scope.ts 投影逐字段一致
 # metaSchema.ts：TS 类型 + schema 形状自检；index.ts：最小 SchemaRegistry get(kind, version)（M1 仅内置节点单一来源）
 ```
-> 边界：`x-*` 仅前端节点 schema，后端 Capability schema 拒绝 `x-*`（U32）；M1 零 UI 变化、零新依赖、不引 AJV（ADR T16 已于 2026-09-16 收口为手写最小子集，M1 解释器 M2 扶正、M3 重开判据，见 10 §4）、不做表单生成；schema 为 nodeCatalog 手写规则的声明式投影，M1 期手写校验保留并双跑等价比对（U36）。工具/技能等五类实体入册缓做 D29。
+> 边界：`x-*` 仅前端节点 schema，后端 Capability schema 拒绝 `x-*`（U32）；M1 零 UI 变化、零新依赖、不引 AJV（ADR T16 已于 2026-09-16 收口为手写最小子集，M2 已立项把 M1 解释器扶正迁入 `lib/validation/l1.ts`——见下 `diagnostic` 契约，M3 重开判据见 10 §4）、不做表单生成；schema 为 nodeCatalog 手写规则的声明式投影，M1 期手写校验保留并双跑等价比对（U36；M2 扶正后双跑脚手架与已覆盖手写规则下线，covered:false 跨字段规则保留）。工具/技能等五类实体入册缓做 D29。
+
+### `diagnostic` — 字段概览（M2 已立项 2026-09-16，未开工；权威见 08 M2 立项条与 04 §6.5 结构化诊断 blockquote，落码承载 `frontend/src/lib/validation/`）
+
+```ts
+// diagnostics.ts
+type Diagnostic = {
+  severity: 'error' | 'warning'
+  layer: 'field' | 'template' | 'graph'   // field=L1 字段/schema+手写跨字段；template=L2 模板引用；graph=类型位（M2 前端不产，L3 权威在后端）
+  code: string        // L1: FIELD_REQUIRED/FIELD_TYPE/FIELD_ENUM/FIELD_CONST/FIELD_RANGE/FIELD_LENGTH/FIELD_PATTERN/FIELD_ITEMS_MIN/FIELD_ITEMS_MAX/FIELD_ADDITIONAL_PROPERTIES/FIELD_ONEOF + 手写跨字段规则稳定码；L2: REF_NODE_NOT_FOUND/REF_NOT_IN_SCOPE/REF_PATH_NOT_FOUND
+  message: string     // 中文，与 M1/M0 现文案逐条一致；未来 i18n key 同源
+  loc: {
+    nodeId?: string                          // 所属图节点 id；图级诊断可缺省
+    pointer?: string                        // RFC 6901 JSON Pointer，相对该节点 config 对象根：/durationSeconds、/branches/0/expression、/inputs/<键>
+    token?: { start: number; end: number; raw: string }  // 仅 L2：{{...}} 在模板字段源串中的区间与原文（含 {{}}）
+  }
+  quickFix?: Fix[]    // 类型位 only：M2 不产任何动作（首个动作随 M4）
+}
+// rank(diags)：error 优先；同严重度按节点拓扑稳定序（上游在前）→ pointer → token.start
+// validateGraph 聚合单节点 L1（l1.ts schema 解释器 + 手写跨字段）与 L2（scope.ts）；PropertyPanel/AtlasNode 角标共用，消费 Diagnostic[].message
+```
+> 后端 compile 422 形状微调（见 12 `/api/graphs/{id}/compile`、06 §6.13）：`detail: string[]`（中文文案/顺序/状态码不变）之外增稀疏侧车 `locations?: Array<{ index: number; nodeId?: string; pointer?: string }>`，index 对齐 detail 下标；图级错误（version/空图/连线/重复 id/全局变量）不出条目。不引入 Python 版 schema 解释器；运行期插值 fail-soft 不变。U37（前端）/U38（后端侧车）为候选用例。
 
 ### `adapter_schema` — 字段概览（完整定义见 04-组件设计-编辑后台.md #459，上下文章节：### 5.4 工具/适配器注册 Schema 示例代码）
 
