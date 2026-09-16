@@ -7,6 +7,7 @@ DSL → LangGraph 编译见 `loader.py`。
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -101,8 +102,19 @@ def parse_graph(raw: dict[str, Any]) -> GraphDSL:
     return graph
 
 
-def validate_graph(graph: GraphDSL) -> list[str]:
-    """结构 + 节点配置静态校验；返回错误文案列表（空列表表示通过）。"""
+def validate_graph(
+    graph: GraphDSL,
+    tool_output_schemas: dict[str, dict[str, Any]] | None = None,
+    *,
+    check_refs: bool = False,
+) -> list[str]:
+    """结构 + 节点配置静态校验；返回错误文案列表（空列表表示通过）。
+
+    tool_output_schemas 为 ``<adapter_id>/<tool> -> output_schema`` 表，
+    来自适配器发现（04 §4.9）；缺省时工具深层路径一律放行。
+    L2 模板引用规则（04 §6.5，与前端 lib/scope.ts 同构）仅在编译期
+    check_refs=True 时启用；解析/保存期不复查，运行期缺失保留原样。
+    """
     errors: list[str] = []
 
     if graph.version != 1:
@@ -185,6 +197,18 @@ def validate_graph(graph: GraphDSL) -> list[str]:
 
     errors.extend(_validate_illegal_cycles(graph, loop_backedges))
     errors.extend(_validate_reachability(graph, node_ids, outgoing))
+    if check_refs:
+        errors.extend(
+            _validate_template_refs(
+                graph,
+                node_ids=node_ids,
+                node_types=node_types,
+                incoming=incoming,
+                outgoing=outgoing,
+                global_names=var_names,
+                tool_output_schemas=tool_output_schemas or {},
+            )
+        )
 
     return errors
 
@@ -735,3 +759,265 @@ def _validate_node_config(node: NodeDSL) -> list[str]:
         if not (config.get("tool") or "").strip():
             return ["工具调用必须选择工具"]
     return []
+
+
+# --- 04 §6.5 L2 模板引用编译期复查（与前端 lib/scope.ts 同构） --------------
+
+_REF_RE = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
+
+_STATIC_OUTPUT_KEYS: dict[str, tuple[str, ...]] = {
+    "ai_decision": ("decision", "prompt_rendered"),
+    "condition": ("branch", "target"),
+    "loop": ("index", "iterations"),
+    "parallel": ("status", "branches", "joinStrategy", "joinTarget"),
+    "wait": ("mode", "waitType", "durationSeconds"),
+    "subgraph": ("status", "outputs"),
+    "human_approval": ("decision", "target", "summary", "approver", "resolvedBy"),
+}
+
+_TRIGGER_CONTEXT_KEYS = ("triggerType", "cron", "webhookUrl", "payload")
+
+
+def _template_fields(node: NodeDSL) -> list[str]:
+    """节点 config 中可能含 {{路径}} 的字符串字段（04 §6.5）。"""
+    config = node.config
+    fields: list[str] = []
+    if node.type == "ai_decision":
+        value = config.get("promptTemplate")
+        if isinstance(value, str):
+            fields.append(value)
+    elif node.type == "tool_call":
+        value = config.get("params")
+        if isinstance(value, str):
+            fields.append(value)
+    elif node.type == "condition":
+        branches = config.get("branches")
+        if isinstance(branches, list):
+            for branch in branches:
+                if isinstance(branch, dict) and isinstance(branch.get("expression"), str):
+                    fields.append(branch["expression"])
+    elif node.type == "loop":
+        value = config.get("continueExpression")
+        if isinstance(value, str):
+            fields.append(value)
+    elif node.type == "human_approval":
+        value = config.get("summary")
+        if isinstance(value, str):
+            fields.append(value)
+    elif node.type == "subgraph":
+        inputs = config.get("inputs")
+        if isinstance(inputs, dict):
+            fields.extend(value for value in inputs.values() if isinstance(value, str))
+    return fields
+
+
+def _reverse_bfs(start: str, incoming: dict[str, set[str]]) -> set[str]:
+    seen = {start}
+    queue = [start]
+    while queue:
+        current = queue.pop()
+        for predecessor in incoming.get(current, set()):
+            if predecessor not in seen:
+                seen.add(predecessor)
+                queue.append(predecessor)
+    seen.discard(start)
+    return seen
+
+
+def _schema_has_path(schema: dict[str, Any] | None, segments: list[str]) -> bool:
+    """output_schema 深层路径存在性；无 schema/开放对象/oneOf 无法静态判定时放行。"""
+    if not schema or "oneOf" in schema:
+        return True
+    if not segments:
+        return True
+    head, *rest = segments
+    if schema.get("type") == "array" or "items" in schema:
+        if head.isdigit():
+            items = schema.get("items")
+            return _schema_has_path(items if isinstance(items, dict) else None, rest)
+        return "items" not in schema
+    if "additionalProperties" in schema:
+        properties = schema.get("properties")
+        if isinstance(properties, dict) and head in properties:
+            return _schema_has_path(properties[head], rest)
+        additional = schema["additionalProperties"]
+        if additional is True:
+            return True
+        if isinstance(additional, dict):
+            return _schema_has_path(additional, rest)
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        if head in properties:
+            return _schema_has_path(properties[head], rest)
+        return False
+    return "type" not in schema
+
+
+def _validate_template_refs(
+    graph: GraphDSL,
+    *,
+    node_ids: set[str],
+    node_types: dict[str, str],
+    incoming: dict[str, set[str]],
+    outgoing: dict[str, set[str]],
+    global_names: set[str],
+    tool_output_schemas: dict[str, dict[str, Any]],
+) -> list[str]:
+    errors: list[str] = []
+    trigger_ids = {nid for nid in node_ids if node_types.get(nid) == "trigger"}
+
+    loop_bodies: dict[str, set[str]] = {}
+    for node in graph.nodes:
+        if node.type != "loop":
+            continue
+        body_target = node.config.get("bodyTarget")
+        exit_target = node.config.get("exitTarget")
+        if not isinstance(body_target, str) or body_target not in node_ids:
+            continue
+        stop = {node.id}
+        if isinstance(exit_target, str):
+            stop.add(exit_target)
+        loop_bodies[node.id] = _bfs({body_target}, outgoing, stop=stop)
+
+    visible_cache: dict[str, set[str]] = {}
+
+    def visible_at(viewer: str) -> set[str]:
+        if viewer not in visible_cache:
+            visible = _reverse_bfs(viewer, incoming)
+            visible |= trigger_ids
+            visible.discard(viewer)
+            visible_cache[viewer] = visible
+        return visible_cache[viewer]
+
+    for node in graph.nodes:
+        if node.type not in _TEMPLATE_FIELDS_TYPES:
+            continue
+        fields = _template_fields(node)
+        if not fields:
+            continue
+        prefix = f"节点 {node.id}"
+        visible = visible_at(node.id)
+        for text in fields:
+            for match in _REF_RE.finditer(text):
+                path = match.group(1)
+                segments = [segment for segment in path.split(".") if segment]
+                if not segments:
+                    continue
+                head = segments[0]
+                display = "{{" + path + "}}"
+
+                if head == "global":
+                    name = segments[1] if len(segments) > 1 else ""
+                    if name not in global_names:
+                        errors.append(
+                            f"{prefix} 模板引用未声明的全局变量（REF_NODE_NOT_FOUND）：{display}"
+                        )
+                    continue
+
+                if head not in node_ids:
+                    errors.append(
+                        f"{prefix} 模板引用的节点不存在（REF_NODE_NOT_FOUND）：{display}"
+                    )
+                    continue
+
+                ref_type = node_types[head]
+                loop_self_index = (
+                    ref_type == "loop"
+                    and head == node.id
+                    and len(segments) > 1
+                    and segments[1] in ("index", "iterations")
+                )
+                loop_blocked = (
+                    ref_type == "loop"
+                    and head != node.id
+                    and node.id not in loop_bodies.get(head, set())
+                )
+                if (
+                    (head == node.id and not loop_self_index)
+                    or loop_blocked
+                    or (head not in visible and not loop_self_index)
+                ):
+                    errors.append(
+                        f"{prefix} 模板引用不可见（REF_NOT_IN_SCOPE：非上游或循环变量越出循环体）："
+                        f"{display}"
+                    )
+                    continue
+
+                tail = segments[1:]
+                if not tail:
+                    errors.append(
+                        f"{prefix} 模板引用缺少输出字段（REF_PATH_NOT_FOUND，"
+                        f"应写 {{{head}.<字段>}}）：{display}"
+                    )
+                    continue
+
+                if ref_type == "trigger":
+                    root = tail[0]
+                    key = tail[1] if len(tail) > 1 else ""
+                    if root != "context" or key not in _TRIGGER_CONTEXT_KEYS:
+                        errors.append(
+                            f"{prefix} 触发器输出路径不存在（REF_PATH_NOT_FOUND，"
+                            f"context 下仅 {'/'.join(_TRIGGER_CONTEXT_KEYS)}）：{display}"
+                        )
+                    continue
+
+                if ref_type == "tool_call":
+                    root = tail[0]
+                    if root != "result":
+                        errors.append(
+                            f"{prefix} 工具节点仅暴露 result 输出（REF_PATH_NOT_FOUND）：{display}"
+                        )
+                        continue
+                    tool = ""
+                    ref_node = next((candidate for candidate in graph.nodes if candidate.id == head), None)
+                    if ref_node is not None and isinstance(ref_node.config.get("tool"), str):
+                        tool = ref_node.config["tool"]
+                    schema = tool_output_schemas.get(tool)
+                    if not _schema_has_path(schema, tail[1:]):
+                        errors.append(
+                            f"{prefix} 工具 {tool or '未选择'} 的输出中不存在该路径"
+                            f"（REF_PATH_NOT_FOUND）：{display}"
+                        )
+                    continue
+
+                if ref_type == "parallel":
+                    root, *rest = tail
+                    if root == "result":
+                        continue  # 动态入口键，深层不做判定（D30）
+                    if root not in _STATIC_OUTPUT_KEYS["parallel"] or rest:
+                        errors.append(
+                            f"{prefix} 并行节点输出路径不存在（REF_PATH_NOT_FOUND，"
+                            f"仅 status/branches/joinStrategy/joinTarget，result 为动态入口）：{display}"
+                        )
+                    continue
+
+                if ref_type == "subgraph":
+                    root, *rest = tail
+                    if root == "outputs":
+                        continue  # 子图输出深层展开缓做 D30
+                    if root not in _STATIC_OUTPUT_KEYS["subgraph"] or rest:
+                        errors.append(
+                            f"{prefix} 子图节点输出路径不存在（REF_PATH_NOT_FOUND，仅 status/outputs 根）："
+                            f"{display}"
+                        )
+                    continue
+
+                static_keys = _STATIC_OUTPUT_KEYS.get(ref_type)
+                if static_keys is not None:
+                    root, *rest = tail
+                    if root not in static_keys or rest:
+                        errors.append(
+                            f"{prefix} 节点 {head} 的输出中不存在该路径（REF_PATH_NOT_FOUND）：{display}"
+                        )
+
+    return errors
+
+
+_TEMPLATE_FIELDS_TYPES = {
+    "ai_decision",
+    "tool_call",
+    "condition",
+    "loop",
+    "human_approval",
+    "subgraph",
+}
