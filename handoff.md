@@ -38,6 +38,7 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 * [docs/19-Schema驱动配置内核与多智能体端到端方案.md](docs/19-Schema驱动配置内核与多智能体端到端方案.md) — 题述设计方案（2026-09-16）：Schema 驱动前端配置内核（SchemaRegistry/Widget 注册表/拓扑作用域索引/三级校验/性能）与多智能体协同/交互模板/部署灰度回滚/可观测端到端，逐节标注 Atlas 现状与缺口；**提案未立项**，落码前先走 10 ADR/08/03 流程
 * [docs/20-题述方案工程化落地路线.md](docs/20-题述方案工程化落地路线.md) — docs/19 的工程化落地拆解（2026-09-16）：M0 前置项已落 + M1–M10 里程碑（题一 Schema 内核 M1–M4、持久化 M5、题二版本化/任务总线/交互卡片/灰度回滚/span M6–M10），每期含仓内改动面、前置门、不做什么、验收口径，附契约同步矩阵与 D29–D34 触发总表；**M1 起未立项**
 * [docs/21-题述原题与方案作答.md](docs/21-题述原题与方案作答.md) — 两道题的题卷+答卷合订阅读版（2026-09-16）：§1 原题照录，§2/§3 按题面「请给出」条目逐条方案作答（模块/数据流/Schema 形状/伪代码/机制策略，不含实现代码），§4 接缝与落地状态，§5 脱离 Atlas 约束的绿地视角（通用骨架 vs Atlas 塑造的选型分期）；细节以 19 为准、排期以 20 为准
+* [docs/22-题述方案绿地独立设计.md](docs/22-题述方案绿地独立设计.md) — 两道题的绿地完整独立方案（2026-09-16）：**显式不受 Atlas 架构/技术栈/单进程 Demo 约束**，按可上线多租户 SaaS 从零设计（rjsf/Formily+AJV+Monaco、Temporal 主协调+Worker Versioning 钉版、独立 Bot 服务、NATS、KMS、OTel/Prometheus、Rollout Controller 灰度），§3 两版选型分叉总对照、§4 七条两版不变通用原则；**非 Atlas 落码依据**，落码以 19/20 为准
 
 根目录元文档：[CHANGELOG.md](CHANGELOG.md)（变更日志）/ [CONTRIBUTING.md](CONTRIBUTING.md)（贡献指南）/ [AGENTS.md](AGENTS.md)（AI 行为规范，**新会话必读**）/ [TRIAL.md](TRIAL.md)（种子客户试用一页纸）/ [git-commit-message.md](git-commit-message.md)（commit 详细规范）/ [MIGRATION_CONVENTION.md](MIGRATION_CONVENTION.md)（DB 迁移规范）/ [BENCHMARK.md](BENCHMARK.md)（性能基准记录表）/ [.gitleaks.toml](.gitleaks.toml)（密钥扫描配置）/ [.env.example](.env.example)（环境变量模板）
 
