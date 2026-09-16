@@ -31,7 +31,7 @@ describe('schemaRegistry', () => {
   })
 
   it('registers only migrated kinds during the M1 rollout', () => {
-    expect(schemaRegistry.registeredKinds()).toEqual(['trigger', 'ai_decision', 'tool_call'])
+    expect(schemaRegistry.registeredKinds()).toEqual(['trigger', 'ai_decision', 'tool_call', 'wait'])
   })
 })
 
@@ -96,5 +96,31 @@ describe('tool_call dual-run equivalence (U36)', () => {
 
   it.each(cases)('%s', (_name, config) => {
     expect(compareNodeL1WithSchema('tool_call', config)).toBeNull()
+  })
+})
+
+describe('wait dual-run equivalence (U36)', () => {
+  const invalidSeconds: Array<[string, number | undefined]> = [
+    ['zero', 0],
+    ['negative', -1],
+    ['above max', 601],
+    ['non-integer', 1.5],
+    ['undefined', undefined],
+  ]
+
+  it.each(invalidSeconds)('%s duration fails durationSeconds on both', (_name, durationSeconds) => {
+    expect(
+      compareNodeL1WithSchema('wait', { waitType: 'duration', durationSeconds: durationSeconds as number }),
+    ).toBeNull()
+  })
+
+  it('default config passes both', () => {
+    expect(compareNodeL1WithSchema('wait', defaultConfig('wait'))).toBeNull()
+  })
+
+  it('non-duration waitType fails waitType on both', () => {
+    expect(
+      compareNodeL1WithSchema('wait', { waitType: 'event' as 'duration', durationSeconds: 5 }),
+    ).toBeNull()
   })
 })
