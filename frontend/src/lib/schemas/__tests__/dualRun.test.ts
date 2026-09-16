@@ -26,12 +26,12 @@ describe('schemaRegistry', () => {
   })
 
   it('rejects unknown kinds and versions', () => {
-    expect(() => schemaRegistry.get('ai_decision')).toThrow(/未知节点种类/)
+    expect(() => schemaRegistry.get('not_a_node_kind')).toThrow(/未知节点种类/)
     expect(() => schemaRegistry.get('trigger', 'v2')).toThrow(/无版本/)
   })
 
   it('registers only migrated kinds during the M1 rollout', () => {
-    expect(schemaRegistry.registeredKinds()).toEqual(['trigger'])
+    expect(schemaRegistry.registeredKinds()).toEqual(['trigger', 'ai_decision'])
   })
 })
 
@@ -62,5 +62,26 @@ describe('trigger dual-run equivalence (U36)', () => {
     validateNode(triggerNode({ ...defaultConfig('trigger'), triggerType: 'schedule', cron: '' }))
     expect(errorSpy).not.toHaveBeenCalled()
     errorSpy.mockRestore()
+  })
+})
+
+describe('ai_decision dual-run equivalence (U36)', () => {
+  const cases: Array<[string, NodeConfig]> = [
+    ['default config fails promptTemplate on both', defaultConfig('ai_decision')],
+    ['whitespace prompt fails promptTemplate on both', { ...defaultConfig('ai_decision'), promptTemplate: ' ' }],
+    ['configured node passes both', { ...defaultConfig('ai_decision'), promptTemplate: '通过吗？' }],
+    [
+      'threshold above range fails confidenceThreshold on both',
+      { ...defaultConfig('ai_decision'), promptTemplate: 'x', confidenceThreshold: 1.2 },
+    ],
+    [
+      'threshold below range fails confidenceThreshold on both',
+      { ...defaultConfig('ai_decision'), promptTemplate: 'x', confidenceThreshold: -0.1 },
+    ],
+    ['boundary thresholds pass both', { ...defaultConfig('ai_decision'), promptTemplate: 'x', confidenceThreshold: 0 }],
+  ]
+
+  it.each(cases)('%s', (_name, config) => {
+    expect(compareNodeL1WithSchema('ai_decision', config)).toBeNull()
   })
 })
