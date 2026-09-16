@@ -383,6 +383,7 @@ def _validate_subgraph_refs(
     *,
     chain: tuple[str, ...],
     depth: int,
+    tool_output_schemas: dict[str, dict[str, Any]] | None = None,
 ) -> list[str]:
     """编译期跨图递归校验（04 §5.7）：可解析、禁自引用/跨图环、深度≤3、子图递归过图校验。"""
     errors: list[str] = []
@@ -418,11 +419,14 @@ def _validate_subgraph_refs(
         if child is None:
             errors.append(f"{prefix} 引用的子图不存在：{ref}")
             continue
-        for child_error in validate_graph(child):
+        for child_error in validate_graph(
+            child, tool_output_schemas, check_refs=True
+        ):
             errors.append(f"子图 {ref}：{child_error}")
         errors.extend(
             _validate_subgraph_refs(
-                child, resolver, ref, chain=(*chain, ref), depth=depth + 1
+                child, resolver, ref, chain=(*chain, ref), depth=depth + 1,
+                tool_output_schemas=tool_output_schemas,
             )
         )
     return errors
@@ -720,6 +724,24 @@ def _make_join_gate(node: NodeDSL, meta: dict[str, Any], emit: EventCallback):
     return gate
 
 
+def _tool_output_schemas(registry: AdapterRegistry) -> dict[str, dict[str, Any]]:
+    """编译期 L2 复查用：``<adapter_id>/<tool> -> output_schema``（04 §4.9/§6.5）。"""
+    table: dict[str, dict[str, Any]] = {}
+    for adapter in registry.list_adapters():
+        for tool in adapter["tools"]:
+            table[f"{adapter['id']}/{tool['name']}"] = tool["output_schema"]
+    return table
+
+
+def tool_input_schemas(registry: AdapterRegistry) -> dict[str, dict[str, Any]]:
+    """NL 参数填充尽力校验用：``<adapter_id>/<tool> -> input_schema``（04 §4.9 ⑤）。"""
+    table: dict[str, dict[str, Any]] = {}
+    for adapter in registry.list_adapters():
+        for tool in adapter["tools"]:
+            table[f"{adapter['id']}/{tool['name']}"] = tool["input_schema"]
+    return table
+
+
 def compile_graph(
     graph: GraphDSL,
     *,
@@ -740,8 +762,15 @@ def compile_graph(
     emit = emit or noop_emit
     payload = trigger_payload or {}
 
-    ref_errors = _validate_subgraph_refs(
-        graph, graph_resolver, graph_id, chain=(graph_id,), depth=_subgraph_depth
+    tool_schemas = _tool_output_schemas(registry)
+    # 编译期 L2 复查（04 §6.5 防绕过）：parse_graph 时无注册表，引用与工具深层路径在此补判。
+    ref_errors = validate_graph(graph, tool_schemas, check_refs=True) + _validate_subgraph_refs(
+        graph,
+        graph_resolver,
+        graph_id,
+        chain=(graph_id,),
+        depth=_subgraph_depth,
+        tool_output_schemas=tool_schemas,
     )
     if ref_errors:
         raise GraphValidationError(ref_errors)

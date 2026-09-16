@@ -286,9 +286,10 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
     setNlLoading(true)
     setNlError(null)
     try {
-      const { graph } = await nlGenerate(nlPrompt)
+      const { graph, paramWarnings } = await nlGenerate(nlPrompt)
       loadGraph(graph)
       setNlOpen(false)
+      paramWarnings?.forEach((warning) => appendLog(`⚠ NL 参数提示：${warning}`))
     } catch (error) {
       setNlError(error instanceof Error ? error.message : String(error))
     } finally {

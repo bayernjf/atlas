@@ -7,6 +7,7 @@
 
 import { token } from '../theme/tokens'
 import { validateExpression } from './conditions'
+import type { JsonSchema, ScopeIndex } from './scope'
 
 export const NODE_KINDS = ['trigger', 'ai_decision', 'tool_call', 'condition', 'loop', 'parallel', 'wait', 'subgraph', 'human_approval'] as const
 export type NodeKind = (typeof NODE_KINDS)[number]
@@ -160,9 +161,22 @@ export function defaultRetry(): RetryConfig {
 }
 
 /**
- * 实时校验（04 §3.3：缺失必填项高亮提示）。返回错误消息数组，空数组表示通过。
+ * L2 跨节点模板引用校验上下文（04 §6.5）；缺省时只做 L1 字段校验。
  */
-export function validateNode(data: EditorNodeData): string[] {
+export type RefValidationContext = {
+  selfId: string
+  scope: ScopeIndex
+  toolOutputSchemas?: Record<string, JsonSchema>
+}
+
+/**
+ * 实时校验（04 §3.3：缺失必填项高亮提示；04 §6.5：L2 模板引用校验）。
+ * 返回错误消息数组，空数组表示通过。
+ */
+export function validateNode(
+  data: EditorNodeData,
+  refContext?: RefValidationContext,
+): string[] {
   const errors: string[] = []
   if (!data.label.trim()) errors.push('节点名称必填')
 
@@ -297,6 +311,16 @@ export function validateNode(data: EditorNodeData): string[] {
         errors.push('通过目标与拒绝目标不能相同')
       }
       break
+    }
+  }
+  if (refContext) {
+    for (const diagnostic of refContext.scope.validateRefsAt(
+      refContext.selfId,
+      data.kind,
+      data.config,
+      refContext.toolOutputSchemas,
+    )) {
+      errors.push(diagnostic.message)
     }
   }
   return errors

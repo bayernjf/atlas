@@ -65,8 +65,8 @@ name: string
 description: string          # 自然语言描述，供LLM理解
 adapter_id: string           # 所属适配器
 action: string               # 具体动作
-input_schema: object         # 输入参数JSON Schema
-output_schema: object        # 输出参数JSON Schema
+input_schema: object         # 输入参数 JSON Schema **子集**（形状权威见 04 §4.9，白名单 keyword；空 {} = 未声明）
+output_schema: object        # 输出参数 JSON Schema 子集（描述 ActionResult.output，同上）
 permission: string           # 所需权限
 timeout: number
 retry_policy: object
@@ -133,6 +133,8 @@ edges:                       # {id, source, target}，端点必须存在且禁�
 > 前端序列化 `frontend/src/lib/graphSerializer.ts`（version 1）；后端解析/校验 `atlas.graph.dsl.parse_graph`，错误一次性聚合；编译执行 `atlas.graph.loader.compile_graph/run_graph`。
 >
 > **租户注记（2026-09-16，§5.14）**：已保存图按租户分区（每租户独立 GraphStore，graph-N 计数各自从 1 起）；tenant 由 token 推断，不进 Graph JSON。跨租户访问图 id → 404。
+>
+> **模板引用与拓扑作用域注记（2026-09-16，§6.5）**：config 内 `{{路径}}` 的节点输出可见性按图拓扑推导（visibleAt = 沿入边反向可达上游 + 全局变量 + loop 体区域），各节点类型输出投影、L2 三错误码（REF_NODE_NOT_FOUND / REF_NOT_IN_SCOPE / REF_PATH_NOT_FOUND）与 token 区间权威见 04 §6.5；前端实现 `frontend/src/lib/scope.ts`，后端编译期复查在 `atlas.graph.dsl`，运行期插值缺失保留原样语义不变。工具 `result.*` 深层路径以 04 §4.9 的 output_schema 子集为来源。
 
 ### `adapter_schema` — 字段概览（完整定义见 04-组件设计-编辑后台.md #459，上下文章节：### 5.4 工具/适配器注册 Schema 示例代码）
 
@@ -145,8 +147,8 @@ auth_type: enum[oauth2, api_key, basic, cookie, none]
 config: object
 capabilities: 
 description: string       # 自然语言描述，供LLM理解
-input_schema: object      # JSON Schema
-output_schema: object
+input_schema: object      # JSON Schema 子集（白名单/形状权威见 04 §4.9）
+output_schema: object     # 同上；GET /api/adapters 投影携带两者，未声明为 {}
 permission: enum[read, write, delete, financial]
 timeout: number
 is_idempotent: boolean
@@ -288,8 +290,9 @@ trace: [string]               # 子图 trace 行
 prompt: string          # 自然语言流程描述
 # 响应
 graph: graph_definition # 见上 graph_definition（version 1，可直接保存/编译）
+paramWarnings: [string] # 2026-09-16 起；tool_call 参数填充对 input_schema 的尽力校验中文警告（可空数组；非阻塞，草稿照常回显）
 ```
-> 无法识别意图时返回 422；未配置 `LITELLM_MODEL` 时仅退款关键词走规则模板兜底。
+> 无法识别意图时返回 422；未配置 `LITELLM_MODEL` 时仅退款关键词走规则模板兜底。`paramWarnings` 只做静态可判项（必填缺失、顶层浅类型、enum、additionalProperties:false），未知工具/空 schema/模板插值值/无法解析的 params 一律放行（04 §4.9 ⑤）。
 
 ### `feedback_item` — 字段概览（Phase 1；`POST/GET /api/feedback`）
 

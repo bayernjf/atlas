@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { AutoComplete, Input, Select, Typography } from 'antd'
-import { listAdapters, type AdapterInfo } from '../../lib/apiClient'
 import { buildToolOptions } from '../../lib/adapters'
+import { useAdapters } from '../../lib/useScope'
 import type { NodeConfig } from '../../lib/nodeCatalog'
 
 type Props = {
@@ -21,22 +21,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 export function ToolCallConfig({ config, update, variablePaths, onInsert }: Props) {
-  const [adapters, setAdapters] = useState<AdapterInfo[] | null>(null)
-  const [fetchFailed, setFetchFailed] = useState(false)
-
-  useEffect(() => {
-    let cancelled = false
-    listAdapters()
-      .then((items) => {
-        if (!cancelled) setAdapters(items)
-      })
-      .catch(() => {
-        if (!cancelled) setFetchFailed(true)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
+  const { adapters, fetchFailed } = useAdapters()
 
   const groups = useMemo(() => (adapters ? buildToolOptions(adapters) : []), [adapters])
   const knownValues = useMemo(

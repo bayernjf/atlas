@@ -78,6 +78,8 @@ class AdapterRegistry:
                         "description": capability.description,
                         "permission": capability.permission.value,
                         "idempotent": capability.is_idempotent,
+                        "input_schema": capability.input_schema,
+                        "output_schema": capability.output_schema,
                     }
                     for capability in record.capabilities
                 ],

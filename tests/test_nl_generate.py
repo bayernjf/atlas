@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from atlas.graph.dsl import parse_graph, validate_graph
-from atlas.llm.nl_generate import generate_graph
+from atlas.llm.nl_generate import generate_graph, validate_param_fills
 
 
 def test_refund_intent_returns_valid_refund_template():
@@ -163,3 +163,77 @@ def test_llm_prompt_advertises_registered_tools(monkeypatch):
     assert "绑定参数" in system
     assert "message/send" in system
     assert "shop/process_refund" in system
+
+
+_PROCESS_REFUND_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "order_id": {"type": "string"},
+        "action": {"type": "string", "enum": ["approve_refund", "request_human_approval"]},
+        "note": {"type": "string"},
+    },
+    "required": ["order_id", "action"],
+}
+
+_TOOL_SCHEMAS = {"shop/process_refund": _PROCESS_REFUND_SCHEMA, "open/thing": {}}
+
+
+def _tool_graph(tool: str, params: str) -> dict:
+    return {"version": 1, "nodes": [
+        {"id": "t1", "type": "tool_call", "config": {"tool": tool, "params": params}}
+    ], "edges": []}
+
+
+def test_param_fills_legal():
+    graph = _tool_graph(
+        "shop/process_refund",
+        '{"order_id":"O-1","action":"approve_refund","note":"ok"}',
+    )
+    assert validate_param_fills(graph, _TOOL_SCHEMAS) == []
+
+
+def test_param_fills_missing_required():
+    warnings = validate_param_fills(_tool_graph("shop/process_refund", '{"order_id":"O-1"}'), _TOOL_SCHEMAS)
+    assert len(warnings) == 1
+    assert "缺少必填字段" in warnings[0]
+    assert "action" in warnings[0]
+    assert "t1" in warnings[0]
+
+
+def test_param_fills_bad_type_and_enum():
+    graph = _tool_graph(
+        "shop/process_refund",
+        '{"order_id":123,"action":"refund_now"}',
+    )
+    warnings = validate_param_fills(graph, _TOOL_SCHEMAS)
+    joined = "; ".join(warnings)
+    assert "order_id" in joined and "string" in joined
+    assert "action" in joined and "允许范围" in joined
+
+
+def test_param_fills_template_values_skipped_but_count_as_present():
+    graph = _tool_graph(
+        "shop/process_refund",
+        '{"order_id":"{{trigger-1.context.payload.order_id}}","action":"approve_refund"}',
+    )
+    assert validate_param_fills(graph, _TOOL_SCHEMAS) == []
+
+
+def test_param_fills_unparseable_params_pass():
+    # 裸 {{}} 插值使 params 不是合法 JSON，尽力校验直接放行
+    graph = _tool_graph("shop/process_refund", '{"order_id":{{trigger-1.context.payload.id}}}')
+    assert validate_param_fills(graph, _TOOL_SCHEMAS) == []
+
+
+def test_param_fills_unknown_tool_and_empty_schema_pass():
+    assert validate_param_fills(_tool_graph("ghost/tool", '{}'), _TOOL_SCHEMAS) == []
+    assert validate_param_fills(_tool_graph("open/thing", '{"anything": 1}'), _TOOL_SCHEMAS) == []
+
+
+def test_param_fills_additional_properties_false():
+    schemas = {"shop/process_refund": {**_PROCESS_REFUND_SCHEMA, "additionalProperties": False}}
+    warnings = validate_param_fills(
+        _tool_graph("shop/process_refund", '{"order_id":"O-1","action":"approve_refund","bogus":1}'),
+        schemas,
+    )
+    assert any("未声明字段" in w and "bogus" in w for w in warnings)

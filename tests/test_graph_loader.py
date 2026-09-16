@@ -34,7 +34,7 @@ def _sample_graph():
                 {"id": "trigger-1", "type": "trigger", "name": "触发",
                  "config": {"triggerType": "webhook", "webhookUrl": "/hooks/approval"}},
                 {"id": "ai_decision-1", "type": "ai_decision", "name": "决策",
-                 "config": {"promptTemplate": "公司 {{global.company_name}} 限额 {{global.approval_limit}} 缺失 {{global.missing}}",
+                 "config": {"promptTemplate": "公司 {{global.company_name}} 限额 {{global.approval_limit}} 缺失 {{trigger-1.context.payload.missing}}",
                             "confidenceThreshold": 0.6, "model": "demo"}},
                 {"id": "tool_call-1", "type": "tool_call", "name": "工具",
                  "config": {"tool": "web-playwright/click",
@@ -69,7 +69,7 @@ def test_compile_produces_graph_and_runs_in_edge_order():
     decision = result["outputs"]["ai_decision-1"]
     assert decision["decision"]["action"] == "request_human_approval"
     assert decision["decision"]["source"] == "rule"
-    assert "公司 Atlas 限额 500 缺失 {{global.missing}}" == decision["prompt_rendered"]
+    assert "公司 Atlas 限额 500 缺失 {{trigger-1.context.payload.missing}}" == decision["prompt_rendered"]
     # 未在 Demo 注册表中的适配器 → 结构化失败，不抛异常
     tool_output = result["outputs"]["tool_call-1"]["result"]
     assert tool_output["status"] == "FAILED"
@@ -171,7 +171,7 @@ def test_condition_stops_at_first_true_branch():
                  "config": {
                      "branches": [
                          {"label": "first", "expression": "true", "target": "tool-a"},
-                         {"label": "broken", "expression": "{{missing}} > 1", "target": "tool-b"},
+                         {"label": "broken", "expression": "{{trigger-1.context.payload.missing}} > 1", "target": "tool-b"},
                      ],
                      "defaultTarget": "tool-c",
                  }},
@@ -251,7 +251,7 @@ def test_loop_fail_safe_exit_at_max_iterations():
 
 
 def test_loop_expression_error_exits_immediately():
-    result = run_graph(_loop_graph("{{missing.path}} > 1"))
+    result = run_graph(_loop_graph("{{trigger-1.context.payload.missing}} > 1"))
     assert "tool-body" not in result["outputs"]
     assert set(result["outputs"].keys()) == {"trigger-1", "loop-1", "tool-exit"}
     loop_output = result["outputs"]["loop-1"]

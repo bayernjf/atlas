@@ -1,11 +1,17 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { NODE_CATALOG, validateNode, type EditorNodeData } from '../../lib/nodeCatalog'
+import { useScopeIndex, useToolOutputSchemas } from '../../lib/useScope'
 import type { EditorNode } from '../../store/editorStore'
 import { useEditorStore } from '../../store/editorStore'
 
 export function AtlasNode({ id, data, selected }: NodeProps<EditorNode>) {
   const meta = NODE_CATALOG[data.kind]
-  const errors = validateNode(data)
+  const nodes = useEditorStore((state) => state.nodes)
+  const edges = useEditorStore((state) => state.edges)
+  const variables = useEditorStore((state) => state.variables)
+  const scope = useScopeIndex({ nodes, edges, variables })
+  const toolOutputSchemas = useToolOutputSchemas()
+  const errors = validateNode(data, { selfId: id, scope, toolOutputSchemas })
   const invalid = errors.length > 0
   const breakpoint = useEditorStore((state) => state.breakpoints[id])
   const toggleBreakpoint = useEditorStore((state) => state.toggleBreakpoint)
