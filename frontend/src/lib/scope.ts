@@ -294,9 +294,12 @@ export function buildScopeIndex(
         }
 
         const visible = visibleNodeIdsAt(nodeId)
+        const outputKey = segments[1]
+        const loopSelfIndex =
+          node.kind === 'loop' && node.id === nodeId && (outputKey === 'index' || outputKey === 'iterations')
         const loopBlocked =
           node.kind === 'loop' && node.id !== nodeId && !inLoopBody(nodeId, node.id)
-        if (node.id === nodeId || loopBlocked || !visible.has(node.id)) {
+        if ((node.id === nodeId && !loopSelfIndex) || loopBlocked || (!visible.has(node.id) && !loopSelfIndex)) {
           diagnostics.push({
             ...ref,
             code: 'REF_NOT_IN_SCOPE',

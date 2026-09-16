@@ -134,6 +134,15 @@ describe('loop 循环体区域', () => {
     expect(diagnostics).toEqual([])
   })
 
+  it('循环节点自身的继续条件可引用自身 index/iterations', () => {
+    expect(
+      scope.validateRefsAt('loop-1', 'loop', { continueExpression: '{{loop-1.index}} < 3' }),
+    ).toEqual([])
+    expect(
+      scope.validateRefsAt('loop-1', 'loop', { continueExpression: '{{loop-1.target}}' })[0]?.code,
+    ).toBe('REF_NOT_IN_SCOPE')
+  })
+
   it('退出目标引用 loop.index → REF_NOT_IN_SCOPE', () => {
     expect(scope.listPathsAt('exit-1').some((p) => p.startsWith('loop-1.'))).toBe(false)
     const diagnostics = scope.validateRefsAt(
