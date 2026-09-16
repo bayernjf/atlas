@@ -86,6 +86,9 @@ node:
 健康: 适配器定期心跳，不可用置灰
 tool: {id, name, description, adapter_id, action,
        input_schema, output_schema, permission, timeout, retry_policy, is_idempotent}
+注（2026-09-16，04 §4.9）：v1 落码的 Capability（harness/base.py）字段为 name/description/action/
+input_schema/output_schema/permission/timeout/is_idempotent（id/retry_policy 未落）；
+input_schema/output_schema 为 JSON Schema 子集 dict，Capability 构造期按白名单校验形状（未知 keyword ValueError）。
 ```
 
 ### 3.3 Web 适配器三层定位（06 6.5）
@@ -425,7 +428,7 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 | POST | /api/operators/{id}/run | 启动 Loop | LoopState |
 | GET | /api/operators/{id}/status | 运行状态/进度（验收标准 5：画布实时显示） | LoopState.status |
 | POST | /api/operators/{id}/pause / resume | 暂停/恢复（人机协作） | status: paused |
-| GET | /api/adapters | 适配器列表（注册发现；W9-W10 已落码，返回 shop 适配器及其能力/权限/幂等标记；Phase 2 起增加 http（单能力 http/request）、database（database/query 只读幂等 + database/execute 写）、message（单能力 message/send 写）三个适配器） | adapter_schema |
+| GET | /api/adapters | 适配器列表（注册发现；W9-W10 已落码，返回 shop 适配器及其能力/权限/幂等标记；Phase 2 起增加 http（单能力 http/request）、database（database/query 只读幂等 + database/execute 写）、message（单能力 message/send 写）三个适配器。**2026-09-16 起 tools[] 增列 `input_schema`/`output_schema`**：JSON Schema 子集（权威形状 04 §4.9），未声明投影为 `{}`，供前端拓扑作用域/变量插入与 NL 参数填充使用） | adapter_schema |
 | GET | /api/demo/messages | 消息适配器演示查看（Phase 2 第三项）：返回进程内 MessageService 已记录消息 `{items:[{id,channel,to,subject,body,sent_at}]}`，重启/reset 清空，不产生真实投递 | message_send_params |
 | GET | /api/demo/mock/orders | API 适配器演示目标（Phase 2 API 适配器）：要求请求头 `X-Demo-Token: demo-token`，缺失/错误 401 JSON；成功返回演示订单数组。进程内无状态 | http_request_params |
 | POST | /api/demo/mock/orders/{id}/receipt | API 适配器演示目标：回显 JSON 请求体并返回 `{"received": true}`，供 POST/body/插值端到端验证 | http_request_params |
