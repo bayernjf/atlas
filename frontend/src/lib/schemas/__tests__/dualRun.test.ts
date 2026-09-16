@@ -39,6 +39,7 @@ describe('schemaRegistry', () => {
       'loop',
       'parallel',
       'wait',
+      'subgraph',
     ])
   })
 })
@@ -251,6 +252,33 @@ describe('parallel dual-run equivalence (U36)', () => {
         ],
         joinTarget: 'tool-x',
       }),
+    ).toBeNull()
+  })
+})
+
+describe('subgraph dual-run equivalence (U36)', () => {
+  it('default config fails graphId on both', () => {
+    expect(compareNodeL1WithSchema('subgraph', defaultConfig('subgraph'))).toBeNull()
+  })
+
+  it('configured node passes both', () => {
+    expect(
+      compareNodeL1WithSchema('subgraph', {
+        graphId: 'graph-7',
+        inputs: { order_id: '{{trigger-1.context.payload.order_id}}' },
+      }),
+    ).toBeNull()
+  })
+
+  it('empty inputs key stays hand-written-only without divergence', () => {
+    expect(
+      compareNodeL1WithSchema('subgraph', { graphId: 'graph-7', inputs: { '': '{{trigger-1.x}}' } }),
+    ).toBeNull()
+  })
+
+  it('blank inputs value fails inputs.<key> on both', () => {
+    expect(
+      compareNodeL1WithSchema('subgraph', { graphId: 'graph-7', inputs: { order_id: '  ' } }),
     ).toBeNull()
   })
 })

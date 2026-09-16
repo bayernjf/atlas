@@ -12,6 +12,7 @@ import { waitSchema } from './nodes/wait.schema'
 import { conditionSchema } from './nodes/condition.schema'
 import { loopSchema } from './nodes/loop.schema'
 import { parallelSchema } from './nodes/parallel.schema'
+import { subgraphSchema } from './nodes/subgraph.schema'
 
 export const SCHEMA_VERSION = 'v1'
 
@@ -23,6 +24,7 @@ const SCHEMAS: Record<string, Record<string, NodeConfigSchema>> = {
   loop: { [SCHEMA_VERSION]: loopSchema },
   parallel: { [SCHEMA_VERSION]: parallelSchema },
   wait: { [SCHEMA_VERSION]: waitSchema },
+  subgraph: { [SCHEMA_VERSION]: subgraphSchema },
 }
 
 for (const versions of Object.values(SCHEMAS)) {
