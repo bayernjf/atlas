@@ -22,6 +22,65 @@ from atlas.harness.base import (
 )
 from .service import DemoShopService
 
+_REFUND_ORDER_ITEM_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "order_id": {"type": "string"},
+        "reason": {"type": "string"},
+        "amount": {"type": "number"},
+    },
+    "required": ["order_id", "reason", "amount"],
+}
+
+_LOGIN_INPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "username": {"type": "string"},
+        "password": {"type": "string"},
+    },
+    "required": ["username", "password"],
+}
+
+_LOGIN_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {"logged_in": {"type": "boolean"}},
+    "required": ["logged_in"],
+}
+
+_LIST_PENDING_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {"orders": {"type": "array", "items": _REFUND_ORDER_ITEM_SCHEMA}},
+    "required": ["orders"],
+}
+
+_ORDER_REF_INPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "order_id": {"type": "string"},
+        "note": {"type": "string"},
+    },
+    "required": ["order_id"],
+}
+
+_REFUND_RESULT_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "order_id": {"type": "string"},
+        "status": {"type": "string", "enum": ["refunded", "human_review"]},
+    },
+    "required": ["order_id", "status"],
+}
+
+_PROCESS_REFUND_INPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "order_id": {"type": "string"},
+        "action": {"type": "string", "enum": ["approve_refund", "request_human_approval"]},
+        "note": {"type": "string"},
+    },
+    "required": ["order_id", "action"],
+}
+
 
 class ShopHarnessAdapter(HarnessAdapter):
     adapter_id = "shop"
@@ -37,14 +96,15 @@ class ShopHarnessAdapter(HarnessAdapter):
                 name="login",
                 description="登录商家售后控制台",
                 action="login",
-                input_schema={"username": "string", "password": "string"},
+                input_schema=_LOGIN_INPUT_SCHEMA,
+                output_schema=_LOGIN_OUTPUT_SCHEMA,
                 permission=Permission.WRITE,
             ),
             Capability(
                 name="list_pending_refunds",
                 description="获取待处理退款单列表",
                 action="list_pending_refunds",
-                output_schema={"orders": "array"},
+                output_schema=_LIST_PENDING_OUTPUT_SCHEMA,
                 permission=Permission.READ,
                 is_idempotent=True,
             ),
@@ -52,21 +112,24 @@ class ShopHarnessAdapter(HarnessAdapter):
                 name="execute_refund",
                 description="对指定订单执行退款（资金操作）",
                 action="execute_refund",
-                input_schema={"order_id": "string", "note": "string"},
+                input_schema=_ORDER_REF_INPUT_SCHEMA,
+                output_schema=_REFUND_RESULT_OUTPUT_SCHEMA,
                 permission=Permission.FINANCIAL,
             ),
             Capability(
                 name="request_human_approval",
                 description="对指定订单发起人工审批",
                 action="request_human_approval",
-                input_schema={"order_id": "string", "note": "string"},
+                input_schema=_ORDER_REF_INPUT_SCHEMA,
+                output_schema=_REFUND_RESULT_OUTPUT_SCHEMA,
                 permission=Permission.WRITE,
             ),
             Capability(
                 name="process_refund",
                 description="按上游 AI 决策动作执行退款或转人工审批",
                 action="process_refund",
-                input_schema={"order_id": "string", "action": "string", "note": "string"},
+                input_schema=_PROCESS_REFUND_INPUT_SCHEMA,
+                output_schema=_REFUND_RESULT_OUTPUT_SCHEMA,
                 permission=Permission.FINANCIAL,
             ),
         ]
