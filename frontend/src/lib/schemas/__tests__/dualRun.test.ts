@@ -37,6 +37,7 @@ describe('schemaRegistry', () => {
       'tool_call',
       'condition',
       'loop',
+      'parallel',
       'wait',
     ])
   })
@@ -207,6 +208,48 @@ describe('loop dual-run equivalence (U36)', () => {
         maxIterations: 0,
         bodyTarget: 'same',
         exitTarget: 'same',
+      }),
+    ).toBeNull()
+  })
+})
+
+describe('parallel dual-run equivalence (U36)', () => {
+  it('default two empty branches fail both item fields and joinTarget on both', () => {
+    expect(compareNodeL1WithSchema('parallel', defaultConfig('parallel'))).toBeNull()
+  })
+
+  it('single branch fails branches plus its fields on both', () => {
+    expect(
+      compareNodeL1WithSchema('parallel', {
+        joinStrategy: 'all_success',
+        branches: [{ label: 'A', target: '' }],
+        joinTarget: '',
+      }),
+    ).toBeNull()
+  })
+
+  it('configured node passes both', () => {
+    expect(
+      compareNodeL1WithSchema('parallel', {
+        joinStrategy: 'all_completed',
+        branches: [
+          { label: 'A', target: 'tool-a' },
+          { label: 'B', target: 'tool-b' },
+        ],
+        joinTarget: 'tool-join',
+      }),
+    ).toBeNull()
+  })
+
+  it('duplicates and join collision stay hand-written-only', () => {
+    expect(
+      compareNodeL1WithSchema('parallel', {
+        joinStrategy: 'all_success',
+        branches: [
+          { label: '同', target: 'tool-x' },
+          { label: '同', target: 'tool-x' },
+        ],
+        joinTarget: 'tool-x',
       }),
     ).toBeNull()
   })
