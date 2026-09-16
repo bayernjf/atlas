@@ -434,7 +434,7 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 | POST | /api/demo/mock/orders/{id}/receipt | API 适配器演示目标：回显 JSON 请求体并返回 `{"received": true}`，供 POST/body/插值端到端验证 | http_request_params |
 | POST | /api/adapters/{id}/tools | 工具查询 | tool |
 | GET | /api/operations/{id}/log | 执行日志/审计（06 安全清单） | 审计 |
-| POST | /api/nl/generate | 自然语言 → 流程草稿（验收标准 6；W9-W10 已落码：LLM 优先、退款规则模板兜底，无法识别 422） | 08 7.2 |
+| POST | /api/nl/generate | 自然语言 → 流程草稿（验收标准 6；W9-W10 已落码：LLM 优先、退款规则模板兜底，无法识别 422；2026-09-16 起响应增列 `paramWarnings:string[]`：按九工具 input_schema 对草稿 tool_call 参数做尽力校验的中文警告——必填缺失/顶层浅类型/enum/additionalProperties:false，模板插值值与不可静态判定项放行，非阻塞） | 08 7.2 |
 | POST | /api/demo/shop/login | Demo 商家平台登录（demo/demo，W9-W10） | — |
 | GET | /api/demo/shop/orders | Demo 待处理退款单（需登录，W9-W10） | — |
 | POST | /api/demo/reset | 【admin only】重置**调用方租户**的 Demo 数据（2026-09-16，04 §5.14：角色不足 403；作用域为本租户 graph/approval/debug/monitoring/message，录制与反馈按租户保留不清；跨租户数据不动）：本租户店铺——全局 demo 店铺恢复 5 笔种子退款单、清空已保存图与登录态、清空 pending 审批请求，Phase 1 种子客户体验，W10 后；Phase 2 第三项起清空进程内消息记录并重建内置 SQLite demo 订单库（全局共享模拟基础设施，仍随 reset 重建）——显式 `ATLAS_DATABASE_URL` 配置的外部库不被触碰；内置流程模板目录为代码常量，不受 reset 影响；录制用例为测试资产同样**不被 reset 清除**——其图已快照进用例，GraphStore 清空不影响回放；Phase 2 能力项起 reset 同时把全部**活动调试暂停按 stop 放行**（会话 cancelled + Event set），阻塞在 paused 的运行线程经 DebugStopped 收敛结束，不留悬挂线程；调试会话本身为进程内临时态，不构成需保留的数据；Phase 2 能力项（基础监控告警）起 reset 同时清空**本租户**监控运行记录与告警（ring、streak、Alert 列表）并把规则阈值恢复默认（运行计数不重置；运行时数据，同消息记录；重启本就清空，持久化随 11 S1/14 D28） | — |

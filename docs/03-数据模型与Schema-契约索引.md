@@ -290,8 +290,9 @@ trace: [string]               # 子图 trace 行
 prompt: string          # 自然语言流程描述
 # 响应
 graph: graph_definition # 见上 graph_definition（version 1，可直接保存/编译）
+paramWarnings: [string] # 2026-09-16 起；tool_call 参数填充对 input_schema 的尽力校验中文警告（可空数组；非阻塞，草稿照常回显）
 ```
-> 无法识别意图时返回 422；未配置 `LITELLM_MODEL` 时仅退款关键词走规则模板兜底。
+> 无法识别意图时返回 422；未配置 `LITELLM_MODEL` 时仅退款关键词走规则模板兜底。`paramWarnings` 只做静态可判项（必填缺失、顶层浅类型、enum、additionalProperties:false），未知工具/空 schema/模板插值值/无法解析的 params 一律放行（04 §4.9 ⑤）。
 
 ### `feedback_item` — 字段概览（Phase 1；`POST/GET /api/feedback`）
 
