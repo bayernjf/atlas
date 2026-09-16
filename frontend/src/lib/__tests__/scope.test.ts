@@ -269,3 +269,54 @@ describe('L2 引用诊断三码', () => {
     expect(validate('普通文本 1 > 0')).toEqual([])
   })
 })
+
+describe('L2 结构化诊断映射 (U37④)', () => {
+  it('诊断携带 layer/nodeId/pointer/token(raw 为含 {{}} 的源串切片)', () => {
+    const scope = buildScopeIndex([node('ai-1', 'ai_decision', { promptTemplate: '' })], [], [])
+    const text = '判断 {{ghost-1.x}} 是否成立'
+    const diagnostics = scope.validateRefsAt('ai-1', 'ai_decision', { promptTemplate: text })
+    expect(diagnostics).toHaveLength(1)
+    const diagnostic = diagnostics[0]
+    expect(diagnostic.severity).toBe('error')
+    expect(diagnostic.layer).toBe('template')
+    expect(diagnostic.code).toBe('REF_NODE_NOT_FOUND')
+    expect(diagnostic.message).toBe('引用的节点不存在：{{ghost-1.x}}')
+    expect(diagnostic.loc.nodeId).toBe('ai-1')
+    expect(diagnostic.loc.pointer).toBe('/promptTemplate')
+    const token = text.indexOf('{{ghost-1.x}}')
+    expect(diagnostic.loc.token).toEqual({
+      start: token,
+      end: token + '{{ghost-1.x}}'.length,
+      raw: '{{ghost-1.x}}',
+    })
+    // 带内部空白的引用：raw 保留源串切片，message 仍用规整化路径（文案不变）。
+    const spaced = scope.validateRefsAt('ai-1', 'ai_decision', { promptTemplate: '{{ ghost-1.x }}' })
+    expect(spaced[0].loc.token?.raw).toBe('{{ ghost-1.x }}')
+    expect(spaced[0].message).toBe('引用的节点不存在：{{ghost-1.x}}')
+  })
+
+  it('condition 分支与 subgraph 入参映射到字段 pointer（键做 RFC6901 转义）', () => {
+    const scope = buildScopeIndex([node('c-1', 'condition')], [], [])
+    const condition = scope.validateRefsAt(
+      'c-1',
+      'condition',
+      { branches: [{ label: 'a', expression: '{{ghost-1.x}}', target: 't' }] },
+    )
+    expect(condition[0].loc.pointer).toBe('/branches/0/expression')
+
+    const subScope = buildScopeIndex([node('sub-1', 'subgraph')], [], [])
+    const subgraph = subScope.validateRefsAt(
+      'sub-1',
+      'subgraph',
+      { graphId: 'g-1', inputs: { 'a/b': '{{ghost-1.x}}' } },
+    )
+    expect(subgraph[0].loc.nodeId).toBe('sub-1')
+    expect(subgraph[0].loc.pointer).toBe('/inputs/a~1b')
+  })
+
+  it('extractTemplateRefs 返回 raw 切片', () => {
+    const refs = extractTemplateRefs('x {{ global.limit }} y')
+    expect(refs[0].raw).toBe('{{ global.limit }}')
+    expect(refs[0].path).toBe('global.limit')
+  })
+})

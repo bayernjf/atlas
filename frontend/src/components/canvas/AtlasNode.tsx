@@ -1,5 +1,6 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react'
-import { NODE_CATALOG, validateNode, type EditorNodeData } from '../../lib/nodeCatalog'
+import { NODE_CATALOG, type EditorNodeData } from '../../lib/nodeCatalog'
+import { validateNodeDiagnostics } from '../../lib/validation/validateGraph'
 import { useScopeIndex, useToolOutputSchemas } from '../../lib/useScope'
 import type { EditorNode } from '../../store/editorStore'
 import { useEditorStore } from '../../store/editorStore'
@@ -11,8 +12,8 @@ export function AtlasNode({ id, data, selected }: NodeProps<EditorNode>) {
   const variables = useEditorStore((state) => state.variables)
   const scope = useScopeIndex({ nodes, edges, variables })
   const toolOutputSchemas = useToolOutputSchemas()
-  const errors = validateNode(data, { selfId: id, scope, toolOutputSchemas })
-  const invalid = errors.length > 0
+  const diagnostics = validateNodeDiagnostics(id, data, { selfId: id, scope, toolOutputSchemas })
+  const invalid = diagnostics.length > 0
   const breakpoint = useEditorStore((state) => state.breakpoints[id])
   const toggleBreakpoint = useEditorStore((state) => state.toggleBreakpoint)
 
@@ -46,7 +47,7 @@ export function AtlasNode({ id, data, selected }: NodeProps<EditorNode>) {
         {data.status === 'paused' && <span className="atlas-node-status">已暂停</span>}
         {data.status === 'completed' && <span className="atlas-node-status">✓</span>}
         {invalid && (
-          <span className="atlas-node-error-icon" title={errors.join('；')}>
+          <span className="atlas-node-error-icon" title={diagnostics.map((d) => d.message).join('；')}>
             !
           </span>
         )}

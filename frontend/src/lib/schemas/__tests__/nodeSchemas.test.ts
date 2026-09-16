@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { defaultConfig, NODE_KINDS, type NodeKind } from '../../nodeCatalog'
 import { schemaRegistry } from '../index'
-import { validateConfigBySchema } from '../validateConfig'
+import { validateSchemaFields } from '../../validation/l1'
 
 // 与 lib/scope.ts STATIC_OUTPUT_KEYS + trigger/tool_call 特例逐字段对齐（04 §6.5，U35④）。
 const EXPECTED_OUTPUT_KEYS: Record<string, string[] | Record<string, string[]>> = {
@@ -45,16 +45,28 @@ describe('nine built-in node schemas (U35)', () => {
   })
 })
 
+describe('schemaRegistry', () => {
+  it('returns the registered trigger schema at v1', () => {
+    expect(schemaRegistry.get('trigger', 'v1').type).toBe('object')
+    expect(schemaRegistry.get('trigger')).toBe(schemaRegistry.get('trigger', 'v1'))
+  })
+
+  it('rejects unknown kinds and versions', () => {
+    expect(() => schemaRegistry.get('not_a_node_kind')).toThrow(/未知节点种类/)
+    expect(() => schemaRegistry.get('trigger', 'v2')).toThrow(/无版本/)
+  })
+})
+
 describe('default configs are structurally schema-valid apart from blank/missing fields (U36②)', () => {
   it.each([...NODE_KINDS])('%s default config only trips required/pattern diagnostics', (kind) => {
-    const diagnostics = validateConfigBySchema(schemaRegistry.get(kind), defaultConfig(kind as NodeKind))
-    for (const diagnostic of diagnostics) {
-      expect(['required', 'pattern']).toContain(diagnostic.rule)
+    const findings = validateSchemaFields(schemaRegistry.get(kind), defaultConfig(kind as NodeKind))
+    for (const finding of findings) {
+      expect(['FIELD_REQUIRED', 'FIELD_PATTERN']).toContain(finding.code)
     }
   })
 
   it('trigger and wait defaults validate clean', () => {
-    expect(validateConfigBySchema(schemaRegistry.get('trigger'), defaultConfig('trigger'))).toEqual([])
-    expect(validateConfigBySchema(schemaRegistry.get('wait'), defaultConfig('wait'))).toEqual([])
+    expect(validateSchemaFields(schemaRegistry.get('trigger'), defaultConfig('trigger'))).toEqual([])
+    expect(validateSchemaFields(schemaRegistry.get('wait'), defaultConfig('wait'))).toEqual([])
   })
 })
