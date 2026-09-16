@@ -17,7 +17,7 @@ import {
   validateNode,
   type NodeConfig,
 } from '../../lib/nodeCatalog'
-import { listVariablePaths } from '../../lib/variables'
+import { useScopeIndex, useToolOutputSchemas } from '../../lib/useScope'
 import { validateExpression } from '../../lib/conditions'
 import { ConditionConfig } from './ConditionConfig'
 import { LoopConfig } from './LoopConfig'
@@ -29,6 +29,7 @@ import { ToolCallConfig } from './ToolCallConfig'
 
 export function PropertyPanel() {
   const nodes = useEditorStore((state) => state.nodes)
+  const edges = useEditorStore((state) => state.edges)
   const variables = useEditorStore((state) => state.variables)
   const selectedNodeId = useEditorStore((state) => state.selectedNodeId)
   const updateSelectedNode = useEditorStore((state) => state.updateSelectedNode)
@@ -39,6 +40,9 @@ export function PropertyPanel() {
   const setBreakpointExpression = useEditorStore(
     (state) => state.setBreakpointExpression,
   )
+
+  const scope = useScopeIndex({ nodes, edges, variables })
+  const toolOutputSchemas = useToolOutputSchemas()
 
   const selectedNode = nodes.find((node) => node.id === selectedNodeId)
 
@@ -52,9 +56,9 @@ export function PropertyPanel() {
 
   const { data } = selectedNode
   const meta = NODE_CATALOG[data.kind]
-  const errors = validateNode(data)
+  const errors = validateNode(data, { selfId: selectedNode.id, scope, toolOutputSchemas })
   const config = data.config
-  const variablePaths = listVariablePaths(variables, nodes)
+  const variablePaths = scope.listPathsAt(selectedNode.id, toolOutputSchemas)
   const targetOptions = nodes
     .filter((node) => node.id !== selectedNode.id)
     .map((node) => ({ value: node.id, label: `${node.data.label}（${node.id}）` }))

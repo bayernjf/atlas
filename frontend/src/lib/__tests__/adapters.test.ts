@@ -7,21 +7,21 @@ const adapters = [
     type: 'shop',
     healthy: true,
     tools: [
-      { name: 'login', description: '登录', permission: 'write', idempotent: false },
-      { name: 'list_pending_refunds', description: '列表', permission: 'read', idempotent: true },
+      { name: 'login', description: '登录', permission: 'write', idempotent: false, input_schema: {}, output_schema: {} },
+      { name: 'list_pending_refunds', description: '列表', permission: 'read', idempotent: true, input_schema: {}, output_schema: {} },
     ],
   },
   {
     id: 'http',
     type: 'api',
     healthy: true,
-    tools: [{ name: 'request', description: 'HTTP', permission: 'write', idempotent: false }],
+    tools: [{ name: 'request', description: 'HTTP', permission: 'write', idempotent: false, input_schema: {}, output_schema: {} }],
   },
   {
     id: 'down',
     type: 'api',
     healthy: false,
-    tools: [{ name: 'ping', description: '', permission: 'read', idempotent: true }],
+    tools: [{ name: 'ping', description: '', permission: 'read', idempotent: true, input_schema: {}, output_schema: {} }],
   },
 ]
 

@@ -10,6 +10,7 @@ import {
   type Principal,
 } from './auth'
 import type { SerializedGraph } from './graphSerializer'
+import type { JsonSchema } from './scope'
 
 export type CompileResult = {
   id: string
@@ -141,6 +142,8 @@ export type AdapterToolInfo = {
   description: string
   permission: string
   idempotent: boolean
+  input_schema: JsonSchema
+  output_schema: JsonSchema
 }
 
 export type AdapterInfo = {
