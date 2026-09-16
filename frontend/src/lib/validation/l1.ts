@@ -13,6 +13,7 @@ import type { ConditionBranch, NodeConfig, ParallelBranch } from '../nodeCatalog
 import { schemaRegistry } from '../schemas'
 import type { MetaSchema, NodeConfigSchema } from '../schemas/metaSchema'
 import type { Diagnostic } from './diagnostics'
+import { escapePointerToken } from './diagnostics'
 
 export const MAX_LOOP_ITERATIONS = 100
 export const MIN_PARALLEL_BRANCHES = 2
@@ -58,16 +59,12 @@ type SchemaFinding = {
 
 const DISCRIMINATOR_CODES = new Set<FieldCode>([FIELD_CODES.TYPE, FIELD_CODES.ENUM, FIELD_CODES.CONST])
 
-function escapeToken(token: string): string {
-  return token.replace(/~/g, '~0').replace(/\//g, '~1')
-}
-
 function unescapeToken(token: string): string {
   return token.replace(/~1/g, '/').replace(/~0/g, '~')
 }
 
 function joinPointer(base: string, key: string | number): string {
-  return `${base}/${typeof key === 'number' ? key : escapeToken(key)}`
+  return `${base}/${typeof key === 'number' ? key : escapePointerToken(key)}`
 }
 
 /** pointer → 段（已反转义）；''（config 根）→ []。 */
@@ -393,7 +390,7 @@ function handFieldDiagnostics(kind: string, config: NodeConfig): Diagnostic[] {
         if (!key.trim()) {
           diagnostics.push(fieldDiag(FIELD_CODES.INPUT_KEY_EMPTY, '入参键名不能为空', '/inputs'))
         } else if (keys.has(key)) {
-          diagnostics.push(fieldDiag(FIELD_CODES.INPUT_KEY_DUPLICATE, `入参键名重复：${key}`, `/inputs/${escapeToken(key)}`))
+          diagnostics.push(fieldDiag(FIELD_CODES.INPUT_KEY_DUPLICATE, `入参键名重复：${key}`, `/inputs/${escapePointerToken(key)}`))
         } else {
           keys.add(key)
         }

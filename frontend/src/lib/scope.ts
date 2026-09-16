@@ -8,6 +8,8 @@
  */
 
 import type { GraphVariable } from './variables'
+import type { Diagnostic } from './validation/diagnostics'
+import { escapePointerToken } from './validation/diagnostics'
 
 export type JsonSchema = {
   type?: string
@@ -36,11 +38,14 @@ export type TemplateRef = {
   path: string
   start: number
   end: number
+  /** 源串切片（含 {{}}）。 */
+  raw: string
 }
 
-export type RefDiagnostic = TemplateRef & {
-  code: RefCode
-  message: string
+/** 模板字段定位：RFC 6901 pointer（相对节点 config 根）+ 字段文本。 */
+export type TemplateFieldLocation = {
+  pointer: string
+  text: string
 }
 
 const TEMPLATE_RE = /\{\{\s*([^{}]+?)\s*\}\}/g
@@ -54,6 +59,7 @@ export function extractTemplateRefs(text: string): TemplateRef[] {
       path: match[1],
       start: match.index,
       end: match.index + match[0].length,
+      raw: match[0],
     })
   }
   return refs
@@ -71,36 +77,38 @@ const STATIC_OUTPUT_KEYS: Record<string, string[]> = {
 
 const TRIGGER_CONTEXT_KEYS = ['triggerType', 'cron', 'webhookUrl', 'payload']
 
-/** 节点 config 中可能含 {{路径}} 的字符串字段（04 §6.5）。 */
-export function templateFields(kind: string, config: Record<string, unknown>): string[] {
-  const fields: string[] = []
-  const push = (value: unknown) => {
-    if (typeof value === 'string') fields.push(value)
+/** 节点 config 中可能含 {{路径}} 的字符串字段（04 §6.5）；pointer 相对 config 根（RFC 6901）。 */
+export function templateFields(kind: string, config: Record<string, unknown>): TemplateFieldLocation[] {
+  const fields: TemplateFieldLocation[] = []
+  const push = (pointer: string, value: unknown) => {
+    if (typeof value === 'string') fields.push({ pointer, text: value })
   }
   switch (kind) {
     case 'ai_decision':
-      push(config.promptTemplate)
+      push('/promptTemplate', config.promptTemplate)
       break
     case 'tool_call':
-      push(config.params)
+      push('/params', config.params)
       break
     case 'condition':
-      for (const branch of Array.isArray(config.branches) ? config.branches : []) {
+      for (const [index, branch] of (Array.isArray(config.branches) ? config.branches : []).entries()) {
         if (branch && typeof branch === 'object') {
-          push((branch as Record<string, unknown>).expression)
+          push(`/branches/${index}/expression`, (branch as Record<string, unknown>).expression)
         }
       }
       break
     case 'loop':
-      push(config.continueExpression)
+      push('/continueExpression', config.continueExpression)
       break
     case 'human_approval':
-      push(config.summary)
+      push('/summary', config.summary)
       break
     case 'subgraph': {
       const inputs = config.inputs
       if (inputs && typeof inputs === 'object') {
-        for (const value of Object.values(inputs as Record<string, unknown>)) push(value)
+        for (const [key, value] of Object.entries(inputs as Record<string, unknown>)) {
+          push(`/inputs/${escapePointerToken(key)}`, value)
+        }
       }
       break
     }
@@ -132,13 +140,13 @@ export type ScopeIndex = {
     nodeId: string,
     toolOutputSchemas?: Record<string, JsonSchema>,
   ) => string[]
-  /** 对单个节点的模板字段做 L2 引用校验，一次性聚合。 */
+  /** 对单个节点的模板字段做 L2 引用校验，一次性聚合（layer:'template' 诊断）。 */
   validateRefsAt: (
     nodeId: string,
     kind: string,
     config: Record<string, unknown>,
     toolOutputSchemas?: Record<string, JsonSchema>,
-  ) => RefDiagnostic[]
+  ) => Diagnostic[]
 }
 
 export function buildScopeIndex(
@@ -264,9 +272,22 @@ export function buildScopeIndex(
   }
 
   const validateRefsAt: ScopeIndex['validateRefsAt'] = (nodeId, kind, config, toolOutputSchemas) => {
-    const diagnostics: RefDiagnostic[] = []
-    for (const text of templateFields(kind, config)) {
-      for (const ref of extractTemplateRefs(text)) {
+    const diagnostics: Diagnostic[] = []
+    const push = (field: TemplateFieldLocation, ref: TemplateRef, code: RefCode, message: string) => {
+      diagnostics.push({
+        severity: 'error',
+        layer: 'template',
+        code,
+        message,
+        loc: {
+          nodeId,
+          pointer: field.pointer,
+          token: { start: ref.start, end: ref.end, raw: ref.raw },
+        },
+      })
+    }
+    for (const field of templateFields(kind, config)) {
+      for (const ref of extractTemplateRefs(field.text)) {
         const segments = ref.path.split('.').filter(Boolean)
         if (segments.length === 0) continue
         const head = segments[0]
@@ -274,22 +295,14 @@ export function buildScopeIndex(
         if (head === 'global') {
           const name = segments[1]
           if (!name || !globalNames.has(name)) {
-            diagnostics.push({
-              ...ref,
-              code: 'REF_NODE_NOT_FOUND',
-              message: `未声明的全局变量：{{${ref.path}}}`,
-            })
+            push(field, ref, 'REF_NODE_NOT_FOUND', `未声明的全局变量：{{${ref.path}}}`)
           }
           continue
         }
 
         const node = nodeById.get(head)
         if (!node) {
-          diagnostics.push({
-            ...ref,
-            code: 'REF_NODE_NOT_FOUND',
-            message: `引用的节点不存在：{{${ref.path}}}`,
-          })
+          push(field, ref, 'REF_NODE_NOT_FOUND', `引用的节点不存在：{{${ref.path}}}`)
           continue
         }
 
@@ -300,32 +313,35 @@ export function buildScopeIndex(
         const loopBlocked =
           node.kind === 'loop' && node.id !== nodeId && !inLoopBody(nodeId, node.id)
         if ((node.id === nodeId && !loopSelfIndex) || loopBlocked || (!visible.has(node.id) && !loopSelfIndex)) {
-          diagnostics.push({
-            ...ref,
-            code: 'REF_NOT_IN_SCOPE',
-            message: `节点 ${node.id} 在当前位置不可见（不是上游，或循环变量越出循环体）：{{${ref.path}}}`,
-          })
+          push(
+            field,
+            ref,
+            'REF_NOT_IN_SCOPE',
+            `节点 ${node.id} 在当前位置不可见（不是上游，或循环变量越出循环体）：{{${ref.path}}}`,
+          )
           continue
         }
 
         const tail = segments.slice(1)
         if (tail.length === 0) {
-          diagnostics.push({
-            ...ref,
-            code: 'REF_PATH_NOT_FOUND',
-            message: `引用缺少输出字段（应为 {{${ref.path}.<字段>}}）：{{${ref.path}}}`,
-          })
+          push(
+            field,
+            ref,
+            'REF_PATH_NOT_FOUND',
+            `引用缺少输出字段（应为 {{${ref.path}.<字段>}}）：{{${ref.path}}}`,
+          )
           continue
         }
 
         if (node.kind === 'trigger') {
           const [contextKey, ...rest] = tail
           if (contextKey !== 'context' || !TRIGGER_CONTEXT_KEYS.includes(rest[0] ?? '')) {
-            diagnostics.push({
-              ...ref,
-              code: 'REF_PATH_NOT_FOUND',
-              message: `触发器输出路径不存在（context 下仅 ${TRIGGER_CONTEXT_KEYS.join('/')}）：{{${ref.path}}}`,
-            })
+            push(
+              field,
+              ref,
+              'REF_PATH_NOT_FOUND',
+              `触发器输出路径不存在（context 下仅 ${TRIGGER_CONTEXT_KEYS.join('/')}）：{{${ref.path}}}`,
+            )
             continue
           }
           // payload 内部来自运行 inputs，无静态 schema，深层任意放行
@@ -335,21 +351,18 @@ export function buildScopeIndex(
         if (node.kind === 'tool_call') {
           const [root, ...rest] = tail
           if (root !== 'result') {
-            diagnostics.push({
-              ...ref,
-              code: 'REF_PATH_NOT_FOUND',
-              message: `工具节点仅暴露 result 输出：{{${ref.path}}}`,
-            })
+            push(field, ref, 'REF_PATH_NOT_FOUND', `工具节点仅暴露 result 输出：{{${ref.path}}}`)
             continue
           }
           const tool = typeof node.config?.tool === 'string' ? node.config.tool : ''
           const outputSchema = tool ? toolOutputSchemas?.[tool] : undefined
           if (!schemaHasPath(outputSchema, rest)) {
-            diagnostics.push({
-              ...ref,
-              code: 'REF_PATH_NOT_FOUND',
-              message: `工具 ${tool || '未选择'} 的输出中不存在该路径：{{${ref.path}}}`,
-            })
+            push(
+              field,
+              ref,
+              'REF_PATH_NOT_FOUND',
+              `工具 ${tool || '未选择'} 的输出中不存在该路径：{{${ref.path}}}`,
+            )
           }
           continue
         }
@@ -358,11 +371,12 @@ export function buildScopeIndex(
           const [root, ...rest] = tail
           if (root === 'result') continue // 动态入口键（D30），深层放行
           if (!STATIC_OUTPUT_KEYS.parallel.includes(root) || rest.length > 0) {
-            diagnostics.push({
-              ...ref,
-              code: 'REF_PATH_NOT_FOUND',
-              message: `并行节点输出路径不存在（status/branches/joinStrategy/joinTarget，result 为动态入口）：{{${ref.path}}}`,
-            })
+            push(
+              field,
+              ref,
+              'REF_PATH_NOT_FOUND',
+              `并行节点输出路径不存在（status/branches/joinStrategy/joinTarget，result 为动态入口）：{{${ref.path}}}`,
+            )
           }
           continue
         }
@@ -371,11 +385,12 @@ export function buildScopeIndex(
           const [root, ...rest] = tail
           if (root === 'outputs') continue // 子图深层展开缓做 D30，放行
           if (!STATIC_OUTPUT_KEYS.subgraph.includes(root) || rest.length > 0) {
-            diagnostics.push({
-              ...ref,
-              code: 'REF_PATH_NOT_FOUND',
-              message: `子图节点输出路径不存在（status / outputs 根）：{{${ref.path}}}`,
-            })
+            push(
+              field,
+              ref,
+              'REF_PATH_NOT_FOUND',
+              `子图节点输出路径不存在（status / outputs 根）：{{${ref.path}}}`,
+            )
           }
           continue
         }
@@ -384,11 +399,7 @@ export function buildScopeIndex(
         if (staticKeys) {
           const [root, ...rest] = tail
           if (!staticKeys.includes(root) || rest.length > 0) {
-            diagnostics.push({
-              ...ref,
-              code: 'REF_PATH_NOT_FOUND',
-              message: `节点 ${node.id} 的输出中不存在该路径：{{${ref.path}}}`,
-            })
+            push(field, ref, 'REF_PATH_NOT_FOUND', `节点 ${node.id} 的输出中不存在该路径：{{${ref.path}}}`)
           }
         }
       }

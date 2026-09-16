@@ -44,6 +44,11 @@ export type Diagnostic = {
   quickFix?: QuickFix[]
 }
 
+/** RFC 6901 token 转义：`~` → `~0`，`/` → `~1`。 */
+export function escapePointerToken(token: string): string {
+  return token.replace(/~/g, '~0').replace(/\//g, '~1')
+}
+
 /**
  * 诊断排序（M2 rank）：error 优先；同严重度按节点拓扑序（nodeOrder 中上游在前，
  * 未知/缺 nodeId 排后并按 id 字典序）；再按 pointer、token.start 稳定排序。
