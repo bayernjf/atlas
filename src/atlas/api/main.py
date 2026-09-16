@@ -87,7 +87,11 @@ _demo_registry.register(MessageHarnessAdapter(granted_permissions=_FULL_PERMISSI
 
 @app.exception_handler(GraphValidationError)
 def graph_validation_handler(_request: Request, exc: GraphValidationError) -> JSONResponse:
-    return JSONResponse(status_code=422, content={"detail": exc.errors})
+    # locations 为稀疏侧车（04 §6.5/06 §6.13）：有可定位条目时才下发，index 对齐 detail。
+    content: dict[str, Any] = {"detail": exc.errors}
+    if exc.locations:
+        content["locations"] = exc.locations
+    return JSONResponse(status_code=422, content=content)
 
 
 class GraphStore:
