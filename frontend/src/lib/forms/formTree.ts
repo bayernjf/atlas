@@ -8,8 +8,13 @@
  * （onChange 抛出的永远是「下一整个 params 对象」）。
  */
 import type { MetaSchema } from '../schemas/metaSchema'
-import { escapePointerToken, type Diagnostic } from '../validation/diagnostics'
-import { resolveWidget, type SchemaSource } from './resolveWidget'
+import {
+  escapePointerToken,
+  type Diagnostic,
+  type DiagnosticSeverity,
+  type DiagnosticToken,
+} from '../validation/diagnostics'
+import { resolveWidget, type SchemaSource, type WidgetResolution } from './resolveWidget'
 import type { WidgetName } from './types'
 
 /** 路径段：对象键为 string、数组下标为 number（pointer 中的数字化形式）。 */
@@ -86,7 +91,7 @@ export function buildFormTree(
   const resolution =
     depth >= MAX_FORM_DEPTH
       ? ({ kind: 'widget', widget: 'json' } as const)
-      : resolveWidget(schema, source)
+      : templateWidget(resolveWidget(schema, source), source)
 
   if (resolution.kind === 'group') {
     const record = isPlainObject(value) ? value : {}
@@ -137,6 +142,18 @@ export function buildFormTree(
     value,
     description: schema.description,
   }
+}
+
+/**
+ * 工具 params 的字符串字段一律由模板控件承载：运行期整串 `interpolate` 对
+ * 每个字符串值同样生效，字段值内的 `{{路径}}` 由 variable-input 补全与高亮
+ * （04 §4.10）。节点 schema 不走此默认，仍按 `x-widget`/`x-variable` 显式标注。
+ */
+function templateWidget(resolution: WidgetResolution, source: SchemaSource): WidgetResolution {
+  if (source === 'tool' && resolution.kind === 'widget' && resolution.widget === 'text') {
+    return { kind: 'widget', widget: 'variable-input' }
+  }
+  return resolution
 }
 
 /** 路径 → RFC 6901 pointer（`~` → `~0`、`/` → `~1`；数字段不加引号）。 */
@@ -258,4 +275,47 @@ export function nextKeyName(existing: string[], base = '新字段'): string {
  */
 export function diagnosticsAt(diagnostics: Diagnostic[] | undefined, pointer: string): Diagnostic[] {
   return (diagnostics ?? []).filter((diagnostic) => (diagnostic.loc.pointer ?? '') === pointer)
+}
+
+export type TokenSegment = {
+  /** 原样文本片段；带 token 的一段即命中的 `{{路径}}`。 */
+  text: string
+  token?: DiagnosticToken
+  severity?: DiagnosticSeverity
+}
+
+/**
+ * 字段文本按 token 区间切段（M2 markers 挂点的消费方，供模板控件做字段内
+ * `{{}}` 红字预览）。越界与重叠区间跳过，保证剩余原文连续、不丢字符。
+ */
+export function splitTokenSegments(
+  text: string,
+  markers: DiagnosticToken[] | undefined,
+  diagnostics: Diagnostic[] | undefined = [],
+): TokenSegment[] {
+  const ordered = [...(markers ?? [])]
+    .filter((marker) => marker.start >= 0 && marker.end > marker.start && marker.end <= text.length)
+    .sort((a, b) => a.start - b.start)
+  const segments: TokenSegment[] = []
+  let cursor = 0
+  for (const marker of ordered) {
+    if (marker.start < cursor) continue
+    if (marker.start > cursor) segments.push({ text: text.slice(cursor, marker.start) })
+    segments.push({
+      text: text.slice(marker.start, marker.end),
+      token: marker,
+      severity: markerSeverity(marker, diagnostics ?? []),
+    })
+    cursor = marker.end
+  }
+  if (cursor < text.length) segments.push({ text: text.slice(cursor) })
+  return segments
+}
+
+function markerSeverity(marker: DiagnosticToken, diagnostics: Diagnostic[]): DiagnosticSeverity {
+  const matched = diagnostics.find(
+    (diagnostic) =>
+      diagnostic.loc.token?.start === marker.start && diagnostic.loc.token.end === marker.end,
+  )
+  return matched?.severity ?? 'error'
 }

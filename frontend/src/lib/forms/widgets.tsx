@@ -3,11 +3,12 @@
  *
  * text/number/select/textarea/switch 为类型默认控件；json 是白名单外结构的
  * 统一降级（多行 JSON 文本，即旧 ToolCallConfig TextArea 路径）；expression
- * 为单行模板表达式；variable-input 为多行模板文本（M3 第④步接入 scope 变量
- * 补全与 M2 token 诊断高亮，本步仅承载字符串值与字段级诊断文案）。
+ * 为单行模板表达式；variable-input 为模板文本控件（M0 作用域变量补全 + M2
+ * token 区间字段内高亮）。
  */
 import { useState, type ReactElement } from 'react'
 import { Input, InputNumber, Select, Switch, Typography } from 'antd'
+import { splitTokenSegments } from './formTree'
 import type { WidgetComponent, WidgetProps } from './types'
 
 function DiagnosticText({ diagnostics }: { diagnostics?: WidgetProps['diagnostics'] }): ReactElement | null {
@@ -101,22 +102,82 @@ export const ExpressionWidget: WidgetComponent = ({ value, onChange, schema, dia
 )
 
 /**
- * 模板文本控件（第④步前的基础形态）：承载含 {{路径}} 的字符串值。
- * 变量补全与 token 区间红字高亮在第④步接入 scope/renderMarkers。
+ * 模板文本控件：承载含 `{{路径}}` 的字符串值，并接入 M0 作用域补全与 M2 token 高亮。
+ * - 变量补全：`scope.listPathsAt(当前节点)` 的可见路径清单，选中即追加 `{{路径}}`；
+ * - 字段内高亮：`markers`（M2 renderMarkers 的 token 区间投影）把值里命中的
+ *   `{{}}` 片段按诊断严重度染红/橙，未命中区间原样展示；无法映射到字段的诊断
+ *   不在此高亮（精确聚合随 M4 Problems 面板）。
  */
-export const VariableInputWidget: WidgetComponent = ({ value, onChange, schema, diagnostics, placeholder, rows }) => (
-  <>
-    <Input.TextArea
-      value={value == null ? '' : String(value)}
-      rows={rows ?? 3}
-      placeholder={placeholder ?? schema.description ?? '可插入 {{节点输出.字段}} 变量'}
-      onChange={(event) => onChange(event.target.value)}
-      style={{ fontFamily: 'var(--atlas-mono, monospace)' }}
-      status={diagnostics?.some((d) => d.severity === 'error') ? 'error' : undefined}
-    />
-    <DiagnosticText diagnostics={diagnostics} />
-  </>
-)
+export const VariableInputWidget: WidgetComponent = ({
+  value,
+  onChange,
+  schema,
+  diagnostics,
+  markers,
+  placeholder,
+  rows,
+  scope,
+  nodeId,
+}) => {
+  const text = value == null ? '' : String(value)
+  const variablePaths = scope?.listPathsAt(nodeId ?? '') ?? []
+  const segments = markers && markers.length > 0 ? splitTokenSegments(text, markers, diagnostics) : []
+
+  return (
+    <>
+      <Input.TextArea
+        value={text}
+        rows={rows ?? 3}
+        placeholder={placeholder ?? schema.description ?? '可插入 {{节点输出.字段}} 变量'}
+        onChange={(event) => onChange(event.target.value)}
+        style={{ fontFamily: 'var(--atlas-mono, monospace)' }}
+        status={diagnostics?.some((d) => d.severity === 'error') ? 'error' : undefined}
+      />
+      {variablePaths.length > 0 && (
+        <Select
+          size="small"
+          style={{ width: '100%', marginTop: 4 }}
+          value={undefined}
+          placeholder="插入变量引用"
+          onChange={(path: string) => onChange(appendToken(text, path))}
+          options={variablePaths.map((path) => ({ value: path, label: `{{${path}}}` }))}
+        />
+      )}
+      {segments.length > 0 && (
+        <div
+          style={{
+            marginTop: 4,
+            fontFamily: 'var(--atlas-mono, monospace)',
+            fontSize: 12,
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-all',
+          }}
+        >
+          {segments.map((segment, index) =>
+            segment.token ? (
+              <Typography.Text
+                key={index}
+                type={segment.severity === 'error' ? 'danger' : 'warning'}
+              >
+                {segment.text}
+              </Typography.Text>
+            ) : (
+              <Typography.Text key={index} type="secondary">
+                {segment.text}
+              </Typography.Text>
+            ),
+          )}
+        </div>
+      )}
+      <DiagnosticText diagnostics={diagnostics} />
+    </>
+  )
+}
+
+/** 变量补全的追加语义：值尾追加 `{{路径}}`（与既有面板「插入变量引用」一致）。 */
+function appendToken(text: string, path: string): string {
+  return `${text}{{${path}}}`
+}
 
 /**
  * JSON 降级控件：多行 JSON 文本。允许暂时无法解析的草稿（不做部分解析）；

@@ -6,7 +6,7 @@
  */
 import type { ReactNode } from 'react'
 import type { MetaSchema } from '../schemas/metaSchema'
-import type { Diagnostic } from '../validation/diagnostics'
+import type { Diagnostic, DiagnosticToken } from '../validation/diagnostics'
 
 export const BUILTIN_WIDGETS = [
   'text',
@@ -39,6 +39,8 @@ export type WidgetProps = {
   nodeId?: string
   /** pointer 命中本字段的 M2 诊断（field/template 均可）。 */
   diagnostics?: Diagnostic[]
+  /** 本字段诊断里的 token 区间投影（M2 renderMarkers）；模板控件据此做字段内高亮。 */
+  markers?: DiagnosticToken[]
   placeholder?: string
   /** 多行控件行数（textarea/variable-input/json）。 */
   rows?: number

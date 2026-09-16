@@ -48,6 +48,9 @@ export function ToolCallConfig({ config, update, variablePaths, onInsert }: Prop
       ? { schema: toolSchema, value: parsedParams }
       : null
 
+  // 字段内变量补全：可见路径清单由 PropertyPanel 按当前节点预先算好（M0 ScopeIndex）。
+  const widgetScope = useMemo(() => ({ listPathsAt: () => variablePaths }), [variablePaths])
+
   const paramsPlaceholder = useMemo(() => {
     const tool = config.tool
     if (tool?.startsWith('http/')) {
@@ -105,6 +108,7 @@ export function ToolCallConfig({ config, update, variablePaths, onInsert }: Prop
             schema={formSource.schema}
             value={formSource.value}
             onChange={(next) => update({ params: paramsToText(next) })}
+            scope={widgetScope}
           />
         ) : (
           <Input.TextArea

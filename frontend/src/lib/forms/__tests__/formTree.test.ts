@@ -11,6 +11,7 @@ import {
   removeAtPath,
   renameKeyAtPath,
   setAtPath,
+  splitTokenSegments,
   type FormArrayNode,
   type FormGroupNode,
   type FormKeyValueNode,
@@ -18,7 +19,7 @@ import {
   type FormWidgetNode,
 } from '../formTree'
 import type { MetaSchema } from '../../schemas/metaSchema'
-import type { Diagnostic } from '../../validation/diagnostics'
+import type { Diagnostic, DiagnosticToken } from '../../validation/diagnostics'
 
 // 九工具 input_schema 实测形态（database/query、http/request、message/send）
 const querySchema: MetaSchema = {
@@ -70,7 +71,7 @@ describe('buildFormTree：结构树（U39③）', () => {
     expect(tree.children.map((child) => child.pointer)).toEqual(['/sql', '/params', '/limit'])
     expect(tree.children.map((child) => child.label)).toEqual(['sql', 'params', 'limit'])
     expect(tree.children.map((child) => child.required)).toEqual([true, false, false])
-    expect(tree.children.map(widgetOf)).toEqual(['text', 'json', 'number'])
+    expect(tree.children.map(widgetOf)).toEqual(['variable-input', 'json', 'number'])
     expect(asWidget(tree.children[0]).value).toBe('SELECT 1')
     expect(asWidget(tree.children[1]).value).toBeUndefined()
   })
@@ -82,7 +83,7 @@ describe('buildFormTree：结构树（U39③）', () => {
       headers: { 'X-Demo-Token': 'demo-token' },
       timeout: 30,
     }) as FormGroupNode
-    expect(tree.children.map(widgetOf)).toEqual(['select', 'text', 'keyvalue', 'json', 'number'])
+    expect(tree.children.map(widgetOf)).toEqual(['select', 'variable-input', 'keyvalue', 'json', 'number'])
     const headers = tree.children[2] as FormKeyValueNode
     expect(headers.entries).toEqual([{ key: 'X-Demo-Token', value: 'demo-token' }])
     expect(headers.valueSchema).toEqual({ type: 'string' })
@@ -98,7 +99,7 @@ describe('buildFormTree：结构树（U39③）', () => {
   it('message/send 的 to（oneOf）与未声明类型字段一律降级 json', () => {
     const tree = buildFormTree(sendSchema, { channel: 'email', to: 'ops@example.com' }) as FormGroupNode
     expect(tree.children.map((child) => child.pointer)).toEqual(['/channel', '/to'])
-    expect(tree.children.map(widgetOf)).toEqual(['text', 'json'])
+    expect(tree.children.map(widgetOf)).toEqual(['variable-input', 'json'])
   })
 
   it('array 按当前值展开增删行，行 pointer 为数字段', () => {
@@ -141,14 +142,27 @@ describe('buildFormTree：结构树（U39③）', () => {
     expect(widgetOf(tree)).toBe('json')
   })
 
-  it('节点 schema 来源下 x-widget 生效（source 默认 tool 按类型结构取 text）', () => {
+  it('节点 schema 来源下 x-widget 生效', () => {
     const schema: MetaSchema = {
       type: 'object',
       properties: { summary: { type: 'string', 'x-widget': 'textarea' } },
     }
-    expect(widgetOf((buildFormTree(schema, {}) as FormGroupNode).children[0])).toBe('text')
     const asNode = buildFormTree(schema, {}, { source: 'node' }) as FormGroupNode
     expect(widgetOf(asNode.children[0])).toBe('textarea')
+  })
+
+  it('工具 params 的字符串字段一律走模板控件（保留既有 {{}} 用 variable-input 承载）', () => {
+    const schema: MetaSchema = {
+      type: 'object',
+      properties: { subject: { type: 'string' }, body: { type: 'string', 'x-widget': 'textarea' } },
+    }
+    const asTool = buildFormTree(schema, { subject: '订单 {{trigger-1.context.payload.order_id}}' }, {
+      source: 'tool',
+    }) as FormGroupNode
+    expect(asTool.children.map(widgetOf)).toEqual(['variable-input', 'variable-input'])
+    // 节点来源仍按 x-widget 显式标注（M3 不消费节点来源）
+    const asNode = buildFormTree(schema, {}, { source: 'node' }) as FormGroupNode
+    expect(asNode.children.map(widgetOf)).toEqual(['text', 'textarea'])
   })
 })
 
@@ -276,5 +290,59 @@ describe('diagnosticsAt（字段级诊断命中）', () => {
     expect(diagnosticsAt(diagnostics, '').map((item) => item.code)).toEqual(['REF_NODE_NOT_FOUND'])
     expect(diagnosticsAt(diagnostics, '/params')).toEqual([])
     expect(diagnosticsAt(undefined, '/sql')).toEqual([])
+  })
+})
+
+describe('splitTokenSegments（U39⑥ 字段内 {{}} 高亮）', () => {
+  const text = '订单 {{trigger-1.context.payload.order_id}} 待审批 {{ghost-1.result}}'
+  const good = '{{trigger-1.context.payload.order_id}}'
+  const bad = '{{ghost-1.result}}'
+  const goodToken: DiagnosticToken = {
+    start: text.indexOf(good),
+    end: text.indexOf(good) + good.length,
+    raw: good,
+  }
+  const badToken: DiagnosticToken = {
+    start: text.indexOf(bad),
+    end: text.indexOf(bad) + bad.length,
+    raw: bad,
+  }
+
+  it('按 token 区间切段、乱序 markers 先排序、严重度来自命中诊断', () => {
+    const diagnostics: Diagnostic[] = [
+      { severity: 'warning', layer: 'template', code: 'REF_NOT_IN_SCOPE', message: '上游不可见', loc: { pointer: '/subject', token: goodToken } },
+      { severity: 'error', layer: 'template', code: 'REF_NODE_NOT_FOUND', message: '引用不存在', loc: { pointer: '/subject', token: badToken } },
+    ]
+    const segments = splitTokenSegments(text, [badToken, goodToken], diagnostics)
+    expect(segments.map((segment) => segment.text).join('')).toBe(text)
+    expect(segments.map((segment) => [segment.text, segment.severity ?? null])).toEqual([
+      ['订单 ', null],
+      [good, 'warning'],
+      [' 待审批 ', null],
+      [bad, 'error'],
+    ])
+  })
+
+  it('无命中诊断的 token 按 error 呈现（markers 只能来自诊断）', () => {
+    const token: DiagnosticToken = { start: 0, end: bad.length, raw: bad }
+    expect(splitTokenSegments(bad, [token])).toEqual([{ text: bad, token, severity: 'error' }])
+  })
+
+  it('越界与重叠区间跳过且不丢字符', () => {
+    expect(splitTokenSegments('ab', [{ start: 5, end: 9, raw: 'x' }])).toEqual([{ text: 'ab' }])
+    const overlapping: DiagnosticToken[] = [
+      { start: 1, end: 6, raw: '{{b}}' },
+      { start: 2, end: 5, raw: '{b}' },
+    ]
+    expect(splitTokenSegments('a{{b}}c', overlapping).map((segment) => segment.text)).toEqual([
+      'a',
+      '{{b}}',
+      'c',
+    ])
+  })
+
+  it('无 markers 或空文本时原样返回（不高亮）', () => {
+    expect(splitTokenSegments('abc', undefined)).toEqual([{ text: 'abc' }])
+    expect(splitTokenSegments('', undefined)).toEqual([])
   })
 })

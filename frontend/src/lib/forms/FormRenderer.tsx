@@ -10,6 +10,7 @@ import { createElement, type ReactElement, type ReactNode } from 'react'
 import { Button, Empty, Input, Typography } from 'antd'
 import type { MetaSchema } from '../schemas/metaSchema'
 import type { Diagnostic } from '../validation/diagnostics'
+import { renderMarkers } from '../validation/markers'
 import { widgetComponent, widgetRegistry } from './defaultRegistry'
 import {
   appendAtPath,
@@ -229,6 +230,7 @@ function WidgetView({ node, ctx }: { node: FormWidgetNode; ctx: ViewContext }): 
         scope: ctx.scope,
         nodeId: ctx.nodeId,
         diagnostics: diagnosticsAt(ctx.diagnostics, node.pointer),
+        markers: renderMarkers(ctx.diagnostics ?? [], node.pointer),
       })}
     </Field>
   )
