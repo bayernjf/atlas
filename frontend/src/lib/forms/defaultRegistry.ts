@@ -41,3 +41,14 @@ export const widgetRegistry = buildDefaultRegistry()
 export function registerWidget(name: string, component: WidgetComponent): void {
   widgetRegistry.register(name, component)
 }
+
+/**
+ * 取名对应控件组件；未注册控件名一律降级 json 控件
+ * （04 §4.10 降级序；FormRenderer 消费，M4 起的节点 schema x-widget 亦走此路）。
+ */
+export function widgetComponent(
+  name: string,
+  registry: WidgetRegistry = widgetRegistry,
+): WidgetComponent {
+  return registry.has(name) ? registry.get(name) : registry.get('json')
+}
