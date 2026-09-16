@@ -16,6 +16,15 @@ from atlas.template.graphs import refund_template_graph
 
 _REFUND_KEYWORDS = ("退款", "退货", "售后")
 
+_TYPE_CHECKS = {
+    "string": lambda value: isinstance(value, str),
+    "integer": lambda value: isinstance(value, int) and not isinstance(value, bool),
+    "number": lambda value: isinstance(value, (int, float)) and not isinstance(value, bool),
+    "boolean": lambda value: isinstance(value, bool),
+    "object": lambda value: isinstance(value, dict),
+    "array": lambda value: isinstance(value, list),
+}
+
 
 def generate_graph(prompt: str) -> dict[str, Any]:
     model = os.getenv("LITELLM_MODEL", "").strip()
@@ -26,6 +35,64 @@ def generate_graph(prompt: str) -> dict[str, Any]:
     if any(keyword in prompt for keyword in _REFUND_KEYWORDS):
         return refund_template_graph()
     raise ValueError("未能识别流程意图（规则兜底仅支持退款/售后场景；配置 LITELLM_MODEL 可支持任意描述）")
+
+
+def validate_param_fills(
+    graph: dict[str, Any], tool_input_schemas: dict[str, dict[str, Any]]
+) -> list[str]:
+    """NL 草稿 tool_call 参数填充的尽力校验（04 §4.9 ⑤；非阻塞警告，不影响草稿回显）。
+
+    只做静态可判项：必填缺失、顶层浅类型、enum、additionalProperties:false。
+    无法静态判定的一律放行：未知工具/空 schema、params 非合法 JSON（含裸 ``{{}}``
+    插值）、值为模板字符串（运行期插值）、字段声明 oneOf 等复合约束。
+    """
+    warnings: list[str] = []
+    for raw_node in graph.get("nodes", []):
+        if not isinstance(raw_node, dict) or raw_node.get("type") != "tool_call":
+            continue
+        node_id = raw_node.get("id", "?")
+        config = raw_node.get("config")
+        if not isinstance(config, dict):
+            continue
+        tool = config.get("tool")
+        schema = tool_input_schemas.get(tool) if isinstance(tool, str) else None
+        if not schema:
+            continue
+        properties = schema.get("properties")
+        if not isinstance(properties, dict) or not properties:
+            continue
+        raw_params = config.get("params")
+        if not isinstance(raw_params, str):
+            continue
+        try:
+            params = json.loads(raw_params)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(params, dict):
+            continue
+        prefix = f"节点「{node_id}」工具 {tool} "
+        for required in schema.get("required", []):
+            if required not in params:
+                warnings.append(prefix + f"参数缺少必填字段：{required}")
+        if schema.get("additionalProperties") is False:
+            for key in params:
+                if key not in properties:
+                    warnings.append(prefix + f"参数包含未声明字段：{key}")
+        for key, value in params.items():
+            field_schema = properties.get(key)
+            if not isinstance(field_schema, dict) or "oneOf" in field_schema:
+                continue
+            if isinstance(value, str) and "{{" in value:
+                continue
+            expected = field_schema.get("type")
+            check = _TYPE_CHECKS.get(expected)
+            if check is not None and not check(value):
+                warnings.append(prefix + f"参数字段「{key}」类型应为 {expected}")
+            enum = field_schema.get("enum")
+            if isinstance(enum, list) and value not in enum:
+                warnings.append(prefix + f"参数字段「{key}」取值不在允许范围内：{enum}")
+    return warnings
+
 
 
 def _generate_with_llm(prompt: str, model: str) -> dict[str, Any] | None:

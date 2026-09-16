@@ -733,6 +733,15 @@ def _tool_output_schemas(registry: AdapterRegistry) -> dict[str, dict[str, Any]]
     return table
 
 
+def tool_input_schemas(registry: AdapterRegistry) -> dict[str, dict[str, Any]]:
+    """NL 参数填充尽力校验用：``<adapter_id>/<tool> -> input_schema``（04 §4.9 ⑤）。"""
+    table: dict[str, dict[str, Any]] = {}
+    for adapter in registry.list_adapters():
+        for tool in adapter["tools"]:
+            table[f"{adapter['id']}/{tool['name']}"] = tool["input_schema"]
+    return table
+
+
 def compile_graph(
     graph: GraphDSL,
     *,

@@ -27,7 +27,7 @@ from atlas.database.service import DatabaseClient, demo_engine
 from atlas.debug import DebugController, DebugStopped
 from atlas.graph.conditions import validate_expression
 from atlas.graph.dsl import GraphValidationError, parse_graph
-from atlas.graph.loader import compile_graph, run_graph
+from atlas.graph.loader import compile_graph, run_graph, tool_input_schemas
 from atlas.harness.base import Permission
 from atlas.harness.registry import AdapterRegistry
 from atlas.httpapi.adapter import HttpApiHarnessAdapter
@@ -35,7 +35,7 @@ from atlas.httpapi.service import HttpApiClient
 from atlas.iam.deps import get_principal, require, services_for, session_store, tenant_registry
 from atlas.iam.principals import Principal, authenticate
 from atlas.iam.registry import TenantServices
-from atlas.llm.nl_generate import generate_graph
+from atlas.llm.nl_generate import generate_graph, validate_param_fills
 from atlas.message.adapter import MessageHarnessAdapter
 from atlas.monitoring import RUN_RING_SIZE, extract_node_results
 from atlas.recording import (
@@ -765,9 +765,11 @@ def nl_generate(
     request: NLGenerateRequest, principal: Principal = Depends(require("operate"))
 ) -> dict[str, Any]:
     try:
-        return {"graph": generate_graph(request.prompt)}
+        graph = generate_graph(request.prompt)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    warnings = validate_param_fills(graph, tool_input_schemas(_demo_registry))
+    return {"graph": graph, "paramWarnings": warnings}
 
 
 @app.post("/api/demo/shop/login")

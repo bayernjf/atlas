@@ -174,7 +174,7 @@ export async function runGraph(id: string, inputs?: RunInputs): Promise<RunResul
   return request(`/api/graphs/${id}/run`, { method: 'POST', body: JSON.stringify({ inputs }) })
 }
 
-export async function nlGenerate(prompt: string): Promise<{ graph: SerializedGraph }> {
+export async function nlGenerate(prompt: string): Promise<{ graph: SerializedGraph; paramWarnings?: string[] }> {
   return request('/api/nl/generate', { method: 'POST', body: JSON.stringify({ prompt }) })
 }
 
