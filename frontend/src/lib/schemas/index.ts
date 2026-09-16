@@ -10,6 +10,7 @@ import { aiDecisionSchema } from './nodes/ai_decision.schema'
 import { toolCallSchema } from './nodes/tool_call.schema'
 import { waitSchema } from './nodes/wait.schema'
 import { conditionSchema } from './nodes/condition.schema'
+import { loopSchema } from './nodes/loop.schema'
 
 export const SCHEMA_VERSION = 'v1'
 
@@ -18,6 +19,7 @@ const SCHEMAS: Record<string, Record<string, NodeConfigSchema>> = {
   ai_decision: { [SCHEMA_VERSION]: aiDecisionSchema },
   tool_call: { [SCHEMA_VERSION]: toolCallSchema },
   condition: { [SCHEMA_VERSION]: conditionSchema },
+  loop: { [SCHEMA_VERSION]: loopSchema },
   wait: { [SCHEMA_VERSION]: waitSchema },
 }
 

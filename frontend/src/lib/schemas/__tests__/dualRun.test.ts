@@ -36,6 +36,7 @@ describe('schemaRegistry', () => {
       'ai_decision',
       'tool_call',
       'condition',
+      'loop',
       'wait',
     ])
   })
@@ -159,6 +160,53 @@ describe('condition dual-run equivalence (U36)', () => {
           { label: 'x', expression: '{{ok}} == null', target: 'a' },
         ],
         defaultTarget: 'a',
+      }),
+    ).toBeNull()
+  })
+})
+
+describe('loop dual-run equivalence (U36)', () => {
+  it('default config fails expression and both targets on both', () => {
+    expect(compareNodeL1WithSchema('loop', defaultConfig('loop'))).toBeNull()
+  })
+
+  it('configured node passes both', () => {
+    expect(
+      compareNodeL1WithSchema('loop', {
+        mode: 'while',
+        continueExpression: '{{loop-1.index}} < 3',
+        maxIterations: 10,
+        bodyTarget: 'tool-body',
+        exitTarget: 'tool-exit',
+      }),
+    ).toBeNull()
+  })
+
+  it.each([
+    ['zero', 0],
+    ['above max', 101],
+    ['non-integer', 1.5],
+    ['undefined', undefined],
+  ])('maxIterations %s fails maxIterations on both', (_name, maxIterations) => {
+    expect(
+      compareNodeL1WithSchema('loop', {
+        mode: 'while',
+        continueExpression: '{{loop-1.index}} < 3',
+        maxIterations: maxIterations as number,
+        bodyTarget: 'b',
+        exitTarget: 'e',
+      }),
+    ).toBeNull()
+  })
+
+  it('expression syntax and body/exit collision stay hand-written-only', () => {
+    expect(
+      compareNodeL1WithSchema('loop', {
+        mode: 'while',
+        continueExpression: 'index >',
+        maxIterations: 0,
+        bodyTarget: 'same',
+        exitTarget: 'same',
       }),
     ).toBeNull()
   })
