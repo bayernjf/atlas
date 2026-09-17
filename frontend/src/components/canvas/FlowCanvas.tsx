@@ -5,6 +5,7 @@ import { useEditorStore, type EditorNode } from '../../store/editorStore'
 import type { NodeKind } from '../../lib/nodeCatalog'
 import { token } from '../../theme/tokens'
 import { AtlasNode } from './AtlasNode'
+import { ProblemsPanel } from './ProblemsPanel'
 
 const edgeColor = token('color-primary')
 const DND_MIME = 'application/atlas-node'
@@ -103,6 +104,7 @@ function FlowCanvasInner() {
         <Background />
         <Controls />
       </ReactFlow>
+      <ProblemsPanel />
     </div>
   )
 }

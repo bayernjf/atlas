@@ -60,6 +60,7 @@ body,
 .canvas-panel {
   width: 100%;
   height: 100%;
+  position: relative;
 }
 
 .editor-footer {
@@ -295,4 +296,158 @@ body,
   background: var(--atlas-color-bg-canvas);
   border-radius: 4px;
   font-size: 11px;
+}
+
+/* ===== Problems 面板（M4 批 2 ⑧）===== */
+.problems-panel {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  width: min(640px, 62%);
+  max-height: 240px;
+  display: flex;
+  flex-direction: column;
+  background: var(--atlas-color-bg-container, #fff);
+  border: 1px solid var(--atlas-color-border, #e5e7eb);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  z-index: 10;
+  overflow: hidden;
+  font-size: 12px;
+}
+
+.problems-panel.is-clean {
+  width: auto;
+  min-width: 180px;
+}
+
+.problems-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 12px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.problems-title {
+  font-weight: 600;
+}
+
+.problems-counts {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+}
+
+.problems-count {
+  border-radius: 10px;
+  padding: 0 8px;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.problems-count-error {
+  background: #fff1f0;
+  color: #cf1322;
+}
+
+.problems-count-warning {
+  background: #fffbe6;
+  color: #d48806;
+}
+
+.problems-count-ok {
+  color: #389e0d;
+}
+
+.problems-chevron {
+  color: #9ca3af;
+  font-size: 10px;
+}
+
+.problems-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 4px 4px;
+  overflow-y: auto;
+}
+
+.problems-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 4px;
+}
+
+.problems-item.is-clickable {
+  cursor: pointer;
+}
+
+.problems-item.is-clickable:hover {
+  background: var(--atlas-color-fill-quaternary, rgba(0, 0, 0, 0.04));
+}
+
+.problems-item-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+  margin-top: 1px;
+}
+
+.problems-item-error .problems-item-icon {
+  background: #cf1322;
+}
+
+.problems-item-warning .problems-item-icon {
+  background: #d48806;
+}
+
+.problems-item-body {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.problems-item-message {
+  font-size: 12px;
+}
+
+.problems-item-meta {
+  display: flex;
+  gap: 8px;
+  color: #9ca3af;
+  font-size: 11px;
+}
+
+.problems-item-pointer {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Problems 点击后右侧属性面板字段闪烁定位 */
+@keyframes problems-field-flash {
+  0%,
+  100% {
+    background: transparent;
+  }
+  30% {
+    background: rgba(250, 173, 20, 0.22);
+  }
+}
+
+.problems-field-flash {
+  animation: problems-field-flash 1.6s ease-in-out 1;
+  border-radius: 4px;
 }

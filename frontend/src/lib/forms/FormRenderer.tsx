@@ -105,15 +105,18 @@ function FormNodeView({ node, ctx }: { node: FormNode; ctx: ViewContext }): Reac
 function Field({
   label,
   required,
+  pointer,
   children,
 }: {
   label: string
   required?: boolean
+  /** RFC6901 指针：挂 data-pointer 供 Problems 面板点击定位（M4 批 2 ⑧）。 */
+  pointer?: string
   children: ReactNode
 }): ReactElement {
   if (!label) return <>{children}</>
   return (
-    <label className="property-field" style={{ display: 'block' }}>
+    <label className="property-field" style={{ display: 'block' }} data-pointer={pointer}>
       <Typography.Text type="secondary">
         {label}
         {required && <Typography.Text type="danger"> *</Typography.Text>}
@@ -153,7 +156,7 @@ function GroupView({ node, ctx }: { node: FormGroupNode; ctx: ViewContext }): Re
 function ArrayView({ node, ctx }: { node: FormArrayNode; ctx: ViewContext }): ReactElement {
   const itemSchema = node.schema.items ?? {}
   return (
-    <div className="property-field form-array" style={{ marginBottom: 8 }}>
+    <div className="property-field form-array" style={{ marginBottom: 8 }} data-pointer={node.pointer}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Typography.Text type="secondary">
           {node.label}
@@ -186,7 +189,7 @@ function ArrayView({ node, ctx }: { node: FormArrayNode; ctx: ViewContext }): Re
 function KeyValueView({ node, ctx }: { node: FormKeyValueNode; ctx: ViewContext }): ReactElement {
   const keys = node.entries.map((entry) => entry.key)
   return (
-    <div className="property-field form-keyvalue" style={{ marginBottom: 8 }}>
+    <div className="property-field form-keyvalue" style={{ marginBottom: 8 }} data-pointer={node.pointer}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Typography.Text type="secondary">
           {node.label}
@@ -237,7 +240,7 @@ function KeyValueView({ node, ctx }: { node: FormKeyValueNode; ctx: ViewContext 
 function WidgetView({ node, ctx }: { node: FormWidgetNode; ctx: ViewContext }): ReactElement {
   const component = widgetComponent(node.widget, ctx.registry)
   return (
-    <Field label={node.label} required={node.required}>
+    <Field label={node.label} required={node.required} pointer={node.pointer}>
       {createElement(component, {
         value: node.value,
         onChange: (next: unknown) => ctx.onChange(setAtPath(ctx.root, node.path, next)),
