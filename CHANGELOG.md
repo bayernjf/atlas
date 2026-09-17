@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### docs(plan)：M5b 立项——PG 实现 + 中断落库（2026-09-17，docs-only 立项批、零代码）
+
+- 按 docs/20 门控（契约设计 ✅ + T18 拍板 B + M5a/M6 已落码）立项 M5 第二子阶段（08 新增 M5b 立项条），契约已由 docs/24 §2/§3/§4/§5 收口。范围四块、三批原子序：① PG 持久化层（`storage/pg.py` 七个租户 store PG 实现 + DDL `db/migrations/002_storage.sql` + `ATLAS_STORAGE_BACKEND` 后端切换，进程内保持默认/测试后端）；② 中断帧落库 + 恢复扫描器（human_approval/wait 挂起写 `interruptions` 帧、审批决策双写、`storage/recovery.py` 启动重建 pending + 重启续跑线程）；③ loader 续跑（`run_graph` 增 `resume=`，尾图编译 + 已完成 outputs 预填）；④ run 状态 + `GET /api/runs` + reset PG 档分层。非目标＝多实例/跨实例、NATS/Go、wait 事件等待、审批评论流、密码哈希、任务信封（M7）。验收＝integration PG 全绿 + U43/U44/U45 转正式 + 浏览器「审批挂起→重启→同 token 决策生效」。同步面：20 §3/§8、13 U43–U45、09 storage pg/recovery、14 D19/D20、11 S1、handoff/CHANGELOG。**下一步＝M5b 批 1 落码**。
+
 ### feat(versioning)：M6 落码——Graph 版本化 + subgraph 钉版（2026-09-17，`1f49644`）
 
 - 按 08 M6 立项条落码，题二 B5 不可变版本前提闭合。新增 `src/atlas/versioning/publish.py`（`publish(graph_store, graph_id)` 冻结 latest 草稿为不可变版本 + 递归钉版 subgraph 引用为 `graphId@vN`——版本号不可变故钉号即冻结引用内容、不复制子图 JSON，`visiting` 防环防御）；`storage/memory.GraphStore` 扩展 `publish`（快照写 `releaseVersion` 字段，从 1 递增）／`get(graph_id, release_version=None)`（缺省 latest）／`list_versions`（升序）／`clear` 清版本，`storage/base.GraphRepository` 协议同步；API 增 `POST /api/graphs/{id}/publish`（operate，返 `{id, releaseVersion}`）、`GET /api/graphs/{id}/versions`（`{items:[<releaseVersion>]}`）、`GET /api/graphs/{id}?releaseVersion=N`（未知/未发布 404），compile/run/run-stream 可选 `releaseVersion`（缺省 latest），`_tenant_graph_resolver` 支持 `graphId@vN`。
