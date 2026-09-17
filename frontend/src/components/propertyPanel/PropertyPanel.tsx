@@ -17,7 +17,7 @@ import {
   type NodeConfig,
 } from '../../lib/nodeCatalog'
 import { useScopeIndex, useToolOutputSchemas } from '../../lib/useScope'
-import { validateNodeDiagnostics } from '../../lib/validation/validateGraph'
+import { useNodeDiagnostics } from '../../store/validationStore'
 import { validateExpression } from '../../lib/conditions'
 import { ConditionConfig } from './ConditionConfig'
 import { LoopConfig } from './LoopConfig'
@@ -44,6 +44,8 @@ export function PropertyPanel() {
 
   const scope = useScopeIndex({ nodes, edges, variables })
   const toolOutputSchemas = useToolOutputSchemas()
+  // M4 批 2 ⑦：诊断来自分层校验引擎结果 store（L1 同步、L2 防抖）。
+  const engineDiagnostics = useNodeDiagnostics(selectedNodeId ?? '')
 
   const selectedNode = nodes.find((node) => node.id === selectedNodeId)
 
@@ -57,11 +59,7 @@ export function PropertyPanel() {
 
   const { data } = selectedNode
   const meta = NODE_CATALOG[data.kind]
-  const diagnostics = validateNodeDiagnostics(selectedNode.id, data, {
-    selfId: selectedNode.id,
-    scope,
-    toolOutputSchemas,
-  })
+  const diagnostics = engineDiagnostics
   const config = data.config
   const variablePaths = scope.listPathsAt(selectedNode.id, toolOutputSchemas)
   const targetOptions = nodes

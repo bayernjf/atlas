@@ -28,13 +28,12 @@ export type GraphValidationNode = {
 }
 
 /**
- * 单节点全部诊断（名称 + L1 + L2）。L1 诊断在此补 loc.nodeId；
- * L2 由 ScopeIndex 自带 nodeId/pointer/token。返回结果经 rank 排序。
+ * 单节点 L1 诊断（名称必填 + 字段层），供分层调度引擎同步层直接调用（M4 批 2 ⑦）。
+ * L1 诊断在此补 loc.nodeId；返回结果经 rank 排序。
  */
-export function validateNodeDiagnostics(
+export function validateNodeL1(
   id: string,
-  data: EditorNodeData,
-  refContext?: RefValidationContext,
+  data: Pick<EditorNodeData, 'kind' | 'label' | 'config'>,
 ): Diagnostic[] {
   const diagnostics: Diagnostic[] = []
 
@@ -52,6 +51,19 @@ export function validateNodeDiagnostics(
     diagnostics.push({ ...diagnostic, loc: { ...diagnostic.loc, nodeId: id } })
   }
 
+  return rank(diagnostics)
+}
+
+/**
+ * 单节点全部诊断（L1 + L2）。L2 由 ScopeIndex 自带 nodeId/pointer/token。
+ */
+export function validateNodeDiagnostics(
+  id: string,
+  data: EditorNodeData,
+  refContext?: RefValidationContext,
+): Diagnostic[] {
+  const diagnostics = validateNodeL1(id, data)
+
   if (refContext) {
     diagnostics.push(
       ...refContext.scope.validateRefsAt(
@@ -67,7 +79,7 @@ export function validateNodeDiagnostics(
 }
 
 /** Kahn 拓扑序（上游在前）；成环节点（如循环回边）在末尾按输入顺序补入。 */
-function topologicalOrder(nodes: ScopeNodeLike[], edges: ScopeEdgeLike[]): string[] {
+export function topologicalOrder(nodes: ScopeNodeLike[], edges: ScopeEdgeLike[]): string[] {
   const ids = new Set(nodes.map((node) => node.id))
   const indegree = new Map<string, number>([...ids].map((id) => [id, 0]))
   const adjacency = new Map<string, string[]>()
