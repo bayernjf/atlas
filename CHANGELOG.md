@@ -4,11 +4,15 @@
 
 ## [Unreleased]
 
+### docs(plan)：M5a 立项——进程内 Repository 重构（2026-09-17，docs-only 立项批、零代码）
+
+- T18 拍板 B 后按 docs/20 门控立项 M5 第一子阶段（08 新增 M5a 立项条）：**零行为变化的进程内重构**，八个进程内 store 收拢为统一抽象。范围：`src/atlas/storage/base.py` 六个 `typing.Protocol`（Graph/Recording/Feedback/Session/Interruption/MonitoringRepository，方法与现有八 store 公开 API 一比一、不增删改名）+ `for_tenant(tenant_id)` 工厂 + reset 分档常量 + `StorageError`；`storage/memory.py` 一次性纯搬移收拢八实现（`GraphStore`/`FeedbackStore` 自 `api/main.py` 内联移出，`RecordingStore`/`SessionStore`/`ApprovalBroker`/`DebuggerBroker`/`MonitoringStore` 迁入、原模块 re-export 过渡、收口时删原实现），`TenantRegistry._create_services` 改从 storage.memory 构造、`api/main.py → iam.registry` 延迟导入环消除；`TenantServices` 字段类型自 `object` 收紧为 Protocol。**非目标**＝PG 实现/中断落库/`GET /api/runs`（均 M5b）、多实例/NATS（D5）/Go（D6）、任何新依赖/前端改动/Schema 变更。**验收**＝后端 431 passed/8 skipped 零回归 + `/api/*` 端点签名零变化 + storage 零第三方依赖 + 无循环导入。同步面：03 新增 `repository` 契约、09 storage 包位注记、20 §3/§5 状态、14 D19/D20 注记、handoff/CHANGELOG。**下一步＝M5a 落码**（建议原子序：base.py 六 Protocol+单测 → memory.py 逐 store 收拢〔每迁一个一提交、测试逐提交转绿〕→ TenantServices/Registry 接线+消环 → 删原实现+文档回填）。
+
 ### docs(plan)：M5 契约设计轮——持久化与中断恢复四缺口收口（2026-09-17，零代码；新增 docs/24 为 M5a/M5b 形状权威；ADR T18 同日拍板选 B）
 
 - 接力 M4 批 3 收口后的「下一步＝M5 契约设计轮」（Active work 11，docs/20 §3 门控：契约设计 → T18 拍板 → 立项 M5a → M6 可插队 → M5b → M7/M9）。新增 **docs/24-M5持久化与中断恢复契约设计.md** 收口四缺口：① **Repository 形状**＝按资源分组六个 `typing.Protocol`（Graph/Recording/Feedback/Session/Interruption/Monitoring，方法与八 store 现有 API 一比一）+ 三条统一约定（`for_tenant(tenant_id)` 工厂、租户分区为构造期关切、reset 分 resettable/persistent），新包 `src/atlas/storage/`（base/memory/pg/recovery），不做单一胖接口；② **中断落库路线 ADR T18**（10 §4 已于 2026-09-17 拍板转 ✅）：A LangGraph checkpointer vs **B 自研暂停帧**（`InterruptionFrame` 两后端同构 + `loader` resume 续跑入口 + `storage/recovery.py` 恢复扫描器），**用户拍板 B**（A 超出 20 §3「不做」边界、重构三处挂起机制、带新依赖；B 与现有同步 SSE/REST token 语义零冲突、可注入假时钟测试；重开判据：M7 要求跨实例迁移执行中运行时重开评 A），**M5a 立项门已开**；③ **04 §5.5/§5.6 v2 语义**＝绝对 `deadline_at` 恢复剩余时长（重启不重计）、决策 Event+1s PG 轮询复合等待、SSE 断线不取消执行且重连走查询端点、重启仅 suspended 帧可恢复（running 标 `interrupted`）、`/api/demo/reset` PG 档 truncate 运行时表保留 recordings/feedback；④ **12 新端点**＝`GET /api/runs?status=suspended` 与 `GET /api/runs/{run_id}`（跨租户 404，不新增写端点，M5b 生效）。
 - 同步面已落：**03** 持久化注记（graph/debug/identity 三契约）+ 新增 `interruption_frame` 契约；**12** 两端点登记（标 M5b 生效）+ reset 分层语义；**13** 候选 U43（挂起帧→新进程→同 token 决策生效）/U44（wait 剩余时长）/U45（SSE 重连与挂起查询）；**09** `storage/` 包位与模块注释；**14** D19/D20 设计轮注记（拍 B 时改写 checkpointer 措辞）；**11** S1 进度（字段映射与 reset 分档已定，DDL 待 M5b）；**00/handoff** 索引与状态；**08** M5 条增「契约设计轮完成」blockquote。
-- **边界重申**：本轮零代码；M5 只做到「单实例重启后流程能恢复」，不含多实例/NATS（D5）/Go 网关（D6）。**T18 已于 2026-09-17 用户拍板选 B（自研暂停帧落库+续跑，10 §4 转 ✅，14 D19/D20/D27 措辞已同步）→ 下一步＝立项 M5a（进程内重构，431+ 测试零回归验收）**。
+- **边界重申**：本轮零代码；M5 只做到「单实例重启后流程能恢复」，不含多实例/NATS（D5）/Go 网关（D6）。**T18 已于 2026-09-17 用户拍板选 B（自研暂停帧落库+续跑，10 §4 转 ✅，14 D19/D20/D27 措辞已同步）→ M5a 已立项未开工（见下条，08 M5a 立项条）**。
 
 ### feat(forms+editor+validation)：M4 批 3——reverseDeps + quickFix v1 + 200/500 基准 + Condition 迁移收口（2026-09-17，五个原子提交 `4b15d95`/`875922b`/`f496062`/`79317e3`/`471b930`，dev 本地未推送）
 
