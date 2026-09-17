@@ -397,7 +397,7 @@ parentSpanId: string
 type: "run_end"         # 随 run_graph 返回值展开
 traceId: string          # M10：run root span 的 trace id
 spanId: string           # M10：run root span id（parentSpanId 缺省）
-graphVersion: string     # M10：`graphId@vN`（发布版本）/`graphId@draft`（草稿）
+graphVersion: string     # M10：`graphId@<releaseVersion:int>`（发布版本，无 v 前缀，对齐 M6 钉版）/`graphId@draft`（草稿）
 ```
 > M10 起三帧均为 **19 §2.3.4 Trace 事件超集**：只新增 traceId/spanId/parentSpanId（run_end 另加 graphVersion），现有字段与帧类型不变，前端忽略未知字段即零改动。span 三元组位于事件顶层、**不进节点 output**（录制回放 collect_steps 只取 output，天然不受随机 id/时间影响）；完整 span 树经 `tracing` 包进程内导出，不进 SSE 高频帧。subgraph 子图以 `emit=None` 重入、事件仍不外泄，子图内部 span 经 `to_tree(include_internal=False)` 折叠（见下 `trace_span`）。
 
@@ -414,7 +414,7 @@ Span:
   startedAt: str         # UTC ISO
   durationMs: float
   status: enum[ok, error]
-  graphVersion: string | None   # run root 标注 graphId@vN / @draft
+  graphVersion: string | None   # run root 标注 graphId@<int> / @draft
   attrs: dict            # actor（任务 assignee）、node_type、adapter、orderId 等
   internal: bool         # subgraph 内部 span 标 true，include_internal=False 时折叠
 # 进程内传播：contextvars 记当前 span（同线程 节点→工具 就近取父）；
@@ -650,7 +650,7 @@ taskId: string            # uuid4，任务唯一标识
 runId: string             # 所属 run
 idempotencyKey: string    # 幂等键 `资源|动作|版本`（L1 去重返首结果）
 traceId: string           # 追溯（M10 span 前 = runId）
-graphVersion: string      # 图版本 `graphId@vN`（M6 后可得）
+graphVersion: string      # 图版本 `graphId@<int>`（发布）/`graphId@draft`（M6 后可得，无 v 前缀）
 type: string              # 任务类型 `refund.verify_order | logistics.check_receipt`
 assignee: string          # 指派人 `bot.customer | bot.logistics`
 payload: object           # 载荷；refs 含跨 Bot 数据引用 `{{...}}`
