@@ -6,7 +6,9 @@
  * 只放组件；控件名常量在 types.ts、注册表在 nodeRegistry.ts（保 fast-refresh
  * 单一导出：组件文件不混出函数/常量）。
  */
-import { Select } from 'antd'
+import { useEffect, useState } from 'react'
+import { Empty, Select, Typography } from 'antd'
+import { listGraphs, type SavedGraphSummary } from '../apiClient'
 import type { WidgetComponent } from './types'
 import { DiagnosticText } from './widgets'
 
@@ -36,6 +38,68 @@ export const TargetSelectWidget: WidgetComponent = ({
         options={options}
         optionFilterProp="label"
       />
+      <DiagnosticText diagnostics={diagnostics} />
+    </>
+  )
+}
+
+/**
+ * 已保存子图选择（subgraph.graphId，M4 批 2 ⑨）：挂载时拉一次 /api/graphs。
+ * 空态引导先搭子流程并保存；加载失败显错误但不阻塞编辑（与旧手写 SubgraphConfig 等价）。
+ * 必填/悬空由 L1 诊断经 DiagnosticText 承接。
+ */
+export const SavedGraphSelectWidget: WidgetComponent = ({
+  value,
+  onChange,
+  diagnostics,
+  placeholder,
+}) => {
+  const [graphs, setGraphs] = useState<SavedGraphSummary[]>([])
+  const [loadError, setLoadError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    listGraphs()
+      .then((items) => {
+        if (!cancelled) setGraphs(items)
+      })
+      .catch((error: Error) => {
+        if (!cancelled) setLoadError(error.message)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  if (graphs.length === 0 && !loadError) {
+    return (
+      <>
+        <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description="还没有已保存的图：先在编辑器搭好子流程并运行一次保存"
+        />
+        <DiagnosticText diagnostics={diagnostics} />
+      </>
+    )
+  }
+
+  return (
+    <>
+      <Select
+        showSearch
+        allowClear={false}
+        style={{ width: '100%' }}
+        value={value ? String(value) : undefined}
+        placeholder={placeholder ?? '选择已保存的图'}
+        status={diagnostics?.some((d) => d.severity === 'error') ? 'error' : undefined}
+        onChange={(next: string) => onChange(next)}
+        optionFilterProp="label"
+        options={graphs.map((item) => ({
+          value: item.id,
+          label: `${item.id}（${item.node_count} 节点）`,
+        }))}
+      />
+      {loadError && <Typography.Text type="danger">{loadError}</Typography.Text>}
       <DiagnosticText diagnostics={diagnostics} />
     </>
   )

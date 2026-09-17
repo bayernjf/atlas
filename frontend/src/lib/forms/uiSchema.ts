@@ -49,12 +49,18 @@ export type UiSchema = {
    * 字段中文标题（字段名 → 文案）。MetaSchema 白名单不含 JSON Schema 的 title
    * （04 §4.9 锁定同源 20 keyword、后端零改动），节点表单的设计态中文文案统一由
    * 前端 UISchema 承接；缺省显示字段名。
+   * M4 批 2 起键支持嵌套路径通配：根字段 'joinTarget'；数组行 'branches[].label'
+   * （[] 匹配任一下标）；键值行值 'inputs.*'（* 匹配任一键）。
    */
   labels?: Record<string, string>
-  /** 字段占位提示（字段名 → 文案），透传给叶子控件。 */
+  /** 字段占位提示（键规则同 labels），透传给叶子控件。 */
   placeholders?: Record<string, string>
-  /** enum/radio 选项中文文案（字段名 → 选项值 → 文案）；缺省显示原始枚举值。 */
+  /** enum/radio 选项中文文案（键规则同 labels，值为选项值 → 文案）；缺省显示原始枚举值。 */
   optionLabels?: Record<string, Record<string, string>>
+  /** 多行控件行数（键规则同 labels），如把 keyvalue 内 variable-input 压成单行。 */
+  rows?: Record<string, number>
+  /** keyvalue 键输入框占位（键为 keyvalue 字段路径，如 'inputs'）。 */
+  keyPlaceholders?: Record<string, string>
 }
 
 type GroupEnvelope = {
@@ -176,6 +182,64 @@ export function applyUiSchema(tree: FormNode, value: unknown, uiSchema?: UiSchem
 function fieldKey(node: FormNode): string | undefined {
   const last = node.path[node.path.length - 1]
   return typeof last === 'string' ? last : undefined
+}
+
+/**
+ * 把 UISchema 文案键转成 pointer 段序列（M4 批 2 嵌套支持）：
+ * 根字段 'joinTarget' → ['joinTarget']；'branches[].label' → ['branches','*','label']；
+ * 'inputs.*' → ['inputs','*']。'*' 匹配任意单段（数组下标或键值行键名）。
+ * 接受点号或斜杠分隔（'branches[].label' 与斜杠指针形式等价）。
+ */
+export function uiKeySegments(key: string): string[] {
+  const normalized = key.replace(/\[\]/g, '.*').replace(/^\//, '')
+  return normalized
+    .split(/[./]/)
+    .filter(Boolean)
+    .map((segment) => (segment === '*' ? '*' : segment))
+}
+
+/** 判断节点 RFC6901 pointer 是否命中 UISchema 文案键（通配规则见 uiKeySegments）。 */
+export function pointerMatches(pointer: string, key: string): boolean {
+  const pattern = uiKeySegments(key)
+  const actual = pointer.split('/').filter(Boolean)
+  if (pattern.length !== actual.length) return false
+  return pattern.every((segment, index) => segment === '*' || segment === actual[index])
+}
+
+function lookupByPointer<T>(table: Record<string, T> | undefined, pointer: string): T | undefined {
+  if (!table) return undefined
+  for (const [key, value] of Object.entries(table)) {
+    if (pointerMatches(pointer, key)) return value
+  }
+  return undefined
+}
+
+/**
+ * 渲染期逐节点装饰（M4 批 2）：FormRenderer 渲染每个 FormNode（含数组行/键值行等
+ * 懒建子树）前调用，按 pointer 通配烘焙 labels/placeholders/optionLabels/rows/
+ * keyPlaceholders。根层的 groups/hiddenWhen 仍只在 applyUiSchema 处理一次。
+ */
+export function decorateNodeForRender(node: FormNode, uiSchema?: UiSchema): FormNode {
+  if (!uiSchema) return node
+  if (node.kind === 'widget') {
+    return {
+      ...node,
+      label: lookupByPointer(uiSchema.labels, node.pointer) ?? node.label,
+      placeholder: lookupByPointer(uiSchema.placeholders, node.pointer) ?? node.placeholder,
+      optionLabels: lookupByPointer(uiSchema.optionLabels, node.pointer) ?? node.optionLabels,
+      rows: lookupByPointer(uiSchema.rows, node.pointer) ?? node.rows,
+    }
+  }
+  if (node.kind === 'keyvalue') {
+    return {
+      ...node,
+      label: lookupByPointer(uiSchema.labels, node.pointer) ?? node.label,
+      keyPlaceholder:
+        lookupByPointer(uiSchema.keyPlaceholders, node.pointer) ?? node.keyPlaceholder,
+    }
+  }
+  const label = lookupByPointer(uiSchema.labels, node.pointer)
+  return label ? { ...node, label } : node
 }
 
 /**

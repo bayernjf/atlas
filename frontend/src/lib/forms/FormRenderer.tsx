@@ -30,7 +30,7 @@ import {
 import type { WidgetRegistry } from './registry'
 import type { SchemaSource } from './resolveWidget'
 import type { WidgetScope } from './types'
-import { applyUiSchema, type UiSchema } from './uiSchema'
+import { applyUiSchema, decorateNodeForRender, type UiSchema } from './uiSchema'
 
 export type FormRendererProps = {
   /** 根 schema（工具 input_schema，或节点字段 schema 片段）。 */
@@ -58,6 +58,7 @@ type ViewContext = {
   scope?: WidgetScope
   nodeId?: string
   diagnostics?: Diagnostic[]
+  uiSchema?: UiSchema
 }
 
 export function FormRenderer({
@@ -72,7 +73,16 @@ export function FormRenderer({
   uiSchema,
 }: FormRendererProps): ReactElement {
   const tree = applyUiSchema(buildFormTree(schema, value, { source }), value, uiSchema)
-  const ctx: ViewContext = { root: value, onChange, registry, source, scope, nodeId, diagnostics }
+  const ctx: ViewContext = {
+    root: value,
+    onChange,
+    registry,
+    source,
+    scope,
+    nodeId,
+    diagnostics,
+    uiSchema,
+  }
   const unmapped = diagnosticsAt(diagnostics, tree.pointer)
 
   return (
@@ -95,7 +105,9 @@ export function FormRenderer({
   )
 }
 
-function FormNodeView({ node, ctx }: { node: FormNode; ctx: ViewContext }): ReactElement {
+function FormNodeView({ node: rawNode, ctx }: { node: FormNode; ctx: ViewContext }): ReactElement {
+  // 渲染期装饰：数组行/键值行等懒建子树也在此统一烘焙嵌套 UISchema 文案。
+  const node = decorateNodeForRender(rawNode, ctx.uiSchema)
   if (node.kind === 'group') return <GroupView node={node} ctx={ctx} />
   if (node.kind === 'array') return <ArrayView node={node} ctx={ctx} />
   if (node.kind === 'keyvalue') return <KeyValueView node={node} ctx={ctx} />
@@ -155,6 +167,13 @@ function GroupView({ node, ctx }: { node: FormGroupNode; ctx: ViewContext }): Re
 
 function ArrayView({ node, ctx }: { node: FormArrayNode; ctx: ViewContext }): ReactElement {
   const itemSchema = node.schema.items ?? {}
+  // minItems/maxItems 门控（M4 批 2 ⑨：parallel branches 2-10；schema 解释器
+  // 同时产出 ITEMS_MIN/MAX 诊断，按钮禁用只负责防越界）。
+  const minItems = typeof node.schema.minItems === 'number' ? node.schema.minItems : 0
+  const maxItems = typeof node.schema.maxItems === 'number' ? node.schema.maxItems : undefined
+  const canRemove = node.items.length > minItems
+  const canAdd = maxItems === undefined || node.items.length < maxItems
+  const addLabel = maxItems === undefined ? '添加' : `添加（${node.items.length}/${maxItems}）`
   return (
     <div className="property-field form-array" style={{ marginBottom: 8 }} data-pointer={node.pointer}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -164,20 +183,42 @@ function ArrayView({ node, ctx }: { node: FormArrayNode; ctx: ViewContext }): Re
         </Typography.Text>
         <Button
           size="small"
+          disabled={!canAdd}
           onClick={() => ctx.onChange(appendAtPath(ctx.root, node.path, defaultValueFor(itemSchema)))}
         >
-          添加
+          {addLabel}
         </Button>
       </div>
       {node.items.length === 0 && (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无条目" />
       )}
       {node.items.map((item, index) => (
-        <div key={item.pointer} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-          <div style={{ flex: 1 }}>
+        <div
+          key={item.pointer}
+          className="form-array-item"
+          data-pointer={item.pointer}
+          style={{
+            display: 'flex',
+            gap: 8,
+            alignItems: 'flex-start',
+            border: '1px solid var(--atlas-color-border, #d9d9d9)',
+            borderRadius: 6,
+            padding: 8,
+            marginTop: 8,
+          }}
+        >
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              #{index + 1}
+            </Typography.Text>
             <FormNodeView node={item} ctx={ctx} />
           </div>
-          <Button size="small" danger onClick={() => ctx.onChange(removeAtPath(ctx.root, [...node.path, index]))}>
+          <Button
+            size="small"
+            danger
+            disabled={!canRemove}
+            onClick={() => ctx.onChange(removeAtPath(ctx.root, [...node.path, index]))}
+          >
             删除
           </Button>
         </div>
@@ -216,7 +257,7 @@ function KeyValueView({ node, ctx }: { node: FormKeyValueNode; ctx: ViewContext 
           <Input
             style={{ width: '40%' }}
             value={entry.key}
-            placeholder="键名"
+            placeholder={node.keyPlaceholder ?? '键名'}
             onChange={(event) => ctx.onChange(renameKeyAtPath(ctx.root, node.path, entry.key, event.target.value))}
           />
           <div style={{ flex: 1 }}>
@@ -251,6 +292,7 @@ function WidgetView({ node, ctx }: { node: FormWidgetNode; ctx: ViewContext }): 
         markers: renderMarkers(ctx.diagnostics ?? [], node.pointer),
         placeholder: node.placeholder,
         optionLabels: node.optionLabels,
+        rows: node.rows,
       })}
     </Field>
   )

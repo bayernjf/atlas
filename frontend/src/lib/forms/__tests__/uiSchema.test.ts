@@ -1,7 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import { buildFormTree, type FormGroupNode, type FormNode } from '../formTree'
-import { applyGroups, applyUiSchema, hiddenFields, type UiSchema } from '../uiSchema'
+import {
+  applyGroups,
+  applyUiSchema,
+  decorateNodeForRender,
+  hiddenFields,
+  pointerMatches,
+  type UiSchema,
+} from '../uiSchema'
 import type { MetaSchema } from '../../schemas/metaSchema'
+import { parallelSchema } from '../../schemas/nodes/parallel.schema'
+import { subgraphSchema } from '../../schemas/nodes/subgraph.schema'
+import { parallelUiSchema, subgraphUiSchema } from '../nodeUiSchemas'
 
 /** 取 group 根的直接子项标签序列（视觉组以 `[a,b]` 表示）。 */
 function childOutline(node: FormNode): Array<string | string[]> {
@@ -223,5 +233,87 @@ describe('applyUiSchema', () => {
       ui,
     )
     expect(childOutline(tree)).toEqual(['continueExpression', 'maxIterations'])
+  })
+})
+
+describe('嵌套路径通配装饰（M4 批 2 ⑨：parallel branches / subgraph inputs）', () => {
+  it('pointerMatches：[] 匹配任意下标、* 匹配任意单段、根字段无前缀', () => {
+    expect(pointerMatches('/branches/0/label', 'branches[].label')).toBe(true)
+    expect(pointerMatches('/branches/10/target', 'branches[].target')).toBe(true)
+    expect(pointerMatches('/branches/0/label', 'branches[].target')).toBe(false)
+    expect(pointerMatches('/joinTarget', 'joinTarget')).toBe(true)
+    expect(pointerMatches('/inputs/order_id', 'inputs.*')).toBe(true)
+    expect(pointerMatches('/inputs', 'inputs.*')).toBe(false)
+    expect(pointerMatches('/inputs/a/b', 'inputs.*')).toBe(false)
+  })
+
+  it('parallel：数组行内 label/target 占位与 joinTarget 长 label 按指针烘焙', () => {
+    const tree = buildFormTree(
+      parallelSchema,
+      {
+        joinStrategy: 'all_success',
+        branches: [
+          { label: 'a', target: 'tool-1' },
+          { label: '', target: '' },
+        ],
+        joinTarget: '',
+      },
+      { source: 'node' },
+    )
+    const branches = tree.kind === 'group' ? tree.children.find((c) => c.label === 'branches') : undefined
+    expect(branches?.kind).toBe('array')
+    if (branches?.kind !== 'array') throw new Error('branches 非 array')
+
+    const item0 = branches.items[0]
+    if (item0.kind !== 'group') throw new Error('item 非 group')
+    const label0 = decorateNodeForRender(item0.children[0], parallelUiSchema)
+    const target0 = decorateNodeForRender(item0.children[1], parallelUiSchema)
+    expect(label0.kind).toBe('widget')
+    expect(target0.kind).toBe('widget')
+    if (label0.kind === 'widget') expect(label0.placeholder).toBe('分支名，如：通知商家')
+    if (target0.kind === 'widget') expect(target0.placeholder).toBe('分支入口节点（需先在画布连线）')
+
+    const joinTarget = tree.kind === 'group' ? tree.children.find((c) => c.label === 'joinTarget') : undefined
+    const decoratedJoin = decorateNodeForRender(joinTarget!, parallelUiSchema)
+    expect(decoratedJoin.kind).toBe('widget')
+    if (decoratedJoin.kind === 'widget') {
+      expect(decoratedJoin.label).toContain('各分支末端都连线到该节点')
+      expect(decoratedJoin.placeholder).toBe('选择汇聚目标节点')
+    }
+
+    const strategy = tree.kind === 'group' ? tree.children.find((c) => c.label === 'joinStrategy') : undefined
+    const decoratedStrategy = decorateNodeForRender(strategy!, parallelUiSchema)
+    if (decoratedStrategy.kind === 'widget') {
+      expect(decoratedStrategy.optionLabels?.all_success).toContain('全部成功')
+      expect(decoratedStrategy.optionLabels?.all_completed).toContain('全部完成')
+    }
+  })
+
+  it('subgraph：inputs 键值行值节点压单行并给占位，键占位烘焙到 keyvalue 节点', () => {
+    const tree = buildFormTree(
+      subgraphSchema,
+      { graphId: 'g1', inputs: { order_id: '{{trigger-1.x}}' } },
+      { source: 'node' },
+    )
+    if (tree.kind !== 'group') throw new Error('根非 group')
+    const inputs = tree.children.find((c) => c.label === 'inputs')
+    expect(inputs?.kind).toBe('keyvalue')
+    if (inputs?.kind !== 'keyvalue') throw new Error('inputs 非 keyvalue')
+    const decoratedKv = decorateNodeForRender(inputs, subgraphUiSchema)
+    if (decoratedKv.kind !== 'keyvalue') throw new Error('装饰后非 keyvalue')
+    expect(decoratedKv.keyPlaceholder).toBe('入参键')
+    expect(decoratedKv.label).toContain('子图入参映射')
+
+    // 键值行值节点在 FormRenderer 内懒建，按同一装饰路径验证
+    const valueNode = buildFormTree(inputs.valueSchema, '{{trigger-1.x}}', {
+      path: ['inputs', 'order_id'],
+      source: 'node',
+    })
+    const decoratedValue = decorateNodeForRender(valueNode, subgraphUiSchema)
+    expect(decoratedValue.kind).toBe('widget')
+    if (decoratedValue.kind === 'widget') {
+      expect(decoratedValue.rows).toBe(1)
+      expect(decoratedValue.placeholder).toBe('{{trigger-1.context.payload.order_id}}')
+    }
   })
 })

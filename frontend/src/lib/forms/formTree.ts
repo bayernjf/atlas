@@ -43,6 +43,8 @@ export type FormWidgetNode = FormNodeBase & {
   placeholder?: string
   /** M4 UISchema：enum/const 选项值 → 中文文案（select/radio）。 */
   optionLabels?: Record<string, string>
+  /** M4 批 2：多行控件行数覆盖（UISchema rows，如 keyvalue 内 variable-input 压成单行）。 */
+  rows?: number
 }
 
 export type FormGroupNode = FormNodeBase & {
@@ -65,6 +67,8 @@ export type FormKeyValueNode = FormNodeBase & {
   /** 值侧 schema（additionalProperties 子 schema；缺省为空 schema → 降级 json）。 */
   valueSchema: MetaSchema
   entries: Array<{ key: string; value: unknown }>
+  /** M4 批 2：键输入框占位（UISchema keyPlaceholders），缺省「键名」。 */
+  keyPlaceholder?: string
 }
 
 export type FormNode = FormWidgetNode | FormGroupNode | FormArrayNode | FormKeyValueNode

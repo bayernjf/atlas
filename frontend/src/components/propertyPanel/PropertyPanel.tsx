@@ -152,6 +152,7 @@ export function PropertyPanel() {
             config={config}
             update={updateSelectedConfig}
             targetOptions={targetOptions}
+            diagnostics={diagnostics}
           />
         )}
         {data.kind === 'wait' && <WaitConfig config={config} update={updateSelectedConfig} />}
@@ -160,6 +161,8 @@ export function PropertyPanel() {
             config={config}
             update={updateSelectedConfig}
             variablePaths={variablePaths}
+            targetOptions={targetOptions}
+            diagnostics={diagnostics}
           />
         )}
         {data.kind === 'human_approval' && (
