@@ -206,4 +206,22 @@ describe('applyUiSchema', () => {
     const onB = applyUiSchema(buildFormTree(schema, { kind: 'b' }, { source: 'node' }), { kind: 'b' }, ui)
     expect(childOutline(onB)).toEqual(['kind', 'b1'])
   })
+
+  it('hideFields 静态隐藏内部字段（loop.mode），其余字段照常渲染', () => {
+    const schema: MetaSchema = {
+      type: 'object',
+      properties: {
+        mode: { type: 'string' },
+        continueExpression: { type: 'string' },
+        maxIterations: { type: 'integer' },
+      },
+    }
+    const ui: UiSchema = { hideFields: ['mode'] }
+    const tree = applyUiSchema(
+      buildFormTree(schema, { mode: 'while', continueExpression: 'x', maxIterations: 10 }, { source: 'node' }),
+      { mode: 'while' },
+      ui,
+    )
+    expect(childOutline(tree)).toEqual(['continueExpression', 'maxIterations'])
+  })
 })

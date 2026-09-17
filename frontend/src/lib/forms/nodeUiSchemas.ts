@@ -6,7 +6,11 @@
  * 只登记已切到 FormRenderer 的节点；未登记节点仍走旧手写组件。
  */
 import type { NodeKind } from '../nodeCatalog'
-import { MAX_APPROVAL_TIMEOUT, MIN_APPROVAL_TIMEOUT } from '../validation/l1'
+import {
+  MAX_APPROVAL_TIMEOUT,
+  MAX_LOOP_ITERATIONS,
+  MIN_APPROVAL_TIMEOUT,
+} from '../validation/l1'
 import type { UiSchema } from './uiSchema'
 
 /**
@@ -59,8 +63,30 @@ export const triggerUiSchema: UiSchema = {
   ],
 }
 
+/**
+ * loop（04 §5.3）：continueExpression 走 variable-input（schema x-variable，语法/
+ * 非空/L2 引用由 L1 承接），maxIterations 走 number，body/exit 走 target-select。
+ * mode 是 v1 内部字段（仅 while），静态隐藏；表达式语法红字经 diagnostics 落字段。
+ */
+export const loopUiSchema: UiSchema = {
+  labels: {
+    continueExpression:
+      '继续条件（每轮重入时求值；体内可用 {{loop-x.index}} 引用当前轮次，从 1 开始）',
+    maxIterations: `最大次数（达到后强制退出，1-${MAX_LOOP_ITERATIONS}）`,
+    bodyTarget: '循环体入口（条件为真时进入；体内末端需连线回本节点）',
+    exitTarget: '退出目标（条件为假 / 达上限 / 表达式异常时）',
+  },
+  placeholders: {
+    continueExpression: '{{loop-1.index}} < 3',
+    bodyTarget: '选择循环体入口节点',
+    exitTarget: '选择退出目标节点',
+  },
+  hideFields: ['mode'],
+}
+
 /** 节点 kind → UISchema；未迁移节点缺省（FormRenderer 无 uiSchema 时退化为字段名直出）。 */
 export const NODE_UI_SCHEMAS: Partial<Record<NodeKind, UiSchema>> = {
   trigger: triggerUiSchema,
+  loop: loopUiSchema,
   human_approval: humanApprovalUiSchema,
 }

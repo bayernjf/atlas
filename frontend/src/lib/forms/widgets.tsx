@@ -52,6 +52,8 @@ export const NumberWidget: WidgetComponent = ({ value, onChange, schema, diagnos
       value={typeof value === 'number' ? value : null}
       min={schema.minimum}
       max={schema.maximum}
+      precision={schema.type === 'integer' ? 0 : undefined}
+      step={schema.type === 'integer' ? 1 : undefined}
       placeholder={placeholder ?? schema.description}
       style={{ width: '100%' }}
       onChange={(next) => onChange(next ?? null)}

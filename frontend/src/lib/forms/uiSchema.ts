@@ -43,6 +43,8 @@ export type UiHiddenWhen = {
 export type UiSchema = {
   groups?: UiGroup[]
   hiddenWhen?: UiHiddenWhen[]
+  /** 静态隐藏的根层字段名（内部/不暴露字段，如 loop.mode）；恒不渲染，值仍保留。 */
+  hideFields?: string[]
   /**
    * 字段中文标题（字段名 → 文案）。MetaSchema 白名单不含 JSON Schema 的 title
    * （04 §4.9 锁定同源 20 keyword、后端零改动），节点表单的设计态中文文案统一由
@@ -155,10 +157,11 @@ export function applyGroups(
 export function applyUiSchema(tree: FormNode, value: unknown, uiSchema?: UiSchema): FormNode {
   if (!uiSchema || tree.kind !== 'group') return tree
   const hidden = hiddenFields(uiSchema, value)
+  const staticHidden = new Set(uiSchema.hideFields ?? [])
   const visibleChildren = tree.children
     .filter((child) => {
       const key = fieldKey(child)
-      return !key || !hidden.has(key)
+      return !key || (!hidden.has(key) && !staticHidden.has(key))
     })
     .map((child) => decorateField(child, uiSchema))
   const children = applyGroups(visibleChildren, uiSchema.groups, {
