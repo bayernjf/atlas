@@ -246,6 +246,8 @@ function WidgetView({ node, ctx }: { node: FormWidgetNode; ctx: ViewContext }): 
         nodeId: ctx.nodeId,
         diagnostics: diagnosticsAt(ctx.diagnostics, node.pointer),
         markers: renderMarkers(ctx.diagnostics ?? [], node.pointer),
+        placeholder: node.placeholder,
+        optionLabels: node.optionLabels,
       })}
     </Field>
   )

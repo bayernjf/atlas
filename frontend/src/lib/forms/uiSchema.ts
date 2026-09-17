@@ -8,6 +8,10 @@
  * - hiddenWhen（条件显隐）：按判别字段当前值显隐受控字段（trigger 的
  *   cron/webhookUrl 随 triggerType 显隐）；被隐藏字段不渲染。
  *
+ * 落码 HumanApproval 时补字段文案（M3 式落码细化，仍自研最小层、零依赖/零后端）：
+ * MetaSchema 白名单无 title，节点表单的中文标题/占位/枚举文案无处安放，统一由
+ * labels/placeholders/optionLabels 承接（只作用根层字段）。
+ *
  * 明确不做（08 M4 立项非目标）：完整 UISchema 规范、ui:order、if/then 动态依赖。
  * 本模块纯逻辑、零 React，可在 node 环境单测；FormRenderer 只做薄接入。
  */
@@ -39,6 +43,16 @@ export type UiHiddenWhen = {
 export type UiSchema = {
   groups?: UiGroup[]
   hiddenWhen?: UiHiddenWhen[]
+  /**
+   * 字段中文标题（字段名 → 文案）。MetaSchema 白名单不含 JSON Schema 的 title
+   * （04 §4.9 锁定同源 20 keyword、后端零改动），节点表单的设计态中文文案统一由
+   * 前端 UISchema 承接；缺省显示字段名。
+   */
+  labels?: Record<string, string>
+  /** 字段占位提示（字段名 → 文案），透传给叶子控件。 */
+  placeholders?: Record<string, string>
+  /** enum/radio 选项中文文案（字段名 → 选项值 → 文案）；缺省显示原始枚举值。 */
+  optionLabels?: Record<string, Record<string, string>>
 }
 
 type GroupEnvelope = {
@@ -129,17 +143,44 @@ export function applyGroups(
  * 把 UISchema 应用到已构建的表单树（FormRenderer 薄接入入口）。
  *
  * 仅处理根 object（M4 最小子集：UISchema 只描述节点 config 根这一层）：先按
- * hiddenWhen 过滤隐藏字段，再按 groups 重组视觉分组。非 group 根或无 uiSchema
- * 时原样返回。
+ * hiddenWhen 过滤隐藏字段，再烘焙字段文案（labels/placeholders/optionLabels），
+ * 最后按 groups 重组视觉分组。非 group 根或无 uiSchema 时原样返回。
  */
 export function applyUiSchema(tree: FormNode, value: unknown, uiSchema?: UiSchema): FormNode {
   if (!uiSchema || tree.kind !== 'group') return tree
   const hidden = hiddenFields(uiSchema, value)
-  const visibleChildren = tree.children.filter((child) => !hidden.has(child.label))
+  const visibleChildren = tree.children
+    .filter((child) => !hidden.has(child.label))
+    .map((child) => decorateField(child, uiSchema))
   const children = applyGroups(visibleChildren, uiSchema.groups, {
     path: tree.path,
     pointer: tree.pointer,
     schema: tree.schema,
   })
   return { ...tree, children }
+}
+
+/** 取节点对应的根层字段名（path 末段）；视觉组 path 同父，末段非 string，返回 undefined。 */
+function rootFieldKey(node: FormNode): string | undefined {
+  const last = node.path[node.path.length - 1]
+  return typeof last === 'string' ? last : undefined
+}
+
+/**
+ * 把 labels/placeholders/optionLabels 烘焙到根层字段节点（在分组重组前执行，
+ * 故平铺字段与将进入视觉组的字段都被覆盖）。只覆盖声明了的键，其余原样。
+ */
+function decorateField(node: FormNode, uiSchema: UiSchema): FormNode {
+  const key = rootFieldKey(node)
+  if (!key) return node
+  const label = uiSchema.labels?.[key]
+  if (node.kind === 'widget') {
+    return {
+      ...node,
+      label: label ?? node.label,
+      placeholder: uiSchema.placeholders?.[key] ?? node.placeholder,
+      optionLabels: uiSchema.optionLabels?.[key] ?? node.optionLabels,
+    }
+  }
+  return label ? { ...node, label } : node
 }

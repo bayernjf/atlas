@@ -27,11 +27,12 @@ describe('WidgetRegistry（U39①）', () => {
     expect(() => registry.get('nope')).toThrow(/未注册控件/)
   })
 
-  it('八件内置控件注册名固定', () => {
+  it('内置控件注册名固定（M3 八件 + M4 radio 共九件）', () => {
     expect([...BUILTIN_WIDGETS]).toEqual([
       'text',
       'number',
       'select',
+      'radio',
       'textarea',
       'switch',
       'json',

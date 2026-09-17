@@ -1,8 +1,8 @@
 /**
- * 默认控件表与扩展点（M3，04 §4.10 / ADR T17）。
+ * 默认控件表与扩展点（M3 八件 / 04 §4.10 / ADR T17；M4 节点迁移补 radio 共九件）。
  *
- * 八件内置控件全部由既有 AntD 承载；registerWidget 扩展点导出但 M3 内
- * 零业务调用方（业务控件/控件市场随 docs/14 D29）。
+ * 内置控件全部由既有 AntD 承载；registerWidget 扩展点导出，节点业务控件
+ * （target-select 等）在 nodeWidgets.tsx 经 buildNodeRegistry 注册，不污染本表。
  */
 import { WidgetRegistry } from './registry'
 import type { WidgetComponent } from './types'
@@ -10,6 +10,7 @@ import {
   ExpressionWidget,
   JsonWidget,
   NumberWidget,
+  RadioWidget,
   SelectWidget,
   SwitchWidget,
   TextareaWidget,
@@ -21,6 +22,7 @@ const BUILTINS: Record<string, WidgetComponent> = {
   text: TextWidget,
   number: NumberWidget,
   select: SelectWidget,
+  radio: RadioWidget,
   textarea: TextareaWidget,
   switch: SwitchWidget,
   json: JsonWidget,

@@ -39,6 +39,10 @@ export type FormWidgetNode = FormNodeBase & {
   widget: WidgetName
   value: unknown
   description?: string
+  /** M4 UISchema：字段占位提示（覆盖 schema.description 兜底）。 */
+  placeholder?: string
+  /** M4 UISchema：enum/const 选项值 → 中文文案（select/radio）。 */
+  optionLabels?: Record<string, string>
 }
 
 export type FormGroupNode = FormNodeBase & {
