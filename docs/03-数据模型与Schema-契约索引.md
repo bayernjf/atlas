@@ -562,7 +562,7 @@ principal:
 
 > 种子租户/账号为代码常量（非 DB，明文密码仅 Demo）：t1 演示企业 A = admin-a/admin123（admin）、operator-a/operator123（operator）、viewer-a/viewer123（viewer）；t2 演示企业 B = admin-b/admin123（admin）。除 login、health、静态、`/demo/shop`、`/api/demo/**` 外全部端点必须 Bearer：缺失/坏 token → 401「缺少或无效的登录凭证」；角色不足 → 403「当前角色无权执行此操作」；访问他租户对象 → 404（不泄漏存在性）。角色矩阵（端点级白名单）、分区资源与全局基础设施清单、reset 本租户语义权威见 04 §5.14；内部接口（iam 包）见 12 §3.10；REST 鉴权列见 12 §5。持久化账号/密码哈希/SSO/JWT 缓做 11 S1 + 14 D22。
 
-### `interruption_frame` — 字段概览（M5 契约设计轮 2026-09-17 新增，**设计已定、待 T18 拍板后随 M5b 落码**；权威＝docs/24 §2.3/§5，落码承载 `src/atlas/storage/`）
+### `interruption_frame` — 字段概览（M5 契约设计轮 2026-09-17 新增，**设计已定、T18 已拍板（B）、随 M5b 落码**；权威＝docs/24 §2.3/§5，落码承载 `src/atlas/storage/`）
 
 ```yaml
 resume_token: string            # uuid4 hex，即现有 approval/debug token（决策/恢复端点零改动）
