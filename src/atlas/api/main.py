@@ -9,10 +9,12 @@ NL 生成草稿、适配器发现、模拟商家售后控制台。
 from __future__ import annotations
 
 import json
+import logging
 import os
 import queue
 import threading
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -26,7 +28,7 @@ from atlas.database.adapter import DatabaseHarnessAdapter
 from atlas.database.service import DatabaseClient, demo_engine
 from atlas.debug import DebugController, DebugStopped
 from atlas.graph.conditions import validate_expression
-from atlas.graph.dsl import GraphValidationError, parse_graph
+from atlas.graph.dsl import GraphDSL, GraphValidationError, parse_graph
 from atlas.graph.loader import compile_graph, run_graph, tool_input_schemas
 from atlas.harness.base import Permission
 from atlas.harness.registry import AdapterRegistry
@@ -34,7 +36,7 @@ from atlas.httpapi.adapter import HttpApiHarnessAdapter
 from atlas.httpapi.service import HttpApiClient
 from atlas.iam.deps import get_principal, require, services_for, session_store, tenant_registry
 from atlas.iam.principals import Principal, authenticate
-from atlas.iam.registry import TenantServices
+from atlas.iam.registry import STORAGE_BACKEND, TenantServices
 from atlas.llm.nl_generate import generate_graph, validate_param_fills
 from atlas.message.adapter import MessageHarnessAdapter
 from atlas.monitoring import RUN_RING_SIZE, extract_node_results
@@ -46,11 +48,87 @@ from atlas.recording import (
 )
 from atlas.shop.adapter import ShopHarnessAdapter
 from atlas.shop.service import DemoShopService
+from atlas.storage.frame import remaining_seconds
 from atlas.storage.memory import FeedbackRequest
+from atlas.storage.pg import get_pg_backend
+from atlas.storage.recovery import clear_frame, load_pending_frames, make_frame_sink
 from atlas.template import get_template, list_templates
 from atlas.versioning.publish import publish as publish_graph_version
 
-app = FastAPI(title="Atlas API", version="0.0.1")
+logger = logging.getLogger(__name__)
+
+
+def recover_pending() -> None:
+    """服务启动钩子：读未决挂起帧 → 逐帧重建 pending + 重启续跑线程（docs/24 §2.4）。
+
+    仅 PG 后端生效（进程内后端重启即失、无帧可恢复）；失败帧隔离记日志、不阻塞其余。
+    """
+    if STORAGE_BACKEND != "pg":
+        return
+    try:
+        engine = get_pg_backend().engine
+        frames = load_pending_frames(engine)
+    except Exception as exc:  # 无 DATABASE_URL / PG 未就绪时不阻断启动
+        logger.warning("中断恢复扫描跳过：%s", exc)
+        return
+    for frame in frames:
+        try:
+            _resume_from_frame(engine, frame)
+        except Exception as exc:
+            logger.warning("帧 %s 恢复失败、隔离跳过：%s", frame.get("resume_token"), exc)
+
+
+def _resume_from_frame(engine, frame: dict) -> None:
+    """按帧重建 pending（approval 重挂 Event + 剩余 deadline），并重启续跑线程。"""
+    services = tenant_registry.get(frame["tenant_id"])
+    token = frame["resume_token"]
+    if frame["kind"] == "approval":
+        services.approval_broker.restore(
+            token=token,
+            node_id=frame["node_id"],
+            graph_id=frame["resume_state"].get("graph_id", ""),
+            summary=frame.get("summary", ""),
+            approver=frame.get("approver", ""),
+            remaining_seconds=remaining_seconds(frame.get("deadline_at")),
+        )
+    threading.Thread(
+        target=_resume_run, args=(engine, services, frame), daemon=True
+    ).start()
+
+
+def _resume_run(engine, services: TenantServices, frame: dict) -> None:
+    """续跑线程：从挂起节点沿边到 END，完成后清帧（决策送达 / wait 到点 / 再次超时均覆盖）。"""
+    try:
+        resume_graph = GraphDSL.model_validate(frame["graph_snapshot"])
+        run_graph(
+            resume_graph,
+            inputs=frame["resume_state"].get("inputs", {}),
+            registry=_runtime_registry(services),
+            approval_broker=services.approval_broker,
+            graph_id=frame["resume_state"].get("graph_id", ""),
+            graph_resolver=_tenant_graph_resolver(services),
+            frame_sink=make_frame_sink(engine, frame["tenant_id"], frame.get("run_id", "")),
+            resume=frame,
+        )
+        clear_frame(engine, frame["resume_token"])
+    except Exception as exc:
+        logger.error("续跑 %s 失败：%s", frame.get("resume_token"), exc)
+
+
+def _frame_sink_for(tenant_id: str, run_id: str = ""):
+    """PG 后端的 frame_sink（挂起写 interruptions 帧）；进程内后端不写帧（重启即失）。"""
+    if STORAGE_BACKEND != "pg":
+        return None
+    return make_frame_sink(get_pg_backend().engine, tenant_id, run_id)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    recover_pending()
+    yield
+
+
+app = FastAPI(title="Atlas API", version="0.0.1", lifespan=lifespan)
 
 # Demo 单例：控制台页面与编译运行的图共享同一份店铺状态
 _demo_shop = DemoShopService()
@@ -492,6 +570,7 @@ def run_saved_graph(
             approval_broker=services.approval_broker,
             graph_id=graph_id,
             graph_resolver=_tenant_graph_resolver(services),
+            frame_sink=_frame_sink_for(principal.tenant_id),
         )
     except Exception as exc:
         monitoring.record_run(
@@ -542,6 +621,7 @@ def run_saved_graph_stream(
     approval_broker = services.approval_broker
     graph_resolver = _tenant_graph_resolver(services)
     monitoring = services.monitoring
+    frame_sink = _frame_sink_for(principal.tenant_id)
 
     def event_stream():
         events: queue.Queue[dict[str, Any] | None] = queue.Queue()
@@ -574,6 +654,7 @@ def run_saved_graph_stream(
                     emit=recording_emit if monitored else emit,
                     graph_resolver=graph_resolver,
                     debug_controller=debug_controller,
+                    frame_sink=frame_sink,
                 )
                 if monitored:
                     monitoring.record_run(

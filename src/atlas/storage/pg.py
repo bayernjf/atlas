@@ -42,6 +42,10 @@ class PgBackend:
     def __init__(self, engine: Engine):
         self._engine = engine
 
+    @property
+    def engine(self) -> Engine:
+        return self._engine
+
     def graph_store(self, tenant_id: str) -> "PgGraphStore":
         return PgGraphStore(self._engine, tenant_id)
 

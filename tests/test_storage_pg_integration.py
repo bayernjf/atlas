@@ -154,3 +154,38 @@ def test_monitoring_roundtrip(backend):
     store.reset()
     assert store.list_runs() == []
     assert store.get_rules().node_failed.enabled
+
+
+def test_interruption_frame_roundtrip(backend):
+    from atlas.storage.frame import build_frame, deadline_iso
+    from atlas.storage.recovery import clear_frame, load_pending_frames, make_frame_sink
+
+    engine = backend.engine
+    frame = build_frame(
+        token="tok-1", run_id="run-1", node_id="human-1", kind="approval",
+        deadline_at=deadline_iso(30),
+        graph_snapshot={"version": 1, "nodes": [], "edges": []},
+        resume_state={"graph_id": "graph-1", "inputs": {"order_id": "X"},
+                      "outputs": {"trigger-1": {}}},
+        summary="订单 X 退款审批", approver="主管",
+    )
+    make_frame_sink(engine, TENANT, "run-1")(frame)
+
+    frames = load_pending_frames(engine)
+    assert len(frames) == 1
+    loaded = frames[0]
+    assert loaded["resume_token"] == "tok-1"
+    assert loaded["tenant_id"] == TENANT
+    assert loaded["run_id"] == "run-1"
+    assert loaded["node_id"] == "human-1"
+    assert loaded["kind"] == "approval"
+    assert loaded["summary"] == "订单 X 退款审批"
+    assert loaded["resume_state"]["inputs"]["order_id"] == "X"
+    assert loaded["graph_snapshot"]["nodes"] == []
+
+    # 幂等：同 token 重写不新增行
+    make_frame_sink(engine, TENANT, "run-1")(frame)
+    assert len(load_pending_frames(engine)) == 1
+
+    clear_frame(engine, "tok-1")
+    assert load_pending_frames(engine) == []
