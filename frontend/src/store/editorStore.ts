@@ -25,6 +25,8 @@ type EditorState = {
   selectedNodeId: string | null
   logs: string[]
   breakpoints: Record<string, Breakpoint>
+  /** NL 草稿的 paramWarnings（wire 仍是 string[]，见 04 §4.10）；加载新图/重新生成即刷新。 */
+  nlWarnings: string[]
   addNodeAt: (kind: NodeKind, position: { x: number; y: number }) => void
   selectNode: (nodeId: string | null) => void
   updateSelectedNode: (patch: Partial<EditorNodeData>) => void
@@ -42,6 +44,7 @@ type EditorState = {
   toggleBreakpoint: (nodeId: string) => void
   setBreakpointExpression: (nodeId: string, expression: string) => void
   clearBreakpoints: () => void
+  setNlWarnings: (warnings: string[]) => void
 }
 
 export function nextId(kind: NodeKind, existing: EditorNode[]): string {
@@ -115,6 +118,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   selectedNodeId: null,
   logs: ['W9-W10 退款 Demo：选择退款单后「编译并运行」，节点实时高亮；也可用自然语言生成草稿'],
   breakpoints: {},
+  nlWarnings: [],
 
   addNodeAt: (kind, position) => {
     const id = nextId(kind, get().nodes)
@@ -278,6 +282,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       variables,
       selectedNodeId: null,
       breakpoints: {},
+      // 换图即失效：NL 参数警告只对刚生成/加载的那张草稿有意义
+      nlWarnings: [],
       logs: [`已加载 NL 生成草稿：${nodes.length} 个节点`],
     })
   },
@@ -320,4 +326,6 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     })),
 
   clearBreakpoints: () => set({ breakpoints: {} }),
+
+  setNlWarnings: (warnings) => set({ nlWarnings: warnings }),
 }))

@@ -15,7 +15,7 @@
 | `node_data_schema` | 04 / §4.9 前端 MetaSchema 扩展（`x-*` keyword 权威）+ `frontend/src/lib/schemas/`（M1 新增） | ### 4.9 Capability JSON Schema 子集与发现投影（v1） |
 | `diagnostic` | 04 / §6.5 结构化诊断 blockquote（M2 2026-09-16 立项并同日落码，234a95f→fbd9f77）+ `frontend/src/lib/validation/`（落码承载） | ### 6.5 拓扑作用域与 L2 模板引用校验（v1） |
 | `graph_definition` | 04 / 5.2 节点系统 Schema（节点形状）+ `src/atlas/graph/dsl.py`（GraphDSL 权威实现，W7-W8） | ### 5.2 节点系统 Schema 示例代码 |
-| `form_renderer` | 04 / §4.10 Schema 驱动表单渲染（M3 2026-09-16 立项未开工）+ `frontend/src/lib/forms/`（落码承载） | ### 4.10 Schema 驱动表单渲染（M3 立项，2026-09-16，未开工） |
+| `form_renderer` | 04 / §4.10 Schema 驱动表单渲染（M3 2026-09-16 立项、**2026-09-17 落码收口**）+ `frontend/src/lib/forms/`（落码承载） | ### 4.10 Schema 驱动表单渲染（M3 立项 2026-09-16，落码 2026-09-17） |
 | `adapter_schema` | 04 / 5.4 工具/适配器注册 Schema 示例代码 | ### 5.4 工具/适配器注册 Schema 示例代码 |
 | `skill_schema` | 05 / 一、技能（Skill）1.2 技能的数据结构 | ## 1.2 技能的数据结构（示例） |
 | `memory_config` | 05 / 二、记忆（Memory）2.3 记忆策略配置 Schema | ## 2.3 记忆策略配置 Schema（示例） |
@@ -175,7 +175,7 @@ type Diagnostic = {
 > 后端 compile 422 形状微调（见 12 `/api/graphs/{id}/compile`、06 §6.13）：`detail: string[]`（中文文案/顺序/状态码不变）之外增稀疏侧车 `locations?: Array<{ index: number; nodeId?: string; pointer?: string }>`，index 对齐 detail 下标；图级错误（version/空图/连线/重复 id/全局变量）不出条目。不引入 Python 版 schema 解释器；运行期插值 fail-soft 不变。U37（前端）/U38（后端侧车）为候选用例。
 
 
-### `form_renderer` — 字段概览（M3 2026-09-16 立项、未开工；权威见 08 M3 立项条与 04 §4.10，落码承载 `frontend/src/lib/forms/`；ADR T17 见 10 §4）
+### `form_renderer` — 字段概览（M3 2026-09-16 立项、**2026-09-17 落码收口（2de5053→6d4a863）**；权威见 08 M3 立项条+落码条与 04 §4.10，落码承载 `frontend/src/lib/forms/`；ADR T17 见 10 §4）
 
 ```ts
 // lib/forms/WidgetRegistry.ts
@@ -197,7 +197,7 @@ type WidgetProps = {           // 19 §1.3.4 的 M3 子集；不含 uiSchema（U
 //   未注册工具/发现失败/空 schema → 旧 JSON TextArea
 // M3 只迁 ToolCallConfig；其余 7 个手写 Config M4 起逐个原子迁移
 ```
-> 验收候选用例 **U39**（13 文档；registry/resolveWidget/降级、不可变写回与字符串回写、第二来源、variable-input+诊断+NL paramWarnings、九工具表单生成与 sql-query-notify 金链、浏览器双路径）。oneOf 等白名单外结构以 JSON 文本降级承接，T16 不重开；重开判据与 M4/M8 边界见 10 §4 T17、04 §4.10。
+> 验收候选用例 **U39**（13 文档，**已随 M3 落码转正式**；registry/resolveWidget/降级、不可变写回与字符串回写、第二来源、variable-input+诊断+NL paramWarnings、九工具表单生成与 sql-query-notify 金链、浏览器双路径）。oneOf 等白名单外结构以 JSON 文本降级承接，T16 不重开；重开判据与 M4/M8 边界见 10 §4 T17、04 §4.10。**落码注记（2026-09-17）**：第二来源落为 `lib/forms/toolSchemas.ts`（`/api/adapters` 发现快照按 `<adapter>/<tool>` 入表、持引用不复制、空 schema 不可表单化）；`config.params` 的文本↔对象转换与 `JSON.stringify` 回写在 `lib/forms/params.ts`；结构树与不可变更新（`setAtPath`/`removeAtPath`/`appendAtPath`/`renameKeyAtPath`）在 `lib/forms/formTree.ts`；字段诊断复用 `lib/validation/l1.validateParamFields`（pointer 相对 params 根），NL paramWarnings 由 `lib/forms/nlWarnings.ts` 按节点归为非阻塞 warning。
 
 ### `adapter_schema` — 字段概览（完整定义见 04-组件设计-编辑后台.md #459，上下文章节：### 5.4 工具/适配器注册 Schema 示例代码）
 

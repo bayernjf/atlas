@@ -5,6 +5,7 @@ import { schemaRegistry } from '../../schemas'
 import {
   FIELD_CODES,
   validateNodeFields,
+  validateParamFields,
   validateSchemaFields,
 } from '../l1'
 
@@ -265,5 +266,56 @@ describe('covered:false hand cross-field rules (U37③)', () => {
       rejectedTarget: 'same',
     })
     expect(diagnostics.map((d) => d.code)).toContain(FIELD_CODES.APPROVAL_TARGET_COLLISION)
+  })
+})
+
+describe('validateParamFields（M3 工具 params 表单化）', () => {
+  const schema: MetaSchema = {
+    type: 'object',
+    properties: {
+      sql: { type: 'string', pattern: '\\S' },
+      channel: { type: 'string', enum: ['email', 'sms'] },
+      limit: { type: 'integer', minimum: 1, maximum: 1000 },
+      headers: { type: 'object', additionalProperties: { type: 'string' } },
+    },
+    required: ['sql', 'channel'],
+  }
+
+  it('必填缺失报在该字段 pointer 上，中文走兜底文案', () => {
+    const diagnostics = validateParamFields(schema, { channel: 'email' })
+    expect(diagnostics.map((d) => [d.loc.pointer, d.code, d.message])).toEqual([
+      ['/sql', FIELD_CODES.REQUIRED, '该字段必填'],
+    ])
+  })
+
+  it('enum 与数值区间错按 pointer 报出', () => {
+    const diagnostics = validateParamFields(schema, {
+      sql: 'SELECT 1',
+      channel: 'wechat',
+      limit: 5000,
+    })
+    expect(diagnostics.map((d) => [d.loc.pointer, d.code])).toEqual([
+      ['/channel', FIELD_CODES.ENUM],
+      ['/limit', FIELD_CODES.RANGE],
+    ])
+  })
+
+  it('嵌套 additionalProperties 值 schema 生效（http headers 形态）', () => {
+    const diagnostics = validateParamFields(schema, {
+      sql: 'SELECT 1',
+      channel: 'email',
+      headers: { 'X-Token': 123 },
+    })
+    expect(diagnostics.map((d) => [d.loc.pointer, d.code])).toEqual([
+      ['/headers/X-Token', FIELD_CODES.TYPE],
+    ])
+  })
+
+  it('合法参数无诊断；诊断恒为 layer:field / severity:error', () => {
+    expect(validateParamFields(schema, { sql: 'SELECT 1', channel: 'email', limit: 50 })).toEqual([])
+    const [first] = validateParamFields(schema, {})
+    expect(first.layer).toBe('field')
+    expect(first.severity).toBe('error')
+    expect(first.loc.nodeId).toBeUndefined()
   })
 })
