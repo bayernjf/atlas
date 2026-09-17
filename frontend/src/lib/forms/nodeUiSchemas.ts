@@ -92,6 +92,10 @@ export const loopUiSchema: UiSchema = {
  */
 export const parallelUiSchema: UiSchema = {
   labels: {
+    // 旧手写表单无字段标题：策略靠选项长文案、分支行靠占位，显式置空盖掉字段名直出。
+    joinStrategy: '',
+    'branches[].label': '',
+    'branches[].target': '',
     branches: '并行分支',
     joinTarget: '汇聚目标（各分支末端都连线到该节点；分支不得直连结束）',
   },
@@ -115,6 +119,8 @@ export const parallelUiSchema: UiSchema = {
  */
 export const subgraphUiSchema: UiSchema = {
   labels: {
+    // 旧手写表单 graphId 无字段标题，靠占位与标题承接，显式置空盖掉字段名直出。
+    graphId: '',
     inputs: '子图入参映射（键 = 子图入参，值支持父图 {{路径}}）',
   },
   placeholders: {

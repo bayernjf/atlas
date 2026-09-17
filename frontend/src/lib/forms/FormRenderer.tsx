@@ -208,9 +208,6 @@ function ArrayView({ node, ctx }: { node: FormArrayNode; ctx: ViewContext }): Re
           }}
         >
           <div style={{ flex: 1, minWidth: 0 }}>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              #{index + 1}
-            </Typography.Text>
             <FormNodeView node={item} ctx={ctx} />
           </div>
           <Button

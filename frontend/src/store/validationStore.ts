@@ -3,6 +3,7 @@
  * AtlasNode 角标、PropertyPanel 红字与 Problems 面板订阅。
  * 与编辑态 editorStore 分开：校验结果是编辑态的派生缓存，独立更新避免全画布重渲染。
  */
+import { useMemo } from 'react'
 import { create } from 'zustand'
 import type { Diagnostic } from '../lib/validation/diagnostics'
 import { rank } from '../lib/validation/diagnostics'
@@ -56,9 +57,12 @@ export const useValidationStore = create<ValidationResultState>((set) => ({
   reset: () => set({ ...EMPTY }),
 }))
 
+/** 稳定空数组引用：selector 每次返回新 [] 会触发 useSyncExternalStore 无限重渲染。 */
+const EMPTY_DIAGNOSTICS: Diagnostic[] = []
+
 /** 单节点诊断订阅（AtlasNode 角标/PropertyPanel）。 */
 export function useNodeDiagnostics(nodeId: string): Diagnostic[] {
-  return useValidationStore((state) => state.nodeDiagnostics[nodeId] ?? [])
+  return useValidationStore((state) => state.nodeDiagnostics[nodeId] ?? EMPTY_DIAGNOSTICS)
 }
 
 /** 全图 Problems 列表：节点级 + 图级统一经 rank（error 优先 → 拓扑序 → pointer → token）。 */
@@ -66,6 +70,8 @@ export function useProblems(): Diagnostic[] {
   const nodeDiagnostics = useValidationStore((state) => state.nodeDiagnostics)
   const graphDiagnostics = useValidationStore((state) => state.graphDiagnostics)
   const nodeOrder = useValidationStore((state) => state.nodeOrder)
-  const all: Diagnostic[] = [...Object.values(nodeDiagnostics).flat(), ...graphDiagnostics]
-  return rank(all, nodeOrder)
+  return useMemo(() => {
+    const all: Diagnostic[] = [...Object.values(nodeDiagnostics).flat(), ...graphDiagnostics]
+    return rank(all, nodeOrder)
+  }, [nodeDiagnostics, graphDiagnostics, nodeOrder])
 }
