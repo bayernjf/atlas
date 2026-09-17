@@ -20,7 +20,7 @@ class _Pending:
     event: threading.Event
     summary: str
     approver: str
-    timeout_seconds: int
+    timeout_seconds: float
     node_id: str
     graph_id: str
     decision: Decision | None = None
@@ -51,6 +51,28 @@ class ApprovalBroker:
                 summary=summary,
                 approver=approver,
                 timeout_seconds=timeout_seconds,
+                node_id=node_id,
+                graph_id=graph_id,
+            )
+        return token
+
+    def restore(
+        self,
+        *,
+        token: str,
+        node_id: str,
+        graph_id: str,
+        summary: str,
+        approver: str,
+        remaining_seconds: float,
+    ) -> str:
+        """恢复扫描器用：以帧内原 token 重建 pending（不生成新 token），剩余时长照扣。"""
+        with self._lock:
+            self._pending[token] = _Pending(
+                event=threading.Event(),
+                summary=summary,
+                approver=approver,
+                timeout_seconds=remaining_seconds,
                 node_id=node_id,
                 graph_id=graph_id,
             )

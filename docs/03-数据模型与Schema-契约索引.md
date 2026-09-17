@@ -125,7 +125,9 @@ breakpoint: boolean          # 是否断点
 ### `graph_definition` — 字段概览（W7-W8；节点形状权威见上 `node_schema`，容器结构以 `src/atlas/graph/dsl.py` GraphDSL 为准）
 
 ```yaml
-version: 1                   # Graph JSON 版本，当前仅支持 1
+version: 1                   # Graph JSON 容器（结构）版本，当前仅支持 1；M6 起与发布版本分维
+releaseVersion: 1            # 业务发布版本号（M6 新增，int，仅发布产物带；草稿 latest 缺省）；
+                             #   发布动作冻结 Graph JSON 为不可变版本，graphId@vN 读取（ADR T19）
 variables:                   # 全局变量（GraphVariable: name/type/value/scope=global）
 nodes:                       # node_schema 节点列表；当前可编译类型：
                              #   trigger / ai_decision / tool_call / condition / loop / parallel / wait / subgraph / human_approval（Phase 2 起），
@@ -142,6 +144,8 @@ edges:                       # {id, source, target}，端点必须存在且禁�
 > **租户注记（2026-09-16，§5.14）**：已保存图按租户分区（每租户独立 GraphStore，graph-N 计数各自从 1 起）；tenant 由 token 推断，不进 Graph JSON。跨租户访问图 id → 404。
 >
 > **模板引用与拓扑作用域注记（2026-09-16，§6.5）**：config 内 `{{路径}}` 的节点输出可见性按图拓扑推导（visibleAt = 沿入边反向可达上游 + 全局变量 + loop 体区域），各节点类型输出投影、L2 三错误码（REF_NODE_NOT_FOUND / REF_NOT_IN_SCOPE / REF_PATH_NOT_FOUND）与 token 区间权威见 04 §6.5；前端实现 `frontend/src/lib/scope.ts`，后端编译期复查在 `atlas.graph.dsl`，运行期插值缺失保留原样语义不变。工具 `result.*` 深层路径以 04 §4.9 的 output_schema 子集为来源。
+>
+> **版本化注记（2026-09-17，M6 立项 / ADR T19）**：`version`（容器结构版本，恒 1）与 `releaseVersion`（业务发布版本号，仅发布产物带）两维分离；发布＝冻结不可变版本（`src/atlas/versioning/`）+ subgraph 钉版（子图 `graphId@vN` 递归钉版本号，版本不可变故钉号即冻结引用内容）；草稿（latest）可变、`graph-N` 保存零回归。权威见 08 M6 立项条、12 §5 发布/版本端点。
 
 ### `node_data_schema` — 字段概览（M1 已落码 2026-09-16，十提交 4ade416→51cb57f；权威见 04 §4.9「前端 MetaSchema 扩展」，前端承载 `frontend/src/lib/schemas/`）
 
@@ -562,7 +566,7 @@ principal:
 
 > 种子租户/账号为代码常量（非 DB，明文密码仅 Demo）：t1 演示企业 A = admin-a/admin123（admin）、operator-a/operator123（operator）、viewer-a/viewer123（viewer）；t2 演示企业 B = admin-b/admin123（admin）。除 login、health、静态、`/demo/shop`、`/api/demo/**` 外全部端点必须 Bearer：缺失/坏 token → 401「缺少或无效的登录凭证」；角色不足 → 403「当前角色无权执行此操作」；访问他租户对象 → 404（不泄漏存在性）。角色矩阵（端点级白名单）、分区资源与全局基础设施清单、reset 本租户语义权威见 04 §5.14；内部接口（iam 包）见 12 §3.10；REST 鉴权列见 12 §5。持久化账号/密码哈希/SSO/JWT 缓做 11 S1 + 14 D22。
 
-### `interruption_frame` — 字段概览（M5 契约设计轮 2026-09-17 新增，**设计已定、T18 已拍板（B）、随 M5b 落码**；权威＝docs/24 §2.3/§5，落码承载 `src/atlas/storage/`）
+### `interruption_frame` — 字段概览（M5 契约设计轮 2026-09-17 新增，**设计已定、T18 已拍板（B）、2026-09-17 已随 M5b 落码**；权威＝docs/24 §2.3/§5，落码承载 `src/atlas/storage/frame.py` + `recovery.py`）
 
 ```yaml
 resume_token: string            # uuid4 hex，即现有 approval/debug token（决策/恢复端点零改动）
@@ -581,7 +585,7 @@ resume_state:                   # 续跑载荷（挂起点续跑，不重跑上�
   retry: object                 # 节点 retry 配置
 ```
 
-> 可恢复边界：重启仅 `suspended` 帧可恢复（恢复扫描器逐帧重建 pending：approval 重挂 Event+剩余 deadline、debug 重挂暂停、wait 重排剩余 sleep）；`running` 中断的运行标 `interrupted`（失败档），不重放副作用。决策信号＝内存 `Event.set` + 恢复行落库双写，执行线程 `Event.wait(剩余)` + 1s PG 轮询复合等待。查询端点 `GET /api/runs?status=suspended`、`GET /api/runs/{run_id}`（12 已登记，M5b 生效）。
+> 可恢复边界：重启仅 `suspended` 帧可恢复（恢复扫描器逐帧重建 pending：approval 重挂 Event+剩余 deadline、debug 重挂暂停、wait 重排剩余 sleep）；`running` 中断的运行标 `interrupted`（失败档），不重放副作用。决策信号＝内存 `Event.set` + 恢复行落库双写，执行线程 `Event.wait(剩余)` + 1s PG 轮询复合等待。查询端点 `GET /api/runs?status=suspended`、`GET /api/runs/{run_id}`（12 已登记，**2026-09-17 已随 M5b 落码生效**）。
 
 ### `repository` — 字段概览（M5a 立项 2026-09-17、**同日落码（0358696）**；权威＝docs/24 §1，落码承载 `src/atlas/storage/base.py`）
 
@@ -601,6 +605,6 @@ def for_tenant(tenant_id: str) -> Repository: ...   # 由 TenantRegistry.get 承
 RESET_RESETTABLE / RESET_PERSISTENT: ...            # reset 分档：graph/approval/debug/monitoring/session=resettable；recording/feedback=persistent
 ```
 
-> M5a 落码＝**零行为变化的进程内重构**：`storage/memory.py` 聚合八个实现（`api/main.py` 内联的 GraphStore/FeedbackStore 移出 + 六类 re-export、延迟导入环消除），`TenantServices` 字段类型自 `object` 收紧为七个 Protocol（message_service 是服务非存储、保持 object）；类名/返回形状/中文文案/UTC 时间戳/id 生成不变。PG 实现与中断落库（`storage/pg.py`/`storage/recovery.py`）随 M5b。验收＝后端 441 passed/8 skipped（431+ 零回归 + 10 新测试）+ `/api/*` 端点签名零变化。
+> M5a 落码＝**零行为变化的进程内重构**：`storage/memory.py` 聚合**七个租户 store**（`api/main.py` 内联的 GraphStore/FeedbackStore 移出 + Approval/Debug/Monitoring/Recording 四类 re-export、延迟导入环消除），`TenantServices` 字段类型自 `object` 收紧为七个 Protocol（message_service 是服务非存储、保持 object）；**`SessionStore` 是 iam 包内全局会话单例（非租户 store、不进 TenantServices、不入 storage.memory 聚合——M6 落码修复了 M5a 遗留的 import 环）**，`SessionRepository` 协议仍供其结构化满足。类名/返回形状/中文文案/UTC 时间戳/id 生成不变。PG 实现与中断落库（`storage/pg.py`/`storage/recovery.py`）随 M5b。验收＝后端 445 passed/8 skipped（M6 后；M5a 当时 441）+ `/api/*` 端点签名零变化。
 
 

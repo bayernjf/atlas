@@ -4,6 +4,24 @@
 
 ## [Unreleased]
 
+### feat(storage/recovery/runs)：M5b 落码——PG 持久化 + 中断恢复 + run 状态（2026-09-17，五提交三批+一修复）
+
+- 题二硬前置 M5 完整闭合（docs/20 §3，D19/D20 取回，ADR T18 拍板 B）。三批原子序：① 批 1 PG 持久化层（`db/migrations/002_storage.sql` 九表 + `storage/pg.py` 六 store + `ATLAS_STORAGE_BACKEND` 切换，进程内保持默认）；② 批 2 帧序列化 + loader 续跑 + 恢复扫描器（`storage/frame.py` + loader `frame_sink`/`run_graph(resume=)` 尾图编译 + `ApprovalBroker.restore` + `storage/recovery.py` + api lifespan `recover_pending`）；③ 批 3 run 状态 + 查询端点（`RunRepository` + memory/PG `RunStore` + `GET /api/runs` + reset PG 档分层）。四处落码细化：帧落库在 loader `frame_sink` 而非 broker、debug 帧落库留后续、`SessionStore` 全局单例、`RunRepository` 新增。验收：进程内 450 passed/13 skipped 零回归、integration PG 13 passed、U43/U44/U45 转正式、脚本实测「审批挂起→强杀重启→同 token 决策生效→run completed」✅、前端零改动零新依赖。同步面：08 立项条+落码条、03 `interruption_frame`/`repository`、12 `/api/runs`、13 U43–U45、09 storage、14 D19/D20、11 S1、24 落码注记、handoff/CHANGELOG。**下一步＝M7（任务总线，依赖 M5b+M6）/ M9（发布流，依赖 M6）**。
+
+### docs(plan)：M5b 立项——PG 实现 + 中断落库（2026-09-17，docs-only 立项批、零代码）
+
+- 按 docs/20 门控（契约设计 ✅ + T18 拍板 B + M5a/M6 已落码）立项 M5 第二子阶段（08 新增 M5b 立项条），契约已由 docs/24 §2/§3/§4/§5 收口。范围四块、三批原子序：① PG 持久化层（`storage/pg.py` 七个租户 store PG 实现 + DDL `db/migrations/002_storage.sql` + `ATLAS_STORAGE_BACKEND` 后端切换，进程内保持默认/测试后端）；② 中断帧落库 + 恢复扫描器（human_approval/wait 挂起写 `interruptions` 帧、审批决策双写、`storage/recovery.py` 启动重建 pending + 重启续跑线程）；③ loader 续跑（`run_graph` 增 `resume=`，尾图编译 + 已完成 outputs 预填）；④ run 状态 + `GET /api/runs` + reset PG 档分层。非目标＝多实例/跨实例、NATS/Go、wait 事件等待、审批评论流、密码哈希、任务信封（M7）。验收＝integration PG 全绿 + U43/U44/U45 转正式 + 浏览器「审批挂起→重启→同 token 决策生效」。同步面：20 §3/§8、13 U43–U45、09 storage pg/recovery、14 D19/D20、11 S1、handoff/CHANGELOG。**下一步＝M5b 批 1 落码**。
+
+### feat(versioning)：M6 落码——Graph 版本化 + subgraph 钉版（2026-09-17，`1f49644`）
+
+- 按 08 M6 立项条落码，题二 B5 不可变版本前提闭合。新增 `src/atlas/versioning/publish.py`（`publish(graph_store, graph_id)` 冻结 latest 草稿为不可变版本 + 递归钉版 subgraph 引用为 `graphId@vN`——版本号不可变故钉号即冻结引用内容、不复制子图 JSON，`visiting` 防环防御）；`storage/memory.GraphStore` 扩展 `publish`（快照写 `releaseVersion` 字段，从 1 递增）／`get(graph_id, release_version=None)`（缺省 latest）／`list_versions`（升序）／`clear` 清版本，`storage/base.GraphRepository` 协议同步；API 增 `POST /api/graphs/{id}/publish`（operate，返 `{id, releaseVersion}`）、`GET /api/graphs/{id}/versions`（`{items:[<releaseVersion>]}`）、`GET /api/graphs/{id}?releaseVersion=N`（未知/未发布 404），compile/run/run-stream 可选 `releaseVersion`（缺省 latest），`_tenant_graph_resolver` 支持 `graphId@vN`。
+- **两处落码细化/修复**：① versions 返回版本号列表（不带时间戳，版本时间戳不在 M6 存储范围，12 §5 已同步）；② 修复 M5a 遗留 import 环——`SessionStore` 是 iam 包内全局会话单例（非租户 store、不进 TenantServices），自 `storage.memory` 聚合移除、`base.py` 的 `Principal` 改 TYPE_CHECKING 注解。
+- **验收全兑现**：后端 pytest **445 passed/8 skipped**（441+ 零回归 + `tests/test_versioning.py` 4 用例）、「保存即 latest」演示流程零回归、前端零改动、零新依赖。同步面：08 M6 落码条、docs/24 §1 落码注记、03 `repository`/`graph_definition`、12 §5、13 U46 转正式、09 versioning 包位、20 §4.1/§5/§8、handoff/CHANGELOG。**下一步＝M5b（PG+中断落库）待立项 / M7（任务总线，依赖 M5b+M6）**。
+
+### docs(plan)：M6 立项——Graph 版本化（2026-09-17，docs-only 立项批、零代码）
+
+- 按 docs/20 门控顺序（M5a 已落码）立项 M6（08 新增 M6 立项条）：`graphId@version` 不可变发布物 + subgraph 钉版（取回 D21 钉版部分 + D32 版本化部分，对应题面 B5 不可变版本前提）。**ADR T19 收口**（10 §4）：Graph JSON 容器 `version:1` 与业务发布版本号 `releaseVersion`（payload 新字段 int，仅发布产物带）两维分离，容器版本只在 Schema 破坏性变更时才动 2。范围：新包 `src/atlas/versioning/`（`publish` 冻结快照 + subgraph 递归钉版，钉版本号即冻结引用内容）；`GraphStore` 扩 `publish/get(release_version)/list_versions`、`GraphRepository` Protocol 同步；12 端点 publish/versions/`?releaseVersion=N` 读取、compile/run/run-stream 可选 `releaseVersion`、resolver 支持 `graphId@vN`；保存仍产 latest 草稿零回归。非目标＝Router/灰度（M9）、升级回归 UI/版本市场（D21 剩余）、发布/版本前端 UI（随 M9）、PG（M5b）。验收＝13 候选 U46。同步面：03 `graph_definition` 版本化注记、12 §5、13 U46、09 versioning 包位、14 D21/D32 注记、20 §4.1/§5/§8、handoff/CHANGELOG。**下一步＝M6 落码**。
+
 ### feat(storage)：M5a 落码——进程内 Repository 重构（2026-09-17，`0358696`，零行为变化）
 
 - 按 08 M5a 立项条落码，题二硬前置 M5 第一子阶段闭合。新增 `src/atlas/storage/base.py` 七个 `@runtime_checkable` Protocol（Graph/Recording/Feedback/Session/Approval/Debug/MonitoringRepository，方法与现有八 store 公开 API 一比一、不增删改名）+ `for_tenant` 约定 + reset 分档常量（resettable/persistent）+ `StorageError`；`storage/memory.py` 聚合八实现（`GraphStore`/`FeedbackStore`/`FeedbackRequest` 自 `api/main.py` 搬出，其余六类 re-export）；`TenantServices` 字段类型自 `object` 收紧为七 Protocol、`TenantRegistry._create_services` 改顶层自 storage.memory 构造，`api/main.py → iam.registry` 延迟导入环消除。

@@ -17,13 +17,16 @@ token+Event+首决生效语义在 M5b 统一落库为 interruption_frame（docs/
 
 from __future__ import annotations
 
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 from atlas.collaboration.approvals import Decision
 from atlas.debug.sessions import DebugSession
-from atlas.iam.principals import Principal
 from atlas.monitoring.records import Alert, RuleConfig, RunRecord
 from atlas.recording.cases import RecordingCase, RecordStep
+
+if TYPE_CHECKING:
+    # 仅类型标注用；运行时避免 import iam（iam.__init__ → deps → registry → storage 会成环）
+    from atlas.iam.principals import Principal
 
 # ---- reset 分档（docs/24 §1.2③；/api/demo/reset 语义，12 §5） ----
 RESET_RESETTABLE = "resettable"  # graph/approval/debug/monitoring/session/message
@@ -37,8 +40,11 @@ class StorageError(Exception):
 @runtime_checkable
 class GraphRepository(Protocol):
     def save(self, raw: dict[str, Any]) -> str: ...
-    def get(self, graph_id: str) -> dict[str, Any] | None: ...
+    def get(self, graph_id: str, release_version: int | None = None) -> dict[str, Any] | None: ...
     def list(self) -> list[dict[str, Any]]: ...
+    # M6 版本化（docs/20 §4.1 / ADR T19）：发布冻结不可变版本，releaseVersion 从 1 递增
+    def publish(self, graph_id: str, raw: dict[str, Any]) -> int: ...
+    def list_versions(self, graph_id: str) -> list[int]: ...
     def clear(self) -> None: ...
 
 
@@ -66,8 +72,8 @@ class FeedbackRepository(Protocol):
 
 @runtime_checkable
 class SessionRepository(Protocol):
-    def issue(self, principal: Principal) -> str: ...
-    def principal_for_token(self, token: str | None) -> Principal | None: ...
+    def issue(self, principal: "Principal") -> str: ...
+    def principal_for_token(self, token: str | None) -> "Principal | None": ...
     def revoke(self, token: str) -> None: ...
     def reset(self) -> None: ...
 
@@ -84,6 +90,16 @@ class ApprovalRepository(Protocol):
         summary: str,
         approver: str,
         timeout_seconds: int,
+    ) -> str: ...
+    def restore(
+        self,
+        *,
+        token: str,
+        node_id: str,
+        graph_id: str,
+        summary: str,
+        approver: str,
+        remaining_seconds: float,
     ) -> str: ...
     def wait(self, token: str) -> Decision | None: ...
     def resolve(
@@ -102,6 +118,37 @@ class DebugRepository(Protocol):
     def create(self, *, graph_id: str, breakpoints: list[dict[str, Any]] | None) -> DebugSession: ...
     def get_session(self, token: str) -> DebugSession | None: ...
     def list_pending(self) -> list[dict[str, Any]]: ...
+    def reset(self) -> None: ...
+
+
+@runtime_checkable
+class RunRepository(Protocol):
+    """运行生命周期状态（running/suspended/completed/failed/interrupted，docs/24 §3.3/§4）。
+
+    M5b 新增：`/api/runs` 查询与 SSE 断线重连据此工作；跨租户/不存在返回 None 对齐 404。
+    """
+
+    def begin(self, *, run_id: str, graph_id: str, mode: str) -> None: ...
+    def suspend(
+        self,
+        *,
+        run_id: str,
+        node_id: str,
+        kind: str,
+        resume_token: str,
+        deadline_at: str | None,
+    ) -> None: ...
+    def finish(
+        self,
+        *,
+        run_id: str,
+        status: Literal["completed", "failed", "interrupted"],
+        error: str | None = None,
+        outputs: dict[str, Any] | None = None,
+        trace: list[str] | None = None,
+    ) -> None: ...
+    def get(self, run_id: str) -> dict | None: ...
+    def list(self, status: str | None = None, limit: int = 50) -> list[dict]: ...
     def reset(self) -> None: ...
 
 

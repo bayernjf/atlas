@@ -9,10 +9,13 @@ NL 生成草稿、适配器发现、模拟商家售后控制台。
 from __future__ import annotations
 
 import json
+import logging
 import os
 import queue
 import threading
 import time
+import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -26,7 +29,7 @@ from atlas.database.adapter import DatabaseHarnessAdapter
 from atlas.database.service import DatabaseClient, demo_engine
 from atlas.debug import DebugController, DebugStopped
 from atlas.graph.conditions import validate_expression
-from atlas.graph.dsl import GraphValidationError, parse_graph
+from atlas.graph.dsl import GraphDSL, GraphValidationError, parse_graph
 from atlas.graph.loader import compile_graph, run_graph, tool_input_schemas
 from atlas.harness.base import Permission
 from atlas.harness.registry import AdapterRegistry
@@ -34,7 +37,7 @@ from atlas.httpapi.adapter import HttpApiHarnessAdapter
 from atlas.httpapi.service import HttpApiClient
 from atlas.iam.deps import get_principal, require, services_for, session_store, tenant_registry
 from atlas.iam.principals import Principal, authenticate
-from atlas.iam.registry import TenantServices
+from atlas.iam.registry import STORAGE_BACKEND, TenantServices
 from atlas.llm.nl_generate import generate_graph, validate_param_fills
 from atlas.message.adapter import MessageHarnessAdapter
 from atlas.monitoring import RUN_RING_SIZE, extract_node_results
@@ -46,10 +49,112 @@ from atlas.recording import (
 )
 from atlas.shop.adapter import ShopHarnessAdapter
 from atlas.shop.service import DemoShopService
+from atlas.storage.frame import remaining_seconds
 from atlas.storage.memory import FeedbackRequest
+from atlas.storage.pg import get_pg_backend
+from atlas.storage.recovery import (
+    clear_frame,
+    clear_tenant_frames,
+    load_pending_frames,
+    make_frame_sink,
+)
 from atlas.template import get_template, list_templates
+from atlas.versioning.publish import publish as publish_graph_version
 
-app = FastAPI(title="Atlas API", version="0.0.1")
+logger = logging.getLogger(__name__)
+
+
+def recover_pending() -> None:
+    """服务启动钩子：读未决挂起帧 → 逐帧重建 pending + 重启续跑线程（docs/24 §2.4）。
+
+    仅 PG 后端生效（进程内后端重启即失、无帧可恢复）；失败帧隔离记日志、不阻塞其余。
+    """
+    if STORAGE_BACKEND != "pg":
+        return
+    try:
+        engine = get_pg_backend().engine
+        frames = load_pending_frames(engine)
+    except Exception as exc:  # 无 DATABASE_URL / PG 未就绪时不阻断启动
+        logger.warning("中断恢复扫描跳过：%s", exc)
+        return
+    for frame in frames:
+        try:
+            _resume_from_frame(engine, frame)
+        except Exception as exc:
+            logger.warning("帧 %s 恢复失败、隔离跳过：%s", frame.get("resume_token"), exc)
+
+
+def _resume_from_frame(engine, frame: dict) -> None:
+    """按帧重建 pending（approval 重挂 Event + 剩余 deadline），并重启续跑线程。"""
+    services = tenant_registry.get(frame["tenant_id"])
+    token = frame["resume_token"]
+    if frame["kind"] == "approval":
+        services.approval_broker.restore(
+            token=token,
+            node_id=frame["node_id"],
+            graph_id=frame["resume_state"].get("graph_id", ""),
+            summary=frame.get("summary", ""),
+            approver=frame.get("approver", ""),
+            remaining_seconds=remaining_seconds(frame.get("deadline_at")),
+        )
+    threading.Thread(
+        target=_resume_run, args=(engine, services, frame), daemon=True
+    ).start()
+
+
+def _resume_run(engine, services: TenantServices, frame: dict) -> None:
+    """续跑线程：从挂起节点沿边到 END，完成后清帧并落 run 终态（决策 / wait 到点 / 再超时均覆盖）。"""
+    run_id = frame.get("run_id", "")
+    try:
+        resume_graph = GraphDSL.model_validate(frame["graph_snapshot"])
+        result = run_graph(
+            resume_graph,
+            inputs=frame["resume_state"].get("inputs", {}),
+            registry=_runtime_registry(services),
+            approval_broker=services.approval_broker,
+            graph_id=frame["resume_state"].get("graph_id", ""),
+            graph_resolver=_tenant_graph_resolver(services),
+            frame_sink=make_frame_sink(engine, frame["tenant_id"], run_id),
+            resume=frame,
+        )
+        if run_id:
+            services.run_store.finish(
+                run_id=run_id, status="completed",
+                outputs=result["outputs"], trace=result["trace"],
+            )
+        clear_frame(engine, frame["resume_token"])
+    except Exception as exc:
+        logger.error("续跑 %s 失败：%s", frame.get("resume_token"), exc)
+        if run_id:
+            services.run_store.finish(
+                run_id=run_id, status="failed", error=f"{type(exc).__name__}: {exc}"
+            )
+
+
+def _frame_sink_for(tenant_id: str, run_store, run_id: str):
+    """挂起回调：先落 run 状态为 suspended（所有后端），PG 后端再写 interruptions 帧。"""
+
+    def sink(frame: dict) -> None:
+        run_store.suspend(
+            run_id=run_id,
+            node_id=frame["node_id"],
+            kind=frame["kind"],
+            resume_token=frame["resume_token"],
+            deadline_at=frame.get("deadline_at"),
+        )
+        if STORAGE_BACKEND == "pg":
+            make_frame_sink(get_pg_backend().engine, tenant_id, run_id)(frame)
+
+    return sink
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    recover_pending()
+    yield
+
+
+app = FastAPI(title="Atlas API", version="0.0.1", lifespan=lifespan)
 
 # Demo 单例：控制台页面与编译运行的图共享同一份店铺状态
 _demo_shop = DemoShopService()
@@ -99,7 +204,10 @@ def _tenant_graph_resolver(services: TenantServices):
     """subgraph 节点 graph_resolver（04 §5.7）：在当前租户 GraphStore 内按 id 解析，缺失抛 KeyError。"""
 
     def resolve(graph_id: str):
-        raw = services.graph_store.get(graph_id)
+        # M6 钉版：subgraph graphId 可为 `graph-7@3`（先按 pin 版本，失败回退 latest 由 get 返回 None 触发 KeyError）
+        ref_id, _, version = graph_id.partition("@")
+        release_version = int(version) if version else None
+        raw = services.graph_store.get(ref_id, release_version)
         if raw is None:
             raise KeyError(graph_id)
         return parse_graph(raw)
@@ -124,6 +232,11 @@ def _runtime_registry(services: TenantServices) -> AdapterRegistry:
 class SaveGraphResponse(BaseModel):
     id: str
     version: int
+
+
+class PublishGraphResponse(BaseModel):
+    id: str
+    releaseVersion: int
 
 
 class CompileResponse(BaseModel):
@@ -218,13 +331,36 @@ def list_graphs(principal: Principal = Depends(require("read"))) -> dict[str, li
 
 @app.get("/api/graphs/{graph_id}")
 def get_graph(
-    graph_id: str, principal: Principal = Depends(require("read"))
+    graph_id: str,
+    releaseVersion: int | None = None,
+    principal: Principal = Depends(require("read")),
 ) -> dict[str, Any]:
-    raw = services_for(principal).graph_store.get(graph_id)
+    raw = services_for(principal).graph_store.get(graph_id, releaseVersion)
     if raw is None:
         # 跨租户访问同样 404，不泄漏资源存在性（04 §5.14）
         raise HTTPException(status_code=404, detail=f"Graph 不存在：{graph_id}")
     return raw
+
+
+@app.post("/api/graphs/{graph_id}/publish", response_model=PublishGraphResponse)
+def publish_graph(
+    graph_id: str, principal: Principal = Depends(require("operate"))
+) -> PublishGraphResponse:
+    """发布 latest 草稿为不可变版本（M6，docs/20 §4.1 / ADR T19）。"""
+    services = services_for(principal)
+    try:
+        release_version = publish_graph_version(services.graph_store, graph_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Graph 不存在：{exc.args[0]}") from exc
+    return PublishGraphResponse(id=graph_id, releaseVersion=release_version)
+
+
+@app.get("/api/graphs/{graph_id}/versions")
+def list_graph_versions(
+    graph_id: str, principal: Principal = Depends(require("read"))
+) -> dict[str, list[int]]:
+    """已发布版本号列表（升序；未发布过 → 空列表）（M6）。"""
+    return {"items": services_for(principal).graph_store.list_versions(graph_id)}
 
 
 @app.get("/api/templates")
@@ -377,13 +513,12 @@ def replay_recording(
 
 @app.post("/api/graphs/{graph_id}/compile", response_model=CompileResponse)
 def compile_saved_graph(
-    graph_id: str, principal: Principal = Depends(require("operate"))
+    graph_id: str,
+    payload: dict[str, Any] | None = None,
+    principal: Principal = Depends(require("operate")),
 ) -> CompileResponse:
     services = services_for(principal)
-    raw = services.graph_store.get(graph_id)
-    if raw is None:
-        raise HTTPException(status_code=404, detail=f"Graph 不存在：{graph_id}")
-    graph = parse_graph(raw)
+    graph = _load_graph_or_404(services, graph_id, (payload or {}).get("releaseVersion"))
     compile_graph(graph, graph_id=graph_id, graph_resolver=_tenant_graph_resolver(services))
 
     incoming = {edge.target for edge in graph.edges}
@@ -397,8 +532,10 @@ def compile_saved_graph(
     )
 
 
-def _load_graph_or_404(services: TenantServices, graph_id: str):
-    raw = services.graph_store.get(graph_id)
+def _load_graph_or_404(
+    services: TenantServices, graph_id: str, release_version: int | None = None
+):
+    raw = services.graph_store.get(graph_id, release_version)
     if raw is None:
         raise HTTPException(status_code=404, detail=f"Graph 不存在：{graph_id}")
     return parse_graph(raw)
@@ -444,13 +581,16 @@ def run_saved_graph(
     principal: Principal = Depends(require("operate")),
 ) -> RunGraphResponse:
     services = services_for(principal)
-    graph = _load_graph_or_404(services, graph_id)
+    graph = _load_graph_or_404(services, graph_id, (payload or {}).get("releaseVersion"))
     if (payload or {}).get("debug") is not None:
         raise HTTPException(status_code=422, detail="单步调试仅支持流式运行 /run/stream")
     graph_view = {"nodes": [{"id": node.id, "type": node.type} for node in graph.nodes]}
     started_at = datetime.now(timezone.utc).isoformat()
     started = time.monotonic()
     monitoring = services.monitoring
+    run_id = uuid.uuid4().hex
+    services.run_store.begin(run_id=run_id, graph_id=graph_id, mode="sync")
+    frame_sink = _frame_sink_for(principal.tenant_id, services.run_store, run_id)
     try:
         result = run_graph(
             graph,
@@ -459,8 +599,12 @@ def run_saved_graph(
             approval_broker=services.approval_broker,
             graph_id=graph_id,
             graph_resolver=_tenant_graph_resolver(services),
+            frame_sink=frame_sink,
         )
     except Exception as exc:
+        services.run_store.finish(
+            run_id=run_id, status="failed", error=f"{type(exc).__name__}: {exc}"
+        )
         monitoring.record_run(
             graph_id=graph_id,
             mode="sync",
@@ -471,6 +615,10 @@ def run_saved_graph(
             error=f"{type(exc).__name__}: {exc}",
         )
         raise
+    services.run_store.finish(
+        run_id=run_id, status="completed",
+        outputs=result["outputs"], trace=result["trace"],
+    )
     monitoring.record_run(
         graph_id=graph_id,
         mode="sync",
@@ -495,7 +643,7 @@ def run_saved_graph_stream(
     租户服务 bundle 在请求线程解析后显式透传 worker（06 §6.12，无线程上下文变量）。
     """
     services = services_for(principal)
-    graph = _load_graph_or_404(services, graph_id)
+    graph = _load_graph_or_404(services, graph_id, (payload or {}).get("releaseVersion"))
     inputs = (payload or {}).get("inputs")
     debug = (payload or {}).get("debug")
     graph_view = {"nodes": [{"id": node.id, "type": node.type} for node in graph.nodes]}
@@ -509,6 +657,9 @@ def run_saved_graph_stream(
     approval_broker = services.approval_broker
     graph_resolver = _tenant_graph_resolver(services)
     monitoring = services.monitoring
+    run_store = services.run_store
+    run_id = uuid.uuid4().hex
+    frame_sink = _frame_sink_for(principal.tenant_id, run_store, run_id)
 
     def event_stream():
         events: queue.Queue[dict[str, Any] | None] = queue.Queue()
@@ -531,6 +682,8 @@ def run_saved_graph_stream(
         def worker() -> None:
             started_at = datetime.now(timezone.utc).isoformat()
             started = time.monotonic()
+            if monitored:
+                run_store.begin(run_id=run_id, graph_id=graph_id, mode="stream")
             try:
                 result = run_graph(
                     graph,
@@ -541,8 +694,13 @@ def run_saved_graph_stream(
                     emit=recording_emit if monitored else emit,
                     graph_resolver=graph_resolver,
                     debug_controller=debug_controller,
+                    frame_sink=frame_sink,
                 )
                 if monitored:
+                    run_store.finish(
+                        run_id=run_id, status="completed",
+                        outputs=result["outputs"], trace=result["trace"],
+                    )
                     monitoring.record_run(
                         graph_id=graph_id,
                         mode="stream",
@@ -556,6 +714,10 @@ def run_saved_graph_stream(
                 events.put({"__stopped__": exc.node_id})
             except Exception as exc:  # 运行期异常经 SSE error 帧下发，不静默吞线程
                 if monitored:
+                    run_store.finish(
+                        run_id=run_id, status="failed",
+                        error=f"{type(exc).__name__}: {exc}",
+                    )
                     monitoring.record_run(
                         graph_id=graph_id,
                         mode="stream",
@@ -596,6 +758,34 @@ def run_saved_graph_stream(
             yield f"event: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.get("/api/runs")
+def list_runs(
+    status: str | None = None,
+    limit: int = 50,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, list[dict[str, Any]]]:
+    """本租户运行列表（新→旧；status 缺省=全部）（M5b，docs/24 §4）。"""
+    if status is not None and status not in {
+        "running", "suspended", "completed", "failed", "interrupted",
+    }:
+        raise HTTPException(status_code=422, detail="非法的 status 过滤值")
+    if not 1 <= limit <= 200:
+        raise HTTPException(status_code=422, detail="limit 必须在 1 到 200 之间")
+    return {"items": services_for(principal).run_store.list(status=status, limit=limit)}
+
+
+@app.get("/api/runs/{run_id}")
+def get_run(
+    run_id: str,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """单运行详情：状态/产出/轨迹/挂起信息；跨租户或不存在 → 404（docs/24 §4）。"""
+    run = services_for(principal).run_store.get(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="运行不存在")
+    return run
 
 
 class ApprovalDecisionRequest(BaseModel):
@@ -798,6 +988,9 @@ def demo_reset(
     （04 §5.11；用例图已快照进自身）。
     """
     tenant_registry.reset_tenant(principal.tenant_id)
+    if STORAGE_BACKEND == "pg":
+        # PG 档：清挂起帧表（帧是 loader frame_sink 写的，内存 broker 不负责；recordings/feedback 保留）。
+        clear_tenant_frames(get_pg_backend().engine, principal.tenant_id)
     _demo_shop.reset()
     _db_client.reseed_demo()
     return {"reset": True}
