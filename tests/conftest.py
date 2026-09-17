@@ -18,6 +18,7 @@ DEFAULT_AUTH_HEADER: dict[str, str] = {}
 def _default_t1_admin_session():
     from tests.test_api_demo import client as demo_client
     from tests.test_api_graphs import client as graphs_client
+    from tests.test_api_runs import client as runs_client
 
     from atlas.iam.deps import session_store
     from atlas.iam.principals import authenticate
@@ -28,11 +29,13 @@ def _default_t1_admin_session():
     header = f"Bearer {token}"
     demo_client.headers["Authorization"] = header
     graphs_client.headers["Authorization"] = header
+    runs_client.headers["Authorization"] = header
     DEFAULT_AUTH_HEADER["Authorization"] = header
     try:
         yield
     finally:
         demo_client.headers.pop("authorization", None)
         graphs_client.headers.pop("authorization", None)
+        runs_client.headers.pop("authorization", None)
         DEFAULT_AUTH_HEADER.pop("Authorization", None)
         session_store.revoke(token)

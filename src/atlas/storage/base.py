@@ -122,6 +122,37 @@ class DebugRepository(Protocol):
 
 
 @runtime_checkable
+class RunRepository(Protocol):
+    """运行生命周期状态（running/suspended/completed/failed/interrupted，docs/24 §3.3/§4）。
+
+    M5b 新增：`/api/runs` 查询与 SSE 断线重连据此工作；跨租户/不存在返回 None 对齐 404。
+    """
+
+    def begin(self, *, run_id: str, graph_id: str, mode: str) -> None: ...
+    def suspend(
+        self,
+        *,
+        run_id: str,
+        node_id: str,
+        kind: str,
+        resume_token: str,
+        deadline_at: str | None,
+    ) -> None: ...
+    def finish(
+        self,
+        *,
+        run_id: str,
+        status: Literal["completed", "failed", "interrupted"],
+        error: str | None = None,
+        outputs: dict[str, Any] | None = None,
+        trace: list[str] | None = None,
+    ) -> None: ...
+    def get(self, run_id: str) -> dict | None: ...
+    def list(self, status: str | None = None, limit: int = 50) -> list[dict]: ...
+    def reset(self) -> None: ...
+
+
+@runtime_checkable
 class MonitoringRepository(Protocol):
     def record_run(
         self,

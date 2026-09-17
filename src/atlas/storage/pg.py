@@ -62,6 +62,9 @@ class PgBackend:
     def monitoring_store(self, tenant_id: str) -> "PgMonitoringStore":
         return PgMonitoringStore(self._engine, tenant_id)
 
+    def run_store(self, tenant_id: str) -> "PgRunsStore":
+        return PgRunsStore(self._engine, tenant_id)
+
 
 _pg_backend: PgBackend | None = None
 _pg_backend_lock = threading.Lock()
@@ -681,5 +684,115 @@ class PgMonitoringStore:
             )
             conn.execute(
                 text("DELETE FROM monitoring_rules WHERE tenant_id = :tenant_id"),
+                {"tenant_id": self._tenant_id},
+            )
+
+
+class PgRunsStore:
+    """运行生命周期状态 PG 实现（M5b，docs/24 §3.3/§4）。"""
+
+    def __init__(self, engine: Engine, tenant_id: str):
+        self._engine = engine
+        self._tenant_id = tenant_id
+
+    def begin(self, *, run_id: str, graph_id: str, mode: str) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO runs (id, tenant_id, graph_id, status, started_at) "
+                    "VALUES (:id, :tenant_id, :graph_id, 'running', :now)"
+                ),
+                {"id": run_id, "tenant_id": self._tenant_id, "graph_id": graph_id, "now": _now_iso()},
+            )
+
+    def suspend(
+        self, *, run_id: str, node_id: str, kind: str,
+        resume_token: str, deadline_at: str | None,
+    ) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE runs SET status = 'suspended', suspended_at = :now, node_id = :node_id, "
+                    "kind = :kind, resume_token = :resume_token, deadline_at = :deadline_at "
+                    "WHERE id = :id AND tenant_id = :tenant_id"
+                ),
+                {
+                    "id": run_id, "tenant_id": self._tenant_id, "now": _now_iso(),
+                    "node_id": node_id, "kind": kind,
+                    "resume_token": resume_token, "deadline_at": deadline_at,
+                },
+            )
+
+    def finish(
+        self, *, run_id: str, status: str, error: str | None = None,
+        outputs: dict | None = None, trace: list | None = None,
+    ) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE runs SET status = :status, finished_at = :now, error = :error, "
+                    "outputs = :outputs, trace = :trace, kind = NULL, node_id = NULL, "
+                    "deadline_at = NULL, resume_token = NULL "
+                    "WHERE id = :id AND tenant_id = :tenant_id"
+                ),
+                {
+                    "id": run_id, "tenant_id": self._tenant_id, "status": status,
+                    "now": _now_iso(), "error": error,
+                    "outputs": json.dumps(outputs, ensure_ascii=False) if outputs is not None else None,
+                    "trace": json.dumps(trace, ensure_ascii=False) if trace is not None else None,
+                },
+            )
+
+    def get(self, run_id: str) -> dict | None:
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT id, graph_id, status, started_at, suspended_at, finished_at, error, "
+                    "kind, node_id, deadline_at, resume_token, outputs, trace FROM runs "
+                    "WHERE id = :id AND tenant_id = :tenant_id"
+                ),
+                {"id": run_id, "tenant_id": self._tenant_id},
+            ).first()
+        if row is None:
+            return None
+        suspension = None
+        if row[7]:
+            suspension = {"kind": row[7], "nodeId": row[8], "deadlineAt": row[9], "resumeToken": row[10]}
+        return {
+            "runId": row[0], "graphId": row[1], "status": row[2], "startedAt": row[3],
+            "suspendedAt": row[4], "finishedAt": row[5], "error": row[6],
+            "outputs": row[11], "trace": row[12], "suspension": suspension,
+        }
+
+    def list(self, status: str | None = None, limit: int = 50) -> list[dict]:
+        if status:
+            sql = (
+                "SELECT id, graph_id, status, started_at, suspended_at, kind, node_id, "
+                "deadline_at, resume_token FROM runs WHERE tenant_id = :tenant_id "
+                "AND status = :status ORDER BY started_at DESC LIMIT :limit"
+            )
+            params: dict = {"tenant_id": self._tenant_id, "status": status, "limit": limit}
+        else:
+            sql = (
+                "SELECT id, graph_id, status, started_at, suspended_at, kind, node_id, "
+                "deadline_at, resume_token FROM runs WHERE tenant_id = :tenant_id "
+                "ORDER BY started_at DESC LIMIT :limit"
+            )
+            params = {"tenant_id": self._tenant_id, "limit": limit}
+        with self._engine.connect() as conn:
+            rows = conn.execute(text(sql), params).all()
+        return [
+            {
+                "runId": r[0], "graphId": r[1], "status": r[2], "startedAt": r[3],
+                "suspendedAt": r[4], "kind": r[5], "nodeId": r[6],
+                "deadlineAt": r[7], "resumeToken": r[8],
+            }
+            for r in rows
+        ]
+
+    def reset(self) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                text("DELETE FROM runs WHERE tenant_id = :tenant_id"),
                 {"tenant_id": self._tenant_id},
             )

@@ -14,6 +14,7 @@ import os
 import queue
 import threading
 import time
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -51,7 +52,12 @@ from atlas.shop.service import DemoShopService
 from atlas.storage.frame import remaining_seconds
 from atlas.storage.memory import FeedbackRequest
 from atlas.storage.pg import get_pg_backend
-from atlas.storage.recovery import clear_frame, load_pending_frames, make_frame_sink
+from atlas.storage.recovery import (
+    clear_frame,
+    clear_tenant_frames,
+    load_pending_frames,
+    make_frame_sink,
+)
 from atlas.template import get_template, list_templates
 from atlas.versioning.publish import publish as publish_graph_version
 
@@ -115,11 +121,21 @@ def _resume_run(engine, services: TenantServices, frame: dict) -> None:
         logger.error("续跑 %s 失败：%s", frame.get("resume_token"), exc)
 
 
-def _frame_sink_for(tenant_id: str, run_id: str = ""):
-    """PG 后端的 frame_sink（挂起写 interruptions 帧）；进程内后端不写帧（重启即失）。"""
-    if STORAGE_BACKEND != "pg":
-        return None
-    return make_frame_sink(get_pg_backend().engine, tenant_id, run_id)
+def _frame_sink_for(tenant_id: str, run_store, run_id: str):
+    """挂起回调：先落 run 状态为 suspended（所有后端），PG 后端再写 interruptions 帧。"""
+
+    def sink(frame: dict) -> None:
+        run_store.suspend(
+            run_id=run_id,
+            node_id=frame["node_id"],
+            kind=frame["kind"],
+            resume_token=frame["resume_token"],
+            deadline_at=frame.get("deadline_at"),
+        )
+        if STORAGE_BACKEND == "pg":
+            make_frame_sink(get_pg_backend().engine, tenant_id, run_id)(frame)
+
+    return sink
 
 
 @asynccontextmanager
@@ -562,6 +578,9 @@ def run_saved_graph(
     started_at = datetime.now(timezone.utc).isoformat()
     started = time.monotonic()
     monitoring = services.monitoring
+    run_id = uuid.uuid4().hex
+    services.run_store.begin(run_id=run_id, graph_id=graph_id, mode="sync")
+    frame_sink = _frame_sink_for(principal.tenant_id, services.run_store, run_id)
     try:
         result = run_graph(
             graph,
@@ -570,9 +589,12 @@ def run_saved_graph(
             approval_broker=services.approval_broker,
             graph_id=graph_id,
             graph_resolver=_tenant_graph_resolver(services),
-            frame_sink=_frame_sink_for(principal.tenant_id),
+            frame_sink=frame_sink,
         )
     except Exception as exc:
+        services.run_store.finish(
+            run_id=run_id, status="failed", error=f"{type(exc).__name__}: {exc}"
+        )
         monitoring.record_run(
             graph_id=graph_id,
             mode="sync",
@@ -583,6 +605,10 @@ def run_saved_graph(
             error=f"{type(exc).__name__}: {exc}",
         )
         raise
+    services.run_store.finish(
+        run_id=run_id, status="completed",
+        outputs=result["outputs"], trace=result["trace"],
+    )
     monitoring.record_run(
         graph_id=graph_id,
         mode="sync",
@@ -621,7 +647,9 @@ def run_saved_graph_stream(
     approval_broker = services.approval_broker
     graph_resolver = _tenant_graph_resolver(services)
     monitoring = services.monitoring
-    frame_sink = _frame_sink_for(principal.tenant_id)
+    run_store = services.run_store
+    run_id = uuid.uuid4().hex
+    frame_sink = _frame_sink_for(principal.tenant_id, run_store, run_id)
 
     def event_stream():
         events: queue.Queue[dict[str, Any] | None] = queue.Queue()
@@ -644,6 +672,8 @@ def run_saved_graph_stream(
         def worker() -> None:
             started_at = datetime.now(timezone.utc).isoformat()
             started = time.monotonic()
+            if monitored:
+                run_store.begin(run_id=run_id, graph_id=graph_id, mode="stream")
             try:
                 result = run_graph(
                     graph,
@@ -657,6 +687,10 @@ def run_saved_graph_stream(
                     frame_sink=frame_sink,
                 )
                 if monitored:
+                    run_store.finish(
+                        run_id=run_id, status="completed",
+                        outputs=result["outputs"], trace=result["trace"],
+                    )
                     monitoring.record_run(
                         graph_id=graph_id,
                         mode="stream",
@@ -670,6 +704,10 @@ def run_saved_graph_stream(
                 events.put({"__stopped__": exc.node_id})
             except Exception as exc:  # 运行期异常经 SSE error 帧下发，不静默吞线程
                 if monitored:
+                    run_store.finish(
+                        run_id=run_id, status="failed",
+                        error=f"{type(exc).__name__}: {exc}",
+                    )
                     monitoring.record_run(
                         graph_id=graph_id,
                         mode="stream",
@@ -710,6 +748,34 @@ def run_saved_graph_stream(
             yield f"event: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.get("/api/runs")
+def list_runs(
+    status: str | None = None,
+    limit: int = 50,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, list[dict[str, Any]]]:
+    """本租户运行列表（新→旧；status 缺省=全部）（M5b，docs/24 §4）。"""
+    if status is not None and status not in {
+        "running", "suspended", "completed", "failed", "interrupted",
+    }:
+        raise HTTPException(status_code=422, detail="非法的 status 过滤值")
+    if not 1 <= limit <= 200:
+        raise HTTPException(status_code=422, detail="limit 必须在 1 到 200 之间")
+    return {"items": services_for(principal).run_store.list(status=status, limit=limit)}
+
+
+@app.get("/api/runs/{run_id}")
+def get_run(
+    run_id: str,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """单运行详情：状态/产出/轨迹/挂起信息；跨租户或不存在 → 404（docs/24 §4）。"""
+    run = services_for(principal).run_store.get(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="运行不存在")
+    return run
 
 
 class ApprovalDecisionRequest(BaseModel):
@@ -912,6 +978,9 @@ def demo_reset(
     （04 §5.11；用例图已快照进自身）。
     """
     tenant_registry.reset_tenant(principal.tenant_id)
+    if STORAGE_BACKEND == "pg":
+        # PG 档：清挂起帧表（帧是 loader frame_sink 写的，内存 broker 不负责；recordings/feedback 保留）。
+        clear_tenant_frames(get_pg_backend().engine, principal.tenant_id)
     _demo_shop.reset()
     _db_client.reseed_demo()
     return {"reset": True}

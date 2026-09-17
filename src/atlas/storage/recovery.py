@@ -77,3 +77,12 @@ def clear_frame(engine: Engine, token: str) -> None:
             text("DELETE FROM interruptions WHERE resume_token = :token"),
             {"token": token},
         )
+
+
+def clear_tenant_frames(engine: Engine, tenant_id: str) -> None:
+    """/api/demo/reset 的 PG 档分层：清本租户挂起帧（recordings/feedback 保留）。"""
+    with engine.begin() as conn:
+        conn.execute(
+            text("DELETE FROM interruptions WHERE tenant_id = :tenant_id"),
+            {"tenant_id": tenant_id},
+        )

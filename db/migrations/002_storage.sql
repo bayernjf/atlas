@@ -25,15 +25,21 @@ CREATE TABLE IF NOT EXISTS graph_versions (
 );
 CREATE INDEX IF NOT EXISTS idx_graph_versions_tenant ON graph_versions (tenant_id);
 
--- 运行记录（run 状态落库，docs/24 §3.3）
+-- 运行记录（run 状态落库，docs/24 §3.3；挂起信息供 §4 /api/runs 查询）
 CREATE TABLE IF NOT EXISTS runs (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL,
     graph_id TEXT NOT NULL,
     status TEXT NOT NULL,
     started_at TEXT,
+    suspended_at TEXT,
     finished_at TEXT,
     error TEXT,
+    kind TEXT,
+    node_id TEXT,
+    deadline_at TEXT,
+    resume_token TEXT,
+    outputs JSONB,
     trace JSONB
 );
 CREATE INDEX IF NOT EXISTS idx_runs_tenant ON runs (tenant_id);

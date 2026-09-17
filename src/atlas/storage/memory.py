@@ -103,6 +103,93 @@ class FeedbackStore:
         return list(self._items)
 
 
+class RunStore:
+    """运行生命周期状态（M5b，docs/24 §3.3/§4）：进程内 dict，重启即失。
+
+    run_id 由调用方生成（uuid）并贯穿 begin/suspend/finish，供 frame_sink 对齐 run。
+    """
+
+    def __init__(self) -> None:
+        self._runs: dict[str, dict[str, Any]] = {}
+        self._order: list[str] = []
+
+    @staticmethod
+    def _now() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    def begin(self, *, run_id: str, graph_id: str, mode: str) -> None:
+        self._runs[run_id] = {
+            "runId": run_id, "graphId": graph_id, "status": "running",
+            "startedAt": self._now(),
+        }
+        self._order.append(run_id)
+
+    def suspend(
+        self, *, run_id: str, node_id: str, kind: str,
+        resume_token: str, deadline_at: str | None,
+    ) -> None:
+        run = self._runs.get(run_id)
+        if run is not None:
+            run.update(
+                status="suspended", suspendedAt=self._now(), nodeId=node_id,
+                kind=kind, resumeToken=resume_token, deadlineAt=deadline_at,
+            )
+
+    def finish(
+        self, *, run_id: str, status: str, error: str | None = None,
+        outputs: dict[str, Any] | None = None, trace: list[str] | None = None,
+    ) -> None:
+        run = self._runs.get(run_id)
+        if run is not None:
+            run.update(status=status, finishedAt=self._now(), error=error)
+            # 终态清除「当前挂起」字段（suspendedAt 历史保留，suspension 置空）。
+            for key in ("kind", "nodeId", "deadlineAt", "resumeToken"):
+                run.pop(key, None)
+            if outputs is not None:
+                run["outputs"] = outputs
+            if trace is not None:
+                run["trace"] = trace
+
+    def get(self, run_id: str) -> dict[str, Any] | None:
+        run = self._runs.get(run_id)
+        if run is None:
+            return None
+        suspension = None
+        if run.get("kind"):
+            suspension = {
+                "kind": run.get("kind"),
+                "nodeId": run.get("nodeId"),
+                "deadlineAt": run.get("deadlineAt"),
+                "resumeToken": run.get("resumeToken"),
+            }
+        return {
+            "runId": run["runId"], "graphId": run["graphId"], "status": run["status"],
+            "startedAt": run.get("startedAt"), "suspendedAt": run.get("suspendedAt"),
+            "finishedAt": run.get("finishedAt"), "error": run.get("error"),
+            "outputs": run.get("outputs"), "trace": run.get("trace"),
+            "suspension": suspension,
+        }
+
+    def list(self, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        items = [self._runs[run_id] for run_id in reversed(self._order)]
+        if status:
+            items = [item for item in items if item["status"] == status]
+        return [
+            {
+                "runId": item["runId"], "graphId": item["graphId"],
+                "status": item["status"], "startedAt": item.get("startedAt"),
+                "suspendedAt": item.get("suspendedAt"), "kind": item.get("kind"),
+                "nodeId": item.get("nodeId"), "deadlineAt": item.get("deadlineAt"),
+                "resumeToken": item.get("resumeToken"),
+            }
+            for item in items[:limit]
+        ]
+
+    def reset(self) -> None:
+        self._runs.clear()
+        self._order.clear()
+
+
 # 六类领域 store 的聚合 re-export（实现类体在原模块，见模块 docstring）。
 # SessionStore 是 iam 包内的**全局**会话单例（非租户 store，不进 TenantServices），
 # 不在此聚合——若 re-export 会经 iam.__init__ → deps → registry 形成 import 环。
@@ -110,6 +197,7 @@ __all__ = [
     "FeedbackRequest",
     "FeedbackStore",
     "GraphStore",
+    "RunStore",
     "ApprovalBroker",
     "DebuggerBroker",
     "MonitoringStore",
