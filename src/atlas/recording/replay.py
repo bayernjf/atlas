@@ -9,6 +9,8 @@ from typing import Any
 from .cases import RecordStep
 
 _VOLATILE_KEYS = ("token", "sent_at")
+# M10：span 元数据键（随机 id/版本标注）不参与录制回放逐节点比对（04 §5.15、U52）。
+_TRACE_KEYS = ("traceId", "spanId", "parentSpanId", "graphVersion")
 
 
 def normalize(
@@ -21,7 +23,9 @@ def normalize(
     - tool == "http/request" 的节点产出删除 ``result.headers.date``；
     - human_approval 产出删除 ``resolvedBy``（回放经 inputs.approvals 预置，
       决策来源 input/timeout/human 属运行时来源，不是业务结果）；
-    - trigger 产出删除 ``context.payload.approvals``（预置通道随载荷回显）。
+    - trigger 产出删除 ``context.payload.approvals``（预置通道随载荷回显）；
+    - 任意层级删除 M10 span 元数据键 ``traceId/spanId/parentSpanId/graphVersion``
+      （随机 id 与版本标注不参与逐节点比对）。
     业务键（order_id 等）不受影响。
     """
     if node_type == "human_approval" and isinstance(value, dict):
@@ -44,7 +48,7 @@ def _normalize(value: Any, tool: str | None) -> Any:
                 result = {**result, "headers": {k: v for k, v in result["headers"].items() if k.lower() != "date"}}
                 value = {**value, "result": result}
         for key, item in value.items():
-            if key in _VOLATILE_KEYS:
+            if key in _VOLATILE_KEYS or key in _TRACE_KEYS:
                 continue
             if is_message_record and key == "id":
                 continue

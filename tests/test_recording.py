@@ -110,6 +110,26 @@ def test_normalize_recurses_lists_and_does_not_mutate_source():
     assert raw["items"][0]["token"] == "t"
 
 
+def test_normalize_strips_span_metadata_keys_at_any_depth():
+    # M10 U52：span 三元组与 graphVersion 是运行时元数据，逐节点比对前剔除（业务键保留）
+    raw = {
+        "traceId": "a" * 32,
+        "spanId": "b" * 16,
+        "parentSpanId": "c" * 16,
+        "graphVersion": "g@3",
+        "order_id": "12345",
+        "nested": {
+            "traceId": "d" * 32,
+            "kept": 1,
+            "items": [{"spanId": "e" * 16, "x": 2}],
+        },
+    }
+    assert normalize(raw) == {
+        "order_id": "12345",
+        "nested": {"kept": 1, "items": [{"x": 2}]},
+    }
+
+
 def test_message_records_with_different_volatile_values_normalize_equal():
     a = normalize(_message_step("m", "uuid-a", "2026-09-15T01:00:00+00:00").output)
     b = normalize(_message_step("m", "uuid-b", "2026-09-15T02:00:00+00:00").output)

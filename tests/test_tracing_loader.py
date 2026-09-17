@@ -230,7 +230,11 @@ def test_subgraph_reuses_tracer_and_internal_spans_fold():
     # 折叠后无 child-* 内部节点、无任何 internal 外泄，但 subgraph span 保留
     assert not [n for n in fold_flat if "child-" in n["name"]]
     assert not [n for n in fold_flat if n.get("internal") is True]
-    assert any(n["kind"] == KIND_SUBGRAPH for n in fold_flat)
+    folded_sub = next(n for n in fold_flat if n["kind"] == KIND_SUBGRAPH)
+    # 折叠为单个 subgraph span，身份/属性/状态保留（U52①）
+    assert folded_sub["spanId"] == sub["spanId"]
+    assert folded_sub["attrs"]["graphId"] == child_id
+    assert folded_sub["status"] == sub["status"]
 
 
 def test_parallel_fork_span_exposed_join_span_internal():
