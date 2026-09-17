@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### docs(plan)：M10 立项——span 级链路追踪（2026-09-18，docs-only 立项批、零代码）
+
+- 题二 D34 进程内部分（docs/20 §4.5，契约 docs/19 §2.3.4/§2.5 提案转权威，前置 M7 已落码、Envelope.traceId/graphVersion 字段已预留）。范围七块、四批原子序：① 新包 `tracing/`（与 OTel 同形最小 Span/Tracer、contextvars 进程内传播、to_tree 折叠开关，纯 stdlib 零新依赖）；② run/节点/tool/parallel/subgraph 埋点 + graphVersion 标注 + SSE 三帧升级为超集（只加 traceId/spanId/parentSpanId、run_end 加 graphVersion，不增帧型、前端零改动）；③ M7 任务信封贯穿 task_dispatch/task_done span + RunRecord 挂 trace_id + api 透传；④ 退货协同 span 树端到端断言 + recording.normalize 剔除 span 键 + 三道门收口。ADR T21 收口（10 §4：不引 OTel SDK/Collector，跨服务传播随 D5、正式栈合流随 D11）。非目标＝OTel 全家桶、跨服务传播、metrics/alerts（已由 monitoring/M9 承接）、span 持久化导出、前端瀑布 UI、新 SSE 事件类型。验收＝退货协同一棵完整 span 树断言、内部 span 可选不外泄开关、录制回放不比对 span 时间/id。沙盘口径＝进程内 span 不解除 D34。候选用例 U49–U52。同步面：08 立项条、10 §4 T21、03 `trace_span`/run_event、04 §5.15、06 §6.15、09 tracing、12 run_graph/SSE/RunRecord、13 U49–U52、14 D34、20 §4.5/§5、handoff/CHANGELOG。**下一步＝M10 批 1 落码（tracing 包）**。
+
 ### feat(coordination/skills)：M7 落码——多 Bot 任务总线（2026-09-17，三批原子序）
 
 - 题二 D31 沙盘语义期闭合（docs/19 §2.2.2/§2.3.1/§2.4 转权威，ADR T20）。三批：① coordination 包（Envelope + dispatch 状态机 pending→accepted→running→done/failed/timeout + TaskStore 进程内按租户 + 幂等键去重返首结果）；② skills 包（Skill+Bot+CoordinatorConfig）+ logistics 假物流适配器 + shop RefundOrder version 字段 + compare_and_set 乐观锁 CAS；③ sandbox run_return_refund（dispatch 客服+物流两信封→join→未签收禁放款→escalate / 签收后 CAS 放款、幂等重放返首结果）+ GET /api/tasks 任务查询端点。两处落码细化：浏览器实测以后端沙盘编排+API 测试承载（任务信封无前端 UI）；超时重试 attempt+1 精确状态机未落地。验收：463 passed/13 skipped 零回归、退货退款沙盘端到端跑通、幂等/CAS/超时单测齐备、零新依赖、前端零改动、假物流 Bot 不解除 D31。同步面：08 立项条+落码条、03 `task_envelope`、12 任务端点、13 U47/U48 转正式、14 D31、09 coordination/skills/logistics、20 §3/§5、06 §6.14、handoff/CHANGELOG。**下一步＝M8 / M9 / M10**。

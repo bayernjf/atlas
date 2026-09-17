@@ -252,9 +252,26 @@ class DebugController:
     # step 保持 / continue 清 step_mode / stop 置 cancelled 并 raise DebugStopped；唤醒后复检 cancelled。
 
 # graph/loader.py 注入（默认 None = 零开销，非调试/回放路径不变）
-def compile_graph(graph, *, ..., debug_controller=None): ...
-def run_graph(graph, *, ..., debug_controller=None): ...
-# _execute_subgraph 重入 run_graph 时不传 debug_controller（子图整段执行，内部不暂停）
+def compile_graph(graph, *, ..., debug_controller=None, tracer=None, graph_version: str | None = None): ...
+def run_graph(graph, *, ..., debug_controller=None, tracer=None,
+              graph_version: str | None = None, _parent_span=None) -> dict: ...
+# M10：未传 tracer 时 run_graph 自建 Tracer（root run span），result 带 traceId/traceTree；
+# _execute_subgraph 重入复用同一 tracer、传 _parent_span=subgraph span（子图 span internal）；
+# _execute_subgraph 重入不传 debug_controller（子图整段执行，内部不暂停）
+
+# tracing/tracer.py（M10，纯 stdlib；04 §5.15/06 §6.15/03 trace_span）
+class Span(BaseModel):            # traceId/spanId/parentSpanId/name/kind/startedAt/durationMs/status/graphVersion/attrs/internal
+    def to_dict(self, include_internal: bool = True) -> dict: ...
+class Tracer:
+    def __init__(self, *, graph_id: str, graph_version: str | None = None): ...   # 建 root run span
+    @contextmanager
+    def span(self, name: str, *, kind: str, parent: "Span | None" = None,
+             internal: bool = False, **attrs) -> Iterator[Span]: ...
+    @property
+    def trace_id(self) -> str: ...
+    def current_context(self) -> dict: ...          # {traceId, spanId, parentSpanId}（供 SSE 帧注入）
+    def to_tree(self, include_internal: bool = True) -> dict: ...   # 嵌套父子树；False 折叠 subgraph 内部
+# contextvars 记当前 span（同线程节点→工具就近取父）；Tracer 经参数显式透传（后台线程，06 §6.12）
 ```
 
 ### 3.9 基础监控告警（04 §5.13，06 §6.11）
@@ -277,10 +294,12 @@ class RunRecord(BaseModel):
     duration_ms: float
     nodes: list[NodeResult]
     error: str | None = None    # 仅运行级异常
+    trace_id: str = ""          # M10：本 run 的 traceId（可空，向后兼容；debug/回放/subgraph 重入不写）
 
 class MonitoringStore:          # 进程内单例；重启清空（持久化随 11 S1/14 D28）
     def record_run(self, *, graph_id, mode, status, started_at,
-                   nodes: list[NodeResult], error: str | None = None) -> RunRecord: ...
+                   nodes: list[NodeResult], error: str | None = None,
+                   trace_id: str = "") -> RunRecord: ...   # M10：trace_id 透传写入
     # 单锁内：deque(maxlen=200) 追加 → 健康（completed 且无失败节点）判定 →
     # 按图 streak 维护（健康归零）→ evaluate_rules → 同 (rule_id,graph_id)
     # 合并非 resolved 最新告警（count++/last_seen/last_run_id）否则新建
@@ -413,7 +432,7 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 | POST | /api/alerts/{id}/resolve | 关闭告警（open/acknowledged→resolved）；未知 id 404、已 resolved 409，中文 detail | monitoring |
 | POST | /api/graphs/{id}/compile | DSL → LangGraph 编译（08 7.1 W7-W8）；**M6 起请求体可选 `releaseVersion`（缺省 latest）**。静态校验失败 422 体 `{"detail":[中文消息,...]}` 不变；**M2 起（2026-09-16 落码，fbd9f77）并列增机器可读定位侧车** `"locations":[{"index":number,"nodeId"?:"…","pointer"?:"/branches/0/expression"}]`——index 对齐 detail 下标、稀疏，pointer 为 RFC6901 相对该节点 config 根；图级错误无条目；契约见 03 `diagnostic`、06 §6.13，用例 U38。run/run/stream 经同一 compile_graph 路径，形状相同 | 02 Graph DSL |
 | POST | /api/graphs/{id}/run | 编译并运行，返回状态/节点产出/执行轨迹；请求体 `{"inputs": {...}}`（M6 起可选 `releaseVersion`，缺省 latest），inputs 同名键覆盖全局变量且整体作为 trigger 节点 webhook 载荷 `context.payload`（W9-W10 接入真实决策/适配器）；**不支持调试**——请求体含 `debug` 返回 422「单步调试仅支持流式运行 /run/stream」（Phase 2 能力项） | 02 Graph DSL / LoopState |
-| POST | /api/graphs/{id}/run/stream | SSE 流式运行（W9-W10；M6 起 body 可选 `releaseVersion`，缺省 latest）：事件 `node_start`/`node_end`/最终 `result`，供画布实时进度（验收标准 5）；condition 节点的 node_end 事件 data 含 `{branch, target, evaluation, expression_errors}`（契约 04 §5.2），loop 节点含 `{mode, iterations, index, target, exitReason, expression_errors}`（契约 04 §5.3），parallel 节点扇出时 data 为 running 占位、joinTarget 的 node_end 前该产出被覆盖为终态 `{mode, joinStrategy, status, branches, result, joinTarget}`（契约 04 §5.4），wait 节点的 node_end 事件 data 含 `{mode:"wait", waitType:"duration", durationSeconds}`（契约 04 §5.5；node_start 后同步阻塞等待），human_approval 节点的 node_start 事件 data 含 `approval:{token, summary, approver, timeoutSeconds}`、node_end 含 `{mode:"human_approval", decision, target, token, summary, approver, resolvedBy}`（契约 04 §5.6），subgraph 节点 node_end 含 `{mode:"subgraph", graphId, status, error?, outputs, trace}` 但**子图内部不产生事件**（emit=None 重入，契约 04 §5.7）；**Phase 2 第五项起本端点为真流式**——run_graph 在后台线程执行、事件经 queue 实时下发（旧实现先跑完再回放，human_approval 会因收不到 node_start 而死锁）；**Phase 2 能力项（单步调试）**请求体可选 `debug:{breakpoints:[{node_id, expression?}]}`——存在时启动即 step 模式（首个节点 node_start 后、逻辑前发 `paused` 帧），断点会话级、不落 Graph JSON，未知 node_id/表达式校验失败 422（中文聚合）；新增帧 `paused`（`{token, node_id, node_type, reason:"step"|"breakpoint"|"condition", globals, outputs}` 深拷贝只读快照）与 `stopped`（resume action=stop 后 `{node_id, reason:"user_stop"}`，流结束且无 result 帧），恢复走 POST /api/debug/{token}/resume；子图内部不产生 paused（契约 04 §5.12） | 08 7.1 |
+| POST | /api/graphs/{id}/run/stream | SSE 流式运行（W9-W10；M6 起 body 可选 `releaseVersion`，缺省 latest）：事件 `node_start`/`node_end`/最终 `result`，供画布实时进度（验收标准 5）；**M10 起三帧为 19 §2.3.4 超集——node_start/node_end 另带 `traceId/spanId/parentSpanId`、run_end(result) 另带 `traceId/spanId/graphVersion`（只增字段、不改帧型，前端忽略未知字段零改动，完整 span 树不进 SSE）**；condition 节点的 node_end 事件 data 含 `{branch, target, evaluation, expression_errors}`（契约 04 §5.2），loop 节点含 `{mode, iterations, index, target, exitReason, expression_errors}`（契约 04 §5.3），parallel 节点扇出时 data 为 running 占位、joinTarget 的 node_end 前该产出被覆盖为终态 `{mode, joinStrategy, status, branches, result, joinTarget}`（契约 04 §5.4），wait 节点的 node_end 事件 data 含 `{mode:"wait", waitType:"duration", durationSeconds}`（契约 04 §5.5；node_start 后同步阻塞等待），human_approval 节点的 node_start 事件 data 含 `approval:{token, summary, approver, timeoutSeconds}`、node_end 含 `{mode:"human_approval", decision, target, token, summary, approver, resolvedBy}`（契约 04 §5.6），subgraph 节点 node_end 含 `{mode:"subgraph", graphId, status, error?, outputs, trace}` 但**子图内部不产生事件**（emit=None 重入，契约 04 §5.7）；**Phase 2 第五项起本端点为真流式**——run_graph 在后台线程执行、事件经 queue 实时下发（旧实现先跑完再回放，human_approval 会因收不到 node_start 而死锁）；**Phase 2 能力项（单步调试）**请求体可选 `debug:{breakpoints:[{node_id, expression?}]}`——存在时启动即 step 模式（首个节点 node_start 后、逻辑前发 `paused` 帧），断点会话级、不落 Graph JSON，未知 node_id/表达式校验失败 422（中文聚合）；新增帧 `paused`（`{token, node_id, node_type, reason:"step"|"breakpoint"|"condition", globals, outputs}` 深拷贝只读快照）与 `stopped`（resume action=stop 后 `{node_id, reason:"user_stop"}`，流结束且无 result 帧），恢复走 POST /api/debug/{token}/resume；子图内部不产生 paused（契约 04 §5.12） | 08 7.1 |
 
 | GET | /api/runs | 挂起/运行查询（**M5 契约设计轮 2026-09-17 登记，docs/24 §4，2026-09-17 已随 M5b 落码生效**）：`?status=suspended&graph_id=&limit=`（新→旧，status 缺省=全部），返回 `{items:[{runId, graphId, status, startedAt, suspendedAt, kind?, nodeId?, deadlineAt?}]}`，`kind=approval` 附 `resumeToken`（审批决策本就凭 token 无身份绑定，沿用现状口径）；仅本租户 | runs |
 | GET | /api/runs/{run_id} | 单运行详情（同上 M5b 已落码生效）：状态（running/suspended/completed/failed/interrupted）、节点产出摘要、trace、挂起信息 `{runId, graphId, status, outputs, trace, suspension?}`；跨租户/不存在 404（04 §5.14 全分区口径，不泄漏存在性）；**不新增写端点**——审批决策仍 `POST /api/approvals/{token}/decision`、调试恢复仍 `POST /api/debug/{token}/resume`，本端点只承担查询与 SSE 断线重连后的状态确认（执行线程与 SSE 连接解耦，断开不取消执行） | runs |
