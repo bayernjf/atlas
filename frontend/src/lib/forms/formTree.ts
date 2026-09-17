@@ -44,6 +44,10 @@ export type FormWidgetNode = FormNodeBase & {
 export type FormGroupNode = FormNodeBase & {
   kind: 'group'
   children: FormNode[]
+  /** M4 UISchema：视觉分组布局；缺省垂直堆叠，'row' 组内字段并排。 */
+  layout?: 'row' | 'column'
+  /** M4 UISchema：true＝ui:group 纯视觉容器（不增数据层级，path/pointer 同父）。 */
+  visual?: boolean
 }
 
 export type FormArrayNode = FormNodeBase & {
