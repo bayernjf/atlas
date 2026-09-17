@@ -41,6 +41,8 @@
 
 ---
 
+> **持久化注记（M5 契约设计轮，2026-09-17；设计权威＝[docs/24](docs/24-M5持久化与中断恢复契约设计.md)，M5a/M5b 立项后按此落码）**：本索引三条进程内契约在 PG 档下的落库口径统一为——`graph_definition` 落 `graphs` 表（definition jsonb，M5b 起运行期按帧内嵌快照引用，M6 版本化前防止恢复错位）；`debug_session` 与审批挂起统一进 `interruptions` 中断帧表（`kind: approval|debug|wait`，含 `deadline_at` 绝对时刻与 `resume_state` 续跑载荷，见下 `interruption_frame`）；`identity_session` 落 `iam_sessions` 表（token/租户/角色/签发时刻，进程内 `SessionStore` 语义不变）。reset 分档：以上均 resettable，`recordings`/`feedback` 为 persistent（`/api/demo/reset` PG 档 truncate 运行时表、保留两表）。
+
 ### `node` — 字段概览（完整定义见 04-组件设计-编辑后台.md #54，上下文章节：### 3.2 节点的通用化接口设计）
 
 ```yaml
@@ -559,4 +561,46 @@ principal:
 ```
 
 > 种子租户/账号为代码常量（非 DB，明文密码仅 Demo）：t1 演示企业 A = admin-a/admin123（admin）、operator-a/operator123（operator）、viewer-a/viewer123（viewer）；t2 演示企业 B = admin-b/admin123（admin）。除 login、health、静态、`/demo/shop`、`/api/demo/**` 外全部端点必须 Bearer：缺失/坏 token → 401「缺少或无效的登录凭证」；角色不足 → 403「当前角色无权执行此操作」；访问他租户对象 → 404（不泄漏存在性）。角色矩阵（端点级白名单）、分区资源与全局基础设施清单、reset 本租户语义权威见 04 §5.14；内部接口（iam 包）见 12 §3.10；REST 鉴权列见 12 §5。持久化账号/密码哈希/SSO/JWT 缓做 11 S1 + 14 D22。
+
+### `interruption_frame` — 字段概览（M5 契约设计轮 2026-09-17 新增，**设计已定、T18 已拍板（B）、随 M5b 落码**；权威＝docs/24 §2.3/§5，落码承载 `src/atlas/storage/`）
+
+```yaml
+resume_token: string            # uuid4 hex，即现有 approval/debug token（决策/恢复端点零改动）
+tenant_id: string               # 由 for_tenant 工厂注入，方法签名不含租户
+run_id: string
+node_id: string
+kind: "approval" | "debug" | "wait"
+created_at: string              # UTC ISO-8601
+deadline_at: string | null      # UTC 绝对时刻（审批超时/wait 到点）；恢复后按剩余时长等待，不重计
+graph_snapshot: object          # 保存时图定义副本（M6 版本化未落地前随帧内嵌，防恢复错位）
+resume_state:                   # 续跑载荷（挂起点续跑，不重跑上游）
+  inputs: object                # run inputs（同名覆盖全局变量口径不变）
+  outputs: object               # 截至挂起点的已完成节点产出
+  decisions: object             # 已记录 branch/target 决策（condition/loop 续跑照走）
+  trace_prefix: string[]        # trace 前缀，恢复后追加
+  retry: object                 # 节点 retry 配置
+```
+
+> 可恢复边界：重启仅 `suspended` 帧可恢复（恢复扫描器逐帧重建 pending：approval 重挂 Event+剩余 deadline、debug 重挂暂停、wait 重排剩余 sleep）；`running` 中断的运行标 `interrupted`（失败档），不重放副作用。决策信号＝内存 `Event.set` + 恢复行落库双写，执行线程 `Event.wait(剩余)` + 1s PG 轮询复合等待。查询端点 `GET /api/runs?status=suspended`、`GET /api/runs/{run_id}`（12 已登记，M5b 生效）。
+
+### `repository` — 字段概览（M5a 立项 2026-09-17、**同日落码（0358696）**；权威＝docs/24 §1，落码承载 `src/atlas/storage/base.py`）
+
+```python
+# typing.Protocol（结构化类型，实现类不强制继承）；方法签名与现有八 store 公开 API 一比一、不增删改名
+class GraphRepository(Protocol):        # GraphStore: save/get/list/clear
+class RecordingRepository(Protocol):    # RecordingStore: add/list/get/delete
+class FeedbackRepository(Protocol):     # FeedbackStore: add/list
+class SessionRepository(Protocol):      # SessionStore: issue/principal_for_token/revoke/reset
+class ApprovalRepository(Protocol):     # ApprovalBroker: request/wait/resolve/complete_timeout/get/list_pending/reset
+class DebugRepository(Protocol):        # DebuggerBroker: create/get_session/list_pending/reset
+class MonitoringRepository(Protocol):   # MonitoringStore: record_run/list_runs/list_alerts/get_alert/acknowledge_alert/resolve_alert/get_rules/update_rules/snapshot_metrics/reset
+# 设计时的 InterruptionRepository（审批+调试「挂起-决断」）拆为 ApprovalRepository/DebugRepository：
+# 二者是两个独立实现类，无单一类满足合并方法集；共享 token+Event+首决生效语义 M5b 统一落 interruption_frame
+
+def for_tenant(tenant_id: str) -> Repository: ...   # 由 TenantRegistry.get 承担；租户分区是构造期关切，方法签名不含 tenant_id
+RESET_RESETTABLE / RESET_PERSISTENT: ...            # reset 分档：graph/approval/debug/monitoring/session=resettable；recording/feedback=persistent
+```
+
+> M5a 落码＝**零行为变化的进程内重构**：`storage/memory.py` 聚合八个实现（`api/main.py` 内联的 GraphStore/FeedbackStore 移出 + 六类 re-export、延迟导入环消除），`TenantServices` 字段类型自 `object` 收紧为七个 Protocol（message_service 是服务非存储、保持 object）；类名/返回形状/中文文案/UTC 时间戳/id 生成不变。PG 实现与中断落库（`storage/pg.py`/`storage/recovery.py`）随 M5b。验收＝后端 441 passed/8 skipped（431+ 零回归 + 10 新测试）+ `/api/*` 端点签名零变化。
+
 

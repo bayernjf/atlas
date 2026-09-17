@@ -4,7 +4,7 @@
 import re
 
 
-from atlas.api.main import FeedbackRequest
+from atlas.storage.memory import FeedbackRequest
 from atlas.iam.principals import (
     Role,
     authenticate,

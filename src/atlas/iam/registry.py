@@ -9,16 +9,34 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass
 
+from atlas.message.service import MessageService
+from atlas.storage.base import (
+    ApprovalRepository,
+    DebugRepository,
+    FeedbackRepository,
+    GraphRepository,
+    MonitoringRepository,
+    RecordingRepository,
+)
+from atlas.storage.memory import (
+    ApprovalBroker,
+    DebuggerBroker,
+    FeedbackStore,
+    GraphStore,
+    MonitoringStore,
+    RecordingStore,
+)
+
 
 @dataclass
 class TenantServices:
-    graph_store: object
-    recording_store: object
-    feedback_store: object
-    message_service: object
-    approval_broker: object
-    debug_broker: object
-    monitoring: object
+    graph_store: GraphRepository
+    recording_store: RecordingRepository
+    feedback_store: FeedbackRepository
+    message_service: object  # MessageService 是服务非存储，不进 Repository 抽象（docs/24 §1.1）
+    approval_broker: ApprovalRepository
+    debug_broker: DebugRepository
+    monitoring: MonitoringRepository
 
 
 class TenantRegistry:
@@ -36,15 +54,8 @@ class TenantRegistry:
 
     @staticmethod
     def _create_services() -> TenantServices:
-        # 延迟导入：GraphStore/FeedbackStore 内联在 api/main.py，
-        # 顶层导入会与 main → iam.registry 形成环；请求期模块已加载完毕。
-        from atlas.api.main import FeedbackStore, GraphStore
-        from atlas.collaboration.approvals import ApprovalBroker
-        from atlas.debug.sessions import DebuggerBroker
-        from atlas.message.service import MessageService
-        from atlas.monitoring.records import MonitoringStore
-        from atlas.recording.cases import RecordingStore
-
+        # 八个进程内 store 统一自 storage.memory 构造（M5a：GraphStore/FeedbackStore
+        # 已自 api/main.py 搬出，延迟导入环随之消除，顶层导入安全）。
         return TenantServices(
             graph_store=GraphStore(),
             recording_store=RecordingStore(),
