@@ -16,6 +16,8 @@
 | `diagnostic` | 04 / §6.5 结构化诊断 blockquote（M2 2026-09-16 立项并同日落码，234a95f→fbd9f77）+ `frontend/src/lib/validation/`（落码承载） | ### 6.5 拓扑作用域与 L2 模板引用校验（v1） |
 | `graph_definition` | 04 / 5.2 节点系统 Schema（节点形状）+ `src/atlas/graph/dsl.py`（GraphDSL 权威实现，W7-W8） | ### 5.2 节点系统 Schema 示例代码 |
 | `form_renderer` | 04 / §4.10 Schema 驱动表单渲染（M3 2026-09-16 立项、**2026-09-17 落码收口**）+ `frontend/src/lib/forms/`（落码承载） | ### 4.10 Schema 驱动表单渲染（M3 立项 2026-09-16，落码 2026-09-17） |
+| `ui_schema` | 04 / §4.10 末 M4 UISchema 最小子集扩展条（**M4 2026-09-17 立项、未落码**）+ `frontend/src/lib/forms/uiSchema.ts` + CondResolver（落码承载，规划） | ### 4.10 Schema 驱动表单渲染（M4 UISchema 扩展） |
+| `graph_diagnostics` | 04 / §6.5 末 M4 前端 L3 预判 + Problems 面板扩展条（**M4 2026-09-17 立项、未落码**）+ `frontend/src/lib/validation/l3.ts`（规划）；后端图级规则权威仍为 `src/atlas/graph/dsl.py` | ### 6.5 拓扑作用域与 L2 模板引用校验（M4 前端 L3/Problems 扩展） |
 | `adapter_schema` | 04 / 5.4 工具/适配器注册 Schema 示例代码 | ### 5.4 工具/适配器注册 Schema 示例代码 |
 | `skill_schema` | 05 / 一、技能（Skill）1.2 技能的数据结构 | ## 1.2 技能的数据结构（示例） |
 | `memory_config` | 05 / 二、记忆（Memory）2.3 记忆策略配置 Schema | ## 2.3 记忆策略配置 Schema（示例） |
@@ -198,6 +200,37 @@ type WidgetProps = {           // 19 §1.3.4 的 M3 子集；不含 uiSchema（U
 // M3 只迁 ToolCallConfig；其余 7 个手写 Config M4 起逐个原子迁移
 ```
 > 验收候选用例 **U39**（13 文档，**已随 M3 落码转正式**；registry/resolveWidget/降级、不可变写回与字符串回写、第二来源、variable-input+诊断+NL paramWarnings、九工具表单生成与 sql-query-notify 金链、浏览器双路径）。oneOf 等白名单外结构以 JSON 文本降级承接，T16 不重开；重开判据与 M4/M8 边界见 10 §4 T17、04 §4.10。**落码注记（2026-09-17）**：第二来源落为 `lib/forms/toolSchemas.ts`（`/api/adapters` 发现快照按 `<adapter>/<tool>` 入表、持引用不复制、空 schema 不可表单化）；`config.params` 的文本↔对象转换与 `JSON.stringify` 回写在 `lib/forms/params.ts`；结构树与不可变更新（`setAtPath`/`removeAtPath`/`appendAtPath`/`renameKeyAtPath`）在 `lib/forms/formTree.ts`；字段诊断复用 `lib/validation/l1.validateParamFields`（pointer 相对 params 根），NL paramWarnings 由 `lib/forms/nlWarnings.ts` 按节点归为非阻塞 warning。
+
+### `ui_schema` — 字段概览（**M4 2026-09-17 立项、未落码**；权威见 08 M4 立项条与 04 §4.10 末扩展条，落码承载 `frontend/src/lib/forms/uiSchema.ts` + CondResolver；ADR T17 复查不重开见 10 §4）
+
+```ts
+// lib/forms/uiSchema.ts（M4 规划，落码以 04 §4.10 扩展条为准）
+// 最小子集，仅承接复杂度 dump 实测的两件需求，不引入完整 JSON Schema UI 规范：
+type UiSchema = {
+  groups?: Array<{ key: string; label?: string; fields: string[]; layout?: 'row' }>
+  // ui:group：把同层字段归入分组容器；实测仅 HumanApproval approved/rejected 并排（layout:'row'）
+  hiddenWhen?: Array<{ field: string; equals: unknown; show: string[] }>
+  // 条件显隐：判别字段 field 取 equals 时才显示 show 中的字段；其余隐藏
+  // 实测仅 trigger：triggerType=schedule 显 cron、=webhook 显 webhookUrl、=manual 全隐
+}
+// 不做 ui:order（M3 已按 schema properties 顺序渲染）、不做 if/then 动态 dependencies
+// x-widget 沿用 M3 resolveWidget，不在本契约重复
+```
+> 验收候选用例 **U40**（13 文档，候选）：ui:group 分组容器与并排布局、hiddenWhen 三分支显隐、未命中条件时字段不渲染且不参与校验。复杂度 dump 证据（8/9 节点零条件结构、UISchema 真实需求 2 处）见 08 M4 立项条。
+
+### `graph_diagnostics` — 字段概览（**M4 2026-09-17 立项、未落码**；权威见 08 M4 立项条与 04 §6.5 末扩展条，落码承载 `frontend/src/lib/validation/l3.ts` + Problems 面板组件；后端图级规则唯一权威仍为 `src/atlas/graph/dsl.py`）
+
+```ts
+// lib/validation/l3.ts（M4 规划，规则从 dsl.py 同构提取，参照 conditions.ts 先例）
+// 首批两条图级规则，产 layer:'graph' Diagnostic（M2 仅留类型位、M4 转正）：
+//   GRAPH_UNREACHABLE：从 trigger BFS 不可达节点（同构 dsl.py _validate_reachability）
+//   GRAPH_ILLEGAL_CYCLE：移除 loop 白名单回边后 DFS 三色检测成环（同构 _validate_illegal_cycles）
+// 前端 L3 仅实时预判；后端 dsl.py 仍是唯一权威，不搬后端重跑、M4 不改后端
+// 分支完备已由 condition L1 手写规则（defaultTarget 必填）覆盖、悬空引用由 L2 REF_NODE_NOT_FOUND 覆盖
+// Problems 面板：消费 validateGraph 全图 Diagnostic[]，rank 排序，点击按 nodeId+pointer 定位节点/字段
+// quickFix v1：仅「删除悬空引用」一个动作（20 §2.5 法定），挂 L2 REF_NODE_NOT_FOUND；reverseDeps 支撑改 id 引用方定位
+```
+> 验收候选用例 **U41**（13 文档，候选）：构造含环/不可达图，前端 L3 诊断与后端 dsl.py 逐条同构对拍；Problems 聚合/rank/点击定位；quickFix 删除悬空引用。分层调度（L1 同步/L2 防抖/L3 requestIdleCallback）、增量脏标记失效范围、200/500 节点基准入 BENCHMARK.md，见 08 M4 立项条③⑦。
 
 ### `adapter_schema` — 字段概览（完整定义见 04-组件设计-编辑后台.md #459，上下文章节：### 5.4 工具/适配器注册 Schema 示例代码）
 
