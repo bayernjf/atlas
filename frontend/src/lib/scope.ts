@@ -34,6 +34,12 @@ export type ScopeEdgeLike = {
 
 export type RefCode = 'REF_NODE_NOT_FOUND' | 'REF_NOT_IN_SCOPE' | 'REF_PATH_NOT_FOUND'
 
+/** M4 批 3 ⑪ quickFix v1 唯一动作：删除悬空引用（20 §2.5 法定，08 M4 立项条⑥）。 */
+export const DELETE_DANGLING_REF_FIX = Object.freeze({
+  id: 'delete-dangling-ref',
+  title: '删除悬空引用',
+})
+
 export type TemplateRef = {
   path: string
   start: number
@@ -284,6 +290,8 @@ export function buildScopeIndex(
           pointer: field.pointer,
           token: { start: ref.start, end: ref.end, raw: ref.raw },
         },
+        // M4 批 3 ⑪：悬空引用（REF_NODE_NOT_FOUND）挂「删除悬空引用」quickFix（20 §2.5 法定）。
+        quickFix: code === 'REF_NODE_NOT_FOUND' ? [DELETE_DANGLING_REF_FIX] : undefined,
       })
     }
     for (const field of templateFields(kind, config)) {

@@ -238,8 +238,11 @@ export function decorateNodeForRender(node: FormNode, uiSchema?: UiSchema): Form
         lookupByPointer(uiSchema.keyPlaceholders, node.pointer) ?? node.keyPlaceholder,
     }
   }
+  // group/array 兜底：显式空串（''）表达「不要标题」，须与未命中（undefined）区分——
+  // 后者回退 buildFormTree 的字段名直出，前者用于数组/分组顶部标题由外层组件承接的场景
+  //（如 condition 瘦包装已有强标题，branches 数组不再重复显示字段名）。
   const label = lookupByPointer(uiSchema.labels, node.pointer)
-  return label ? { ...node, label } : node
+  return label !== undefined ? { ...node, label } : node
 }
 
 /**

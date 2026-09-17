@@ -17,7 +17,7 @@
 | `graph_definition` | 04 / 5.2 节点系统 Schema（节点形状）+ `src/atlas/graph/dsl.py`（GraphDSL 权威实现，W7-W8） | ### 5.2 节点系统 Schema 示例代码 |
 | `form_renderer` | 04 / §4.10 Schema 驱动表单渲染（M3 2026-09-16 立项、**2026-09-17 落码收口**）+ `frontend/src/lib/forms/`（落码承载） | ### 4.10 Schema 驱动表单渲染（M3 立项 2026-09-16，落码 2026-09-17） |
 | `ui_schema` | 04 / §4.10 末 M4 UISchema 最小子集扩展条（**M4 批 1/批 2 2026-09-17 已落码**：groups/hiddenWhen/hideFields/文案层〔批 2 起嵌套通配键+rows/keyPlaceholders〕，控件 8→9 + target-select/saved-graph-select 两个节点业务控件）+ `frontend/src/lib/forms/{uiSchema,nodeWidgets,nodeRegistry,nodeUiSchemas,NodeConfigForm}` | ### 4.10 Schema 驱动表单渲染（M4 UISchema 扩展） |
-| `graph_diagnostics` | 04 / §6.5 末 M4 前端 L3 预判 + Problems 面板扩展条（**M4 批 2 2026-09-17 已落码**：l3.ts 同构对拍、分层调度+记忆化、ProblemsPanel；quickFix/reverseDeps/BENCHMARK 留批 3）+ `frontend/src/lib/validation/l3.ts`；后端图级规则权威仍为 `src/atlas/graph/dsl.py` | ### 6.5 拓扑作用域与 L2 模板引用校验（M4 前端 L3/Problems 扩展） |
+| `graph_diagnostics` | 04 / §6.5 末 M4 前端 L3 预判 + Problems 面板扩展条（**M4 批 2/批 3 2026-09-17 已落码**：l3.ts 同构对拍、分层调度+记忆化、ProblemsPanel 点击定位；批 3 reverseDeps 反向索引、quickFix v1 删除悬空引用、200/500 节点 BENCHMARK）+ `frontend/src/lib/validation/{l3,reverseDeps}.ts` + `components/canvas/ProblemsPanel.tsx`；后端图级规则权威仍为 `src/atlas/graph/dsl.py` | ### 6.5 拓扑作用域与 L2 模板引用校验（M4 前端 L3/Problems 扩展） |
 | `adapter_schema` | 04 / 5.4 工具/适配器注册 Schema 示例代码 | ### 5.4 工具/适配器注册 Schema 示例代码 |
 | `skill_schema` | 05 / 一、技能（Skill）1.2 技能的数据结构 | ## 1.2 技能的数据结构（示例） |
 | `memory_config` | 05 / 二、记忆（Memory）2.3 记忆策略配置 Schema | ## 2.3 记忆策略配置 Schema（示例） |
@@ -245,9 +245,10 @@ type UiSchema = {
 // ScopeIndex/L3 按 structureSignature 记忆化；dirty.ts 维护增量失效范围与 revision 守卫
 // Problems 面板（ProblemsPanel.tsx）：validationStore 全图 Diagnostic 经 rank 聚合，
 //   点击 nodeId 条目 selectNode+setCenter，pointer 条目滚到 [data-pointer] 字段并闪烁；无 nodeId 环条目不可点
-// quickFix v1 与 reverseDeps：批 3 未做
+// quickFix v1 与 reverseDeps：批 3 已落（reverseDeps.ts 双类反向索引 + removeDanglingRef；
+//   REF_NODE_NOT_FOUND 挂 DELETE_DANGLING_REF_FIX，ProblemsPanel 内联按钮；改名联动随 D30）
 ```
-> 验收候选用例 **U41**（13 文档，候选）：构造含环/不可达图，前端 L3 诊断与后端 dsl.py 逐条同构对拍（**批 2 已落 11 夹具对拍**）；Problems 聚合/rank/点击定位（**批 2 已落并浏览器冒烟**）；分层调度/增量脏标记（**批 2 已落**）；quickFix 删除悬空引用、reverseDeps、200/500 节点基准 BENCHMARK.md 留批 3。
+> 验收候选用例 **U41**（13 文档，候选）：构造含环/不可达图，前端 L3 诊断与后端 dsl.py 逐条同构对拍（**批 2 已落 11 夹具对拍**）；Problems 聚合/rank/点击定位（**批 2 已落并浏览器冒烟**）；分层调度/增量脏标记（**批 2 已落**）；quickFix 删除悬空引用、reverseDeps、200/500 节点基准 BENCHMARK.md（**批 3 已落并浏览器冒烟**，脚本 scripts/dev/m4_batch3_smoke.py）。
 
 ### `adapter_schema` — 字段概览（完整定义见 04-组件设计-编辑后台.md #459，上下文章节：### 5.4 工具/适配器注册 Schema 示例代码）
 

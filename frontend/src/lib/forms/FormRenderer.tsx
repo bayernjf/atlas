@@ -177,10 +177,12 @@ function ArrayView({ node, ctx }: { node: FormArrayNode; ctx: ViewContext }): Re
   return (
     <div className="property-field form-array" style={{ marginBottom: 8 }} data-pointer={node.pointer}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Typography.Text type="secondary">
-          {node.label}
-          {node.required && <Typography.Text type="danger"> *</Typography.Text>}
-        </Typography.Text>
+        {node.label && (
+          <Typography.Text type="secondary">
+            {node.label}
+            {node.required && <Typography.Text type="danger"> *</Typography.Text>}
+          </Typography.Text>
+        )}
         <Button
           size="small"
           disabled={!canAdd}
@@ -229,10 +231,12 @@ function KeyValueView({ node, ctx }: { node: FormKeyValueNode; ctx: ViewContext 
   return (
     <div className="property-field form-keyvalue" style={{ marginBottom: 8 }} data-pointer={node.pointer}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Typography.Text type="secondary">
-          {node.label}
-          {node.required && <Typography.Text type="danger"> *</Typography.Text>}
-        </Typography.Text>
+        {node.label && (
+          <Typography.Text type="secondary">
+            {node.label}
+            {node.required && <Typography.Text type="danger"> *</Typography.Text>}
+          </Typography.Text>
+        )}
         <Button
           size="small"
           onClick={() =>

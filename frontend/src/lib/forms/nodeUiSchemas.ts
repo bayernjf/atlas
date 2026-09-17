@@ -85,12 +85,37 @@ export const loopUiSchema: UiSchema = {
 }
 
 /**
+ * condition（04 §5.2）：branches 动态数组行内三件套——label 文本、expression
+ * variable-input（TextArea 2 行 + 变量插入，语法/非空由 L1 手写承接）、target-select；
+ * minItems 1 由 ArrayView 门控（最后一个分支禁用删除，替代旧的删空后红字）；
+ * defaultTarget 走 target-select。分支名/目标唯一、默认分支互异仍由 L1 手写产出。
+ */
+export const conditionUiSchema: UiSchema = {
+  labels: {
+    // 旧手写表单数组与行内字段无标题（顶部标题在瘦包装组件），显式置空盖掉字段名直出。
+    branches: '',
+    'branches[].label': '',
+    'branches[].expression': '',
+    'branches[].target': '',
+    defaultTarget: '默认分支（所有条件均不满足时，必填）',
+  },
+  placeholders: {
+    'branches[].label': '分支名，如：大额',
+    'branches[].expression': '{{trigger-1.context.payload.amount}} > 1000',
+    'branches[].target': '目标节点（需先在画布连线）',
+    defaultTarget: '选择默认目标节点',
+  },
+  rows: {
+    'branches[].expression': 2,
+  },
+}
+
+/**
  * parallel（04 §5.4）：joinStrategy radio 两条长文案；branches 数组行内
  * label 文本/target-select（占位承接，无行内字段标题），min/max 2-10 由
  * ArrayView 门控；joinTarget 走 target-select。分支名/目标唯一性等跨字段
  * 规则仍由 L1 手写产出。
- */
-export const parallelUiSchema: UiSchema = {
+ */export const parallelUiSchema: UiSchema = {
   labels: {
     // 旧手写表单无字段标题：策略靠选项长文案、分支行靠占位，显式置空盖掉字段名直出。
     joinStrategy: '',
@@ -138,6 +163,7 @@ export const subgraphUiSchema: UiSchema = {
 /** 节点 kind → UISchema；未迁移节点缺省（FormRenderer 无 uiSchema 时退化为字段名直出）。 */
 export const NODE_UI_SCHEMAS: Partial<Record<NodeKind, UiSchema>> = {
   trigger: triggerUiSchema,
+  condition: conditionUiSchema,
   loop: loopUiSchema,
   human_approval: humanApprovalUiSchema,
   parallel: parallelUiSchema,

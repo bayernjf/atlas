@@ -436,6 +436,24 @@ body,
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+/* M4 批 3 ⑪ quickFix「删除悬空引用」按钮 */
+.problems-fix-btn {
+  flex: none;
+  align-self: center;
+  padding: 1px 8px;
+  border: 1px solid var(--atlas-color-primary-border, #91caff);
+  border-radius: 4px;
+  background: var(--atlas-color-primary-bg, #e6f4ff);
+  color: var(--atlas-color-primary, #1677ff);
+  font-size: 11px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.problems-fix-btn:hover {
+  background: var(--atlas-color-primary-border-hover, #bae0ff);
+}
+
 /* Problems 点击后右侧属性面板字段闪烁定位 */
 @keyframes problems-field-flash {
   0%,

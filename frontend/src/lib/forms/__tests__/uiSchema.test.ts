@@ -10,8 +10,9 @@ import {
 } from '../uiSchema'
 import type { MetaSchema } from '../../schemas/metaSchema'
 import { parallelSchema } from '../../schemas/nodes/parallel.schema'
+import { conditionSchema } from '../../schemas/nodes/condition.schema'
 import { subgraphSchema } from '../../schemas/nodes/subgraph.schema'
-import { parallelUiSchema, subgraphUiSchema } from '../nodeUiSchemas'
+import { conditionUiSchema, parallelUiSchema, subgraphUiSchema } from '../nodeUiSchemas'
 
 /** 取 group 根的直接子项标签序列（视觉组以 `[a,b]` 表示）。 */
 function childOutline(node: FormNode): Array<string | string[]> {
@@ -287,6 +288,45 @@ describe('嵌套路径通配装饰（M4 批 2 ⑨：parallel branches / subgraph
       expect(decoratedStrategy.optionLabels?.all_success).toContain('全部成功')
       expect(decoratedStrategy.optionLabels?.all_completed).toContain('全部完成')
     }
+  })
+
+  it('condition：数组节点显式空 label 生效（不回退字段名 branches），行内三件套文案烘焙', () => {
+    const tree = buildFormTree(
+      conditionSchema,
+      {
+        branches: [{ label: '大额', expression: '{{trigger-1.x}} > 1', target: 'tool-1' }],
+        defaultTarget: 'tool-2',
+      },
+      { source: 'node' },
+    )
+    const branches = tree.kind === 'group' ? tree.children.find((c) => c.pointer === '/branches') : undefined
+    expect(branches?.kind).toBe('array')
+    if (branches?.kind !== 'array') throw new Error('branches 非 array')
+    // 显式空串覆盖字段名（ArrayView 据此隐藏数组标题，顶部标题由瘦包装承接）
+    const decoratedBranches = decorateNodeForRender(branches, conditionUiSchema)
+    expect(decoratedBranches.label).toBe('')
+
+    const item0 = branches.items[0]
+    if (item0.kind !== 'group') throw new Error('item 非 group')
+    const [label, expression, target] = item0.children
+    const dLabel = decorateNodeForRender(label, conditionUiSchema)
+    const dExpression = decorateNodeForRender(expression, conditionUiSchema)
+    const dTarget = decorateNodeForRender(target, conditionUiSchema)
+    expect(dLabel.label).toBe('')
+    expect(dExpression.label).toBe('')
+    expect(dTarget.label).toBe('')
+    if (dLabel.kind === 'widget') expect(dLabel.placeholder).toContain('分支名')
+    if (dExpression.kind === 'widget') {
+      expect(dExpression.placeholder).toContain('amount')
+      expect(dExpression.rows).toBe(2)
+    }
+    if (dTarget.kind === 'widget') expect(dTarget.placeholder).toContain('目标节点')
+
+    const defaultTarget = tree.kind === 'group'
+      ? tree.children.find((c) => c.pointer === '/defaultTarget')
+      : undefined
+    const dDefault = decorateNodeForRender(defaultTarget!, conditionUiSchema)
+    if (dDefault.kind === 'widget') expect(dDefault.label).toContain('默认分支')
   })
 
   it('subgraph：inputs 键值行值节点压单行并给占位，键占位烘焙到 keyvalue 节点', () => {
