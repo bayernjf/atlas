@@ -46,6 +46,7 @@ from atlas.recording import (
 )
 from atlas.shop.adapter import ShopHarnessAdapter
 from atlas.shop.service import DemoShopService
+from atlas.storage.memory import FeedbackRequest
 from atlas.template import get_template, list_templates
 
 app = FastAPI(title="Atlas API", version="0.0.1")
@@ -92,38 +93,6 @@ def graph_validation_handler(_request: Request, exc: GraphValidationError) -> JS
     if exc.locations:
         content["locations"] = exc.locations
     return JSONResponse(status_code=422, content=content)
-
-
-class GraphStore:
-    def __init__(self) -> None:
-        self._graphs: dict[str, dict[str, Any]] = {}
-        self._updated_at: dict[str, str] = {}
-        self._counter = 0
-
-    def save(self, raw: dict[str, Any]) -> str:
-        self._counter += 1
-        graph_id = f"graph-{self._counter}"
-        self._graphs[graph_id] = raw
-        self._updated_at[graph_id] = datetime.now(timezone.utc).isoformat()
-        return graph_id
-
-    def get(self, graph_id: str) -> dict[str, Any] | None:
-        return self._graphs.get(graph_id)
-
-    def list(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "id": graph_id,
-                "node_count": len(raw.get("nodes", [])),
-                "updated_at": self._updated_at[graph_id],
-            }
-            for graph_id, raw in self._graphs.items()
-        ]
-
-    def clear(self) -> None:
-        self._graphs = {}
-        self._updated_at = {}
-        self._counter = 0
 
 
 def _tenant_graph_resolver(services: TenantServices):
@@ -832,35 +801,6 @@ def demo_reset(
     _demo_shop.reset()
     _db_client.reseed_demo()
     return {"reset": True}
-
-
-class FeedbackRequest(BaseModel):
-    type: Literal["bug", "suggestion"]
-    content: str = Field(min_length=1, max_length=2000)
-    contact: str = Field(default="", max_length=200)
-
-
-class FeedbackStore:
-    """Phase 1 种子反馈：进程内存储（重启清空，与 Demo 同假设）；reset 不清除。"""
-
-    def __init__(self) -> None:
-        self._items: list[dict[str, Any]] = []
-        self._counter = 0
-
-    def add(self, request: FeedbackRequest) -> dict[str, Any]:
-        self._counter += 1
-        item = {
-            "id": f"feedback-{self._counter}",
-            "type": request.type,
-            "content": request.content,
-            "contact": request.contact,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }
-        self._items.append(item)
-        return item
-
-    def list(self) -> list[dict[str, Any]]:
-        return list(self._items)
 
 
 @app.post("/api/feedback", status_code=201)
