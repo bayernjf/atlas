@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### feat(coordination/skills)：M7 落码——多 Bot 任务总线（2026-09-17，三批原子序）
+
+- 题二 D31 沙盘语义期闭合（docs/19 §2.2.2/§2.3.1/§2.4 转权威，ADR T20）。三批：① coordination 包（Envelope + dispatch 状态机 pending→accepted→running→done/failed/timeout + TaskStore 进程内按租户 + 幂等键去重返首结果）；② skills 包（Skill+Bot+CoordinatorConfig）+ logistics 假物流适配器 + shop RefundOrder version 字段 + compare_and_set 乐观锁 CAS；③ sandbox run_return_refund（dispatch 客服+物流两信封→join→未签收禁放款→escalate / 签收后 CAS 放款、幂等重放返首结果）+ GET /api/tasks 任务查询端点。两处落码细化：浏览器实测以后端沙盘编排+API 测试承载（任务信封无前端 UI）；超时重试 attempt+1 精确状态机未落地。验收：463 passed/13 skipped 零回归、退货退款沙盘端到端跑通、幂等/CAS/超时单测齐备、零新依赖、前端零改动、假物流 Bot 不解除 D31。同步面：08 立项条+落码条、03 `task_envelope`、12 任务端点、13 U47/U48 转正式、14 D31、09 coordination/skills/logistics、20 §3/§5、06 §6.14、handoff/CHANGELOG。**下一步＝M8 / M9 / M10**。
+
 ### docs(plan)：M7 立项——多 Bot 任务总线（2026-09-17，docs-only 立项批、零代码）
 
 - 题二 D31 沙盘语义期（docs/20 §4.2，契约 docs/19 §2.2.2/§2.3.1/§2.4 提案转权威，前置 M5b+M6 已落码）。范围四块、三批原子序：① 任务信封执行层（`coordination/`：Envelope + TaskStore 进程内 + dispatch/join/escalate）；② Bot 执行体抽象（`skills/` 首次启用，物流 Bot 假适配器沙盘）；③ 冲突三层（L1 幂等键返首结果 + L2 CAS 进程内 version 模拟 + L3 硬约束+升级）；④ 超时三级链（重试→升级→fail-safe）。ADR T20 收口（10 §4：进程内总线 + CAS 进程内模拟）。非目标＝NATS/跨服务、Agent mesh、Bot 间对话、SLA 看板。沙盘口径＝不解除 D31。验收＝退货退款沙盘链路 + 幂等/CAS/超时单测与浏览器实测。同步面：08 立项条、10 §4 T20、03 `task_envelope`、05 技能注记、06 §6.14、12 任务端点、13 U47/U48、14 D31、09 skills、20 §3/§5、handoff/CHANGELOG。**下一步＝M7 批 1 落码**。
