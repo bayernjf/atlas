@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### docs(plan)：M7 立项——多 Bot 任务总线（2026-09-17，docs-only 立项批、零代码）
+
+- 题二 D31 沙盘语义期（docs/20 §4.2，契约 docs/19 §2.2.2/§2.3.1/§2.4 提案转权威，前置 M5b+M6 已落码）。范围四块、三批原子序：① 任务信封执行层（`coordination/`：Envelope + TaskStore 进程内 + dispatch/join/escalate）；② Bot 执行体抽象（`skills/` 首次启用，物流 Bot 假适配器沙盘）；③ 冲突三层（L1 幂等键返首结果 + L2 CAS 进程内 version 模拟 + L3 硬约束+升级）；④ 超时三级链（重试→升级→fail-safe）。ADR T20 收口（10 §4：进程内总线 + CAS 进程内模拟）。非目标＝NATS/跨服务、Agent mesh、Bot 间对话、SLA 看板。沙盘口径＝不解除 D31。验收＝退货退款沙盘链路 + 幂等/CAS/超时单测与浏览器实测。同步面：08 立项条、10 §4 T20、03 `task_envelope`、05 技能注记、06 §6.14、12 任务端点、13 U47/U48、14 D31、09 skills、20 §3/§5、handoff/CHANGELOG。**下一步＝M7 批 1 落码**。
+
 ### feat(storage/recovery/runs)：M5b 落码——PG 持久化 + 中断恢复 + run 状态（2026-09-17，五提交三批+一修复）
 
 - 题二硬前置 M5 完整闭合（docs/20 §3，D19/D20 取回，ADR T18 拍板 B）。三批原子序：① 批 1 PG 持久化层（`db/migrations/002_storage.sql` 九表 + `storage/pg.py` 六 store + `ATLAS_STORAGE_BACKEND` 切换，进程内保持默认）；② 批 2 帧序列化 + loader 续跑 + 恢复扫描器（`storage/frame.py` + loader `frame_sink`/`run_graph(resume=)` 尾图编译 + `ApprovalBroker.restore` + `storage/recovery.py` + api lifespan `recover_pending`）；③ 批 3 run 状态 + 查询端点（`RunRepository` + memory/PG `RunStore` + `GET /api/runs` + reset PG 档分层）。四处落码细化：帧落库在 loader `frame_sink` 而非 broker、debug 帧落库留后续、`SessionStore` 全局单例、`RunRepository` 新增。验收：进程内 450 passed/13 skipped 零回归、integration PG 13 passed、U43/U44/U45 转正式、脚本实测「审批挂起→强杀重启→同 token 决策生效→run completed」✅、前端零改动零新依赖。同步面：08 立项条+落码条、03 `interruption_frame`/`repository`、12 `/api/runs`、13 U43–U45、09 storage、14 D19/D20、11 S1、24 落码注记、handoff/CHANGELOG。**下一步＝M7（任务总线，依赖 M5b+M6）/ M9（发布流，依赖 M6）**。

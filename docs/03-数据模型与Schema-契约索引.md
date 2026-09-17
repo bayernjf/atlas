@@ -608,3 +608,23 @@ RESET_RESETTABLE / RESET_PERSISTENT: ...            # reset 分档：graph/appro
 > M5a 落码＝**零行为变化的进程内重构**：`storage/memory.py` 聚合**七个租户 store**（`api/main.py` 内联的 GraphStore/FeedbackStore 移出 + Approval/Debug/Monitoring/Recording 四类 re-export、延迟导入环消除），`TenantServices` 字段类型自 `object` 收紧为七个 Protocol（message_service 是服务非存储、保持 object）；**`SessionStore` 是 iam 包内全局会话单例（非租户 store、不进 TenantServices、不入 storage.memory 聚合——M6 落码修复了 M5a 遗留的 import 环）**，`SessionRepository` 协议仍供其结构化满足。类名/返回形状/中文文案/UTC 时间戳/id 生成不变。PG 实现与中断落库（`storage/pg.py`/`storage/recovery.py`）随 M5b。验收＝后端 445 passed/8 skipped（M6 后；M5a 当时 441）+ `/api/*` 端点签名零变化。
 
 
+### `task_envelope` — 字段概览（M7 立项 2026-09-17；权威＝docs/19 §2.3.1 提案转权威 + 08 M7 立项条 + 10 §4 ADR T20，落码承载 `src/atlas/coordination/`）
+
+```yaml
+taskId: string            # uuid4，任务唯一标识
+runId: string             # 所属 run
+idempotencyKey: string    # 幂等键 `资源|动作|版本`（L1 去重返首结果）
+traceId: string           # 追溯（M10 span 前 = runId）
+graphVersion: string      # 图版本 `graphId@vN`（M6 后可得）
+type: string              # 任务类型 `refund.verify_order | logistics.check_receipt`
+assignee: string          # 指派人 `bot.customer | bot.logistics`
+payload: object           # 载荷；refs 含跨 Bot 数据引用 `{{...}}`
+deadlineMs: number        # 任务级 deadline（超时三级链第①级）
+state: string             # pending|accepted|running|done|failed|timeout
+result: object            # 任务结果
+attempt: number           # 尝试次数（重试幂等键不变）
+```
+
+> 状态机 dispatch `pending→accepted→running→done/failed/timeout`；join 复用 parallel all_completed 网关与 `result.<入口id>` 承载；escalate＝带审批卡片的特殊 human_approval。冲突三层（19 §2.4）：L1 幂等键、L2 CAS（demo shop 进程内 version 模拟）、L3 硬约束 condition + 升级。`TaskStore` 进程内首版、按租户分区（沿用 storage Repository 约定）；沙盘语义期不解除 D31。
+
+
