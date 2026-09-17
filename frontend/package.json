@@ -9,6 +9,7 @@
     "lint": "oxlint",
     "test": "vitest run",
     "test:watch": "vitest",
+    "bench": "RUN_BENCH=1 vitest run bench/validation.perf.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {
