@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### docs(plan)：M5 契约设计轮——持久化与中断恢复四缺口收口（2026-09-17，零代码；新增 docs/24 为 M5a/M5b 形状权威，ADR T18 ⏳ 待拍板）
+
+- 接力 M4 批 3 收口后的「下一步＝M5 契约设计轮」（Active work 11，docs/20 §3 门控：契约设计 → T18 拍板 → 立项 M5a → M6 可插队 → M5b → M7/M9）。新增 **docs/24-M5持久化与中断恢复契约设计.md** 收口四缺口：① **Repository 形状**＝按资源分组六个 `typing.Protocol`（Graph/Recording/Feedback/Session/Interruption/Monitoring，方法与八 store 现有 API 一比一）+ 三条统一约定（`for_tenant(tenant_id)` 工厂、租户分区为构造期关切、reset 分 resettable/persistent），新包 `src/atlas/storage/`（base/memory/pg/recovery），不做单一胖接口；② **中断落库路线 ADR T18**（10 §4 ⏳ 待拍板）：A LangGraph checkpointer vs **B 自研暂停帧**（`InterruptionFrame` 两后端同构 + `loader` resume 续跑入口 + `storage/recovery.py` 恢复扫描器），**设计推荐 B**（A 超出 20 §3「不做」边界、重构三处挂起机制、带新依赖；B 与现有同步 SSE/REST token 语义零冲突、可注入假时钟测试；重开判据：M7 要求跨实例迁移执行中运行时重开评 A），**拍板前 M5a 不开工**；③ **04 §5.5/§5.6 v2 语义**＝绝对 `deadline_at` 恢复剩余时长（重启不重计）、决策 Event+1s PG 轮询复合等待、SSE 断线不取消执行且重连走查询端点、重启仅 suspended 帧可恢复（running 标 `interrupted`）、`/api/demo/reset` PG 档 truncate 运行时表保留 recordings/feedback；④ **12 新端点**＝`GET /api/runs?status=suspended` 与 `GET /api/runs/{run_id}`（跨租户 404，不新增写端点，M5b 生效）。
+- 同步面已落：**03** 持久化注记（graph/debug/identity 三契约）+ 新增 `interruption_frame` 契约；**12** 两端点登记（标 M5b 生效）+ reset 分层语义；**13** 候选 U43（挂起帧→新进程→同 token 决策生效）/U44（wait 剩余时长）/U45（SSE 重连与挂起查询）；**09** `storage/` 包位与模块注释；**14** D19/D20 设计轮注记（拍 B 时改写 checkpointer 措辞）；**11** S1 进度（字段映射与 reset 分档已定，DDL 待 M5b）；**00/handoff** 索引与状态；**08** M5 条增「契约设计轮完成」blockquote。
+- **边界重申**：本轮零代码；M5 只做到「单实例重启后流程能恢复」，不含多实例/NATS（D5）/Go 网关（D6）。**下一步＝用户对 T18 拍板 → 立项 M5a（进程内重构，431+ 测试零回归验收）**。
+
 ### feat(forms+editor+validation)：M4 批 3——reverseDeps + quickFix v1 + 200/500 基准 + Condition 迁移收口（2026-09-17，五个原子提交 `4b15d95`/`875922b`/`f496062`/`79317e3`/`471b930`，dev 本地未推送）
 
 - 用户指令「按你建议来，一口气搞了」完成 M4 批 3（题一主线 M4 最后一批），逐提交过三道门 + 批末真实浏览器冒烟，**后端零改动、零新依赖**；前端 vitest 336/30 → **359 passed/2 skipped（32 文件，skipped 为基准门控场景）**，后端 **431 passed/8 skipped** 零回归。
