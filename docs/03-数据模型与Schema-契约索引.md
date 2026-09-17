@@ -583,7 +583,7 @@ resume_state:                   # 续跑载荷（挂起点续跑，不重跑上�
 
 > 可恢复边界：重启仅 `suspended` 帧可恢复（恢复扫描器逐帧重建 pending：approval 重挂 Event+剩余 deadline、debug 重挂暂停、wait 重排剩余 sleep）；`running` 中断的运行标 `interrupted`（失败档），不重放副作用。决策信号＝内存 `Event.set` + 恢复行落库双写，执行线程 `Event.wait(剩余)` + 1s PG 轮询复合等待。查询端点 `GET /api/runs?status=suspended`、`GET /api/runs/{run_id}`（12 已登记，M5b 生效）。
 
-### `repository` — 字段概览（M5a 立项 2026-09-17，**设计已定、随 M5a 落码**；权威＝docs/24 §1，落码承载 `src/atlas/storage/base.py`）
+### `repository` — 字段概览（M5a 立项 2026-09-17、**同日落码（0358696）**；权威＝docs/24 §1，落码承载 `src/atlas/storage/base.py`）
 
 ```python
 # typing.Protocol（结构化类型，实现类不强制继承）；方法签名与现有八 store 公开 API 一比一、不增删改名
@@ -591,13 +591,16 @@ class GraphRepository(Protocol):        # GraphStore: save/get/list/clear
 class RecordingRepository(Protocol):    # RecordingStore: add/list/get/delete
 class FeedbackRepository(Protocol):     # FeedbackStore: add/list
 class SessionRepository(Protocol):      # SessionStore: issue/principal_for_token/revoke/reset
-class InterruptionRepository(Protocol): # ApprovalBroker(request/wait/resolve/complete_timeout/get/list_pending) + DebuggerBroker(create/get_session/list_pending)
+class ApprovalRepository(Protocol):     # ApprovalBroker: request/wait/resolve/complete_timeout/get/list_pending/reset
+class DebugRepository(Protocol):        # DebuggerBroker: create/get_session/list_pending/reset
 class MonitoringRepository(Protocol):   # MonitoringStore: record_run/list_runs/list_alerts/get_alert/acknowledge_alert/resolve_alert/get_rules/update_rules/snapshot_metrics/reset
+# 设计时的 InterruptionRepository（审批+调试「挂起-决断」）拆为 ApprovalRepository/DebugRepository：
+# 二者是两个独立实现类，无单一类满足合并方法集；共享 token+Event+首决生效语义 M5b 统一落 interruption_frame
 
 def for_tenant(tenant_id: str) -> Repository: ...   # 由 TenantRegistry.get 承担；租户分区是构造期关切，方法签名不含 tenant_id
 RESET_RESETTABLE / RESET_PERSISTENT: ...            # reset 分档：graph/approval/debug/monitoring/session=resettable；recording/feedback=persistent
 ```
 
-> M5a 只做**零行为变化的进程内重构**：`storage/memory.py` 收拢八个实现（`api/main.py` 内联的 GraphStore/FeedbackStore 移出、延迟导入环消除），`TenantServices` 字段类型自 `object` 收紧为 Protocol；类名/返回形状/中文文案/UTC 时间戳/id 生成不变。PG 实现与中断落库（`storage/pg.py`/`storage/recovery.py`）随 M5b。验收＝后端 431+ 零回归 + `/api/*` 端点签名零变化（08 M5a 立项条）。
+> M5a 落码＝**零行为变化的进程内重构**：`storage/memory.py` 聚合八个实现（`api/main.py` 内联的 GraphStore/FeedbackStore 移出 + 六类 re-export、延迟导入环消除），`TenantServices` 字段类型自 `object` 收紧为七个 Protocol（message_service 是服务非存储、保持 object）；类名/返回形状/中文文案/UTC 时间戳/id 生成不变。PG 实现与中断落库（`storage/pg.py`/`storage/recovery.py`）随 M5b。验收＝后端 441 passed/8 skipped（431+ 零回归 + 10 新测试）+ `/api/*` 端点签名零变化。
 
 

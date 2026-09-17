@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### feat(storage)：M5a 落码——进程内 Repository 重构（2026-09-17，`0358696`，零行为变化）
+
+- 按 08 M5a 立项条落码，题二硬前置 M5 第一子阶段闭合。新增 `src/atlas/storage/base.py` 七个 `@runtime_checkable` Protocol（Graph/Recording/Feedback/Session/Approval/Debug/MonitoringRepository，方法与现有八 store 公开 API 一比一、不增删改名）+ `for_tenant` 约定 + reset 分档常量（resettable/persistent）+ `StorageError`；`storage/memory.py` 聚合八实现（`GraphStore`/`FeedbackStore`/`FeedbackRequest` 自 `api/main.py` 搬出，其余六类 re-export）；`TenantServices` 字段类型自 `object` 收紧为七 Protocol、`TenantRegistry._create_services` 改顶层自 storage.memory 构造，`api/main.py → iam.registry` 延迟导入环消除。
+- **两处落码细化（不超范围、不改契约）**：① 立项的 InterruptionRepository 拆为 `ApprovalRepository`/`DebugRepository` 两个 Protocol（二者是独立实现类，无单一类满足合并方法集；共享 token+Event+首决生效语义 M5b 落 interruption_frame）；② 六类 store 采用 re-export 聚合而非物理复制类体（搬移是物理移动、re-export 已是单一聚合入口，行为等价；物理移动留待 M5b 按需拆分）。
+- **验收全兑现**：后端 pytest **441 passed/8 skipped**（431+ 零回归 + `tests/test_storage.py` 10 用例）、`/api/*` 端点签名零变化、storage 零第三方依赖、`import atlas.api.main` 无循环导入、前端零改动。同步面：08 新增 M5a 落码条、docs/24 §1 六→七、03 `repository` 契约、20 §3/§5、09 storage 包位、handoff/CHANGELOG。**下一步＝M6 可插队 / M5b 待立项**。
+
 ### docs(plan)：M5a 立项——进程内 Repository 重构（2026-09-17，docs-only 立项批、零代码）
 
 - T18 拍板 B 后按 docs/20 门控立项 M5 第一子阶段（08 新增 M5a 立项条）：**零行为变化的进程内重构**，八个进程内 store 收拢为统一抽象。范围：`src/atlas/storage/base.py` 六个 `typing.Protocol`（Graph/Recording/Feedback/Session/Interruption/MonitoringRepository，方法与现有八 store 公开 API 一比一、不增删改名）+ `for_tenant(tenant_id)` 工厂 + reset 分档常量 + `StorageError`；`storage/memory.py` 一次性纯搬移收拢八实现（`GraphStore`/`FeedbackStore` 自 `api/main.py` 内联移出，`RecordingStore`/`SessionStore`/`ApprovalBroker`/`DebuggerBroker`/`MonitoringStore` 迁入、原模块 re-export 过渡、收口时删原实现），`TenantRegistry._create_services` 改从 storage.memory 构造、`api/main.py → iam.registry` 延迟导入环消除；`TenantServices` 字段类型自 `object` 收紧为 Protocol。**非目标**＝PG 实现/中断落库/`GET /api/runs`（均 M5b）、多实例/NATS（D5）/Go（D6）、任何新依赖/前端改动/Schema 变更。**验收**＝后端 431 passed/8 skipped 零回归 + `/api/*` 端点签名零变化 + storage 零第三方依赖 + 无循环导入。同步面：03 新增 `repository` 契约、09 storage 包位注记、20 §3/§5 状态、14 D19/D20 注记、handoff/CHANGELOG。**下一步＝M5a 落码**（建议原子序：base.py 六 Protocol+单测 → memory.py 逐 store 收拢〔每迁一个一提交、测试逐提交转绿〕→ TenantServices/Registry 接线+消环 → 删原实现+文档回填）。
