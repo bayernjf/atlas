@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### feat(storage/recovery/runs)：M5b 落码——PG 持久化 + 中断恢复 + run 状态（2026-09-17，五提交三批+一修复）
+
+- 题二硬前置 M5 完整闭合（docs/20 §3，D19/D20 取回，ADR T18 拍板 B）。三批原子序：① 批 1 PG 持久化层（`db/migrations/002_storage.sql` 九表 + `storage/pg.py` 六 store + `ATLAS_STORAGE_BACKEND` 切换，进程内保持默认）；② 批 2 帧序列化 + loader 续跑 + 恢复扫描器（`storage/frame.py` + loader `frame_sink`/`run_graph(resume=)` 尾图编译 + `ApprovalBroker.restore` + `storage/recovery.py` + api lifespan `recover_pending`）；③ 批 3 run 状态 + 查询端点（`RunRepository` + memory/PG `RunStore` + `GET /api/runs` + reset PG 档分层）。四处落码细化：帧落库在 loader `frame_sink` 而非 broker、debug 帧落库留后续、`SessionStore` 全局单例、`RunRepository` 新增。验收：进程内 450 passed/13 skipped 零回归、integration PG 13 passed、U43/U44/U45 转正式、脚本实测「审批挂起→强杀重启→同 token 决策生效→run completed」✅、前端零改动零新依赖。同步面：08 立项条+落码条、03 `interruption_frame`/`repository`、12 `/api/runs`、13 U43–U45、09 storage、14 D19/D20、11 S1、24 落码注记、handoff/CHANGELOG。**下一步＝M7（任务总线，依赖 M5b+M6）/ M9（发布流，依赖 M6）**。
+
 ### docs(plan)：M5b 立项——PG 实现 + 中断落库（2026-09-17，docs-only 立项批、零代码）
 
 - 按 docs/20 门控（契约设计 ✅ + T18 拍板 B + M5a/M6 已落码）立项 M5 第二子阶段（08 新增 M5b 立项条），契约已由 docs/24 §2/§3/§4/§5 收口。范围四块、三批原子序：① PG 持久化层（`storage/pg.py` 七个租户 store PG 实现 + DDL `db/migrations/002_storage.sql` + `ATLAS_STORAGE_BACKEND` 后端切换，进程内保持默认/测试后端）；② 中断帧落库 + 恢复扫描器（human_approval/wait 挂起写 `interruptions` 帧、审批决策双写、`storage/recovery.py` 启动重建 pending + 重启续跑线程）；③ loader 续跑（`run_graph` 增 `resume=`，尾图编译 + 已完成 outputs 预填）；④ run 状态 + `GET /api/runs` + reset PG 档分层。非目标＝多实例/跨实例、NATS/Go、wait 事件等待、审批评论流、密码哈希、任务信封（M7）。验收＝integration PG 全绿 + U43/U44/U45 转正式 + 浏览器「审批挂起→重启→同 token 决策生效」。同步面：20 §3/§8、13 U43–U45、09 storage pg/recovery、14 D19/D20、11 S1、handoff/CHANGELOG。**下一步＝M5b 批 1 落码**。
