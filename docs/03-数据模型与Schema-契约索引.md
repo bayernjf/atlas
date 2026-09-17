@@ -16,8 +16,8 @@
 | `diagnostic` | 04 / §6.5 结构化诊断 blockquote（M2 2026-09-16 立项并同日落码，234a95f→fbd9f77）+ `frontend/src/lib/validation/`（落码承载） | ### 6.5 拓扑作用域与 L2 模板引用校验（v1） |
 | `graph_definition` | 04 / 5.2 节点系统 Schema（节点形状）+ `src/atlas/graph/dsl.py`（GraphDSL 权威实现，W7-W8） | ### 5.2 节点系统 Schema 示例代码 |
 | `form_renderer` | 04 / §4.10 Schema 驱动表单渲染（M3 2026-09-16 立项、**2026-09-17 落码收口**）+ `frontend/src/lib/forms/`（落码承载） | ### 4.10 Schema 驱动表单渲染（M3 立项 2026-09-16，落码 2026-09-17） |
-| `ui_schema` | 04 / §4.10 末 M4 UISchema 最小子集扩展条（**M4 批 1 2026-09-17 已落码**：groups/hiddenWhen/hideFields/文案层，控件 8→9 + target-select 节点业务控件层）+ `frontend/src/lib/forms/{uiSchema,nodeWidgets,nodeRegistry,nodeUiSchemas,NodeConfigForm}` | ### 4.10 Schema 驱动表单渲染（M4 UISchema 扩展） |
-| `graph_diagnostics` | 04 / §6.5 末 M4 前端 L3 预判 + Problems 面板扩展条（**M4 2026-09-17 立项、未落码**）+ `frontend/src/lib/validation/l3.ts`（规划）；后端图级规则权威仍为 `src/atlas/graph/dsl.py` | ### 6.5 拓扑作用域与 L2 模板引用校验（M4 前端 L3/Problems 扩展） |
+| `ui_schema` | 04 / §4.10 末 M4 UISchema 最小子集扩展条（**M4 批 1/批 2 2026-09-17 已落码**：groups/hiddenWhen/hideFields/文案层〔批 2 起嵌套通配键+rows/keyPlaceholders〕，控件 8→9 + target-select/saved-graph-select 两个节点业务控件）+ `frontend/src/lib/forms/{uiSchema,nodeWidgets,nodeRegistry,nodeUiSchemas,NodeConfigForm}` | ### 4.10 Schema 驱动表单渲染（M4 UISchema 扩展） |
+| `graph_diagnostics` | 04 / §6.5 末 M4 前端 L3 预判 + Problems 面板扩展条（**M4 批 2 2026-09-17 已落码**：l3.ts 同构对拍、分层调度+记忆化、ProblemsPanel；quickFix/reverseDeps/BENCHMARK 留批 3）+ `frontend/src/lib/validation/l3.ts`；后端图级规则权威仍为 `src/atlas/graph/dsl.py` | ### 6.5 拓扑作用域与 L2 模板引用校验（M4 前端 L3/Problems 扩展） |
 | `adapter_schema` | 04 / 5.4 工具/适配器注册 Schema 示例代码 | ### 5.4 工具/适配器注册 Schema 示例代码 |
 | `skill_schema` | 05 / 一、技能（Skill）1.2 技能的数据结构 | ## 1.2 技能的数据结构（示例） |
 | `memory_config` | 05 / 二、记忆（Memory）2.3 记忆策略配置 Schema | ## 2.3 记忆策略配置 Schema（示例） |
@@ -201,10 +201,10 @@ type WidgetProps = {           // 19 §1.3.4 的 M3 子集；不含 uiSchema（U
 ```
 > 验收候选用例 **U39**（13 文档，**已随 M3 落码转正式**；registry/resolveWidget/降级、不可变写回与字符串回写、第二来源、variable-input+诊断+NL paramWarnings、九工具表单生成与 sql-query-notify 金链、浏览器双路径）。oneOf 等白名单外结构以 JSON 文本降级承接，T16 不重开；重开判据与 M4/M8 边界见 10 §4 T17、04 §4.10。**落码注记（2026-09-17）**：第二来源落为 `lib/forms/toolSchemas.ts`（`/api/adapters` 发现快照按 `<adapter>/<tool>` 入表、持引用不复制、空 schema 不可表单化）；`config.params` 的文本↔对象转换与 `JSON.stringify` 回写在 `lib/forms/params.ts`；结构树与不可变更新（`setAtPath`/`removeAtPath`/`appendAtPath`/`renameKeyAtPath`）在 `lib/forms/formTree.ts`；字段诊断复用 `lib/validation/l1.validateParamFields`（pointer 相对 params 根），NL paramWarnings 由 `lib/forms/nlWarnings.ts` 按节点归为非阻塞 warning。
 
-### `ui_schema` — 字段概览（**M4 批 1 已落码 2026-09-17**；权威以代码 `frontend/src/lib/forms/uiSchema.ts` 为准，立项契约见 08 M4 立项条与 04 §4.10 末扩展条；ADR T17 复查不重开见 10 §4）
+### `ui_schema` — 字段概览（**M4 批 1/批 2 已落码 2026-09-17**；权威以代码 `frontend/src/lib/forms/uiSchema.ts` 为准，立项契约见 08 M4 立项条与 04 §4.10 末扩展条；ADR T17 复查不重开见 10 §4）
 
 ```ts
-// lib/forms/uiSchema.ts（M4 批 1 落码形态；纯逻辑，零 React）
+// lib/forms/uiSchema.ts（M4 批 2 落码形态；纯逻辑，零 React）
 // 最小子集，不引入完整 JSON Schema UI 规范：
 type UiSchema = {
   groups?: Array<{ key: string; label?: string; fields: string[]; layout?: 'row'|'column'; visual?: boolean }>
@@ -213,33 +213,41 @@ type UiSchema = {
   // 值驱动条件显隐：判别字段 field 取 equals 时才显示 show 中字段；trigger triggerType 显隐 cron/webhookUrl
   hideFields?: string[]
   // 静态隐藏（值保留、不参与渲染）：Loop 内部字段 mode 用；区别于值驱动的 hiddenWhen
-  labels?: Record<string, string>        // 字段中文 label（MetaSchema 白名单无 title，见 04 §4.10 落码细化）
-  placeholders?: Record<string, string>  // 字段 placeholder
+  // 批 2 起文案键支持嵌套路径通配：根字段 'joinTarget'、数组行 'branches[].label'（[] 匹配任一下标）、
+  // 键值行 'inputs.*'（* 匹配任意单段）；点号或斜杠分隔均可（uiKeySegments/pointerMatches）
+  labels?: Record<string, string>        // 字段中文 label（空串显式盖掉字段名直出，parallel/subgraph 用）
+  placeholders?: Record<string, string>  // 字段 placeholder（键规则同 labels）
   optionLabels?: Record<string, Record<string, string>> // enum/const 枚举值中文案
+  rows?: Record<string, number>          // 批 2：多行控件行数（subgraph inputs.* 值压单行）
+  keyPlaceholders?: Record<string, string> // 批 2：keyvalue 键输入框占位（subgraph inputs 用「入参键」）
 }
-// 分组与显隐一律按 path 末段「字段 key」判定（label 仅展示），避免本地化后匹配失败（fix 1936f4c）
-// 不做 ui:order（按 schema properties 顺序渲染）、不做 if/then 动态 dependencies；x-widget 沿用 resolveWidget
+// groups/hiddenWhen 只作用根 object；labels 等文案由 FormRenderer 渲染期逐节点装饰
+// （decorateNodeForRender，含数组行与 keyvalue 懒建值节点）；不做 ui:order、不做 if/then
 ```
 
-**内置控件九件**（`lib/forms/types.ts` BUILTIN_WIDGETS + `defaultRegistry.ts`）：text / number / select / **radio**（M4 新增，承接 onTimeout 这类 Radio 形态）/ textarea / switch / json / expression / variable-input。M4 另增**节点业务控件层**：`target-select`（连线目标选择，`nodeWidgets.tsx` 的 TargetSelectWidget，经 `nodeRegistry.ts` 的 buildNodeRegistry 注册，scope 增 `listNodeTargets()`；与内置控件分层、不进默认注册表）；节点表单共享包装 `NodeConfigForm.tsx`（schemaRegistry + NODE_UI_SCHEMAS + node registry，只透传带 pointer 的诊断）。`resolveWidget` 选择序：节点 x-widget → **有非空 properties 的 object 展开为 group（已提到 oneOf 降级之前，fix fba124a）** → 无统一 properties 的 oneOf 联合降级 json → enum/const select → 类型分支。NumberWidget 对 integer 设 precision=0/step=1。
+**内置控件九件**（`lib/forms/types.ts` BUILTIN_WIDGETS + `defaultRegistry.ts`）：text / number / select / **radio**（M4 新增，承接 onTimeout/joinStrategy 这类 Radio 形态）/ textarea / switch / json / expression / variable-input。M4 另增**节点业务控件层**（`nodeWidgets.tsx` + `nodeRegistry.ts` 的 buildNodeRegistry，与内置控件分层、不进默认注册表）：`target-select`（连线目标选择，scope `listNodeTargets()`）与批 2 新增 `saved-graph-select`（subgraph graphId，挂载拉一次 `/api/graphs`，空态 Empty/错误态红字/option 文案 `id（n 节点）`）；节点表单共享包装 `NodeConfigForm.tsx`（schemaRegistry + NODE_UI_SCHEMAS + node registry，只透传带 pointer 的诊断）。`resolveWidget` 选择序：节点 x-widget → **有非空 properties 的 object 展开为 group（已提到 oneOf 降级之前，fix fba124a）** → 无统一 properties 的 oneOf 联合降级 json → enum/const select → 类型分支。NumberWidget 对 integer 设 precision=0/step=1。批 2 ArrayView 消费 schema `minItems/maxItems`：删除在 ≤minItems 禁用、添加在 ≥maxItems 禁用并显 `添加（n/max）`、行卡片边框 + formTree 行号 `#n`。
 
-**批 1 迁移状态**：HumanApproval / Trigger / Loop 已切 NodeConfigForm（旧内联组件已删）；**Wait 经落码判定保留手写**（waitType 为 const、旧 UI 含一个禁用 event 单选项 + Tooltip 预告 D19，schema const/radio 无法表达"禁用选项+Tooltip"，强迁要么丢预告要么逼 radio 加 disabledOptions 过度设计；符合"等价才迁、不设硬指标"）；Parallel/Subgraph 批 2、Condition 批 3。
+**迁移状态**：HumanApproval / Trigger / Loop（批 1）、**Parallel / Subgraph（批 2，06b62fc）** 已切 NodeConfigForm（旧内联组件已删/瘦包装化）；**Wait 经落码判定保留手写**（waitType 为 const、旧 UI 含一个禁用 event 单选项 + Tooltip 预告 D19，schema const/radio 无法表达"禁用选项+Tooltip"，强迁要么丢预告要么逼 radio 加 disabledOptions 过度设计；符合"等价才迁、不设硬指标"）；Condition 批 3（动态 branches 最复杂置末）。
 
-> 验收候选用例 **U40**（13 文档）：ui:group 分组容器与并排布局、hiddenWhen 三分支显隐、未命中条件时字段不渲染且不参与校验、hideFields 静态隐藏值保留、字段/枚举中文案。复杂度 dump 证据与落码细化（MetaSchema 无 title 扩文案层、控件 8→9、oneOf+properties object 展开、Wait 保留手写）见 08 M4 立项/落码条。
+> 验收候选用例 **U40**（13 文档）：ui:group 分组容器与并排布局、hiddenWhen 三分支显隐、未命中条件时字段不渲染且不参与校验、hideFields 静态隐藏值保留、字段/枚举中文案、嵌套通配文案（批 2 补）。复杂度 dump 证据与落码细化见 08 M4 立项/批 1/批 2 落码条。
 
-### `graph_diagnostics` — 字段概览（**M4 2026-09-17 立项、未落码**；权威见 08 M4 立项条与 04 §6.5 末扩展条，落码承载 `frontend/src/lib/validation/l3.ts` + Problems 面板组件；后端图级规则唯一权威仍为 `src/atlas/graph/dsl.py`）
+### `graph_diagnostics` — 字段概览（**M4 批 2 已落码 2026-09-17**（0dc9b7f/1468e18/2ad4177）；权威见 08 M4 批 2 落码条与 04 §6.5 末扩展条，落码承载 `frontend/src/lib/validation/{l3,engine,useValidationEngine}.ts` + `store/validationStore.ts` + `components/canvas/ProblemsPanel.tsx`；后端图级规则唯一权威仍为 `src/atlas/graph/dsl.py`）
 
 ```ts
-// lib/validation/l3.ts（M4 规划，规则从 dsl.py 同构提取，参照 conditions.ts 先例）
-// 首批两条图级规则，产 layer:'graph' Diagnostic（M2 仅留类型位、M4 转正）：
-//   GRAPH_UNREACHABLE：从 trigger BFS 不可达节点（同构 dsl.py _validate_reachability）
+// lib/validation/l3.ts（已落码，规则从 dsl.py 同构提取，跨运行时对拍夹具守漂移）：
+//   GRAPH_UNREACHABLE：从 trigger BFS 不可达节点（同构 _validate_reachability）
 //   GRAPH_ILLEGAL_CYCLE：移除 loop 白名单回边后 DFS 三色检测成环（同构 _validate_illegal_cycles）
-// 前端 L3 仅实时预判；后端 dsl.py 仍是唯一权威，不搬后端重跑、M4 不改后端
-// 分支完备已由 condition L1 手写规则（defaultTarget 必填）覆盖、悬空引用由 L2 REF_NODE_NOT_FOUND 覆盖
-// Problems 面板：消费 validateGraph 全图 Diagnostic[]，rank 排序，点击按 nodeId+pointer 定位节点/字段
-// quickFix v1：仅「删除悬空引用」一个动作（20 §2.5 法定），挂 L2 REF_NODE_NOT_FOUND；reverseDeps 支撑改 id 引用方定位
+// 聚合顺序环先于不可达，与 validate_graph_report 一致；message 与后端字节对齐
+// 对拍：scripts/dev/generate_l3_fixtures.py 以后端实跑生成 11 用例 JSON，
+//       tests/test_l3_fixtures.py（后端重建重跑）+ l3.test.ts（前端对拍）双侧守
+// 唯一有意偏差：GRAPH_UNREACHABLE 的 loc.nodeId 取不可达节点自身（后端 locations 侧车无图级条目）
+// 调度（useValidationEngine）：L1 useLayoutEffect 同步 / L2 300ms 防抖 / L3 requestIdleCallback（+500ms setTimeout 回退）
+// ScopeIndex/L3 按 structureSignature 记忆化；dirty.ts 维护增量失效范围与 revision 守卫
+// Problems 面板（ProblemsPanel.tsx）：validationStore 全图 Diagnostic 经 rank 聚合，
+//   点击 nodeId 条目 selectNode+setCenter，pointer 条目滚到 [data-pointer] 字段并闪烁；无 nodeId 环条目不可点
+// quickFix v1 与 reverseDeps：批 3 未做
 ```
-> 验收候选用例 **U41**（13 文档，候选）：构造含环/不可达图，前端 L3 诊断与后端 dsl.py 逐条同构对拍；Problems 聚合/rank/点击定位；quickFix 删除悬空引用。分层调度（L1 同步/L2 防抖/L3 requestIdleCallback）、增量脏标记失效范围、200/500 节点基准入 BENCHMARK.md，见 08 M4 立项条③⑦。
+> 验收候选用例 **U41**（13 文档，候选）：构造含环/不可达图，前端 L3 诊断与后端 dsl.py 逐条同构对拍（**批 2 已落 11 夹具对拍**）；Problems 聚合/rank/点击定位（**批 2 已落并浏览器冒烟**）；分层调度/增量脏标记（**批 2 已落**）；quickFix 删除悬空引用、reverseDeps、200/500 节点基准 BENCHMARK.md 留批 3。
 
 ### `adapter_schema` — 字段概览（完整定义见 04-组件设计-编辑后台.md #459，上下文章节：### 5.4 工具/适配器注册 Schema 示例代码）
 
