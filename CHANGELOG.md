@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### feat(forms+editor)：M4 批 1——UISchema 最小子集 + 节点表单迁移二波 + 校验脏标记骨架（2026-09-17，九个原子提交 `49cb692`→`30d5009`，dev 本地未推送、未开 PR）
+
+- 用户指令「开搞」推进 M4，按 08 立项契约三批原子序完成**批 1**（表单能力 + 简单迁移 + 脏标记），每提交过三道门 + 逐节点真实浏览器冒烟，**后端零改动、零新依赖**，前端 vitest 基线 243/24 → **291/27**、oxlint 0/0、tsc+vite build 过。
+- ① `49cb692` 纯逻辑 `lib/forms/uiSchema.ts`：`groups` 分组容器（layout row/column、visual）+ `hiddenWhen` 值驱动条件显隐（CondResolver，受控字段=出现在任一 show、命中判别值才可见、非对象 fail-closed）；分组与显隐一律按 path 末段**字段 key** 判定（label 仅展示，避免本地化后匹配失败）。
+- ② `0d648f0` 节点表单渲染基座：内置控件八件→**九件**（新增 radio，承接 onTimeout）；新增独立**节点业务控件层** `target-select`（`nodeWidgets.tsx` TargetSelectWidget + `nodeRegistry.ts` buildNodeRegistry，scope 增 `listNodeTargets()`，与内置默认注册表分层）；UiSchema 增 `labels/placeholders/optionLabels` 字段文案层；`NodeConfigForm.tsx` 共享包装（schemaRegistry + NODE_UI_SCHEMAS + node registry，只透传带 pointer 诊断）。
+- ③ 节点迁移：HumanApproval `6e5707d` + 分组按字段 key 修复 `1936f4c`（双 target 并排）；trigger oneOf+properties object 展开修复 `fba124a`（resolveWidget 把「有非空 properties 的 object→group」提到 oneOf 降级之前，无统一 properties 联合仍降级 json）+ hiddenWhen 首个消费者 `8d83e07`（manual/schedule/webhook 三态显隐、必填由 oneOf+L1 承接、隐藏值跨切换保留）；Loop + hideFields `d7f883e`（continueExpression/maxIterations/body/exit 目标选择、静态隐藏内部 mode 值保留、NumberWidget integer precision=0/step=1）。旧内联 HumanApprovalConfig/LoopConfig/TriggerConfig 删除，WaitConfig **经判定保留手写**（waitType const + 禁用 event 单选项 + D19 Tooltip 无法用 schema radio 表达，强迁逼 disabledOptions 过度设计，符合「等价才迁、不设硬指标」）。
+- ⑤ `30d5009` 校验增量调度脏标记骨架：纯模块 `lib/validation/dirty.ts` 维护 `{l1NodeIds,l2NodeIds,l3,revision}` 与纯函数 mark*（改 config 仅脏该节点 L1、patch 键承载引用或值含 `{{` 才脏 L2；增删节点/边置 L3 并保守标 L2；换图全量；全局变量增删 L2 全量；markClean 清范围不重置 revision），editorStore 在 addNodeAt/updateSelectedConfig/deleteSelectedNode/onConnect/onNodesChange·onEdgesChange（仅 remove）/loadGraph/变量增删接入并暴露 clearDirty；label/description/status/log/断点编辑不脏校验。**分层调度（L1 同步/L2 防抖/L3 requestIdleCallback）+ 结构 hash 记忆化 ScopeIndex 与受影响子图收窄在批 2 消费**，reverseDeps 精确收窄在批 3。
+- **四处落码细化（立项 dump 盲区，已同步 03 `ui_schema`/04 §4.10/09 目录树+待定项 15/10 §4 T17/08 落码条/13 U40·U42）**：MetaSchema 白名单无 title→UiSchema 文案层承接不扩 MetaSchema；内置控件 8→9 + 节点业务控件层（T17 立项与批 1 两次复查均不重开）；oneOf+完整 properties object 展开为分组；Wait 保留手写 + hideFields/integer precision。
+- 浏览器冒烟（Playwright 对真实 :8000+:5174，admin-a）：HumanApproval 11 项、trigger 8 项、Loop 11 项全过零控制台错误，截图 `docs/assets/m4-human-approval-form-smoke.png`、`docs/assets/m4-loop-form-smoke.png`。批 2（前端 L3 不可达 BFS/环 DFS 同构 dsl.py + 对拍、分层调度消费 dirty、Problems 面板、Parallel/Subgraph 迁移）与批 3（reverseDeps、quickFix v1 删除悬空引用、200/500 节点 BENCHMARK、ConditionConfig、收口）未开工。
+
 ### docs / forms+validation（2026-09-17，M4 立项：UISchema 最小子集 + 手写 Config 迁移二波 + 增量调度 + 前端 L3 + Problems 面板 + reverseDeps/quickFix v1，docs-only、零代码）
 
 - 用户指令「开搞」启动 M4 立项，按 M1–M3 同构治理流程把 docs/20 §2.5 方案转为权威契约，**本批零代码**。立项前完成九节点 schema + 七手写 Config 的复杂度 dump（纯只读）：8/9 节点 schema 零 oneOf/if-then/dependencies/allOf（仅 trigger 1 处 oneOf，M1 解释器已处理），enum/const 共 6 处；手写 Config 除已迁 ToolCallConfig（165 行）外 6 个为 53–117 行、条件渲染共 6 处、无 Form.Item/折叠/Tabs；UISchema 真实需求仅 ui:group 1 处（HumanApproval approved/rejected 并排）+ 条件显隐 1 处（trigger cron/webhookUrl 按 triggerType），自研 <100 行。据此 **ADR T17 复查不重开**（远未到 rjsf/Formily 框架量级，M8 卡片第三类 schema 来源的重开判据不变），已记 10 §2/§4。

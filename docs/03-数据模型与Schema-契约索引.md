@@ -16,7 +16,7 @@
 | `diagnostic` | 04 / §6.5 结构化诊断 blockquote（M2 2026-09-16 立项并同日落码，234a95f→fbd9f77）+ `frontend/src/lib/validation/`（落码承载） | ### 6.5 拓扑作用域与 L2 模板引用校验（v1） |
 | `graph_definition` | 04 / 5.2 节点系统 Schema（节点形状）+ `src/atlas/graph/dsl.py`（GraphDSL 权威实现，W7-W8） | ### 5.2 节点系统 Schema 示例代码 |
 | `form_renderer` | 04 / §4.10 Schema 驱动表单渲染（M3 2026-09-16 立项、**2026-09-17 落码收口**）+ `frontend/src/lib/forms/`（落码承载） | ### 4.10 Schema 驱动表单渲染（M3 立项 2026-09-16，落码 2026-09-17） |
-| `ui_schema` | 04 / §4.10 末 M4 UISchema 最小子集扩展条（**M4 2026-09-17 立项、未落码**）+ `frontend/src/lib/forms/uiSchema.ts` + CondResolver（落码承载，规划） | ### 4.10 Schema 驱动表单渲染（M4 UISchema 扩展） |
+| `ui_schema` | 04 / §4.10 末 M4 UISchema 最小子集扩展条（**M4 批 1 2026-09-17 已落码**：groups/hiddenWhen/hideFields/文案层，控件 8→9 + target-select 节点业务控件层）+ `frontend/src/lib/forms/{uiSchema,nodeWidgets,nodeRegistry,nodeUiSchemas,NodeConfigForm}` | ### 4.10 Schema 驱动表单渲染（M4 UISchema 扩展） |
 | `graph_diagnostics` | 04 / §6.5 末 M4 前端 L3 预判 + Problems 面板扩展条（**M4 2026-09-17 立项、未落码**）+ `frontend/src/lib/validation/l3.ts`（规划）；后端图级规则权威仍为 `src/atlas/graph/dsl.py` | ### 6.5 拓扑作用域与 L2 模板引用校验（M4 前端 L3/Problems 扩展） |
 | `adapter_schema` | 04 / 5.4 工具/适配器注册 Schema 示例代码 | ### 5.4 工具/适配器注册 Schema 示例代码 |
 | `skill_schema` | 05 / 一、技能（Skill）1.2 技能的数据结构 | ## 1.2 技能的数据结构（示例） |
@@ -201,22 +201,31 @@ type WidgetProps = {           // 19 §1.3.4 的 M3 子集；不含 uiSchema（U
 ```
 > 验收候选用例 **U39**（13 文档，**已随 M3 落码转正式**；registry/resolveWidget/降级、不可变写回与字符串回写、第二来源、variable-input+诊断+NL paramWarnings、九工具表单生成与 sql-query-notify 金链、浏览器双路径）。oneOf 等白名单外结构以 JSON 文本降级承接，T16 不重开；重开判据与 M4/M8 边界见 10 §4 T17、04 §4.10。**落码注记（2026-09-17）**：第二来源落为 `lib/forms/toolSchemas.ts`（`/api/adapters` 发现快照按 `<adapter>/<tool>` 入表、持引用不复制、空 schema 不可表单化）；`config.params` 的文本↔对象转换与 `JSON.stringify` 回写在 `lib/forms/params.ts`；结构树与不可变更新（`setAtPath`/`removeAtPath`/`appendAtPath`/`renameKeyAtPath`）在 `lib/forms/formTree.ts`；字段诊断复用 `lib/validation/l1.validateParamFields`（pointer 相对 params 根），NL paramWarnings 由 `lib/forms/nlWarnings.ts` 按节点归为非阻塞 warning。
 
-### `ui_schema` — 字段概览（**M4 2026-09-17 立项、未落码**；权威见 08 M4 立项条与 04 §4.10 末扩展条，落码承载 `frontend/src/lib/forms/uiSchema.ts` + CondResolver；ADR T17 复查不重开见 10 §4）
+### `ui_schema` — 字段概览（**M4 批 1 已落码 2026-09-17**；权威以代码 `frontend/src/lib/forms/uiSchema.ts` 为准，立项契约见 08 M4 立项条与 04 §4.10 末扩展条；ADR T17 复查不重开见 10 §4）
 
 ```ts
-// lib/forms/uiSchema.ts（M4 规划，落码以 04 §4.10 扩展条为准）
-// 最小子集，仅承接复杂度 dump 实测的两件需求，不引入完整 JSON Schema UI 规范：
+// lib/forms/uiSchema.ts（M4 批 1 落码形态；纯逻辑，零 React）
+// 最小子集，不引入完整 JSON Schema UI 规范：
 type UiSchema = {
-  groups?: Array<{ key: string; label?: string; fields: string[]; layout?: 'row' }>
-  // ui:group：把同层字段归入分组容器；实测仅 HumanApproval approved/rejected 并排（layout:'row'）
+  groups?: Array<{ key: string; label?: string; fields: string[]; layout?: 'row'|'column'; visual?: boolean }>
+  // ui:group：把同层字段归入分组容器；layout:'row' 承接 HumanApproval approved/rejected 并排
   hiddenWhen?: Array<{ field: string; equals: unknown; show: string[] }>
-  // 条件显隐：判别字段 field 取 equals 时才显示 show 中的字段；其余隐藏
-  // 实测仅 trigger：triggerType=schedule 显 cron、=webhook 显 webhookUrl、=manual 全隐
+  // 值驱动条件显隐：判别字段 field 取 equals 时才显示 show 中字段；trigger triggerType 显隐 cron/webhookUrl
+  hideFields?: string[]
+  // 静态隐藏（值保留、不参与渲染）：Loop 内部字段 mode 用；区别于值驱动的 hiddenWhen
+  labels?: Record<string, string>        // 字段中文 label（MetaSchema 白名单无 title，见 04 §4.10 落码细化）
+  placeholders?: Record<string, string>  // 字段 placeholder
+  optionLabels?: Record<string, Record<string, string>> // enum/const 枚举值中文案
 }
-// 不做 ui:order（M3 已按 schema properties 顺序渲染）、不做 if/then 动态 dependencies
-// x-widget 沿用 M3 resolveWidget，不在本契约重复
+// 分组与显隐一律按 path 末段「字段 key」判定（label 仅展示），避免本地化后匹配失败（fix 1936f4c）
+// 不做 ui:order（按 schema properties 顺序渲染）、不做 if/then 动态 dependencies；x-widget 沿用 resolveWidget
 ```
-> 验收候选用例 **U40**（13 文档，候选）：ui:group 分组容器与并排布局、hiddenWhen 三分支显隐、未命中条件时字段不渲染且不参与校验。复杂度 dump 证据（8/9 节点零条件结构、UISchema 真实需求 2 处）见 08 M4 立项条。
+
+**内置控件九件**（`lib/forms/types.ts` BUILTIN_WIDGETS + `defaultRegistry.ts`）：text / number / select / **radio**（M4 新增，承接 onTimeout 这类 Radio 形态）/ textarea / switch / json / expression / variable-input。M4 另增**节点业务控件层**：`target-select`（连线目标选择，`nodeWidgets.tsx` 的 TargetSelectWidget，经 `nodeRegistry.ts` 的 buildNodeRegistry 注册，scope 增 `listNodeTargets()`；与内置控件分层、不进默认注册表）；节点表单共享包装 `NodeConfigForm.tsx`（schemaRegistry + NODE_UI_SCHEMAS + node registry，只透传带 pointer 的诊断）。`resolveWidget` 选择序：节点 x-widget → **有非空 properties 的 object 展开为 group（已提到 oneOf 降级之前，fix fba124a）** → 无统一 properties 的 oneOf 联合降级 json → enum/const select → 类型分支。NumberWidget 对 integer 设 precision=0/step=1。
+
+**批 1 迁移状态**：HumanApproval / Trigger / Loop 已切 NodeConfigForm（旧内联组件已删）；**Wait 经落码判定保留手写**（waitType 为 const、旧 UI 含一个禁用 event 单选项 + Tooltip 预告 D19，schema const/radio 无法表达"禁用选项+Tooltip"，强迁要么丢预告要么逼 radio 加 disabledOptions 过度设计；符合"等价才迁、不设硬指标"）；Parallel/Subgraph 批 2、Condition 批 3。
+
+> 验收候选用例 **U40**（13 文档）：ui:group 分组容器与并排布局、hiddenWhen 三分支显隐、未命中条件时字段不渲染且不参与校验、hideFields 静态隐藏值保留、字段/枚举中文案。复杂度 dump 证据与落码细化（MetaSchema 无 title 扩文案层、控件 8→9、oneOf+properties object 展开、Wait 保留手写）见 08 M4 立项/落码条。
 
 ### `graph_diagnostics` — 字段概览（**M4 2026-09-17 立项、未落码**；权威见 08 M4 立项条与 04 §6.5 末扩展条，落码承载 `frontend/src/lib/validation/l3.ts` + Problems 面板组件；后端图级规则唯一权威仍为 `src/atlas/graph/dsl.py`）
 
