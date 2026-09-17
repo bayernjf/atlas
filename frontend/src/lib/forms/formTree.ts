@@ -39,11 +39,19 @@ export type FormWidgetNode = FormNodeBase & {
   widget: WidgetName
   value: unknown
   description?: string
+  /** M4 UISchema：字段占位提示（覆盖 schema.description 兜底）。 */
+  placeholder?: string
+  /** M4 UISchema：enum/const 选项值 → 中文文案（select/radio）。 */
+  optionLabels?: Record<string, string>
 }
 
 export type FormGroupNode = FormNodeBase & {
   kind: 'group'
   children: FormNode[]
+  /** M4 UISchema：视觉分组布局；缺省垂直堆叠，'row' 组内字段并排。 */
+  layout?: 'row' | 'column'
+  /** M4 UISchema：true＝ui:group 纯视觉容器（不增数据层级，path/pointer 同父）。 */
+  visual?: boolean
 }
 
 export type FormArrayNode = FormNodeBase & {

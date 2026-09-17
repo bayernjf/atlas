@@ -30,6 +30,7 @@ import {
 import type { WidgetRegistry } from './registry'
 import type { SchemaSource } from './resolveWidget'
 import type { WidgetScope } from './types'
+import { applyUiSchema, type UiSchema } from './uiSchema'
 
 export type FormRendererProps = {
   /** 根 schema（工具 input_schema，或节点字段 schema 片段）。 */
@@ -45,6 +46,8 @@ export type FormRendererProps = {
   /** 表单内诊断（pointer 相对根）；未命中字段的条目在根下非阻塞汇总。 */
   diagnostics?: Diagnostic[]
   registry?: WidgetRegistry
+  /** M4：UISchema 最小子集（ui:group 视觉分组 + hiddenWhen 条件显隐），仅作用于根 object。 */
+  uiSchema?: UiSchema
 }
 
 type ViewContext = {
@@ -66,8 +69,9 @@ export function FormRenderer({
   nodeId,
   diagnostics,
   registry = widgetRegistry,
+  uiSchema,
 }: FormRendererProps): ReactElement {
-  const tree = buildFormTree(schema, value, { source })
+  const tree = applyUiSchema(buildFormTree(schema, value, { source }), value, uiSchema)
   const ctx: ViewContext = { root: value, onChange, registry, source, scope, nodeId, diagnostics }
   const unmapped = diagnosticsAt(diagnostics, tree.pointer)
 
@@ -120,17 +124,28 @@ function Field({
 }
 
 function GroupView({ node, ctx }: { node: FormGroupNode; ctx: ViewContext }): ReactElement {
+  // M4 ui:group：layout 'row' 让组内字段并排（视觉组专用）；缺省垂直堆叠。
+  const row = node.layout === 'row'
   return (
-    <div className="form-group">
+    <div
+      className="form-group"
+      style={row ? { display: 'flex', gap: 8, alignItems: 'flex-start' } : undefined}
+    >
       {node.label && (
         <Typography.Text type="secondary">
           {node.label}
           {node.required && <Typography.Text type="danger"> *</Typography.Text>}
         </Typography.Text>
       )}
-      {node.children.map((child) => (
-        <FormNodeView key={child.pointer} node={child} ctx={ctx} />
-      ))}
+      {node.children.map((child) =>
+        row ? (
+          <div key={child.pointer} style={{ flex: 1, minWidth: 0 }}>
+            <FormNodeView node={child} ctx={ctx} />
+          </div>
+        ) : (
+          <FormNodeView key={child.pointer} node={child} ctx={ctx} />
+        ),
+      )}
     </div>
   )
 }
@@ -231,6 +246,8 @@ function WidgetView({ node, ctx }: { node: FormWidgetNode; ctx: ViewContext }): 
         nodeId: ctx.nodeId,
         diagnostics: diagnosticsAt(ctx.diagnostics, node.pointer),
         markers: renderMarkers(ctx.diagnostics ?? [], node.pointer),
+        placeholder: node.placeholder,
+        optionLabels: node.optionLabels,
       })}
     </Field>
   )

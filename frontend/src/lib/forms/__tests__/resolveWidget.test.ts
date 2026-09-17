@@ -65,7 +65,7 @@ describe('resolveWidget 选择序（U39①）', () => {
 })
 
 describe('resolveWidget 降级序（U39①）', () => {
-  it('oneOf 一律降级 json（含 message/send to：string|array）', () => {
+  it('无统一 properties 的 oneOf 联合降级 json（message/send to：string|array）', () => {
     const to = schema({
       oneOf: [
         { type: 'string' },
@@ -73,6 +73,24 @@ describe('resolveWidget 降级序（U39①）', () => {
       ],
     })
     expect(resolveWidget(to)).toEqual({ kind: 'widget', widget: 'json' })
+  })
+
+  it('object + properties + 顶层判别 oneOf 仍按 properties 展开为 group（trigger 三分支）', () => {
+    const trigger = schema({
+      type: 'object',
+      properties: {
+        triggerType: { type: 'string', enum: ['manual', 'schedule', 'webhook'] },
+        cron: { type: 'string' },
+        webhookUrl: { type: 'string' },
+      },
+      required: ['triggerType'],
+      oneOf: [
+        { properties: { triggerType: { const: 'manual' } } },
+        { properties: { triggerType: { const: 'schedule' } }, required: ['cron'] },
+        { properties: { triggerType: { const: 'webhook' } }, required: ['webhookUrl'] },
+      ],
+    })
+    expect(resolveWidget(trigger)).toEqual({ kind: 'group' })
   })
 
   it('空 schema {} 降级 json', () => {

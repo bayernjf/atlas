@@ -25,6 +25,12 @@ export function resolveWidget(schema: MetaSchema, source: SchemaSource = 'node')
     return { kind: 'widget', widget: schema['x-widget'] as WidgetName }
   }
 
+  // 有统一 properties 的 object 即便带顶层 oneOf 判别联合（如 trigger：按 triggerType
+  // 三分支条件必填）也按 properties 展开成 group；oneOf 只承载条件必填，结构由 L1 解释。
+  // 无统一 properties 的 oneOf 联合（如 to: string|array）无法生成稳定字段，才降级 json。
+  if (isObjectSchema(schema) && schema.properties && Object.keys(schema.properties).length > 0) {
+    return { kind: 'group' }
+  }
   if (Array.isArray(schema.oneOf) && schema.oneOf.length > 0) {
     return { kind: 'widget', widget: 'json' }
   }

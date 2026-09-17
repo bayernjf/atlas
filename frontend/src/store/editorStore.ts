@@ -11,6 +11,17 @@ import {
 } from '../lib/nodeCatalog'
 import type { GraphVariable } from '../lib/variables'
 import { deserializeGraph, type SerializedGraph } from '../lib/graphSerializer'
+import {
+  INITIAL_DIRTY,
+  markClean,
+  markConfigEdit,
+  markEdgeChanged,
+  markGraphLoaded,
+  markNodeAdded,
+  markNodeDeleted,
+  markVariablesChanged,
+  type ValidationDirty,
+} from '../lib/validation/dirty'
 
 export type EditorNode = Node<EditorNodeData>
 export type { NodeKind }
@@ -27,6 +38,10 @@ type EditorState = {
   breakpoints: Record<string, Breakpoint>
   /** NL 草稿的 paramWarnings（wire 仍是 string[]，见 04 §4.10）；加载新图/重新生成即刷新。 */
   nlWarnings: string[]
+  /** M4 校验增量调度的失效范围（L1 节点字段 / L2 跨节点引用 / L3 全图结构）；批 2 调度器消费。 */
+  dirty: ValidationDirty
+  /** 调度器重算完对应层后清除失效标记（revision 不动）。 */
+  clearDirty: () => void
   addNodeAt: (kind: NodeKind, position: { x: number; y: number }) => void
   selectNode: (nodeId: string | null) => void
   updateSelectedNode: (patch: Partial<EditorNodeData>) => void
@@ -119,6 +134,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   logs: ['W9-W10 退款 Demo：选择退款单后「编译并运行」，节点实时高亮；也可用自然语言生成草稿'],
   breakpoints: {},
   nlWarnings: [],
+  dirty: INITIAL_DIRTY,
+
+  clearDirty: () => set((state) => ({ dirty: markClean(state.dirty) })),
 
   addNodeAt: (kind, position) => {
     const id = nextId(kind, get().nodes)
@@ -138,6 +156,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       nodes: [...state.nodes, node],
       selectedNodeId: id,
       logs: [...state.logs, `添加节点：${NODE_CATALOG[kind].label}（${id}）`],
+      dirty: markNodeAdded(state.dirty, id),
     }))
   },
 
@@ -162,6 +181,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           ? { ...node, data: { ...node.data, config: { ...node.data.config, ...patch } } }
           : node,
       ),
+      dirty: markConfigEdit(state.dirty, selectedId, patch),
     }))
   },
 
@@ -244,6 +264,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         Object.entries(state.breakpoints).filter(([nodeId]) => nodeId !== selectedId),
       ),
       logs: [...state.logs, `删除节点：${selectedId}`],
+      dirty: markNodeDeleted(
+        state.dirty,
+        state.nodes.filter((node) => node.id !== selectedId).map((node) => node.id),
+      ),
     }))
   },
 
@@ -251,41 +275,70 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((state) => ({
       variables: [...state.variables, variable],
       logs: [...state.logs, `新增全局变量：${variable.name}`],
+      dirty: markVariablesChanged(
+        state.dirty,
+        state.nodes.map((node) => node.id),
+      ),
     })),
 
   removeVariable: (name) =>
     set((state) => ({
       variables: state.variables.filter((variable) => variable.name !== name),
       logs: [...state.logs, `删除全局变量：${name}`],
+      dirty: markVariablesChanged(
+        state.dirty,
+        state.nodes.map((node) => node.id),
+      ),
     })),
 
   onNodesChange: (changes) => {
-    set((state) => ({ nodes: applyNodeChanges(changes, state.nodes) }))
+    set((state) => {
+      const nodes = applyNodeChanges(changes, state.nodes)
+      const removed = changes.some((change) => change.type === 'remove')
+      return removed
+        ? { nodes, dirty: markNodeDeleted(state.dirty, nodes.map((node) => node.id)) }
+        : { nodes }
+    })
   },
 
   onEdgesChange: (changes) => {
-    set((state) => ({ edges: applyEdgeChanges(changes, state.edges) }))
+    set((state) => {
+      const edges = applyEdgeChanges(changes, state.edges)
+      // 删边改变可达性/作用域（位置/选择变更不影响校验）；批 1 无 reverseDeps，L2 全量保守。
+      const removed = changes.some((change) => change.type === 'remove')
+      return removed
+        ? { edges, dirty: markEdgeChanged(state.dirty, state.nodes.map((node) => node.id)) }
+        : { edges }
+    })
   },
 
   onConnect: (connection) => {
     set((state) => ({
       edges: addEdge({ ...connection }, state.edges),
       logs: [...state.logs, `连接节点：${connection.source} → ${connection.target}`],
+      dirty: markEdgeChanged(state.dirty, [connection.source, connection.target].filter(
+        (id): id is string => typeof id === 'string',
+      )),
     }))
   },
 
   loadGraph: (graph) => {
     const { nodes, edges, variables } = deserializeGraph(graph)
-    set({
-      nodes: nodes as EditorNode[],
+    const loadedNodes = nodes as EditorNode[]
+    set((state) => ({
+      nodes: loadedNodes,
       edges,
       variables,
       selectedNodeId: null,
       breakpoints: {},
       // 换图即失效：NL 参数警告只对刚生成/加载的那张草稿有意义
       nlWarnings: [],
-      logs: [`已加载 NL 生成草稿：${nodes.length} 个节点`],
-    })
+      logs: [`已加载 NL 生成草稿：${loadedNodes.length} 个节点`],
+      dirty: markGraphLoaded(
+        state.dirty,
+        loadedNodes.map((node) => node.id),
+      ),
+    }))
   },
 
   setNodeStatus: (nodeId, status) => {

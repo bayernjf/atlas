@@ -7,11 +7,17 @@
  * token 区间字段内高亮）。
  */
 import { useState, type ReactElement } from 'react'
-import { Input, InputNumber, Select, Switch, Typography } from 'antd'
+import { Input, InputNumber, Radio, Select, Switch, Typography } from 'antd'
 import { splitTokenSegments } from './formTree'
 import type { WidgetComponent, WidgetProps } from './types'
 
-function DiagnosticText({ diagnostics }: { diagnostics?: WidgetProps['diagnostics'] }): ReactElement | null {
+/** enum/const 选项的展示文案：UISchema optionLabels 优先，缺省回退原始值字符串。 */
+function optionLabelOf(option: unknown, optionLabels?: Record<string, string>): string {
+  const key = String(option)
+  return optionLabels?.[key] ?? key
+}
+
+export function DiagnosticText({ diagnostics }: { diagnostics?: WidgetProps['diagnostics'] }): ReactElement | null {
   if (!diagnostics || diagnostics.length === 0) return null
   return (
     <div style={{ marginTop: 4 }}>
@@ -46,6 +52,8 @@ export const NumberWidget: WidgetComponent = ({ value, onChange, schema, diagnos
       value={typeof value === 'number' ? value : null}
       min={schema.minimum}
       max={schema.maximum}
+      precision={schema.type === 'integer' ? 0 : undefined}
+      step={schema.type === 'integer' ? 1 : undefined}
       placeholder={placeholder ?? schema.description}
       style={{ width: '100%' }}
       onChange={(next) => onChange(next ?? null)}
@@ -55,19 +63,40 @@ export const NumberWidget: WidgetComponent = ({ value, onChange, schema, diagnos
   </>
 )
 
-export const SelectWidget: WidgetComponent = ({ value, onChange, schema }) => {
+export const SelectWidget: WidgetComponent = ({ value, onChange, schema, optionLabels }) => {
   const options = schema.const !== undefined
     ? [schema.const]
     : (schema.enum ?? [])
   return (
     <Select
       value={value as never}
-      options={options.map((option) => ({ label: String(option), value: option as never }))}
+      options={options.map((option) => ({
+        label: optionLabelOf(option, optionLabels),
+        value: option as never,
+      }))}
       disabled={schema.const !== undefined}
       style={{ width: '100%' }}
       onChange={(next) => onChange(next)}
       allowClear={schema.const === undefined}
     />
+  )
+}
+
+/**
+ * Radio 控件（M4 新增内置第九件）：enum/const 的单选按钮形态，供节点表单少量
+ * 枚举（如 human_approval.onTimeout）保持与旧手写面板一致的并排单选；工具表单
+ * enum 默认仍走 select，需在节点 schema 以 x-widget:'radio' 显式指定。
+ */
+export const RadioWidget: WidgetComponent = ({ value, onChange, schema, optionLabels }) => {
+  const options = schema.const !== undefined ? [schema.const] : (schema.enum ?? [])
+  return (
+    <Radio.Group value={value} onChange={(event) => onChange(event.target.value)}>
+      {options.map((option) => (
+        <Radio key={String(option)} value={option as never}>
+          {optionLabelOf(option, optionLabels)}
+        </Radio>
+      ))}
+    </Radio.Group>
   )
 }
 

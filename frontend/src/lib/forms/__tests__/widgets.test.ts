@@ -3,8 +3,8 @@ import { BUILTIN_WIDGETS } from '../types'
 import { WidgetRegistry } from '../registry'
 import { buildDefaultRegistry, registerWidget, widgetComponent, widgetRegistry } from '../defaultRegistry'
 
-describe('默认控件表（U39①）', () => {
-  it('八件内置控件全部注册且均可取到组件', () => {
+describe('默认控件表（U39① / M4 radio）', () => {
+  it('内置控件全部注册且均可取到组件（M3 八件 + M4 radio 共九件）', () => {
     const registry = buildDefaultRegistry()
     for (const name of BUILTIN_WIDGETS) {
       expect(registry.has(name)).toBe(true)

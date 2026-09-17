@@ -11,8 +11,8 @@ export const loopSchema: NodeConfigSchema = {
     mode: { type: 'string' },
     continueExpression: { type: 'string', pattern: '\\S', 'x-variable': true },
     maxIterations: { type: 'integer', minimum: 1, maximum: 100, default: 10 },
-    bodyTarget: { type: 'string', pattern: '\\S', 'x-ref': { kinds: ['*'] } },
-    exitTarget: { type: 'string', pattern: '\\S', 'x-ref': { kinds: ['*'] } },
+    bodyTarget: { type: 'string', pattern: '\\S', 'x-ref': { kinds: ['*'] }, 'x-widget': 'target-select' },
+    exitTarget: { type: 'string', pattern: '\\S', 'x-ref': { kinds: ['*'] }, 'x-widget': 'target-select' },
   },
   required: ['continueExpression', 'maxIterations', 'bodyTarget', 'exitTarget'],
   'x-outputSchema': {

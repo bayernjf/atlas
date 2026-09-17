@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { nextId, useEditorStore, type EditorNode } from '../editorStore'
 import { defaultConfig, defaultRetry } from '../../lib/nodeCatalog'
+import { INITIAL_DIRTY } from '../../lib/validation/dirty'
 
 function stubNode(id: string): EditorNode {
   return {
@@ -303,5 +304,85 @@ describe('NL 参数警告（M3 表单化展示）', () => {
 
     useEditorStore.getState().loadGraph({ version: 1, variables: [], nodes: [], edges: [] })
     expect(useEditorStore.getState().nlWarnings).toEqual([])
+  })
+})
+
+describe('editorStore 校验脏标记（M4 批 1 ⑤）', () => {
+  function resetWith(nodes: EditorNode[], selected: string | null) {
+    useEditorStore.setState({
+      nodes,
+      edges: [],
+      variables: [],
+      selectedNodeId: selected,
+      logs: [],
+      dirty: INITIAL_DIRTY,
+    })
+    useEditorStore.getState().clearDirty() // 干净基线：l1/l2/l3 全空
+  }
+
+  it('改纯 config 字段只脏该节点 L1', () => {
+    resetWith([stubNode('trigger-1')], 'trigger-1')
+    useEditorStore.getState().updateSelectedConfig({ webhookUrl: '/hooks/x' })
+    const { dirty } = useEditorStore.getState()
+    expect(dirty.l1NodeIds).toEqual(['trigger-1'])
+    expect(dirty.l2NodeIds).toEqual([])
+    expect(dirty.l3).toBe(false)
+    expect(dirty.revision).toBe(1)
+  })
+
+  it('改含 {{}} 引用的字段同时脏该节点 L2', () => {
+    resetWith([stubNode('trigger-1')], 'trigger-1')
+    useEditorStore.getState().updateSelectedConfig({ webhookUrl: '{{trigger-1.context.token}}' })
+    const { dirty } = useEditorStore.getState()
+    expect(dirty.l1NodeIds).toEqual(['trigger-1'])
+    expect(dirty.l2NodeIds).toEqual(['trigger-1'])
+  })
+
+  it('addNodeAt 标记 L3 + 新节点 L1/L2', () => {
+    resetWith([stubNode('trigger-1')], null)
+    useEditorStore.getState().addNodeAt('wait', { x: 0, y: 0 })
+    const { dirty } = useEditorStore.getState()
+    expect(dirty.l3).toBe(true)
+    expect(dirty.l1NodeIds).toContain('wait-1')
+    expect(dirty.l2NodeIds).toContain('wait-1')
+  })
+
+  it('onConnect 标记 L3 + 边两端 L2', () => {
+    resetWith([stubNode('trigger-1'), stubNode('trigger-2')], null)
+    useEditorStore
+      .getState()
+      .onConnect({ source: 'trigger-1', target: 'trigger-2' } as Parameters<ReturnType<typeof useEditorStore.getState>['onConnect']>[0])
+    const { dirty } = useEditorStore.getState()
+    expect(dirty.l3).toBe(true)
+    expect(dirty.l2NodeIds).toEqual(['trigger-1', 'trigger-2'])
+  })
+
+  it('loadGraph 标记 L3 + 全部节点 L1/L2', () => {
+    resetWith([stubNode('trigger-1')], null)
+    useEditorStore.getState().loadGraph({
+      version: 1,
+      variables: [],
+      nodes: [
+        { id: 'trigger-1', type: 'trigger', name: 'a', description: '', position: { x: 0, y: 0 }, config: { triggerType: 'manual' }, retry: defaultRetry() },
+        { id: 'tool_call-1', type: 'tool_call', name: 'b', description: '', position: { x: 0, y: 0 }, config: { tool: 'x' }, retry: defaultRetry() },
+      ],
+      edges: [],
+    })
+    const { dirty } = useEditorStore.getState()
+    expect(dirty.l3).toBe(true)
+    expect(dirty.l1NodeIds).toEqual(['trigger-1', 'tool_call-1'])
+    expect(dirty.l2NodeIds).toEqual(['trigger-1', 'tool_call-1'])
+  })
+
+  it('clearDirty 清空待算范围但保留 revision', () => {
+    resetWith([stubNode('trigger-1')], 'trigger-1')
+    useEditorStore.getState().updateSelectedConfig({ webhookUrl: '/x' })
+    expect(useEditorStore.getState().dirty.revision).toBe(1)
+    useEditorStore.getState().clearDirty()
+    const { dirty } = useEditorStore.getState()
+    expect(dirty.l1NodeIds).toEqual([])
+    expect(dirty.l2NodeIds).toEqual([])
+    expect(dirty.l3).toBe(false)
+    expect(dirty.revision).toBe(1)
   })
 })
