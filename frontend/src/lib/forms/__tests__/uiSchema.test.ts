@@ -138,6 +138,17 @@ describe('applyGroups', () => {
       'rejectedTarget',
     ])
   })
+
+  it('回归：labels 烘焙成中文后，groups 仍按字段 key 成组且组内带中文 label', () => {
+    const ui: UiSchema = {
+      labels: { approvedTarget: '通过目标', rejectedTarget: '拒绝目标' },
+      groups: [{ key: 'targets', fields: ['approvedTarget', 'rejectedTarget'], layout: 'row' }],
+    }
+    const tree = applyUiSchema(buildFormTree(approvalSchema, {}, { source: 'node' }), {}, ui)
+    const group = findVisualGroup(tree)
+    expect(group.layout).toBe('row')
+    expect(group.children.map((c) => c.label)).toEqual(['通过目标', '拒绝目标'])
+  })
 })
 
 // ---- applyUiSchema 端到端（hiddenWhen + groups 协同）----------------------------

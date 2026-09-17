@@ -102,15 +102,19 @@ export function applyGroups(
 ): FormNode[] {
   if (!groups || groups.length === 0) return children
 
+  // 一律按字段 key（path 末段）匹配，不依赖 label——label 可能已被 decorateField
+  // 烘焙成中文标题，而 group.fields 用的是数据字段名。
   const byField = new Map<string, FormNode>()
   for (const child of children) {
-    if (child.label) byField.set(child.label, child)
+    const key = fieldKey(child)
+    if (key) byField.set(key, child)
   }
 
   const result: FormNode[] = []
   const placed = new Set<string>()
   for (const child of children) {
-    const owner = groups.find((group) => group.fields.includes(child.label))
+    const key = fieldKey(child)
+    const owner = key ? groups.find((group) => group.fields.includes(key)) : undefined
     if (!owner) {
       result.push(child)
       continue
@@ -145,12 +149,17 @@ export function applyGroups(
  * 仅处理根 object（M4 最小子集：UISchema 只描述节点 config 根这一层）：先按
  * hiddenWhen 过滤隐藏字段，再烘焙字段文案（labels/placeholders/optionLabels），
  * 最后按 groups 重组视觉分组。非 group 根或无 uiSchema 时原样返回。
+ * 隐藏/分组均按字段 key（path 末段）判定，label 仅作展示，故 decorate 改中文
+ * label 不影响分组与显隐。
  */
 export function applyUiSchema(tree: FormNode, value: unknown, uiSchema?: UiSchema): FormNode {
   if (!uiSchema || tree.kind !== 'group') return tree
   const hidden = hiddenFields(uiSchema, value)
   const visibleChildren = tree.children
-    .filter((child) => !hidden.has(child.label))
+    .filter((child) => {
+      const key = fieldKey(child)
+      return !key || !hidden.has(key)
+    })
     .map((child) => decorateField(child, uiSchema))
   const children = applyGroups(visibleChildren, uiSchema.groups, {
     path: tree.path,
@@ -161,7 +170,7 @@ export function applyUiSchema(tree: FormNode, value: unknown, uiSchema?: UiSchem
 }
 
 /** 取节点对应的根层字段名（path 末段）；视觉组 path 同父，末段非 string，返回 undefined。 */
-function rootFieldKey(node: FormNode): string | undefined {
+function fieldKey(node: FormNode): string | undefined {
   const last = node.path[node.path.length - 1]
   return typeof last === 'string' ? last : undefined
 }
@@ -171,7 +180,7 @@ function rootFieldKey(node: FormNode): string | undefined {
  * 故平铺字段与将进入视觉组的字段都被覆盖）。只覆盖声明了的键，其余原样。
  */
 function decorateField(node: FormNode, uiSchema: UiSchema): FormNode {
-  const key = rootFieldKey(node)
+  const key = fieldKey(node)
   if (!key) return node
   const label = uiSchema.labels?.[key]
   if (node.kind === 'widget') {
