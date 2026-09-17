@@ -22,6 +22,7 @@ import { FeedbackButton } from '../components/feedback/FeedbackButton'
 import { UserBadge } from '../components/UserBadge'
 import { roleCan, type Principal } from '../lib/auth'
 import { useEditorStore } from '../store/editorStore'
+import { useValidationEngine } from '../lib/validation/useValidationEngine'
 import { serializeGraph } from '../lib/graphSerializer'
 import { toSteps } from '../lib/recordings'
 import {
@@ -72,6 +73,9 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
   const appendLog = useEditorStore((state) => state.appendLog)
   const setNlWarnings = useEditorStore((state) => state.setNlWarnings)
   const breakpoints = useEditorStore((state) => state.breakpoints)
+
+  // M4 批 2 ⑦：分层校验调度（L1 同步 / L2 防抖 / L3 idle），结果入 validationStore。
+  useValidationEngine()
 
   const [exportOpen, setExportOpen] = useState(false)
   const [runOpen, setRunOpen] = useState(false)

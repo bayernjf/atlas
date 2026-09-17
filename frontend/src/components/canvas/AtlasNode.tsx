@@ -1,18 +1,13 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { NODE_CATALOG, type EditorNodeData } from '../../lib/nodeCatalog'
-import { validateNodeDiagnostics } from '../../lib/validation/validateGraph'
-import { useScopeIndex, useToolOutputSchemas } from '../../lib/useScope'
 import type { EditorNode } from '../../store/editorStore'
 import { useEditorStore } from '../../store/editorStore'
+import { useNodeDiagnostics } from '../../store/validationStore'
 
 export function AtlasNode({ id, data, selected }: NodeProps<EditorNode>) {
   const meta = NODE_CATALOG[data.kind]
-  const nodes = useEditorStore((state) => state.nodes)
-  const edges = useEditorStore((state) => state.edges)
-  const variables = useEditorStore((state) => state.variables)
-  const scope = useScopeIndex({ nodes, edges, variables })
-  const toolOutputSchemas = useToolOutputSchemas()
-  const diagnostics = validateNodeDiagnostics(id, data, { selfId: id, scope, toolOutputSchemas })
+  // M4 批 2 ⑦：诊断由分层校验引擎统一产出（不再每节点各建一次 ScopeIndex）。
+  const diagnostics = useNodeDiagnostics(id)
   const invalid = diagnostics.length > 0
   const breakpoint = useEditorStore((state) => state.breakpoints[id])
   const toggleBreakpoint = useEditorStore((state) => state.toggleBreakpoint)

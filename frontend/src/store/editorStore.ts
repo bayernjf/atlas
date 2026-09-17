@@ -15,11 +15,14 @@ import {
   INITIAL_DIRTY,
   markClean,
   markConfigEdit,
+  markConsumed,
   markEdgeChanged,
   markGraphLoaded,
   markNodeAdded,
   markNodeDeleted,
+  markNodeMetaEdit,
   markVariablesChanged,
+  type ConsumedRanges,
   type ValidationDirty,
 } from '../lib/validation/dirty'
 
@@ -40,8 +43,8 @@ type EditorState = {
   nlWarnings: string[]
   /** M4 校验增量调度的失效范围（L1 节点字段 / L2 跨节点引用 / L3 全图结构）；批 2 调度器消费。 */
   dirty: ValidationDirty
-  /** 调度器重算完对应层后清除失效标记（revision 不动）。 */
-  clearDirty: () => void
+  /** 调度器重算完对应层后清除失效标记（revision 不动）；不传 ranges 为全清。 */
+  clearDirty: (ranges?: ConsumedRanges) => void
   addNodeAt: (kind: NodeKind, position: { x: number; y: number }) => void
   selectNode: (nodeId: string | null) => void
   updateSelectedNode: (patch: Partial<EditorNodeData>) => void
@@ -136,7 +139,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   nlWarnings: [],
   dirty: INITIAL_DIRTY,
 
-  clearDirty: () => set((state) => ({ dirty: markClean(state.dirty) })),
+  clearDirty: (ranges) =>
+    set((state) => ({ dirty: ranges ? markConsumed(state.dirty, ranges) : markClean(state.dirty) })),
 
   addNodeAt: (kind, position) => {
     const id = nextId(kind, get().nodes)
@@ -169,20 +173,28 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       nodes: state.nodes.map((node) =>
         node.id === selectedId ? { ...node, data: { ...node.data, ...patch } } : node,
       ),
+      // label/描述等元信息只影响该节点 L1（名称必填）。
+      dirty: markNodeMetaEdit(state.dirty, selectedId),
     }))
   },
 
   updateSelectedConfig: (patch) => {
     const selectedId = get().selectedNodeId
     if (!selectedId) return
-    set((state) => ({
-      nodes: state.nodes.map((node) =>
-        node.id === selectedId
-          ? { ...node, data: { ...node.data, config: { ...node.data.config, ...patch } } }
-          : node,
-      ),
-      dirty: markConfigEdit(state.dirty, selectedId, patch),
-    }))
+    set((state) => {
+      const target = state.nodes.find((node) => node.id === selectedId)
+      return {
+        nodes: state.nodes.map((node) =>
+          node.id === selectedId
+            ? { ...node, data: { ...node.data, config: { ...node.data.config, ...patch } } }
+            : node,
+        ),
+        dirty: markConfigEdit(state.dirty, selectedId, patch, {
+          kind: target?.data.kind,
+          allNodeIds: state.nodes.map((node) => node.id),
+        }),
+      }
+    })
   },
 
   deleteSelectedNode: () => {
@@ -316,9 +328,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((state) => ({
       edges: addEdge({ ...connection }, state.edges),
       logs: [...state.logs, `连接节点：${connection.source} → ${connection.target}`],
-      dirty: markEdgeChanged(state.dirty, [connection.source, connection.target].filter(
-        (id): id is string => typeof id === 'string',
-      )),
+      // 新增连线可改变下游整片子图的可达作用域，批 1 无 reverseDeps，L2 全量保守（与删边一致）。
+      dirty: markEdgeChanged(
+        state.dirty,
+        state.nodes.map((node) => node.id),
+      ),
     }))
   },
 

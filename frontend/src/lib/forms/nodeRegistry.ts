@@ -6,15 +6,16 @@
  * 不污染工具表单；业务控件随节点迁移在此登记。
  */
 import { buildDefaultRegistry } from './defaultRegistry'
-import { TargetSelectWidget } from './nodeWidgets'
+import { SavedGraphSelectWidget, TargetSelectWidget } from './nodeWidgets'
 import type { WidgetRegistry } from './registry'
-import { TARGET_SELECT_WIDGET } from './types'
+import { SAVED_GRAPH_SELECT_WIDGET, TARGET_SELECT_WIDGET } from './types'
 
-export { TARGET_SELECT_WIDGET } from './types'
+export { SAVED_GRAPH_SELECT_WIDGET, TARGET_SELECT_WIDGET } from './types'
 
-/** 节点表单控件表：内置九件 + target-select（独立实例，随节点表单挂载）。 */
+/** 节点表单控件表：内置九件 + target-select + saved-graph-select（独立实例）。 */
 export function buildNodeRegistry(): WidgetRegistry {
   const registry = buildDefaultRegistry()
   registry.register(TARGET_SELECT_WIDGET, TargetSelectWidget)
+  registry.register(SAVED_GRAPH_SELECT_WIDGET, SavedGraphSelectWidget)
   return registry
 }

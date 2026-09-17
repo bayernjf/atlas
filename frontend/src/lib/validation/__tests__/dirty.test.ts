@@ -3,10 +3,12 @@ import {
   INITIAL_DIRTY,
   markClean,
   markConfigEdit,
+  markConsumed,
   markEdgeChanged,
   markGraphLoaded,
   markNodeAdded,
   markNodeDeleted,
+  markNodeMetaEdit,
   markVariablesChanged,
   patchTouchesReferences,
 } from '../dirty'
@@ -97,5 +99,63 @@ describe('失效范围标记（M4 批 1 ⑤）', () => {
     expect(d.l2NodeIds).toEqual([])
     expect(d.l3).toBe(false)
     expect(d.revision).toBe(1)
+  })
+})
+
+describe('markConfigEdit 的 loop 结构感知（批 2 ⑦）', () => {
+  it('loop 改 bodyTarget/exitTarget：L3 置位 + L2 全量', () => {
+    const d0 = markClean(INITIAL_DIRTY)
+    const d = markConfigEdit(d0, 'loop-1', { bodyTarget: 'tool-a' }, {
+      kind: 'loop',
+      allNodeIds: ['loop-1', 'tool-a', 'tool-b'],
+    })
+    expect(d.l3).toBe(true)
+    expect(d.l2NodeIds).toEqual(['loop-1', 'tool-a', 'tool-b'])
+    expect(d.l1NodeIds).toContain('loop-1')
+  })
+
+  it('loop 改 continueExpression：只脏本节点 L1/L2，不置 L3', () => {
+    const d0 = markClean(INITIAL_DIRTY)
+    const d = markConfigEdit(d0, 'loop-1', { continueExpression: 'x > 0' }, {
+      kind: 'loop',
+      allNodeIds: ['loop-1', 'tool-a'],
+    })
+    expect(d.l3).toBe(false)
+    expect(d.l2NodeIds).toEqual(['loop-1'])
+  })
+
+  it('非 loop 节点改 target：不置 L3', () => {
+    const d = markConfigEdit(markClean(INITIAL_DIRTY), 'h-1', { approvedTarget: 'tool-a' }, {
+      kind: 'human_approval',
+      allNodeIds: ['h-1', 'tool-a'],
+    })
+    expect(d.l3).toBe(false)
+  })
+})
+
+describe('markConsumed（按 revision 消费）', () => {
+  it('revision 一致：只清实际消费的范围', () => {
+    const d0 = markNodeAdded(markClean(INITIAL_DIRTY), 'a-1') // revision 1, l3 true
+    const d = markConsumed(d0, { revision: 1, l1NodeIds: ['a-1'] })
+    expect(d.l1NodeIds).toEqual([])
+    expect(d.l2NodeIds).toContain('a-1')
+    expect(d.l3).toBe(true)
+    expect(d.revision).toBe(1)
+  })
+
+  it('消费期间又有新变更（revision 已增）：原样保留，交下轮重算', () => {
+    const d0 = markNodeAdded(markClean(INITIAL_DIRTY), 'a-1')
+    const d1 = markConfigEdit(d0, 'a-1', { promptTemplate: 'x' }) // revision 2
+    const d = markConsumed(d1, { revision: 1, l1NodeIds: ['a-1'], l3: true })
+    expect(d).toEqual(d1)
+  })
+})
+
+describe('markNodeMetaEdit', () => {
+  it('改名只脏该节点 L1，不碰 L2/L3', () => {
+    const d = markNodeMetaEdit(markClean(INITIAL_DIRTY), 'a-1')
+    expect(d.l1NodeIds).toEqual(['a-1'])
+    expect(d.l2NodeIds).toEqual([])
+    expect(d.l3).toBe(false)
   })
 })

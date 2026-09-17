@@ -542,7 +542,11 @@ def test_human_approval_resolved_from_other_thread_routes_approved():
             captured["approval"] = event["approval"]
 
     def decide_later():
-        time_mod.sleep(0.05)
+        # 轮询等待 node_start 投递 approval（原固定 sleep 0.05 在调度抖动下
+        # 可能早于事件触发，线程 KeyError 后用例等满 300s 超时——时序 flaky）。
+        deadline = time_mod.monotonic() + 2
+        while "approval" not in captured and time_mod.monotonic() < deadline:
+            time_mod.sleep(0.005)
         token = captured["approval"]["token"]
         assert broker.resolve(token, "approved", comment="同意退款") is True
 

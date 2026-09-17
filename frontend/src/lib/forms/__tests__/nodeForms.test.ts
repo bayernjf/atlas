@@ -1,9 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import { humanApprovalSchema } from '../../schemas/nodes/human_approval.schema'
+import { parallelSchema } from '../../schemas/nodes/parallel.schema'
+import { subgraphSchema } from '../../schemas/nodes/subgraph.schema'
 import { loopSchema } from '../../schemas/nodes/loop.schema'
-import { buildNodeRegistry, TARGET_SELECT_WIDGET } from '../nodeRegistry'
-import { humanApprovalUiSchema, loopUiSchema, NODE_UI_SCHEMAS } from '../nodeUiSchemas'
+import { buildNodeRegistry, SAVED_GRAPH_SELECT_WIDGET, TARGET_SELECT_WIDGET } from '../nodeRegistry'
+import {
+  humanApprovalUiSchema,
+  loopUiSchema,
+  NODE_UI_SCHEMAS,
+  parallelUiSchema,
+  subgraphUiSchema,
+} from '../nodeUiSchemas'
 import { BUILTIN_WIDGETS } from '../types'
+import { pointerMatches } from '../uiSchema'
 
 describe('节点控件表 buildNodeRegistry（M4）', () => {
   it('含全部内置控件（九件）+ target-select 业务控件', () => {
@@ -101,5 +110,59 @@ describe('loop UISchema 与数据 schema 对齐（迁移等价基线）', () => 
 
   it('已登记到 NODE_UI_SCHEMAS', () => {
     expect(NODE_UI_SCHEMAS.loop).toBe(loopUiSchema)
+  })
+})
+
+describe('parallel 迁移对齐（M4 批 2 ⑨）', () => {
+  const properties = parallelSchema.properties ?? {}
+  const branchesItems = (properties.branches.items?.properties ?? {}) as Record<string, { 'x-widget'?: string }>
+
+  it('joinStrategy 补 enum + radio，每个枚举值都有中文长文案', () => {
+    expect(properties.joinStrategy.type).toBe('string')
+    expect(properties.joinStrategy.enum).toEqual(['all_success', 'all_completed'])
+    expect(properties.joinStrategy['x-widget']).toBe('radio')
+    for (const value of properties.joinStrategy.enum ?? []) {
+      expect(parallelUiSchema.optionLabels?.joinStrategy?.[String(value)]).toBeTruthy()
+    }
+  })
+
+  it('分支入口与汇聚目标标 x-widget target-select，数组 2-10 门控', () => {
+    expect(branchesItems.target['x-widget']).toBe(TARGET_SELECT_WIDGET)
+    expect(properties.joinTarget['x-widget']).toBe(TARGET_SELECT_WIDGET)
+    expect(properties.branches.minItems).toBe(2)
+    expect(properties.branches.maxItems).toBe(10)
+  })
+
+  it('数组行占位键能命中 branches[].label/target 指针', () => {
+    expect(pointerMatches('/branches/0/label', 'branches[].label')).toBe(true)
+    expect(parallelUiSchema.placeholders?.['branches[].label']).toBeTruthy()
+    expect(parallelUiSchema.placeholders?.['branches[].target']).toBeTruthy()
+    expect(parallelUiSchema.labels?.joinTarget).toContain('汇聚目标')
+  })
+
+  it('已登记到 NODE_UI_SCHEMAS', () => {
+    expect(NODE_UI_SCHEMAS.parallel).toBe(parallelUiSchema)
+  })
+})
+
+describe('subgraph 迁移对齐（M4 批 2 ⑨）', () => {
+  const properties = subgraphSchema.properties ?? {}
+
+  it('graphId 标 x-widget saved-graph-select，节点控件表已注册', () => {
+    expect(properties.graphId['x-widget']).toBe(SAVED_GRAPH_SELECT_WIDGET)
+    const registry = buildNodeRegistry()
+    expect(registry.has(SAVED_GRAPH_SELECT_WIDGET)).toBe(true)
+  })
+
+  it('inputs 值为 x-variable 模板字符串，UiSchema 给键值行文案与单行 rows', () => {
+    const valueSchema = properties.inputs.additionalProperties as { 'x-variable'?: boolean }
+    expect(valueSchema?.['x-variable']).toBe(true)
+    expect(subgraphUiSchema.labels?.inputs).toContain('子图入参映射')
+    expect(subgraphUiSchema.keyPlaceholders?.inputs).toBe('入参键')
+    expect(subgraphUiSchema.rows?.['inputs.*']).toBe(1)
+  })
+
+  it('已登记到 NODE_UI_SCHEMAS', () => {
+    expect(NODE_UI_SCHEMAS.subgraph).toBe(subgraphUiSchema)
   })
 })

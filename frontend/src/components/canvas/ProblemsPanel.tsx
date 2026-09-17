@@ -1,0 +1,113 @@
+/**
+ * Problems 面板（M4 批 2 ⑧ / U41③，04 §6.5 末扩展条）。
+ *
+ * 全图 Diagnostic（节点 L1/L2 + 图级 L3）经 rank 排序后聚合展示；
+ * 点击条目：nodeId → 选中并居中画布节点；pointer → 同步滚动定位到右侧属性面板对应字段并闪烁。
+ * 必须渲染在 ReactFlowProvider 内（FlowCanvasInner）以使用 useReactFlow。
+ */
+import { useMemo, useState } from 'react'
+import { useReactFlow } from '@xyflow/react'
+import { Typography } from 'antd'
+import { useEditorStore } from '../../store/editorStore'
+import { useProblems } from '../../store/validationStore'
+import type { Diagnostic } from '../../lib/validation/diagnostics'
+
+const FLASH_CLASS = 'problems-field-flash'
+const FLASH_MS = 1600
+
+function focusPropertyField(pointer: string): void {
+  // 选中节点后属性面板切换需要一帧；延后到下一帧再查锚点。
+  window.setTimeout(() => {
+    const panel = document.querySelector('.side-card')
+    const exact = panel?.querySelector(`[data-pointer="${CSS.escape(pointer)}]`)
+    const target = exact ?? panel?.querySelector(`[data-pointer^="${CSS.escape(pointer)}/"]`)
+    if (!target) return
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    target.classList.remove(FLASH_CLASS)
+    // 强制重排以重启动画
+    void (target as HTMLElement).offsetWidth
+    target.classList.add(FLASH_CLASS)
+    window.setTimeout(() => target.classList.remove(FLASH_CLASS), FLASH_MS)
+  }, 60)
+}
+
+export function ProblemsPanel() {
+  const problems = useProblems()
+  const [collapsed, setCollapsed] = useState(false)
+  const { setCenter } = useReactFlow()
+  const nodes = useEditorStore((state) => state.nodes)
+  const selectNode = useEditorStore((state) => state.selectNode)
+
+  const labelById = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const node of nodes) map.set(node.id, node.data.label || node.id)
+    return map
+  }, [nodes])
+
+  const errorCount = problems.filter((problem) => problem.severity === 'error').length
+  const warningCount = problems.length - errorCount
+
+  const onSelect = (problem: Diagnostic) => {
+    const nodeId = problem.loc.nodeId
+    if (!nodeId) return
+    selectNode(nodeId)
+    const node = useEditorStore.getState().nodes.find((item) => item.id === nodeId)
+    if (node) {
+      const width = node.measured?.width ?? 180
+      const height = node.measured?.height ?? 80
+      void setCenter(node.position.x + width / 2, node.position.y + height / 2, {
+        zoom: 1.1,
+        duration: 300,
+      })
+    }
+    if (problem.loc.pointer) focusPropertyField(problem.loc.pointer)
+  }
+
+  return (
+    <div className={`problems-panel ${problems.length === 0 ? 'is-clean' : ''}`}>
+      <button
+        type="button"
+        className="problems-header"
+        onClick={() => setCollapsed((value) => !value)}
+        aria-expanded={!collapsed}
+      >
+        <span className="problems-title">问题</span>
+        <span className="problems-counts">
+          {errorCount > 0 && <span className="problems-count problems-count-error">错误 {errorCount}</span>}
+          {warningCount > 0 && <span className="problems-count problems-count-warning">警告 {warningCount}</span>}
+          {problems.length === 0 && <span className="problems-count problems-count-ok">无问题</span>}
+        </span>
+        <span className="problems-chevron">{collapsed ? '▲' : '▼'}</span>
+      </button>
+      {!collapsed && problems.length > 0 && (
+        <ul className="problems-list">
+          {problems.map((problem, index) => {
+            const nodeId = problem.loc.nodeId
+            const clickable = !!nodeId
+            return (
+              <li
+                // rank 后同序列稳定，index 作 key 可接受（无重排编辑）。
+                key={`${problem.code}-${nodeId ?? 'graph'}-${problem.loc.pointer ?? ''}-${index}`}
+                className={`problems-item problems-item-${problem.severity} ${clickable ? 'is-clickable' : ''}`}
+                onClick={() => onSelect(problem)}
+                title={clickable ? '点击定位' : problem.message}
+              >
+                <span className="problems-item-icon">{problem.severity === 'error' ? '✕' : '!'}</span>
+                <span className="problems-item-body">
+                  <Typography.Text className="problems-item-message" ellipsis>
+                    {problem.message}
+                  </Typography.Text>
+                  <span className="problems-item-meta">
+                    {nodeId && <span className="problems-item-node">{labelById.get(nodeId) ?? nodeId}</span>}
+                    {problem.loc.pointer && <span className="problems-item-pointer">{problem.loc.pointer}</span>}
+                    {!nodeId && <span className="problems-item-node">全图</span>}
+                  </span>
+                </span>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
+  )
+}

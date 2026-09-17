@@ -28,6 +28,12 @@ export type WidgetName = (typeof BUILTIN_WIDGETS)[number]
  */
 export const TARGET_SELECT_WIDGET = 'target-select'
 
+/**
+ * 节点业务控件名（M4 批 2 ⑨）：已保存子图选择（subgraph.graphId），
+ * 由 nodeWidgets.tsx 拉取 /api/graphs，nodeRegistry 注册；工具表单不注册、遇之降级 json。
+ */
+export const SAVED_GRAPH_SELECT_WIDGET = 'saved-graph-select'
+
 /** 目标节点候选项（target-select 节点业务控件消费）。 */
 export type WidgetTargetOption = { value: string; label: string }
 
@@ -59,5 +65,4 @@ export type WidgetProps = {
   /** M4：enum/const 选项值 → 中文文案（select/radio 节点表单用；缺省显示原始值）。 */
   optionLabels?: Record<string, string>
 }
-
 export type WidgetComponent = (props: WidgetProps) => ReactNode

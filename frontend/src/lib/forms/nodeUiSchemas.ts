@@ -84,9 +84,62 @@ export const loopUiSchema: UiSchema = {
   hideFields: ['mode'],
 }
 
+/**
+ * parallel（04 §5.4）：joinStrategy radio 两条长文案；branches 数组行内
+ * label 文本/target-select（占位承接，无行内字段标题），min/max 2-10 由
+ * ArrayView 门控；joinTarget 走 target-select。分支名/目标唯一性等跨字段
+ * 规则仍由 L1 手写产出。
+ */
+export const parallelUiSchema: UiSchema = {
+  labels: {
+    // 旧手写表单无字段标题：策略靠选项长文案、分支行靠占位，显式置空盖掉字段名直出。
+    joinStrategy: '',
+    'branches[].label': '',
+    'branches[].target': '',
+    branches: '并行分支',
+    joinTarget: '汇聚目标（各分支末端都连线到该节点；分支不得直连结束）',
+  },
+  placeholders: {
+    'branches[].label': '分支名，如：通知商家',
+    'branches[].target': '分支入口节点（需先在画布连线）',
+    joinTarget: '选择汇聚目标节点',
+  },
+  optionLabels: {
+    joinStrategy: {
+      all_success: '全部成功：任一分支失败则汇聚状态为 failed（汇聚节点仍执行）',
+      all_completed: '全部完成：只要各分支都走到汇聚即视为成功',
+    },
+  },
+}
+
+/**
+ * subgraph（04 §5.7）：graphId 走 saved-graph-select（空态/错误态由控件承接）；
+ * inputs 键值行，值为 variable-input（压单行 + 变量插入 Select），键占位「入参键」。
+ * 空键名/键名重复由 L1 手写产出。
+ */
+export const subgraphUiSchema: UiSchema = {
+  labels: {
+    // 旧手写表单 graphId 无字段标题，靠占位与标题承接，显式置空盖掉字段名直出。
+    graphId: '',
+    inputs: '子图入参映射（键 = 子图入参，值支持父图 {{路径}}）',
+  },
+  placeholders: {
+    graphId: '选择已保存的图',
+    'inputs.*': '{{trigger-1.context.payload.order_id}}',
+  },
+  rows: {
+    'inputs.*': 1,
+  },
+  keyPlaceholders: {
+    inputs: '入参键',
+  },
+}
+
 /** 节点 kind → UISchema；未迁移节点缺省（FormRenderer 无 uiSchema 时退化为字段名直出）。 */
 export const NODE_UI_SCHEMAS: Partial<Record<NodeKind, UiSchema>> = {
   trigger: triggerUiSchema,
   loop: loopUiSchema,
   human_approval: humanApprovalUiSchema,
+  parallel: parallelUiSchema,
+  subgraph: subgraphUiSchema,
 }

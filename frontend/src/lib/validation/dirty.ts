@@ -70,18 +70,33 @@ function bump(dirty: ValidationDirty, patch: Partial<ValidationDirty>): Validati
   }
 }
 
+/** loop 节点 bodyTarget/exitTarget 编辑会改变白名单与作用域区域，属结构变更（L3 + 全量 L2）。 */
+const LOOP_STRUCTURE_KEYS = new Set(['bodyTarget', 'exitTarget'])
+
 /** 改某节点 config：L1 必脏该节点；patch 承载引用时 L2 也脏该节点。 */
 export function markConfigEdit(
   dirty: ValidationDirty,
   nodeId: string,
   patch: Record<string, unknown>,
+  context?: { kind?: string; allNodeIds?: string[] },
 ): ValidationDirty {
+  const loopStructureChanged =
+    context?.kind === 'loop' &&
+    Object.keys(patch).some((key) => LOOP_STRUCTURE_KEYS.has(key))
   return bump(dirty, {
     l1NodeIds: unionIds(dirty.l1NodeIds, [nodeId]),
-    l2NodeIds: patchTouchesReferences(patch)
-      ? unionIds(dirty.l2NodeIds, [nodeId])
-      : dirty.l2NodeIds,
+    l2NodeIds: loopStructureChanged
+      ? unionIds(dirty.l2NodeIds, context?.allNodeIds ?? [nodeId])
+      : patchTouchesReferences(patch)
+        ? unionIds(dirty.l2NodeIds, [nodeId])
+        : dirty.l2NodeIds,
+    l3: loopStructureChanged ? true : undefined,
   })
+}
+
+/** 改节点元信息（如显示名 label）：只脏该节点 L1。 */
+export function markNodeMetaEdit(dirty: ValidationDirty, nodeId: string): ValidationDirty {
+  return bump(dirty, { l1NodeIds: unionIds(dirty.l1NodeIds, [nodeId]) })
 }
 
 /** 新增节点：结构变更（L3）+ 新节点 L1/L2 待算。 */
@@ -130,4 +145,28 @@ export function markVariablesChanged(dirty: ValidationDirty, allNodeIds: string[
 /** 调度器消费完失效范围后清标记（revision 不动，它只随变更递增）。 */
 export function markClean(dirty: ValidationDirty): ValidationDirty {
   return { l1NodeIds: [], l2NodeIds: [], l3: false, revision: dirty.revision }
+}
+
+/** 分层调度按批消费的范围（revision 用于防漏：消费期间有新变更则整批不清，下轮重算）。 */
+export type ConsumedRanges = {
+  revision: number
+  l1NodeIds?: string[]
+  l2NodeIds?: string[]
+  l3?: boolean
+}
+
+/**
+ * 只清除本次实际消费的范围，且仅当 dirty.revision 与快照一致；
+ * 消费期间又发生变更（revision 已增）则原样返回，由调度器下一轮合并重算，保证不漏。
+ */
+export function markConsumed(dirty: ValidationDirty, ranges: ConsumedRanges): ValidationDirty {
+  if (dirty.revision !== ranges.revision) return dirty
+  const consumedL1 = new Set(ranges.l1NodeIds ?? [])
+  const consumedL2 = new Set(ranges.l2NodeIds ?? [])
+  return {
+    l1NodeIds: ranges.l1NodeIds ? dirty.l1NodeIds.filter((id) => !consumedL1.has(id)) : dirty.l1NodeIds,
+    l2NodeIds: ranges.l2NodeIds ? dirty.l2NodeIds.filter((id) => !consumedL2.has(id)) : dirty.l2NodeIds,
+    l3: ranges.l3 ? false : dirty.l3,
+    revision: dirty.revision,
+  }
 }
