@@ -201,6 +201,51 @@ describe('editorStore addNodeAt / variables', () => {
     expect(updated.data.config.approvedTarget).toBe('tool-approve')
     expect(updated.data.config.rejectedTarget).toBe('')
   })
+
+  it('deleting a node keeps template refs but narrows L2 to referrers (M4 批 3 ⑩)', () => {
+    const ai: EditorNode = {
+      id: 'ai-1',
+      position: { x: 0, y: 0 },
+      data: {
+        label: '决策',
+        kind: 'ai_decision',
+        status: 'idle',
+        config: { promptTemplate: '{{tool-1.result.x}}' } as EditorNode['data']['config'],
+        retry: defaultRetry(),
+      },
+    }
+    const condition: EditorNode = {
+      id: 'condition-1',
+      position: { x: 0, y: 0 },
+      data: {
+        label: '路由',
+        kind: 'condition',
+        status: 'idle',
+        config: {
+          branches: [{ label: 'A', expression: 'x', target: 'other-1' }],
+          defaultTarget: 'tool-1',
+        } as EditorNode['data']['config'],
+        retry: defaultRetry(),
+      },
+    }
+    useEditorStore.setState({
+      nodes: [ai, condition, stubNode('tool-1'), stubNode('other-1')],
+      edges: [],
+      variables: [],
+      selectedNodeId: 'tool-1',
+      logs: [],
+    })
+    useEditorStore.getState().deleteSelectedNode()
+    const state = useEditorStore.getState()
+    // 模板引用保留（悬空后由 quickFix 处理）
+    expect(state.nodes.find((node) => node.id === 'ai-1')?.data.config.promptTemplate).toBe(
+      '{{tool-1.result.x}}',
+    )
+    // target 引用自动清空
+    expect(state.nodes.find((node) => node.id === 'condition-1')?.data.config.defaultTarget).toBe('')
+    // L2 精确收窄：仅引用方 ai-1/condition-1，other-1 不重算
+    expect(state.dirty.l2NodeIds.sort()).toEqual(['ai-1', 'condition-1'])
+  })
 })
 
 describe('editorStore W9-W10 run status and draft loading', () => {

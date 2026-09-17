@@ -25,6 +25,7 @@ import {
   type ConsumedRanges,
   type ValidationDirty,
 } from '../lib/validation/dirty'
+import { buildReverseIndex, removeDanglingRef } from '../lib/validation/reverseDeps'
 
 export type EditorNode = Node<EditorNodeData>
 export type { NodeKind }
@@ -189,7 +190,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             ? { ...node, data: { ...node.data, config: { ...node.data.config, ...patch } } }
             : node,
         ),
-        dirty: markConfigEdit(state.dirty, selectedId, patch, {
+        dirty: markConfigEdit(state.dirty, selectedId, patch as Record<string, unknown>, {
           kind: target?.data.kind,
           allNodeIds: state.nodes.map((node) => node.id),
         }),
@@ -200,87 +201,55 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   deleteSelectedNode: () => {
     const selectedId = get().selectedNodeId
     if (!selectedId) return
-    set((state) => ({
-      nodes: state.nodes
+    set((state) => {
+      // M4 批 3 ⑩：reverseDeps 定位全部引用方，统一清 target 引用（替代按 kind 硬编码）。
+      const scopeNodes = state.nodes.map((node) => ({
+        id: node.id,
+        kind: node.data.kind,
+        config: node.data.config as Record<string, unknown>,
+      }))
+      const deps = buildReverseIndex(scopeNodes).referrersOf(selectedId)
+      const targetDeps = new Map<string, Array<{ pointer: string }>>()
+      for (const dep of deps) {
+        if (dep.kind !== 'target') continue
+        const list = targetDeps.get(dep.referrerId)
+        if (list) list.push({ pointer: dep.pointer })
+        else targetDeps.set(dep.referrerId, [{ pointer: dep.pointer }])
+      }
+      const referrerIds = [...new Set(deps.map((dep) => dep.referrerId))]
+      const nodes = state.nodes
         .filter((node) => node.id !== selectedId)
         .map((node) => {
-          if (node.data.kind === 'condition') {
-            const config = node.data.config
-            return {
-              ...node,
-              data: {
-                ...node.data,
-                config: {
-                  ...config,
-                  branches: config.branches?.map((branch) => ({
-                    ...branch,
-                    target: branch.target === selectedId ? '' : branch.target,
-                  })),
-                  defaultTarget: config.defaultTarget === selectedId ? '' : config.defaultTarget,
-                },
-              },
-            }
+          const refs = targetDeps.get(node.id)
+          if (!refs) return node
+          let config = node.data.config
+          for (const ref of refs) {
+            const patch = removeDanglingRef(
+              node.data.kind,
+              config as Record<string, unknown>,
+              ref.pointer,
+            )
+            if (patch) config = { ...config, ...patch } as NodeConfig
           }
-          if (node.data.kind === 'loop') {
-            const config = node.data.config
-            return {
-              ...node,
-              data: {
-                ...node.data,
-                config: {
-                  ...config,
-                  bodyTarget: config.bodyTarget === selectedId ? '' : config.bodyTarget,
-                  exitTarget: config.exitTarget === selectedId ? '' : config.exitTarget,
-                },
-              },
-            }
-          }
-          if (node.data.kind === 'parallel') {
-            const config = node.data.config
-            return {
-              ...node,
-              data: {
-                ...node.data,
-                config: {
-                  ...config,
-                  branches: config.branches?.map((branch) => ({
-                    ...branch,
-                    target: branch.target === selectedId ? '' : branch.target,
-                  })),
-                  joinTarget: config.joinTarget === selectedId ? '' : config.joinTarget,
-                },
-              },
-            }
-          }
-          if (node.data.kind === 'human_approval') {
-            const config = node.data.config
-            return {
-              ...node,
-              data: {
-                ...node.data,
-                config: {
-                  ...config,
-                  approvedTarget: config.approvedTarget === selectedId ? '' : config.approvedTarget,
-                  rejectedTarget: config.rejectedTarget === selectedId ? '' : config.rejectedTarget,
-                },
-              },
-            }
-          }
-          return node
-        }),
-      edges: state.edges.filter(
-        (edge) => edge.source !== selectedId && edge.target !== selectedId,
-      ),
-      selectedNodeId: null,
-      breakpoints: Object.fromEntries(
-        Object.entries(state.breakpoints).filter(([nodeId]) => nodeId !== selectedId),
-      ),
-      logs: [...state.logs, `删除节点：${selectedId}`],
-      dirty: markNodeDeleted(
-        state.dirty,
-        state.nodes.filter((node) => node.id !== selectedId).map((node) => node.id),
-      ),
-    }))
+          return { ...node, data: { ...node.data, config } }
+        })
+      return {
+        nodes,
+        edges: state.edges.filter(
+          (edge) => edge.source !== selectedId && edge.target !== selectedId,
+        ),
+        selectedNodeId: null,
+        breakpoints: Object.fromEntries(
+          Object.entries(state.breakpoints).filter(([nodeId]) => nodeId !== selectedId),
+        ),
+        logs: [...state.logs, `删除节点：${selectedId}`],
+        dirty: markNodeDeleted(
+          state.dirty,
+          nodes.map((node) => node.id),
+          referrerIds,
+        ),
+      }
+    })
   },
 
   addVariable: (variable) =>

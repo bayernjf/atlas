@@ -66,12 +66,20 @@ describe('失效范围标记（M4 批 1 ⑤）', () => {
     expect(d.l2NodeIds).toEqual(['wait-1'])
   })
 
-  it('删除节点：L3 置位、L2 全量剩余、被删节点移出 L1', () => {
+  it('删除节点：L3 置位、被删节点移出 L1/L2、无引用方时不全量 L2', () => {
     let d = markNodeAdded(markNodeAdded(INITIAL_DIRTY, 'a-1'), 'b-1')
     d = markNodeDeleted(d, ['a-1'])
     expect(d.l3).toBe(true)
     expect(d.l2NodeIds).toEqual(['a-1'])
     expect(d.l1NodeIds).not.toContain('b-1')
+  })
+
+  it('删除节点：L2 精确收窄到引用方（reverseDeps，不再全量剩余）', () => {
+    // 干净态：三节点均已算过（l2 为空）；删除 victim-1，仅 ref-1 引用它
+    const d = markNodeDeleted(markClean(INITIAL_DIRTY), ['ref-1', 'other-1'], ['ref-1'])
+    expect(d.l2NodeIds).toEqual(['ref-1'])
+    expect(d.l2NodeIds).not.toContain('other-1')
+    expect(d.l3).toBe(true)
   })
 
   it('边变更：L3 置位 + 端点进 L2（去重）', () => {

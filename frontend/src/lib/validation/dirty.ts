@@ -108,11 +108,24 @@ export function markNodeAdded(dirty: ValidationDirty, nodeId: string): Validatio
   })
 }
 
-/** 删除节点：结构变更（L3）；引用被清理、拓扑改变，剩余节点 L2 保守全量重算。 */
-export function markNodeDeleted(dirty: ValidationDirty, remainingNodeIds: string[]): ValidationDirty {
+/**
+ * 删除节点：结构变更（L3）；L2 只重算引用方（M4 批 3 ⑩ reverseDeps 精确收窄，
+ * 调用方传 referrersOf(被删节点) 的引用方 id——target 引用方被清空后需确认、模板引用方需出悬空诊断）。
+ * 不再全量重算剩余节点。
+ */
+export function markNodeDeleted(
+  dirty: ValidationDirty,
+  remainingNodeIds: string[],
+  referrerIds: string[] = [],
+): ValidationDirty {
+  const remaining = new Set(remainingNodeIds)
+  const l2NodeIds = referrerIds.filter((id) => remaining.has(id))
   return bump(dirty, {
-    l1NodeIds: dirty.l1NodeIds.filter((id) => remainingNodeIds.includes(id)),
-    l2NodeIds: [...remainingNodeIds],
+    l1NodeIds: dirty.l1NodeIds.filter((id) => remaining.has(id)),
+    l2NodeIds: unionIds(
+      dirty.l2NodeIds.filter((id) => remaining.has(id)),
+      l2NodeIds,
+    ),
     l3: true,
   })
 }
