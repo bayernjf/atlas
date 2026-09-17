@@ -26,6 +26,7 @@ import { WaitConfig } from './WaitConfig'
 import { SubgraphConfig } from './SubgraphConfig'
 import { HumanApprovalConfig } from './HumanApprovalConfig'
 import { ToolCallConfig } from './ToolCallConfig'
+import { NodeConfigForm } from '../../lib/forms/NodeConfigForm'
 
 export function PropertyPanel() {
   const nodes = useEditorStore((state) => state.nodes)
@@ -113,7 +114,16 @@ export function PropertyPanel() {
           />
         </Field>
 
-        {data.kind === 'trigger' && <TriggerConfig config={config} update={updateSelectedConfig} />}
+        {data.kind === 'trigger' && (
+          <NodeConfigForm
+            kind="trigger"
+            config={config}
+            update={updateSelectedConfig}
+            variablePaths={[]}
+            targetOptions={[]}
+            diagnostics={diagnostics}
+          />
+        )}
         {data.kind === 'ai_decision' && (
           <DecisionConfig
             config={config}
@@ -262,45 +272,6 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 type ConfigProps = {
   config: NodeConfig
   update: (patch: Partial<NodeConfig>) => void
-}
-
-function TriggerConfig({ config, update }: ConfigProps) {
-  return (
-    <>
-      <Field label="触发方式">
-        <Select
-          value={config.triggerType}
-          style={{ width: '100%' }}
-          onChange={(triggerType) => update({ triggerType })}
-          options={[
-            { value: 'manual', label: '手动触发' },
-            { value: 'schedule', label: '定时（Cron）' },
-            { value: 'webhook', label: 'Webhook' },
-          ]}
-        />
-      </Field>
-      {config.triggerType === 'schedule' && (
-        <Field label="Cron 表达式">
-          <Input
-            placeholder="0 9 * * *"
-            value={config.cron}
-            status={!config.cron?.trim() ? 'error' : undefined}
-            onChange={(event) => update({ cron: event.target.value })}
-          />
-        </Field>
-      )}
-      {config.triggerType === 'webhook' && (
-        <Field label="Webhook 路径">
-          <Input
-            placeholder="/hooks/approval"
-            value={config.webhookUrl}
-            status={!config.webhookUrl?.trim() ? 'error' : undefined}
-            onChange={(event) => update({ webhookUrl: event.target.value })}
-          />
-        </Field>
-      )}
-    </>
-  )
 }
 
 type VariableInsertProps = ConfigProps & {

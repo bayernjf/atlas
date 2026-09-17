@@ -35,7 +35,32 @@ export const humanApprovalUiSchema: UiSchema = {
   groups: [{ key: 'targets', fields: ['approvedTarget', 'rejectedTarget'], layout: 'row' }],
 }
 
+/**
+ * trigger（04 §5.1）：hiddenWhen 的首个真实消费者。triggerType 决定显隐——
+ * manual 无额外字段；schedule 显 cron；webhook 显 webhookUrl。必填由数据 schema
+ * oneOf 三分支（M1 已解释）+ L1 承接，manual 不误报。
+ */
+export const triggerUiSchema: UiSchema = {
+  labels: {
+    triggerType: '触发方式',
+    cron: 'Cron 表达式',
+    webhookUrl: 'Webhook 路径',
+  },
+  placeholders: {
+    cron: '0 9 * * *',
+    webhookUrl: '/hooks/approval',
+  },
+  optionLabels: {
+    triggerType: { manual: '手动触发', schedule: '定时（Cron）', webhook: 'Webhook' },
+  },
+  hiddenWhen: [
+    { field: 'triggerType', equals: 'schedule', show: ['cron'] },
+    { field: 'triggerType', equals: 'webhook', show: ['webhookUrl'] },
+  ],
+}
+
 /** 节点 kind → UISchema；未迁移节点缺省（FormRenderer 无 uiSchema 时退化为字段名直出）。 */
 export const NODE_UI_SCHEMAS: Partial<Record<NodeKind, UiSchema>> = {
+  trigger: triggerUiSchema,
   human_approval: humanApprovalUiSchema,
 }
