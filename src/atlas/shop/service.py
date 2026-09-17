@@ -21,6 +21,8 @@ class RefundOrder:
     amount: float
     status: str = PENDING
     history: list[str] = field(default_factory=list)
+    # M7 L2 乐观锁 CAS（19 §2.4）：资源带版本号，并发写失败方重读发现已终态则放弃
+    version: int = 0
 
 
 def seed_orders() -> dict[str, RefundOrder]:
@@ -68,6 +70,39 @@ class DemoShopService:
         order.status = HUMAN_REVIEW
         order.history.append(f"转人工审批：{note}")
         return {"order_id": order_id, "status": HUMAN_REVIEW}
+
+    def compare_and_set(
+        self,
+        order_id: str,
+        expected_version: int,
+        *,
+        status: str | None = None,
+        note: str = "",
+    ) -> dict:
+        """乐观锁 CAS（M7 19 §2.4 L2）：version 匹配才更新，冲突返回 current_version。
+
+        两 Bot 并发改同一订单时，失败方据返回的 current_version/status 重读、发现已
+        终态则放弃（金融写仍走 execute_refund 单一通道 + financial 权限，见 loader）。
+        """
+        order = self.get_order(order_id)
+        if order.version != expected_version:
+            return {
+                "order_id": order_id,
+                "conflict": True,
+                "current_version": order.version,
+                "status": order.status,
+            }
+        order.version += 1
+        if status is not None:
+            order.status = status
+        if note:
+            order.history.append(note)
+        return {
+            "order_id": order_id,
+            "conflict": False,
+            "version": order.version,
+            "status": order.status,
+        }
 
     def reset(self) -> None:
         """恢复种子数据（种子客户每家从初始状态体验）。"""

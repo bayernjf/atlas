@@ -788,6 +788,38 @@ def get_run(
     return run
 
 
+@app.get("/api/tasks")
+def list_tasks(
+    state: str | None = None,
+    assignee: str | None = None,
+    limit: int = 50,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, list[dict[str, Any]]]:
+    """本租户任务信封列表（新→旧；state/assignee 可过滤）（M7，docs/20 §4.2 / 12 任务端点）。"""
+    if state is not None and state not in {
+        "pending", "accepted", "running", "done", "failed", "timeout",
+    }:
+        raise HTTPException(status_code=422, detail="非法的 state 过滤值")
+    if not 1 <= limit <= 200:
+        raise HTTPException(status_code=422, detail="limit 必须在 1 到 200 之间")
+    tasks = services_for(principal).task_store.list(state=state)
+    if assignee:
+        tasks = [task for task in tasks if task.assignee == assignee]
+    return {"items": [task.model_dump() for task in tasks[:limit]]}
+
+
+@app.get("/api/tasks/{task_id}")
+def get_task(
+    task_id: str,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """单任务信封详情；跨租户或不存在 → 404（M7）。"""
+    task = services_for(principal).task_store.get(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return task.model_dump()
+
+
 class ApprovalDecisionRequest(BaseModel):
     decision: Literal["approved", "rejected"]
     comment: str = Field(default="", max_length=500)

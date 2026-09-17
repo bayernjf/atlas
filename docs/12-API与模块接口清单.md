@@ -417,6 +417,8 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 
 | GET | /api/runs | 挂起/运行查询（**M5 契约设计轮 2026-09-17 登记，docs/24 §4，2026-09-17 已随 M5b 落码生效**）：`?status=suspended&graph_id=&limit=`（新→旧，status 缺省=全部），返回 `{items:[{runId, graphId, status, startedAt, suspendedAt, kind?, nodeId?, deadlineAt?}]}`，`kind=approval` 附 `resumeToken`（审批决策本就凭 token 无身份绑定，沿用现状口径）；仅本租户 | runs |
 | GET | /api/runs/{run_id} | 单运行详情（同上 M5b 已落码生效）：状态（running/suspended/completed/failed/interrupted）、节点产出摘要、trace、挂起信息 `{runId, graphId, status, outputs, trace, suspension?}`；跨租户/不存在 404（04 §5.14 全分区口径，不泄漏存在性）；**不新增写端点**——审批决策仍 `POST /api/approvals/{token}/decision`、调试恢复仍 `POST /api/debug/{token}/resume`，本端点只承担查询与 SSE 断线重连后的状态确认（执行线程与 SSE 连接解耦，断开不取消执行） | runs |
+| GET | /api/tasks | 任务信封查询（**M7 立项 2026-09-17 登记，08 M7 立项条，同日三批落码生效**）：`?state=&assignee=&limit=`（新→旧），返回 `{items:[{taskId, runId, type, assignee, state, deadlineMs, attempt, result?}]}`；仅本租户 | task_envelope |
+| GET | /api/tasks/{task_id} | 单任务详情（同上 M7 已落码生效）：`{taskId, runId, idempotencyKey, type, assignee, payload, deadlineMs, state, result, attempt}`；跨租户/不存在 404；**人工升级不新增写端点**——升级复用 `POST /api/approvals/{token}/decision`（升级帧进 human_approval） | task_envelope |
 
 > condition 节点（Phase 2 首版）运行结果写入 `outputs[condition_id] = {branch, target, evaluation:[{label,expression,result}], expression_errors:[string]}`（默认分支 `branch="__default__"`）；执行轨迹 messages 增一行 `condition-x: branch=… → target`。短路求值与 fail-safe 语义见 04 §5.2、06 §6.1。
 >

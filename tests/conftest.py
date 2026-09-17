@@ -19,6 +19,7 @@ def _default_t1_admin_session():
     from tests.test_api_demo import client as demo_client
     from tests.test_api_graphs import client as graphs_client
     from tests.test_api_runs import client as runs_client
+    from tests.test_api_tasks import client as tasks_client
 
     from atlas.iam.deps import session_store
     from atlas.iam.principals import authenticate
@@ -30,6 +31,7 @@ def _default_t1_admin_session():
     demo_client.headers["Authorization"] = header
     graphs_client.headers["Authorization"] = header
     runs_client.headers["Authorization"] = header
+    tasks_client.headers["Authorization"] = header
     DEFAULT_AUTH_HEADER["Authorization"] = header
     try:
         yield
@@ -37,5 +39,6 @@ def _default_t1_admin_session():
         demo_client.headers.pop("authorization", None)
         graphs_client.headers.pop("authorization", None)
         runs_client.headers.pop("authorization", None)
+        tasks_client.headers.pop("authorization", None)
         DEFAULT_AUTH_HEADER.pop("Authorization", None)
         session_store.revoke(token)
