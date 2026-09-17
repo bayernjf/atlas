@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping build Atlas. This is an AI 运营体（Agent）编排平台 —— Python 引擎 + Go Harness 网关（Demo 阶段暂用 FastAPI 接口）+ React 前端。**W1-W10 Demo 已全部完成**（2026-09-13，电商退款端到端跑通）；当前进入 Phase 1 种子客户验证阶段，后续任务见 [handoff.md](handoff.md) 与 [docs/14-缓做事项登记表.md](docs/14-缓做事项登记表.md)。
+Thanks for helping build Atlas. This is an AI 运营体（Agent）编排平台 —— Python 引擎 + Go Harness 网关（Demo 阶段暂用 FastAPI 接口）+ React 前端。**题述工程化路线（docs/19/20，M1–M10）推进中，M1–M7 已落码**（题一 Schema 内核 M1–M4、题二 M5 持久化+中断恢复 / M6 版本化 / M7 任务总线）；W1-W10 Demo（2026-09-13）为基线。当前状态与待办见 [handoff.md](handoff.md)，缓做事项见 [docs/14-缓做事项登记表.md](docs/14-缓做事项登记表.md)，排期见 [docs/08](docs/08-任务迭代计划.md)。
 
 ## Prerequisites
 

@@ -12,7 +12,12 @@ Atlas 是一个 **AI 运营体（Agent）编排平台**：以 **Harness / Graph 
 
 ## 当前阶段
 
-**W1-W10 Demo 已全部完成**（2026-09-13）。电商退款端到端链路跑通（08 §7.3 七条验收全达成）：webhook 退款单 → AI 决策（LiteLLM；未配置 `LITELLM_MODEL` 时规则兜底，对齐 06 §9.2 黄金用例）→ shop 适配器执行退款或转人工，SSE 节点事件实时上屏，自然语言可生成退款流程草稿。设计文档以 `docs/` 为唯一事实源（00-18 共 19 份）。下一步进入 Phase 1 种子客户验证（计划见 [docs/18](docs/18-种子客户验证计划.md)，客户向操作指南见 [TRIAL.md](TRIAL.md)，进度见 [handoff.md](handoff.md)）。
+**题述工程化落地路线（docs/19/20，M1–M10）推进中，M1–M7 已落码**：
+
+- **题一（Schema 驱动配置内核）M1–M4 全部闭合**：M1 节点 Data Schema 提取（零 UI 变化）、M2 L1 字段校验扶正 + 结构化诊断（nodeId/RFC6901 pointer/token range）、M3 WidgetRegistry + FormRenderer 工具 params 表单化首期、M4 UISchema 条件显示/增量调度/Problems 面板/reverseDeps/quickFix。
+- **题二（多智能体端到端）M5–M7 已落码**：M5 持久化 + 中断恢复（M5a 进程内 Repository 重构、M5b PG 实现 + 中断帧落库 + 恢复扫描器 + run 状态 + `GET /api/runs`）、M6 Graph 版本化（不可变 releaseVersion + subgraph 钉版）、M7 多 Bot 任务总线（任务信封状态机 + 幂等/CAS + 退货退款协同沙盘 + `GET /api/tasks`）。
+- **W1-W10 Demo（2026-09-13）为基线**：电商退款端到端链路（webhook 退款单 → AI 决策 → shop 适配器执行退款或转人工，SSE 实时上屏，NL 生成草稿）；规则兜底离线可跑，配置 `LITELLM_MODEL` 即用真实 LLM。
+- **下一步**：M8（交互卡片）/ M9（灰度回滚）/ M10（span 追踪）。设计文档以 `docs/` 为唯一事实源（00-24 共 25 份）；当前状态与待办见 [handoff.md](handoff.md)，排期见 [docs/08](docs/08-任务迭代计划.md)，种子客户计划见 [docs/18](docs/18-种子客户验证计划.md)。
 
 ### 本地运行 Demo
 
@@ -56,6 +61,10 @@ Python 3.11+（引擎）/ Go（Harness 网关产品化目标，Demo 暂用 FastA
 > T1-T5 已于 2026-09-13 收口，见 [10 技术选型决策记录 §3](docs/10-技术选型决策记录.md)。
 
 ## 路线图
+
+**题述工程化路线（当前主线）**：题一 Schema 内核 M1–M4 → 题二多智能体 M5（持久化+中断恢复）→ M6（版本化）→ M7（任务总线）→ M8（交互卡片）→ M9（灰度回滚）→ M10（span 追踪）。拆解、前置门与验收见 [docs/20](docs/20-题述方案工程化落地路线.md)，逐里程碑立项/落码条见 [docs/08](docs/08-任务迭代计划.md)。
+
+**原始阶段路线（背景参考）**：
 
 - **Phase 1** 最小可行引擎（2 个月）：固定操作 Graph + 基础 Harness + 单步决策 Loop，跑通一条审批流程。
 - **Phase 2** 动态反馈与 DIY（3 个月）：异常处理 Loop、反思模块、可视化 Graph 编辑器，自然语言定义流程。
