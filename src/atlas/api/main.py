@@ -103,22 +103,32 @@ def _resume_from_frame(engine, frame: dict) -> None:
 
 
 def _resume_run(engine, services: TenantServices, frame: dict) -> None:
-    """续跑线程：从挂起节点沿边到 END，完成后清帧（决策送达 / wait 到点 / 再次超时均覆盖）。"""
+    """续跑线程：从挂起节点沿边到 END，完成后清帧并落 run 终态（决策 / wait 到点 / 再超时均覆盖）。"""
+    run_id = frame.get("run_id", "")
     try:
         resume_graph = GraphDSL.model_validate(frame["graph_snapshot"])
-        run_graph(
+        result = run_graph(
             resume_graph,
             inputs=frame["resume_state"].get("inputs", {}),
             registry=_runtime_registry(services),
             approval_broker=services.approval_broker,
             graph_id=frame["resume_state"].get("graph_id", ""),
             graph_resolver=_tenant_graph_resolver(services),
-            frame_sink=make_frame_sink(engine, frame["tenant_id"], frame.get("run_id", "")),
+            frame_sink=make_frame_sink(engine, frame["tenant_id"], run_id),
             resume=frame,
         )
+        if run_id:
+            services.run_store.finish(
+                run_id=run_id, status="completed",
+                outputs=result["outputs"], trace=result["trace"],
+            )
         clear_frame(engine, frame["resume_token"])
     except Exception as exc:
         logger.error("续跑 %s 失败：%s", frame.get("resume_token"), exc)
+        if run_id:
+            services.run_store.finish(
+                run_id=run_id, status="failed", error=f"{type(exc).__name__}: {exc}"
+            )
 
 
 def _frame_sink_for(tenant_id: str, run_store, run_id: str):
