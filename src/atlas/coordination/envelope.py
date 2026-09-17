@@ -43,6 +43,7 @@ class Envelope(BaseModel):
     assignee: str
     payload: dict[str, Any] = Field(default_factory=dict)
     deadlineMs: int
+    parentSpanId: str = ""  # M10：发起 dispatch 的 task_dispatch span id（可空，向后兼容）
     state: TaskState = "pending"
     result: dict[str, Any] = Field(default_factory=dict)
     attempt: int = 1

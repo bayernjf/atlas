@@ -65,6 +65,10 @@ EventCallback = Callable[[dict[str, Any]], None]
 # 编译期注入的汇聚网关节点名前缀（04 §5.4）；该节点事件不下发。
 JOIN_GATE_PREFIX = "__join__"
 
+# M10：run_graph 的 tracer 哨兵——未显式传 tracer 时自建；显式传 None 表示不埋点
+# （debug 单步会话口径，04 §5.13/§5.15：SSE 帧保持无 span 字段的旧形状）。
+_AUTO_TRACER = object()
+
 # 进程内审批信号单例（04 §5.6）；API/测试可注入自己的实例。
 _default_approval_broker = ApprovalBroker()
 
@@ -1223,7 +1227,7 @@ def run_graph(
     debug_controller: Any = None,
     frame_sink: Callable[[dict], None] | None = None,
     resume: dict | None = None,
-    tracer: Tracer | None = None,
+    tracer: Tracer | None | object = _AUTO_TRACER,
     graph_version: str | None = None,
     _parent_span: Span | None = None,
 ) -> dict[str, Any]:
@@ -1243,20 +1247,33 @@ def run_graph(
     _parent_span=subgraph span（子图节点 internal）。顶层 result 带 traceId/traceTree，
     run_end 帧带 root spanId 与 graphVersion（04 §5.15）。
     """
-    if tracer is None:
+    if tracer is _AUTO_TRACER:
         tracer = Tracer(graph_id=graph_id, graph_version=graph_version)
     internal_run = _parent_span is not None
 
     def _finish(result: dict[str, Any], *, emit_end: bool) -> dict[str, Any]:
-        """收尾：结束 root（仅顶层）、result 挂 traceId/traceTree、发 run_end 超集帧。"""
+        """收尾：结束 root（仅顶层）、result 挂 traceId/traceTree、发 run_end 超集帧。
+
+        tracer 显式为 None（debug 单步）时不埋点：result 不挂 trace 字段、
+        run_end 保持旧形状（无 span 三元组）。
+        """
+        if tracer is None:
+            if emit_end and emit is not None:
+                emit({"type": "run_end", **result})
+            return result
         result["traceId"] = tracer.trace_id
         if not internal_run:
             tracer.finish("ok" if result.get("status") == "completed" else "error")
             result["traceTree"] = tracer.to_tree(include_internal=True)
         if emit_end and emit is not None:
+            # 终帧只带 span 三元组与 graphVersion；完整 traceTree 留在进程内返回值，
+            # 不进 SSE（04 §5.15：完整树由 tracer.to_tree 导出/未来调试端点）。
             run_end: dict[str, Any] = {
                 "type": "run_end",
-                **result,
+                "status": result.get("status", "completed"),
+                "outputs": result.get("outputs", {}),
+                "trace": result.get("trace", []),
+                "traceId": tracer.trace_id,
                 "spanId": tracer.root.span_id,
             }
             if tracer.graph_version is not None:

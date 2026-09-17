@@ -31,6 +31,7 @@ from atlas.debug import DebugController, DebugStopped
 from atlas.graph.conditions import validate_expression
 from atlas.graph.dsl import GraphDSL, GraphValidationError, parse_graph
 from atlas.graph.loader import compile_graph, run_graph, tool_input_schemas
+from atlas.tracing import Tracer
 from atlas.harness.base import Permission
 from atlas.harness.registry import AdapterRegistry
 from atlas.httpapi.adapter import HttpApiHarnessAdapter
@@ -541,6 +542,14 @@ def _load_graph_or_404(
     return parse_graph(raw)
 
 
+def _graph_version(graph_id: str, release_version: int | None) -> str:
+    """M10 graphVersion 标注（与 M6 钉版形态一致，SUBSCRIPT_KEY='@'）：
+    发布版 `graphId@<releaseVersion>`（int），草稿/未发布 `graphId@draft`。"""
+    if release_version is not None:
+        return f"{graph_id}@{release_version}"
+    return f"{graph_id}@draft"
+
+
 def _validate_debug(graph, debug: Any) -> list[dict[str, Any]]:
     """校验 /run/stream 的 debug.breakpoints，返回规范化列表；错误聚合成中文 422。"""
     if not isinstance(debug, dict):
@@ -581,7 +590,8 @@ def run_saved_graph(
     principal: Principal = Depends(require("operate")),
 ) -> RunGraphResponse:
     services = services_for(principal)
-    graph = _load_graph_or_404(services, graph_id, (payload or {}).get("releaseVersion"))
+    release_version = (payload or {}).get("releaseVersion")
+    graph = _load_graph_or_404(services, graph_id, release_version)
     if (payload or {}).get("debug") is not None:
         raise HTTPException(status_code=422, detail="单步调试仅支持流式运行 /run/stream")
     graph_view = {"nodes": [{"id": node.id, "type": node.type} for node in graph.nodes]}
@@ -589,6 +599,9 @@ def run_saved_graph(
     started = time.monotonic()
     monitoring = services.monitoring
     run_id = uuid.uuid4().hex
+    tracer = Tracer(
+        graph_id=graph_id, graph_version=_graph_version(graph_id, release_version)
+    )
     services.run_store.begin(run_id=run_id, graph_id=graph_id, mode="sync")
     frame_sink = _frame_sink_for(principal.tenant_id, services.run_store, run_id)
     try:
@@ -600,6 +613,8 @@ def run_saved_graph(
             graph_id=graph_id,
             graph_resolver=_tenant_graph_resolver(services),
             frame_sink=frame_sink,
+            tracer=tracer,
+            graph_version=tracer.graph_version,
         )
     except Exception as exc:
         services.run_store.finish(
@@ -613,6 +628,7 @@ def run_saved_graph(
             duration_ms=(time.monotonic() - started) * 1000,
             nodes=[],
             error=f"{type(exc).__name__}: {exc}",
+            trace_id=tracer.trace_id,
         )
         raise
     services.run_store.finish(
@@ -626,6 +642,7 @@ def run_saved_graph(
         started_at=started_at,
         duration_ms=(time.monotonic() - started) * 1000,
         nodes=extract_node_results(graph_view, result["outputs"]),
+        trace_id=tracer.trace_id,
     )
     return RunGraphResponse(id=graph_id, **result)
 
@@ -660,6 +677,14 @@ def run_saved_graph_stream(
     run_store = services.run_store
     run_id = uuid.uuid4().hex
     frame_sink = _frame_sink_for(principal.tenant_id, run_store, run_id)
+    # M10：真实运行（非 debug）建 tracer 并显式透传 worker（06 §6.12 后台线程不靠全局）；
+    # debug 单步会话显式传 None 不埋点（04 §5.13/§5.15，SSE 帧保持旧形状）。
+    release_version = (payload or {}).get("releaseVersion")
+    tracer: Tracer | None = (
+        Tracer(graph_id=graph_id, graph_version=_graph_version(graph_id, release_version))
+        if debug is None
+        else None
+    )
 
     def event_stream():
         events: queue.Queue[dict[str, Any] | None] = queue.Queue()
@@ -695,6 +720,8 @@ def run_saved_graph_stream(
                     graph_resolver=graph_resolver,
                     debug_controller=debug_controller,
                     frame_sink=frame_sink,
+                    tracer=tracer,
+                    graph_version=tracer.graph_version if tracer is not None else None,
                 )
                 if monitored:
                     run_store.finish(
@@ -708,6 +735,7 @@ def run_saved_graph_stream(
                         started_at=started_at,
                         duration_ms=(time.monotonic() - started) * 1000,
                         nodes=extract_node_results(graph_view, result["outputs"]),
+                        trace_id=tracer.trace_id if tracer is not None else "",
                     )
                 events.put({"__result__": result})
             except DebugStopped as exc:
@@ -726,6 +754,7 @@ def run_saved_graph_stream(
                         duration_ms=(time.monotonic() - started) * 1000,
                         nodes=extract_node_results(graph_view, collected),
                         error=f"{type(exc).__name__}: {exc}",
+                        trace_id=tracer.trace_id if tracer is not None else "",
                     )
                 events.put({"__error__": f"{type(exc).__name__}: {exc}"})
 
@@ -736,9 +765,20 @@ def run_saved_graph_stream(
             if event is None:
                 continue
             if "__result__" in event:
+                # M10：终帧为 run_end 超集（traceId/spanId/graphVersion）；完整 traceTree
+                # 只留在进程内返回值，不进 SSE（04 §5.15）。
+                result_payload = {
+                    key: value
+                    for key, value in event["__result__"].items()
+                    if key != "traceTree"
+                }
+                if tracer is not None:
+                    result_payload.setdefault("spanId", tracer.root.span_id)
+                    if tracer.graph_version is not None:
+                        result_payload.setdefault("graphVersion", tracer.graph_version)
                 yield (
                     f"event: result\ndata: "
-                    f"{json.dumps({'id': graph_id, **event['__result__']}, ensure_ascii=False)}\n\n"
+                    f"{json.dumps({'id': graph_id, **result_payload}, ensure_ascii=False)}\n\n"
                 )
                 break
             if "__stopped__" in event:

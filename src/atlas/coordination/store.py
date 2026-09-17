@@ -33,6 +33,7 @@ class TaskStore:
         assignee: str,
         payload: dict[str, Any],
         deadline_ms: int,
+        parent_span_id: str = "",
     ) -> tuple[Envelope, bool]:
         """创建 pending 信封；幂等键命中返首结果（created=False，不重复执行）。"""
         with self._lock:
@@ -50,6 +51,7 @@ class TaskStore:
                 assignee=assignee,
                 payload=payload,
                 deadlineMs=deadline_ms,
+                parentSpanId=parent_span_id,
             )
             self._tasks[task_id] = envelope
             self._by_key[idempotency_key] = task_id

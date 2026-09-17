@@ -170,6 +170,18 @@ def test_run_end_omits_graph_version_when_unversioned():
     assert "graphVersion" not in run_end
 
 
+def test_explicit_none_tracer_disables_instrumentation():
+    """debug 单步路径显式传 tracer=None：不建 span，SSE 帧保持无 span 字段旧形状。"""
+    events: list[dict] = []
+    result = run_graph(_simple_graph(), tracer=None, emit=events.append)
+    assert "traceId" not in result
+    assert "traceTree" not in result
+    for event in events:
+        assert "traceId" not in event
+        assert "spanId" not in event
+        assert "parentSpanId" not in event
+
+
 def test_failed_tool_marks_tool_and_node_spans_error():
     # web-playwright 适配器未在 demo registry 注册 → 工具 FAILED
     result = run_graph(_simple_graph(tool="web-playwright/click"))
