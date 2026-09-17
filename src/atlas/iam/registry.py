@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import os
 import threading
 from dataclasses import dataclass
 
@@ -28,6 +29,12 @@ from atlas.storage.memory import (
 )
 
 
+# M5b 后端切换（docs/24 §1.2②）：ATLAS_STORAGE_BACKEND=pg 装配 PG 实现，
+# 缺省 memory（进程内实现为默认/测试后端）。SessionStore 是全局单例（iam/deps.py），
+# 不在 TenantServices，其后端切换不在此处。
+STORAGE_BACKEND = os.environ.get("ATLAS_STORAGE_BACKEND", "memory")
+
+
 @dataclass
 class TenantServices:
     graph_store: GraphRepository
@@ -48,14 +55,29 @@ class TenantRegistry:
         with self._lock:
             services = self._tenants.get(tenant_id)
             if services is None:
-                services = self._create_services()
+                services = self._create_services(tenant_id)
                 self._tenants[tenant_id] = services
             return services
 
     @staticmethod
-    def _create_services() -> TenantServices:
-        # 八个进程内 store 统一自 storage.memory 构造（M5a：GraphStore/FeedbackStore
+    def _create_services(tenant_id: str) -> TenantServices:
+        # M5a：八个进程内 store 统一自 storage.memory 构造（GraphStore/FeedbackStore
         # 已自 api/main.py 搬出，延迟导入环随之消除，顶层导入安全）。
+        # M5b：ATLAS_STORAGE_BACKEND=pg 时，租户 store 换 PG 实现（per-tenant 绑定）；
+        # debug 会话是短命临时态、其帧落库不在 U43–U45 验收，批 1 保持内存实现。
+        if STORAGE_BACKEND == "pg":
+            from atlas.storage.pg import get_pg_backend
+
+            backend = get_pg_backend()
+            return TenantServices(
+                graph_store=backend.graph_store(tenant_id),
+                recording_store=backend.recording_store(tenant_id),
+                feedback_store=backend.feedback_store(tenant_id),
+                message_service=MessageService(),
+                approval_broker=backend.approval_broker(tenant_id),
+                debug_broker=DebuggerBroker(),
+                monitoring=backend.monitoring_store(tenant_id),
+            )
         return TenantServices(
             graph_store=GraphStore(),
             recording_store=RecordingStore(),
