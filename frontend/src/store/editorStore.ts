@@ -26,6 +26,7 @@ import {
   type ValidationDirty,
 } from '../lib/validation/dirty'
 import { buildReverseIndex, removeDanglingRef } from '../lib/validation/reverseDeps'
+import type { DiagnosticToken } from '../lib/validation/diagnostics'
 
 export type EditorNode = Node<EditorNodeData>
 export type { NodeKind }
@@ -50,6 +51,10 @@ type EditorState = {
   selectNode: (nodeId: string | null) => void
   updateSelectedNode: (patch: Partial<EditorNodeData>) => void
   updateSelectedConfig: (patch: Partial<NodeConfig>) => void
+  /** 通用节点 config 更新（不限选中态；quickFix 与属性面板共用）。 */
+  updateNodeConfig: (nodeId: string, patch: Partial<NodeConfig>) => void
+  /** M4 批 3 ⑪ quickFix v1：删除悬空引用（L2 REF_NODE_NOT_FOUND 的唯一动作）。 */
+  applyQuickFix: (nodeId: string, pointer: string, token?: DiagnosticToken) => void
   deleteSelectedNode: () => void
   addVariable: (variable: GraphVariable) => void
   removeVariable: (name: string) => void
@@ -182,21 +187,50 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   updateSelectedConfig: (patch) => {
     const selectedId = get().selectedNodeId
     if (!selectedId) return
+    get().updateNodeConfig(selectedId, patch)
+  },
+
+  updateNodeConfig: (nodeId, patch) =>
     set((state) => {
-      const target = state.nodes.find((node) => node.id === selectedId)
+      const target = state.nodes.find((node) => node.id === nodeId)
+      if (!target) return {}
       return {
         nodes: state.nodes.map((node) =>
-          node.id === selectedId
+          node.id === nodeId
             ? { ...node, data: { ...node.data, config: { ...node.data.config, ...patch } } }
             : node,
         ),
-        dirty: markConfigEdit(state.dirty, selectedId, patch as Record<string, unknown>, {
-          kind: target?.data.kind,
+        dirty: markConfigEdit(state.dirty, nodeId, patch as Record<string, unknown>, {
+          kind: target.data.kind,
           allNodeIds: state.nodes.map((node) => node.id),
         }),
       }
-    })
-  },
+    }),
+
+  applyQuickFix: (nodeId, pointer, token) =>
+    set((state) => {
+      const node = state.nodes.find((item) => item.id === nodeId)
+      if (!node) return {}
+      const patch = removeDanglingRef(
+        node.data.kind,
+        node.data.config as Record<string, unknown>,
+        pointer,
+        token,
+      )
+      if (!patch) return {}
+      return {
+        nodes: state.nodes.map((item) =>
+          item.id === nodeId
+            ? { ...item, data: { ...item.data, config: { ...item.data.config, ...patch } } }
+            : item,
+        ),
+        logs: [...state.logs, `删除悬空引用：${node.data.label || nodeId} ${pointer}`],
+        dirty: markConfigEdit(state.dirty, nodeId, patch, {
+          kind: node.data.kind,
+          allNodeIds: state.nodes.map((item) => item.id),
+        }),
+      }
+    }),
 
   deleteSelectedNode: () => {
     const selectedId = get().selectedNodeId

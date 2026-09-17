@@ -37,6 +37,7 @@ export function ProblemsPanel() {
   const { setCenter } = useReactFlow()
   const nodes = useEditorStore((state) => state.nodes)
   const selectNode = useEditorStore((state) => state.selectNode)
+  const applyQuickFix = useEditorStore((state) => state.applyQuickFix)
 
   const labelById = useMemo(() => {
     const map = new Map<string, string>()
@@ -103,6 +104,18 @@ export function ProblemsPanel() {
                     {!nodeId && <span className="problems-item-node">全图</span>}
                   </span>
                 </span>
+                {problem.quickFix && problem.quickFix.length > 0 && nodeId && problem.loc.pointer && (
+                  <button
+                    type="button"
+                    className="problems-fix-btn"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      applyQuickFix(nodeId, problem.loc.pointer as string, problem.loc.token)
+                    }}
+                  >
+                    {problem.quickFix[0].title}
+                  </button>
+                )}
               </li>
             )
           })}

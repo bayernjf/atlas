@@ -202,6 +202,35 @@ describe('editorStore addNodeAt / variables', () => {
     expect(updated.data.config.rejectedTarget).toBe('')
   })
 
+  it('applyQuickFix removes a dangling template ref token (M4 批 3 ⑪)', () => {
+    const text = '前置 {{ghost-1.result.x}} 后置'
+    const ai: EditorNode = {
+      id: 'ai-1',
+      position: { x: 0, y: 0 },
+      data: {
+        label: '决策',
+        kind: 'ai_decision',
+        status: 'idle',
+        config: { promptTemplate: text } as EditorNode['data']['config'],
+        retry: defaultRetry(),
+      },
+    }
+    useEditorStore.setState({
+      nodes: [ai],
+      edges: [],
+      variables: [],
+      selectedNodeId: null,
+      logs: [],
+    })
+    const start = text.indexOf('{{ghost-1.result.x}}')
+    useEditorStore.getState().applyQuickFix('ai-1', '/promptTemplate', {
+      start,
+      end: start + '{{ghost-1.result.x}}'.length,
+      raw: '{{ghost-1.result.x}}',
+    })
+    expect(useEditorStore.getState().nodes[0].data.config.promptTemplate).toBe('前置  后置')
+  })
+
   it('deleting a node keeps template refs but narrows L2 to referrers (M4 批 3 ⑩)', () => {
     const ai: EditorNode = {
       id: 'ai-1',

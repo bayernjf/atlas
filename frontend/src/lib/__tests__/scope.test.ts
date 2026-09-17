@@ -200,6 +200,18 @@ describe('L2 引用诊断三码', () => {
     expect(d[0].code).toBe('REF_NODE_NOT_FOUND')
   })
 
+  it('REF_NODE_NOT_FOUND：挂「删除悬空引用」quickFix（M4 批 3 ⑪）', () => {
+    const ghost = validate('{{ghost-1.result.x}}')[0]
+    expect(ghost.quickFix).toEqual([{ id: 'delete-dangling-ref', title: '删除悬空引用' }])
+    const globalRef = validate('{{global.unknown}}')[0]
+    expect(globalRef.quickFix).toEqual([{ id: 'delete-dangling-ref', title: '删除悬空引用' }])
+  })
+
+  it('REF_NOT_IN_SCOPE / REF_PATH_NOT_FOUND：不挂 quickFix', () => {
+    expect(validate('{{ai-1.decision}}')[0].quickFix).toBeUndefined()
+    expect(validate('{{trigger-1.wrong.payload}}')[0].quickFix).toBeUndefined()
+  })
+
   it('REF_NOT_IN_SCOPE：自身与下游不可引用', () => {
     expect(validate('{{ai-1.decision}}').map((d) => d.code)).toEqual(['REF_NOT_IN_SCOPE'])
   })
