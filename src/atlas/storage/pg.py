@@ -16,12 +16,11 @@ from __future__ import annotations
 import json
 import threading
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from sqlalchemy import Engine, text
 
-from atlas.collaboration.approvals import Decision
 from atlas.iam.principals import Principal, Role
 from atlas.monitoring.alerts import Alert, RuleConfig, rules_from_raw, validate_rules
 from atlas.monitoring.records import RunRecord
@@ -58,9 +57,6 @@ class PgBackend:
 
     def monitoring_store(self, tenant_id: str) -> "PgMonitoringStore":
         return PgMonitoringStore(self._engine, tenant_id)
-
-    def approval_broker(self, tenant_id: str) -> "PgApprovalBroker":
-        return PgApprovalBroker(self._engine, tenant_id)
 
 
 _pg_backend: PgBackend | None = None
@@ -681,154 +677,5 @@ class PgMonitoringStore:
             )
             conn.execute(
                 text("DELETE FROM monitoring_rules WHERE tenant_id = :tenant_id"),
-                {"tenant_id": self._tenant_id},
-            )
-
-
-class PgApprovalBroker:
-    """审批挂起 PG 实现（批 1：帧落 `interruptions` 表 + 内存 Event，单进程阻塞语义不变）。
-
-    跨进程恢复（重启后读帧重建 Event + 1s 轮询）在批 2 `recovery.py` 实现。
-    """
-
-    def __init__(self, engine: Engine, tenant_id: str):
-        self._engine = engine
-        self._tenant_id = tenant_id
-        self._lock = threading.Lock()
-        self._pending: dict[str, dict[str, Any]] = {}
-        self._events: dict[str, threading.Event] = {}
-
-    def _write_frame(self, token: str, payload: dict[str, Any]) -> None:
-        with self._engine.begin() as conn:
-            conn.execute(
-                text(
-                    "INSERT INTO interruptions "
-                    "(resume_token, tenant_id, run_id, node_id, kind, payload, deadline_at, created_at) "
-                    "VALUES (:token, :tenant_id, :run_id, :node_id, 'approval', :payload, "
-                    ":deadline_at, :created_at)"
-                ),
-                {
-                    "token": token,
-                    "tenant_id": self._tenant_id,
-                    "run_id": payload.get("run_id", ""),
-                    "node_id": payload.get("node_id", ""),
-                    "payload": json.dumps(payload, ensure_ascii=False),
-                    "deadline_at": payload.get("deadline_at"),
-                    "created_at": _now_iso(),
-                },
-            )
-
-    def request(
-        self,
-        *,
-        node_id: str,
-        graph_id: str,
-        summary: str,
-        approver: str,
-        timeout_seconds: int,
-    ) -> str:
-        token = uuid.uuid4().hex
-        deadline_at = datetime.now(timezone.utc) + timedelta(seconds=timeout_seconds)
-        with self._lock:
-            self._pending[token] = {
-                "node_id": node_id,
-                "graph_id": graph_id,
-                "summary": summary,
-                "approver": approver,
-                "timeout_seconds": timeout_seconds,
-                "decision": None,
-                "resolved_by": None,
-            }
-            self._events[token] = threading.Event()
-            self._write_frame(
-                token,
-                {
-                    "run_id": "",
-                    "node_id": node_id,
-                    "graph_id": graph_id,
-                    "summary": summary,
-                    "approver": approver,
-                    "timeout_seconds": timeout_seconds,
-                    "deadline_at": deadline_at.isoformat(),
-                },
-            )
-        return token
-
-    def wait(self, token: str) -> Decision | None:
-        with self._lock:
-            pending = self._pending.get(token)
-            event = self._events.get(token)
-        if pending is None or event is None:
-            return None
-        event.wait(pending["timeout_seconds"])
-        return pending["decision"]
-
-    def resolve(
-        self, token: str, decision: Decision, *, resolved_by: str = "human", comment: str = ""
-    ) -> bool:
-        with self._lock:
-            pending = self._pending.get(token)
-            if pending is None or pending["decision"] is not None:
-                return False
-            pending["decision"] = decision
-            pending["resolved_by"] = resolved_by
-            self._events[token].set()
-            self._clear_frame(token)
-        return True
-
-    def complete_timeout(self, token: str, decision: Decision) -> tuple[Decision, str] | None:
-        with self._lock:
-            pending = self._pending.get(token)
-            if pending is None:
-                return None
-            if pending["decision"] is None:
-                pending["decision"] = decision
-                pending["resolved_by"] = "timeout"
-                self._events[token].set()
-                self._clear_frame(token)
-            return pending["decision"], pending["resolved_by"] or "timeout"
-
-    def _clear_frame(self, token: str) -> None:
-        with self._engine.begin() as conn:
-            conn.execute(
-                text(
-                    "DELETE FROM interruptions WHERE resume_token = :token AND tenant_id = :tenant_id"
-                ),
-                {"token": token, "tenant_id": self._tenant_id},
-            )
-
-    def get(self, token: str) -> dict | None:
-        with self._lock:
-            pending = self._pending.get(token)
-            if pending is None:
-                return None
-            return {
-                "token": token,
-                "node_id": pending["node_id"],
-                "graph_id": pending["graph_id"],
-                "summary": pending["summary"],
-                "approver": pending["approver"],
-                "timeoutSeconds": pending["timeout_seconds"],
-                "decision": pending["decision"],
-                "resolvedBy": pending["resolved_by"],
-            }
-
-    def list_pending(self) -> list[dict]:
-        with self._lock:
-            tokens = [t for t, p in self._pending.items() if p["decision"] is None]
-            return [self.get(t) for t in tokens]
-
-    def reset(self) -> None:
-        with self._lock:
-            for token, pending in self._pending.items():
-                if pending["decision"] is None:
-                    pending["decision"] = "rejected"
-                    pending["resolved_by"] = "timeout"
-                    self._events[token].set()
-            self._pending.clear()
-            self._events.clear()
-        with self._engine.begin() as conn:
-            conn.execute(
-                text("DELETE FROM interruptions WHERE tenant_id = :tenant_id"),
                 {"tenant_id": self._tenant_id},
             )

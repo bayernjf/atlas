@@ -154,31 +154,3 @@ def test_monitoring_roundtrip(backend):
     store.reset()
     assert store.list_runs() == []
     assert store.get_rules().node_failed.enabled
-
-
-def test_approval_frame_persisted(backend):
-    broker = backend.approval_broker(TENANT)
-    token = broker.request(
-        node_id="human-1", graph_id="graph-1", summary="审批", approver="主管",
-        timeout_seconds=30,
-    )
-    assert token
-    # 帧已落 interruptions 表（批 1：落表；跨进程恢复在批 2）
-    engine = broker._engine
-    with engine.connect() as conn:
-        row = conn.execute(
-            text("SELECT kind, node_id, payload FROM interruptions WHERE resume_token = :t"),
-            {"t": token},
-        ).first()
-    assert row is not None
-    assert row[0] == "approval"
-    assert row[1] == "human-1"
-    assert row[2]["summary"] == "审批"
-    # resolve 后帧清除、决策生效
-    assert broker.resolve(token, "approved") is True
-    with engine.connect() as conn:
-        remaining = conn.execute(
-            text("SELECT count(*) FROM interruptions WHERE resume_token = :t"), {"t": token},
-        ).scalar_one()
-    assert remaining == 0
-    broker.reset()

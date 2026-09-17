@@ -69,12 +69,14 @@ class TenantRegistry:
             from atlas.storage.pg import get_pg_backend
 
             backend = get_pg_backend()
+            # approval 的帧持久化在 loader frame_sink（批 2 写 interruptions 表），
+            # broker 只承担进程内 pending + Event（重启后由恢复扫描器 restore 重建）。
             return TenantServices(
                 graph_store=backend.graph_store(tenant_id),
                 recording_store=backend.recording_store(tenant_id),
                 feedback_store=backend.feedback_store(tenant_id),
                 message_service=MessageService(),
-                approval_broker=backend.approval_broker(tenant_id),
+                approval_broker=ApprovalBroker(),
                 debug_broker=DebuggerBroker(),
                 monitoring=backend.monitoring_store(tenant_id),
             )

@@ -19,6 +19,8 @@ import json
 import operator
 import re
 import time
+import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Callable, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -33,6 +35,7 @@ from atlas.llm.decision import get_decision_client
 from atlas.message.adapter import MessageHarnessAdapter
 from atlas.message.service import MessageService
 from atlas.shop.adapter import ShopHarnessAdapter
+from atlas.storage.frame import build_frame, deadline_iso, remaining_seconds
 from .conditions import ConditionEvalError, evaluate_expression
 from .dsl import (
     MAX_SUBGRAPH_DEPTH,
@@ -150,6 +153,9 @@ def _make_executor(
     graph_resolver: Callable[[str], GraphDSL] | None,
     subgraph_depth: int,
     debug_controller: Any = None,
+    frame_sink: Callable[[dict], None] | None = None,
+    resume: dict | None = None,
+    graph_snapshot: dict | None = None,
 ):
     def execute(state: GraphState) -> dict:
         context = {"global": state["variables"].get("global", {}), **state["outputs"]}
@@ -159,10 +165,19 @@ def _make_executor(
             "node_type": node.type,
         }
 
+        # 续跑时仅在挂起节点生效：用帧内原 token 继续等待（不重新登记审批）。
+        resume_here = resume is not None and node.id == resume["node_id"]
+
         approval_payload = None
         if node.type == "human_approval":
-            # 调试运行时审批登记推迟到暂停放行之后（04 §5.12：先暂停再进审批等待）。
-            if debug_controller is None:
+            if resume_here:
+                approval_payload = {
+                    "token": resume["resume_token"],
+                    "summary": resume.get("summary", ""),
+                    "approver": resume.get("approver", ""),
+                    "timeoutSeconds": 0,
+                }
+            elif debug_controller is None:
                 approval_payload = _register_approval(
                     node,
                     context=context,
@@ -171,11 +186,24 @@ def _make_executor(
                     graph_id=graph_id,
                 )
                 start_event["approval"] = approval_payload
+                _emit_frame(
+                    frame_sink,
+                    node,
+                    state,
+                    token=approval_payload["token"],
+                    kind="approval",
+                    graph_id=graph_id,
+                    graph_snapshot=graph_snapshot,
+                    trigger_payload=trigger_payload,
+                    timeout_seconds=int(node.config["timeoutSeconds"]),
+                    summary=approval_payload["summary"],
+                    approver=approval_payload["approver"],
+                )
         emit(start_event)
 
         if debug_controller is not None:
             debug_controller.before_node(node, state)
-            if node.type == "human_approval":
+            if node.type == "human_approval" and not resume_here:
                 approval_payload = _register_approval(
                     node,
                     context=context,
@@ -185,6 +213,19 @@ def _make_executor(
                 )
                 # 第二个 node_start 携带 approval 载荷，前端据此打开审批 Modal。
                 emit({**start_event, "approval": approval_payload})
+                _emit_frame(
+                    frame_sink,
+                    node,
+                    state,
+                    token=approval_payload["token"],
+                    kind="approval",
+                    graph_id=graph_id,
+                    graph_snapshot=graph_snapshot,
+                    trigger_payload=trigger_payload,
+                    timeout_seconds=int(node.config["timeoutSeconds"]),
+                    summary=approval_payload["summary"],
+                    approver=approval_payload["approver"],
+                )
 
         if node.type == "trigger":
             output = {
@@ -231,7 +272,22 @@ def _make_executor(
             message = f"{node.id}: fork {len(targets)} branches → {', '.join(targets)}"
         elif node.type == "wait":
             seconds = int(node.config["durationSeconds"])
-            time.sleep(seconds)
+            if resume_here:
+                # 续跑：按剩余时长等待（绝对 deadline 照扣，docs/24 §3.1）。
+                seconds = int(remaining_seconds(resume.get("deadline_at")))
+            else:
+                _emit_frame(
+                    frame_sink,
+                    node,
+                    state,
+                    token=uuid.uuid4().hex,
+                    kind="wait",
+                    graph_id=graph_id,
+                    graph_snapshot=graph_snapshot,
+                    trigger_payload=trigger_payload,
+                    timeout_seconds=seconds,
+                )
+            time.sleep(max(seconds, 0))
             output = {"mode": "wait", "waitType": "duration", "durationSeconds": seconds}
             message = f"{node.id}: waited {seconds}s"
         elif node.type == "human_approval":
@@ -263,6 +319,45 @@ def _make_executor(
         }
 
     return execute
+
+
+def _emit_frame(
+    frame_sink: Callable[[dict], None] | None,
+    node: NodeDSL,
+    state: GraphState,
+    *,
+    token: str,
+    kind: str,
+    graph_id: str,
+    graph_snapshot: dict | None,
+    trigger_payload: dict[str, Any],
+    timeout_seconds: int,
+    summary: str = "",
+    approver: str = "",
+) -> None:
+    """挂起前经 frame_sink 序列化中断帧（含 graph_snapshot 与截至挂起点的 outputs）。
+
+    frame_sink 由 API 层注入（PG 后端写 interruptions 表）；进程内后端不注入时跳过。
+    """
+    if frame_sink is None or graph_snapshot is None:
+        return
+    frame_sink(
+        build_frame(
+            token=token,
+            run_id="",
+            node_id=node.id,
+            kind=kind,
+            deadline_at=deadline_iso(timeout_seconds),
+            graph_snapshot=graph_snapshot,
+            resume_state={
+                "graph_id": graph_id,
+                "inputs": trigger_payload,
+                "outputs": state["outputs"],
+            },
+            summary=summary,
+            approver=approver,
+        )
+    )
 
 
 def _register_approval(
@@ -770,6 +865,9 @@ def compile_graph(
     graph_resolver: Callable[[str], GraphDSL] | None = None,
     _subgraph_depth: int = 0,
     debug_controller: Any = None,
+    frame_sink: Callable[[dict], None] | None = None,
+    resume: dict | None = None,
+    validate_with: GraphDSL | None = None,
 ):
     decision_client = decision_client or get_decision_client()
     registry = registry if registry is not None else build_demo_registry()
@@ -777,12 +875,16 @@ def compile_graph(
     noop_emit: EventCallback = lambda event: None
     emit = emit or noop_emit
     payload = trigger_payload or {}
+    graph_snapshot = graph.model_dump()
+    # 续跑时校验用完整图（尾图节点仍引用上游已完成节点，其引用合法），
+    # 编译仍用裁剪后的尾图。
+    validation_graph = validate_with or graph
 
     tool_schemas = _tool_output_schemas(registry)
     # 编译期 L2 复查（04 §6.5 防绕过）：parse_graph 时无注册表，引用与工具深层路径在此补判。
-    ref_errors, ref_locations = validate_graph_report(graph, tool_schemas, check_refs=True)
+    ref_errors, ref_locations = validate_graph_report(validation_graph, tool_schemas, check_refs=True)
     subgraph_issues = _validate_subgraph_refs(
-        graph,
+        validation_graph,
         graph_resolver,
         graph_id,
         chain=(graph_id,),
@@ -815,6 +917,9 @@ def compile_graph(
                 graph_resolver=graph_resolver,
                 subgraph_depth=_subgraph_depth,
                 debug_controller=debug_controller,
+                frame_sink=frame_sink,
+                resume=resume,
+                graph_snapshot=graph_snapshot,
             ),
         )
 
@@ -944,6 +1049,33 @@ def _recursion_limit(graph: GraphDSL) -> int:
     return 2 * len(graph.nodes) + 2 * loop_steps + parallel_wait + 10
 
 
+def _tail_subgraph(graph: GraphDSL, resume_node_id: str) -> GraphDSL:
+    """续跑尾图：从挂起节点沿边可达的子图（挂起节点为新入口，上游视为已完成）。
+
+    docs/24 §2.3：续跑不重跑上游——已完成节点产出注入 initial state，只执行尾图。
+    """
+    outgoing: dict[str, list[str]] = {}
+    for edge in graph.edges:
+        outgoing.setdefault(edge.source, []).append(edge.target)
+    reachable: set[str] = set()
+    stack = [resume_node_id]
+    while stack:
+        current = stack.pop()
+        if current in reachable:
+            continue
+        reachable.add(current)
+        stack.extend(outgoing.get(current, []))
+    return GraphDSL(
+        version=graph.version,
+        variables=graph.variables,
+        nodes=[node for node in graph.nodes if node.id in reachable],
+        edges=[
+            edge for edge in graph.edges
+            if edge.source in reachable and edge.target in reachable
+        ],
+    )
+
+
 def run_graph(
     graph: GraphDSL,
     *,
@@ -956,6 +1088,8 @@ def run_graph(
     graph_resolver: Callable[[str], GraphDSL] | None = None,
     _subgraph_depth: int = 0,
     debug_controller: Any = None,
+    frame_sink: Callable[[dict], None] | None = None,
+    resume: dict | None = None,
 ) -> dict[str, Any]:
     """编译并执行，返回状态/节点产出/轨迹。
 
@@ -965,7 +1099,45 @@ def run_graph(
     graph_resolver 按 subgraph 节点 config.graphId 解析已保存子图（04 §5.7）。
     debug_controller 注入时在每个节点 node_start 后/逻辑前暂停（04 §5.12）；
     subgraph 重入不传控制器，子图整段执行。
+    frame_sink 在挂起点（human_approval/wait）经回调序列化中断帧（docs/24 §2.3）。
+    resume 为中断帧时：以帧内 graph_snapshot 为权威图定义（防图已改错位）裁剪尾图，
+    从挂起节点续跑到 END；调用方须先用帧 restore 审批 pending（恢复扫描器职责）。
     """
+    if resume is not None:
+        resume_graph = GraphDSL.model_validate(resume["graph_snapshot"])
+        tail = _tail_subgraph(resume_graph, resume["node_id"])
+        resume_state = resume.get("resume_state", {})
+        resume_inputs = resume_state.get("inputs", {})
+        resume_graph_id = resume_state.get("graph_id", graph_id)
+        compiled = compile_graph(
+            tail,
+            decision_client=decision_client,
+            registry=registry,
+            approval_broker=approval_broker,
+            graph_id=resume_graph_id,
+            emit=emit,
+            trigger_payload=resume_inputs,
+            graph_resolver=graph_resolver,
+            _subgraph_depth=_subgraph_depth,
+            debug_controller=debug_controller,
+            frame_sink=frame_sink,
+            resume=resume,
+            validate_with=resume_graph,
+        )
+        state = initial_state(tail, inputs=resume_inputs)
+        state["outputs"] = resume_state.get("outputs", {})
+        final_state = compiled.invoke(
+            state, config={"recursion_limit": _recursion_limit(tail)}
+        )
+        result = {
+            "status": "completed",
+            "outputs": final_state["outputs"],
+            "trace": final_state["messages"],
+        }
+        if emit:
+            emit({"type": "run_end", **result})
+        return result
+
     compiled = compile_graph(
         graph,
         decision_client=decision_client,
@@ -977,6 +1149,7 @@ def run_graph(
         graph_resolver=graph_resolver,
         _subgraph_depth=_subgraph_depth,
         debug_controller=debug_controller,
+        frame_sink=frame_sink,
     )
     final_state = compiled.invoke(
         initial_state(graph, inputs=inputs),

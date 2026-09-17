@@ -91,6 +91,16 @@ class ApprovalRepository(Protocol):
         approver: str,
         timeout_seconds: int,
     ) -> str: ...
+    def restore(
+        self,
+        *,
+        token: str,
+        node_id: str,
+        graph_id: str,
+        summary: str,
+        approver: str,
+        remaining_seconds: float,
+    ) -> str: ...
     def wait(self, token: str) -> Decision | None: ...
     def resolve(
         self, token: str, decision: Decision, *, resolved_by: str = "human", comment: str = ""
