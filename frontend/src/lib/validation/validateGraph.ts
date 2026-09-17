@@ -1,10 +1,10 @@
 /**
- * 图校验聚合入口（M2，08 M2 立项条 / 04 §6.5）。
+ * 图校验聚合入口（M2，M4 批 2 扩 L3；08 M2/M4 立项条 / 04 §6.5）。
  *
  * 单节点 = 节点名称必填 + L1 字段诊断（schema 解释器 + 手写跨字段）+ L2 模板引用诊断；
- * 全图 = 对每个节点跑一遍共享的 ScopeIndex，再按 rank（error 优先 → 节点拓扑序 →
- * pointer → token.start）排序。layer:'graph' 仅留类型位：M2 前端不预判 L3，
- * 图级规则的唯一权威仍在后端 dsl.py。
+ * 全图 = 对每个节点跑一遍共享的 ScopeIndex，再叠加 L3 结构预判（不可达/非法环，
+ * M4 批 2 同构 dsl.py；后端仍是唯一权威），最后按 rank（error 优先 → 节点拓扑序 →
+ * pointer → token.start）排序。
  */
 
 import type { RefValidationContext, EditorNodeData } from '../nodeCatalog'
@@ -17,6 +17,7 @@ import {
 } from '../scope'
 import type { GraphVariable } from '../variables'
 import { rank, type Diagnostic } from './diagnostics'
+import { validateL3 } from './l3'
 
 /** 节点名称必填（data.label，非 config 字段；loc 仅带 nodeId）。 */
 export const NODE_LABEL_REQUIRED_CODE = 'NODE_LABEL_REQUIRED'
@@ -98,8 +99,8 @@ function topologicalOrder(nodes: ScopeNodeLike[], edges: ScopeEdgeLike[]): strin
 }
 
 /**
- * 全图前端诊断（L1 + L2，不含 L3）。一次构建 ScopeIndex 供全部节点复用，
- * 排序节点序按边拓扑推导；M2 不产 layer:'graph' 诊断。
+ * 全图前端诊断（L1 + L2 + L3）。一次构建 ScopeIndex 供全部节点复用，
+ * 排序节点序按边拓扑推导；L3（不可达/非法环）同构后端 dsl.py，仅实时预判。
  */
 export function validateGraph(
   nodes: GraphValidationNode[],
@@ -125,5 +126,6 @@ export function validateGraph(
       ),
     )
   }
+  diagnostics.push(...validateL3(scopeNodes, edges))
   return rank(diagnostics, nodeOrder)
 }

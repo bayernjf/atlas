@@ -1,0 +1,621 @@
+{
+  "_comment": "M4 批 2 ⑥ L3 对拍夹具；由 scripts/dev/generate_l3_fixtures.py 以后端 parse_graph 实跑生成，勿手改 structural 期望值；规则变更后重跑生成器。",
+  "cases": [
+    {
+      "name": "valid-linear",
+      "nodes": [
+        {
+          "id": "trigger-1",
+          "type": "trigger",
+          "config": {
+            "triggerType": "webhook",
+            "cron": "",
+            "webhookUrl": "/hooks/refund"
+          }
+        },
+        {
+          "id": "ai_decision-1",
+          "type": "ai_decision",
+          "config": {
+            "promptTemplate": "处理 {{global.approval_limit}}",
+            "confidenceThreshold": 0.6
+          }
+        },
+        {
+          "id": "tool_call-1",
+          "type": "tool_call",
+          "config": {
+            "tool": "shop/process_refund",
+            "params": ""
+          }
+        }
+      ],
+      "edges": [
+        {
+          "source": "trigger-1",
+          "target": "ai_decision-1"
+        },
+        {
+          "source": "ai_decision-1",
+          "target": "tool_call-1"
+        }
+      ],
+      "backend": {
+        "structural": true,
+        "messages": []
+      }
+    },
+    {
+      "name": "unreachable-one",
+      "nodes": [
+        {
+          "id": "trigger-1",
+          "type": "trigger",
+          "config": {
+            "triggerType": "webhook",
+            "cron": "",
+            "webhookUrl": "/hooks/refund"
+          }
+        },
+        {
+          "id": "ai_decision-1",
+          "type": "ai_decision",
+          "config": {
+            "promptTemplate": "处理 {{global.approval_limit}}",
+            "confidenceThreshold": 0.6
+          }
+        },
+        {
+          "id": "tool_call-1",
+          "type": "tool_call",
+          "config": {
+            "tool": "shop/process_refund",
+            "params": ""
+          }
+        },
+        {
+          "id": "tool-orphan",
+          "type": "tool_call",
+          "config": {
+            "tool": "shop/process_refund",
+            "params": ""
+          }
+        }
+      ],
+      "edges": [
+        {
+          "source": "trigger-1",
+          "target": "ai_decision-1"
+        },
+        {
+          "source": "ai_decision-1",
+          "target": "tool_call-1"
+        }
+      ],
+      "backend": {
+        "structural": true,
+        "messages": [
+          "节点 tool-orphan 不可达（没有任何入边路径能到达它）"
+        ]
+      }
+    },
+    {
+      "name": "unreachable-two",
+      "nodes": [
+        {
+          "id": "trigger-1",
+          "type": "trigger",
+          "config": {
+            "triggerType": "webhook",
+            "cron": "",
+            "webhookUrl": "/hooks/refund"
+          }
+        },
+        {
+          "id": "ai_decision-1",
+          "type": "ai_decision",
+          "config": {
+            "promptTemplate": "处理 {{global.approval_limit}}",
+            "confidenceThreshold": 0.6
+          }
+        },
+        {
+          "id": "tool_call-1",
+          "type": "tool_call",
+          "config": {
+            "tool": "shop/process_refund",
+            "params": ""
+          }
+        },
+        {
+          "id": "tool-orphan-a",
+          "type": "tool_call",
+          "config": {
+            "tool": "shop/process_refund",
+            "params": ""
+          }
+        },
+        {
+          "id": "tool-orphan-b",
+          "type": "tool_call",
+          "config": {
+            "tool": "shop/process_refund",
+            "params": ""
+          }
+        }
+      ],
+      "edges": [
+        {
+          "source": "trigger-1",
+          "target": "ai_decision-1"
+        },
+        {
+          "source": "ai_decision-1",
+          "target": "tool_call-1"
+        }
+      ],
+      "backend": {
+        "structural": true,
+        "messages": [
+          "节点 tool-orphan-a 不可达（没有任何入边路径能到达它）",
+          "节点 tool-orphan-b 不可达（没有任何入边路径能到达它）"
+        ]
+      }
+    },
+    {
+      "name": "legal-loop-single-body",
+      "nodes": [
+        {
+          "id": "trigger-1",
+          "type": "trigger",
+          "config": {
+            "triggerType": "webhook",
+            "cron": "",
+            "webhookUrl": "/hooks/refund"
+          }
+        },
+        {
+          "id": "loop-1",
+          "type": "loop",
+          "config": {
+            "mode": "while",
+            "continueExpression": "{{loop-1.index}} < 3",
+            "maxIterations": 10,
+            "bodyTarget": "tool-body",
+            "exitTarget": "tool-exit"
+          }
+        },
+        {
+          "id": "tool-body",
+          "type": "tool_call",
+          "config": {
+            "tool": "shop/process_refund",
+            "params": ""
+          }
+        },
+        {
+          "id": "tool-exit",
+          "type": "tool_call",
+          "config": {
+            "tool": "shop/process_refund",
+            "params": ""
+          }
+        }
+      ],
+      "edges": [
+        {
+          "source": "trigger-1",
+          "target": "loop-1"
+        },
+        {
+          "source": "loop-1",
+          "target": "tool-body"
+        },
+        {
+          "source": "tool-body",
+          "target": "loop-1"
+        },
+        {
+          "source": "loop-1",
+          "target": "tool-exit"
+        }
+      ],
+      "backend": {
+        "structural": true,
+        "messages": []
+      }
+    },
+    {
+      "name": "legal-loop-chain-body",
+      "nodes": [
+        {
+          "id": "trigger-1",
+          "type": "trigger",
+          "config": {
+            "triggerType": "webhook",
+            "cron": "",
+            "webhookUrl": "/hooks/refund"
+          }
+        },
+        {
+          "id": "loop-1",
+          "type": "loop",
+          "config": {
+            "mode": "while",
+            "continueExpression": "{{loop-1.index}} < 3",
+            "maxIterations": 10,
+            "bodyTarget": "tool-body-a",
+            "exitTarget": "tool-exit"
+          }
+        },
+        {
+          "id": "tool-body-a",
+          "type": "tool_call",
+          "config": {
+            "tool": "shop/process_refund",
+            "params": ""
+          }
+        },
+        {
+          "id": "tool-body-b",
+          "type": "tool_call",
+          "config": {
+            "tool": "shop/process_refund",
+            "params": ""
+          }
+        },
+        {
+          "id": "tool-exit",
+          "type": "tool_call",
+          "config": {
+            "tool": "shop/process_refund",
+            "params": ""
+          }
+        }
+      ],
+      "edges": [
+        {
+          "source": "trigger-1",
+          "target": "loop-1"
+        },
+        {
+          "source": "loop-1",
+          "target": "tool-body-a"
+        },
+        {
+          "source": "tool-body-a",
+          "target": "tool-body-b"
+        },
+        {
+          "source": "tool-body-b",
+          "target": "loop-1"
+        },
+        {
+          "source": "loop-1",
+          "target": "tool-exit"
+        }
+      ],
+      "backend": {
+        "structural": true,
+        "messages": []
+      }
+    },
+    {
+      "name": "illegal-cycle-2",
+      "nodes": [
+        {
+          "id": "trigger-1",
+          "type": "trigger",
+          "config": {
+            "triggerType": "webhook",
+            "cron": "",
+            "webhookUrl": "/hooks/refund"
+          }
+        },
+        {
+          "id": "tool-x",
+          "type": "tool_call",
+          "config": {
+            "tool": "shop/process_refund",
+            "params": ""
+          }
+        },
+        {
+          "id": "tool-y",
+          "type": "tool_call",
+          "config": {
+            "tool": "shop/process_refund",
+            "params": ""
+          }
+        }
+      ],
+      "edges": [
+        {
+          "source": "trigger-1",
+          "target": "tool-x"
+        },
+        {
+          "source": "tool-x",
+          "target": "tool-y"
+        },
+        {
+          "source": "tool-y",
+          "target": "tool-x"
+        }
+      ],
+      "backend": {
+        "structural": true,
+        "messages": [
+          "检测到非法循环依赖（循环只允许经循环节点的循环体回到自身）：tool-x → tool-y → tool-x"
+        ]
+      }
+    },
+    {
+      "name": "illegal-cycle-self",
+      "nodes": [
+        {
+          "id": "trigger-1",
+          "type": "trigger",
+          "config": {
+            "triggerType": "webhook",
+            "cron": "",
+            "webhookUrl": "/hooks/refund"
+          }
+        },
+        {
+          "id": "tool-x",
+          "type": "tool_call",
+          "config": {
+            "tool": "shop/process_refund",
+            "params": ""
+          }
+        }
+      ],
+      "edges": [
+        {
+          "source": "trigger-1",
+          "target": "tool-x"
+        },
+        {
+          "source": "tool-x",
+          "target": "tool-x"
+        }
+      ],
+      "backend": {
+        "structural": true,
+        "messages": [
+          "检测到非法循环依赖（循环只允许经循环节点的循环体回到自身）：tool-x → tool-x"
+        ]
+      }
+    },
+    {
+      "name": "illegal-cycle-3",
+      "nodes": [
+        {
+          "id": "trigger-1",
+          "type": "trigger",
+          "config": {
+            "triggerType": "webhook",
+            "cron": "",
+            "webhookUrl": "/hooks/refund"
+          }
+        },
+        {
+          "id": "tool-a",
+          "type": "tool_call",
+          "config": {
+            "tool": "shop/process_refund",
+            "params": ""
+          }
+        },
+        {
+          "id": "tool-b",
+          "type": "tool_call",
+          "config": {
+            "tool": "shop/process_refund",
+            "params": ""
+          }
+        },
+        {
+          "id": "tool-c",
+          "type": "tool_call",
+          "config": {
+            "tool": "shop/process_refund",
+            "params": ""
+          }
+        },
+        {
+          "id": "tool-tail",
+          "type": "tool_call",
+          "config": {
+            "tool": "shop/process_refund",
+            "params": ""
+          }
+        }
+      ],
+      "edges": [
+        {
+          "source": "trigger-1",
+          "target": "tool-a"
+        },
+        {
+          "source": "tool-a",
+          "target": "tool-b"
+        },
+        {
+          "source": "tool-b",
+          "target": "tool-c"
+        },
+        {
+          "source": "tool-c",
+          "target": "tool-a"
+        },
+        {
+          "source": "tool-c",
+          "target": "tool-tail"
+        }
+      ],
+      "backend": {
+        "structural": true,
+        "messages": [
+          "检测到非法循环依赖（循环只允许经循环节点的循环体回到自身）：tool-a → tool-b → tool-c → tool-a"
+        ]
+      }
+    },
+    {
+      "name": "unreachable-and-cycle",
+      "nodes": [
+        {
+          "id": "trigger-1",
+          "type": "trigger",
+          "config": {
+            "triggerType": "webhook",
+            "cron": "",
+            "webhookUrl": "/hooks/refund"
+          }
+        },
+        {
+          "id": "tool-x",
+          "type": "tool_call",
+          "config": {
+            "tool": "shop/process_refund",
+            "params": ""
+          }
+        },
+        {
+          "id": "tool-y",
+          "type": "tool_call",
+          "config": {
+            "tool": "shop/process_refund",
+            "params": ""
+          }
+        },
+        {
+          "id": "tool-orphan",
+          "type": "tool_call",
+          "config": {
+            "tool": "shop/process_refund",
+            "params": ""
+          }
+        }
+      ],
+      "edges": [
+        {
+          "source": "trigger-1",
+          "target": "tool-x"
+        },
+        {
+          "source": "tool-x",
+          "target": "tool-y"
+        },
+        {
+          "source": "tool-y",
+          "target": "tool-x"
+        }
+      ],
+      "backend": {
+        "structural": true,
+        "messages": [
+          "检测到非法循环依赖（循环只允许经循环节点的循环体回到自身）：tool-x → tool-y → tool-x",
+          "节点 tool-orphan 不可达（没有任何入边路径能到达它）"
+        ]
+      }
+    },
+    {
+      "name": "no-trigger",
+      "nodes": [
+        {
+          "id": "tool-a",
+          "type": "tool_call",
+          "config": {
+            "tool": "shop/process_refund",
+            "params": ""
+          }
+        },
+        {
+          "id": "tool-b",
+          "type": "tool_call",
+          "config": {
+            "tool": "shop/process_refund",
+            "params": ""
+          }
+        }
+      ],
+      "edges": [
+        {
+          "source": "tool-a",
+          "target": "tool-b"
+        }
+      ],
+      "backend": {
+        "structural": true,
+        "messages": []
+      }
+    },
+    {
+      "name": "loop-empty-body-target",
+      "nodes": [
+        {
+          "id": "trigger-1",
+          "type": "trigger",
+          "config": {
+            "triggerType": "webhook",
+            "cron": "",
+            "webhookUrl": "/hooks/refund"
+          }
+        },
+        {
+          "id": "loop-1",
+          "type": "loop",
+          "config": {
+            "mode": "while",
+            "continueExpression": "{{loop-1.index}} < 3",
+            "maxIterations": 10,
+            "bodyTarget": "",
+            "exitTarget": "tool-exit"
+          }
+        },
+        {
+          "id": "tool-body",
+          "type": "tool_call",
+          "config": {
+            "tool": "shop/process_refund",
+            "params": ""
+          }
+        },
+        {
+          "id": "tool-exit",
+          "type": "tool_call",
+          "config": {
+            "tool": "shop/process_refund",
+            "params": ""
+          }
+        }
+      ],
+      "edges": [
+        {
+          "source": "trigger-1",
+          "target": "loop-1"
+        },
+        {
+          "source": "loop-1",
+          "target": "tool-body"
+        },
+        {
+          "source": "tool-body",
+          "target": "loop-1"
+        },
+        {
+          "source": "loop-1",
+          "target": "tool-exit"
+        }
+      ],
+      "backend": {
+        "structural": true,
+        "messages": [
+          "检测到非法循环依赖（循环只允许经循环节点的循环体回到自身）：loop-1 → tool-body → loop-1"
+        ]
+      }
+    }
+  ]
+}
