@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { humanApprovalSchema } from '../../schemas/nodes/human_approval.schema'
 import { parallelSchema } from '../../schemas/nodes/parallel.schema'
+import { conditionSchema } from '../../schemas/nodes/condition.schema'
 import { subgraphSchema } from '../../schemas/nodes/subgraph.schema'
 import { loopSchema } from '../../schemas/nodes/loop.schema'
 import { buildNodeRegistry, SAVED_GRAPH_SELECT_WIDGET, TARGET_SELECT_WIDGET } from '../nodeRegistry'
 import {
+  conditionUiSchema,
   humanApprovalUiSchema,
   loopUiSchema,
   NODE_UI_SCHEMAS,
@@ -142,6 +144,40 @@ describe('parallel 迁移对齐（M4 批 2 ⑨）', () => {
 
   it('已登记到 NODE_UI_SCHEMAS', () => {
     expect(NODE_UI_SCHEMAS.parallel).toBe(parallelUiSchema)
+  })
+})
+
+describe('condition 迁移对齐（M4 批 3 ⑬）', () => {
+  const properties = conditionSchema.properties ?? {}
+  const branchProps = (properties.branches.items?.properties ?? {}) as Record<
+    string,
+    { 'x-widget'?: string; 'x-variable'?: boolean }
+  >
+
+  it('expression 标 x-variable（variable-input：TextArea+变量插入），target/defaultTarget 标 target-select', () => {
+    expect(branchProps.expression['x-variable']).toBe(true)
+    expect(branchProps.target['x-widget']).toBe(TARGET_SELECT_WIDGET)
+    expect(properties.defaultTarget['x-widget']).toBe(TARGET_SELECT_WIDGET)
+  })
+
+  it('branches minItems 1 且无 maxItems（分支数无上限，最后一个禁用删除）', () => {
+    expect(properties.branches.minItems).toBe(1)
+    expect(properties.branches.maxItems).toBeUndefined()
+  })
+
+  it('数组行三件套占位键命中 branches[].*，expression 给 2 行 TextArea，defaultTarget 有中文标题', () => {
+    expect(pointerMatches('/branches/0/label', 'branches[].label')).toBe(true)
+    expect(pointerMatches('/branches/0/expression', 'branches[].expression')).toBe(true)
+    expect(pointerMatches('/branches/0/target', 'branches[].target')).toBe(true)
+    expect(conditionUiSchema.placeholders?.['branches[].label']).toContain('分支名')
+    expect(conditionUiSchema.placeholders?.['branches[].expression']).toContain('{{')
+    expect(conditionUiSchema.placeholders?.['branches[].target']).toContain('目标节点')
+    expect(conditionUiSchema.rows?.['branches[].expression']).toBe(2)
+    expect(conditionUiSchema.labels?.defaultTarget).toContain('默认分支')
+  })
+
+  it('已登记到 NODE_UI_SCHEMAS', () => {
+    expect(NODE_UI_SCHEMAS.condition).toBe(conditionUiSchema)
   })
 })
 

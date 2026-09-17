@@ -136,6 +136,7 @@ export function PropertyPanel() {
             update={updateSelectedConfig}
             variablePaths={variablePaths}
             targetOptions={targetOptions}
+            diagnostics={diagnostics}
           />
         )}
         {data.kind === 'loop' && (

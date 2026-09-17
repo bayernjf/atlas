@@ -17,12 +17,22 @@ export const conditionSchema: NodeConfigSchema = {
         properties: {
           label: { type: 'string', pattern: '\\S' },
           expression: { type: 'string', pattern: '\\S', 'x-variable': true },
-          target: { type: 'string', pattern: '\\S', 'x-ref': { kinds: ['*'] } },
+          target: {
+            type: 'string',
+            pattern: '\\S',
+            'x-ref': { kinds: ['*'] },
+            'x-widget': 'target-select',
+          },
         },
         required: ['label', 'expression', 'target'],
       },
     },
-    defaultTarget: { type: 'string', pattern: '\\S', 'x-ref': { kinds: ['*'] } },
+    defaultTarget: {
+      type: 'string',
+      pattern: '\\S',
+      'x-ref': { kinds: ['*'] },
+      'x-widget': 'target-select',
+    },
   },
   required: ['branches', 'defaultTarget'],
   'x-outputSchema': {
