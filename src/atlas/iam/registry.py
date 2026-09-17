@@ -10,6 +10,7 @@ import os
 import threading
 from dataclasses import dataclass
 
+from atlas.coordination import TaskStore
 from atlas.message.service import MessageService
 from atlas.storage.base import (
     ApprovalRepository,
@@ -47,6 +48,7 @@ class TenantServices:
     debug_broker: DebugRepository
     monitoring: MonitoringRepository
     run_store: RunRepository
+    task_store: TaskStore
 
 
 class TenantRegistry:
@@ -83,6 +85,7 @@ class TenantRegistry:
                 debug_broker=DebuggerBroker(),
                 monitoring=backend.monitoring_store(tenant_id),
                 run_store=backend.run_store(tenant_id),
+                task_store=TaskStore(),
             )
         return TenantServices(
             graph_store=GraphStore(),
@@ -93,6 +96,7 @@ class TenantRegistry:
             debug_broker=DebuggerBroker(),
             monitoring=MonitoringStore(),
             run_store=RunStore(),
+            task_store=TaskStore(),
         )
 
     def reset_tenant(self, tenant_id: str) -> None:
