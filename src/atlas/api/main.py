@@ -48,6 +48,7 @@ from atlas.shop.adapter import ShopHarnessAdapter
 from atlas.shop.service import DemoShopService
 from atlas.storage.memory import FeedbackRequest
 from atlas.template import get_template, list_templates
+from atlas.versioning.publish import publish as publish_graph_version
 
 app = FastAPI(title="Atlas API", version="0.0.1")
 
@@ -99,7 +100,10 @@ def _tenant_graph_resolver(services: TenantServices):
     """subgraph 节点 graph_resolver（04 §5.7）：在当前租户 GraphStore 内按 id 解析，缺失抛 KeyError。"""
 
     def resolve(graph_id: str):
-        raw = services.graph_store.get(graph_id)
+        # M6 钉版：subgraph graphId 可为 `graph-7@3`（先按 pin 版本，失败回退 latest 由 get 返回 None 触发 KeyError）
+        ref_id, _, version = graph_id.partition("@")
+        release_version = int(version) if version else None
+        raw = services.graph_store.get(ref_id, release_version)
         if raw is None:
             raise KeyError(graph_id)
         return parse_graph(raw)
@@ -124,6 +128,11 @@ def _runtime_registry(services: TenantServices) -> AdapterRegistry:
 class SaveGraphResponse(BaseModel):
     id: str
     version: int
+
+
+class PublishGraphResponse(BaseModel):
+    id: str
+    releaseVersion: int
 
 
 class CompileResponse(BaseModel):
@@ -218,13 +227,36 @@ def list_graphs(principal: Principal = Depends(require("read"))) -> dict[str, li
 
 @app.get("/api/graphs/{graph_id}")
 def get_graph(
-    graph_id: str, principal: Principal = Depends(require("read"))
+    graph_id: str,
+    releaseVersion: int | None = None,
+    principal: Principal = Depends(require("read")),
 ) -> dict[str, Any]:
-    raw = services_for(principal).graph_store.get(graph_id)
+    raw = services_for(principal).graph_store.get(graph_id, releaseVersion)
     if raw is None:
         # 跨租户访问同样 404，不泄漏资源存在性（04 §5.14）
         raise HTTPException(status_code=404, detail=f"Graph 不存在：{graph_id}")
     return raw
+
+
+@app.post("/api/graphs/{graph_id}/publish", response_model=PublishGraphResponse)
+def publish_graph(
+    graph_id: str, principal: Principal = Depends(require("operate"))
+) -> PublishGraphResponse:
+    """发布 latest 草稿为不可变版本（M6，docs/20 §4.1 / ADR T19）。"""
+    services = services_for(principal)
+    try:
+        release_version = publish_graph_version(services.graph_store, graph_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Graph 不存在：{exc.args[0]}") from exc
+    return PublishGraphResponse(id=graph_id, releaseVersion=release_version)
+
+
+@app.get("/api/graphs/{graph_id}/versions")
+def list_graph_versions(
+    graph_id: str, principal: Principal = Depends(require("read"))
+) -> dict[str, list[int]]:
+    """已发布版本号列表（升序；未发布过 → 空列表）（M6）。"""
+    return {"items": services_for(principal).graph_store.list_versions(graph_id)}
 
 
 @app.get("/api/templates")
@@ -377,13 +409,12 @@ def replay_recording(
 
 @app.post("/api/graphs/{graph_id}/compile", response_model=CompileResponse)
 def compile_saved_graph(
-    graph_id: str, principal: Principal = Depends(require("operate"))
+    graph_id: str,
+    payload: dict[str, Any] | None = None,
+    principal: Principal = Depends(require("operate")),
 ) -> CompileResponse:
     services = services_for(principal)
-    raw = services.graph_store.get(graph_id)
-    if raw is None:
-        raise HTTPException(status_code=404, detail=f"Graph 不存在：{graph_id}")
-    graph = parse_graph(raw)
+    graph = _load_graph_or_404(services, graph_id, (payload or {}).get("releaseVersion"))
     compile_graph(graph, graph_id=graph_id, graph_resolver=_tenant_graph_resolver(services))
 
     incoming = {edge.target for edge in graph.edges}
@@ -397,8 +428,10 @@ def compile_saved_graph(
     )
 
 
-def _load_graph_or_404(services: TenantServices, graph_id: str):
-    raw = services.graph_store.get(graph_id)
+def _load_graph_or_404(
+    services: TenantServices, graph_id: str, release_version: int | None = None
+):
+    raw = services.graph_store.get(graph_id, release_version)
     if raw is None:
         raise HTTPException(status_code=404, detail=f"Graph 不存在：{graph_id}")
     return parse_graph(raw)
@@ -444,7 +477,7 @@ def run_saved_graph(
     principal: Principal = Depends(require("operate")),
 ) -> RunGraphResponse:
     services = services_for(principal)
-    graph = _load_graph_or_404(services, graph_id)
+    graph = _load_graph_or_404(services, graph_id, (payload or {}).get("releaseVersion"))
     if (payload or {}).get("debug") is not None:
         raise HTTPException(status_code=422, detail="单步调试仅支持流式运行 /run/stream")
     graph_view = {"nodes": [{"id": node.id, "type": node.type} for node in graph.nodes]}
@@ -495,7 +528,7 @@ def run_saved_graph_stream(
     租户服务 bundle 在请求线程解析后显式透传 worker（06 §6.12，无线程上下文变量）。
     """
     services = services_for(principal)
-    graph = _load_graph_or_404(services, graph_id)
+    graph = _load_graph_or_404(services, graph_id, (payload or {}).get("releaseVersion"))
     inputs = (payload or {}).get("inputs")
     debug = (payload or {}).get("debug")
     graph_view = {"nodes": [{"id": node.id, "type": node.type} for node in graph.nodes]}

@@ -16,7 +16,6 @@ from pydantic import BaseModel, Field
 
 from atlas.collaboration.approvals import ApprovalBroker
 from atlas.debug.sessions import DebuggerBroker
-from atlas.iam.sessions import SessionStore
 from atlas.monitoring.records import MonitoringStore
 from atlas.recording.cases import RecordingStore
 
@@ -32,6 +31,9 @@ class GraphStore:
         self._graphs: dict[str, dict[str, Any]] = {}
         self._updated_at: dict[str, str] = {}
         self._counter = 0
+        # M6 版本化（docs/20 §4.1 / ADR T19）：graph_id -> {release_version: 冻结快照}
+        self._versions: dict[str, dict[int, dict[str, Any]]] = {}
+        self._version_counter: dict[str, int] = {}
 
     def save(self, raw: dict[str, Any]) -> str:
         self._counter += 1
@@ -40,8 +42,10 @@ class GraphStore:
         self._updated_at[graph_id] = datetime.now(timezone.utc).isoformat()
         return graph_id
 
-    def get(self, graph_id: str) -> dict[str, Any] | None:
-        return self._graphs.get(graph_id)
+    def get(self, graph_id: str, release_version: int | None = None) -> dict[str, Any] | None:
+        if release_version is None:
+            return self._graphs.get(graph_id)
+        return self._versions.get(graph_id, {}).get(release_version)
 
     def list(self) -> list[dict[str, Any]]:
         return [
@@ -53,10 +57,27 @@ class GraphStore:
             for graph_id, raw in self._graphs.items()
         ]
 
+    def publish(self, graph_id: str, raw: dict[str, Any]) -> int:
+        """把给定快照存为下一个发布版本（releaseVersion 从 1 递增）；只允许发布已存在的草稿。
+
+        快照带 `releaseVersion` 字段（ADR T19：发布产物带、草稿 latest 不带）。
+        """
+        if graph_id not in self._graphs:
+            raise KeyError(graph_id)
+        version = self._version_counter.get(graph_id, 0) + 1
+        self._version_counter[graph_id] = version
+        self._versions.setdefault(graph_id, {})[version] = {**raw, "releaseVersion": version}
+        return version
+
+    def list_versions(self, graph_id: str) -> list[int]:
+        return sorted(self._versions.get(graph_id, {}).keys())
+
     def clear(self) -> None:
         self._graphs = {}
         self._updated_at = {}
         self._counter = 0
+        self._versions = {}
+        self._version_counter = {}
 
 
 class FeedbackStore:
@@ -82,14 +103,15 @@ class FeedbackStore:
         return list(self._items)
 
 
-# 六类领域 store 的聚合 re-export（实现类体在原模块，见模块 docstring）
+# 六类领域 store 的聚合 re-export（实现类体在原模块，见模块 docstring）。
+# SessionStore 是 iam 包内的**全局**会话单例（非租户 store，不进 TenantServices），
+# 不在此聚合——若 re-export 会经 iam.__init__ → deps → registry 形成 import 环。
 __all__ = [
     "FeedbackRequest",
     "FeedbackStore",
     "GraphStore",
     "ApprovalBroker",
     "DebuggerBroker",
-    "SessionStore",
     "MonitoringStore",
     "RecordingStore",
 ]
