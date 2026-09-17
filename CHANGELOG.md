@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### docs(plan)：M6 立项——Graph 版本化（2026-09-17，docs-only 立项批、零代码）
+
+- 按 docs/20 门控顺序（M5a 已落码）立项 M6（08 新增 M6 立项条）：`graphId@version` 不可变发布物 + subgraph 钉版（取回 D21 钉版部分 + D32 版本化部分，对应题面 B5 不可变版本前提）。**ADR T19 收口**（10 §4）：Graph JSON 容器 `version:1` 与业务发布版本号 `releaseVersion`（payload 新字段 int，仅发布产物带）两维分离，容器版本只在 Schema 破坏性变更时才动 2。范围：新包 `src/atlas/versioning/`（`publish` 冻结快照 + subgraph 递归钉版，钉版本号即冻结引用内容）；`GraphStore` 扩 `publish/get(release_version)/list_versions`、`GraphRepository` Protocol 同步；12 端点 publish/versions/`?releaseVersion=N` 读取、compile/run/run-stream 可选 `releaseVersion`、resolver 支持 `graphId@vN`；保存仍产 latest 草稿零回归。非目标＝Router/灰度（M9）、升级回归 UI/版本市场（D21 剩余）、发布/版本前端 UI（随 M9）、PG（M5b）。验收＝13 候选 U46。同步面：03 `graph_definition` 版本化注记、12 §5、13 U46、09 versioning 包位、14 D21/D32 注记、20 §4.1/§5/§8、handoff/CHANGELOG。**下一步＝M6 落码**。
+
 ### feat(storage)：M5a 落码——进程内 Repository 重构（2026-09-17，`0358696`，零行为变化）
 
 - 按 08 M5a 立项条落码，题二硬前置 M5 第一子阶段闭合。新增 `src/atlas/storage/base.py` 七个 `@runtime_checkable` Protocol（Graph/Recording/Feedback/Session/Approval/Debug/MonitoringRepository，方法与现有八 store 公开 API 一比一、不增删改名）+ `for_tenant` 约定 + reset 分档常量（resettable/persistent）+ `StorageError`；`storage/memory.py` 聚合八实现（`GraphStore`/`FeedbackStore`/`FeedbackRequest` 自 `api/main.py` 搬出，其余六类 re-export）；`TenantServices` 字段类型自 `object` 收紧为七 Protocol、`TenantRegistry._create_services` 改顶层自 storage.memory 构造，`api/main.py → iam.registry` 延迟导入环消除。

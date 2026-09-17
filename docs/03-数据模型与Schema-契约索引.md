@@ -125,7 +125,9 @@ breakpoint: boolean          # 是否断点
 ### `graph_definition` — 字段概览（W7-W8；节点形状权威见上 `node_schema`，容器结构以 `src/atlas/graph/dsl.py` GraphDSL 为准）
 
 ```yaml
-version: 1                   # Graph JSON 版本，当前仅支持 1
+version: 1                   # Graph JSON 容器（结构）版本，当前仅支持 1；M6 起与发布版本分维
+releaseVersion: 1            # 业务发布版本号（M6 新增，int，仅发布产物带；草稿 latest 缺省）；
+                             #   发布动作冻结 Graph JSON 为不可变版本，graphId@vN 读取（ADR T19）
 variables:                   # 全局变量（GraphVariable: name/type/value/scope=global）
 nodes:                       # node_schema 节点列表；当前可编译类型：
                              #   trigger / ai_decision / tool_call / condition / loop / parallel / wait / subgraph / human_approval（Phase 2 起），
@@ -142,6 +144,8 @@ edges:                       # {id, source, target}，端点必须存在且禁�
 > **租户注记（2026-09-16，§5.14）**：已保存图按租户分区（每租户独立 GraphStore，graph-N 计数各自从 1 起）；tenant 由 token 推断，不进 Graph JSON。跨租户访问图 id → 404。
 >
 > **模板引用与拓扑作用域注记（2026-09-16，§6.5）**：config 内 `{{路径}}` 的节点输出可见性按图拓扑推导（visibleAt = 沿入边反向可达上游 + 全局变量 + loop 体区域），各节点类型输出投影、L2 三错误码（REF_NODE_NOT_FOUND / REF_NOT_IN_SCOPE / REF_PATH_NOT_FOUND）与 token 区间权威见 04 §6.5；前端实现 `frontend/src/lib/scope.ts`，后端编译期复查在 `atlas.graph.dsl`，运行期插值缺失保留原样语义不变。工具 `result.*` 深层路径以 04 §4.9 的 output_schema 子集为来源。
+>
+> **版本化注记（2026-09-17，M6 立项 / ADR T19）**：`version`（容器结构版本，恒 1）与 `releaseVersion`（业务发布版本号，仅发布产物带）两维分离；发布＝冻结不可变版本（`src/atlas/versioning/`）+ subgraph 钉版（子图 `graphId@vN` 递归钉版本号，版本不可变故钉号即冻结引用内容）；草稿（latest）可变、`graph-N` 保存零回归。权威见 08 M6 立项条、12 §5 发布/版本端点。
 
 ### `node_data_schema` — 字段概览（M1 已落码 2026-09-16，十提交 4ade416→51cb57f；权威见 04 §4.9「前端 MetaSchema 扩展」，前端承载 `frontend/src/lib/schemas/`）
 
