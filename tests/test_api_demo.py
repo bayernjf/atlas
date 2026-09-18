@@ -785,21 +785,20 @@ def test_recordings_survive_reset_but_delete_removes_them():
 
 def test_recording_replay_folds_missing_subgraph_reference():
     client.post("/api/demo/reset")
-    child_id = client.post("/api/graphs", json=_subgraph_child_graph()).json()["id"]
-    parent = _subgraph_parent_graph(child_id)
+    # 父图引用一个「录制时就不存在」的子图（保存仅结构校验、不 check_refs，故可存）；
+    # 录制收集快照时该引用 fetch 为空、不内联（subgraphs={}），回放期内联未命中、
+    # 实时 store 也缺失，折叠为 failed 报告而非 500。录制时存在的子图则被内联冻结、
+    # reset 后仍可回放，见 test_recording_inlines_subgraph_snapshot_for_replay_after_child_changes。
+    parent = _subgraph_parent_graph("graph-never-existed")
     parent_id = client.post("/api/graphs", json=parent).json()["id"]
-    result = client.post(f"/api/graphs/{parent_id}/run", json={"inputs": {"order_id": "X-1"}}).json()
-    node_types = {node["id"]: node["type"] for node in parent["nodes"]}
-    steps = [
-        {"node_id": node_id, "node_type": node_types[node_id], "output": output}
-        for node_id, output in result["outputs"].items()
-    ]
     case_id = client.post("/api/recordings", json={
-        "name": "子图引用用例", "graph_id": parent_id, "inputs": {"order_id": "X-1"},
-        "steps": steps, "status": result["status"],
+        "name": "缺失子图用例", "graph_id": parent_id, "inputs": {"order_id": "X-1"},
+        "steps": [{"node_id": "trigger-1", "node_type": "trigger", "output": {}}],
+        "status": "completed",
     }).json()["id"]
+    assert client.get(f"/api/recordings/{case_id}").json()["subgraphs"] == {}
 
-    client.post("/api/demo/reset")  # 子图/父图均被清空，快照内 graphId 不可解析
+    client.post("/api/demo/reset")  # 父图也清空，快照内 graphId 实时不可解析
     response = client.post(f"/api/recordings/{case_id}/replay")
     assert response.status_code == 200  # 折叠为报告而非 500
     report = response.json()
@@ -1298,3 +1297,48 @@ def test_i18_debug_run_is_not_recorded():
     assert event_names[-1] == "stopped"
     assert client.get("/api/monitoring/runs").json()["items"] == []
     assert client.get("/api/monitoring/metrics").json()["total"] == 0
+
+
+def test_recording_inlines_subgraph_snapshot_for_replay_after_child_changes():
+    """D26：录制时冻结 subgraph 快照；子图事后被改坏，单用例回放仍走内联成功（gate 仍验实时）。"""
+    client.post("/api/demo/reset")
+    child_id = client.post("/api/graphs", json=_subgraph_child_graph()).json()["id"]
+    parent_id = client.post("/api/graphs", json=_subgraph_parent_graph(child_id)).json()["id"]
+
+    created = client.post("/api/recordings", json={
+        "name": "子图内联回放",
+        "graph_id": parent_id,
+        "inputs": {"order_id": "X-9"},
+        "steps": [{"node_id": "trigger-1", "node_type": "trigger", "output": {}}],
+        "status": "completed",
+    })
+    assert created.status_code == 201
+    case_id = created.json()["id"]
+
+    detail = client.get(f"/api/recordings/{case_id}").json()
+    assert child_id in detail["subgraphs"]
+    assert {"child-trigger", "child-tool"} <= {n["id"] for n in detail["subgraphs"][child_id]["nodes"]}
+
+    # 子图事后被改成「引用不存在孙图」的坏草稿（结构合法、编译期 check_refs 失败）
+    # 结构合法（可保存），但编译期 check_refs 会因子图内模板引用不存在节点而 422
+    broken_child = {
+        "version": 1, "variables": [],
+        "nodes": [
+            {"id": "child-trigger", "type": "trigger", "name": "子图触发",
+             "config": {"triggerType": "manual"}},
+            {"id": "child-tool", "type": "tool_call", "name": "子图工具",
+             "config": {"tool": "op-child",
+                        "params": json.dumps({"x": "{{ghost-node.result.x}}"})}},
+        ],
+        "edges": [{"id": "ce1", "source": "child-trigger", "target": "child-tool"}],
+    }
+    assert client.put(f"/api/graphs/{child_id}", json=broken_child).status_code == 200
+
+    # 对照：实时路径（编译）因子图已坏而 422
+    assert client.post(f"/api/graphs/{parent_id}/compile").status_code == 422
+
+    # 录制回放走内联冻结的好子图，仍 completed（不被事后改动影响）
+    replay = client.post(f"/api/recordings/{case_id}/replay")
+    assert replay.status_code == 200
+    assert replay.json()["replay_status"] == "completed"
+    client.post("/api/demo/reset")

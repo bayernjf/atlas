@@ -33,6 +33,10 @@ class RecordingCase(BaseModel):
     steps: list[RecordStep]
     status: str
     created_at: str
+    # D26 纯超集：录制时递归冻结的 subgraph 引用快照（key＝节点 config.graphId 引用原文，
+    # 含 @N 钉版）。单用例冻结回放「内联优先」解析，使引用子图被 reset/删除/改动后
+    # 用例仍可回放；旧用例缺省空 dict（回退租户实时 store，保持旧行为）。
+    subgraphs: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 class RecordingStore:
@@ -49,6 +53,7 @@ class RecordingStore:
         steps: list[RecordStep],
         status: str,
         graph_id: str = "",
+        subgraphs: dict[str, dict[str, Any]] | None = None,
     ) -> RecordingCase:
         self._counter += 1
         case = RecordingCase(
@@ -60,6 +65,7 @@ class RecordingStore:
             steps=steps,
             status=status,
             created_at=datetime.now(timezone.utc).isoformat(),
+            subgraphs=subgraphs or {},
         )
         self._items.append(case)
         return case

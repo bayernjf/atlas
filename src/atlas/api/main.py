@@ -52,7 +52,9 @@ from atlas.monitoring import RUN_RING_SIZE, extract_business, extract_node_resul
 from atlas.recording import (
     RecordingCreateRequest,
     collect_steps,
+    collect_subgraph_snapshots,
     compare as compare_recording,
+    inline_first_resolver,
     preset_approvals,
     run_release_gate,
 )
@@ -640,6 +642,14 @@ def create_recording(
     raw = services.graph_store.get(request.graph_id)
     if raw is None:
         raise HTTPException(status_code=404, detail=f"Graph 不存在：{request.graph_id}")
+
+    def _fetch_subgraph_raw(ref: str):
+        # 与 _tenant_graph_resolver 同口径：graphId 可为 `graph-7@3` 钉版。
+        ref_id, _, version = ref.partition("@")
+        release_version = int(version) if version else None
+        return services.graph_store.get(ref_id, release_version)
+
+    subgraphs = collect_subgraph_snapshots(raw, fetch_raw=_fetch_subgraph_raw)
     case = services.recording_store.add(
         name=request.name,
         graph_id=request.graph_id,
@@ -647,6 +657,7 @@ def create_recording(
         inputs=request.inputs,
         steps=request.steps,
         status=request.status,
+        subgraphs=subgraphs,
     )
     return case.model_dump()
 
@@ -721,7 +732,9 @@ def replay_recording(
             approval_broker=services.approval_broker,
             graph_id=f"replay-{case.id}",
             emit=emit,
-            graph_resolver=_tenant_graph_resolver(services),
+            graph_resolver=inline_first_resolver(
+                case.subgraphs, _tenant_graph_resolver(services)
+            ),
         )
         replay_steps = take_steps()
         tools_by_node = {

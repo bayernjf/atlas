@@ -363,3 +363,105 @@ def test_recording_create_request_validation():
     ]})
     assert isinstance(ok.steps[0], RecordStep)
     assert isinstance(ok, RecordingCase) is False
+
+
+# --- D26 subgraph 快照内联（collect_subgraph_snapshots / inline_first_resolver）---
+
+def _graph_referencing(ref: str, *, sub_node_id: str = "sub-1") -> dict:
+    """一张含单个 subgraph 节点引用 ref 的最小父图原始 JSON。"""
+    return {
+        "version": 1,
+        "variables": [],
+        "nodes": [
+            {"id": "t", "type": "trigger", "name": "t",
+             "config": {"triggerType": "manual"}},
+            {"id": sub_node_id, "type": "subgraph", "name": "子流程",
+             "config": {"graphId": ref, "inputs": {}}},
+        ],
+        "edges": [{"id": "e1", "source": "t", "target": sub_node_id}],
+    }
+
+
+def _leaf_graph(trigger_id: str = "t") -> dict:
+    return {
+        "version": 1,
+        "variables": [],
+        "nodes": [{"id": trigger_id, "type": "trigger", "name": "t",
+                   "config": {"triggerType": "manual"}}],
+        "edges": [],
+    }
+
+
+def test_collect_subgraph_snapshots_recurses_and_keys_by_raw_ref():
+    from atlas.recording import collect_subgraph_snapshots
+
+    grand = _leaf_graph("grand-t")
+    middle = _graph_referencing("grand", sub_node_id="m-sub")
+    parent = _graph_referencing("mid@2")  # 引用原文带钉版
+    library = {"mid@2": middle, "grand": grand}
+
+    snapshots = collect_subgraph_snapshots(parent, fetch_raw=library.get)
+
+    assert set(snapshots) == {"mid@2", "grand"}
+    assert snapshots["mid@2"] is middle
+    assert snapshots["grand"] is grand
+
+
+def test_collect_subgraph_snapshots_skips_missing_reference():
+    from atlas.recording import collect_subgraph_snapshots
+
+    parent = _graph_referencing("graph-ghost")
+    snapshots = collect_subgraph_snapshots(parent, fetch_raw=lambda ref: None)
+    assert snapshots == {}  # 引用缺失不阻断录制
+
+
+def test_collect_subgraph_snapshots_breaks_reference_cycle():
+    from atlas.recording import collect_subgraph_snapshots
+
+    # a → b → a（跨图环，编译期会拦；收集器只负责不卡死、尽力冻结）
+    a = _graph_referencing("b", sub_node_id="a-sub")
+    b = _graph_referencing("a", sub_node_id="b-sub")
+    library = {"a": a, "b": b}
+
+    snapshots = collect_subgraph_snapshots(a, fetch_raw=library.get)
+    assert "b" in snapshots  # 终止且有冻结，未无限递归
+
+
+def test_collect_subgraph_snapshots_respects_max_depth():
+    from atlas.recording import collect_subgraph_snapshots
+
+    c1 = _graph_referencing("c2", sub_node_id="n1")
+    c2 = _graph_referencing("c3", sub_node_id="n2")
+    c3 = _graph_referencing("c4", sub_node_id="n3")  # 第 4 层，超出 MAX=3
+    library = {"c1": c1, "c2": c2, "c3": c3}
+
+    snapshots = collect_subgraph_snapshots(_graph_referencing("c1"), fetch_raw=library.get)
+    assert set(snapshots) == {"c1", "c2", "c3"}
+    assert "c4" not in snapshots
+
+
+def test_inline_first_resolver_prefers_snapshot_then_falls_back():
+    from atlas.recording import inline_first_resolver
+
+    child = _leaf_graph("child-trigger")
+    calls: list[str] = []
+
+    def fallback(graph_id: str):
+        calls.append(graph_id)
+        return "FALLBACK"
+
+    resolver = inline_first_resolver({"child": child}, fallback)
+    parsed = resolver("child")
+    assert _parsed_has_trigger(parsed, "child-trigger")
+    assert calls == []  # 命中内联，未触 fallback
+
+    assert resolver("other") == "FALLBACK"
+    assert calls == ["other"]
+
+    # 旧用例无内联（空 dict）——等价于直接走 fallback，保持历史行为
+    legacy = inline_first_resolver({}, fallback)
+    assert legacy("child") == "FALLBACK"
+
+
+def _parsed_has_trigger(graph, node_id: str) -> bool:
+    return any(node.id == node_id for node in graph.nodes)
