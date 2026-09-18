@@ -7,10 +7,11 @@
 
 from __future__ import annotations
 
+import copy
 import threading
 import uuid
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 Decision = Literal["approved", "rejected"]
 
@@ -26,6 +27,11 @@ class _Pending:
     decision: Decision | None = None
     resolved_by: str | None = None
     comment: str = ""
+    # M8：命中交互卡片时携带卡片 id 与挂起时上下文快照（供三渠道渲染）；
+    # action_id 为本次决策实际命中的卡片动作（预置/超时来源为 None）。
+    card_template_id: str | None = None
+    card_context: dict[str, Any] | None = None
+    action_id: str | None = None
 
 
 @dataclass
@@ -43,6 +49,8 @@ class ApprovalBroker:
         summary: str,
         approver: str,
         timeout_seconds: int,
+        card_template_id: str | None = None,
+        card_context: dict[str, Any] | None = None,
     ) -> str:
         token = uuid.uuid4().hex
         with self._lock:
@@ -53,6 +61,8 @@ class ApprovalBroker:
                 timeout_seconds=timeout_seconds,
                 node_id=node_id,
                 graph_id=graph_id,
+                card_template_id=card_template_id,
+                card_context=copy.deepcopy(card_context) if card_context is not None else None,
             )
         return token
 
@@ -65,6 +75,8 @@ class ApprovalBroker:
         summary: str,
         approver: str,
         remaining_seconds: float,
+        card_template_id: str | None = None,
+        card_context: dict[str, Any] | None = None,
     ) -> str:
         """恢复扫描器用：以帧内原 token 重建 pending（不生成新 token），剩余时长照扣。"""
         with self._lock:
@@ -75,6 +87,8 @@ class ApprovalBroker:
                 timeout_seconds=remaining_seconds,
                 node_id=node_id,
                 graph_id=graph_id,
+                card_template_id=card_template_id,
+                card_context=copy.deepcopy(card_context) if card_context is not None else None,
             )
         return token
 
@@ -88,7 +102,13 @@ class ApprovalBroker:
         return pending.decision
 
     def resolve(
-        self, token: str, decision: Decision, *, resolved_by: str = "human", comment: str = ""
+        self,
+        token: str,
+        decision: Decision,
+        *,
+        resolved_by: str = "human",
+        comment: str = "",
+        action_id: str | None = None,
     ) -> bool:
         """首决生效：返回 True 表示本次调用完成决策，False 表示未知或已决。"""
         with self._lock:
@@ -98,6 +118,8 @@ class ApprovalBroker:
             pending.decision = decision
             pending.resolved_by = resolved_by
             pending.comment = comment
+            if action_id is not None:
+                pending.action_id = action_id
             pending.event.set()
         return True
 
@@ -121,7 +143,7 @@ class ApprovalBroker:
             pending = self._pending.get(token)
             if pending is None:
                 return None
-            return {
+            result = {
                 "token": token,
                 "node_id": pending.node_id,
                 "graph_id": pending.graph_id,
@@ -130,7 +152,20 @@ class ApprovalBroker:
                 "timeoutSeconds": pending.timeout_seconds,
                 "decision": pending.decision,
                 "resolvedBy": pending.resolved_by,
+                "comment": pending.comment,
+                "actionId": pending.action_id,
             }
+            if pending.card_template_id:
+                result["cardTemplateId"] = pending.card_template_id
+            return result
+
+    def get_card_context(self, token: str) -> dict[str, Any] | None:
+        """命中卡片时返回挂起时上下文快照的深拷贝（渲染用）；未知 token/无卡返 None。"""
+        with self._lock:
+            pending = self._pending.get(token)
+            if pending is None or pending.card_context is None:
+                return None
+            return copy.deepcopy(pending.card_context)
 
     def list_pending(self) -> list[dict]:
         with self._lock:
@@ -139,7 +174,7 @@ class ApprovalBroker:
 
     @staticmethod
     def _public(token: str, pending: _Pending) -> dict:
-        return {
+        result = {
             "token": token,
             "node_id": pending.node_id,
             "graph_id": pending.graph_id,
@@ -147,6 +182,9 @@ class ApprovalBroker:
             "approver": pending.approver,
             "timeoutSeconds": pending.timeout_seconds,
         }
+        if pending.card_template_id:
+            result["cardTemplateId"] = pending.card_template_id
+        return result
 
     def reset(self) -> None:
         """Demo reset：释放所有等待方（按拒绝放行）并清空。"""

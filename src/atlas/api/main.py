@@ -25,6 +25,13 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from atlas.cards import (
+    CardRenderError,
+    get_card,
+    list_cards,
+    map_action_output,
+    render_card,
+)
 from atlas.database.adapter import DatabaseHarnessAdapter
 from atlas.database.service import DatabaseClient, demo_engine
 from atlas.debug import DebugController, DebugStopped
@@ -50,7 +57,7 @@ from atlas.recording import (
 )
 from atlas.shop.adapter import ShopHarnessAdapter
 from atlas.shop.service import DemoShopService
-from atlas.storage.frame import remaining_seconds
+from atlas.storage.frame import card_context_from_frame, remaining_seconds
 from atlas.storage.memory import FeedbackRequest
 from atlas.storage.pg import get_pg_backend
 from atlas.storage.recovery import (
@@ -90,6 +97,7 @@ def _resume_from_frame(engine, frame: dict) -> None:
     services = tenant_registry.get(frame["tenant_id"])
     token = frame["resume_token"]
     if frame["kind"] == "approval":
+        card_template_id = frame.get("card_template_id") or None
         services.approval_broker.restore(
             token=token,
             node_id=frame["node_id"],
@@ -97,6 +105,8 @@ def _resume_from_frame(engine, frame: dict) -> None:
             summary=frame.get("summary", ""),
             approver=frame.get("approver", ""),
             remaining_seconds=remaining_seconds(frame.get("deadline_at")),
+            card_template_id=card_template_id,
+            card_context=card_context_from_frame(frame) if card_template_id else None,
         )
     threading.Thread(
         target=_resume_run, args=(engine, services, frame), daemon=True
@@ -392,6 +402,48 @@ def get_catalog_template(
     if template is None:
         raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
     return template.model_dump()
+
+
+@app.get("/api/cards")
+def list_catalog_cards(
+    principal: Principal = Depends(require("read")),
+) -> dict[str, list[dict[str, Any]]]:
+    """列出内置交互卡片目录（M8；只读代码常量，不受 reset 影响，12 §3.11）。"""
+    return {"items": [card.model_dump() for card in list_cards()]}
+
+
+@app.get("/api/approvals/{token}/card")
+def render_approval_card(
+    token: str,
+    channel: Literal["web", "im", "email"] = "web",
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """审批卡片按渠道渲染（M8，viewer+）；只读，不产生决策副作用（防邮件预取）。
+
+    未知 token 404、该审批未配卡片 404、非法 channel 由 FastAPI 判 422。
+    渲染上下文取挂起时快照（中断恢复后从帧重建）。
+    """
+    broker = services_for(principal).approval_broker
+    pending = broker.get(token)
+    if pending is None:
+        raise HTTPException(status_code=404, detail=f"审批请求不存在或已清理：{token}")
+    card_template_id = pending.get("cardTemplateId")
+    if not card_template_id:
+        raise HTTPException(status_code=404, detail="该审批请求未配置交互卡片")
+    card = get_card(card_template_id)
+    if card is None:  # 理论不发生：编译期已校验目录命中
+        raise HTTPException(status_code=404, detail=f"交互卡片不存在：{card_template_id}")
+    try:
+        return render_card(
+            card,
+            broker.get_card_context(token),
+            token=token,
+            channel=channel,
+            approver=pending.get("approver", ""),
+            timeout_seconds=pending.get("timeoutSeconds"),
+        )
+    except CardRenderError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.post("/api/recordings", status_code=201)
@@ -861,8 +913,13 @@ def get_task(
 
 
 class ApprovalDecisionRequest(BaseModel):
-    decision: Literal["approved", "rejected"]
+    # M8：旧 {decision, comment?} 仍可用；命中卡片可提交 {actionId, form?}（decision/comment 可省）。
+    decision: Literal["approved", "rejected"] | None = None
     comment: str = Field(default="", max_length=500)
+    action_id: str | None = Field(default=None, alias="actionId")
+    form: dict[str, Any] | None = None
+
+    model_config = {"populate_by_name": True}
 
 
 @app.get("/api/approvals")
@@ -880,12 +937,42 @@ def decide_approval(
     principal: Principal = Depends(require("operate")),
 ) -> dict[str, Any]:
     broker = services_for(principal).approval_broker
-    if broker.get(token) is None:
+    pending = broker.get(token)
+    if pending is None:
         # 跨租户 token 同样 404，不泄漏存在性（04 §5.14）
         raise HTTPException(status_code=404, detail=f"审批请求不存在或已清理：{token}")
-    if not broker.resolve(token, request.decision, comment=request.comment):
+    if pending.get("decision") is not None:
         raise HTTPException(status_code=409, detail="该审批请求已有决策，重复提交不生效")
-    return {"token": token, "decision": request.decision, "resolvedBy": "human"}
+
+    action_id: str | None = None
+    if request.action_id:
+        # M8：卡片动作提交，服务端按 action.output 映射 decision/comment（map_action_output 唯一权威）。
+        card_template_id = pending.get("cardTemplateId")
+        card = get_card(card_template_id) if card_template_id else None
+        if card is None:
+            raise HTTPException(status_code=422, detail="该审批请求未配置交互卡片或卡片不存在")
+        try:
+            mapped = map_action_output(card, request.action_id, request.form)
+        except CardRenderError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        decision = mapped["decision"]
+        comment = mapped.get("comment", "")
+        action_id = request.action_id
+    else:
+        if request.decision is None:
+            raise HTTPException(
+                status_code=422,
+                detail="请提供 decision（approved/rejected）或卡片 actionId",
+            )
+        decision = request.decision
+        comment = request.comment
+
+    if not broker.resolve(token, decision, comment=comment, action_id=action_id):
+        raise HTTPException(status_code=409, detail="该审批请求已有决策，重复提交不生效")
+    result: dict[str, Any] = {"token": token, "decision": decision, "resolvedBy": "human"}
+    if action_id:
+        result["actionId"] = action_id
+    return result
 
 
 class ResumeDebugRequest(BaseModel):
