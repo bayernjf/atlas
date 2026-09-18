@@ -8,7 +8,11 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-RuleId = Literal["run_error", "node_failed", "consecutive_failures", "failure_rate"]
+RuleId = Literal[
+    "run_error", "node_failed", "consecutive_failures", "failure_rate",
+    # M9：灰度门控自动回滚告警（阈值随每图 RolloutConfig.gate，不在全局 RuleConfig）
+    "rollout_gate",
+]
 
 
 class RuleToggle(BaseModel):
@@ -45,6 +49,8 @@ class Alert(BaseModel):
     count: int = 1
     status: Literal["open", "acknowledged", "resolved"] = "open"
     last_run_id: str
+    # M9 纯超集：仅 rollout_gate 告警携带自动回滚动作 {type,from_version,to_version,reason,actor}
+    action: dict | None = None
 
 
 class AlertEvent(BaseModel):

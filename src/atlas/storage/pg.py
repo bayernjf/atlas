@@ -391,6 +391,7 @@ class PgMonitoringStore:
         error: str | None = None,
         trace_id: str = "",
         resolved_version: int | None = None,
+        business=None,
     ) -> RunRecord:
         from atlas.monitoring.alerts import evaluate_rules
         from atlas.monitoring.metrics import is_healthy
@@ -405,14 +406,15 @@ class PgMonitoringStore:
                 started_at=started_at, finished_at=_now_iso(),
                 duration_ms=duration_ms, nodes=nodes, error=error,
                 trace_id=trace_id, resolved_version=resolved_version,
+                business=business,
             )
             conn.execute(
                 text(
                     "INSERT INTO monitoring_runs "
                     "(id, tenant_id, graph_id, mode, status, started_at, finished_at, "
-                    "duration_ms, nodes, error, trace_id, resolved_version) "
+                    "duration_ms, nodes, error, trace_id, resolved_version, business) "
                     "VALUES (:id, :tenant_id, :graph_id, :mode, :status, :started_at, "
-                    ":finished_at, :duration_ms, :nodes, :error, :trace_id, :resolved_version)"
+                    ":finished_at, :duration_ms, :nodes, :error, :trace_id, :resolved_version, :business)"
                 ),
                 {
                     "id": run_id,
@@ -427,6 +429,7 @@ class PgMonitoringStore:
                     "error": error,
                     "trace_id": trace_id,
                     "resolved_version": resolved_version,
+                    "business": json.dumps(business.model_dump(), ensure_ascii=False) if business is not None else None,
                 },
             )
             rules = self._rules_locked(conn)
@@ -542,12 +545,12 @@ class PgMonitoringStore:
         return RunRecord(
             id=r[0], graph_id=r[1], mode=r[2], status=r[3], started_at=r[4],
             finished_at=r[5], duration_ms=r[6], nodes=r[7], error=r[8],
-            trace_id=r[9] or "", resolved_version=r[10],
+            trace_id=r[9] or "", resolved_version=r[10], business=r[11],
         )
 
     _RUN_COLS = (
         "id, graph_id, mode, status, started_at, finished_at, "
-        "duration_ms, nodes, error, trace_id, resolved_version"
+        "duration_ms, nodes, error, trace_id, resolved_version, business"
     )
 
     @staticmethod
