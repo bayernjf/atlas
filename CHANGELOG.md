@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### docs(plan)：D26 部分取回立项——录制用例集报告 v1（批量回放报告沉淀 + 通过率历史趋势，2026-09-18，docs-only 立项批、零代码）
+
+- M9 发布门禁的 GateReport 即时返回、不沉淀、无历史；本次立项取回 14 D26「批量回放与用例集报告（通过率/趋势）」最小集：新模块 `recording/reports.py`（ReleaseReport＝rr-N/trigger manual·publish-gate/pass_rate/逐 case 行，ReportStore 进程内 ring 100/租户、reset 清空、不进 Repository 抽象不 PG 化，照 RoutingStore 先例），release-gate 与 publish gate 每次运行沉淀（含 skipped/blocked，409 报告体带 id），GateReport 响应纯超集加 `id`；`GET /api/graphs/{id}/release-reports` 倒序摘要、`.../release-reports/{rid}` 详情（read 角色，跨图/跨租户 404）；前端 ReleaseModal 增「历史报告（通过率趋势）」折叠区（AntD Progress/Tag，零新依赖）。候选 U60，reset 清空报告而录制用例保留。影子模式/Mock 工具响应/用例编辑参数化/subgraph 快照内联/PG 持久化多租户/跨图看板/定时 CI/导出仍缓做，**不解除 D26**，不新增 ADR。同步面：08 D26 立项条、03 `release_report`、04 §5.11 末、09 recording 包位（顺带订正 M9 已落码状态）、12 §3.7/§5、13 U60、14 D26、20 §4.4 矩阵、handoff。
+
 ### feat(routing/release/monitoring/frontend)：M9 落码收口——入站 Router + 灰度发布 + 指标门控自动回滚（2026-09-18，四批原子序 + 收口四提交）
 
 - 题二最后里程碑闭合（docs/20 §4.4，ADR T22，U55–U59 转正式，D32/D26 沙盘语义期取回，**M1–M10 主线至此全闭合**），零新依赖、后端纯 stdlib。四批：批 1 `c863f86`/`6e3f74a`/`60d885b`/`57b9966` 新包 `src/atlas/routing/`（models 四段规则、router `resolve_version` 固定序 internal→lowValueBucket→canary→full 纯函数 sha256 稳定桶、store RoutingStore 每租户 rollout 状态机 configure/start/promote/rollback/resolve、gate 门控占位）+ rollout REST + run[/stream] event 接线 pin + RunRecord.resolved_version；批 2 `1dc6314`/`1380cff` `recording/gate.py` 发布前批量回放门禁 + RecordingCase.graph_id + release-gate 端点 + publish `{gate}`（blocked 409 不产版本、无用例 skipped 明示）；批 3 `dcd40d1`/`7f2b503` `monitoring/business.py` 业务三率 extract_business + metrics business 全局/per_graph/per_version + `evaluate_after_run` 越阈自动 rollback(actor=auto) + rollout_gate 告警 action（只切流不改外部事实、无自动 promote）；批 4 `d6223ed`/`d53de4b`/`d7f0c77` 前端发布流（apiClient + `lib/release.ts` + 发布门禁 Modal + RolloutModal 四段规则/门控表单/状态机/流量计数/模拟事件 + Monitoring 业务三率与告警 action 徽标 + Editor 发布按钮/版本 Select）。

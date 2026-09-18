@@ -1,6 +1,6 @@
 # Handoff — Atlas
 
-更新时间：2026-09-18（**M9 入站 Router + 灰度发布 + 指标门控自动回滚已落码收口（批 1-4＋总收口：routing 三段分桶+event/pin+rollout REST、发布流批量回放门禁、monitoring 业务指标+门控越阈自动回滚、前端发布流 UI＋同图草稿 PUT 端点，后端 602 passed/13 skipped、前端 vitest 396 passed/2 skipped/34 文件；m9_smoke 32 断言、Router benchmark、真实浏览器全链路 0 console error、4 截图均已收口，见 Recently shipped 1 与 Active work 15）**；M8 交互模板系统、M10 span 级追踪、M9 灰度回滚全部收口，U49–U59 转正式；**题一 M1–M4、题二 M5a/M6/M5b/M7/M8/M9/M10 全部闭合——M1–M10 主线全闭合**）
+更新时间：2026-09-18（**M9 入站 Router + 灰度发布 + 指标门控自动回滚已落码收口（批 1-4＋总收口：routing 三段分桶+event/pin+rollout REST、发布流批量回放门禁、monitoring 业务指标+门控越阈自动回滚、前端发布流 UI＋同图草稿 PUT 端点，后端 602 passed/13 skipped、前端 vitest 396 passed/2 skipped/34 文件；m9_smoke 32 断言、Router benchmark、真实浏览器全链路 0 console error、4 截图均已收口，见 Recently shipped 1 与 Active work 15）**；M8 交互模板系统、M10 span 级追踪、M9 灰度回滚全部收口，U49–U59 转正式；**题一 M1–M4、题二 M5a/M6/M5b/M7/M8/M9/M10 全部闭合——M1–M10 主线全闭合**；主线闭合后首个缓做项提前取回：**D26 用例集报告 v1（批量回放报告沉淀＋通过率历史趋势）2026-09-18 已立项（docs-only，U60，待落码，见 Active work 16；不解除 D26、不新增 ADR）**）
 
 ## 项目概况
 
@@ -80,6 +80,7 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 
 14. ✅ **M8 交互模板系统（审批卡片双向 Schema + web/im/email 三渠道渲染降级）**（2026-09-18，立项 `e994ac5` + 三批 `2b35fc9`/`5f4384e`/`4b45571`/`25afa10` + 收口 `94000de`/`486a591`，U53/U54 转正式）。详见 Recently shipped 2。
 15. ✅ **M9 入站 Router + 灰度发布 + 指标门控自动回滚**（2026-09-18，立项 `ce57355` + 批 1–4 + 总收口，ADR T22，U55–U59 转正式；m9_smoke 32 断言、Router p50 0.0041ms、浏览器 0 console error）。详见 Recently shipped 1。
+16. 📋 **D26 用例集报告 v1（批量回放报告沉淀 + 通过率历史趋势）**（2026-09-18 用户拍板提前取回、docs-only 立项批已落；M9 门禁即时报告不沉淀/无历史，本次补回归资产沉淀）：原子序＝① `recording/reports.py`（ReleaseReport/ReportStore ring 100/租户，gate 端点与 publish gate 沉淀 manual/publish-gate，GateReport 纯超集加 id）→ ② 两 GET release-reports + TenantServices/reset 接线 + U60 后端 → ③ ReleaseModal 历史报告折叠区（AntD Progress/Tag，零新依赖）+ vitest → ④ 三道门/真实浏览器冒烟/截图/落码文档收口。不解除 D26（影子/Mock/参数化/PG 多租户仍缓做），不新增 ADR。契约 08 D26 立项条、03 `release_report`、04 §5.11 末、12 §3.7/§5、13 U60、14 D26。
 
 7. 📋 **i18n 与设计 Token 方案已定（2026-09-13，docs/17）**：设计 Token 等价替换**已落码**（`frontend/src/theme/tokens.ts` 单一事实源 + `setup.ts` 注入 `--atlas-*` 变量 + AntD theme，三页面主体零视觉差异；2026-09-16 17 §3.5 收尾清单五项已全部清零，`frontend/src` 仅 tokens.ts primitive 定义含 hex，浏览器逐项核对）；i18n 库（i18next+react-i18next）按触发条件引入（14 D12：首个英文使用者/出海需求），组件描述多语言随 Phase 2 模板库（14 D13）。
 
