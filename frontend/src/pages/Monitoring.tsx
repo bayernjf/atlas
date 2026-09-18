@@ -60,6 +60,13 @@ const EMPTY_METRICS: MetricsSummary = {
   p95: null,
   per_graph: [],
   failed_nodes: [],
+  business: {
+    auto_refund_rate: null,
+    manual_escalation_rate: null,
+    refund_amount_diff_rate: null,
+    per_graph: [],
+    per_version: [],
+  },
 }
 
 function rateText(rate: number | null): string {
@@ -148,7 +155,21 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
       ),
     },
     { title: '图', dataIndex: 'graph_id', width: 140 },
-    { title: '内容', dataIndex: 'message' },
+    {
+      title: '内容',
+      key: 'message',
+      render: (_, alert) => (
+        <Space orientation="vertical" size={2}>
+          <span>{alert.message}</span>
+          {alert.action?.type === 'rollback' && (
+            <Tag color="volcano" style={{ marginTop: 2 }}>
+              {alert.action.actor === 'auto' ? '自动' : '手动'}回滚 v{alert.action.from_version} → v
+              {alert.action.to_version}
+            </Tag>
+          )}
+        </Space>
+      ),
+    },
     {
       title: '次数',
       dataIndex: 'count',
@@ -204,7 +225,13 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
 
   const runColumns: ColumnsType<RunRecord> = [
     { title: '运行', dataIndex: 'id', width: 90 },
-    { title: '图', dataIndex: 'graph_id', width: 140 },
+    { title: '图', dataIndex: 'graph_id', width: 130 },
+    {
+      title: '版本',
+      dataIndex: 'resolved_version',
+      width: 80,
+      render: (value: number | null) => (value === null ? '草稿' : `v${value}`),
+    },
     {
       title: '方式',
       dataIndex: 'mode',
@@ -304,6 +331,54 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
               </Card>
             </Col>
           </Row>
+
+          <Row gutter={16}>
+            <Col span={8}>
+              <Card>
+                <Statistic title="自动退款率（业务）" value={rateText(metrics.business?.auto_refund_rate ?? null)} />
+              </Card>
+            </Col>
+            <Col span={8}>
+              <Card>
+                <Statistic title="人工升级率（业务）" value={rateText(metrics.business?.manual_escalation_rate ?? null)} />
+              </Card>
+            </Col>
+            <Col span={8}>
+              <Card>
+                <Statistic
+                  title="退款金额差异率（业务）"
+                  value={rateText(metrics.business?.refund_amount_diff_rate ?? null)}
+                />
+              </Card>
+            </Col>
+          </Row>
+
+          <Card title="业务指标 · 按发布版本（灰度门控对照，04 §5.13）">
+            <Table
+              size="small"
+              pagination={false}
+              rowKey={(row) => `${row.graph_id}@${row.resolved_version ?? 'draft'}`}
+              dataSource={metrics.business?.per_version ?? []}
+              locale={{ emptyText: '暂无带业务结果的运行' }}
+              columns={[
+                { title: '图', dataIndex: 'graph_id' },
+                {
+                  title: '版本',
+                  dataIndex: 'resolved_version',
+                  width: 90,
+                  render: (value: number | null) => (value === null ? '草稿' : `v${value}`),
+                },
+                { title: '样本', dataIndex: 'samples', width: 80 },
+                { title: '自动退款率', dataIndex: 'auto_refund_rate', render: rateText },
+                { title: '人工升级率', dataIndex: 'manual_escalation_rate', render: rateText },
+                {
+                  title: '退款金额差异率',
+                  dataIndex: 'refund_amount_diff_rate',
+                  render: rateText,
+                },
+              ]}
+            />
+          </Card>
 
           <Card
             title={
