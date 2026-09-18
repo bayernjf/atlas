@@ -209,9 +209,18 @@ def run_release_gate(*, graph_id: str, draft: dict, cases: list[RecordingCase],
     # registry / graph_resolver 由 API 层注入（避免 recording → api 反向依赖，与 subgraph
     # 重入同一注入口径）；筛选 case.graph_id == graph_id（旧用例空串不入选）；逐例对 draft 走标准 run_graph
     # （preset_approvals/collect_steps/compare 全部复用 replay.py，无录制专用运行时），
-    # 返 GateReport {graph_id, target:"draft", total, passed, failed, skipped, blocked,
+    # 返 GateReport {id?,graph_id, target:"draft", total, passed, failed, skipped, blocked,
     #                cases:[{case_id,name,matches,replay_status,note?}]}；
     # total=0 → skipped=true 不阻塞（明示未覆盖）；total>0 任一不匹配 → blocked=true
+    # D26 报告 v1（2026-09-18 已落码）：gate.py 仍为纯函数；API 层每次跑完沉淀 ReleaseReport
+    #   （release-gate→manual，publish gate→publish-gate，含 skipped/blocked），响应纯超集加 id
+
+# src/atlas/recording/reports.py（D26 报告 v1，2026-09-18 已落码；04 §5.11 末 / 03 release_report）
+class ReportStore:                                  # 进程内 per-tenant（挂 TenantServices.report_store），单锁 + deque(maxlen=100)
+    def record(self, *, graph_id: str, trigger: str, report: dict) -> str: ...   # → rr-N；pass_rate total=0 为 None
+    def list_summary(self, graph_id: str) -> list[dict]: ...                     # 倒序摘要，不含 cases
+    def get(self, graph_id: str, rid: str) -> dict | None: ...                   # 详情含 cases；不属于该图 → None（API 404）
+    def reset(self) -> None: ...                    # /api/demo/reset 清空（录制用例不清）
 
 # src/atlas/recording/replay.py（纯函数）
 def normalize(value, tool: str | None = None): ...
@@ -557,7 +566,9 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 | GET | /api/graphs/{id} | 读取 Graph（latest 草稿；`?releaseVersion=N` 读指定发布版本快照，未知/未发布 404） | — |
 | POST | /api/graphs/{id}/publish | 【operate】发布当前草稿为不可变版本（M6 立项 2026-09-17，docs/20 §4.1 / ADR T19）：冻结 Graph JSON + subgraph 钉版（递归，子图未发布则先递归发布其草稿为 v1），返回 `{id, releaseVersion}`；releaseVersion 从 1 递增、已发布版本只读。**M9 起请求体从无改为可选 `{gate?: boolean}`**：gate=true 先跑发布门禁（下行 release-gate），blocked → **409 带完整 GateReport 且不产新版本** | graph_definition / release_gate |
 | GET | /api/graphs/{id}/versions | 【read】已发布版本列表（M6）：`{items:[<releaseVersion>]}`（升序）；未发布过 → 空列表 | graph_definition |
-| POST | /api/graphs/{id}/release-gate | 【operate，M9 已落码 2026-09-18】发布前批量回放门禁（只跑门禁不发布，D26 部分取回）：对当前 latest 草稿逐例重放 `case.graph_id==id` 的录制用例（复用 replay.compare），返回 GateReport `{graph_id, target:"draft", total, passed, failed, skipped, blocked, cases:[{case_id,name,matches,replay_status,note?}]}`；total=0 时 skipped=true 不阻塞（明示未覆盖），total>0 任一不匹配 blocked=true；图不存在 404 | release_gate / recording_case |
+| POST | /api/graphs/{id}/release-gate | 【operate，M9 已落码 2026-09-18】发布前批量回放门禁（只跑门禁不发布，D26 部分取回）：对当前 latest 草稿逐例重放 `case.graph_id==id` 的录制用例（复用 replay.compare），返回 GateReport（D26 报告 v1 起纯超集加 `id`＝沉淀报告 rr-N）`{id,graph_id, target:"draft", total, passed, failed, skipped, blocked, cases:[{case_id,name,matches,replay_status,note?}]}`；total=0 时 skipped=true 不阻塞（明示未覆盖），total>0 任一不匹配 blocked=true；图不存在 404。**D26 报告 v1（2026-09-18 已落码）起每次运行沉淀一条 ReleaseReport（trigger=manual，含 skipped）**；publish `{gate:true}` 另沉淀 trigger=publish-gate（通过/blocked 均沉淀，409 报告体带 id） | release_gate / release_report / recording_case |
+| GET | /api/graphs/{id}/release-reports | 【read，D26 报告 v1 已落码 2026-09-18】本图批量回放报告历史（倒序摘要）：`{items:[{id,graph_id,trigger,total,passed,failed,skipped,blocked,pass_rate,created_at}]}`，不含 cases；图不存在 404，跨租户 404 | release_report |
+| GET | /api/graphs/{id}/release-reports/{rid} | 【read，D26 报告 v1 已落码 2026-09-18】报告详情（含 cases 逐例 ✓/✗/note）；报告不属于该图或不存在 404，跨租户不泄漏存在性 | release_report |
 | GET | /api/graphs/{id}/rollout | 【read，M9】灰度配置与运行态：`{status, stable, candidate, started_at, rolled_back_at, rollback_reason, config, traffic:{stable,candidate,segments:{internal,lowValueBucket,canary,full,fallback}}}`；从未配置 → status="idle" 空态 | rollout_config |
 | PUT | /api/graphs/{id}/rollout | 【operate，M9】存 RolloutConfig（strategy/rules 四段/gate/inFlightPolicy，形状见 §3.12），**只存配置不启动**；非法值（percent 越界、阈值非 0-1、段顺序/形状错）422 中文聚合；图不存在 404 | rollout_config |
 | POST | /api/graphs/{id}/rollout/start | 【operate，M9】idle→canary：取最新两个发布版（stable=前一版、candidate=最新版）；发布版不足 2 个 → 409「至少需要两个发布版本才能开始灰度」；未配置 RolloutConfig 409；返回 rollout 快照 | rollout_config |

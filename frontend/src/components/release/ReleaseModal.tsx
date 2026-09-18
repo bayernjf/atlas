@@ -1,14 +1,24 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Alert, Button, Modal, Space, Table, Tag, Typography } from 'antd'
+import { Alert, Button, Collapse, Modal, Progress, Space, Spin, Table, Tag, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import {
   GateBlockedError,
+  getReleaseReport,
+  listReleaseReports,
   publishGraph,
   runReleaseGate,
   type GateCaseRow,
   type GateReport,
+  type ReleaseReport,
+  type ReleaseReportSummary,
 } from '../../lib/apiClient'
-import { gateConclusion } from '../../lib/release'
+import {
+  GATE_CONCLUSION_META,
+  REPORT_TRIGGER_META,
+  gateConclusion,
+  reportConclusion,
+  reportTimeLabel,
+} from '../../lib/release'
 
 const { Text } = Typography
 
@@ -31,6 +41,19 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
   const [report, setReport] = useState<GateReport | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [publishedVersion, setPublishedVersion] = useState<number | null>(null)
+  // D26 报告 v1：历史报告（倒序摘要）+ 展开行懒加载详情
+  const [history, setHistory] = useState<ReleaseReportSummary[]>([])
+  const [detailById, setDetailById] = useState<Record<string, ReleaseReport>>({})
+
+  const loadHistory = useCallback(async () => {
+    if (!graphId) return
+    try {
+      setHistory(await listReleaseReports(graphId))
+    } catch {
+      // 历史是辅助视图，加载失败不阻断门禁主流程
+      setHistory([])
+    }
+  }, [graphId])
 
   const loadGate = useCallback(async () => {
     if (!graphId) return
@@ -45,7 +68,8 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
     } finally {
       setLoading(false)
     }
-  }, [graphId])
+    void loadHistory()  // 手动门禁沉淀后刷新历史（含本次）
+  }, [graphId, loadHistory])
 
   useEffect(() => {
     if (open) void loadGate()
@@ -68,6 +92,7 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
       }
     } finally {
       setPublishing(false)
+      void loadHistory()  // 发布门禁（通过/blocked/skipped）均沉淀，刷新历史
     }
   }
 
@@ -84,6 +109,62 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
     { title: '用例', dataIndex: 'name' },
     { title: '回放终态', dataIndex: 'replay_status', width: 110 },
     { title: '说明', dataIndex: 'note' },
+  ]
+
+  const onExpandHistory = async (expanded: boolean, row: ReleaseReportSummary) => {
+    if (!expanded || !graphId || detailById[row.id]) return
+    try {
+      const detail = await getReleaseReport(graphId, row.id)
+      setDetailById((prev) => ({ ...prev, [row.id]: detail }))
+    } catch {
+      // 单行详情失败不影响列表，展开区保持空
+    }
+  }
+
+  const historyColumns: ColumnsType<ReleaseReportSummary> = [
+    {
+      title: '时间',
+      dataIndex: 'created_at',
+      width: 110,
+      render: (createdAt: string) => reportTimeLabel(createdAt),
+    },
+    {
+      title: '触发方式',
+      dataIndex: 'trigger',
+      width: 100,
+      render: (trigger: ReleaseReportSummary['trigger']) => {
+        const meta = REPORT_TRIGGER_META[trigger]
+        return <Tag color={meta.color}>{meta.label}</Tag>
+      },
+    },
+    {
+      title: '通过/总数',
+      width: 90,
+      render: (_, row) => `${row.passed}/${row.total}`,
+    },
+    {
+      title: '通过率趋势',
+      dataIndex: 'pass_rate',
+      width: 170,
+      render: (passRate: number | null, row) =>
+        passRate === null ? (
+          <Tag>未覆盖</Tag>
+        ) : (
+          <Progress
+            percent={Math.round(passRate * 100)}
+            size="small"
+            status={row.blocked ? 'exception' : 'success'}
+          />
+        ),
+    },
+    {
+      title: '结论',
+      width: 90,
+      render: (_, row) => {
+        const meta = GATE_CONCLUSION_META[reportConclusion(row)]
+        return <Tag color={meta.color}>{meta.label}</Tag>
+      },
+    },
   ]
 
   return (
@@ -144,6 +225,43 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
           dataSource={report?.cases ?? []}
           pagination={false}
           locale={{ emptyText: loading ? '回放中…' : '暂无匹配用例' }}
+        />
+        <Collapse
+          ghost
+          items={[
+            {
+              key: 'history',
+              label: `历史报告（通过率趋势）${history.length ? `· ${history.length} 条` : ''}`,
+              children: (
+                <Table
+                  rowKey="id"
+                  size="small"
+                  columns={historyColumns}
+                  dataSource={history}
+                  pagination={false}
+                  locale={{ emptyText: '暂无历史报告（每次门禁/发布都会在此沉淀）' }}
+                  expandable={{
+                    onExpand: onExpandHistory,
+                    expandedRowRender: (row) => {
+                      const detail = detailById[row.id]
+                      if (!detail) {
+                        return <Spin size="small" />
+                      }
+                      return (
+                        <Table
+                          rowKey="case_id"
+                          size="small"
+                          columns={columns}
+                          dataSource={detail.cases}
+                          pagination={false}
+                        />
+                      )
+                    },
+                  }}
+                />
+              ),
+            },
+          ]}
         />
       </Space>
     </Modal>

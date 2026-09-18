@@ -42,7 +42,8 @@
 | `trace_span` | 04 / 五、逻辑组件 5.15 链路追踪 v1 契约（**M10 已落码 2026-09-18**；权威 blockquote）+ `src/atlas/tracing/`（与 OTel 同形最小 Span/Tracer、contextvars 进程内传播、to_tree 折叠开关） | ### 5.15 链路追踪（span v1） |
 | `rollout_config` | **M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；04 / 五、逻辑组件 5.16 灰度发布与门控回滚 v1 契约（权威 blockquote）+ `src/atlas/routing/{models,router,store,gate}.py`（rollout 配置/三段分桶/状态机/门控；ADR T22）；形状来源 docs/19 §2.3.3 提案转权威 | ### 5.16 灰度发布与门控回滚 |
 | `route_decision` | **M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；同上 04 §5.16 + `routing/router.py` resolve_version 纯函数（入站 event→发布版本/分桶段，pin-to-version） | ### 5.16 灰度发布与门控回滚 |
-| `release_gate` | **M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；04 §5.11 末发布前批量门禁段 + `src/atlas/recording/gate.py`（GateReport，D26 部分取回） | ### 5.11 操作录制与回放 |
+| `release_gate` | **M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；04 §5.11 末发布前批量门禁段 + `src/atlas/recording/gate.py`（GateReport，D26 部分取回；D26 报告 v1 起响应纯超集加 `id` 并沉淀，见下行） | ### 5.11 操作录制与回放 |
+| `release_report` | **D26 报告 v1 已落码收口（2026-09-18，U60 转正式，08 D26 落码条；立项 `71153a8`、后端 `9dc9690`/`5c812c5`、前端 `f5c789c`）**；04 §5.11 末用例集报告段 + `src/atlas/recording/reports.py`（ReleaseReport 沉淀/按图历史/通过率趋势，ring 100/租户、reset 清空、不 PG 化） | ### 5.11 操作录制与回放 |
 | `business_metrics` | **M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；04 §5.13 末业务指标段 + `src/atlas/monitoring/business.py`（extract_business 业务结果三率，金融灰度门控信号源） | ### 5.13 基础监控告警 |
 
 ---
@@ -808,7 +809,31 @@ cases:
     replay_status: string
     note: string?             # 分支漂移/回放异常等
 # 逐例对草稿走标准 run_graph（审批预置同现有 replay 端点），复用 recording.replay.compare 产逐节点 diff_keys
+# D26 报告 v1（2026-09-18 已落码，见下 `release_report`）：响应纯超集加 id（沉淀报告 rr-N）；
+#   release-gate 沉淀 trigger=manual、publish gate 沉淀 trigger=publish-gate（含 blocked 409 报告体），skipped 也沉淀
 ```
+
+### `release_report` — 字段概览（**D26 报告 v1 已落码收口，2026-09-18，U60 转正式**；`src/atlas/recording/reports.py`，08 D26 落码条；用例集报告 v1＝沉淀 + 按图历史 + 通过率趋势）
+
+```yaml
+# ReportCaseRow：与 GateReport.cases 行同形 {case_id,name,matches,replay_status,note?}
+# ReleaseReport（id rr-{n}，进程内 per-tenant，ring 100，reset 清空；不进 Repository 抽象/不 PG 化，照 RoutingStore 先例）:
+id: string                      # rr-N
+graph_id: string
+target: "draft"
+trigger: "manual" | "publish-gate"   # release-gate 端点＝manual；publish {gate:true}＝publish-gate（通过/blocked 均沉淀）
+total: integer
+passed: integer
+failed: integer
+skipped: boolean                # total=0 也沉淀（留「当时未覆盖」痕迹，覆盖趋势可见）
+blocked: boolean
+pass_rate: number | null        # passed/total；total=0 为 null
+cases: ReportCaseRow[]
+created_at: string              # ISO UTC
+# GET /api/graphs/{id}/release-reports（read）→ {items:[摘要…]} 倒序、不含 cases
+# GET /api/graphs/{id}/release-reports/{rid}（read）→ 完整 ReleaseReport；不属于该图/不存在 404，跨租户不泄漏
+```
+> 仍缓做（不解除 D26）：影子模式、Mock 工具响应、用例编辑/参数化、subgraph 快照内联、PG 持久化与多租户共享、跨图聚合看板、定时/CI 回放、报告导出。
 
 ### `business_metrics` — 字段概览（**M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；`src/atlas/monitoring/business.py` extract_business 纯函数；金融灰度门控信号源）
 

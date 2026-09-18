@@ -8,6 +8,7 @@ import type {
   GateMetric,
   GateMetricId,
   GateReport,
+  ReleaseReportSummary,
   RolloutConfig,
   RolloutRule,
   RolloutStatus,
@@ -33,6 +34,40 @@ export type GateConclusion = 'blocked' | 'skipped' | 'passed'
 export function gateConclusion(report: GateReport): GateConclusion {
   if (report.total === 0 || report.skipped) return 'skipped'
   return report.blocked ? 'blocked' : 'passed'
+}
+
+/** 门禁/报告结论中文 meta（U60 ⑧，历史区结论 Tag） */
+export const GATE_CONCLUSION_META: Record<GateConclusion, { label: string; color: string }> = {
+  blocked: { label: '未通过', color: 'error' },
+  skipped: { label: '未覆盖', color: 'warning' },
+  passed: { label: '通过', color: 'success' },
+}
+
+/** 报告触发方式中文 meta（03 release_report.trigger；手动门禁 vs 发布时门禁） */
+export const REPORT_TRIGGER_META: Record<
+  ReleaseReportSummary['trigger'],
+  { label: string; color: string }
+> = {
+  manual: { label: '手动门禁', color: 'blue' },
+  'publish-gate': { label: '发布门禁', color: 'purple' },
+}
+
+/** 历史报告结论（摘要行无 cases，按 total/skipped/blocked 判定，口径同 gateConclusion） */
+export function reportConclusion(
+  report: Pick<ReleaseReportSummary, 'total' | 'skipped' | 'blocked'>,
+): GateConclusion {
+  if (report.total === 0 || report.skipped) return 'skipped'
+  return report.blocked ? 'blocked' : 'passed'
+}
+
+/** ISO 时间 → MM-DD HH:mm（历史趋势表紧凑展示；非法输入原样返回） */
+export function reportTimeLabel(iso: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return iso
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(
+    date.getMinutes(),
+  )}`
 }
 
 /** 默认灰度配置：internal 全量 candidate（本租户）+ 低金额桶（≤200 全进）+ canary 5% + 三指标门控 */
