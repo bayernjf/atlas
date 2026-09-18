@@ -121,6 +121,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
   const [releaseGraphId, setReleaseGraphId] = useState<string | null>(null)
   const [rolloutGraphId, setRolloutGraphId] = useState<string | null>(null)
   const [publishedRef, setPublishedRef] = useState<{ id: string; versions: number[] } | null>(null)
+  const [draftGraphId, setDraftGraphId] = useState<string | null>(null)
   const [runTarget, setRunTarget] = useState<'draft' | number>('draft')
   const [releaseBusy, setReleaseBusy] = useState(false)
 
@@ -159,9 +160,18 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
       if (pinnedVersion !== undefined && publishedRef) {
         graphId = publishedRef.id
         appendLog(`运行已发布版本：${graphId}@${pinnedVersion}（不使用当前草稿）`)
+      } else if (draftGraphId) {
+        // 同一画布复用稳定 graph id：PUT 覆盖草稿、不新建图，录制用例与发布门禁才能匹配本图
+        await saveGraphDraft(draftGraphId, serialized)
+        graphId = draftGraphId
+        appendLog(`已更新草稿：${graphId}`)
+        const compiled = await compileGraph(graphId)
+        setCompileResult(compiled)
+        appendLog(`编译成功：入口 ${compiled.entrypoints.join(', ')}`)
       } else {
         const saved = await saveGraph(serialized)
         graphId = saved.id
+        setDraftGraphId(graphId)
         appendLog(`已保存 Graph：${graphId}`)
         const compiled = await compileGraph(graphId)
         setCompileResult(compiled)
@@ -317,13 +327,14 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
 
   async function ensureGraphId(): Promise<string> {
     const current = serializeGraph(nodes, edges, variables)
-    if (publishedRef) {
-      await saveGraphDraft(publishedRef.id, current)
-      appendLog(`已更新草稿：${publishedRef.id}`)
-      return publishedRef.id
+    if (draftGraphId) {
+      await saveGraphDraft(draftGraphId, current)
+      appendLog(`已更新草稿：${draftGraphId}`)
+      return draftGraphId
     }
     const saved = await saveGraph(current)
-    setPublishedRef({ id: saved.id, versions: [] })
+    setDraftGraphId(saved.id)
+    setPublishedRef((prev) => prev ?? { id: saved.id, versions: [] })
     appendLog(`已保存 Graph：${saved.id}`)
     return saved.id
   }
@@ -344,6 +355,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
     setReleaseBusy(true)
     try {
       const id = await ensureGraphId()
+      setDraftGraphId(id)
       setPublishedRef({ id, versions: await listVersions(id) })
       setRolloutGraphId(id)
       setRolloutOpen(true)
@@ -355,11 +367,12 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
   }
 
   const onPublished = (version: number) => {
-    setPublishedRef((prev) =>
-      prev
-        ? { ...prev, versions: [...new Set([...prev.versions, version])].sort((a, b) => a - b) }
-        : prev,
-    )
+    const id = draftGraphId ?? publishedRef?.id
+    if (!id) return
+    setPublishedRef((prev) => {
+      const base = prev && prev.id === id ? prev.versions : []
+      return { id, versions: [...new Set([...base, version])].sort((a, b) => a - b) }
+    })
   }
 
   async function generateDraft() {
@@ -368,6 +381,9 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
     try {
       const { graph, paramWarnings } = await nlGenerate(nlPrompt)
       loadGraph(graph)
+      setDraftGraphId(null)
+      setPublishedRef(null)
+      setRunTarget('draft')
       // loadGraph 会清空警告，故在其后写入；M3 表单化后按节点归到 params 根（04 §4.10）
       setNlWarnings(paramWarnings ?? [])
       setNlOpen(false)
@@ -399,6 +415,9 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
     try {
       const detail = await getTemplate(templateId)
       loadGraph(detail.graph)
+      setDraftGraphId(null)
+      setPublishedRef(null)
+      setRunTarget('draft')
       appendLog(`已加载模板：${detail.name}（${detail.id}），画布已整体替换`)
       setTemplateOpen(false)
     } catch (error) {
