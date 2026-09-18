@@ -429,7 +429,7 @@ def get_card(card_id: str) -> CardTemplate | None: ...   # 未知 id 返 None（
 
 # src/atlas/cards/render.py（纯函数；bindings 复用 graph.loader.interpolate 同一插值/缺失语义）
 def render_card(card: CardTemplate, context: dict, *, token: str,
-                channel: Literal["web", "im", "email"], approber: str = "",
+                channel: Literal["web", "im", "email"], approver: str = "",
                 timeout_seconds: int | None = None) -> dict: ...
     # context＝审批挂起时快照（trigger/globals/visibleAt 内 outputs）
     # web  ＝ {channel:"web", cardId, name, fields:[{label,value}], form:[{type,name,label,required,default}],
