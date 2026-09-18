@@ -16,11 +16,17 @@
  * 唯一有意偏差：GRAPH_UNREACHABLE 的 loc.nodeId 取不可达节点自身——后端 locations
  * 侧车对图级错误不出条目，前端为 Problems 面板点击定位补上 nodeId（message/规则语义不变）。
  */
-import type { ScopeEdgeLike, ScopeNodeLike } from '../scope'
+import { buildScopeIndex, type ScopeEdgeLike, type ScopeNodeLike } from '../scope'
 import type { Diagnostic } from './diagnostics'
 
 export const GRAPH_UNREACHABLE_CODE = 'GRAPH_UNREACHABLE'
 export const GRAPH_ILLEGAL_CYCLE_CODE = 'GRAPH_ILLEGAL_CYCLE'
+export const GRAPH_DATA_CYCLE_CODE = 'GRAPH_DATA_CYCLE'
+
+const DATA_CYCLE_MESSAGE_PREFIX =
+  '检测到变量数据依赖环（GRAPH_DATA_CYCLE：节点配置中的模板引用相互依赖；' +
+  '常见于循环节点的 continueExpression 引用了循环体内节点、而体内节点又引用' +
+  '循环变量，首轮条件求值时体内尚无输出）：'
 
 const CYCLE_MESSAGE_PREFIX = '检测到非法循环依赖（循环只允许经循环节点的循环体回到自身）：'
 
@@ -192,10 +198,78 @@ export function validateReachability(
 }
 
 /**
- * L3 全图预判：聚合顺序同构 validate_graph_report——非法环（至多一条）在前，
- * 不可达（节点序）在后。
+ * GRAPH_DATA_CYCLE：数据依赖环（同构后端 _validate_data_dependency_cycles；19
+ * §1.4.3/§1.5.2）。与控制流拓扑环分开建图——边取自「通过可见性判定的模板引用」
+ * viewer→provider（scope.dataDependencyEdges），DFS 三色报首个环。拓扑无环图上
+ * 可见边必为 DAG（引用只能朝上游），新增诊断集中在 loop 白名单回边区：loop 条件
+ * 引用体内节点、体内节点又引用 loop.index 时成环（拓扑环检测豁免回边会漏）。
+ * loc.nodeId 取回边引用方、pointer 落其模板字段，供 Problems 面板定位。
+ */
+export function validateDataDependencyCycles(
+  nodes: ScopeNodeLike[],
+  edges: ScopeEdgeLike[],
+): Diagnostic[] {
+  const dataEdges = buildScopeIndex(nodes, edges).dataDependencyEdges()
+  const adjacency = new Map<string, Array<{ provider: string; pointer: string }>>()
+  for (const edge of dataEdges) {
+    if (!adjacency.has(edge.viewer)) adjacency.set(edge.viewer, [])
+    adjacency.get(edge.viewer)!.push({ provider: edge.provider, pointer: edge.pointer })
+  }
+
+  const WHITE = 0
+  const GRAY = 1
+  const BLACK = 2
+  const color = new Map<string, number>(nodes.map((node) => [node.id, WHITE]))
+  const stack: string[] = []
+  // 数组容器（同 validateIllegalCycles）：闭包内 push，规避 TS 对 let|null 的控制流收窄。
+  const found: Array<{ cycle: string[]; backViewer: string; pointer: string }> = []
+
+  const dfs = (start: string): void => {
+    color.set(start, GRAY)
+    stack.push(start)
+    for (const { provider, pointer } of adjacency.get(start) ?? []) {
+      const providerColor = color.get(provider)
+      if (providerColor === GRAY) {
+        const begin = stack.indexOf(provider)
+        found.push({ cycle: [...stack.slice(begin), provider], backViewer: start, pointer })
+        return
+      }
+      if (providerColor === WHITE) {
+        dfs(provider)
+        if (found.length > 0) return
+      }
+    }
+    stack.pop()
+    color.set(start, BLACK)
+  }
+
+  for (const node of nodes) {
+    if (color.get(node.id) === WHITE) dfs(node.id)
+    if (found.length > 0) break
+  }
+
+  const hit = found[0]
+  if (!hit) return []
+  return [
+    {
+      severity: 'error',
+      layer: 'graph',
+      code: GRAPH_DATA_CYCLE_CODE,
+      message: `${DATA_CYCLE_MESSAGE_PREFIX}${hit.cycle.join(' → ')}`,
+      loc: { nodeId: hit.backViewer, pointer: hit.pointer },
+    },
+  ]
+}
+
+/**
+ * L3 全图预判：聚合顺序同构 validate_graph_report——非法环（至多一条）、不可达
+ * （节点序）在前（结构期），数据依赖环在 check_refs 期、排末位。
  */
 export function validateL3(nodes: ScopeNodeLike[], edges: ScopeEdgeLike[]): Diagnostic[] {
   const whitelist = loopBackedges(nodes, edges)
-  return [...validateIllegalCycles(nodes, edges, whitelist), ...validateReachability(nodes, edges)]
+  return [
+    ...validateIllegalCycles(nodes, edges, whitelist),
+    ...validateReachability(nodes, edges),
+    ...validateDataDependencyCycles(nodes, edges),
+  ]
 }

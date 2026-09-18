@@ -5,14 +5,16 @@
  * - L1 字段层：单节点 kind/label/config → 诊断，按节点签名记忆化，编辑即重算；
  * - L2 引用层：ScopeIndex 按**结构签名**记忆化（拓扑/loop 双 target/变量名不变则不重建），
  *   仅重算到期节点；toolOutputSchemas 到达或变化时该层缓存自动失效；
- * - L3 全图层：validateL3 同样按结构签名记忆化。
+ * - L3 全图层：validateL3 按**图数据签名**记忆化（结构签名 + 模板字段投影）——
+ *   非法环/不可达只依赖结构，但 GRAPH_DATA_CYCLE 依赖模板引用，模板编辑也须使 L3 失效。
  *
  * 调度时序（L1 同步 / L2 防抖 / L3 requestIdleCallback）在 React 薄绑定
  * useValidationEngine 中；本类只回答「这批到期范围重算后更新了谁」。
- * 模板文本变化只改本节点 L2 签名，不重建 ScopeIndex（结构签名不含模板字段）。
+ * 模板文本变化只改本节点 L2 签名、不重建 ScopeIndex（可见性只依赖拓扑）；但会改变
+ * 图数据签名，触发 L3 重算（数据环依赖模板引用）。
  */
 import type { CardBindings, JsonSchema, ScopeEdgeLike, ScopeIndex, ScopeNodeLike } from '../scope'
-import { buildScopeIndex } from '../scope'
+import { buildScopeIndex, templateFields } from '../scope'
 import type { NodeKind } from '../nodeCatalog'
 import type { GraphVariable } from '../variables'
 import type { Diagnostic } from './diagnostics'
@@ -55,6 +57,25 @@ export function structureSignature(
 
 function configSignature(config: Record<string, unknown>): string {
   return JSON.stringify(config)
+}
+
+/**
+ * 图数据签名：在结构签名之上叠加各节点模板字段（pointer+文本）投影。
+ * ScopeIndex 的可见性只依赖拓扑，仍用 structureSignature（编辑模板不重建索引）；
+ * 但 L3 的 GRAPH_DATA_CYCLE 数据边来自模板引用，模板编辑必须使 L3 缓存失效，
+ * 故 runGraph 用本签名（D30）。
+ */
+export function graphDataSignature(
+  nodes: ScopeNodeLike[],
+  edges: ScopeEdgeLike[],
+  variables: Pick<GraphVariable, 'name'>[],
+): string {
+  return JSON.stringify({
+    s: structureSignature(nodes, edges, variables),
+    t: nodes.map((node) =>
+      templateFields(node.kind, node.config ?? {}).map((field) => [field.pointer, field.text]),
+    ),
+  })
 }
 
 export class ValidationEngine {
@@ -150,13 +171,13 @@ export class ValidationEngine {
     return updated
   }
 
-  /** L3：结构签名不变则直接返回缓存（编辑模板文本不触发全图重算）。 */
+  /** L3：图数据签名（含模板投影）不变则返回缓存；编辑模板会触发数据环重算。 */
   runGraph(
     nodes: ScopeNodeLike[],
     edges: ScopeEdgeLike[],
     variables: Pick<GraphVariable, 'name'>[],
   ): Diagnostic[] {
-    const sig = structureSignature(nodes, edges, variables)
+    const sig = graphDataSignature(nodes, edges, variables)
     if (sig !== this.graphSig) {
       this.graphSig = sig
       this.graphCache = validateL3(nodes, edges)

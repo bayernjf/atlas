@@ -261,17 +261,17 @@ def validate_graph_report(
     for message in _validate_reachability(graph, node_ids, outgoing):
         issues.add(message)
     if check_refs:
-        issues.extend(
-            _validate_template_refs(
-                graph,
-                node_ids=node_ids,
-                node_types=node_types,
-                incoming=incoming,
-                outgoing=outgoing,
-                global_names=var_names,
-                tool_output_schemas=tool_output_schemas or {},
-            )
+        ref_issues, data_edges = _validate_template_refs(
+            graph,
+            node_ids=node_ids,
+            node_types=node_types,
+            incoming=incoming,
+            outgoing=outgoing,
+            global_names=var_names,
+            tool_output_schemas=tool_output_schemas or {},
         )
+        issues.extend(ref_issues)
+        issues.extend(_validate_data_dependency_cycles(data_edges))
 
     return issues.messages, issues.locations
 
@@ -1015,8 +1015,12 @@ def _validate_template_refs(
     outgoing: dict[str, set[str]],
     global_names: set[str],
     tool_output_schemas: dict[str, dict[str, Any]],
-) -> list[Issue]:
+) -> tuple[list[Issue], list[tuple[str, str, str]]]:
     issues: list[Issue] = []
+    # 通过可见性判定的数据依赖边 (引用方 viewer -> 被引节点 provider, 模板字段 pointer)；
+    # 节点不存在/不可见/路径非法的引用不纳边（由各自诊断承接）。loop 自身 index/iterations
+    # 引用是运行时循环计数、不依赖节点配置产出，不纳边（否则每个 loop 都成自环）。
+    edges: list[tuple[str, str, str]] = []
     trigger_ids = {nid for nid in node_ids if node_types.get(nid) == "trigger"}
 
     loop_bodies: dict[str, set[str]] = {}
@@ -1102,6 +1106,10 @@ def _validate_template_refs(
                         pointer,
                     )
                     continue
+
+                # 通过存在性与可见性判定：记录数据依赖边（loop 自身 index 自引用除外）。
+                if not loop_self_index:
+                    edges.append((node.id, head, pointer))
 
                 tail = segments[1:]
                 if not tail:
@@ -1196,7 +1204,59 @@ def _validate_template_refs(
                             pointer,
                         )
 
-    return issues
+    return issues, edges
+
+
+def _validate_data_dependency_cycles(
+    edges: list[tuple[str, str, str]],
+) -> list[Issue]:
+    """数据依赖环（GRAPH_DATA_CYCLE；19 §1.4.3/§1.5.2）：与控制流拓扑环分开建图。
+
+    边为「通过可见性判定的模板引用」viewer→provider（节点不存在/不可见/路径非法
+    的引用不纳边），DFS 三色报首个环，定位挂在回边引用方的模板字段。拓扑无环图上
+    可见边必为 DAG（引用只能朝上游），故本规则新增诊断集中在 loop 白名单回边区：
+    loop 的 continueExpression 引用体内节点、体内节点又引用 loop.index 时成环
+    （首轮条件求值时体内尚无输出），拓扑环检测豁免回边会漏，本规则补判。
+    """
+    adjacency: dict[str, list[tuple[str, str]]] = {}
+    for viewer, provider, pointer in edges:
+        adjacency.setdefault(viewer, []).append((provider, pointer))
+
+    white, gray, black = 0, 1, 2
+    color: dict[str, int] = {}
+    stack: list[str] = []
+    found: tuple[list[str], str, str] | None = None
+
+    def dfs(node: str) -> bool:
+        nonlocal found
+        color[node] = gray
+        stack.append(node)
+        for provider, pointer in adjacency.get(node, []):
+            state = color.get(provider, white)
+            if state == gray:
+                start = stack.index(provider)
+                found = (stack[start:] + [provider], node, pointer)
+                return True
+            if state == white and dfs(provider):
+                return True
+        stack.pop()
+        color[node] = black
+        return False
+
+    for node in adjacency:
+        if color.get(node, white) == white and dfs(node):
+            break
+
+    if found is None:
+        return []
+    cycle, back_node, back_pointer = found
+    chain = " → ".join(cycle)
+    return [(
+        "检测到变量数据依赖环（GRAPH_DATA_CYCLE：节点配置中的模板引用相互依赖；"
+        "常见于循环节点的 continueExpression 引用了循环体内节点、而体内节点又引用"
+        "循环变量，首轮条件求值时体内尚无输出）：" + chain,
+        _loc(back_node, back_pointer),
+    )]
 
 
 _TEMPLATE_FIELDS_TYPES = {

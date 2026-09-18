@@ -142,13 +142,47 @@ describe('ValidationEngine L3（全图结构层）', () => {
     expect(connected).toEqual([])
   })
 
-  it('编辑模板文本不改变结构签名（L3 不重算）', () => {
+  it('编辑不含引用的模板：图数据签名变化使 L3 重算，但无引用环时诊断仍为空', () => {
     const engine = new ValidationEngine()
     const edges = [{ source: 'trigger-1', target: 'tool-a' }]
     const v1 = [node('trigger-1', 'trigger', { triggerType: 'manual' }), node('tool-a', 'tool_call', { params: 'a' })]
-    engine.runGraph(scopeNodes(v1), edges, [])
+    const first = engine.runGraph(scopeNodes(v1), edges, [])
     const v2 = [node('trigger-1', 'trigger', { triggerType: 'manual' }), node('tool-a', 'tool_call', { params: 'bbbb' })]
-    expect(engine.runGraph(scopeNodes(v2), edges, [])).toBe(engine.getGraphDiagnostics())
+    const second = engine.runGraph(scopeNodes(v2), edges, [])
+    // 模板投影进入图数据签名 → L3 重算（非同一数组）；ScopeIndex 仍按结构签名命中、不重建。
+    expect(second).not.toBe(first)
+    expect(second).toEqual([])
+  })
+
+  it('编辑模板引入数据环时 L3 实时报 GRAPH_DATA_CYCLE（模板投影必须进入图签名）', () => {
+    const engine = new ValidationEngine()
+    const edges: ScopeEdgeLike[] = [
+      { source: 'trigger-1', target: 'loop-1' },
+      { source: 'loop-1', target: 'tool-body' },
+      { source: 'tool-body', target: 'loop-1' },
+      { source: 'loop-1', target: 'tool-exit' },
+    ]
+    const build = (continueExpression: string) => [
+      node('trigger-1', 'trigger', { triggerType: 'manual' }),
+      node('loop-1', 'loop', {
+        mode: 'while',
+        continueExpression,
+        maxIterations: 10,
+        bodyTarget: 'tool-body',
+        exitTarget: 'tool-exit',
+      }),
+      node('tool-body', 'tool_call', { tool: 'x', params: '{"idx":"{{loop-1.index}}"}' }),
+      node('tool-exit', 'tool_call', { tool: 'y', params: '{}' }),
+    ]
+    // 初始合法：条件只引用自身 index，体内引用 loop.index 不成环。
+    const clean = engine.runGraph(scopeNodes(build('{{loop-1.index}} < 3')), edges, [])
+    expect(clean.map((d) => d.code)).not.toContain('GRAPH_DATA_CYCLE')
+    // 仅改模板文本（结构签名不变）：条件改引体内节点 → 与体内的 loop.index 引用成环，须重算并报出。
+    const cyclic = engine.runGraph(scopeNodes(build('{{tool-body.result}}')), edges, [])
+    expect(cyclic.map((d) => d.code)).toContain('GRAPH_DATA_CYCLE')
+    // 改回合法条件后环消失。
+    const recovered = engine.runGraph(scopeNodes(build('{{loop-1.index}} < 3')), edges, [])
+    expect(recovered.map((d) => d.code)).not.toContain('GRAPH_DATA_CYCLE')
   })
 })
 

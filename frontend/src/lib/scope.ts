@@ -181,6 +181,11 @@ export type ScopeIndex = {
     toolOutputSchemas?: Record<string, JsonSchema>,
     cardBindings?: CardBindings,
   ) => Diagnostic[]
+  /**
+   * D30：收集「通过可见性判定」的模板数据依赖边 viewer→provider（同构后端
+   * _validate_template_refs 顺带产出的 data_edges），供 L3 检测 GRAPH_DATA_CYCLE。
+   */
+  dataDependencyEdges: () => Array<{ viewer: string; provider: string; pointer: string }>
 }
 
 export function buildScopeIndex(
@@ -467,5 +472,45 @@ export function buildScopeIndex(
     return diagnostics
   }
 
-  return { visibleNodeIdsAt, listPathsAt, validateRefsAt }
+  // 同构后端 data_edges：global/不存在/不可见引用不纳边（L2 各诊断承接）；loop 自身
+  // index/iterations 是运行时循环计数、不依赖节点配置产出，不纳边（否则每个 loop 成自环）。
+  // 仅取节点自身模板字段，不含卡片只读 bindings（后端数据边同样不含卡片字段）。
+  const dataDependencyEdges: ScopeIndex['dataDependencyEdges'] = () => {
+    const result: Array<{ viewer: string; provider: string; pointer: string }> = []
+    for (const viewer of nodes) {
+      const config = viewer.config ?? {}
+      for (const field of templateFields(viewer.kind, config)) {
+        for (const ref of extractTemplateRefs(field.text)) {
+          const segments = ref.path.split('.').filter(Boolean)
+          if (segments.length === 0) continue
+          const head = segments[0]
+          if (head === 'global') continue
+          const provider = nodeById.get(head)
+          if (!provider) continue
+          const visible = visibleNodeIdsAt(viewer.id)
+          const outputKey = segments[1]
+          const loopSelfIndex =
+            provider.kind === 'loop' &&
+            provider.id === viewer.id &&
+            (outputKey === 'index' || outputKey === 'iterations')
+          const loopBlocked =
+            provider.kind === 'loop' &&
+            provider.id !== viewer.id &&
+            !inLoopBody(viewer.id, provider.id)
+          if (
+            (provider.id === viewer.id && !loopSelfIndex) ||
+            loopBlocked ||
+            (!visible.has(provider.id) && !loopSelfIndex)
+          ) {
+            continue
+          }
+          if (loopSelfIndex) continue
+          result.push({ viewer: viewer.id, provider: provider.id, pointer: field.pointer })
+        }
+      }
+    }
+    return result
+  }
+
+  return { visibleNodeIdsAt, listPathsAt, validateRefsAt, dataDependencyEdges }
 }
