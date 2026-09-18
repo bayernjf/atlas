@@ -8,7 +8,7 @@
  */
 import { useEffect, useState } from 'react'
 import { Empty, Select, Typography } from 'antd'
-import { listGraphs, type SavedGraphSummary } from '../apiClient'
+import { listCards, listGraphs, type CardSummary, type SavedGraphSummary } from '../apiClient'
 import type { WidgetComponent } from './types'
 import { DiagnosticText } from './widgets'
 
@@ -98,6 +98,65 @@ export const SavedGraphSelectWidget: WidgetComponent = ({
           value: item.id,
           label: `${item.id}（${item.node_count} 节点）`,
         }))}
+      />
+      {loadError && <Typography.Text type="danger">{loadError}</Typography.Text>}
+      <DiagnosticText diagnostics={diagnostics} />
+    </>
+  )
+}
+
+/**
+ * 交互卡片选择（human_approval.cardTemplateId，M8）：挂载时拉一次 /api/cards。
+ * 与子图选择不同，本字段可选：允许清空（allowClear），清空即回到 summary 旧路径；
+ * 目录为空/加载失败也不阻塞编辑（该字段本就可留空）。
+ */
+export const CardSelectWidget: WidgetComponent = ({
+  value,
+  onChange,
+  diagnostics,
+  placeholder,
+}) => {
+  const [cards, setCards] = useState<CardSummary[]>([])
+  const [loadError, setLoadError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    listCards()
+      .then((items) => {
+        if (!cancelled) setCards(items)
+      })
+      .catch((error: Error) => {
+        if (!cancelled) setLoadError(error.message)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  if (cards.length === 0 && !loadError) {
+    return (
+      <>
+        <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description="暂无内置卡片：留空即使用默认审批说明"
+        />
+        <DiagnosticText diagnostics={diagnostics} />
+      </>
+    )
+  }
+
+  return (
+    <>
+      <Select
+        showSearch
+        allowClear
+        style={{ width: '100%' }}
+        value={value ? String(value) : undefined}
+        placeholder={placeholder ?? '选择交互卡片（留空＝默认审批说明）'}
+        status={diagnostics?.some((d) => d.severity === 'error') ? 'error' : undefined}
+        onChange={(next: string | undefined) => onChange(next ?? '')}
+        optionFilterProp="label"
+        options={cards.map((item) => ({ value: item.id, label: `${item.name}（${item.id}）` }))}
       />
       {loadError && <Typography.Text type="danger">{loadError}</Typography.Text>}
       <DiagnosticText diagnostics={diagnostics} />

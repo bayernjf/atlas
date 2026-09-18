@@ -25,6 +25,7 @@ export const humanApprovalUiSchema: UiSchema = {
     onTimeout: '超时策略（默认自动拒绝；超时后 run 仍完成）',
     approvedTarget: '通过目标（人工同意 / 超时自动通过时进入）',
     rejectedTarget: '拒绝目标（人工拒绝 / 超时自动拒绝时进入）',
+    cardTemplateId: '交互卡片（可选；留空使用默认审批说明，选择后按卡片字段与动作渲染）',
   },
   placeholders: {
     summary:
@@ -32,6 +33,7 @@ export const humanApprovalUiSchema: UiSchema = {
     approver: '客服主管',
     approvedTarget: '选择通过目标节点',
     rejectedTarget: '选择拒绝目标节点',
+    cardTemplateId: '选择交互卡片（留空＝默认审批说明）',
   },
   optionLabels: {
     onTimeout: { reject: '超时自动拒绝', approve: '超时自动通过' },

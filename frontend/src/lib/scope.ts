@@ -78,8 +78,18 @@ const STATIC_OUTPUT_KEYS: Record<string, string[]> = {
   parallel: ['status', 'branches', 'joinStrategy', 'joinTarget'],
   wait: ['mode', 'waitType', 'durationSeconds'],
   subgraph: ['status', 'outputs'],
-  human_approval: ['decision', 'target', 'summary', 'approver', 'resolvedBy'],
+  human_approval: ['decision', 'target', 'summary', 'approver', 'resolvedBy', 'comment', 'card'],
 }
+
+/** ai_decision.decision 固定结构允许的一层子键（M8 审批卡引用 decision.reason）。 */
+const AI_DECISION_KEYS = ['action', 'reason', 'confidence', 'source']
+
+/**
+ * M8 卡片只读字段 bindings 索引：卡片 id → 该卡 FieldsSection 各 binding 的 ``{{路径}}`` 串。
+ * 来自后端 /api/cards 目录（前端不硬编码，避免漂移）；action.output 的 ``{{form.*}}``
+ * 不经节点作用域，故不纳入。
+ */
+export type CardBindings = Map<string, string[]>
 
 const TRIGGER_CONTEXT_KEYS = ['triggerType', 'cron', 'webhookUrl', 'payload']
 
@@ -124,6 +134,23 @@ export function templateFields(kind: string, config: Record<string, unknown>): T
   return fields
 }
 
+/**
+ * M8：human_approval 命中交互卡片时，把卡片 FieldsSection 的只读 bindings 追加为
+ * 本节点的模板字段（pointer 落在 /cardTemplateId），与 summary 同走一个可见集；
+ * 未配置卡片或目录未就绪时原样返回（后端编译期另有强校验兜底）。
+ */
+function appendCardFields(
+  fields: TemplateFieldLocation[],
+  config: Record<string, unknown>,
+  cardBindings?: CardBindings,
+): TemplateFieldLocation[] {
+  const cardId = config.cardTemplateId
+  if (typeof cardId !== 'string' || !cardId) return fields
+  const bindings = cardBindings?.get(cardId)
+  if (!bindings || bindings.length === 0) return fields
+  return [...fields, ...bindings.map((text) => ({ pointer: '/cardTemplateId', text }))]
+}
+
 function bfs(start: Set<string>, adjacency: Map<string, Set<string>>, stop?: Set<string>): Set<string> {
   const seen = new Set<string>()
   const queue = [...start]
@@ -152,6 +179,7 @@ export type ScopeIndex = {
     kind: string,
     config: Record<string, unknown>,
     toolOutputSchemas?: Record<string, JsonSchema>,
+    cardBindings?: CardBindings,
   ) => Diagnostic[]
 }
 
@@ -277,7 +305,13 @@ export function buildScopeIndex(
     return false
   }
 
-  const validateRefsAt: ScopeIndex['validateRefsAt'] = (nodeId, kind, config, toolOutputSchemas) => {
+  const validateRefsAt: ScopeIndex['validateRefsAt'] = (
+    nodeId,
+    kind,
+    config,
+    toolOutputSchemas,
+    cardBindings,
+  ) => {
     const diagnostics: Diagnostic[] = []
     const push = (field: TemplateFieldLocation, ref: TemplateRef, code: RefCode, message: string) => {
       diagnostics.push({
@@ -294,7 +328,8 @@ export function buildScopeIndex(
         quickFix: code === 'REF_NODE_NOT_FOUND' ? [DELETE_DANGLING_REF_FIX] : undefined,
       })
     }
-    for (const field of templateFields(kind, config)) {
+    const fields = appendCardFields(templateFields(kind, config), config, cardBindings)
+    for (const field of fields) {
       for (const ref of extractTemplateRefs(field.text)) {
         const segments = ref.path.split('.').filter(Boolean)
         if (segments.length === 0) continue
@@ -399,6 +434,23 @@ export function buildScopeIndex(
               'REF_PATH_NOT_FOUND',
               `子图节点输出路径不存在（status / outputs 根）：{{${ref.path}}}`,
             )
+          }
+          continue
+        }
+
+        if (node.kind === 'ai_decision') {
+          const [root, ...rest] = tail
+          let pathOk = false
+          if (root === 'decision') {
+            // decision 根对象本身合法；其下仅放行一层固定子键（M8 审批卡引用 decision.reason）。
+            pathOk =
+              rest.length === 0 ||
+              (rest.length === 1 && AI_DECISION_KEYS.includes(rest[0]))
+          } else if (root === 'prompt_rendered') {
+            pathOk = rest.length === 0
+          }
+          if (!pathOk) {
+            push(field, ref, 'REF_PATH_NOT_FOUND', `节点 ${node.id} 的输出中不存在该路径：{{${ref.path}}}`)
           }
           continue
         }

@@ -34,6 +34,12 @@ export const TARGET_SELECT_WIDGET = 'target-select'
  */
 export const SAVED_GRAPH_SELECT_WIDGET = 'saved-graph-select'
 
+/**
+ * 节点业务控件名（M8）：交互卡片选择（human_approval.cardTemplateId），
+ * 由 nodeWidgets.tsx 拉取 /api/cards，nodeRegistry 注册；允许清空（空＝走 summary 旧路径）。
+ */
+export const CARD_SELECT_WIDGET = 'card-select'
+
 /** 目标节点候选项（target-select 节点业务控件消费）。 */
 export type WidgetTargetOption = { value: string; label: string }
 

@@ -10,7 +10,7 @@
 import { useEffect, useLayoutEffect, useRef } from 'react'
 import { useEditorStore } from '../../store/editorStore'
 import { useValidationStore } from '../../store/validationStore'
-import { useToolOutputSchemas } from '../useScope'
+import { useCardBindings, useToolOutputSchemas } from '../useScope'
 import type { ScopeEdgeLike, ScopeNodeLike } from '../scope'
 import { ValidationEngine, type EngineNode, type EngineNodeData } from './engine'
 import { topologicalOrder } from './validateGraph'
@@ -57,6 +57,7 @@ export function useValidationEngine(): void {
   const edges = useEditorStore((state) => state.edges)
   const variables = useEditorStore((state) => state.variables)
   const toolOutputSchemas = useToolOutputSchemas()
+  const cardBindings = useCardBindings()
 
   const engineRef = useRef<ValidationEngine | null>(null)
   if (engineRef.current === null) engineRef.current = new ValidationEngine()
@@ -64,6 +65,10 @@ export function useValidationEngine(): void {
   useEffect(() => {
     schemasRef.current = toolOutputSchemas
   }, [toolOutputSchemas])
+  const cardBindingsRef = useRef(cardBindings)
+  useEffect(() => {
+    cardBindingsRef.current = cardBindings
+  }, [cardBindings])
 
   // L1：同步层（编辑当帧）。
   useLayoutEffect(() => {
@@ -107,6 +112,7 @@ export function useValidationEngine(): void {
         dataById,
         dueL2,
         schemasRef.current,
+        cardBindingsRef.current,
       )
       if (updated.length > 0) {
         const entries = Object.fromEntries(
@@ -151,7 +157,7 @@ export function useValidationEngine(): void {
     }
   }, [revision, nodes, edges, variables])
 
-  // 适配器 schema 到达/刷新：L2 全量补算一次（不消费 dirty）。
+  // 适配器 schema / 卡片目录到达或刷新：L2 全量补算一次（不消费 dirty）。
   useEffect(() => {
     const timer = window.setTimeout(() => {
       const engine = engineRef.current!
@@ -168,6 +174,7 @@ export function useValidationEngine(): void {
         dataById,
         store.nodes.map((node) => node.id),
         toolOutputSchemas,
+        cardBindings,
       )
       if (updated.length > 0) {
         results.patchNodes(
@@ -177,5 +184,5 @@ export function useValidationEngine(): void {
       }
     }, L2_DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
-  }, [toolOutputSchemas])
+  }, [toolOutputSchemas, cardBindings])
 }
