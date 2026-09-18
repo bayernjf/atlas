@@ -416,6 +416,39 @@ def run_graph_release_gate(
     return services.report_store.record(graph_id=graph_id, trigger="manual", report=report)
 
 
+@app.get("/api/graphs/{graph_id}/release-reports")
+def list_graph_release_reports(
+    graph_id: str, principal: Principal = Depends(require("read"))
+) -> dict[str, Any]:
+    """本图批量回放报告历史（倒序摘要，不含 cases；D26 报告 v1，03 release_report）。
+
+    图在本租户不存在（无草稿且无发布版）→ 404，跨租户不泄漏存在性（照 rollout 端点）。
+    """
+    services = services_for(principal)
+    if services.graph_store.get(graph_id) is None and not services.graph_store.list_versions(graph_id):
+        raise HTTPException(status_code=404, detail=f"Graph 不存在：{graph_id}")
+    return {"items": services.report_store.list_summary(graph_id)}
+
+
+@app.get("/api/graphs/{graph_id}/release-reports/{report_id}")
+def get_graph_release_report(
+    graph_id: str, report_id: str, principal: Principal = Depends(require("read"))
+) -> dict[str, Any]:
+    """报告详情（含 cases 逐例结果；D26 报告 v1，03 release_report）。
+
+    图不存在、报告不属于该图或不存在 → 404（跨租户/跨图不泄漏存在性）。
+    """
+    services = services_for(principal)
+    if services.graph_store.get(graph_id) is None and not services.graph_store.list_versions(graph_id):
+        raise HTTPException(status_code=404, detail=f"Graph 不存在：{graph_id}")
+    report = services.report_store.get(graph_id, report_id)
+    if report is None:
+        raise HTTPException(
+            status_code=404, detail=f"发布报告不存在：{graph_id}/{report_id}"
+        )
+    return report
+
+
 @app.post("/api/graphs/{graph_id}/publish", response_model=PublishGraphResponse)
 def publish_graph(
     graph_id: str,
