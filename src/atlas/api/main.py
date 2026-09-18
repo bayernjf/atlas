@@ -48,7 +48,7 @@ from atlas.iam.principals import Principal, authenticate
 from atlas.iam.registry import STORAGE_BACKEND, TenantServices
 from atlas.llm.nl_generate import generate_graph, validate_param_fills
 from atlas.message.adapter import MessageHarnessAdapter
-from atlas.monitoring import RUN_RING_SIZE, extract_node_results
+from atlas.monitoring import RUN_RING_SIZE, extract_business, extract_node_results
 from atlas.recording import (
     RecordingCreateRequest,
     collect_steps,
@@ -61,6 +61,7 @@ from atlas.routing import (
     RolloutError,
     RolloutState,
     TriggerEvent,
+    evaluate_after_run,
 )
 from atlas.shop.adapter import ShopHarnessAdapter
 from atlas.shop.service import DemoShopService
@@ -834,6 +835,7 @@ def run_saved_graph(
     body = payload or {}
     release_version, resolved_version = _resolve_event_version(services, principal, graph_id, body)
     graph = _load_graph_or_404(services, graph_id, release_version)
+    event_payload = (body.get("event") or {}).get("payload") or {}
     if body.get("debug") is not None:
         raise HTTPException(status_code=422, detail="单步调试仅支持流式运行 /run/stream")
     graph_view = {"nodes": [{"id": node.id, "type": node.type} for node in graph.nodes]}
@@ -862,7 +864,7 @@ def run_saved_graph(
         services.run_store.finish(
             run_id=run_id, status="failed", error=f"{type(exc).__name__}: {exc}"
         )
-        monitoring.record_run(
+        record = monitoring.record_run(
             graph_id=graph_id,
             mode="sync",
             status="error",
@@ -873,12 +875,13 @@ def run_saved_graph(
             trace_id=tracer.trace_id,
             resolved_version=resolved_version,
         )
+        evaluate_after_run(services, record)  # M9：异常运行同样计入 candidate 门控
         raise
     services.run_store.finish(
         run_id=run_id, status="completed",
         outputs=result["outputs"], trace=result["trace"],
     )
-    monitoring.record_run(
+    record = monitoring.record_run(
         graph_id=graph_id,
         mode="sync",
         status="completed",
@@ -887,7 +890,9 @@ def run_saved_graph(
         nodes=extract_node_results(graph_view, result["outputs"]),
         trace_id=tracer.trace_id,
         resolved_version=resolved_version,
+        business=extract_business(graph_view, result["outputs"], event_payload=event_payload),
     )
+    evaluate_after_run(services, record)  # M9：灰度门控越阈自动回滚
     return RunGraphResponse(id=graph_id, **result)
 
 
@@ -908,6 +913,7 @@ def run_saved_graph_stream(
     # M9：event 在请求线程解析（Principal 不进 worker），钉住的版本随闭包透传后台线程。
     release_version, resolved_version = _resolve_event_version(services, principal, graph_id, body)
     graph = _load_graph_or_404(services, graph_id, release_version)
+    event_payload = (body.get("event") or {}).get("payload") or {}
     inputs = body.get("inputs")
     debug = body.get("debug")
     graph_view = {"nodes": [{"id": node.id, "type": node.type} for node in graph.nodes]}
@@ -974,7 +980,7 @@ def run_saved_graph_stream(
                         run_id=run_id, status="completed",
                         outputs=result["outputs"], trace=result["trace"],
                     )
-                    monitoring.record_run(
+                    record = monitoring.record_run(
                         graph_id=graph_id,
                         mode="stream",
                         status="completed",
@@ -983,7 +989,11 @@ def run_saved_graph_stream(
                         nodes=extract_node_results(graph_view, result["outputs"]),
                         trace_id=tracer.trace_id if tracer is not None else "",
                         resolved_version=resolved_version,
+                        business=extract_business(
+                            graph_view, result["outputs"], event_payload=event_payload
+                        ),
                     )
+                    evaluate_after_run(services, record)
                 events.put({"__result__": result})
             except DebugStopped as exc:
                 events.put({"__stopped__": exc.node_id})
@@ -993,7 +1003,7 @@ def run_saved_graph_stream(
                         run_id=run_id, status="failed",
                         error=f"{type(exc).__name__}: {exc}",
                     )
-                    monitoring.record_run(
+                    record = monitoring.record_run(
                         graph_id=graph_id,
                         mode="stream",
                         status="error",
@@ -1004,6 +1014,7 @@ def run_saved_graph_stream(
                         trace_id=tracer.trace_id if tracer is not None else "",
                         resolved_version=resolved_version,
                     )
+                    evaluate_after_run(services, record)
                 events.put({"__error__": f"{type(exc).__name__}: {exc}"})
 
         thread = threading.Thread(target=worker, daemon=True)

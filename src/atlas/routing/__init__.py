@@ -31,6 +31,7 @@ from .router import (
     resolve_version,
 )
 from .store import RolloutError, RolloutState, RoutingStore
+from .gate import evaluate_after_run
 
 __all__ = [
     "BucketRule",
@@ -40,6 +41,7 @@ __all__ = [
     "GateMetric",
     "InternalRule",
     "RolloutConfig",
+    "evaluate_after_run",
     "RolloutError",
     "RolloutState",
     "RolloutStatus",
