@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### feat(recording/api/frontend)：D26 用例集报告 v1 落码收口——批量回放报告沉淀 + 通过率历史趋势（2026-09-18，立项后三批 + 收口，U60 转正式）
+
+- M9 发布门禁的 GateReport 即时返回、不沉淀、无历史；本次落码 14 D26「批量回放与用例集报告（通过率/趋势）」最小集。立项 docs-only `71153a8`；后端批 `9dc9690` 新包 `recording/reports.py`（ReleaseReport/ReportCaseRow pydantic + ReportStore 进程内 ring 100/租户，rr-N 租户级单调计数且 reset 归零，pass_rate=passed/total 四位小数、total=0 为 null，不进 Repository 抽象/不 PG 化照 RoutingStore 先例），release-gate 端点沉淀 trigger=manual、publish `{gate:true}` 沉淀 trigger=publish-gate（通过/blocked 均沉淀、409 报告体带 id、skipped 也沉淀），GateReport 响应纯超集加 `id`，gate.py 保持纯函数不碰存储，TenantServices memory/PG 两档挂 report_store、reset 清报告而录制用例保留；`5c812c5` 两 GET `release-reports`（倒序摘要剥 cases）/`release-reports/{rid}`（详情含逐例 cases，read 角色，图不存在/跨图/跨租户 404）；前端批 `f5c789c` apiClient ReleaseReport(+Summary) 类型与 list/get、`lib/release.ts` 报告结论/trigger 中文 meta 与 MM-DD HH:mm 纯函数、ReleaseModal ghost Collapse「历史报告（通过率趋势）」（Progress 成功绿/blocked exception 红、null 显「未覆盖」Tag、展开行懒加载详情嵌套逐例 ✓/✗/note 表）。
+- 三道门：后端 **615 passed/13 skipped**（M9 基线 602，+13＝6 存储 + 7 API）、前端 **404 passed/2 skipped（34 文件）**（基线 396，+8）、oxlint 0 error（2 warning 既有）/tsc+vite build 过，零新依赖、不新增 ADR。
+- 冒烟：`scripts/dev/d26_smoke.py` 对真实 :8000 **24 断言全过**（两触发沉淀/倒序/摘要剥 cases/详情/跨图与图不存在 404/reset 语义；脚本自隔离 DELETE 遗留录制用例、先登录后 reset——reset 需 administer），`scripts/dev/d26_ui_seed.py` 供浏览器对已存图造完整历史；真实 :8000+:5174 浏览器冒烟验 6 条历史（manual/publish-gate × 未覆盖/通过/未通过）与 blocked 行展开懒加载逐例差异，2 截图 `docs/assets/d26-report-{trend,detail}.png`。**不解除 D26**：影子模式/Mock 工具响应/用例编辑参数化/subgraph 快照内联/PG 持久化多租户/跨图看板/定时 CI/导出仍缓做（14 注记，触发条件不变）。同步面：08 落码条、03 `release_report`、04 §5.11 末、09 reports.py、12 §3.7/§5、13 U60+§9、14 D26、20 §4.4、handoff。
+
 ### docs(plan)：D26 部分取回立项——录制用例集报告 v1（批量回放报告沉淀 + 通过率历史趋势，2026-09-18，docs-only 立项批、零代码）
 
 - M9 发布门禁的 GateReport 即时返回、不沉淀、无历史；本次立项取回 14 D26「批量回放与用例集报告（通过率/趋势）」最小集：新模块 `recording/reports.py`（ReleaseReport＝rr-N/trigger manual·publish-gate/pass_rate/逐 case 行，ReportStore 进程内 ring 100/租户、reset 清空、不进 Repository 抽象不 PG 化，照 RoutingStore 先例），release-gate 与 publish gate 每次运行沉淀（含 skipped/blocked，409 报告体带 id），GateReport 响应纯超集加 `id`；`GET /api/graphs/{id}/release-reports` 倒序摘要、`.../release-reports/{rid}` 详情（read 角色，跨图/跨租户 404）；前端 ReleaseModal 增「历史报告（通过率趋势）」折叠区（AntD Progress/Tag，零新依赖）。候选 U60，reset 清空报告而录制用例保留。影子模式/Mock 工具响应/用例编辑参数化/subgraph 快照内联/PG 持久化多租户/跨图看板/定时 CI/导出仍缓做，**不解除 D26**，不新增 ADR。同步面：08 D26 立项条、03 `release_report`、04 §5.11 末、09 recording 包位（顺带订正 M9 已落码状态）、12 §3.7/§5、13 U60、14 D26、20 §4.4 矩阵、handoff。
