@@ -28,6 +28,7 @@ class RunRecord(BaseModel):
     duration_ms: float
     nodes: list[NodeResult]
     error: str | None = None
+    trace_id: str = ""  # M10：本 run 的 traceId（可空，向后兼容；debug/回放/subgraph 重入不写）
 
 
 def _now_iso() -> str:
@@ -54,6 +55,7 @@ class MonitoringStore:
         duration_ms: float,
         nodes: list,
         error: str | None = None,
+        trace_id: str = "",
     ) -> RunRecord:
         with self._lock:
             self._run_counter += 1
@@ -67,6 +69,7 @@ class MonitoringStore:
                 duration_ms=duration_ms,
                 nodes=nodes,
                 error=error,
+                trace_id=trace_id,
             )
             self._runs.append(record)
             healthy = is_healthy(record)

@@ -20,6 +20,7 @@ import operator
 import re
 import time
 import uuid
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Callable, TypedDict
 
@@ -36,6 +37,14 @@ from atlas.message.adapter import MessageHarnessAdapter
 from atlas.message.service import MessageService
 from atlas.shop.adapter import ShopHarnessAdapter
 from atlas.storage.frame import build_frame, deadline_iso, remaining_seconds
+from atlas.tracing import (
+    KIND_NODE,
+    KIND_PARALLEL,
+    KIND_SUBGRAPH,
+    KIND_TOOL,
+    Span,
+    Tracer,
+)
 from .conditions import ConditionEvalError, evaluate_expression
 from .dsl import (
     MAX_SUBGRAPH_DEPTH,
@@ -55,6 +64,10 @@ EventCallback = Callable[[dict[str, Any]], None]
 
 # 编译期注入的汇聚网关节点名前缀（04 §5.4）；该节点事件不下发。
 JOIN_GATE_PREFIX = "__join__"
+
+# M10：run_graph 的 tracer 哨兵——未显式传 tracer 时自建；显式传 None 表示不埋点
+# （debug 单步会话口径，04 §5.13/§5.15：SSE 帧保持无 span 字段的旧形状）。
+_AUTO_TRACER = object()
 
 # 进程内审批信号单例（04 §5.6）；API/测试可注入自己的实例。
 _default_approval_broker = ApprovalBroker()
@@ -156,167 +169,221 @@ def _make_executor(
     frame_sink: Callable[[dict], None] | None = None,
     resume: dict | None = None,
     graph_snapshot: dict | None = None,
+    tracer: Tracer | None = None,
+    base_span: Span | None = None,
+    internal_spans: bool = False,
 ):
     def execute(state: GraphState) -> dict:
         context = {"global": state["variables"].get("global", {}), **state["outputs"]}
-        start_event: dict[str, Any] = {
-            "type": "node_start",
-            "node_id": node.id,
-            "node_type": node.type,
-        }
 
-        # 续跑时仅在挂起节点生效：用帧内原 token 继续等待（不重新登记审批）。
-        resume_here = resume is not None and node.id == resume["node_id"]
-
-        approval_payload = None
-        if node.type == "human_approval":
-            if resume_here:
-                approval_payload = {
-                    "token": resume["resume_token"],
-                    "summary": resume.get("summary", ""),
-                    "approver": resume.get("approver", ""),
-                    "timeoutSeconds": 0,
-                }
-            elif debug_controller is None:
-                approval_payload = _register_approval(
-                    node,
-                    context=context,
-                    trigger_payload=trigger_payload,
-                    broker=approval_broker,
-                    graph_id=graph_id,
-                )
-                start_event["approval"] = approval_payload
-                _emit_frame(
-                    frame_sink,
-                    node,
-                    state,
-                    token=approval_payload["token"],
-                    kind="approval",
-                    graph_id=graph_id,
-                    graph_snapshot=graph_snapshot,
-                    trigger_payload=trigger_payload,
-                    timeout_seconds=int(node.config["timeoutSeconds"]),
-                    summary=approval_payload["summary"],
-                    approver=approval_payload["approver"],
-                )
-        emit(start_event)
-
-        if debug_controller is not None:
-            debug_controller.before_node(node, state)
-            if node.type == "human_approval" and not resume_here:
-                approval_payload = _register_approval(
-                    node,
-                    context=context,
-                    trigger_payload=trigger_payload,
-                    broker=approval_broker,
-                    graph_id=graph_id,
-                )
-                # 第二个 node_start 携带 approval 载荷，前端据此打开审批 Modal。
-                emit({**start_event, "approval": approval_payload})
-                _emit_frame(
-                    frame_sink,
-                    node,
-                    state,
-                    token=approval_payload["token"],
-                    kind="approval",
-                    graph_id=graph_id,
-                    graph_snapshot=graph_snapshot,
-                    trigger_payload=trigger_payload,
-                    timeout_seconds=int(node.config["timeoutSeconds"]),
-                    summary=approval_payload["summary"],
-                    approver=approval_payload["approver"],
-                )
-
-        if node.type == "trigger":
-            output = {
-                "context": {
-                    "triggerType": node.config.get("triggerType", "manual"),
-                    "cron": node.config.get("cron", ""),
-                    "webhookUrl": node.config.get("webhookUrl", ""),
-                    "payload": trigger_payload,
-                }
-            }
-            message = f"{node.id}({node.type}): executed"
-        elif node.type == "ai_decision":
-            payload = trigger_payload or {}
-            prompt = interpolate(node.config.get("promptTemplate", ""), context)
-            try:
-                limit = float(context["global"].get("approval_limit", 500))
-            except (TypeError, ValueError):
-                limit = 500.0
-            result = decision_client.decide_refund(
-                reason=str(payload.get("reason", "")),
-                amount=float(payload.get("amount", 0)),
-                limit=limit,
-            )
-            output = {"decision": result, "prompt_rendered": prompt}
-            message = f"{node.id}({node.type}): executed"
-        elif node.type == "condition":
-            output = _execute_condition(node, state, context)
-            message = f"{node.id}: branch={output['branch']} → {output['target']}"
-        elif node.type == "loop":
-            output = _execute_loop(node, state, context)
-            if output["exitReason"] is None:
-                message = (
-                    f"{node.id}: continue ({output['iterations']}/"
-                    f"{node.config.get('maxIterations')}) → {output['target']}"
-                )
-            else:
-                message = (
-                    f"{node.id}: exit ({output['exitReason']}) after "
-                    f"{output['iterations']} → {output['target']}"
-                )
-        elif node.type == "parallel":
-            output = _parallel_running_output(node)
-            targets = [branch["target"] for branch in node.config.get("branches", [])]
-            message = f"{node.id}: fork {len(targets)} branches → {', '.join(targets)}"
-        elif node.type == "wait":
-            seconds = int(node.config["durationSeconds"])
-            if resume_here:
-                # 续跑：按剩余时长等待（绝对 deadline 照扣，docs/24 §3.1）。
-                seconds = int(remaining_seconds(resume.get("deadline_at")))
-            else:
-                _emit_frame(
-                    frame_sink,
-                    node,
-                    state,
-                    token=uuid.uuid4().hex,
-                    kind="wait",
-                    graph_id=graph_id,
-                    graph_snapshot=graph_snapshot,
-                    trigger_payload=trigger_payload,
-                    timeout_seconds=seconds,
-                )
-            time.sleep(max(seconds, 0))
-            output = {"mode": "wait", "waitType": "duration", "durationSeconds": seconds}
-            message = f"{node.id}: waited {seconds}s"
-        elif node.type == "human_approval":
-            output, message = _await_human_approval(
-                node,
-                token=approval_payload["token"],
-                trigger_payload=trigger_payload,
-                broker=approval_broker,
-            )
-        elif node.type == "subgraph":
-            output, message = _execute_subgraph(
-                node,
-                context=context,
-                registry=registry,
-                decision_client=decision_client,
-                approval_broker=approval_broker,
-                resolver=graph_resolver,
-                depth=subgraph_depth,
+        # M10：每节点一个 node span（parallel 用 parallel kind 并记 fork attrs）；
+        # parent 显式取 base_span（顶层=root，subgraph 重入=subgraph span），不依赖跨超步 current。
+        span_attrs: dict[str, Any] = {"nodeId": node.id, "nodeType": node.type}
+        if node.type == "parallel":
+            fork_targets = [
+                branch.get("target") for branch in node.config.get("branches", [])
+            ]
+            span_attrs["forkCount"] = len(fork_targets)
+            span_attrs["targets"] = fork_targets
+        if tracer is not None:
+            span_cm = tracer.span(
+                f"{node.type}:{node.id}",
+                kind=KIND_PARALLEL if node.type == "parallel" else KIND_NODE,
+                parent=base_span,
+                internal=internal_spans,
+                **span_attrs,
             )
         else:
-            output = _execute_tool(node, context, registry)
-            message = f"{node.id}({node.type}): executed"
+            span_cm = nullcontext()
 
-        emit({"type": "node_end", "node_id": node.id, "node_type": node.type, "output": output})
-        return {
-            "outputs": {node.id: output},
-            "status": "running",
-            "messages": [message],
-        }
+        with span_cm as node_span:
+            start_event: dict[str, Any] = {
+                "type": "node_start",
+                "node_id": node.id,
+                "node_type": node.type,
+            }
+            if isinstance(node_span, Span):
+                start_event.update(node_span.context())
+
+            # 续跑时仅在挂起节点生效：用帧内原 token 继续等待（不重新登记审批）。
+            resume_here = resume is not None and node.id == resume["node_id"]
+
+            approval_payload = None
+            if node.type == "human_approval":
+                if resume_here:
+                    approval_payload = {
+                        "token": resume["resume_token"],
+                        "summary": resume.get("summary", ""),
+                        "approver": resume.get("approver", ""),
+                        "timeoutSeconds": 0,
+                    }
+                elif debug_controller is None:
+                    approval_payload = _register_approval(
+                        node,
+                        context=context,
+                        trigger_payload=trigger_payload,
+                        broker=approval_broker,
+                        graph_id=graph_id,
+                    )
+                    start_event["approval"] = approval_payload
+                    _emit_frame(
+                        frame_sink,
+                        node,
+                        state,
+                        token=approval_payload["token"],
+                        kind="approval",
+                        graph_id=graph_id,
+                        graph_snapshot=graph_snapshot,
+                        trigger_payload=trigger_payload,
+                        timeout_seconds=int(node.config["timeoutSeconds"]),
+                        summary=approval_payload["summary"],
+                        approver=approval_payload["approver"],
+                    )
+            emit(start_event)
+
+            if debug_controller is not None:
+                debug_controller.before_node(node, state)
+                if node.type == "human_approval" and not resume_here:
+                    approval_payload = _register_approval(
+                        node,
+                        context=context,
+                        trigger_payload=trigger_payload,
+                        broker=approval_broker,
+                        graph_id=graph_id,
+                    )
+                    # 第二个 node_start 携带 approval 载荷，前端据此打开审批 Modal。
+                    emit({**start_event, "approval": approval_payload})
+                    _emit_frame(
+                        frame_sink,
+                        node,
+                        state,
+                        token=approval_payload["token"],
+                        kind="approval",
+                        graph_id=graph_id,
+                        graph_snapshot=graph_snapshot,
+                        trigger_payload=trigger_payload,
+                        timeout_seconds=int(node.config["timeoutSeconds"]),
+                        summary=approval_payload["summary"],
+                        approver=approval_payload["approver"],
+                    )
+
+            if node.type == "trigger":
+                output = {
+                    "context": {
+                        "triggerType": node.config.get("triggerType", "manual"),
+                        "cron": node.config.get("cron", ""),
+                        "webhookUrl": node.config.get("webhookUrl", ""),
+                        "payload": trigger_payload,
+                    }
+                }
+                message = f"{node.id}({node.type}): executed"
+            elif node.type == "ai_decision":
+                payload = trigger_payload or {}
+                prompt = interpolate(node.config.get("promptTemplate", ""), context)
+                try:
+                    limit = float(context["global"].get("approval_limit", 500))
+                except (TypeError, ValueError):
+                    limit = 500.0
+                result = decision_client.decide_refund(
+                    reason=str(payload.get("reason", "")),
+                    amount=float(payload.get("amount", 0)),
+                    limit=limit,
+                )
+                output = {"decision": result, "prompt_rendered": prompt}
+                message = f"{node.id}({node.type}): executed"
+            elif node.type == "condition":
+                output = _execute_condition(node, state, context)
+                message = f"{node.id}: branch={output['branch']} → {output['target']}"
+            elif node.type == "loop":
+                output = _execute_loop(node, state, context)
+                if output["exitReason"] is None:
+                    message = (
+                        f"{node.id}: continue ({output['iterations']}/"
+                        f"{node.config.get('maxIterations')}) → {output['target']}"
+                    )
+                else:
+                    message = (
+                        f"{node.id}: exit ({output['exitReason']}) after "
+                        f"{output['iterations']} → {output['target']}"
+                    )
+            elif node.type == "parallel":
+                output = _parallel_running_output(node)
+                targets = [branch["target"] for branch in node.config.get("branches", [])]
+                message = f"{node.id}: fork {len(targets)} branches → {', '.join(targets)}"
+            elif node.type == "wait":
+                seconds = int(node.config["durationSeconds"])
+                if resume_here:
+                    # 续跑：按剩余时长等待（绝对 deadline 照扣，docs/24 §3.1）。
+                    seconds = int(remaining_seconds(resume.get("deadline_at")))
+                else:
+                    _emit_frame(
+                        frame_sink,
+                        node,
+                        state,
+                        token=uuid.uuid4().hex,
+                        kind="wait",
+                        graph_id=graph_id,
+                        graph_snapshot=graph_snapshot,
+                        trigger_payload=trigger_payload,
+                        timeout_seconds=seconds,
+                    )
+                time.sleep(max(seconds, 0))
+                output = {"mode": "wait", "waitType": "duration", "durationSeconds": seconds}
+                message = f"{node.id}: waited {seconds}s"
+            elif node.type == "human_approval":
+                output, message = _await_human_approval(
+                    node,
+                    token=approval_payload["token"],
+                    trigger_payload=trigger_payload,
+                    broker=approval_broker,
+                )
+            elif node.type == "subgraph":
+                output, message = _execute_subgraph(
+                    node,
+                    context=context,
+                    registry=registry,
+                    decision_client=decision_client,
+                    approval_broker=approval_broker,
+                    resolver=graph_resolver,
+                    depth=subgraph_depth,
+                    tracer=tracer,
+                )
+            else:
+                # M10：工具调用包 tool span（parent 经 contextvars 就近取当前 node span）。
+                tool_name = node.config.get("tool", "")
+                if tracer is not None and "/" in tool_name:
+                    adapter_id, capability_name = tool_name.split("/", 1)
+                    tool_cm = tracer.span(
+                        f"tool:{tool_name}",
+                        kind=KIND_TOOL,
+                        adapter=adapter_id,
+                        capability=capability_name,
+                        internal=internal_spans,
+                    )
+                else:
+                    tool_cm = nullcontext()
+                with tool_cm as tool_span:
+                    output = _execute_tool(node, context, registry)
+                    if isinstance(tool_span, Span) and _node_failure(output):
+                        tool_span.end("error")
+                message = f"{node.id}({node.type}): executed"
+
+            end_event: dict[str, Any] = {
+                "type": "node_end",
+                "node_id": node.id,
+                "node_type": node.type,
+                "output": output,
+            }
+            if isinstance(node_span, Span):
+                end_event.update(node_span.context())
+                if _span_error(output):
+                    node_span.end("error")
+            emit(end_event)
+            return {
+                "outputs": {node.id: output},
+                "status": "running",
+                "messages": [message],
+            }
 
     return execute
 
@@ -430,29 +497,46 @@ def _execute_subgraph(
     approval_broker: ApprovalBroker,
     resolver: Callable[[str], GraphDSL] | None,
     depth: int,
+    tracer: Tracer | None = None,
 ) -> tuple[dict[str, Any], str]:
     """进程内重入执行被引用子图（04 §5.7）；任何异常 fail-safe 为 failed，父 run 仍 completed。"""
     graph_ref = str(node.config.get("graphId", ""))
     mapping = node.config.get("inputs") or {}
     child_inputs = {key: interpolate(str(value), context) for key, value in mapping.items()}
-    try:
-        if resolver is None:
-            raise RuntimeError("子图解析器未注入")
-        if depth + 1 > MAX_SUBGRAPH_DEPTH:
-            raise RuntimeError(f"子图嵌套深度超过上限 {MAX_SUBGRAPH_DEPTH}")
-        child = resolver(graph_ref)
-        result = run_graph(
-            child,
-            inputs=child_inputs,
-            decision_client=decision_client,
-            registry=registry,
-            approval_broker=approval_broker,
-            graph_id=graph_ref,
-            emit=None,
-            graph_resolver=resolver,
-            _subgraph_depth=depth + 1,
+    # M10：subgraph span（非 internal，折叠后代表整段子图）；子图内部节点 span 标 internal。
+    sub_cm = (
+        tracer.span(
+            f"subgraph:{graph_ref}",
+            kind=KIND_SUBGRAPH,
+            graphId=graph_ref,
         )
+        if tracer is not None
+        else nullcontext()
+    )
+    sub_span: Span | None = None
+    try:
+        with sub_cm as sub_span:
+            if resolver is None:
+                raise RuntimeError("子图解析器未注入")
+            if depth + 1 > MAX_SUBGRAPH_DEPTH:
+                raise RuntimeError(f"子图嵌套深度超过上限 {MAX_SUBGRAPH_DEPTH}")
+            child = resolver(graph_ref)
+            result = run_graph(
+                child,
+                inputs=child_inputs,
+                decision_client=decision_client,
+                registry=registry,
+                approval_broker=approval_broker,
+                graph_id=graph_ref,
+                emit=None,
+                graph_resolver=resolver,
+                _subgraph_depth=depth + 1,
+                tracer=tracer,
+                _parent_span=sub_span if isinstance(sub_span, Span) else None,
+            )
     except Exception as exc:
+        if isinstance(sub_span, Span):
+            sub_span.end("error")
         output = {
             "mode": "subgraph",
             "graphId": graph_ref,
@@ -770,7 +854,25 @@ def _node_failure(output: dict[str, Any]) -> str | None:
     return None
 
 
-def _make_join_gate(node: NodeDSL, meta: dict[str, Any], emit: EventCallback):
+def _span_error(output: dict[str, Any]) -> str | None:
+    """节点产出是否应把 node span 标 error（M10）：工具 FAILED / subgraph / parallel failed。"""
+    failure = _node_failure(output)
+    if failure:
+        return failure
+    if output.get("mode") == "subgraph" and output.get("status") == "failed":
+        return str(output.get("error") or "subgraph failed")
+    if output.get("mode") == "parallel" and output.get("status") == "failed":
+        return "parallel join failed"
+    return None
+
+
+def _make_join_gate(
+    node: NodeDSL,
+    meta: dict[str, Any],
+    emit: EventCallback,
+    tracer: Tracer | None = None,
+    base_span: Span | None = None,
+):
     """汇聚网关（04 §5.4）：所有分支末端都有产出时聚合一次，否则空转等下超步。"""
 
     config = node.config
@@ -829,7 +931,27 @@ def _make_join_gate(node: NodeDSL, meta: dict[str, Any], emit: EventCallback):
             message = f"{node.id}: joined ({strategy}) success"
         # 汇聚完成时以 parallel 节点自身补发一次 node_end（fork 时产出为 running），
         # 供 SSE 画布展示最终汇聚结果；等待超步不发事件。
-        emit({"type": "node_end", "node_id": node.id, "node_type": "parallel", "output": output})
+        join_event: dict[str, Any] = {
+            "type": "node_end",
+            "node_id": node.id,
+            "node_type": "parallel",
+            "output": output,
+        }
+        if tracer is not None:
+            # M10：__join__ 网关本身不外泄 span——只建一个 internal parallel 汇聚 span，
+            # include_internal=False 折叠；traceId 与本 run 一致。
+            join_span = tracer.start_span(
+                f"parallel-join:{node.id}",
+                kind=KIND_PARALLEL,
+                parent=base_span,
+                internal=True,
+                nodeId=node.id,
+                joinStrategy=strategy,
+                status=overall,
+            )
+            join_span.end("error" if overall == "failed" else "ok")
+            join_event.update(join_span.context())
+        emit(join_event)
         return {"outputs": {node.id: output}, "messages": [message]}
 
     return gate
@@ -868,12 +990,22 @@ def compile_graph(
     frame_sink: Callable[[dict], None] | None = None,
     resume: dict | None = None,
     validate_with: GraphDSL | None = None,
+    tracer: Tracer | None = None,
+    graph_version: str | None = None,
+    _parent_span: Span | None = None,
 ):
     decision_client = decision_client or get_decision_client()
     registry = registry if registry is not None else build_demo_registry()
     approval_broker = approval_broker or _default_approval_broker
     noop_emit: EventCallback = lambda event: None
     emit = emit or noop_emit
+    # M10：节点 span 的父——subgraph 重入为 subgraph span（子图节点 internal），
+    # 顶层为 tracer.root；tracer 为 None（debug/直接 compile）时不埋点。
+    base_span: Span | None = (
+        _parent_span if _parent_span is not None
+        else (tracer.root if tracer is not None else None)
+    )
+    internal_spans = _parent_span is not None
     payload = trigger_payload or {}
     graph_snapshot = graph.model_dump()
     # 续跑时校验用完整图（尾图节点仍引用上游已完成节点，其引用合法），
@@ -920,6 +1052,9 @@ def compile_graph(
                 frame_sink=frame_sink,
                 resume=resume,
                 graph_snapshot=graph_snapshot,
+                tracer=tracer,
+                base_span=base_span,
+                internal_spans=internal_spans,
             ),
         )
 
@@ -934,7 +1069,9 @@ def compile_graph(
     retarget: dict[tuple[str, str], str] = {}
     for node in parallels:
         meta = metas[node.id]
-        builder.add_node(meta["gate"], _make_join_gate(node, meta, emit))
+        builder.add_node(
+            meta["gate"], _make_join_gate(node, meta, emit, tracer=tracer, base_span=base_span)
+        )
         for source in meta["region"]:
             if meta["join_target"] in outgoing.get(source, []):
                 retarget[(source, meta["join_target"])] = meta["gate"]
@@ -1090,6 +1227,9 @@ def run_graph(
     debug_controller: Any = None,
     frame_sink: Callable[[dict], None] | None = None,
     resume: dict | None = None,
+    tracer: Tracer | None | object = _AUTO_TRACER,
+    graph_version: str | None = None,
+    _parent_span: Span | None = None,
 ) -> dict[str, Any]:
     """编译并执行，返回状态/节点产出/轨迹。
 
@@ -1102,7 +1242,45 @@ def run_graph(
     frame_sink 在挂起点（human_approval/wait）经回调序列化中断帧（docs/24 §2.3）。
     resume 为中断帧时：以帧内 graph_snapshot 为权威图定义（防图已改错位）裁剪尾图，
     从挂起节点续跑到 END；调用方须先用帧 restore 审批 pending（恢复扫描器职责）。
+
+    M10：未传 tracer 时自建（库直跑/测试也有 span）；subgraph 重入复用父 tracer 并传
+    _parent_span=subgraph span（子图节点 internal）。顶层 result 带 traceId/traceTree，
+    run_end 帧带 root spanId 与 graphVersion（04 §5.15）。
     """
+    if tracer is _AUTO_TRACER:
+        tracer = Tracer(graph_id=graph_id, graph_version=graph_version)
+    internal_run = _parent_span is not None
+
+    def _finish(result: dict[str, Any], *, emit_end: bool) -> dict[str, Any]:
+        """收尾：结束 root（仅顶层）、result 挂 traceId/traceTree、发 run_end 超集帧。
+
+        tracer 显式为 None（debug 单步）时不埋点：result 不挂 trace 字段、
+        run_end 保持旧形状（无 span 三元组）。
+        """
+        if tracer is None:
+            if emit_end and emit is not None:
+                emit({"type": "run_end", **result})
+            return result
+        result["traceId"] = tracer.trace_id
+        if not internal_run:
+            tracer.finish("ok" if result.get("status") == "completed" else "error")
+            result["traceTree"] = tracer.to_tree(include_internal=True)
+        if emit_end and emit is not None:
+            # 终帧只带 span 三元组与 graphVersion；完整 traceTree 留在进程内返回值，
+            # 不进 SSE（04 §5.15：完整树由 tracer.to_tree 导出/未来调试端点）。
+            run_end: dict[str, Any] = {
+                "type": "run_end",
+                "status": result.get("status", "completed"),
+                "outputs": result.get("outputs", {}),
+                "trace": result.get("trace", []),
+                "traceId": tracer.trace_id,
+                "spanId": tracer.root.span_id,
+            }
+            if tracer.graph_version is not None:
+                run_end["graphVersion"] = tracer.graph_version
+            emit(run_end)
+        return result
+
     if resume is not None:
         resume_graph = GraphDSL.model_validate(resume["graph_snapshot"])
         tail = _tail_subgraph(resume_graph, resume["node_id"])
@@ -1123,6 +1301,9 @@ def run_graph(
             frame_sink=frame_sink,
             resume=resume,
             validate_with=resume_graph,
+            tracer=tracer,
+            graph_version=graph_version,
+            _parent_span=_parent_span,
         )
         state = initial_state(tail, inputs=resume_inputs)
         state["outputs"] = resume_state.get("outputs", {})
@@ -1134,9 +1315,7 @@ def run_graph(
             "outputs": final_state["outputs"],
             "trace": final_state["messages"],
         }
-        if emit:
-            emit({"type": "run_end", **result})
-        return result
+        return _finish(result, emit_end=True)
 
     compiled = compile_graph(
         graph,
@@ -1150,6 +1329,9 @@ def run_graph(
         _subgraph_depth=_subgraph_depth,
         debug_controller=debug_controller,
         frame_sink=frame_sink,
+        tracer=tracer,
+        graph_version=graph_version,
+        _parent_span=_parent_span,
     )
     final_state = compiled.invoke(
         initial_state(graph, inputs=inputs),
@@ -1160,6 +1342,4 @@ def run_graph(
         "outputs": final_state["outputs"],
         "trace": final_state["messages"],
     }
-    if emit:
-        emit({"type": "run_end", **result})
-    return result
+    return _finish(result, emit_end=True)

@@ -27,7 +27,7 @@
 | `evaluation_task` | 06 / 9.2 评估 Harness 设计 | ### 9.2 评估 Harness 设计（借鉴 lm-evaluation-harness）代码示例 |
 | `refund_decision` | `src/atlas/llm/decision.py`（W9-W10 权威实现；规则对齐 06 §9.2 黄金用例） | —（工程推导契约） |
 | `refund_order` | `src/atlas/shop/service.py`（W9-W10 Demo 电商数据结构） | —（工程推导契约） |
-| `run_event` | `src/atlas/graph/loader.py`（emit 产出）+ `src/atlas/api/main.py`（SSE 帧，W9-W10） | —（工程推导契约） |
+| `run_event` | `src/atlas/graph/loader.py`（emit 产出）+ `src/atlas/api/main.py`（SSE 帧，W9-W10）；M10 起三帧为 19 §2.3.4 超集（加 traceId/spanId/parentSpanId、run_end 加 graphVersion） | —（工程推导契约） |
 | `nl_generate_request` | `src/atlas/api/main.py` NLGenerateRequest（W9-W10；响应为 `{graph: graph_definition}`） | —（工程推导契约） |
 | `feedback_item` | `src/atlas/api/main.py` FeedbackRequest（Phase 1；进程内反馈，响应含 id/created_at） | —（工程推导契约） |
 | `http_request_params` | 04 / 四、工具/适配器组件 4.6 API 适配器（通用 HTTP）v1 契约（权威 blockquote）+ `src/atlas/httpapi/{service,adapter}.py` | ### 4.6 API 适配器（通用 HTTP）v1 契约 |
@@ -38,6 +38,7 @@
 | `debug_session` | 04 / 五、逻辑组件 5.12 单步调试与断点 v1 契约（权威 blockquote）+ `src/atlas/debug/{sessions,controller}.py`（运行期调试会话、暂停状态机、paused/stopped 帧） | ### 5.12 单步调试与断点 |
 | `monitoring` | 04 / 五、逻辑组件 5.13 基础监控告警 v1 契约（权威 blockquote）+ `src/atlas/monitoring/{records,metrics,alerts}.py`（运行记录 ring、指标聚合、规则求值与告警状态机） | ### 5.13 基础监控告警 |
 | `identity_session` | 04 / 五、逻辑组件 5.14 多租户与权限 v1 契约（权威 blockquote）+ `src/atlas/iam/{principals,sessions,registry,deps}.py`（种子租户/账号、Principal、sess- token、按租户服务注册表、Bearer 依赖） | ### 5.14 多租户与权限 |
+| `trace_span` | 04 / 五、逻辑组件 5.15 链路追踪 v1 契约（M10 立项 2026-09-18、待落码；权威 blockquote）+ `src/atlas/tracing/`（与 OTel 同形最小 Span/Tracer、contextvars 进程内传播、to_tree 折叠开关） | ### 5.15 链路追踪（span v1） |
 
 ---
 
@@ -381,14 +382,48 @@ history: list[string]   # 操作记录（自动退款/转人工审批）
 type: "node_start"
 node_id: string
 node_type: enum[trigger, ai_decision, tool_call]
+traceId: string          # M10：本次 run 的 trace id（32hex），整棵树一致
+spanId: string           # M10：本节点 span id（16hex）
+parentSpanId: string     # M10：父 span id（run root；subgraph 内为 subgraph span）
 # 节点结束
 type: "node_end"
 node_id: string
 node_type: string
 output: object          # 该节点产出（决策 dict / 工具 ActionResult 输出）
+traceId: string          # M10：同 node_start
+spanId: string
+parentSpanId: string
 # 运行结束（SSE 末帧为 event: result，载荷 {id, status, outputs, traces}）
 type: "run_end"         # 随 run_graph 返回值展开
+traceId: string          # M10：run root span 的 trace id
+spanId: string           # M10：run root span id（parentSpanId 缺省）
+graphVersion: string     # M10：`graphId@<releaseVersion:int>`（发布版本，无 v 前缀，对齐 M6 钉版）/`graphId@draft`（草稿）
 ```
+> M10 起三帧均为 **19 §2.3.4 Trace 事件超集**：只新增 traceId/spanId/parentSpanId（run_end 另加 graphVersion），现有字段与帧类型不变，前端忽略未知字段即零改动。span 三元组位于事件顶层、**不进节点 output**（录制回放 collect_steps 只取 output，天然不受随机 id/时间影响）；完整 span 树经 `tracing` 包进程内导出，不进 SSE 高频帧。subgraph 子图以 `emit=None` 重入、事件仍不外泄，子图内部 span 经 `to_tree(include_internal=False)` 折叠（见下 `trace_span`）。
+
+### `trace_span` — 字段概览（M10 立项 2026-09-18、待落码；权威＝docs/19 §2.3.4 + 10 §4 ADR T21 + 08 M10 立项条，落码承载 `src/atlas/tracing/`）
+
+```yaml
+# 与 OTel 同形的最小 span（纯 stdlib、零新依赖；不引 OTel SDK，合流随 D11）
+Span:
+  traceId: string        # 32hex（uuid4），一次 run（含 subgraph/任务信封）一致
+  spanId: string         # 16hex（uuid4 前 16）
+  parentSpanId: string | None   # root run span 为 None
+  name: string           # 如 run:<graphId> / node:<id> / tool:<adapter>/<cap> / task:<type>
+  kind: enum[run, node, tool, parallel, subgraph, task_dispatch, task_done, approval]
+  startedAt: str         # UTC ISO
+  durationMs: float
+  status: enum[ok, error]
+  graphVersion: string | None   # run root 标注 graphId@<int> / @draft
+  attrs: dict            # actor（任务 assignee）、node_type、adapter、orderId 等
+  internal: bool         # subgraph 内部 span 标 true，include_internal=False 时折叠
+# 进程内传播：contextvars 记当前 span（同线程 节点→工具 就近取父）；
+# Tracer 经 run_graph/compile_graph 参数显式透传（SSE worker 后台线程，守 06 §6.12）。
+# to_tree(include_internal=True/False) -> 嵌套 dict；False 把子图内部折叠为单个 subgraph span。
+```
+> M7 `task_envelope.traceId/graphVersion` 落码时为占位（traceId=runId）；**M10 起填真实 traceId 并记录 parentSpanId**（dispatch 建 task_dispatch span、complete 建 task_done span，actor=assignee）。`RunRecord` 同期加可选 `trace_id`（见 12 监控段）。
+
+
 > `node_type` 实际已随 Phase 2 扩展为全部可编译类型（含 subgraph）。subgraph 节点内部子图以 `emit=None` 重入执行，**不产生 node_start/node_end/run_end 事件**；子图 trace 与 outputs 收入 subgraph 节点产出（权威形状见 04 §5.7）。
 
 ### `subgraph_node_output` — 字段概览（Phase 2 第六项；subgraph 节点 outputs[id]）
@@ -615,7 +650,7 @@ taskId: string            # uuid4，任务唯一标识
 runId: string             # 所属 run
 idempotencyKey: string    # 幂等键 `资源|动作|版本`（L1 去重返首结果）
 traceId: string           # 追溯（M10 span 前 = runId）
-graphVersion: string      # 图版本 `graphId@vN`（M6 后可得）
+graphVersion: string      # 图版本 `graphId@<int>`（发布）/`graphId@draft`（M6 后可得，无 v 前缀）
 type: string              # 任务类型 `refund.verify_order | logistics.check_receipt`
 assignee: string          # 指派人 `bot.customer | bot.logistics`
 payload: object           # 载荷；refs 含跨 Bot 数据引用 `{{...}}`
