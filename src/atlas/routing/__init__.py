@@ -2,7 +2,7 @@
 
 - models：TriggerEvent / RolloutConfig 四段规则 / GateConfig（v1 无 when DSL）
 - router：resolve_version 固定序三段分桶纯函数 + 稳定哈希
-- store：RoutingStore 每图 rollout 状态机（批 1 后续提交）
+- store：RoutingStore 每图 rollout 状态机
 - gate：evaluate_after_run 指标门控自动回滚（批 3）
 """
 
@@ -30,6 +30,7 @@ from .router import (
     hash_hit,
     resolve_version,
 )
+from .store import RolloutError, RolloutState, RoutingStore
 
 __all__ = [
     "BucketRule",
@@ -39,7 +40,10 @@ __all__ = [
     "GateMetric",
     "InternalRule",
     "RolloutConfig",
+    "RolloutError",
+    "RolloutState",
     "RolloutStatus",
+    "RoutingStore",
     "TriggerEvent",
     "parse_rule",
     "SEGMENT_BUCKET",
