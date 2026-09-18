@@ -1,0 +1,66 @@
+name: Release gate replay (scheduled)
+
+# D26 定时批量回放：起真实 API，跑 scripts/dev/d26_smoke.py 全链路回归
+# （手动门禁/publish-gate 沉淀、历史报告、录制用例回放、reset 语义）。
+# 进程内存储、脚本自造数并自隔离，无需任何密钥；admin-a 为代码内置种子账号。
+#
+# 注意：GitHub 的 schedule 只在仓库默认分支（main）上生效；本文件先随 dev 落库，
+# 合并进 main 后开始按 cron 触发。dev/特性分支可用 workflow_dispatch 手动验证。
+on:
+  schedule:
+    # 每周一 03:17 UTC（北京 11:17），刻意避开整点与 CI 主工作流高峰
+    - cron: "17 3 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-gate-replay
+  cancel-in-progress: false
+
+jobs:
+  replay-smoke:
+    name: D26 release-gate replay smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install package
+        run: pip install -e ".[dev]"
+
+      - name: Start API server and wait until ready
+        run: |
+          nohup python -m uvicorn atlas.api.main:app --host 127.0.0.1 --port 8000 \
+            > /tmp/uvicorn.log 2>&1 &
+          for attempt in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" \
+              -X POST http://127.0.0.1:8000/api/auth/login \
+              -H 'Content-Type: application/json' \
+              -d '{"username":"admin-a","password":"admin123"}')
+            if [ "$code" = "200" ]; then
+              echo "API is ready after ${attempt}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::API server did not become ready"
+          cat /tmp/uvicorn.log
+          exit 1
+
+      - name: Run D26 release-gate replay smoke
+        run: python scripts/dev/d26_smoke.py
+
+      - name: Upload server log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uvicorn-log
+          path: /tmp/uvicorn.log
+          if-no-files-found: ignore
+          retention-days: 7
