@@ -40,6 +40,8 @@ from atlas.harness.base import ActionRequest, Permission
 from atlas.llm.decision import RuleBasedDecisionClient
 from atlas.shop.adapter import ShopHarnessAdapter
 from atlas.shop.service import DemoShopService
+from atlas.routing.models import BucketRule, CanaryRule, InternalRule, RolloutConfig, TriggerEvent
+from atlas.routing.router import resolve_version
 
 
 def _refund_graph():
@@ -217,6 +219,46 @@ def _benchmark_scenarios(iterations: int) -> list[dict[str, str]]:
         "metric": "shop/list_pending_refunds 单次调用 p50/p99 (ms)",
         "value": f"{med:.3f} / {_p99(samples):.3f} ms",
         "notes": "权限校验+审计+进程内分发，不含外部平台耗时",
+    })
+
+    # M9 Router 三段分桶（docs/20 §4.4）：固定 10k 次，混合 internal/低金额桶/canary/稳定流量
+    rollout_config = RolloutConfig(
+        rules=[
+            InternalRule(tenants=["internal-bank"]),
+            BucketRule(value=200, percent=100),
+            CanaryRule(percent=5),
+        ]
+    )
+    route_mix: list[tuple[str, TriggerEvent]] = []
+    for i in range(1000):
+        if i % 10 == 0:
+            tenant, payload = "internal-bank", {"order_id": f"o{i}", "amount": 5000}
+        elif i % 10 < 5:
+            tenant, payload = "t-external", {"order_id": f"o{i}", "amount": 100 + (i % 90)}
+        else:
+            tenant, payload = "t-external", {"order_id": f"o{i}", "amount": 5000}
+        route_mix.append((tenant, TriggerEvent(channel="webhook", payload=payload)))
+    route_index = {"i": 0}
+
+    def route_once() -> None:
+        tenant, event = route_mix[route_index["i"] % len(route_mix)]
+        route_index["i"] += 1
+        resolve_version(
+            graph_id="graph-bench",
+            stable=1,
+            candidate=2,
+            tenant=tenant,
+            event=event,
+            config=rollout_config,
+        )
+
+    route_samples = _measure(route_once, 10000)
+    route_med = statistics.median(route_samples)
+    rows.append({
+        "scenario": "M9 Router three-stage bucketing",
+        "metric": "单次 resolve_version（internal→低金额桶→canary 哈希）p50/p99 (ms)；10k 次解析吞吐/s",
+        "value": f"{route_med:.4f} / {_p99(route_samples):.4f} ms；{1000 / route_med:.0f} resolves/s",
+        "notes": "纯函数字典/哈希判断、零 IO；混合 10% internal、40% 低金额桶、其余走 canary 哈希；固定 10000 次采样",
     })
 
     if os.environ.get("DATABASE_URL"):
