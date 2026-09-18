@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 import operator
-import re
 import time
 import uuid
 from contextlib import nullcontext
@@ -56,9 +55,7 @@ from .dsl import (
     _loop_body_set,
     validate_graph_report,
 )
-
-_TEMPLATE_RE = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
-_PATH_SEGMENT_RE = re.compile(r"[^.[\]]+|\[\d+\]")
+from .interpolation import interpolate, resolve_path
 
 EventCallback = Callable[[dict[str, Any]], None]
 
@@ -88,31 +85,6 @@ class GraphState(TypedDict):
     outputs: Annotated[dict[str, dict[str, Any]], _merge_outputs]
     messages: Annotated[list[str], operator.add]
     status: Annotated[str, _last_write]
-
-
-def interpolate(template: str, context: dict[str, Any]) -> str:
-    """渲染 04 §6.3 {{路径}}；路径缺失时占位符原样保留（与前端一致）。"""
-
-    def replace(match: re.Match[str]) -> str:
-        value = resolve_path(match.group(1), context)
-        return match.group(0) if value is None else str(value)
-
-    return _TEMPLATE_RE.sub(replace, template)
-
-
-def resolve_path(path: str, context: dict[str, Any]) -> Any:
-    current: Any = context
-    for segment in _PATH_SEGMENT_RE.findall(path):
-        if segment.startswith("["):
-            index = int(segment[1:-1])
-            if not isinstance(current, list) or index >= len(current):
-                return None
-            current = current[index]
-        else:
-            if not isinstance(current, dict) or segment not in current:
-                return None
-            current = current[segment]
-    return current
 
 
 # params 插值后为 JSON 对象、整体透传给适配器的通用通道（04 §4.6-4.8）；
