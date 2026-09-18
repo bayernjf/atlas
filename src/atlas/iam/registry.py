@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from atlas.coordination import TaskStore
 from atlas.message.service import MessageService
+from atlas.recording import ReportStore
 from atlas.routing import RoutingStore
 from atlas.storage.base import (
     ApprovalRepository,
@@ -51,6 +52,7 @@ class TenantServices:
     run_store: RunRepository
     task_store: TaskStore
     routing_store: RoutingStore
+    report_store: ReportStore  # D26 报告 v1：批量回放报告 ring（进程内，memory/PG 档均挂内存实例）
 
 
 class TenantRegistry:
@@ -89,6 +91,7 @@ class TenantRegistry:
                 run_store=backend.run_store(tenant_id),
                 task_store=TaskStore(),
                 routing_store=RoutingStore(),
+                report_store=ReportStore(),
             )
         return TenantServices(
             graph_store=GraphStore(),
@@ -101,11 +104,12 @@ class TenantRegistry:
             run_store=RunStore(),
             task_store=TaskStore(),
             routing_store=RoutingStore(),
+            report_store=ReportStore(),
         )
 
     def reset_tenant(self, tenant_id: str) -> None:
-        """本租户运行时数据重置：图/消息/审批/调试/监控/运行状态/灰度路由清空，规则回默认；
-        录制与反馈沿用「reset 不清除」语义保留；监控运行计数器不重置。"""
+        """本租户运行时数据重置：图/消息/审批/调试/监控/运行状态/灰度路由/批量回放报告清空，规则回默认；
+        录制用例与反馈沿用「reset 不清除」语义保留；监控运行计数器不重置。"""
         services = self.get(tenant_id)
         services.graph_store.clear()
         services.message_service.reset()
@@ -114,3 +118,4 @@ class TenantRegistry:
         services.monitoring.reset()
         services.run_store.reset()
         services.routing_store.reset()
+        services.report_store.reset()

@@ -412,7 +412,8 @@ def run_graph_release_gate(
     report = _release_gate_for_draft(services, graph_id)
     if report is None:
         raise HTTPException(status_code=404, detail=f"Graph 不存在或无待发布草稿：{graph_id}")
-    return report
+    # D26 报告 v1：每次门禁运行沉淀（manual，含 skipped），响应纯超集带报告 id（03 release_report）
+    return services.report_store.record(graph_id=graph_id, trigger="manual", report=report)
 
 
 @app.post("/api/graphs/{graph_id}/publish", response_model=PublishGraphResponse)
@@ -431,6 +432,10 @@ def publish_graph(
         report = _release_gate_for_draft(services, graph_id)
         if report is None:
             raise HTTPException(status_code=404, detail=f"Graph 不存在：{graph_id}")
+        # D26 报告 v1：发布门禁沉淀（publish-gate，通过/blocked/skipped 均沉淀，409 报告体同样带 id）
+        report = services.report_store.record(
+            graph_id=graph_id, trigger="publish-gate", report=report
+        )
         if report["blocked"]:
             raise HTTPException(
                 status_code=409,
