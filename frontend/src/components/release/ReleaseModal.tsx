@@ -3,6 +3,7 @@ import { Alert, Button, Collapse, Modal, Progress, Space, Spin, Table, Tag, Typo
 import type { ColumnsType } from 'antd/es/table'
 import {
   GateBlockedError,
+  exportReleaseReport,
   getReleaseReport,
   listReleaseReports,
   publishGraph,
@@ -111,6 +112,15 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
     { title: '说明', dataIndex: 'note' },
   ]
 
+  const doExport = async (row: ReleaseReportSummary, format: 'csv' | 'json') => {
+    if (!graphId) return
+    try {
+      await exportReleaseReport(graphId, row.id, format)
+    } catch {
+      // 下载为辅助动作，失败不打断门禁主流程
+    }
+  }
+
   const onExpandHistory = async (expanded: boolean, row: ReleaseReportSummary) => {
     if (!expanded || !graphId || detailById[row.id]) return
     try {
@@ -164,6 +174,36 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
         const meta = GATE_CONCLUSION_META[reportConclusion(row)]
         return <Tag color={meta.color}>{meta.label}</Tag>
       },
+    },
+    {
+      title: '导出',
+      width: 104,
+      render: (_, row) => (
+        <Space size={4}>
+          <Button
+            type="link"
+            size="small"
+            style={{ padding: 0 }}
+            onClick={(event) => {
+              event.stopPropagation()
+              void doExport(row, 'csv')
+            }}
+          >
+            CSV
+          </Button>
+          <Button
+            type="link"
+            size="small"
+            style={{ padding: 0 }}
+            onClick={(event) => {
+              event.stopPropagation()
+              void doExport(row, 'json')
+            }}
+          >
+            JSON
+          </Button>
+        </Space>
+      ),
     },
   ]
 
