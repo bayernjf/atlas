@@ -390,6 +390,60 @@ def services_for(principal: Principal) -> TenantServices: ...  # = TenantRegistr
 
 全局单例（不分区，基础设施层）：模板目录、AdapterRegistry 与 demo 适配器实例、HttpApiClient/DatabaseClient 出向连接、DemoShopService、demo SQLite 种子。SSE worker 线程在请求线程内解析 TenantServices 后显式传入，不使用线程上下文变量。
 
+### 3.11 交互卡片（M8 立项 2026-09-18、待落码；04 §5.6 追加段 / 03 `card_template` / 19 §2.2.3/§2.3.2）
+
+```python
+# src/atlas/cards/catalog.py（随代码发布的只读内置目录，无状态/无存储，照 template 包）
+class FieldBinding(BaseModel):
+    label: str
+    value: str                       # {{路径}} 模板，复用 graph.loader.interpolate
+class FieldsSection(BaseModel):
+    type: Literal["fields"]
+    bindings: list[FieldBinding]
+class FormSection(BaseModel):
+    type: Literal["textarea", "input"]
+    name: str                        # action.output 以 {{form.<name>}} 引用
+    label: str | None = None
+    required: bool = False
+    default: str = ""
+class CardAction(BaseModel):
+    id: str                          # approve / reject
+    label: str
+    style: Literal["primary", "danger", "default"] = "default"
+    output: dict                     # {"decision": "approved"|"rejected", "comment"?: "{{form.comment}}"}
+    channels: dict | None = None     # 如 {"email": {"render": "link"}}
+class CardFallback(BaseModel):
+    im: dict | None = None           # {"detailUrl": "/approvals/{token}"}
+    email: dict | None = None        # {"timeoutHint": true}
+class CardTemplate(BaseModel):
+    id: str                          # kebab-case 目录内唯一（v1: refund-approval）
+    name: str
+    channels: list[Literal["web", "im", "email"]]
+    sections: list[FieldsSection | FormSection]
+    actions: list[CardAction]
+    fallback: CardFallback | None = None
+
+CARDS: tuple[CardTemplate, ...]
+def list_cards() -> list[CardTemplate]: ...
+def get_card(card_id: str) -> CardTemplate | None: ...   # 未知 id 返 None（REST 404 / 编译 422）
+
+# src/atlas/cards/render.py（纯函数；bindings 复用 graph.loader.interpolate 同一插值/缺失语义）
+def render_card(card: CardTemplate, context: dict, *, token: str,
+                channel: Literal["web", "im", "email"], approver: str = "",
+                timeout_seconds: int | None = None) -> dict: ...
+    # context＝审批挂起时快照（trigger/globals/visibleAt 内 outputs）
+    # web  ＝ {channel:"web", cardId, name, fields:[{label,value}], form:[{type,name,label,required,default}],
+    #          actions:[{id,label,style}], token, approver, timeoutSeconds}（前端 CardRenderer 渲染）
+    # im   ＝ {channel:"im", text, buttons:[{id,label,url}], detailUrl}（纯文本+两按钮回调 URL）
+    # email＝ {channel:"email", subject, html, links:[{id,label,url}]}（只读 HTML + 带 token 两链接）
+    # 链接为前端路由 GET URL（/approvals/{token}?decision=…），GET 不产生决策副作用（防邮件预取）
+def map_action_output(card: CardTemplate, action_id: str, form_values: dict) -> dict: ...
+    # 按 action.output 映射：{{form.<name>}} 回填；返 {decision, comment?}；
+    # 未知 action / decision 非 approved|rejected / 缺必填 form → ValueError（REST 422）
+def to_message_params(rendered: dict, *, to) -> dict: ...
+    # im/email 渲染产物 → message/send 入参 {channel,to,subject,body}（v1 不自动外发，随 D20/D24）
+```
+
 ## 4. 记忆检索接口（依据 06 6.2 / 05 2.3）
 
 ```python
@@ -416,6 +470,8 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 | GET | /api/graphs/{id}/versions | 【read】已发布版本列表（M6）：`{items:[<releaseVersion>]}`（升序）；未发布过 → 空列表 | graph_definition |
 | GET | /api/templates | 内置流程模板目录列表（Phase 2 能力项，只读代码常量；返回 `{items:[{id,name,description,tags,node_count}]}`，不含 graph；不受 reset 影响） | template_catalog |
 | GET | /api/templates/{id} | 模板详情：完整 TemplateMeta 含 `graph`（可直接载入画布/保存为新图）；未知 id 404 | template_catalog / graph_definition |
+| GET | /api/cards | 内置交互卡片目录（M8 立项 2026-09-18、待落码，viewer+；只读代码常量，不受 reset 影响）：`{items:[{id,name,channels,sections,actions,fallback?}]}`（CardTemplate 投影，供配置态 card-select 与运行态渲染） | card_template |
+| GET | /api/approvals/{token}/card | 审批卡片按渠道渲染（M8，viewer+）：`?channel=web\|im\|email`（缺省 web），返回 §3.11 对应渠道渲染产物；未知 token 404、该审批未配 cardTemplateId（无卡片）404、非法 channel 422；渲染上下文取挂起时快照（中断恢复后从帧重建）；**只读，不产生决策副作用**（邮件链接为 GET 落地页，决策一律走 POST） | card_template / human_approval |
 | POST | /api/recordings | 录制用例入库（Phase 2 能力项）：请求体 `{name(1-100), graph_id, inputs, steps:[{node_id,node_type,output}], status}`，服务端按 graph_id 取已保存图原始 JSON 作**快照**存入（不重新执行；graph 未知 404、steps 形状非法 422、空 steps 422），201 返回完整 RecordingCase | recording_case |
 | GET | /api/recordings | 录制用例列表：`{items:[{id,name,node_count,step_count,status,created_at}]}` 投影（不含 graph/steps）；进程内存储，reset 不清除 | recording_case |
 | GET | /api/recordings/{id} | 录制用例详情：完整 RecordingCase（含 graph 快照与 steps）；未知 id 404 | recording_case |
@@ -447,7 +503,7 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 
 > wait 节点（Phase 2 第四项，v1 仅定时等待）运行结果写入 `outputs[wait_id] = {mode:"wait", waitType:"duration", durationSeconds: <int>}`；执行器 node_start 后同步 `time.sleep(durationSeconds)`（1-600 秒整数常量，线程池工作线程内阻塞），到时沿唯一普通边继续。trace 增 `wait-x: waited 5s` 行。下游引用形如 `{{wait-x.durationSeconds}}`。事件等待缓做 14 D19，语义见 04 §5.5、06 §6.1。
 >
-> human_approval 节点（Phase 2 第五项，v1 进程内审批信号）运行结果写入 `outputs[human_id] = {mode:"human_approval", decision:"approved"|"rejected", target, token, summary, approver, resolvedBy:"human"|"input"|"timeout"}`；执行器在 `ApprovalBroker`（模块级单例，可注入）登记 pending 后阻塞，node_start 携带 `approval` 载荷。决策三来源：REST 人工放行、run inputs 预置 `{"approvals":{"<node-id>":"approved"|"rejected"}}`（非交互/测试）、超时按 onTimeout（10-3600 秒，默认 reject）自动决策；两条出边全 conditional，按 decision 路由 approvedTarget/rejectedTarget。trace 增 `human-x: approved (human) → tool-y` / `… rejected (timeout) → tool-z` 行。下游引用形如 `{{human-x.decision}}`。持久化中断-恢复缓做 14 D20，语义见 04 §5.6、06 §6.1。
+> human_approval 节点（Phase 2 第五项，v1 进程内审批信号）运行结果写入 `outputs[human_id] = {mode:"human_approval", decision:"approved"|"rejected", target, token, summary, approver, resolvedBy:"human"|"input"|"timeout"}`；执行器在 `ApprovalBroker`（模块级单例，可注入）登记 pending 后阻塞，node_start 携带 `approval` 载荷。决策三来源：REST 人工放行、run inputs 预置 `{"approvals":{"<node-id>":"approved"|"rejected"}}`（非交互/测试）、超时按 onTimeout（10-3600 秒，默认 reject）自动决策；两条出边全 conditional，按 decision 路由 approvedTarget/rejectedTarget。trace 增 `human-x: approved (human) → tool-y` / `… rejected (timeout) → tool-z` 行。下游引用形如 `{{human-x.decision}}`。持久化中断-恢复缓做 14 D20，语义见 04 §5.6、06 §6.1。**M8（立项 2026-09-18、待落码）纯超集**：config 可选 `cardTemplateId`（不填＝上述 summary 旧路径完全不回归；非空未命中内置目录→编译 422）；命中时 node_start 的 `approval` 载荷在 `{token,summary,approver,timeoutSeconds}` 上加 `cardTemplateId`，节点产出在现有字段上加 `comment`（审批意见，三来源缺省空串）与 `card:{templateId,actionId}`；ApprovalBroker pending 携带 card_template_id 与渲染上下文快照，M5b 中断帧带 cardTemplateId、恢复时上下文从帧 `resume_state.outputs`+trigger 重建；卡片渲染与决策端点见 §3.11 与 `/api/cards`、`/api/approvals/{token}/card`、`/api/approvals/{token}/decision`（actionId/form）。
 >
 > subgraph 节点（Phase 2 第六项，v1 进程内引用式）运行结果写入 `outputs[subgraph_id] = {mode:"subgraph", graphId, status:"success"|"failed", error?, outputs:<子图全部节点 outputs>, trace:[string]}`；执行器经 `compile_graph/run_graph(graph_resolver=<Callable[[str], GraphDSL]>)` 注入的解析器（Demo 为 GraphStore.get）按 config.graphId 取子图，config.inputs（`{<子图入参键>: "<父图 {{路径}}/字面量>"}`）用父图上下文渲染后作为子图 run inputs 重入 run_graph（emit=None，子图事件不外泄；复用同一 registry/decision_client/approval_broker）。编译期递归校验：graphId 可解析、禁自引用与跨图环、嵌套深度 ≤3、子图递归过 validate_graph（错误中文聚合）；运行期任何异常 fail-safe 为 status:"failed"、父 run 仍 completed 沿唯一普通出边继续。trace 增 `subgraph-x: graph-7 success (N nodes)` / `… failed: <error>` 行。下游引用形如 `{{subgraph-x.status}}`、`{{subgraph-x.outputs.<子图节点id>.<键>}}`。版本钉版/子图市场/远程引用缓做 14 D21，语义见 04 §5.7、06 §6.1。
 | POST | /api/operators | 创建运营体（镜像） | operator |
@@ -464,8 +520,8 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 | POST | /api/demo/shop/login | Demo 商家平台登录（demo/demo，W9-W10） | — |
 | GET | /api/demo/shop/orders | Demo 待处理退款单（需登录，W9-W10） | — |
 | POST | /api/demo/reset | 【admin only】重置**调用方租户**的 Demo 数据（2026-09-16，04 §5.14：角色不足 403；作用域为本租户 graph/approval/debug/monitoring/message，录制与反馈按租户保留不清；跨租户数据不动）：本租户店铺——全局 demo 店铺恢复 5 笔种子退款单、清空已保存图与登录态、清空 pending 审批请求，Phase 1 种子客户体验，W10 后；Phase 2 第三项起清空进程内消息记录并重建内置 SQLite demo 订单库（全局共享模拟基础设施，仍随 reset 重建）——显式 `ATLAS_DATABASE_URL` 配置的外部库不被触碰；内置流程模板目录为代码常量，不受 reset 影响；录制用例为测试资产同样**不被 reset 清除**——其图已快照进用例，GraphStore 清空不影响回放；Phase 2 能力项起 reset 同时把全部**活动调试暂停按 stop 放行**（会话 cancelled + Event set），阻塞在 paused 的运行线程经 DebugStopped 收敛结束，不留悬挂线程；调试会话本身为进程内临时态，不构成需保留的数据；Phase 2 能力项（基础监控告警）起 reset 同时清空**本租户**监控运行记录与告警（ring、streak、Alert 列表）并把规则阈值恢复默认（运行计数不重置；运行时数据，同消息记录；重启本就清空，持久化随 11 S1/14 D28）。**M5 契约设计轮分层语义（2026-09-17，docs/24 §3.4）**：进程内后端行为不变；PG 档（M5b）＝truncate 本租户运行时表（graphs/runs/interruptions/iam_sessions/monitoring_*）并重建种子，`recordings`/`feedback`（persistent 档）保留不清 | — |
-| GET | /api/approvals | 列出当前 pending 审批请求（`{items:[{token, summary, approver, timeoutSeconds, node_id, graph_id}]}`，进程内单例，重启即失；Phase 2 第五项） | human_approval |
-| POST | /api/approvals/{token}/decision | 人工审批决策，请求体 `{decision: "approved"|"rejected", comment?}`（comment v1 仅接收不展示）；首决生效，200 返回决策结果；未知 token 404、已决重复提交 409；Phase 2 第五项 | human_approval |
+| GET | /api/approvals | 列出当前 pending 审批请求（`{items:[{token, summary, approver, timeoutSeconds, node_id, graph_id, cardTemplateId?}]}`，M8 起命中卡片附 cardTemplateId；进程内单例，重启即失；Phase 2 第五项） | human_approval |
+| POST | /api/approvals/{token}/decision | 人工审批决策，请求体 `{decision: "approved"|"rejected", comment?}`（comment v1 仅接收不展示）；**M8 起纯超集加可选 `{actionId?, form?}`**——命中卡片时前端可提交 `{actionId, form:{<name>:<value>}}`（decision/comment 可省，服务端经 `map_action_output` 按卡片 action.output 映射，`{{form.*}}` 回填 comment），也仍接受旧 `{decision,comment?}`；首决生效，200 返回决策结果；未知 token 404、已决重复提交 409、坏 actionId 或 action.output 缺必填 form 字段 422（中文 detail）；Phase 2 第五项 | human_approval / card_template |
 | POST | /api/feedback | 提交种子试用反馈（type=bug/suggestion、content、contact 选填，201；进程内存储，reset 不清除；Phase 1） | feedback_item |
 | GET | /api/feedback | 导出反馈（陪同试用收集用，`{items: [...]}`，Phase 1；2026-09-16 起 **admin only** 且只列本租户，04 §5.14） | feedback_item |
 | GET | /demo/shop | 模拟商家售后控制台 HTML 页面（W9-W10，自动登录/抓取演示目标系统） | — |

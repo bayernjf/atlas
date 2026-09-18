@@ -6,7 +6,7 @@
  */
 
 import { token } from '../theme/tokens'
-import type { JsonSchema, ScopeIndex } from './scope'
+import type { CardBindings, JsonSchema, ScopeIndex } from './scope'
 import type { ApprovalTimeoutAction } from './validation/l1'
 
 export {
@@ -85,6 +85,8 @@ export type NodeConfig = {
   onTimeout?: ApprovalTimeoutAction
   approvedTarget?: string
   rejectedTarget?: string
+  /** M8：可选内置交互卡片 id；留空走 summary 旧路径。 */
+  cardTemplateId?: string
 }
 
 export type EditorNodeData = {
@@ -171,4 +173,6 @@ export type RefValidationContext = {
   selfId: string
   scope: ScopeIndex
   toolOutputSchemas?: Record<string, JsonSchema>
+  /** M8：卡片 id → 只读 binding 模板串，供审批卡 bindings 的 L2 校验。 */
+  cardBindings?: CardBindings
 }

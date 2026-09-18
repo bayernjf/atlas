@@ -23,7 +23,8 @@
 | `memory_config` | 05 / 二、记忆（Memory）2.3 记忆策略配置 Schema | ## 2.3 记忆策略配置 Schema（示例） |
 | `collaboration_message` | 05 / 三、智能体协同 3.3 协同通信协议 | ## 3.3 协同通信协议（示例） |
 | `deployment_config` | 05 / 四、部署方式 4.3 部署配置 Schema | ## 4.3 部署配置 Schema（示例） |
-| `interaction_template` | 05 / 五、自定义前端模板 5.3 交互模板 Schema | ## 5.3 交互模板 Schema（示例） |
+| `interaction_template` | 05 / 五、自定义前端模板 5.3 交互模板 Schema（**愿景大 Schema**；M8 工程化最小子集＝下行 `card_template`） | ## 5.3 交互模板 Schema（示例） |
+| `card_template` | **M8 立项 2026-09-18、待落码**；`src/atlas/cards/{catalog,render}.py`（审批卡片双向 Schema + web/im/email 三渠道渲染）+ 04 §5.6 追加段（human_approval.cardTemplateId）；权威＝08 M8 立项条 | —（工程契约） |
 | `evaluation_task` | 06 / 9.2 评估 Harness 设计 | ### 9.2 评估 Harness 设计（借鉴 lm-evaluation-harness）代码示例 |
 | `refund_decision` | `src/atlas/llm/decision.py`（W9-W10 权威实现；规则对齐 06 §9.2 黄金用例） | —（工程推导契约） |
 | `refund_order` | `src/atlas/shop/service.py`（W9-W10 Demo 电商数据结构） | —（工程推导契约） |
@@ -104,8 +105,8 @@ type: object               # 节点类型专属配置；condition 节点 config 
                            #   唯一权威见 04 §5.5「wait 节点 config 契约」
                            # human_approval 节点 config 形状：
                            #   {summary, approver?, timeoutSeconds: 10-3600 整数, onTimeout: approve|reject(默认reject),
-                           #    approvedTarget, rejectedTarget}
-                           #   唯一权威见 04 §5.6「human_approval 节点 config 契约」
+                           #    approvedTarget, rejectedTarget, cardTemplateId?（M8 新增，可选内置卡片 id，不填走 summary 旧路径）}
+                           #   唯一权威见 04 §5.6「human_approval 节点 config 契约」（含 M8 cardTemplateId 追加段）
                            # subgraph 节点 config 形状：
                            #   {graphId, inputs?: {<子图入参键>: "<父图 {{路径}}/字面量>"}}
                            #   唯一权威见 04 §5.7「subgraph 节点 config 契约」
@@ -319,14 +320,55 @@ concurrency_limit: number      # 最大并发实例数
 timeout_per_run: number        # 单次运行超时
 ```
 
-### `interaction_template` — 字段概览（完整定义见 05-组件设计-运营体五项核心.md #552，上下文章节：## 5.3 交互模板 Schema（示例））
+### `interaction_template` — 字段概览（**愿景大 Schema**，完整定义见 05-组件设计-运营体五项核心.md #552，上下文章节：## 5.3 交互模板 Schema（示例））
+
+> **M8 边界（2026-09-18 立项）**：下列 style/layout/conditional_display/channel_adaptations 等为**愿景形态**，M8 不实现；M8 只取回审批卡片的**双向最小子集**，工程契约见下行 `card_template`（权威＝08 M8 立项条 + 04 §5.6 追加段）。
 
 ```yaml
 id: string
 name: string
 type: enum[approval, form, notification, guide, progress, choice, alert]
 version: string
+# 愿景另含 style（主题/字体/圆角/Logo/暗色）、layout.sections（header/body/footer/actions）、
+# bindings（element_id/source/transform）、conditional_display、actions（payload/feedback）、
+# channel_adaptations（wechat_work/web/mobile/email）——M8 不做，见 05 §5.3/§5.4。
 ```
+
+### `card_template` — 字段概览（**M8 立项 2026-09-18、待落码**；权威实现 `src/atlas/cards/catalog.py`，形状来源 docs/19 §2.3.2 提案转权威；渲染见 `cards/render.py`，接线见 04 §5.6 追加段）
+
+```yaml
+# 内置只读目录（照 template 包：随代码发布、无 DB/CRUD、reset 不影响）；v1 一张 refund-approval
+id: string                          # kebab-case 目录内唯一（refund-approval）
+name: string                        # 展示名
+channels: [enum[web, im, email]]    # 支持的渲染降级渠道
+sections:
+  - type: "fields"                  # 只读展示行
+    bindings:
+      - label: string
+        value: string               # {{路径}} 模板，复用 graph.loader.interpolate；可见集＝该审批节点 visibleAt（L2 校验）
+  - type: "textarea" | "input"      # 可编辑表单字段（FormRenderer 第三类 schema 来源 kind:"card"）
+    name: string                    # 表单字段名，action.output 以 {{form.<name>}} 引用
+    label: string?
+    required: boolean?
+    default: string?
+actions:
+  - id: string                      # approve / reject
+    label: string
+    style: enum[primary, danger, default]?
+    output:
+      decision: enum[approved, rejected]
+      comment: string?              # 形如 {{form.comment}}，map_action_output 回填
+    channels: object?               # 如 {email: {render: "link"}}
+fallback:
+  im:    { detailUrl: string }?     # IM 详情兜底链接（含 {token} 占位）
+  email: { timeoutHint: boolean }?  # 邮件超时提示
+# 渲染产物 render_card(card, context, *, token, channel, approver, timeout_seconds)：
+#   web  ＝结构化投影（fields 插值只读行 + form 字段描述 + actions 按钮，前端 CardRenderer 渲染）
+#   im   ＝{channel:"im", text, buttons:[{label,url}], detailUrl}（纯文本+两按钮回调 URL）
+#   email＝{channel:"email", subject, html, links:[{id,label,url}]}（只读 HTML + 带 token 两链接；GET 不产生决策）
+# action 回调：POST /api/approvals/{token}/decision，体 {decision,comment?} 或 {actionId,form?}（服务端 map_action_output 映射）
+```
+> 卡片是图的附属实体（第六类实体，复验 D29 多来源）：bindings 的 `{{}}` 走 M0/L2 同一 ScopeIndex，坏引用编辑期被同一诊断流拦截；actions 只回写审批 decision/comment，不回写任意节点。进程内三渠道渲染 + message/send 落记录为沙盘语义，**不解除 D33**（真实 IM/邮件渠道随 D24/D20）。REST：`GET /api/cards`、`GET /api/approvals/{token}/card?channel=`，见 12 §5。
 
 ### `evaluation_task` — 字段概览（完整定义见 06-运行时与质量保障.md #125，上下文章节：### 9.2 评估 Harness 设计（借鉴 lm-evaluation-harness）代码示例）
 

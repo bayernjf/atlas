@@ -11,6 +11,7 @@ import type { RefValidationContext, EditorNodeData } from '../nodeCatalog'
 import { validateNodeFields } from './l1'
 import {
   buildScopeIndex,
+  type CardBindings,
   type JsonSchema,
   type ScopeEdgeLike,
   type ScopeNodeLike,
@@ -71,6 +72,7 @@ export function validateNodeDiagnostics(
         data.kind,
         data.config as Record<string, unknown>,
         refContext.toolOutputSchemas,
+        refContext.cardBindings,
       ),
     )
   }
@@ -119,6 +121,7 @@ export function validateGraph(
   edges: ScopeEdgeLike[],
   variables: Pick<GraphVariable, 'name'>[] = [],
   toolOutputSchemas?: Record<string, JsonSchema>,
+  cardBindings?: CardBindings,
 ): Diagnostic[] {
   const scopeNodes: ScopeNodeLike[] = nodes.map((node) => ({
     id: node.id,
@@ -134,7 +137,7 @@ export function validateGraph(
       ...validateNodeDiagnostics(
         node.id,
         node.data,
-        { selfId: node.id, scope, toolOutputSchemas },
+        { selfId: node.id, scope, toolOutputSchemas, cardBindings },
       ),
     )
   }

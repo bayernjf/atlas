@@ -332,3 +332,82 @@ describe('L2 结构化诊断映射 (U37④)', () => {
     expect(refs[0].path).toBe('global.limit')
   })
 })
+
+describe('M8 ai_decision decision 白名单与审批卡 bindings L2', () => {
+  it('ai_decision.decision 根与一层固定子键放行，错名/深层拒绝', () => {
+    const nodes = [node('trigger-1', 'trigger'), node('ai-1', 'ai_decision'), node('ai-2', 'ai_decision')]
+    const edges = [edge('trigger-1', 'ai-1'), edge('ai-1', 'ai-2')]
+    const scope = buildScopeIndex(nodes, edges, [])
+    const validate = (template: string) =>
+      scope.validateRefsAt('ai-2', 'ai_decision', { promptTemplate: template })
+
+    expect(validate('{{ai-1.decision}}')).toEqual([])
+    expect(validate('{{ai-1.decision.action}}')).toEqual([])
+    expect(validate('{{ai-1.decision.reason}}')).toEqual([])
+    expect(validate('{{ai-1.decision.confidence}}')).toEqual([])
+    expect(validate('{{ai-1.decision.source}}')).toEqual([])
+    expect(validate('{{ai-1.prompt_rendered}}')).toEqual([])
+
+    expect(validate('{{ai-1.decision.bogus}}')[0]?.code).toBe('REF_PATH_NOT_FOUND')
+    expect(validate('{{ai-1.decision.reason.detail}}')[0]?.code).toBe('REF_PATH_NOT_FOUND')
+    expect(validate('{{ai-1.prompt_rendered.x}}')[0]?.code).toBe('REF_PATH_NOT_FOUND')
+    expect(validate('{{ai-1.bogus}}')[0]?.code).toBe('REF_PATH_NOT_FOUND')
+  })
+
+  it('审批卡 FieldsSection bindings 纳入审批节点作用域，诊断 pointer 落 /cardTemplateId', () => {
+    const nodes = [
+      node('trigger-1', 'trigger'),
+      node('ai-1', 'ai_decision'),
+      node('human-1', 'human_approval'),
+    ]
+    const edges = [edge('trigger-1', 'ai-1'), edge('ai-1', 'human-1')]
+    const scope = buildScopeIndex(nodes, edges, [{ name: 'approval_limit' }])
+    const cardBindings = new Map<string, string[]>([
+      [
+        'refund-approval',
+        [
+          '{{trigger-1.context.payload.order_id}}',
+          '{{ai-1.decision.reason}}',
+          '{{global.approval_limit}}',
+          '{{ghost-1.x}}',
+        ],
+      ],
+    ])
+    const diagnostics = scope.validateRefsAt(
+      'human-1',
+      'human_approval',
+      { summary: '纯文本说明', cardTemplateId: 'refund-approval' },
+      undefined,
+      cardBindings,
+    )
+    expect(diagnostics).toHaveLength(1)
+    expect(diagnostics[0].code).toBe('REF_NODE_NOT_FOUND')
+    expect(diagnostics[0].loc.pointer).toBe('/cardTemplateId')
+    expect(diagnostics[0].loc.token?.raw).toBe('{{ghost-1.x}}')
+  })
+
+  it('卡片目录未就绪或节点未配置卡片时，bindings 不参与校验（不误报）', () => {
+    const nodes = [node('trigger-1', 'trigger'), node('human-1', 'human_approval')]
+    const edges = [edge('trigger-1', 'human-1')]
+    const scope = buildScopeIndex(nodes, edges, [])
+    expect(
+      scope.validateRefsAt('human-1', 'human_approval', {
+        summary: 's',
+        cardTemplateId: 'refund-approval',
+      }),
+    ).toEqual([])
+    const cardBindings = new Map<string, string[]>([['refund-approval', ['{{ghost-1.x}}']]])
+    expect(
+      scope.validateRefsAt('human-1', 'human_approval', { summary: 's' }, undefined, cardBindings),
+    ).toEqual([])
+  })
+
+  it('human_approval 输出补全含 comment / card 根', () => {
+    const nodes = [node('human-1', 'human_approval'), node('tool-1', 'tool_call')]
+    const edges = [edge('human-1', 'tool-1')]
+    const scope = buildScopeIndex(nodes, edges, [])
+    const paths = scope.listPathsAt('tool-1')
+    expect(paths).toContain('human-1.comment')
+    expect(paths).toContain('human-1.card')
+  })
+})

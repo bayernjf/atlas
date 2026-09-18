@@ -8,7 +8,13 @@
 import type { MetaSchema } from '../schemas/metaSchema'
 import type { WidgetName } from './types'
 
-export type SchemaSource = 'node' | 'tool'
+/**
+ * node：节点 config 表单，认 x-widget 业务控件（target-select 等）；
+ * tool：工具 params 表单，忽略一切 x-*，仅内置控件；
+ * card：M8 审批卡运行态表单，前端由卡片 form spec 生成的可信扁平 object，
+ *   认内置控件的 x-widget（textarea），但用默认注册表、不含任何节点业务控件。
+ */
+export type SchemaSource = 'node' | 'tool' | 'card'
 
 export type WidgetResolution =
   | { kind: 'widget'; widget: WidgetName }
@@ -21,7 +27,8 @@ function isObjectSchema(schema: MetaSchema): boolean {
 }
 
 export function resolveWidget(schema: MetaSchema, source: SchemaSource = 'node'): WidgetResolution {
-  if (source === 'node' && typeof schema['x-widget'] === 'string' && schema['x-widget']) {
+  // node 与 card 都认 x-widget；tool 忽略一切 x-*（card 仅用内置控件，注册表不含业务控件）。
+  if (source !== 'tool' && typeof schema['x-widget'] === 'string' && schema['x-widget']) {
     return { kind: 'widget', widget: schema['x-widget'] as WidgetName }
   }
 

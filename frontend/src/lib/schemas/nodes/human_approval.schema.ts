@@ -26,6 +26,8 @@ export const humanApprovalSchema: NodeConfigSchema = {
       'x-ref': { kinds: ['*'] },
       'x-widget': 'target-select',
     },
+    // M8：可选交互卡片 id；留空走 summary 旧路径，非空须命中内置卡片目录（后端编译期校验）。
+    cardTemplateId: { type: 'string', 'x-widget': 'card-select' },
   },
   required: ['summary', 'timeoutSeconds', 'approvedTarget', 'rejectedTarget'],
   'x-outputSchema': {
@@ -36,6 +38,8 @@ export const humanApprovalSchema: NodeConfigSchema = {
       summary: { type: 'string' },
       approver: { type: 'string' },
       resolvedBy: { type: 'string' },
+      comment: { type: 'string' },
+      card: {},
     },
   },
 }

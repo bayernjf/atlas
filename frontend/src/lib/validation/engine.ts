@@ -11,7 +11,7 @@
  * useValidationEngine 中；本类只回答「这批到期范围重算后更新了谁」。
  * 模板文本变化只改本节点 L2 签名，不重建 ScopeIndex（结构签名不含模板字段）。
  */
-import type { JsonSchema, ScopeEdgeLike, ScopeIndex, ScopeNodeLike } from '../scope'
+import type { CardBindings, JsonSchema, ScopeEdgeLike, ScopeIndex, ScopeNodeLike } from '../scope'
 import { buildScopeIndex } from '../scope'
 import type { NodeKind } from '../nodeCatalog'
 import type { GraphVariable } from '../variables'
@@ -69,6 +69,7 @@ export class ValidationEngine {
   private graphSig: string | null = null
   private graphCache: Diagnostic[] = []
   private schemas: Record<string, JsonSchema> | null = null
+  private cardBindingsKey: CardBindings | null = null
 
   private ensureScope(
     nodes: ScopeNodeLike[],
@@ -114,12 +115,20 @@ export class ValidationEngine {
     dataById: Map<string, EngineNodeData>,
     dueIds: string[],
     toolOutputSchemas?: Record<string, JsonSchema>,
+    cardBindings?: CardBindings,
   ): string[] {
     const { sig, scope } = this.ensureScope(scopeNodes, edges, variables)
     const schemasKey = toolOutputSchemas ?? null
     if (schemasKey !== this.schemas) {
       // 适配器发现到达/刷新：工具深层路径可见性可能变化，L2 全部视为到期。
       this.schemas = schemasKey
+      this.l2Sigs.clear()
+      this.l2Cache.clear()
+    }
+    const cardKey = cardBindings ?? null
+    if (cardKey !== this.cardBindingsKey) {
+      // M8 卡片目录到达/刷新：卡片 bindings 引用可见性可能变化，L2 全部视为到期。
+      this.cardBindingsKey = cardKey
       this.l2Sigs.clear()
       this.l2Cache.clear()
     }
@@ -134,7 +143,7 @@ export class ValidationEngine {
       this.l2Sigs.set(scopeNode.id, nodeSig)
       this.l2Cache.set(
         scopeNode.id,
-        scope.validateRefsAt(scopeNode.id, data.kind, data.config, toolOutputSchemas),
+        scope.validateRefsAt(scopeNode.id, data.kind, data.config, toolOutputSchemas, cardBindings),
       )
       updated.push(scopeNode.id)
     }

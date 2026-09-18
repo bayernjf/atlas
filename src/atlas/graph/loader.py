@@ -15,9 +15,9 @@ W9-W10 执行器：
 
 from __future__ import annotations
 
+import copy
 import json
 import operator
-import re
 import time
 import uuid
 from contextlib import nullcontext
@@ -26,6 +26,7 @@ from typing import Annotated, Any, Callable, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from atlas.cards.catalog import get_card
 from atlas.collaboration.approvals import ApprovalBroker
 from atlas.database.adapter import DatabaseHarnessAdapter
 from atlas.database.service import DatabaseClient, demo_engine
@@ -56,9 +57,7 @@ from .dsl import (
     _loop_body_set,
     validate_graph_report,
 )
-
-_TEMPLATE_RE = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
-_PATH_SEGMENT_RE = re.compile(r"[^.[\]]+|\[\d+\]")
+from .interpolation import interpolate, resolve_path
 
 EventCallback = Callable[[dict[str, Any]], None]
 
@@ -88,31 +87,6 @@ class GraphState(TypedDict):
     outputs: Annotated[dict[str, dict[str, Any]], _merge_outputs]
     messages: Annotated[list[str], operator.add]
     status: Annotated[str, _last_write]
-
-
-def interpolate(template: str, context: dict[str, Any]) -> str:
-    """渲染 04 §6.3 {{路径}}；路径缺失时占位符原样保留（与前端一致）。"""
-
-    def replace(match: re.Match[str]) -> str:
-        value = resolve_path(match.group(1), context)
-        return match.group(0) if value is None else str(value)
-
-    return _TEMPLATE_RE.sub(replace, template)
-
-
-def resolve_path(path: str, context: dict[str, Any]) -> Any:
-    current: Any = context
-    for segment in _PATH_SEGMENT_RE.findall(path):
-        if segment.startswith("["):
-            index = int(segment[1:-1])
-            if not isinstance(current, list) or index >= len(current):
-                return None
-            current = current[index]
-        else:
-            if not isinstance(current, dict) or segment not in current:
-                return None
-            current = current[segment]
-    return current
 
 
 # params 插值后为 JSON 对象、整体透传给适配器的通用通道（04 §4.6-4.8）；
@@ -217,6 +191,8 @@ def _make_executor(
                         "approver": resume.get("approver", ""),
                         "timeoutSeconds": 0,
                     }
+                    if resume.get("card_template_id"):
+                        approval_payload["cardTemplateId"] = resume["card_template_id"]
                 elif debug_controller is None:
                     approval_payload = _register_approval(
                         node,
@@ -238,6 +214,7 @@ def _make_executor(
                         timeout_seconds=int(node.config["timeoutSeconds"]),
                         summary=approval_payload["summary"],
                         approver=approval_payload["approver"],
+                        card_template_id=approval_payload.get("cardTemplateId", ""),
                     )
             emit(start_event)
 
@@ -265,6 +242,7 @@ def _make_executor(
                         timeout_seconds=int(node.config["timeoutSeconds"]),
                         summary=approval_payload["summary"],
                         approver=approval_payload["approver"],
+                        card_template_id=approval_payload.get("cardTemplateId", ""),
                     )
 
             if node.type == "trigger":
@@ -401,6 +379,7 @@ def _emit_frame(
     timeout_seconds: int,
     summary: str = "",
     approver: str = "",
+    card_template_id: str = "",
 ) -> None:
     """挂起前经 frame_sink 序列化中断帧（含 graph_snapshot 与截至挂起点的 outputs）。
 
@@ -423,6 +402,7 @@ def _emit_frame(
             },
             summary=summary,
             approver=approver,
+            card_template_id=card_template_id,
         )
     )
 
@@ -439,19 +419,30 @@ def _register_approval(
     config = node.config
     summary = interpolate(str(config.get("summary", "")), context)
     approver = interpolate(str(config.get("approver", "")), context) if config.get("approver") else ""
+    timeout_seconds = int(config["timeoutSeconds"])
+    # M8：可选内置卡片；编译期已校验目录命中，运行时防御未命中即按无卡（旧 summary 路径）。
+    card_template_id = config.get("cardTemplateId") or None
+    if card_template_id is not None and get_card(card_template_id) is None:
+        card_template_id = None
+    card_context = copy.deepcopy(context) if card_template_id else None
     token = broker.request(
         node_id=node.id,
         graph_id=graph_id,
         summary=summary,
         approver=approver,
-        timeout_seconds=int(config["timeoutSeconds"]),
+        timeout_seconds=timeout_seconds,
+        card_template_id=card_template_id,
+        card_context=card_context,
     )
-    return {
+    payload: dict[str, Any] = {
         "token": token,
         "summary": summary,
         "approver": approver,
-        "timeoutSeconds": int(config["timeoutSeconds"]),
+        "timeoutSeconds": timeout_seconds,
     }
+    if card_template_id:
+        payload["cardTemplateId"] = card_template_id
+    return payload
 
 
 def _await_human_approval(
@@ -475,15 +466,23 @@ def _await_human_approval(
         resolved_by = broker.get(token)["resolvedBy"]
 
     target = config["approvedTarget"] if decision == "approved" else config["rejectedTarget"]
-    output = {
+    info = broker.get(token)
+    output: dict[str, Any] = {
         "mode": "human_approval",
         "decision": decision,
         "target": target,
         "token": token,
-        "summary": broker.get(token)["summary"],
-        "approver": broker.get(token)["approver"],
+        "summary": info["summary"],
+        "approver": info["approver"],
         "resolvedBy": resolved_by,
+        "comment": info.get("comment", ""),
     }
+    # M8：命中卡片时回带模板 id 与本次动作 id（预置/超时来源 actionId 为 None）。
+    if info.get("cardTemplateId"):
+        output["card"] = {
+            "templateId": info["cardTemplateId"],
+            "actionId": info.get("actionId"),
+        }
     message = f"{node.id}: {decision} ({resolved_by}) → {target}"
     return output, message
 

@@ -13,7 +13,7 @@ const EXPECTED_OUTPUT_KEYS: Record<string, string[] | Record<string, string[]>> 
   parallel: ['status', 'branches', 'joinStrategy', 'joinTarget'],
   wait: ['mode', 'waitType', 'durationSeconds'],
   subgraph: ['status', 'outputs'],
-  human_approval: ['decision', 'target', 'summary', 'approver', 'resolvedBy'],
+  human_approval: ['decision', 'target', 'summary', 'approver', 'resolvedBy', 'comment', 'card'],
 }
 
 describe('nine built-in node schemas (U35)', () => {

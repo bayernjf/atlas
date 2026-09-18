@@ -6,16 +6,17 @@
  * 不污染工具表单；业务控件随节点迁移在此登记。
  */
 import { buildDefaultRegistry } from './defaultRegistry'
-import { SavedGraphSelectWidget, TargetSelectWidget } from './nodeWidgets'
+import { CardSelectWidget, SavedGraphSelectWidget, TargetSelectWidget } from './nodeWidgets'
 import type { WidgetRegistry } from './registry'
-import { SAVED_GRAPH_SELECT_WIDGET, TARGET_SELECT_WIDGET } from './types'
+import { CARD_SELECT_WIDGET, SAVED_GRAPH_SELECT_WIDGET, TARGET_SELECT_WIDGET } from './types'
 
-export { SAVED_GRAPH_SELECT_WIDGET, TARGET_SELECT_WIDGET } from './types'
+export { CARD_SELECT_WIDGET, SAVED_GRAPH_SELECT_WIDGET, TARGET_SELECT_WIDGET } from './types'
 
-/** 节点表单控件表：内置九件 + target-select + saved-graph-select（独立实例）。 */
+/** 节点表单控件表：内置九件 + target-select + saved-graph-select + card-select（独立实例）。 */
 export function buildNodeRegistry(): WidgetRegistry {
   const registry = buildDefaultRegistry()
   registry.register(TARGET_SELECT_WIDGET, TargetSelectWidget)
   registry.register(SAVED_GRAPH_SELECT_WIDGET, SavedGraphSelectWidget)
+  registry.register(CARD_SELECT_WIDGET, CardSelectWidget)
   return registry
 }

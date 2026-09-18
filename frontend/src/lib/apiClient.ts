@@ -34,6 +34,8 @@ export type ApprovalRequest = {
   summary: string
   approver: string
   timeoutSeconds: number
+  /** M8：命中内置交互卡片时携带卡片 id；缺省走 summary 旧路径。 */
+  cardTemplateId?: string
 }
 
 export type DebugAction = 'step' | 'continue' | 'stop'
@@ -211,6 +213,87 @@ export async function decideApproval(
   return request(`/api/approvals/${token}/decision`, {
     method: 'POST',
     body: JSON.stringify({ decision, comment }),
+  })
+}
+
+// --- M8 交互卡片（04 §5.6 追加段 / 12 §3.11） ------------------------------
+
+/** 内置卡片目录项（GET /api/cards，只读代码常量）。 */
+export type CardSummary = {
+  id: string
+  name: string
+  channels: Array<'web' | 'im' | 'email'>
+  sections: Array<Record<string, unknown>>
+  actions: Array<{
+    id: string
+    label: string
+    style?: 'primary' | 'danger' | 'default'
+    output: Record<string, unknown>
+  }>
+  fallback?: Record<string, unknown> | null
+}
+
+export type CardFieldRow = { label: string; value: unknown }
+export type CardFormSpec = {
+  type: 'textarea' | 'input'
+  name: string
+  label: string | null
+  required: boolean
+  default: string
+}
+export type CardActionView = {
+  id: string
+  label: string
+  style?: 'primary' | 'danger' | 'default'
+}
+export type WebCardView = {
+  channel: 'web'
+  cardId: string
+  name: string
+  fields: CardFieldRow[]
+  form: CardFormSpec[]
+  actions: CardActionView[]
+  token: string
+  approver: string
+  timeoutSeconds: number | null
+}
+export type ImCardView = {
+  channel: 'im'
+  name: string
+  text: string
+  buttons: Array<{ id: string; label: string; url: string }>
+  detailUrl: string
+}
+export type EmailCardView = {
+  channel: 'email'
+  subject: string
+  html: string
+  links: Array<{ id: string; label: string; url: string }>
+}
+export type RenderedCard = WebCardView | ImCardView | EmailCardView
+
+export async function listCards(): Promise<CardSummary[]> {
+  const body = await request<{ items: CardSummary[] }>('/api/cards')
+  return body.items
+}
+
+export async function getApprovalCard(
+  token: string,
+  channel: 'web' | 'im' | 'email' = 'web',
+): Promise<RenderedCard> {
+  const query = new URLSearchParams({ channel })
+  return request(`/api/approvals/${encodeURIComponent(token)}/card?${query.toString()}`)
+}
+
+/** 卡片动作提交：服务端按 action.output 映射 decision/comment（map_action_output 唯一权威）。 */
+export async function decideCardAction(
+  token: string,
+  actionId: string,
+  form?: Record<string, string>,
+): Promise<{ token: string; decision: string; resolvedBy: string; actionId?: string }> {
+  return request(`/api/approvals/${token}/decision`, {
+    method: 'POST',
+    body: JSON.stringify({ actionId, form }),
   })
 }
 

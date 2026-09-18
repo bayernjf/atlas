@@ -12,6 +12,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from atlas.cards.catalog import get_card
 from atlas.graph.conditions import validate_expression
 
 SUPPORTED_NODE_TYPES = (
@@ -715,6 +716,17 @@ def _validate_human_approval_config(
     if approver != "" and not isinstance(approver, str):
         add(f"{prefix} 审批人（approver）必须是文本", "/approver")
 
+    card_template_id = config.get("cardTemplateId")
+    if card_template_id is not None and card_template_id != "":
+        # M8：可选内置卡片 id；不填走 summary 旧路径，非空但目录未命中→编译 422。
+        if not isinstance(card_template_id, str):
+            add(f"{prefix} 交互卡片（cardTemplateId）必须是卡片 id 文本", "/cardTemplateId")
+        elif get_card(card_template_id) is None:
+            add(
+                f"{prefix} 配置的交互卡片不存在：{card_template_id}",
+                "/cardTemplateId",
+            )
+
     seconds = config.get("timeoutSeconds")
     if isinstance(seconds, bool) or not isinstance(seconds, int):
         add(f"{prefix} 超时时长（timeoutSeconds）必须是整数秒", "/timeoutSeconds")
@@ -907,7 +919,7 @@ _STATIC_OUTPUT_KEYS: dict[str, tuple[str, ...]] = {
     "parallel": ("status", "branches", "joinStrategy", "joinTarget"),
     "wait": ("mode", "waitType", "durationSeconds"),
     "subgraph": ("status", "outputs"),
-    "human_approval": ("decision", "target", "summary", "approver", "resolvedBy"),
+    "human_approval": ("decision", "target", "summary", "approver", "resolvedBy", "comment", "card"),
 }
 
 _TRIGGER_CONTEXT_KEYS = ("triggerType", "cron", "webhookUrl", "payload")
@@ -936,6 +948,14 @@ def _template_fields(node: NodeDSL) -> list[tuple[str, str]]:
         push("/continueExpression", config.get("continueExpression"))
     elif node.type == "human_approval":
         push("/summary", config.get("summary"))
+        # M8：命中卡片的只读字段 bindings 与 summary 同走本节点作用域 L2 复查
+        # （可见集＝该审批节点 visibleAt；action.output 的 {{form.*}} 不经节点作用域）。
+        card = get_card(config.get("cardTemplateId") or "")
+        if card is not None:
+            for section in card.sections:
+                if section.type == "fields":
+                    for binding in section.bindings:
+                        push("/cardTemplateId", binding.value)
     elif node.type == "subgraph":
         inputs = config.get("inputs")
         if isinstance(inputs, dict):
@@ -1144,6 +1164,25 @@ def _validate_template_refs(
                         add(
                             f"{prefix} 子图节点输出路径不存在（REF_PATH_NOT_FOUND，仅 status/outputs 根）："
                             f"{display}",
+                            pointer,
+                        )
+                    continue
+
+                if ref_type == "ai_decision":
+                    # decision 为 loader 固定产出结构 {action, reason, confidence, source?}，
+                    # 放行其一层白名单子键（M8 审批卡需引用 decision.reason）；prompt_rendered 为标量。
+                    root, *rest = tail
+                    if root == "decision":
+                        # decision 根对象本身合法，或其一层固定子键 action/reason/confidence/source
+                        path_ok = len(rest) == 0 or (
+                            len(rest) == 1
+                            and rest[0] in ("action", "reason", "confidence", "source")
+                        )
+                    else:
+                        path_ok = root == "prompt_rendered" and not rest
+                    if not path_ok:
+                        add(
+                            f"{prefix} 节点 {head} 的输出中不存在该路径（REF_PATH_NOT_FOUND）：{display}",
                             pointer,
                         )
                     continue

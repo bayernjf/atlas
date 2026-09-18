@@ -20,6 +20,7 @@ import { PropertyPanel } from '../components/propertyPanel/PropertyPanel'
 import { DebugConsole } from '../components/debugConsole/DebugConsole'
 import { FeedbackButton } from '../components/feedback/FeedbackButton'
 import { UserBadge } from '../components/UserBadge'
+import { ApprovalCardGate } from '../components/approval/CardRenderer'
 import { roleCan, type Principal } from '../lib/auth'
 import { useEditorStore } from '../store/editorStore'
 import { useValidationEngine } from '../lib/validation/useValidationEngine'
@@ -28,6 +29,7 @@ import { toSteps } from '../lib/recordings'
 import {
   compileGraph,
   decideApproval,
+  decideCardAction,
   deleteRecording,
   getTemplate,
   listRecordings,
@@ -401,6 +403,21 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
     }
   }
 
+  async function resolveCurrentCard(actionId: string, form: Record<string, string>) {
+    if (!currentApproval) return
+    setApprovalBusy(true)
+    setApprovalError(null)
+    try {
+      await decideCardAction(currentApproval.token, actionId, form)
+      setPendingApprovals((items) => items.filter((item) => item.token !== currentApproval.token))
+    } catch (error) {
+      // 同 resolveCurrentApproval：409 已超时决策 / 404 已清理，保留弹窗供确认关闭
+      setApprovalError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setApprovalBusy(false)
+    }
+  }
+
   function dismissCurrentApproval() {
     if (!currentApproval) return
     setApprovalError(null)
@@ -689,24 +706,28 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
         onCancel={dismissCurrentApproval}
         mask={{ closable: false }}
         width={520}
-        footer={[
-          <Button
-            key="reject"
-            danger
-            loading={approvalBusy}
-            onClick={() => resolveCurrentApproval('rejected')}
-          >
-            拒绝
-          </Button>,
-          <Button
-            key="approve"
-            type="primary"
-            loading={approvalBusy}
-            onClick={() => resolveCurrentApproval('approved')}
-          >
-            同意
-          </Button>,
-        ]}
+        footer={
+          currentApproval && !currentApproval.cardTemplateId
+            ? [
+                <Button
+                  key="reject"
+                  danger
+                  loading={approvalBusy}
+                  onClick={() => resolveCurrentApproval('rejected')}
+                >
+                  拒绝
+                </Button>,
+                <Button
+                  key="approve"
+                  type="primary"
+                  loading={approvalBusy}
+                  onClick={() => resolveCurrentApproval('approved')}
+                >
+                  同意
+                </Button>,
+              ]
+            : null
+        }
       >
         {currentApproval && (
           <Space orientation="vertical" size={8} style={{ width: '100%' }}>
@@ -714,10 +735,20 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
               <Typography.Text type="secondary">节点</Typography.Text>
               <div>{currentApproval.nodeId}</div>
             </div>
-            <div>
-              <Typography.Text type="secondary">审批说明</Typography.Text>
-              <div>{currentApproval.summary}</div>
-            </div>
+            {currentApproval.cardTemplateId ? (
+              <ApprovalCardGate
+                key={currentApproval.token}
+                approval={currentApproval}
+                busy={approvalBusy}
+                onCardDecided={resolveCurrentCard}
+                onLegacyDecided={resolveCurrentApproval}
+              />
+            ) : (
+              <div>
+                <Typography.Text type="secondary">审批说明</Typography.Text>
+                <div>{currentApproval.summary}</div>
+              </div>
+            )}
             <div>
               <Typography.Text type="secondary">审批人</Typography.Text>
               <div>{currentApproval.approver || '未指定'}</div>
