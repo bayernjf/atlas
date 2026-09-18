@@ -707,9 +707,8 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
         mask={{ closable: false }}
         width={520}
         footer={
-          currentApproval.cardTemplateId
-            ? null
-            : [
+          currentApproval && !currentApproval.cardTemplateId
+            ? [
                 <Button
                   key="reject"
                   danger
@@ -727,6 +726,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                   同意
                 </Button>,
               ]
+            : null
         }
       >
         {currentApproval && (
