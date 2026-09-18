@@ -190,6 +190,7 @@ class RecordStep(BaseModel):
 class RecordingCase(BaseModel):
     id: str                # "rec-{自增}"
     name: str              # 1-100 字
+    graph_id: str = ""     # M9：所属图 id（创建请求已收，M9 起落库；旧用例为空串，发布门禁不入选）
     graph: dict            # 录制时图快照（graph_definition version 1，冻结）
     inputs: dict | None
     steps: list[RecordStep]
@@ -197,10 +198,19 @@ class RecordingCase(BaseModel):
     created_at: str        # ISO8601 UTC
 
 class RecordingStore:  # 进程内单例；重启清空（11 S1 持久化），reset 不清除（同 feedback）
-    def add(self, *, name, graph, inputs, steps, status) -> RecordingCase: ...
+    def add(self, *, name, graph_id, graph, inputs, steps, status) -> RecordingCase: ...  # M9 起 graph_id 落库
     def list(self) -> list[RecordingCase]: ...
     def get(self, case_id: str) -> RecordingCase | None: ...
     def delete(self, case_id: str) -> bool: ...
+
+# src/atlas/recording/gate.py（M9，发布前批量回放门禁；04 §5.11 末 / 03 release_gate）
+def run_release_gate(*, graph_id: str, draft: dict, cases: list[RecordingCase],
+                     services) -> dict: ...
+    # 筛选 case.graph_id == graph_id（旧用例空串不入选）；逐例对 draft 走标准 run_graph
+    # （preset_approvals/collect_steps/compare 全部复用 replay.py，无录制专用运行时），
+    # 返 GateReport {graph_id, target:"draft", total, passed, failed, skipped, blocked,
+    #                cases:[{case_id,name,matches,replay_status,note?}]}；
+    # total=0 → skipped=true 不阻塞（明示未覆盖）；total>0 任一不匹配 → blocked=true
 
 # src/atlas/recording/replay.py（纯函数）
 def normalize(value, tool: str | None = None): ...
@@ -295,11 +305,15 @@ class RunRecord(BaseModel):
     nodes: list[NodeResult]
     error: str | None = None    # 仅运行级异常
     trace_id: str = ""          # M10：本 run 的 traceId（可空，向后兼容；debug/回放/subgraph 重入不写）
+    resolved_version: int | None = None   # M9：入站 event 运行经 Router 钉住的发布版本；手动运行为 None
+    business: "BusinessOutcome | None" = None  # M9：业务结果提取（无业务结果时 None）
 
 class MonitoringStore:          # 进程内单例；重启清空（持久化随 11 S1/14 D28）
     def record_run(self, *, graph_id, mode, status, started_at,
                    nodes: list[NodeResult], error: str | None = None,
-                   trace_id: str = "") -> RunRecord: ...   # M10：trace_id 透传写入
+                   trace_id: str = "",
+                   resolved_version: int | None = None,
+                   business: dict | None = None) -> RunRecord: ...   # M9 纯超集透传
     # 单锁内：deque(maxlen=200) 追加 → 健康（completed 且无失败节点）判定 →
     # 按图 streak 维护（健康归零）→ evaluate_rules → 同 (rule_id,graph_id)
     # 合并非 resolved 最新告警（count++/last_seen/last_run_id）否则新建
@@ -320,7 +334,18 @@ def extract_node_results(graph: dict, outputs: dict) -> list[NodeResult]: ...
 def percentile(values: list[float], p: float) -> float | None: ...   # nearest-rank，空集 None
 def summarize(runs: list[RunRecord]) -> dict: ...
 # {total, healthy, unhealthy, success_rate, p50, p95,
-#  per_graph:[{graph_id, ...同口径}], failed_nodes:[{node_id,node_type,count,last_error,last_seen}]}
+#  per_graph:[{graph_id, ...同口径}], failed_nodes:[{node_id,node_type,count,last_error,last_seen}],
+#  M9 增 business:{auto_refund_rate, manual_escalation_rate, refund_amount_diff_rate,
+#                  per_graph:[{graph_id, ...三率, samples}],
+#                  per_version:[{graph_id, resolved_version, ...三率, samples}]}
+#  业务三率分母＝有业务结果的 run，样本 0 为 null}
+
+# src/atlas/monitoring/business.py（M9 纯函数；04 §5.13 末 / 03 business_metrics）
+def extract_business(graph: dict, outputs: dict) -> dict | None: ...
+# BusinessOutcome {auto_refunded: bool（任一 tool_call result.status=="refunded"）,
+#   manual_escalated: bool（=="human_review"）, expected_amount: number?（trigger payload.amount）,
+#   refunded_amount: number?（退款 result.amount；demo shop 不回金额→回退 expected）,
+#   amount_diff: bool}；无业务结果返 None
 
 # src/atlas/monitoring/alerts.py（纯函数 + 模型）
 class RuleConfig(BaseModel):
@@ -328,6 +353,11 @@ class RuleConfig(BaseModel):
     node_failed:          RuleToggle
     consecutive_failures: ConsecutiveRule      # enabled + threshold(1..200, 默认 3)
     failure_rate:         FailureRateRule       # enabled + window(默认 20)/min_samples(默认 5)/rate(默认 0.5)
+# M9：rollout_gate 阈值不在全局 RuleConfig，随每图 RolloutConfig.gate（routing 包）
+
+# M9 Alert 纯超集字段（仅 rollout_gate 告警携带，其余规则无此字段）：
+#   rule_id 枚举增 "rollout_gate"（critical）；
+#   action: {type:"rollback", from_version:int, to_version:int, reason:str, actor:"auto"|"manual"} | None
 
 def validate_rules(raw: dict) -> list[str]: ...           # 中文错误信息（enabled bool、整数 1-200、rate 0-1）
 def evaluate_rules(*, record, healthy, recent_by_graph: list[RunRecord],
@@ -337,7 +367,7 @@ def evaluate_rules(*, record, healthy, recent_by_graph: list[RunRecord],
 # failure_rate（该图近 window 次含本次样本≥min_samples 且不健康占比≥rate，critical）
 ```
 
-埋点只在 `src/atlas/api/main.py`：sync `/run` 包装（异常记录 error 后原样 raise，保持 500），`/run/stream` worker 非 debug 时以 emit 包装收集 node_end output，`__result__` 记 completed、`__error__` 记 error（部分节点）、`__stopped__`（debug）不记。录制 replay 端点与 subgraph 重入零改动。
+埋点只在 `src/atlas/api/main.py`：sync `/run` 包装（异常记录 error 后原样 raise，保持 500），`/run/stream` worker 非 debug 时以 emit 包装收集 node_end output，`__result__` 记 completed、`__error__` 记 error（部分节点）、`__stopped__`（debug）不记。录制 replay 端点与 subgraph 重入零改动。**M9 起两个真实运行入口在 `record_run` 之后调用 `routing.gate.evaluate_after_run(services, record)`（门控自动回滚，见 §3.12）；replay/debug/subgraph 重入同口径不触发。**
 
 ### 3.10 多租户与权限（04 §5.14，06 §6.12）
 
@@ -375,11 +405,12 @@ class TenantServices(BaseModel):           # 每租户一套进程内实例（id
     approval_broker: ApprovalBroker
     debug_broker: DebuggerBroker
     monitoring: MonitoringStore
+    routing_store: RoutingStore            # M9：每租户一个 rollout/路由状态（进程内，同 TaskStore 先例）
 
 class TenantRegistry:
     def get(self, tenant_id: str) -> TenantServices: ...       # 惰性创建
     def reset_tenant(self, tenant_id: str) -> None: ...
-    # graph.clear + broker/debug/monitoring/message reset（规则回默认、计数器不重置）；
+    # graph.clear + broker/debug/monitoring/message/routing reset（规则回默认、计数器不重置）；
     # recording_store/feedback_store 不动（沿用「reset 不清除」）
 
 # src/atlas/iam/deps.py（FastAPI 依赖，非中间件）
@@ -390,7 +421,7 @@ def services_for(principal: Principal) -> TenantServices: ...  # = TenantRegistr
 
 全局单例（不分区，基础设施层）：模板目录、AdapterRegistry 与 demo 适配器实例、HttpApiClient/DatabaseClient 出向连接、DemoShopService、demo SQLite 种子。SSE worker 线程在请求线程内解析 TenantServices 后显式传入，不使用线程上下文变量。
 
-### 3.11 交互卡片（M8 立项 2026-09-18、待落码；04 §5.6 追加段 / 03 `card_template` / 19 §2.2.3/§2.3.2）
+### 3.11 交互卡片（M8 已落码 2026-09-18；04 §5.6 追加段 / 03 `card_template` / 19 §2.2.3/§2.3.2）
 
 ```python
 # src/atlas/cards/catalog.py（随代码发布的只读内置目录，无状态/无存储，照 template 包）
@@ -444,6 +475,62 @@ def to_message_params(rendered: dict, *, to) -> dict: ...
     # im/email 渲染产物 → message/send 入参 {channel,to,subject,body}（v1 不自动外发，随 D20/D24）
 ```
 
+### 3.12 路由与灰度（M9 立项 2026-09-18、待落码；04 §5.16 / 06 §6.17 / 03 `rollout_config`·`route_decision` / 19 §2.3.3·§2.5）
+
+```python
+# src/atlas/routing/models.py（pydantic；v1 无 when 表达式解析器，字符串条件落为结构化字段）
+class TriggerEvent(BaseModel):
+    channel: Literal["api", "webhook", "im", "embed"] = "api"
+    payload: dict = {}
+class InternalRule(BaseModel):  to: Literal["internal"]; tenants: list[str]
+class BucketRule(BaseModel):    to: Literal["lowValueBucket"]; field: str; op: Literal["<="];
+                                value: float; percent: int = 100
+class CanaryRule(BaseModel):    to: Literal["canary"]; percent: int          # 1..100
+class FullRule(BaseModel):      to: Literal["full"]
+class GateMetric(BaseModel):    id: Literal["run_error_rate", "manual_escalation_rate",
+                                            "refund_amount_diff_rate"]
+                                threshold: float; compareWith: int | None = None
+                                min_samples: int | None = None
+class GateConfig(BaseModel):    observe_minutes: int = 60; auto_rollback: bool = True
+                                min_samples: int = 3; metrics: list[GateMetric]
+class RolloutConfig(BaseModel):
+    strategy: Literal["progressive"] = "progressive"
+    rules: list[InternalRule | BucketRule | CanaryRule | FullRule]
+    gate: GateConfig
+    in_flight_policy: Literal["pin-to-version"] = "pin-to-version"
+
+# src/atlas/routing/router.py（纯函数，无 IO；U55 钉死）
+def resolve_version(*, graph_id: str, stable: int | None, candidate: int | None,
+                    tenant: str, event: TriggerEvent | None,
+                    config: RolloutConfig | None) -> tuple[int | None, str]: ...
+    # 固定序 internal→lowValueBucket→canary→full；返 (version, segment)
+    # canary 桶键 payload.order_id 缺省 payload.id；
+    #   int(sha256(f"{graph_id}:{bucket_key}").hexdigest(), 16) % 100 < percent → candidate
+    # 桶键缺失/非字符串 fail-safe 落 stable（segment="fallback"）；未配置/无 candidate → stable
+
+# src/atlas/routing/store.py（每租户一个；进程内，reset 清空；多实例同步随 D6/D10b/D32）
+class RoutingStore:
+    def configure(self, graph_id: str, raw: dict) -> RolloutConfig: ...   # 非法 ValueError（REST 422）
+    def start(self, graph_id: str, versions: list[int]) -> dict: ...      # 取最新两版；不足两个 ValueError（409）
+    def promote(self, graph_id: str) -> dict: ...                         # canary→full，唯一放量路径（仅手动）
+    def rollback(self, graph_id: str, *, reason: str, actor: Literal["auto","manual"]) -> dict: ...
+        # 任意态→rolled_back，candidate 撤流 stable 接全量；幂等（重复回滚不报错）
+    def resolve(self, graph_id: str, *, tenant: str, event: TriggerEvent) -> tuple[int|None, str]: ...
+        # 委托 router.resolve_version 并累加 traffic 计数 {stable,candidate,segments{...}}
+    def snapshot(self, graph_id: str) -> dict: ...
+        # {status:"idle"|"canary"|"full"|"rolled_back", stable, candidate, started_at,
+        #  rolled_back_at, rollback_reason, config, traffic}
+
+# src/atlas/routing/gate.py（API 层在 record_run 之后调用；monitoring 不反向依赖 routing）
+def evaluate_after_run(services: TenantServices, record: RunRecord) -> None: ...
+    # 仅 record.resolved_version 为某图 candidate 且 status=canary 且 gate.auto_rollback 时求值；
+    # 按 finished_at 取 observe_minutes 窗内该图 candidate 运行；样本 < min_samples 不判；
+    # run_error_rate 复用 metrics.is_healthy；业务两率取 business 段（样本 0 为 null 不判）；
+    # 任一越阈 → routing_store.rollback(actor="auto") +
+    #   monitoring 产 rollout_gate critical 告警（Alert.action 携带 from/to/reason/actor）；
+    # 无任何自动 promote 代码；回滚只切新流量，不改外部已发生事实。
+```
+
 ## 4. 记忆检索接口（依据 06 6.2 / 05 2.3）
 
 ```python
@@ -456,7 +543,7 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 
 > 以下路径为按 Demo 需求推导的 REST 端点清单，字段以 03/04/05 Schema 为准；正式定义待落码时随 OpenAPI 生成。
 >
-> **鉴权四档（2026-09-16，04 §5.14）**：除标注「公开」者外，端点必须携带 `Authorization: Bearer <sess-token>`，缺失/无效 → 401「缺少或无效的登录凭证」；角色不足 → 403「当前角色无权执行此操作」；访问不存在于本租户的对象（含他租户审批/调试 token）→ 404。**公开**：`POST /api/auth/login`、`GET /api/health`、静态托管、`GET /demo/shop`、`/api/demo/**`（模拟外部系统，沿用 X-Demo-Token/demo 登录自带认证，不经平台鉴权）。**viewer+**（全部登录角色可读）：所有 GET 业务端点（graphs/templates/adapters/recordings/monitoring/alerts/approvals/debug/messages）+ `POST /api/feedback`（人人可提交）。**operator+**：POST/PUT/DELETE/POST 运行类——graphs 保存、compile、run、run/stream、nl/generate、recordings 写/删/replay、approvals 决策、debug resume、alerts acknowledge/resolve。**admin only**：`PUT /api/monitoring/rules`、`POST /api/demo/reset`、`GET /api/feedback`。所有业务数据按 token 推断的租户分区（03 各结构租户注记）。
+> **鉴权四档（2026-09-16，04 §5.14）**：除标注「公开」者外，端点必须携带 `Authorization: Bearer <sess-token>`，缺失/无效 → 401「缺少或无效的登录凭证」；角色不足 → 403「当前角色无权执行此操作」；访问不存在于本租户的对象（含他租户审批/调试 token）→ 404。**公开**：`POST /api/auth/login`、`GET /api/health`、静态托管、`GET /demo/shop`、`/api/demo/**`（模拟外部系统，沿用 X-Demo-Token/demo 登录自带认证，不经平台鉴权）。**viewer+**（全部登录角色可读）：所有 GET 业务端点（graphs/templates/adapters/recordings/monitoring/alerts/approvals/debug/messages）+ `POST /api/feedback`（人人可提交）。**operator+**：POST/PUT/DELETE/POST 运行类——graphs 保存、compile、run、run/stream、nl/generate、recordings 写/删/replay、approvals 决策、debug resume、alerts acknowledge/resolve、publish 与 release-gate、rollout 配置/start/promote/rollback（M9，对齐发布权限）。**admin only**：`PUT /api/monitoring/rules`、`POST /api/demo/reset`、`GET /api/feedback`。所有业务数据按 token 推断的租户分区（03 各结构租户注记）。
 
 | 方法 | 路径 | 功能 | 关联 |
 |---|---|---|---|
@@ -466,20 +553,26 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 | POST | /api/graphs | 保存 Graph 定义（DSL） | node_schema / graph_definition |
 | GET | /api/graphs | 列出已保存图（`{items:[{id, node_count, updated_at}]}`，进程内存储；Phase 2 第六项，供 subgraph 节点选择器） | graph_definition |
 | GET | /api/graphs/{id} | 读取 Graph（latest 草稿；`?releaseVersion=N` 读指定发布版本快照，未知/未发布 404） | — |
-| POST | /api/graphs/{id}/publish | 【operate】发布当前草稿为不可变版本（M6 立项 2026-09-17，docs/20 §4.1 / ADR T19）：冻结 Graph JSON + subgraph 钉版（递归，子图未发布则先递归发布其草稿为 v1），返回 `{id, releaseVersion}`；releaseVersion 从 1 递增、已发布版本只读 | graph_definition |
+| POST | /api/graphs/{id}/publish | 【operate】发布当前草稿为不可变版本（M6 立项 2026-09-17，docs/20 §4.1 / ADR T19）：冻结 Graph JSON + subgraph 钉版（递归，子图未发布则先递归发布其草稿为 v1），返回 `{id, releaseVersion}`；releaseVersion 从 1 递增、已发布版本只读。**M9 起请求体从无改为可选 `{gate?: boolean}`**：gate=true 先跑发布门禁（下行 release-gate），blocked → **409 带完整 GateReport 且不产新版本** | graph_definition / release_gate |
 | GET | /api/graphs/{id}/versions | 【read】已发布版本列表（M6）：`{items:[<releaseVersion>]}`（升序）；未发布过 → 空列表 | graph_definition |
+| POST | /api/graphs/{id}/release-gate | 【operate，M9 立项 2026-09-18、待落码】发布前批量回放门禁（只跑门禁不发布，D26 部分取回）：对当前 latest 草稿逐例重放 `case.graph_id==id` 的录制用例（复用 replay.compare），返回 GateReport `{graph_id, target:"draft", total, passed, failed, skipped, blocked, cases:[{case_id,name,matches,replay_status,note?}]}`；total=0 时 skipped=true 不阻塞（明示未覆盖），total>0 任一不匹配 blocked=true；图不存在 404 | release_gate / recording_case |
+| GET | /api/graphs/{id}/rollout | 【read，M9】灰度配置与运行态：`{status, stable, candidate, started_at, rolled_back_at, rollback_reason, config, traffic:{stable,candidate,segments:{internal,lowValueBucket,canary,full,fallback}}}`；从未配置 → status="idle" 空态 | rollout_config |
+| PUT | /api/graphs/{id}/rollout | 【operate，M9】存 RolloutConfig（strategy/rules 四段/gate/inFlightPolicy，形状见 §3.12），**只存配置不启动**；非法值（percent 越界、阈值非 0-1、段顺序/形状错）422 中文聚合；图不存在 404 | rollout_config |
+| POST | /api/graphs/{id}/rollout/start | 【operate，M9】idle→canary：取最新两个发布版（stable=前一版、candidate=最新版）；发布版不足 2 个 → 409「至少需要两个发布版本才能开始灰度」；未配置 RolloutConfig 409；返回 rollout 快照 | rollout_config |
+| POST | /api/graphs/{id}/rollout/promote | 【operate，M9】canary→full：**唯一放量路径，仅手动**（全仓无自动 promote）；状态非 canary 409；返回快照 | rollout_config |
+| POST | /api/graphs/{id}/rollout/rollback | 【operate，M9】任意态→rolled_back（candidate 撤流、stable 接全量）；自动门控（actor="auto"）与手动（actor="manual"）同一幂等函数，重复回滚幂等 200；body 可选 `{reason?}`；返回快照 | rollout_config / business_metrics |
 | GET | /api/templates | 内置流程模板目录列表（Phase 2 能力项，只读代码常量；返回 `{items:[{id,name,description,tags,node_count}]}`，不含 graph；不受 reset 影响） | template_catalog |
 | GET | /api/templates/{id} | 模板详情：完整 TemplateMeta 含 `graph`（可直接载入画布/保存为新图）；未知 id 404 | template_catalog / graph_definition |
-| GET | /api/cards | 内置交互卡片目录（M8 立项 2026-09-18、待落码，viewer+；只读代码常量，不受 reset 影响）：`{items:[{id,name,channels,sections,actions,fallback?}]}`（CardTemplate 投影，供配置态 card-select 与运行态渲染） | card_template |
+| GET | /api/cards | 内置交互卡片目录（M8 已落码 2026-09-18，viewer+；只读代码常量，不受 reset 影响）：`{items:[{id,name,channels,sections,actions,fallback?}]}`（CardTemplate 投影，供配置态 card-select 与运行态渲染） | card_template |
 | GET | /api/approvals/{token}/card | 审批卡片按渠道渲染（M8，viewer+）：`?channel=web\|im\|email`（缺省 web），返回 §3.11 对应渠道渲染产物；未知 token 404、该审批未配 cardTemplateId（无卡片）404、非法 channel 422；渲染上下文取挂起时快照（中断恢复后从帧重建）；**只读，不产生决策副作用**（邮件链接为 GET 落地页，决策一律走 POST） | card_template / human_approval |
-| POST | /api/recordings | 录制用例入库（Phase 2 能力项）：请求体 `{name(1-100), graph_id, inputs, steps:[{node_id,node_type,output}], status}`，服务端按 graph_id 取已保存图原始 JSON 作**快照**存入（不重新执行；graph 未知 404、steps 形状非法 422、空 steps 422），201 返回完整 RecordingCase | recording_case |
-| GET | /api/recordings | 录制用例列表：`{items:[{id,name,node_count,step_count,status,created_at}]}` 投影（不含 graph/steps）；进程内存储，reset 不清除 | recording_case |
+| POST | /api/recordings | 录制用例入库（Phase 2 能力项）：请求体 `{name(1-100), graph_id, inputs, steps:[{node_id,node_type,output}], status}`，服务端按 graph_id 取已保存图原始 JSON 作**快照**存入（不重新执行；graph 未知 404、steps 形状非法 422、空 steps 422），201 返回完整 RecordingCase；**M9 起 graph_id 一并落库**（纯超集，旧用例该字段为空串） | recording_case |
+| GET | /api/recordings | 录制用例列表：`{items:[{id,name,graph_id,node_count,step_count,status,created_at}]}` 投影（M9 起含 graph_id；不含 graph/steps）；进程内存储，reset 不清除 | recording_case |
 | GET | /api/recordings/{id} | 录制用例详情：完整 RecordingCase（含 graph 快照与 steps）；未知 id 404 | recording_case |
 | DELETE | /api/recordings/{id} | 删除录制用例；未知 id 404 | recording_case |
 | POST | /api/recordings/{id}/replay | 回放用例：对快照走标准 run_graph（审批决策从 baseline 抽为 inputs.approvals 预置，不挂起），比对操作序列与逐节点归一化产出；返回 `{matches, baseline_status, replay_status, steps:[{node_id,match,note,diff_keys?}]}`；回放异常折叠 replay_status="failed"/matches=false（不抛 500）；未知用例 404 | recording_case |
 | POST | /api/debug/{token}/resume | 恢复调试暂停（Phase 2 能力项）：请求体 `{action:"step"|"continue"|"stop"}`；step=执行当前节点并在下一节点前再停、continue=退出逐节点仅断点停、stop=取消运行（随后收到 stopped 帧、无 result）；首决生效 200，未知 token 404、对已恢复暂停重复提交 409；进程内会话重启即失 | debug_session |
 | GET | /api/debug | 列出当前活动调试暂停：`{items:[{token, node_id, node_type, graph_id, reason}]}`（Phase 2 能力项，进程内） | debug_session |
-| GET | /api/monitoring/metrics | 监控指标聚合（Phase 2 能力项）：`{total,healthy,unhealthy,success_rate,p50,p95,per_graph:[{graph_id,…}],failed_nodes:[{node_id,node_type,count,last_error,last_seen}]}`；口径=ring 内全部保留运行（≤200），空集 success_rate/p50/p95 为 null；进程内、重启即失 | monitoring |
+| GET | /api/monitoring/metrics | 监控指标聚合（Phase 2 能力项）：`{total,healthy,unhealthy,success_rate,p50,p95,per_graph:[{graph_id,…}],failed_nodes:[{node_id,node_type,count,last_error,last_seen}]}`；口径=ring 内全部保留运行（≤200），空集 success_rate/p50/p95 为 null；进程内、重启即失。**M9 起增 `business` 段**：`{auto_refund_rate, manual_escalation_rate, refund_amount_diff_rate, per_graph:[{graph_id,…三率,samples}], per_version:[{graph_id,resolved_version,…三率,samples}]}`（分母＝有业务结果的 run，样本 0 为 null；契约 03 `business_metrics`） | monitoring / business_metrics |
 | GET | /api/monitoring/runs | 运行记录列表：`?graph_id=&limit=`（默认 50、1-200 截断，新→旧），返回 `{items:[RunRecord]}`；仅真实运行（debug/回放/子图重入不计） | monitoring |
 | GET | /api/monitoring/rules | 读取四内置规则当前配置 RuleConfig（默认全开，连续阈值 3、窗口 20/最小样本 5/失败率 0.5） | monitoring |
 | PUT | /api/monitoring/rules | 全量替换规则配置；非法值（enabled 非 bool、阈值/窗口/样本非 1-200 整数、rate 非 0-1）422 中文聚合错误；`/api/demo/reset` 恢复默认 | monitoring |
@@ -487,8 +580,8 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 | POST | /api/alerts/{id}/acknowledge | 确认告警（open→acknowledged）；未知 id 404、非 open 状态 409，中文 detail | monitoring |
 | POST | /api/alerts/{id}/resolve | 关闭告警（open/acknowledged→resolved）；未知 id 404、已 resolved 409，中文 detail | monitoring |
 | POST | /api/graphs/{id}/compile | DSL → LangGraph 编译（08 7.1 W7-W8）；**M6 起请求体可选 `releaseVersion`（缺省 latest）**。静态校验失败 422 体 `{"detail":[中文消息,...]}` 不变；**M2 起（2026-09-16 落码，fbd9f77）并列增机器可读定位侧车** `"locations":[{"index":number,"nodeId"?:"…","pointer"?:"/branches/0/expression"}]`——index 对齐 detail 下标、稀疏，pointer 为 RFC6901 相对该节点 config 根；图级错误无条目；契约见 03 `diagnostic`、06 §6.13，用例 U38。run/run/stream 经同一 compile_graph 路径，形状相同 | 02 Graph DSL |
-| POST | /api/graphs/{id}/run | 编译并运行，返回状态/节点产出/执行轨迹；请求体 `{"inputs": {...}}`（M6 起可选 `releaseVersion`，缺省 latest），inputs 同名键覆盖全局变量且整体作为 trigger 节点 webhook 载荷 `context.payload`（W9-W10 接入真实决策/适配器）；**不支持调试**——请求体含 `debug` 返回 422「单步调试仅支持流式运行 /run/stream」（Phase 2 能力项） | 02 Graph DSL / LoopState |
-| POST | /api/graphs/{id}/run/stream | SSE 流式运行（W9-W10；M6 起 body 可选 `releaseVersion`，缺省 latest）：事件 `node_start`/`node_end`/最终 `result`，供画布实时进度（验收标准 5）；**M10 起三帧为 19 §2.3.4 超集——node_start/node_end 另带 `traceId/spanId/parentSpanId`、run_end(result) 另带 `traceId/spanId/graphVersion`（只增字段、不改帧型，前端忽略未知字段零改动，完整 span 树不进 SSE）**；condition 节点的 node_end 事件 data 含 `{branch, target, evaluation, expression_errors}`（契约 04 §5.2），loop 节点含 `{mode, iterations, index, target, exitReason, expression_errors}`（契约 04 §5.3），parallel 节点扇出时 data 为 running 占位、joinTarget 的 node_end 前该产出被覆盖为终态 `{mode, joinStrategy, status, branches, result, joinTarget}`（契约 04 §5.4），wait 节点的 node_end 事件 data 含 `{mode:"wait", waitType:"duration", durationSeconds}`（契约 04 §5.5；node_start 后同步阻塞等待），human_approval 节点的 node_start 事件 data 含 `approval:{token, summary, approver, timeoutSeconds}`、node_end 含 `{mode:"human_approval", decision, target, token, summary, approver, resolvedBy}`（契约 04 §5.6），subgraph 节点 node_end 含 `{mode:"subgraph", graphId, status, error?, outputs, trace}` 但**子图内部不产生事件**（emit=None 重入，契约 04 §5.7）；**Phase 2 第五项起本端点为真流式**——run_graph 在后台线程执行、事件经 queue 实时下发（旧实现先跑完再回放，human_approval 会因收不到 node_start 而死锁）；**Phase 2 能力项（单步调试）**请求体可选 `debug:{breakpoints:[{node_id, expression?}]}`——存在时启动即 step 模式（首个节点 node_start 后、逻辑前发 `paused` 帧），断点会话级、不落 Graph JSON，未知 node_id/表达式校验失败 422（中文聚合）；新增帧 `paused`（`{token, node_id, node_type, reason:"step"|"breakpoint"|"condition", globals, outputs}` 深拷贝只读快照）与 `stopped`（resume action=stop 后 `{node_id, reason:"user_stop"}`，流结束且无 result 帧），恢复走 POST /api/debug/{token}/resume；子图内部不产生 paused（契约 04 §5.12） | 08 7.1 |
+| POST | /api/graphs/{id}/run | 编译并运行，返回状态/节点产出/执行轨迹；请求体 `{"inputs": {...}}`（M6 起可选 `releaseVersion`，缺省 latest；**M9 起可选 `event:{channel?,payload?}`——带 event 为入站触发，经 Router 三段分桶解析发布版本并按不可变快照运行（pin-to-version），无任何发布版 → 409；不带 event＝编辑器手动运行 latest 草稿，旧行为零回归；RunRecord 记 resolved_version**），inputs 同名键覆盖全局变量且整体作为 trigger 节点 webhook 载荷 `context.payload`（W9-W10 接入真实决策/适配器）；**不支持调试**——请求体含 `debug` 返回 422「单步调试仅支持流式运行 /run/stream」（Phase 2 能力项） | 02 Graph DSL / LoopState / route_decision |
+| POST | /api/graphs/{id}/run/stream | SSE 流式运行（W9-W10；M6 起 body 可选 `releaseVersion`，缺省 latest；**M9 起同 sync 行可选 `event:{channel?,payload?}`，Router 分桶 + pin-to-version，无发布版 409，不带 event 走草稿零回归**）：事件 `node_start`/`node_end`/最终 `result`，供画布实时进度（验收标准 5）；**M10 起三帧为 19 §2.3.4 超集——node_start/node_end 另带 `traceId/spanId/parentSpanId`、run_end(result) 另带 `traceId/spanId/graphVersion`（只增字段、不改帧型，前端忽略未知字段零改动，完整 span 树不进 SSE）**；condition 节点的 node_end 事件 data 含 `{branch, target, evaluation, expression_errors}`（契约 04 §5.2），loop 节点含 `{mode, iterations, index, target, exitReason, expression_errors}`（契约 04 §5.3），parallel 节点扇出时 data 为 running 占位、joinTarget 的 node_end 前该产出被覆盖为终态 `{mode, joinStrategy, status, branches, result, joinTarget}`（契约 04 §5.4），wait 节点的 node_end 事件 data 含 `{mode:"wait", waitType:"duration", durationSeconds}`（契约 04 §5.5；node_start 后同步阻塞等待），human_approval 节点的 node_start 事件 data 含 `approval:{token, summary, approver, timeoutSeconds}`、node_end 含 `{mode:"human_approval", decision, target, token, summary, approver, resolvedBy}`（契约 04 §5.6），subgraph 节点 node_end 含 `{mode:"subgraph", graphId, status, error?, outputs, trace}` 但**子图内部不产生事件**（emit=None 重入，契约 04 §5.7）；**Phase 2 第五项起本端点为真流式**——run_graph 在后台线程执行、事件经 queue 实时下发（旧实现先跑完再回放，human_approval 会因收不到 node_start 而死锁）；**Phase 2 能力项（单步调试）**请求体可选 `debug:{breakpoints:[{node_id, expression?}]}`——存在时启动即 step 模式（首个节点 node_start 后、逻辑前发 `paused` 帧），断点会话级、不落 Graph JSON，未知 node_id/表达式校验失败 422（中文聚合）；新增帧 `paused`（`{token, node_id, node_type, reason:"step"|"breakpoint"|"condition", globals, outputs}` 深拷贝只读快照）与 `stopped`（resume action=stop 后 `{node_id, reason:"user_stop"}`，流结束且无 result 帧），恢复走 POST /api/debug/{token}/resume；子图内部不产生 paused（契约 04 §5.12） | 08 7.1 |
 
 | GET | /api/runs | 挂起/运行查询（**M5 契约设计轮 2026-09-17 登记，docs/24 §4，2026-09-17 已随 M5b 落码生效**）：`?status=suspended&graph_id=&limit=`（新→旧，status 缺省=全部），返回 `{items:[{runId, graphId, status, startedAt, suspendedAt, kind?, nodeId?, deadlineAt?}]}`，`kind=approval` 附 `resumeToken`（审批决策本就凭 token 无身份绑定，沿用现状口径）；仅本租户 | runs |
 | GET | /api/runs/{run_id} | 单运行详情（同上 M5b 已落码生效）：状态（running/suspended/completed/failed/interrupted）、节点产出摘要、trace、挂起信息 `{runId, graphId, status, outputs, trace, suspension?}`；跨租户/不存在 404（04 §5.14 全分区口径，不泄漏存在性）；**不新增写端点**——审批决策仍 `POST /api/approvals/{token}/decision`、调试恢复仍 `POST /api/debug/{token}/resume`，本端点只承担查询与 SSE 断线重连后的状态确认（执行线程与 SSE 连接解耦，断开不取消执行） | runs |
@@ -503,7 +596,7 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 
 > wait 节点（Phase 2 第四项，v1 仅定时等待）运行结果写入 `outputs[wait_id] = {mode:"wait", waitType:"duration", durationSeconds: <int>}`；执行器 node_start 后同步 `time.sleep(durationSeconds)`（1-600 秒整数常量，线程池工作线程内阻塞），到时沿唯一普通边继续。trace 增 `wait-x: waited 5s` 行。下游引用形如 `{{wait-x.durationSeconds}}`。事件等待缓做 14 D19，语义见 04 §5.5、06 §6.1。
 >
-> human_approval 节点（Phase 2 第五项，v1 进程内审批信号）运行结果写入 `outputs[human_id] = {mode:"human_approval", decision:"approved"|"rejected", target, token, summary, approver, resolvedBy:"human"|"input"|"timeout"}`；执行器在 `ApprovalBroker`（模块级单例，可注入）登记 pending 后阻塞，node_start 携带 `approval` 载荷。决策三来源：REST 人工放行、run inputs 预置 `{"approvals":{"<node-id>":"approved"|"rejected"}}`（非交互/测试）、超时按 onTimeout（10-3600 秒，默认 reject）自动决策；两条出边全 conditional，按 decision 路由 approvedTarget/rejectedTarget。trace 增 `human-x: approved (human) → tool-y` / `… rejected (timeout) → tool-z` 行。下游引用形如 `{{human-x.decision}}`。持久化中断-恢复缓做 14 D20，语义见 04 §5.6、06 §6.1。**M8（立项 2026-09-18、待落码）纯超集**：config 可选 `cardTemplateId`（不填＝上述 summary 旧路径完全不回归；非空未命中内置目录→编译 422）；命中时 node_start 的 `approval` 载荷在 `{token,summary,approver,timeoutSeconds}` 上加 `cardTemplateId`，节点产出在现有字段上加 `comment`（审批意见，三来源缺省空串）与 `card:{templateId,actionId}`；ApprovalBroker pending 携带 card_template_id 与渲染上下文快照，M5b 中断帧带 cardTemplateId、恢复时上下文从帧 `resume_state.outputs`+trigger 重建；卡片渲染与决策端点见 §3.11 与 `/api/cards`、`/api/approvals/{token}/card`、`/api/approvals/{token}/decision`（actionId/form）。
+> human_approval 节点（Phase 2 第五项，v1 进程内审批信号）运行结果写入 `outputs[human_id] = {mode:"human_approval", decision:"approved"|"rejected", target, token, summary, approver, resolvedBy:"human"|"input"|"timeout"}`；执行器在 `ApprovalBroker`（模块级单例，可注入）登记 pending 后阻塞，node_start 携带 `approval` 载荷。决策三来源：REST 人工放行、run inputs 预置 `{"approvals":{"<node-id>":"approved"|"rejected"}}`（非交互/测试）、超时按 onTimeout（10-3600 秒，默认 reject）自动决策；两条出边全 conditional，按 decision 路由 approvedTarget/rejectedTarget。trace 增 `human-x: approved (human) → tool-y` / `… rejected (timeout) → tool-z` 行。下游引用形如 `{{human-x.decision}}`。持久化中断-恢复缓做 14 D20，语义见 04 §5.6、06 §6.1。**M8（已落码 2026-09-18）纯超集**：config 可选 `cardTemplateId`（不填＝上述 summary 旧路径完全不回归；非空未命中内置目录→编译 422）；命中时 node_start 的 `approval` 载荷在 `{token,summary,approver,timeoutSeconds}` 上加 `cardTemplateId`，节点产出在现有字段上加 `comment`（审批意见，三来源缺省空串）与 `card:{templateId,actionId}`；ApprovalBroker pending 携带 card_template_id 与渲染上下文快照，M5b 中断帧带 cardTemplateId、恢复时上下文从帧 `resume_state.outputs`+trigger 重建；卡片渲染与决策端点见 §3.11 与 `/api/cards`、`/api/approvals/{token}/card`、`/api/approvals/{token}/decision`（actionId/form）。
 >
 > subgraph 节点（Phase 2 第六项，v1 进程内引用式）运行结果写入 `outputs[subgraph_id] = {mode:"subgraph", graphId, status:"success"|"failed", error?, outputs:<子图全部节点 outputs>, trace:[string]}`；执行器经 `compile_graph/run_graph(graph_resolver=<Callable[[str], GraphDSL]>)` 注入的解析器（Demo 为 GraphStore.get）按 config.graphId 取子图，config.inputs（`{<子图入参键>: "<父图 {{路径}}/字面量>"}`）用父图上下文渲染后作为子图 run inputs 重入 run_graph（emit=None，子图事件不外泄；复用同一 registry/decision_client/approval_broker）。编译期递归校验：graphId 可解析、禁自引用与跨图环、嵌套深度 ≤3、子图递归过 validate_graph（错误中文聚合）；运行期任何异常 fail-safe 为 status:"failed"、父 run 仍 completed 沿唯一普通出边继续。trace 增 `subgraph-x: graph-7 success (N nodes)` / `… failed: <error>` 行。下游引用形如 `{{subgraph-x.status}}`、`{{subgraph-x.outputs.<子图节点id>.<键>}}`。版本钉版/子图市场/远程引用缓做 14 D21，语义见 04 §5.7、06 §6.1。
 | POST | /api/operators | 创建运营体（镜像） | operator |
@@ -519,7 +612,7 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 | POST | /api/nl/generate | 自然语言 → 流程草稿（验收标准 6；W9-W10 已落码：LLM 优先、退款规则模板兜底，无法识别 422；2026-09-16 起响应增列 `paramWarnings:string[]`：按九工具 input_schema 对草稿 tool_call 参数做尽力校验的中文警告——必填缺失/顶层浅类型/enum/additionalProperties:false，模板插值值与不可静态判定项放行，非阻塞） | 08 7.2 |
 | POST | /api/demo/shop/login | Demo 商家平台登录（demo/demo，W9-W10） | — |
 | GET | /api/demo/shop/orders | Demo 待处理退款单（需登录，W9-W10） | — |
-| POST | /api/demo/reset | 【admin only】重置**调用方租户**的 Demo 数据（2026-09-16，04 §5.14：角色不足 403；作用域为本租户 graph/approval/debug/monitoring/message，录制与反馈按租户保留不清；跨租户数据不动）：本租户店铺——全局 demo 店铺恢复 5 笔种子退款单、清空已保存图与登录态、清空 pending 审批请求，Phase 1 种子客户体验，W10 后；Phase 2 第三项起清空进程内消息记录并重建内置 SQLite demo 订单库（全局共享模拟基础设施，仍随 reset 重建）——显式 `ATLAS_DATABASE_URL` 配置的外部库不被触碰；内置流程模板目录为代码常量，不受 reset 影响；录制用例为测试资产同样**不被 reset 清除**——其图已快照进用例，GraphStore 清空不影响回放；Phase 2 能力项起 reset 同时把全部**活动调试暂停按 stop 放行**（会话 cancelled + Event set），阻塞在 paused 的运行线程经 DebugStopped 收敛结束，不留悬挂线程；调试会话本身为进程内临时态，不构成需保留的数据；Phase 2 能力项（基础监控告警）起 reset 同时清空**本租户**监控运行记录与告警（ring、streak、Alert 列表）并把规则阈值恢复默认（运行计数不重置；运行时数据，同消息记录；重启本就清空，持久化随 11 S1/14 D28）。**M5 契约设计轮分层语义（2026-09-17，docs/24 §3.4）**：进程内后端行为不变；PG 档（M5b）＝truncate 本租户运行时表（graphs/runs/interruptions/iam_sessions/monitoring_*）并重建种子，`recordings`/`feedback`（persistent 档）保留不清 | — |
+| POST | /api/demo/reset | 【admin only】重置**调用方租户**的 Demo 数据（2026-09-16，04 §5.14：角色不足 403；作用域为本租户 graph/approval/debug/monitoring/message，录制与反馈按租户保留不清；跨租户数据不动）：本租户店铺——全局 demo 店铺恢复 5 笔种子退款单、清空已保存图与登录态、清空 pending 审批请求，Phase 1 种子客户体验，W10 后；Phase 2 第三项起清空进程内消息记录并重建内置 SQLite demo 订单库（全局共享模拟基础设施，仍随 reset 重建）——显式 `ATLAS_DATABASE_URL` 配置的外部库不被触碰；内置流程模板目录为代码常量，不受 reset 影响；录制用例为测试资产同样**不被 reset 清除**——其图已快照进用例，GraphStore 清空不影响回放；Phase 2 能力项起 reset 同时把全部**活动调试暂停按 stop 放行**（会话 cancelled + Event set），阻塞在 paused 的运行线程经 DebugStopped 收敛结束，不留悬挂线程；调试会话本身为进程内临时态，不构成需保留的数据；Phase 2 能力项（基础监控告警）起 reset 同时清空**本租户**监控运行记录与告警（ring、streak、Alert 列表）并把规则阈值恢复默认（运行计数不重置；运行时数据，同消息记录；重启本就清空，持久化随 11 S1/14 D28）。**M5 契约设计轮分层语义（2026-09-17，docs/24 §3.4）**：进程内后端行为不变；PG 档（M5b）＝truncate 本租户运行时表（graphs/runs/interruptions/iam_sessions/monitoring_*）并重建种子，`recordings`/`feedback`（persistent 档）保留不清。**M9 起 reset 同时清空本租户 RoutingStore（rollout 配置/状态/流量计数，进程内运行时态，memory/PG 两档同口径）**。 | — |
 | GET | /api/approvals | 列出当前 pending 审批请求（`{items:[{token, summary, approver, timeoutSeconds, node_id, graph_id, cardTemplateId?}]}`，M8 起命中卡片附 cardTemplateId；进程内单例，重启即失；Phase 2 第五项） | human_approval |
 | POST | /api/approvals/{token}/decision | 人工审批决策，请求体 `{decision: "approved"|"rejected", comment?}`（comment v1 仅接收不展示）；**M8 起纯超集加可选 `{actionId?, form?}`**——命中卡片时前端可提交 `{actionId, form:{<name>:<value>}}`（decision/comment 可省，服务端经 `map_action_output` 按卡片 action.output 映射，`{{form.*}}` 回填 comment），也仍接受旧 `{decision,comment?}`；首决生效，200 返回决策结果；未知 token 404、已决重复提交 409、坏 actionId 或 action.output 缺必填 form 字段 422（中文 detail）；Phase 2 第五项 | human_approval / card_template |
 | POST | /api/feedback | 提交种子试用反馈（type=bug/suggestion、content、contact 选填，201；进程内存储，reset 不清除；Phase 1） | feedback_item |
