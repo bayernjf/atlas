@@ -366,6 +366,25 @@ def get_graph(
     return raw
 
 
+@app.put("/api/graphs/{graph_id}")
+def update_graph(
+    graph_id: str,
+    raw: dict[str, Any],
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """覆盖已存图的 latest 草稿（M9 发布流：同一 graph 迭代多版本，不新建 id）。
+
+    已发布版本不可变、不受影响；图不存在（含跨租户）404。校验与 POST /api/graphs 一致。
+    """
+    services = services_for(principal)
+    graph = parse_graph(raw)
+    try:
+        services.graph_store.update_draft(graph_id, raw)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Graph 不存在：{exc.args[0]}") from exc
+    return {"id": graph_id, "version": graph.version}
+
+
 def _release_gate_for_draft(services: TenantServices, graph_id: str) -> dict[str, Any]:
     """对当前 latest 草稿跑发布前批量回放门禁（M9）；无草稿/图不存在返 None（调用方 404）。"""
     raw = services.graph_store.get(graph_id)

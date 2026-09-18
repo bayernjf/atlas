@@ -360,3 +360,29 @@ def test_http_candidate_failures_auto_rollback_then_new_events_go_stable():
     assert after.status_code == 200
     latest = client.get(f"/api/monitoring/runs?graph_id={graph_id}").json()["items"][0]
     assert latest["resolved_version"] == 1
+
+
+def test_put_draft_iterates_versions_on_same_graph_without_touching_v1():
+    """M9 发布流闭环：PUT 覆盖 latest 草稿 → publish v2，v1 不可变快照保持原样。"""
+    good = _message_graph("message/send")
+    graph_id = client.post("/api/graphs", json=good).json()["id"]
+    assert client.post(f"/api/graphs/{graph_id}/publish").json()["releaseVersion"] == 1
+
+    # 改草稿（坏工具）PUT 覆盖同 id，再发布 v2
+    bad = _message_graph("nonexistent/tool")
+    put_res = client.put(f"/api/graphs/{graph_id}", json=bad)
+    assert put_res.status_code == 200, put_res.text
+    assert client.post(f"/api/graphs/{graph_id}/publish").json()["releaseVersion"] == 2
+
+    versions = client.get(f"/api/graphs/{graph_id}/versions").json()["items"]
+    assert versions == [1, 2]
+    # v1 冻结快照仍是好工具，latest 草稿是坏工具
+    v1 = client.get(f"/api/graphs/{graph_id}?releaseVersion=1").json()
+    latest = client.get(f"/api/graphs/{graph_id}").json()
+    v1_tool = next(n for n in v1["nodes"] if n["id"] == "msg-1")["config"]["tool"]
+    latest_tool = next(n for n in latest["nodes"] if n["id"] == "msg-1")["config"]["tool"]
+    assert v1_tool == "message/send"
+    assert latest_tool == "nonexistent/tool"
+
+    # 不存在图（含跨租户不泄漏）→ 404
+    assert client.put("/api/graphs/graph-999999", json=good).status_code == 404

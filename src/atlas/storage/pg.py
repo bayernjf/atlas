@@ -107,6 +107,25 @@ class PgGraphStore:
             )
         return graph_id
 
+    def update_draft(self, graph_id: str, raw: dict[str, Any]) -> None:
+        """覆盖 latest 草稿（M9）；行不存在（含跨租户）抛 KeyError，已发布版本不变。"""
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                text(
+                    "UPDATE graphs SET definition = :definition, node_count = :node_count, "
+                    "updated_at = :updated_at WHERE id = :id AND tenant_id = :tenant_id"
+                ),
+                {
+                    "id": graph_id,
+                    "tenant_id": self._tenant_id,
+                    "definition": json.dumps(raw, ensure_ascii=False),
+                    "node_count": len(raw.get("nodes", [])),
+                    "updated_at": _now_iso(),
+                },
+            )
+            if result.rowcount == 0:
+                raise KeyError(graph_id)
+
     def get(self, graph_id: str, release_version: int | None = None) -> dict[str, Any] | None:
         if release_version is None:
             sql = "SELECT definition FROM graphs WHERE id = :id AND tenant_id = :tenant_id"
