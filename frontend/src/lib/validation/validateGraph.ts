@@ -72,6 +72,7 @@ export function validateNodeDiagnostics(
         data.kind,
         data.config as Record<string, unknown>,
         refContext.toolOutputSchemas,
+        refContext.toolInputSchemas,
         refContext.cardBindings,
       ),
     )
@@ -121,6 +122,7 @@ export function validateGraph(
   edges: ScopeEdgeLike[],
   variables: Pick<GraphVariable, 'name'>[] = [],
   toolOutputSchemas?: Record<string, JsonSchema>,
+  toolInputSchemas?: Record<string, JsonSchema>,
   cardBindings?: CardBindings,
 ): Diagnostic[] {
   const scopeNodes: ScopeNodeLike[] = nodes.map((node) => ({
@@ -137,7 +139,7 @@ export function validateGraph(
       ...validateNodeDiagnostics(
         node.id,
         node.data,
-        { selfId: node.id, scope, toolOutputSchemas, cardBindings },
+        { selfId: node.id, scope, toolOutputSchemas, toolInputSchemas, cardBindings },
       ),
     )
   }

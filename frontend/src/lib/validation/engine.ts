@@ -90,6 +90,7 @@ export class ValidationEngine {
   private graphSig: string | null = null
   private graphCache: Diagnostic[] = []
   private schemas: Record<string, JsonSchema> | null = null
+  private inputSchemas: Record<string, JsonSchema> | null = null
   private cardBindingsKey: CardBindings | null = null
 
   private ensureScope(
@@ -136,6 +137,7 @@ export class ValidationEngine {
     dataById: Map<string, EngineNodeData>,
     dueIds: string[],
     toolOutputSchemas?: Record<string, JsonSchema>,
+    toolInputSchemas?: Record<string, JsonSchema>,
     cardBindings?: CardBindings,
   ): string[] {
     const { sig, scope } = this.ensureScope(scopeNodes, edges, variables)
@@ -143,6 +145,13 @@ export class ValidationEngine {
     if (schemasKey !== this.schemas) {
       // 适配器发现到达/刷新：工具深层路径可见性可能变化，L2 全部视为到期。
       this.schemas = schemasKey
+      this.l2Sigs.clear()
+      this.l2Cache.clear()
+    }
+    const inputSchemasKey = toolInputSchemas ?? null
+    if (inputSchemasKey !== this.inputSchemas) {
+      // D30：工具入参 schema 到达/刷新：参数类型比对结果可能变化，L2 全部视为到期。
+      this.inputSchemas = inputSchemasKey
       this.l2Sigs.clear()
       this.l2Cache.clear()
     }
@@ -164,7 +173,14 @@ export class ValidationEngine {
       this.l2Sigs.set(scopeNode.id, nodeSig)
       this.l2Cache.set(
         scopeNode.id,
-        scope.validateRefsAt(scopeNode.id, data.kind, data.config, toolOutputSchemas, cardBindings),
+        scope.validateRefsAt(
+          scopeNode.id,
+          data.kind,
+          data.config,
+          toolOutputSchemas,
+          toolInputSchemas,
+          cardBindings,
+        ),
       )
       updated.push(scopeNode.id)
     }

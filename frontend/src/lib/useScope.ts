@@ -63,6 +63,20 @@ export function useToolOutputSchemas(): Record<string, JsonSchema> {
   }, [adapters])
 }
 
+/** 以 `<adapter_id>/<tool>` 为键的入参 schema 表（D30 REF_TYPE_MISMATCH 期望类型来源）。 */
+export function useToolInputSchemas(): Record<string, JsonSchema> {
+  const { adapters } = useAdapters()
+  return useMemo(() => {
+    const table: Record<string, JsonSchema> = {}
+    for (const adapter of adapters ?? []) {
+      for (const tool of adapter.tools) {
+        table[`${adapter.id}/${tool.name}`] = tool.input_schema
+      }
+    }
+    return table
+  }, [adapters])
+}
+
 // --- M8 内置卡片目录缓存（喂 card-select 控件与 L2 卡片 bindings 校验）-------------
 
 type CardsSnapshot = { cards: CardSummary[] | null; fetchFailed: boolean }

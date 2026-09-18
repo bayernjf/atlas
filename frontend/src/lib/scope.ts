@@ -32,7 +32,11 @@ export type ScopeEdgeLike = {
   target: string
 }
 
-export type RefCode = 'REF_NODE_NOT_FOUND' | 'REF_NOT_IN_SCOPE' | 'REF_PATH_NOT_FOUND'
+export type RefCode =
+  | 'REF_NODE_NOT_FOUND'
+  | 'REF_NOT_IN_SCOPE'
+  | 'REF_PATH_NOT_FOUND'
+  | 'REF_TYPE_MISMATCH'
 
 /** M4 批 3 ⑪ quickFix v1 唯一动作：删除悬空引用（20 §2.5 法定，08 M4 立项条⑥）。 */
 export const DELETE_DANGLING_REF_FIX = Object.freeze({
@@ -139,6 +143,91 @@ export function templateFields(kind: string, config: Record<string, unknown>): T
  * 本节点的模板字段（pointer 落在 /cardTemplateId），与 summary 同走一个可见集；
  * 未配置卡片或目录未就绪时原样返回（后端编译期另有强校验兜底）。
  */
+/**
+ * 沿 JSON Schema 的 properties/items 走到 segments 末端，返回末端 type；
+ * 不可静态判定（空 schema/oneOf/开放 additionalProperties/路径缺失）返回 null。
+ */
+export function jsonSchemaTypeAt(
+  schema: JsonSchema | undefined,
+  segments: string[],
+): string | null {
+  if (!schema || Object.keys(schema).length === 0 || schema.oneOf) return null
+  let current: JsonSchema = schema
+  for (const segment of segments) {
+    if (current.oneOf || current.additionalProperties !== undefined) return null
+    if (current.type === 'array' || current.items) {
+      if (/^\d+$/.test(segment)) {
+        if (!current.items) return null
+        current = current.items
+        continue
+      }
+      return null
+    }
+    if (current.properties && segment in current.properties) {
+      const next = current.properties[segment]
+      if (!next || next.oneOf) return null
+      current = next
+      continue
+    }
+    return null
+  }
+  return typeof current.type === 'string' ? current.type : null
+}
+
+const SCALAR_JSON_TYPES = new Set(['string', 'number', 'integer', 'boolean'])
+
+/** 仅标量返回类型词；object/array/null/缺 type 返回 null（不可比对、放行）。 */
+function scalarTypeOf(type: string | null): string | null {
+  return type && SCALAR_JSON_TYPES.has(type) ? type : null
+}
+
+/**
+ * 标量赋值兼容：相同兼容；期望 number 接受 integer 源（integer 是 number 子类型）；
+ * 期望 integer 不接受 number 源（可能带小数，D30 约定对此警告）；其余不兼容。
+ */
+function scalarAssignable(expected: string, actual: string): boolean {
+  if (expected === actual) return true
+  if (expected === 'number' && actual === 'integer') return true
+  return false
+}
+
+export type ParamTemplateLeaf = { pointer: string; text: string }
+
+/**
+ * 解析 tool_call params JSON，收集「值整体为单个 {{模板}}、无拼接」的叶子
+ * （pointer 为相对 params 根的 RFC6901）。params 非合法 JSON 返回 []（结构问题由
+ * L1/保存校验承接，类型校验降级放行）；拼接串、对象/数组叶子不收（无法静态定型）。
+ */
+export function extractSingleTemplateLeaves(paramsText: string): ParamTemplateLeaf[] {
+  let data: unknown
+  try {
+    data = JSON.parse(paramsText)
+  } catch {
+    return []
+  }
+  const leaves: ParamTemplateLeaf[] = []
+  const walk = (value: unknown, pointer: string): void => {
+    if (typeof value === 'string') {
+      const refs = extractTemplateRefs(value)
+      if (refs.length === 1 && refs[0].raw === value.trim()) {
+        leaves.push({ pointer, text: value })
+      }
+      return
+    }
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => walk(item, `${pointer}/${index}`))
+      return
+    }
+    if (value && typeof value === 'object') {
+      for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+        walk(child, `${pointer}/${escapePointerToken(key)}`)
+      }
+    }
+  }
+  walk(data, '')
+  return leaves
+}
+
 function appendCardFields(
   fields: TemplateFieldLocation[],
   config: Record<string, unknown>,
@@ -179,6 +268,7 @@ export type ScopeIndex = {
     kind: string,
     config: Record<string, unknown>,
     toolOutputSchemas?: Record<string, JsonSchema>,
+    toolInputSchemas?: Record<string, JsonSchema>,
     cardBindings?: CardBindings,
   ) => Diagnostic[]
   /**
@@ -315,6 +405,7 @@ export function buildScopeIndex(
     kind,
     config,
     toolOutputSchemas,
+    toolInputSchemas,
     cardBindings,
   ) => {
     const diagnostics: Diagnostic[] = []
@@ -466,6 +557,53 @@ export function buildScopeIndex(
           if (!staticKeys.includes(root) || rest.length > 0) {
             push(field, ref, 'REF_PATH_NOT_FOUND', `节点 ${node.id} 的输出中不存在该路径：{{${ref.path}}}`)
           }
+        }
+      }
+    }
+
+    // D30 REF_TYPE_MISMATCH（warning，不进后端编译 422）：仅 tool_call params 的单模板
+    // 叶子，且引用源同为 tool_call、两端标量类型都可静态判定时比对。object/array/oneOf/
+    // 拼接串/缺 schema 一律放行（outputSchema 缺省降级为仅存在性，19 §1.4.3 下限）。
+    if (kind === 'tool_call') {
+      const toolName = typeof config.tool === 'string' ? config.tool : ''
+      const inputSchema = toolName ? toolInputSchemas?.[toolName] : undefined
+      const paramsText = typeof config.params === 'string' ? config.params : ''
+      if (inputSchema && paramsText) {
+        for (const leaf of extractSingleTemplateLeaves(paramsText)) {
+          const ref = extractTemplateRefs(leaf.text)[0]
+          if (!ref) continue
+          const refSegments = ref.path.split('.').filter(Boolean)
+          if (refSegments.length === 0 || refSegments[0] === 'global') continue
+          const providerNode = nodeById.get(refSegments[0])
+          if (!providerNode || providerNode.kind !== 'tool_call') continue
+          if (!visibleNodeIdsAt(nodeId).has(providerNode.id)) continue
+          const [rootKey, ...restPath] = refSegments.slice(1)
+          if (rootKey !== 'result') continue
+          const providerTool =
+            typeof providerNode.config?.tool === 'string' ? providerNode.config.tool : ''
+          const outputSchema = providerTool ? toolOutputSchemas?.[providerTool] : undefined
+          const actual = scalarTypeOf(jsonSchemaTypeAt(outputSchema, restPath))
+          const expected = scalarTypeOf(
+            jsonSchemaTypeAt(inputSchema, leaf.pointer.split('/').slice(1)),
+          )
+          if (!actual || !expected || scalarAssignable(expected, actual)) continue
+          const offset = paramsText.indexOf(ref.raw)
+          diagnostics.push({
+            severity: 'warning',
+            layer: 'template',
+            code: 'REF_TYPE_MISMATCH',
+            message:
+              `参数 ${leaf.pointer || '（根）'} 期望 ${expected}，但引用 ${ref.raw} 的输出末端为 ` +
+              `${actual}（REF_TYPE_MISMATCH：类型不匹配，运行期仍按原样插值）`,
+            loc: {
+              nodeId,
+              pointer: '/params',
+              token:
+                offset >= 0
+                  ? { start: offset, end: offset + ref.raw.length, raw: ref.raw }
+                  : undefined,
+            },
+          })
         }
       }
     }
