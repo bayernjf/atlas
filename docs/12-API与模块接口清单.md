@@ -205,8 +205,9 @@ class RecordingStore:  # 进程内单例；重启清空（11 S1 持久化），r
 
 # src/atlas/recording/gate.py（M9，发布前批量回放门禁；04 §5.11 末 / 03 release_gate）
 def run_release_gate(*, graph_id: str, draft: dict, cases: list[RecordingCase],
-                     services) -> dict: ...
-    # 筛选 case.graph_id == graph_id（旧用例空串不入选）；逐例对 draft 走标准 run_graph
+                     services, registry, graph_resolver) -> dict: ...
+    # registry / graph_resolver 由 API 层注入（避免 recording → api 反向依赖，与 subgraph
+    # 重入同一注入口径）；筛选 case.graph_id == graph_id（旧用例空串不入选）；逐例对 draft 走标准 run_graph
     # （preset_approvals/collect_steps/compare 全部复用 replay.py，无录制专用运行时），
     # 返 GateReport {graph_id, target:"draft", total, passed, failed, skipped, blocked,
     #                cases:[{case_id,name,matches,replay_status,note?}]}；
@@ -475,7 +476,7 @@ def to_message_params(rendered: dict, *, to) -> dict: ...
     # im/email 渲染产物 → message/send 入参 {channel,to,subject,body}（v1 不自动外发，随 D20/D24）
 ```
 
-### 3.12 路由与灰度（M9 立项 2026-09-18、待落码；04 §5.16 / 06 §6.17 / 03 `rollout_config`·`route_decision` / 19 §2.3.3·§2.5）
+### 3.12 路由与灰度（M9 已落码 2026-09-18 批 1-4＋收口，后端 602/前端 396；04 §5.16 / 06 §6.17 / 03 `rollout_config`·`route_decision` / 19 §2.3.3·§2.5）
 
 ```python
 # src/atlas/routing/models.py（pydantic；v1 无 when 表达式解析器，字符串条件落为结构化字段）
@@ -550,12 +551,13 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 | POST | /api/auth/login | 登录换会话（公开）：请求体 `{username, password}`，坏凭证 401「用户名或密码错误」；200 返回 `{token:"sess-<uuid hex>", principal:{tenant_id, tenant_name, username, display_name, role}}`（identity_session） | identity_session |
 | GET | /api/auth/me | 回显当前 Bearer 会话的 Principal（viewer+） | identity_session |
 | POST | /api/auth/logout | 吊销当前 token（viewer+；幂等，204/200） | identity_session |
-| POST | /api/graphs | 保存 Graph 定义（DSL） | node_schema / graph_definition |
+| POST | /api/graphs | 保存 Graph 定义（DSL）：总是新建 graph-N（首次建图） | node_schema / graph_definition |
+| PUT | /api/graphs/{id} | 【operate，M9】同图迭代覆盖 latest 草稿（`GraphRepository.update_draft`）：body 同 POST 的 SerializedGraph、过 parse_graph 校验，**不新建 id、不动不可变发布版**，刷 updated_at，返 `{id, version}`；图不存在/跨租户 → 404（KeyError）。前端编辑器对同一画布首次 POST 之后的运行/录制/发布统一走此端点（修复早期每次运行新建 graph-N 致录制用例与门禁 graph_id 错位） | graph_definition |
 | GET | /api/graphs | 列出已保存图（`{items:[{id, node_count, updated_at}]}`，进程内存储；Phase 2 第六项，供 subgraph 节点选择器） | graph_definition |
 | GET | /api/graphs/{id} | 读取 Graph（latest 草稿；`?releaseVersion=N` 读指定发布版本快照，未知/未发布 404） | — |
 | POST | /api/graphs/{id}/publish | 【operate】发布当前草稿为不可变版本（M6 立项 2026-09-17，docs/20 §4.1 / ADR T19）：冻结 Graph JSON + subgraph 钉版（递归，子图未发布则先递归发布其草稿为 v1），返回 `{id, releaseVersion}`；releaseVersion 从 1 递增、已发布版本只读。**M9 起请求体从无改为可选 `{gate?: boolean}`**：gate=true 先跑发布门禁（下行 release-gate），blocked → **409 带完整 GateReport 且不产新版本** | graph_definition / release_gate |
 | GET | /api/graphs/{id}/versions | 【read】已发布版本列表（M6）：`{items:[<releaseVersion>]}`（升序）；未发布过 → 空列表 | graph_definition |
-| POST | /api/graphs/{id}/release-gate | 【operate，M9 立项 2026-09-18、待落码】发布前批量回放门禁（只跑门禁不发布，D26 部分取回）：对当前 latest 草稿逐例重放 `case.graph_id==id` 的录制用例（复用 replay.compare），返回 GateReport `{graph_id, target:"draft", total, passed, failed, skipped, blocked, cases:[{case_id,name,matches,replay_status,note?}]}`；total=0 时 skipped=true 不阻塞（明示未覆盖），total>0 任一不匹配 blocked=true；图不存在 404 | release_gate / recording_case |
+| POST | /api/graphs/{id}/release-gate | 【operate，M9 已落码 2026-09-18】发布前批量回放门禁（只跑门禁不发布，D26 部分取回）：对当前 latest 草稿逐例重放 `case.graph_id==id` 的录制用例（复用 replay.compare），返回 GateReport `{graph_id, target:"draft", total, passed, failed, skipped, blocked, cases:[{case_id,name,matches,replay_status,note?}]}`；total=0 时 skipped=true 不阻塞（明示未覆盖），total>0 任一不匹配 blocked=true；图不存在 404 | release_gate / recording_case |
 | GET | /api/graphs/{id}/rollout | 【read，M9】灰度配置与运行态：`{status, stable, candidate, started_at, rolled_back_at, rollback_reason, config, traffic:{stable,candidate,segments:{internal,lowValueBucket,canary,full,fallback}}}`；从未配置 → status="idle" 空态 | rollout_config |
 | PUT | /api/graphs/{id}/rollout | 【operate，M9】存 RolloutConfig（strategy/rules 四段/gate/inFlightPolicy，形状见 §3.12），**只存配置不启动**；非法值（percent 越界、阈值非 0-1、段顺序/形状错）422 中文聚合；图不存在 404 | rollout_config |
 | POST | /api/graphs/{id}/rollout/start | 【operate，M9】idle→canary：取最新两个发布版（stable=前一版、candidate=最新版）；发布版不足 2 个 → 409「至少需要两个发布版本才能开始灰度」；未配置 RolloutConfig 409；返回 rollout 快照 | rollout_config |
