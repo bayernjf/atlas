@@ -29,6 +29,7 @@ class RunRecord(BaseModel):
     nodes: list[NodeResult]
     error: str | None = None
     trace_id: str = ""  # M10：本 run 的 traceId（可空，向后兼容；debug/回放/subgraph 重入不写）
+    resolved_version: int | None = None  # M9：入站 event 经 Router 解析钉住的发布版本（手动运行/草稿为 None）
 
 
 def _now_iso() -> str:
@@ -56,6 +57,7 @@ class MonitoringStore:
         nodes: list,
         error: str | None = None,
         trace_id: str = "",
+        resolved_version: int | None = None,
     ) -> RunRecord:
         with self._lock:
             self._run_counter += 1
@@ -70,6 +72,7 @@ class MonitoringStore:
                 nodes=nodes,
                 error=error,
                 trace_id=trace_id,
+                resolved_version=resolved_version,
             )
             self._runs.append(record)
             healthy = is_healthy(record)

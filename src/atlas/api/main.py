@@ -23,7 +23,7 @@ from typing import Any, Literal
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from atlas.cards import (
     CardRenderError,
@@ -54,6 +54,12 @@ from atlas.recording import (
     collect_steps,
     compare as compare_recording,
     preset_approvals,
+)
+from atlas.routing import (
+    RolloutConfig,
+    RolloutError,
+    RolloutState,
+    TriggerEvent,
 )
 from atlas.shop.adapter import ShopHarnessAdapter
 from atlas.shop.service import DemoShopService
@@ -374,6 +380,76 @@ def list_graph_versions(
     return {"items": services_for(principal).graph_store.list_versions(graph_id)}
 
 
+@app.get("/api/graphs/{graph_id}/rollout")
+def get_rollout(
+    graph_id: str, principal: Principal = Depends(require("read"))
+) -> dict[str, Any]:
+    """灰度配置与运行态投影（M9，03 `rollout_config`；从未配置返 idle 默认态）。
+
+    图在本租户不存在（无草稿且无发布版）→ 404，跨租户不泄漏存在性（04 §5.14）。
+    """
+    services = services_for(principal)
+    if services.graph_store.get(graph_id) is None and not services.graph_store.list_versions(graph_id):
+        raise HTTPException(status_code=404, detail=f"Graph 不存在：{graph_id}")
+    state = services.routing_store.snapshot(graph_id)
+    return _rollout_projection(state)
+
+
+@app.put("/api/graphs/{graph_id}/rollout")
+def put_rollout(
+    graph_id: str,
+    body: dict[str, Any] | None = None,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """存灰度配置（只存不启动；非法形状 422 中文；M9，04 §5.16）。"""
+    config = _rollout_config_or_422(body)
+    state = services_for(principal).routing_store.configure(graph_id, config)
+    return _rollout_projection(state)
+
+
+@app.post("/api/graphs/{graph_id}/rollout/start")
+def start_rollout(
+    graph_id: str, principal: Principal = Depends(require("operate"))
+) -> dict[str, Any]:
+    """idle→canary：取最新两个发布版（stable/candidate）；未配置/版本不足/非 idle → 409。"""
+    services = services_for(principal)
+    versions = services.graph_store.list_versions(graph_id)
+    try:
+        state = services.routing_store.start(graph_id, versions)
+    except RolloutError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _rollout_projection(state)
+
+
+@app.post("/api/graphs/{graph_id}/rollout/promote")
+def promote_rollout(
+    graph_id: str, principal: Principal = Depends(require("operate"))
+) -> dict[str, Any]:
+    """canary→full：唯一放量路径，仅手动（不存在任何自动 promote）。"""
+    try:
+        state = services_for(principal).routing_store.promote(graph_id)
+    except RolloutError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _rollout_projection(state)
+
+
+@app.post("/api/graphs/{graph_id}/rollout/rollback")
+def rollback_rollout(
+    graph_id: str,
+    body: dict[str, Any] | None = None,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """任意态→rolled_back（幂等；candidate 撤流、stable 接新流量；M9 门控自动回滚走同一函数）。"""
+    reason = (body or {}).get("reason") or "manual rollback"
+    try:
+        state = services_for(principal).routing_store.rollback(
+            graph_id, actor="manual", reason=str(reason)
+        )
+    except RolloutError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _rollout_projection(state)
+
+
 @app.get("/api/templates")
 def list_catalog_templates(
     principal: Principal = Depends(require("read")),
@@ -602,6 +678,66 @@ def _graph_version(graph_id: str, release_version: int | None) -> str:
     return f"{graph_id}@draft"
 
 
+def _resolve_event_version(
+    services: TenantServices, principal: Principal, graph_id: str, payload: dict[str, Any]
+) -> tuple[int | None, int | None]:
+    """M9 入站事件路由（03 `route_decision`）：返 (加载用 releaseVersion, RunRecord.resolved_version)。
+
+    - 无 event：旧行为（手动 releaseVersion 或草稿），resolved_version 恒 None，零回归；
+    - 带 event：经 RoutingStore 三段分桶解析钉住的发布版（tenant 取 Principal 不取 body）；
+      event 与 releaseVersion 同传 422（语义冲突）；无任何发布版可路由 409。
+    """
+    event_raw = payload.get("event")
+    if event_raw is None:
+        return payload.get("releaseVersion"), None
+    if payload.get("releaseVersion") is not None:
+        raise HTTPException(status_code=422, detail="event 与 releaseVersion 不可同时指定（入站路由与手动钉版互斥）")
+    if payload.get("debug") is not None:
+        raise HTTPException(status_code=422, detail="入站事件运行不支持单步调试（debug 仅用于草稿手动运行）")
+    if not isinstance(event_raw, dict):
+        raise HTTPException(status_code=422, detail="event 必须是对象：{channel?, payload?}")
+    try:
+        event = TriggerEvent.model_validate(event_raw)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=f"event 非法：{exc.errors()[0]['msg']}") from exc
+    version, _segment = services.routing_store.resolve(
+        graph_id, tenant=principal.tenant_id, event=event
+    )
+    if version is None:
+        raise HTTPException(status_code=409, detail="图尚未发布，入站事件无版本可路由")
+    return version, version
+
+
+def _rollout_config_or_422(body: Any) -> RolloutConfig:
+    """PUT rollout body → RolloutConfig；非法形状聚合为中文 422（不泄漏 pydantic 英文堆栈）。"""
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=422, detail="rollout 配置必须是 JSON 对象")
+    try:
+        return RolloutConfig.model_validate(body)
+    except ValidationError as exc:
+        messages = []
+        for error in exc.errors():
+            loc = ".".join(str(part) for part in error["loc"])
+            messages.append(f"{loc}：{error['msg']}" if loc else error["msg"])
+        raise HTTPException(status_code=422, detail="灰度配置非法：" + "；".join(messages)) from exc
+
+
+def _rollout_projection(state: RolloutState) -> dict[str, Any]:
+    """GET rollout 投影（camelCase；config 未配置为 null）。"""
+    return {
+        "graphId": state.graph_id,
+        "status": state.status,
+        "config": state.config.model_dump() if state.config is not None else None,
+        "stable": state.stable,
+        "candidate": state.candidate,
+        "startedAt": state.started_at,
+        "rolledBackAt": state.rolled_back_at,
+        "rollbackReason": state.rollback_reason,
+        "rollbackActor": state.rollback_actor,
+        "traffic": state.traffic,
+    }
+
+
 def _validate_debug(graph, debug: Any) -> list[dict[str, Any]]:
     """校验 /run/stream 的 debug.breakpoints，返回规范化列表；错误聚合成中文 422。"""
     if not isinstance(debug, dict):
@@ -642,9 +778,10 @@ def run_saved_graph(
     principal: Principal = Depends(require("operate")),
 ) -> RunGraphResponse:
     services = services_for(principal)
-    release_version = (payload or {}).get("releaseVersion")
+    body = payload or {}
+    release_version, resolved_version = _resolve_event_version(services, principal, graph_id, body)
     graph = _load_graph_or_404(services, graph_id, release_version)
-    if (payload or {}).get("debug") is not None:
+    if body.get("debug") is not None:
         raise HTTPException(status_code=422, detail="单步调试仅支持流式运行 /run/stream")
     graph_view = {"nodes": [{"id": node.id, "type": node.type} for node in graph.nodes]}
     started_at = datetime.now(timezone.utc).isoformat()
@@ -659,7 +796,7 @@ def run_saved_graph(
     try:
         result = run_graph(
             graph,
-            inputs=(payload or {}).get("inputs"),
+            inputs=body.get("inputs"),
             registry=_runtime_registry(services),
             approval_broker=services.approval_broker,
             graph_id=graph_id,
@@ -681,6 +818,7 @@ def run_saved_graph(
             nodes=[],
             error=f"{type(exc).__name__}: {exc}",
             trace_id=tracer.trace_id,
+            resolved_version=resolved_version,
         )
         raise
     services.run_store.finish(
@@ -695,6 +833,7 @@ def run_saved_graph(
         duration_ms=(time.monotonic() - started) * 1000,
         nodes=extract_node_results(graph_view, result["outputs"]),
         trace_id=tracer.trace_id,
+        resolved_version=resolved_version,
     )
     return RunGraphResponse(id=graph_id, **result)
 
@@ -712,9 +851,12 @@ def run_saved_graph_stream(
     租户服务 bundle 在请求线程解析后显式透传 worker（06 §6.12，无线程上下文变量）。
     """
     services = services_for(principal)
-    graph = _load_graph_or_404(services, graph_id, (payload or {}).get("releaseVersion"))
-    inputs = (payload or {}).get("inputs")
-    debug = (payload or {}).get("debug")
+    body = payload or {}
+    # M9：event 在请求线程解析（Principal 不进 worker），钉住的版本随闭包透传后台线程。
+    release_version, resolved_version = _resolve_event_version(services, principal, graph_id, body)
+    graph = _load_graph_or_404(services, graph_id, release_version)
+    inputs = body.get("inputs")
+    debug = body.get("debug")
     graph_view = {"nodes": [{"id": node.id, "type": node.type} for node in graph.nodes]}
     debug_session = None
     if debug is not None:
@@ -731,7 +873,6 @@ def run_saved_graph_stream(
     frame_sink = _frame_sink_for(principal.tenant_id, run_store, run_id)
     # M10：真实运行（非 debug）建 tracer 并显式透传 worker（06 §6.12 后台线程不靠全局）；
     # debug 单步会话显式传 None 不埋点（04 §5.13/§5.15，SSE 帧保持旧形状）。
-    release_version = (payload or {}).get("releaseVersion")
     tracer: Tracer | None = (
         Tracer(graph_id=graph_id, graph_version=_graph_version(graph_id, release_version))
         if debug is None
@@ -788,6 +929,7 @@ def run_saved_graph_stream(
                         duration_ms=(time.monotonic() - started) * 1000,
                         nodes=extract_node_results(graph_view, result["outputs"]),
                         trace_id=tracer.trace_id if tracer is not None else "",
+                        resolved_version=resolved_version,
                     )
                 events.put({"__result__": result})
             except DebugStopped as exc:
@@ -807,6 +949,7 @@ def run_saved_graph_stream(
                         nodes=extract_node_results(graph_view, collected),
                         error=f"{type(exc).__name__}: {exc}",
                         trace_id=tracer.trace_id if tracer is not None else "",
+                        resolved_version=resolved_version,
                     )
                 events.put({"__error__": f"{type(exc).__name__}: {exc}"})
 

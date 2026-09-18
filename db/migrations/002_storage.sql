@@ -102,7 +102,9 @@ CREATE TABLE IF NOT EXISTS monitoring_runs (
     finished_at TEXT NOT NULL,
     duration_ms DOUBLE PRECISION NOT NULL,
     nodes JSONB NOT NULL,
-    error TEXT
+    error TEXT,
+    trace_id TEXT,
+    resolved_version INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_monitoring_runs_tenant ON monitoring_runs (tenant_id);
 
