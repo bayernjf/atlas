@@ -35,7 +35,7 @@
 | `db_sql_params` | 04 / 四、工具/适配器组件 4.7 数据适配器（通用 SQL）v1 契约（权威 blockquote）+ `src/atlas/database/{service,adapter}.py`（query/execute 两能力） | ### 4.7 数据适配器（通用 SQL）v1 契约 |
 | `message_send_params` | 04 / 四、工具/适配器组件 4.8 消息适配器（进程内消息服务）v1 契约（权威 blockquote）+ `src/atlas/message/{service,adapter}.py`（单能力 message/send） | ### 4.8 消息适配器（进程内消息服务）v1 契约 |
 | `template_catalog` | 04 / 五、逻辑组件 5.10 流程模板库（内置只读）v1 契约（权威 blockquote）+ `src/atlas/template/catalog.py`（5 个内置模板元数据与 graph） | ### 5.10 流程模板库（内置只读） |
-| `recording_case` | 04 / 五、逻辑组件 5.11 操作录制与回放 v1 契约（权威 blockquote）+ `src/atlas/recording/{cases,replay,gate}.py`（录制用例模型与进程内存储；M9 增 gate 发布前批量回放门禁，见下行 `release_gate`） | ### 5.11 操作录制与回放 |
+| `recording_case` | 04 / 五、逻辑组件 5.11 操作录制与回放 v1 契约（权威 blockquote）+ `src/atlas/recording/{cases,replay,gate,snapshots}.py`（录制用例模型与进程内存储；M9 增 gate 发布前批量回放门禁；D26-b 增 `subgraphs` 快照内联，仅 replay 内联、gate 保持实时，见下行 `release_gate`） | ### 5.11 操作录制与回放 |
 | `debug_session` | 04 / 五、逻辑组件 5.12 单步调试与断点 v1 契约（权威 blockquote）+ `src/atlas/debug/{sessions,controller}.py`（运行期调试会话、暂停状态机、paused/stopped 帧） | ### 5.12 单步调试与断点 |
 | `monitoring` | 04 / 五、逻辑组件 5.13 基础监控告警 v1 契约（权威 blockquote）+ `src/atlas/monitoring/{records,metrics,alerts,business}.py`（运行记录 ring、指标聚合、规则求值与告警状态机；M9 增业务结果指标与 rollout_gate 告警动作，见下行 `business_metrics`） | ### 5.13 基础监控告警 |
 | `identity_session` | 04 / 五、逻辑组件 5.14 多租户与权限 v1 契约（权威 blockquote）+ `src/atlas/iam/{principals,sessions,registry,deps}.py`（种子租户/账号、Principal、sess- token、按租户服务注册表、Bearer 依赖） | ### 5.14 多租户与权限 |
@@ -43,7 +43,7 @@
 | `rollout_config` | **M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；04 / 五、逻辑组件 5.16 灰度发布与门控回滚 v1 契约（权威 blockquote）+ `src/atlas/routing/{models,router,store,gate}.py`（rollout 配置/三段分桶/状态机/门控；ADR T22）；形状来源 docs/19 §2.3.3 提案转权威 | ### 5.16 灰度发布与门控回滚 |
 | `route_decision` | **M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；同上 04 §5.16 + `routing/router.py` resolve_version 纯函数（入站 event→发布版本/分桶段，pin-to-version） | ### 5.16 灰度发布与门控回滚 |
 | `release_gate` | **M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；04 §5.11 末发布前批量门禁段 + `src/atlas/recording/gate.py`（GateReport，D26 部分取回；D26 报告 v1 起响应纯超集加 `id` 并沉淀，见下行） | ### 5.11 操作录制与回放 |
-| `release_report` | **D26 报告 v1 已落码收口（2026-09-18，U60 转正式，08 D26 落码条；立项 `71153a8`、后端 `9dc9690`/`5c812c5`、前端 `f5c789c`）**；04 §5.11 末用例集报告段 + `src/atlas/recording/reports.py`（ReleaseReport 沉淀/按图历史/通过率趋势，ring 100/租户、reset 清空、不 PG 化） | ### 5.11 操作录制与回放 |
+| `release_report` | **D26 报告 v1 已落码收口（2026-09-18，U60 转正式）；2026-09-19 收尾批补 CSV/JSON 导出（`8a37b4e`，`.../export?format=csv|json`）**；04 §5.11 末用例集报告段 + `src/atlas/recording/reports.py`（ReleaseReport 沉淀/按图历史/通过率趋势/导出，ring 100/租户、reset 清空、不 PG 化） | ### 5.11 操作录制与回放 |
 | `business_metrics` | **M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；04 §5.13 末业务指标段 + `src/atlas/monitoring/business.py`（extract_business 业务结果三率，金融灰度门控信号源） | ### 5.13 基础监控告警 |
 
 ---
@@ -250,12 +250,18 @@ type UiSchema = {
 // lib/validation/l3.ts（已落码，规则从 dsl.py 同构提取，跨运行时对拍夹具守漂移）：
 //   GRAPH_UNREACHABLE：从 trigger BFS 不可达节点（同构 _validate_reachability）
 //   GRAPH_ILLEGAL_CYCLE：移除 loop 白名单回边后 DFS 三色检测成环（同构 _validate_illegal_cycles）
-// 聚合顺序环先于不可达，与 validate_graph_report 一致；message 与后端字节对齐
+//   GRAPH_DATA_CYCLE（D30-b，2026-09-19 已落码 9a357df）：数据依赖环——边为「通过可见性判定的
+//       模板引用」viewer→provider（scope.dataDependencyEdges），DFS 三色；新增价值在 loop 回边区
+//       （loop 条件引用体内节点、体内又引用 loop.index）；后端 _validate_data_dependency_cycles 权威、error 进编译 422
+// L2 另有 REF_TYPE_MISMATCH（D30-a，47ecf48，warning）：tool_call params 单模板叶子标量类型与
+//       工具 input/outputSchema 不符（number 接受 integer、integer 不接受 number、object/array/拼接/缺 schema 放行）
+// 聚合顺序环→不可达→数据环，与 validate_graph_report 一致；message 与后端字节对齐
 // 对拍：scripts/dev/generate_l3_fixtures.py 以后端实跑生成 11 用例 JSON，
 //       tests/test_l3_fixtures.py（后端重建重跑）+ l3.test.ts（前端对拍）双侧守
 // 唯一有意偏差：GRAPH_UNREACHABLE 的 loc.nodeId 取不可达节点自身（后端 locations 侧车无图级条目）
 // 调度（useValidationEngine）：L1 useLayoutEffect 同步 / L2 300ms 防抖 / L3 requestIdleCallback（+500ms setTimeout 回退）
-// ScopeIndex/L3 按 structureSignature 记忆化；dirty.ts 维护增量失效范围与 revision 守卫
+// ScopeIndex 按 structureSignature 记忆化（编辑模板不重建索引）；L3 自 D30-b 起按 graphDataSignature
+//   （结构 + 各节点模板字段投影）记忆化——数据环依赖模板文本，编辑模板须使 L3 重算；dirty.ts 维护增量失效与 revision 守卫
 // Problems 面板（ProblemsPanel.tsx）：validationStore 全图 Diagnostic 经 rank 聚合，
 //   点击 nodeId 条目 selectNode+setCenter，pointer 条目滚到 [data-pointer] 字段并闪烁；无 nodeId 环条目不可点
 // quickFix v1 与 reverseDeps：批 3 已落（reverseDeps.ts 双类反向索引 + removeDanglingRef；
@@ -541,10 +547,13 @@ status: string             # 录制运行终态
 id: string                 # rec-{自增}
 graph_id: string           # M9 新增纯超集：所属图 id（创建请求已收，M9 起落库；旧用例为空串，发布门禁不入选）
 graph: graph_definition    # 录制时的图快照（冻结，非 graph_id 活引用）
+subgraphs: {graphId: raw}  # D26-b（2026-09-19，29bb3d9）纯超集：录制时递归冻结的子图 raw（深度≤3、visited 防环、引用缺失不阻断）；旧用例缺省 {}
 created_at: string         # UTC ISO-8601
 # GET /api/recordings 列表投影（不含 graph/steps）
 items: [{id, name, graph_id, node_count, step_count, status, created_at}]
 # POST /api/recordings/{id}/replay 响应（ReplayReport）
+# D26-b：单用例 replay 走「内联优先」resolver（snapshots.inline_first_resolver）——先查 subgraphs 快照、未命中回退租户 GraphStore，
+#   reset/删除/改动子图后旧用例仍可回放；发布门禁 gate.run_release_gate 刻意保持实时 resolver 不内联（验当前 latest 草稿，坏子图应 block）
 matches: boolean           # 操作序列与逐节点归一化产出全部一致
 baseline_status: string
 replay_status: string      # 回放异常（如子图引用缺失）折叠为 "failed"
@@ -832,8 +841,10 @@ cases: ReportCaseRow[]
 created_at: string              # ISO UTC
 # GET /api/graphs/{id}/release-reports（read）→ {items:[摘要…]} 倒序、不含 cases
 # GET /api/graphs/{id}/release-reports/{rid}（read）→ 完整 ReleaseReport；不属于该图/不存在 404，跨租户不泄漏
+# D26-a（2026-09-19，8a37b4e）导出：GET /api/graphs/{id}/release-reports/{rid}/export?format=csv|json（read）
+#   → attachment 下载（rr-N.json / rr-N.csv）；非法 format 422，404 照详情；CSV 为元信息行 + 空行 + 逐 case 行，带 UTF-8 BOM 供 Excel；reports.report_to_csv（stdlib csv/io）
 ```
-> 仍缓做（不解除 D26）：影子模式、Mock 工具响应、用例编辑/参数化、subgraph 快照内联、PG 持久化与多租户共享、跨图聚合看板、定时/CI 回放、报告导出。
+> 2026-09-19 D26 收尾批已落：报告导出 CSV/JSON（8a37b4e）、subgraph 快照内联（29bb3d9，见 `recording_case`）、定时 CI 回放（cea70f4，`.github/workflows/release-gate-cron.yml`，cron 仅 main 生效）。仍缓做（不解除 D26）：影子模式、Mock 工具响应、用例编辑/参数化、PG 持久化与多租户共享、跨图聚合看板、报告删除端点（ring 自然淘汰）。
 
 ### `business_metrics` — 字段概览（**M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；`src/atlas/monitoring/business.py` extract_business 纯函数；金融灰度门控信号源）
 
