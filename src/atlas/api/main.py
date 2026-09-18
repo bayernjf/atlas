@@ -54,6 +54,7 @@ from atlas.recording import (
     collect_steps,
     compare as compare_recording,
     preset_approvals,
+    run_release_gate,
 )
 from atlas.routing import (
     RolloutConfig,
@@ -256,6 +257,11 @@ class PublishGraphResponse(BaseModel):
     releaseVersion: int
 
 
+class PublishGraphRequest(BaseModel):
+    # M9 发布门禁：true 时先批量回放，blocked 拦截发布（03 `release_gate`）
+    gate: bool = False
+
+
 class CompileResponse(BaseModel):
     id: str
     nodes: list[dict[str, str]]
@@ -359,12 +365,57 @@ def get_graph(
     return raw
 
 
+def _release_gate_for_draft(services: TenantServices, graph_id: str) -> dict[str, Any]:
+    """对当前 latest 草稿跑发布前批量回放门禁（M9）；无草稿/图不存在返 None（调用方 404）。"""
+    raw = services.graph_store.get(graph_id)
+    if raw is None:
+        return None
+    return run_release_gate(
+        graph_id=graph_id,
+        draft=raw,
+        cases=services.recording_store.list(),
+        services=services,
+        registry=_runtime_registry(services),
+        graph_resolver=_tenant_graph_resolver(services),
+    )
+
+
+@app.post("/api/graphs/{graph_id}/release-gate")
+def run_graph_release_gate(
+    graph_id: str, principal: Principal = Depends(require("operate"))
+) -> dict[str, Any]:
+    """发布前批量回放门禁：只跑门禁不发布（M9，03 `release_gate`；D26 部分取回）。
+
+    对当前 latest 草稿逐例重跑 graph_id 匹配的录制用例并比对；无草稿/图不存在 404。
+    """
+    services = services_for(principal)
+    report = _release_gate_for_draft(services, graph_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail=f"Graph 不存在或无待发布草稿：{graph_id}")
+    return report
+
+
 @app.post("/api/graphs/{graph_id}/publish", response_model=PublishGraphResponse)
 def publish_graph(
-    graph_id: str, principal: Principal = Depends(require("operate"))
+    graph_id: str,
+    request: PublishGraphRequest | None = None,
+    principal: Principal = Depends(require("operate")),
 ) -> PublishGraphResponse:
-    """发布 latest 草稿为不可变版本（M6，docs/20 §4.1 / ADR T19）。"""
+    """发布 latest 草稿为不可变版本（M6，docs/20 §4.1 / ADR T19）。
+
+    M9：可选 body ``{"gate": true}``——先跑发布前批量回放门禁，blocked → 409
+    带完整 GateReport 且不产新版本；total=0（skipped）不阻塞（03 `release_gate`）。
+    """
     services = services_for(principal)
+    if request is not None and request.gate:
+        report = _release_gate_for_draft(services, graph_id)
+        if report is None:
+            raise HTTPException(status_code=404, detail=f"Graph 不存在：{graph_id}")
+        if report["blocked"]:
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "发布门禁未通过，已拦截发布（存在不匹配用例）", "report": report},
+            )
     try:
         release_version = publish_graph_version(services.graph_store, graph_id)
     except KeyError as exc:
@@ -533,6 +584,7 @@ def create_recording(
         raise HTTPException(status_code=404, detail=f"Graph 不存在：{request.graph_id}")
     case = services.recording_store.add(
         name=request.name,
+        graph_id=request.graph_id,
         graph=raw,
         inputs=request.inputs,
         steps=request.steps,
@@ -551,6 +603,7 @@ def list_recordings(
             {
                 "id": case.id,
                 "name": case.name,
+                "graph_id": case.graph_id,
                 "node_count": len(case.graph.get("nodes", [])),
                 "step_count": len(case.steps),
                 "status": case.status,

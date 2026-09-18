@@ -704,7 +704,8 @@ def test_recording_create_projection_detail_validation_and_404():
 
     items = client.get("/api/recordings").json()["items"]
     mine = next(item for item in items if item["id"] == case_id)
-    assert set(mine) == {"id", "name", "node_count", "step_count", "status", "created_at"}
+    assert set(mine) == {"id", "name", "graph_id", "node_count", "step_count", "status", "created_at"}
+    assert mine["graph_id"] == case["graph_id"]
     assert mine["node_count"] == 4 and mine["step_count"] == 3
 
     assert client.post(
