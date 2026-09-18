@@ -107,6 +107,25 @@ class PgGraphStore:
             )
         return graph_id
 
+    def update_draft(self, graph_id: str, raw: dict[str, Any]) -> None:
+        """覆盖 latest 草稿（M9）；行不存在（含跨租户）抛 KeyError，已发布版本不变。"""
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                text(
+                    "UPDATE graphs SET definition = :definition, node_count = :node_count, "
+                    "updated_at = :updated_at WHERE id = :id AND tenant_id = :tenant_id"
+                ),
+                {
+                    "id": graph_id,
+                    "tenant_id": self._tenant_id,
+                    "definition": json.dumps(raw, ensure_ascii=False),
+                    "node_count": len(raw.get("nodes", [])),
+                    "updated_at": _now_iso(),
+                },
+            )
+            if result.rowcount == 0:
+                raise KeyError(graph_id)
+
     def get(self, graph_id: str, release_version: int | None = None) -> dict[str, Any] | None:
         if release_version is None:
             sql = "SELECT definition FROM graphs WHERE id = :id AND tenant_id = :tenant_id"
@@ -389,6 +408,9 @@ class PgMonitoringStore:
         duration_ms: float,
         nodes: list,
         error: str | None = None,
+        trace_id: str = "",
+        resolved_version: int | None = None,
+        business=None,
     ) -> RunRecord:
         from atlas.monitoring.alerts import evaluate_rules
         from atlas.monitoring.metrics import is_healthy
@@ -402,14 +424,16 @@ class PgMonitoringStore:
                 id=run_id, graph_id=graph_id, mode=mode, status=status,
                 started_at=started_at, finished_at=_now_iso(),
                 duration_ms=duration_ms, nodes=nodes, error=error,
+                trace_id=trace_id, resolved_version=resolved_version,
+                business=business,
             )
             conn.execute(
                 text(
                     "INSERT INTO monitoring_runs "
                     "(id, tenant_id, graph_id, mode, status, started_at, finished_at, "
-                    "duration_ms, nodes, error) "
+                    "duration_ms, nodes, error, trace_id, resolved_version, business) "
                     "VALUES (:id, :tenant_id, :graph_id, :mode, :status, :started_at, "
-                    ":finished_at, :duration_ms, :nodes, :error)"
+                    ":finished_at, :duration_ms, :nodes, :error, :trace_id, :resolved_version, :business)"
                 ),
                 {
                     "id": run_id,
@@ -422,6 +446,9 @@ class PgMonitoringStore:
                     "duration_ms": duration_ms,
                     "nodes": json.dumps(serialized_nodes, ensure_ascii=False),
                     "error": error,
+                    "trace_id": trace_id,
+                    "resolved_version": resolved_version,
+                    "business": json.dumps(business.model_dump(), ensure_ascii=False) if business is not None else None,
                 },
             )
             rules = self._rules_locked(conn)
@@ -459,20 +486,13 @@ class PgMonitoringStore:
     def _recent_locked(self, conn: Any, graph_id: str) -> list[RunRecord]:
         rows = conn.execute(
             text(
-                "SELECT id, graph_id, mode, status, started_at, finished_at, duration_ms, "
-                "nodes, error FROM monitoring_runs "
+                f"SELECT {self._RUN_COLS} FROM monitoring_runs "
                 "WHERE tenant_id = :tenant_id AND graph_id = :graph_id "
                 "ORDER BY finished_at DESC LIMIT 200"
             ),
             {"tenant_id": self._tenant_id, "graph_id": graph_id},
         ).all()
-        return [
-            RunRecord(
-                id=r[0], graph_id=r[1], mode=r[2], status=r[3], started_at=r[4],
-                finished_at=r[5], duration_ms=r[6], nodes=r[7], error=r[8],
-            )
-            for r in rows
-        ]
+        return [self._run_from_row(r) for r in rows]
 
     def _raise_or_merge_locked(self, conn: Any, event: Any, record: RunRecord) -> None:
         row = conn.execute(
@@ -523,8 +543,7 @@ class PgMonitoringStore:
             if graph_id:
                 rows = conn.execute(
                     text(
-                        "SELECT id, graph_id, mode, status, started_at, finished_at, "
-                        "duration_ms, nodes, error FROM monitoring_runs "
+                        f"SELECT {self._RUN_COLS} FROM monitoring_runs "
                         "WHERE tenant_id = :tenant_id AND graph_id = :graph_id "
                         "ORDER BY finished_at DESC LIMIT :limit"
                     ),
@@ -533,8 +552,7 @@ class PgMonitoringStore:
             else:
                 rows = conn.execute(
                     text(
-                        "SELECT id, graph_id, mode, status, started_at, finished_at, "
-                        "duration_ms, nodes, error FROM monitoring_runs "
+                        f"SELECT {self._RUN_COLS} FROM monitoring_runs "
                         "WHERE tenant_id = :tenant_id ORDER BY finished_at DESC LIMIT :limit"
                     ),
                     {"tenant_id": self._tenant_id, "limit": limit},
@@ -546,7 +564,13 @@ class PgMonitoringStore:
         return RunRecord(
             id=r[0], graph_id=r[1], mode=r[2], status=r[3], started_at=r[4],
             finished_at=r[5], duration_ms=r[6], nodes=r[7], error=r[8],
+            trace_id=r[9] or "", resolved_version=r[10], business=r[11],
         )
+
+    _RUN_COLS = (
+        "id, graph_id, mode, status, started_at, finished_at, "
+        "duration_ms, nodes, error, trace_id, resolved_version, business"
+    )
 
     @staticmethod
     def _alert_from_row(r: Any) -> Alert:
@@ -665,8 +689,7 @@ class PgMonitoringStore:
         with self._engine.connect() as conn:
             rows = conn.execute(
                 text(
-                    "SELECT id, graph_id, mode, status, started_at, finished_at, "
-                    "duration_ms, nodes, error FROM monitoring_runs WHERE tenant_id = :tenant_id"
+                    f"SELECT {self._RUN_COLS} FROM monitoring_runs WHERE tenant_id = :tenant_id"
                 ),
                 {"tenant_id": self._tenant_id},
             ).all()

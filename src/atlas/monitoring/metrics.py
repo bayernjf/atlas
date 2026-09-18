@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
+from .business import summarize_business
+
 
 class NodeResult(BaseModel):
     node_id: str
@@ -103,4 +105,9 @@ def summarize(runs: list) -> dict[str, Any]:
                 entry["last_seen"] = run.finished_at
     top = sorted(failed_nodes.values(), key=lambda item: (item["count"], item["last_seen"]), reverse=True)
 
-    return {**_stats(runs), "per_graph": per_graph, "failed_nodes": top}
+    return {
+        **_stats(runs),
+        "per_graph": per_graph,
+        "failed_nodes": top,
+        "business": summarize_business(runs),
+    }

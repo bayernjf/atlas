@@ -21,6 +21,8 @@ import { DebugConsole } from '../components/debugConsole/DebugConsole'
 import { FeedbackButton } from '../components/feedback/FeedbackButton'
 import { UserBadge } from '../components/UserBadge'
 import { ApprovalCardGate } from '../components/approval/CardRenderer'
+import { ReleaseModal } from '../components/release/ReleaseModal'
+import { RolloutModal } from '../components/release/RolloutModal'
 import { roleCan, type Principal } from '../lib/auth'
 import { useEditorStore } from '../store/editorStore'
 import { useValidationEngine } from '../lib/validation/useValidationEngine'
@@ -34,9 +36,11 @@ import {
   getTemplate,
   listRecordings,
   listTemplates,
+  listVersions,
   nlGenerate,
   replayRecording,
   saveGraph,
+  saveGraphDraft,
   saveRecording,
   streamRun,
   resumeDebug,
@@ -112,6 +116,14 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
   const [pausedFrame, setPausedFrame] = useState<PausedFrame | null>(null)
   const [resumeBusy, setResumeBusy] = useState<DebugAction | null>(null)
   const [varFilter, setVarFilter] = useState('')
+  const [releaseOpen, setReleaseOpen] = useState(false)
+  const [rolloutOpen, setRolloutOpen] = useState(false)
+  const [releaseGraphId, setReleaseGraphId] = useState<string | null>(null)
+  const [rolloutGraphId, setRolloutGraphId] = useState<string | null>(null)
+  const [publishedRef, setPublishedRef] = useState<{ id: string; versions: number[] } | null>(null)
+  const [draftGraphId, setDraftGraphId] = useState<string | null>(null)
+  const [runTarget, setRunTarget] = useState<'draft' | number>('draft')
+  const [releaseBusy, setReleaseBusy] = useState(false)
 
   const graphJson = JSON.stringify(serializeGraph(nodes, edges, variables), null, 2)
 
@@ -142,12 +154,33 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
     resetRunStatuses()
     const collected: RunEvent[] = []
     try {
-      const saved = await saveGraph(serializeGraph(nodes, edges, variables))
-      appendLog(`已保存 Graph：${saved.id}`)
-      const compiled = await compileGraph(saved.id)
-      setCompileResult(compiled)
-      appendLog(`编译成功：入口 ${compiled.entrypoints.join(', ')}`)
-      const executed = await streamRun(saved.id, inputs, (event) => {
+      const serialized = serializeGraph(nodes, edges, variables)
+      const pinnedVersion = runTarget === 'draft' ? undefined : runTarget
+      let graphId: string
+      if (pinnedVersion !== undefined && publishedRef) {
+        graphId = publishedRef.id
+        appendLog(`运行已发布版本：${graphId}@${pinnedVersion}（不使用当前草稿）`)
+      } else if (draftGraphId) {
+        // 同一画布复用稳定 graph id：PUT 覆盖草稿、不新建图，录制用例与发布门禁才能匹配本图
+        await saveGraphDraft(draftGraphId, serialized)
+        graphId = draftGraphId
+        appendLog(`已更新草稿：${graphId}`)
+        const compiled = await compileGraph(graphId)
+        setCompileResult(compiled)
+        appendLog(`编译成功：入口 ${compiled.entrypoints.join(', ')}`)
+      } else {
+        const saved = await saveGraph(serialized)
+        graphId = saved.id
+        setDraftGraphId(graphId)
+        appendLog(`已保存 Graph：${graphId}`)
+        const compiled = await compileGraph(graphId)
+        setCompileResult(compiled)
+        appendLog(`编译成功：入口 ${compiled.entrypoints.join(', ')}`)
+      }
+      const executed = await streamRun(
+        graphId,
+        inputs,
+        (event) => {
         collected.push(event)
         if (event.type === 'paused') {
           setNodeStatus(event.node_id, 'paused')
@@ -249,7 +282,10 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
             appendLog(`✓ 节点完成：${event.node_id}`)
           }
         }
-      }, debugRequest)
+      },
+        debugRequest,
+        pinnedVersion !== undefined ? { releaseVersion: pinnedVersion } : undefined,
+      )
       const toolOutputs = Object.values(executed.outputs).filter(
         (output): output is { result?: { status?: string } } =>
           typeof output === 'object' && output !== null && 'result' in output,
@@ -260,10 +296,10 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
       setPausedFrame(null)
       setRunOpen(true)
       if (shouldRecord) {
-        const name = caseName.trim() || `录制 ${saved.id} ${new Date().toLocaleString()}`
+        const name = caseName.trim() || `录制 ${graphId} ${new Date().toLocaleString()}`
         const savedCase = await saveRecording({
           name,
-          graph_id: saved.id,
+          graph_id: graphId,
           inputs: inputs ?? null,
           steps: toSteps(collected),
           status: executed.status,
@@ -289,12 +325,65 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
     }
   }
 
+  async function ensureGraphId(): Promise<string> {
+    const current = serializeGraph(nodes, edges, variables)
+    if (draftGraphId) {
+      await saveGraphDraft(draftGraphId, current)
+      appendLog(`已更新草稿：${draftGraphId}`)
+      return draftGraphId
+    }
+    const saved = await saveGraph(current)
+    setDraftGraphId(saved.id)
+    setPublishedRef((prev) => prev ?? { id: saved.id, versions: [] })
+    appendLog(`已保存 Graph：${saved.id}`)
+    return saved.id
+  }
+
+  async function openRelease() {
+    setReleaseBusy(true)
+    try {
+      setReleaseGraphId(await ensureGraphId())
+      setReleaseOpen(true)
+    } catch (error) {
+      setRunError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setReleaseBusy(false)
+    }
+  }
+
+  async function openRollout() {
+    setReleaseBusy(true)
+    try {
+      const id = await ensureGraphId()
+      setDraftGraphId(id)
+      setPublishedRef({ id, versions: await listVersions(id) })
+      setRolloutGraphId(id)
+      setRolloutOpen(true)
+    } catch (error) {
+      setRunError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setReleaseBusy(false)
+    }
+  }
+
+  const onPublished = (version: number) => {
+    const id = draftGraphId ?? publishedRef?.id
+    if (!id) return
+    setPublishedRef((prev) => {
+      const base = prev && prev.id === id ? prev.versions : []
+      return { id, versions: [...new Set([...base, version])].sort((a, b) => a - b) }
+    })
+  }
+
   async function generateDraft() {
     setNlLoading(true)
     setNlError(null)
     try {
       const { graph, paramWarnings } = await nlGenerate(nlPrompt)
       loadGraph(graph)
+      setDraftGraphId(null)
+      setPublishedRef(null)
+      setRunTarget('draft')
       // loadGraph 会清空警告，故在其后写入；M3 表单化后按节点归到 params 根（04 §4.10）
       setNlWarnings(paramWarnings ?? [])
       setNlOpen(false)
@@ -326,6 +415,9 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
     try {
       const detail = await getTemplate(templateId)
       loadGraph(detail.graph)
+      setDraftGraphId(null)
+      setPublishedRef(null)
+      setRunTarget('draft')
       appendLog(`已加载模板：${detail.name}（${detail.id}），画布已整体替换`)
       setTemplateOpen(false)
     } catch (error) {
@@ -462,7 +554,26 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
           <FeedbackButton />
           {canOperate && (
             <>
-              <Button loading={running} onClick={() => compileAndRun(false, true)}>
+              <Select
+                value={runTarget}
+                style={{ width: 130 }}
+                onChange={(value) => setRunTarget(value as 'draft' | number)}
+                options={[
+                  { value: 'draft', label: '草稿运行' },
+                  ...(publishedRef?.versions ?? []).map((v) => ({ value: v, label: `已发布 v${v}` })),
+                ]}
+              />
+              <Button loading={releaseBusy} onClick={openRelease}>
+                发布
+              </Button>
+              <Button loading={releaseBusy} onClick={openRollout}>
+                灰度发布
+              </Button>
+              <Button
+                loading={running}
+                disabled={runTarget !== 'draft'}
+                onClick={() => compileAndRun(false, true)}
+              >
                 调试
               </Button>
               <Button type="primary" loading={running} onClick={() => compileAndRun()}>
@@ -837,6 +948,18 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
           </Space>
         </Card>
       )}
+      <ReleaseModal
+        open={releaseOpen}
+        graphId={releaseGraphId}
+        onClose={() => setReleaseOpen(false)}
+        onPublished={onPublished}
+      />
+      <RolloutModal
+        open={rolloutOpen}
+        graphId={rolloutGraphId}
+        tenant={principal.tenant_id}
+        onClose={() => setRolloutOpen(false)}
+      />
     </Layout>
   )
 }

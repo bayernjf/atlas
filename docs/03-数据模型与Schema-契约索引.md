@@ -24,7 +24,7 @@
 | `collaboration_message` | 05 / 三、智能体协同 3.3 协同通信协议 | ## 3.3 协同通信协议（示例） |
 | `deployment_config` | 05 / 四、部署方式 4.3 部署配置 Schema | ## 4.3 部署配置 Schema（示例） |
 | `interaction_template` | 05 / 五、自定义前端模板 5.3 交互模板 Schema（**愿景大 Schema**；M8 工程化最小子集＝下行 `card_template`） | ## 5.3 交互模板 Schema（示例） |
-| `card_template` | **M8 立项 2026-09-18、待落码**；`src/atlas/cards/{catalog,render}.py`（审批卡片双向 Schema + web/im/email 三渠道渲染）+ 04 §5.6 追加段（human_approval.cardTemplateId）；权威＝08 M8 立项条 | —（工程契约） |
+| `card_template` | **M8 已落码收口 2026-09-18（2b35fc9 起，08 M8 落码条）**；`src/atlas/cards/{catalog,render}.py`（审批卡片双向 Schema + web/im/email 三渠道渲染）+ 04 §5.6 追加段（human_approval.cardTemplateId）；权威＝08 M8 立项/落码条 | —（工程契约） |
 | `evaluation_task` | 06 / 9.2 评估 Harness 设计 | ### 9.2 评估 Harness 设计（借鉴 lm-evaluation-harness）代码示例 |
 | `refund_decision` | `src/atlas/llm/decision.py`（W9-W10 权威实现；规则对齐 06 §9.2 黄金用例） | —（工程推导契约） |
 | `refund_order` | `src/atlas/shop/service.py`（W9-W10 Demo 电商数据结构） | —（工程推导契约） |
@@ -35,11 +35,15 @@
 | `db_sql_params` | 04 / 四、工具/适配器组件 4.7 数据适配器（通用 SQL）v1 契约（权威 blockquote）+ `src/atlas/database/{service,adapter}.py`（query/execute 两能力） | ### 4.7 数据适配器（通用 SQL）v1 契约 |
 | `message_send_params` | 04 / 四、工具/适配器组件 4.8 消息适配器（进程内消息服务）v1 契约（权威 blockquote）+ `src/atlas/message/{service,adapter}.py`（单能力 message/send） | ### 4.8 消息适配器（进程内消息服务）v1 契约 |
 | `template_catalog` | 04 / 五、逻辑组件 5.10 流程模板库（内置只读）v1 契约（权威 blockquote）+ `src/atlas/template/catalog.py`（5 个内置模板元数据与 graph） | ### 5.10 流程模板库（内置只读） |
-| `recording_case` | 04 / 五、逻辑组件 5.11 操作录制与回放 v1 契约（权威 blockquote）+ `src/atlas/recording/cases.py`（录制用例模型与进程内存储） | ### 5.11 操作录制与回放 |
+| `recording_case` | 04 / 五、逻辑组件 5.11 操作录制与回放 v1 契约（权威 blockquote）+ `src/atlas/recording/{cases,replay,gate}.py`（录制用例模型与进程内存储；M9 增 gate 发布前批量回放门禁，见下行 `release_gate`） | ### 5.11 操作录制与回放 |
 | `debug_session` | 04 / 五、逻辑组件 5.12 单步调试与断点 v1 契约（权威 blockquote）+ `src/atlas/debug/{sessions,controller}.py`（运行期调试会话、暂停状态机、paused/stopped 帧） | ### 5.12 单步调试与断点 |
-| `monitoring` | 04 / 五、逻辑组件 5.13 基础监控告警 v1 契约（权威 blockquote）+ `src/atlas/monitoring/{records,metrics,alerts}.py`（运行记录 ring、指标聚合、规则求值与告警状态机） | ### 5.13 基础监控告警 |
+| `monitoring` | 04 / 五、逻辑组件 5.13 基础监控告警 v1 契约（权威 blockquote）+ `src/atlas/monitoring/{records,metrics,alerts,business}.py`（运行记录 ring、指标聚合、规则求值与告警状态机；M9 增业务结果指标与 rollout_gate 告警动作，见下行 `business_metrics`） | ### 5.13 基础监控告警 |
 | `identity_session` | 04 / 五、逻辑组件 5.14 多租户与权限 v1 契约（权威 blockquote）+ `src/atlas/iam/{principals,sessions,registry,deps}.py`（种子租户/账号、Principal、sess- token、按租户服务注册表、Bearer 依赖） | ### 5.14 多租户与权限 |
-| `trace_span` | 04 / 五、逻辑组件 5.15 链路追踪 v1 契约（M10 立项 2026-09-18、待落码；权威 blockquote）+ `src/atlas/tracing/`（与 OTel 同形最小 Span/Tracer、contextvars 进程内传播、to_tree 折叠开关） | ### 5.15 链路追踪（span v1） |
+| `trace_span` | 04 / 五、逻辑组件 5.15 链路追踪 v1 契约（**M10 已落码 2026-09-18**；权威 blockquote）+ `src/atlas/tracing/`（与 OTel 同形最小 Span/Tracer、contextvars 进程内传播、to_tree 折叠开关） | ### 5.15 链路追踪（span v1） |
+| `rollout_config` | **M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；04 / 五、逻辑组件 5.16 灰度发布与门控回滚 v1 契约（权威 blockquote）+ `src/atlas/routing/{models,router,store,gate}.py`（rollout 配置/三段分桶/状态机/门控；ADR T22）；形状来源 docs/19 §2.3.3 提案转权威 | ### 5.16 灰度发布与门控回滚 |
+| `route_decision` | **M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；同上 04 §5.16 + `routing/router.py` resolve_version 纯函数（入站 event→发布版本/分桶段，pin-to-version） | ### 5.16 灰度发布与门控回滚 |
+| `release_gate` | **M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；04 §5.11 末发布前批量门禁段 + `src/atlas/recording/gate.py`（GateReport，D26 部分取回） | ### 5.11 操作录制与回放 |
+| `business_metrics` | **M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；04 §5.13 末业务指标段 + `src/atlas/monitoring/business.py`（extract_business 业务结果三率，金融灰度门控信号源） | ### 5.13 基础监控告警 |
 
 ---
 
@@ -147,7 +151,7 @@ edges:                       # {id, source, target}，端点必须存在且禁�
 >
 > **模板引用与拓扑作用域注记（2026-09-16，§6.5）**：config 内 `{{路径}}` 的节点输出可见性按图拓扑推导（visibleAt = 沿入边反向可达上游 + 全局变量 + loop 体区域），各节点类型输出投影、L2 三错误码（REF_NODE_NOT_FOUND / REF_NOT_IN_SCOPE / REF_PATH_NOT_FOUND）与 token 区间权威见 04 §6.5；前端实现 `frontend/src/lib/scope.ts`，后端编译期复查在 `atlas.graph.dsl`，运行期插值缺失保留原样语义不变。工具 `result.*` 深层路径以 04 §4.9 的 output_schema 子集为来源。
 >
-> **版本化注记（2026-09-17，M6 立项 / ADR T19）**：`version`（容器结构版本，恒 1）与 `releaseVersion`（业务发布版本号，仅发布产物带）两维分离；发布＝冻结不可变版本（`src/atlas/versioning/`）+ subgraph 钉版（子图 `graphId@vN` 递归钉版本号，版本不可变故钉号即冻结引用内容）；草稿（latest）可变、`graph-N` 保存零回归。权威见 08 M6 立项条、12 §5 发布/版本端点。
+> **版本化注记（2026-09-17，M6 立项 / ADR T19）**：`version`（容器结构版本，恒 1）与 `releaseVersion`（业务发布版本号，仅发布产物带）两维分离；发布＝冻结不可变版本（`src/atlas/versioning/`）+ subgraph 钉版（子图 `graphId@vN` 递归钉版本号，版本不可变故钉号即冻结引用内容）；草稿（latest）可变、`graph-N` 保存零回归。权威见 08 M6 立项条、12 §5 发布/版本端点。 M9 增 `PUT /api/graphs/{id}`（operate）：同一 graph id 迭代时覆盖 latest 草稿（首次 POST 建图之后复用该 id），不动不可变发布版、不新建 id；body 同 SerializedGraph（过 parse_graph 校验），图不存在/跨租户 → 404，返 `{id, version}`。前端编辑器编译运行/录制/发布统一经此端点（收口期修复了早期每次运行都 POST 新 graph-N、致录制用例 graph_id 与发布门禁筛选错位、门禁恒「暂无匹配用例」的缺陷）。
 
 ### `node_data_schema` — 字段概览（M1 已落码 2026-09-16，十提交 4ade416→51cb57f；权威见 04 §4.9「前端 MetaSchema 扩展」，前端承载 `frontend/src/lib/schemas/`）
 
@@ -334,7 +338,7 @@ version: string
 # channel_adaptations（wechat_work/web/mobile/email）——M8 不做，见 05 §5.3/§5.4。
 ```
 
-### `card_template` — 字段概览（**M8 立项 2026-09-18、待落码**；权威实现 `src/atlas/cards/catalog.py`，形状来源 docs/19 §2.3.2 提案转权威；渲染见 `cards/render.py`，接线见 04 §5.6 追加段）
+### `card_template` — 字段概览（**M8 已落码收口 2026-09-18（2b35fc9/5f4384e/4b45571/25afa10，08 M8 落码条）**；权威实现 `src/atlas/cards/catalog.py`，形状来源 docs/19 §2.3.2 提案转权威；渲染见 `cards/render.py`，接线见 04 §5.6 追加段）
 
 ```yaml
 # 内置只读目录（照 template 包：随代码发布、无 DB/CRUD、reset 不影响）；v1 一张 refund-approval
@@ -443,7 +447,7 @@ graphVersion: string     # M10：`graphId@<releaseVersion:int>`（发布版本�
 ```
 > M10 起三帧均为 **19 §2.3.4 Trace 事件超集**：只新增 traceId/spanId/parentSpanId（run_end 另加 graphVersion），现有字段与帧类型不变，前端忽略未知字段即零改动。span 三元组位于事件顶层、**不进节点 output**（录制回放 collect_steps 只取 output，天然不受随机 id/时间影响）；完整 span 树经 `tracing` 包进程内导出，不进 SSE 高频帧。subgraph 子图以 `emit=None` 重入、事件仍不外泄，子图内部 span 经 `to_tree(include_internal=False)` 折叠（见下 `trace_span`）。
 
-### `trace_span` — 字段概览（M10 立项 2026-09-18、待落码；权威＝docs/19 §2.3.4 + 10 §4 ADR T21 + 08 M10 立项条，落码承载 `src/atlas/tracing/`）
+### `trace_span` — 字段概览（**M10 已落码收口 2026-09-18（ba9e0d2 起，08 M10 落码条）**；权威＝docs/19 §2.3.4 + 10 §4 ADR T21 + 08 M10 立项条，落码承载 `src/atlas/tracing/`）
 
 ```yaml
 # 与 OTel 同形的最小 span（纯 stdlib、零新依赖；不引 OTel SDK，合流随 D11）
@@ -463,7 +467,7 @@ Span:
 # Tracer 经 run_graph/compile_graph 参数显式透传（SSE worker 后台线程，守 06 §6.12）。
 # to_tree(include_internal=True/False) -> 嵌套 dict；False 把子图内部折叠为单个 subgraph span。
 ```
-> M7 `task_envelope.traceId/graphVersion` 落码时为占位（traceId=runId）；**M10 起填真实 traceId 并记录 parentSpanId**（dispatch 建 task_dispatch span、complete 建 task_done span，actor=assignee）。`RunRecord` 同期加可选 `trace_id`（见 12 监控段）。
+> M7 `task_envelope.traceId/graphVersion` 落码时为占位（traceId=runId）；**M10 起填真实 traceId 并记录 parentSpanId**（dispatch 建 task_dispatch span、complete 建 task_done span，actor=assignee）。`RunRecord` 同期加可选 `trace_id`（见监控段；M9 再加 `resolved_version`/`business`，见下 `business_metrics`）。
 
 
 > `node_type` 实际已随 Phase 2 扩展为全部可编译类型（含 subgraph）。subgraph 节点内部子图以 `emit=None` 重入执行，**不产生 node_start/node_end/run_end 事件**；子图 trace 与 outputs 收入 subgraph 节点产出（权威形状见 04 §5.7）。
@@ -534,10 +538,11 @@ steps: [{node_id, node_type, output}]  # 至少 1 步；node_id 重复时服务�
 status: string             # 录制运行终态
 # 响应 201 / GET 详情（RecordingCase）
 id: string                 # rec-{自增}
+graph_id: string           # M9 新增纯超集：所属图 id（创建请求已收，M9 起落库；旧用例为空串，发布门禁不入选）
 graph: graph_definition    # 录制时的图快照（冻结，非 graph_id 活引用）
 created_at: string         # UTC ISO-8601
 # GET /api/recordings 列表投影（不含 graph/steps）
-items: [{id, name, node_count, step_count, status, created_at}]
+items: [{id, name, graph_id, node_count, step_count, status, created_at}]
 # POST /api/recordings/{id}/replay 响应（ReplayReport）
 matches: boolean           # 操作序列与逐节点归一化产出全部一致
 baseline_status: string
@@ -545,6 +550,8 @@ replay_status: string      # 回放异常（如子图引用缺失）折叠为 "f
 steps: [{node_id, match, note, diff_keys?}]  # diff_keys 为归一化后差异顶层键
 ```
 > 进程内存储（重启清空，持久化随 11 S1）；`/api/demo/reset` 不清除（测试资产，同 feedback）。回放从 human_approval 步骤抽解决策预置为 inputs.approvals，不挂起；比对前递归剔除 token/sent_at、消息记录 uuid id、HTTP headers date。权威契约见 04 §5.11，REST 见 12 §5。
+>
+> **M9 发布门禁（2026-09-18 已落码，D26 部分取回）**：`graph_id` 用于发布前批量回放筛选；`POST /api/graphs/{id}/release-gate` 对当前 latest 草稿逐例重跑 + compare 产 `release_gate` 报告（见下），publish 可带 `gate:true` 拦截坏版本。用例集趋势报告/影子模式/Mock 外部系统仍缓做 14 D26。
 >
 > **租户注记（2026-09-16，§5.14）**：录制用例按租户分区（rec-N 计数各自从 1，图快照取自本租户 GraphStore）；跨租户访问录制 id → 404，reset 不清除。
 
@@ -594,6 +601,14 @@ nodes:
     status: "success" | "failed"   # output.status=="failed" 或 output.result.status=="FAILED"
     error: string?                 # 优先 error / result.message / result.code
 error: string?
+trace_id: string?          # M10：本次 run 的 trace id（32hex）
+resolved_version: int?     # M9：入站 event 运行经 Router 解析钉住的发布版本号；编辑器手动运行为 null
+business:                  # M9：业务结果提取（见下 business_metrics；无业务结果时各值为 null/false）
+  auto_refunded: boolean
+  manual_escalated: boolean
+  refunded_amount: number?
+  expected_amount: number?
+  amount_diff: boolean
 # GET /api/monitoring/metrics
 total: integer
 healthy: integer                 # completed 且无失败节点
@@ -603,14 +618,21 @@ p50: number | null               # duration_ms nearest-rank 百分位
 p95: number | null
 per_graph: [{graph_id, total, healthy, unhealthy, success_rate, p50, p95}]
 failed_nodes: [{node_id, node_type, count, last_error, last_seen}]  # count 降序
+business:                        # M9：业务结果指标段（与系统指标分列；分母＝有业务结果的 run，样本 0 为 null）
+  auto_refund_rate: number | null
+  manual_escalation_rate: number | null
+  refund_amount_diff_rate: number | null
+  per_graph: [{graph_id, ...上述三率, samples}]
+  per_version: [{graph_id, resolved_version, ...三率, samples}]
 # RuleConfig（GET/PUT /api/monitoring/rules，PUT 全量替换，非法中文 422）
 run_error:            {enabled: boolean}
 node_failed:          {enabled: boolean}
 consecutive_failures: {enabled: boolean, threshold: 1..200 整数}
 failure_rate:         {enabled: boolean, window: 1..200, min_samples: 1..200, rate: 0..1}
+# rollout_gate（M9）阈值不在全局 RuleConfig：随每图 RolloutConfig.gate 配置（见下 rollout_config）
 # Alert（GET /api/alerts?status=；POST /api/alerts/{id}/acknowledge|resolve）
 id: string                 # alt-{自增}
-rule_id: "run_error" | "node_failed" | "consecutive_failures" | "failure_rate"
+rule_id: "run_error" | "node_failed" | "consecutive_failures" | "failure_rate" | "rollout_gate"  # M9 增 rollout_gate（critical）
 graph_id: string
 severity: "critical" | "warning"
 message: string
@@ -619,6 +641,12 @@ last_seen: string
 count: integer             # 同 (rule_id, graph_id) 合并非 resolved 最新告警
 status: "open" | "acknowledged" | "resolved"
 last_run_id: string
+action:                    # M9 纯超集，仅 rollout_gate 告警携带；其余规则无此字段
+  type: "rollback"
+  from_version: int        # 被撤流的 candidate
+  to_version: int          # 接全量的 stable
+  reason: string           # 越阈指标/阈值/观察窗
+  actor: "auto" | "manual"
 ```
 > 进程内 ring buffer（200 条，满则丢最旧）+ 单锁同步评估（写运行→按图 streak→四规则），重启即失；`/api/demo/reset` 清空运行/告警并恢复默认规则（持久化随 11 S1/D11/D28）。未知告警 404、重复状态迁移 409。权威契约见 04 §5.13，内部接口见 12 §3.9，REST 见 12 §5。
 >
@@ -703,5 +731,104 @@ attempt: number           # 尝试次数（重试幂等键不变）
 ```
 
 > 状态机 dispatch `pending→accepted→running→done/failed/timeout`；join 复用 parallel all_completed 网关与 `result.<入口id>` 承载；escalate＝带审批卡片的特殊 human_approval。冲突三层（19 §2.4）：L1 幂等键、L2 CAS（demo shop 进程内 version 模拟）、L3 硬约束 condition + 升级。`TaskStore` 进程内首版、按租户分区（沿用 storage Repository 约定）；沙盘语义期不解除 D31。
+
+### `rollout_config` — 字段概览（**M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；权威＝docs/19 §2.3.3 提案转权威 + 10 §4 ADR T22 + 08 M9 立项条，落码承载 `src/atlas/routing/{models,store}.py`，契约 04 §5.16）
+
+```yaml
+# PUT /api/graphs/{id}/rollout（存配置不启动，非法 422 中文）；GET 投影含状态与分流计数
+strategy: "progressive"          # v1 唯一值
+rules:                           # 求值顺序固定，v1 不做 when 表达式解析器（字符串条件落为结构化字段）
+  - {to: "internal", tenants: [string]}          # 内部租户 allowlist 段
+  - {to: "lowValueBucket", field: "payload.amount", op: "<=", value: number, percent: 100}
+  - {to: "canary", percent: 1..100}              # 稳定哈希百分比段
+  - {to: "full"}                                 # 放量段（promote 后生效，全量 candidate）
+gate:
+  observeMinutes: integer        # 默认 60；按 RunRecord.finished_at 时间过滤
+  autoRollback: boolean          # 默认 true；false 时越阈只告警不切流
+  minSamples: integer            # 默认 3；窗口内 candidate 样本不足不判（fail-safe 防冷启动误杀）
+  metrics:
+    - {id: "run_error_rate", threshold: number, minSamples?: int}
+    - {id: "manual_escalation_rate", threshold: number, compareWith?: int, minSamples?: int}
+    - {id: "refund_amount_diff_rate", threshold: number, minSamples?: int}
+inFlightPolicy: "pin-to-version"  # v1 唯一值：一次 run 钉启动时不可变发布快照
+# RoutingStore 每图运行态（GET /api/graphs/{id}/rollout 投影）
+status: "idle" | "canary" | "full" | "rolled_back"
+stable: int | null               # 前一发布版（start 时取最新两版）
+candidate: int | null            # 最新发布版
+started_at: string?
+rolled_back_at: string?
+rollback_reason: string?
+traffic: {stable: int, candidate: int, segments: {internal:int, lowValueBucket:int, canary:int, full:int, fallback:int}}
+# 状态迁移（POST .../rollout/{start|promote|rollback}）
+# configure 存配置不启动；start: idle→canary（发布版不足 2 个 409）；
+# promote: canary→full（唯一放量路径，仅手动，无任何自动 promote 代码）；
+# rollback: */→rolled_back（candidate 撤流、stable 接全量；actor auto|manual 同一幂等函数）
+```
+> 每租户一个 RoutingStore 进程内实例（挂 TenantServices、reset 清空），与 iam 进程内分区/T20 任务总线同策略；真实多实例路由表同步/热推送/配置中心随 D6/D10b，沙盘不解除 D32。金融灰度硬条款（19 §2.5.5/20 §7.5）：业务桶 + 业务结果门控指标 + 回滚不改外部已发生事实，三条不可简化。
+
+### `route_decision` — 字段概览（**M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；`src/atlas/routing/router.py` resolve_version 纯函数 + run 端点 event 接线）
+
+```yaml
+# POST /api/graphs/{id}/run 与 /run/stream 请求体新增可选字段（编辑器手动运行不传＝旧行为零回归）
+event:
+  channel: "api" | "webhook" | "im" | "embed"   # 缺省 "api"；v1 仅经现有 run 端点承载，无真实 ingress 服务器
+  payload: object        # 入站业务载荷；tenant 由会话 Principal 定，不从请求体取
+# resolve_version(*, graph_id, stable, candidate, event, config) -> (version:int|None, segment:str)
+#   internal：event.tenant ∈ tenants → candidate
+#   lowValueBucket：payload.amount 为数字且 ≤ value（percent=100）→ candidate
+#   canary：桶键取 payload.order_id（缺省 payload.id）；
+#           int(sha256(f"{graph_id}:{bucket_key}").hexdigest(), 16) % 100 < percent → candidate
+#           桶键缺失/非字符串 → fail-safe 落 stable（segment="fallback"）
+#   full：→ candidate；未命中任何段/无 candidate/未配置 → stable
+# 带 event 但图无任何发布版 → 409「图尚未发布，入站事件无版本可路由」
+# pin：按解析版本加载不可变快照运行（含 M6 subgraph 递归钉版）；中断帧 M5b 已冻结 graph_snapshot，
+#      回滚后在途实例续跑仍为启动版本（不新增机制，U56 补帧快照断言）
+```
+> 入站复用 /run[/stream] + 可选 event（ADR T22④，vs 新增 /ingress 两套端点）：pin 解析集中一处，调试/录制/监控/追踪既有旁路自动复用；event 缺省严格保持草稿手动运行旧行为。RunRecord.resolved_version 记录解析版本（见上 `monitoring`）。
+>
+> **落码注记（2026-09-18）**：event 解析统一经 `RoutingStore.resolve`，入站事件路由绑定灰度生命周期——图只 `publish` 而从未 `PUT rollout`/`start`（RoutingStore 无该图 entry）时，即便已有发布版也返 409「图尚未发布，入站事件无版本可路由」；`start` 后按 idle/canary/full/rolled_back 状态机解析（rolled_back 后新事件全落 stable，在途实例 pin 见上）。
+
+### `release_gate` — 字段概览（**M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；`src/atlas/recording/gate.py`，D26 仅取回发布前批量回放 + 跨版本 diff）
+
+```yaml
+# POST /api/graphs/{id}/release-gate（operate，只跑门禁不发布）→ GateReport
+# POST /api/graphs/{id}/publish 请求体从无改可选 {gate?: boolean}；
+#   gate=true 先跑门禁，blocked → 409 带完整报告且不产新版本
+graph_id: string
+target: "draft"               # 门禁对象＝当前 latest 草稿（publish 冻结物）
+total: integer                # case.graph_id 匹配且非空的录制用例数（旧用例 graph_id="" 不入选）
+passed: integer
+failed: integer
+skipped: boolean              # total=0 时 true：无用例不阻塞发布，但报告明示「未覆盖」，不假装通过
+blocked: boolean              # total>0 且任一用例不匹配
+cases:
+  - case_id: string
+    name: string
+    matches: boolean
+    replay_status: string
+    note: string?             # 分支漂移/回放异常等
+# 逐例对草稿走标准 run_graph（审批预置同现有 replay 端点），复用 recording.replay.compare 产逐节点 diff_keys
+```
+
+### `business_metrics` — 字段概览（**M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；`src/atlas/monitoring/business.py` extract_business 纯函数；金融灰度门控信号源）
+
+```yaml
+# extract_business(graph, outputs) -> BusinessOutcome（业务结果以 shop 终态为准，不以 AI 中间决策为准）
+auto_refunded: boolean        # 任一 tool_call 节点 output.result.status == "refunded"
+manual_escalated: boolean     # 任一 tool_call 节点 output.result.status == "human_review"
+expected_amount: number?      # trigger 产出 context.payload.amount（回退入站 event.payload.amount）
+refunded_amount: number?      # 退款节点 result.amount；demo shop 现不回金额 → 回退 expected（全额退口径）
+amount_diff: boolean          # 两者皆在且不等
+# 门控三率（分母＝有业务结果的 run；样本 0 为 null；按 resolved_version 分版本对照）
+#   auto_refund_rate / manual_escalation_rate / refund_amount_diff_rate
+# evaluate_after_run(services, record)（routing/gate.py，API 层 record_run 之后调用，
+#   守 06 §6.11「API 层埋点、执行器零分支」，monitoring 不反向依赖 routing）：
+#   仅当 record.resolved_version 是某图 candidate 且 status=canary 且 gate.autoRollback 时求值；
+#   取 observeMinutes 窗内该图 candidate 运行（finished_at 过滤），<minSamples 不判；
+#   run_error_rate 复用 is_healthy，另两率取 business 段；任一越阈 →
+#   routing.rollback(actor="auto") + 产 rollout_gate critical 告警（携带 action，见 monitoring 段）；
+#   compareWith 版本 v1 落为告警 message 中 stable 同期对照值（stable 样本不足明示），不做额外阻断。
+```
+> demo shop 不返回退款金额，沙盘现状 refund_amount_diff_rate 恒为 0：**门控机制与阈值先行、真实金额字段随正式 shop 接入**；不改造 demo shop、不碰录制归一化（避免破坏黄金用例比对）。自动回滚不改外部已发生事实（已退款不可逆，切流只影响新流量）。
 
 

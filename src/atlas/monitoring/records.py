@@ -13,6 +13,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from .alerts import Alert, AlertEvent, RuleConfig, evaluate_rules, rules_from_raw, validate_rules
+from .business import BusinessOutcome
 from .metrics import NodeResult, is_healthy
 
 RUN_RING_SIZE = 200
@@ -29,6 +30,8 @@ class RunRecord(BaseModel):
     nodes: list[NodeResult]
     error: str | None = None
     trace_id: str = ""  # M10：本 run 的 traceId（可空，向后兼容；debug/回放/subgraph 重入不写）
+    resolved_version: int | None = None  # M9：入站 event 经 Router 解析钉住的发布版本（手动运行/草稿为 None）
+    business: BusinessOutcome | None = None  # M9：业务结果（退款/人工升级/金额差异）；无业务结果为 None
 
 
 def _now_iso() -> str:
@@ -56,6 +59,8 @@ class MonitoringStore:
         nodes: list,
         error: str | None = None,
         trace_id: str = "",
+        resolved_version: int | None = None,
+        business: BusinessOutcome | None = None,
     ) -> RunRecord:
         with self._lock:
             self._run_counter += 1
@@ -70,6 +75,8 @@ class MonitoringStore:
                 nodes=nodes,
                 error=error,
                 trace_id=trace_id,
+                resolved_version=resolved_version,
+                business=business,
             )
             self._runs.append(record)
             healthy = is_healthy(record)
@@ -111,6 +118,46 @@ class MonitoringStore:
                 last_run_id=record.id,
             )
         )
+
+    def raise_rollout_gate_alert(
+        self,
+        *,
+        graph_id: str,
+        message: str,
+        action: dict,
+        last_run_id: str = "",
+    ) -> Alert:
+        """M9：灰度门控越阈自动回滚后，由 routing.gate 显式产一条 rollout_gate critical 告警。
+
+        与四内置规则不同，阈值随每图 RolloutConfig.gate（不在全局 RuleConfig），
+        故不经 evaluate_rules；同 (rule_id, graph_id) 未 resolved 告警合并计数、保留首次 action。
+        """
+        with self._lock:
+            for alert in reversed(self._alerts):
+                if (
+                    alert.rule_id == "rollout_gate"
+                    and alert.graph_id == graph_id
+                    and alert.status != "resolved"
+                ):
+                    alert.count += 1
+                    alert.last_seen = _now_iso()
+                    alert.last_run_id = last_run_id or alert.last_run_id
+                    return alert
+            self._alert_counter += 1
+            now = _now_iso()
+            alert = Alert(
+                id=f"alt-{self._alert_counter}",
+                rule_id="rollout_gate",
+                graph_id=graph_id,
+                severity="critical",
+                message=message,
+                first_seen=now,
+                last_seen=now,
+                last_run_id=last_run_id,
+                action=action,
+            )
+            self._alerts.append(alert)
+            return alert
 
     def list_runs(self, graph_id: str | None = None, limit: int = 50) -> list[RunRecord]:
         with self._lock:

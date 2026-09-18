@@ -168,12 +168,44 @@ export async function listGraphs(): Promise<SavedGraphSummary[]> {
   return body.items
 }
 
+/** 覆盖已存图的 latest 草稿（M9：同一 graph 迭代多版本，不新建 id；已发布版本不可变） */
+export async function saveGraphDraft(
+  graphId: string,
+  graph: SerializedGraph,
+): Promise<{ id: string; version: number }> {
+  return request(`/api/graphs/${graphId}`, { method: 'PUT', body: JSON.stringify(graph) })
+}
+
 export async function compileGraph(id: string): Promise<CompileResult> {
   return request(`/api/graphs/${id}/compile`, { method: 'POST' })
 }
 
-export async function runGraph(id: string, inputs?: RunInputs): Promise<RunResult> {
-  return request(`/api/graphs/${id}/run`, { method: 'POST', body: JSON.stringify({ inputs }) })
+export type TriggerEventPayload = {
+  channel?: 'api' | 'webhook' | 'im' | 'embed'
+  payload?: Record<string, unknown>
+}
+
+export type RunOptions = {
+  /** 手动钉住的发布版本（草稿运行不传）；与 event 互斥 */
+  releaseVersion?: number
+  /** 入站事件（经 Router 三段分桶解析版本）；与 releaseVersion 互斥、不支持 debug */
+  event?: TriggerEventPayload
+}
+
+function runBody(inputs: RunInputs | undefined, debug?: DebugRequest, opts?: RunOptions) {
+  const body: Record<string, unknown> = { inputs }
+  if (debug) body.debug = debug
+  if (opts?.releaseVersion !== undefined) body.releaseVersion = opts.releaseVersion
+  if (opts?.event) body.event = opts.event
+  return JSON.stringify(body)
+}
+
+export async function runGraph(
+  id: string,
+  inputs?: RunInputs,
+  opts?: RunOptions,
+): Promise<RunResult> {
+  return request(`/api/graphs/${id}/run`, { method: 'POST', body: runBody(inputs, undefined, opts) })
 }
 
 export async function nlGenerate(prompt: string): Promise<{ graph: SerializedGraph; paramWarnings?: string[] }> {
@@ -390,6 +422,7 @@ export async function streamRun(
   inputs: RunInputs | undefined,
   onEvent: (event: RunEvent) => void,
   debug?: DebugRequest,
+  opts?: RunOptions,
 ): Promise<RunResult> {
   const headers = new Headers({ 'Content-Type': 'application/json' })
   const token = getToken()
@@ -397,7 +430,7 @@ export async function streamRun(
   const response = await fetch(`/api/graphs/${id}/run/stream`, {
     method: 'POST',
     headers,
-    body: JSON.stringify(debug ? { inputs, debug } : { inputs }),
+    body: runBody(inputs, debug, opts),
   })
   if (!response.ok || !response.body) {
     const body = await response.json().catch(() => null)
@@ -445,6 +478,31 @@ export type NodeResult = {
   error: string | null
 }
 
+export type BusinessOutcome = {
+  auto_refunded: boolean
+  manual_escalated: boolean
+  refunded_amount: number | null
+  expected_amount: number | null
+  amount_diff: boolean
+}
+
+export type BusinessRateRows = {
+  graph_id: string
+  resolved_version?: number | null
+  samples: number
+  auto_refund_rate: number | null
+  manual_escalation_rate: number | null
+  refund_amount_diff_rate: number | null
+}
+
+export type BusinessMetricsSummary = {
+  auto_refund_rate: number | null
+  manual_escalation_rate: number | null
+  refund_amount_diff_rate: number | null
+  per_graph: BusinessRateRows[]
+  per_version: BusinessRateRows[]
+}
+
 export type RunRecord = {
   id: string
   graph_id: string
@@ -455,6 +513,8 @@ export type RunRecord = {
   duration_ms: number
   nodes: NodeResult[]
   error: string | null
+  resolved_version?: number | null
+  business?: BusinessOutcome | null
 }
 
 export type MetricsStats = {
@@ -477,9 +537,15 @@ export type FailedNodeRow = {
 export type MetricsSummary = MetricsStats & {
   per_graph: Array<{ graph_id: string } & MetricsStats>
   failed_nodes: FailedNodeRow[]
+  business: BusinessMetricsSummary
 }
 
-export type RuleId = 'run_error' | 'node_failed' | 'consecutive_failures' | 'failure_rate'
+export type RuleId =
+  | 'run_error'
+  | 'node_failed'
+  | 'consecutive_failures'
+  | 'failure_rate'
+  | 'rollout_gate'
 
 export type AlertStatus = 'open' | 'acknowledged' | 'resolved'
 
@@ -494,6 +560,7 @@ export type AlertItem = {
   count: number
   status: AlertStatus
   last_run_id: string
+  action?: RolloutAlertAction | null
 }
 
 export type RuleConfig = {
@@ -535,4 +602,171 @@ export async function acknowledgeAlert(id: string): Promise<AlertItem> {
 
 export async function resolveAlert(id: string): Promise<AlertItem> {
   return request(`/api/alerts/${id}/resolve`, { method: 'POST' })
+}
+
+// --- M9 版本发布 / 发布门禁 / 灰度发布（03 release_gate/rollout_config，04 §5.11/§5.16） ---
+
+export type GateCaseRow = {
+  case_id: string
+  name: string
+  matches: boolean
+  replay_status: string
+  note: string
+}
+
+export type GateReport = {
+  graph_id: string
+  target: string
+  total: number
+  passed: number
+  failed: number
+  skipped: boolean
+  blocked: boolean
+  cases: GateCaseRow[]
+}
+
+export type InternalRule = { to: 'internal'; tenants: string[] }
+export type BucketRule = {
+  to: 'lowValueBucket'
+  field?: string
+  op?: '<='
+  value: number
+  percent?: number
+}
+export type CanaryRule = { to: 'canary'; percent: number }
+export type FullRule = { to: 'full' }
+export type RolloutRule = InternalRule | BucketRule | CanaryRule | FullRule
+
+export type GateMetricId =
+  | 'run_error_rate'
+  | 'manual_escalation_rate'
+  | 'refund_amount_diff_rate'
+
+export type GateMetric = {
+  id: GateMetricId
+  threshold: number
+  compareWith?: number | null
+  minSamples?: number | null
+}
+
+export type GateConfig = {
+  observeMinutes: number
+  autoRollback: boolean
+  minSamples: number
+  metrics: GateMetric[]
+}
+
+export type RolloutConfig = {
+  strategy?: 'progressive'
+  rules: RolloutRule[]
+  gate: GateConfig
+  inFlightPolicy?: 'pin-to-version'
+}
+
+export type RolloutStatus = 'idle' | 'canary' | 'full' | 'rolled_back'
+
+export type RolloutAlertAction = {
+  type: 'rollback'
+  from_version: number | null
+  to_version: number | null
+  reason: string
+  actor: string
+}
+
+export type RolloutTraffic = {
+  stable: number
+  candidate: number
+  segments: Partial<Record<'internal' | 'lowValueBucket' | 'canary' | 'full' | 'fallback', number>>
+}
+
+export type RolloutSnapshot = {
+  graphId: string
+  status: RolloutStatus
+  config: RolloutConfig | null
+  stable: number | null
+  candidate: number | null
+  startedAt: string | null
+  rolledBackAt: string | null
+  rollbackReason: string | null
+  rollbackActor: string | null
+  traffic: RolloutTraffic
+}
+
+/** 发布门禁 blocked（409）：携带完整 GateReport 供 Modal 展示，不产新版本 */
+export class GateBlockedError extends Error {
+  report: GateReport
+  constructor(report: GateReport) {
+    super('发布门禁未通过，已拦截发布（存在不匹配用例）')
+    this.name = 'GateBlockedError'
+    this.report = report
+  }
+}
+
+export async function listVersions(graphId: string): Promise<number[]> {
+  const body = await request<{ items: number[] }>(`/api/graphs/${graphId}/versions`)
+  return body.items
+}
+
+export async function runReleaseGate(graphId: string): Promise<GateReport> {
+  return request(`/api/graphs/${graphId}/release-gate`, { method: 'POST' })
+}
+
+/**
+ * 发布 latest 草稿为不可变版本。gate=true 先跑批量回放门禁：
+ * blocked → 抛 GateBlockedError（携带报告、不产版本）；total=0 skipped 不阻塞。
+ */
+export async function publishGraph(
+  graphId: string,
+  gate = false,
+): Promise<{ id: string; releaseVersion: number }> {
+  if (!gate) {
+    return request(`/api/graphs/${graphId}/publish`, { method: 'POST', body: JSON.stringify({}) })
+  }
+  const headers = new Headers({ 'Content-Type': 'application/json' })
+  const token = getToken()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  const response = await fetch(`/api/graphs/${graphId}/publish`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ gate: true }),
+  })
+  const body = await response.json().catch(() => null)
+  if (response.status === 409 && body?.detail?.report) {
+    throw new GateBlockedError(body.detail.report as GateReport)
+  }
+  if (!response.ok) {
+    const detail = body?.detail
+    throw new Error(
+      typeof detail === 'object'
+        ? detail?.message ?? `发布失败：${response.status}`
+        : detail || `发布失败：${response.status}`,
+    )
+  }
+  return body as { id: string; releaseVersion: number }
+}
+
+export async function getRollout(graphId: string): Promise<RolloutSnapshot> {
+  return request(`/api/graphs/${graphId}/rollout`)
+}
+
+export async function updateRollout(
+  graphId: string,
+  config: RolloutConfig,
+): Promise<RolloutSnapshot> {
+  return request(`/api/graphs/${graphId}/rollout`, {
+    method: 'PUT',
+    body: JSON.stringify(config),
+  })
+}
+
+export async function startRollout(graphId: string): Promise<RolloutSnapshot> {
+  return request(`/api/graphs/${graphId}/rollout/start`, { method: 'POST' })
+}
+
+export async function promoteRollout(graphId: string): Promise<RolloutSnapshot> {
+  return request(`/api/graphs/${graphId}/rollout/promote`, { method: 'POST' })
+}
+
+export async function rollbackRollout(graphId: string): Promise<RolloutSnapshot> {
+  return request(`/api/graphs/${graphId}/rollout/rollback`, { method: 'POST' })
 }

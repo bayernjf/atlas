@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from atlas.coordination import TaskStore
 from atlas.message.service import MessageService
+from atlas.routing import RoutingStore
 from atlas.storage.base import (
     ApprovalRepository,
     DebugRepository,
@@ -49,6 +50,7 @@ class TenantServices:
     monitoring: MonitoringRepository
     run_store: RunRepository
     task_store: TaskStore
+    routing_store: RoutingStore
 
 
 class TenantRegistry:
@@ -86,6 +88,7 @@ class TenantRegistry:
                 monitoring=backend.monitoring_store(tenant_id),
                 run_store=backend.run_store(tenant_id),
                 task_store=TaskStore(),
+                routing_store=RoutingStore(),
             )
         return TenantServices(
             graph_store=GraphStore(),
@@ -97,10 +100,11 @@ class TenantRegistry:
             monitoring=MonitoringStore(),
             run_store=RunStore(),
             task_store=TaskStore(),
+            routing_store=RoutingStore(),
         )
 
     def reset_tenant(self, tenant_id: str) -> None:
-        """本租户运行时数据重置：图/消息/审批/调试/监控/运行状态清空，规则回默认；
+        """本租户运行时数据重置：图/消息/审批/调试/监控/运行状态/灰度路由清空，规则回默认；
         录制与反馈沿用「reset 不清除」语义保留；监控运行计数器不重置。"""
         services = self.get(tenant_id)
         services.graph_store.clear()
@@ -109,3 +113,4 @@ class TenantRegistry:
         services.debug_broker.reset()
         services.monitoring.reset()
         services.run_store.reset()
+        services.routing_store.reset()

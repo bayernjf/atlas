@@ -27,6 +27,7 @@ class RecordingCreateRequest(BaseModel):
 class RecordingCase(BaseModel):
     id: str
     name: str
+    graph_id: str = ""  # M9 纯超集：所属图 id（发布门禁筛选）；旧用例为空串不入选
     graph: dict[str, Any]
     inputs: dict[str, Any] | None
     steps: list[RecordStep]
@@ -47,11 +48,13 @@ class RecordingStore:
         inputs: dict[str, Any] | None,
         steps: list[RecordStep],
         status: str,
+        graph_id: str = "",
     ) -> RecordingCase:
         self._counter += 1
         case = RecordingCase(
             id=f"rec-{self._counter}",
             name=name,
+            graph_id=graph_id,
             graph=graph,
             inputs=inputs,
             steps=steps,

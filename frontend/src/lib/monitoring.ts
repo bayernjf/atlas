@@ -25,6 +25,7 @@ export const RULE_LABELS: Record<RuleId, string> = {
   node_failed: '节点失败',
   consecutive_failures: '连续失败',
   failure_rate: '失败率超标',
+  rollout_gate: '灰度门控回滚',
 }
 
 export function ruleLabel(ruleId: RuleId): string {

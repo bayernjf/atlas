@@ -42,6 +42,13 @@ class GraphStore:
         self._updated_at[graph_id] = datetime.now(timezone.utc).isoformat()
         return graph_id
 
+    def update_draft(self, graph_id: str, raw: dict[str, Any]) -> None:
+        """覆盖已存在图的 latest 草稿（M9 发布流：同图迭代多版本）；不动已发布版本，不存在抛 KeyError。"""
+        if graph_id not in self._graphs:
+            raise KeyError(graph_id)
+        self._graphs[graph_id] = raw
+        self._updated_at[graph_id] = datetime.now(timezone.utc).isoformat()
+
     def get(self, graph_id: str, release_version: int | None = None) -> dict[str, Any] | None:
         if release_version is None:
             return self._graphs.get(graph_id)
