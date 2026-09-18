@@ -615,6 +615,8 @@ export type GateCaseRow = {
 }
 
 export type GateReport = {
+  /** D26 报告 v1：沉淀后的报告 id（rr-N），纯超集；旧消费方可忽略 */
+  id?: string
   graph_id: string
   target: string
   total: number
@@ -624,6 +626,25 @@ export type GateReport = {
   blocked: boolean
   cases: GateCaseRow[]
 }
+
+/** D26 报告 v1：批量回放沉淀报告摘要（列表项，不含 cases；03 release_report） */
+export type ReleaseReportSummary = {
+  id: string
+  graph_id: string
+  target: string
+  trigger: 'manual' | 'publish-gate'
+  total: number
+  passed: number
+  failed: number
+  skipped: boolean
+  blocked: boolean
+  /** passed/total；total=0（skipped 未覆盖）为 null */
+  pass_rate: number | null
+  created_at: string
+}
+
+/** D26 报告 v1：报告详情（含逐例 ✓/✗/note） */
+export type ReleaseReport = ReleaseReportSummary & { cases: GateCaseRow[] }
 
 export type InternalRule = { to: 'internal'; tenants: string[] }
 export type BucketRule = {
@@ -709,6 +730,22 @@ export async function listVersions(graphId: string): Promise<number[]> {
 
 export async function runReleaseGate(graphId: string): Promise<GateReport> {
   return request(`/api/graphs/${graphId}/release-gate`, { method: 'POST' })
+}
+
+/** D26 报告 v1：本图批量回放报告历史（倒序摘要，不含逐例 cases） */
+export async function listReleaseReports(graphId: string): Promise<ReleaseReportSummary[]> {
+  const body = await request<{ items: ReleaseReportSummary[] }>(
+    `/api/graphs/${graphId}/release-reports`,
+  )
+  return body.items
+}
+
+/** D26 报告 v1：报告详情（含逐例 ✓/✗/note）；跨图/不存在由后端 404 */
+export async function getReleaseReport(
+  graphId: string,
+  reportId: string,
+): Promise<ReleaseReport> {
+  return request(`/api/graphs/${graphId}/release-reports/${reportId}`)
 }
 
 /**

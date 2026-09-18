@@ -1,17 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import {
+  GATE_CONCLUSION_META,
   GATE_METRIC_SPECS,
+  REPORT_TRIGGER_META,
   ROLLOUT_STATUS_META,
   asPercent,
   defaultRolloutConfig,
   findRule,
   gateConclusion,
+  reportConclusion,
+  reportTimeLabel,
   rolloutActions,
   setGateMetric,
   withRule,
   type GateConclusion,
 } from '../release'
-import type { GateReport, RolloutConfig } from '../apiClient'
+import type { GateReport, ReleaseReportSummary, RolloutConfig } from '../apiClient'
 
 function makeReport(overrides: Partial<GateReport>): GateReport {
   return {
@@ -135,5 +139,59 @@ describe('状态元数据与百分比', () => {
     expect(asPercent(null)).toBe('—')
     expect(asPercent(undefined)).toBe('—')
     expect(asPercent(0.125)).toBe('12.5%')
+  })
+})
+
+function makeSummary(overrides: Partial<ReleaseReportSummary>): ReleaseReportSummary {
+  return {
+    id: 'rr-1',
+    graph_id: 'graph-1',
+    target: 'draft',
+    trigger: 'manual',
+    total: 0,
+    passed: 0,
+    failed: 0,
+    skipped: true,
+    blocked: false,
+    pass_rate: null,
+    created_at: '2026-09-18T10:00:00+00:00',
+    ...overrides,
+  }
+}
+
+describe('D26 报告 v1：reportConclusion（U60 ⑧，口径同 gateConclusion）', () => {
+  it('total=0/skipped → 未覆盖', () => {
+    expect(reportConclusion(makeSummary({}))).toBe('skipped')
+  })
+  it('全部一致 → 通过', () => {
+    expect(
+      reportConclusion(
+        makeSummary({ total: 3, passed: 3, failed: 0, skipped: false, pass_rate: 1 }),
+      ),
+    ).toBe('passed')
+  })
+  it('任一不匹配 → 未通过', () => {
+    expect(
+      reportConclusion(
+        makeSummary({ total: 3, passed: 2, failed: 1, skipped: false, blocked: true, pass_rate: 2 / 3 }),
+      ),
+    ).toBe('blocked')
+  })
+  it('三态结论 meta 与两种 trigger meta 均有中文标签/颜色', () => {
+    for (const key of ['blocked', 'skipped', 'passed'] as const) {
+      expect(GATE_CONCLUSION_META[key].label).toBeTruthy()
+      expect(GATE_CONCLUSION_META[key].color).toBeTruthy()
+    }
+    expect(REPORT_TRIGGER_META.manual.label).toBe('手动门禁')
+    expect(REPORT_TRIGGER_META['publish-gate'].label).toBe('发布门禁')
+  })
+})
+
+describe('D26 报告 v1：reportTimeLabel', () => {
+  it('ISO 时间格式化为 MM-DD HH:mm', () => {
+    expect(reportTimeLabel('2026-09-18T10:05:00+00:00')).toMatch(/^09-\d{2} \d{2}:\d{2}$/)
+  })
+  it('非法时间原样返回（不抛错）', () => {
+    expect(reportTimeLabel('not-a-date')).toBe('not-a-date')
   })
 })

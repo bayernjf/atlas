@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   GateBlockedError,
+  getReleaseReport,
   getRollout,
+  listReleaseReports,
   listVersions,
   promoteRollout,
   publishGraph,
@@ -12,6 +14,7 @@ import {
   startRollout,
   updateRollout,
   type GateReport,
+  type ReleaseReportSummary,
   type RolloutConfig,
 } from '../apiClient'
 
@@ -101,6 +104,48 @@ describe('发布门禁与草稿端点（M9）', () => {
   it('listVersions 返回版本号数组', async () => {
     stubFetch({ items: [1, 2, 3] })
     await expect(listVersions('graph-1')).resolves.toEqual([1, 2, 3])
+  })
+})
+
+describe('D26 报告 v1：历史报告端点（U60 ⑧）', () => {
+  const summary: ReleaseReportSummary = {
+    id: 'rr-2',
+    graph_id: 'graph-1',
+    target: 'draft',
+    trigger: 'manual',
+    total: 2,
+    passed: 1,
+    failed: 1,
+    skipped: false,
+    blocked: true,
+    pass_rate: 0.5,
+    created_at: '2026-09-18T10:00:00+00:00',
+  }
+
+  it('listReleaseReports GET 摘要列表（不含 cases）并倒序返回', async () => {
+    stubFetch({ items: [summary] })
+    const items = await listReleaseReports('graph-1')
+    expect(items).toHaveLength(1)
+    expect(items[0].id).toBe('rr-2')
+    expect('cases' in items[0]).toBe(false)
+    const url = vi.mocked(fetch).mock.calls[0][0]
+    expect(url).toBe('/api/graphs/graph-1/release-reports')
+  })
+
+  it('getReleaseReport GET 详情（含逐例 cases）', async () => {
+    stubFetch({
+      ...summary,
+      trigger: 'publish-gate',
+      cases: [
+        { case_id: 'rec-1', name: '黄金用例', matches: true, replay_status: 'completed', note: '全部节点一致' },
+      ],
+    })
+    const detail = await getReleaseReport('graph-1', 'rr-2')
+    expect(detail.cases).toHaveLength(1)
+    expect(detail.trigger).toBe('publish-gate')
+    expect(vi.mocked(fetch).mock.calls[0][0]).toBe(
+      '/api/graphs/graph-1/release-reports/rr-2',
+    )
   })
 })
 
