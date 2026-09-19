@@ -329,15 +329,17 @@ class PgRecordingStore:
         inputs: dict[str, Any] | None,
         steps: list[RecordStep],
         status: str,
+        recorded_at: str | None = None,
     ) -> RecordingCase:
         with self._engine.begin() as conn:
             case_id = _next_id(conn, "rec")
             created_at = _now_iso()
+            recorded = recorded_at or created_at
             conn.execute(
                 text(
                     "INSERT INTO recordings "
-                    "(id, tenant_id, name, graph, inputs, steps, status, created_at) "
-                    "VALUES (:id, :tenant_id, :name, :graph, :inputs, :steps, :status, :created_at)"
+                    "(id, tenant_id, name, graph, inputs, steps, status, created_at, recorded_at) "
+                    "VALUES (:id, :tenant_id, :name, :graph, :inputs, :steps, :status, :created_at, :recorded_at)"
                 ),
                 {
                     "id": case_id,
@@ -348,11 +350,12 @@ class PgRecordingStore:
                     "steps": json.dumps([step.model_dump() for step in steps], ensure_ascii=False),
                     "status": status,
                     "created_at": created_at,
+                    "recorded_at": recorded,
                 },
             )
         return RecordingCase(
             id=case_id, name=name, graph=graph, inputs=inputs,
-            steps=steps, status=status, created_at=created_at,
+            steps=steps, status=status, created_at=created_at, recorded_at=recorded,
         )
 
     @staticmethod
@@ -360,14 +363,14 @@ class PgRecordingStore:
         return RecordingCase(
             id=row[0], name=row[1], graph=row[2], inputs=row[3],
             steps=[RecordStep(**step) for step in row[4]],
-            status=row[5], created_at=row[6],
+            status=row[5], created_at=row[6], recorded_at=row[7],
         )
 
     def list(self) -> list[RecordingCase]:
         with self._engine.connect() as conn:
             rows = conn.execute(
                 text(
-                    "SELECT id, name, graph, inputs, steps, status, created_at FROM recordings "
+                    "SELECT id, name, graph, inputs, steps, status, created_at, recorded_at FROM recordings "
                     "WHERE tenant_id = :tenant_id ORDER BY created_at"
                 ),
                 {"tenant_id": self._tenant_id},
@@ -378,7 +381,7 @@ class PgRecordingStore:
         with self._engine.connect() as conn:
             row = conn.execute(
                 text(
-                    "SELECT id, name, graph, inputs, steps, status, created_at FROM recordings "
+                    "SELECT id, name, graph, inputs, steps, status, created_at, recorded_at FROM recordings "
                     "WHERE id = :id AND tenant_id = :tenant_id"
                 ),
                 {"id": case_id, "tenant_id": self._tenant_id},

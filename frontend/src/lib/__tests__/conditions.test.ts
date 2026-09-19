@@ -82,4 +82,34 @@ describe('validateExpression', () => {
     expect(validateExpression('date(2026, 1) == date(2026,1)')[0]).toContain('3 个参数')
     expect(validateExpression('bar == 1')[0]).toContain('未知标识符')
   })
+
+  // C（docs/27 §2）：可注入时钟 today/now + UTC datetime 体系（前端静态校验同构）
+  it('C accepts today/now/datetime/hoursBetween in boolean comparisons', () => {
+    expect(validateExpression('now() >= datetime(2026,1,1,0,0)')).toEqual([])
+    expect(validateExpression('today() == date(2026,9,19) || now() < datetime(2026,9,20,0,0)')).toEqual([])
+    expect(validateExpression('hoursBetween(datetime(2026,9,19,10,0), datetime(2026,9,19,12,30)) == 2.5')).toEqual([])
+    expect(validateExpression('hoursBetween(date(2026,9,19), datetime(2026,9,19,6,0)) == 6')).toEqual([])
+    expect(validateExpression('daysBetween(datetime(2026,9,19,23,0), datetime(2026,9,20,1,0)) == 1')).toEqual([])
+    expect(validateExpression('year(now()) == 2026 || month(now()) == 9')).toEqual([])
+  })
+
+  it('C rejects non-boolean bare today()/now() and datetime arity', () => {
+    expect(validateExpression('now()')[0]).toContain('布尔')
+    expect(validateExpression('today()')[0]).toContain('布尔')
+    expect(validateExpression('datetime(2026,1,1,0) == now()')[0]).toContain('参数') // 仅 4 参
+    expect(validateExpression('datetime(2026,1,1,0,0,0,0) == now()')[0]).toContain('参数') // 7 参
+    expect(validateExpression('today(1) == true')[0]).toContain('参数')
+  })
+
+  it('C constant-folds invalid datetime and non-integer components', () => {
+    expect(validateExpression('datetime(2026,1,1,25,0) == now()')[0]).toContain('非法日期时间')
+    expect(validateExpression('datetime(2026,13,1,0,0) == now()')[0]).toContain('非法日期')
+    expect(validateExpression('datetime(2026.5,1,1,0,0) == now()')[0]).toContain('整数')
+  })
+
+  it('C rejects hoursBetween type errors and date/datetime cross-type ordering', () => {
+    expect(validateExpression('hoursBetween(1, now()) > 0')[0]).toContain('hoursBetween')
+    expect(validateExpression('today() > now()')[0]).toContain('日期时间')
+    expect(validateExpression('date(2026,9,19) < now()')[0]).toContain('日期时间')
+  })
 })

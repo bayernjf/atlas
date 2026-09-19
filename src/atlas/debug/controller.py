@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Callable
 
 from atlas.graph.conditions import ConditionEvalError, evaluate_expression
@@ -17,12 +18,12 @@ class DebugController:
         self._session = session
         self._emit = emit
 
-    def before_node(self, node: Any, state: dict[str, Any]) -> None:
+    def before_node(self, node: Any, state: dict[str, Any], *, now: datetime | None = None) -> None:
         session = self._session
         if session.cancelled:
             raise DebugStopped(node.id)
 
-        reason = self._hit_reason(node.id, state)
+        reason = self._hit_reason(node.id, state, now)
         if reason is None:
             return
 
@@ -47,7 +48,9 @@ class DebugController:
         if session.cancelled:
             raise DebugStopped(node.id)
 
-    def _hit_reason(self, node_id: str, state: dict[str, Any]) -> str | None:
+    def _hit_reason(
+        self, node_id: str, state: dict[str, Any], now: datetime | None = None
+    ) -> str | None:
         session = self._session
         if session.step_mode:
             return "step"
@@ -58,7 +61,7 @@ class DebugController:
             return "breakpoint"
         context = {"global": state["variables"].get("global", {}), **state["outputs"]}
         try:
-            hit = evaluate_expression(expression, context)
+            hit = evaluate_expression(expression, context, now=now)
         except ConditionEvalError as exc:
             # fail-safe：表达式异常不卡断运行，仅记录供调试侧可见（04 §5.12）。
             session.last_condition_error = str(exc)

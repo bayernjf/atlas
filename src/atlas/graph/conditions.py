@@ -11,12 +11,16 @@
     unary        := ('!'|'-'|'+') unary | primary
     primary      := '(' or_expr ')' | '{{路径}}' | 字面量 | 函数调用
     函数调用     := NAME '(' [or_expr (',' or_expr)*] ')'   仅白名单函数
-字面量：数字、单/双引号字符串、true/false/null；日期由 date(y,m,d) 构造。
+字面量：数字、单/双引号字符串、true/false/null；日期由 date(y,m,d) 构造、
+日期时间由 datetime(y,m,d,H,M[,S]) 构造（统一 UTC）。
 顶层表达式必须产出布尔值（比较/逻辑运算）；纯算术/常量非布尔在 validate 期报错。
-白名单函数（纯、确定、无副作用；D15 不含 now()/today() 等非确定函数）：
+白名单函数（无副作用；D15 算术/函数已落，today/now 为非确定函数，其值由可注入时钟决定）：
     数值 abs/floor/ceil/round/min/max；字符串 len/lower/upper；
-    日期 date/year/month/day/daysBetween。
-LLM 判断分支（D14）、foreach（D16）仍缓做（见 14 登记表）。
+    日期 date/year/month/day/daysBetween/today；
+    日期时间 now/datetime/hoursBetween（today()/now() 取注入时钟，录制/回放冻结以保确定性）。
+today()/now() 为非确定函数：evaluate_expression(..., now=) 可注入时钟（单次运行固定、
+回放冻结到用例 recorded_at）；不传则取当前 UTC。date 与 datetime 不可跨类型直接比较。
+LLM 判断分支（D14）、foreach（D16）、随机/UUID/命名时区仍缓做（见 14 登记表）。
 """
 
 from __future__ import annotations
@@ -85,7 +89,7 @@ def _tokenize(expression: str) -> list[_Token]:
 
 
 # 白名单函数：name -> (最少参数数, 最多参数数或 None 表示不限, 返回类型)。
-# 返回类型：number/string/date/any。
+# 返回类型：number/string/date/datetime/any。
 _FUNCTIONS: dict[str, tuple[int, int | None, str]] = {
     "abs": (1, 1, "number"),
     "floor": (1, 1, "number"),
@@ -101,7 +105,27 @@ _FUNCTIONS: dict[str, tuple[int, int | None, str]] = {
     "month": (1, 1, "number"),
     "day": (1, 1, "number"),
     "daysBetween": (2, 2, "number"),
+    # 非确定日期/时间（取注入时钟，单次运行固定、回放冻结）与 UTC datetime 体系（D15 余部，docs/27 C）。
+    "today": (0, 0, "date"),
+    "now": (0, 0, "datetime"),
+    "datetime": (5, 6, "datetime"),
+    "hoursBetween": (2, 2, "number"),
 }
+
+# 非确定函数：静态校验期不做常量折叠（其值依赖运行时钟），其余纯函数仍折叠暴露错误。
+_NONDETERMINISTIC = frozenset({"today", "now"})
+
+
+def _default_now() -> datetime.datetime:
+    """缺省时钟：当前 UTC（aware）。"""
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+def _ensure_utc(value: datetime.datetime) -> datetime.datetime:
+    """归一化为 aware UTC：naive datetime 视为 UTC，aware 转到 UTC。"""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=datetime.timezone.utc)
+    return value.astimezone(datetime.timezone.utc)
 
 
 class _Parser:
@@ -247,7 +271,7 @@ def validate_expression(expression: str) -> list[str]:
     errors = _static_type_errors(ast)
     # 顶层必须产出布尔：静态可判定为非布尔（数值/字符串/日期）即报错；类型未知（变量）放行。
     top_type = _infer_type(ast)
-    if top_type in ("number", "string", "date"):
+    if top_type in ("number", "string", "date", "datetime"):
         errors.append("条件表达式必须产出布尔值（比较或逻辑运算），不能直接使用算术结果/数值/字符串/日期")
     return errors
 
@@ -278,6 +302,8 @@ def _infer_type(node: tuple) -> str:
             return "number"
         if isinstance(value, str):
             return "string"
+        if isinstance(value, datetime.datetime):
+            return "datetime"
         if isinstance(value, datetime.date):
             return "date"
         return "null"
@@ -302,9 +328,10 @@ def _static_type_errors(node: tuple) -> list[str]:
         for arg in node[2]:
             errors.extend(_static_type_errors(arg))
         # 纯常量调用：折叠求值以静态暴露除零/参数类型/非法日期等错误。
-        if not any(_has_var(arg) for arg in node[2]):
+        # today()/now() 依赖运行时钟，非确定，静态期不折叠（其类型由 _FUNCTIONS 推断）。
+        if node[1] not in _NONDETERMINISTIC and not any(_has_var(arg) for arg in node[2]):
             try:
-                _evaluate(node, {})
+                _evaluate(node, {}, None)
             except ConditionEvalError as exc:
                 errors.append(str(exc))
         return errors
@@ -313,25 +340,27 @@ def _static_type_errors(node: tuple) -> list[str]:
     if op in _CMP_OPS:
         if not _has_var(node[2]) and not _has_var(node[3]):
             try:
-                _compare(op, _evaluate(node[2], {}), _evaluate(node[3], {}))
+                _compare(op, _evaluate(node[2], {}, None), _evaluate(node[3], {}, None))
             except ConditionEvalError as exc:
                 errors.append(str(exc))
     elif op in _ADD_OPS + _MUL_OPS:
         # 纯常量算术折叠；含变量子树的类型错误留运行时 fail-safe。
         if not _has_var(node[2]) and not _has_var(node[3]):
             try:
-                _evaluate(node, {})
+                _evaluate(node, {}, None)
             except ConditionEvalError as exc:
                 errors.append(str(exc))
     return errors
 
 
-def evaluate_expression(expression: str, context: dict[str, Any]) -> bool:
+def evaluate_expression(
+    expression: str, context: dict[str, Any], *, now: datetime.datetime | None = None
+) -> bool:
     ast = parse(expression)
-    return _evaluate(ast, context)
+    return _evaluate(ast, context, _ensure_utc(now) if now is not None else _default_now())
 
 
-def _evaluate(node: tuple, context: dict[str, Any]) -> Any:
+def _evaluate(node: tuple, context: dict[str, Any], now: datetime.datetime | None) -> Any:
     kind = node[0]
     if kind == "lit":
         return node[1]
@@ -341,7 +370,7 @@ def _evaluate(node: tuple, context: dict[str, Any]) -> Any:
         return resolve_path(node[1], context)
     if kind == "unary":
         op = node[1]
-        value = _evaluate(node[2], context)
+        value = _evaluate(node[2], context, now)
         if op == "!":
             if not isinstance(value, bool):
                 raise ConditionEvalError(f'逻辑非 "!" 要求布尔值，实际为 {_type_name(value)}')
@@ -351,21 +380,31 @@ def _evaluate(node: tuple, context: dict[str, Any]) -> Any:
             raise ConditionEvalError(f'一元 "{op}" 要求数值，实际为 {_type_name(value)}')
         return +value if op == "+" else -value
     if kind == "call":
-        return _evaluate_function(node[1], [_evaluate(arg, context) for arg in node[2]])
+        return _evaluate_function(
+            node[1], [_evaluate(arg, context, now) for arg in node[2]], now
+        )
     op, left_node, right_node = node[1], node[2], node[3]
     if op == "&&":
-        left = _evaluate(left_node, context)
+        left = _evaluate(left_node, context, now)
         if not isinstance(left, bool):
             raise ConditionEvalError(f'"&&" 要求布尔值，实际为 {_type_name(left)}')
-        return left and _evaluate(right_node, context)
+        return left and _evaluate(right_node, context, now)
     if op == "||":
-        left = _evaluate(left_node, context)
+        left = _evaluate(left_node, context, now)
         if not isinstance(left, bool):
             raise ConditionEvalError(f'"||" 要求布尔值，实际为 {_type_name(left)}')
-        return left or _evaluate(right_node, context)
+        return left or _evaluate(right_node, context, now)
     if op in _CMP_OPS:
-        return _compare(op, _evaluate(left_node, context), _evaluate(right_node, context))
-    return _arith(op, _evaluate(left_node, context), _evaluate(right_node, context))
+        return _compare(
+            op,
+            _evaluate(left_node, context, now),
+            _evaluate(right_node, context, now),
+        )
+    return _arith(
+        op,
+        _evaluate(left_node, context, now),
+        _evaluate(right_node, context, now),
+    )
 
 
 def _arith(op: str, left: Any, right: Any) -> Any:
@@ -391,7 +430,9 @@ def _arith(op: str, left: Any, right: Any) -> Any:
     return left - right * math.trunc(left / right)
 
 
-def _evaluate_function(name: str, args: list[Any]) -> Any:
+def _evaluate_function(
+    name: str, args: list[Any], now: datetime.datetime | None
+) -> Any:
     if name == "abs":
         _require_number(name, args[0])
         return abs(args[0])
@@ -435,12 +476,58 @@ def _evaluate_function(name: str, args: list[Any]) -> Any:
         return getattr(args[0], name)
     if name == "daysBetween":
         start, end = args
-        if not isinstance(start, datetime.date) or not isinstance(end, datetime.date):
+        # datetime 先取日期（docs/27 §2.3），再按整日差。
+        start_d = start.date() if isinstance(start, datetime.datetime) else start
+        end_d = end.date() if isinstance(end, datetime.datetime) else end
+        if not isinstance(start_d, datetime.date) or not isinstance(end_d, datetime.date):
             raise ConditionEvalError(
                 f'函数 "daysBetween" 要求两个日期值，实际为 {_type_name(start)} 与 {_type_name(end)}'
             )
-        return (end - start).days
+        return (end_d - start_d).days
+    if name == "today":
+        clock = now if now is not None else _default_now()
+        return _ensure_utc(clock).date()
+    if name == "now":
+        clock = now if now is not None else _default_now()
+        return _ensure_utc(clock)
+    if name == "datetime":
+        if len(args) == 5:
+            year, month, day, hour, minute = args
+            second = 0
+        else:
+            year, month, day, hour, minute, second = args
+        for label, value in (
+            ("年", year), ("月", month), ("日", day),
+            ("小时", hour), ("分钟", minute), ("秒", second),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ConditionEvalError(f'函数 "datetime" 的{label}必须是整数')
+        try:
+            return datetime.datetime(
+                year, month, day, hour, minute, second, tzinfo=datetime.timezone.utc
+            )
+        except ValueError as exc:
+            raise ConditionEvalError(f'函数 "datetime" 构造了非法日期时间：{exc}') from None
+    if name == "hoursBetween":
+        start, end = args
+        start_dt = _coerce_datetime(start)
+        end_dt = _coerce_datetime(end)
+        return (end_dt - start_dt).total_seconds() / 3600
     raise ConditionEvalError(f'未知函数 "{name}"')  # 理论不可达（parse 已拦）
+
+
+def _coerce_datetime(value: Any) -> datetime.datetime:
+    """hoursBetween 入参归一化：datetime 转 UTC；date 按当日 00:00 UTC；其余报错。"""
+    if isinstance(value, datetime.datetime):
+        return _ensure_utc(value)
+    if isinstance(value, datetime.date):
+        return datetime.datetime(
+            value.year, value.month, value.day, tzinfo=datetime.timezone.utc
+        )
+    raise ConditionEvalError(
+        '函数 "hoursBetween" 要求日期时间值（用 datetime(...) 或 now() 构造，日期按当日 00:00 UTC），'
+        f"实际为 {_type_name(value)}"
+    )
 
 
 def _require_number(name: str, value: Any) -> None:
@@ -477,6 +564,8 @@ def _type_name(value: Any) -> str:
         return "数字"
     if isinstance(value, str):
         return "字符串"
+    if isinstance(value, datetime.datetime):
+        return "日期时间"
     if isinstance(value, datetime.date):
         return "日期"
     return type(value).__name__

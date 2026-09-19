@@ -147,6 +147,7 @@ def _make_executor(
     tracer: Tracer | None = None,
     base_span: Span | None = None,
     internal_spans: bool = False,
+    now: datetime | None = None,
 ):
     def execute(state: GraphState) -> dict:
         context = {"global": state["variables"].get("global", {}), **state["outputs"]}
@@ -220,7 +221,7 @@ def _make_executor(
             emit(start_event)
 
             if debug_controller is not None:
-                debug_controller.before_node(node, state)
+                debug_controller.before_node(node, state, now=now)
                 if node.type == "human_approval" and not resume_here:
                     approval_payload = _register_approval(
                         node,
@@ -271,10 +272,10 @@ def _make_executor(
                 output = {"decision": result, "prompt_rendered": prompt}
                 message = f"{node.id}({node.type}): executed"
             elif node.type == "condition":
-                output = _execute_condition(node, state, context)
+                output = _execute_condition(node, state, context, now=now)
                 message = f"{node.id}: branch={output['branch']} → {output['target']}"
             elif node.type == "loop":
-                output = _execute_loop(node, state, context)
+                output = _execute_loop(node, state, context, now=now)
                 if output["exitReason"] is None:
                     message = (
                         f"{node.id}: continue ({output['iterations']}/"
@@ -326,6 +327,7 @@ def _make_executor(
                     resolver=graph_resolver,
                     depth=subgraph_depth,
                     tracer=tracer,
+                    now=now,
                 )
             else:
                 # M10：工具调用包 tool span（parent 经 contextvars 就近取当前 node span）。
@@ -498,6 +500,7 @@ def _execute_subgraph(
     resolver: Callable[[str], GraphDSL] | None,
     depth: int,
     tracer: Tracer | None = None,
+    now: datetime | None = None,
 ) -> tuple[dict[str, Any], str]:
     """进程内重入执行被引用子图（04 §5.7）；任何异常 fail-safe 为 failed，父 run 仍 completed。"""
     graph_ref = str(node.config.get("graphId", ""))
@@ -532,6 +535,7 @@ def _execute_subgraph(
                 graph_resolver=resolver,
                 _subgraph_depth=depth + 1,
                 tracer=tracer,
+                now_override=now,
                 _parent_span=sub_span if isinstance(sub_span, Span) else None,
             )
     except Exception as exc:
@@ -672,7 +676,9 @@ def _parallel_running_output(node: NodeDSL) -> dict[str, Any]:
     }
 
 
-def _execute_condition(node: NodeDSL, state: GraphState, context: dict[str, Any]) -> dict[str, Any]:
+def _execute_condition(
+    node: NodeDSL, state: GraphState, context: dict[str, Any], *, now: datetime | None = None
+) -> dict[str, Any]:
     """按 branches 顺序短路求值（04 §5.2）；异常 fail-safe 走 defaultTarget。"""
     evaluation: list[dict[str, Any]] = []
     errors: list[str] = []
@@ -681,7 +687,7 @@ def _execute_condition(node: NodeDSL, state: GraphState, context: dict[str, Any]
     for item in node.config.get("branches", []):
         label, expression = item["label"], item["expression"]
         try:
-            result = evaluate_expression(expression, context)
+            result = evaluate_expression(expression, context, now=now)
         except ConditionEvalError as exc:
             errors.append(f"分支 {label}：{exc}")
             evaluation.append({"label": label, "expression": expression, "result": None})
@@ -704,7 +710,9 @@ def _execute_condition(node: NodeDSL, state: GraphState, context: dict[str, Any]
     }
 
 
-def _execute_loop(node: NodeDSL, state: GraphState, context: dict[str, Any]) -> dict[str, Any]:
+def _execute_loop(
+    node: NodeDSL, state: GraphState, context: dict[str, Any], *, now: datetime | None = None
+) -> dict[str, Any]:
     """条件循环重入求值（04 §5.3）；达上限/求值异常 fail-safe 走 exitTarget。"""
     config = node.config
     body_target = config["bodyTarget"]
@@ -725,7 +733,7 @@ def _execute_loop(node: NodeDSL, state: GraphState, context: dict[str, Any]) -> 
         # 首轮自身产出尚不存在；播种 index 供 {{loop-x.index}} 求值
         loop_context = {**context, node.id: {"index": iterations, "iterations": iterations}}
         try:
-            result = evaluate_expression(config["continueExpression"], loop_context)
+            result = evaluate_expression(config["continueExpression"], loop_context, now=now)
         except ConditionEvalError as exc:
             target = exit_target
             exit_reason = "expression_error"
@@ -1154,11 +1162,20 @@ def compile_graph(
     validate_with: GraphDSL | None = None,
     tracer: Tracer | None = None,
     graph_version: str | None = None,
+    now: datetime | None = None,
     _parent_span: Span | None = None,
 ):
     decision_client = decision_client or get_decision_client()
     registry = registry if registry is not None else build_demo_registry()
     approval_broker = approval_broker or _default_approval_broker
+    # C（docs/27 §2.1）：单次编译/运行固定一个 UTC 时钟，供 today()/now() 与条件断点求值；
+    # 录制/回放由 run_graph(now_override=) 注入冻结时刻，未注入则入口取一次当前 UTC。
+    if now is None:
+        now = datetime.now(timezone.utc)
+    elif now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    else:
+        now = now.astimezone(timezone.utc)
     noop_emit: EventCallback = lambda event: None
     emit = emit or noop_emit
     # M10：节点 span 的父——subgraph 重入为 subgraph span（子图节点 internal），
@@ -1244,6 +1261,7 @@ def compile_graph(
             tracer=tracer,
             base_span=base_span,
             internal_spans=internal_spans,
+            now=now,
         )
         if node.id in skip_guards:
             parallel_id, safe_target = skip_guards[node.id]
@@ -1479,6 +1497,7 @@ def run_graph(
     resume: dict | None = None,
     tracer: Tracer | None | object = _AUTO_TRACER,
     graph_version: str | None = None,
+    now_override: datetime | None = None,
     _parent_span: Span | None = None,
 ) -> dict[str, Any]:
     """编译并执行，返回状态/节点产出/轨迹。
@@ -1553,6 +1572,7 @@ def run_graph(
             validate_with=resume_graph,
             tracer=tracer,
             graph_version=graph_version,
+            now=now_override,
             _parent_span=_parent_span,
         )
         state = initial_state(tail, inputs=resume_inputs)
@@ -1581,6 +1601,7 @@ def run_graph(
         frame_sink=frame_sink,
         tracer=tracer,
         graph_version=graph_version,
+        now=now_override,
         _parent_span=_parent_span,
     )
     final_state = compiled.invoke(

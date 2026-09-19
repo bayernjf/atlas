@@ -52,6 +52,7 @@ from atlas.message.adapter import MessageHarnessAdapter
 from atlas.monitoring import RUN_RING_SIZE, extract_business, extract_node_results
 from atlas.recording import (
     RecordingCreateRequest,
+    clock_anchor,
     collect_steps,
     collect_subgraph_snapshots,
     compare as compare_recording,
@@ -760,6 +761,7 @@ def replay_recording(
     try:
         graph = parse_graph(case.graph)
         emit, take_steps = collect_steps()
+        anchor, clock_note = clock_anchor(case)
         inputs = dict(case.inputs or {})
         presets = preset_approvals(case.steps)
         if presets:
@@ -776,19 +778,23 @@ def replay_recording(
             graph_resolver=inline_first_resolver(
                 case.subgraphs, _tenant_graph_resolver(services)
             ),
+            now_override=anchor,
         )
         replay_steps = take_steps()
         tools_by_node = {
             node.id: (node.config.get("tool") if node.type == "tool_call" else None)
             for node in graph.nodes
         }
-        return compare_recording(
+        report = compare_recording(
             case.steps,
             replay_steps,
             tools_by_node=tools_by_node,
             baseline_status=case.status,
             replay_status=result["status"],
         )
+        if clock_note:
+            report["clock_note"] = clock_note
+        return report
     except Exception as exc:  # 回放失败折叠为报告而非 500
         return {
             "matches": False,

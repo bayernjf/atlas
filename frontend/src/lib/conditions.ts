@@ -4,9 +4,11 @@
  * 与后端 atlas.graph.conditions 同构的手写递归下降解析，禁止 eval、零依赖。
  * 前端只做语法 + 静态类型校验（实时中文报错，含无变量子树的常量折叠）；
  * 真正求值在后端进行，含变量的运行时类型错误由后端 fail-safe 走 defaultTarget。
- * 白名单函数（纯、确定、无副作用；不含 now()/today()）：
+ * 白名单函数（无副作用；today()/now() 为非确定函数，值由后端可注入时钟决定，
+ * 录制/回放冻结；前端静态校验对二者跳过常量折叠，类型按函数表推断）：
  *   数值 abs/floor/ceil/round/min/max；字符串 len/lower/upper；
- *   日期 date/year/month/day/daysBetween。
+ *   日期 date/year/month/day/daysBetween/today；
+ *   日期时间 now/datetime/hoursBetween（date 与 datetime 不可跨类型有序比较）。
  */
 
 const TOKEN_RE =
@@ -18,6 +20,11 @@ const MUL_OPS = new Set(['*', '/', '%'])
 
 type Token = { kind: string; value: string; pos: number }
 type DateValue = { readonly __date: true; readonly y: number; readonly m: number; readonly d: number }
+type DateTimeValue = {
+  readonly __datetime: true
+  readonly y: number; readonly m: number; readonly d: number
+  readonly H: number; readonly M: number; readonly S: number
+}
 type AstNode =
   | ['lit', unknown]
   | ['var', string]
@@ -41,8 +48,15 @@ const FUNCTIONS: Record<string, [number, number | null, string]> = {
   month: [1, 1, 'number'],
   day: [1, 1, 'number'],
   daysBetween: [2, 2, 'number'],
+  // 非确定日期/时间（后端取注入时钟）与 UTC datetime 体系（D15 余部，docs/27 C）。
+  today: [0, 0, 'date'],
+  now: [0, 0, 'datetime'],
+  datetime: [5, 6, 'datetime'],
+  hoursBetween: [2, 2, 'number'],
 }
 const FN_NAMES = Object.keys(FUNCTIONS).join(', ')
+// 非确定函数：静态校验期不做常量折叠（其值依赖运行时钟）。
+const NONDETERMINISTIC = new Set(['today', 'now'])
 
 function tokenize(expression: string): Token[] {
   const tokens: Token[] = []
@@ -242,6 +256,20 @@ function isDate(value: unknown): value is DateValue {
   return !!value && typeof value === 'object' && (value as DateValue).__date === true
 }
 
+function isDateTime(value: unknown): value is DateTimeValue {
+  return !!value && typeof value === 'object' && (value as DateTimeValue).__datetime === true
+}
+
+function isTemporal(value: unknown): value is DateValue | DateTimeValue {
+  return isDate(value) || isDateTime(value)
+}
+
+function temporalKind(value: unknown): 'date' | 'datetime' | null {
+  if (isDateTime(value)) return 'datetime'
+  if (isDate(value)) return 'date'
+  return null
+}
+
 function isNum(value: unknown): value is number {
   return typeof value === 'number'
 }
@@ -251,6 +279,7 @@ function typeName(value: unknown): string {
   if (typeof value === 'boolean') return '布尔'
   if (typeof value === 'number') return '数字'
   if (typeof value === 'string') return '字符串'
+  if (isDateTime(value)) return '日期时间'
   if (isDate(value)) return '日期'
   return typeof value
 }
@@ -270,8 +299,27 @@ function makeDate(y: number, m: number, d: number): DateValue {
   return { __date: true, y, m, d }
 }
 
+function makeDateTime(
+  y: number, m: number, d: number, H: number, M: number, S: number,
+): DateTimeValue {
+  if (![y, m, d, H, M, S].every(Number.isInteger)) {
+    throw new Error('函数 "datetime" 的年/月/日/小时/分钟/秒必须是整数')
+  }
+  makeDate(y, m, d) // 复用日期（含闰年）校验，非法即抛
+  if (H < 0 || H > 23 || M < 0 || M > 59 || S < 0 || S > 59) {
+    throw new Error(`函数 "datetime" 构造了非法日期时间：${y}-${m}-${d} ${H}:${M}:${S}`)
+  }
+  return { __datetime: true, y, m, d, H, M, S }
+}
+
+// 日期时间换算为自序数原点的秒数（date 按当日 00:00），供小时差与 datetime 有序比较。
+function temporalTicks(value: DateValue | DateTimeValue): number {
+  const daySeconds = toOrdinal(value) * 86400
+  return isDateTime(value) ? daySeconds + value.H * 3600 + value.M * 60 + value.S : daySeconds
+}
+
 // 与 Python date.toordinal 同构（Howard Hinnant 公式），供天数差与日期有序比较。
-function toOrdinal(date: DateValue): number {
+function toOrdinal(date: { y: number; m: number; d: number }): number {
   const a = Math.trunc((14 - date.m) / 12)
   const yy = date.y + 4800 - a
   const mm = date.m + 12 * a - 3
@@ -324,16 +372,41 @@ function evalFunction(name: string, args: unknown[]): unknown {
     case 'year':
     case 'month':
     case 'day':
-      if (!isDate(args[0])) {
+      if (!isTemporal(args[0])) {
         throw new Error(`函数 "${name}" 要求日期值（用 date(y,m,d) 构造），实际为 ${typeName(args[0])}`)
       }
       return args[0][name === 'year' ? 'y' : name === 'month' ? 'm' : 'd']
     case 'daysBetween': {
       const [start, end] = args
-      if (!isDate(start) || !isDate(end)) {
+      if (!isTemporal(start) || !isTemporal(end)) {
         throw new Error(`函数 "daysBetween" 要求两个日期值，实际为 ${typeName(start)} 与 ${typeName(end)}`)
       }
       return toOrdinal(end) - toOrdinal(start)
+    }
+    case 'today': {
+      const n = new Date()
+      return makeDate(n.getUTCFullYear(), n.getUTCMonth() + 1, n.getUTCDate())
+    }
+    case 'now': {
+      const n = new Date()
+      return makeDateTime(
+        n.getUTCFullYear(), n.getUTCMonth() + 1, n.getUTCDate(),
+        n.getUTCHours(), n.getUTCMinutes(), n.getUTCSeconds(),
+      )
+    }
+    case 'datetime':
+      return makeDateTime(
+        args[0] as number, args[1] as number, args[2] as number,
+        args[3] as number, args[4] as number, (args[5] ?? 0) as number,
+      )
+    case 'hoursBetween': {
+      const [start, end] = args
+      if (!isTemporal(start) || !isTemporal(end)) {
+        throw new Error(
+          `函数 "hoursBetween" 要求日期时间值（用 datetime(...) 或 now() 构造，日期按当日 00:00 UTC），实际为 ${typeName(start)}`,
+        )
+      }
+      return (temporalTicks(end as DateValue | DateTimeValue) - temporalTicks(start as DateValue | DateTimeValue)) / 3600
     }
     default:
       throw new Error(`未知函数 "${name}"`)
@@ -365,9 +438,14 @@ function arith(op: string, left: unknown, right: unknown): unknown {
 function compare(op: string, left: unknown, right: unknown): boolean {
   if (op === '==' || op === '!=') {
     let equal: boolean
-    if (isDate(left) && isDate(right)) {
+    if (isDateTime(left) && isDateTime(right)) {
+      equal =
+        left.y === right.y && left.m === right.m && left.d === right.d &&
+        left.H === right.H && left.M === right.M && left.S === right.S
+    } else if (isDate(left) && isDate(right)) {
       equal = left.y === right.y && left.m === right.m && left.d === right.d
     } else {
+      // date 与 datetime 跨类型走严格相等（不同对象 → false），与后端一致
       equal = left === right
     }
     return op === '==' ? equal : !equal
@@ -379,15 +457,23 @@ function compare(op: string, left: unknown, right: unknown): boolean {
     typeof left === 'boolean' ||
     typeof right === 'boolean' ||
     typeof left !== typeof right ||
-    isDate(left) !== isDate(right)
+    temporalKind(left) !== temporalKind(right)
   ) {
-    throw new Error(`有序比较 "${op}" 要求两侧同为数字、字符串或日期，实际为 ${typeName(left)} 与 ${typeName(right)}`)
+    throw new Error(`有序比较 "${op}" 要求两侧同为数字、字符串、日期或日期时间，实际为 ${typeName(left)} 与 ${typeName(right)}`)
   }
-  if (!(typeof left === 'number' || typeof left === 'string' || isDate(left))) {
+  if (!(typeof left === 'number' || typeof left === 'string' || isTemporal(left))) {
     throw new Error(`有序比较 "${op}" 不支持类型 ${typeName(left)}`)
   }
-  const lv = isDate(left) ? toOrdinal(left) : (left as number | string)
-  const rv = isDate(right) ? toOrdinal(right) : (right as number | string)
+  const lv = isDateTime(left)
+    ? temporalTicks(left)
+    : isDate(left)
+      ? toOrdinal(left)
+      : (left as number | string)
+  const rv = isDateTime(right)
+    ? temporalTicks(right)
+    : isDate(right)
+      ? toOrdinal(right)
+      : (right as number | string)
   return op === '>' ? lv > rv : op === '>=' ? lv >= rv : op === '<' ? lv < rv : lv <= rv
 }
 
@@ -463,7 +549,8 @@ function staticTypeErrors(node: AstNode): string[] {
   if (node[0] === 'unary') return staticTypeErrors(node[2])
   if (node[0] === 'call') {
     const errors = node[2].flatMap(staticTypeErrors)
-    if (!node[2].some(hasVar)) {
+    // today()/now() 依赖运行时钟，静态期不折叠（类型由 FUNCTIONS 表推断）。
+    if (!NONDETERMINISTIC.has(node[1]) && !node[2].some(hasVar)) {
       try {
         evaluateConst(node)
       } catch (error) {
@@ -500,7 +587,7 @@ export function validateExpression(expression: string): string[] {
   }
   const errors = staticTypeErrors(ast)
   const topType = inferType(ast)
-  if (topType === 'number' || topType === 'string' || topType === 'date') {
+  if (topType === 'number' || topType === 'string' || topType === 'date' || topType === 'datetime') {
     errors.push('条件表达式必须产出布尔值（比较或逻辑运算），不能直接使用算术结果/数值/字符串/日期')
   }
   return errors

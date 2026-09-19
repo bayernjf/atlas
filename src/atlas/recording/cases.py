@@ -33,6 +33,9 @@ class RecordingCase(BaseModel):
     steps: list[RecordStep]
     status: str
     created_at: str
+    # C（docs/27 §2.4）：录制时钟锚点（ISO UTC）。回放冻结到该时刻供 today()/now() 求值；
+    # 新用例入库即生成（与 created_at 同刻），历史用例缺省 None → 回放回退 created_at。
+    recorded_at: str | None = None
     # D26 纯超集：录制时递归冻结的 subgraph 引用快照（key＝节点 config.graphId 引用原文，
     # 含 @N 钉版）。单用例冻结回放「内联优先」解析，使引用子图被 reset/删除/改动后
     # 用例仍可回放；旧用例缺省空 dict（回退租户实时 store，保持旧行为）。
@@ -54,8 +57,10 @@ class RecordingStore:
         status: str,
         graph_id: str = "",
         subgraphs: dict[str, dict[str, Any]] | None = None,
+        recorded_at: str | None = None,
     ) -> RecordingCase:
         self._counter += 1
+        stamp = datetime.now(timezone.utc).isoformat()
         case = RecordingCase(
             id=f"rec-{self._counter}",
             name=name,
@@ -64,7 +69,8 @@ class RecordingStore:
             inputs=inputs,
             steps=steps,
             status=status,
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=stamp,
+            recorded_at=recorded_at or stamp,
             subgraphs=subgraphs or {},
         )
         self._items.append(case)
