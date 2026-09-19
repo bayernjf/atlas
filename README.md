@@ -12,12 +12,14 @@ Atlas 是一个 **AI 运营体（Agent）编排平台**：以 **Harness / Graph 
 
 ## 当前阶段
 
-**题述工程化落地路线（docs/19/20，M1–M10）推进中，M1–M7 已落码**：
+**题述工程化落地路线（docs/19/20）M1–M10 已全部闭合**（2026-09-18），**M11 记忆/长期上下文已完成 docs-only 立项、待确认契约后落码**（2026-09-19）：
 
-- **题一（Schema 驱动配置内核）M1–M4 全部闭合**：M1 节点 Data Schema 提取（零 UI 变化）、M2 L1 字段校验扶正 + 结构化诊断（nodeId/RFC6901 pointer/token range）、M3 WidgetRegistry + FormRenderer 工具 params 表单化首期、M4 UISchema 条件显示/增量调度/Problems 面板/reverseDeps/quickFix。
-- **题二（多智能体端到端）M5–M7 已落码**：M5 持久化 + 中断恢复（M5a 进程内 Repository 重构、M5b PG 实现 + 中断帧落库 + 恢复扫描器 + run 状态 + `GET /api/runs`）、M6 Graph 版本化（不可变 releaseVersion + subgraph 钉版）、M7 多 Bot 任务总线（任务信封状态机 + 幂等/CAS + 退货退款协同沙盘 + `GET /api/tasks`）。
+- **题一（Schema 驱动配置内核）M1–M4 闭合**：M1 节点 Data Schema 提取（零 UI 变化）、M2 L1 字段校验扶正 + 结构化诊断（nodeId/RFC6901 pointer/token range）、M3 WidgetRegistry + FormRenderer 工具 params 表单化、M4 UISchema 条件显示/增量调度/Problems 面板/reverseDeps/quickFix。
+- **题二（多智能体端到端）M5–M10 全闭合**：M5 持久化 + 中断恢复（M5a 进程内 Repository 重构、M5b PG 实现 + 中断帧落库 + 恢复扫描器 + run 状态 + `GET /api/runs`）、M6 Graph 版本化（不可变 releaseVersion + subgraph 钉版）、M7 多 Bot 任务总线（任务信封状态机 + 幂等/CAS + 退货退款协同沙盘）、M8 交互模板系统（审批卡片双向 Schema + web/im/email 三渠道渲染降级）、M9 入站 Router + 灰度发布 + 指标门控自动回滚、M10 span 级链路追踪。
+- **缓做项提前取回**：D26 用例集报告 v1（通过率历史趋势/导出/定时回放 CI）、D30 余部（数据依赖环/类型 warning/作用域语义）、A+B 打包六项（D15 表达式函数库、D17 loop break·continue、D18 parallel any_success、parallel.result/subgraph.outputs 可见性、改节点 id quickFix 联动）。
+- **进行中**：M11 记忆/长期上下文——形状权威 [docs/26](docs/26-M11记忆长期上下文契约设计.md)（ADR T23，四决策已拍板），落码分四批（进程内内核 → 适配器+REST → PG/pgvector → 前端记忆页），**待契约确认后开工**。
 - **W1-W10 Demo（2026-09-13）为基线**：电商退款端到端链路（webhook 退款单 → AI 决策 → shop 适配器执行退款或转人工，SSE 实时上屏，NL 生成草稿）；规则兜底离线可跑，配置 `LITELLM_MODEL` 即用真实 LLM。
-- **下一步**：M8（交互卡片）/ M9（灰度回滚）/ M10（span 追踪）。设计文档以 `docs/` 为唯一事实源（00-24 共 25 份）；当前状态与待办见 [handoff.md](handoff.md)，排期见 [docs/08](docs/08-任务迭代计划.md)，种子客户计划见 [docs/18](docs/18-种子客户验证计划.md)。
+- 设计文档以 `docs/` 为唯一事实源；当前状态与待办见 [handoff.md](handoff.md)，排期见 [docs/08](docs/08-任务迭代计划.md)，种子客户计划见 [docs/18](docs/18-种子客户验证计划.md)。
 
 ### 本地运行 Demo
 
@@ -62,7 +64,7 @@ Python 3.11+（引擎）/ Go（Harness 网关产品化目标，Demo 暂用 FastA
 
 ## 路线图
 
-**题述工程化路线（当前主线）**：题一 Schema 内核 M1–M4 → 题二多智能体 M5（持久化+中断恢复）→ M6（版本化）→ M7（任务总线）→ M8（交互卡片）→ M9（灰度回滚）→ M10（span 追踪）。拆解、前置门与验收见 [docs/20](docs/20-题述方案工程化落地路线.md)，逐里程碑立项/落码条见 [docs/08](docs/08-任务迭代计划.md)。
+**题述工程化路线（当前主线，M1–M10 已闭合）**：题一 Schema 内核 M1–M4 → 题二多智能体 M5（持久化+中断恢复）→ M6（版本化）→ M7（任务总线）→ M8（交互卡片）→ M9（灰度回滚）→ M10（span 追踪）→ **M11 记忆/长期上下文（已 docs-only 立项，待契约确认后四批落码）**。拆解、前置门与验收见 [docs/20](docs/20-题述方案工程化落地路线.md)，逐里程碑立项/落码条见 [docs/08](docs/08-任务迭代计划.md)，M11 形状权威见 [docs/26](docs/26-M11记忆长期上下文契约设计.md)。
 
 **原始阶段路线（背景参考）**：
 
