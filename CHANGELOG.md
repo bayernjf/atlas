@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### feat(conditions)：C 包落码收口——可注入回放时钟 + today/now/datetime/hoursBetween + 录制 recorded_at 冻结锚点（2026-09-19，单原子 `3415377`，U100–U113 转正式，形状权威 docs/27 §2，D15 余部取回）
+
+- C+A+B 打包（见下立项条）原子序②，零新依赖、不新增 ADR、**不解除 D15**（随机/UUID、命名时区仍缓做）。前后端 conditions 同构、禁 eval 红线不变。
+- **可注入时钟**：`run_graph(..., now_override=None)`（aware UTC；naive 当 UTC；None 时运行入口取一次 `datetime.now(timezone.utc)` 单次运行固定），经 compile_graph→`_make_executor`→condition/loop/subgraph（子图重入继承同一冻结时刻）→`DebugController` 条件断点全链透传（loader.py 16 处、controller.py 5 处）。
+- **白名单纯超集新增函数**：`today()`→UTC date、`now()`→UTC aware datetime（新 datetime 值类型，后端 datetime.datetime、前端 DateTimeValue）、`datetime(y,m,d,H,M[,S])`→UTC datetime（5–6 参整数分量，非法抛 ConditionEvalError）、`hoursBetween(a,b)`→总秒/3600（date 按当日 00:00 UTC）；`daysBetween`/`year`/`month`/`day` 接受 datetime。date 与 datetime **禁跨类型有序比较（报错）、跨类型 `==` 为 false**；常量折叠对非确定 today/now 跳过、`datetime()` 纯常量仍折叠以静态暴露非法值。关键坑：Python `datetime.datetime` 是 `datetime.date` 子类，类型守卫先判 datetime。
+- **录制冻结锚点**：`RecordingCase.recorded_at` 纯超集（新用例入库时与 created_at 同 stamp，进程内/PG 两档一致，迁移 `db/migrations/007_recording_recorded_at.sql` 已应用 atlas-pg）；新增纯函数 `recording.replay.clock_anchor(case)->(datetime|None, note|None)`（回退 recorded_at→created_at→真实时钟，缺失/非法附中文 clock_note），单用例 replay 注入 now_override、clock_note 挂响应顶层，发布门禁每例注入、clock_note 挂对应 case compare report；异常折叠分支不挂。
+- **两处落码细化（docs/27 顶部注记）**：① recorded_at 锚点＝**用例入库时刻**而非 baseline 运行开始时刻——`POST /api/recordings` 不重跑 baseline（steps/status 由前端 /run/stream 采集后随请求入库，端点只冻结图快照），RecordingStore.add 用同一 stamp 同时写 created_at 与 recorded_at；② 前端 conditions.ts 仅静态校验、无运行时求值入口，today/now 仅跳过常量折叠、类型按函数表推断，不接 now 参数。
+- **一处既有缺口（非本包引入、未修，归属 D26 用例 PG 持久化）**：PG 档 `PgRecordingStore.add` 的 INSERT 仅基础 8 列、无富字段 `graph_id`/`subgraphs`，而 `create_recording` 早传二者，PG 后端下 `POST /api/recordings` 500（`TypeError: unexpected keyword argument 'graph_id'`，HEAD `5e677ce` 即如此）；recorded_at 已做到两档 store 层一致，富字段 PG 化（加列+迁移+协议）随 D26，已登记 docs/14 D26、docs/03、docs/27。d26_smoke 因此仅内存档全过。
+- 测试：后端 **687 passed/18 skipped**（基线 673/17；净增 14＝新建 `tests/test_clock.py` 9 端到端〔now_override 决定 today/now 分支、naive 当 UTC、子图重入继承冻结时钟、clock_anchor 回退/naive/缺失/非法、回放冻结走历史分支、RecordingStore.add stamp 同源〕＋ test_conditions +5；新增 PG recorded_at 往返测无 DATABASE_URL 时 skip，给库时 storage+memory PG 集成 **10 passed**）；前端 **453 passed/2 skipped（37 文件，+4）**、`pnpm build` 过、oxlint **0 error**（ReleaseModal/RolloutModal 2 warning 为既有基线）；内存档 d26_smoke 全过、m11_smoke 内存/PG 两档 M11_SMOKE_ALL_PASS。C 无浏览器动作。同步面：docs/27 顶部 C 落码注记、08 C 落码收口条、04 §5.1、06 §6.9、03 recording_case/ReplayReport、12 §5 recordings/replay/release-gate、13 U100–U113、14 D15/D26、handoff、本文件。**A（子图 SSE/审批）、B（急停/断点增强/变量改写）待续**。
+
 ### docs(plan)：进程内运行体验补强（C+A+B）立项——时钟函数 / 子图事件上屏 / 调试控制（2026-09-19，docs-only 立项、零业务代码，形状权威 docs/27）
 
 - M11 收口后续做缓做项小项打包；用户拍板两处分叉（docs/27 §0）：**D（D30 输出键〔非节点 id〕改名）判空集、本轮不落码**（v1 产出键由节点类型固定、节点 schema 无自定义输出键/别名/映射、B3 已覆盖改节点 id，无作用对象，随未来命名输出特性启用）；**A、B 取进程内 v1 形态**（不碰 D19/D20/S1 持久化、多实例、断点落图/团队共享、IM/邮件通知）；C 直接做。零新依赖、不新增 ADR、不解除 D15/D21/D27/D30。
