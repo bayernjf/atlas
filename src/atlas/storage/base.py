@@ -143,7 +143,7 @@ class RunRepository(Protocol):
         self,
         *,
         run_id: str,
-        status: Literal["completed", "failed", "interrupted"],
+        status: Literal["completed", "failed", "interrupted", "cancelled"],
         error: str | None = None,
         outputs: dict[str, Any] | None = None,
         trace: list[str] | None = None,

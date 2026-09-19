@@ -10,6 +10,7 @@ import os
 import threading
 from dataclasses import dataclass
 
+from atlas.collaboration.cancellations import RunCancellationBroker
 from atlas.coordination import TaskStore
 from atlas.message.service import MessageService
 from atlas.recording import ReportStore
@@ -50,6 +51,7 @@ class TenantServices:
     message_service: object  # MessageService 是服务非存储，不进 Repository 抽象（docs/24 §1.1）
     approval_broker: ApprovalRepository
     debug_broker: DebugRepository
+    cancellation_broker: RunCancellationBroker  # B 包协作式急停（进程内，memory/PG 档均内存实例）
     monitoring: MonitoringRepository
     run_store: RunRepository
     task_store: TaskStore
@@ -90,6 +92,7 @@ class TenantRegistry:
                 message_service=MessageService(),
                 approval_broker=ApprovalBroker(),
                 debug_broker=DebuggerBroker(),
+                cancellation_broker=RunCancellationBroker(),
                 monitoring=backend.monitoring_store(tenant_id),
                 run_store=backend.run_store(tenant_id),
                 task_store=TaskStore(),
@@ -104,6 +107,7 @@ class TenantRegistry:
             message_service=MessageService(),
             approval_broker=ApprovalBroker(),
             debug_broker=DebuggerBroker(),
+            cancellation_broker=RunCancellationBroker(),
             monitoring=MonitoringStore(),
             run_store=RunStore(),
             task_store=TaskStore(),
@@ -120,6 +124,7 @@ class TenantRegistry:
         services.message_service.reset()
         services.approval_broker.reset()
         services.debug_broker.reset()
+        services.cancellation_broker.reset()
         services.monitoring.reset()
         services.run_store.reset()
         services.routing_store.reset()

@@ -28,6 +28,7 @@ from langgraph.graph import END, START, StateGraph
 
 from atlas.cards.catalog import get_card
 from atlas.collaboration.approvals import ApprovalBroker
+from atlas.collaboration.cancellations import RunCancelled
 from atlas.database.adapter import DatabaseHarnessAdapter
 from atlas.database.service import DatabaseClient, demo_engine
 from atlas.harness.base import ActionRequest, ActionStatus
@@ -149,6 +150,7 @@ def _make_executor(
     internal_spans: bool = False,
     now: datetime | None = None,
     subgraph_path: tuple[str, ...] = (),
+    is_cancelled: Callable[[], bool] | None = None,
 ):
     def execute(state: GraphState) -> dict:
         context = {"global": state["variables"].get("global", {}), **state["outputs"]}
@@ -220,6 +222,11 @@ def _make_executor(
                         card_template_id=approval_payload.get("cardTemplateId", ""),
                     )
             emit(start_event)
+
+            # B 包（docs/27 §4.1）：节点边界协作式取消。调试流由 DebugController
+            # 统一折叠为 DebugStopped（event:stopped）；普通流在此抛 RunCancelled。
+            if debug_controller is None and is_cancelled is not None and is_cancelled():
+                raise RunCancelled(node.id)
 
             if debug_controller is not None:
                 debug_controller.before_node(node, state, now=now)
@@ -331,6 +338,7 @@ def _make_executor(
                     now=now,
                     emit=emit,
                     subgraph_path=subgraph_path,
+                    is_cancelled=is_cancelled,
                 )
             else:
                 # M10：工具调用包 tool span（parent 经 contextvars 就近取当前 node span）。
@@ -533,6 +541,7 @@ def _execute_subgraph(
     now: datetime | None = None,
     emit: EventCallback | None = None,
     subgraph_path: tuple[str, ...] = (),
+    is_cancelled: Callable[[], bool] | None = None,
 ) -> tuple[dict[str, Any], str]:
     """进程内重入执行被引用子图（04 §5.7）；任何异常 fail-safe 为 failed，父 run 仍 completed。"""
     graph_ref = str(node.config.get("graphId", ""))
@@ -572,8 +581,14 @@ def _execute_subgraph(
                 _subgraph_path=child_path,
                 tracer=tracer,
                 now_override=now,
+                is_cancelled=is_cancelled,
                 _parent_span=sub_span if isinstance(sub_span, Span) else None,
             )
+    except RunCancelled:
+        # 取消须穿透子图 fail-safe 兜底，冒泡终止整图（docs/27 §4.1）。
+        if isinstance(sub_span, Span):
+            sub_span.end("error")
+        raise
     except Exception as exc:
         if isinstance(sub_span, Span):
             sub_span.end("error")
@@ -1201,6 +1216,7 @@ def compile_graph(
     graph_version: str | None = None,
     now: datetime | None = None,
     _parent_span: Span | None = None,
+    is_cancelled: Callable[[], bool] | None = None,
 ):
     decision_client = decision_client or get_decision_client()
     registry = registry if registry is not None else build_demo_registry()
@@ -1300,6 +1316,7 @@ def compile_graph(
             internal_spans=internal_spans,
             now=now,
             subgraph_path=_subgraph_path,
+            is_cancelled=is_cancelled,
         )
         if node.id in skip_guards:
             parallel_id, safe_target = skip_guards[node.id]
@@ -1538,6 +1555,7 @@ def run_graph(
     graph_version: str | None = None,
     now_override: datetime | None = None,
     _parent_span: Span | None = None,
+    is_cancelled: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     """编译并执行，返回状态/节点产出/轨迹。
 
@@ -1613,6 +1631,7 @@ def run_graph(
             tracer=tracer,
             graph_version=graph_version,
             now=now_override,
+            is_cancelled=is_cancelled,
             _parent_span=_parent_span,
         )
         state = initial_state(tail, inputs=resume_inputs)
@@ -1643,6 +1662,7 @@ def run_graph(
         tracer=tracer,
         graph_version=graph_version,
         now=now_override,
+        is_cancelled=is_cancelled,
         _parent_span=_parent_span,
     )
     final_state = compiled.invoke(

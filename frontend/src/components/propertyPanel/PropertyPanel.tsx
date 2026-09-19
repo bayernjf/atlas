@@ -42,6 +42,8 @@ export function PropertyPanel() {
   const setBreakpointExpression = useEditorStore(
     (state) => state.setBreakpointExpression,
   )
+  const setBreakpointHitCount = useEditorStore((state) => state.setBreakpointHitCount)
+  const setBreakpointLogMessage = useEditorStore((state) => state.setBreakpointLogMessage)
 
   const scope = useScopeIndex({ nodes, edges, variables })
   const toolOutputSchemas = useToolOutputSchemas()
@@ -264,6 +266,35 @@ export function PropertyPanel() {
               )}
             <Typography.Text type="secondary">
               断点仅本会话有效，不随 Graph 保存；异常表达式 fail-safe 视为不命中。
+            </Typography.Text>
+          </Field>
+        )}
+        {selectedNode.id in breakpoints && (
+          <Field label="命中计数 hitCount（每 N 次命中暂停一次；留空＝每次命中都暂停）">
+            <InputNumber
+              min={1}
+              precision={0}
+              style={{ width: '100%' }}
+              placeholder="如 3（循环/重入节点常用）"
+              value={breakpoints[selectedNode.id]?.hitCount ?? null}
+              onChange={(value) =>
+                setBreakpointHitCount(selectedNode.id, (value as number | null) ?? null)
+              }
+            />
+          </Field>
+        )}
+        {selectedNode.id in breakpoints && (
+          <Field label="日志断点 logMessage（非空＝命中只记日志、不暂停）">
+            <Input
+              value={breakpoints[selectedNode.id]?.logMessage ?? ''}
+              placeholder="如：已到达退款节点（消息原样输出，不做插值）"
+              onChange={(event) =>
+                setBreakpointLogMessage(selectedNode.id, event.target.value)
+              }
+            />
+            <Typography.Text type="secondary">
+              填写消息后该断点成为日志断点：命中仅在调试控制台输出，不暂停运行；v1 不与
+              hitCount 组合、消息原样不插值。
             </Typography.Text>
           </Field>
         )}

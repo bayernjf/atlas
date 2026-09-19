@@ -43,6 +43,10 @@ export type DebugAction = 'step' | 'continue' | 'stop'
 export type DebugBreakpoint = {
   node_id: string
   expression?: string
+  /** B 包（docs/27 §4.2）：每 N 次命中暂停一次（正整数）；缺省每次命中暂停。 */
+  hitCount?: number
+  /** B 包：非空即日志断点（logpoint），命中只发 debug_log 不暂停。 */
+  logMessage?: string
 }
 
 export type DebugRequest = {
@@ -65,12 +69,38 @@ export type StoppedFrame = {
   reason: 'user_stop'
 }
 
+/** B 包（docs/27 §4.2）：日志断点命中帧，不暂停运行。 */
+export type DebugLogFrame = {
+  type: 'debug_log'
+  node_id: string
+  hits: number
+  message: string
+  subgraphPath?: string[]
+}
+
+/** B 包（docs/27 §4.1）：普通（非调试）运行被协作式急停的终帧。 */
+export type CancelledFrame = {
+  type: 'cancelled'
+  node_id: string
+  reason: 'user_cancel'
+}
+
 /** 调试运行被「停止」结束（stopped 帧）；无 result，属正常终止而非请求失败。 */
 export class DebugRunStoppedError extends Error {
   nodeId: string
   constructor(nodeId: string) {
     super(`调试已停止：${nodeId}`)
     this.name = 'DebugRunStoppedError'
+    this.nodeId = nodeId
+  }
+}
+
+/** 普通运行被协作式急停结束（cancelled 帧）；用户主动，非请求失败。 */
+export class RunCancelledError extends Error {
+  nodeId: string
+  constructor(nodeId: string) {
+    super(`运行已取消：${nodeId}`)
+    this.name = 'RunCancelledError'
     this.nodeId = nodeId
   }
 }
@@ -95,6 +125,8 @@ export type RunEvent =
   | ({ type: 'run_end' } & Partial<RunResult>)
   | PausedFrame
   | StoppedFrame
+  | DebugLogFrame
+  | CancelledFrame
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
@@ -346,11 +378,36 @@ export async function decideCardAction(
 export async function resumeDebug(
   token: string,
   action: DebugAction,
+  globals?: Record<string, unknown>,
 ): Promise<{ token: string; action: DebugAction }> {
+  // B 包（docs/27 §4.3）：step/continue 可带 globals 顶层键浅合并覆盖；stop 忽略。
+  const body = globals !== undefined ? JSON.stringify({ action, globals }) : JSON.stringify({ action })
   return request(`/api/debug/${token}/resume`, {
     method: 'POST',
-    body: JSON.stringify({ action }),
+    body,
   })
+}
+
+/**
+ * B 包（docs/27 §4.1）协作式急停：取本图最新在途 run（running；wait 阻塞为 suspended，
+ * broker 句柄仍在亦可取消），置取消事件，下一节点边界生效。无在途 run 返回 null。
+ * 不在 wait/approval/tool 阻塞中点强杀。
+ */
+export async function cancelActiveRun(
+  graphId: string,
+): Promise<{ runId: string } | null> {
+  const runs = await request<{
+    items: Array<{ runId: string; graphId: string; status: string }>
+  }>('/api/runs?limit=50')
+  const target = runs.items.find(
+    (r) => r.graphId === graphId && (r.status === 'running' || r.status === 'suspended'),
+  )
+  if (!target) return null
+  await request<{ run_id: string; cancelled: boolean }>(
+    `/api/runs/${target.runId}/cancel`,
+    { method: 'POST' },
+  )
+  return { runId: target.runId }
 }
 
 export type FeedbackType = 'bug' | 'suggestion'
@@ -457,6 +514,7 @@ export async function streamRun(
   let buffer = ''
   let result: RunResult | null = null
   let stoppedNodeId: string | null = null
+  let cancelledNodeId: string | null = null
 
   while (true) {
     const { done, value } = await reader.read()
@@ -473,12 +531,16 @@ export async function streamRun(
       } else if (payload.type === 'stopped') {
         stoppedNodeId = payload.node_id
         onEvent(payload as StoppedFrame)
+      } else if (payload.type === 'cancelled') {
+        cancelledNodeId = payload.node_id
+        onEvent(payload as CancelledFrame)
       } else {
         onEvent(payload as RunEvent)
       }
     }
   }
   if (stoppedNodeId !== null) throw new DebugRunStoppedError(stoppedNodeId)
+  if (cancelledNodeId !== null) throw new RunCancelledError(cancelledNodeId)
   if (!result) throw new Error('SSE 流缺少最终运行结果')
   return result
 }

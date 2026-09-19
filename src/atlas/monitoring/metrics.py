@@ -61,7 +61,10 @@ def percentile(values: list[float], p: float) -> float | None:
 
 
 def is_healthy(record: object) -> bool:
-    return record.status == "completed" and all(node.status != "failed" for node in record.nodes)
+    # cancelled 为用户协作式急停，非系统失败，不计失败 streak/告警（docs/27 §4.1）。
+    return record.status in ("completed", "cancelled") and all(
+        node.status != "failed" for node in record.nodes
+    )
 
 
 def _stats(runs: list) -> dict[str, Any]:

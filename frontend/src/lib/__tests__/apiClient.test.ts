@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { DebugRunStoppedError, streamRun, type RunEvent } from '../apiClient'
+import {
+  DebugRunStoppedError,
+  RunCancelledError,
+  cancelActiveRun,
+  resumeDebug,
+  streamRun,
+  type RunEvent,
+} from '../apiClient'
 
 function sseResponse(frames: Array<Record<string, unknown>>) {
   const body = frames
@@ -62,5 +69,108 @@ describe('streamRun debug framing (04 §5.12)', () => {
       DebugRunStoppedError,
     )
     expect(events.map((event) => event.type)).toEqual(['paused', 'stopped'])
+  })
+})
+
+
+function jsonResponse(data: unknown) {
+  return { ok: true, status: 200, json: async () => data } as Response
+}
+
+describe('B 包 streamRun 急停/日志帧（docs/27 §4，U134/U136）', () => {
+  it('cancelled 终帧转发并以 RunCancelledError 拒绝（无 result）', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        sseResponse([
+          { type: 'node_start', node_id: 'trigger-1', node_type: 'trigger' },
+          { type: 'cancelled', node_id: 'tool-1', reason: 'user_cancel' },
+        ]),
+      ),
+    )
+    const events: RunEvent[] = []
+    await expect(
+      streamRun('graph-1', {}, (event) => events.push(event)),
+    ).rejects.toBeInstanceOf(RunCancelledError)
+    expect(events.map((event) => event.type)).toEqual(['node_start', 'cancelled'])
+  })
+
+  it('debug_log 帧转发给 onEvent 且不暂停、运行正常完成', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        sseResponse([
+          { type: 'debug_log', node_id: 'tool-1', hits: 2, message: '到达退款节点' },
+          resultFrame,
+        ]),
+      ),
+    )
+    const events: RunEvent[] = []
+    const result = await streamRun('graph-1', {}, (event) => events.push(event))
+    expect(events[0].type).toBe('debug_log')
+    if (events[0].type === 'debug_log') {
+      expect(events[0].hits).toBe(2)
+      expect(events[0].message).toBe('到达退款节点')
+    }
+    expect(result.id).toBe('graph-1')
+  })
+})
+
+describe('B 包 resumeDebug globals 覆盖（docs/27 §4.3，U137）', () => {
+  it('带 globals 时请求体含 globals，不带时不含', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ token: 'dbg-1', action: 'continue' }))
+    vi.stubGlobal('fetch', fetchMock)
+    await resumeDebug('dbg-1', 'continue', { amount: 9999 })
+    let init = fetchMock.mock.calls[0][1] as RequestInit
+    expect(JSON.parse(init.body as string)).toEqual({ action: 'continue', globals: { amount: 9999 } })
+
+    fetchMock.mockClear()
+    await resumeDebug('dbg-1', 'stop')
+    init = fetchMock.mock.calls[0][1] as RequestInit
+    expect(JSON.parse(init.body as string)).toEqual({ action: 'stop' })
+  })
+})
+
+describe('B 包 cancelActiveRun 协作式急停（docs/27 §4.1，U134）', () => {
+  it('命中本图在途 run 时 POST cancel 并返回 runId', async () => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/api/runs?limit=50')) {
+        return jsonResponse({
+          items: [
+            { runId: 'run-old', graphId: 'other', status: 'completed' },
+            { runId: 'run-1', graphId: 'graph-1', status: 'running' },
+          ],
+        })
+      }
+      if (url.endsWith('/api/runs/run-1/cancel')) {
+        expect(init?.method).toBe('POST')
+        return jsonResponse({ run_id: 'run-1', cancelled: true })
+      }
+      throw new Error(`unexpected url ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await cancelActiveRun('graph-1')
+    expect(result).toEqual({ runId: 'run-1' })
+  })
+
+  it('suspended（wait 阻塞中）的在途 run 也可取消', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) =>
+        url.endsWith('/api/runs?limit=50')
+          ? jsonResponse({ items: [{ runId: 'run-2', graphId: 'graph-1', status: 'suspended' }] })
+          : jsonResponse({ run_id: 'run-2', cancelled: true }),
+      ),
+    )
+    expect(await cancelActiveRun('graph-1')).toEqual({ runId: 'run-2' })
+  })
+
+  it('无本图在途 run 返回 null（不调用 cancel）', async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ items: [{ runId: 'run-3', graphId: 'graph-1', status: 'completed' }] }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    expect(await cancelActiveRun('graph-1')).toBeNull()
+    expect(fetchMock.mock.calls).toHaveLength(1)
   })
 })
