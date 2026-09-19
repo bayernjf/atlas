@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
@@ -52,8 +52,11 @@ from atlas.monitoring import RUN_RING_SIZE, extract_business, extract_node_resul
 from atlas.recording import (
     RecordingCreateRequest,
     collect_steps,
+    collect_subgraph_snapshots,
     compare as compare_recording,
+    inline_first_resolver,
     preset_approvals,
+    report_to_csv,
     run_release_gate,
 )
 from atlas.routing import (
@@ -449,6 +452,39 @@ def get_graph_release_report(
     return report
 
 
+@app.get("/api/graphs/{graph_id}/release-reports/{report_id}/export")
+def export_graph_release_report(
+    graph_id: str,
+    report_id: str,
+    format: Literal["csv", "json"] = "csv",
+    principal: Principal = Depends(require("read")),
+):
+    """导出报告为 CSV/JSON 下载（D26 报告导出；read 角色；404 口径同详情端点，03 release_report）。"""
+    services = services_for(principal)
+    if services.graph_store.get(graph_id) is None and not services.graph_store.list_versions(graph_id):
+        raise HTTPException(status_code=404, detail=f"Graph 不存在：{graph_id}")
+    report = services.report_store.get(graph_id, report_id)
+    if report is None:
+        raise HTTPException(
+            status_code=404, detail=f"发布报告不存在：{graph_id}/{report_id}"
+        )
+    if format == "json":
+        return JSONResponse(
+            report,
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f'attachment; filename="{report_id}.json"'
+            },
+        )
+    # UTF-8 BOM 让 Excel 直接识别中文表头（零新依赖，stdlib csv 渲染见 reports.report_to_csv）。
+    csv_text = report_to_csv(report)
+    return Response(
+        content="\ufeff" + csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{report_id}.csv"'},
+    )
+
+
 @app.post("/api/graphs/{graph_id}/publish", response_model=PublishGraphResponse)
 def publish_graph(
     graph_id: str,
@@ -640,6 +676,14 @@ def create_recording(
     raw = services.graph_store.get(request.graph_id)
     if raw is None:
         raise HTTPException(status_code=404, detail=f"Graph 不存在：{request.graph_id}")
+
+    def _fetch_subgraph_raw(ref: str):
+        # 与 _tenant_graph_resolver 同口径：graphId 可为 `graph-7@3` 钉版。
+        ref_id, _, version = ref.partition("@")
+        release_version = int(version) if version else None
+        return services.graph_store.get(ref_id, release_version)
+
+    subgraphs = collect_subgraph_snapshots(raw, fetch_raw=_fetch_subgraph_raw)
     case = services.recording_store.add(
         name=request.name,
         graph_id=request.graph_id,
@@ -647,6 +691,7 @@ def create_recording(
         inputs=request.inputs,
         steps=request.steps,
         status=request.status,
+        subgraphs=subgraphs,
     )
     return case.model_dump()
 
@@ -721,7 +766,9 @@ def replay_recording(
             approval_broker=services.approval_broker,
             graph_id=f"replay-{case.id}",
             emit=emit,
-            graph_resolver=_tenant_graph_resolver(services),
+            graph_resolver=inline_first_resolver(
+                case.subgraphs, _tenant_graph_resolver(services)
+            ),
         )
         replay_steps = take_steps()
         tools_by_node = {

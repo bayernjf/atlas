@@ -173,6 +173,8 @@ export type RefValidationContext = {
   selfId: string
   scope: ScopeIndex
   toolOutputSchemas?: Record<string, JsonSchema>
+  /** D30：工具入参 schema 表，供 REF_TYPE_MISMATCH 类型比对的期望类型。 */
+  toolInputSchemas?: Record<string, JsonSchema>
   /** M8：卡片 id → 只读 binding 模板串，供审批卡 bindings 的 L2 校验。 */
   cardBindings?: CardBindings
 }

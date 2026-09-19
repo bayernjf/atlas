@@ -748,6 +748,33 @@ export async function getReleaseReport(
   return request(`/api/graphs/${graphId}/release-reports/${reportId}`)
 }
 
+/** D26 报告导出：浏览器下载 CSV/JSON（attachment，read 角色；404 口径同详情）。 */
+export async function exportReleaseReport(
+  graphId: string,
+  reportId: string,
+  format: 'csv' | 'json',
+): Promise<void> {
+  const headers = new Headers()
+  const token = getToken()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  const response = await fetch(
+    `/api/graphs/${graphId}/release-reports/${reportId}/export?format=${format}`,
+    { headers },
+  )
+  if (!response.ok) {
+    throw new Error(`报告导出失败：${response.status}`)
+  }
+  const blob = await response.blob()
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = `${reportId}.${format}`
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(url)
+}
+
 /**
  * 发布 latest 草稿为不可变版本。gate=true 先跑批量回放门禁：
  * blocked → 抛 GateBlockedError（携带报告、不产版本）；total=0 skipped 不阻塞。

@@ -172,3 +172,48 @@ def test_parallel_dynamic_result_and_subgraph_outputs_deep_pass():
         ],
     )
     compile_graph(parse_graph(raw), registry=build_demo_registry())
+
+
+def _loop_graph(continue_expression: str, body_params: str = "{}") -> dict:
+    nodes = [
+        _trigger(),
+        {
+            "id": "loop-1",
+            "type": "loop",
+            "name": "循环",
+            "config": {
+                "mode": "while",
+                "continueExpression": continue_expression,
+                "maxIterations": 10,
+                "bodyTarget": "tool-body",
+                "exitTarget": "tool-exit",
+            },
+        },
+        _tool("tool-body", "shop/list_pending_refunds", body_params),
+        _tool("tool-exit", "message/send"),
+    ]
+    edges = [
+        {"id": "e1", "source": "trigger-1", "target": "loop-1"},
+        {"id": "e2", "source": "loop-1", "target": "tool-body"},
+        {"id": "e3", "source": "tool-body", "target": "loop-1"},
+        {"id": "e4", "source": "loop-1", "target": "tool-exit"},
+    ]
+    return _chain(*nodes, edges=edges)
+
+
+def test_data_dependency_cycle_loop_condition_referencing_body_rejected():
+    # loop 条件引用体内节点输出，体内节点又引用 loop.index → 数据环
+    # （拓扑回边合法、被 GRAPH_ILLEGAL_CYCLE 豁免；首轮条件求值时体内尚无输出）。
+    raw = _loop_graph(
+        "{{tool-body.result}}",
+        '{"idx":"{{loop-1.index}}"}',
+    )
+    message = _compile_error(raw)
+    assert "GRAPH_DATA_CYCLE" in message
+    assert "loop-1" in message and "tool-body" in message
+
+
+def test_loop_self_index_reference_is_not_a_data_cycle():
+    # 合法基线：条件只引用自身 index、体内引用 loop.index，不构成数据环。
+    raw = _loop_graph("{{loop-1.index}} < 3", '{"idx":"{{loop-1.index}}"}')
+    compile_graph(parse_graph(raw), registry=build_demo_registry())

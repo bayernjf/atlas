@@ -124,3 +124,52 @@ class ReportStore:
         with self._lock:
             self._items.clear()
             self._counter = 0
+
+
+# --- D26 报告导出（CSV；JSON 直接用 model_dump，端点加 attachment 头）-------------
+
+_TRIGGER_ZH = {"manual": "手动门禁", "publish-gate": "发布门禁"}
+
+
+def _bool_zh(value: Any) -> str:
+    return "是" if bool(value) else "否"
+
+
+def report_to_csv(report: dict[str, Any]) -> str:
+    """把报告详情渲染为 CSV 文本（UTF-8，无 BOM；端点按需加 BOM 供 Excel 识别中文）。
+
+    上半段为报告元信息（键,值），空行分隔后为逐用例结果表。stdlib csv，零新依赖。
+    pass_rate 为 0–1 小数，展示为百分比；total=0（未覆盖）显「未覆盖」。
+    """
+    import csv
+    import io
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+
+    pass_rate = report.get("pass_rate")
+    pass_rate_text = f"{pass_rate * 100:.2f}%" if isinstance(pass_rate, (int, float)) else "未覆盖"
+    writer.writerow(["报告ID", report.get("id", "")])
+    writer.writerow(["图ID", report.get("graph_id", "")])
+    writer.writerow(["目标", report.get("target", "draft")])
+    writer.writerow(["触发方式", _TRIGGER_ZH.get(report.get("trigger"), report.get("trigger", ""))])
+    writer.writerow(["生成时间(UTC)", report.get("created_at", "")])
+    writer.writerow(["用例总数", report.get("total", 0)])
+    writer.writerow(["通过", report.get("passed", 0)])
+    writer.writerow(["失败", report.get("failed", 0)])
+    writer.writerow(["无用例跳过", _bool_zh(report.get("skipped"))])
+    writer.writerow(["阻塞发布", _bool_zh(report.get("blocked"))])
+    writer.writerow(["通过率", pass_rate_text])
+    writer.writerow([])
+    writer.writerow(["用例ID", "用例名", "是否匹配", "回放状态", "备注"])
+    for row in report.get("cases", []):
+        writer.writerow(
+            [
+                row.get("case_id", ""),
+                row.get("name", ""),
+                _bool_zh(row.get("matches")),
+                row.get("replay_status", ""),
+                row.get("note") or "",
+            ]
+        )
+    return buffer.getvalue()

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   GateBlockedError,
+  exportReleaseReport,
   getReleaseReport,
   getRollout,
   listReleaseReports,
@@ -146,6 +147,34 @@ describe('D26 报告 v1：历史报告端点（U60 ⑧）', () => {
     expect(vi.mocked(fetch).mock.calls[0][0]).toBe(
       '/api/graphs/graph-1/release-reports/rr-2',
     )
+  })
+
+  it('exportReleaseReport 拉取 blob 并触发 a[download] 点击（CSV）', async () => {
+    const blob = new Blob(['csv'], { type: 'text/csv' })
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, blob: async () => blob })))
+    const createObjectURL = vi.fn(() => 'blob:mock')
+    const revokeObjectURL = vi.fn()
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL })
+    const click = vi.fn()
+    const anchor = { href: '', download: '', click, remove: vi.fn() }
+    vi.stubGlobal('document', {
+      body: { appendChild: vi.fn() },
+      createElement: () => anchor,
+    })
+
+    await exportReleaseReport('graph-1', 'rr-2', 'csv')
+
+    expect(vi.mocked(fetch).mock.calls[0][0]).toBe(
+      '/api/graphs/graph-1/release-reports/rr-2/export?format=csv',
+    )
+    expect(createObjectURL).toHaveBeenCalledTimes(1)
+    expect(click).toHaveBeenCalledTimes(1)
+    expect(anchor.download).toBe('rr-2.csv')
+  })
+
+  it('exportReleaseReport 非 2xx 拒绝（不触发下载）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404, blob: async () => new Blob([]) })))
+    await expect(exportReleaseReport('graph-1', 'rr-x', 'json')).rejects.toThrow('404')
   })
 })
 

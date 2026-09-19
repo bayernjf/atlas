@@ -10,7 +10,7 @@
 import { useEffect, useLayoutEffect, useRef } from 'react'
 import { useEditorStore } from '../../store/editorStore'
 import { useValidationStore } from '../../store/validationStore'
-import { useCardBindings, useToolOutputSchemas } from '../useScope'
+import { useCardBindings, useToolInputSchemas, useToolOutputSchemas } from '../useScope'
 import type { ScopeEdgeLike, ScopeNodeLike } from '../scope'
 import { ValidationEngine, type EngineNode, type EngineNodeData } from './engine'
 import { topologicalOrder } from './validateGraph'
@@ -57,6 +57,7 @@ export function useValidationEngine(): void {
   const edges = useEditorStore((state) => state.edges)
   const variables = useEditorStore((state) => state.variables)
   const toolOutputSchemas = useToolOutputSchemas()
+  const toolInputSchemas = useToolInputSchemas()
   const cardBindings = useCardBindings()
 
   const engineRef = useRef<ValidationEngine | null>(null)
@@ -65,6 +66,10 @@ export function useValidationEngine(): void {
   useEffect(() => {
     schemasRef.current = toolOutputSchemas
   }, [toolOutputSchemas])
+  const inputSchemasRef = useRef(toolInputSchemas)
+  useEffect(() => {
+    inputSchemasRef.current = toolInputSchemas
+  }, [toolInputSchemas])
   const cardBindingsRef = useRef(cardBindings)
   useEffect(() => {
     cardBindingsRef.current = cardBindings
@@ -112,6 +117,7 @@ export function useValidationEngine(): void {
         dataById,
         dueL2,
         schemasRef.current,
+        inputSchemasRef.current,
         cardBindingsRef.current,
       )
       if (updated.length > 0) {
@@ -174,6 +180,7 @@ export function useValidationEngine(): void {
         dataById,
         store.nodes.map((node) => node.id),
         toolOutputSchemas,
+        toolInputSchemas,
         cardBindings,
       )
       if (updated.length > 0) {
@@ -184,5 +191,5 @@ export function useValidationEngine(): void {
       }
     }, L2_DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
-  }, [toolOutputSchemas, cardBindings])
+  }, [toolOutputSchemas, toolInputSchemas, cardBindings])
 }

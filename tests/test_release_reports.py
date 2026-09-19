@@ -325,3 +325,71 @@ def test_reset_clears_reports_and_counter():
     assert store.list_summary("graph-a") == []
     again = store.record(graph_id="graph-a", trigger="manual", report=_gate_report(1, 1))
     assert again["id"] == "rr-1"  # 计数归零
+
+
+# ---------- D26 报告导出 CSV/JSON ----------
+
+def test_report_to_csv_renders_meta_header_and_case_rows():
+    from atlas.recording.reports import report_to_csv
+
+    store = ReportStore()
+    saved = store.record(graph_id="graph-a", trigger="manual", report=_gate_report(2, 1))
+    csv_text = report_to_csv(saved)
+
+    assert "报告ID" in csv_text and saved["id"] in csv_text
+    assert "触发方式" in csv_text and "手动门禁" in csv_text
+    assert "通过率" in csv_text and "50.00%" in csv_text  # 1/2
+    assert "用例ID,用例名,是否匹配,回放状态,备注" in csv_text
+    assert "rec-0" in csv_text and "全部节点一致" in csv_text
+    # 逐例匹配结果布尔中文化：1 通过（是）+ 1 不通过（否）
+    assert "rec-0,用例 0,是,succeeded" in csv_text
+    assert "rec-1,用例 1,否,succeeded" in csv_text
+
+
+def test_report_to_csv_marks_uncovered_when_no_cases():
+    from atlas.recording.reports import report_to_csv
+
+    store = ReportStore()
+    saved = store.record(graph_id="graph-a", trigger="publish-gate", report=_gate_report(0, 0))
+    csv_text = report_to_csv(saved)
+    assert "未覆盖" in csv_text
+    assert "发布门禁" in csv_text
+
+
+def test_export_report_csv_and_json_endpoints():
+    graph_id, _ = _make_graph_with_cases(case_count=1)
+    rid = client.post(f"/api/graphs/{graph_id}/release-gate").json()["id"]
+
+    csv_resp = client.get(f"/api/graphs/{graph_id}/release-reports/{rid}/export?format=csv")
+    assert csv_resp.status_code == 200, csv_resp.text
+    assert csv_resp.headers["content-type"].startswith("text/csv")
+    assert f'attachment; filename="{rid}.csv"' in csv_resp.headers["content-disposition"]
+    assert csv_resp.content.startswith(b"\xef\xbb\xbf")  # UTF-8 BOM（Excel 中文）
+    assert rid in csv_resp.content.decode("utf-8-sig")
+
+    json_resp = client.get(f"/api/graphs/{graph_id}/release-reports/{rid}/export?format=json")
+    assert json_resp.status_code == 200
+    assert json_resp.headers["content-type"].startswith("application/json")
+    assert f'attachment; filename="{rid}.json"' in json_resp.headers["content-disposition"]
+    exported = json_resp.json()
+    assert exported["id"] == rid and len(exported["cases"]) == 1
+
+
+def test_export_report_defaults_to_csv_and_validates_format():
+    graph_id, _ = _make_graph_with_cases(case_count=0)
+    rid = client.post(f"/api/graphs/{graph_id}/release-gate").json()["id"]
+
+    default = client.get(f"/api/graphs/{graph_id}/release-reports/{rid}/export")
+    assert default.status_code == 200
+    assert default.headers["content-type"].startswith("text/csv")  # 默认 csv
+
+    bad = client.get(f"/api/graphs/{graph_id}/release-reports/{rid}/export?format=xlsx")
+    assert bad.status_code == 422  # format 仅 csv/json
+
+
+def test_export_report_404_scoped_like_detail():
+    graph_id, _ = _make_graph_with_cases(case_count=0)
+    # 报告不存在
+    assert client.get(f"/api/graphs/{graph_id}/release-reports/rr-999/export").status_code == 404
+    # 图不存在
+    assert client.get("/api/graphs/graph-ghost/release-reports/rr-1/export").status_code == 404

@@ -378,6 +378,7 @@ describe('M8 ai_decision decision 白名单与审批卡 bindings L2', () => {
       'human_approval',
       { summary: '纯文本说明', cardTemplateId: 'refund-approval' },
       undefined,
+      undefined,
       cardBindings,
     )
     expect(diagnostics).toHaveLength(1)
@@ -398,7 +399,7 @@ describe('M8 ai_decision decision 白名单与审批卡 bindings L2', () => {
     ).toEqual([])
     const cardBindings = new Map<string, string[]>([['refund-approval', ['{{ghost-1.x}}']]])
     expect(
-      scope.validateRefsAt('human-1', 'human_approval', { summary: 's' }, undefined, cardBindings),
+      scope.validateRefsAt('human-1', 'human_approval', { summary: 's' }, undefined, undefined, cardBindings),
     ).toEqual([])
   })
 
@@ -409,5 +410,106 @@ describe('M8 ai_decision decision 白名单与审批卡 bindings L2', () => {
     const paths = scope.listPathsAt('tool-1')
     expect(paths).toContain('human-1.comment')
     expect(paths).toContain('human-1.card')
+  })
+})
+
+describe('D30 REF_TYPE_MISMATCH 标量类型比对（warning，tool→tool 单模板叶子）', () => {
+  const outputSchema: JsonSchema = {
+    type: 'object',
+    properties: {
+      count: { type: 'integer' },
+      ratio: { type: 'number' },
+      name: { type: 'string' },
+      active: { type: 'boolean' },
+      tags: { type: 'array', items: { type: 'string' } },
+      meta: { type: 'object', properties: { x: { type: 'string' } } },
+    },
+  }
+  const inputSchema: JsonSchema = {
+    type: 'object',
+    properties: {
+      amount: { type: 'number' },
+      qty: { type: 'integer' },
+      title: { type: 'string' },
+      enabled: { type: 'boolean' },
+      items: { type: 'array', items: { type: 'string' } },
+      meta: { type: 'object' },
+    },
+  }
+  const outSchemas: Record<string, JsonSchema> = { 'src/get': outputSchema }
+  const inSchemas: Record<string, JsonSchema> = { 'dst/set': inputSchema }
+
+  function diagnose(params: string) {
+    const nodes = [
+      node('trigger-1', 'trigger'),
+      node('tool-src', 'tool_call', { tool: 'src/get', params: '{}' }),
+      node('tool-dst', 'tool_call', { tool: 'dst/set', params }),
+    ]
+    const edges = [edge('trigger-1', 'tool-src'), edge('tool-src', 'tool-dst')]
+    const scope = buildScopeIndex(nodes, edges, [])
+    return scope.validateRefsAt('tool-dst', 'tool_call', { tool: 'dst/set', params }, outSchemas, inSchemas)
+  }
+  const mismatch = (params: string) =>
+    diagnose(params).filter((d) => d.code === 'REF_TYPE_MISMATCH')
+
+  it('同标量类型不报（string←string / integer←integer）', () => {
+    expect(mismatch('{"title":"{{tool-src.result.name}}"}')).toHaveLength(0)
+    expect(mismatch('{"qty":"{{tool-src.result.count}}"}')).toHaveLength(0)
+  })
+
+  it('期望 number 接受 integer 源（integer 是 number 子类型）', () => {
+    expect(mismatch('{"amount":"{{tool-src.result.count}}"}')).toHaveLength(0)
+  })
+
+  it('期望 integer 不接受 number 源（可能带小数）→ warning', () => {
+    const d = mismatch('{"qty":"{{tool-src.result.ratio}}"}')
+    expect(d).toHaveLength(1)
+    expect(d[0].severity).toBe('warning')
+    expect(d[0].loc.pointer).toBe('/params')
+    expect(d[0].message).toContain('integer')
+  })
+
+  it('string 期望给 integer/boolean 源 → warning', () => {
+    expect(mismatch('{"title":"{{tool-src.result.count}}"}')[0]?.severity).toBe('warning')
+    expect(mismatch('{"enabled":"{{tool-src.result.name}}"}')[0]?.code).toBe('REF_TYPE_MISMATCH')
+  })
+
+  it('object/array 末端不参与标量比对，放行（控误报）', () => {
+    expect(mismatch('{"meta":"{{tool-src.result.meta}}"}')).toHaveLength(0)
+    expect(mismatch('{"items":"{{tool-src.result.tags}}"}')).toHaveLength(0)
+  })
+
+  it('拼接串（值不是单个完整模板）无法静态定型，放行', () => {
+    expect(mismatch('{"title":"编号-{{tool-src.result.name}}"}')).toHaveLength(0)
+  })
+
+  it('缺 input schema 或缺 output schema 时降级为仅存在性，不报类型', () => {
+    const nodes = [
+      node('trigger-1', 'trigger'),
+      node('tool-src', 'tool_call', { tool: 'src/get', params: '{}' }),
+      node('tool-dst', 'tool_call', { tool: 'unknown/tool', params: '{"x":"{{tool-src.result.count}}"}' }),
+    ]
+    const edges = [edge('trigger-1', 'tool-src'), edge('tool-src', 'tool-dst')]
+    const scope = buildScopeIndex(nodes, edges, [])
+    // viewer 工具无 input schema → 放行
+    expect(
+      scope.validateRefsAt('tool-dst', 'tool_call', nodes[2].config as Record<string, unknown>, outSchemas, inSchemas)
+        .filter((d) => d.code === 'REF_TYPE_MISMATCH'),
+    ).toHaveLength(0)
+    // provider output 无 schema（工具不在 outSchemas）→ actual 不可判定，放行
+    const nodes2 = [
+      node('trigger-1', 'trigger'),
+      node('tool-src', 'tool_call', { tool: 'ghost/src', params: '{}' }),
+      node('tool-dst', 'tool_call', { tool: 'dst/set', params: '{"title":"{{tool-src.result.whatever}}"}' }),
+    ]
+    const scope2 = buildScopeIndex(nodes2, edges, [])
+    expect(
+      scope2.validateRefsAt('tool-dst', 'tool_call', nodes2[2].config as Record<string, unknown>, outSchemas, inSchemas)
+        .filter((d) => d.code === 'REF_TYPE_MISMATCH'),
+    ).toHaveLength(0)
+  })
+
+  it('params 非合法 JSON 时降级放行（结构问题由 L1/保存校验承接）', () => {
+    expect(mismatch('{"title":')).toHaveLength(0)
   })
 })
