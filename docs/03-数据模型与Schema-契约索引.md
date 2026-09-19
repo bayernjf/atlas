@@ -868,7 +868,7 @@ amount_diff: boolean          # 两者皆在且不等
 ```
 > demo shop 不返回退款金额，沙盘现状 refund_amount_diff_rate 恒为 0：**门控机制与阈值先行、真实金额字段随正式 shop 接入**；不改造 demo shop、不碰录制归一化（避免破坏黄金用例比对）。自动回滚不改外部已发生事实（已退款不可逆，切流只影响新流量）。
 
-### `memory_item` — 字段概览（**M11 立项 2026-09-19，docs-only 未开工**；权威＝docs/26 + 10 ADR T23，落码承载 `src/atlas/memory/{models,embeddings,items}.py`、`storage` MemoryRepository）
+### `memory_item` — 字段概览（**M11 已落码收口 2026-09-19**，commit `5441902`/`73e53bd`；权威＝docs/26 + 10 ADR T23，承载 `src/atlas/memory/{models,embeddings,items,adapter}.py`、`storage` MemoryRepository/PgMemoryStore）
 
 ```yaml
 # 统一记忆条目（fact/preference 以 kind 区分；进程内为 dict、PG memory_items 一行）
@@ -879,12 +879,12 @@ scope: {string: string}         # 业务绑定（如 user_id/order_id），缺�
 confidence: number              # 0-1，缺省 1.0（自动提取 <1 随 D35 缓做）
 source: "tool" | "manual" | "run"   # 缺省 tool；v1 仅经工具写
 metadata: object                # 附加信息，缺省 {}（PG 列名 meta，JSONB）
-created_at: string              # UTC ISO-8601；v1 不可变（只追加/删，无 update）
+created_at: string              # UTC ISO-8601；两档均 TEXT 存 Python ISO 字符串（对齐迁移 002）；v1 不可变（只追加/删，无 update）
 # embedding: number[256]        # 内部字段，LocalDeterministicEmbedder 产出，不进 API 响应
 ```
-> 第九个 Repository `MemoryRepository`（remember/recall/list/delete/clear，RESET_RESETTABLE）：进程内 `MemoryStore` + PG/pgvector `PgMemoryStore` 两档，租户分区（构造期注入 tenant_id，不进方法签名/资源 JSON）。`EmbeddingProvider` Protocol + 本地确定性 embedder（EMBED_DIM=256、signed hashing、中文 unigram+bigram、纯 stdlib、离线且回放确定；商业 embedding 缓做 D35）；PG 迁移 `006_memory.sql` vector(256)、`embedding <=> :q::vector(256)` 余弦、`scope @> :scope::jsonb` 子集。本地词法向量只验证机制与接缝、非真实语义。权威设计见 docs/26 §2–§4。
+> 第九个 Repository `MemoryRepository`（remember/recall/list/delete/clear，RESET_RESETTABLE）：进程内 `MemoryStore` + PG/pgvector `PgMemoryStore` 两档，租户分区（构造期注入 tenant_id，不进方法签名/资源 JSON）。`EmbeddingProvider` Protocol + 本地确定性 embedder（EMBED_DIM=256、signed hashing、中文 unigram+bigram、纯 stdlib、离线且回放确定；商业 embedding 缓做 D35）；PG 迁移 `006_memory.sql` vector(256)+ivfflat(lists=100)、`embedding <=> CAST(:q AS vector(256))` 余弦（score=1−distance）、`scope @> CAST(:scope AS jsonb)` 子集（SQLAlchemy text() 中 `:p::type` 与绑定参数冲突，故用 CAST）。本地词法向量只验证机制与接缝、非真实语义。权威设计见 docs/26 §2–§4。
 
-### `memory_remember` / `memory_recall` — 工具契约（**M11 立项 2026-09-19，docs-only 未开工**；`memory` Harness 适配器，adapter_id/type="memory"；零新节点、零 DSL/编译器改动）
+### `memory_remember` / `memory_recall` — 工具契约（**M11 已落码收口 2026-09-19**，commit `58d936c`；`memory` Harness 适配器，adapter_id/type="memory"；零新节点、零 DSL/编译器改动；图接入须把 `memory` 加入 loader GENERIC_JSON_ADAPTERS）
 
 ```yaml
 # 能力 memory/remember（action=memory_remember，permission=write，非幂等）
@@ -896,4 +896,4 @@ input:  {query: string（必填，支持 {{变量}}）, kind?: enum[fact,prefere
          scope?: {string:string}, top_k?: int 1-20=5, min_score?: number 0-1=0}
 output: {results: [{id, kind, content, score: number, confidence, scope, created_at}]}  # 无命中 results=[]
 ```
-> 走现有 tool_call/harness 链路（params 由 M3 FormRenderer 按 input_schema 自动生成、M2 变量补全零额外）；schema 守 Capability keyword 白名单（无 x- 扩展）。装配照 message 两段式：全局注册仅供发现，`_runtime_registry` 按租户克隆注入 `services.memory_store`。REST：`GET /api/memories`（viewer+，kind 过滤）、`GET /api/memories/search?q=`（viewer+，q 空 422）、`DELETE /api/memories/{id}`（**admin**，跨租户 404）；**写入不开 REST**（只走图工具）。docs/12 原 `GET/PUT /api/memories/{operator_id}` 据此订正为按租户、operator 降为 `scope.user_id`。working/summary/case 层、自动提取、决策隐式注入、PII/更新策略均缓做（D35）。
+> 走现有 tool_call/harness 链路（params 由 M3 FormRenderer 按 input_schema 自动生成、M2 变量补全零额外）；schema 守 Capability keyword 白名单（无 x- 扩展）。装配照 message 两段式：全局注册仅供发现，`_runtime_registry` 按租户克隆注入 `services.memory_store`。REST：`GET /api/memories`（viewer+，kind 过滤）、`GET /api/memories/search?q=`（viewer+，q 空 422）、`DELETE /api/memories/{id}`（**admin**，跨租户 404）；**写入不开 REST**（只走图工具）。docs/12 原 `GET/PUT /api/memories/{operator_id}` 据此订正为按租户、operator 降为 `scope.user_id`。错误码：repo 缺省的发现实例执行期返 `MEMORY_NOT_CONFIGURED`、入参校验失败折 `MEMORY_INVALID_INPUT`；tool_call 成功后节点输出包一层 `{"result": <工具 output>, "action_status": "SUCCESS"}`。working/summary/case 层、自动提取、决策隐式注入、PII/更新策略均缓做（D35）。

@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### feat(memory)：M11 记忆 / 长期上下文落码收口——统一记忆条目 + 本地确定性向量 + remember/recall 工具 + 进程内/PG 两档 + 前端记忆页（2026-09-19，四批原子提交，U72–U99 转正式）
+
+- 形状权威 docs/26、ADR T23（四决策均用户拍板推荐项）；docs-only 立项后四批原子落码，零新 Python/前端依赖（embedder 纯 stdlib re/hashlib/math），不新增 ADR，**不解除 D35**。
+- **批 1 `5441902` 进程内内核（U72–U83 18 测）**：`memory/models.py`（MemoryItem pydantic、fact/preference、content 1–2000、confidence 0–1、top_k 1–20、scope/metadata 限 dict[str,str]、validate_remember/recall_params）、`memory/embeddings.py`（EMBED_DIM=256、LocalDeterministicEmbedder signed hashing：英文数字 `[a-z0-9]+` + 中文 unigram/bigram、md5 分桶奇偶定号、L2 归一、空文本零向量、cosine、get_embedding_provider 工厂 v1 恒 local 且非 local fail-closed）、`memory/items.py`（MemoryStore 租户计数 mem-N、remember/recall/list/delete/clear、scope 子集匹配）；storage 加第九个 MemoryRepository Protocol（RESET_RESETTABLE）。实测：无共享 token 时哈希碰撞可产生小**负**余弦（约 −0.113，|c|<0.2），默认 min_score=0 过滤，已回填 docs/26 §3.2。
+- **批 2 `58d936c` 适配器 + REST（U84–U92 10 测 + m11_smoke）**：`memory/adapter.py` MemoryHarnessAdapter（remember=WRITE 非幂等、recall=READ 幂等、schema 全走白名单 keyword、repo 缺省执行返 MEMORY_NOT_CONFIGURED、校验失败折 MEMORY_INVALID_INPUT）；registry TenantServices 接 memory_store 两档 + reset 清空；api/main 三 REST 端点（GET /api/memories、GET /api/memories/search、DELETE /api/memories/{id} admin，无 POST/PUT）；关键：memory 加入 graph/loader.py GENERIC_JSON_ADAPTERS，否则 tool_call params 不透传。
+- **批 3 `73e53bd` PG/pgvector（U93–U96 4 集成测）**：迁移 006 memory_items（id/tenant_id 复合主键、embedding vector(256)、scope/meta JSONB、ivfflat lists=100 空表建索引 pg16 实测成功、created_at **TEXT** 存 Python ISO 串对齐 002）；storage/pg.py PgMemoryStore（Python 算 embedding、向量 `<=>` CAST、scope `@>`、score=1−distance、min_score 在 SQL 内过滤）；SQLAlchemy text() 中 `:p::type` 与绑定参数冲突，统一 CAST(:p AS vector(256)/jsonb)。本地 Docker atlas-pg 两档对拍 content 顺序与 score（0.434524）一致。
+- **批 4 `75c4150` 前端记忆页（U97–U98 13 vitest + U99 浏览器）**：apiClient listMemories/searchMemories/deleteMemory；lib/memory.ts kind 标签/颜色·score/confidence/scope/时间纯函数；pages/Memory.tsx（语义搜索 score 进度条降序、记忆列表 kind 筛选、admin Popconfirm 删除、viewer 无操作列、顶部「本地词法向量非真实语义」提示）；Dashboard/App 入口。浏览器冒烟两角色、3 截图 docs/assets/m11-memory-*.png、零应用错误。
+- 收口门：后端 **673 passed/17 skipped**（给 DATABASE_URL+ATLAS_RUN_INTEGRATION 时 PG 套件 9 passed）、前端 **449 passed/2 skipped（37 文件）**、tsc+vite build 过、oxlint 0 error（基线 2 warning）、m11_smoke 进程内档与 PG 档全过、d26_smoke 24 断言零回归。同步面：docs/26 顶部落码注记 + §3.2/§4.4、03 memory_item/remember/recall、08 落码收口条、09 memory 包、12 §4.1/§5、13 U72–U99、14 D35、00 文档地图、README。
+
 ### feat(conditions/loop/parallel/validation/editor)：A+B 打包落码收口——表达式函数库 + loop break/continue + parallel any_success，parallel.result/subgraph.outputs 作用域 + 改节点 id 联动（2026-09-19，立项 docs-only `646ca79` 后六项原子序 + build 修复，U66–U71 转正式）
 
 - Phase 2 运行时语义三项（A 组，stdlib/纯引擎，改运行语义已重跑录制回放黄金用例零回归）与 D30 变量作用域余部三项（B 组，纯前端 L2/quickFix + 后端编译期权威门）一次打包；零新依赖、不新增 ADR、**不解除 D15/D17/D18/D30**。三处语义分叉经用户拍板（均取推荐项）：any_success 取消语义＝只跳过未开始节点；break/continue＝纯拓扑不新增 DSL 节点类型；subgraph.outputs＝可解析则校验否则降级放行。

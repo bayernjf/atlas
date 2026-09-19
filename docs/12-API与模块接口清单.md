@@ -543,7 +543,7 @@ def evaluate_after_run(services: TenantServices, record: RunRecord) -> None: ...
 
 ## 4. 记忆检索接口（依据 06 6.2 / 05 2.3）
 
-> **M11 实现边界（2026-09-19 立项，docs-only 未开工；权威＝docs/26、ADR T23）**：下列 `memory_retriever.query` 五层分层检索为**愿景**（working Redis / summary / fact pgvector / case / preference + 决策节点隐式注入），v1 不实现，缓做 14 D35。M11 取回的是下方「4.1 M11 长期记忆最小接口」——统一 memory_item（fact/preference）+ 显式 remember/recall 两工具，**不做决策隐式注入**。
+> **M11 实现边界（2026-09-19 已落码收口；权威＝docs/26、ADR T23）**：下列 `memory_retriever.query` 五层分层检索为**愿景**（working Redis / summary / fact pgvector / case / preference + 决策节点隐式注入），v1 不实现，缓做 14 D35。M11 取回的是下方「4.1 M11 长期记忆最小接口」——统一 memory_item（fact/preference）+ 显式 remember/recall 两工具，**不做决策隐式注入**。
 
 ```python
 # 【愿景，缓做 D35】决策节点隐式分层记忆检索（06 §6.2 decide 第 1 步）
@@ -552,7 +552,7 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 #   / fact_memory(pgvector, confidence≥0.85) / case_memory(相似度阈值) / preference_memory
 ```
 
-### 4.1 M11 长期记忆最小接口（docs/26，2026-09-19 立项、未开工）
+### 4.1 M11 长期记忆最小接口（docs/26，2026-09-19 已落码 `5441902`/`58d936c`/`73e53bd`）
 
 ```python
 # src/atlas/memory/embeddings.py（纯 stdlib：re/hashlib/math，不引 numpy；离线、录制回放确定）
@@ -670,7 +670,7 @@ class MemoryRepository(Protocol):
 | GET | /api/feedback | 导出反馈（陪同试用收集用，`{items: [...]}`，Phase 1；2026-09-16 起 **admin only** 且只列本租户，04 §5.14） | feedback_item |
 | GET | /demo/shop | 模拟商家售后控制台 HTML 页面（W9-W10，自动登录/抓取演示目标系统） | — |
 | GET | / 及静态资源 | 生产形态（Docker）FastAPI 同源托管 `frontend/dist` 构建产物（`ATLAS_FRONTEND_DIST` 指向目录时挂载，html=True；dev 仍用 Vite 5174 代理） | — |
-| GET | /api/memories | 【viewer+，M11 立项未开工】列出本租户记忆，query `?kind=fact|preference&limit=`（默认 50、上限 200），返 `{items:[memory_item…]}`，不含 embedding | memory_item |
+| GET | /api/memories | 【viewer+，M11 已落码 `58d936c`】列出本租户记忆，query `?kind=fact|preference&limit=`（默认 50、上限 200），返 `{items:[memory_item…]}`，不含 embedding | memory_item |
 | GET | /api/memories/search | 【viewer+，M11】语义检索，query `?q=&kind=&top_k=&min_score=`；q 空白 → 422；返 `{results:[{…memory_item, score}]}` 按 score 降序 | memory_item |
 | DELETE | /api/memories/{id} | 【**admin only**，M11】删除一条记忆；他租户/不存在 → 404 | memory_item |
 
@@ -704,7 +704,7 @@ evaluation_task:
 - [x] 工具权限枚举：read/write/delete/financial（03 adapter_schema；W3-W4 落码于 `harness/base.py`）
 - [x] 适配器类型枚举：web/api/mobile/desktop/database/iot/message（W3-W4 已用于 `adapter_type` 字段；web 类型已实现；api 类型 2026-09-15 随 `httpapi/` 通用 HTTP 适配器落地，契约 04 §4.6；**database 与 message 类型 2026-09-15 随 `database/`（query/execute 双能力）、`message/`（message/send 进程内 sink）落地，契约 04 §4.7/§4.8**）
 - [ ] 记忆检索分层与 memory_config 阈值（05 2.3）——**愿景，M11 不实现、缓做 D35**（working/summary/case/决策隐式注入）
-- [ ] **M11（2026-09-19 docs-only 立项、未开工，docs/26/ADR T23）**：MemoryItem fact/preference 字段与 EMBED_DIM=256 迁移严格一致；EmbeddingProvider 本地确定性（纯 stdlib、录制回放确定）；MemoryRepository 第九个两档（进程内 / pgvector）remember/recall/list/delete/clear；memory/remember(write)·memory/recall(read) 两能力 schema 过 Capability 白名单；REST `GET /api/memories`、`GET /api/memories/search`（viewer+）+ `DELETE /api/memories/{id}`（admin）、**无 POST/PUT 写入**；reset 清空、跨租户 404
+- [x] **M11（2026-09-19 四批落码收口 `5441902`/`58d936c`/`73e53bd`/`75c4150`，docs/26/ADR T23；U72–U99 转正式）**：MemoryItem fact/preference 字段与 EMBED_DIM=256 迁移严格一致；EmbeddingProvider 本地确定性（纯 stdlib、录制回放确定）；MemoryRepository 第九个两档（进程内 / pgvector）remember/recall/list/delete/clear；memory/remember(write)·memory/recall(read) 两能力 schema 过 Capability 白名单；REST `GET /api/memories`、`GET /api/memories/search`（viewer+）+ `DELETE /api/memories/{id}`（admin）、**无 POST/PUT 写入**；reset 清空、跨租户 404
 - [ ] 评估指标三元组（06 9.2 metrics）
 
 ---
