@@ -520,7 +520,7 @@ describe('editorStore renameNode 重命名联动（D30/B3）', () => {
     expect(state.nodes.some((n) => n.id === 'tool-1')).toBe(false)
     expect(state.nodes.some((n) => n.id === 'tool-z')).toBe(true)
     const cond = state.nodes.find((n) => n.id === 'condition-1')!
-    expect(cond.data.config.branches[0].target).toBe('tool-z')
+    expect(cond.data.config.branches![0].target).toBe('tool-z')
     expect(cond.data.config.defaultTarget).toBe('tool-z')
     const aiNode = state.nodes.find((n) => n.id === 'ai-1')!
     expect(aiNode.data.config.promptTemplate).toBe('{{tool-z.result.a}} {{ tool-z.result.b }}')
