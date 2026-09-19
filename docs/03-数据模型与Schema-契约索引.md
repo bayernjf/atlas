@@ -36,7 +36,7 @@
 | `message_send_params` | 04 / 四、工具/适配器组件 4.8 消息适配器（进程内消息服务）v1 契约（权威 blockquote）+ `src/atlas/message/{service,adapter}.py`（单能力 message/send） | ### 4.8 消息适配器（进程内消息服务）v1 契约 |
 | `template_catalog` | 04 / 五、逻辑组件 5.10 流程模板库（内置只读）v1 契约（权威 blockquote）+ `src/atlas/template/catalog.py`（5 个内置模板元数据与 graph） | ### 5.10 流程模板库（内置只读） |
 | `recording_case` | 04 / 五、逻辑组件 5.11 操作录制与回放 v1 契约（权威 blockquote）+ `src/atlas/recording/{cases,replay,gate,snapshots}.py`（录制用例模型与进程内存储；M9 增 gate 发布前批量回放门禁；D26-b 增 `subgraphs` 快照内联，仅 replay 内联、gate 保持实时，见下行 `release_gate`；C 包 `3415377` 增 `recorded_at` 回放冻结时钟锚点与 today/now/datetime/hoursBetween 时钟函数，权威见 04 §5.1 C 注记） | ### 5.11 操作录制与回放 |
-| `debug_session` | 04 / 五、逻辑组件 5.12 单步调试与断点 v1 契约（权威 blockquote）+ `src/atlas/debug/{sessions,controller}.py`（运行期调试会话、暂停状态机、paused/stopped 帧） | ### 5.12 单步调试与断点 |
+| `debug_session` | 04 / 五、逻辑组件 5.12 单步调试与断点 v1 契约（权威 blockquote）+ `src/atlas/debug/{sessions,controller}.py`（运行期调试会话、暂停状态机、paused/stopped/debug_log 帧、hitCount/logpoint、resume globals 浅合并）+ `src/atlas/collaboration/cancellations.py`（B 包 f9a1301：RunCancelled/RunCancellationBroker 协作式急停、cancelled 帧） | ### 5.12 单步调试与断点 |
 | `monitoring` | 04 / 五、逻辑组件 5.13 基础监控告警 v1 契约（权威 blockquote）+ `src/atlas/monitoring/{records,metrics,alerts,business}.py`（运行记录 ring、指标聚合、规则求值与告警状态机；M9 增业务结果指标与 rollout_gate 告警动作，见下行 `business_metrics`） | ### 5.13 基础监控告警 |
 | `identity_session` | 04 / 五、逻辑组件 5.14 多租户与权限 v1 契约（权威 blockquote）+ `src/atlas/iam/{principals,sessions,registry,deps}.py`（种子租户/账号、Principal、sess- token、按租户服务注册表、Bearer 依赖） | ### 5.14 多租户与权限 |
 | `trace_span` | 04 / 五、逻辑组件 5.15 链路追踪 v1 契约（**M10 已落码 2026-09-18**；权威 blockquote）+ `src/atlas/tracing/`（与 OTel 同形最小 Span/Tracer、contextvars 进程内传播、to_tree 折叠开关） | ### 5.15 链路追踪（span v1） |
@@ -580,6 +580,8 @@ debug:
   breakpoints:
     - node_id: string          # 必须是本图节点（未知 422）
       expression: string?      # 可选，§5.1 白名单表达式；校验失败 422，运行时求值异常 fail-safe 不命中
+      hitCount: int?           # B 包(f9a1301)：正整数 N，每第 N 次命中才暂停（hits%N==0）；缺省=每次命中；非正整数/布尔 422
+      logMessage: string?      # B 包：非空＝日志断点 logpoint，命中只发 debug_log 不暂停（消息原样不插值）；v1 不与 hitCount 组合
 # 启动即 step 模式（每个节点执行前暂停）；断点不进 Graph JSON、会话级。
 # SSE event: paused
 type: "paused"
@@ -590,11 +592,24 @@ reason: "step" | "breakpoint" | "condition"
 globals: object                # 当前全局变量快照（深拷贝，只读）
 outputs: object                # 截至暂停点全部已完成节点终态产出（深拷贝，只读）
 # POST /api/debug/{token}/resume 请求体
-action: "step" | "continue" | "stop"   # step=下一节点再停；continue=关逐节点仅断点停；stop=取消运行
-# SSE event: stopped（无 result 帧）
+action: "step" | "continue" | "stop"   # step=下一节点再停；continue=关逐节点仅断点停；stop=取消运行（忽略 globals）
+globals: object?                       # B 包(f9a1301)：仅 action=step/continue；global 顶层键浅合并覆盖（dict 值整体替换、不深 merge、不删未提供键）；键名 ^[A-Za-z_][A-Za-z0-9_]*$、值 JSON 可序列化，非法 422
+# SSE event: stopped（无 result 帧；调试流急停也折叠为此帧，不另发 cancelled）
 type: "stopped"
 node_id: string
 reason: "user_stop"
+# SSE event: debug_log（B 包，仅调试流；logpoint 命中，不暂停）
+type: "debug_log"
+node_id: string
+hits: int                  # 该节点断点累计命中次数
+message: string            # logMessage 原样
+subgraphPath: string[]?    # 预留（子图断点仍缓做，v1 缺省）
+# 普通（非调试）运行急停：SSE event: cancelled
+type: "cancelled"
+node_id: string            # 取消生效的下一节点边界 id（wait/approval/tool 阻塞中点不强杀）
+reason: "user_cancel"
+# POST /api/runs/{run_id}/cancel（operate）：置位协作式取消事件 → {run_id,cancelled:true}
+#   run 不存在/跨租户 404；已结束无注册句柄 409；窗口内重复取消幂等 200；viewer 403
 # GET /api/debug → {items:[{token, node_id, node_type, graph_id, reason}]}
 ```
 > 进程内会话（threading.Event，重启即失，持久化中断随 11 S1/14 D19/D20）；未知 token 404、重复 resume 409；`/api/demo/reset` 按 stop 释放全部暂停；parallel 暂停串行化、`__join__` 网关与 subgraph 内部不暂停。权威契约见 04 §5.12，REST 见 12 §5。
@@ -608,7 +623,7 @@ reason: "user_stop"
 id: string                 # run-{自增}
 graph_id: string
 mode: "sync" | "stream"    # 仅真实运行；debug/回放/子图重入不记录
-status: "completed" | "error"   # 未捕获异常=error；节点 FAILED 是数据不是异常
+status: "completed" | "error" | "cancelled"   # 未捕获异常=error；节点 FAILED 是数据不是异常；B 包(f9a1301)起协作式急停=cancelled（健康判定认 completed/cancelled 且无失败节点，不刷 streak/不告警）
 started_at: string         # ISO 8601 UTC
 finished_at: string
 duration_ms: number
