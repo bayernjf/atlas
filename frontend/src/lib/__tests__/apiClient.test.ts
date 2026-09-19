@@ -118,16 +118,21 @@ describe('B 包 streamRun 急停/日志帧（docs/27 §4，U134/U136）', () => 
 
 describe('B 包 resumeDebug globals 覆盖（docs/27 §4.3，U137）', () => {
   it('带 globals 时请求体含 globals，不带时不含', async () => {
-    const fetchMock = vi.fn(async () => jsonResponse({ token: 'dbg-1', action: 'continue' }))
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+      jsonResponse({ token: 'dbg-1', action: 'continue' }),
+    )
     vi.stubGlobal('fetch', fetchMock)
     await resumeDebug('dbg-1', 'continue', { amount: 9999 })
-    let init = fetchMock.mock.calls[0][1] as RequestInit
-    expect(JSON.parse(init.body as string)).toEqual({ action: 'continue', globals: { amount: 9999 } })
+    let init = fetchMock.mock.calls[0][1]
+    expect(JSON.parse(init?.body as string)).toEqual({
+      action: 'continue',
+      globals: { amount: 9999 },
+    })
 
     fetchMock.mockClear()
     await resumeDebug('dbg-1', 'stop')
-    init = fetchMock.mock.calls[0][1] as RequestInit
-    expect(JSON.parse(init.body as string)).toEqual({ action: 'stop' })
+    init = fetchMock.mock.calls[0][1]
+    expect(JSON.parse(init?.body as string)).toEqual({ action: 'stop' })
   })
 })
 
