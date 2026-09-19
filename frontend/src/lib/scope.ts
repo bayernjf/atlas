@@ -3,7 +3,9 @@
  *
  * 可见性按图拓扑推导：global 恒可见；trigger 恒可见；其余节点仅在引用方
  * 沿入边反向可达时可见；loop 的 index/iterations 仅循环体内可见；
- * parallel.result / subgraph.outputs 的动态深层路径只列根、不做存在性判定。
+ * parallel.result 仅汇聚点之后可见、入口 id 对照 branches 校验（其下深层动态放行，D30/B1）；
+ * subgraph.outputs：注入子图内部节点索引时校验 outputs.<内部节点id> 存在性（D30/B2），
+ * 未注入（编辑器尚未加载子图结构）时降级仅放行 outputs 根。
  * v1 不做类型级校验（D30），运行期插值缺失保留原样的语义不变。
  */
 
@@ -282,6 +284,9 @@ export function buildScopeIndex(
   nodes: ScopeNodeLike[],
   edges: ScopeEdgeLike[],
   variables: Pick<GraphVariable, 'name'>[] = [],
+  // D30/B2：subgraph 节点 id -> 被引子图内部节点 id 集（由调用方注入已加载子图结构）；
+  // 缺省/未加载的子图不在表中，outputs 深层降级放行（后端编译期为权威门，前端随 D21 接入拉取）。
+  subgraphOutputs: Map<string, Set<string>> = new Map(),
 ): ScopeIndex {
   const nodeById = new Map(nodes.map((node) => [node.id, node]))
   const incoming = new Map<string, Set<string>>()
@@ -306,6 +311,25 @@ export function buildScopeIndex(
     const stop = new Set([node.id])
     if (typeof exitTarget === 'string' && exitTarget) stop.add(exitTarget)
     loopBodies.set(node.id, bfs(new Set([bodyTarget]), outgoing, stop))
+  }
+
+  // D30/B1：parallel 汇聚区域（同构后端 _parallel_meta）——result.<入口> 仅汇聚点之后可见。
+  // entries=branches 目标；region=各入口沿出边 BFS、止于 parallel 自身与 joinTarget（不含二者）。
+  const parallelMeta = new Map<string, { entries: Set<string>; region: Set<string> }>()
+  for (const pNode of nodes) {
+    if (pNode.kind !== 'parallel') continue
+    const joinTarget = pNode.config?.joinTarget
+    const entries = new Set<string>()
+    const branches = Array.isArray(pNode.config?.branches) ? pNode.config.branches : []
+    for (const branch of branches) {
+      const target = branch && typeof branch === 'object' ? (branch as Record<string, unknown>).target : undefined
+      if (typeof target === 'string' && nodeById.has(target)) entries.add(target)
+    }
+    const stop = new Set([pNode.id])
+    if (typeof joinTarget === 'string') stop.add(joinTarget)
+    let region = new Set<string>()
+    for (const entry of entries) region = new Set([...region, ...bfs(new Set([entry]), outgoing, stop)])
+    parallelMeta.set(pNode.id, { entries, region })
   }
 
   const reverseCache = new Map<string, Set<string>>()
@@ -508,7 +532,31 @@ export function buildScopeIndex(
 
         if (node.kind === 'parallel') {
           const [root, ...rest] = tail
-          if (root === 'result') continue // 动态入口键（D30），深层放行
+          if (root === 'result') {
+            const meta = parallelMeta.get(node.id)
+            // B1：result 是汇聚产出，分支区域内（汇聚点之前）尚未产出，不可见。
+            if (meta && meta.region.has(nodeId)) {
+              push(
+                field,
+                ref,
+                'REF_NOT_IN_SCOPE',
+                `并行结果在汇聚点之后才可用（分支区域内尚未汇聚）：{{${ref.path}}}`,
+              )
+              continue
+            }
+            // result.<入口id>：入口须为 branches 目标；入口下深层为分支产出，动态放行。
+            // branches 未配置（entries 空）时降级，配置缺失归 L1/拓扑校验，不双重报错。
+            const entryId = rest[0]
+            if (meta && meta.entries.size > 0 && entryId !== undefined && !meta.entries.has(entryId)) {
+              push(
+                field,
+                ref,
+                'REF_PATH_NOT_FOUND',
+                `并行节点输出入口不存在（result 下须为分支入口节点 id，合法入口：${[...meta.entries].join('/')}）：{{${ref.path}}}`,
+              )
+            }
+            continue
+          }
           if (!STATIC_OUTPUT_KEYS.parallel.includes(root) || rest.length > 0) {
             push(
               field,
@@ -522,7 +570,20 @@ export function buildScopeIndex(
 
         if (node.kind === 'subgraph') {
           const [root, ...rest] = tail
-          if (root === 'outputs') continue // 子图深层展开缓做 D30，放行
+          if (root === 'outputs') {
+            // D30/B2：注入子图结构则校验 outputs.<内部节点id>；其后深层为内部节点产出，放行。
+            // 未注入（子图未加载/跨租户/钉版缺失）降级仅放行 outputs 根。
+            const inner = subgraphOutputs.get(node.id)
+            if (inner && rest.length > 0 && !inner.has(rest[0])) {
+              push(
+                field,
+                ref,
+                'REF_PATH_NOT_FOUND',
+                `子图输出中不存在该内部节点（outputs 下须为子图内节点 id，合法：${[...inner].join('/')}）：{{${ref.path}}}`,
+              )
+            }
+            continue
+          }
           if (!STATIC_OUTPUT_KEYS.subgraph.includes(root) || rest.length > 0) {
             push(
               field,

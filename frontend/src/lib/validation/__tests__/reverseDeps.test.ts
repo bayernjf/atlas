@@ -3,6 +3,8 @@ import {
   buildReverseIndex,
   removeDanglingRef,
   pointerSegments,
+  rewriteTemplateHeads,
+  renameNodeRefs,
   TARGET_FIELD_PATHS,
 } from '../reverseDeps'
 import type { ScopeNodeLike } from '../../scope'
@@ -225,5 +227,62 @@ describe('pointerSegments', () => {
   it('RFC6901 解码', () => {
     expect(pointerSegments('/branches/0/target')).toEqual(['branches', '0', 'target'])
     expect(pointerSegments('/inputs/a~1b')).toEqual(['inputs', 'a/b'])
+  })
+})
+
+describe('D30/B3 rewriteTemplateHeads 模板头段改写', () => {
+  it('替换头段并保留空白与后续路径；根引用与多 token 正确', () => {
+    expect(rewriteTemplateHeads('单号 {{tool-a.result.x}} 完成', 'tool-a', 'tool-z')).toBe(
+      '单号 {{tool-z.result.x}} 完成',
+    )
+    expect(rewriteTemplateHeads('{{ tool-a.result.x }}', 'tool-a', 'tool-z')).toBe(
+      '{{ tool-z.result.x }}',
+    )
+    expect(rewriteTemplateHeads('{{tool-a}}', 'tool-a', 'tool-z')).toBe('{{tool-z}}')
+    expect(rewriteTemplateHeads('{{tool-a.x}}-{{tool-b.y}}-{{tool-a.z}}', 'tool-a', 'tool-z')).toBe(
+      '{{tool-z.x}}-{{tool-b.y}}-{{tool-z.z}}',
+    )
+  })
+
+  it('无匹配原样返回；前缀相似不误伤', () => {
+    expect(rewriteTemplateHeads('{{tool-ab.x}}', 'tool-a', 'tool-z')).toBe('{{tool-ab.x}}')
+    expect(rewriteTemplateHeads('无引用文本', 'tool-a', 'tool-z')).toBe('无引用文本')
+  })
+})
+
+describe('D30/B3 renameNodeRefs 重命名联动', () => {
+  it('联动 target（含 branches 数组）与模板，按引用方折叠；被改名节点自身不入结果', () => {
+    const nodes = [
+      node('condition-1', 'condition', {
+        branches: [
+          { label: 'A', expression: 'x', target: 'tool-a' },
+          { label: 'B', expression: 'y', target: 'tool-b' },
+        ],
+        defaultTarget: 'tool-a',
+      }),
+      node('ai-1', 'ai_decision', {
+        promptTemplate: '看 {{tool-a.result.x}} 和 {{tool-a.result.y}}',
+        model: 'demo',
+      }),
+      node('tool-a', 'tool_call', {}),
+      node('tool-b', 'tool_call', {}),
+    ]
+    const edits = renameNodeRefs(nodes, 'tool-a', 'tool-z')
+    const cond = edits.get('condition-1') as Record<string, any>
+    expect(cond.branches[0].target).toBe('tool-z')
+    expect(cond.branches[1].target).toBe('tool-b')
+    expect(cond.defaultTarget).toBe('tool-z')
+    const ai = edits.get('ai-1') as Record<string, any>
+    expect(ai.promptTemplate).toBe('看 {{tool-z.result.x}} 和 {{tool-z.result.y}}')
+    expect(edits.has('tool-a')).toBe(false)
+  })
+
+  it('无引用时返回空 Map', () => {
+    const edits = renameNodeRefs(
+      [node('a', 'tool_call', {}), node('b', 'tool_call', {})],
+      'a',
+      'z',
+    )
+    expect(edits.size).toBe(0)
   })
 })

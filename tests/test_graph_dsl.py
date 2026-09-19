@@ -235,7 +235,7 @@ def test_reject_loop_without_back_edge():
     with pytest.raises(GraphValidationError) as exc:
         parse_graph(raw)
     messages = " ".join(exc.value.errors)
-    assert "连回循环节点的回边" in messages and "tool-body 没有回到循环节点的路径" in messages
+    assert "连回循环节点的回边" in messages and "tool-body 没有回到循环节点或 break 出口的路径" in messages
 
 
 def test_reject_loop_body_leaking_to_exit_target():
@@ -243,7 +243,8 @@ def test_reject_loop_body_leaking_to_exit_target():
     raw["edges"].append({"id": "e5", "source": "tool-body", "target": "tool-exit"})
     with pytest.raises(GraphValidationError) as exc:
         parse_graph(raw)
-    assert any("退出路径只能由循环节点出发" in error for error in exc.value.errors)
+    # D17/A2：非 condition 的体内节点直连退出目标仍属非法逃逸（break 须经 condition 分支）。
+    assert any("不能直接连到退出目标" in error for error in exc.value.errors)
 
 
 def test_reject_nested_loop_in_body():
@@ -425,7 +426,7 @@ def test_parse_valid_parallel_region_with_self_contained_loop():
 def test_reject_parallel_bad_strategy_count_labels_targets():
     raw = make_parallel_graph()
     raw["nodes"][1] = _parallel_node(
-        joinStrategy="any_success",
+        joinStrategy="wrong_strategy",
         branches=[{"label": "  ", "target": "tool-a"}],
         joinTarget="tool-a",
     )

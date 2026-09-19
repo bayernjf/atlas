@@ -11,8 +11,8 @@
  *    替代批 1 之前的按 kind 硬编码清理；dirty 层只重算引用方（L2 精确收窄）。
  * 2. quickFix v1：L2 REF_NODE_NOT_FOUND（悬空引用）挂「删除悬空引用」动作，
  *    removeDanglingRef 产出删除引用后的 config patch（target 清空 / 模板删 token）。
- *
- * 改名联动（把引用改写为新 id）与数据依赖环检测随 D30，本期不做。
+ * 3. quickFix v2 / 改名联动（D30/B3）：renameNodeRefs 在节点 id 重命名时把全部
+ *    target 字段与模板 `{{oldId.…}}` 头段原子改写为新 id（数据依赖环检测为另一模块）。
  */
 import type { ScopeNodeLike } from '../scope'
 import { extractTemplateRefs, templateFields } from '../scope'
@@ -231,4 +231,62 @@ export function removeDanglingRef(
   if (!declared) return null
   const segments = pointerSegments(pointer)
   return patchLeaf(config, segments, '')
+}
+
+/** 转义正则元字符（节点 id 理论上仅字母数字-_，仍保险转义）。 */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * 在单个模板字段文本中，把所有头段等于 oldId 的 `{{oldId.…}}` / `{{ oldId }}`
+ * 引用头段改写为 newId（保留空白与后续路径）；无匹配返回原文。从后向前 splice 保偏移。
+ */
+export function rewriteTemplateHeads(text: string, oldId: string, newId: string): string {
+  const matched = extractTemplateRefs(text).filter(
+    (ref) => (ref.path.split('.')[0] ?? '').trim() === oldId,
+  )
+  if (matched.length === 0) return text
+  const headRegex = new RegExp(
+    '^(\\{\\{\\s*)' + escapeRegExp(oldId) + '(\\s*(?:\\.|\\}\\}))',
+  )
+  let out = text
+  for (const ref of [...matched].sort((a, b) => b.start - a.start)) {
+    const updatedRaw = ref.raw.replace(headRegex, `$1${newId}$2`)
+    out = out.slice(0, ref.start) + updatedRaw + out.slice(ref.end)
+  }
+  return out
+}
+
+/**
+ * 节点 id 重命名联动（D30/B3）：扫描全部 target 字段与模板引用，把引用 oldId 的位置
+ * 改写为 newId，返回 引用方节点 id -> 合并后的完整 config（调用方浅合并回节点即可）。
+ * 同一引用方的多个字段 / 分支 / token 折叠为单个 config；被重命名节点自身不在结果中
+ * （其 id 由调用方在节点数组上直接改）。
+ */
+export function renameNodeRefs(
+  nodes: ScopeNodeLike[],
+  oldId: string,
+  newId: string,
+): Map<string, Record<string, unknown>> {
+  const edits = new Map<string, Record<string, unknown>>()
+  const deps = buildReverseIndex(nodes).referrersOf(oldId)
+  for (const dep of deps) {
+    const node = nodes.find((candidate) => candidate.id === dep.referrerId)
+    if (!node) continue
+    const base = edits.get(dep.referrerId) ?? { ...(node.config ?? {}) }
+    let patch: Record<string, unknown>
+    if (dep.kind === 'target') {
+      patch = patchLeaf(base, pointerSegments(dep.pointer), newId)
+    } else {
+      const segments = pointerSegments(dep.pointer)
+      const text = readStringAt(base, segments)
+      if (text === undefined) continue
+      const rewritten = rewriteTemplateHeads(text, oldId, newId)
+      if (rewritten === text) continue
+      patch = patchLeaf(base, segments, rewritten)
+    }
+    if (Object.keys(patch).length > 0) edits.set(dep.referrerId, { ...base, ...patch })
+  }
+  return edits
 }

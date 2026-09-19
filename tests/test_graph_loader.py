@@ -742,6 +742,40 @@ def test_subgraph_compile_rejects_unresolvable_reference():
     assert any("引用的子图不存在：graph-missing" in e for e in exc.value.errors)
 
 
+def test_subgraph_outputs_unknown_inner_node_rejected_at_compile_d30_b2():
+    child_id, child = _child_graph()  # 内部节点：child-trigger / child-tool
+    store = {child_id: child}
+
+    def parent(template: str):
+        return parse_graph(
+            {
+                "version": 1,
+                "variables": [],
+                "nodes": [
+                    {"id": "trigger-1", "type": "trigger", "name": "t",
+                     "config": {"triggerType": "manual"}},
+                    {"id": "subgraph-1", "type": "subgraph", "name": "子流程",
+                     "config": {"graphId": child_id, "inputs": {}}},
+                    {"id": "ai-1", "type": "ai_decision", "name": "后继",
+                     "config": {"promptTemplate": template, "model": "demo"}},
+                ],
+                "edges": [
+                    {"id": "e1", "source": "trigger-1", "target": "subgraph-1"},
+                    {"id": "e2", "source": "subgraph-1", "target": "ai-1"},
+                ],
+            }
+        )
+
+    # 合法内部节点 id 的深层路径：编译通过
+    compile_graph(parent("{{subgraph-1.outputs.child-tool.x}}"),
+                  graph_id="graph-parent", graph_resolver=store.get)
+    # 不存在的内部节点 id：编译期 REF_PATH_NOT_FOUND
+    with pytest.raises(GraphValidationError) as exc:
+        compile_graph(parent("{{subgraph-1.outputs.ghost.x}}"),
+                      graph_id="graph-parent", graph_resolver=store.get)
+    assert any("子图输出中不存在" in e and "ghost" in e for e in exc.value.errors)
+
+
 def test_subgraph_compile_rejects_without_resolver():
     with pytest.raises(GraphValidationError) as exc:
         compile_graph(_parent_subgraph_graph(), graph_id="graph-parent")
@@ -1008,3 +1042,183 @@ def test_build_demo_registry_contains_database_and_message():
 
     assert [c.name for c in registry.get("database").list_capabilities()] == ["query", "execute"]
     assert [c.name for c in registry.get("message").list_capabilities()] == ["send"]
+
+
+def _loop_break_graph():
+    """D17/A2：体内 condition 在 index>=2 时走 break 分支直连 exitTarget，否则回边 continue。"""
+    return parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "loop-1", "type": "loop", "name": "循环",
+                 "config": {
+                     "mode": "while",
+                     "continueExpression": "true",
+                     "maxIterations": 10,
+                     "bodyTarget": "tool-body",
+                     "exitTarget": "tool-exit",
+                 }},
+                {"id": "tool-body", "type": "tool_call", "name": "循环体",
+                 "config": {"tool": "body-op"}},
+                {"id": "condition-break", "type": "condition", "name": "中断判断",
+                 "config": {
+                     "branches": [
+                         {"label": "stop", "expression": "{{loop-1.index}} >= 2",
+                          "target": "tool-exit"}
+                     ],
+                     "defaultTarget": "loop-1",
+                 }},
+                {"id": "tool-exit", "type": "tool_call", "name": "退出",
+                 "config": {"tool": "exit-op"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "loop-1"},
+                {"id": "e2", "source": "loop-1", "target": "tool-body"},
+                {"id": "e3", "source": "loop-1", "target": "tool-exit"},
+                {"id": "e4", "source": "tool-body", "target": "condition-break"},
+                {"id": "e5", "source": "condition-break", "target": "loop-1"},
+                {"id": "e6", "source": "condition-break", "target": "tool-exit"},
+            ],
+        }
+    )
+
+
+def test_loop_break_via_body_condition_exits_with_break_reason_d17_a2():
+    result = run_graph(_loop_break_graph())
+    assert result["status"] == "completed"
+    body_runs = sum(1 for line in result["trace"] if line.startswith("tool-body"))
+    assert body_runs == 2  # index 1 continue、index 2 break，未跑满 maxIterations
+    loop_output = result["outputs"]["loop-1"]
+    assert loop_output["exitReason"] == "break"
+    assert loop_output["iterations"] == 2
+    assert loop_output["target"] == "tool-exit"
+    assert "tool-exit" in result["outputs"]
+    # 合成 __break__ 网关不外泄为节点产出
+    assert not any(key.startswith("__break__") for key in result["outputs"])
+    assert set(result["outputs"].keys()) == {
+        "trigger-1", "loop-1", "tool-body", "condition-break", "tool-exit"
+    }
+    assert any("exit (break) after 2 → tool-exit" in line for line in result["trace"])
+
+
+def test_loop_break_graph_validates_d17_a2():
+    # 含 condition break 出口的图应当通过 DSL 校验（旧规则会误判“循环体连到退出目标”）；
+    # parse_graph 内部已跑完整静态校验，能成功构造即通过。
+    assert _loop_break_graph() is not None
+
+
+def test_loop_non_condition_body_node_cannot_reach_exit_target_d17_a2():
+    raw = {
+        "version": 1,
+        "variables": [],
+        "nodes": [
+            {"id": "trigger-1", "type": "trigger", "name": "t",
+             "config": {"triggerType": "manual"}},
+            {"id": "loop-1", "type": "loop", "name": "循环",
+             "config": {"mode": "while", "continueExpression": "true",
+                        "maxIterations": 3, "bodyTarget": "tool-body",
+                        "exitTarget": "tool-exit"}},
+            {"id": "tool-body", "type": "tool_call", "name": "循环体",
+             "config": {"tool": "body-op"}},
+            {"id": "tool-exit", "type": "tool_call", "name": "退出",
+             "config": {"tool": "exit-op"}},
+        ],
+        "edges": [
+            {"id": "e1", "source": "trigger-1", "target": "loop-1"},
+            {"id": "e2", "source": "loop-1", "target": "tool-body"},
+            {"id": "e3", "source": "loop-1", "target": "tool-exit"},
+            {"id": "e4", "source": "tool-body", "target": "loop-1"},
+            # 非法：非 condition 的体内节点直连退出目标
+            {"id": "e5", "source": "tool-body", "target": "tool-exit"},
+        ],
+    }
+    # 非法逃逸在解析期静态校验即被拒。
+    with pytest.raises(GraphValidationError) as excinfo:
+        parse_graph(raw)
+    assert any("不能直接连到退出目标" in msg for msg in excinfo.value.errors)
+
+
+def _any_success_graph(a_tool: str = "op-a", b_tool: str = "op-b"):
+    """D18/A1：短支 tool-a 单节点直连汇聚；长支 tool-b→tool-mid→tool-late 三节点。"""
+    return parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "parallel-1", "type": "parallel", "name": "并行",
+                 "config": {
+                     "joinStrategy": "any_success",
+                     "branches": [
+                         {"label": "短支", "target": "tool-a"},
+                         {"label": "长支", "target": "tool-b"},
+                     ],
+                     "joinTarget": "tool-join",
+                 }},
+                {"id": "tool-a", "type": "tool_call", "name": "A",
+                 "config": {"tool": a_tool}},
+                {"id": "tool-b", "type": "tool_call", "name": "B",
+                 "config": {"tool": b_tool}},
+                {"id": "tool-mid", "type": "tool_call", "name": "长支中段",
+                 "config": {"tool": "op-mid"}},
+                {"id": "tool-late", "type": "tool_call", "name": "长支末段",
+                 "config": {"tool": "op-late"}},
+                {"id": "tool-join", "type": "tool_call", "name": "汇聚",
+                 "config": {"tool": "op-join", "params": "状态={{parallel-1.status}}"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "parallel-1"},
+                {"id": "e2", "source": "parallel-1", "target": "tool-a"},
+                {"id": "e3", "source": "parallel-1", "target": "tool-b"},
+                {"id": "e4", "source": "tool-a", "target": "tool-join"},
+                {"id": "e5", "source": "tool-b", "target": "tool-mid"},
+                {"id": "e6", "source": "tool-mid", "target": "tool-late"},
+                {"id": "e7", "source": "tool-late", "target": "tool-join"},
+            ],
+        }
+    )
+
+
+def test_parallel_any_success_short_circuits_unstarted_nodes_d18_a1():
+    events: list[dict] = []
+    result = run_graph(_any_success_graph(), emit=events.append)
+    assert result["status"] == "completed"
+
+    # 汇聚节点只执行一次（迟到的残留分支不重复放行）。
+    starts = [event["node_id"] for event in events if event["type"] == "node_start"]
+    assert starts.count("tool-join") == 1
+
+    po = result["outputs"]["parallel-1"]
+    assert po["joinStrategy"] == "any_success"
+    assert po["status"] == "success"
+    by_target = {b["target"]: b["status"] for b in po["branches"]}
+    assert by_target["tool-a"] == "success"
+    assert by_target["tool-b"] == "skipped"
+
+    # 已开始的节点（tool-b/tool-mid 与汇聚同超步前后启动）保留；未启动的 tool-late 被短路跳过。
+    assert result["outputs"]["tool-late"].get("skipped") is True
+    assert not result["outputs"]["tool-mid"].get("skipped")
+    assert result["outputs"]["tool-join"]["params_rendered"] == "状态=success"
+    assert any("joined (any_success) success" in line for line in result["trace"])
+
+
+def test_parallel_any_success_failed_only_when_all_branches_fail_d18_a1():
+    result = run_graph(_any_success_graph(a_tool="bogus/xa", b_tool="bogus/xb"))
+    po = result["outputs"]["parallel-1"]
+    assert po["status"] == "failed"
+    assert {b["status"] for b in po["branches"]} == {"failed"}
+    assert "tool-join" in result["outputs"]  # 汇聚节点仍执行（fail-safe）
+    assert any("joined (any_success) failed" in line for line in result["trace"])
+
+
+def test_parallel_any_success_succeeds_despite_one_failed_branch_d18_a1():
+    result = run_graph(_any_success_graph(a_tool="op-a", b_tool="bogus/xb"))
+    po = result["outputs"]["parallel-1"]
+    assert po["status"] == "success"
+    by_target = {b["target"]: b["status"] for b in po["branches"]}
+    assert by_target["tool-a"] == "success"
+    assert by_target["tool-b"] == "failed"

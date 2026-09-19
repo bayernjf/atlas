@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { nextId, useEditorStore, type EditorNode } from '../editorStore'
+import { nextId, useEditorStore, validateNodeId, type EditorNode } from '../editorStore'
 import { defaultConfig, defaultRetry } from '../../lib/nodeCatalog'
 import { INITIAL_DIRTY } from '../../lib/validation/dirty'
 
@@ -458,5 +458,107 @@ describe('editorStore 校验脏标记（M4 批 1 ⑤）', () => {
     expect(dirty.l2NodeIds).toEqual([])
     expect(dirty.l3).toBe(false)
     expect(dirty.revision).toBe(1)
+  })
+})
+
+describe('editorStore renameNode 重命名联动（D30/B3）', () => {
+  function toolNode(): EditorNode {
+    return {
+      id: 'tool-1',
+      position: { x: 0, y: 0 },
+      data: {
+        label: '工具',
+        kind: 'tool_call',
+        status: 'idle',
+        config: { tool: 't/x', params: '{}' } as EditorNode['data']['config'],
+        retry: defaultRetry(),
+      },
+    }
+  }
+
+  it('改 id 原子联动 target / 模板引用 / 边端点 / 选中态 / 断点', () => {
+    const condition: EditorNode = {
+      id: 'condition-1',
+      position: { x: 0, y: 0 },
+      data: {
+        label: '路由',
+        kind: 'condition',
+        status: 'idle',
+        config: {
+          branches: [{ label: 'A', expression: 'true', target: 'tool-1' }],
+          defaultTarget: 'tool-1',
+        } as EditorNode['data']['config'],
+        retry: defaultRetry(),
+      },
+    }
+    const ai: EditorNode = {
+      id: 'ai-1',
+      position: { x: 0, y: 0 },
+      data: {
+        label: '决策',
+        kind: 'ai_decision',
+        status: 'idle',
+        config: { promptTemplate: '{{tool-1.result.a}} {{ tool-1.result.b }}' } as EditorNode['data']['config'],
+        retry: defaultRetry(),
+      },
+    }
+    useEditorStore.setState({
+      nodes: [toolNode(), condition, ai, stubNode('other-1')],
+      edges: [
+        { id: 'e1', source: 'tool-1', target: 'ai-1' },
+        { id: 'e2', source: 'other-1', target: 'tool-1' },
+      ],
+      variables: [],
+      selectedNodeId: 'tool-1',
+      breakpoints: { 'tool-1': { expression: 'x' } as never },
+      logs: [],
+    })
+
+    useEditorStore.getState().renameNode('tool-1', 'tool-z')
+    const state = useEditorStore.getState()
+
+    expect(state.nodes.some((n) => n.id === 'tool-1')).toBe(false)
+    expect(state.nodes.some((n) => n.id === 'tool-z')).toBe(true)
+    const cond = state.nodes.find((n) => n.id === 'condition-1')!
+    expect(cond.data.config.branches![0].target).toBe('tool-z')
+    expect(cond.data.config.defaultTarget).toBe('tool-z')
+    const aiNode = state.nodes.find((n) => n.id === 'ai-1')!
+    expect(aiNode.data.config.promptTemplate).toBe('{{tool-z.result.a}} {{ tool-z.result.b }}')
+    expect(state.edges.find((e) => e.id === 'e1')).toMatchObject({ source: 'tool-z', target: 'ai-1' })
+    expect(state.edges.find((e) => e.id === 'e2')).toMatchObject({ source: 'other-1', target: 'tool-z' })
+    expect(state.selectedNodeId).toBe('tool-z')
+    expect(Object.keys(state.breakpoints)).toEqual(['tool-z'])
+    // 结构 + 跨节点引用：L3 置位、L2 全量
+    expect(state.dirty.l3).toBe(true)
+    expect(state.dirty.l2NodeIds).toContain('condition-1')
+    expect(state.dirty.l2NodeIds).toContain('ai-1')
+  })
+
+  it('非法 id（重复 / 非法字符 / 保留字 / 空）拒绝且不改图', () => {
+    useEditorStore.setState({
+      nodes: [toolNode(), stubNode('other-1')],
+      edges: [],
+      variables: [],
+      selectedNodeId: 'tool-1',
+      logs: [],
+    })
+    for (const bad of ['other-1', 'has space', 'a.b', 'global', '   ']) {
+      useEditorStore.getState().renameNode('tool-1', bad)
+      const state = useEditorStore.getState()
+      // 拒绝改名：整图 id 集合保持不变
+      expect(state.nodes.map((n) => n.id).sort()).toEqual(['other-1', 'tool-1'])
+    }
+  })
+})
+
+describe('validateNodeId（D30/B3）', () => {
+  it('合法 / 无变化放行，非法返回文案', () => {
+    expect(validateNodeId('tool-9', 'tool-1', ['tool-1', 'other-1'])).toBeNull()
+    expect(validateNodeId('tool-1', 'tool-1', ['tool-1'])).toBeNull()
+    expect(validateNodeId('other-1', 'tool-1', ['tool-1', 'other-1'])).toContain('已存在')
+    expect(validateNodeId('a b', 'tool-1', ['tool-1'])).toContain('字母')
+    expect(validateNodeId('a.b', 'tool-1', ['tool-1'])).toContain('字母')
+    expect(validateNodeId('global', 'tool-1', ['tool-1'])).toContain('保留字')
+    expect(validateNodeId('  ', 'tool-1', ['tool-1'])).toContain('不能为空')
   })
 })

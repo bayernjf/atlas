@@ -63,6 +63,7 @@ EventCallback = Callable[[dict[str, Any]], None]
 
 # 编译期注入的汇聚网关节点名前缀（04 §5.4）；该节点事件不下发。
 JOIN_GATE_PREFIX = "__join__"
+BREAK_GATE_PREFIX = "__break__"
 
 # M10：run_graph 的 tracer 哨兵——未显式传 tracer 时自建；显式传 None 表示不埋点
 # （debug 单步会话口径，04 §5.13/§5.15：SSE 帧保持无 span 字段的旧形状）。
@@ -556,6 +557,34 @@ def _execute_subgraph(
     return output, f"{node.id}: {graph_ref} success ({len(child.nodes)} nodes)"
 
 
+def _subgraph_output_index(
+    graph: GraphDSL,
+    resolver: Callable[[str], GraphDSL] | None,
+) -> dict[str, set[str]]:
+    """D30/B2：subgraph 节点 id -> 被引子图内部节点 id 集，供 outputs.<内部id> 存在性校验。
+
+    只解析直接一层（嵌套子图由递归校验各自覆盖）；解析不到（无 resolver / 子图缺失 /
+    钉版失败）的子图不入索引，模板校验降级为仅放行 outputs 根（子图不存在另有专规报错）。
+    """
+    index: dict[str, set[str]] = {}
+    if resolver is None:
+        return index
+    for node in graph.nodes:
+        if node.type != "subgraph":
+            continue
+        ref = node.config.get("graphId")
+        if not isinstance(ref, str) or not ref.strip():
+            continue
+        try:
+            child = resolver(ref)
+        except KeyError:
+            continue
+        if child is None:
+            continue
+        index[node.id] = {candidate.id for candidate in child.nodes}
+    return index
+
+
 def _validate_subgraph_refs(
     graph: GraphDSL,
     resolver: Callable[[str], GraphDSL] | None,
@@ -612,7 +641,10 @@ def _validate_subgraph_refs(
             add_own(f"{prefix} 引用的子图不存在：{ref}")
             continue
         child_messages, _child_locations = validate_graph_report(
-            child, tool_output_schemas, check_refs=True
+            child,
+            tool_output_schemas,
+            check_refs=True,
+            subgraph_index=_subgraph_output_index(child, resolver),
         )
         for child_error in child_messages:
             issues.append((f"子图 {ref}：{child_error}", _loc(owner)))
@@ -720,6 +752,42 @@ def _execute_loop(node: NodeDSL, state: GraphState, context: dict[str, Any]) -> 
         "exitReason": exit_reason,
         "expression_errors": expression_errors,
     }
+
+
+def _make_break_gate(
+    loop_node: NodeDSL,
+    emit: EventCallback,
+    *,
+    tracer: Tracer | None = None,
+    base_span: Span | None = None,
+):
+    """D17/A2 break 合成网关：体内 condition 选中 break 分支（直连 exitTarget）后，
+    经本网关节点把循环控制态收口为 exitReason='break' 再放行进退出目标。
+
+    与 __join__ 同属编译期内部节点（用户图中不存在、不新增 DSL 节点类型）；
+    outputs 为浅合并，故须先读 loop 节点既有产出（iterations/index）再整体回写。
+    """
+    exit_target = loop_node.config["exitTarget"]
+
+    def gate(state: GraphState) -> dict[str, Any]:
+        previous = state["outputs"].get(loop_node.id, {})
+        if not isinstance(previous, dict):
+            previous = {}
+        iterations = int(previous.get("iterations", 0))
+        output = {
+            "mode": "while",
+            "iterations": iterations,
+            "index": iterations,
+            "target": exit_target,
+            "exitReason": "break",
+            "expression_errors": [],
+        }
+        message = f"{loop_node.id}: exit (break) after {iterations} → {exit_target}"
+        # 以 loop 节点自身补发 node_end（同 __join__ 汇聚补发模式），供画布展示 break 终态。
+        emit({"type": "node_end", "node_id": loop_node.id, "node_type": "loop", "output": output})
+        return {"outputs": {loop_node.id: output}, "messages": [message]}
+
+    return gate
 
 
 def _execute_tool(
@@ -865,6 +933,41 @@ def _span_error(output: dict[str, Any]) -> str | None:
     return None
 
 
+def _branch_outcomes(meta: dict[str, Any], outputs: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """逐分支判定终态/成功/失败（04 §5.4，all_success 与 any_success 共用）。
+
+    settled：该分支已有末端节点产出（走到汇聚）；failure：区域内首个失败节点；
+    success：settled 且区域内无失败。any_success 下未 settled 的分支将被短路跳过。
+    """
+    outcomes: dict[str, dict[str, Any]] = {}
+    for entry in meta["entries"]:
+        area = meta["entry_areas"][entry]
+        terminals = meta["entry_terminals"][entry]
+        # 被 any_success 短路守卫跳过（skipped 产出）的末端不算真正走到汇聚。
+        settled = any(
+            terminal in outputs
+            and not (
+                isinstance(outputs.get(terminal), dict)
+                and outputs[terminal].get("skipped")
+            )
+            for terminal in terminals
+        )
+        failure = ""
+        for area_node in area:
+            area_output = outputs.get(area_node)
+            if isinstance(area_output, dict) and not area_output.get("skipped"):
+                found = _node_failure(area_output)
+                if found:
+                    failure = found
+                    break
+        outcomes[entry] = {
+            "settled": settled,
+            "success": settled and not failure,
+            "failure": failure,
+        }
+    return outcomes
+
+
 def _make_join_gate(
     node: NodeDSL,
     meta: dict[str, Any],
@@ -880,41 +983,54 @@ def _make_join_gate(
 
     def gate(state: GraphState) -> dict:
         outputs = state["outputs"]
-        done = all(
-            any(terminal in outputs for terminal in terminals)
-            for terminals in meta["entry_terminals"].values()
-        )
-        if not done:
+        # 汇聚目标已执行即说明已放行过：any_success 下迟到的残留分支再次触发网关时
+        # 空转（不重复 emit / 不覆盖结论），由 route_gate 收口到 END。
+        if meta["join_target"] in outputs:
             return {"messages": []}
+        outcomes = _branch_outcomes(meta, outputs)
+        if strategy == "any_success":
+            # D18/A1 OR-join：任一分支成功即汇聚；否则等所有分支走到终态，全失败才 failed。
+            any_ok = any(o["success"] for o in outcomes.values())
+            all_settled = all(o["settled"] for o in outcomes.values())
+            if not (any_ok or all_settled):
+                return {"messages": []}
+            overall = "success" if any_ok else "failed"
+        else:
+            if not all(o["settled"] for o in outcomes.values()):
+                return {"messages": []}
+            overall = (
+                "failed"
+                if strategy == "all_success"
+                and any(o["failure"] for o in outcomes.values())
+                else "success"
+            )
 
         branches: list[dict[str, Any]] = []
         result: dict[str, Any] = {}
         failed: list[tuple[str, str]] = []
         for entry in meta["entries"]:
-            area = meta["entry_areas"][entry]
-            error = ""
-            for area_node in area:
-                area_output = outputs.get(area_node)
-                if isinstance(area_output, dict):
-                    failure = _node_failure(area_output)
-                    if failure:
-                        error = failure
-                        break
+            outcome = outcomes[entry]
             executed = [
                 terminal for terminal in meta["entry_terminals"][entry] if terminal in outputs
             ]
             if executed:
                 result[entry] = outputs[executed[0]]
-            status = "failed" if error else "success"
-            if error:
-                failed.append((labels.get(entry, entry), error))
+            if outcome["failure"]:
+                status = "failed"
+                failed.append((labels.get(entry, entry), outcome["failure"]))
+            elif outcome["settled"]:
+                status = "success"
+            else:
+                # any_success 抢先汇聚时该分支尚未走到末端：标记短路跳过（未启动）。
+                status = "skipped"
             branches.append(
-                {"label": labels.get(entry, entry), "target": entry, "status": status, "error": error}
+                {
+                    "label": labels.get(entry, entry),
+                    "target": entry,
+                    "status": status,
+                    "error": outcome["failure"],
+                }
             )
-
-        overall = "success"
-        if strategy == "all_success" and failed:
-            overall = "failed"
         output = {
             "mode": "parallel",
             "joinStrategy": strategy,
@@ -954,6 +1070,53 @@ def _make_join_gate(
         return {"outputs": {node.id: output}, "messages": [message]}
 
     return gate
+
+
+def _guard_any_success(
+    base_executor: Callable[[GraphState], dict],
+    parallel_id: str,
+    node_id: str,
+    node_type: str,
+    safe_target: str | None,
+    emit: EventCallback,
+) -> Callable[[GraphState], dict]:
+    """D18/A1 any_success 短路守卫：OR-join 抢先成功汇聚后，区域内尚未启动的节点
+    不再产生副作用（不发起 tool 调用、不进入 wait/human_approval）。
+
+    已发起的外部事实不可逆、不回滚（fail-safe）：守卫只在 executor 入口判定，
+    已进入执行的节点不受影响。条件路由节点（condition/human/loop）需补一个
+    target，使其条件边仍能流向汇聚网关；普通节点靠普通边自然链式跳过。
+    """
+
+    def guarded(state: GraphState) -> dict:
+        joined = state["outputs"].get(parallel_id)
+        if (
+            isinstance(joined, dict)
+            and joined.get("joinStrategy") == "any_success"
+            and joined.get("status") == "success"
+        ):
+            output: dict[str, Any] = {
+                "skipped": True,
+                "reason": "any_success_joined",
+                "parallelId": parallel_id,
+            }
+            if safe_target is not None:
+                output["target"] = safe_target
+            emit(
+                {
+                    "type": "node_end",
+                    "node_id": node_id,
+                    "node_type": node_type,
+                    "output": output,
+                }
+            )
+            return {
+                "outputs": {node_id: output},
+                "messages": [f"{node_id}: skipped (any_success {parallel_id} joined)"],
+            }
+        return base_executor(state)
+
+    return guarded
 
 
 def _tool_output_schemas(registry: AdapterRegistry) -> dict[str, dict[str, Any]]:
@@ -1012,8 +1175,12 @@ def compile_graph(
     validation_graph = validate_with or graph
 
     tool_schemas = _tool_output_schemas(registry)
+    # D30/B2：用 resolver 预算子图内部节点索引（解析不到则降级），供 outputs.<内部id> 存在性校验。
+    subgraph_index = _subgraph_output_index(validation_graph, graph_resolver)
     # 编译期 L2 复查（04 §6.5 防绕过）：parse_graph 时无注册表，引用与工具深层路径在此补判。
-    ref_errors, ref_locations = validate_graph_report(validation_graph, tool_schemas, check_refs=True)
+    ref_errors, ref_locations = validate_graph_report(
+        validation_graph, tool_schemas, check_refs=True, subgraph_index=subgraph_index
+    )
     subgraph_issues = _validate_subgraph_refs(
         validation_graph,
         graph_resolver,
@@ -1034,37 +1201,59 @@ def compile_graph(
         raise GraphValidationError(ref_errors, ref_locations)
 
     builder = StateGraph(GraphState)
-    for node in graph.nodes:
-        builder.add_node(
-            node.id,
-            _make_executor(
-                node,
-                trigger_payload=payload,
-                decision_client=decision_client,
-                registry=registry,
-                approval_broker=approval_broker,
-                graph_id=graph_id,
-                emit=emit,
-                graph_resolver=graph_resolver,
-                subgraph_depth=_subgraph_depth,
-                debug_controller=debug_controller,
-                frame_sink=frame_sink,
-                resume=resume,
-                graph_snapshot=graph_snapshot,
-                tracer=tracer,
-                base_span=base_span,
-                internal_spans=internal_spans,
-            ),
-        )
 
+    # 边表与 parallel 区域需在 add_node 前就绪：any_success 短路守卫要按区域包裹 executor。
     outgoing: dict[str, list[str]] = {}
     for edge in graph.edges:
         outgoing.setdefault(edge.source, []).append(edge.target)
+    parallels = [node for node in graph.nodes if node.type == "parallel"]
+    metas = {node.id: _parallel_meta(node, outgoing) for node in parallels}
+
+    # D18/A1 any_success：region 内节点 -> (parallel_id, 条件路由节点的安全 target)。
+    routing_kinds = {"condition", "human_approval", "loop"}
+    type_by_node = {n.id: n.type for n in graph.nodes}
+    skip_guards: dict[str, tuple[str, str | None]] = {}
+    for pnode in parallels:
+        if pnode.config.get("joinStrategy") != "any_success":
+            continue
+        pmeta = metas[pnode.id]
+        join_t = pmeta["join_target"]
+        for member in pmeta["region"]:
+            if type_by_node.get(member) in routing_kinds:
+                outs = outgoing.get(member, [])
+                safe_target = join_t if join_t in outs else (outs[0] if outs else None)
+            else:
+                safe_target = None
+            skip_guards[member] = (pnode.id, safe_target)
+
+    for node in graph.nodes:
+        executor = _make_executor(
+            node,
+            trigger_payload=payload,
+            decision_client=decision_client,
+            registry=registry,
+            approval_broker=approval_broker,
+            graph_id=graph_id,
+            emit=emit,
+            graph_resolver=graph_resolver,
+            subgraph_depth=_subgraph_depth,
+            debug_controller=debug_controller,
+            frame_sink=frame_sink,
+            resume=resume,
+            graph_snapshot=graph_snapshot,
+            tracer=tracer,
+            base_span=base_span,
+            internal_spans=internal_spans,
+        )
+        if node.id in skip_guards:
+            parallel_id, safe_target = skip_guards[node.id]
+            executor = _guard_any_success(
+                executor, parallel_id, node.id, node.type, safe_target, emit
+            )
+        builder.add_node(node.id, executor)
 
     # parallel 区域推导：区域内节点指向 joinTarget 的边在编译期改指向汇聚网关，
     # 网关等待全部分支末端产出后聚合一次再放行进 joinTarget（04 §5.4）。
-    parallels = [node for node in graph.nodes if node.type == "parallel"]
-    metas = {node.id: _parallel_meta(node, outgoing) for node in parallels}
     retarget: dict[tuple[str, str], str] = {}
     for node in parallels:
         meta = metas[node.id]
@@ -1074,6 +1263,39 @@ def compile_graph(
         for source in meta["region"]:
             if meta["join_target"] in outgoing.get(source, []):
                 retarget[(source, meta["join_target"])] = meta["gate"]
+
+    # D17/A2 break 网关：循环体内 condition 经分支直连 loop.exitTarget 的边，编译期
+    # retarget 到合成 __break__ 节点（收口 exitReason='break'）后再放行进退出目标。
+    type_by_id = {node.id: node.type for node in graph.nodes}
+    outgoing_set: dict[str, set[str]] = {}
+    for edge in graph.edges:
+        outgoing_set.setdefault(edge.source, set()).add(edge.target)
+    for lnode in [n for n in graph.nodes if n.type == "loop"]:
+        body_target = lnode.config.get("bodyTarget")
+        exit_target = lnode.config.get("exitTarget")
+        if not (
+            isinstance(body_target, str)
+            and isinstance(exit_target, str)
+            and body_target != lnode.id
+            and exit_target != lnode.id
+        ):
+            continue
+        body = _loop_body_set(body_target, lnode.id, exit_target, outgoing_set)
+        sources = sorted(
+            member
+            for member in body
+            if type_by_id.get(member) == "condition"
+            and exit_target in outgoing_set.get(member, set())
+        )
+        if not sources:
+            continue
+        gate_id = f"{BREAK_GATE_PREFIX}{lnode.id}"
+        builder.add_node(
+            gate_id, _make_break_gate(lnode, emit, tracer=tracer, base_span=base_span)
+        )
+        builder.add_edge(gate_id, exit_target)
+        for member in sources:
+            retarget[(member, exit_target)] = gate_id
 
     incoming = {edge.target for edge in graph.edges}
     for node in graph.nodes:
@@ -1101,10 +1323,10 @@ def compile_graph(
             target = state["outputs"][cid]["target"]
             return retarget.get((cid, target), target)
 
+        # path map 键须为 route 实际返回值（retarget 后的网关 id），否则 langgraph 查无分支。
+        destinations = {retarget.get((condition_id, t), t) for t in targets}
         builder.add_conditional_edges(
-            condition_id,
-            route,
-            {target: retarget.get((condition_id, target), target) for target in targets},
+            condition_id, route, {dest: dest for dest in destinations}
         )
 
     for loop in graph.nodes:
@@ -1116,10 +1338,9 @@ def compile_graph(
             target = state["outputs"][cid]["target"]
             return retarget.get((cid, target), target)
 
+        loop_destinations = {retarget.get((loop.id, t), t) for t in targets}
         builder.add_conditional_edges(
-            loop.id,
-            route_loop,
-            {target: retarget.get((loop.id, target), target) for target in targets},
+            loop.id, route_loop, {dest: dest for dest in loop_destinations}
         )
 
     for node in parallels:
@@ -1133,17 +1354,32 @@ def compile_graph(
             node.id, route_parallel, {target: target for target in targets}
         )
 
-        def route_gate(state: GraphState, m: dict[str, Any] = meta) -> str:
-            ready = all(
-                any(terminal in state["outputs"] for terminal in terminals)
-                for terminals in m["entry_terminals"].values()
-            )
+        def route_gate(
+            state: GraphState,
+            m: dict[str, Any] = meta,
+            strat: str = node.config.get("joinStrategy", "all_success"),
+        ) -> str:
+            # 已放行过汇聚目标：残留分支的迟到触发收口到 END，不重复执行 join 节点。
+            if m["join_target"] in state["outputs"]:
+                return "done"
+            outcomes = _branch_outcomes(m, state["outputs"])
+            if strat == "any_success":
+                # 任一分支成功即放行；否则等所有分支终态（全失败时 gate 产出 failed 后放行）。
+                ready = any(o["success"] for o in outcomes.values()) or all(
+                    o["settled"] for o in outcomes.values()
+                )
+            else:
+                ready = all(o["settled"] for o in outcomes.values())
             return m["join_target"] if ready else "wait"
 
         builder.add_conditional_edges(
             meta["gate"],
             route_gate,
-            {meta["join_target"]: meta["join_target"], "wait": meta["gate"]},
+            {
+                meta["join_target"]: meta["join_target"],
+                "wait": meta["gate"],
+                "done": END,
+            },
         )
 
     for node in graph.nodes:
@@ -1182,7 +1418,22 @@ def _recursion_limit(graph: GraphDSL) -> int:
         if node.type == "parallel":
             meta = _parallel_meta(node, outgoing)
             parallel_wait += 2 * len(meta["region"])
-    return 2 * len(graph.nodes) + 2 * loop_steps + parallel_wait + 10
+    # D17/A2：每个含 break 出口的循环额外一个 __break__ 网关节点超步。
+    type_by_id = {n.id: n.type for n in graph.nodes}
+    break_gates = 0
+    for node in graph.nodes:
+        if node.type != "loop":
+            continue
+        bt, et = node.config.get("bodyTarget"), node.config.get("exitTarget")
+        if not (isinstance(bt, str) and isinstance(et, str)):
+            continue
+        body = _loop_body_set(bt, node.id, et, outgoing)
+        if any(
+            type_by_id.get(member) == "condition" and et in outgoing.get(member, set())
+            for member in body
+        ):
+            break_gates += 1
+    return 2 * len(graph.nodes) + 2 * loop_steps + parallel_wait + 2 * break_gates + 10
 
 
 def _tail_subgraph(graph: GraphDSL, resume_node_id: str) -> GraphDSL:

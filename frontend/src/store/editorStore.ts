@@ -25,7 +25,7 @@ import {
   type ConsumedRanges,
   type ValidationDirty,
 } from '../lib/validation/dirty'
-import { buildReverseIndex, removeDanglingRef } from '../lib/validation/reverseDeps'
+import { buildReverseIndex, removeDanglingRef, renameNodeRefs } from '../lib/validation/reverseDeps'
 import type { DiagnosticToken } from '../lib/validation/diagnostics'
 
 export type EditorNode = Node<EditorNodeData>
@@ -55,6 +55,8 @@ type EditorState = {
   updateNodeConfig: (nodeId: string, patch: Partial<NodeConfig>) => void
   /** M4 批 3 ⑪ quickFix v1：删除悬空引用（L2 REF_NODE_NOT_FOUND 的唯一动作）。 */
   applyQuickFix: (nodeId: string, pointer: string, token?: DiagnosticToken) => void
+  /** D30/B3 quickFix v2：重命名节点 id 并原子联动全部 target/模板引用、边、选中态与断点。 */
+  renameNode: (oldId: string, rawNewId: string) => void
   deleteSelectedNode: () => void
   addVariable: (variable: GraphVariable) => void
   removeVariable: (name: string) => void
@@ -81,6 +83,22 @@ export function nextId(kind: NodeKind, existing: EditorNode[]): string {
     }
   }
   return `${prefix}${max + 1}`
+}
+
+const NODE_ID_RE = /^[A-Za-z0-9_-]+$/
+
+/**
+ * 校验新节点 id（D30/B3 重命名联动）：非空、字符合法（字母数字 _-，不含 '.' 与空格，
+ * 以免与模板路径段冲突）、非保留头 global、不与现有 id 重复。返回错误文案；合法（含无变化）返回 null。
+ */
+export function validateNodeId(rawNewId: string, oldId: string, allIds: string[]): string | null {
+  const newId = rawNewId.trim()
+  if (!newId) return '节点 ID 不能为空'
+  if (newId === oldId) return null
+  if (newId === 'global') return '节点 ID 不能使用保留字 global'
+  if (!NODE_ID_RE.test(newId)) return '节点 ID 仅支持字母、数字、下划线、连字符'
+  if (allIds.includes(newId)) return `节点 ID 已存在：${newId}`
+  return null
 }
 
 const initialNodes: EditorNode[] = [
@@ -229,6 +247,47 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           kind: node.data.kind,
           allNodeIds: state.nodes.map((item) => item.id),
         }),
+      }
+    }),
+
+  renameNode: (oldId, rawNewId) =>
+    set((state) => {
+      const newId = rawNewId.trim()
+      const allIds = state.nodes.map((node) => node.id)
+      if (newId === oldId || validateNodeId(newId, oldId, allIds) !== null) return {}
+      if (!state.nodes.some((node) => node.id === oldId)) return {}
+      const scopeNodes = state.nodes.map((node) => ({
+        id: node.id,
+        kind: node.data.kind,
+        config: node.data.config as Record<string, unknown>,
+      }))
+      const edits = renameNodeRefs(scopeNodes, oldId, newId)
+      const nodes = state.nodes.map((node) => {
+        if (node.id === oldId) return { ...node, id: newId }
+        const edit = edits.get(node.id)
+        if (!edit) return node
+        return {
+          ...node,
+          data: { ...node.data, config: { ...node.data.config, ...edit } as NodeConfig },
+        }
+      })
+      const edges = state.edges.map((edge) => ({
+        ...edge,
+        source: edge.source === oldId ? newId : edge.source,
+        target: edge.target === oldId ? newId : edge.target,
+      }))
+      // 重命名改 id（结构）+ 跨节点引用（L2）：保守置 L3 并全量 L2（重命名极低频）。
+      let dirty = markVariablesChanged(state.dirty, allIds)
+      dirty = markEdgeChanged(dirty, [newId])
+      return {
+        nodes,
+        edges,
+        selectedNodeId: state.selectedNodeId === oldId ? newId : state.selectedNodeId,
+        breakpoints: Object.fromEntries(
+          Object.entries(state.breakpoints).map(([id, value]) => [id === oldId ? newId : id, value]),
+        ),
+        logs: [...state.logs, `重命名节点：${oldId} → ${newId}`],
+        dirty,
       }
     }),
 

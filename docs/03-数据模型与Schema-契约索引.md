@@ -103,7 +103,7 @@ type: object               # 节点类型专属配置；condition 节点 config 
                            #   {mode:"while", continueExpression, maxIterations, bodyTarget, exitTarget}
                            #   唯一权威见 04 §5.3「loop 节点 config 契约」
                            # parallel 节点 config 形状：
-                           #   {joinStrategy: all_success|all_completed, branches:[{label,target}], joinTarget}
+                           #   {joinStrategy: all_success|all_completed|any_success, branches:[{label,target}], joinTarget}  # any_success(D18) 语义见 04 §5.4
                            #   唯一权威见 04 §5.4「parallel 节点 config 契约」
                            # wait 节点 config 形状：
                            #   {waitType:"duration", durationSeconds: 1-600 整数}
@@ -150,7 +150,7 @@ edges:                       # {id, source, target}，端点必须存在且禁�
 >
 > **租户注记（2026-09-16，§5.14）**：已保存图按租户分区（每租户独立 GraphStore，graph-N 计数各自从 1 起）；tenant 由 token 推断，不进 Graph JSON。跨租户访问图 id → 404。
 >
-> **模板引用与拓扑作用域注记（2026-09-16，§6.5）**：config 内 `{{路径}}` 的节点输出可见性按图拓扑推导（visibleAt = 沿入边反向可达上游 + 全局变量 + loop 体区域），各节点类型输出投影、L2 三错误码（REF_NODE_NOT_FOUND / REF_NOT_IN_SCOPE / REF_PATH_NOT_FOUND）与 token 区间权威见 04 §6.5；前端实现 `frontend/src/lib/scope.ts`，后端编译期复查在 `atlas.graph.dsl`，运行期插值缺失保留原样语义不变。工具 `result.*` 深层路径以 04 §4.9 的 output_schema 子集为来源。
+> **模板引用与拓扑作用域注记（2026-09-16，§6.5）**：config 内 `{{路径}}` 的节点输出可见性按图拓扑推导（visibleAt = 沿入边反向可达上游 + 全局变量 + loop 体区域），各节点类型输出投影、L2 三错误码（REF_NODE_NOT_FOUND / REF_NOT_IN_SCOPE / REF_PATH_NOT_FOUND）与 token 区间权威见 04 §6.5；前端实现 `frontend/src/lib/scope.ts`，后端编译期复查在 `atlas.graph.dsl`，运行期插值缺失保留原样语义不变。工具 `result.*` 深层路径以 04 §4.9 的 output_schema 子集为来源。 **2026-09-19 A+B 批补三条可见性/联动规则（权威见 04 §5.1/§5.3/§5.4/§6.5，U66–U71）**：表达式扩算术 + 白名单函数 + 确定性日期（D15，禁 eval、不含 now()/today()）；loop 支持 break（体内 condition→exitTarget，exitReason 增 `break`，合成 `__break__` 网关）/continue（回边重入）（D17）；parallel 增 any_success OR-join（未开始分支短路 `status:"skipped"`、已发起调用不回滚、全失败才 failed，合成 `__join__` 网关幂等 + done→END）（D18）；`parallel.result.<入口id>` 仅汇聚点后可见（区域内 REF_NOT_IN_SCOPE）、`subgraph.outputs.<子图内部节点id>` 按已解析子图深层校验（后端编译期权威、前端未解析降级，随 D21 接编辑器拉取）、节点 id 可在属性面板编辑并由 renameNode 全量联动模板头/target/边（D30 B1/B2/B3）。
 >
 > **版本化注记（2026-09-17，M6 立项 / ADR T19）**：`version`（容器结构版本，恒 1）与 `releaseVersion`（业务发布版本号，仅发布产物带）两维分离；发布＝冻结不可变版本（`src/atlas/versioning/`）+ subgraph 钉版（子图 `graphId@vN` 递归钉版本号，版本不可变故钉号即冻结引用内容）；草稿（latest）可变、`graph-N` 保存零回归。权威见 08 M6 立项条、12 §5 发布/版本端点。 M9 增 `PUT /api/graphs/{id}`（operate）：同一 graph id 迭代时覆盖 latest 草稿（首次 POST 建图之后复用该 id），不动不可变发布版、不新建 id；body 同 SerializedGraph（过 parse_graph 校验），图不存在/跨租户 → 404，返 `{id, version}`。前端编辑器编译运行/录制/发布统一经此端点（收口期修复了早期每次运行都 POST 新 graph-N、致录制用例 graph_id 与发布门禁筛选错位、门禁恒「暂无匹配用例」的缺陷）。
 

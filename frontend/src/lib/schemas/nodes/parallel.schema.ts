@@ -12,7 +12,7 @@ export const parallelSchema: NodeConfigSchema = {
   properties: {
     joinStrategy: {
       type: 'string',
-      enum: ['all_success', 'all_completed'],
+      enum: ['all_success', 'all_completed', 'any_success'],
       'x-widget': 'radio',
     },
     branches: {

@@ -30,7 +30,7 @@ SUPPORTED_NODE_TYPES = (
 MAX_LOOP_ITERATIONS = 100
 MIN_PARALLEL_BRANCHES = 2
 MAX_PARALLEL_BRANCHES = 10
-PARALLEL_JOIN_STRATEGIES = ("all_success", "all_completed")
+PARALLEL_JOIN_STRATEGIES = ("all_success", "all_completed", "any_success")
 MIN_WAIT_SECONDS = 1
 MAX_WAIT_SECONDS = 600
 MAX_SUBGRAPH_DEPTH = 3
@@ -173,6 +173,7 @@ def validate_graph_report(
     tool_output_schemas: dict[str, dict[str, Any]] | None = None,
     *,
     check_refs: bool = False,
+    subgraph_index: dict[str, set[str]] | None = None,
 ) -> tuple[list[str], list[dict[str, Any]]]:
     """同 validate_graph，另返回 index 对齐的稀疏 locations 侧车（06 §6.13）。"""
     issues = _Issues()
@@ -269,6 +270,7 @@ def validate_graph_report(
             outgoing=outgoing,
             global_names=var_names,
             tool_output_schemas=tool_output_schemas or {},
+            subgraph_index=subgraph_index or {},
         )
         issues.extend(ref_issues)
         issues.extend(_validate_data_dependency_cycles(data_edges))
@@ -450,21 +452,52 @@ def _validate_loop_config(
         for member in body_triggers:
             add_graph(f"{prefix} 循环体内不能包含触发器节点：{member}")
 
-        if exit_target in node_ids and exit_target in _bfs({body_target}, outgoing, stop={node.id}):
-            add_graph(
-                f"{prefix} 退出路径只能由循环节点出发，循环体不能直接连到退出目标 {exit_target}"
-            )
+        # D17/A2 break：允许循环体内 condition 节点经其分支直连 exit_target（break 出口）。
+        break_sources = {
+            member
+            for member in body
+            if node_types.get(member) == "condition"
+            and exit_target in outgoing.get(member, set())
+        }
+        # 其余体内节点（非 condition）直连退出目标仍属非法逃逸（break 须经 condition 分支）。
+        for member in sorted(body):
+            if exit_target in outgoing.get(member, set()) and member not in break_sources:
+                add_graph(
+                    f"{prefix} 退出路径只能由循环节点或体内 condition 的 break 分支出发，"
+                    f"循环体节点 {member} 不能直接连到退出目标 {exit_target}"
+                )
 
         returners = _reverse_reachable(node.id, exit_target, incoming)
-        stranded = sorted(member for member in body if member not in returners)
+        # 能沿体内反向走到 break 出口的节点，同样有合法终止路径，不报 stranded。
+        break_reachable: set[str] = set()
+        if break_sources:
+            frontier = set(break_sources)
+            while frontier:
+                current = frontier.pop()
+                if current in break_reachable or current in (exit_target, node.id):
+                    continue
+                break_reachable.add(current)
+                for predecessor in incoming.get(current, set()):
+                    if predecessor in body and predecessor not in break_reachable:
+                        frontier.add(predecessor)
+        stranded = sorted(
+            member
+            for member in body
+            if member not in returners and member not in break_reachable
+        )
         for member in stranded:
-            add_graph(f"{prefix} 循环体节点 {member} 没有回到循环节点的路径")
+            add_graph(
+                f"{prefix} 循环体节点 {member} 没有回到循环节点或 break 出口的路径"
+            )
 
         for member in body:
             if node.id in outgoing.get(member, set()):
                 backedges.add((member, node.id))
-        if not any(source in body for source in incoming.get(node.id, set())):
-            add_graph(f"{prefix} 循环体必须有一条连回循环节点的回边")
+        if (
+            not any(source in body for source in incoming.get(node.id, set()))
+            and not break_sources
+        ):
+            add_graph(f"{prefix} 循环体必须有一条连回循环节点的回边（或一个 break 出口）")
 
     return issues, backedges
 
@@ -1015,6 +1048,7 @@ def _validate_template_refs(
     outgoing: dict[str, set[str]],
     global_names: set[str],
     tool_output_schemas: dict[str, dict[str, Any]],
+    subgraph_index: dict[str, set[str]] | None = None,
 ) -> tuple[list[Issue], list[tuple[str, str, str]]]:
     issues: list[Issue] = []
     # 通过可见性判定的数据依赖边 (引用方 viewer -> 被引节点 provider, 模板字段 pointer)；
@@ -1035,6 +1069,27 @@ def _validate_template_refs(
         if isinstance(exit_target, str):
             stop.add(exit_target)
         loop_bodies[node.id] = _bfs({body_target}, outgoing, stop=stop)
+
+    # D30/B1：parallel 汇聚区域（同构 loader._parallel_meta）——result.<入口> 仅汇聚点之后可见。
+    # entries=branches 目标；region=各入口沿出边 BFS、止于 parallel 自身与 joinTarget（不含二者）。
+    parallel_meta: dict[str, tuple[set[str], set[str]]] = {}
+    for candidate in graph.nodes:
+        if candidate.type != "parallel":
+            continue
+        cfg = candidate.config
+        join_target = cfg.get("joinTarget")
+        entries = {
+            branch.get("target")
+            for branch in cfg.get("branches", [])
+            if isinstance(branch, dict) and branch.get("target") in node_ids
+        }
+        stop = {candidate.id}
+        if isinstance(join_target, str):
+            stop.add(join_target)
+        region: set[str] = set()
+        for entry in entries:
+            region |= _bfs({entry}, outgoing, stop=stop)
+        parallel_meta[candidate.id] = (entries, region)
 
     visible_cache: dict[str, set[str]] = {}
 
@@ -1155,7 +1210,24 @@ def _validate_template_refs(
                 if ref_type == "parallel":
                     root, *rest = tail
                     if root == "result":
-                        continue  # 动态入口键，深层不做判定（D30）
+                        entries, region = parallel_meta.get(head, (set(), set()))
+                        # B1：result 是汇聚产出，分支区域内（汇聚点之前）尚未产出，不可见。
+                        if node.id in region:
+                            add(
+                                f"{prefix} 并行结果在汇聚后才可用（REF_NOT_IN_SCOPE："
+                                f"分支区域内尚未汇聚）：{display}",
+                                pointer,
+                            )
+                            continue
+                        # result.<入口id>：入口须为 branches 目标；其下深层为分支产出，动态放行。
+                        # branches 未配置（entries 空）时降级，配置缺失归 L1/拓扑校验，不双重报错。
+                        if entries and rest and rest[0] not in entries:
+                            add(
+                                f"{prefix} 并行结果入口不存在（REF_PATH_NOT_FOUND，"
+                                f"result 下须为 branches 目标节点 id，合法入口：{sorted(entries)}）：{display}",
+                                pointer,
+                            )
+                        continue
                     if root not in _STATIC_OUTPUT_KEYS["parallel"] or rest:
                         add(
                             f"{prefix} 并行节点输出路径不存在（REF_PATH_NOT_FOUND，"
@@ -1167,7 +1239,17 @@ def _validate_template_refs(
                 if ref_type == "subgraph":
                     root, *rest = tail
                     if root == "outputs":
-                        continue  # 子图输出深层展开缓做 D30
+                        # D30/B2：解析到子图结构时校验 outputs.<内部节点id> 存在性（其后深层为内部
+                        # 节点产出形状，跨图不展开、放行）；解析不到（无 resolver/子图缺失/钉版）降级，
+                        # 仅放行 outputs 根，与 outputSchema 缺省同构。
+                        inner = (subgraph_index or {}).get(head)
+                        if inner is not None and rest and rest[0] not in inner:
+                            add(
+                                f"{prefix} 子图输出中不存在该内部节点（REF_PATH_NOT_FOUND，"
+                                f"outputs 下须为子图内节点 id，合法：{sorted(inner)}）：{display}",
+                                pointer,
+                            )
+                        continue
                     if root not in _STATIC_OUTPUT_KEYS["subgraph"] or rest:
                         add(
                             f"{prefix} 子图节点输出路径不存在（REF_PATH_NOT_FOUND，仅 status/outputs 根）："

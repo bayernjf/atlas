@@ -75,8 +75,9 @@ export const loopUiSchema: UiSchema = {
     continueExpression:
       '继续条件（每轮重入时求值；体内可用 {{loop-x.index}} 引用当前轮次，从 1 开始）',
     maxIterations: `最大次数（达到后强制退出，1-${MAX_LOOP_ITERATIONS}）`,
-    bodyTarget: '循环体入口（条件为真时进入；体内末端需连线回本节点）',
-    exitTarget: '退出目标（条件为假 / 达上限 / 表达式异常时）',
+    bodyTarget: '循环体入口（条件为真时进入；体内节点连线回本节点即 continue，重新求值继续条件）',
+    exitTarget:
+      '退出目标（条件为假 / 达上限 / 表达式异常时进入；体内 condition 的分支连此目标即 break，立即中断退出）',
   },
   placeholders: {
     continueExpression: '{{loop-1.index}} < 3',
@@ -135,6 +136,8 @@ export const conditionUiSchema: UiSchema = {
     joinStrategy: {
       all_success: '全部成功：任一分支失败则汇聚状态为 failed（汇聚节点仍执行）',
       all_completed: '全部完成：只要各分支都走到汇聚即视为成功',
+      any_success:
+        '任一成功：任一分支成功即汇聚，未开始的分支直接跳过；仅当全部分支失败才 failed（已发起的调用 / 等待 / 审批不取消）',
     },
   },
 }

@@ -183,7 +183,7 @@ def test_topology_errors_are_node_id_only():
             _node(
                 "cond-1",
                 "condition",
-                branches=[{"label": "A", "expression": "1", "target": "w1"}],
+                branches=[{"label": "A", "expression": "true", "target": "w1"}],
                 defaultTarget="w2",
             ),
             _node("w1", "wait", waitType="duration", durationSeconds=5),
