@@ -452,21 +452,52 @@ def _validate_loop_config(
         for member in body_triggers:
             add_graph(f"{prefix} 循环体内不能包含触发器节点：{member}")
 
-        if exit_target in node_ids and exit_target in _bfs({body_target}, outgoing, stop={node.id}):
-            add_graph(
-                f"{prefix} 退出路径只能由循环节点出发，循环体不能直接连到退出目标 {exit_target}"
-            )
+        # D17/A2 break：允许循环体内 condition 节点经其分支直连 exit_target（break 出口）。
+        break_sources = {
+            member
+            for member in body
+            if node_types.get(member) == "condition"
+            and exit_target in outgoing.get(member, set())
+        }
+        # 其余体内节点（非 condition）直连退出目标仍属非法逃逸（break 须经 condition 分支）。
+        for member in sorted(body):
+            if exit_target in outgoing.get(member, set()) and member not in break_sources:
+                add_graph(
+                    f"{prefix} 退出路径只能由循环节点或体内 condition 的 break 分支出发，"
+                    f"循环体节点 {member} 不能直接连到退出目标 {exit_target}"
+                )
 
         returners = _reverse_reachable(node.id, exit_target, incoming)
-        stranded = sorted(member for member in body if member not in returners)
+        # 能沿体内反向走到 break 出口的节点，同样有合法终止路径，不报 stranded。
+        break_reachable: set[str] = set()
+        if break_sources:
+            frontier = set(break_sources)
+            while frontier:
+                current = frontier.pop()
+                if current in break_reachable or current in (exit_target, node.id):
+                    continue
+                break_reachable.add(current)
+                for predecessor in incoming.get(current, set()):
+                    if predecessor in body and predecessor not in break_reachable:
+                        frontier.add(predecessor)
+        stranded = sorted(
+            member
+            for member in body
+            if member not in returners and member not in break_reachable
+        )
         for member in stranded:
-            add_graph(f"{prefix} 循环体节点 {member} 没有回到循环节点的路径")
+            add_graph(
+                f"{prefix} 循环体节点 {member} 没有回到循环节点或 break 出口的路径"
+            )
 
         for member in body:
             if node.id in outgoing.get(member, set()):
                 backedges.add((member, node.id))
-        if not any(source in body for source in incoming.get(node.id, set())):
-            add_graph(f"{prefix} 循环体必须有一条连回循环节点的回边")
+        if (
+            not any(source in body for source in incoming.get(node.id, set()))
+            and not break_sources
+        ):
+            add_graph(f"{prefix} 循环体必须有一条连回循环节点的回边（或一个 break 出口）")
 
     return issues, backedges
 

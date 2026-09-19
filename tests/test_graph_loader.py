@@ -1042,3 +1042,100 @@ def test_build_demo_registry_contains_database_and_message():
 
     assert [c.name for c in registry.get("database").list_capabilities()] == ["query", "execute"]
     assert [c.name for c in registry.get("message").list_capabilities()] == ["send"]
+
+
+def _loop_break_graph():
+    """D17/A2：体内 condition 在 index>=2 时走 break 分支直连 exitTarget，否则回边 continue。"""
+    return parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "loop-1", "type": "loop", "name": "循环",
+                 "config": {
+                     "mode": "while",
+                     "continueExpression": "true",
+                     "maxIterations": 10,
+                     "bodyTarget": "tool-body",
+                     "exitTarget": "tool-exit",
+                 }},
+                {"id": "tool-body", "type": "tool_call", "name": "循环体",
+                 "config": {"tool": "body-op"}},
+                {"id": "condition-break", "type": "condition", "name": "中断判断",
+                 "config": {
+                     "branches": [
+                         {"label": "stop", "expression": "{{loop-1.index}} >= 2",
+                          "target": "tool-exit"}
+                     ],
+                     "defaultTarget": "loop-1",
+                 }},
+                {"id": "tool-exit", "type": "tool_call", "name": "退出",
+                 "config": {"tool": "exit-op"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "loop-1"},
+                {"id": "e2", "source": "loop-1", "target": "tool-body"},
+                {"id": "e3", "source": "loop-1", "target": "tool-exit"},
+                {"id": "e4", "source": "tool-body", "target": "condition-break"},
+                {"id": "e5", "source": "condition-break", "target": "loop-1"},
+                {"id": "e6", "source": "condition-break", "target": "tool-exit"},
+            ],
+        }
+    )
+
+
+def test_loop_break_via_body_condition_exits_with_break_reason_d17_a2():
+    result = run_graph(_loop_break_graph())
+    assert result["status"] == "completed"
+    body_runs = sum(1 for line in result["trace"] if line.startswith("tool-body"))
+    assert body_runs == 2  # index 1 continue、index 2 break，未跑满 maxIterations
+    loop_output = result["outputs"]["loop-1"]
+    assert loop_output["exitReason"] == "break"
+    assert loop_output["iterations"] == 2
+    assert loop_output["target"] == "tool-exit"
+    assert "tool-exit" in result["outputs"]
+    # 合成 __break__ 网关不外泄为节点产出
+    assert not any(key.startswith("__break__") for key in result["outputs"])
+    assert set(result["outputs"].keys()) == {
+        "trigger-1", "loop-1", "tool-body", "condition-break", "tool-exit"
+    }
+    assert any("exit (break) after 2 → tool-exit" in line for line in result["trace"])
+
+
+def test_loop_break_graph_validates_d17_a2():
+    # 含 condition break 出口的图应当通过 DSL 校验（旧规则会误判“循环体连到退出目标”）；
+    # parse_graph 内部已跑完整静态校验，能成功构造即通过。
+    assert _loop_break_graph() is not None
+
+
+def test_loop_non_condition_body_node_cannot_reach_exit_target_d17_a2():
+    raw = {
+        "version": 1,
+        "variables": [],
+        "nodes": [
+            {"id": "trigger-1", "type": "trigger", "name": "t",
+             "config": {"triggerType": "manual"}},
+            {"id": "loop-1", "type": "loop", "name": "循环",
+             "config": {"mode": "while", "continueExpression": "true",
+                        "maxIterations": 3, "bodyTarget": "tool-body",
+                        "exitTarget": "tool-exit"}},
+            {"id": "tool-body", "type": "tool_call", "name": "循环体",
+             "config": {"tool": "body-op"}},
+            {"id": "tool-exit", "type": "tool_call", "name": "退出",
+             "config": {"tool": "exit-op"}},
+        ],
+        "edges": [
+            {"id": "e1", "source": "trigger-1", "target": "loop-1"},
+            {"id": "e2", "source": "loop-1", "target": "tool-body"},
+            {"id": "e3", "source": "loop-1", "target": "tool-exit"},
+            {"id": "e4", "source": "tool-body", "target": "loop-1"},
+            # 非法：非 condition 的体内节点直连退出目标
+            {"id": "e5", "source": "tool-body", "target": "tool-exit"},
+        ],
+    }
+    # 非法逃逸在解析期静态校验即被拒。
+    with pytest.raises(GraphValidationError) as excinfo:
+        parse_graph(raw)
+    assert any("不能直接连到退出目标" in msg for msg in excinfo.value.errors)

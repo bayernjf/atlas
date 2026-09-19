@@ -63,6 +63,7 @@ EventCallback = Callable[[dict[str, Any]], None]
 
 # 编译期注入的汇聚网关节点名前缀（04 §5.4）；该节点事件不下发。
 JOIN_GATE_PREFIX = "__join__"
+BREAK_GATE_PREFIX = "__break__"
 
 # M10：run_graph 的 tracer 哨兵——未显式传 tracer 时自建；显式传 None 表示不埋点
 # （debug 单步会话口径，04 §5.13/§5.15：SSE 帧保持无 span 字段的旧形状）。
@@ -753,6 +754,42 @@ def _execute_loop(node: NodeDSL, state: GraphState, context: dict[str, Any]) -> 
     }
 
 
+def _make_break_gate(
+    loop_node: NodeDSL,
+    emit: EventCallback,
+    *,
+    tracer: Tracer | None = None,
+    base_span: Span | None = None,
+):
+    """D17/A2 break 合成网关：体内 condition 选中 break 分支（直连 exitTarget）后，
+    经本网关节点把循环控制态收口为 exitReason='break' 再放行进退出目标。
+
+    与 __join__ 同属编译期内部节点（用户图中不存在、不新增 DSL 节点类型）；
+    outputs 为浅合并，故须先读 loop 节点既有产出（iterations/index）再整体回写。
+    """
+    exit_target = loop_node.config["exitTarget"]
+
+    def gate(state: GraphState) -> dict[str, Any]:
+        previous = state["outputs"].get(loop_node.id, {})
+        if not isinstance(previous, dict):
+            previous = {}
+        iterations = int(previous.get("iterations", 0))
+        output = {
+            "mode": "while",
+            "iterations": iterations,
+            "index": iterations,
+            "target": exit_target,
+            "exitReason": "break",
+            "expression_errors": [],
+        }
+        message = f"{loop_node.id}: exit (break) after {iterations} → {exit_target}"
+        # 以 loop 节点自身补发 node_end（同 __join__ 汇聚补发模式），供画布展示 break 终态。
+        emit({"type": "node_end", "node_id": loop_node.id, "node_type": "loop", "output": output})
+        return {"outputs": {loop_node.id: output}, "messages": [message]}
+
+    return gate
+
+
 def _execute_tool(
     node: NodeDSL, context: dict[str, Any], registry: AdapterRegistry | None
 ) -> dict[str, Any]:
@@ -1110,6 +1147,39 @@ def compile_graph(
             if meta["join_target"] in outgoing.get(source, []):
                 retarget[(source, meta["join_target"])] = meta["gate"]
 
+    # D17/A2 break 网关：循环体内 condition 经分支直连 loop.exitTarget 的边，编译期
+    # retarget 到合成 __break__ 节点（收口 exitReason='break'）后再放行进退出目标。
+    type_by_id = {node.id: node.type for node in graph.nodes}
+    outgoing_set: dict[str, set[str]] = {}
+    for edge in graph.edges:
+        outgoing_set.setdefault(edge.source, set()).add(edge.target)
+    for lnode in [n for n in graph.nodes if n.type == "loop"]:
+        body_target = lnode.config.get("bodyTarget")
+        exit_target = lnode.config.get("exitTarget")
+        if not (
+            isinstance(body_target, str)
+            and isinstance(exit_target, str)
+            and body_target != lnode.id
+            and exit_target != lnode.id
+        ):
+            continue
+        body = _loop_body_set(body_target, lnode.id, exit_target, outgoing_set)
+        sources = sorted(
+            member
+            for member in body
+            if type_by_id.get(member) == "condition"
+            and exit_target in outgoing_set.get(member, set())
+        )
+        if not sources:
+            continue
+        gate_id = f"{BREAK_GATE_PREFIX}{lnode.id}"
+        builder.add_node(
+            gate_id, _make_break_gate(lnode, emit, tracer=tracer, base_span=base_span)
+        )
+        builder.add_edge(gate_id, exit_target)
+        for member in sources:
+            retarget[(member, exit_target)] = gate_id
+
     incoming = {edge.target for edge in graph.edges}
     for node in graph.nodes:
         if node.id not in incoming:
@@ -1136,10 +1206,10 @@ def compile_graph(
             target = state["outputs"][cid]["target"]
             return retarget.get((cid, target), target)
 
+        # path map 键须为 route 实际返回值（retarget 后的网关 id），否则 langgraph 查无分支。
+        destinations = {retarget.get((condition_id, t), t) for t in targets}
         builder.add_conditional_edges(
-            condition_id,
-            route,
-            {target: retarget.get((condition_id, target), target) for target in targets},
+            condition_id, route, {dest: dest for dest in destinations}
         )
 
     for loop in graph.nodes:
@@ -1151,10 +1221,9 @@ def compile_graph(
             target = state["outputs"][cid]["target"]
             return retarget.get((cid, target), target)
 
+        loop_destinations = {retarget.get((loop.id, t), t) for t in targets}
         builder.add_conditional_edges(
-            loop.id,
-            route_loop,
-            {target: retarget.get((loop.id, target), target) for target in targets},
+            loop.id, route_loop, {dest: dest for dest in loop_destinations}
         )
 
     for node in parallels:
@@ -1217,7 +1286,22 @@ def _recursion_limit(graph: GraphDSL) -> int:
         if node.type == "parallel":
             meta = _parallel_meta(node, outgoing)
             parallel_wait += 2 * len(meta["region"])
-    return 2 * len(graph.nodes) + 2 * loop_steps + parallel_wait + 10
+    # D17/A2：每个含 break 出口的循环额外一个 __break__ 网关节点超步。
+    type_by_id = {n.id: n.type for n in graph.nodes}
+    break_gates = 0
+    for node in graph.nodes:
+        if node.type != "loop":
+            continue
+        bt, et = node.config.get("bodyTarget"), node.config.get("exitTarget")
+        if not (isinstance(bt, str) and isinstance(et, str)):
+            continue
+        body = _loop_body_set(bt, node.id, et, outgoing)
+        if any(
+            type_by_id.get(member) == "condition" and et in outgoing.get(member, set())
+            for member in body
+        ):
+            break_gates += 1
+    return 2 * len(graph.nodes) + 2 * loop_steps + parallel_wait + 2 * break_gates + 10
 
 
 def _tail_subgraph(graph: GraphDSL, resume_node_id: str) -> GraphDSL:
