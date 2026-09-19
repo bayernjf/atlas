@@ -543,10 +543,47 @@ def evaluate_after_run(services: TenantServices, record: RunRecord) -> None: ...
 
 ## 4. 记忆检索接口（依据 06 6.2 / 05 2.3）
 
+> **M11 实现边界（2026-09-19 立项，docs-only 未开工；权威＝docs/26、ADR T23）**：下列 `memory_retriever.query` 五层分层检索为**愿景**（working Redis / summary / fact pgvector / case / preference + 决策节点隐式注入），v1 不实现，缓做 14 D35。M11 取回的是下方「4.1 M11 长期记忆最小接口」——统一 memory_item（fact/preference）+ 显式 remember/recall 两工具，**不做决策隐式注入**。
+
 ```python
+# 【愿景，缓做 D35】决策节点隐式分层记忆检索（06 §6.2 decide 第 1 步）
 memory_retriever.query(goal: str, recent_messages: list) -> list
 # 依据 memory_config 分层检索：working_memory(Redis) / summary_memory(PostgreSQL)
 #   / fact_memory(pgvector, confidence≥0.85) / case_memory(相似度阈值) / preference_memory
+```
+
+### 4.1 M11 长期记忆最小接口（docs/26，2026-09-19 立项、未开工）
+
+```python
+# src/atlas/memory/embeddings.py（纯 stdlib：re/hashlib/math，不引 numpy；离线、录制回放确定）
+EMBED_DIM = 256
+class EmbeddingProvider(Protocol):
+    def embed(self, text: str) -> list[float]: ...        # L2 归一化；空文本返零向量
+class LocalDeterministicEmbedder:                         # 沙盘默认：signed hashing trick
+    def embed(self, text: str) -> list[float]: ...        # 英文数字 [a-z0-9]+、中文 unigram+bigram，md5 定桶/奇偶定号
+def cosine_similarity(a, b) -> float: ...                 # 零向量 → 0
+def get_embedding_provider() -> EmbeddingProvider: ...    # 商业 embedding 缓做 D35，仅留 provider 接缝
+
+# src/atlas/storage/base.py：第九个 MemoryRepository（RESET_RESETTABLE；tenant_id 构造期注入，不进方法签名）
+class MemoryRepository(Protocol):
+    def remember(self, *, kind, content, scope=None, confidence=1.0, source="tool", metadata=None) -> dict: ...
+    def recall(self, query, *, kind=None, scope=None, top_k=5, min_score=0.0) -> list[dict]: ...  # 每项=记忆 dict+"score"，降序
+    def list(self, *, kind=None, limit=50) -> list[dict]: ...
+    def delete(self, id: str) -> bool: ...
+    def clear(self) -> None: ...
+# 两档实现：memory/items.py MemoryStore（进程内，mem-N 租户计数）；storage/pg.py PgMemoryStore
+#   （memory_items 表 vector(256)，embedding <=> :q::vector(256) 余弦、scope @> :scope::jsonb，迁移 006_memory.sql）
+
+# src/atlas/memory/adapter.py：MemoryHarnessAdapter(HarnessAdapter)，adapter_id/type="memory"
+#   能力 memory/remember（action=memory_remember，permission=write，非幂等）
+#     input  {kind: enum[fact,preference]*（*必填）, content: string 1-2000*, scope?:{str:str},
+#             confidence?: number 0-1, metadata?:{str:str}}
+#     output {id, kind, content, confidence, source, scope, created_at}
+#   能力 memory/recall（action=memory_recall，permission=read，幂等）
+#     input  {query: string*, kind?: enum, scope?:{str:str}, top_k?: int 1-20=5, min_score?: number 0-1=0}
+#     output {results: [{id, kind, content, score, confidence, scope, created_at}]}  # 无命中 results=[]
+#   schema 守 harness Capability keyword 白名单（无 x- 扩展）；observe() 返空 Observation。
+#   装配照 message 两段式：全局注册仅供发现，_runtime_registry 按租户克隆注入 services.memory_store。
 ```
 
 ## 5. 后端服务 API（依据 08 7.2 /api/main.py FastAPI 入口）
@@ -633,8 +670,11 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 | GET | /api/feedback | 导出反馈（陪同试用收集用，`{items: [...]}`，Phase 1；2026-09-16 起 **admin only** 且只列本租户，04 §5.14） | feedback_item |
 | GET | /demo/shop | 模拟商家售后控制台 HTML 页面（W9-W10，自动登录/抓取演示目标系统） | — |
 | GET | / 及静态资源 | 生产形态（Docker）FastAPI 同源托管 `frontend/dist` 构建产物（`ATLAS_FRONTEND_DIST` 指向目录时挂载，html=True；dev 仍用 Vite 5174 代理） | — |
-| GET | /api/memories/{operator_id} | 记忆配置读取（05 2.4 配置界面） | memory_config |
-| PUT | /api/memories/{operator_id} | 记忆配置保存 | memory_config |
+| GET | /api/memories | 【viewer+，M11 立项未开工】列出本租户记忆，query `?kind=fact|preference&limit=`（默认 50、上限 200），返 `{items:[memory_item…]}`，不含 embedding | memory_item |
+| GET | /api/memories/search | 【viewer+，M11】语义检索，query `?q=&kind=&top_k=&min_score=`；q 空白 → 422；返 `{results:[{…memory_item, score}]}` 按 score 降序 | memory_item |
+| DELETE | /api/memories/{id} | 【**admin only**，M11】删除一条记忆；他租户/不存在 → 404 | memory_item |
+
+> **M11 记忆端点口径订正（2026-09-19，docs/26）**：上表取代原愿景 `GET/PUT /api/memories/{operator_id}`（memory_config 配置读写，05 §2.4）——五层策略配置随 D35 缓做，operator 维度降为记忆条目 `scope.user_id`，租户由会话 Principal 定。**M11 不开 POST/PUT 写入端点**：写入只走图工具 `memory/remember`，手动造数走 `scripts/dev/m11_seed.py`。
 
 ## 6. 协同消息协议（依据 05 3.3 collaboration_message）
 
@@ -663,7 +703,8 @@ evaluation_task:
 - [ ] 节点失败处理枚举：stop/continue/jump_to（03 node_schema）
 - [x] 工具权限枚举：read/write/delete/financial（03 adapter_schema；W3-W4 落码于 `harness/base.py`）
 - [x] 适配器类型枚举：web/api/mobile/desktop/database/iot/message（W3-W4 已用于 `adapter_type` 字段；web 类型已实现；api 类型 2026-09-15 随 `httpapi/` 通用 HTTP 适配器落地，契约 04 §4.6；**database 与 message 类型 2026-09-15 随 `database/`（query/execute 双能力）、`message/`（message/send 进程内 sink）落地，契约 04 §4.7/§4.8**）
-- [ ] 记忆检索分层与 memory_config 阈值（05 2.3）
+- [ ] 记忆检索分层与 memory_config 阈值（05 2.3）——**愿景，M11 不实现、缓做 D35**（working/summary/case/决策隐式注入）
+- [ ] **M11（2026-09-19 docs-only 立项、未开工，docs/26/ADR T23）**：MemoryItem fact/preference 字段与 EMBED_DIM=256 迁移严格一致；EmbeddingProvider 本地确定性（纯 stdlib、录制回放确定）；MemoryRepository 第九个两档（进程内 / pgvector）remember/recall/list/delete/clear；memory/remember(write)·memory/recall(read) 两能力 schema 过 Capability 白名单；REST `GET /api/memories`、`GET /api/memories/search`（viewer+）+ `DELETE /api/memories/{id}`（admin）、**无 POST/PUT 写入**；reset 清空、跨租户 404
 - [ ] 评估指标三元组（06 9.2 metrics）
 
 ---
