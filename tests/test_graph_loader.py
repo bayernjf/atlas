@@ -654,11 +654,24 @@ def test_subgraph_runs_child_with_mapped_inputs_and_exposes_outputs():
     after = result["outputs"]["tool-after"]
     assert after["params_rendered"] == "单号 X-1"
     assert any(f"{child_id} success (2 nodes)" in line for line in result["trace"])
-    # ④ 子图事件不外泄
-    leaked = [event for event in events if str(event.get("node_id", "")).startswith("child-")]
-    assert leaked == []
-    parent_ids = {event["node_id"] for event in events if event["type"] == "node_start"}
+    # ④ A 包（docs/27 §3）：子图内部节点事件现在上屏，但带 subgraphPath 命名空间；
+    #    只转发 node_start/node_end，子层 run_end 等终帧仍吞掉。
+    child_events = [
+        event for event in events
+        if str(event.get("node_id", "")).startswith("child-")
+    ]
+    assert child_events, "子图内部节点事件应上屏"
+    assert all(event.get("subgraphPath") == ["subgraph-1"] for event in child_events)
+    assert all(event["type"] in ("node_start", "node_end") for event in child_events)
+    # 顶层 node_start 集合不变（child-* 带命名空间，不计入顶层）
+    parent_ids = {
+        event["node_id"]
+        for event in events
+        if event["type"] == "node_start" and not event.get("subgraphPath")
+    }
     assert parent_ids == {"trigger-1", "subgraph-1", "tool-after"}
+    # 整图只有一个顶层 run_end（子层终帧被吞）
+    assert len([event for event in events if event["type"] == "run_end"]) == 1
 
 
 class _BoomDecisionClient:

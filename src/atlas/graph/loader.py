@@ -148,6 +148,7 @@ def _make_executor(
     base_span: Span | None = None,
     internal_spans: bool = False,
     now: datetime | None = None,
+    subgraph_path: tuple[str, ...] = (),
 ):
     def execute(state: GraphState) -> dict:
         context = {"global": state["variables"].get("global", {}), **state["outputs"]}
@@ -328,6 +329,8 @@ def _make_executor(
                     depth=subgraph_depth,
                     tracer=tracer,
                     now=now,
+                    emit=emit,
+                    subgraph_path=subgraph_path,
                 )
             else:
                 # M10：工具调用包 tool span（parent 经 contextvars 就近取当前 node span）。
@@ -490,6 +493,33 @@ def _await_human_approval(
     return output, message
 
 
+def _namespaced_emit(parent: EventCallback, path: tuple[str, ...]) -> EventCallback:
+    """A 包（docs/27 §3.2）：子图重入的命名空间事件回调。
+
+    - 只转发节点级 ``node_start``/``node_end``（含 node_start 上的 approval 载荷）；
+    - 子层 ``run_end``/result 等终帧一律吞掉，避免子图结束被 SSE 误判为整图结束
+      （子图结果由父图 subgraph 节点自身的 node_end.output 体现）；
+    - 给本层直接节点事件附加 ``subgraphPath``＝每层父图 subgraph 节点 id 路径；
+      更深层 wrapper 已附完整路径的事件原样转发（完整路径在最深一层一次性构造，
+      嵌套重入时不在此重复叠加）；
+    - 回调自身任何异常都不得影响图执行（fail-safe，§3.2 第 5 条）。
+    """
+    path_list = list(path)
+
+    def _emit(event: dict[str, Any]) -> None:
+        try:
+            if event.get("type") not in ("node_start", "node_end"):
+                return
+            if event.get("subgraphPath"):
+                parent(event)
+            else:
+                parent({**event, "subgraphPath": path_list})
+        except Exception:
+            return
+
+    return _emit
+
+
 def _execute_subgraph(
     node: NodeDSL,
     *,
@@ -501,9 +531,14 @@ def _execute_subgraph(
     depth: int,
     tracer: Tracer | None = None,
     now: datetime | None = None,
+    emit: EventCallback | None = None,
+    subgraph_path: tuple[str, ...] = (),
 ) -> tuple[dict[str, Any], str]:
     """进程内重入执行被引用子图（04 §5.7）；任何异常 fail-safe 为 failed，父 run 仍 completed。"""
     graph_ref = str(node.config.get("graphId", ""))
+    # A 包（docs/27 §3.1）：本 subgraph 节点在父图中的完整路径，子层内部事件据此上屏。
+    child_path = (*subgraph_path, node.id)
+    child_emit = _namespaced_emit(emit, child_path) if emit is not None else None
     mapping = node.config.get("inputs") or {}
     child_inputs = {key: interpolate(str(value), context) for key, value in mapping.items()}
     # M10：subgraph span（非 internal，折叠后代表整段子图）；子图内部节点 span 标 internal。
@@ -531,9 +566,10 @@ def _execute_subgraph(
                 registry=registry,
                 approval_broker=approval_broker,
                 graph_id=graph_ref,
-                emit=None,
+                emit=child_emit,
                 graph_resolver=resolver,
                 _subgraph_depth=depth + 1,
+                _subgraph_path=child_path,
                 tracer=tracer,
                 now_override=now,
                 _parent_span=sub_span if isinstance(sub_span, Span) else None,
@@ -1159,6 +1195,7 @@ def compile_graph(
     debug_controller: Any = None,
     frame_sink: Callable[[dict], None] | None = None,
     resume: dict | None = None,
+    _subgraph_path: tuple[str, ...] = (),
     validate_with: GraphDSL | None = None,
     tracer: Tracer | None = None,
     graph_version: str | None = None,
@@ -1262,6 +1299,7 @@ def compile_graph(
             base_span=base_span,
             internal_spans=internal_spans,
             now=now,
+            subgraph_path=_subgraph_path,
         )
         if node.id in skip_guards:
             parallel_id, safe_target = skip_guards[node.id]
@@ -1495,6 +1533,7 @@ def run_graph(
     debug_controller: Any = None,
     frame_sink: Callable[[dict], None] | None = None,
     resume: dict | None = None,
+    _subgraph_path: tuple[str, ...] = (),
     tracer: Tracer | None | object = _AUTO_TRACER,
     graph_version: str | None = None,
     now_override: datetime | None = None,
@@ -1569,6 +1608,7 @@ def run_graph(
             debug_controller=debug_controller,
             frame_sink=frame_sink,
             resume=resume,
+            _subgraph_path=_subgraph_path,
             validate_with=resume_graph,
             tracer=tracer,
             graph_version=graph_version,
@@ -1599,6 +1639,7 @@ def run_graph(
         _subgraph_depth=_subgraph_depth,
         debug_controller=debug_controller,
         frame_sink=frame_sink,
+        _subgraph_path=_subgraph_path,
         tracer=tracer,
         graph_version=graph_version,
         now=now_override,

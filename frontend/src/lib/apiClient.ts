@@ -76,8 +76,22 @@ export class DebugRunStoppedError extends Error {
 }
 
 export type RunEvent =
-  | { type: 'node_start'; node_id: string; node_type: string; approval?: ApprovalRequest }
-  | { type: 'node_end'; node_id: string; node_type: string; output: unknown }
+  | {
+      type: 'node_start'
+      node_id: string
+      node_type: string
+      approval?: ApprovalRequest
+      /** A 包（docs/27 §3.1）：子图内部节点携带每层父图 subgraph 节点 id 路径；顶层节点缺省。 */
+      subgraphPath?: string[]
+    }
+  | {
+      type: 'node_end'
+      node_id: string
+      node_type: string
+      output: unknown
+      /** A 包（docs/27 §3.1）：子图内部节点携带每层父图 subgraph 节点 id 路径；顶层节点缺省。 */
+      subgraphPath?: string[]
+    }
   | ({ type: 'run_end' } & Partial<RunResult>)
   | PausedFrame
   | StoppedFrame

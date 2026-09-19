@@ -28,6 +28,7 @@ import { useEditorStore } from '../store/editorStore'
 import { useValidationEngine } from '../lib/validation/useValidationEngine'
 import { serializeGraph } from '../lib/graphSerializer'
 import { toSteps } from '../lib/recordings'
+import { isSubgraphInternal, subgraphPathPrefix, subgraphPathLabel } from '../lib/subgraphEvents'
 import {
   compileGraph,
   decideApproval,
@@ -98,7 +99,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
   const [compileResult, setCompileResult] = useState<CompileResult | null>(null)
   const [runResult, setRunResult] = useState<RunResult | null>(null)
   const [pendingApprovals, setPendingApprovals] = useState<
-    Array<ApprovalRequest & { nodeId: string }>
+    Array<ApprovalRequest & { nodeId: string; subgraphPath?: string[] }>
   >([])
   const [approvalBusy, setApprovalBusy] = useState(false)
   const [approvalError, setApprovalError] = useState<string | null>(null)
@@ -193,15 +194,25 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
           setPausedFrame(null)
           setNodeStatus(event.node_id, 'idle')
         } else if (event.type === 'node_start') {
-          setNodeStatus(event.node_id, 'running')
-          appendLog(`▶ 节点开始：${event.node_id}`)
+          // A 包（docs/27 §3.3）：子图内部节点事件带 subgraphPath，日志加路径前缀，
+          // 不写父图节点状态表（父 subgraph 节点由其自身无路径事件驱动高亮）。
+          const startPath = event.subgraphPath ?? []
+          const startInSubgraph = isSubgraphInternal(event.subgraphPath)
+          const startPrefix = subgraphPathPrefix(event.subgraphPath)
+          if (!startInSubgraph) setNodeStatus(event.node_id, 'running')
+          appendLog(`▶ ${startPrefix}节点开始：${event.node_id}`)
           if (event.approval) {
             const approval = event.approval
-            setPendingApprovals((items) => [...items, { ...approval, nodeId: event.node_id }])
-            appendLog(`⏸ ${event.node_id} 等待人工审批：${approval.summary}`)
+            setPendingApprovals((items) => [
+              ...items,
+              { ...approval, nodeId: event.node_id, subgraphPath: startPath },
+            ])
+            appendLog(`⏸ ${startPrefix}${event.node_id} 等待人工审批：${approval.summary}`)
           }
         } else if (event.type === 'node_end') {
-          setNodeStatus(event.node_id, 'completed')
+          const endInSubgraph = isSubgraphInternal(event.subgraphPath)
+          const endPrefix = subgraphPathPrefix(event.subgraphPath)
+          if (!endInSubgraph) setNodeStatus(event.node_id, 'completed')
           const output = event.output as {
             decision?: { action?: string }
             branch?: string
@@ -217,6 +228,25 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
             branches?: Array<{ label: string; target: string; status: string; error: string }>
             action_status?: string
             result?: { status?: unknown; code?: string; message?: string }
+          }
+          // A 包：子图内部节点只记带路径前缀的日志，不进入父图节点的富模式渲染；
+          // 子图内审批仍要消除其 pending Modal（按内部 node_id 匹配）。
+          if (endInSubgraph) {
+            if (output?.mode === 'human_approval') {
+              const subHumanDecision = output.decision as unknown as 'approved' | 'rejected'
+              const subDecisionLabel = subHumanDecision === 'approved' ? '通过' : '拒绝'
+              const subSourceLabel =
+                { human: '人工', timeout: '超时', input: '预置' }[output.resolvedBy ?? ''] ??
+                output.resolvedBy
+              appendLog(
+                `✓ ${endPrefix}${event.node_id} 人工审批：${subDecisionLabel}（${subSourceLabel}）→ ${output.target}`,
+              )
+              setPendingApprovals((items) => items.filter((item) => item.nodeId !== event.node_id))
+              setApprovalError(null)
+            } else {
+              appendLog(`✓ ${endPrefix}节点完成：${event.node_id}`)
+            }
+            return
           }
           const decision = output?.decision
           if (output?.mode === 'human_approval') {
@@ -844,7 +874,18 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
           <Space orientation="vertical" size={8} style={{ width: '100%' }}>
             <div>
               <Typography.Text type="secondary">节点</Typography.Text>
-              <div>{currentApproval.nodeId}</div>
+              <div>
+                {currentApproval.subgraphPath && currentApproval.subgraphPath.length > 0
+                  ? `[${subgraphPathLabel(currentApproval.subgraphPath)}] ${currentApproval.nodeId}`
+                  : currentApproval.nodeId}
+              </div>
+              {currentApproval.subgraphPath && currentApproval.subgraphPath.length > 0 && (
+                <div>
+                  <Typography.Text type="secondary">
+                    子图内审批（所属 subgraph 节点：{subgraphPathLabel(currentApproval.subgraphPath)}）
+                  </Typography.Text>
+                </div>
+              )}
             </div>
             {currentApproval.cardTemplateId ? (
               <ApprovalCardGate

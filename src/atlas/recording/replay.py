@@ -143,7 +143,9 @@ def collect_steps() -> tuple[Callable[[dict[str, Any]], None], Callable[[], list
     collected: list[RecordStep] = []
 
     def emit(event: dict[str, Any]) -> None:
-        if event.get("type") == "node_end":
+        # A 包（docs/27 §3.2/§10.1）：子图内部 node_end 带 subgraphPath，录制/回放步骤只
+        # 统计顶层节点（子图结果由 subgraph 节点自身 node_end 体现），与 baseline 口径一致。
+        if event.get("type") == "node_end" and not event.get("subgraphPath"):
             collected.append(
                 RecordStep(
                     node_id=event["node_id"],

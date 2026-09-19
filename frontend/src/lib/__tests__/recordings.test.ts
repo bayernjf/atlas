@@ -33,4 +33,46 @@ describe('toSteps', () => {
       toSteps([{ type: 'node_start', node_id: 'trigger-1', node_type: 'trigger' }]),
     ).toEqual([])
   })
+
+  it('A pack: excludes subgraph-internal node_end but keeps the subgraph node itself', () => {
+    const events: RunEvent[] = [
+      { type: 'node_end', node_id: 'p-trigger', node_type: 'trigger', output: {} },
+      // 子图内部节点（带 subgraphPath）不得进入录制步骤
+      {
+        type: 'node_end',
+        node_id: 'c-trigger',
+        node_type: 'trigger',
+        output: {},
+        subgraphPath: ['subgraph-1'],
+      },
+      {
+        type: 'node_end',
+        node_id: 'c-tool',
+        node_type: 'tool_call',
+        output: { ok: true },
+        subgraphPath: ['subgraph-1'],
+      },
+      // 嵌套子图内部节点同样排除
+      {
+        type: 'node_end',
+        node_id: 'g-tool',
+        node_type: 'tool_call',
+        output: {},
+        subgraphPath: ['subgraph-1', 'subgraph-inner'],
+      },
+      // 父图 subgraph 节点自身的 node_end（无 subgraphPath）保留，承载子图结果
+      {
+        type: 'node_end',
+        node_id: 'subgraph-1',
+        node_type: 'subgraph',
+        output: { mode: 'subgraph', status: 'success' },
+      },
+      { type: 'node_end', node_id: 'tool-after', node_type: 'tool_call', output: {} },
+    ]
+    expect(toSteps(events).map((s) => s.node_id)).toEqual([
+      'p-trigger',
+      'subgraph-1',
+      'tool-after',
+    ])
+  })
 })

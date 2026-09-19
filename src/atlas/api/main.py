@@ -1069,7 +1069,9 @@ def run_saved_graph_stream(
         collected: dict[str, Any] = {}
 
         def recording_emit(event: dict[str, Any]) -> None:
-            if event.get("type") == "node_end":
+            # A 包（docs/27 §10.1）：监控/运行产出只收顶层 node_end；带 subgraphPath 的
+            # 子图内部节点不进 collected（子图结果归在 subgraph 节点），但仍转发 SSE 上屏。
+            if event.get("type") == "node_end" and not event.get("subgraphPath"):
                 collected[event["node_id"]] = event.get("output")
             emit(event)
 
