@@ -10,7 +10,8 @@ import {
   Tag,
   Typography,
 } from 'antd'
-import { useEditorStore } from '../../store/editorStore'
+import { useEffect, useState } from 'react'
+import { useEditorStore, validateNodeId } from '../../store/editorStore'
 import {
   NODE_CATALOG,
   ON_ERROR_STRATEGIES,
@@ -46,6 +47,17 @@ export function PropertyPanel() {
   const toolOutputSchemas = useToolOutputSchemas()
   // M4 批 2 ⑦：诊断来自分层校验引擎结果 store（L1 同步、L2 防抖）。
   const engineDiagnostics = useNodeDiagnostics(selectedNodeId ?? '')
+  const renameNode = useEditorStore((state) => state.renameNode)
+
+  // D30/B3：节点 ID 可编辑重命名（草稿态；切换选中节点时同步并清错）。
+  const [idDraft, setIdDraft] = useState('')
+  const [idError, setIdError] = useState<string | null>(null)
+  useEffect(() => {
+    setIdDraft(nodes.find((node) => node.id === selectedNodeId)?.id ?? '')
+    setIdError(null)
+    // 仅随选中节点切换重置；编辑草稿不依赖 nodes，避免输入中被冲掉。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedNodeId])
 
   const selectedNode = nodes.find((node) => node.id === selectedNodeId)
 
@@ -65,6 +77,23 @@ export function PropertyPanel() {
   const targetOptions = nodes
     .filter((node) => node.id !== selectedNode.id)
     .map((node) => ({ value: node.id, label: `${node.data.label}（${node.id}）` }))
+
+  const commitRename = () => {
+    if (!selectedNodeId) return
+    const trimmed = idDraft.trim()
+    if (trimmed === selectedNodeId) {
+      setIdError(null)
+      setIdDraft(selectedNodeId)
+      return
+    }
+    const error = validateNodeId(idDraft, selectedNodeId, nodes.map((node) => node.id))
+    if (error) {
+      setIdError(error)
+      return
+    }
+    renameNode(selectedNodeId, idDraft)
+    setIdError(null)
+  }
 
   const insertVariable = (path: string) => {
     if (!path) return
@@ -89,7 +118,25 @@ export function PropertyPanel() {
       <Space orientation="vertical" style={{ width: '100%' }} size="small">
         <div>
           <Typography.Text type="secondary">节点 ID</Typography.Text>
-          <div>{selectedNode.id}</div>
+          <Input
+            size="small"
+            value={idDraft}
+            status={idError ? 'error' : undefined}
+            aria-label="节点 ID"
+            onChange={(event) => {
+              setIdDraft(event.target.value)
+              setIdError(null)
+            }}
+            onPressEnter={commitRename}
+            onBlur={commitRename}
+          />
+          {idError ? (
+            <div>
+              <Typography.Text type="danger" style={{ fontSize: 12 }}>
+                {idError}
+              </Typography.Text>
+            </div>
+          ) : null}
         </div>
         <div>
           <Typography.Text type="secondary">类型</Typography.Text>
