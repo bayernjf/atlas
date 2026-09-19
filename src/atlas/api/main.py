@@ -47,6 +47,7 @@ from atlas.iam.deps import get_principal, require, services_for, session_store, 
 from atlas.iam.principals import Principal, authenticate
 from atlas.iam.registry import STORAGE_BACKEND, TenantServices
 from atlas.llm.nl_generate import generate_graph, validate_param_fills
+from atlas.memory.adapter import MemoryHarnessAdapter
 from atlas.message.adapter import MessageHarnessAdapter
 from atlas.monitoring import RUN_RING_SIZE, extract_business, extract_node_results
 from atlas.recording import (
@@ -211,6 +212,8 @@ _demo_registry.register(
 )
 # 全局注册表里的 message 实例仅供适配器发现；执行期注册表替换为租户消息服务
 _demo_registry.register(MessageHarnessAdapter(granted_permissions=_FULL_PERMISSIONS))
+# 全局注册表里的 memory 实例仅供适配器发现；执行期注册表替换为租户记忆存储（docs/26 §5.1）
+_demo_registry.register(MemoryHarnessAdapter(granted_permissions=_FULL_PERMISSIONS))
 
 
 @app.exception_handler(GraphValidationError)
@@ -246,6 +249,10 @@ def _runtime_registry(services: TenantServices) -> AdapterRegistry:
         if item["id"] == "message":
             adapter = MessageHarnessAdapter(
                 service=services.message_service, granted_permissions=_FULL_PERMISSIONS
+            )
+        if item["id"] == "memory":
+            adapter = MemoryHarnessAdapter(
+                repo=services.memory_store, granted_permissions=_FULL_PERMISSIONS
             )
         registry.register(adapter)
     return registry
@@ -1445,6 +1452,55 @@ def demo_messages(
 ) -> dict[str, Any]:
     """消息适配器演示查看（04 §4.8）：本租户进程内已记录消息，重启/reset 清空，无真实投递。"""
     return {"items": services_for(principal).message_service.list()}
+
+
+# ---- M11 长期记忆（docs/26 §6）：按租户只读 + admin 删；写入只走图内 remember 工具 ----
+
+
+@app.get("/api/memories")
+def list_memories(
+    kind: str | None = None,
+    limit: int = 50,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """当前租户记忆倒序列表（不含 embedding）；kind 可选过滤，limit 缺省 50、上限 200。"""
+    if kind is not None and kind not in ("fact", "preference"):
+        raise HTTPException(status_code=422, detail="kind 必须是 fact 或 preference")
+    limit = max(1, min(limit, 200))
+    return {"items": services_for(principal).memory_store.list(kind=kind, limit=limit)}
+
+
+@app.get("/api/memories/search")
+def search_memories(
+    q: str = "",
+    kind: str | None = None,
+    top_k: int = 5,
+    min_score: float = 0.0,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """语义检索当前租户记忆；q 空白返 422，无命中返空数组（成功不报错）。"""
+    if not q or not q.strip():
+        raise HTTPException(status_code=422, detail="q 必须是非空检索词")
+    if kind is not None and kind not in ("fact", "preference"):
+        raise HTTPException(status_code=422, detail="kind 必须是 fact 或 preference")
+    top_k = max(1, min(top_k, 20))
+    min_score = max(0.0, min(min_score, 1.0))
+    results = services_for(principal).memory_store.recall(
+        q.strip(), kind=kind, top_k=top_k, min_score=min_score
+    )
+    return {"results": results}
+
+
+@app.delete("/api/memories/{memory_id}")
+def delete_memory(
+    memory_id: str,
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, bool]:
+    """删除一条记忆（admin only）；不存在或跨租户一律 404（不泄漏存在性，T15）。"""
+    deleted = services_for(principal).memory_store.delete(memory_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="记忆不存在")
+    return {"deleted": True}
 
 
 @app.post("/api/demo/reset")

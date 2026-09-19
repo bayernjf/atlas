@@ -92,7 +92,7 @@ class GraphState(TypedDict):
 
 # params 插值后为 JSON 对象、整体透传给适配器的通用通道（04 §4.6-4.8）；
 # 其余适配器（shop）走下方按能力硬编码装配。
-GENERIC_JSON_ADAPTERS = frozenset({"http", "database", "message"})
+GENERIC_JSON_ADAPTERS = frozenset({"http", "database", "message", "memory"})
 
 
 def build_demo_registry() -> AdapterRegistry:

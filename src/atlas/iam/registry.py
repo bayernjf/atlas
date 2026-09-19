@@ -19,6 +19,7 @@ from atlas.storage.base import (
     DebugRepository,
     FeedbackRepository,
     GraphRepository,
+    MemoryRepository,
     MonitoringRepository,
     RecordingRepository,
     RunRepository,
@@ -28,6 +29,7 @@ from atlas.storage.memory import (
     DebuggerBroker,
     FeedbackStore,
     GraphStore,
+    MemoryStore,
     MonitoringStore,
     RecordingStore,
     RunStore,
@@ -53,6 +55,7 @@ class TenantServices:
     task_store: TaskStore
     routing_store: RoutingStore
     report_store: ReportStore  # D26 报告 v1：批量回放报告 ring（进程内，memory/PG 档均挂内存实例）
+    memory_store: MemoryRepository  # M11 长期记忆 fact/preference（批 3 PG 档换 PgMemoryStore）
 
 
 class TenantRegistry:
@@ -92,6 +95,8 @@ class TenantRegistry:
                 task_store=TaskStore(),
                 routing_store=RoutingStore(),
                 report_store=ReportStore(),
+                # 批 2 先挂进程内实现；批 3 换 backend.memory_store(tenant_id)（pgvector）
+                memory_store=MemoryStore(),
             )
         return TenantServices(
             graph_store=GraphStore(),
@@ -105,10 +110,11 @@ class TenantRegistry:
             task_store=TaskStore(),
             routing_store=RoutingStore(),
             report_store=ReportStore(),
+            memory_store=MemoryStore(),
         )
 
     def reset_tenant(self, tenant_id: str) -> None:
-        """本租户运行时数据重置：图/消息/审批/调试/监控/运行状态/灰度路由/批量回放报告清空，规则回默认；
+        """本租户运行时数据重置：图/消息/审批/调试/监控/运行状态/灰度路由/批量回放报告/长期记忆清空，规则回默认；
         录制用例与反馈沿用「reset 不清除」语义保留；监控运行计数器不重置。"""
         services = self.get(tenant_id)
         services.graph_store.clear()
@@ -119,3 +125,4 @@ class TenantRegistry:
         services.run_store.reset()
         services.routing_store.reset()
         services.report_store.reset()
+        services.memory_store.clear()
