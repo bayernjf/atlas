@@ -834,3 +834,48 @@ export async function promoteRollout(graphId: string): Promise<RolloutSnapshot> 
 export async function rollbackRollout(graphId: string): Promise<RolloutSnapshot> {
   return request(`/api/graphs/${graphId}/rollout/rollback`, { method: 'POST' })
 }
+
+// --- M11 长期记忆（docs/26 §6；只读浏览 + admin 删除，写入只走图工具） --------
+
+export type MemoryKind = 'fact' | 'preference'
+
+export type MemoryItem = {
+  id: string
+  kind: MemoryKind
+  content: string
+  scope: Record<string, string>
+  confidence: number
+  source: string
+  metadata: Record<string, string>
+  created_at: string
+}
+
+export type MemorySearchResult = MemoryItem & { score: number }
+
+export async function listMemories(
+  kind?: MemoryKind,
+  limit = 50,
+): Promise<MemoryItem[]> {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (kind) params.set('kind', kind)
+  const body = await request<{ items: MemoryItem[] }>(`/api/memories?${params.toString()}`)
+  return body.items
+}
+
+export async function searchMemories(
+  q: string,
+  opts: { kind?: MemoryKind; topK?: number; minScore?: number } = {},
+): Promise<MemorySearchResult[]> {
+  const params = new URLSearchParams({ q })
+  if (opts.kind) params.set('kind', opts.kind)
+  if (opts.topK !== undefined) params.set('top_k', String(opts.topK))
+  if (opts.minScore !== undefined) params.set('min_score', String(opts.minScore))
+  const body = await request<{ results: MemorySearchResult[] }>(
+    `/api/memories/search?${params.toString()}`,
+  )
+  return body.results
+}
+
+export async function deleteMemory(id: string): Promise<void> {
+  await request(`/api/memories/${id}`, { method: 'DELETE' })
+}
