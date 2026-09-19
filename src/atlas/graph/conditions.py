@@ -1,30 +1,46 @@
-"""condition 节点首版规则表达式（04 §5.1 语法白名单 / §5.2 契约）。
+"""condition/loop 安全规则表达式（04 §5.1 语法白名单 / §5.2 契约；D15 扩算术与函数）。
 
 手写 tokenize + 递归下降解析，禁止 eval，零第三方依赖。
-语法：
-    or_expr   := and_expr ('||' and_expr)*
-    and_expr  := not_expr ('&&' not_expr)*
-    not_expr  := '!' not_expr | comparison
-    comparison := primary (op primary)?   op ∈ > >= < <= == !=
-    primary   := '(' or_expr ')' | '{{路径}}' | 字面量
-字面量：数字（含负号）、单/双引号字符串、true/false/null。
-首版不支持算术、函数调用、裸标识符；LLM 判断分支缓做（14 登记表）。
+语法（D15 在比较之下加入算术层与白名单函数）：
+    or_expr      := and_expr ('||' and_expr)*
+    and_expr     := not_expr ('&&' not_expr)*
+    not_expr     := '!' not_expr | comparison
+    comparison   := additive (cmp_op additive)?    cmp_op ∈ > >= < <= == !=
+    additive     := multiplicative (('+'|'-') multiplicative)*
+    multiplicative := unary (('*'|'/'|'%') unary)*
+    unary        := ('!'|'-'|'+') unary | primary
+    primary      := '(' or_expr ')' | '{{路径}}' | 字面量 | 函数调用
+    函数调用     := NAME '(' [or_expr (',' or_expr)*] ')'   仅白名单函数
+字面量：数字、单/双引号字符串、true/false/null；日期由 date(y,m,d) 构造。
+顶层表达式必须产出布尔值（比较/逻辑运算）；纯算术/常量非布尔在 validate 期报错。
+白名单函数（纯、确定、无副作用；D15 不含 now()/today() 等非确定函数）：
+    数值 abs/floor/ceil/round/min/max；字符串 len/lower/upper；
+    日期 date/year/month/day/daysBetween。
+LLM 判断分支（D14）、foreach（D16）仍缓做（见 14 登记表）。
 """
 
 from __future__ import annotations
 
+import datetime
+import math
 import re
 from dataclasses import dataclass
 from typing import Any
 
 _TOKEN_RE = re.compile(
     r"\{\{\s*[^{}]+?\s*\}\}"  # {{路径}}
-    r"|>=|<=|==|!=|&&|\|\||[()!><]"
-    r"|-?\d+(?:\.\d+)?"
+    r"|>=|<=|==|!=|&&|\|\||[()!><+\-*/%,]"  # 运算符与逗号（负号由 parser 一元处理）
+    r"|\d+(?:\.\d+)?"
     r"|'(?:\\.|[^'\\])*'"
     r'|"(?:\\.|[^"\\])*"'
     r"|[A-Za-z_][A-Za-z0-9_]*"
 )
+
+_CMP_OPS = (">", ">=", "<", "<=", "==", "!=")
+_LOGIC_OPS = ("&&", "||")
+_ADD_OPS = ("+", "-")
+_MUL_OPS = ("*", "/", "%")
+_UNARY_OPS = ("!", "-", "+")
 
 
 class ConditionEvalError(Exception):
@@ -52,22 +68,40 @@ def _tokenize(expression: str) -> list[_Token]:
         if text.startswith("{{"):
             kind = "path"
             value = text[2:-2].strip()
-        elif text[0].isdigit() or (text.startswith("-") and len(text) > 1):
+        elif text[0].isdigit():
             kind, value = "number", text
         elif text[0] in ("'", '"'):
             kind, value = "string", text[1:-1]
         elif text in ("true", "false", "null"):
             kind, value = "literal", text
-        elif text in ("&&", "||", "!", ">", ">=", "<", "<=", "==", "!=", "(", ")"):
+        elif text in _CMP_OPS + _LOGIC_OPS + _ADD_OPS + _MUL_OPS + ("(", ")", "!", ","):
             kind, value = "op", text
         else:
-            raise ConditionEvalError(
-                f'语法错误：未知标识符 "{text}"（位置 {pos + 1}；'
-                "变量须用 {{路径}} 包裹，字面量仅支持 true/false/null、数字、字符串）"
-            )
+            # 裸标识符：函数名在 parser 结合其后的 '(' 判定，其余为未知标识符。
+            kind, value = "ident", text
         tokens.append(_Token(kind, value, pos))
         pos = match.end()
     return tokens
+
+
+# 白名单函数：name -> (最少参数数, 最多参数数或 None 表示不限, 返回类型)。
+# 返回类型：number/string/date/any。
+_FUNCTIONS: dict[str, tuple[int, int | None, str]] = {
+    "abs": (1, 1, "number"),
+    "floor": (1, 1, "number"),
+    "ceil": (1, 1, "number"),
+    "round": (1, 1, "number"),
+    "min": (1, None, "number"),
+    "max": (1, None, "number"),
+    "len": (1, 1, "number"),
+    "lower": (1, 1, "string"),
+    "upper": (1, 1, "string"),
+    "date": (3, 3, "date"),
+    "year": (1, 1, "number"),
+    "month": (1, 1, "number"),
+    "day": (1, 1, "number"),
+    "daysBetween": (2, 2, "number"),
+}
 
 
 class _Parser:
@@ -110,17 +144,38 @@ class _Parser:
         token = self._peek()
         if token is not None and token.value == "!":
             self._consume()
-            return ("unary", "not", self._parse_not())
+            return ("unary", "!", self._parse_not())
         return self._parse_comparison()
 
     def _parse_comparison(self) -> tuple:
-        left = self._parse_primary()
+        left = self._parse_additive()
         token = self._peek()
-        if token is not None and token.value in (">", ">=", "<", "<=", "==", "!="):
+        if token is not None and token.value in _CMP_OPS:
             self._consume()
-            right = self._parse_primary()
+            right = self._parse_additive()
             return ("binary", token.value, left, right)
         return left
+
+    def _parse_additive(self) -> tuple:
+        node = self._parse_multiplicative()
+        while (token := self._peek()) is not None and token.value in _ADD_OPS:
+            self._consume()
+            node = ("binary", token.value, node, self._parse_multiplicative())
+        return node
+
+    def _parse_multiplicative(self) -> tuple:
+        node = self._parse_unary()
+        while (token := self._peek()) is not None and token.value in _MUL_OPS:
+            self._consume()
+            node = ("binary", token.value, node, self._parse_unary())
+        return node
+
+    def _parse_unary(self) -> tuple:
+        token = self._peek()
+        if token is not None and token.value in ("!", "-", "+"):
+            self._consume()
+            return ("unary", token.value, self._parse_unary())
+        return self._parse_primary()
 
     def _parse_primary(self) -> tuple:
         token = self._consume()
@@ -139,7 +194,42 @@ class _Parser:
             return ("lit", token.value)
         if token.kind == "literal":
             return ("lit", {"true": True, "false": False, "null": None}[token.value])
+        if token.kind == "ident":
+            return self._parse_identifier(token)
         raise ConditionEvalError(f'语法错误：意外的 token "{token.value}"（位置 {token.pos + 1}）')
+
+    def _parse_identifier(self, token: _Token) -> tuple:
+        nxt = self._peek()
+        if nxt is None or nxt.value != "(":
+            raise ConditionEvalError(
+                f'语法错误：未知标识符 "{token.value}"（位置 {token.pos + 1}；'
+                "变量须用 {{路径}} 包裹，字面量仅支持 true/false/null、数字、字符串，"
+                f"函数仅限白名单：{', '.join(_FUNCTIONS)}）"
+            )
+        # 函数调用
+        self._consume()  # '('
+        args: list[tuple] = []
+        if self._peek() is not None and self._peek().value != ")":
+            args.append(self._parse_or())
+            while self._peek() is not None and self._peek().value == ",":
+                self._consume()
+                args.append(self._parse_or())
+        closing = self._peek()
+        if closing is None or closing.value != ")":
+            raise ConditionEvalError(f'语法错误：函数 "{token.value}" 缺少右括号')
+        self._consume()  # ')'
+        if token.value not in _FUNCTIONS:
+            raise ConditionEvalError(
+                f'语法错误：未知函数 "{token.value}"（仅支持白名单函数：{", ".join(_FUNCTIONS)}）'
+            )
+        min_args, max_args, _return_type = _FUNCTIONS[token.value]
+        if len(args) < min_args or (max_args is not None and len(args) > max_args):
+            if min_args == max_args:
+                want = f"{min_args} 个参数"
+            else:
+                want = f"至少 {min_args} 个参数" if max_args is None else f"{min_args}-{max_args} 个参数"
+            raise ConditionEvalError(f'函数 "{token.value}" 需要{want}，实际 {len(args)} 个')
+        return ("call", token.value, tuple(args))
 
 
 def parse(expression: str) -> tuple:
@@ -147,14 +237,19 @@ def parse(expression: str) -> tuple:
 
 
 def validate_expression(expression: str) -> list[str]:
-    """校验期检查：语法 + 纯字面量比较的静态类型；错误为中文列表。"""
+    """校验期检查：语法 + 静态类型（常量折叠求值 + 顶层须为布尔）；错误为中文列表。"""
     if not expression or not expression.strip():
         return ["表达式不能为空"]
     try:
         ast = parse(expression)
     except ConditionEvalError as exc:
         return [str(exc)]
-    return _static_type_errors(ast)
+    errors = _static_type_errors(ast)
+    # 顶层必须产出布尔：静态可判定为非布尔（数值/字符串/日期）即报错；类型未知（变量）放行。
+    top_type = _infer_type(ast)
+    if top_type in ("number", "string", "date"):
+        errors.append("条件表达式必须产出布尔值（比较或逻辑运算），不能直接使用算术结果/数值/字符串/日期")
+    return errors
 
 
 def _has_var(node: tuple) -> bool:
@@ -165,28 +260,70 @@ def _has_var(node: tuple) -> bool:
         return False
     if kind == "unary":
         return _has_var(node[2])
+    if kind == "call":
+        return any(_has_var(arg) for arg in node[2])
     return _has_var(node[2]) or _has_var(node[3])
+
+
+def _infer_type(node: tuple) -> str:
+    """静态推断产出类型：bool/number/string/date/null/unknown（var 与含 var 表达式为 unknown）。"""
+    kind = node[0]
+    if kind == "var":
+        return "unknown"
+    if kind == "lit":
+        value = node[1]
+        if isinstance(value, bool):
+            return "bool"
+        if isinstance(value, (int, float)):
+            return "number"
+        if isinstance(value, str):
+            return "string"
+        if isinstance(value, datetime.date):
+            return "date"
+        return "null"
+    if kind == "unary":
+        return "bool" if node[1] == "!" else "number"
+    if kind == "call":
+        return _FUNCTIONS[node[1]][2]
+    op = node[1]
+    if op in _CMP_OPS or op in _LOGIC_OPS:
+        return "bool"
+    return "number"  # 算术
 
 
 def _static_type_errors(node: tuple) -> list[str]:
     kind = node[0]
-    if kind == "lit" or kind == "var":
+    if kind in ("lit", "var"):
         return []
     if kind == "unary":
         return _static_type_errors(node[2])
+    if kind == "call":
+        errors: list[str] = []
+        for arg in node[2]:
+            errors.extend(_static_type_errors(arg))
+        # 纯常量调用：折叠求值以静态暴露除零/参数类型/非法日期等错误。
+        if not any(_has_var(arg) for arg in node[2]):
+            try:
+                _evaluate(node, {})
+            except ConditionEvalError as exc:
+                errors.append(str(exc))
+        return errors
     errors = _static_type_errors(node[2]) + _static_type_errors(node[3])
     op = node[1]
-    if op in (">", ">=", "<", "<=") and not _has_var(node[2]) and not _has_var(node[3]):
-        try:
-            _compare(op, _literal_value(node[2]), _literal_value(node[3]))
-        except ConditionEvalError as exc:
-            errors.append(str(exc))
+    if op in _CMP_OPS:
+        if not _has_var(node[2]) and not _has_var(node[3]):
+            try:
+                _compare(op, _evaluate(node[2], {}), _evaluate(node[3], {}))
+            except ConditionEvalError as exc:
+                errors.append(str(exc))
+    elif op in _ADD_OPS + _MUL_OPS:
+        # 纯常量算术折叠；含变量子树的类型错误留运行时 fail-safe。
+        if not _has_var(node[2]) and not _has_var(node[3]):
+            try:
+                _evaluate(node, {})
+            except ConditionEvalError as exc:
+                errors.append(str(exc))
     return errors
-
-
-def _literal_value(node: tuple) -> Any:
-    # 仅用于无变量子树；非 lit 的无变量表达式（true/false/括号布尔）交运行时规则处理。
-    return node[1] if node[0] == "lit" else True
 
 
 def evaluate_expression(expression: str, context: dict[str, Any]) -> bool:
@@ -203,10 +340,18 @@ def _evaluate(node: tuple, context: dict[str, Any]) -> Any:
 
         return resolve_path(node[1], context)
     if kind == "unary":
+        op = node[1]
         value = _evaluate(node[2], context)
-        if not isinstance(value, bool):
-            raise ConditionEvalError(f'逻辑非 "!" 要求布尔值，实际为 {_type_name(value)}')
-        return not value
+        if op == "!":
+            if not isinstance(value, bool):
+                raise ConditionEvalError(f'逻辑非 "!" 要求布尔值，实际为 {_type_name(value)}')
+            return not value
+        # 一元 +/- 要求数值
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ConditionEvalError(f'一元 "{op}" 要求数值，实际为 {_type_name(value)}')
+        return +value if op == "+" else -value
+    if kind == "call":
+        return _evaluate_function(node[1], [_evaluate(arg, context) for arg in node[2]])
     op, left_node, right_node = node[1], node[2], node[3]
     if op == "&&":
         left = _evaluate(left_node, context)
@@ -218,7 +363,89 @@ def _evaluate(node: tuple, context: dict[str, Any]) -> Any:
         if not isinstance(left, bool):
             raise ConditionEvalError(f'"||" 要求布尔值，实际为 {_type_name(left)}')
         return left or _evaluate(right_node, context)
-    return _compare(op, _evaluate(left_node, context), _evaluate(right_node, context))
+    if op in _CMP_OPS:
+        return _compare(op, _evaluate(left_node, context), _evaluate(right_node, context))
+    return _arith(op, _evaluate(left_node, context), _evaluate(right_node, context))
+
+
+def _arith(op: str, left: Any, right: Any) -> Any:
+    if isinstance(left, bool) or isinstance(right, bool) or not (
+        isinstance(left, (int, float)) and isinstance(right, (int, float))
+    ):
+        raise ConditionEvalError(
+            f'算术 "{op}" 要求两侧均为数值，实际为 {_type_name(left)} 与 {_type_name(right)}'
+        )
+    if op == "+":
+        return left + right
+    if op == "-":
+        return left - right
+    if op == "*":
+        return left * right
+    if op == "/":
+        if right == 0:
+            raise ConditionEvalError('算术 "/" 除数不能为 0')
+        return left / right
+    # 截断式余数（与前端 JS Math.trunc 语义对齐，负数余数符号随被除数）
+    if right == 0:
+        raise ConditionEvalError('算术 "%" 模数不能为 0')
+    return left - right * math.trunc(left / right)
+
+
+def _evaluate_function(name: str, args: list[Any]) -> Any:
+    if name == "abs":
+        _require_number(name, args[0])
+        return abs(args[0])
+    if name == "floor":
+        _require_number(name, args[0])
+        return math.floor(args[0])
+    if name == "ceil":
+        _require_number(name, args[0])
+        return math.ceil(args[0])
+    if name == "round":
+        _require_number(name, args[0])
+        # 半值向正无穷（floor(x+0.5)），与前端同构
+        return math.floor(args[0] + 0.5)
+    if name in ("min", "max"):
+        for value in args:
+            _require_number(name, value)
+        return min(args) if name == "min" else max(args)
+    if name == "len":
+        value = args[0]
+        if isinstance(value, str):
+            return len(value)
+        if isinstance(value, (list, dict)):
+            return len(value)
+        raise ConditionEvalError(f'函数 "len" 要求字符串/数组/对象，实际为 {_type_name(value)}')
+    if name in ("lower", "upper"):
+        if not isinstance(args[0], str):
+            raise ConditionEvalError(f'函数 "{name}" 要求字符串，实际为 {_type_name(args[0])}')
+        return args[0].lower() if name == "lower" else args[0].upper()
+    if name == "date":
+        year, month, day = args
+        for component, value in (("年", year), ("月", month), ("日", day)):
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ConditionEvalError(f'函数 "date" 的{component}份必须是整数')
+        try:
+            return datetime.date(year, month, day)
+        except ValueError as exc:
+            raise ConditionEvalError(f'函数 "date" 构造了非法日期：{exc}') from None
+    if name in ("year", "month", "day"):
+        if not isinstance(args[0], datetime.date):
+            raise ConditionEvalError(f'函数 "{name}" 要求日期值（用 date(y,m,d) 构造），实际为 {_type_name(args[0])}')
+        return getattr(args[0], name)
+    if name == "daysBetween":
+        start, end = args
+        if not isinstance(start, datetime.date) or not isinstance(end, datetime.date):
+            raise ConditionEvalError(
+                f'函数 "daysBetween" 要求两个日期值，实际为 {_type_name(start)} 与 {_type_name(end)}'
+            )
+        return (end - start).days
+    raise ConditionEvalError(f'未知函数 "{name}"')  # 理论不可达（parse 已拦）
+
+
+def _require_number(name: str, value: Any) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ConditionEvalError(f'函数 "{name}" 要求数值参数，实际为 {_type_name(value)}')
 
 
 def _compare(op: str, left: Any, right: Any) -> bool:
@@ -229,9 +456,9 @@ def _compare(op: str, left: Any, right: Any) -> bool:
         raise ConditionEvalError("空值（null/缺失变量）只能做 == / != 比较，不能参与大小比较")
     if isinstance(left, bool) or isinstance(right, bool) or type(left) is not type(right):
         raise ConditionEvalError(
-            f'有序比较 "{op}" 要求两侧同为数字或同为字符串，实际为 {_type_name(left)} 与 {_type_name(right)}'
+            f'有序比较 "{op}" 要求两侧同为数字、字符串或日期，实际为 {_type_name(left)} 与 {_type_name(right)}'
         )
-    if not isinstance(left, (int, float, str)):
+    if not isinstance(left, (int, float, str, datetime.date)):
         raise ConditionEvalError(f'有序比较 "{op}" 不支持类型 {_type_name(left)}')
     return {
         ">": left > right,
@@ -250,4 +477,6 @@ def _type_name(value: Any) -> str:
         return "数字"
     if isinstance(value, str):
         return "字符串"
+    if isinstance(value, datetime.date):
+        return "日期"
     return type(value).__name__
