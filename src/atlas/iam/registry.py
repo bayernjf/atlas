@@ -95,8 +95,7 @@ class TenantRegistry:
                 task_store=TaskStore(),
                 routing_store=RoutingStore(),
                 report_store=ReportStore(),
-                # 批 2 先挂进程内实现；批 3 换 backend.memory_store(tenant_id)（pgvector）
-                memory_store=MemoryStore(),
+                memory_store=backend.memory_store(tenant_id),
             )
         return TenantServices(
             graph_store=GraphStore(),

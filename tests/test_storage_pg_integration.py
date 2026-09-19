@@ -49,6 +49,7 @@ def _cleanup(engine) -> None:
     tables = [
         "graphs", "graph_versions", "runs", "interruptions", "iam_sessions",
         "recordings", "feedback", "monitoring_runs", "monitoring_alerts", "monitoring_rules",
+        "memory_items",
     ]
     with engine.begin() as conn:
         for table in tables:

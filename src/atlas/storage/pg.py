@@ -65,6 +65,9 @@ class PgBackend:
     def run_store(self, tenant_id: str) -> "PgRunsStore":
         return PgRunsStore(self._engine, tenant_id)
 
+    def memory_store(self, tenant_id: str) -> "PgMemoryStore":
+        return PgMemoryStore(self._engine, tenant_id)
+
 
 _pg_backend: PgBackend | None = None
 _pg_backend_lock = threading.Lock()
@@ -817,5 +820,169 @@ class PgRunsStore:
         with self._engine.begin() as conn:
             conn.execute(
                 text("DELETE FROM runs WHERE tenant_id = :tenant_id"),
+                {"tenant_id": self._tenant_id},
+            )
+
+
+class PgMemoryStore:
+    """长期记忆 PG/pgvector 实现（M11，docs/26 §4.3）。
+
+    embedding 由 Python 端 LocalDeterministicEmbedder 计算后写 vector 列（两档同一
+    provider/同一 dim，保证对拍一致；pgvector 只负责存与余弦距离）。scope 子集匹配用
+    JSONB @>；行内 tenant_id 过滤（不用 RLS）；不返回 embedding。
+    """
+
+    def __init__(self, engine: Engine, tenant_id: str, provider: Any | None = None):
+        self._engine = engine
+        self._tenant_id = tenant_id
+        if provider is None:
+            from atlas.memory.embeddings import get_embedding_provider
+
+            provider = get_embedding_provider()
+        self._provider = provider
+
+    @staticmethod
+    def _vector_literal(vector: list[float]) -> str:
+        return "[" + ",".join(f"{value:.8f}" for value in vector) + "]"
+
+    @staticmethod
+    def _row_to_public(row: Any) -> dict[str, Any]:
+        return {
+            "id": row[0],
+            "kind": row[1],
+            "content": row[2],
+            "scope": row[3] or {},
+            "confidence": float(row[4]),
+            "source": row[5],
+            "metadata": row[6] or {},
+            "created_at": row[7],
+        }
+
+    _PUBLIC_COLS = (
+        "id, kind, content, scope, confidence, source, meta, created_at"
+    )
+
+    def remember(
+        self,
+        *,
+        kind: str,
+        content: str,
+        scope: dict[str, str] | None = None,
+        confidence: float = 1.0,
+        source: str = "tool",
+        metadata: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        from atlas.memory.models import validate_remember_params
+
+        params = validate_remember_params(
+            kind=kind, content=content, scope=scope, confidence=confidence,
+            source=source, metadata=metadata,
+        )
+        vector = self._provider.embed([params["content"]])[0]
+        with self._engine.begin() as conn:
+            memory_id = _next_id(conn, "mem")
+            created_at = _now_iso()
+            conn.execute(
+                text(
+                    "INSERT INTO memory_items (id, tenant_id, kind, content, scope, embedding, "
+                    "confidence, source, meta, created_at) VALUES (:id, :tenant_id, :kind, :content, "
+                    "CAST(:scope AS jsonb), CAST(:embedding AS vector(256)), :confidence, :source, CAST(:meta AS jsonb), :created_at)"
+                ),
+                {
+                    "id": memory_id,
+                    "tenant_id": self._tenant_id,
+                    "kind": params["kind"],
+                    "content": params["content"],
+                    "scope": json.dumps(params["scope"], ensure_ascii=False),
+                    "embedding": self._vector_literal(vector),
+                    "confidence": params["confidence"],
+                    "source": params["source"],
+                    "meta": json.dumps(params["metadata"], ensure_ascii=False),
+                    "created_at": created_at,
+                },
+            )
+        return {
+            "id": memory_id,
+            "kind": params["kind"],
+            "content": params["content"],
+            "scope": params["scope"],
+            "confidence": params["confidence"],
+            "source": params["source"],
+            "metadata": params["metadata"],
+            "created_at": created_at,
+        }
+
+    def recall(
+        self,
+        query: str,
+        *,
+        kind: str | None = None,
+        scope: dict[str, str] | None = None,
+        top_k: int = 5,
+        min_score: float = 0.0,
+    ) -> list[dict[str, Any]]:
+        from atlas.memory.models import validate_recall_params
+
+        params = validate_recall_params(
+            query=query, kind=kind, scope=scope, top_k=top_k, min_score=min_score
+        )
+        query_vector = self._provider.embed([params["query"]])[0]
+        clauses = ["tenant_id = :tenant_id", "scope @> CAST(:scope AS jsonb)"]
+        args: dict[str, Any] = {
+            "tenant_id": self._tenant_id,
+            "scope": json.dumps(params["scope"], ensure_ascii=False),
+            "q": self._vector_literal(query_vector),
+            "top_k": params["top_k"],
+            "min_score": params["min_score"],
+        }
+        if params["kind"] is not None:
+            clauses.append("kind = :kind")
+            args["kind"] = params["kind"]
+        where = " AND ".join(clauses)
+        sql = (
+            f"SELECT {self._PUBLIC_COLS}, 1.0 - (embedding <=> CAST(:q AS vector(256))) AS score "
+            f"FROM memory_items WHERE {where} "
+            "AND (1.0 - (embedding <=> CAST(:q AS vector(256)))) >= :min_score "
+            "ORDER BY embedding <=> CAST(:q AS vector(256)) LIMIT :top_k"
+        )
+        with self._engine.connect() as conn:
+            rows = conn.execute(text(sql), args).all()
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            public = self._row_to_public(row)
+            public["score"] = round(float(row[8]), 6)
+            results.append(public)
+        return results
+
+    def list(self, *, kind: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+            raise ValueError("limit 必须是正整数")
+        if kind is not None and kind not in ("fact", "preference"):
+            raise ValueError("kind 必须是 fact 或 preference")
+        sql = (
+            f"SELECT {self._PUBLIC_COLS} FROM memory_items WHERE tenant_id = :tenant_id "
+            "{kind_clause} ORDER BY created_at DESC LIMIT :limit"
+        )
+        args: dict[str, Any] = {"tenant_id": self._tenant_id, "limit": limit}
+        kind_clause = ""
+        if kind is not None:
+            kind_clause = "AND kind = :kind"
+            args["kind"] = kind
+        with self._engine.connect() as conn:
+            rows = conn.execute(text(sql.format(kind_clause=kind_clause)), args).all()
+        return [self._row_to_public(row) for row in rows]
+
+    def delete(self, memory_id: str) -> bool:
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                text("DELETE FROM memory_items WHERE id = :id AND tenant_id = :tenant_id"),
+                {"id": memory_id, "tenant_id": self._tenant_id},
+            )
+            return result.rowcount == 1
+
+    def clear(self) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                text("DELETE FROM memory_items WHERE tenant_id = :tenant_id"),
                 {"tenant_id": self._tenant_id},
             )
