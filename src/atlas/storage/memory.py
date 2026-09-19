@@ -1,4 +1,4 @@
-"""进程内存储实现——八个 store 的聚合入口（M5a，docs/24 §1 / 08 M5a 立项条）。
+"""进程内存储实现——九个 store 的聚合入口（M5a，docs/24 §1 / 08 M5a 立项条；M11 增 MemoryStore）。
 
 GraphStore / FeedbackStore（及反馈入参模型 FeedbackRequest）原内联在
 `api/main.py`，此处**搬移**为独立模块；其余六类经 re-export 聚合：
@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from atlas.collaboration.approvals import ApprovalBroker
 from atlas.debug.sessions import DebuggerBroker
+from atlas.memory.items import MemoryStore
 from atlas.monitoring.records import MonitoringStore
 from atlas.recording.cases import RecordingStore
 
@@ -197,7 +198,7 @@ class RunStore:
         self._order.clear()
 
 
-# 六类领域 store 的聚合 re-export（实现类体在原模块，见模块 docstring）。
+# 领域 store 的聚合 re-export（实现类体在原模块，见模块 docstring）。
 # SessionStore 是 iam 包内的**全局**会话单例（非租户 store，不进 TenantServices），
 # 不在此聚合——若 re-export 会经 iam.__init__ → deps → registry 形成 import 环。
 __all__ = [
@@ -209,4 +210,5 @@ __all__ = [
     "DebuggerBroker",
     "MonitoringStore",
     "RecordingStore",
+    "MemoryStore",
 ]
