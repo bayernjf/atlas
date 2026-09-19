@@ -439,6 +439,7 @@ node_type: enum[trigger, ai_decision, tool_call]
 traceId: string          # M10：本次 run 的 trace id（32hex），整棵树一致
 spanId: string           # M10：本节点 span id（16hex）
 parentSpanId: string     # M10：父 span id（run root；subgraph 内为 subgraph span）
+subgraphPath: string[]  # A 包(e594a4b)：仅子图内部节点事件携带，按进入层级存每层父图 subgraph 节点 id；顶层节点缺省此键
 # 节点结束
 type: "node_end"
 node_id: string
@@ -447,13 +448,14 @@ output: object          # 该节点产出（决策 dict / 工具 ActionResult �
 traceId: string          # M10：同 node_start
 spanId: string
 parentSpanId: string
+subgraphPath: string[]  # A 包：同 node_start，仅子图内部 node_end 携带；录制/监控采集只收无此键的顶层 node_end
 # 运行结束（SSE 末帧为 event: result，载荷 {id, status, outputs, traces}）
 type: "run_end"         # 随 run_graph 返回值展开
 traceId: string          # M10：run root span 的 trace id
 spanId: string           # M10：run root span id（parentSpanId 缺省）
 graphVersion: string     # M10：`graphId@<releaseVersion:int>`（发布版本，无 v 前缀，对齐 M6 钉版）/`graphId@draft`（草稿）
 ```
-> M10 起三帧均为 **19 §2.3.4 Trace 事件超集**：只新增 traceId/spanId/parentSpanId（run_end 另加 graphVersion），现有字段与帧类型不变，前端忽略未知字段即零改动。span 三元组位于事件顶层、**不进节点 output**（录制回放 collect_steps 只取 output，天然不受随机 id/时间影响）；完整 span 树经 `tracing` 包进程内导出，不进 SSE 高频帧。subgraph 子图以 `emit=None` 重入、事件仍不外泄，子图内部 span 经 `to_tree(include_internal=False)` 折叠（见下 `trace_span`）。
+> M10 起三帧均为 **19 §2.3.4 Trace 事件超集**：只新增 traceId/spanId/parentSpanId（run_end 另加 graphVersion），现有字段与帧类型不变，前端忽略未知字段即零改动。span 三元组位于事件顶层、**不进节点 output**（录制回放 collect_steps 只取 output，天然不受随机 id/时间影响）；完整 span 树经 `tracing` 包进程内导出，不进 SSE 高频帧。子图内部 span 经 `to_tree(include_internal=False)` 折叠（见下 `trace_span`，A 包后 span 树折叠口径不变）；A 包（`e594a4b`）后子图内部 node_start/node_end 改经可选 `subgraphPath` 上 SSE（见下），与 span 折叠相互独立。
 
 ### `trace_span` — 字段概览（**M10 已落码收口 2026-09-18（ba9e0d2 起，08 M10 落码条）**；权威＝docs/19 §2.3.4 + 10 §4 ADR T21 + 08 M10 立项条，落码承载 `src/atlas/tracing/`）
 
@@ -478,7 +480,7 @@ Span:
 > M7 `task_envelope.traceId/graphVersion` 落码时为占位（traceId=runId）；**M10 起填真实 traceId 并记录 parentSpanId**（dispatch 建 task_dispatch span、complete 建 task_done span，actor=assignee）。`RunRecord` 同期加可选 `trace_id`（见监控段；M9 再加 `resolved_version`/`business`，见下 `business_metrics`）。
 
 
-> `node_type` 实际已随 Phase 2 扩展为全部可编译类型（含 subgraph）。subgraph 节点内部子图以 `emit=None` 重入执行，**不产生 node_start/node_end/run_end 事件**；子图 trace 与 outputs 收入 subgraph 节点产出（权威形状见 04 §5.7）。
+> `node_type` 实际已随 Phase 2 扩展为全部可编译类型（含 subgraph）。**A 包（2026-09-19 `e594a4b`，docs/27 §3）起，subgraph 子图重入时内部 `node_start`/`node_end` 以可选 `subgraphPath: string[]`（按进入层级存每层父图 subgraph 节点 id；顶层节点缺省此键）命名空间上 SSE**，只转发节点级事件（含 node_start 的 approval 载荷）、吞掉子层 `run_end`/result 终帧（整图仅父层发一个 run_end）；子图内 human_approval 凭上屏 payload 的全局唯一 token，复用共享 ApprovalBroker 与既有 `/api/approvals/{token}/decision` 交互（无新端点）。子图 trace 与 outputs 仍收入 subgraph 节点产出（权威形状见 04 §5.7）。录制 `collect_steps` 与 SSE worker 监控采集只收无 `subgraphPath` 的顶层 node_end，内部事件不污染录制 steps/监控指标，但仍实时上屏。
 
 ### `subgraph_node_output` — 字段概览（Phase 2 第六项；subgraph 节点 outputs[id]）
 
