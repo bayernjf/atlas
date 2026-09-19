@@ -121,7 +121,7 @@ describe('parallel 迁移对齐（M4 批 2 ⑨）', () => {
 
   it('joinStrategy 补 enum + radio，每个枚举值都有中文长文案', () => {
     expect(properties.joinStrategy.type).toBe('string')
-    expect(properties.joinStrategy.enum).toEqual(['all_success', 'all_completed'])
+    expect(properties.joinStrategy.enum).toEqual(['all_success', 'all_completed', 'any_success'])
     expect(properties.joinStrategy['x-widget']).toBe('radio')
     for (const value of properties.joinStrategy.enum ?? []) {
       expect(parallelUiSchema.optionLabels?.joinStrategy?.[String(value)]).toBeTruthy()

@@ -933,6 +933,41 @@ def _span_error(output: dict[str, Any]) -> str | None:
     return None
 
 
+def _branch_outcomes(meta: dict[str, Any], outputs: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """逐分支判定终态/成功/失败（04 §5.4，all_success 与 any_success 共用）。
+
+    settled：该分支已有末端节点产出（走到汇聚）；failure：区域内首个失败节点；
+    success：settled 且区域内无失败。any_success 下未 settled 的分支将被短路跳过。
+    """
+    outcomes: dict[str, dict[str, Any]] = {}
+    for entry in meta["entries"]:
+        area = meta["entry_areas"][entry]
+        terminals = meta["entry_terminals"][entry]
+        # 被 any_success 短路守卫跳过（skipped 产出）的末端不算真正走到汇聚。
+        settled = any(
+            terminal in outputs
+            and not (
+                isinstance(outputs.get(terminal), dict)
+                and outputs[terminal].get("skipped")
+            )
+            for terminal in terminals
+        )
+        failure = ""
+        for area_node in area:
+            area_output = outputs.get(area_node)
+            if isinstance(area_output, dict) and not area_output.get("skipped"):
+                found = _node_failure(area_output)
+                if found:
+                    failure = found
+                    break
+        outcomes[entry] = {
+            "settled": settled,
+            "success": settled and not failure,
+            "failure": failure,
+        }
+    return outcomes
+
+
 def _make_join_gate(
     node: NodeDSL,
     meta: dict[str, Any],
@@ -948,41 +983,54 @@ def _make_join_gate(
 
     def gate(state: GraphState) -> dict:
         outputs = state["outputs"]
-        done = all(
-            any(terminal in outputs for terminal in terminals)
-            for terminals in meta["entry_terminals"].values()
-        )
-        if not done:
+        # 汇聚目标已执行即说明已放行过：any_success 下迟到的残留分支再次触发网关时
+        # 空转（不重复 emit / 不覆盖结论），由 route_gate 收口到 END。
+        if meta["join_target"] in outputs:
             return {"messages": []}
+        outcomes = _branch_outcomes(meta, outputs)
+        if strategy == "any_success":
+            # D18/A1 OR-join：任一分支成功即汇聚；否则等所有分支走到终态，全失败才 failed。
+            any_ok = any(o["success"] for o in outcomes.values())
+            all_settled = all(o["settled"] for o in outcomes.values())
+            if not (any_ok or all_settled):
+                return {"messages": []}
+            overall = "success" if any_ok else "failed"
+        else:
+            if not all(o["settled"] for o in outcomes.values()):
+                return {"messages": []}
+            overall = (
+                "failed"
+                if strategy == "all_success"
+                and any(o["failure"] for o in outcomes.values())
+                else "success"
+            )
 
         branches: list[dict[str, Any]] = []
         result: dict[str, Any] = {}
         failed: list[tuple[str, str]] = []
         for entry in meta["entries"]:
-            area = meta["entry_areas"][entry]
-            error = ""
-            for area_node in area:
-                area_output = outputs.get(area_node)
-                if isinstance(area_output, dict):
-                    failure = _node_failure(area_output)
-                    if failure:
-                        error = failure
-                        break
+            outcome = outcomes[entry]
             executed = [
                 terminal for terminal in meta["entry_terminals"][entry] if terminal in outputs
             ]
             if executed:
                 result[entry] = outputs[executed[0]]
-            status = "failed" if error else "success"
-            if error:
-                failed.append((labels.get(entry, entry), error))
+            if outcome["failure"]:
+                status = "failed"
+                failed.append((labels.get(entry, entry), outcome["failure"]))
+            elif outcome["settled"]:
+                status = "success"
+            else:
+                # any_success 抢先汇聚时该分支尚未走到末端：标记短路跳过（未启动）。
+                status = "skipped"
             branches.append(
-                {"label": labels.get(entry, entry), "target": entry, "status": status, "error": error}
+                {
+                    "label": labels.get(entry, entry),
+                    "target": entry,
+                    "status": status,
+                    "error": outcome["failure"],
+                }
             )
-
-        overall = "success"
-        if strategy == "all_success" and failed:
-            overall = "failed"
         output = {
             "mode": "parallel",
             "joinStrategy": strategy,
@@ -1022,6 +1070,53 @@ def _make_join_gate(
         return {"outputs": {node.id: output}, "messages": [message]}
 
     return gate
+
+
+def _guard_any_success(
+    base_executor: Callable[[GraphState], dict],
+    parallel_id: str,
+    node_id: str,
+    node_type: str,
+    safe_target: str | None,
+    emit: EventCallback,
+) -> Callable[[GraphState], dict]:
+    """D18/A1 any_success 短路守卫：OR-join 抢先成功汇聚后，区域内尚未启动的节点
+    不再产生副作用（不发起 tool 调用、不进入 wait/human_approval）。
+
+    已发起的外部事实不可逆、不回滚（fail-safe）：守卫只在 executor 入口判定，
+    已进入执行的节点不受影响。条件路由节点（condition/human/loop）需补一个
+    target，使其条件边仍能流向汇聚网关；普通节点靠普通边自然链式跳过。
+    """
+
+    def guarded(state: GraphState) -> dict:
+        joined = state["outputs"].get(parallel_id)
+        if (
+            isinstance(joined, dict)
+            and joined.get("joinStrategy") == "any_success"
+            and joined.get("status") == "success"
+        ):
+            output: dict[str, Any] = {
+                "skipped": True,
+                "reason": "any_success_joined",
+                "parallelId": parallel_id,
+            }
+            if safe_target is not None:
+                output["target"] = safe_target
+            emit(
+                {
+                    "type": "node_end",
+                    "node_id": node_id,
+                    "node_type": node_type,
+                    "output": output,
+                }
+            )
+            return {
+                "outputs": {node_id: output},
+                "messages": [f"{node_id}: skipped (any_success {parallel_id} joined)"],
+            }
+        return base_executor(state)
+
+    return guarded
 
 
 def _tool_output_schemas(registry: AdapterRegistry) -> dict[str, dict[str, Any]]:
@@ -1106,37 +1201,59 @@ def compile_graph(
         raise GraphValidationError(ref_errors, ref_locations)
 
     builder = StateGraph(GraphState)
-    for node in graph.nodes:
-        builder.add_node(
-            node.id,
-            _make_executor(
-                node,
-                trigger_payload=payload,
-                decision_client=decision_client,
-                registry=registry,
-                approval_broker=approval_broker,
-                graph_id=graph_id,
-                emit=emit,
-                graph_resolver=graph_resolver,
-                subgraph_depth=_subgraph_depth,
-                debug_controller=debug_controller,
-                frame_sink=frame_sink,
-                resume=resume,
-                graph_snapshot=graph_snapshot,
-                tracer=tracer,
-                base_span=base_span,
-                internal_spans=internal_spans,
-            ),
-        )
 
+    # 边表与 parallel 区域需在 add_node 前就绪：any_success 短路守卫要按区域包裹 executor。
     outgoing: dict[str, list[str]] = {}
     for edge in graph.edges:
         outgoing.setdefault(edge.source, []).append(edge.target)
+    parallels = [node for node in graph.nodes if node.type == "parallel"]
+    metas = {node.id: _parallel_meta(node, outgoing) for node in parallels}
+
+    # D18/A1 any_success：region 内节点 -> (parallel_id, 条件路由节点的安全 target)。
+    routing_kinds = {"condition", "human_approval", "loop"}
+    type_by_node = {n.id: n.type for n in graph.nodes}
+    skip_guards: dict[str, tuple[str, str | None]] = {}
+    for pnode in parallels:
+        if pnode.config.get("joinStrategy") != "any_success":
+            continue
+        pmeta = metas[pnode.id]
+        join_t = pmeta["join_target"]
+        for member in pmeta["region"]:
+            if type_by_node.get(member) in routing_kinds:
+                outs = outgoing.get(member, [])
+                safe_target = join_t if join_t in outs else (outs[0] if outs else None)
+            else:
+                safe_target = None
+            skip_guards[member] = (pnode.id, safe_target)
+
+    for node in graph.nodes:
+        executor = _make_executor(
+            node,
+            trigger_payload=payload,
+            decision_client=decision_client,
+            registry=registry,
+            approval_broker=approval_broker,
+            graph_id=graph_id,
+            emit=emit,
+            graph_resolver=graph_resolver,
+            subgraph_depth=_subgraph_depth,
+            debug_controller=debug_controller,
+            frame_sink=frame_sink,
+            resume=resume,
+            graph_snapshot=graph_snapshot,
+            tracer=tracer,
+            base_span=base_span,
+            internal_spans=internal_spans,
+        )
+        if node.id in skip_guards:
+            parallel_id, safe_target = skip_guards[node.id]
+            executor = _guard_any_success(
+                executor, parallel_id, node.id, node.type, safe_target, emit
+            )
+        builder.add_node(node.id, executor)
 
     # parallel 区域推导：区域内节点指向 joinTarget 的边在编译期改指向汇聚网关，
     # 网关等待全部分支末端产出后聚合一次再放行进 joinTarget（04 §5.4）。
-    parallels = [node for node in graph.nodes if node.type == "parallel"]
-    metas = {node.id: _parallel_meta(node, outgoing) for node in parallels}
     retarget: dict[tuple[str, str], str] = {}
     for node in parallels:
         meta = metas[node.id]
@@ -1237,17 +1354,32 @@ def compile_graph(
             node.id, route_parallel, {target: target for target in targets}
         )
 
-        def route_gate(state: GraphState, m: dict[str, Any] = meta) -> str:
-            ready = all(
-                any(terminal in state["outputs"] for terminal in terminals)
-                for terminals in m["entry_terminals"].values()
-            )
+        def route_gate(
+            state: GraphState,
+            m: dict[str, Any] = meta,
+            strat: str = node.config.get("joinStrategy", "all_success"),
+        ) -> str:
+            # 已放行过汇聚目标：残留分支的迟到触发收口到 END，不重复执行 join 节点。
+            if m["join_target"] in state["outputs"]:
+                return "done"
+            outcomes = _branch_outcomes(m, state["outputs"])
+            if strat == "any_success":
+                # 任一分支成功即放行；否则等所有分支终态（全失败时 gate 产出 failed 后放行）。
+                ready = any(o["success"] for o in outcomes.values()) or all(
+                    o["settled"] for o in outcomes.values()
+                )
+            else:
+                ready = all(o["settled"] for o in outcomes.values())
             return m["join_target"] if ready else "wait"
 
         builder.add_conditional_edges(
             meta["gate"],
             route_gate,
-            {meta["join_target"]: meta["join_target"], "wait": meta["gate"]},
+            {
+                meta["join_target"]: meta["join_target"],
+                "wait": meta["gate"],
+                "done": END,
+            },
         )
 
     for node in graph.nodes:

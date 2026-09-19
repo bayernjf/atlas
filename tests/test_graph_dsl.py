@@ -426,7 +426,7 @@ def test_parse_valid_parallel_region_with_self_contained_loop():
 def test_reject_parallel_bad_strategy_count_labels_targets():
     raw = make_parallel_graph()
     raw["nodes"][1] = _parallel_node(
-        joinStrategy="any_success",
+        joinStrategy="wrong_strategy",
         branches=[{"label": "  ", "target": "tool-a"}],
         joinTarget="tool-a",
     )

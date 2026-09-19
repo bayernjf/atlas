@@ -24,7 +24,7 @@ export type { ApprovalTimeoutAction } from './validation/l1'
 export const NODE_KINDS = ['trigger', 'ai_decision', 'tool_call', 'condition', 'loop', 'parallel', 'wait', 'subgraph', 'human_approval'] as const
 export type NodeKind = (typeof NODE_KINDS)[number]
 
-export const PARALLEL_JOIN_STRATEGIES = ['all_success', 'all_completed'] as const
+export const PARALLEL_JOIN_STRATEGIES = ['all_success', 'all_completed', 'any_success'] as const
 export type ParallelJoinStrategy = (typeof PARALLEL_JOIN_STRATEGIES)[number]
 
 export const ON_ERROR_STRATEGIES = ['stop', 'continue', 'jump_to'] as const

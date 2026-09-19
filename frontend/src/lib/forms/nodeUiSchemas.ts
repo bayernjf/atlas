@@ -136,6 +136,8 @@ export const conditionUiSchema: UiSchema = {
     joinStrategy: {
       all_success: '全部成功：任一分支失败则汇聚状态为 failed（汇聚节点仍执行）',
       all_completed: '全部完成：只要各分支都走到汇聚即视为成功',
+      any_success:
+        '任一成功：任一分支成功即汇聚，未开始的分支直接跳过；仅当全部分支失败才 failed（已发起的调用 / 等待 / 审批不取消）',
     },
   },
 }

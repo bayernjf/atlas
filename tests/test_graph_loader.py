@@ -1139,3 +1139,86 @@ def test_loop_non_condition_body_node_cannot_reach_exit_target_d17_a2():
     with pytest.raises(GraphValidationError) as excinfo:
         parse_graph(raw)
     assert any("不能直接连到退出目标" in msg for msg in excinfo.value.errors)
+
+
+def _any_success_graph(a_tool: str = "op-a", b_tool: str = "op-b"):
+    """D18/A1：短支 tool-a 单节点直连汇聚；长支 tool-b→tool-mid→tool-late 三节点。"""
+    return parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "parallel-1", "type": "parallel", "name": "并行",
+                 "config": {
+                     "joinStrategy": "any_success",
+                     "branches": [
+                         {"label": "短支", "target": "tool-a"},
+                         {"label": "长支", "target": "tool-b"},
+                     ],
+                     "joinTarget": "tool-join",
+                 }},
+                {"id": "tool-a", "type": "tool_call", "name": "A",
+                 "config": {"tool": a_tool}},
+                {"id": "tool-b", "type": "tool_call", "name": "B",
+                 "config": {"tool": b_tool}},
+                {"id": "tool-mid", "type": "tool_call", "name": "长支中段",
+                 "config": {"tool": "op-mid"}},
+                {"id": "tool-late", "type": "tool_call", "name": "长支末段",
+                 "config": {"tool": "op-late"}},
+                {"id": "tool-join", "type": "tool_call", "name": "汇聚",
+                 "config": {"tool": "op-join", "params": "状态={{parallel-1.status}}"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "parallel-1"},
+                {"id": "e2", "source": "parallel-1", "target": "tool-a"},
+                {"id": "e3", "source": "parallel-1", "target": "tool-b"},
+                {"id": "e4", "source": "tool-a", "target": "tool-join"},
+                {"id": "e5", "source": "tool-b", "target": "tool-mid"},
+                {"id": "e6", "source": "tool-mid", "target": "tool-late"},
+                {"id": "e7", "source": "tool-late", "target": "tool-join"},
+            ],
+        }
+    )
+
+
+def test_parallel_any_success_short_circuits_unstarted_nodes_d18_a1():
+    events: list[dict] = []
+    result = run_graph(_any_success_graph(), emit=events.append)
+    assert result["status"] == "completed"
+
+    # 汇聚节点只执行一次（迟到的残留分支不重复放行）。
+    starts = [event["node_id"] for event in events if event["type"] == "node_start"]
+    assert starts.count("tool-join") == 1
+
+    po = result["outputs"]["parallel-1"]
+    assert po["joinStrategy"] == "any_success"
+    assert po["status"] == "success"
+    by_target = {b["target"]: b["status"] for b in po["branches"]}
+    assert by_target["tool-a"] == "success"
+    assert by_target["tool-b"] == "skipped"
+
+    # 已开始的节点（tool-b/tool-mid 与汇聚同超步前后启动）保留；未启动的 tool-late 被短路跳过。
+    assert result["outputs"]["tool-late"].get("skipped") is True
+    assert not result["outputs"]["tool-mid"].get("skipped")
+    assert result["outputs"]["tool-join"]["params_rendered"] == "状态=success"
+    assert any("joined (any_success) success" in line for line in result["trace"])
+
+
+def test_parallel_any_success_failed_only_when_all_branches_fail_d18_a1():
+    result = run_graph(_any_success_graph(a_tool="bogus/xa", b_tool="bogus/xb"))
+    po = result["outputs"]["parallel-1"]
+    assert po["status"] == "failed"
+    assert {b["status"] for b in po["branches"]} == {"failed"}
+    assert "tool-join" in result["outputs"]  # 汇聚节点仍执行（fail-safe）
+    assert any("joined (any_success) failed" in line for line in result["trace"])
+
+
+def test_parallel_any_success_succeeds_despite_one_failed_branch_d18_a1():
+    result = run_graph(_any_success_graph(a_tool="op-a", b_tool="bogus/xb"))
+    po = result["outputs"]["parallel-1"]
+    assert po["status"] == "success"
+    by_target = {b["target"]: b["status"] for b in po["branches"]}
+    assert by_target["tool-a"] == "success"
+    assert by_target["tool-b"] == "failed"
