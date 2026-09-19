@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### docs(plan)：进程内运行体验补强（C+A+B）立项——时钟函数 / 子图事件上屏 / 调试控制（2026-09-19，docs-only 立项、零业务代码，形状权威 docs/27）
+
+- M11 收口后续做缓做项小项打包；用户拍板两处分叉（docs/27 §0）：**D（D30 输出键〔非节点 id〕改名）判空集、本轮不落码**（v1 产出键由节点类型固定、节点 schema 无自定义输出键/别名/映射、B3 已覆盖改节点 id，无作用对象，随未来命名输出特性启用）；**A、B 取进程内 v1 形态**（不碰 D19/D20/S1 持久化、多实例、断点落图/团队共享、IM/邮件通知）；C 直接做。零新依赖、不新增 ADR、不解除 D15/D21/D27/D30。
+- **C（D15 余部）**：run_graph 增 `now_override`（单次运行固定 UTC），conditions 前后端同构新增 `today()`/`now()`/`datetime()`/`hoursBetween` 与最小 datetime 类型；RecordingCase 增可选 `recorded_at`，录制 baseline 与 replay/gate 共享冻结时钟（旧用例回退 created_at）。
+- **A（D21 两项，进程内）**：子图重入不再 emit=None，内部 node_start/node_end 以可选 `subgraphPath` 上 SSE、吞掉子层 run_end；子图内 human_approval 审批 payload 上屏，复用共享 ApprovalBroker 与现有审批 Modal/决策端点（无新端点）；前端日志路径前缀、画布高亮父 subgraph 节点。
+- **B（D27 三项，进程内）**：运行中协作式急停（RunCancellationBroker + `POST /api/runs/{id}/cancel` + run_graph `is_cancelled` 节点边界 + SSE cancelled 帧/状态，不在 wait/approval/tool 阻塞中点强杀）；断点 hitCount（每 N 次命中暂停）+ logpoint（命中只发 debug_log 不暂停）；暂停时 resume 带 globals 顶层键白名单浅合并改写续跑（帧仍只读、stop 忽略覆盖）。
+- 显式非目标：子图内单步断点、持久化中断/多实例调试、断点落 Graph JSON、变量变化历史、异常断点、嵌套可视化编辑器、命名输出新特性、命名时区/随机/UUID。原子序：立项 → C → A → B → 收口；测试 U100 起（候选）；三道门基线后端 673/前端 449，每批重跑 d26/m11/录制黄金用例。**本提交仅立项，业务代码未落，提交号在各批收口时回填。**
+
 ### feat(memory)：M11 记忆 / 长期上下文落码收口——统一记忆条目 + 本地确定性向量 + remember/recall 工具 + 进程内/PG 两档 + 前端记忆页（2026-09-19，四批原子提交，U72–U99 转正式）
 
 - 形状权威 docs/26、ADR T23（四决策均用户拍板推荐项）；docs-only 立项后四批原子落码，零新 Python/前端依赖（embedder 纯 stdlib re/hashlib/math），不新增 ADR，**不解除 D35**。
