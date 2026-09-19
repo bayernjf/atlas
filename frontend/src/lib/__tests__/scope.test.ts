@@ -513,3 +513,55 @@ describe('D30 REF_TYPE_MISMATCH 标量类型比对（warning，tool→tool 单�
     expect(mismatch('{"title":')).toHaveLength(0)
   })
 })
+
+describe('D30/B1 parallel.result 汇聚点可见性与入口校验', () => {
+  const parConfig = {
+    joinStrategy: 'all_success',
+    joinTarget: 'join-1',
+    branches: [
+      { label: 'b1', target: 'tb1' },
+      { label: 'b2', target: 'tb2' },
+    ],
+  }
+  const nodes: ScopeNodeLike[] = [
+    node('trigger-1', 'trigger'),
+    node('par-1', 'parallel', parConfig),
+    node('tb1', 'tool_call', { tool: 'message/send', params: '{}' }),
+    node('tb2', 'tool_call', { tool: 'message/send', params: '{}' }),
+    node('join-1', 'ai_decision', { promptTemplate: '' }),
+  ]
+  const edges: ScopeEdgeLike[] = [
+    edge('trigger-1', 'par-1'),
+    edge('par-1', 'tb1'),
+    edge('par-1', 'tb2'),
+    edge('tb1', 'join-1'),
+    edge('tb2', 'join-1'),
+  ]
+  const scope = buildScopeIndex(nodes, edges, [])
+
+  it('汇聚点引用合法入口的深层路径放行，status 静态键放行', () => {
+    const ok = scope.validateRefsAt('join-1', 'ai_decision', {
+      promptTemplate: '{{par-1.result.tb1.x}} {{par-1.status}}',
+    })
+    expect(ok).toEqual([])
+  })
+
+  it('汇聚点引用不存在的分支入口：REF_PATH_NOT_FOUND', () => {
+    const d = scope.validateRefsAt('join-1', 'ai_decision', {
+      promptTemplate: '{{par-1.result.nope.z}}',
+    })
+    expect(d).toHaveLength(1)
+    expect(d[0].code).toBe('REF_PATH_NOT_FOUND')
+    expect(d[0].message).toContain('入口')
+  })
+
+  it('分支区域内（汇聚前）引用 par-1.result：REF_NOT_IN_SCOPE', () => {
+    const d = scope.validateRefsAt('tb1', 'tool_call', {
+      tool: 'message/send',
+      params: JSON.stringify({ q: '{{par-1.result.tb2.y}}' }),
+    })
+    expect(d).toHaveLength(1)
+    expect(d[0].code).toBe('REF_NOT_IN_SCOPE')
+    expect(d[0].message).toContain('汇聚')
+  })
+})

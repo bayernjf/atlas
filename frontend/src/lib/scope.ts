@@ -3,7 +3,8 @@
  *
  * 可见性按图拓扑推导：global 恒可见；trigger 恒可见；其余节点仅在引用方
  * 沿入边反向可达时可见；loop 的 index/iterations 仅循环体内可见；
- * parallel.result / subgraph.outputs 的动态深层路径只列根、不做存在性判定。
+ * parallel.result 仅汇聚点之后可见、入口 id 对照 branches 校验（其下深层动态放行，D30/B1）；
+ * subgraph.outputs 的动态深层路径只列根、不做存在性判定。
  * v1 不做类型级校验（D30），运行期插值缺失保留原样的语义不变。
  */
 
@@ -308,6 +309,25 @@ export function buildScopeIndex(
     loopBodies.set(node.id, bfs(new Set([bodyTarget]), outgoing, stop))
   }
 
+  // D30/B1：parallel 汇聚区域（同构后端 _parallel_meta）——result.<入口> 仅汇聚点之后可见。
+  // entries=branches 目标；region=各入口沿出边 BFS、止于 parallel 自身与 joinTarget（不含二者）。
+  const parallelMeta = new Map<string, { entries: Set<string>; region: Set<string> }>()
+  for (const pNode of nodes) {
+    if (pNode.kind !== 'parallel') continue
+    const joinTarget = pNode.config?.joinTarget
+    const entries = new Set<string>()
+    const branches = Array.isArray(pNode.config?.branches) ? pNode.config.branches : []
+    for (const branch of branches) {
+      const target = branch && typeof branch === 'object' ? (branch as Record<string, unknown>).target : undefined
+      if (typeof target === 'string' && nodeById.has(target)) entries.add(target)
+    }
+    const stop = new Set([pNode.id])
+    if (typeof joinTarget === 'string') stop.add(joinTarget)
+    let region = new Set<string>()
+    for (const entry of entries) region = new Set([...region, ...bfs(new Set([entry]), outgoing, stop)])
+    parallelMeta.set(pNode.id, { entries, region })
+  }
+
   const reverseCache = new Map<string, Set<string>>()
   const visibleNodeIdsAt = (nodeId: string): Set<string> => {
     const cached = reverseCache.get(nodeId)
@@ -508,7 +528,31 @@ export function buildScopeIndex(
 
         if (node.kind === 'parallel') {
           const [root, ...rest] = tail
-          if (root === 'result') continue // 动态入口键（D30），深层放行
+          if (root === 'result') {
+            const meta = parallelMeta.get(node.id)
+            // B1：result 是汇聚产出，分支区域内（汇聚点之前）尚未产出，不可见。
+            if (meta && meta.region.has(nodeId)) {
+              push(
+                field,
+                ref,
+                'REF_NOT_IN_SCOPE',
+                `并行结果在汇聚点之后才可用（分支区域内尚未汇聚）：{{${ref.path}}}`,
+              )
+              continue
+            }
+            // result.<入口id>：入口须为 branches 目标；入口下深层为分支产出，动态放行。
+            // branches 未配置（entries 空）时降级，配置缺失归 L1/拓扑校验，不双重报错。
+            const entryId = rest[0]
+            if (meta && meta.entries.size > 0 && entryId !== undefined && !meta.entries.has(entryId)) {
+              push(
+                field,
+                ref,
+                'REF_PATH_NOT_FOUND',
+                `并行节点输出入口不存在（result 下须为分支入口节点 id，合法入口：${[...meta.entries].join('/')}）：{{${ref.path}}}`,
+              )
+            }
+            continue
+          }
           if (!STATIC_OUTPUT_KEYS.parallel.includes(root) || rest.length > 0) {
             push(
               field,

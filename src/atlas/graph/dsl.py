@@ -1036,6 +1036,27 @@ def _validate_template_refs(
             stop.add(exit_target)
         loop_bodies[node.id] = _bfs({body_target}, outgoing, stop=stop)
 
+    # D30/B1：parallel 汇聚区域（同构 loader._parallel_meta）——result.<入口> 仅汇聚点之后可见。
+    # entries=branches 目标；region=各入口沿出边 BFS、止于 parallel 自身与 joinTarget（不含二者）。
+    parallel_meta: dict[str, tuple[set[str], set[str]]] = {}
+    for candidate in graph.nodes:
+        if candidate.type != "parallel":
+            continue
+        cfg = candidate.config
+        join_target = cfg.get("joinTarget")
+        entries = {
+            branch.get("target")
+            for branch in cfg.get("branches", [])
+            if isinstance(branch, dict) and branch.get("target") in node_ids
+        }
+        stop = {candidate.id}
+        if isinstance(join_target, str):
+            stop.add(join_target)
+        region: set[str] = set()
+        for entry in entries:
+            region |= _bfs({entry}, outgoing, stop=stop)
+        parallel_meta[candidate.id] = (entries, region)
+
     visible_cache: dict[str, set[str]] = {}
 
     def visible_at(viewer: str) -> set[str]:
@@ -1155,7 +1176,24 @@ def _validate_template_refs(
                 if ref_type == "parallel":
                     root, *rest = tail
                     if root == "result":
-                        continue  # 动态入口键，深层不做判定（D30）
+                        entries, region = parallel_meta.get(head, (set(), set()))
+                        # B1：result 是汇聚产出，分支区域内（汇聚点之前）尚未产出，不可见。
+                        if node.id in region:
+                            add(
+                                f"{prefix} 并行结果在汇聚后才可用（REF_NOT_IN_SCOPE："
+                                f"分支区域内尚未汇聚）：{display}",
+                                pointer,
+                            )
+                            continue
+                        # result.<入口id>：入口须为 branches 目标；其下深层为分支产出，动态放行。
+                        # branches 未配置（entries 空）时降级，配置缺失归 L1/拓扑校验，不双重报错。
+                        if entries and rest and rest[0] not in entries:
+                            add(
+                                f"{prefix} 并行结果入口不存在（REF_PATH_NOT_FOUND，"
+                                f"result 下须为 branches 目标节点 id，合法入口：{sorted(entries)}）：{display}",
+                                pointer,
+                            )
+                        continue
                     if root not in _STATIC_OUTPUT_KEYS["parallel"] or rest:
                         add(
                             f"{prefix} 并行节点输出路径不存在（REF_PATH_NOT_FOUND，"
