@@ -556,6 +556,34 @@ def _execute_subgraph(
     return output, f"{node.id}: {graph_ref} success ({len(child.nodes)} nodes)"
 
 
+def _subgraph_output_index(
+    graph: GraphDSL,
+    resolver: Callable[[str], GraphDSL] | None,
+) -> dict[str, set[str]]:
+    """D30/B2：subgraph 节点 id -> 被引子图内部节点 id 集，供 outputs.<内部id> 存在性校验。
+
+    只解析直接一层（嵌套子图由递归校验各自覆盖）；解析不到（无 resolver / 子图缺失 /
+    钉版失败）的子图不入索引，模板校验降级为仅放行 outputs 根（子图不存在另有专规报错）。
+    """
+    index: dict[str, set[str]] = {}
+    if resolver is None:
+        return index
+    for node in graph.nodes:
+        if node.type != "subgraph":
+            continue
+        ref = node.config.get("graphId")
+        if not isinstance(ref, str) or not ref.strip():
+            continue
+        try:
+            child = resolver(ref)
+        except KeyError:
+            continue
+        if child is None:
+            continue
+        index[node.id] = {candidate.id for candidate in child.nodes}
+    return index
+
+
 def _validate_subgraph_refs(
     graph: GraphDSL,
     resolver: Callable[[str], GraphDSL] | None,
@@ -612,7 +640,10 @@ def _validate_subgraph_refs(
             add_own(f"{prefix} 引用的子图不存在：{ref}")
             continue
         child_messages, _child_locations = validate_graph_report(
-            child, tool_output_schemas, check_refs=True
+            child,
+            tool_output_schemas,
+            check_refs=True,
+            subgraph_index=_subgraph_output_index(child, resolver),
         )
         for child_error in child_messages:
             issues.append((f"子图 {ref}：{child_error}", _loc(owner)))
@@ -1012,8 +1043,12 @@ def compile_graph(
     validation_graph = validate_with or graph
 
     tool_schemas = _tool_output_schemas(registry)
+    # D30/B2：用 resolver 预算子图内部节点索引（解析不到则降级），供 outputs.<内部id> 存在性校验。
+    subgraph_index = _subgraph_output_index(validation_graph, graph_resolver)
     # 编译期 L2 复查（04 §6.5 防绕过）：parse_graph 时无注册表，引用与工具深层路径在此补判。
-    ref_errors, ref_locations = validate_graph_report(validation_graph, tool_schemas, check_refs=True)
+    ref_errors, ref_locations = validate_graph_report(
+        validation_graph, tool_schemas, check_refs=True, subgraph_index=subgraph_index
+    )
     subgraph_issues = _validate_subgraph_refs(
         validation_graph,
         graph_resolver,

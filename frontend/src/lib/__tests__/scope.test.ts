@@ -565,3 +565,39 @@ describe('D30/B1 parallel.result 汇聚点可见性与入口校验', () => {
     expect(d[0].message).toContain('汇聚')
   })
 })
+
+describe('D30/B2 subgraph.outputs 内部节点展开（注入索引校验，缺省降级）', () => {
+  const nodes: ScopeNodeLike[] = [
+    node('trigger-1', 'trigger'),
+    node('sub-1', 'subgraph', { graphId: 'graph-child', inputs: {} }),
+    node('ai-1', 'ai_decision', { promptTemplate: '' }),
+  ]
+  const edges: ScopeEdgeLike[] = [
+    edge('trigger-1', 'sub-1'),
+    edge('sub-1', 'ai-1'),
+  ]
+  const withIndex = new Map([['sub-1', new Set(['child-a', 'child-b'])]])
+
+  it('注入子图结构：合法内部节点深层放行，非法内部节点 REF_PATH_NOT_FOUND', () => {
+    const scope = buildScopeIndex(nodes, edges, [], withIndex)
+    expect(
+      scope.validateRefsAt('ai-1', 'ai_decision', { promptTemplate: '{{sub-1.outputs.child-a.x}}' }),
+    ).toEqual([])
+    const bad = scope.validateRefsAt('ai-1', 'ai_decision', {
+      promptTemplate: '{{sub-1.outputs.ghost.x}}',
+    })
+    expect(bad).toHaveLength(1)
+    expect(bad[0].code).toBe('REF_PATH_NOT_FOUND')
+    expect(bad[0].message).toContain('子图输出中不存在')
+  })
+
+  it('未注入子图结构（编辑器未加载）：降级仅放行 outputs 根，不误报', () => {
+    const scope = buildScopeIndex(nodes, edges, [])
+    expect(
+      scope.validateRefsAt('ai-1', 'ai_decision', { promptTemplate: '{{sub-1.outputs.ghost.x}}' }),
+    ).toEqual([])
+    expect(
+      scope.validateRefsAt('ai-1', 'ai_decision', { promptTemplate: '{{sub-1.outputs}}' }),
+    ).toEqual([])
+  })
+})

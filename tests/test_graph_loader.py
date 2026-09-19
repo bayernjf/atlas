@@ -742,6 +742,40 @@ def test_subgraph_compile_rejects_unresolvable_reference():
     assert any("引用的子图不存在：graph-missing" in e for e in exc.value.errors)
 
 
+def test_subgraph_outputs_unknown_inner_node_rejected_at_compile_d30_b2():
+    child_id, child = _child_graph()  # 内部节点：child-trigger / child-tool
+    store = {child_id: child}
+
+    def parent(template: str):
+        return parse_graph(
+            {
+                "version": 1,
+                "variables": [],
+                "nodes": [
+                    {"id": "trigger-1", "type": "trigger", "name": "t",
+                     "config": {"triggerType": "manual"}},
+                    {"id": "subgraph-1", "type": "subgraph", "name": "子流程",
+                     "config": {"graphId": child_id, "inputs": {}}},
+                    {"id": "ai-1", "type": "ai_decision", "name": "后继",
+                     "config": {"promptTemplate": template, "model": "demo"}},
+                ],
+                "edges": [
+                    {"id": "e1", "source": "trigger-1", "target": "subgraph-1"},
+                    {"id": "e2", "source": "subgraph-1", "target": "ai-1"},
+                ],
+            }
+        )
+
+    # 合法内部节点 id 的深层路径：编译通过
+    compile_graph(parent("{{subgraph-1.outputs.child-tool.x}}"),
+                  graph_id="graph-parent", graph_resolver=store.get)
+    # 不存在的内部节点 id：编译期 REF_PATH_NOT_FOUND
+    with pytest.raises(GraphValidationError) as exc:
+        compile_graph(parent("{{subgraph-1.outputs.ghost.x}}"),
+                      graph_id="graph-parent", graph_resolver=store.get)
+    assert any("子图输出中不存在" in e and "ghost" in e for e in exc.value.errors)
+
+
 def test_subgraph_compile_rejects_without_resolver():
     with pytest.raises(GraphValidationError) as exc:
         compile_graph(_parent_subgraph_graph(), graph_id="graph-parent")

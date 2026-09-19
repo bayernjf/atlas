@@ -4,7 +4,8 @@
  * 可见性按图拓扑推导：global 恒可见；trigger 恒可见；其余节点仅在引用方
  * 沿入边反向可达时可见；loop 的 index/iterations 仅循环体内可见；
  * parallel.result 仅汇聚点之后可见、入口 id 对照 branches 校验（其下深层动态放行，D30/B1）；
- * subgraph.outputs 的动态深层路径只列根、不做存在性判定。
+ * subgraph.outputs：注入子图内部节点索引时校验 outputs.<内部节点id> 存在性（D30/B2），
+ * 未注入（编辑器尚未加载子图结构）时降级仅放行 outputs 根。
  * v1 不做类型级校验（D30），运行期插值缺失保留原样的语义不变。
  */
 
@@ -283,6 +284,9 @@ export function buildScopeIndex(
   nodes: ScopeNodeLike[],
   edges: ScopeEdgeLike[],
   variables: Pick<GraphVariable, 'name'>[] = [],
+  // D30/B2：subgraph 节点 id -> 被引子图内部节点 id 集（由调用方注入已加载子图结构）；
+  // 缺省/未加载的子图不在表中，outputs 深层降级放行（后端编译期为权威门，前端随 D21 接入拉取）。
+  subgraphOutputs: Map<string, Set<string>> = new Map(),
 ): ScopeIndex {
   const nodeById = new Map(nodes.map((node) => [node.id, node]))
   const incoming = new Map<string, Set<string>>()
@@ -566,7 +570,20 @@ export function buildScopeIndex(
 
         if (node.kind === 'subgraph') {
           const [root, ...rest] = tail
-          if (root === 'outputs') continue // 子图深层展开缓做 D30，放行
+          if (root === 'outputs') {
+            // D30/B2：注入子图结构则校验 outputs.<内部节点id>；其后深层为内部节点产出，放行。
+            // 未注入（子图未加载/跨租户/钉版缺失）降级仅放行 outputs 根。
+            const inner = subgraphOutputs.get(node.id)
+            if (inner && rest.length > 0 && !inner.has(rest[0])) {
+              push(
+                field,
+                ref,
+                'REF_PATH_NOT_FOUND',
+                `子图输出中不存在该内部节点（outputs 下须为子图内节点 id，合法：${[...inner].join('/')}）：{{${ref.path}}}`,
+              )
+            }
+            continue
+          }
           if (!STATIC_OUTPUT_KEYS.subgraph.includes(root) || rest.length > 0) {
             push(
               field,

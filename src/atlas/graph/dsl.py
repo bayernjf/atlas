@@ -173,6 +173,7 @@ def validate_graph_report(
     tool_output_schemas: dict[str, dict[str, Any]] | None = None,
     *,
     check_refs: bool = False,
+    subgraph_index: dict[str, set[str]] | None = None,
 ) -> tuple[list[str], list[dict[str, Any]]]:
     """同 validate_graph，另返回 index 对齐的稀疏 locations 侧车（06 §6.13）。"""
     issues = _Issues()
@@ -269,6 +270,7 @@ def validate_graph_report(
             outgoing=outgoing,
             global_names=var_names,
             tool_output_schemas=tool_output_schemas or {},
+            subgraph_index=subgraph_index or {},
         )
         issues.extend(ref_issues)
         issues.extend(_validate_data_dependency_cycles(data_edges))
@@ -1015,6 +1017,7 @@ def _validate_template_refs(
     outgoing: dict[str, set[str]],
     global_names: set[str],
     tool_output_schemas: dict[str, dict[str, Any]],
+    subgraph_index: dict[str, set[str]] | None = None,
 ) -> tuple[list[Issue], list[tuple[str, str, str]]]:
     issues: list[Issue] = []
     # 通过可见性判定的数据依赖边 (引用方 viewer -> 被引节点 provider, 模板字段 pointer)；
@@ -1205,7 +1208,17 @@ def _validate_template_refs(
                 if ref_type == "subgraph":
                     root, *rest = tail
                     if root == "outputs":
-                        continue  # 子图输出深层展开缓做 D30
+                        # D30/B2：解析到子图结构时校验 outputs.<内部节点id> 存在性（其后深层为内部
+                        # 节点产出形状，跨图不展开、放行）；解析不到（无 resolver/子图缺失/钉版）降级，
+                        # 仅放行 outputs 根，与 outputSchema 缺省同构。
+                        inner = (subgraph_index or {}).get(head)
+                        if inner is not None and rest and rest[0] not in inner:
+                            add(
+                                f"{prefix} 子图输出中不存在该内部节点（REF_PATH_NOT_FOUND，"
+                                f"outputs 下须为子图内节点 id，合法：{sorted(inner)}）：{display}",
+                                pointer,
+                            )
+                        continue
                     if root not in _STATIC_OUTPUT_KEYS["subgraph"] or rest:
                         add(
                             f"{prefix} 子图节点输出路径不存在（REF_PATH_NOT_FOUND，仅 status/outputs 根）："

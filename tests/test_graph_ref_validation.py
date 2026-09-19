@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from atlas.graph.dsl import GraphValidationError, parse_graph
+from atlas.graph.dsl import GraphValidationError, parse_graph, validate_graph_report
 from atlas.graph.loader import build_demo_registry, compile_graph
 
 
@@ -203,6 +203,43 @@ def test_parallel_result_visible_after_join_but_not_inside_branch():
     # 汇聚点引用不存在的分支入口：REF_PATH_NOT_FOUND
     err2 = _compile_error(_parallel_raw(ai_template="{{par-1.result.nope.z}}"))
     assert "REF_PATH_NOT_FOUND" in err2 and "入口" in err2
+
+
+def _subgraph_parent(template: str) -> dict:
+    return _chain(
+        _trigger(),
+        {"id": "sub-1", "type": "subgraph", "name": "子流程",
+         "config": {"graphId": "graph-child", "inputs": {}}},
+        _ai("ai-1", template),
+    )
+
+
+def test_subgraph_outputs_inner_node_expansion_d30_b2():
+    index = {"sub-1": {"child-a", "child-b"}}
+    # 解析到子图结构：合法内部节点 id 的深层路径放行
+    msgs, _ = validate_graph_report(
+        parse_graph(_subgraph_parent("{{sub-1.outputs.child-a.x}}")),
+        {}, check_refs=True, subgraph_index=index,
+    )
+    assert not any("子图输出中不存在" in m for m in msgs)
+    # outputs.<不存在的内部节点 id>：REF_PATH_NOT_FOUND
+    msgs2, _ = validate_graph_report(
+        parse_graph(_subgraph_parent("{{sub-1.outputs.ghost.x}}")),
+        {}, check_refs=True, subgraph_index=index,
+    )
+    assert any("REF_PATH_NOT_FOUND" in m and "子图输出中不存在" in m for m in msgs2)
+    # 解析不到子图（无 index）：降级仅放行 outputs 根，不报路径错
+    msgs3, _ = validate_graph_report(
+        parse_graph(_subgraph_parent("{{sub-1.outputs.ghost.x}}")),
+        {}, check_refs=True,
+    )
+    assert not any("子图输出中不存在" in m for m in msgs3)
+    # outputs 根本身始终放行
+    msgs4, _ = validate_graph_report(
+        parse_graph(_subgraph_parent("{{sub-1.outputs}}")),
+        {}, check_refs=True, subgraph_index=index,
+    )
+    assert not any("子图输出中不存在" in m for m in msgs4)
 
 
 def _loop_graph(continue_expression: str, body_params: str = "{}") -> dict:
