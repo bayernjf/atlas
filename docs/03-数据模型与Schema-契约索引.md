@@ -449,6 +449,14 @@ traceId: string          # M10：同 node_start
 spanId: string
 parentSpanId: string
 subgraphPath: string[]  # A 包：同 node_start，仅子图内部 node_end 携带；录制/监控采集只收无此键的顶层 node_end
+# 工具适配器调用埋点（docs/28 §4.1 ⑧，D28 批3 a318d97；内部事件，executor 无条件 emit，debug 流也发但不采集）
+type: "tool_metric"
+node_id: string
+tool: string             # adapter/capability
+duration_ms: number      # float，真实调用 monotonic 计时
+action_status: "SUCCESS" | "FAILED" | "SIMULATED"
+error_code: string?      # result.code，可空
+subgraphPath: string[]  # 子图内部工具携带则被监控采集吞掉（命名空间白名单不放行 tool_metric），只采顶层；mock 命中不发
 # 运行结束（SSE 末帧为 event: result，载荷 {id, status, outputs, traces}）
 type: "run_end"         # 随 run_graph 返回值展开
 traceId: string          # M10：run root span 的 trace id
@@ -652,6 +660,13 @@ business:                  # M9：业务结果提取（见下 business_metrics�
   refunded_amount: number?
   expected_amount: number?
   amount_diff: boolean
+tool_calls:                  # docs/28 §4.1 ⑧（D28 批3，2026-09-20，a318d97）：真实工具适配器调用埋点，纯超集缺省 []
+  - node_id: string
+    tool: string             # adapter/capability，如 message/send
+    duration_ms: number      # float，time.monotonic 真实调用计时（SIMULATED 为本地构造、不纳延迟分位）
+    action_status: "SUCCESS" | "FAILED" | "SIMULATED"
+    error_code: string?      # result.code，无结构化 code（如未注册适配器）为 null
+# 仅两个真实运行入口（同步 /run、流式 /run/stream）采集无 subgraphPath 的顶层工具；mock 命中、子图内、debug/回放/门禁不采集
 # GET /api/monitoring/metrics
 total: integer
 healthy: integer                 # completed 且无失败节点
@@ -667,17 +682,34 @@ business:                        # M9：业务结果指标段（与系统指标�
   refund_amount_diff_rate: number | null
   per_graph: [{graph_id, ...上述三率, samples}]
   per_version: [{graph_id, resolved_version, ...三率, samples}]
+tools:                       # docs/28 §4.1 ⑧：按工具聚合（summarize_tools），样本 0 为 []
+  - tool: string
+    calls: integer           # 含 SUCCESS/FAILED/SIMULATED 全部
+    failed: integer          # 仅 FAILED（SIMULATED 不计 failed）
+    simulated: integer       # SIMULATED 计数（纳 calls 展示，不纳 p50/p95 分位）
+    error_codes: {string: integer}   # 有结构化 code 的失败按码计数；无 code 失败不入此 map
+    p50: number | null       # 仅真实（非 SIMULATED）样本 nearest-rank；真实样本 0 为 null
+    p95: number | null
 # RuleConfig（GET/PUT /api/monitoring/rules，PUT 全量替换，非法中文 422）
 run_error:            {enabled: boolean}
 node_failed:          {enabled: boolean}
 consecutive_failures: {enabled: boolean, threshold: 1..200 整数}
 failure_rate:         {enabled: boolean, window: 1..200, min_samples: 1..200, rate: 0..1}
+custom:                      # docs/28 §4.2 ⑨（D28 批3，2026-09-20，11b1ba7）：自定义规则，纯超集缺省 []，旧配置/PG JSONB 不 422
+  - cid: string             # 客户端 crypto.randomUUID()，strip 非空、同配置唯一、≤64
+    name: string            # strip 非空、≤50
+    enabled: boolean = true
+    expression: string      # 经 graph.conditions.validate_expression 静态校验（递归下降，禁 eval）；顶层须为布尔
+    severity: "critical" | "warning" = "warning"
+# 求值上下文（扁平白名单，不含 graphId）：{status:"completed"|"error"|"cancelled", durationMs:int(round 毫秒),
+#   failedCount:int, hasError:bool}；自定义规则对租户全部运行求值；非布尔/任何异常 fail-safe 不告警不阻塞
 # rollout_gate（M9）阈值不在全局 RuleConfig：随每图 RolloutConfig.gate 配置（见下 rollout_config）
 # Alert（GET /api/alerts?status=；POST /api/alerts/{id}/acknowledge|resolve）
 id: string                 # alt-{自增}
-rule_id: "run_error" | "node_failed" | "consecutive_failures" | "failure_rate" | "rollout_gate"  # M9 增 rollout_gate（critical）
+rule_id: string             # 内置五条字面量 或 自定义 "custom:{cid}"（docs/28 §4.2 起放宽为 str；PG monitoring_alerts.rule_id 本为 TEXT，无 DDL）
 graph_id: string
 severity: "critical" | "warning"
+rule_name: string?          # docs/28 §4.2：自定义规则名（内置规则缺省；进程内档落库，PG 档 v1 表无此列读回 null，前端回退显示 rule_id）
 message: string
 first_seen: string
 last_seen: string
