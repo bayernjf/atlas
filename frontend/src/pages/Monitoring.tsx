@@ -23,11 +23,13 @@ import {
   getRules,
   getRuns,
   listAlerts,
+  listAllReleaseReports,
   resolveAlert,
   updateRules,
   type AlertItem,
   type AlertStatus,
   type MetricsSummary,
+  type ReleaseReportSummary,
   type RuleConfig,
   type RunRecord,
 } from '../lib/apiClient'
@@ -80,6 +82,7 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
   const [alerts, setAlerts] = useState<AlertItem[]>([])
   const [runs, setRuns] = useState<RunRecord[]>([])
   const [rules, setRules] = useState<RuleConfig | null>(null)
+  const [crossReports, setCrossReports] = useState<ReleaseReportSummary[]>([])
   const [statusFilter, setStatusFilter] = useState<'all' | AlertStatus>('all')
   const [graphFilter, setGraphFilter] = useState<'all' | string>('all')
   const [loadError, setLoadError] = useState('')
@@ -88,14 +91,16 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
 
   const refresh = useCallback(async () => {
     try {
-      const [metricsData, alertsData, runsData] = await Promise.all([
+      const [metricsData, alertsData, runsData, crossReportsData] = await Promise.all([
         getMetrics(),
         listAlerts(),
         getRuns(graphFilter === 'all' ? undefined : graphFilter),
+        listAllReleaseReports(100),
       ])
       setMetrics(metricsData)
       setAlerts(alertsData)
       setRuns(runsData)
+      setCrossReports(crossReportsData)
       setLoadError('')
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : String(error))
@@ -271,6 +276,45 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
     },
   ]
 
+  const crossReportColumns: ColumnsType<ReleaseReportSummary> = [
+    {
+      title: '时间',
+      dataIndex: 'created_at',
+      width: 180,
+      render: (value) => formatTime(value as string),
+    },
+    { title: '图 ID', dataIndex: 'graph_id', ellipsis: true },
+    {
+      title: '触发',
+      dataIndex: 'trigger',
+      width: 100,
+      render: (value) => (value === 'publish-gate' ? '发布门禁' : '手动门禁'),
+    },
+    {
+      title: '通过率',
+      dataIndex: 'pass_rate',
+      width: 110,
+      render: (value) => {
+        const rate = value as number | null
+        if (rate === null) return <Tag>未覆盖</Tag>
+        const color = rate >= 1 ? 'green' : rate >= 0.8 ? 'orange' : 'red'
+        return <Tag color={color}>{(rate * 100).toFixed(1)}%</Tag>
+      },
+    },
+    {
+      title: '通过/总数',
+      width: 100,
+      render: (_, record) => `${record.passed}/${record.total}`,
+    },
+    {
+      title: '阻塞',
+      dataIndex: 'blocked',
+      width: 90,
+      render: (value) =>
+        value ? <Tag color="red">阻塞</Tag> : <Tag color="green">放行</Tag>,
+    },
+  ]
+
   return (
     <Layout className="page-layout">
       <Header className="page-header">
@@ -331,6 +375,24 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
               </Card>
             </Col>
           </Row>
+
+          <Card
+            title="跨图用例集报告（最近 100 条，docs/28 §2.4）"
+            extra={
+              <Typography.Text type="secondary">
+                手动/发布门禁沉淀 · 倒序 · Demo 进程内数据
+              </Typography.Text>
+            }
+          >
+            <Table<ReleaseReportSummary>
+              rowKey="id"
+              size="small"
+              pagination={false}
+              dataSource={crossReports}
+              columns={crossReportColumns}
+              locale={{ emptyText: '暂无批量回放报告' }}
+            />
+          </Card>
 
           <Row gutter={16}>
             <Col span={8}>

@@ -437,11 +437,17 @@ export type RecordingSummary = {
 export type RecordingCase = {
   id: string
   name: string
+  /** 所属图 id（M9 纯超集；旧用例为空串） */
+  graph_id: string
   graph: SerializedGraph
   inputs: RunInputs | null
   steps: RecordStep[]
   status: string
   created_at: string
+  /** 录制时钟锚点（C 包；回放冻结到该时刻） */
+  recorded_at?: string | null
+  /** 录制时递归冻结的 subgraph 引用快照（key＝引用原文含 @N） */
+  subgraphs?: Record<string, SerializedGraph>
 }
 
 export type ReplayStepRow = {
@@ -456,6 +462,23 @@ export type ReplayReport = {
   baseline_status: string
   replay_status: string
   steps: ReplayStepRow[]
+  /** 时钟锚点缺失/不可解析时的提示（C 包，可选） */
+  clock_note?: string
+  /** docs/28 §2.2：本次被桩替代的工具节点 id（未启用 mock 为 []） */
+  mocked_tools?: string[]
+}
+
+/** docs/28 §2.2/§2.3：单用例回放可选请求体 */
+export type ReplayRequestOptions = {
+  mock_tools?: boolean
+  /** 顶层键浅合并进用例 inputs（一次性，不落库） */
+  inputs_override?: RunInputs
+}
+
+/** docs/28 §2.3：用例元信息编辑（仅 name/inputs 可改） */
+export type RecordingUpdatePatch = {
+  name?: string
+  inputs?: RunInputs
 }
 
 export async function listRecordings(): Promise<RecordingSummary[]> {
@@ -477,8 +500,27 @@ export async function deleteRecording(id: string): Promise<void> {
   await request(`/api/recordings/${id}`, { method: 'DELETE' })
 }
 
-export async function replayRecording(id: string): Promise<ReplayReport> {
-  return request(`/api/recordings/${id}/replay`, { method: 'POST' })
+export async function replayRecording(
+  id: string,
+  body?: ReplayRequestOptions,
+): Promise<ReplayReport> {
+  return request(`/api/recordings/${id}/replay`, {
+    method: 'POST',
+    body: body ? JSON.stringify(body) : undefined,
+  })
+}
+
+/** 单用例完整详情（编辑预填 inputs；列表投影 RecordingSummary 不含 inputs） */
+export async function getRecording(id: string): Promise<RecordingCase> {
+  return request(`/api/recordings/${id}`)
+}
+
+/** docs/28 §2.3：编辑用例 name/inputs（仅这两项可改；不存在后端 404） */
+export async function updateRecording(
+  id: string,
+  patch: RecordingUpdatePatch,
+): Promise<RecordingCase> {
+  return request(`/api/recordings/${id}`, { method: 'PUT', body: JSON.stringify(patch) })
 }
 
 /**
@@ -812,6 +854,16 @@ export async function runReleaseGate(graphId: string): Promise<GateReport> {
 export async function listReleaseReports(graphId: string): Promise<ReleaseReportSummary[]> {
   const body = await request<{ items: ReleaseReportSummary[] }>(
     `/api/graphs/${graphId}/release-reports`,
+  )
+  return body.items
+}
+
+/** docs/28 §2.4：跨图用例集报告看板（倒序摘要，limit 默认 100、上限 200） */
+export async function listAllReleaseReports(
+  limit = 100,
+): Promise<ReleaseReportSummary[]> {
+  const body = await request<{ items: ReleaseReportSummary[] }>(
+    `/api/release-reports?limit=${limit}`,
   )
   return body.items
 }

@@ -3,6 +3,7 @@ import {
   Alert,
   Button,
   Card,
+  Checkbox,
   Layout,
   Modal,
   Popconfirm,
@@ -35,12 +36,14 @@ import {
   decideApproval,
   decideCardAction,
   deleteRecording,
+  getRecording,
   getTemplate,
   listRecordings,
   listTemplates,
   listVersions,
   nlGenerate,
   replayRecording,
+  updateRecording,
   saveGraph,
   saveGraphDraft,
   saveRecording,
@@ -53,8 +56,10 @@ import {
   type CompileResult,
   type DebugAction,
   type PausedFrame,
+  type RecordingCase,
   type RecordingSummary,
   type ReplayReport,
+  type ReplayRequestOptions,
   type RunEvent,
   type RunInputs,
   type RunResult,
@@ -63,6 +68,22 @@ import {
 
 const { Header, Sider, Content, Footer } = Layout
 const { TextArea } = Input
+
+/** docs/28 §2.2/§2.3：把 TextArea 文本解析为顶层 JSON 对象；非法返回 ok:false 与文案。 */
+function parseInputsObject(
+  text: string,
+): { ok: true; value: Record<string, unknown> } | { ok: false; error: string } {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return { ok: false, error: '入参不是合法 JSON，请检查格式' }
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return { ok: false, error: '入参必须是顶层 JSON 对象（{}）' }
+  }
+  return { ok: true, value: parsed as Record<string, unknown> }
+}
 
 const DEMO_ORDERS: Array<{ order_id: string; reason: string; amount: number }> = [
   { order_id: '12345', reason: '商品破损', amount: 299 },
@@ -117,6 +138,16 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
   const [replayBusyId, setReplayBusyId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [reports, setReports] = useState<Record<string, ReplayReport>>({})
+  // docs/28 §2.2：单用例回放 Mock 勾选 / 入参覆写草稿（per-case，一次性不落库）
+  const [mockToolsById, setMockToolsById] = useState<Record<string, boolean>>({})
+  const [overrideById, setOverrideById] = useState<Record<string, string>>({})
+  // docs/28 §2.3：用例元信息编辑（仅 name/inputs）
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [loadingEditId, setLoadingEditId] = useState<string | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editInputsText, setEditInputsText] = useState('')
+  const [editError, setEditError] = useState<string | null>(null)
+  const [savingEdit, setSavingEdit] = useState(false)
   const [pausedFrame, setPausedFrame] = useState<PausedFrame | null>(null)
   const [resumeBusy, setResumeBusy] = useState<DebugAction | null>(null)
   const [varFilter, setVarFilter] = useState('')
@@ -515,12 +546,77 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
     setRecordingError(null)
     setReplayBusyId(caseId)
     try {
-      const report = await replayRecording(caseId)
+      const body: ReplayRequestOptions = {}
+      if (mockToolsById[caseId]) body.mock_tools = true
+      const overrideText = (overrideById[caseId] ?? '').trim()
+      if (overrideText) {
+        const parsed = parseInputsObject(overrideText)
+        if (!parsed.ok) {
+          setRecordingError(parsed.error)
+          return
+        }
+        body.inputs_override = parsed.value as RunInputs
+      }
+      const report = await replayRecording(caseId, body)
       setReports((prev) => ({ ...prev, [caseId]: report }))
     } catch (error) {
       setRecordingError(error instanceof Error ? error.message : String(error))
     } finally {
       setReplayBusyId(null)
+    }
+  }
+
+  // docs/28 §2.3：展开编辑并拉完整用例预填 name/inputs（列表投影不含 inputs）
+  async function openEdit(rec: RecordingSummary) {
+    setRecordingError(null)
+    setEditError(null)
+    setEditingId(rec.id)
+    setEditName(rec.name)
+    setEditInputsText('')
+    setLoadingEditId(rec.id)
+    try {
+      const full: RecordingCase = await getRecording(rec.id)
+      setEditName(full.name)
+      setEditInputsText(JSON.stringify(full.inputs ?? {}, null, 2))
+    } catch (error) {
+      setEditError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setLoadingEditId(null)
+    }
+  }
+
+  function cancelEdit() {
+    setEditingId(null)
+    setEditError(null)
+  }
+
+  async function saveEdit(caseId: string) {
+    setEditError(null)
+    const patch: { name?: string; inputs?: RunInputs } = {}
+    const name = editName.trim()
+    if (name) patch.name = name
+    const inputsText = editInputsText.trim()
+    if (inputsText) {
+      const parsed = parseInputsObject(inputsText)
+      if (!parsed.ok) {
+        setEditError(parsed.error)
+        return
+      }
+      patch.inputs = parsed.value as RunInputs
+    }
+    if (!patch.name && !patch.inputs) {
+      setEditError('请至少修改名称或入参之一')
+      return
+    }
+    setSavingEdit(true)
+    try {
+      await updateRecording(caseId, patch)
+      setRecordings(await listRecordings())
+      setEditingId(null)
+    } catch (error) {
+      setEditError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setSavingEdit(false)
     }
   }
 
@@ -877,6 +973,15 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                     >
                       回放
                     </Button>
+                    <Button
+                      type="link"
+                      loading={loadingEditId === rec.id}
+                      onClick={() =>
+                        editingId === rec.id ? cancelEdit() : openEdit(rec)
+                      }
+                    >
+                      {editingId === rec.id ? '收起' : '编辑'}
+                    </Button>
                     <Popconfirm
                       title="确认删除该录制用例？"
                       okText="删除"
@@ -890,12 +995,88 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                     </Popconfirm>
                   </Space>
                 </div>
+                {editingId === rec.id ? (
+                  <div
+                    style={{
+                      marginTop: 8,
+                      padding: 10,
+                      border: '1px dashed var(--atlas-color-border)',
+                      borderRadius: 8,
+                    }}
+                  >
+                    {loadingEditId === rec.id ? (
+                      <Typography.Text type="secondary">加载用例…</Typography.Text>
+                    ) : (
+                      <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+                        <Input
+                          value={editName}
+                          onChange={(event) => setEditName(event.target.value)}
+                          placeholder="用例名称"
+                        />
+                        <TextArea
+                          autoSize={{ minRows: 2, maxRows: 6 }}
+                          value={editInputsText}
+                          onChange={(event) => setEditInputsText(event.target.value)}
+                          placeholder="回放入参（JSON 对象，保存时整体替换）"
+                        />
+                        {editError && <Alert type="error" showIcon title={editError} />}
+                        <Space size={8} wrap>
+                          <Button
+                            type="primary"
+                            size="small"
+                            loading={savingEdit}
+                            onClick={() => saveEdit(rec.id)}
+                          >
+                            保存
+                          </Button>
+                          <Button size="small" onClick={cancelEdit}>
+                            取消
+                          </Button>
+                          <Typography.Text type="secondary">
+                            仅名称/入参可改；步骤与 Graph 快照不可改（请重新录制）
+                          </Typography.Text>
+                        </Space>
+                      </Space>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ marginTop: 8 }}>
+                    <Checkbox
+                      checked={!!mockToolsById[rec.id]}
+                      onChange={(event) =>
+                        setMockToolsById((prev) => ({
+                          ...prev,
+                          [rec.id]: event.target.checked,
+                        }))
+                      }
+                    >
+                      Mock 工具节点（命中录制输出、不触达适配器；发布门禁不接 mock）
+                    </Checkbox>
+                    <TextArea
+                      autoSize={{ minRows: 1, maxRows: 3 }}
+                      style={{ marginTop: 4 }}
+                      value={overrideById[rec.id] ?? ''}
+                      onChange={(event) =>
+                        setOverrideById((prev) => ({
+                          ...prev,
+                          [rec.id]: event.target.value,
+                        }))
+                      }
+                      placeholder='入参覆写（可选，JSON 对象如 {"amount": 100}，仅本次回放浅合并、不落库）'
+                    />
+                  </div>
+                )}
                 {report && (
                   <div style={{ marginTop: 8 }}>
                     <Space size={8} wrap>
                       <Tag color={report.matches ? 'green' : 'red'}>
                         {report.matches ? '匹配' : '不匹配'}
                       </Tag>
+                      {report.mocked_tools && report.mocked_tools.length > 0 && (
+                        <Tag color="blue" title={report.mocked_tools.join(', ')}>
+                          Mock {report.mocked_tools.length} 工具
+                        </Tag>
+                      )}
                       <Typography.Text type="secondary">
                         基线 {report.baseline_status} → 回放 {report.replay_status}
                       </Typography.Text>
