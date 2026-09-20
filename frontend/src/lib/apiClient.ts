@@ -149,6 +149,16 @@ export type RunEvent =
       /** A 包（docs/27 §3.1）：子图内部节点携带每层父图 subgraph 节点 id 路径；顶层节点缺省。 */
       subgraphPath?: string[]
     }
+  | {
+      /** docs/28 §4.1 ⑧：工具适配器调用埋点（监控采集用，编辑器无分支即忽略）。 */
+      type: 'tool_metric'
+      node_id: string
+      tool: string
+      duration_ms: number
+      action_status: 'SUCCESS' | 'FAILED' | 'SIMULATED'
+      error_code: string | null
+      subgraphPath?: string[]
+    }
   | ({ type: 'run_end' } & Partial<RunResult>)
   | PausedFrame
   | StoppedFrame
@@ -648,11 +658,31 @@ export type BusinessMetricsSummary = {
   per_version: BusinessRateRows[]
 }
 
+/** docs/28 §4.1 ⑧ 单次工具适配器调用埋点。 */
+export type ToolCallMetric = {
+  node_id: string
+  tool: string
+  duration_ms: number
+  action_status: 'SUCCESS' | 'FAILED' | 'SIMULATED'
+  error_code: string | null
+}
+
+/** docs/28 §4.1 ⑧ 按工具聚合的调用指标行（SIMULATED 不纳延迟分位，样本 0 为 null）。 */
+export type ToolMetricsRow = {
+  tool: string
+  calls: number
+  failed: number
+  simulated: number
+  error_codes: Record<string, number>
+  p50: number | null
+  p95: number | null
+}
+
 export type RunRecord = {
   id: string
   graph_id: string
   mode: 'sync' | 'stream'
-  status: 'completed' | 'error'
+  status: 'completed' | 'error' | 'cancelled'
   started_at: string
   finished_at: string
   duration_ms: number
@@ -660,6 +690,7 @@ export type RunRecord = {
   error: string | null
   resolved_version?: number | null
   business?: BusinessOutcome | null
+  tool_calls?: ToolCallMetric[]
 }
 
 export type MetricsStats = {
@@ -683,6 +714,8 @@ export type MetricsSummary = MetricsStats & {
   per_graph: Array<{ graph_id: string } & MetricsStats>
   failed_nodes: FailedNodeRow[]
   business: BusinessMetricsSummary
+  /** docs/28 §4.1 ⑧：适配器调用聚合（旧后端/空数据为 []）。 */
+  tools?: ToolMetricsRow[]
 }
 
 export type RuleId =
@@ -695,8 +728,9 @@ export type RuleId =
 export type AlertStatus = 'open' | 'acknowledged' | 'resolved'
 
 export type AlertItem = {
+  /** 内置四条/rollout_gate 为字面量，自定义规则为 custom:{cid}，故放宽为 string。 */
+  rule_id: string
   id: string
-  rule_id: RuleId
   graph_id: string
   severity: 'critical' | 'warning'
   message: string
@@ -706,6 +740,17 @@ export type AlertItem = {
   status: AlertStatus
   last_run_id: string
   action?: RolloutAlertAction | null
+  /** docs/28 §4.2 ⑨：自定义规则名（内置规则缺省；PG 档 v1 不持久化，可能为空）。 */
+  rule_name?: string | null
+}
+
+/** docs/28 §4.2 ⑨ 自定义告警规则（表达式复用安全条件引擎，禁 eval）。 */
+export type CustomRuleConfig = {
+  cid: string
+  name: string
+  enabled: boolean
+  expression: string
+  severity: 'critical' | 'warning'
 }
 
 export type RuleConfig = {
@@ -713,6 +758,8 @@ export type RuleConfig = {
   node_failed: { enabled: boolean }
   consecutive_failures: { enabled: boolean; threshold: number }
   failure_rate: { enabled: boolean; window: number; min_samples: number; rate: number }
+  /** 纯超集：旧后端/旧配置缺省为空数组，不报错。 */
+  custom?: CustomRuleConfig[]
 }
 
 export async function getMetrics(): Promise<MetricsSummary> {

@@ -1,4 +1,4 @@
-import type { AlertStatus, RuleId, RunRecord } from './apiClient'
+import type { AlertStatus, RunRecord } from './apiClient'
 
 export type RunHealth = 'healthy' | 'unhealthy' | 'error'
 
@@ -20,7 +20,7 @@ export function formatTime(iso: string): string {
     : date.toLocaleTimeString('zh-CN', { hour12: false })
 }
 
-export const RULE_LABELS: Record<RuleId, string> = {
+export const RULE_LABELS: Record<string, string> = {
   run_error: '运行异常',
   node_failed: '节点失败',
   consecutive_failures: '连续失败',
@@ -28,7 +28,12 @@ export const RULE_LABELS: Record<RuleId, string> = {
   rollout_gate: '灰度门控回滚',
 }
 
-export function ruleLabel(ruleId: RuleId): string {
+/**
+ * 告警规则名：自定义规则优先用后端 rule_name；内置规则用本地映射；
+ * custom:{cid} 且无 rule_name（PG 档 v1 不持久化）时回退显示 rule_id（docs/28 §4.2）。
+ */
+export function ruleLabel(ruleId: string, ruleName?: string | null): string {
+  if (ruleName) return ruleName
   return RULE_LABELS[ruleId] ?? ruleId
 }
 

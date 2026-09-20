@@ -5,6 +5,7 @@ import {
   Button,
   Card,
   Col,
+  Input,
   InputNumber,
   Layout,
   Row,
@@ -28,11 +29,14 @@ import {
   updateRules,
   type AlertItem,
   type AlertStatus,
+  type CustomRuleConfig,
   type MetricsSummary,
   type ReleaseReportSummary,
   type RuleConfig,
   type RunRecord,
+  type ToolMetricsRow,
 } from '../lib/apiClient'
+import { validateExpression } from '../lib/conditions'
 import { roleCan, type Principal } from '../lib/auth'
 import { UserBadge } from '../components/UserBadge'
 import {
@@ -62,6 +66,7 @@ const EMPTY_METRICS: MetricsSummary = {
   p95: null,
   per_graph: [],
   failed_nodes: [],
+  tools: [],
   business: {
     auto_refund_rate: null,
     manual_escalation_rate: null,
@@ -131,10 +136,61 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
     }
   }
 
+  const updateCustom = (idx: number, patch: Partial<CustomRuleConfig>) => {
+    setRules((current) =>
+      !current
+        ? current
+        : {
+            ...current,
+            custom: (current.custom ?? []).map((rule, i) =>
+              i === idx ? { ...rule, ...patch } : rule,
+            ),
+          },
+    )
+  }
+  const addCustom = () => {
+    setRules((current) =>
+      !current
+        ? current
+        : {
+            ...current,
+            custom: [
+              ...(current.custom ?? []),
+              {
+                cid: crypto.randomUUID(),
+                name: '',
+                enabled: true,
+                expression: '{{hasError}}',
+                severity: 'warning',
+              },
+            ],
+          },
+    )
+  }
+  const removeCustom = (idx: number) => {
+    setRules((current) =>
+      !current
+        ? current
+        : { ...current, custom: (current.custom ?? []).filter((_, i) => i !== idx) },
+    )
+  }
+
   const saveRules = async () => {
     if (!rules) return
     setRuleError('')
     setRuleSaved(false)
+    // docs/28 §4.2：保存前逐行前端校验（与后端 validate_rules 同构，禁 eval 引擎）
+    for (const rule of rules.custom ?? []) {
+      if (!rule.name.trim()) {
+        setRuleError(`存在名称为空的自定义规则（cid ${rule.cid}）`)
+        return
+      }
+      const exprErrors = validateExpression(rule.expression)
+      if (exprErrors.length > 0) {
+        setRuleError(`自定义规则「${rule.name}」表达式非法：${exprErrors.join('；')}`)
+        return
+      }
+    }
     try {
       const saved = await updateRules(rules)
       setRules(saved)
@@ -152,7 +208,7 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
       width: 110,
       render: (ruleId: AlertItem['rule_id'], alert) => (
         <Space orientation="vertical" size={0}>
-          <span>{ruleLabel(ruleId)}</span>
+          <span>{ruleLabel(ruleId, alert.rule_name)}</span>
           <Tag color={SEVERITY_COLORS[alert.severity]} style={{ marginTop: 2 }}>
             {alert.severity === 'critical' ? '严重' : '警告'}
           </Tag>
@@ -443,6 +499,49 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
           </Card>
 
           <Card
+            title="适配器调用（docs/28 §4.1，真实运行埋点；SIMULATED 为本地模拟，不纳延迟分位）"
+          >
+            <Table<ToolMetricsRow>
+              rowKey="tool"
+              size="small"
+              pagination={false}
+              dataSource={metrics.tools ?? []}
+              locale={{ emptyText: '暂无工具调用（运行含工具节点的图后出现）' }}
+              columns={[
+                { title: '工具（adapter/capability）', dataIndex: 'tool' },
+                { title: '调用数', dataIndex: 'calls', width: 90 },
+                {
+                  title: '失败',
+                  dataIndex: 'failed',
+                  width: 80,
+                  render: (value: number) => (value > 0 ? <Tag color="red">{value}</Tag> : 0),
+                },
+                { title: '模拟', dataIndex: 'simulated', width: 80 },
+                { title: 'P50', dataIndex: 'p50', width: 100, render: formatDuration },
+                { title: 'P95', dataIndex: 'p95', width: 100, render: formatDuration },
+                {
+                  title: '错误码分布',
+                  dataIndex: 'error_codes',
+                  render: (codes: Record<string, number>) => {
+                    const entries = Object.entries(codes)
+                    return entries.length === 0 ? (
+                      '—'
+                    ) : (
+                      <Space wrap size={4}>
+                        {entries.map(([code, count]) => (
+                          <Tag key={code} color="volcano">
+                            {code} ×{count}
+                          </Tag>
+                        ))}
+                      </Space>
+                    )
+                  },
+                },
+              ]}
+            />
+          </Card>
+
+          <Card
             title={
               <Space>
                 告警
@@ -583,6 +682,69 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
                   保存规则
                 </Button>
               </Space>
+
+              <div style={{ marginTop: 16 }}>
+                <Typography.Text strong>自定义规则（表达式，docs/28 §4.2）</Typography.Text>
+                <Typography.Paragraph type="secondary" style={{ marginBottom: 8, marginTop: 4 }}>
+                  可用变量（双花括号引用）：status（completed / error / cancelled）、durationMs（整数毫秒）、
+                  failedCount（失败节点数）、hasError（是否有错误）；示例：{"{{status}} == 'error' || {{hasError}}"}。
+                  表达式复用安全条件引擎（禁 eval），结果须为布尔，否则运行时 fail-safe 不告警。
+                </Typography.Paragraph>
+                {(rules.custom ?? []).map((rule, idx) => {
+                  const exprErrors = validateExpression(rule.expression)
+                  const nameEmpty = !rule.name.trim()
+                  return (
+                    <Space
+                      key={rule.cid}
+                      wrap
+                      align="start"
+                      style={{ display: 'flex', marginBottom: 8 }}
+                    >
+                      <Input
+                        placeholder="规则名称"
+                        value={rule.name}
+                        style={{ width: 150 }}
+                        status={nameEmpty ? 'error' : undefined}
+                        onChange={(event) => updateCustom(idx, { name: event.target.value })}
+                      />
+                      <Input
+                        placeholder="{{status}} == 'error' || {{hasError}}"
+                        value={rule.expression}
+                        style={{ width: 340, fontFamily: 'monospace' }}
+                        status={exprErrors.length > 0 ? 'error' : undefined}
+                        onChange={(event) => updateCustom(idx, { expression: event.target.value })}
+                      />
+                      <Select
+                        value={rule.severity}
+                        style={{ width: 100 }}
+                        onChange={(severity) => updateCustom(idx, { severity })}
+                        options={[
+                          { value: 'warning', label: '警告' },
+                          { value: 'critical', label: '严重' },
+                        ]}
+                      />
+                      <Space style={{ marginTop: 4 }}>
+                        <span>启用</span>
+                        <Switch
+                          checked={rule.enabled}
+                          onChange={(enabled) => updateCustom(idx, { enabled })}
+                        />
+                      </Space>
+                      <Button danger size="small" style={{ marginTop: 2 }} onClick={() => removeCustom(idx)}>
+                        删除
+                      </Button>
+                      {(nameEmpty || exprErrors.length > 0) && (
+                        <Typography.Text type="danger" style={{ marginTop: 6 }}>
+                          {nameEmpty ? '名称不能为空' : exprErrors.join('；')}
+                        </Typography.Text>
+                      )}
+                    </Space>
+                  )
+                })}
+                <Button size="small" onClick={addCustom}>
+                  ＋ 新增自定义规则
+                </Button>
+              </div>
             </Card>
           )}
 

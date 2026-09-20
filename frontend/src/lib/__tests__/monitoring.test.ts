@@ -57,4 +57,11 @@ describe('monitoring display maps', () => {
     expect(ALERT_STATUS_LABELS.open).toBe('待处理')
     expect(formatTime('not-a-date')).toBe('not-a-date')
   })
+
+  it('docs/28 §4.2 prefers custom rule_name and falls back to rule_id', () => {
+    expect(ruleLabel('custom:abc', '错误即告警')).toBe('错误即告警')
+    // PG 档 v1 不持久化 rule_name（null）时回退显示 rule_id 原文
+    expect(ruleLabel('custom:abc', null)).toBe('custom:abc')
+    expect(ruleLabel('custom:abc')).toBe('custom:abc')
+  })
 })
