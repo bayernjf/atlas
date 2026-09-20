@@ -59,6 +59,9 @@ class RecordingRepository(Protocol):
         inputs: dict[str, Any] | None,
         steps: list[RecordStep],
         status: str,
+        graph_id: str = "",
+        subgraphs: dict[str, dict[str, Any]] | None = None,
+        recorded_at: str | None = None,
     ) -> RecordingCase: ...
     def list(self) -> list[RecordingCase]: ...
     def get(self, case_id: str) -> RecordingCase | None: ...

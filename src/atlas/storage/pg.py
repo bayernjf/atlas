@@ -329,33 +329,41 @@ class PgRecordingStore:
         inputs: dict[str, Any] | None,
         steps: list[RecordStep],
         status: str,
+        graph_id: str = "",
+        subgraphs: dict[str, dict[str, Any]] | None = None,
         recorded_at: str | None = None,
     ) -> RecordingCase:
         with self._engine.begin() as conn:
             case_id = _next_id(conn, "rec")
             created_at = _now_iso()
             recorded = recorded_at or created_at
+            frozen_subgraphs = subgraphs or {}
             conn.execute(
                 text(
                     "INSERT INTO recordings "
-                    "(id, tenant_id, name, graph, inputs, steps, status, created_at, recorded_at) "
-                    "VALUES (:id, :tenant_id, :name, :graph, :inputs, :steps, :status, :created_at, :recorded_at)"
+                    "(id, tenant_id, name, graph_id, graph, inputs, steps, status, "
+                    "created_at, recorded_at, subgraphs) "
+                    "VALUES (:id, :tenant_id, :name, :graph_id, :graph, :inputs, :steps, "
+                    ":status, :created_at, :recorded_at, :subgraphs)"
                 ),
                 {
                     "id": case_id,
                     "tenant_id": self._tenant_id,
                     "name": name,
+                    "graph_id": graph_id,
                     "graph": json.dumps(graph, ensure_ascii=False),
                     "inputs": json.dumps(inputs, ensure_ascii=False) if inputs is not None else None,
                     "steps": json.dumps([step.model_dump() for step in steps], ensure_ascii=False),
                     "status": status,
                     "created_at": created_at,
                     "recorded_at": recorded,
+                    "subgraphs": json.dumps(frozen_subgraphs, ensure_ascii=False),
                 },
             )
         return RecordingCase(
-            id=case_id, name=name, graph=graph, inputs=inputs,
+            id=case_id, name=name, graph_id=graph_id, graph=graph, inputs=inputs,
             steps=steps, status=status, created_at=created_at, recorded_at=recorded,
+            subgraphs=frozen_subgraphs,
         )
 
     @staticmethod
@@ -364,14 +372,20 @@ class PgRecordingStore:
             id=row[0], name=row[1], graph=row[2], inputs=row[3],
             steps=[RecordStep(**step) for step in row[4]],
             status=row[5], created_at=row[6], recorded_at=row[7],
+            graph_id=row[8] or "", subgraphs=row[9] or {},
         )
+
+    _SELECT_COLS = (
+        "SELECT id, name, graph, inputs, steps, status, created_at, recorded_at, "
+        "graph_id, subgraphs FROM recordings "
+    )
 
     def list(self) -> list[RecordingCase]:
         with self._engine.connect() as conn:
             rows = conn.execute(
                 text(
-                    "SELECT id, name, graph, inputs, steps, status, created_at, recorded_at FROM recordings "
-                    "WHERE tenant_id = :tenant_id ORDER BY created_at"
+                    self._SELECT_COLS
+                    + "WHERE tenant_id = :tenant_id ORDER BY created_at"
                 ),
                 {"tenant_id": self._tenant_id},
             ).all()
@@ -381,8 +395,8 @@ class PgRecordingStore:
         with self._engine.connect() as conn:
             row = conn.execute(
                 text(
-                    "SELECT id, name, graph, inputs, steps, status, created_at, recorded_at FROM recordings "
-                    "WHERE id = :id AND tenant_id = :tenant_id"
+                    self._SELECT_COLS
+                    + "WHERE id = :id AND tenant_id = :tenant_id"
                 ),
                 {"id": case_id, "tenant_id": self._tenant_id},
             ).first()

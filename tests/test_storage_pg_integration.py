@@ -155,6 +155,33 @@ def test_recording_recorded_at_roundtrip(backend):
     assert recording.get(fixed.id).recorded_at == "2026-01-02T03:04:05+00:00"
 
 
+def test_recording_graph_id_subgraphs_roundtrip(backend):
+    # 批 1 D26①（docs/28 §2.1，迁移 008）：graph_id/subgraphs 富字段 PG 往返，
+    # 修复 PG 档「录为用例」500（unexpected keyword argument 'graph_id'）。
+    from atlas.recording.cases import RecordStep
+
+    recording = backend.recording_store(TENANT)
+    frozen = {"sub-a@3": {"version": 1, "nodes": []}, "sub-b": {"version": 1}}
+    rich = recording.add(
+        name="富字段", graph={"version": 1}, inputs={"amount": 100},
+        steps=[RecordStep(node_id="t", node_type="trigger", output={})],
+        status="ok", graph_id="graph-rich", subgraphs=frozen,
+    )
+    got = recording.get(rich.id)
+    assert got is not None
+    assert got.graph_id == "graph-rich"
+    assert got.subgraphs == frozen
+    listed = next(c for c in recording.list() if c.id == rich.id)
+    assert listed.graph_id == "graph-rich" and listed.subgraphs == frozen
+    # 缺省兼容：旧形状用例 graph_id 空串、subgraphs 空 dict
+    legacy = recording.add(
+        name="旧形状", graph={"version": 1}, inputs=None,
+        steps=[RecordStep(node_id="t", node_type="trigger", output={})], status="ok",
+    )
+    legacy_got = recording.get(legacy.id)
+    assert legacy_got.graph_id == "" and legacy_got.subgraphs == {}
+
+
 def test_monitoring_roundtrip(backend):
     store = backend.monitoring_store(TENANT)
     record = store.record_run(
