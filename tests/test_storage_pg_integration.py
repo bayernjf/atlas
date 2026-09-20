@@ -328,3 +328,43 @@ def test_interruption_frame_roundtrip(backend):
 
     clear_frame(engine, "tok-1")
     assert load_pending_frames(engine) == []
+
+
+
+def test_u211_subgraph_upgrade_plan_pg_roundtrip(backend):
+    """docs/28 §5.2 ⑪：PG 档发布快照 JSON 往返后升级体检 from→to 正确（只读不产版本）。"""
+    from atlas.versioning.publish import publish as publish_version
+    from atlas.versioning.upgrades import subgraph_upgrade_plan
+
+    store = backend.graph_store(TENANT)
+    store.clear()
+    sub_tool = {"id": "s", "type": "tool", "config": {}}
+    sub = store.save({"nodes": [sub_tool], "edges": []})
+    publish_version(store, sub)  # v1
+    store.update_draft(sub, {"nodes": [{"id": "s2", "type": "tool", "config": {}}], "edges": []})
+    publish_version(store, sub)  # v2
+    parent = store.save(
+        {"nodes": [{"id": "n1", "type": "subgraph", "config": {"graphId": sub}}], "edges": []}
+    )
+    # 父图首次发布前：首次钉版 to=2
+    pre = subgraph_upgrade_plan(store, parent)
+    assert pre == [
+        {"node_id": "n1", "sub_id": sub, "from_version": None,
+         "to_version": 2, "first_pin": True}
+    ]
+    publish_version(store, parent)  # parent v1 钉 sub@2
+    # 无变化 → 空
+    assert subgraph_upgrade_plan(store, parent) == []
+    # 子图发 v3 → 升级 from 2 to 3，且体检不产生任何版本
+    store.update_draft(sub, {"nodes": [{"id": "s3", "type": "tool", "config": {}}], "edges": []})
+    publish_version(store, sub)  # v3
+    versions_before = store.list_versions(parent)
+    plan = subgraph_upgrade_plan(store, parent)
+    assert plan == [
+        {"node_id": "n1", "sub_id": sub, "from_version": 2,
+         "to_version": 3, "first_pin": False}
+    ]
+    assert store.list_versions(parent) == versions_before  # 只读
+    # 草稿不存在 → None
+    assert subgraph_upgrade_plan(store, "graph-404") is None
+    store.clear()

@@ -86,6 +86,7 @@ from atlas.storage.recovery import (
 )
 from atlas.template import get_template, list_templates
 from atlas.versioning.publish import publish as publish_graph_version
+from atlas.versioning.upgrades import subgraph_upgrade_plan
 
 logger = logging.getLogger(__name__)
 
@@ -541,6 +542,22 @@ def publish_graph(
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Graph 不存在：{exc.args[0]}") from exc
     return PublishGraphResponse(id=graph_id, releaseVersion=release_version)
+
+
+@app.get("/api/graphs/{graph_id}/subgraph-upgrades")
+def subgraph_upgrades(
+    graph_id: str,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """发布前子图版本升级体检（docs/28 §5.2 ⑪，read）：纯只读、不产版本、不阻断。
+
+    返 ``{items: [{node_id, sub_id, from_version, to_version, first_pin}]}``；
+    草稿不存在 404。v1 只扫顶层 subgraph、只对已发布版本号（不检测子图草稿 dirty）。
+    """
+    plan = subgraph_upgrade_plan(services_for(principal).graph_store, graph_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail=f"Graph 不存在：{graph_id}")
+    return {"items": plan}
 
 
 @app.get("/api/graphs/{graph_id}/versions")
