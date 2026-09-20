@@ -221,5 +221,8 @@ class MemoryRepository(Protocol):
     ) -> list[dict[str, Any]]: ...  # 每项 = MemoryItem dict + "score"，按 score 降序
 
     def list(self, *, kind: str | None = None, limit: int = 50) -> list[dict[str, Any]]: ...
+    def update(
+        self, memory_id: str, **fields: Any
+    ) -> dict[str, Any] | None: ...  # docs/28 §5.1 手动编辑白名单字段；不存在返回 None（跨租户同不存在）
     def delete(self, memory_id: str) -> bool: ...  # 不存在返回 False（跨租户同不存在）
     def clear(self) -> None: ...

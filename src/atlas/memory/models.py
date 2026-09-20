@@ -104,6 +104,36 @@ def validate_remember_params(
     }
 
 
+# docs/28 §5.1（批 4 ⑩，D35 部分取回）：手动新建/编辑允许的白名单字段。
+# id/created_at/tenant/embedding 不可改；source 对手动写入强制 "manual"。
+REMEMBER_EDITABLE_FIELDS = ("kind", "content", "scope", "confidence", "metadata")
+
+
+def merge_manual_update(
+    old: dict[str, Any], fields: dict[str, Any]
+) -> tuple[dict[str, Any], bool]:
+    """合并手动编辑白名单字段并整体过校验，source 强制 ``manual``（docs/28 §5.1）。
+
+    ``old`` 为对外形态（含 kind/content/scope/confidence/source/metadata/created_at）；
+    ``fields`` 仅允许 :data:`REMEMBER_EDITABLE_FIELDS` 键（REST 层 pydantic extra=forbid
+    已挡未知键，此层再防御一次）。返回 ``(validate_remember_params 归一 kwargs,
+    content 是否变化)``，两档存储共享以防漂移；content 变化时调用方重算 embedding。
+    """
+    unknown = sorted(set(fields) - set(REMEMBER_EDITABLE_FIELDS))
+    if unknown:
+        raise MemoryValidationError(f"不可修改字段：{', '.join(unknown)}")
+    merged = {
+        key: (fields[key] if key in fields else old.get(key))
+        for key in REMEMBER_EDITABLE_FIELDS
+    }
+    params = validate_remember_params(source="manual", **merged)
+    old_content = old.get("content", "")
+    if not isinstance(old_content, str):
+        old_content = ""
+    content_changed = params["content"] != old_content.strip()
+    return params, content_changed
+
+
 def validate_recall_params(
     *,
     query: Any,

@@ -23,7 +23,7 @@ from typing import Any, Literal
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from atlas.cards import (
     CardRenderError,
@@ -49,6 +49,7 @@ from atlas.iam.principals import Principal, authenticate
 from atlas.iam.registry import STORAGE_BACKEND, TenantServices
 from atlas.llm.nl_generate import generate_graph, validate_param_fills
 from atlas.memory.adapter import MemoryHarnessAdapter
+from atlas.memory.models import MemoryValidationError
 from atlas.message.adapter import MessageHarnessAdapter
 from atlas.monitoring import RUN_RING_SIZE, extract_business, extract_node_results
 from atlas.recording import (
@@ -1633,7 +1634,71 @@ def demo_messages(
     return {"items": services_for(principal).message_service.list()}
 
 
-# ---- M11 长期记忆（docs/26 §6）：按租户只读 + admin 删；写入只走图内 remember 工具 ----
+# ---- M11 长期记忆（docs/26 §6 / docs/28 §5.1）：读 viewer+、手动新建/编辑 operate（source=manual）、删 admin；图内 remember 工具仍是运行时写入主路径 ----
+
+
+class MemoryCreateRequest(BaseModel):
+    """手动新建记忆（⑩）；source 由端点固定 manual，不接受入参。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["fact", "preference"]
+    content: str = Field(min_length=1, max_length=2000)
+    scope: dict[str, str] | None = None
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    metadata: dict[str, str] | None = None
+
+
+class MemoryUpdateRequest(BaseModel):
+    """手动编辑记忆（⑩）：白名单字段子集，至少一个；id/created_at/source/embedding 不可改。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["fact", "preference"] | None = None
+    content: str | None = Field(default=None, min_length=1, max_length=2000)
+    scope: dict[str, str] | None = None
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    metadata: dict[str, str] | None = None
+
+
+@app.post("/api/memories", status_code=201)
+def create_memory(
+    body: MemoryCreateRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """手动新建记忆（operate；source 固定 manual，201，docs/28 §5.1）。校验失败 422 中文。"""
+    repo = services_for(principal).memory_store
+    try:
+        return repo.remember(
+            kind=body.kind,
+            content=body.content,
+            scope=body.scope,
+            confidence=1.0 if body.confidence is None else body.confidence,
+            source="manual",
+            metadata=body.metadata,
+        )
+    except MemoryValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+@app.put("/api/memories/{memory_id}")
+def update_memory(
+    memory_id: str,
+    body: MemoryUpdateRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """手动编辑记忆白名单字段（operate；source 置 manual）；空体 422，不存在/他租户 404。"""
+    data = body.model_dump(exclude_unset=True)
+    if not data:
+        raise HTTPException(status_code=422, detail="请求体至少包含一个可改字段")
+    repo = services_for(principal).memory_store
+    try:
+        updated = repo.update(memory_id, **data)
+    except MemoryValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    if updated is None:
+        raise HTTPException(status_code=404, detail="记忆不存在")
+    return updated
 
 
 @app.get("/api/memories")

@@ -1026,6 +1026,59 @@ class PgMemoryStore:
             rows = conn.execute(text(sql.format(kind_clause=kind_clause)), args).all()
         return [self._row_to_public(row) for row in rows]
 
+    def update(self, memory_id: str, **fields: Any) -> dict[str, Any] | None:
+        """手动编辑白名单字段（docs/28 §5.1）；SELECT 旧行→合并校验→content 变重算
+        embedding→动态 UPDATE；不存在返回 None，id/created_at 不变，source 置 manual。
+        """
+        from atlas.memory.models import merge_manual_update
+
+        with self._engine.begin() as conn:
+            row = conn.execute(
+                text(
+                    f"SELECT {self._PUBLIC_COLS} FROM memory_items "
+                    "WHERE id = :id AND tenant_id = :tenant_id"
+                ),
+                {"id": memory_id, "tenant_id": self._tenant_id},
+            ).first()
+            if row is None:
+                return None
+            old = self._row_to_public(row)
+            params, content_changed = merge_manual_update(old, fields)
+            sets = (
+                "kind = :kind, content = :content, scope = CAST(:scope AS jsonb), "
+                "confidence = :confidence, source = 'manual', meta = CAST(:meta AS jsonb)"
+            )
+            args: dict[str, Any] = {
+                "id": memory_id,
+                "tenant_id": self._tenant_id,
+                "kind": params["kind"],
+                "content": params["content"],
+                "scope": json.dumps(params["scope"], ensure_ascii=False),
+                "confidence": params["confidence"],
+                "meta": json.dumps(params["metadata"], ensure_ascii=False),
+            }
+            if content_changed:
+                vector = self._provider.embed([params["content"]])[0]
+                sets += ", embedding = CAST(:embedding AS vector(256))"
+                args["embedding"] = self._vector_literal(vector)
+            conn.execute(
+                text(
+                    f"UPDATE memory_items SET {sets} "
+                    "WHERE id = :id AND tenant_id = :tenant_id"
+                ),
+                args,
+            )
+        return {
+            "id": old["id"],
+            "kind": params["kind"],
+            "content": params["content"],
+            "scope": params["scope"],
+            "confidence": params["confidence"],
+            "source": "manual",
+            "metadata": params["metadata"],
+            "created_at": old["created_at"],
+        }
+
     def delete(self, memory_id: str) -> bool:
         with self._engine.begin() as conn:
             result = conn.execute(
