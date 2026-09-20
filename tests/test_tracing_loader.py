@@ -144,8 +144,8 @@ def test_sse_frames_are_superset_with_no_new_event_types():
         emit=events.append,
     )
     types = [e["type"] for e in events]
-    # 不新增事件类型
-    assert set(types) <= {"node_start", "node_end", "run_end"}
+    # docs/28 §4.1 ⑧ 起工具节点新增 tool_metric 埋点帧（仍为既有节点/终帧之外的受控新事件型）
+    assert set(types) <= {"node_start", "node_end", "run_end", "tool_metric"}
     assert "run_end" in types
 
     for event in events:

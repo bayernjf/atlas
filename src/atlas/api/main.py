@@ -1023,6 +1023,17 @@ def _validate_debug(graph, debug: Any) -> list[dict[str, Any]]:
     return normalized
 
 
+def _tool_call_from_event(event: dict[str, Any]) -> dict[str, Any]:
+    """docs/28 §4.1 ⑧：tool_metric SSE/采集事件 → RunRecord.tool_calls 载荷（dict，pydantic 转模型）。"""
+    return {
+        "node_id": event["node_id"],
+        "tool": event.get("tool", ""),
+        "duration_ms": float(event.get("duration_ms", 0.0)),
+        "action_status": event["action_status"],
+        "error_code": event.get("error_code"),
+    }
+
+
 @app.post("/api/graphs/{graph_id}/run", response_model=RunGraphResponse)
 def run_saved_graph(
     graph_id: str,
@@ -1046,6 +1057,13 @@ def run_saved_graph(
     )
     services.run_store.begin(run_id=run_id, graph_id=graph_id, mode="sync")
     frame_sink = _frame_sink_for(principal.tenant_id, services.run_store, run_id)
+    # docs/28 §4.1 ⑧：同步入口无 SSE，构造同形收集 emit（只收顶层 tool_metric，其余忽略）。
+    tool_calls: list[dict[str, Any]] = []
+
+    def _metric_collect(event: dict[str, Any]) -> None:
+        if event.get("type") == "tool_metric" and not event.get("subgraphPath"):
+            tool_calls.append(_tool_call_from_event(event))
+
     try:
         result = run_graph(
             graph,
@@ -1054,6 +1072,7 @@ def run_saved_graph(
             approval_broker=services.approval_broker,
             graph_id=graph_id,
             graph_resolver=_tenant_graph_resolver(services),
+            emit=_metric_collect,
             frame_sink=frame_sink,
             tracer=tracer,
             graph_version=tracer.graph_version,
@@ -1072,6 +1091,7 @@ def run_saved_graph(
             error=f"{type(exc).__name__}: {exc}",
             trace_id=tracer.trace_id,
             resolved_version=resolved_version,
+            tool_calls=tool_calls,
         )
         evaluate_after_run(services, record)  # M9：异常运行同样计入 candidate 门控
         raise
@@ -1089,6 +1109,7 @@ def run_saved_graph(
         trace_id=tracer.trace_id,
         resolved_version=resolved_version,
         business=extract_business(graph_view, result["outputs"], event_payload=event_payload),
+        tool_calls=tool_calls,
     )
     evaluate_after_run(services, record)  # M9：灰度门控越阈自动回滚
     return RunGraphResponse(id=graph_id, **result)
@@ -1153,12 +1174,16 @@ def run_saved_graph_stream(
         # debug 会话不是真实运行，全程不埋点（04 §5.13）
         monitored = debug_controller is None
         collected: dict[str, Any] = {}
+        tool_calls: list[dict[str, Any]] = []
 
         def recording_emit(event: dict[str, Any]) -> None:
             # A 包（docs/27 §10.1）：监控/运行产出只收顶层 node_end；带 subgraphPath 的
             # 子图内部节点不进 collected（子图结果归在 subgraph 节点），但仍转发 SSE 上屏。
             if event.get("type") == "node_end" and not event.get("subgraphPath"):
                 collected[event["node_id"]] = event.get("output")
+            # docs/28 §4.1 ⑧：另册收集顶层 tool_metric（子层已被命名空间 wrapper 白名单吞掉）。
+            elif event.get("type") == "tool_metric" and not event.get("subgraphPath"):
+                tool_calls.append(_tool_call_from_event(event))
             emit(event)
 
         def worker() -> None:
@@ -1198,6 +1223,7 @@ def run_saved_graph_stream(
                         business=extract_business(
                             graph_view, result["outputs"], event_payload=event_payload
                         ),
+                        tool_calls=tool_calls,
                     )
                     evaluate_after_run(services, record)
                 events.put({"__result__": result})
@@ -1217,6 +1243,7 @@ def run_saved_graph_stream(
                         nodes=extract_node_results(graph_view, collected),
                         trace_id=tracer.trace_id if tracer is not None else "",
                         resolved_version=resolved_version,
+                        tool_calls=tool_calls,
                     )
                 events.put({"__cancelled__": exc.node_id})
             except Exception as exc:  # 运行期异常经 SSE error 帧下发，不静默吞线程
@@ -1235,6 +1262,7 @@ def run_saved_graph_stream(
                         error=f"{type(exc).__name__}: {exc}",
                         trace_id=tracer.trace_id if tracer is not None else "",
                         resolved_version=resolved_version,
+                        tool_calls=tool_calls,
                     )
                     evaluate_after_run(services, record)
                 events.put({"__error__": f"{type(exc).__name__}: {exc}"})

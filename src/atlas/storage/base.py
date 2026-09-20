@@ -170,11 +170,15 @@ class MonitoringRepository(Protocol):
         *,
         graph_id: str,
         mode: Literal["sync", "stream"],
-        status: Literal["completed", "error"],
+        status: Literal["completed", "error", "cancelled"],
         started_at: str,
         duration_ms: float,
         nodes: list,
         error: str | None = None,
+        trace_id: str = "",
+        resolved_version: int | None = None,
+        business=None,
+        tool_calls: list | None = None,
     ) -> RunRecord: ...
     def list_runs(self, graph_id: str | None = None, limit: int = 50) -> list[RunRecord]: ...
     def list_alerts(self, status: str | None = None) -> list[Alert]: ...

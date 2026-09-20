@@ -81,6 +81,43 @@ def _stats(runs: list) -> dict[str, Any]:
     }
 
 
+def summarize_tools(runs: list) -> list[dict[str, Any]]:
+    """docs/28 §4.1 ⑧：按工具聚合调用数/失败数/模拟数/错误码分布与真实调用延迟分位。
+
+    SIMULATED 为本地构造（无 adapter/capability 或未注册 registry）：计入 calls 与 simulated、
+    不进失败数、不纳延迟分位；p50/p95 仅对真实（SUCCESS/FAILED）调用计时，样本 0 为 None。
+    """
+    buckets: "OrderedDict[str, dict[str, Any]]" = OrderedDict()
+    for run in runs:
+        for call in getattr(run, "tool_calls", None) or []:
+            tool = call.tool
+            bucket = buckets.get(tool)
+            if bucket is None:
+                bucket = {"calls": 0, "failed": 0, "simulated": 0, "error_codes": {}, "durations": []}
+                buckets[tool] = bucket
+            bucket["calls"] += 1
+            if call.action_status == "SIMULATED":
+                bucket["simulated"] += 1
+                continue
+            bucket["durations"].append(call.duration_ms)
+            if call.action_status == "FAILED":
+                bucket["failed"] += 1
+                if call.error_code:
+                    bucket["error_codes"][call.error_code] = bucket["error_codes"].get(call.error_code, 0) + 1
+    return [
+        {
+            "tool": tool,
+            "calls": bucket["calls"],
+            "failed": bucket["failed"],
+            "simulated": bucket["simulated"],
+            "error_codes": dict(bucket["error_codes"]),
+            "p50": percentile(bucket["durations"], 50),
+            "p95": percentile(bucket["durations"], 95),
+        }
+        for tool, bucket in buckets.items()
+    ]
+
+
 def summarize(runs: list) -> dict[str, Any]:
     """全局 + 按图分组指标 + 失败节点 Top（按 count 降序，count 同则末次时间晚者优先）。"""
     by_graph: OrderedDict[str, list] = OrderedDict()
@@ -113,4 +150,5 @@ def summarize(runs: list) -> dict[str, Any]:
         "per_graph": per_graph,
         "failed_nodes": top,
         "business": summarize_business(runs),
+        "tools": summarize_tools(runs),
     }

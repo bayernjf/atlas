@@ -229,6 +229,35 @@ def test_monitoring_roundtrip(backend):
     assert store.get_rules().node_failed.enabled
 
 
+def test_tool_calls_roundtrip(backend):
+    """docs/28 §4.1 ⑧：monitoring_runs.tool_calls JSONB（迁移 008）持久化与读回。"""
+    store = backend.monitoring_store(TENANT)
+    record = store.record_run(
+        graph_id="graph-tools", mode="stream", status="completed",
+        started_at="2026-09-20T00:00:00+00:00", duration_ms=42.0, nodes=[],
+        tool_calls=[
+            {"node_id": "t1", "tool": "message/send", "duration_ms": 8.5,
+             "action_status": "SUCCESS", "error_code": None},
+            {"node_id": "t2", "tool": "http/request", "duration_ms": 3.0,
+             "action_status": "FAILED", "error_code": "INVALID_PARAMETER"},
+            {"node_id": "t3", "tool": "local-op", "duration_ms": 0.01,
+             "action_status": "SIMULATED", "error_code": None},
+        ],
+    )
+    loaded = next(r for r in store.list_runs(graph_id="graph-tools") if r.id == record.id)
+    assert [c.tool for c in loaded.tool_calls] == ["message/send", "http/request", "local-op"]
+    failed = loaded.tool_calls[1]
+    assert failed.action_status == "FAILED" and failed.error_code == "INVALID_PARAMETER"
+    assert loaded.tool_calls[2].action_status == "SIMULATED"
+    # 历史行/无工具运行读回为空列表（迁移 008 DEFAULT '[]'）
+    plain = store.record_run(
+        graph_id="graph-tools", mode="sync", status="completed",
+        started_at="2026-09-20T01:00:00+00:00", duration_ms=1.0, nodes=[],
+    )
+    assert next(r for r in store.list_runs(graph_id="graph-tools") if r.id == plain.id).tool_calls == []
+    store.reset()
+
+
 def test_interruption_frame_roundtrip(backend):
     from atlas.storage.frame import build_frame, deadline_iso
     from atlas.storage.recovery import clear_frame, load_pending_frames, make_frame_sink

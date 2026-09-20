@@ -365,10 +365,22 @@ def _make_executor(
                         )
                     else:
                         tool_cm = nullcontext()
+                    tool_started = time.monotonic()
                     with tool_cm as tool_span:
                         output = _execute_tool(node, context, registry)
                         if isinstance(tool_span, Span) and _node_failure(output):
                             tool_span.end("error")
+                    # docs/28 §4.1 ⑧：executor 无条件埋点（debug 流也 emit，worker 不采集）；
+                    # mock 命中走上方分支不发，子层 tool_metric 经 _namespaced_emit 白名单吞掉。
+                    if emit is not None:
+                        metric_event = _tool_metric_event(
+                            node_id=node.id,
+                            tool_name=tool_name,
+                            output=output,
+                            duration_ms=(time.monotonic() - tool_started) * 1000,
+                        )
+                        if metric_event is not None:
+                            emit(metric_event)
                     message = f"{node.id}({node.type}): executed"
             except (RunCancelled, DebugStopped):
                 raise
@@ -969,6 +981,36 @@ def _execute_tool(
             "action_status": result.status.value,
         }
     return output
+
+
+def _tool_metric_event(
+    *, node_id: str, tool_name: str, output: dict[str, Any], duration_ms: float
+) -> dict[str, Any]:
+    """docs/28 §4.1 ⑧：把工具节点终态 output 归一为 tool_metric 事件。
+
+    - SIMULATED（无 ``adapter/capability`` 或 registry 缺失的本地构造）记 ``SIMULATED``、无 code；
+    - 其余取外层 action_status（ActionResult 状态），回退 result.status 并大写归一为 SUCCESS/FAILED；
+    - error_code 取 result.code（INVALID_PARAMETER/UNKNOWN/适配器错误码），成功通常为空。
+    """
+    result = output.get("result") if isinstance(output, dict) else None
+    if isinstance(result, dict) and result.get("status") == "SIMULATED":
+        action_status = "SIMULATED"
+        error_code = None
+    else:
+        raw_status = output.get("action_status") if isinstance(output, dict) else None
+        if raw_status is None and isinstance(result, dict):
+            raw_status = result.get("status")
+        action_status = "FAILED" if str(raw_status or "SUCCESS").upper() == "FAILED" else "SUCCESS"
+        code = result.get("code") if isinstance(result, dict) else None
+        error_code = str(code) if code else None
+    return {
+        "type": "tool_metric",
+        "node_id": node_id,
+        "tool": tool_name,
+        "duration_ms": round(float(duration_ms), 3),
+        "action_status": action_status,
+        "error_code": error_code,
+    }
 
 
 def _parallel_meta(node: NodeDSL, outgoing: dict[str, list[str]]) -> dict[str, Any] | None:
