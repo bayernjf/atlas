@@ -151,6 +151,7 @@ def _make_executor(
     now: datetime | None = None,
     subgraph_path: tuple[str, ...] = (),
     is_cancelled: Callable[[], bool] | None = None,
+    tool_mocks: dict[str, Any] | None = None,
 ):
     def execute(state: GraphState) -> dict:
         context = {"global": state["variables"].get("global", {}), **state["outputs"]}
@@ -340,6 +341,13 @@ def _make_executor(
                     subgraph_path=subgraph_path,
                     is_cancelled=is_cancelled,
                 )
+            elif tool_mocks is not None and node.id in tool_mocks:
+                # Mock 回放（docs/28 §2.2）：以录制桩 output 替代真实适配器调用，
+                # 隔离外部系统；不触达 registry/harness、不发 tool span、不发 tool_metric。
+                # node_end/outputs/trace 与真实分支同构，比对两端各自 normalize 必然一致。
+                # 子图重入不透传 tool_mocks（steps 只录顶层 node_end）。
+                output = tool_mocks[node.id]
+                message = f"{node.id}({node.type}): executed"
             else:
                 # M10：工具调用包 tool span（parent 经 contextvars 就近取当前 node span）。
                 tool_name = node.config.get("tool", "")
@@ -1217,6 +1225,7 @@ def compile_graph(
     now: datetime | None = None,
     _parent_span: Span | None = None,
     is_cancelled: Callable[[], bool] | None = None,
+    tool_mocks: dict[str, Any] | None = None,
 ):
     decision_client = decision_client or get_decision_client()
     registry = registry if registry is not None else build_demo_registry()
@@ -1317,6 +1326,7 @@ def compile_graph(
             now=now,
             subgraph_path=_subgraph_path,
             is_cancelled=is_cancelled,
+            tool_mocks=tool_mocks,
         )
         if node.id in skip_guards:
             parallel_id, safe_target = skip_guards[node.id]
@@ -1556,6 +1566,7 @@ def run_graph(
     now_override: datetime | None = None,
     _parent_span: Span | None = None,
     is_cancelled: Callable[[], bool] | None = None,
+    tool_mocks: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """编译并执行，返回状态/节点产出/轨迹。
 
@@ -1633,6 +1644,7 @@ def run_graph(
             now=now_override,
             is_cancelled=is_cancelled,
             _parent_span=_parent_span,
+            tool_mocks=tool_mocks,
         )
         state = initial_state(tail, inputs=resume_inputs)
         state["outputs"] = resume_state.get("outputs", {})
@@ -1664,6 +1676,7 @@ def run_graph(
         now=now_override,
         is_cancelled=is_cancelled,
         _parent_span=_parent_span,
+        tool_mocks=tool_mocks,
     )
     final_state = compiled.invoke(
         initial_state(graph, inputs=inputs),

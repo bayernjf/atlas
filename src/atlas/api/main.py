@@ -53,6 +53,8 @@ from atlas.message.adapter import MessageHarnessAdapter
 from atlas.monitoring import RUN_RING_SIZE, extract_business, extract_node_results
 from atlas.recording import (
     RecordingCreateRequest,
+    ReplayRequest,
+    build_tool_mocks,
     clock_anchor,
     collect_steps,
     collect_subgraph_snapshots,
@@ -747,9 +749,15 @@ def delete_recording(
 
 @app.post("/api/recordings/{case_id}/replay")
 def replay_recording(
-    case_id: str, principal: Principal = Depends(require("operate"))
+    case_id: str,
+    payload: ReplayRequest | None = None,
+    principal: Principal = Depends(require("operate")),
 ) -> dict[str, Any]:
     """回放冻结快照：标准 run_graph + 审批决策预置，比对操作序列与逐节点产出。
+
+    可选 body（docs/28 §2.2/§2.3）：``mock_tools=true`` 以录制工具产出作桩，回放不
+    触达适配器（隔离外部系统；发布门禁不接 mock）；``inputs_override`` 顶层键浅合并进
+    用例 inputs（一次性入参参数化，不落库）。响应纯超集加 ``mocked_tools``（未启用为 []）。
 
     回放期异常（如快照内 subgraph 引用的 graphId 已被 reset 删除）折叠为
     replay_status="failed"/matches=false，不抛 500（04 §5.11，06 §6.9）。
@@ -759,11 +767,19 @@ def replay_recording(
     if case is None:
         raise HTTPException(status_code=404, detail=f"录制用例不存在：{case_id}")
 
+    tool_mocks: dict[str, Any] | None = None
+    mocked_tools: list[str] = []
+    if payload is not None and payload.mock_tools:
+        tool_mocks, mocked_tools = build_tool_mocks(case)
+
     try:
         graph = parse_graph(case.graph)
         emit, take_steps = collect_steps()
         anchor, clock_note = clock_anchor(case)
         inputs = dict(case.inputs or {})
+        if payload is not None and payload.inputs_override:
+            # 顶层键浅合并（dict 值整体替换）；一次性覆写，不修改已入库用例。
+            inputs = {**inputs, **payload.inputs_override}
         presets = preset_approvals(case.steps)
         if presets:
             approvals = dict(inputs.get("approvals") or {})
@@ -780,6 +796,7 @@ def replay_recording(
                 case.subgraphs, _tenant_graph_resolver(services)
             ),
             now_override=anchor,
+            tool_mocks=tool_mocks,
         )
         replay_steps = take_steps()
         tools_by_node = {
@@ -795,12 +812,14 @@ def replay_recording(
         )
         if clock_note:
             report["clock_note"] = clock_note
+        report["mocked_tools"] = mocked_tools
         return report
     except Exception as exc:  # 回放失败折叠为报告而非 500
         return {
             "matches": False,
             "baseline_status": case.status,
             "replay_status": "failed",
+            "mocked_tools": mocked_tools,
             "steps": [
                 {
                     "node_id": step.node_id,

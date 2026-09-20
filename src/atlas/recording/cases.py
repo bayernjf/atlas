@@ -24,6 +24,17 @@ class RecordingCreateRequest(BaseModel):
     status: str
 
 
+class ReplayRequest(BaseModel):
+    """单用例回放可选请求体（docs/28 §2.2/§2.3）。
+
+    mock_tools=true 时以录制桩 output 替代真实适配器调用（隔离外部系统，发布门禁不接）；
+    inputs_override 顶层键浅合并进 case.inputs（一次性入参参数化，不落库）。
+    """
+
+    mock_tools: bool = False
+    inputs_override: dict[str, Any] | None = None
+
+
 class RecordingCase(BaseModel):
     id: str
     name: str

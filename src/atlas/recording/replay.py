@@ -138,6 +138,22 @@ def compare(
     }
 
 
+def build_tool_mocks(case: RecordingCase) -> tuple[dict[str, Any], list[str]]:
+    """从录制步骤构造工具桩，返回 ``(mocks, mocked_node_ids)``（docs/28 §2.2）。
+
+    仅取 ``node_type == "tool_call"`` 的**顶层**步骤（collect_steps 已排除子图内部
+    node_end）；桩 output 取录制入库的**原始未归一化**形状，回放时 node_end 走与真实
+    工具相同的链路，compare 两端各自 normalize，同形必然一致。dedupe 保末与 baseline 口径一致。
+    """
+    mocks: dict[str, Any] = {}
+    mocked: list[str] = []
+    for step in dedupe_steps(case.steps):
+        if step.node_type == "tool_call":
+            mocks[step.node_id] = step.output
+            mocked.append(step.node_id)
+    return mocks, mocked
+
+
 def collect_steps() -> tuple[Callable[[dict[str, Any]], None], Callable[[], list[RecordStep]]]:
     """返回 (emit, take_steps)：emit 接 run_graph 事件，take 取去重保末的 node_end 步骤。"""
     collected: list[RecordStep] = []
