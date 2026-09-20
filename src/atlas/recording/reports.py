@@ -106,6 +106,20 @@ class ReportStore:
             for item in reversed(items)
         ]
 
+    def list_all_summary(self, limit: int = 100) -> list[dict[str, Any]]:
+        """跨图报告倒序摘要（不含 cases；docs/28 §2.4 跨图看板）。
+
+        ring 按插入时间排列，整体 reversed 后切片；上限 200（端点层再 clamp 一次）。
+        进程内 ring 不跨租户（每租户一个 ReportStore），不进 Repository、不 PG 化。
+        """
+        bounded = max(1, min(int(limit), 200))
+        with self._lock:
+            items = list(reversed(self._items))[:bounded]
+        return [
+            {key: value for key, value in item.model_dump().items() if key != "cases"}
+            for item in items
+        ]
+
     def get(self, graph_id: str, report_id: str) -> dict[str, Any] | None:
         """按图取报告详情（含 cases）；不属于该图或不存在返 None（API 层 404，跨租户不泄漏）。"""
         with self._lock:

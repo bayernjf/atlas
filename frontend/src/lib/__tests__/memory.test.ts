@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildMemoryPayload,
   formatConfidence,
   formatCreatedAt,
   formatScope,
@@ -8,6 +9,7 @@ import {
   kindLabel,
   MEMORY_KIND_COLORS,
   MEMORY_KIND_LABELS,
+  parseStringMapText,
 } from '../memory'
 
 describe('M11 memory 纯函数（U98）', () => {
@@ -57,3 +59,64 @@ describe('M11 memory 纯函数（U98）', () => {
     expect(formatCreatedAt('not-a-date')).toBe('not-a-date')
   })
 })
+
+describe('记忆手动新建/编辑表单纯函数（⑩）', () => {
+  it('parseStringMapText：空文本→{}，合法对象解析', () => {
+    for (const text of ['', '   ']) {
+      const empty = parseStringMapText(text)
+      expect(empty.ok).toBe(true)
+      if (empty.ok) expect(empty.value).toEqual({})
+    }
+    const obj = parseStringMapText('{"user_id":"u-1"}')
+    expect(obj.ok).toBe(true)
+    if (obj.ok) expect(obj.value).toEqual({ user_id: 'u-1' })
+  })
+
+  it('parseStringMapText：非法 JSON / 数组 / 非字符串值报错', () => {
+    expect(parseStringMapText('{a:').ok).toBe(false)
+    const arr = parseStringMapText('["a","b"]')
+    expect(arr.ok).toBe(false)
+    const num = parseStringMapText('123')
+    expect(num.ok).toBe(false)
+    const badVal = parseStringMapText('{"k":1}')
+    expect(badVal.ok).toBe(false)
+    const emptyKey = parseStringMapText('{"":"v"}')
+    expect(emptyKey.ok).toBe(false)
+  })
+
+  it('buildMemoryPayload：合法表单构造 payload（content trim、空 map 归 {}）', () => {
+    const result = buildMemoryPayload({
+      kind: 'preference',
+      content: '  手动偏好  ',
+      confidence: 0.5,
+      scopeText: '{"user_id":"u-7"}',
+      metadataText: '',
+    })
+    expect(result.error).toBeUndefined()
+    expect(result.payload).toEqual({
+      kind: 'preference',
+      content: '手动偏好',
+      confidence: 0.5,
+      scope: { user_id: 'u-7' },
+      metadata: {},
+    })
+  })
+
+  it('buildMemoryPayload：空内容/超长/越界置信度/坏 JSON 返中文错误且无 payload', () => {
+    expect(buildMemoryPayload({
+      kind: 'fact', content: '   ', confidence: 1, scopeText: '', metadataText: '',
+    }).payload).toBeUndefined()
+    expect(buildMemoryPayload({
+      kind: 'fact', content: 'x'.repeat(2001), confidence: 1, scopeText: '', metadataText: '',
+    }).error).toContain('2000')
+    expect(buildMemoryPayload({
+      kind: 'fact', content: 'ok', confidence: 1.4, scopeText: '', metadataText: '',
+    }).error).toContain('置信度')
+    const badJson = buildMemoryPayload({
+      kind: 'fact', content: 'ok', confidence: 1, scopeText: '{bad', metadataText: '',
+    })
+    expect(badJson.payload).toBeUndefined()
+    expect(badJson.error).toContain('作用域')
+  })
+})
+

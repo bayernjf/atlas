@@ -367,6 +367,30 @@ describe('editorStore session breakpoints (04 §5.12)', () => {
     })
     expect(useEditorStore.getState().breakpoints).toEqual({})
   })
+
+  it('toggles exception breakpoints independently (docs/28 §3.2)', () => {
+    useEditorStore.setState({ breakpoints: {} })
+    const store = useEditorStore.getState()
+    // 无普通断点时可独立开启纯异常断点（continue 模式仅在抛异常时停）
+    store.toggleBreakpointException('ai_decision-1')
+    expect(useEditorStore.getState().breakpoints['ai_decision-1']).toEqual({ onException: true })
+    // 再关一次：整条为空则删除，不遗留无条件普通断点
+    useEditorStore.getState().toggleBreakpointException('ai_decision-1')
+    expect(useEditorStore.getState().breakpoints).toEqual({})
+    // 可与条件表达式共存
+    store.toggleBreakpoint('tool_call-1')
+    useEditorStore.getState().setBreakpointExpression('tool_call-1', '{{x}} > 1')
+    useEditorStore.getState().toggleBreakpointException('tool_call-1')
+    expect(useEditorStore.getState().breakpoints['tool_call-1']).toEqual({
+      expression: '{{x}} > 1',
+      onException: true,
+    })
+    // 关闭异常后条件字段保留
+    useEditorStore.getState().toggleBreakpointException('tool_call-1')
+    expect(useEditorStore.getState().breakpoints['tool_call-1']).toEqual({
+      expression: '{{x}} > 1',
+    })
+  })
 })
 
 describe('NL 参数警告（M3 表单化展示）', () => {

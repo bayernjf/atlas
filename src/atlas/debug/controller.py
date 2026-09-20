@@ -33,6 +33,17 @@ class DebugController:
         self._session = session
         self._emit = emit
         self._is_cancelled = is_cancelled
+        # docs/28 §3.3：子图重入时压入命名空间 emit（paused/debug_log 附 subgraphPath），
+        # 同线程顺序重入、finally 弹出；session/门闩仍唯一共享。
+        self._emit_stack: list[EventCallback] = []
+
+    def push_namespaced_emit(self, namespaced: EventCallback) -> None:
+        self._emit_stack.append(self._emit)
+        self._emit = namespaced
+
+    def pop_namespaced_emit(self) -> None:
+        if self._emit_stack:
+            self._emit = self._emit_stack.pop()
 
     def before_node(self, node: Any, state: dict[str, Any], *, now: datetime | None = None) -> None:
         session = self._session
@@ -40,6 +51,9 @@ class DebugController:
         if session.cancelled or (self._is_cancelled is not None and self._is_cancelled()):
             session.cancelled = True
             raise DebugStopped(node.id)
+
+        # docs/28 §3.1：登记「自上次暂停以来到达 before 的节点」（当前节点逻辑尚未执行）。
+        session.mark_node(node.id)
 
         decision = self._classify_hit(node.id, state, now)
         if decision is None:
@@ -52,11 +66,14 @@ class DebugController:
             return
 
         reason = decision[1]
+        globals_now = state["variables"].get("global", {})
+        # docs/28 §3.1：暂停成立先沉淀 global 顶层键变化历史，再入暂停。
+        session.snapshot_change(node_id=node.id, reason=reason, globals_=globals_now)
         token = session.request_pause(
             node_id=node.id,
             node_type=node.type,
             reason=reason,
-            globals=state["variables"].get("global", {}),
+            globals=globals_now,
             outputs=state["outputs"],
         )
         frame = session.frame(token)
@@ -79,6 +96,53 @@ class DebugController:
             globals_ = variables.setdefault("global", {})
             if isinstance(globals_, dict):
                 globals_.update(overrides)
+                # 用户手动改写同步进历史基线，不被记为运行变化（docs/28 §3.1）。
+                session.seed_baseline(globals_)
+
+    def on_exception(self, node: Any, exc: BaseException, state: dict[str, Any]) -> None:
+        """节点逻辑抛异常时调用（docs/28 §3.2）。
+
+        该节点配置异常断点则先暂停供观测；wait 返回 stop 抛 DebugStopped，
+        step/continue 正常返回（由 executor 原样重抛 exc，v1 不提供忽略继续）。
+        未配置则立即返回，executor 随即重抛，行为与现状逐字节一致。
+        """
+        session = self._session
+        spec = session.breakpoints.get(node.id)
+        if spec is None or not spec.exception:
+            return
+        globals_now = state["variables"].get("global", {})
+        session.snapshot_change(
+            node_id=node.id, reason="exception", globals_=globals_now
+        )
+        token = session.request_pause(
+            node_id=node.id,
+            node_type=node.type,
+            reason="exception",
+            globals=globals_now,
+            outputs=state["outputs"],
+        )
+        frame = session.frame(token)
+        # 帧纯超集加 error（仅改本次下发的本地 dict，不污染会话内投影）。
+        frame["error"] = {"type": type(exc).__name__, "message": str(exc)}
+        self._emit(frame)
+        try:
+            action = session.wait(token)
+        finally:
+            session.end_pause(token)
+        overrides = session.take_overrides(token)
+        if action == "continue":
+            session.step_mode = False
+        elif action == "stop":
+            session.cancelled = True
+        if session.cancelled:
+            raise DebugStopped(node.id)
+        if action in ("step", "continue") and overrides:
+            variables = state.setdefault("variables", {})
+            globals_ = variables.setdefault("global", {})
+            if isinstance(globals_, dict):
+                globals_.update(overrides)
+                session.seed_baseline(globals_)
+        # step/continue：正常返回，executor 的 except 块原样重抛原异常。
 
     def _classify_hit(
         self, node_id: str, state: dict[str, Any], now: datetime | None = None
@@ -90,6 +154,15 @@ class DebugController:
             return ("pause", "step", None)
         spec = session.breakpoints.get(node_id)
         if spec is None:
+            return None
+        # docs/28 §3.2：纯异常断点（只开 onException，无条件表达式/hitCount/logMessage）
+        # 不在节点逻辑前暂停，仅在节点抛异常时由 on_exception 暂停。
+        if (
+            spec.exception
+            and not spec.expression
+            and not spec.hit_count
+            and not spec.log_message
+        ):
             return None
         expression = spec.expression
         if expression:

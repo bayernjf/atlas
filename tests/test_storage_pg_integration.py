@@ -155,6 +155,56 @@ def test_recording_recorded_at_roundtrip(backend):
     assert recording.get(fixed.id).recorded_at == "2026-01-02T03:04:05+00:00"
 
 
+def test_recording_graph_id_subgraphs_roundtrip(backend):
+    # 批 1 D26①（docs/28 §2.1，迁移 008）：graph_id/subgraphs 富字段 PG 往返，
+    # 修复 PG 档「录为用例」500（unexpected keyword argument 'graph_id'）。
+    from atlas.recording.cases import RecordStep
+
+    recording = backend.recording_store(TENANT)
+    frozen = {"sub-a@3": {"version": 1, "nodes": []}, "sub-b": {"version": 1}}
+    rich = recording.add(
+        name="富字段", graph={"version": 1}, inputs={"amount": 100},
+        steps=[RecordStep(node_id="t", node_type="trigger", output={})],
+        status="ok", graph_id="graph-rich", subgraphs=frozen,
+    )
+    got = recording.get(rich.id)
+    assert got is not None
+    assert got.graph_id == "graph-rich"
+    assert got.subgraphs == frozen
+    listed = next(c for c in recording.list() if c.id == rich.id)
+    assert listed.graph_id == "graph-rich" and listed.subgraphs == frozen
+    # 缺省兼容：旧形状用例 graph_id 空串、subgraphs 空 dict
+    legacy = recording.add(
+        name="旧形状", graph={"version": 1}, inputs=None,
+        steps=[RecordStep(node_id="t", node_type="trigger", output={})], status="ok",
+    )
+    legacy_got = recording.get(legacy.id)
+    assert legacy_got.graph_id == "" and legacy_got.subgraphs == {}
+
+
+def test_recording_update_meta_roundtrip(backend):
+    # 批 1 D26③（docs/28 §2.3）：PUT 仅改 name/inputs，PG 往返且录制事实不动。
+    from atlas.recording.cases import RecordStep
+
+    recording = backend.recording_store(TENANT)
+    case = recording.add(
+        name="原名", graph={"version": 1}, inputs={"x": 1},
+        steps=[RecordStep(node_id="t", node_type="trigger", output={"a": 1})],
+        status="completed", graph_id="g-upd",
+        subgraphs={"s@1": {"version": 1}},
+    )
+    updated = recording.update_meta(case.id, name="新名", inputs={"x": 9})
+    assert updated is not None
+    assert updated.name == "新名" and updated.inputs == {"x": 9}
+    got = recording.get(case.id)
+    assert got.name == "新名" and got.inputs == {"x": 9}
+    # 录制事实不动
+    assert got.graph_id == "g-upd" and got.subgraphs == {"s@1": {"version": 1}}
+    assert len(got.steps) == 1 and got.graph == {"version": 1}
+    # 不存在 → None
+    assert recording.update_meta("rec-nope", name="x") is None
+
+
 def test_monitoring_roundtrip(backend):
     store = backend.monitoring_store(TENANT)
     record = store.record_run(
@@ -177,6 +227,72 @@ def test_monitoring_roundtrip(backend):
     store.reset()
     assert store.list_runs() == []
     assert store.get_rules().node_failed.enabled
+
+
+def test_tool_calls_roundtrip(backend):
+    """docs/28 §4.1 ⑧：monitoring_runs.tool_calls JSONB（迁移 008）持久化与读回。"""
+    store = backend.monitoring_store(TENANT)
+    record = store.record_run(
+        graph_id="graph-tools", mode="stream", status="completed",
+        started_at="2026-09-20T00:00:00+00:00", duration_ms=42.0, nodes=[],
+        tool_calls=[
+            {"node_id": "t1", "tool": "message/send", "duration_ms": 8.5,
+             "action_status": "SUCCESS", "error_code": None},
+            {"node_id": "t2", "tool": "http/request", "duration_ms": 3.0,
+             "action_status": "FAILED", "error_code": "INVALID_PARAMETER"},
+            {"node_id": "t3", "tool": "local-op", "duration_ms": 0.01,
+             "action_status": "SIMULATED", "error_code": None},
+        ],
+    )
+    loaded = next(r for r in store.list_runs(graph_id="graph-tools") if r.id == record.id)
+    assert [c.tool for c in loaded.tool_calls] == ["message/send", "http/request", "local-op"]
+    failed = loaded.tool_calls[1]
+    assert failed.action_status == "FAILED" and failed.error_code == "INVALID_PARAMETER"
+    assert loaded.tool_calls[2].action_status == "SIMULATED"
+    # 历史行/无工具运行读回为空列表（迁移 008 DEFAULT '[]'）
+    plain = store.record_run(
+        graph_id="graph-tools", mode="sync", status="completed",
+        started_at="2026-09-20T01:00:00+00:00", duration_ms=1.0, nodes=[],
+    )
+    assert next(r for r in store.list_runs(graph_id="graph-tools") if r.id == plain.id).tool_calls == []
+    store.reset()
+
+
+def test_custom_rules_roundtrip(backend):
+    """docs/28 §4.2 ⑨：自定义规则随 monitoring_rules.config JSONB 往返（无 DDL），
+    custom:{cid} 告警 rule_id 为 TEXT 可落库。"""
+    store = backend.monitoring_store(TENANT)
+    store.update_rules({
+        "run_error": {"enabled": True},
+        "node_failed": {"enabled": False},
+        "consecutive_failures": {"enabled": True, "threshold": 3},
+        "failure_rate": {"enabled": True, "window": 20, "min_samples": 5, "rate": 0.5},
+        "custom": [
+            {"cid": "cid-1", "name": "错误即告警",
+             "expression": "{{status}} == 'error' || {{hasError}}", "severity": "critical"},
+        ],
+    })
+    rules = store.get_rules()
+    assert len(rules.custom) == 1
+    assert rules.custom[0].cid == "cid-1"
+    assert rules.custom[0].expression == "{{status}} == 'error' || {{hasError}}"
+    # 触发一次 error 运行 → custom:cid-1 落 monitoring_alerts（rule_id TEXT）
+    store.record_run(
+        graph_id="graph-custom", mode="sync", status="error",
+        started_at="2026-09-20T00:00:00+00:00", duration_ms=10.0, nodes=[],
+        error="boom",
+    )
+    alerts = [a for a in store.list_alerts() if a.rule_id == "custom:cid-1"]
+    assert len(alerts) == 1
+    assert alerts[0].severity == "critical"
+    # 旧配置（无 custom 段）写回后缺省为空，不报错
+    store.update_rules({
+        "run_error": {"enabled": True}, "node_failed": {"enabled": True},
+        "consecutive_failures": {"enabled": True, "threshold": 3},
+        "failure_rate": {"enabled": True, "window": 20, "min_samples": 5, "rate": 0.5},
+    })
+    assert store.get_rules().custom == []
+    store.reset()
 
 
 def test_interruption_frame_roundtrip(backend):
@@ -212,3 +328,43 @@ def test_interruption_frame_roundtrip(backend):
 
     clear_frame(engine, "tok-1")
     assert load_pending_frames(engine) == []
+
+
+
+def test_u211_subgraph_upgrade_plan_pg_roundtrip(backend):
+    """docs/28 §5.2 ⑪：PG 档发布快照 JSON 往返后升级体检 from→to 正确（只读不产版本）。"""
+    from atlas.versioning.publish import publish as publish_version
+    from atlas.versioning.upgrades import subgraph_upgrade_plan
+
+    store = backend.graph_store(TENANT)
+    store.clear()
+    sub_tool = {"id": "s", "type": "tool", "config": {}}
+    sub = store.save({"nodes": [sub_tool], "edges": []})
+    publish_version(store, sub)  # v1
+    store.update_draft(sub, {"nodes": [{"id": "s2", "type": "tool", "config": {}}], "edges": []})
+    publish_version(store, sub)  # v2
+    parent = store.save(
+        {"nodes": [{"id": "n1", "type": "subgraph", "config": {"graphId": sub}}], "edges": []}
+    )
+    # 父图首次发布前：首次钉版 to=2
+    pre = subgraph_upgrade_plan(store, parent)
+    assert pre == [
+        {"node_id": "n1", "sub_id": sub, "from_version": None,
+         "to_version": 2, "first_pin": True}
+    ]
+    publish_version(store, parent)  # parent v1 钉 sub@2
+    # 无变化 → 空
+    assert subgraph_upgrade_plan(store, parent) == []
+    # 子图发 v3 → 升级 from 2 to 3，且体检不产生任何版本
+    store.update_draft(sub, {"nodes": [{"id": "s3", "type": "tool", "config": {}}], "edges": []})
+    publish_version(store, sub)  # v3
+    versions_before = store.list_versions(parent)
+    plan = subgraph_upgrade_plan(store, parent)
+    assert plan == [
+        {"node_id": "n1", "sub_id": sub, "from_version": 2,
+         "to_version": 3, "first_pin": False}
+    ]
+    assert store.list_versions(parent) == versions_before  # 只读
+    # 草稿不存在 → None
+    assert subgraph_upgrade_plan(store, "graph-404") is None
+    store.clear()

@@ -201,6 +201,34 @@ def test_viewer_can_read_history_but_not_run_gate():
     assert client.post(f"/api/graphs/{graph_id}/release-gate").status_code == 403
 
 
+# ---------- docs/28 §2.4 跨图报告看板 ----------
+
+def test_cross_graph_release_reports_listing():
+    graph_a, _ = _make_graph_with_cases(case_count=1)
+    client.post(f"/api/graphs/{graph_a}/release-gate")  # rr-1（A）
+    client.post(f"/api/graphs/{graph_a}/release-gate")  # rr-2（A）
+    graph_b = client.post("/api/graphs", json=_load_template_graph()).json()["id"]
+    client.post(f"/api/graphs/{graph_b}/release-gate")  # rr-3（B，无用例 skipped）
+
+    items = client.get("/api/release-reports").json()["items"]
+    assert [item["id"] for item in items] == ["rr-3", "rr-2", "rr-1"]  # 跨图倒序
+    assert {item["graph_id"] for item in items} == {graph_a, graph_b}
+    assert all("cases" not in item for item in items)  # 摘要不含 cases
+    assert [item["id"] for item in client.get("/api/release-reports?limit=2").json()["items"]] == [
+        "rr-3", "rr-2"
+    ]
+    assert len(client.get("/api/release-reports?limit=0").json()["items"]) == 1  # clamp 下限 1
+    assert len(client.get("/api/release-reports?limit=99999").json()["items"]) == 3  # clamp 上限 200
+    assert client.get("/api/release-reports?limit=abc").status_code == 422  # 非整数 422
+
+    # viewer（read）可读跨图看板
+    viewer_token = client.post(
+        "/api/auth/login", json={"username": "viewer-a", "password": "viewer123"}
+    ).json()["token"]
+    client.headers["Authorization"] = f"Bearer {viewer_token}"
+    assert client.get("/api/release-reports").status_code == 200
+
+
 # ---------- U60 ⑥ reset 清空报告、保留录制用例 ----------
 
 def test_reset_clears_reports_but_keeps_recorded_cases():
@@ -304,6 +332,22 @@ def test_get_detail_scoped_by_graph():
 
     assert store.get("graph-b", saved["id"]) is None  # 跨图不泄漏
     assert store.get("graph-a", "rr-999") is None
+
+
+def test_list_all_summary_cross_graph_reverse_and_limit():
+    store = ReportStore()
+    store.record(graph_id="graph-a", trigger="manual", report=_gate_report(2, 1))
+    store.record(graph_id="graph-b", trigger="manual", report=_gate_report(0, 0))
+    store.record(graph_id="graph-a", trigger="publish-gate", report=_gate_report(2, 2))
+
+    all_items = store.list_all_summary()
+    assert [item["id"] for item in all_items] == ["rr-3", "rr-2", "rr-1"]  # 跨图整体倒序
+    assert {item["graph_id"] for item in all_items} == {"graph-a", "graph-b"}
+    assert all("cases" not in item for item in all_items)
+    assert [item["id"] for item in store.list_all_summary(limit=2)] == ["rr-3", "rr-2"]
+    # limit 边界：<=0 归一到 1，超大 clamp 200（此处仅 3 条）
+    assert [item["id"] for item in store.list_all_summary(limit=0)] == ["rr-3"]
+    assert len(store.list_all_summary(limit=10_000)) == 3
 
 
 def test_ring_evicts_oldest_but_keeps_counter():

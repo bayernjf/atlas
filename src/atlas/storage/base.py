@@ -59,7 +59,17 @@ class RecordingRepository(Protocol):
         inputs: dict[str, Any] | None,
         steps: list[RecordStep],
         status: str,
+        graph_id: str = "",
+        subgraphs: dict[str, dict[str, Any]] | None = None,
+        recorded_at: str | None = None,
     ) -> RecordingCase: ...
+    def update_meta(
+        self,
+        case_id: str,
+        *,
+        name: str | None = None,
+        inputs: dict[str, Any] | None = None,
+    ) -> RecordingCase | None: ...
     def list(self) -> list[RecordingCase]: ...
     def get(self, case_id: str) -> RecordingCase | None: ...
     def delete(self, case_id: str) -> bool: ...
@@ -160,11 +170,15 @@ class MonitoringRepository(Protocol):
         *,
         graph_id: str,
         mode: Literal["sync", "stream"],
-        status: Literal["completed", "error"],
+        status: Literal["completed", "error", "cancelled"],
         started_at: str,
         duration_ms: float,
         nodes: list,
         error: str | None = None,
+        trace_id: str = "",
+        resolved_version: int | None = None,
+        business=None,
+        tool_calls: list | None = None,
     ) -> RunRecord: ...
     def list_runs(self, graph_id: str | None = None, limit: int = 50) -> list[RunRecord]: ...
     def list_alerts(self, status: str | None = None) -> list[Alert]: ...
@@ -207,5 +221,8 @@ class MemoryRepository(Protocol):
     ) -> list[dict[str, Any]]: ...  # 每项 = MemoryItem dict + "score"，按 score 降序
 
     def list(self, *, kind: str | None = None, limit: int = 50) -> list[dict[str, Any]]: ...
+    def update(
+        self, memory_id: str, **fields: Any
+    ) -> dict[str, Any] | None: ...  # docs/28 §5.1 手动编辑白名单字段；不存在返回 None（跨租户同不存在）
     def delete(self, memory_id: str) -> bool: ...  # 不存在返回 False（跨租户同不存在）
     def clear(self) -> None: ...

@@ -329,33 +329,41 @@ class PgRecordingStore:
         inputs: dict[str, Any] | None,
         steps: list[RecordStep],
         status: str,
+        graph_id: str = "",
+        subgraphs: dict[str, dict[str, Any]] | None = None,
         recorded_at: str | None = None,
     ) -> RecordingCase:
         with self._engine.begin() as conn:
             case_id = _next_id(conn, "rec")
             created_at = _now_iso()
             recorded = recorded_at or created_at
+            frozen_subgraphs = subgraphs or {}
             conn.execute(
                 text(
                     "INSERT INTO recordings "
-                    "(id, tenant_id, name, graph, inputs, steps, status, created_at, recorded_at) "
-                    "VALUES (:id, :tenant_id, :name, :graph, :inputs, :steps, :status, :created_at, :recorded_at)"
+                    "(id, tenant_id, name, graph_id, graph, inputs, steps, status, "
+                    "created_at, recorded_at, subgraphs) "
+                    "VALUES (:id, :tenant_id, :name, :graph_id, :graph, :inputs, :steps, "
+                    ":status, :created_at, :recorded_at, :subgraphs)"
                 ),
                 {
                     "id": case_id,
                     "tenant_id": self._tenant_id,
                     "name": name,
+                    "graph_id": graph_id,
                     "graph": json.dumps(graph, ensure_ascii=False),
                     "inputs": json.dumps(inputs, ensure_ascii=False) if inputs is not None else None,
                     "steps": json.dumps([step.model_dump() for step in steps], ensure_ascii=False),
                     "status": status,
                     "created_at": created_at,
                     "recorded_at": recorded,
+                    "subgraphs": json.dumps(frozen_subgraphs, ensure_ascii=False),
                 },
             )
         return RecordingCase(
-            id=case_id, name=name, graph=graph, inputs=inputs,
+            id=case_id, name=name, graph_id=graph_id, graph=graph, inputs=inputs,
             steps=steps, status=status, created_at=created_at, recorded_at=recorded,
+            subgraphs=frozen_subgraphs,
         )
 
     @staticmethod
@@ -364,14 +372,20 @@ class PgRecordingStore:
             id=row[0], name=row[1], graph=row[2], inputs=row[3],
             steps=[RecordStep(**step) for step in row[4]],
             status=row[5], created_at=row[6], recorded_at=row[7],
+            graph_id=row[8] or "", subgraphs=row[9] or {},
         )
+
+    _SELECT_COLS = (
+        "SELECT id, name, graph, inputs, steps, status, created_at, recorded_at, "
+        "graph_id, subgraphs FROM recordings "
+    )
 
     def list(self) -> list[RecordingCase]:
         with self._engine.connect() as conn:
             rows = conn.execute(
                 text(
-                    "SELECT id, name, graph, inputs, steps, status, created_at, recorded_at FROM recordings "
-                    "WHERE tenant_id = :tenant_id ORDER BY created_at"
+                    self._SELECT_COLS
+                    + "WHERE tenant_id = :tenant_id ORDER BY created_at"
                 ),
                 {"tenant_id": self._tenant_id},
             ).all()
@@ -381,12 +395,42 @@ class PgRecordingStore:
         with self._engine.connect() as conn:
             row = conn.execute(
                 text(
-                    "SELECT id, name, graph, inputs, steps, status, created_at, recorded_at FROM recordings "
-                    "WHERE id = :id AND tenant_id = :tenant_id"
+                    self._SELECT_COLS
+                    + "WHERE id = :id AND tenant_id = :tenant_id"
                 ),
                 {"id": case_id, "tenant_id": self._tenant_id},
             ).first()
         return self._row_to_case(row) if row else None
+
+    def update_meta(
+        self,
+        case_id: str,
+        *,
+        name: str | None = None,
+        inputs: dict[str, Any] | None = None,
+    ) -> RecordingCase | None:
+        """仅改 name/inputs（docs/28 §2.3）；不存在返 None，无变更字段时回读原样返回。"""
+        sets: list[str] = []
+        params: dict[str, Any] = {}
+        if name is not None:
+            sets.append("name = :name")
+            params["name"] = name
+        if inputs is not None:
+            sets.append("inputs = :inputs")
+            params["inputs"] = json.dumps(inputs, ensure_ascii=False)
+        if sets:
+            params.update({"id": case_id, "tenant_id": self._tenant_id})
+            with self._engine.begin() as conn:
+                result = conn.execute(
+                    text(
+                        "UPDATE recordings SET " + ", ".join(sets)
+                        + " WHERE id = :id AND tenant_id = :tenant_id"
+                    ),
+                    params,
+                )
+            if result.rowcount == 0:
+                return None
+        return self.get(case_id)
 
     def delete(self, case_id: str) -> bool:
         with self._engine.begin() as conn:
@@ -409,7 +453,7 @@ class PgMonitoringStore:
         *,
         graph_id: str,
         mode: Literal["sync", "stream"],
-        status: Literal["completed", "error"],
+        status: Literal["completed", "error", "cancelled"],
         started_at: str,
         duration_ms: float,
         nodes: list,
@@ -417,6 +461,7 @@ class PgMonitoringStore:
         trace_id: str = "",
         resolved_version: int | None = None,
         business=None,
+        tool_calls: list | None = None,
     ) -> RunRecord:
         from atlas.monitoring.alerts import evaluate_rules
         from atlas.monitoring.metrics import is_healthy
@@ -431,15 +476,16 @@ class PgMonitoringStore:
                 started_at=started_at, finished_at=_now_iso(),
                 duration_ms=duration_ms, nodes=nodes, error=error,
                 trace_id=trace_id, resolved_version=resolved_version,
-                business=business,
+                business=business, tool_calls=tool_calls or [],
             )
             conn.execute(
                 text(
                     "INSERT INTO monitoring_runs "
                     "(id, tenant_id, graph_id, mode, status, started_at, finished_at, "
-                    "duration_ms, nodes, error, trace_id, resolved_version, business) "
+                    "duration_ms, nodes, error, trace_id, resolved_version, business, tool_calls) "
                     "VALUES (:id, :tenant_id, :graph_id, :mode, :status, :started_at, "
-                    ":finished_at, :duration_ms, :nodes, :error, :trace_id, :resolved_version, :business)"
+                    ":finished_at, :duration_ms, :nodes, :error, :trace_id, :resolved_version, "
+                    ":business, :tool_calls)"
                 ),
                 {
                     "id": run_id,
@@ -455,6 +501,10 @@ class PgMonitoringStore:
                     "trace_id": trace_id,
                     "resolved_version": resolved_version,
                     "business": json.dumps(business.model_dump(), ensure_ascii=False) if business is not None else None,
+                    "tool_calls": json.dumps(
+                        [m.model_dump() if hasattr(m, "model_dump") else m for m in record.tool_calls],
+                        ensure_ascii=False,
+                    ),
                 },
             )
             rules = self._rules_locked(conn)
@@ -571,11 +621,12 @@ class PgMonitoringStore:
             id=r[0], graph_id=r[1], mode=r[2], status=r[3], started_at=r[4],
             finished_at=r[5], duration_ms=r[6], nodes=r[7], error=r[8],
             trace_id=r[9] or "", resolved_version=r[10], business=r[11],
+            tool_calls=r[12] or [],
         )
 
     _RUN_COLS = (
         "id, graph_id, mode, status, started_at, finished_at, "
-        "duration_ms, nodes, error, trace_id, resolved_version, business"
+        "duration_ms, nodes, error, trace_id, resolved_version, business, tool_calls"
     )
 
     @staticmethod
@@ -974,6 +1025,59 @@ class PgMemoryStore:
         with self._engine.connect() as conn:
             rows = conn.execute(text(sql.format(kind_clause=kind_clause)), args).all()
         return [self._row_to_public(row) for row in rows]
+
+    def update(self, memory_id: str, **fields: Any) -> dict[str, Any] | None:
+        """手动编辑白名单字段（docs/28 §5.1）；SELECT 旧行→合并校验→content 变重算
+        embedding→动态 UPDATE；不存在返回 None，id/created_at 不变，source 置 manual。
+        """
+        from atlas.memory.models import merge_manual_update
+
+        with self._engine.begin() as conn:
+            row = conn.execute(
+                text(
+                    f"SELECT {self._PUBLIC_COLS} FROM memory_items "
+                    "WHERE id = :id AND tenant_id = :tenant_id"
+                ),
+                {"id": memory_id, "tenant_id": self._tenant_id},
+            ).first()
+            if row is None:
+                return None
+            old = self._row_to_public(row)
+            params, content_changed = merge_manual_update(old, fields)
+            sets = (
+                "kind = :kind, content = :content, scope = CAST(:scope AS jsonb), "
+                "confidence = :confidence, source = 'manual', meta = CAST(:meta AS jsonb)"
+            )
+            args: dict[str, Any] = {
+                "id": memory_id,
+                "tenant_id": self._tenant_id,
+                "kind": params["kind"],
+                "content": params["content"],
+                "scope": json.dumps(params["scope"], ensure_ascii=False),
+                "confidence": params["confidence"],
+                "meta": json.dumps(params["metadata"], ensure_ascii=False),
+            }
+            if content_changed:
+                vector = self._provider.embed([params["content"]])[0]
+                sets += ", embedding = CAST(:embedding AS vector(256))"
+                args["embedding"] = self._vector_literal(vector)
+            conn.execute(
+                text(
+                    f"UPDATE memory_items SET {sets} "
+                    "WHERE id = :id AND tenant_id = :tenant_id"
+                ),
+                args,
+            )
+        return {
+            "id": old["id"],
+            "kind": params["kind"],
+            "content": params["content"],
+            "scope": params["scope"],
+            "confidence": params["confidence"],
+            "source": "manual",
+            "metadata": params["metadata"],
+            "created_at": old["created_at"],
+        }
 
     def delete(self, memory_id: str) -> bool:
         with self._engine.begin() as conn:

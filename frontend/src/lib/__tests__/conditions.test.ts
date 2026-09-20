@@ -112,4 +112,14 @@ describe('validateExpression', () => {
     expect(validateExpression('today() > now()')[0]).toContain('日期时间')
     expect(validateExpression('date(2026,9,19) < now()')[0]).toContain('日期时间')
   })
+
+  it('docs/28 §4.2 custom alert DSL: whitelist expressions pass static validation (unknown vars allowed)', () => {
+    // 自定义规则白名单变量在静态校验期类型未知，须放行；运行期由后端注入 status/durationMs/failedCount/hasError
+    expect(validateExpression("{{status}} == 'error' || {{hasError}}")).toEqual([])
+    expect(validateExpression('{{durationMs}} > 500')).toEqual([])
+    expect(validateExpression('{{failedCount}} >= 1')).toEqual([])
+    expect(validateExpression('{{notInWhitelist}} == 1')).toEqual([])
+    // 纯算术（非布尔顶层）仍拒绝，与条件引擎一致
+    expect(validateExpression('{{durationMs}} + 1')[0]).toContain('布尔值')
+  })
 })

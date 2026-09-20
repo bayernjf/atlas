@@ -11,6 +11,11 @@ B 包（docs/27 §4.2/§4.3）：
 - 会话内易失计数 hit_counts（不持久化）；
 - resume 可带 globals 顶层键浅合并覆盖（apply_overrides 校验后暂存本次 _Pause，
   控制器在续跑前写回 state；帧仍是只读深拷贝）。
+
+docs/28 批 2（§3.1）：
+- DebugSession 增易失 variable_history（相邻暂停间 global 顶层键新增/变更＋经过节点，
+  正序上限 50，不持久化、不进录制）；mark_node/snapshot_change/seed_baseline 三方法，
+  frame() 纯超集带 history。
 """
 
 from __future__ import annotations
@@ -27,6 +32,20 @@ DebugAction = Literal["step", "continue", "stop"]
 
 # 合法 global 顶层变量名（与条件表达式标识符口径一致）。
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+# docs/28 §3.1：变量变化历史上限（正序，超出丢最旧）。
+VARIABLE_HISTORY_LIMIT = 50
+
+# 不可 JSON 序列化值的哨兵（变化历史只收可随 paused 帧下发的 JSON 值）。
+_UNSTABLE = object()
+
+
+def _stable_json(value: Any) -> Any:
+    """JSON round-trip 净化；不可序列化返回 _UNSTABLE（调用方 fail-safe 跳过该键）。"""
+    try:
+        return json.loads(json.dumps(value, ensure_ascii=False))
+    except (TypeError, ValueError):
+        return _UNSTABLE
 
 
 class DebugStopped(Exception):
@@ -48,6 +67,8 @@ class BreakpointSpec:
     expression: str | None = None
     hit_count: int | None = None
     log_message: str | None = None
+    # docs/28 §3.2：异常断点——节点逻辑抛异常时先暂停，resume 后原样重抛。
+    exception: bool = False
 
 
 @dataclass
@@ -74,6 +95,10 @@ class DebugSession:
     last_condition_error: str | None = None
     # B 包：会话内每节点累计命中次数（logpoint/暂停共用）。
     hit_counts: dict[str, int] = field(default_factory=dict)
+    # docs/28 §3.1：相邻暂停间 global 顶层键变化历史（易失、正序、上限 50）。
+    variable_history: list[dict[str, Any]] = field(default_factory=list)
+    _last_pause_globals: dict[str, Any] | None = None
+    _nodes_since_pause: list[str] = field(default_factory=list)
     # _gate 由暂停线程在整个 request→wait 区间持有，串行化并行分支。
     _gate: threading.Lock = field(default_factory=threading.Lock)
     _state: threading.Lock = field(default_factory=threading.Lock)
@@ -156,6 +181,61 @@ class DebugSession:
                 return {}
             return copy.deepcopy(pause.overrides or {})
 
+    def mark_node(self, node_id: str) -> None:
+        """节点 before_node 开头调用（取消检查后）：登记自上次暂停以来到达的节点。
+
+        语义为「到达 before 的节点」，当前节点逻辑尚未执行，归入本次区间起点。
+        """
+        with self._state:
+            self._nodes_since_pause.append(node_id)
+
+    def snapshot_change(self, *, node_id: str, reason: str, globals_: Any) -> None:
+        """暂停成立、request_pause 之前调用：与上次暂停基线做 global 顶层键 diff。
+
+        仅记新增（old=None）与值变更；键删除 v1 不记（resume 浅合并只加不删）。
+        不可 JSON 序列化的键 fail-safe 跳过；记完清空经过节点、置本次为新基线。
+        """
+        with self._state:
+            # 基线只保留 JSON 可净化值（round-trip 即独立副本，无需 deepcopy）；
+            # 不可序列化键 fail-safe：不进基线、不进历史。
+            stable_globals: dict[str, Any] = {}
+            changes: list[dict[str, Any]] = []
+            if isinstance(globals_, dict):
+                for key, new_value in globals_.items():
+                    new_stable = _stable_json(new_value)
+                    if new_stable is _UNSTABLE:
+                        continue
+                    stable_globals[key] = new_stable
+                    baseline = self._last_pause_globals
+                    if baseline is None or key not in baseline:
+                        if baseline is not None:
+                            changes.append({"key": key, "old": None, "new": new_stable})
+                    elif baseline[key] != new_stable:
+                        changes.append({"key": key, "old": baseline[key], "new": new_stable})
+            entry = {
+                "seq": len(self.variable_history),
+                "node_id": node_id,
+                "reason": reason,
+                "since_nodes": list(self._nodes_since_pause),
+                "changes": changes,
+            }
+            self.variable_history.append(entry)
+            if len(self.variable_history) > VARIABLE_HISTORY_LIMIT:
+                del self.variable_history[:-VARIABLE_HISTORY_LIMIT]
+            self._nodes_since_pause = []
+            self._last_pause_globals = stable_globals
+
+    def seed_baseline(self, globals_: Any) -> None:
+        """resume 写回用户手动改写后调用：把改写同步进基线，不计为运行变化。"""
+        with self._state:
+            if isinstance(globals_, dict):
+                baseline: dict[str, Any] = {}
+                for key, value in globals_.items():
+                    stable = _stable_json(value)
+                    if stable is not _UNSTABLE:
+                        baseline[key] = stable
+                self._last_pause_globals = baseline
+
     def bump_hits(self, node_id: str) -> int:
         """命中一次断点，累计并返回该节点当前命中次数。"""
         hits = self.hit_counts.get(node_id, 0) + 1
@@ -188,6 +268,8 @@ class DebugSession:
                 "reason": pause.reason,
                 "globals": copy.deepcopy(pause.globals),
                 "outputs": copy.deepcopy(pause.outputs),
+                # docs/28 §3.1：截至本次暂停的变量变化历史（上限内全量、深拷贝）。
+                "history": copy.deepcopy(self.variable_history),
             }
 
 
@@ -210,6 +292,7 @@ class DebuggerBroker:
                 expression=expression,
                 hit_count=bp.get("hitCount"),
                 log_message=bp.get("logMessage"),
+                exception=bool(bp.get("onException") or False),
             )
         session = DebugSession(graph_id=graph_id, breakpoints=table)
         with self._lock:

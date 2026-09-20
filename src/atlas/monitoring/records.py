@@ -10,13 +10,27 @@ from datetime import datetime, timezone
 from threading import Lock
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .alerts import Alert, AlertEvent, RuleConfig, evaluate_rules, rules_from_raw, validate_rules
 from .business import BusinessOutcome
 from .metrics import NodeResult, is_healthy
 
 RUN_RING_SIZE = 200
+
+
+class ToolCallMetric(BaseModel):
+    """单次工具（适配器能力）调用埋点（docs/28 §4.1 ⑧）。
+
+    action_status：SIMULATED＝无 ``adapter/capability`` 或未注册 registry 的本地构造
+    （照记但不纳延迟分位）；SUCCESS/FAILED 取适配器 ActionResult 归一。
+    """
+
+    node_id: str
+    tool: str
+    duration_ms: float
+    action_status: Literal["SUCCESS", "FAILED", "SIMULATED"]
+    error_code: str | None = None
 
 
 class RunRecord(BaseModel):
@@ -32,6 +46,7 @@ class RunRecord(BaseModel):
     trace_id: str = ""  # M10：本 run 的 traceId（可空，向后兼容；debug/回放/subgraph 重入不写）
     resolved_version: int | None = None  # M9：入站 event 经 Router 解析钉住的发布版本（手动运行/草稿为 None）
     business: BusinessOutcome | None = None  # M9：业务结果（退款/人工升级/金额差异）；无业务结果为 None
+    tool_calls: list[ToolCallMetric] = Field(default_factory=list)  # docs/28 §4.1：顶层工具调用埋点（子图/mock/debug/回放不采）
 
 
 def _now_iso() -> str:
@@ -61,6 +76,7 @@ class MonitoringStore:
         trace_id: str = "",
         resolved_version: int | None = None,
         business: BusinessOutcome | None = None,
+        tool_calls: list | None = None,
     ) -> RunRecord:
         with self._lock:
             self._run_counter += 1
@@ -77,6 +93,7 @@ class MonitoringStore:
                 trace_id=trace_id,
                 resolved_version=resolved_version,
                 business=business,
+                tool_calls=tool_calls or [],
             )
             self._runs.append(record)
             healthy = is_healthy(record)
@@ -116,6 +133,7 @@ class MonitoringStore:
                 first_seen=record.finished_at,
                 last_seen=record.finished_at,
                 last_run_id=record.id,
+                rule_name=event.rule_name,
             )
         )
 

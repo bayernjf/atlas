@@ -1,7 +1,15 @@
-from .cases import RecordStep, RecordingCase, RecordingCreateRequest, RecordingStore
+from .cases import (
+    RecordStep,
+    RecordingCase,
+    RecordingCreateRequest,
+    RecordingStore,
+    RecordingUpdateRequest,
+    ReplayRequest,
+)
 from .gate import run_release_gate
 from .reports import ReleaseReport, ReportCaseRow, ReportStore, report_to_csv
 from .replay import (
+    build_tool_mocks,
     clock_anchor,
     collect_steps,
     compare,
@@ -16,6 +24,8 @@ __all__ = [
     "RecordingCase",
     "RecordingCreateRequest",
     "RecordingStore",
+    "RecordingUpdateRequest",
+    "ReplayRequest",
     "run_release_gate",
     "ReleaseReport",
     "ReportCaseRow",
@@ -23,6 +33,7 @@ __all__ = [
     "report_to_csv",
     "clock_anchor",
     "collect_steps",
+    "build_tool_mocks",
     "compare",
     "dedupe_steps",
     "normalize",

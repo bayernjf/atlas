@@ -131,6 +131,37 @@ class MemoryStore:
             items = [item for item in items if item["kind"] == kind]
         return [public_memory(item) for item in reversed(items[-limit:])]
 
+    def update(self, memory_id: str, **fields: Any) -> dict[str, Any] | None:
+        """手动编辑白名单字段（docs/28 §5.1）；不存在返回 None，source 强制 manual。
+
+        合并后整体过 validate_remember_params；content 变化重算 embedding，
+        id/created_at 不变。与 PG 档共享 memory.models.merge_manual_update。
+        """
+        from atlas.memory.models import merge_manual_update
+
+        with self._lock:
+            target = next(
+                (item for item in self._items if item["id"] == memory_id), None
+            )
+            if target is None:
+                return None
+            params, content_changed = merge_manual_update(public_memory(target), fields)
+            vector = target["embedding"]
+            if content_changed:
+                vector = self._provider.embed([params["content"]])[0]
+            target.update(
+                {
+                    "kind": params["kind"],
+                    "content": params["content"],
+                    "scope": params["scope"],
+                    "confidence": params["confidence"],
+                    "source": "manual",
+                    "metadata": params["metadata"],
+                    "embedding": vector,
+                }
+            )
+            return public_memory(dict(target))
+
     def delete(self, memory_id: str) -> bool:
         """按 id 删除；不存在返回 False（实例天然只含本租户）。"""
         with self._lock:

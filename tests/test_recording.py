@@ -7,6 +7,7 @@ from atlas.recording import (
     RecordingCase,
     RecordingCreateRequest,
     RecordingStore,
+    build_tool_mocks,
     collect_steps,
     compare,
     dedupe_steps,
@@ -224,6 +225,36 @@ def test_dedupe_steps_keeps_last_occurrence_and_position():
     assert result[-1].output == {"v": 3}
 
 
+# ---------- build_tool_mocks（docs/28 §2.2 Mock 回放） ----------
+
+def _case_with_steps(steps):
+    return RecordingCase(
+        id="rec-1", name="n", graph={"version": 1}, inputs={},
+        steps=steps, status="completed", created_at="2026-09-20T00:00:00+00:00",
+    )
+
+
+def test_build_tool_mocks_filters_tool_call_and_keeps_last():
+    case = _case_with_steps([
+        RecordStep(node_id="t", node_type="trigger", output={"a": 1}),
+        RecordStep(node_id="tool-1", node_type="tool_call", output={"result": {"v": 1}}),
+        RecordStep(node_id="tool-1", node_type="tool_call", output={"result": {"v": 2}}),
+        RecordStep(node_id="h", node_type="human_approval", output={"decision": "approved"}),
+    ])
+    mocks, mocked = build_tool_mocks(case)
+    assert mocked == ["tool-1"]  # 仅 tool_call，dedupe 保末
+    assert mocks == {"tool-1": {"result": {"v": 2}}}
+
+
+def test_build_tool_mocks_empty_when_no_tool_steps():
+    case = _case_with_steps([
+        RecordStep(node_id="t", node_type="trigger", output={}),
+        RecordStep(node_id="h", node_type="human_approval", output={"decision": "approved"}),
+    ])
+    mocks, mocked = build_tool_mocks(case)
+    assert mocks == {} and mocked == []
+
+
 # ---------- compare ----------
 
 def test_compare_identical_steps_matches_with_tools_mapping():
@@ -346,6 +377,33 @@ def test_recording_store_crud_and_counter_ids():
     assert store.delete("rec-1") is True
     assert store.get("rec-1") is None
     assert store.delete("rec-1") is False
+
+
+def test_recording_store_update_meta_only_name_inputs():
+    store = RecordingStore()
+    graph = {"version": 1, "nodes": [{"id": "t", "type": "trigger"}]}
+    steps = [RecordStep(node_id="t", node_type="trigger", output={"a": 1})]
+    case = store.add(name="原名", graph=graph, inputs={"x": 1}, steps=steps,
+                     status="completed", graph_id="g-1",
+                     subgraphs={"s@1": {"version": 1}})
+
+    # 仅改名
+    renamed = store.update_meta(case.id, name="新名")
+    assert renamed is not None and renamed.name == "新名"
+    assert renamed.inputs == {"x": 1} and renamed.graph_id == "g-1"
+    # 仅改 inputs；steps/graph/subgraphs/graph_id/时间戳不动
+    re_input = store.update_meta(case.id, inputs={"x": 2, "y": 3})
+    assert re_input is not None and re_input.inputs == {"x": 2, "y": 3}
+    assert re_input.name == "新名"
+    assert re_input.steps == steps and re_input.graph == graph
+    assert re_input.subgraphs == {"s@1": {"version": 1}} and re_input.graph_id == "g-1"
+    assert re_input.created_at == case.created_at and re_input.recorded_at == case.recorded_at
+    # 读回应为更新后的同一存储项
+    assert store.get(case.id).name == "新名" and store.get(case.id).inputs == {"x": 2, "y": 3}
+    # 无变更字段：原样返回（不报错）
+    assert store.update_meta(case.id) is store.get(case.id)
+    # 不存在 → None
+    assert store.update_meta("rec-missing", name="x") is None
 
 
 def test_recording_create_request_validation():

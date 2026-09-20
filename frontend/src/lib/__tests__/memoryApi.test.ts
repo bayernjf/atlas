@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  createMemory,
   deleteMemory,
   listMemories,
   searchMemories,
+  updateMemory,
   type MemoryItem,
   type MemorySearchResult,
 } from '../apiClient'
@@ -90,5 +92,31 @@ describe('M11 memory apiClient（U97）', () => {
   it('后端 4xx 时抛错', async () => {
     vi.stubGlobal('fetch', mockFetch({ detail: '记忆不存在' }, 404))
     await expect(deleteMemory('mem-x')).rejects.toThrow('记忆不存在')
+  })
+
+  it('createMemory 发 POST（201）回传条目，body 不含 source', async () => {
+    const created: MemoryItem = { ...item, id: 'mem-2', source: 'manual' }
+    const fetchMock = mockFetch(created, 201)
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await createMemory({ kind: 'preference', content: '手动偏好', confidence: 0.8 })
+    expect(result.id).toBe('mem-2')
+    expect(result.source).toBe('manual')
+    expect(String(fetchMock.mock.calls[0][0])).toBe('/api/memories')
+    expect(fetchMock.mock.calls[0][1]?.method).toBe('POST')
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body))
+    expect(body).toEqual({ kind: 'preference', content: '手动偏好', confidence: 0.8 })
+    expect(body).not.toHaveProperty('source')
+  })
+
+  it('updateMemory 发 PUT 到 /api/memories/{id}，仅发部分字段', async () => {
+    const updated: MemoryItem = { ...item, source: 'manual', confidence: 0.2 }
+    const fetchMock = mockFetch(updated)
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await updateMemory('mem-1', { confidence: 0.2 })
+    expect(result.confidence).toBe(0.2)
+    expect(result.source).toBe('manual')
+    expect(String(fetchMock.mock.calls[0][0])).toBe('/api/memories/mem-1')
+    expect(fetchMock.mock.calls[0][1]?.method).toBe('PUT')
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({ confidence: 0.2 })
   })
 })

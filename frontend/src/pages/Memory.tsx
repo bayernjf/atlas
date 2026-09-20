@@ -5,7 +5,9 @@ import {
   Card,
   Empty,
   Input,
+  InputNumber,
   Layout,
+  Modal,
   Popconfirm,
   Progress,
   Select,
@@ -16,9 +18,11 @@ import {
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import {
+  createMemory,
   deleteMemory,
   listMemories,
   searchMemories,
+  updateMemory,
   type MemoryItem,
   type MemoryKind,
   type MemorySearchResult,
@@ -26,14 +30,17 @@ import {
 import { roleCan, type Principal } from '../lib/auth'
 import { UserBadge } from '../components/UserBadge'
 import {
+  buildMemoryPayload,
   formatConfidence,
   formatCreatedAt,
   formatScope,
   formatScore,
   kindColor,
   kindLabel,
+  type MemoryDraft,
 } from '../lib/memory'
 
+const { TextArea } = Input
 const { Content, Header } = Layout
 
 type MemoryProps = {
@@ -44,8 +51,17 @@ type MemoryProps = {
 
 type KindFilter = MemoryKind | 'all'
 
+const EMPTY_DRAFT: MemoryDraft = {
+  kind: 'fact',
+  content: '',
+  confidence: 1,
+  scopeText: '',
+  metadataText: '',
+}
+
 export function Memory({ principal, onLogout, onBack }: MemoryProps) {
   const canAdmin = roleCan(principal.role, 'administer')
+  const canOperate = roleCan(principal.role, 'operate')
   const [items, setItems] = useState<MemoryItem[]>([])
   const [listKind, setListKind] = useState<KindFilter>('all')
   const [loadingList, setLoadingList] = useState(true)
@@ -56,6 +72,13 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
   const [results, setResults] = useState<MemorySearchResult[] | null>(null)
   const [searching, setSearching] = useState(false)
   const [searchError, setSearchError] = useState('')
+
+  // ⑩ 手动新建/编辑（operate；source 由后端固定 manual）
+  const [editorOpen, setEditorOpen] = useState(false)
+  const [editing, setEditing] = useState<MemoryItem | null>(null)
+  const [draft, setDraft] = useState<MemoryDraft>(EMPTY_DRAFT)
+  const [saving, setSaving] = useState(false)
+  const [formError, setFormError] = useState('')
 
   const refresh = useCallback(async () => {
     try {
@@ -117,6 +140,57 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
     [refresh],
   )
 
+  const patchDraft = useCallback((patch: Partial<MemoryDraft>) => {
+    setDraft((prev) => ({ ...prev, ...patch }))
+  }, [])
+
+  const openCreate = useCallback(() => {
+    setEditing(null)
+    setDraft(EMPTY_DRAFT)
+    setFormError('')
+    setEditorOpen(true)
+  }, [])
+
+  const openEdit = useCallback((record: MemoryItem) => {
+    setEditing(record)
+    setDraft({
+      kind: record.kind,
+      content: record.content,
+      confidence: record.confidence,
+      scopeText: Object.keys(record.scope).length ? JSON.stringify(record.scope, null, 2) : '',
+      metadataText: Object.keys(record.metadata).length
+        ? JSON.stringify(record.metadata, null, 2)
+        : '',
+    })
+    setFormError('')
+    setEditorOpen(true)
+  }, [])
+
+  const draftValid = Boolean(buildMemoryPayload(draft).payload)
+
+  const handleSave = useCallback(async () => {
+    const { payload, error } = buildMemoryPayload(draft)
+    if (!payload) {
+      setFormError(error ?? '表单不合法')
+      return
+    }
+    setSaving(true)
+    setFormError('')
+    try {
+      if (editing) {
+        await updateMemory(editing.id, payload)
+      } else {
+        await createMemory(payload)
+      }
+      setEditorOpen(false)
+      await refresh()
+    } catch (saveError) {
+      setFormError(saveError instanceof Error ? saveError.message : '保存失败')
+    } finally {
+      setSaving(false)
+    }
+  }, [draft, editing, refresh])
+
   const listColumns: ColumnsType<MemoryItem> = [
     {
       title: '内容',
@@ -153,25 +227,32 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
       width: 180,
       render: (value: string) => formatCreatedAt(value),
     },
-    ...(canAdmin
+    ...(canOperate
       ? [
           {
             title: '操作',
             key: 'actions',
-            width: 90,
+            width: canAdmin ? 132 : 84,
             render: (_: unknown, record: MemoryItem) => (
-              <Popconfirm
-                title="删除该条记忆？"
-                description="删除后不可恢复，且不影响已结束的运行。"
-                okText="删除"
-                cancelText="取消"
-                okButtonProps={{ danger: true }}
-                onConfirm={() => handleDelete(record.id)}
-              >
-                <Button size="small" danger>
-                  删除
+              <Space size={4}>
+                <Button size="small" onClick={() => openEdit(record)}>
+                  编辑
                 </Button>
-              </Popconfirm>
+                {canAdmin && (
+                  <Popconfirm
+                    title="删除该条记忆？"
+                    description="删除后不可恢复，且不影响已结束的运行。"
+                    okText="删除"
+                    cancelText="取消"
+                    okButtonProps={{ danger: true }}
+                    onConfirm={() => handleDelete(record.id)}
+                  >
+                    <Button size="small" danger>
+                      删除
+                    </Button>
+                  </Popconfirm>
+                )}
+              </Space>
             ),
           } as ColumnsType<MemoryItem>[number],
         ]
@@ -234,7 +315,7 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
             type="info"
             showIcon
             message="本地词法向量，用于机制演示，非真实语义"
-            description="相似度由内置确定性词法向量计算（离线可复现），不代表商业语义模型效果；记忆写入只发生在流程运行中。"
+            description="相似度由内置确定性词法向量计算（离线可复现），不代表商业语义模型效果；运行中的流程会经记忆工具自动写入，运营（operate）可在此手动新建/编辑记忆（标记为 manual），删除需管理员（admin）。"
           />
 
           <Card
@@ -288,6 +369,11 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
             title="记忆列表"
             extra={
               <Space>
+                {canOperate && (
+                  <Button type="primary" onClick={openCreate}>
+                    新建记忆
+                  </Button>
+                )}
                 <Select<KindFilter>
                   value={listKind}
                   onChange={handleListKindChange}
@@ -314,6 +400,82 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
           </Card>
         </Space>
       </Content>
+
+      <Modal
+        title={editing ? '编辑记忆' : '新建记忆'}
+        open={editorOpen}
+        onCancel={() => setEditorOpen(false)}
+        onOk={() => void handleSave()}
+        confirmLoading={saving}
+        okText="保存"
+        cancelText="取消"
+        okButtonProps={{ disabled: !draftValid }}
+        destroyOnClose
+      >
+        <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
+          {formError && <Alert type="error" showIcon message={formError} />}
+          <Alert
+            type="info"
+            showIcon
+            message="手动新建/编辑的记忆将以 source=manual 保存；内容修改后会重新计算向量。"
+          />
+          <div>
+            <Typography.Text type="secondary">类型</Typography.Text>
+            <Select<MemoryKind>
+              value={draft.kind}
+              onChange={(kind) => patchDraft({ kind })}
+              style={{ width: '100%', marginTop: 4 }}
+              options={[
+                { value: 'fact', label: '事实' },
+                { value: 'preference', label: '偏好' },
+              ]}
+            />
+          </div>
+          <div>
+            <Typography.Text type="secondary">内容</Typography.Text>
+            <TextArea
+              rows={3}
+              maxLength={2000}
+              showCount
+              value={draft.content}
+              onChange={(event) => patchDraft({ content: event.target.value })}
+              placeholder="记忆内容（必填，最长 2000 字）"
+              style={{ marginTop: 4 }}
+            />
+          </div>
+          <div>
+            <Typography.Text type="secondary">置信度（0-1）</Typography.Text>
+            <InputNumber
+              min={0}
+              max={1}
+              step={0.1}
+              value={draft.confidence}
+              onChange={(value) => patchDraft({ confidence: value === null ? 1 : Number(value) })}
+              style={{ width: '100%', marginTop: 4 }}
+            />
+          </div>
+          <div>
+            <Typography.Text type="secondary">作用域（JSON 对象，键值均为字符串，可空）</Typography.Text>
+            <TextArea
+              rows={2}
+              value={draft.scopeText}
+              onChange={(event) => patchDraft({ scopeText: event.target.value })}
+              placeholder='{"user_id":"u-1"}'
+              style={{ marginTop: 4, fontFamily: 'monospace' }}
+            />
+          </div>
+          <div>
+            <Typography.Text type="secondary">元数据（JSON 对象，键值均为字符串，可空）</Typography.Text>
+            <TextArea
+              rows={2}
+              value={draft.metadataText}
+              onChange={(event) => patchDraft({ metadataText: event.target.value })}
+              placeholder='{"note":"手动补充"}'
+              style={{ marginTop: 4, fontFamily: 'monospace' }}
+            />
+          </div>
+        </Space>
+      </Modal>
     </Layout>
   )
 }

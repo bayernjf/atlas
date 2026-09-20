@@ -164,3 +164,41 @@ def test_u96_backend_switch_wires_pg_memory_store(monkeypatch):
     services = registry_mod.TenantRegistry._create_services(TENANT)
     assert isinstance(services.memory_store, PgMemoryStore)
     services.memory_store.clear()
+
+
+def test_u201_pg_update_merges_reindexes_and_404(pg_store):
+    """docs/28 §5.1 ⑩：PgMemoryStore.update 往返、source=manual、content 变重算 embedding。"""
+    from atlas.memory.models import MemoryValidationError
+
+    pg_store.clear()
+    created = pg_store.remember(
+        kind="fact", content="PG 更新前的事实内容", confidence=0.5, source="tool",
+        metadata={"k": "v"},
+    )
+    # content 不变、仅改 confidence/scope → 200 形态、source manual、created_at 保留
+    partial = pg_store.update(created["id"], confidence=0.25, scope={"user_id": "u-1"})
+    assert partial is not None
+    assert partial["id"] == created["id"]
+    assert partial["created_at"] == created["created_at"]
+    assert partial["confidence"] == 0.25
+    assert partial["scope"] == {"user_id": "u-1"}
+    assert partial["source"] == "manual"
+    # content/kind/metadata 全改 → 重算 embedding，新词可检索
+    full = pg_store.update(
+        created["id"], kind="preference", content="PG 更新后偏好顺丰周末配送",
+        metadata={"via": "ui"},
+    )
+    assert full["kind"] == "preference"
+    assert full["metadata"] == {"via": "ui"}
+    hits = pg_store.recall("顺丰周末配送", top_k=1)
+    assert hits and hits[0]["id"] == created["id"]
+    # 落库后重新读回，字段确实持久化（非仅返回值）
+    again = pg_store.list(limit=100)
+    row = next(i for i in again if i["id"] == created["id"])
+    assert row["source"] == "manual" and row["kind"] == "preference"
+    # 不存在 / 他租户 → None；非法入参报错
+    assert pg_store.update("mem-404", content="x") is None
+    with pytest.raises(MemoryValidationError):
+        pg_store.update(created["id"], confidence=9)
+    pg_store.clear()
+    _seed(pg_store)

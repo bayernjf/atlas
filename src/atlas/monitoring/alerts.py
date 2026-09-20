@@ -6,13 +6,13 @@ evaluate_rules 只产出「触发意图」，同键合并/计数由 store 负责
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-RuleId = Literal[
-    "run_error", "node_failed", "consecutive_failures", "failure_rate",
-    # M9：灰度门控自动回滚告警（阈值随每图 RolloutConfig.gate，不在全局 RuleConfig）
-    "rollout_gate",
-]
+from atlas.graph.conditions import ConditionEvalError, evaluate_expression, validate_expression
+
+# rule_id 放宽为 str：内置四条 + rollout_gate 用字面量，自定义规则为 "custom:{cid}"
+# （docs/28 §4.2 ⑨；PG monitoring_alerts.rule_id 本就是 TEXT）。
+RuleId = str
 
 
 class RuleToggle(BaseModel):
@@ -31,11 +31,22 @@ class FailureRateRule(BaseModel):
     rate: float = 0.5
 
 
+class CustomRule(BaseModel):
+    """docs/28 §4.2 ⑨ 自定义告警规则（表达式复用 graph.conditions 安全引擎，禁 eval）。"""
+
+    cid: str  # 客户端 crypto.randomUUID()，后端只校验非空与长度 ≤64、同配置唯一
+    name: str
+    enabled: bool = True
+    expression: str
+    severity: Literal["critical", "warning"] = "warning"
+
+
 class RuleConfig(BaseModel):
     run_error: RuleToggle = RuleToggle()
     node_failed: RuleToggle = RuleToggle()
     consecutive_failures: ConsecutiveRule = ConsecutiveRule()
     failure_rate: FailureRateRule = FailureRateRule()
+    custom: list[CustomRule] = Field(default_factory=list)
 
 
 class Alert(BaseModel):
@@ -51,12 +62,15 @@ class Alert(BaseModel):
     last_run_id: str
     # M9 纯超集：仅 rollout_gate 告警携带自动回滚动作 {type,from_version,to_version,reason,actor}
     action: dict | None = None
+    # docs/28 §4.2 ⑨：自定义规则名（内置规则缺省 None；PG 档 v1 不持久化此字段，读回为 None）
+    rule_name: str | None = None
 
 
 class AlertEvent(BaseModel):
     rule_id: RuleId
     severity: Literal["critical", "warning"]
     message: str
+    rule_name: str | None = None
 
 
 def _is_bool(value: object) -> bool:
@@ -102,6 +116,42 @@ def validate_rules(raw: object) -> list[str]:
             errors.append("failure_rate.rate 必须是 0-1 之间的数值")
     elif "failure_rate" in raw:
         errors.append("failure_rate 必须是对象")
+    # docs/28 §4.2 ⑨：自定义规则段可选（缺省/空合法，旧配置与 PG JSONB 反序列化不 422）
+    if "custom" in raw:
+        custom_raw = raw["custom"]
+        if not isinstance(custom_raw, list):
+            errors.append("custom 必须是规则数组")
+        else:
+            seen_cids: set[str] = set()
+            for index, rule in enumerate(custom_raw):
+                prefix = f"custom[{index}]"
+                if not isinstance(rule, dict):
+                    errors.append(f"{prefix} 必须是对象")
+                    continue
+                cid = str(rule.get("cid", "")).strip()
+                if not cid:
+                    errors.append(f"{prefix}.cid 不能为空")
+                elif len(cid) > 64:
+                    errors.append(f"{prefix}.cid 长度不能超过 64")
+                elif cid in seen_cids:
+                    errors.append(f"{prefix}.cid 重复：{cid}")
+                else:
+                    seen_cids.add(cid)
+                name = str(rule.get("name", "")).strip()
+                if not name:
+                    errors.append(f"{prefix}.name 不能为空")
+                elif len(name) > 50:
+                    errors.append(f"{prefix}.name 长度不能超过 50")
+                if "enabled" in rule and not _is_bool(rule["enabled"]):
+                    errors.append(f"{prefix}.enabled 必须是布尔值")
+                if rule.get("severity", "warning") not in ("critical", "warning"):
+                    errors.append(f"{prefix}.severity 必须是 critical 或 warning")
+                expression = rule.get("expression", "")
+                if not isinstance(expression, str):
+                    errors.append(f"{prefix}.expression 必须是字符串")
+                else:
+                    for expr_error in validate_expression(expression):
+                        errors.append(f"{prefix}.expression：{expr_error}")
     return errors
 
 
@@ -119,6 +169,17 @@ def rules_from_raw(raw: dict) -> RuleConfig:
             min_samples=raw["failure_rate"]["min_samples"],
             rate=float(raw["failure_rate"]["rate"]),
         ),
+        custom=[
+            CustomRule(
+                cid=str(rule.get("cid", "")).strip(),
+                name=str(rule.get("name", "")).strip(),
+                enabled=rule.get("enabled", True),
+                expression=rule["expression"],
+                severity=rule.get("severity", "warning"),
+            )
+            for rule in raw.get("custom", [])
+            if isinstance(rule, dict)
+        ],
     )
 
 
@@ -184,4 +245,37 @@ def evaluate_rules(
                         ),
                     )
                 )
+    events.extend(_evaluate_custom_rules(rules=rules, record=record, graph_id=graph_id, run_id=run_id))
+    return events
+
+
+def _evaluate_custom_rules(*, rules: RuleConfig, record: object, graph_id: str, run_id: str) -> list[AlertEvent]:
+    """docs/28 §4.2 ⑨：以扁平白名单上下文求自定义规则；非布尔/任何异常 fail-safe 不告警。"""
+    failed_nodes = [node for node in record.nodes if node.status == "failed"]
+    context = {
+        "status": record.status,  # completed | error | cancelled
+        # durationMs 取整毫秒：条件引擎有序比较要求两侧严格同型（int 字面量 vs int），
+        # 传 float 会令 `{{durationMs}} > 500` 静态/运行期判类型不符而 fail-safe（docs/28 §4.2）。
+        "durationMs": int(round(record.duration_ms)),
+        "failedCount": len(failed_nodes),  # int
+        "hasError": record.status == "error" or bool(failed_nodes),  # bool
+    }
+    events: list[AlertEvent] = []
+    for rule in rules.custom:
+        if not rule.enabled:
+            continue
+        try:
+            matched = evaluate_expression(rule.expression, context)
+        except Exception:  # ConditionEvalError 或任何异常一律 fail-safe，不告警、不阻塞运行
+            continue
+        if matched is not True:
+            continue
+        events.append(
+            AlertEvent(
+                rule_id=f"custom:{rule.cid}",
+                severity=rule.severity,
+                message=f"自定义规则「{rule.name}」触发：图 {graph_id} 运行 {run_id}",
+                rule_name=rule.name,
+            )
+        )
     return events

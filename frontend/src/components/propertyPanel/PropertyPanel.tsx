@@ -44,6 +44,9 @@ export function PropertyPanel() {
   )
   const setBreakpointHitCount = useEditorStore((state) => state.setBreakpointHitCount)
   const setBreakpointLogMessage = useEditorStore((state) => state.setBreakpointLogMessage)
+  const toggleBreakpointException = useEditorStore(
+    (state) => state.toggleBreakpointException,
+  )
 
   const scope = useScopeIndex({ nodes, edges, variables })
   const toolOutputSchemas = useToolOutputSchemas()
@@ -298,6 +301,17 @@ export function PropertyPanel() {
             </Typography.Text>
           </Field>
         )}
+        <Field label="异常断点（节点抛出异常时暂停，docs/28 §3.2）">
+          <Switch
+            checked={!!breakpoints[selectedNode.id]?.onException}
+            onChange={() => toggleBreakpointException(selectedNode.id)}
+          />
+          <Typography.Text type="secondary">
+            开启后节点逻辑抛异常会先暂停并展示异常类型与消息，下一步/继续后原样抛出
+            （v1 不支持忽略继续），停止则结束调试；不填条件表达式时，continue 模式仅在
+            该节点抛异常时暂停、正常经过不暂停。
+          </Typography.Text>
+        </Field>
 
         <Typography.Text strong>重试与失败处理（04 §3.2 retry）</Typography.Text>
         <Field label="最大重试次数">

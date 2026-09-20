@@ -23,7 +23,7 @@ from typing import Any, Literal
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from atlas.cards import (
     CardRenderError,
@@ -49,10 +49,14 @@ from atlas.iam.principals import Principal, authenticate
 from atlas.iam.registry import STORAGE_BACKEND, TenantServices
 from atlas.llm.nl_generate import generate_graph, validate_param_fills
 from atlas.memory.adapter import MemoryHarnessAdapter
+from atlas.memory.models import MemoryValidationError
 from atlas.message.adapter import MessageHarnessAdapter
 from atlas.monitoring import RUN_RING_SIZE, extract_business, extract_node_results
 from atlas.recording import (
     RecordingCreateRequest,
+    RecordingUpdateRequest,
+    ReplayRequest,
+    build_tool_mocks,
     clock_anchor,
     collect_steps,
     collect_subgraph_snapshots,
@@ -82,6 +86,7 @@ from atlas.storage.recovery import (
 )
 from atlas.template import get_template, list_templates
 from atlas.versioning.publish import publish as publish_graph_version
+from atlas.versioning.upgrades import subgraph_upgrade_plan
 
 logger = logging.getLogger(__name__)
 
@@ -442,6 +447,19 @@ def list_graph_release_reports(
     return {"items": services.report_store.list_summary(graph_id)}
 
 
+@app.get("/api/release-reports")
+def list_all_release_reports(
+    limit: int = 100, principal: Principal = Depends(require("read"))
+) -> dict[str, Any]:
+    """跨图批量回放报告看板（docs/28 §2.4）：倒序摘要，不含 cases，read 角色。
+
+    limit 默认 100、上限 200（非整数 query 由 FastAPI 422）；报告进程内 ring 不 PG 化。
+    """
+    services = services_for(principal)
+    bounded = max(1, min(limit, 200))
+    return {"items": services.report_store.list_all_summary(limit=bounded)}
+
+
 @app.get("/api/graphs/{graph_id}/release-reports/{report_id}")
 def get_graph_release_report(
     graph_id: str, report_id: str, principal: Principal = Depends(require("read"))
@@ -524,6 +542,22 @@ def publish_graph(
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Graph 不存在：{exc.args[0]}") from exc
     return PublishGraphResponse(id=graph_id, releaseVersion=release_version)
+
+
+@app.get("/api/graphs/{graph_id}/subgraph-upgrades")
+def subgraph_upgrades(
+    graph_id: str,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """发布前子图版本升级体检（docs/28 §5.2 ⑪，read）：纯只读、不产版本、不阻断。
+
+    返 ``{items: [{node_id, sub_id, from_version, to_version, first_pin}]}``；
+    草稿不存在 404。v1 只扫顶层 subgraph、只对已发布版本号（不检测子图草稿 dirty）。
+    """
+    plan = subgraph_upgrade_plan(services_for(principal).graph_store, graph_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail=f"Graph 不存在：{graph_id}")
+    return {"items": plan}
 
 
 @app.get("/api/graphs/{graph_id}/versions")
@@ -736,6 +770,25 @@ def get_recording(
     return case.model_dump()
 
 
+@app.put("/api/recordings/{case_id}")
+def update_recording(
+    case_id: str,
+    request: RecordingUpdateRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """编辑用例元信息（docs/28 §2.3）：仅 name/inputs 可改，其余录制事实不可改。
+
+    字段缺省不改；name 空串/超长、inputs 非对象 → 422；用例不存在 → 404。
+    """
+    services = services_for(principal)
+    updated = services.recording_store.update_meta(
+        case_id, name=request.name, inputs=request.inputs
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail=f"录制用例不存在：{case_id}")
+    return updated.model_dump()
+
+
 @app.delete("/api/recordings/{case_id}")
 def delete_recording(
     case_id: str, principal: Principal = Depends(require("operate"))
@@ -747,9 +800,15 @@ def delete_recording(
 
 @app.post("/api/recordings/{case_id}/replay")
 def replay_recording(
-    case_id: str, principal: Principal = Depends(require("operate"))
+    case_id: str,
+    payload: ReplayRequest | None = None,
+    principal: Principal = Depends(require("operate")),
 ) -> dict[str, Any]:
     """回放冻结快照：标准 run_graph + 审批决策预置，比对操作序列与逐节点产出。
+
+    可选 body（docs/28 §2.2/§2.3）：``mock_tools=true`` 以录制工具产出作桩，回放不
+    触达适配器（隔离外部系统；发布门禁不接 mock）；``inputs_override`` 顶层键浅合并进
+    用例 inputs（一次性入参参数化，不落库）。响应纯超集加 ``mocked_tools``（未启用为 []）。
 
     回放期异常（如快照内 subgraph 引用的 graphId 已被 reset 删除）折叠为
     replay_status="failed"/matches=false，不抛 500（04 §5.11，06 §6.9）。
@@ -759,11 +818,19 @@ def replay_recording(
     if case is None:
         raise HTTPException(status_code=404, detail=f"录制用例不存在：{case_id}")
 
+    tool_mocks: dict[str, Any] | None = None
+    mocked_tools: list[str] = []
+    if payload is not None and payload.mock_tools:
+        tool_mocks, mocked_tools = build_tool_mocks(case)
+
     try:
         graph = parse_graph(case.graph)
         emit, take_steps = collect_steps()
         anchor, clock_note = clock_anchor(case)
         inputs = dict(case.inputs or {})
+        if payload is not None and payload.inputs_override:
+            # 顶层键浅合并（dict 值整体替换）；一次性覆写，不修改已入库用例。
+            inputs = {**inputs, **payload.inputs_override}
         presets = preset_approvals(case.steps)
         if presets:
             approvals = dict(inputs.get("approvals") or {})
@@ -780,6 +847,7 @@ def replay_recording(
                 case.subgraphs, _tenant_graph_resolver(services)
             ),
             now_override=anchor,
+            tool_mocks=tool_mocks,
         )
         replay_steps = take_steps()
         tools_by_node = {
@@ -795,12 +863,14 @@ def replay_recording(
         )
         if clock_note:
             report["clock_note"] = clock_note
+        report["mocked_tools"] = mocked_tools
         return report
     except Exception as exc:  # 回放失败折叠为报告而非 500
         return {
             "matches": False,
             "baseline_status": case.status,
             "replay_status": "failed",
+            "mocked_tools": mocked_tools,
             "steps": [
                 {
                     "node_id": step.node_id,
@@ -948,6 +1018,11 @@ def _validate_debug(graph, debug: Any) -> list[dict[str, Any]]:
         log_message = point.get("logMessage")
         if log_message is not None and not isinstance(log_message, str):
             errors.append(f"断点 {node_id} 的 logMessage 必须为字符串")
+        # docs/28 §3.2：onException 布尔（异常断点）；bool 是 int 子类须先判 bool。
+        on_exception = point.get("onException", False)
+        if not isinstance(on_exception, bool):
+            errors.append(f"断点 {node_id} 的 onException 必须为布尔值")
+            on_exception = False
         normalized.append(
             {
                 "node_id": node_id,
@@ -958,11 +1033,23 @@ def _validate_debug(graph, debug: Any) -> list[dict[str, Any]]:
                     if isinstance(log_message, str) and log_message.strip()
                     else None
                 ),
+                "onException": on_exception,
             }
         )
     if errors:
         raise HTTPException(status_code=422, detail="；".join(errors))
     return normalized
+
+
+def _tool_call_from_event(event: dict[str, Any]) -> dict[str, Any]:
+    """docs/28 §4.1 ⑧：tool_metric SSE/采集事件 → RunRecord.tool_calls 载荷（dict，pydantic 转模型）。"""
+    return {
+        "node_id": event["node_id"],
+        "tool": event.get("tool", ""),
+        "duration_ms": float(event.get("duration_ms", 0.0)),
+        "action_status": event["action_status"],
+        "error_code": event.get("error_code"),
+    }
 
 
 @app.post("/api/graphs/{graph_id}/run", response_model=RunGraphResponse)
@@ -988,6 +1075,13 @@ def run_saved_graph(
     )
     services.run_store.begin(run_id=run_id, graph_id=graph_id, mode="sync")
     frame_sink = _frame_sink_for(principal.tenant_id, services.run_store, run_id)
+    # docs/28 §4.1 ⑧：同步入口无 SSE，构造同形收集 emit（只收顶层 tool_metric，其余忽略）。
+    tool_calls: list[dict[str, Any]] = []
+
+    def _metric_collect(event: dict[str, Any]) -> None:
+        if event.get("type") == "tool_metric" and not event.get("subgraphPath"):
+            tool_calls.append(_tool_call_from_event(event))
+
     try:
         result = run_graph(
             graph,
@@ -996,6 +1090,7 @@ def run_saved_graph(
             approval_broker=services.approval_broker,
             graph_id=graph_id,
             graph_resolver=_tenant_graph_resolver(services),
+            emit=_metric_collect,
             frame_sink=frame_sink,
             tracer=tracer,
             graph_version=tracer.graph_version,
@@ -1014,6 +1109,7 @@ def run_saved_graph(
             error=f"{type(exc).__name__}: {exc}",
             trace_id=tracer.trace_id,
             resolved_version=resolved_version,
+            tool_calls=tool_calls,
         )
         evaluate_after_run(services, record)  # M9：异常运行同样计入 candidate 门控
         raise
@@ -1031,6 +1127,7 @@ def run_saved_graph(
         trace_id=tracer.trace_id,
         resolved_version=resolved_version,
         business=extract_business(graph_view, result["outputs"], event_payload=event_payload),
+        tool_calls=tool_calls,
     )
     evaluate_after_run(services, record)  # M9：灰度门控越阈自动回滚
     return RunGraphResponse(id=graph_id, **result)
@@ -1095,12 +1192,16 @@ def run_saved_graph_stream(
         # debug 会话不是真实运行，全程不埋点（04 §5.13）
         monitored = debug_controller is None
         collected: dict[str, Any] = {}
+        tool_calls: list[dict[str, Any]] = []
 
         def recording_emit(event: dict[str, Any]) -> None:
             # A 包（docs/27 §10.1）：监控/运行产出只收顶层 node_end；带 subgraphPath 的
             # 子图内部节点不进 collected（子图结果归在 subgraph 节点），但仍转发 SSE 上屏。
             if event.get("type") == "node_end" and not event.get("subgraphPath"):
                 collected[event["node_id"]] = event.get("output")
+            # docs/28 §4.1 ⑧：另册收集顶层 tool_metric（子层已被命名空间 wrapper 白名单吞掉）。
+            elif event.get("type") == "tool_metric" and not event.get("subgraphPath"):
+                tool_calls.append(_tool_call_from_event(event))
             emit(event)
 
         def worker() -> None:
@@ -1140,6 +1241,7 @@ def run_saved_graph_stream(
                         business=extract_business(
                             graph_view, result["outputs"], event_payload=event_payload
                         ),
+                        tool_calls=tool_calls,
                     )
                     evaluate_after_run(services, record)
                 events.put({"__result__": result})
@@ -1159,6 +1261,7 @@ def run_saved_graph_stream(
                         nodes=extract_node_results(graph_view, collected),
                         trace_id=tracer.trace_id if tracer is not None else "",
                         resolved_version=resolved_version,
+                        tool_calls=tool_calls,
                     )
                 events.put({"__cancelled__": exc.node_id})
             except Exception as exc:  # 运行期异常经 SSE error 帧下发，不静默吞线程
@@ -1177,6 +1280,7 @@ def run_saved_graph_stream(
                         error=f"{type(exc).__name__}: {exc}",
                         trace_id=tracer.trace_id if tracer is not None else "",
                         resolved_version=resolved_version,
+                        tool_calls=tool_calls,
                     )
                     evaluate_after_run(services, record)
                 events.put({"__error__": f"{type(exc).__name__}: {exc}"})
@@ -1547,7 +1651,71 @@ def demo_messages(
     return {"items": services_for(principal).message_service.list()}
 
 
-# ---- M11 长期记忆（docs/26 §6）：按租户只读 + admin 删；写入只走图内 remember 工具 ----
+# ---- M11 长期记忆（docs/26 §6 / docs/28 §5.1）：读 viewer+、手动新建/编辑 operate（source=manual）、删 admin；图内 remember 工具仍是运行时写入主路径 ----
+
+
+class MemoryCreateRequest(BaseModel):
+    """手动新建记忆（⑩）；source 由端点固定 manual，不接受入参。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["fact", "preference"]
+    content: str = Field(min_length=1, max_length=2000)
+    scope: dict[str, str] | None = None
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    metadata: dict[str, str] | None = None
+
+
+class MemoryUpdateRequest(BaseModel):
+    """手动编辑记忆（⑩）：白名单字段子集，至少一个；id/created_at/source/embedding 不可改。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["fact", "preference"] | None = None
+    content: str | None = Field(default=None, min_length=1, max_length=2000)
+    scope: dict[str, str] | None = None
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    metadata: dict[str, str] | None = None
+
+
+@app.post("/api/memories", status_code=201)
+def create_memory(
+    body: MemoryCreateRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """手动新建记忆（operate；source 固定 manual，201，docs/28 §5.1）。校验失败 422 中文。"""
+    repo = services_for(principal).memory_store
+    try:
+        return repo.remember(
+            kind=body.kind,
+            content=body.content,
+            scope=body.scope,
+            confidence=1.0 if body.confidence is None else body.confidence,
+            source="manual",
+            metadata=body.metadata,
+        )
+    except MemoryValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+@app.put("/api/memories/{memory_id}")
+def update_memory(
+    memory_id: str,
+    body: MemoryUpdateRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """手动编辑记忆白名单字段（operate；source 置 manual）；空体 422，不存在/他租户 404。"""
+    data = body.model_dump(exclude_unset=True)
+    if not data:
+        raise HTTPException(status_code=422, detail="请求体至少包含一个可改字段")
+    repo = services_for(principal).memory_store
+    try:
+        updated = repo.update(memory_id, **data)
+    except MemoryValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    if updated is None:
+        raise HTTPException(status_code=404, detail="记忆不存在")
+    return updated
 
 
 @app.get("/api/memories")

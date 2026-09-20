@@ -55,18 +55,24 @@ def test_golden_order_12345_auto_refunded_end_to_end():
     assert result["outputs"]["tool_call-1"]["result"] == {"order_id": "12345", "status": "refunded"}
     assert result["outputs"]["tool_call-1"]["action_status"] == "SUCCESS"
     assert service.orders["12345"].status == "refunded"
-    # 事件序列供 SSE 实时进度使用
+    # 事件序列供 SSE 实时进度使用（docs/28 §4.1 ⑧：工具节点 node_start 后、node_end 前发 tool_metric）
     assert [event["type"] for event in events] == [
         "node_start",
         "node_end",
         "node_start",
         "node_end",
         "node_start",
+        "tool_metric",
         "node_end",
         "run_end",
     ]
     start_events = [event["node_id"] for event in events if event["type"] == "node_start"]
     assert start_events == ["trigger-1", "ai_decision-1", "tool_call-1"]
+    metric = next(event for event in events if event["type"] == "tool_metric")
+    assert metric["node_id"] == "tool_call-1"
+    assert metric["action_status"] == "SUCCESS"
+    assert metric["error_code"] is None
+    assert metric["duration_ms"] >= 0
 
 
 def test_golden_order_12346_routed_to_human_review_end_to_end():

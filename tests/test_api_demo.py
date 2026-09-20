@@ -769,6 +769,138 @@ def test_recording_replay_detects_tampered_output():
     assert "result" in row["diff_keys"]
 
 
+def _record_mockable_tool_case():
+    """trigger(webhook) → 未注册工具 ghost/ping；baseline 工具产出为手造成功桩。"""
+    graph = {
+        "version": 1, "variables": [],
+        "nodes": [
+            {"id": "trigger-1", "type": "trigger", "name": "t",
+             "config": {"triggerType": "webhook", "webhookUrl": "/hooks/x"}},
+            {"id": "msg-1", "type": "tool_call", "name": "幽灵工具",
+             "config": {"tool": "ghost/ping", "params": "{}"}},
+        ],
+        "edges": [{"id": "e1", "source": "trigger-1", "target": "msg-1"}],
+    }
+    graph_id = client.post("/api/graphs", json=graph).json()["id"]
+    trigger_output = {"context": {"triggerType": "webhook", "cron": "",
+                                  "webhookUrl": "/hooks/x", "payload": {}}}
+    tool_stub = {"result": {"status": "SUCCESS", "echo": "pong"}, "action_status": "SUCCESS"}
+    case_id = client.post("/api/recordings", json={
+        "name": "Mock 回放用例", "graph_id": graph_id, "inputs": {},
+        "steps": [
+            {"node_id": "trigger-1", "node_type": "trigger", "output": trigger_output},
+            {"node_id": "msg-1", "node_type": "tool_call", "output": tool_stub},
+        ],
+        "status": "completed",
+    }).json()["id"]
+    return case_id
+
+
+def test_replay_mock_tools_skips_unregistered_adapter():
+    case_id = _record_mockable_tool_case()
+
+    # 默认（无 body）：真实触达未注册适配器 → FAILED 产出，与成功桩不符；mocked_tools 为 []
+    real = client.post(f"/api/recordings/{case_id}/replay").json()
+    assert real["mocked_tools"] == []
+    assert real["replay_status"] == "completed"
+    assert real["matches"] is False
+    assert next(r for r in real["steps"] if r["node_id"] == "msg-1")["match"] is False
+
+    # 显式 false 同默认
+    off = client.post(f"/api/recordings/{case_id}/replay", json={"mock_tools": False}).json()
+    assert off["mocked_tools"] == [] and off["matches"] is False
+
+    # mock_tools=true：桩命中、不触达适配器 → 全节点一致，mocked_tools 含该工具节点
+    mocked = client.post(
+        f"/api/recordings/{case_id}/replay", json={"mock_tools": True}
+    ).json()
+    assert mocked["mocked_tools"] == ["msg-1"]
+    assert mocked["replay_status"] == "completed"
+    assert mocked["matches"] is True
+    assert all(row["match"] for row in mocked["steps"])
+
+
+def test_replay_inputs_override_shallow_merges_and_validates():
+    # 单 webhook trigger：trigger output.context.payload 即 inputs。
+    graph = {
+        "version": 1, "variables": [],
+        "nodes": [
+            {"id": "trigger-1", "type": "trigger", "name": "t",
+             "config": {"triggerType": "webhook", "webhookUrl": "/hooks/x"}},
+        ],
+        "edges": [],
+    }
+    graph_id = client.post("/api/graphs", json=graph).json()["id"]
+    payload = {"amount": 100, "region": "cn"}
+    trigger_output = {"context": {"triggerType": "webhook", "cron": "",
+                                  "webhookUrl": "/hooks/x", "payload": payload}}
+    case_id = client.post("/api/recordings", json={
+        "name": "入参覆写用例", "graph_id": graph_id, "inputs": dict(payload),
+        "steps": [{"node_id": "trigger-1", "node_type": "trigger", "output": trigger_output}],
+        "status": "completed",
+    }).json()["id"]
+
+    # 无覆写：payload 与 baseline 一致
+    assert client.post(f"/api/recordings/{case_id}/replay").json()["matches"] is True
+    # 覆写 amount：浅合并后 region 保留、amount 改变 → trigger 产出不符
+    changed = client.post(
+        f"/api/recordings/{case_id}/replay",
+        json={"inputs_override": {"amount": 9999}},
+    ).json()
+    assert changed["matches"] is False
+    # 只覆写 amount 为原值且不带 region：浅合并保留 region → 仍一致（证明非整体替换）
+    kept = client.post(
+        f"/api/recordings/{case_id}/replay",
+        json={"inputs_override": {"amount": 100}},
+    ).json()
+    assert kept["matches"] is True
+    # 非法类型 422
+    assert client.post(
+        f"/api/recordings/{case_id}/replay", json={"inputs_override": "x"}
+    ).status_code == 422
+    assert client.post(
+        f"/api/recordings/{case_id}/replay", json={"mock_tools": ["x"]}
+    ).status_code == 422
+
+
+def test_recording_update_meta_endpoint():
+    case_id = _record_mockable_tool_case()
+
+    # 改名 + 改 inputs
+    resp = client.put(f"/api/recordings/{case_id}", json={"name": "新名", "inputs": {"amount": 5}})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["name"] == "新名" and body["inputs"] == {"amount": 5}
+    # 录制事实不动（steps/graph_id/status/graph 快照）
+    assert len(body["steps"]) == 2 and body["status"] == "completed"
+    assert body["graph_id"] and isinstance(body["graph"], dict)
+    # 详情与列表投影反映新值
+    got = client.get(f"/api/recordings/{case_id}").json()
+    assert got["name"] == "新名" and got["inputs"] == {"amount": 5}
+    proj = next(i for i in client.get("/api/recordings").json()["items"] if i["id"] == case_id)
+    assert proj["name"] == "新名"
+    # 仅改名时 inputs 保留
+    only_name = client.put(f"/api/recordings/{case_id}", json={"name": "只改名"}).json()
+    assert only_name["name"] == "只改名" and only_name["inputs"] == {"amount": 5}
+    # 空 body（无字段）原样返回 200
+    assert client.put(f"/api/recordings/{case_id}", json={}).json()["name"] == "只改名"
+    # 404 / 422
+    assert client.put("/api/recordings/rec-nope", json={"name": "x"}).status_code == 404
+    assert client.put(f"/api/recordings/{case_id}", json={"name": ""}).status_code == 422
+    assert client.put(f"/api/recordings/{case_id}", json={"name": "x" * 101}).status_code == 422
+    assert client.put(f"/api/recordings/{case_id}", json={"inputs": "bad"}).status_code == 422
+    # viewer（read）不可编辑（operate）
+    viewer_token = client.post(
+        "/api/auth/login", json={"username": "viewer-a", "password": "viewer123"}
+    ).json()["token"]
+    denied = client.put(
+        f"/api/recordings/{case_id}",
+        json={"name": "x"},
+        headers={"Authorization": f"Bearer {viewer_token}"},
+    )
+    assert denied.status_code == 403
+
+
 def test_recordings_survive_reset_but_delete_removes_them():
     case_id, _, _ = _record_approval_timeout_case()
     client.post("/api/demo/reset")  # GraphStore 清空，但用例图已快照

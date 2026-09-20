@@ -24,6 +24,28 @@ class RecordingCreateRequest(BaseModel):
     status: str
 
 
+class RecordingUpdateRequest(BaseModel):
+    """用例元信息编辑（docs/28 §2.3）：仅 name/inputs 可改。
+
+    steps/graph/subgraphs/graph_id/时间戳是录制事实与冻结快照，v1 不可改（请重新录制）。
+    字段缺省（None）表示不改；name 显式空串/超长由 pydantic 校验 422。
+    """
+
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    inputs: dict[str, Any] | None = None
+
+
+class ReplayRequest(BaseModel):
+    """单用例回放可选请求体（docs/28 §2.2/§2.3）。
+
+    mock_tools=true 时以录制桩 output 替代真实适配器调用（隔离外部系统，发布门禁不接）；
+    inputs_override 顶层键浅合并进 case.inputs（一次性入参参数化，不落库）。
+    """
+
+    mock_tools: bool = False
+    inputs_override: dict[str, Any] | None = None
+
+
 class RecordingCase(BaseModel):
     id: str
     name: str
@@ -81,6 +103,28 @@ class RecordingStore:
 
     def get(self, case_id: str) -> RecordingCase | None:
         return next((item for item in self._items if item.id == case_id), None)
+
+    def update_meta(
+        self,
+        case_id: str,
+        *,
+        name: str | None = None,
+        inputs: dict[str, Any] | None = None,
+    ) -> RecordingCase | None:
+        """仅改 name/inputs（录制事实不可改）；不存在返 None。无变更字段时原样返回。"""
+        for index, item in enumerate(self._items):
+            if item.id == case_id:
+                changes: dict[str, Any] = {}
+                if name is not None:
+                    changes["name"] = name
+                if inputs is not None:
+                    changes["inputs"] = inputs
+                if changes:
+                    updated = item.model_copy(update=changes)
+                    self._items[index] = updated
+                    return updated
+                return item
+        return None
 
     def delete(self, case_id: str) -> bool:
         for index, item in enumerate(self._items):

@@ -293,7 +293,9 @@ def test_paused_frame_snapshots_are_deep_copied():
     session.end_pause(token)
 
 
-def test_subgraph_interior_is_not_paused():
+def test_subgraph_interior_is_paused_with_path():
+    # docs/28 §3.3（契约反转，旧名为 test_subgraph_interior_is_not_paused）：
+    # 子图重入透传同一调试会话，step 在子层节点同样暂停，paused 帧附 subgraphPath。
     child = parse_graph(
         {
             "version": 1,
@@ -326,10 +328,15 @@ def test_subgraph_interior_is_not_paused():
         }
     )
     run = _DebugRun(parent, graph_resolver={"g-child": child}.get).start()
-    run.resume(run.wait_paused("trigger-1"), "step")
-    run.resume(run.wait_paused("subgraph-1"), "step")
-    run.resume(run.wait_paused("tool-after"), "step")
+    order = ["trigger-1", "subgraph-1", "child-trigger", "child-tool", "tool-after"]
+    frames = {}
+    for node_id in order:
+        frame = run.wait_paused(node_id)
+        frames[node_id] = frame
+        run.resume(frame, "step")
     run.join()
-    assert run.paused_nodes == ["trigger-1", "subgraph-1", "tool-after"]
-    assert not any(n.startswith("child-") for n in run.paused_nodes)
+    assert run.paused_nodes == order
+    assert frames["child-trigger"]["subgraphPath"] == ["subgraph-1"]
+    assert frames["child-tool"]["subgraphPath"] == ["subgraph-1"]
+    assert "subgraphPath" not in frames["tool-after"]
     assert run.errors == []

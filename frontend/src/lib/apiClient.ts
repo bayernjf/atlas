@@ -47,20 +47,47 @@ export type DebugBreakpoint = {
   hitCount?: number
   /** B 包：非空即日志断点（logpoint），命中只发 debug_log 不暂停。 */
   logMessage?: string
+  /** docs/28 §3.2：异常断点——节点逻辑抛异常时先暂停，resume 后原样重抛。 */
+  onException?: boolean
 }
 
 export type DebugRequest = {
   breakpoints: DebugBreakpoint[]
 }
 
+/** docs/28 §3.1：单个 global 顶层键在相邻暂停间的变化（新增 old=null）。 */
+export type VariableChangeEntry = {
+  key: string
+  old: unknown
+  new: unknown
+}
+
+/** docs/28 §3.1：一次暂停对应的变量变化历史条目。 */
+export type VariableHistoryItem = {
+  seq: number
+  node_id: string
+  reason: string
+  since_nodes: string[]
+  changes: VariableChangeEntry[]
+}
+
+/** docs/28 §3.2：异常断点暂停时携带的异常类型与消息。 */
+export type PausedError = { type: string; message: string }
+
 export type PausedFrame = {
   type: 'paused'
   token: string
   node_id: string
   node_type: string
-  reason: 'step' | 'breakpoint' | 'condition'
+  reason: 'step' | 'breakpoint' | 'condition' | 'exception'
   globals: Record<string, unknown>
   outputs: Record<string, unknown>
+  /** docs/28 §3.1：截至本次暂停的变量变化历史（易失、随调试会话）。 */
+  history?: VariableHistoryItem[]
+  /** docs/28 §3.2：仅 reason=exception 时存在。 */
+  error?: PausedError
+  /** docs/28 §3.3：子图内部暂停时父图 subgraph 节点 id 路径；顶层节点无此键。 */
+  subgraphPath?: string[]
 }
 
 export type StoppedFrame = {
@@ -120,6 +147,16 @@ export type RunEvent =
       node_type: string
       output: unknown
       /** A 包（docs/27 §3.1）：子图内部节点携带每层父图 subgraph 节点 id 路径；顶层节点缺省。 */
+      subgraphPath?: string[]
+    }
+  | {
+      /** docs/28 §4.1 ⑧：工具适配器调用埋点（监控采集用，编辑器无分支即忽略）。 */
+      type: 'tool_metric'
+      node_id: string
+      tool: string
+      duration_ms: number
+      action_status: 'SUCCESS' | 'FAILED' | 'SIMULATED'
+      error_code: string | null
       subgraphPath?: string[]
     }
   | ({ type: 'run_end' } & Partial<RunResult>)
@@ -437,11 +474,17 @@ export type RecordingSummary = {
 export type RecordingCase = {
   id: string
   name: string
+  /** 所属图 id（M9 纯超集；旧用例为空串） */
+  graph_id: string
   graph: SerializedGraph
   inputs: RunInputs | null
   steps: RecordStep[]
   status: string
   created_at: string
+  /** 录制时钟锚点（C 包；回放冻结到该时刻） */
+  recorded_at?: string | null
+  /** 录制时递归冻结的 subgraph 引用快照（key＝引用原文含 @N） */
+  subgraphs?: Record<string, SerializedGraph>
 }
 
 export type ReplayStepRow = {
@@ -456,6 +499,23 @@ export type ReplayReport = {
   baseline_status: string
   replay_status: string
   steps: ReplayStepRow[]
+  /** 时钟锚点缺失/不可解析时的提示（C 包，可选） */
+  clock_note?: string
+  /** docs/28 §2.2：本次被桩替代的工具节点 id（未启用 mock 为 []） */
+  mocked_tools?: string[]
+}
+
+/** docs/28 §2.2/§2.3：单用例回放可选请求体 */
+export type ReplayRequestOptions = {
+  mock_tools?: boolean
+  /** 顶层键浅合并进用例 inputs（一次性，不落库） */
+  inputs_override?: RunInputs
+}
+
+/** docs/28 §2.3：用例元信息编辑（仅 name/inputs 可改） */
+export type RecordingUpdatePatch = {
+  name?: string
+  inputs?: RunInputs
 }
 
 export async function listRecordings(): Promise<RecordingSummary[]> {
@@ -477,8 +537,27 @@ export async function deleteRecording(id: string): Promise<void> {
   await request(`/api/recordings/${id}`, { method: 'DELETE' })
 }
 
-export async function replayRecording(id: string): Promise<ReplayReport> {
-  return request(`/api/recordings/${id}/replay`, { method: 'POST' })
+export async function replayRecording(
+  id: string,
+  body?: ReplayRequestOptions,
+): Promise<ReplayReport> {
+  return request(`/api/recordings/${id}/replay`, {
+    method: 'POST',
+    body: body ? JSON.stringify(body) : undefined,
+  })
+}
+
+/** 单用例完整详情（编辑预填 inputs；列表投影 RecordingSummary 不含 inputs） */
+export async function getRecording(id: string): Promise<RecordingCase> {
+  return request(`/api/recordings/${id}`)
+}
+
+/** docs/28 §2.3：编辑用例 name/inputs（仅这两项可改；不存在后端 404） */
+export async function updateRecording(
+  id: string,
+  patch: RecordingUpdatePatch,
+): Promise<RecordingCase> {
+  return request(`/api/recordings/${id}`, { method: 'PUT', body: JSON.stringify(patch) })
 }
 
 /**
@@ -579,11 +658,31 @@ export type BusinessMetricsSummary = {
   per_version: BusinessRateRows[]
 }
 
+/** docs/28 §4.1 ⑧ 单次工具适配器调用埋点。 */
+export type ToolCallMetric = {
+  node_id: string
+  tool: string
+  duration_ms: number
+  action_status: 'SUCCESS' | 'FAILED' | 'SIMULATED'
+  error_code: string | null
+}
+
+/** docs/28 §4.1 ⑧ 按工具聚合的调用指标行（SIMULATED 不纳延迟分位，样本 0 为 null）。 */
+export type ToolMetricsRow = {
+  tool: string
+  calls: number
+  failed: number
+  simulated: number
+  error_codes: Record<string, number>
+  p50: number | null
+  p95: number | null
+}
+
 export type RunRecord = {
   id: string
   graph_id: string
   mode: 'sync' | 'stream'
-  status: 'completed' | 'error'
+  status: 'completed' | 'error' | 'cancelled'
   started_at: string
   finished_at: string
   duration_ms: number
@@ -591,6 +690,7 @@ export type RunRecord = {
   error: string | null
   resolved_version?: number | null
   business?: BusinessOutcome | null
+  tool_calls?: ToolCallMetric[]
 }
 
 export type MetricsStats = {
@@ -614,6 +714,8 @@ export type MetricsSummary = MetricsStats & {
   per_graph: Array<{ graph_id: string } & MetricsStats>
   failed_nodes: FailedNodeRow[]
   business: BusinessMetricsSummary
+  /** docs/28 §4.1 ⑧：适配器调用聚合（旧后端/空数据为 []）。 */
+  tools?: ToolMetricsRow[]
 }
 
 export type RuleId =
@@ -626,8 +728,9 @@ export type RuleId =
 export type AlertStatus = 'open' | 'acknowledged' | 'resolved'
 
 export type AlertItem = {
+  /** 内置四条/rollout_gate 为字面量，自定义规则为 custom:{cid}，故放宽为 string。 */
+  rule_id: string
   id: string
-  rule_id: RuleId
   graph_id: string
   severity: 'critical' | 'warning'
   message: string
@@ -637,6 +740,17 @@ export type AlertItem = {
   status: AlertStatus
   last_run_id: string
   action?: RolloutAlertAction | null
+  /** docs/28 §4.2 ⑨：自定义规则名（内置规则缺省；PG 档 v1 不持久化，可能为空）。 */
+  rule_name?: string | null
+}
+
+/** docs/28 §4.2 ⑨ 自定义告警规则（表达式复用安全条件引擎，禁 eval）。 */
+export type CustomRuleConfig = {
+  cid: string
+  name: string
+  enabled: boolean
+  expression: string
+  severity: 'critical' | 'warning'
 }
 
 export type RuleConfig = {
@@ -644,6 +758,8 @@ export type RuleConfig = {
   node_failed: { enabled: boolean }
   consecutive_failures: { enabled: boolean; threshold: number }
   failure_rate: { enabled: boolean; window: number; min_samples: number; rate: number }
+  /** 纯超集：旧后端/旧配置缺省为空数组，不报错。 */
+  custom?: CustomRuleConfig[]
 }
 
 export async function getMetrics(): Promise<MetricsSummary> {
@@ -808,10 +924,36 @@ export async function runReleaseGate(graphId: string): Promise<GateReport> {
   return request(`/api/graphs/${graphId}/release-gate`, { method: 'POST' })
 }
 
+/** docs/28 §5.2 ⑪：发布前子图版本升级体检（只读，不产版本、不阻断）。 */
+export type SubgraphUpgrade = {
+  node_id: string
+  sub_id: string
+  from_version: number | null
+  to_version: number
+  first_pin: boolean
+}
+
+export async function getSubgraphUpgrades(graphId: string): Promise<SubgraphUpgrade[]> {
+  const body = await request<{ items: SubgraphUpgrade[] }>(
+    `/api/graphs/${graphId}/subgraph-upgrades`,
+  )
+  return body.items
+}
+
 /** D26 报告 v1：本图批量回放报告历史（倒序摘要，不含逐例 cases） */
 export async function listReleaseReports(graphId: string): Promise<ReleaseReportSummary[]> {
   const body = await request<{ items: ReleaseReportSummary[] }>(
     `/api/graphs/${graphId}/release-reports`,
+  )
+  return body.items
+}
+
+/** docs/28 §2.4：跨图用例集报告看板（倒序摘要，limit 默认 100、上限 200） */
+export async function listAllReleaseReports(
+  limit = 100,
+): Promise<ReleaseReportSummary[]> {
+  const body = await request<{ items: ReleaseReportSummary[] }>(
+    `/api/release-reports?limit=${limit}`,
   )
   return body.items
 }
@@ -954,4 +1096,24 @@ export async function searchMemories(
 
 export async function deleteMemory(id: string): Promise<void> {
   await request(`/api/memories/${id}`, { method: 'DELETE' })
+}
+
+/** docs/28 §5.1 ⑩：手动新建/编辑记忆入参（source 由后端固定 manual，不在此传）。 */
+export type MemoryWritePayload = {
+  kind: MemoryKind
+  content: string
+  scope?: Record<string, string>
+  confidence?: number
+  metadata?: Record<string, string>
+}
+
+export async function createMemory(payload: MemoryWritePayload): Promise<MemoryItem> {
+  return request('/api/memories', { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export async function updateMemory(
+  id: string,
+  payload: Partial<MemoryWritePayload>,
+): Promise<MemoryItem> {
+  return request(`/api/memories/${id}`, { method: 'PUT', body: JSON.stringify(payload) })
 }

@@ -35,7 +35,7 @@
 | `db_sql_params` | 04 / 四、工具/适配器组件 4.7 数据适配器（通用 SQL）v1 契约（权威 blockquote）+ `src/atlas/database/{service,adapter}.py`（query/execute 两能力） | ### 4.7 数据适配器（通用 SQL）v1 契约 |
 | `message_send_params` | 04 / 四、工具/适配器组件 4.8 消息适配器（进程内消息服务）v1 契约（权威 blockquote）+ `src/atlas/message/{service,adapter}.py`（单能力 message/send） | ### 4.8 消息适配器（进程内消息服务）v1 契约 |
 | `template_catalog` | 04 / 五、逻辑组件 5.10 流程模板库（内置只读）v1 契约（权威 blockquote）+ `src/atlas/template/catalog.py`（5 个内置模板元数据与 graph） | ### 5.10 流程模板库（内置只读） |
-| `recording_case` | 04 / 五、逻辑组件 5.11 操作录制与回放 v1 契约（权威 blockquote）+ `src/atlas/recording/{cases,replay,gate,snapshots}.py`（录制用例模型与进程内存储；M9 增 gate 发布前批量回放门禁；D26-b 增 `subgraphs` 快照内联，仅 replay 内联、gate 保持实时，见下行 `release_gate`；C 包 `3415377` 增 `recorded_at` 回放冻结时钟锚点与 today/now/datetime/hoursBetween 时钟函数，权威见 04 §5.1 C 注记） | ### 5.11 操作录制与回放 |
+| `recording_case` | 04 / 五、逻辑组件 5.11 操作录制与回放 v1 契约（权威 blockquote）+ `src/atlas/recording/{cases,replay,gate,snapshots}.py`（录制用例模型与进程内存储；M9 增 gate 发布前批量回放门禁；D26-b 增 `subgraphs` 快照内联，仅 replay 内联、gate 保持实时，见下行 `release_gate`；C 包 `3415377` 增 `recorded_at` 回放冻结时钟锚点与 today/now/datetime/hoursBetween 时钟函数，权威见 04 §5.1 C 注记；docs/28 批 1（2026-09-20）：PG 富字段 graph_id/subgraphs 持久化修复（d1f455b，迁移 008）、单用例 Mock 工具回放＋入参覆写（c7bf138）、PUT 用例编辑（89e21fc）） | ### 5.11 操作录制与回放 |
 | `debug_session` | 04 / 五、逻辑组件 5.12 单步调试与断点 v1 契约（权威 blockquote）+ `src/atlas/debug/{sessions,controller}.py`（运行期调试会话、暂停状态机、paused/stopped/debug_log 帧、hitCount/logpoint、resume globals 浅合并）+ `src/atlas/collaboration/cancellations.py`（B 包 f9a1301：RunCancelled/RunCancellationBroker 协作式急停、cancelled 帧） | ### 5.12 单步调试与断点 |
 | `monitoring` | 04 / 五、逻辑组件 5.13 基础监控告警 v1 契约（权威 blockquote）+ `src/atlas/monitoring/{records,metrics,alerts,business}.py`（运行记录 ring、指标聚合、规则求值与告警状态机；M9 增业务结果指标与 rollout_gate 告警动作，见下行 `business_metrics`） | ### 5.13 基础监控告警 |
 | `identity_session` | 04 / 五、逻辑组件 5.14 多租户与权限 v1 契约（权威 blockquote）+ `src/atlas/iam/{principals,sessions,registry,deps}.py`（种子租户/账号、Principal、sess- token、按租户服务注册表、Bearer 依赖） | ### 5.14 多租户与权限 |
@@ -43,7 +43,7 @@
 | `rollout_config` | **M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；04 / 五、逻辑组件 5.16 灰度发布与门控回滚 v1 契约（权威 blockquote）+ `src/atlas/routing/{models,router,store,gate}.py`（rollout 配置/三段分桶/状态机/门控；ADR T22）；形状来源 docs/19 §2.3.3 提案转权威 | ### 5.16 灰度发布与门控回滚 |
 | `route_decision` | **M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；同上 04 §5.16 + `routing/router.py` resolve_version 纯函数（入站 event→发布版本/分桶段，pin-to-version） | ### 5.16 灰度发布与门控回滚 |
 | `release_gate` | **M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；04 §5.11 末发布前批量门禁段 + `src/atlas/recording/gate.py`（GateReport，D26 部分取回；D26 报告 v1 起响应纯超集加 `id` 并沉淀，见下行） | ### 5.11 操作录制与回放 |
-| `release_report` | **D26 报告 v1 已落码收口（2026-09-18，U60 转正式）；2026-09-19 收尾批补 CSV/JSON 导出（`8a37b4e`，`.../export?format=csv|json`）**；04 §5.11 末用例集报告段 + `src/atlas/recording/reports.py`（ReleaseReport 沉淀/按图历史/通过率趋势/导出，ring 100/租户、reset 清空、不 PG 化） | ### 5.11 操作录制与回放 |
+| `release_report` | **D26 报告 v1 已落码收口（2026-09-18，U60 转正式）；2026-09-19 收尾批补 CSV/JSON 导出（`8a37b4e`，`.../export?format=csv|json`）**；04 §5.11 末用例集报告段 + `src/atlas/recording/reports.py`（ReleaseReport 沉淀/按图历史/通过率趋势/导出，ring 100/租户、reset 清空、不 PG 化；docs/28 批 1④（2026-09-20，89e21fc）增跨图聚合 GET /api/release-reports?limit= 看板） | ### 5.11 操作录制与回放 |
 | `business_metrics` | **M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；04 §5.13 末业务指标段 + `src/atlas/monitoring/business.py`（extract_business 业务结果三率，金融灰度门控信号源） | ### 5.13 基础监控告警 |
 
 ---
@@ -449,6 +449,14 @@ traceId: string          # M10：同 node_start
 spanId: string
 parentSpanId: string
 subgraphPath: string[]  # A 包：同 node_start，仅子图内部 node_end 携带；录制/监控采集只收无此键的顶层 node_end
+# 工具适配器调用埋点（docs/28 §4.1 ⑧，D28 批3 a318d97；内部事件，executor 无条件 emit，debug 流也发但不采集）
+type: "tool_metric"
+node_id: string
+tool: string             # adapter/capability
+duration_ms: number      # float，真实调用 monotonic 计时
+action_status: "SUCCESS" | "FAILED" | "SIMULATED"
+error_code: string?      # result.code，可空
+subgraphPath: string[]  # 子图内部工具携带则被监控采集吞掉（命名空间白名单不放行 tool_metric），只采顶层；mock 命中不发
 # 运行结束（SSE 末帧为 event: result，载荷 {id, status, outputs, traces}）
 type: "run_end"         # 随 run_graph 返回值展开
 traceId: string          # M10：run root span 的 trace id
@@ -555,7 +563,11 @@ created_at: string         # UTC ISO-8601
 recorded_at: string | null # C 包（2026-09-19，3415377）纯超集：回放冻结时钟锚点（UTC ISO）；新用例入库时与 created_at 同 stamp（端点不重跑 baseline，锚点＝入库时刻），旧用例为 null（回放回退 created_at）；进程内/PG 两档一致（迁移 007）
 # GET /api/recordings 列表投影（不含 graph/steps）
 items: [{id, name, graph_id, node_count, step_count, status, created_at}]
-# POST /api/recordings/{id}/replay 响应（ReplayReport）
+# POST /api/recordings/{id}/replay（body 可省略；docs/28 §2.2，c7bf138，D26 部分取回）
+#   可选 body {mock_tools?: bool, inputs_override?: object}：mock_tools=true 时顶层工具节点命中录制输出桩
+#   （不触达 registry、不发 tool span/tool_metric；子图内工具不桩），发布门禁刻意不接 mock；
+#   inputs_override 顶层键浅合并进用例 inputs（仅本次回放、不落库），非对象 422
+# 响应（ReplayReport）
 # D26-b：单用例 replay 走「内联优先」resolver（snapshots.inline_first_resolver）——先查 subgraphs 快照、未命中回退租户 GraphStore，
 #   reset/删除/改动子图后旧用例仍可回放；发布门禁 gate.run_release_gate 刻意保持实时 resolver 不内联（验当前 latest 草稿，坏子图应 block）
 matches: boolean           # 操作序列与逐节点归一化产出全部一致
@@ -563,14 +575,17 @@ baseline_status: string
 replay_status: string      # 回放异常（如子图引用缺失）折叠为 "failed"
 steps: [{node_id, match, note, diff_keys?}]  # diff_keys 为归一化后差异顶层键
 clock_note?: string        # C 包（3415377）：仅当用例缺 recorded_at/created_at、无法冻结时钟时附（中文，提示 today()/now() 时间分支可能漂移）；单用例 replay 挂响应顶层，发布门禁挂对应 case 项
+mocked_tools?: string[]     # docs/28 §2.2（c7bf138）：本次被桩替代的工具节点 id（未启用 mock/缺省为 []）
+# PUT /api/recordings/{id}（operate；docs/28 §2.3，89e21fc）：body {name?: 1-100字, inputs?: object}，仅 name/inputs 可改；
+#   steps/graph/subgraphs/graph_id/时间戳为录制事实不可改（请重新录制）；不存在 404、空名/超长/inputs 非对象 422；返完整 RecordingCase；进程内/PG 两档持久化
 ```
 > 进程内存储（重启清空，持久化随 11 S1）；`/api/demo/reset` 不清除（测试资产，同 feedback）。回放从 human_approval 步骤抽解决策预置为 inputs.approvals，不挂起；比对前递归剔除 token/sent_at、消息记录 uuid id、HTTP headers date。权威契约见 04 §5.11，REST 见 12 §5。
 >
-> **M9 发布门禁（2026-09-18 已落码，D26 部分取回）**：`graph_id` 用于发布前批量回放筛选；`POST /api/graphs/{id}/release-gate` 对当前 latest 草稿逐例重跑 + compare 产 `release_gate` 报告（见下），publish 可带 `gate:true` 拦截坏版本。用例集趋势报告/影子模式/Mock 外部系统仍缓做 14 D26。
+> **M9 发布门禁（2026-09-18 已落码，D26 部分取回）**：`graph_id` 用于发布前批量回放筛选；`POST /api/graphs/{id}/release-gate` 对当前 latest 草稿逐例重跑 + compare 产 `release_gate` 报告（见下），publish 可带 `gate:true` 拦截坏版本。用例集趋势报告/影子模式/Mock 外部系统仍缓做 14 D26。 **docs/28 批 4⑪（2026-09-20 `ba97088`）增发布前子图版本升级体检**：`GET /api/graphs/{id}/subgraph-upgrades`（read、纯只读不产版本）返 `{items:[{node_id, sub_id, from_version: int|null, to_version: int, first_pin: bool}]}`，对父图草稿顶层 subgraph 节点比对「本次发布将钉版本 to（子图最新发布版，无则 1）vs 父图最新发布快照所钉 from」，仅列首次钉版（first_pin=true）或 from≠to 的升级；草稿不存在 404。纯函数在 `versioning/upgrades.py`（与 publish.py 同包，两档同构）；v1 只扫顶层、不阻断发布、不做草稿 pin 编辑器、不检测子图草稿 dirty，发布门禁回归仍是发布前权威门；前端 ReleaseModal 门禁表上方只读体检区。显式 pin 编辑/子图市场仍缓做 D21。
 >
 > **租户注记（2026-09-16，§5.14）**：录制用例按租户分区（rec-N 计数各自从 1，图快照取自本租户 GraphStore）；跨租户访问录制 id → 404，reset 不清除。
 >
-> **C 包冻结时钟（2026-09-19 已落码，`3415377`，docs/27 §2，D15 余部）**：`run_graph(now_override=)` 单次运行固定一个 UTC 时钟并透传 condition/loop/subgraph/调试断点；回放单用例与发布门禁经 `recording.replay.clock_anchor(case)`（recorded_at→created_at→真实时钟）取锚点注入，含 `today()/now()` 的分支录制与回放确定可比。**已知 PG 缺口（非本包引入、归属 D26 用例 PG 持久化）**：PG 档 `PgRecordingStore.add` 未实现富字段 `graph_id`/`subgraphs`，PG 后端下 `POST /api/recordings` 500（TypeError）；`recorded_at` 已两档一致，富字段 PG 化随 D26（见 docs/14 D26）。
+> **C 包冻结时钟（2026-09-19 已落码，`3415377`，docs/27 §2，D15 余部）**：`run_graph(now_override=)` 单次运行固定一个 UTC 时钟并透传 condition/loop/subgraph/调试断点；回放单用例与发布门禁经 `recording.replay.clock_anchor(case)`（recorded_at→created_at→真实时钟）取锚点注入，含 `today()/now()` 的分支录制与回放确定可比。**PG 富字段缺口已修复（docs/28 批 1①，2026-09-20，`d1f455b`，迁移 008）**：PG 档 recordings 已持久化 `graph_id`/`subgraphs`（`monitoring_runs.tool_calls` 列同批 DDL 预留，批 3 启用），`PgRecordingStore` 四读写路径与进程内同超集、`RecordingRepository.add/update_meta` 协议同步，PG 档「录为用例」不再 500；`recorded_at` 早已两档一致（迁移 007）。
 
 ### `debug_session` — 字段概览（Phase 2 能力项，2026-09-15；`/api/debug*` 与 /run/stream 的 debug 入参）
 
@@ -582,15 +597,19 @@ debug:
       expression: string?      # 可选，§5.1 白名单表达式；校验失败 422，运行时求值异常 fail-safe 不命中
       hitCount: int?           # B 包(f9a1301)：正整数 N，每第 N 次命中才暂停（hits%N==0）；缺省=每次命中；非正整数/布尔 422
       logMessage: string?      # B 包：非空＝日志断点 logpoint，命中只发 debug_log 不暂停（消息原样不插值）；v1 不与 hitCount 组合
+      onException: bool?       # 批2(9b378c2)：true=异常断点，节点抛异常时先暂停（reason="exception"），resume 原样重抛不忽略；纯异常（无 expression/hitCount/logMessage）before 早退不误停
 # 启动即 step 模式（每个节点执行前暂停）；断点不进 Graph JSON、会话级。
 # SSE event: paused
 type: "paused"
 token: string                  # dbg-<uuid>，resume 凭据
 node_id: string                # 暂停在该节点 node_start 之后、逻辑之前
 node_type: string
-reason: "step" | "breakpoint" | "condition"
+reason: "step" | "breakpoint" | "condition" | "exception"   # 批2(9b378c2) 增 exception
 globals: object                # 当前全局变量快照（深拷贝，只读）
 outputs: object                # 截至暂停点全部已完成节点终态产出（深拷贝，只读）
+history: object[]?             # 批2(038dcaa)：变量变化历史（易失、不持久化、上限50丢最旧），每条 {seq,node_id,reason,since_nodes,changes:[{key,old,new}]}；首暂停 changes=[]，键删除 v1 不记，不可序列化值 fail-safe 跳过；resume 手动改写 seed 基线不记为变化
+error: {type: string, message: string}?  # 批2(9b378c2)：仅 reason="exception" 携带，异常类名与 str(e)；step/continue 后原样重抛（v1 不支持忽略继续），stop 抛 DebugStopped
+subgraphPath: string[]?        # 批2(f6f7d30)：子图内部暂停时按进入层级存每层父图 subgraph 节点 id（如 ["subgraph-1"]）；顶层节点缺省此键
 # POST /api/debug/{token}/resume 请求体
 action: "step" | "continue" | "stop"   # step=下一节点再停；continue=关逐节点仅断点停；stop=取消运行（忽略 globals）
 globals: object?                       # B 包(f9a1301)：仅 action=step/continue；global 顶层键浅合并覆盖（dict 值整体替换、不深 merge、不删未提供键）；键名 ^[A-Za-z_][A-Za-z0-9_]*$、值 JSON 可序列化，非法 422
@@ -603,7 +622,7 @@ type: "debug_log"
 node_id: string
 hits: int                  # 该节点断点累计命中次数
 message: string            # logMessage 原样
-subgraphPath: string[]?    # 预留（子图断点仍缓做，v1 缺省）
+subgraphPath: string[]?    # 批2(f6f7d30)：子图内部 logpoint/暂停帧携带，按进入层级存每层父图 subgraph 节点 id；顶层缺省
 # 普通（非调试）运行急停：SSE event: cancelled
 type: "cancelled"
 node_id: string            # 取消生效的下一节点边界 id（wait/approval/tool 阻塞中点不强杀）
@@ -612,7 +631,7 @@ reason: "user_cancel"
 #   run 不存在/跨租户 404；已结束无注册句柄 409；窗口内重复取消幂等 200；viewer 403
 # GET /api/debug → {items:[{token, node_id, node_type, graph_id, reason}]}
 ```
-> 进程内会话（threading.Event，重启即失，持久化中断随 11 S1/14 D19/D20）；未知 token 404、重复 resume 409；`/api/demo/reset` 按 stop 释放全部暂停；parallel 暂停串行化、`__join__` 网关与 subgraph 内部不暂停。权威契约见 04 §5.12，REST 见 12 §5。
+> 进程内会话（threading.Event，重启即失，持久化中断随 11 S1/14 D19/D20）；未知 token 404、重复 resume 409；`/api/demo/reset` 按 stop 释放全部暂停；parallel 暂停串行化、`__join__` 网关不暂停；**批 2（f6f7d30）起 subgraph 内部可逐帧暂停、可命中断点与 logpoint**（重入透传同一 DebugSession/controller，子层 paused/debug_log 带 `subgraphPath`，子层 stop 穿透 DebugStopped 不折叠为 failed，终帧仍只父层一个）。权威契约见 04 §5.12，REST 见 12 §5。
 >
 > **租户注记（2026-09-16，§5.14）**：调试会话按租户分区（dbg- token 绑定所属租户 broker）；持他租户 token 调 resume/查询 → 404。审批会话（human_approval 的 approval token）同理，按租户 broker 分区。
 
@@ -641,6 +660,13 @@ business:                  # M9：业务结果提取（见下 business_metrics�
   refunded_amount: number?
   expected_amount: number?
   amount_diff: boolean
+tool_calls:                  # docs/28 §4.1 ⑧（D28 批3，2026-09-20，a318d97）：真实工具适配器调用埋点，纯超集缺省 []
+  - node_id: string
+    tool: string             # adapter/capability，如 message/send
+    duration_ms: number      # float，time.monotonic 真实调用计时（SIMULATED 为本地构造、不纳延迟分位）
+    action_status: "SUCCESS" | "FAILED" | "SIMULATED"
+    error_code: string?      # result.code，无结构化 code（如未注册适配器）为 null
+# 仅两个真实运行入口（同步 /run、流式 /run/stream）采集无 subgraphPath 的顶层工具；mock 命中、子图内、debug/回放/门禁不采集
 # GET /api/monitoring/metrics
 total: integer
 healthy: integer                 # completed 且无失败节点
@@ -656,17 +682,34 @@ business:                        # M9：业务结果指标段（与系统指标�
   refund_amount_diff_rate: number | null
   per_graph: [{graph_id, ...上述三率, samples}]
   per_version: [{graph_id, resolved_version, ...三率, samples}]
+tools:                       # docs/28 §4.1 ⑧：按工具聚合（summarize_tools），样本 0 为 []
+  - tool: string
+    calls: integer           # 含 SUCCESS/FAILED/SIMULATED 全部
+    failed: integer          # 仅 FAILED（SIMULATED 不计 failed）
+    simulated: integer       # SIMULATED 计数（纳 calls 展示，不纳 p50/p95 分位）
+    error_codes: {string: integer}   # 有结构化 code 的失败按码计数；无 code 失败不入此 map
+    p50: number | null       # 仅真实（非 SIMULATED）样本 nearest-rank；真实样本 0 为 null
+    p95: number | null
 # RuleConfig（GET/PUT /api/monitoring/rules，PUT 全量替换，非法中文 422）
 run_error:            {enabled: boolean}
 node_failed:          {enabled: boolean}
 consecutive_failures: {enabled: boolean, threshold: 1..200 整数}
 failure_rate:         {enabled: boolean, window: 1..200, min_samples: 1..200, rate: 0..1}
+custom:                      # docs/28 §4.2 ⑨（D28 批3，2026-09-20，11b1ba7）：自定义规则，纯超集缺省 []，旧配置/PG JSONB 不 422
+  - cid: string             # 客户端 crypto.randomUUID()，strip 非空、同配置唯一、≤64
+    name: string            # strip 非空、≤50
+    enabled: boolean = true
+    expression: string      # 经 graph.conditions.validate_expression 静态校验（递归下降，禁 eval）；顶层须为布尔
+    severity: "critical" | "warning" = "warning"
+# 求值上下文（扁平白名单，不含 graphId）：{status:"completed"|"error"|"cancelled", durationMs:int(round 毫秒),
+#   failedCount:int, hasError:bool}；自定义规则对租户全部运行求值；非布尔/任何异常 fail-safe 不告警不阻塞
 # rollout_gate（M9）阈值不在全局 RuleConfig：随每图 RolloutConfig.gate 配置（见下 rollout_config）
 # Alert（GET /api/alerts?status=；POST /api/alerts/{id}/acknowledge|resolve）
 id: string                 # alt-{自增}
-rule_id: "run_error" | "node_failed" | "consecutive_failures" | "failure_rate" | "rollout_gate"  # M9 增 rollout_gate（critical）
+rule_id: string             # 内置五条字面量 或 自定义 "custom:{cid}"（docs/28 §4.2 起放宽为 str；PG monitoring_alerts.rule_id 本为 TEXT，无 DDL）
 graph_id: string
 severity: "critical" | "warning"
+rule_name: string?          # docs/28 §4.2：自定义规则名（内置规则缺省；进程内档落库，PG 档 v1 表无此列读回 null，前端回退显示 rule_id）
 message: string
 first_seen: string
 last_seen: string
@@ -865,8 +908,10 @@ created_at: string              # ISO UTC
 # GET /api/graphs/{id}/release-reports/{rid}（read）→ 完整 ReleaseReport；不属于该图/不存在 404，跨租户不泄漏
 # D26-a（2026-09-19，8a37b4e）导出：GET /api/graphs/{id}/release-reports/{rid}/export?format=csv|json（read）
 #   → attachment 下载（rr-N.json / rr-N.csv）；非法 format 422，404 照详情；CSV 为元信息行 + 空行 + 逐 case 行，带 UTF-8 BOM 供 Excel；reports.report_to_csv（stdlib csv/io）
+# docs/28 §2.4（2026-09-20，89e21fc）跨图看板：GET /api/release-reports?limit=（read）→ {items:[摘要…]}
+#   跨全部图倒序（默认 100、clamp 1-200、非整数 422），摘要去 cases、含 graph_id；ReportStore.list_all_summary（跨租户 ring 倒序切片），仍进程内、不进 Repository/不 PG 化
 ```
-> 2026-09-19 D26 收尾批已落：报告导出 CSV/JSON（8a37b4e）、subgraph 快照内联（29bb3d9，见 `recording_case`）、定时 CI 回放（cea70f4，`.github/workflows/release-gate-cron.yml`，cron 仅 main 生效）。仍缓做（不解除 D26）：影子模式、Mock 工具响应、用例编辑/参数化、PG 持久化与多租户共享、跨图聚合看板、报告删除端点（ring 自然淘汰）。
+> 2026-09-19 D26 收尾批已落：报告导出 CSV/JSON（8a37b4e）、subgraph 快照内联（29bb3d9，见 `recording_case`）、定时 CI 回放（cea70f4，`.github/workflows/release-gate-cron.yml`，cron 仅 main 生效）。**docs/28 批 1（2026-09-20）进一步部分取回**：Mock 工具响应（仅单用例 replay、门禁不接，`c7bf138`）、用例编辑/参数化（PUT name/inputs＋replay inputs_override，`89e21fc`）、跨图聚合看板（GET /api/release-reports，`89e21fc`）、recordings 富字段 PG 持久化（`d1f455b`，迁移 008）。**仍缓做（不解除 D26）**：影子模式/线上旁路录制、子图快照多租户共享、报告 PG 化（ReportStore 仍 ring 100/租户进程内）、报告删除端点（ring 自然淘汰）、跨版本配置 diff。
 
 ### `business_metrics` — 字段概览（**M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；`src/atlas/monitoring/business.py` extract_business 纯函数；金融灰度门控信号源）
 
@@ -898,12 +943,12 @@ kind: "fact" | "preference"     # 必填：长期事实 / 用户偏好
 content: string                 # 记忆文本，1-2000 字；remember 时据此算 embedding
 scope: {string: string}         # 业务绑定（如 user_id/order_id），缺省 {}；recall 子集匹配
 confidence: number              # 0-1，缺省 1.0（自动提取 <1 随 D35 缓做）
-source: "tool" | "manual" | "run"   # 缺省 tool；v1 仅经工具写
+source: "tool" | "manual" | "run"   # 缺省 tool；图工具通道写 tool/run，REST 手动新建/编辑固定 manual（docs/28 批 4⑩）
 metadata: object                # 附加信息，缺省 {}（PG 列名 meta，JSONB）
-created_at: string              # UTC ISO-8601；两档均 TEXT 存 Python ISO 字符串（对齐迁移 002）；v1 不可变（只追加/删，无 update）
+created_at: string              # UTC ISO-8601；两档均 TEXT 存 Python ISO 字符串（对齐迁移 002）；创建后不变。白名单字段（kind/content/scope/confidence/metadata）可经 PUT 手动改（source 归 manual、content 变重算 embedding），id/created_at 不变（docs/28 批 4⑩，原「v1 不可变无 update」口径已订正）
 # embedding: number[256]        # 内部字段，LocalDeterministicEmbedder 产出，不进 API 响应
 ```
-> 第九个 Repository `MemoryRepository`（remember/recall/list/delete/clear，RESET_RESETTABLE）：进程内 `MemoryStore` + PG/pgvector `PgMemoryStore` 两档，租户分区（构造期注入 tenant_id，不进方法签名/资源 JSON）。`EmbeddingProvider` Protocol + 本地确定性 embedder（EMBED_DIM=256、signed hashing、中文 unigram+bigram、纯 stdlib、离线且回放确定；商业 embedding 缓做 D35）；PG 迁移 `006_memory.sql` vector(256)+ivfflat(lists=100)、`embedding <=> CAST(:q AS vector(256))` 余弦（score=1−distance）、`scope @> CAST(:scope AS jsonb)` 子集（SQLAlchemy text() 中 `:p::type` 与绑定参数冲突，故用 CAST）。本地词法向量只验证机制与接缝、非真实语义。权威设计见 docs/26 §2–§4。
+> 第九个 Repository `MemoryRepository`（remember/recall/list/**update**/delete/clear，RESET_RESETTABLE；docs/28 批 4⑩ 起加 `update(memory_id, **fields) -> dict | None`：白名单字段合并、source 归 manual、content 变才重算 embedding，不存在/他租户返 None）：进程内 `MemoryStore` + PG/pgvector `PgMemoryStore` 两档，租户分区（构造期注入 tenant_id，不进方法签名/资源 JSON）。`EmbeddingProvider` Protocol + 本地确定性 embedder（EMBED_DIM=256、signed hashing、中文 unigram+bigram、纯 stdlib、离线且回放确定；商业 embedding 缓做 D35）；PG 迁移 `006_memory.sql` vector(256)+ivfflat(lists=100)、`embedding <=> CAST(:q AS vector(256))` 余弦（score=1−distance）、`scope @> CAST(:scope AS jsonb)` 子集（SQLAlchemy text() 中 `:p::type` 与绑定参数冲突，故用 CAST）。本地词法向量只验证机制与接缝、非真实语义。权威设计见 docs/26 §2–§4。
 
 ### `memory_remember` / `memory_recall` — 工具契约（**M11 已落码收口 2026-09-19**，commit `58d936c`；`memory` Harness 适配器，adapter_id/type="memory"；零新节点、零 DSL/编译器改动；图接入须把 `memory` 加入 loader GENERIC_JSON_ADAPTERS）
 
@@ -917,4 +962,4 @@ input:  {query: string（必填，支持 {{变量}}）, kind?: enum[fact,prefere
          scope?: {string:string}, top_k?: int 1-20=5, min_score?: number 0-1=0}
 output: {results: [{id, kind, content, score: number, confidence, scope, created_at}]}  # 无命中 results=[]
 ```
-> 走现有 tool_call/harness 链路（params 由 M3 FormRenderer 按 input_schema 自动生成、M2 变量补全零额外）；schema 守 Capability keyword 白名单（无 x- 扩展）。装配照 message 两段式：全局注册仅供发现，`_runtime_registry` 按租户克隆注入 `services.memory_store`。REST：`GET /api/memories`（viewer+，kind 过滤）、`GET /api/memories/search?q=`（viewer+，q 空 422）、`DELETE /api/memories/{id}`（**admin**，跨租户 404）；**写入不开 REST**（只走图工具）。docs/12 原 `GET/PUT /api/memories/{operator_id}` 据此订正为按租户、operator 降为 `scope.user_id`。错误码：repo 缺省的发现实例执行期返 `MEMORY_NOT_CONFIGURED`、入参校验失败折 `MEMORY_INVALID_INPUT`；tool_call 成功后节点输出包一层 `{"result": <工具 output>, "action_status": "SUCCESS"}`。working/summary/case 层、自动提取、决策隐式注入、PII/更新策略均缓做（D35）。
+> 走现有 tool_call/harness 链路（params 由 M3 FormRenderer 按 input_schema 自动生成、M2 变量补全零额外）；schema 守 Capability keyword 白名单（无 x- 扩展）。装配照 message 两段式：全局注册仅供发现，`_runtime_registry` 按租户克隆注入 `services.memory_store`。REST：`GET /api/memories`（viewer+，kind 过滤）、`GET /api/memories/search?q=`（viewer+，q 空 422）、`DELETE /api/memories/{id}`（**admin**，跨租户 404）；docs/28 批 4⑩（2026-09-20 `ec0fd81`）起**开 `POST /api/memories` 与 `PUT /api/memories/{id}`（均 operate，source 固定 manual，白名单字段、extra forbid、空体 PUT 422、不存在/他租户 404）**——图工具仍是运行时自动写入主路径，REST 仅手动新建/编辑，删除仍仅 admin。docs/12 原 `GET/PUT /api/memories/{operator_id}` 据此订正为按租户、operator 降为 `scope.user_id`。错误码：repo 缺省的发现实例执行期返 `MEMORY_NOT_CONFIGURED`、入参校验失败折 `MEMORY_INVALID_INPUT`；tool_call 成功后节点输出包一层 `{"result": <工具 output>, "action_status": "SUCCESS"}`。working/summary/case 层、自动提取、决策隐式注入、PII/更新策略均缓做（D35）。
