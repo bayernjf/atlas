@@ -342,6 +342,7 @@ def _make_executor(
                         emit=emit,
                         subgraph_path=subgraph_path,
                         is_cancelled=is_cancelled,
+                        debug_controller=debug_controller,
                     )
                 elif tool_mocks is not None and node.id in tool_mocks:
                     # Mock 回放（docs/28 §2.2）：以录制桩 output 替代真实适配器调用，
@@ -534,7 +535,14 @@ def _namespaced_emit(parent: EventCallback, path: tuple[str, ...]) -> EventCallb
 
     def _emit(event: dict[str, Any]) -> None:
         try:
-            if event.get("type") not in ("node_start", "node_end"):
+            # docs/28 §3.3：子层调试 paused/debug_log 同样上屏（附 subgraphPath）；
+            # run_end/result/stopped/error/cancelled 等终帧仍吞，整图终帧唯一。
+            if event.get("type") not in (
+                "node_start",
+                "node_end",
+                "paused",
+                "debug_log",
+            ):
                 return
             if event.get("subgraphPath"):
                 parent(event)
@@ -560,12 +568,17 @@ def _execute_subgraph(
     emit: EventCallback | None = None,
     subgraph_path: tuple[str, ...] = (),
     is_cancelled: Callable[[], bool] | None = None,
+    debug_controller: Any = None,
 ) -> tuple[dict[str, Any], str]:
     """进程内重入执行被引用子图（04 §5.7）；任何异常 fail-safe 为 failed，父 run 仍 completed。"""
     graph_ref = str(node.config.get("graphId", ""))
     # A 包（docs/27 §3.1）：本 subgraph 节点在父图中的完整路径，子层内部事件据此上屏。
     child_path = (*subgraph_path, node.id)
     child_emit = _namespaced_emit(emit, child_path) if emit is not None else None
+    # docs/28 §3.3：子层复用同一 controller/session，仅把其 emit 换成本层命名空间回调，
+    # 使子层 paused/debug_log 帧附 subgraphPath；同线程顺序重入，finally 弹栈恢复。
+    if debug_controller is not None and child_emit is not None:
+        debug_controller.push_namespaced_emit(child_emit)
     mapping = node.config.get("inputs") or {}
     child_inputs = {key: interpolate(str(value), context) for key, value in mapping.items()}
     # M10：subgraph span（非 internal，折叠后代表整段子图）；子图内部节点 span 标 internal。
@@ -600,10 +613,12 @@ def _execute_subgraph(
                 tracer=tracer,
                 now_override=now,
                 is_cancelled=is_cancelled,
+                debug_controller=debug_controller,
                 _parent_span=sub_span if isinstance(sub_span, Span) else None,
             )
-    except RunCancelled:
-        # 取消须穿透子图 fail-safe 兜底，冒泡终止整图（docs/27 §4.1）。
+    except (RunCancelled, DebugStopped):
+        # 取消与调试急停/异常断点 stop 均须穿透子图 fail-safe 兜底，冒泡终止整图
+        # （docs/27 §4.1 修 RunCancelled；docs/28 §3.2/§3.3 补 DebugStopped）。
         if isinstance(sub_span, Span):
             sub_span.end("error")
         raise
@@ -619,6 +634,9 @@ def _execute_subgraph(
             "trace": [],
         }
         return output, f"{node.id}: {graph_ref} failed: {exc}"
+    finally:
+        if debug_controller is not None and child_emit is not None:
+            debug_controller.pop_namespaced_emit()
 
     output = {
         "mode": "subgraph",

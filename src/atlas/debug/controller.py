@@ -33,6 +33,17 @@ class DebugController:
         self._session = session
         self._emit = emit
         self._is_cancelled = is_cancelled
+        # docs/28 §3.3：子图重入时压入命名空间 emit（paused/debug_log 附 subgraphPath），
+        # 同线程顺序重入、finally 弹出；session/门闩仍唯一共享。
+        self._emit_stack: list[EventCallback] = []
+
+    def push_namespaced_emit(self, namespaced: EventCallback) -> None:
+        self._emit_stack.append(self._emit)
+        self._emit = namespaced
+
+    def pop_namespaced_emit(self) -> None:
+        if self._emit_stack:
+            self._emit = self._emit_stack.pop()
 
     def before_node(self, node: Any, state: dict[str, Any], *, now: datetime | None = None) -> None:
         session = self._session
