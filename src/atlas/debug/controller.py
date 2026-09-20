@@ -41,6 +41,9 @@ class DebugController:
             session.cancelled = True
             raise DebugStopped(node.id)
 
+        # docs/28 §3.1：登记「自上次暂停以来到达 before 的节点」（当前节点逻辑尚未执行）。
+        session.mark_node(node.id)
+
         decision = self._classify_hit(node.id, state, now)
         if decision is None:
             return
@@ -52,11 +55,14 @@ class DebugController:
             return
 
         reason = decision[1]
+        globals_now = state["variables"].get("global", {})
+        # docs/28 §3.1：暂停成立先沉淀 global 顶层键变化历史，再入暂停。
+        session.snapshot_change(node_id=node.id, reason=reason, globals_=globals_now)
         token = session.request_pause(
             node_id=node.id,
             node_type=node.type,
             reason=reason,
-            globals=state["variables"].get("global", {}),
+            globals=globals_now,
             outputs=state["outputs"],
         )
         frame = session.frame(token)
@@ -79,6 +85,8 @@ class DebugController:
             globals_ = variables.setdefault("global", {})
             if isinstance(globals_, dict):
                 globals_.update(overrides)
+                # 用户手动改写同步进历史基线，不被记为运行变化（docs/28 §3.1）。
+                session.seed_baseline(globals_)
 
     def _classify_hit(
         self, node_id: str, state: dict[str, Any], now: datetime | None = None
