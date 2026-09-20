@@ -4,7 +4,7 @@
 
 ## [Unreleased]
 
-### docs(contracts)：工程内可闭环缓做项 11 项打包 docs-only 立项（2026-09-20，D26/D27/D28/D35/D21 部分取回，形状权威 docs/28，0 落码）
+### docs(contracts)：工程内可闭环缓做项 11 项打包 docs-only 立项（2026-09-20，单原子 `b0d8023`，D26/D27/D28/D35/D21 部分取回，形状权威 docs/28，0 落码）
 
 - C+A+B 收口（后端 712/前端 472）后，用户拍板「能一起推进的话，一起搞了」：把 11 项**不依赖外部真实世界、工程内可闭环**的缓做余部一次打包，全部取**进程内 v1 形态**，零新依赖、不新增 ADR、**不解除任何缓做条目**（docs/14 仅加部分取回注记）。新建 docs/28 形状权威（10 章：§0 八条已拍板、§1 范围表/非目标、§2–§5 四批设计、§6 REST/SSE/Schema 汇总、§7 前端落点、§8 原子序与 U139–U186 候选、§9 契约同步矩阵、§10 风险）。
 - **批 1 D26 四项**：①迁移 008 修 PG 档 recordings 富字段缺口（recordings 加 graph_id/subgraphs、PgRecordingStore 四读写路径与 Repository 协议同步；现状 PG 档「录为用例」500、d26_smoke 仅内存档全过）；②Mock 工具响应回放（run_graph 全链透传 tool_mocks，键＝节点 id、值＝录制原始 output；仅单用例 replay 端点 body `{mock_tools?,inputs_override?}`，发布门禁不接、子图不传、桩不发 span/tool_metric）；③PUT /api/recordings/{id} 仅 name/inputs 可改＋回放入参浅合并覆写；④GET /api/release-reports 跨图看板（ReportStore.list_all_summary 进程内 ring 不 PG 化＋Monitoring Card）。
