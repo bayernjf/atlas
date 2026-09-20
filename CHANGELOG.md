@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### feat(i18n)：M12 续批——dashboard namespace 首批生产接线（2026-09-20，U219–U221 转正式，D12 部分取回续批不解除）
+
+- M12 骨架的非 common namespace 此前只在单测里跑过、生产零调用；本批首次在真实页面接通第二个 namespace（登录后落地页 Dashboard）。
+- `zh-CN/dashboard.json` 填 demo.title/description/cards.graph·loop·harness；`zh-CN/common.json` 增补跨页通用 brand.appName 与 nav.openEditor/monitoring/memory；`pages/Dashboard.tsx` 改 `useTranslation('dashboard')`，页面文案走默认 ns、品牌名与主导航经显式 `common:` 前缀跨取；Graph/Loop/Harness 技术专名 Card title 按 docs/17 §2.5 保留英文；`en-US/dashboard.json` 仍空 `{}`。
+- i18n 纯函数测试 13→16（U219 dashboard ns 解析、U220 `common:` 前缀跨取、U221 en-US 空骨架 zh-CN 回退）。
+- 验证：前端 **498 passed/2 skipped/40 文件**（净增 3）、tsc+vite build 过、oxlint **0 error/2 既有 warning**；后端零改动 **782 passed/24 skipped 不变**；真实浏览器 admin-a 登录后 Dashboard 品牌名/三导航按钮/Demo 标题描述/三卡中文零视觉差异，1 截图 `docs/assets/m12-dashboard.png`。同步面：docs/17 §4、08 续批收口条、14 D12、13 U219–U221、09 locales 树、handoff。边界不变：不引 i18next/不做切换 UI/不翻译 en-US/不接 AntD locale/不动后端错误码；editor（1359 行）/Monitoring/Memory 大页面留后续触发批分批抽取。
+
 ### feat(i18n)：M12 零依赖文案抽取骨架落码收口（2026-09-20，两原子 `9f1963f`/`a894fa7`，U212–U218 转正式，D12 部分取回不解除）
 
 - 立项（`3197e07`）后按零依赖＋样板先行落码，**不引入 i18next/react-i18next**、无语言切换 UI、无 en-US 翻译、后端零改动。

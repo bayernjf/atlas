@@ -1,1 +1,11 @@
-{}
+{
+  "demo": {
+    "title": "W9-W10 端到端 Demo：电商退款自动化",
+    "description": "选择退款单一键运行：AI 按退款原因与审批限额决策自动退款或转人工，画布实时显示节点进度；也可用自然语言生成退款流程草稿。",
+    "cards": {
+      "graph": "退款流程经 DSL → LangGraph 编译运行，节点事件 SSE 实时上屏",
+      "loop": "OODA 最小循环已跑通",
+      "harness": "契约/注册层 + Playwright Web 适配器（三层定位）已跑通"
+    }
+  }
+}

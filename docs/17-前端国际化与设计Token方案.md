@@ -140,6 +140,7 @@ frontend/src/theme/setup.ts    # main.tsx 引入一次，把 semantic 注入 :ro
 |---|---|---|
 | 设计 Token 等价替换（tokens.ts + CSS 变量 + AntD theme） | ✅ 2026-09-13 已落码（本节 §3.5） | §3 |
 | 零依赖文案抽取骨架（自写 t()/useTranslation 对齐 i18next 签名 + zh-CN/common 样板 + 登录页/UserBadge 接线，余 namespace 与 en-US 空对象占位） | ✅ 2026-09-20 M12 落码收口（`9f1963f`/`a894fa7`，U212–U218，前端 495/40 文件，浏览器两截图 m12-login/userbadge；不装 i18next，触发时零返工替换） | §2.3 |
+| dashboard namespace 首批生产接线（登录后落地页 Dashboard：demo.* 走 dashboard ns，品牌名/主导航入 common 经 `common:` 前缀跨取；Graph/Loop/Harness 技术专名按 §2.5 不译，en-US/dashboard 仍空） | ✅ 2026-09-20 M12 续批落码（U219–U221，前端 498/40 文件，截图 m12-dashboard；editor/Monitoring/Memory 大页面留后续分批） | §2.3/§2.5 |
 | i18n 库引入 + zh-CN 抽取 + en-US 骨架 | 触发式：首个英文使用者/明确出海需求（14 D12） | §2.2 |
 | 完整英文翻译 | 随首个英文客户试用 | §2.3 |
 | 组件/模板描述多语言 | Phase 2 模板库（14 D13） | 04 §28 第 3 条 |
