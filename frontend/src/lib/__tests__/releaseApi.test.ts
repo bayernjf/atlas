@@ -3,6 +3,7 @@ import {
   GateBlockedError,
   exportReleaseReport,
   getReleaseReport,
+  getSubgraphUpgrades,
   getRollout,
   listReleaseReports,
   listVersions,
@@ -226,3 +227,26 @@ describe('runGraph 入站事件与钉版（M9）', () => {
     expect(body.event).toBeUndefined()
   })
 })
+
+describe('子图版本升级体检 apiClient（⑪）', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('getSubgraphUpgrades 发 GET 并解包 items', async () => {
+    const items = [
+      { node_id: 'n1', sub_id: 'graph-2', from_version: null, to_version: 1, first_pin: true },
+      { node_id: 'n2', sub_id: 'graph-3', from_version: 1, to_version: 2, first_pin: false },
+    ]
+    stubFetch({ items })
+    const plan = await getSubgraphUpgrades('graph-1')
+    expect(plan).toHaveLength(2)
+    expect(plan[0].first_pin).toBe(true)
+    expect(plan[1].from_version).toBe(1)
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toBe(
+      '/api/graphs/graph-1/subgraph-upgrades',
+    )
+    expect(vi.mocked(fetch).mock.calls[0][1]?.method).toBeUndefined() // GET
+  })
+})
+

@@ -6,12 +6,14 @@ import {
   exportReleaseReport,
   getReleaseReport,
   listReleaseReports,
+  getSubgraphUpgrades,
   publishGraph,
   runReleaseGate,
   type GateCaseRow,
   type GateReport,
   type ReleaseReport,
   type ReleaseReportSummary,
+  type SubgraphUpgrade,
 } from '../../lib/apiClient'
 import {
   GATE_CONCLUSION_META,
@@ -45,6 +47,21 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
   // D26 报告 v1：历史报告（倒序摘要）+ 展开行懒加载详情
   const [history, setHistory] = useState<ReleaseReportSummary[]>([])
   const [detailById, setDetailById] = useState<Record<string, ReleaseReport>>({})
+  // ⑪ 子图版本升级体检（只读，与门禁并行加载；失败 fail-safe 不阻断）
+  const [upgrades, setUpgrades] = useState<SubgraphUpgrade[] | null>(null)
+
+  const loadUpgrades = useCallback(async () => {
+    if (!graphId) {
+      setUpgrades(null)
+      return
+    }
+    setUpgrades(null)
+    try {
+      setUpgrades(await getSubgraphUpgrades(graphId))
+    } catch {
+      setUpgrades([])
+    }
+  }, [graphId])
 
   const loadHistory = useCallback(async () => {
     if (!graphId) return
@@ -73,8 +90,11 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
   }, [graphId, loadHistory])
 
   useEffect(() => {
-    if (open) void loadGate()
-  }, [open, loadGate])
+    if (open) {
+      void loadGate()
+      void loadUpgrades()
+    }
+  }, [open, loadGate, loadUpgrades])
 
   const doPublish = async () => {
     if (!graphId) return
@@ -110,6 +130,26 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
     { title: '用例', dataIndex: 'name' },
     { title: '回放终态', dataIndex: 'replay_status', width: 110 },
     { title: '说明', dataIndex: 'note' },
+  ]
+
+  const upgradeColumns: ColumnsType<SubgraphUpgrade> = [
+    { title: '节点', dataIndex: 'node_id', width: 150 },
+    { title: '子图', dataIndex: 'sub_id', width: 170 },
+    {
+      title: '版本变化',
+      render: (_, row) =>
+        row.first_pin || row.from_version === null ? (
+          <Tag color="blue">首次钉版 @{row.to_version}</Tag>
+        ) : (
+          <Space size={4}>
+            <Tag>@{row.from_version}</Tag>
+            <span>→</span>
+            <Tag color={row.to_version > (row.from_version ?? 0) ? 'orange' : 'default'}>
+              @{row.to_version}
+            </Tag>
+          </Space>
+        ),
+    },
   ]
 
   const doExport = async (row: ReleaseReportSummary, format: 'csv' | 'json') => {
@@ -256,6 +296,28 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
             showIcon
             message={`门禁通过：${report.passed}/${report.total} 个用例全部一致，可发布。`}
           />
+        )}
+        {upgrades !== null && (
+          <div>
+            <Space style={{ justifyContent: 'space-between', width: '100%' }}>
+              <Text strong>子图版本升级体检</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                发布将把子图引用钉到对应版本；升级后建议先跑门禁回归再发布（只读，不检测子图草稿改动）
+              </Text>
+            </Space>
+            {upgrades.length === 0 ? (
+              <Text type="secondary">本次发布无子图版本变化</Text>
+            ) : (
+              <Table
+                rowKey="node_id"
+                size="small"
+                pagination={false}
+                dataSource={upgrades}
+                columns={upgradeColumns}
+                style={{ marginTop: 8 }}
+              />
+            )}
+          </div>
         )}
         <Table
           rowKey="case_id"

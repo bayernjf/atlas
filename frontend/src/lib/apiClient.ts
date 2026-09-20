@@ -924,6 +924,22 @@ export async function runReleaseGate(graphId: string): Promise<GateReport> {
   return request(`/api/graphs/${graphId}/release-gate`, { method: 'POST' })
 }
 
+/** docs/28 §5.2 ⑪：发布前子图版本升级体检（只读，不产版本、不阻断）。 */
+export type SubgraphUpgrade = {
+  node_id: string
+  sub_id: string
+  from_version: number | null
+  to_version: number
+  first_pin: boolean
+}
+
+export async function getSubgraphUpgrades(graphId: string): Promise<SubgraphUpgrade[]> {
+  const body = await request<{ items: SubgraphUpgrade[] }>(
+    `/api/graphs/${graphId}/subgraph-upgrades`,
+  )
+  return body.items
+}
+
 /** D26 报告 v1：本图批量回放报告历史（倒序摘要，不含逐例 cases） */
 export async function listReleaseReports(graphId: string): Promise<ReleaseReportSummary[]> {
   const body = await request<{ items: ReleaseReportSummary[] }>(
@@ -1080,4 +1096,24 @@ export async function searchMemories(
 
 export async function deleteMemory(id: string): Promise<void> {
   await request(`/api/memories/${id}`, { method: 'DELETE' })
+}
+
+/** docs/28 §5.1 ⑩：手动新建/编辑记忆入参（source 由后端固定 manual，不在此传）。 */
+export type MemoryWritePayload = {
+  kind: MemoryKind
+  content: string
+  scope?: Record<string, string>
+  confidence?: number
+  metadata?: Record<string, string>
+}
+
+export async function createMemory(payload: MemoryWritePayload): Promise<MemoryItem> {
+  return request('/api/memories', { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export async function updateMemory(
+  id: string,
+  payload: Partial<MemoryWritePayload>,
+): Promise<MemoryItem> {
+  return request(`/api/memories/${id}`, { method: 'PUT', body: JSON.stringify(payload) })
 }
