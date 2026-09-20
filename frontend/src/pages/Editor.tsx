@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Alert,
   Button,
@@ -28,6 +28,8 @@ import { useEditorStore } from '../store/editorStore'
 import { useValidationEngine } from '../lib/validation/useValidationEngine'
 import { serializeGraph } from '../lib/graphSerializer'
 import { toSteps } from '../lib/recordings'
+import { isSubgraphInternal, subgraphPathPrefix, subgraphPathLabel } from '../lib/subgraphEvents'
+import { parseGlobalsDraft } from '../lib/debugOverrides'
 import {
   compileGraph,
   decideApproval,
@@ -44,7 +46,9 @@ import {
   saveRecording,
   streamRun,
   resumeDebug,
+  cancelActiveRun,
   DebugRunStoppedError,
+  RunCancelledError,
   type ApprovalRequest,
   type CompileResult,
   type DebugAction,
@@ -98,7 +102,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
   const [compileResult, setCompileResult] = useState<CompileResult | null>(null)
   const [runResult, setRunResult] = useState<RunResult | null>(null)
   const [pendingApprovals, setPendingApprovals] = useState<
-    Array<ApprovalRequest & { nodeId: string }>
+    Array<ApprovalRequest & { nodeId: string; subgraphPath?: string[] }>
   >([])
   const [approvalBusy, setApprovalBusy] = useState(false)
   const [approvalError, setApprovalError] = useState<string | null>(null)
@@ -116,6 +120,19 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
   const [pausedFrame, setPausedFrame] = useState<PausedFrame | null>(null)
   const [resumeBusy, setResumeBusy] = useState<DebugAction | null>(null)
   const [varFilter, setVarFilter] = useState('')
+  // B 包（docs/27 §4.3）：暂停 Modal 内 globals 可编辑草稿，step/continue 浅合并写回。
+  const [globalsDraft, setGlobalsDraft] = useState('')
+  const [globalsError, setGlobalsError] = useState<string | null>(null)
+
+  // 切换到新的暂停 token 时用最新只读快照预填草稿；编辑过程中不覆盖。
+  const pausedToken = pausedFrame?.token
+  useEffect(() => {
+    if (pausedFrame) {
+      setGlobalsDraft(JSON.stringify(pausedFrame.globals, null, 2))
+      setGlobalsError(null)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pausedToken])
   const [releaseOpen, setReleaseOpen] = useState(false)
   const [rolloutOpen, setRolloutOpen] = useState(false)
   const [releaseGraphId, setReleaseGraphId] = useState<string | null>(null)
@@ -138,7 +155,15 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
             .filter(([nodeId]) => nodes.some((node) => node.id === nodeId))
             .map(([node_id, breakpoint]) => {
               const expression = breakpoint.expression?.trim()
-              return expression ? { node_id, expression } : { node_id }
+              const logMessage = breakpoint.logMessage?.trim()
+              return {
+                node_id,
+                ...(expression ? { expression } : {}),
+                ...(breakpoint.hitCount && breakpoint.hitCount >= 1
+                  ? { hitCount: breakpoint.hitCount }
+                  : {}),
+                ...(logMessage ? { logMessage } : {}),
+              }
             }),
         }
       : undefined
@@ -192,16 +217,34 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
         } else if (event.type === 'stopped') {
           setPausedFrame(null)
           setNodeStatus(event.node_id, 'idle')
+        } else if (event.type === 'cancelled') {
+          // 普通流急停终帧：复位暂停态；提示语在 catch RunCancelledError 统一记，避免重复。
+          setPausedFrame(null)
+        } else if (event.type === 'debug_log') {
+          const logPrefix = subgraphPathPrefix(event.subgraphPath)
+          appendLog(
+            `📝 ${logPrefix}${event.node_id} 日志断点（第 ${event.hits} 次）：${event.message}`,
+          )
         } else if (event.type === 'node_start') {
-          setNodeStatus(event.node_id, 'running')
-          appendLog(`▶ 节点开始：${event.node_id}`)
+          // A 包（docs/27 §3.3）：子图内部节点事件带 subgraphPath，日志加路径前缀，
+          // 不写父图节点状态表（父 subgraph 节点由其自身无路径事件驱动高亮）。
+          const startPath = event.subgraphPath ?? []
+          const startInSubgraph = isSubgraphInternal(event.subgraphPath)
+          const startPrefix = subgraphPathPrefix(event.subgraphPath)
+          if (!startInSubgraph) setNodeStatus(event.node_id, 'running')
+          appendLog(`▶ ${startPrefix}节点开始：${event.node_id}`)
           if (event.approval) {
             const approval = event.approval
-            setPendingApprovals((items) => [...items, { ...approval, nodeId: event.node_id }])
-            appendLog(`⏸ ${event.node_id} 等待人工审批：${approval.summary}`)
+            setPendingApprovals((items) => [
+              ...items,
+              { ...approval, nodeId: event.node_id, subgraphPath: startPath },
+            ])
+            appendLog(`⏸ ${startPrefix}${event.node_id} 等待人工审批：${approval.summary}`)
           }
         } else if (event.type === 'node_end') {
-          setNodeStatus(event.node_id, 'completed')
+          const endInSubgraph = isSubgraphInternal(event.subgraphPath)
+          const endPrefix = subgraphPathPrefix(event.subgraphPath)
+          if (!endInSubgraph) setNodeStatus(event.node_id, 'completed')
           const output = event.output as {
             decision?: { action?: string }
             branch?: string
@@ -217,6 +260,25 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
             branches?: Array<{ label: string; target: string; status: string; error: string }>
             action_status?: string
             result?: { status?: unknown; code?: string; message?: string }
+          }
+          // A 包：子图内部节点只记带路径前缀的日志，不进入父图节点的富模式渲染；
+          // 子图内审批仍要消除其 pending Modal（按内部 node_id 匹配）。
+          if (endInSubgraph) {
+            if (output?.mode === 'human_approval') {
+              const subHumanDecision = output.decision as unknown as 'approved' | 'rejected'
+              const subDecisionLabel = subHumanDecision === 'approved' ? '通过' : '拒绝'
+              const subSourceLabel =
+                { human: '人工', timeout: '超时', input: '预置' }[output.resolvedBy ?? ''] ??
+                output.resolvedBy
+              appendLog(
+                `✓ ${endPrefix}${event.node_id} 人工审批：${subDecisionLabel}（${subSourceLabel}）→ ${output.target}`,
+              )
+              setPendingApprovals((items) => items.filter((item) => item.nodeId !== event.node_id))
+              setApprovalError(null)
+            } else {
+              appendLog(`✓ ${endPrefix}节点完成：${event.node_id}`)
+            }
+            return
           }
           const decision = output?.decision
           if (output?.mode === 'human_approval') {
@@ -311,6 +373,8 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
     } catch (error) {
       if (error instanceof DebugRunStoppedError) {
         appendLog(`调试已停止：${error.nodeId}（无运行结果）`)
+      } else if (error instanceof RunCancelledError) {
+        appendLog(`⏹ 运行已急停：${error.nodeId}（协作式取消，无运行结果）`)
       } else {
         const message = error instanceof Error ? error.message : String(error)
         setRunError(message)
@@ -516,15 +580,55 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
     setPendingApprovals((items) => items.filter((item) => item.token !== currentApproval.token))
   }
 
+  function parseGlobalsOverride(): Record<string, unknown> | null {
+    const result = parseGlobalsDraft(globalsDraft)
+    if (!result.ok) {
+      setGlobalsError(result.error)
+      return null
+    }
+    setGlobalsError(null)
+    return result.value
+  }
+
   async function resumeCurrentDebug(action: DebugAction) {
     const frame = pausedFrame
     if (!frame) return
+    let globals: Record<string, unknown> | undefined
+    if (action !== 'stop') {
+      const parsed = parseGlobalsOverride()
+      if (parsed === null) return // JSON/键名校验未过，不发请求（后端会再校验一次）
+      globals = parsed
+    }
     setResumeBusy(action)
     try {
-      await resumeDebug(frame.token, action)
+      await resumeDebug(frame.token, action, globals)
     } catch (error) {
       appendLog(`✗ 调试放行失败：${error instanceof Error ? error.message : String(error)}`)
       setResumeBusy(null)
+    }
+  }
+
+  // B 包（docs/27 §4.1）协作式急停：调试暂停中走 stop；普通在途运行调 cancel 端点，
+  // 下一节点边界生效，不在 wait/approval/tool 阻塞中点强杀。
+  async function handleEmergencyStop() {
+    if (pausedFrame) {
+      await resumeCurrentDebug('stop')
+      return
+    }
+    const activeGraphId = draftGraphId ?? publishedRef?.id
+    if (!activeGraphId) {
+      appendLog('当前没有在途运行可取消')
+      return
+    }
+    try {
+      const cancelled = await cancelActiveRun(activeGraphId)
+      if (cancelled) {
+        appendLog(`⏹ 已请求急停 ${cancelled.runId}（下一节点边界生效）`)
+      } else {
+        appendLog('当前没有在途运行可取消（可能已结束）')
+      }
+    } catch (error) {
+      appendLog(`✗ 急停失败：${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -579,6 +683,11 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
               <Button type="primary" loading={running} onClick={() => compileAndRun()}>
                 编译并运行
               </Button>
+              {running && (
+                <Button danger onClick={handleEmergencyStop}>
+                  急停
+                </Button>
+              )}
             </>
           )}
         </Space>
@@ -844,7 +953,18 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
           <Space orientation="vertical" size={8} style={{ width: '100%' }}>
             <div>
               <Typography.Text type="secondary">节点</Typography.Text>
-              <div>{currentApproval.nodeId}</div>
+              <div>
+                {currentApproval.subgraphPath && currentApproval.subgraphPath.length > 0
+                  ? `[${subgraphPathLabel(currentApproval.subgraphPath)}] ${currentApproval.nodeId}`
+                  : currentApproval.nodeId}
+              </div>
+              {currentApproval.subgraphPath && currentApproval.subgraphPath.length > 0 && (
+                <div>
+                  <Typography.Text type="secondary">
+                    子图内审批（所属 subgraph 节点：{subgraphPathLabel(currentApproval.subgraphPath)}）
+                  </Typography.Text>
+                </div>
+              )}
             </div>
             {currentApproval.cardTemplateId ? (
               <ApprovalCardGate
@@ -934,10 +1054,24 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
               onChange={(event) => setVarFilter(event.target.value)}
             />
             <div>
-              <Typography.Text type="secondary">全局变量 globals（只读快照）</Typography.Text>
-              <pre className="debug-toolbar-json">
-                {JSON.stringify(filterSnapshot(pausedFrame.globals, varFilter), null, 2)}
-              </pre>
+              <Typography.Text type="secondary">
+                全局变量 globals（可编辑 JSON；下一步/继续时浅合并写回，停止忽略）
+              </Typography.Text>
+              <TextArea
+                size="small"
+                autoSize={{ minRows: 3, maxRows: 10 }}
+                value={globalsDraft}
+                status={globalsError ? 'error' : undefined}
+                onChange={(event) => setGlobalsDraft(event.target.value)}
+              />
+              {globalsError && (
+                <Typography.Text type="danger">{globalsError}</Typography.Text>
+              )}
+              {varFilter ? (
+                <pre className="debug-toolbar-json">
+                  {JSON.stringify(filterSnapshot(pausedFrame.globals, varFilter), null, 2)}
+                </pre>
+              ) : null}
             </div>
             <div>
               <Typography.Text type="secondary">节点产出 outputs（只读快照）</Typography.Text>

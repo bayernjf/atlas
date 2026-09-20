@@ -4,9 +4,10 @@
 """
 
 from collections.abc import Callable
+from datetime import datetime, timezone
 from typing import Any
 
-from .cases import RecordStep
+from .cases import RecordStep, RecordingCase
 
 _VOLATILE_KEYS = ("token", "sent_at")
 # M10：span 元数据键（随机 id/版本标注）不参与录制回放逐节点比对（04 §5.15、U52）。
@@ -142,7 +143,9 @@ def collect_steps() -> tuple[Callable[[dict[str, Any]], None], Callable[[], list
     collected: list[RecordStep] = []
 
     def emit(event: dict[str, Any]) -> None:
-        if event.get("type") == "node_end":
+        # A 包（docs/27 §3.2/§10.1）：子图内部 node_end 带 subgraphPath，录制/回放步骤只
+        # 统计顶层节点（子图结果由 subgraph 节点自身 node_end 体现），与 baseline 口径一致。
+        if event.get("type") == "node_end" and not event.get("subgraphPath"):
             collected.append(
                 RecordStep(
                     node_id=event["node_id"],
@@ -155,3 +158,21 @@ def collect_steps() -> tuple[Callable[[dict[str, Any]], None], Callable[[], list
         return dedupe_steps(collected)
 
     return emit, take_steps
+
+
+def clock_anchor(case: RecordingCase) -> tuple[datetime | None, str | None]:
+    """C（docs/27 §2.4）：取回放冻结时钟锚点。
+
+    优先 recorded_at，回退 created_at；解析失败/缺失返回 (None, note)，
+    调用方据此退回真实时钟并在报告标注 today()/now() 时间分支可能漂移。
+    """
+    raw = case.recorded_at or getattr(case, "created_at", None)
+    if not raw:
+        return None, "用例缺少 recorded_at/created_at，回放使用真实时钟（today()/now() 时间分支可能漂移）"
+    try:
+        anchor = datetime.fromisoformat(raw)
+    except ValueError:
+        return None, f"时钟锚点无法解析（{raw}），回放使用真实时钟（时间分支可能漂移）"
+    if anchor.tzinfo is None:
+        anchor = anchor.replace(tzinfo=timezone.utc)
+    return anchor.astimezone(timezone.utc), None

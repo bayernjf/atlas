@@ -543,17 +543,54 @@ def evaluate_after_run(services: TenantServices, record: RunRecord) -> None: ...
 
 ## 4. 记忆检索接口（依据 06 6.2 / 05 2.3）
 
+> **M11 实现边界（2026-09-19 已落码收口；权威＝docs/26、ADR T23）**：下列 `memory_retriever.query` 五层分层检索为**愿景**（working Redis / summary / fact pgvector / case / preference + 决策节点隐式注入），v1 不实现，缓做 14 D35。M11 取回的是下方「4.1 M11 长期记忆最小接口」——统一 memory_item（fact/preference）+ 显式 remember/recall 两工具，**不做决策隐式注入**。
+
 ```python
+# 【愿景，缓做 D35】决策节点隐式分层记忆检索（06 §6.2 decide 第 1 步）
 memory_retriever.query(goal: str, recent_messages: list) -> list
 # 依据 memory_config 分层检索：working_memory(Redis) / summary_memory(PostgreSQL)
 #   / fact_memory(pgvector, confidence≥0.85) / case_memory(相似度阈值) / preference_memory
+```
+
+### 4.1 M11 长期记忆最小接口（docs/26，2026-09-19 已落码 `5441902`/`58d936c`/`73e53bd`）
+
+```python
+# src/atlas/memory/embeddings.py（纯 stdlib：re/hashlib/math，不引 numpy；离线、录制回放确定）
+EMBED_DIM = 256
+class EmbeddingProvider(Protocol):
+    def embed(self, text: str) -> list[float]: ...        # L2 归一化；空文本返零向量
+class LocalDeterministicEmbedder:                         # 沙盘默认：signed hashing trick
+    def embed(self, text: str) -> list[float]: ...        # 英文数字 [a-z0-9]+、中文 unigram+bigram，md5 定桶/奇偶定号
+def cosine_similarity(a, b) -> float: ...                 # 零向量 → 0
+def get_embedding_provider() -> EmbeddingProvider: ...    # 商业 embedding 缓做 D35，仅留 provider 接缝
+
+# src/atlas/storage/base.py：第九个 MemoryRepository（RESET_RESETTABLE；tenant_id 构造期注入，不进方法签名）
+class MemoryRepository(Protocol):
+    def remember(self, *, kind, content, scope=None, confidence=1.0, source="tool", metadata=None) -> dict: ...
+    def recall(self, query, *, kind=None, scope=None, top_k=5, min_score=0.0) -> list[dict]: ...  # 每项=记忆 dict+"score"，降序
+    def list(self, *, kind=None, limit=50) -> list[dict]: ...
+    def delete(self, id: str) -> bool: ...
+    def clear(self) -> None: ...
+# 两档实现：memory/items.py MemoryStore（进程内，mem-N 租户计数）；storage/pg.py PgMemoryStore
+#   （memory_items 表 vector(256)，embedding <=> :q::vector(256) 余弦、scope @> :scope::jsonb，迁移 006_memory.sql）
+
+# src/atlas/memory/adapter.py：MemoryHarnessAdapter(HarnessAdapter)，adapter_id/type="memory"
+#   能力 memory/remember（action=memory_remember，permission=write，非幂等）
+#     input  {kind: enum[fact,preference]*（*必填）, content: string 1-2000*, scope?:{str:str},
+#             confidence?: number 0-1, metadata?:{str:str}}
+#     output {id, kind, content, confidence, source, scope, created_at}
+#   能力 memory/recall（action=memory_recall，permission=read，幂等）
+#     input  {query: string*, kind?: enum, scope?:{str:str}, top_k?: int 1-20=5, min_score?: number 0-1=0}
+#     output {results: [{id, kind, content, score, confidence, scope, created_at}]}  # 无命中 results=[]
+#   schema 守 harness Capability keyword 白名单（无 x- 扩展）；observe() 返空 Observation。
+#   装配照 message 两段式：全局注册仅供发现，_runtime_registry 按租户克隆注入 services.memory_store。
 ```
 
 ## 5. 后端服务 API（依据 08 7.2 /api/main.py FastAPI 入口）
 
 > 以下路径为按 Demo 需求推导的 REST 端点清单，字段以 03/04/05 Schema 为准；正式定义待落码时随 OpenAPI 生成。
 >
-> **鉴权四档（2026-09-16，04 §5.14）**：除标注「公开」者外，端点必须携带 `Authorization: Bearer <sess-token>`，缺失/无效 → 401「缺少或无效的登录凭证」；角色不足 → 403「当前角色无权执行此操作」；访问不存在于本租户的对象（含他租户审批/调试 token）→ 404。**公开**：`POST /api/auth/login`、`GET /api/health`、静态托管、`GET /demo/shop`、`/api/demo/**`（模拟外部系统，沿用 X-Demo-Token/demo 登录自带认证，不经平台鉴权）。**viewer+**（全部登录角色可读）：所有 GET 业务端点（graphs/templates/adapters/recordings/monitoring/alerts/approvals/debug/messages）+ `POST /api/feedback`（人人可提交）。**operator+**：POST/PUT/DELETE/POST 运行类——graphs 保存、compile、run、run/stream、nl/generate、recordings 写/删/replay、approvals 决策、debug resume、alerts acknowledge/resolve、publish 与 release-gate、rollout 配置/start/promote/rollback（M9，对齐发布权限）。**admin only**：`PUT /api/monitoring/rules`、`POST /api/demo/reset`、`GET /api/feedback`。所有业务数据按 token 推断的租户分区（03 各结构租户注记）。
+> **鉴权四档（2026-09-16，04 §5.14）**：除标注「公开」者外，端点必须携带 `Authorization: Bearer <sess-token>`，缺失/无效 → 401「缺少或无效的登录凭证」；角色不足 → 403「当前角色无权执行此操作」；访问不存在于本租户的对象（含他租户审批/调试 token）→ 404。**公开**：`POST /api/auth/login`、`GET /api/health`、静态托管、`GET /demo/shop`、`/api/demo/**`（模拟外部系统，沿用 X-Demo-Token/demo 登录自带认证，不经平台鉴权）。**viewer+**（全部登录角色可读）：所有 GET 业务端点（graphs/templates/adapters/recordings/monitoring/alerts/approvals/debug/messages）+ `POST /api/feedback`（人人可提交）。**operator+**：POST/PUT/DELETE/POST 运行类——graphs 保存、compile、run、run/stream、nl/generate、recordings 写/删/replay、approvals 决策、debug resume、runs/{id}/cancel 急停、alerts acknowledge/resolve、publish 与 release-gate、rollout 配置/start/promote/rollback（M9，对齐发布权限）。**admin only**：`PUT /api/monitoring/rules`、`POST /api/demo/reset`、`GET /api/feedback`。所有业务数据按 token 推断的租户分区（03 各结构租户注记）。
 
 | 方法 | 路径 | 功能 | 关联 |
 |---|---|---|---|
@@ -566,7 +603,7 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 | GET | /api/graphs/{id} | 读取 Graph（latest 草稿；`?releaseVersion=N` 读指定发布版本快照，未知/未发布 404） | — |
 | POST | /api/graphs/{id}/publish | 【operate】发布当前草稿为不可变版本（M6 立项 2026-09-17，docs/20 §4.1 / ADR T19）：冻结 Graph JSON + subgraph 钉版（递归，子图未发布则先递归发布其草稿为 v1），返回 `{id, releaseVersion}`；releaseVersion 从 1 递增、已发布版本只读。**M9 起请求体从无改为可选 `{gate?: boolean}`**：gate=true 先跑发布门禁（下行 release-gate），blocked → **409 带完整 GateReport 且不产新版本** | graph_definition / release_gate |
 | GET | /api/graphs/{id}/versions | 【read】已发布版本列表（M6）：`{items:[<releaseVersion>]}`（升序）；未发布过 → 空列表 | graph_definition |
-| POST | /api/graphs/{id}/release-gate | 【operate，M9 已落码 2026-09-18】发布前批量回放门禁（只跑门禁不发布，D26 部分取回）：对当前 latest 草稿逐例重放 `case.graph_id==id` 的录制用例（复用 replay.compare），返回 GateReport（D26 报告 v1 起纯超集加 `id`＝沉淀报告 rr-N）`{id,graph_id, target:"draft", total, passed, failed, skipped, blocked, cases:[{case_id,name,matches,replay_status,note?}]}`；total=0 时 skipped=true 不阻塞（明示未覆盖），total>0 任一不匹配 blocked=true；图不存在 404。**D26 报告 v1（2026-09-18 已落码）起每次运行沉淀一条 ReleaseReport（trigger=manual，含 skipped）**；publish `{gate:true}` 另沉淀 trigger=publish-gate（通过/blocked 均沉淀，409 报告体带 id） | release_gate / release_report / recording_case |
+| POST | /api/graphs/{id}/release-gate | 【operate，M9 已落码 2026-09-18】发布前批量回放门禁（只跑门禁不发布，D26 部分取回）：对当前 latest 草稿逐例重放 `case.graph_id==id` 的录制用例（复用 replay.compare），返回 GateReport（D26 报告 v1 起纯超集加 `id`＝沉淀报告 rr-N）`{id,graph_id, target:"draft", total, passed, failed, skipped, blocked, cases:[{case_id,name,matches,replay_status,note?,clock_note?}]}`（**C 包 `3415377` 起每例回放冻结到该例 recorded_at〔回退 created_at〕，缺锚点的用例在该 case 项附 `clock_note`**）；total=0 时 skipped=true 不阻塞（明示未覆盖），total>0 任一不匹配 blocked=true；图不存在 404。**D26 报告 v1（2026-09-18 已落码）起每次运行沉淀一条 ReleaseReport（trigger=manual，含 skipped）**；publish `{gate:true}` 另沉淀 trigger=publish-gate（通过/blocked 均沉淀，409 报告体带 id） | release_gate / release_report / recording_case |
 | GET | /api/graphs/{id}/release-reports | 【read，D26 报告 v1 已落码 2026-09-18】本图批量回放报告历史（倒序摘要）：`{items:[{id,graph_id,trigger,total,passed,failed,skipped,blocked,pass_rate,created_at}]}`，不含 cases；图不存在 404，跨租户 404 | release_report |
 | GET | /api/graphs/{id}/release-reports/{rid} | 【read，D26 报告 v1 已落码 2026-09-18】报告详情（含 cases 逐例 ✓/✗/note）；报告不属于该图或不存在 404，跨租户不泄漏存在性 | release_report |
 | GET | /api/graphs/{id}/release-reports/{rid}/export | 【read，D26 收尾批已落码 2026-09-19，`8a37b4e`】导出报告下载，query `format=csv|json`（默认 csv，非法值 422）：JSON 为完整报告 attachment（`rr-N.json`），CSV 为元信息行+空行+逐 case 行（`text/csv; charset=utf-8`、带 UTF-8 BOM 供 Excel，`rr-N.csv`）；`Content-Disposition: attachment`，图不存在/报告跨图或不存在 404 照详情；前端经 Bearer fetch→blob→`a[download]` | release_report |
@@ -579,12 +616,12 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 | GET | /api/templates/{id} | 模板详情：完整 TemplateMeta 含 `graph`（可直接载入画布/保存为新图）；未知 id 404 | template_catalog / graph_definition |
 | GET | /api/cards | 内置交互卡片目录（M8 已落码 2026-09-18，viewer+；只读代码常量，不受 reset 影响）：`{items:[{id,name,channels,sections,actions,fallback?}]}`（CardTemplate 投影，供配置态 card-select 与运行态渲染） | card_template |
 | GET | /api/approvals/{token}/card | 审批卡片按渠道渲染（M8，viewer+）：`?channel=web\|im\|email`（缺省 web），返回 §3.11 对应渠道渲染产物；未知 token 404、该审批未配 cardTemplateId（无卡片）404、非法 channel 422；渲染上下文取挂起时快照（中断恢复后从帧重建）；**只读，不产生决策副作用**（邮件链接为 GET 落地页，决策一律走 POST） | card_template / human_approval |
-| POST | /api/recordings | 录制用例入库（Phase 2 能力项）：请求体 `{name(1-100), graph_id, inputs, steps:[{node_id,node_type,output}], status}`，服务端按 graph_id 取已保存图原始 JSON 作**快照**存入（不重新执行；graph 未知 404、steps 形状非法 422、空 steps 422），201 返回完整 RecordingCase；**M9 起 graph_id 一并落库**（纯超集，旧用例该字段为空串）；**D26-b（2026-09-19，`29bb3d9`）起录制创建时递归收集父图及嵌套子图 raw 入纯超集 `subgraphs:{graphId:raw}`**（深度≤3、visited 防环、引用缺失不阻断录制），单用例 replay 内联优先解析、发布门禁仍实时解析（见 04 §5.11） | recording_case |
+| POST | /api/recordings | 录制用例入库（Phase 2 能力项）：请求体 `{name(1-100), graph_id, inputs, steps:[{node_id,node_type,output}], status}`，服务端按 graph_id 取已保存图原始 JSON 作**快照**存入（不重新执行；graph 未知 404、steps 形状非法 422、空 steps 422），201 返回完整 RecordingCase；**M9 起 graph_id 一并落库**（纯超集，旧用例该字段为空串）；**D26-b（2026-09-19，`29bb3d9`）起录制创建时递归收集父图及嵌套子图 raw 入纯超集 `subgraphs:{graphId:raw}`**（深度≤3、visited 防环、引用缺失不阻断录制），单用例 replay 内联优先解析、发布门禁仍实时解析（见 04 §5.11）；**C 包 `3415377` 起入库即写 `recorded_at`（UTC ISO，与 created_at 同 stamp，回放冻结时钟锚点；端点不重跑 baseline）** | recording_case |
 | GET | /api/recordings | 录制用例列表：`{items:[{id,name,graph_id,node_count,step_count,status,created_at}]}` 投影（M9 起含 graph_id；不含 graph/steps）；进程内存储，reset 不清除 | recording_case |
-| GET | /api/recordings/{id} | 录制用例详情：完整 RecordingCase（含 graph 快照与 steps）；未知 id 404 | recording_case |
+| GET | /api/recordings/{id} | 录制用例详情：完整 RecordingCase（含 graph 快照与 steps、C 包起含 `recorded_at`，旧用例为 null）；未知 id 404 | recording_case |
 | DELETE | /api/recordings/{id} | 删除录制用例；未知 id 404 | recording_case |
-| POST | /api/recordings/{id}/replay | 回放用例：对快照走标准 run_graph（审批决策从 baseline 抽为 inputs.approvals 预置，不挂起），比对操作序列与逐节点归一化产出；返回 `{matches, baseline_status, replay_status, steps:[{node_id,match,note,diff_keys?}]}`；回放异常折叠 replay_status="failed"/matches=false（不抛 500）；未知用例 404 | recording_case |
-| POST | /api/debug/{token}/resume | 恢复调试暂停（Phase 2 能力项）：请求体 `{action:"step"|"continue"|"stop"}`；step=执行当前节点并在下一节点前再停、continue=退出逐节点仅断点停、stop=取消运行（随后收到 stopped 帧、无 result）；首决生效 200，未知 token 404、对已恢复暂停重复提交 409；进程内会话重启即失 | debug_session |
+| POST | /api/recordings/{id}/replay | 回放用例：对快照走标准 run_graph（审批决策从 baseline 抽为 inputs.approvals 预置，不挂起），比对操作序列与逐节点归一化产出；返回 `{matches, baseline_status, replay_status, steps:[{node_id,match,note,diff_keys?}]}`；回放异常折叠 replay_status="failed"/matches=false（不抛 500）；未知用例 404。**C 包 `3415377` 起回放把 run_graph 时钟冻结到 `clock_anchor(case)`（recorded_at→created_at→真实时钟），含 today()/now() 的分支与录制时确定可比；用例两时间戳皆缺时响应附顶层 `clock_note`（中文，提示时间分支可能漂移）** | recording_case |
+| POST | /api/debug/{token}/resume | 恢复调试暂停（Phase 2 能力项）：请求体 `{action:"step"|"continue"|"stop", globals?{...}}`；step=执行当前节点并在下一节点前再停、continue=退出逐节点仅断点停、stop=取消运行（随后收到 stopped 帧、无 result）；**B 包（f9a1301）起 step/continue 可带 `globals`：global 顶层键浅合并覆盖（dict 值整体替换、不深 merge、不删未给键），键名须 `^[A-Za-z_][A-Za-z0-9_]*$`、值 JSON 可序列化，非法 422 中文，stop 忽略 globals**；首决生效 200，未知 token 404、对已恢复暂停重复提交 409；进程内会话重启即失 | debug_session |
 | GET | /api/debug | 列出当前活动调试暂停：`{items:[{token, node_id, node_type, graph_id, reason}]}`（Phase 2 能力项，进程内） | debug_session |
 | GET | /api/monitoring/metrics | 监控指标聚合（Phase 2 能力项）：`{total,healthy,unhealthy,success_rate,p50,p95,per_graph:[{graph_id,…}],failed_nodes:[{node_id,node_type,count,last_error,last_seen}]}`；口径=ring 内全部保留运行（≤200），空集 success_rate/p50/p95 为 null；进程内、重启即失。**M9 起增 `business` 段**：`{auto_refund_rate, manual_escalation_rate, refund_amount_diff_rate, per_graph:[{graph_id,…三率,samples}], per_version:[{graph_id,resolved_version,…三率,samples}]}`（分母＝有业务结果的 run，样本 0 为 null；契约 03 `business_metrics`） | monitoring / business_metrics |
 | GET | /api/monitoring/runs | 运行记录列表：`?graph_id=&limit=`（默认 50、1-200 截断，新→旧），返回 `{items:[RunRecord]}`；仅真实运行（debug/回放/子图重入不计） | monitoring |
@@ -595,10 +632,11 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 | POST | /api/alerts/{id}/resolve | 关闭告警（open/acknowledged→resolved）；未知 id 404、已 resolved 409，中文 detail | monitoring |
 | POST | /api/graphs/{id}/compile | DSL → LangGraph 编译（08 7.1 W7-W8）；**M6 起请求体可选 `releaseVersion`（缺省 latest）**。静态校验失败 422 体 `{"detail":[中文消息,...]}` 不变；**M2 起（2026-09-16 落码，fbd9f77）并列增机器可读定位侧车** `"locations":[{"index":number,"nodeId"?:"…","pointer"?:"/branches/0/expression"}]`——index 对齐 detail 下标、稀疏，pointer 为 RFC6901 相对该节点 config 根；图级错误无条目；契约见 03 `diagnostic`、06 §6.13，用例 U38。run/run/stream 经同一 compile_graph 路径，形状相同 | 02 Graph DSL |
 | POST | /api/graphs/{id}/run | 编译并运行，返回状态/节点产出/执行轨迹；请求体 `{"inputs": {...}}`（M6 起可选 `releaseVersion`，缺省 latest；**M9 起可选 `event:{channel?,payload?}`——带 event 为入站触发，经 Router 三段分桶解析发布版本并按不可变快照运行（pin-to-version），无任何发布版 → 409；不带 event＝编辑器手动运行 latest 草稿，旧行为零回归；RunRecord 记 resolved_version**），inputs 同名键覆盖全局变量且整体作为 trigger 节点 webhook 载荷 `context.payload`（W9-W10 接入真实决策/适配器）；**不支持调试**——请求体含 `debug` 返回 422「单步调试仅支持流式运行 /run/stream」（Phase 2 能力项） | 02 Graph DSL / LoopState / route_decision |
-| POST | /api/graphs/{id}/run/stream | SSE 流式运行（W9-W10；M6 起 body 可选 `releaseVersion`，缺省 latest；**M9 起同 sync 行可选 `event:{channel?,payload?}`，Router 分桶 + pin-to-version，无发布版 409，不带 event 走草稿零回归**）：事件 `node_start`/`node_end`/最终 `result`，供画布实时进度（验收标准 5）；**M10 起三帧为 19 §2.3.4 超集——node_start/node_end 另带 `traceId/spanId/parentSpanId`、run_end(result) 另带 `traceId/spanId/graphVersion`（只增字段、不改帧型，前端忽略未知字段零改动，完整 span 树不进 SSE）**；condition 节点的 node_end 事件 data 含 `{branch, target, evaluation, expression_errors}`（契约 04 §5.2），loop 节点含 `{mode, iterations, index, target, exitReason, expression_errors}`（契约 04 §5.3），parallel 节点扇出时 data 为 running 占位、joinTarget 的 node_end 前该产出被覆盖为终态 `{mode, joinStrategy, status, branches, result, joinTarget}`（契约 04 §5.4），wait 节点的 node_end 事件 data 含 `{mode:"wait", waitType:"duration", durationSeconds}`（契约 04 §5.5；node_start 后同步阻塞等待），human_approval 节点的 node_start 事件 data 含 `approval:{token, summary, approver, timeoutSeconds}`、node_end 含 `{mode:"human_approval", decision, target, token, summary, approver, resolvedBy}`（契约 04 §5.6），subgraph 节点 node_end 含 `{mode:"subgraph", graphId, status, error?, outputs, trace}` 但**子图内部不产生事件**（emit=None 重入，契约 04 §5.7）；**Phase 2 第五项起本端点为真流式**——run_graph 在后台线程执行、事件经 queue 实时下发（旧实现先跑完再回放，human_approval 会因收不到 node_start 而死锁）；**Phase 2 能力项（单步调试）**请求体可选 `debug:{breakpoints:[{node_id, expression?}]}`——存在时启动即 step 模式（首个节点 node_start 后、逻辑前发 `paused` 帧），断点会话级、不落 Graph JSON，未知 node_id/表达式校验失败 422（中文聚合）；新增帧 `paused`（`{token, node_id, node_type, reason:"step"|"breakpoint"|"condition", globals, outputs}` 深拷贝只读快照）与 `stopped`（resume action=stop 后 `{node_id, reason:"user_stop"}`，流结束且无 result 帧），恢复走 POST /api/debug/{token}/resume；子图内部不产生 paused（契约 04 §5.12） | 08 7.1 |
+| POST | /api/graphs/{id}/run/stream | SSE 流式运行（W9-W10；M6 起 body 可选 `releaseVersion`，缺省 latest；**M9 起同 sync 行可选 `event:{channel?,payload?}`，Router 分桶 + pin-to-version，无发布版 409，不带 event 走草稿零回归**）：事件 `node_start`/`node_end`/最终 `result`，供画布实时进度（验收标准 5）；**M10 起三帧为 19 §2.3.4 超集——node_start/node_end 另带 `traceId/spanId/parentSpanId`、run_end(result) 另带 `traceId/spanId/graphVersion`（只增字段、不改帧型，前端忽略未知字段零改动，完整 span 树不进 SSE）**；condition 节点的 node_end 事件 data 含 `{branch, target, evaluation, expression_errors}`（契约 04 §5.2），loop 节点含 `{mode, iterations, index, target, exitReason, expression_errors}`（契约 04 §5.3），parallel 节点扇出时 data 为 running 占位、joinTarget 的 node_end 前该产出被覆盖为终态 `{mode, joinStrategy, status, branches, result, joinTarget}`（契约 04 §5.4），wait 节点的 node_end 事件 data 含 `{mode:"wait", waitType:"duration", durationSeconds}`（契约 04 §5.5；node_start 后同步阻塞等待），human_approval 节点的 node_start 事件 data 含 `approval:{token, summary, approver, timeoutSeconds}`、node_end 含 `{mode:"human_approval", decision, target, token, summary, approver, resolvedBy}`（契约 04 §5.6），subgraph 节点自身 node_end 含 `{mode:"subgraph", graphId, status, error?, outputs, trace}`（无 subgraphPath）；**A 包（2026-09-19 `e594a4b`，docs/27 §3）起子图内部 `node_start`/`node_end` 以可选 `subgraphPath:string[]`（每层父图 subgraph 节点 id，顶层缺省）上 SSE**——只转发节点级事件、吞掉子层 run_end/result（整图仅一个 run_end），子图内 human_approval 的 approval 载荷随内部 node_start 上屏、可经共享 broker 与既有决策端点交互（无新端点，契约 04 §5.7）；**Phase 2 第五项起本端点为真流式**——run_graph 在后台线程执行、事件经 queue 实时下发（旧实现先跑完再回放，human_approval 会因收不到 node_start 而死锁）；**Phase 2 能力项（单步调试）**请求体可选 `debug:{breakpoints:[{node_id, expression?, hitCount?, logMessage?}]}`（**B 包 f9a1301：hitCount 正整数 N＝每第 N 次命中暂停 hits%N==0、logMessage 非空＝日志断点命中只发 debug_log 不暂停、消息原样不插值，非正整数/布尔/非串 422 中文聚合**）——存在时启动即 step 模式（首个节点 node_start 后、逻辑前发 `paused` 帧），断点会话级、不落 Graph JSON，未知 node_id/表达式校验失败 422（中文聚合）；新增帧 `paused`（`{token, node_id, node_type, reason:"step"|"breakpoint"|"condition", globals, outputs}` 深拷贝只读快照）与 `stopped`（resume action=stop 后 `{node_id, reason:"user_stop"}`，流结束且无 result 帧；**调试流中点急停也折叠为 stopped，不另发 cancelled**）、`debug_log`（**B 包 f9a1301** logpoint 帧 `{node_id,hits,message}`，命中不暂停）；**普通（非调试）流急停另发 `cancelled`（`{node_id,reason:"user_cancel"}`，协作式取消、wait/approval/tool 阻塞中点不强杀、下一节点边界生效）**，恢复走 POST /api/debug/{token}/resume（B 包起 step/continue 可带 globals 浅合并改写），急停走 POST /api/runs/{id}/cancel；子图内部不产生 paused（契约 04 §5.12） | 08 7.1 |
 
 | GET | /api/runs | 挂起/运行查询（**M5 契约设计轮 2026-09-17 登记，docs/24 §4，2026-09-17 已随 M5b 落码生效**）：`?status=suspended&graph_id=&limit=`（新→旧，status 缺省=全部），返回 `{items:[{runId, graphId, status, startedAt, suspendedAt, kind?, nodeId?, deadlineAt?}]}`，`kind=approval` 附 `resumeToken`（审批决策本就凭 token 无身份绑定，沿用现状口径）；仅本租户 | runs |
-| GET | /api/runs/{run_id} | 单运行详情（同上 M5b 已落码生效）：状态（running/suspended/completed/failed/interrupted）、节点产出摘要、trace、挂起信息 `{runId, graphId, status, outputs, trace, suspension?}`；跨租户/不存在 404（04 §5.14 全分区口径，不泄漏存在性）；**不新增写端点**——审批决策仍 `POST /api/approvals/{token}/decision`、调试恢复仍 `POST /api/debug/{token}/resume`，本端点只承担查询与 SSE 断线重连后的状态确认（执行线程与 SSE 连接解耦，断开不取消执行） | runs |
+| GET | /api/runs/{run_id} | 单运行详情（同上 M5b 已落码生效）：状态（running/suspended/completed/failed/cancelled/interrupted，**B 包 f9a1301 增 cancelled**）、节点产出摘要、trace、挂起信息 `{runId, graphId, status, outputs, trace, suspension?}`；跨租户/不存在 404（04 §5.14 全分区口径，不泄漏存在性）；**不新增写端点**——审批决策仍 `POST /api/approvals/{token}/decision`、调试恢复仍 `POST /api/debug/{token}/resume`，本端点只承担查询与 SSE 断线重连后的状态确认（执行线程与 SSE 连接解耦，断开不取消执行） | runs |
+| POST | /api/runs/{run_id}/cancel | **B 包（f9a1301）新增**：协作式急停（operate；viewer 403）。置位本租户该 run 的取消事件，下一节点边界抛 RunCancelled 收敛——run_store/monitoring 记 `status=cancelled`（不触发 evaluate_after_run、不刷 streak/告警），SSE 发 `cancelled` 帧后关流。响应 `{run_id,cancelled:true}`：窗口内命中（含重复取消）200 幂等；run 不存在/跨租户 404；run 已结束、broker 无注册句柄 409。worker 在请求线程 register/finally unregister；wait 同步 sleep 中 cancel 返 200 但于 sleep 结束后下一节点边界才生效 | runs / debug_session |
 | GET | /api/tasks | 任务信封查询（**M7 立项 2026-09-17 登记，08 M7 立项条，同日三批落码生效**）：`?state=&assignee=&limit=`（新→旧），返回 `{items:[{taskId, runId, type, assignee, state, deadlineMs, attempt, result?}]}`；仅本租户 | task_envelope |
 | GET | /api/tasks/{task_id} | 单任务详情（同上 M7 已落码生效）：`{taskId, runId, idempotencyKey, type, assignee, payload, deadlineMs, state, result, attempt}`；跨租户/不存在 404；**人工升级不新增写端点**——升级复用 `POST /api/approvals/{token}/decision`（升级帧进 human_approval） | task_envelope |
 
@@ -612,7 +650,7 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 >
 > human_approval 节点（Phase 2 第五项，v1 进程内审批信号）运行结果写入 `outputs[human_id] = {mode:"human_approval", decision:"approved"|"rejected", target, token, summary, approver, resolvedBy:"human"|"input"|"timeout"}`；执行器在 `ApprovalBroker`（模块级单例，可注入）登记 pending 后阻塞，node_start 携带 `approval` 载荷。决策三来源：REST 人工放行、run inputs 预置 `{"approvals":{"<node-id>":"approved"|"rejected"}}`（非交互/测试）、超时按 onTimeout（10-3600 秒，默认 reject）自动决策；两条出边全 conditional，按 decision 路由 approvedTarget/rejectedTarget。trace 增 `human-x: approved (human) → tool-y` / `… rejected (timeout) → tool-z` 行。下游引用形如 `{{human-x.decision}}`。持久化中断-恢复缓做 14 D20，语义见 04 §5.6、06 §6.1。**M8（已落码 2026-09-18）纯超集**：config 可选 `cardTemplateId`（不填＝上述 summary 旧路径完全不回归；非空未命中内置目录→编译 422）；命中时 node_start 的 `approval` 载荷在 `{token,summary,approver,timeoutSeconds}` 上加 `cardTemplateId`，节点产出在现有字段上加 `comment`（审批意见，三来源缺省空串）与 `card:{templateId,actionId}`；ApprovalBroker pending 携带 card_template_id 与渲染上下文快照，M5b 中断帧带 cardTemplateId、恢复时上下文从帧 `resume_state.outputs`+trigger 重建；卡片渲染与决策端点见 §3.11 与 `/api/cards`、`/api/approvals/{token}/card`、`/api/approvals/{token}/decision`（actionId/form）。
 >
-> subgraph 节点（Phase 2 第六项，v1 进程内引用式）运行结果写入 `outputs[subgraph_id] = {mode:"subgraph", graphId, status:"success"|"failed", error?, outputs:<子图全部节点 outputs>, trace:[string]}`；执行器经 `compile_graph/run_graph(graph_resolver=<Callable[[str], GraphDSL]>)` 注入的解析器（Demo 为 GraphStore.get）按 config.graphId 取子图，config.inputs（`{<子图入参键>: "<父图 {{路径}}/字面量>"}`）用父图上下文渲染后作为子图 run inputs 重入 run_graph（emit=None，子图事件不外泄；复用同一 registry/decision_client/approval_broker）。编译期递归校验：graphId 可解析、禁自引用与跨图环、嵌套深度 ≤3、子图递归过 validate_graph（错误中文聚合）；运行期任何异常 fail-safe 为 status:"failed"、父 run 仍 completed 沿唯一普通出边继续。trace 增 `subgraph-x: graph-7 success (N nodes)` / `… failed: <error>` 行。下游引用形如 `{{subgraph-x.status}}`、`{{subgraph-x.outputs.<子图节点id>.<键>}}`。版本钉版/子图市场/远程引用缓做 14 D21，语义见 04 §5.7、06 §6.1。
+> subgraph 节点（Phase 2 第六项，v1 进程内引用式）运行结果写入 `outputs[subgraph_id] = {mode:"subgraph", graphId, status:"success"|"failed", error?, outputs:<子图全部节点 outputs>, trace:[string]}`；执行器经 `compile_graph/run_graph(graph_resolver=<Callable[[str], GraphDSL]>)` 注入的解析器（Demo 为 GraphStore.get）按 config.graphId 取子图，config.inputs（`{<子图入参键>: "<父图 {{路径}}/字面量>"}`）用父图上下文渲染后作为子图 run inputs 重入 run_graph（**A 包 `e594a4b` 起经命名空间 emit 把子图内部 node_start/node_end 以 subgraphPath 上屏、吞子层 run_end**，此前 v1 为 emit=None；复用同一 registry/decision_client/approval_broker）。编译期递归校验：graphId 可解析、禁自引用与跨图环、嵌套深度 ≤3、子图递归过 validate_graph（错误中文聚合）；运行期任何异常 fail-safe 为 status:"failed"、父 run 仍 completed 沿唯一普通出边继续。trace 增 `subgraph-x: graph-7 success (N nodes)` / `… failed: <error>` 行。下游引用形如 `{{subgraph-x.status}}`、`{{subgraph-x.outputs.<子图节点id>.<键>}}`。版本钉版/子图市场/远程引用缓做 14 D21，语义见 04 §5.7、06 §6.1。
 | POST | /api/operators | 创建运营体（镜像） | operator |
 | POST | /api/operators/{id}/run | 启动 Loop | LoopState |
 | GET | /api/operators/{id}/status | 运行状态/进度（验收标准 5：画布实时显示） | LoopState.status |
@@ -633,8 +671,11 @@ memory_retriever.query(goal: str, recent_messages: list) -> list
 | GET | /api/feedback | 导出反馈（陪同试用收集用，`{items: [...]}`，Phase 1；2026-09-16 起 **admin only** 且只列本租户，04 §5.14） | feedback_item |
 | GET | /demo/shop | 模拟商家售后控制台 HTML 页面（W9-W10，自动登录/抓取演示目标系统） | — |
 | GET | / 及静态资源 | 生产形态（Docker）FastAPI 同源托管 `frontend/dist` 构建产物（`ATLAS_FRONTEND_DIST` 指向目录时挂载，html=True；dev 仍用 Vite 5174 代理） | — |
-| GET | /api/memories/{operator_id} | 记忆配置读取（05 2.4 配置界面） | memory_config |
-| PUT | /api/memories/{operator_id} | 记忆配置保存 | memory_config |
+| GET | /api/memories | 【viewer+，M11 已落码 `58d936c`】列出本租户记忆，query `?kind=fact|preference&limit=`（默认 50、上限 200），返 `{items:[memory_item…]}`，不含 embedding | memory_item |
+| GET | /api/memories/search | 【viewer+，M11】语义检索，query `?q=&kind=&top_k=&min_score=`；q 空白 → 422；返 `{results:[{…memory_item, score}]}` 按 score 降序 | memory_item |
+| DELETE | /api/memories/{id} | 【**admin only**，M11】删除一条记忆；他租户/不存在 → 404 | memory_item |
+
+> **M11 记忆端点口径订正（2026-09-19，docs/26）**：上表取代原愿景 `GET/PUT /api/memories/{operator_id}`（memory_config 配置读写，05 §2.4）——五层策略配置随 D35 缓做，operator 维度降为记忆条目 `scope.user_id`，租户由会话 Principal 定。**M11 不开 POST/PUT 写入端点**：写入只走图工具 `memory/remember`，手动造数走 `scripts/dev/m11_seed.py`。
 
 ## 6. 协同消息协议（依据 05 3.3 collaboration_message）
 
@@ -663,7 +704,8 @@ evaluation_task:
 - [ ] 节点失败处理枚举：stop/continue/jump_to（03 node_schema）
 - [x] 工具权限枚举：read/write/delete/financial（03 adapter_schema；W3-W4 落码于 `harness/base.py`）
 - [x] 适配器类型枚举：web/api/mobile/desktop/database/iot/message（W3-W4 已用于 `adapter_type` 字段；web 类型已实现；api 类型 2026-09-15 随 `httpapi/` 通用 HTTP 适配器落地，契约 04 §4.6；**database 与 message 类型 2026-09-15 随 `database/`（query/execute 双能力）、`message/`（message/send 进程内 sink）落地，契约 04 §4.7/§4.8**）
-- [ ] 记忆检索分层与 memory_config 阈值（05 2.3）
+- [ ] 记忆检索分层与 memory_config 阈值（05 2.3）——**愿景，M11 不实现、缓做 D35**（working/summary/case/决策隐式注入）
+- [x] **M11（2026-09-19 四批落码收口 `5441902`/`58d936c`/`73e53bd`/`75c4150`，docs/26/ADR T23；U72–U99 转正式）**：MemoryItem fact/preference 字段与 EMBED_DIM=256 迁移严格一致；EmbeddingProvider 本地确定性（纯 stdlib、录制回放确定）；MemoryRepository 第九个两档（进程内 / pgvector）remember/recall/list/delete/clear；memory/remember(write)·memory/recall(read) 两能力 schema 过 Capability 白名单；REST `GET /api/memories`、`GET /api/memories/search`（viewer+）+ `DELETE /api/memories/{id}`（admin）、**无 POST/PUT 写入**；reset 清空、跨租户 404
 - [ ] 评估指标三元组（06 9.2 metrics）
 
 ---

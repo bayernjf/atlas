@@ -4,11 +4,12 @@ import { Dashboard } from './pages/Dashboard'
 import { Editor } from './pages/Editor'
 import { Login } from './pages/Login'
 import { Monitoring } from './pages/Monitoring'
+import { Memory } from './pages/Memory'
 import { logout as logoutApi } from './lib/apiClient'
 import { getStoredPrincipal, UNAUTHORIZED_EVENT, type Principal } from './lib/auth'
 import { antdTheme } from './theme/tokens'
 
-type Page = 'dashboard' | 'editor' | 'monitoring'
+type Page = 'dashboard' | 'editor' | 'monitoring' | 'memory'
 
 function App() {
   const [principal, setPrincipal] = useState<Principal | null>(() => getStoredPrincipal())
@@ -50,9 +51,12 @@ function App() {
           onLogout={handleLogout}
           onOpenEditor={() => setPage('editor')}
           onOpenMonitoring={() => setPage('monitoring')}
+          onOpenMemory={() => setPage('memory')}
         />
       ) : page === 'monitoring' ? (
         <Monitoring principal={principal} onLogout={handleLogout} onBack={() => setPage('dashboard')} />
+      ) : page === 'memory' ? (
+        <Memory principal={principal} onLogout={handleLogout} onBack={() => setPage('dashboard')} />
       ) : (
         <Editor principal={principal} onLogout={handleLogout} />
       )}

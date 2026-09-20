@@ -23,7 +23,7 @@ class RunRecord(BaseModel):
     id: str
     graph_id: str
     mode: Literal["sync", "stream"]
-    status: Literal["completed", "error"]
+    status: Literal["completed", "error", "cancelled"]
     started_at: str
     finished_at: str
     duration_ms: float
@@ -53,7 +53,7 @@ class MonitoringStore:
         *,
         graph_id: str,
         mode: Literal["sync", "stream"],
-        status: Literal["completed", "error"],
+        status: Literal["completed", "error", "cancelled"],
         started_at: str,
         duration_ms: float,
         nodes: list,

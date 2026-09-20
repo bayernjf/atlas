@@ -28,6 +28,7 @@ from langgraph.graph import END, START, StateGraph
 
 from atlas.cards.catalog import get_card
 from atlas.collaboration.approvals import ApprovalBroker
+from atlas.collaboration.cancellations import RunCancelled
 from atlas.database.adapter import DatabaseHarnessAdapter
 from atlas.database.service import DatabaseClient, demo_engine
 from atlas.harness.base import ActionRequest, ActionStatus
@@ -92,7 +93,7 @@ class GraphState(TypedDict):
 
 # params 插值后为 JSON 对象、整体透传给适配器的通用通道（04 §4.6-4.8）；
 # 其余适配器（shop）走下方按能力硬编码装配。
-GENERIC_JSON_ADAPTERS = frozenset({"http", "database", "message"})
+GENERIC_JSON_ADAPTERS = frozenset({"http", "database", "message", "memory"})
 
 
 def build_demo_registry() -> AdapterRegistry:
@@ -147,6 +148,9 @@ def _make_executor(
     tracer: Tracer | None = None,
     base_span: Span | None = None,
     internal_spans: bool = False,
+    now: datetime | None = None,
+    subgraph_path: tuple[str, ...] = (),
+    is_cancelled: Callable[[], bool] | None = None,
 ):
     def execute(state: GraphState) -> dict:
         context = {"global": state["variables"].get("global", {}), **state["outputs"]}
@@ -219,8 +223,13 @@ def _make_executor(
                     )
             emit(start_event)
 
+            # B 包（docs/27 §4.1）：节点边界协作式取消。调试流由 DebugController
+            # 统一折叠为 DebugStopped（event:stopped）；普通流在此抛 RunCancelled。
+            if debug_controller is None and is_cancelled is not None and is_cancelled():
+                raise RunCancelled(node.id)
+
             if debug_controller is not None:
-                debug_controller.before_node(node, state)
+                debug_controller.before_node(node, state, now=now)
                 if node.type == "human_approval" and not resume_here:
                     approval_payload = _register_approval(
                         node,
@@ -271,10 +280,10 @@ def _make_executor(
                 output = {"decision": result, "prompt_rendered": prompt}
                 message = f"{node.id}({node.type}): executed"
             elif node.type == "condition":
-                output = _execute_condition(node, state, context)
+                output = _execute_condition(node, state, context, now=now)
                 message = f"{node.id}: branch={output['branch']} → {output['target']}"
             elif node.type == "loop":
-                output = _execute_loop(node, state, context)
+                output = _execute_loop(node, state, context, now=now)
                 if output["exitReason"] is None:
                     message = (
                         f"{node.id}: continue ({output['iterations']}/"
@@ -326,6 +335,10 @@ def _make_executor(
                     resolver=graph_resolver,
                     depth=subgraph_depth,
                     tracer=tracer,
+                    now=now,
+                    emit=emit,
+                    subgraph_path=subgraph_path,
+                    is_cancelled=is_cancelled,
                 )
             else:
                 # M10：工具调用包 tool span（parent 经 contextvars 就近取当前 node span）。
@@ -488,6 +501,33 @@ def _await_human_approval(
     return output, message
 
 
+def _namespaced_emit(parent: EventCallback, path: tuple[str, ...]) -> EventCallback:
+    """A 包（docs/27 §3.2）：子图重入的命名空间事件回调。
+
+    - 只转发节点级 ``node_start``/``node_end``（含 node_start 上的 approval 载荷）；
+    - 子层 ``run_end``/result 等终帧一律吞掉，避免子图结束被 SSE 误判为整图结束
+      （子图结果由父图 subgraph 节点自身的 node_end.output 体现）；
+    - 给本层直接节点事件附加 ``subgraphPath``＝每层父图 subgraph 节点 id 路径；
+      更深层 wrapper 已附完整路径的事件原样转发（完整路径在最深一层一次性构造，
+      嵌套重入时不在此重复叠加）；
+    - 回调自身任何异常都不得影响图执行（fail-safe，§3.2 第 5 条）。
+    """
+    path_list = list(path)
+
+    def _emit(event: dict[str, Any]) -> None:
+        try:
+            if event.get("type") not in ("node_start", "node_end"):
+                return
+            if event.get("subgraphPath"):
+                parent(event)
+            else:
+                parent({**event, "subgraphPath": path_list})
+        except Exception:
+            return
+
+    return _emit
+
+
 def _execute_subgraph(
     node: NodeDSL,
     *,
@@ -498,9 +538,16 @@ def _execute_subgraph(
     resolver: Callable[[str], GraphDSL] | None,
     depth: int,
     tracer: Tracer | None = None,
+    now: datetime | None = None,
+    emit: EventCallback | None = None,
+    subgraph_path: tuple[str, ...] = (),
+    is_cancelled: Callable[[], bool] | None = None,
 ) -> tuple[dict[str, Any], str]:
     """进程内重入执行被引用子图（04 §5.7）；任何异常 fail-safe 为 failed，父 run 仍 completed。"""
     graph_ref = str(node.config.get("graphId", ""))
+    # A 包（docs/27 §3.1）：本 subgraph 节点在父图中的完整路径，子层内部事件据此上屏。
+    child_path = (*subgraph_path, node.id)
+    child_emit = _namespaced_emit(emit, child_path) if emit is not None else None
     mapping = node.config.get("inputs") or {}
     child_inputs = {key: interpolate(str(value), context) for key, value in mapping.items()}
     # M10：subgraph span（非 internal，折叠后代表整段子图）；子图内部节点 span 标 internal。
@@ -528,12 +575,20 @@ def _execute_subgraph(
                 registry=registry,
                 approval_broker=approval_broker,
                 graph_id=graph_ref,
-                emit=None,
+                emit=child_emit,
                 graph_resolver=resolver,
                 _subgraph_depth=depth + 1,
+                _subgraph_path=child_path,
                 tracer=tracer,
+                now_override=now,
+                is_cancelled=is_cancelled,
                 _parent_span=sub_span if isinstance(sub_span, Span) else None,
             )
+    except RunCancelled:
+        # 取消须穿透子图 fail-safe 兜底，冒泡终止整图（docs/27 §4.1）。
+        if isinstance(sub_span, Span):
+            sub_span.end("error")
+        raise
     except Exception as exc:
         if isinstance(sub_span, Span):
             sub_span.end("error")
@@ -672,7 +727,9 @@ def _parallel_running_output(node: NodeDSL) -> dict[str, Any]:
     }
 
 
-def _execute_condition(node: NodeDSL, state: GraphState, context: dict[str, Any]) -> dict[str, Any]:
+def _execute_condition(
+    node: NodeDSL, state: GraphState, context: dict[str, Any], *, now: datetime | None = None
+) -> dict[str, Any]:
     """按 branches 顺序短路求值（04 §5.2）；异常 fail-safe 走 defaultTarget。"""
     evaluation: list[dict[str, Any]] = []
     errors: list[str] = []
@@ -681,7 +738,7 @@ def _execute_condition(node: NodeDSL, state: GraphState, context: dict[str, Any]
     for item in node.config.get("branches", []):
         label, expression = item["label"], item["expression"]
         try:
-            result = evaluate_expression(expression, context)
+            result = evaluate_expression(expression, context, now=now)
         except ConditionEvalError as exc:
             errors.append(f"分支 {label}：{exc}")
             evaluation.append({"label": label, "expression": expression, "result": None})
@@ -704,7 +761,9 @@ def _execute_condition(node: NodeDSL, state: GraphState, context: dict[str, Any]
     }
 
 
-def _execute_loop(node: NodeDSL, state: GraphState, context: dict[str, Any]) -> dict[str, Any]:
+def _execute_loop(
+    node: NodeDSL, state: GraphState, context: dict[str, Any], *, now: datetime | None = None
+) -> dict[str, Any]:
     """条件循环重入求值（04 §5.3）；达上限/求值异常 fail-safe 走 exitTarget。"""
     config = node.config
     body_target = config["bodyTarget"]
@@ -725,7 +784,7 @@ def _execute_loop(node: NodeDSL, state: GraphState, context: dict[str, Any]) -> 
         # 首轮自身产出尚不存在；播种 index 供 {{loop-x.index}} 求值
         loop_context = {**context, node.id: {"index": iterations, "iterations": iterations}}
         try:
-            result = evaluate_expression(config["continueExpression"], loop_context)
+            result = evaluate_expression(config["continueExpression"], loop_context, now=now)
         except ConditionEvalError as exc:
             target = exit_target
             exit_reason = "expression_error"
@@ -1151,14 +1210,25 @@ def compile_graph(
     debug_controller: Any = None,
     frame_sink: Callable[[dict], None] | None = None,
     resume: dict | None = None,
+    _subgraph_path: tuple[str, ...] = (),
     validate_with: GraphDSL | None = None,
     tracer: Tracer | None = None,
     graph_version: str | None = None,
+    now: datetime | None = None,
     _parent_span: Span | None = None,
+    is_cancelled: Callable[[], bool] | None = None,
 ):
     decision_client = decision_client or get_decision_client()
     registry = registry if registry is not None else build_demo_registry()
     approval_broker = approval_broker or _default_approval_broker
+    # C（docs/27 §2.1）：单次编译/运行固定一个 UTC 时钟，供 today()/now() 与条件断点求值；
+    # 录制/回放由 run_graph(now_override=) 注入冻结时刻，未注入则入口取一次当前 UTC。
+    if now is None:
+        now = datetime.now(timezone.utc)
+    elif now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    else:
+        now = now.astimezone(timezone.utc)
     noop_emit: EventCallback = lambda event: None
     emit = emit or noop_emit
     # M10：节点 span 的父——subgraph 重入为 subgraph span（子图节点 internal），
@@ -1244,6 +1314,9 @@ def compile_graph(
             tracer=tracer,
             base_span=base_span,
             internal_spans=internal_spans,
+            now=now,
+            subgraph_path=_subgraph_path,
+            is_cancelled=is_cancelled,
         )
         if node.id in skip_guards:
             parallel_id, safe_target = skip_guards[node.id]
@@ -1477,9 +1550,12 @@ def run_graph(
     debug_controller: Any = None,
     frame_sink: Callable[[dict], None] | None = None,
     resume: dict | None = None,
+    _subgraph_path: tuple[str, ...] = (),
     tracer: Tracer | None | object = _AUTO_TRACER,
     graph_version: str | None = None,
+    now_override: datetime | None = None,
     _parent_span: Span | None = None,
+    is_cancelled: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     """编译并执行，返回状态/节点产出/轨迹。
 
@@ -1550,9 +1626,12 @@ def run_graph(
             debug_controller=debug_controller,
             frame_sink=frame_sink,
             resume=resume,
+            _subgraph_path=_subgraph_path,
             validate_with=resume_graph,
             tracer=tracer,
             graph_version=graph_version,
+            now=now_override,
+            is_cancelled=is_cancelled,
             _parent_span=_parent_span,
         )
         state = initial_state(tail, inputs=resume_inputs)
@@ -1579,8 +1658,11 @@ def run_graph(
         _subgraph_depth=_subgraph_depth,
         debug_controller=debug_controller,
         frame_sink=frame_sink,
+        _subgraph_path=_subgraph_path,
         tracer=tracer,
         graph_version=graph_version,
+        now=now_override,
+        is_cancelled=is_cancelled,
         _parent_span=_parent_span,
     )
     final_state = compiled.invoke(

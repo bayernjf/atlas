@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from atlas.iam.principals import Principal
 
 # ---- reset 分档（docs/24 §1.2③；/api/demo/reset 语义，12 §5） ----
-RESET_RESETTABLE = "resettable"  # graph/approval/debug/monitoring/session/message
+RESET_RESETTABLE = "resettable"  # graph/approval/debug/monitoring/session/message/memory
 RESET_PERSISTENT = "persistent"  # recording/feedback（测试资产，reset 不清除）
 
 
@@ -143,7 +143,7 @@ class RunRepository(Protocol):
         self,
         *,
         run_id: str,
-        status: Literal["completed", "failed", "interrupted"],
+        status: Literal["completed", "failed", "interrupted", "cancelled"],
         error: str | None = None,
         outputs: dict[str, Any] | None = None,
         trace: list[str] | None = None,
@@ -175,3 +175,37 @@ class MonitoringRepository(Protocol):
     def update_rules(self, raw: dict) -> RuleConfig: ...
     def snapshot_metrics(self) -> dict: ...
     def reset(self) -> None: ...
+
+
+@runtime_checkable
+class MemoryRepository(Protocol):
+    """长期记忆（M11，docs/26 §4.1）：fact/preference 写入与语义检索。
+
+    租户分区是构造期关切（不进签名）；返回的 MemoryItem dict 不含 embedding；
+    归 RESET_RESETTABLE（记忆是演示运行数据，reset_tenant 清空）。
+    """
+
+    def remember(
+        self,
+        *,
+        kind: str,  # "fact" | "preference"
+        content: str,
+        scope: dict[str, str] | None = None,
+        confidence: float = 1.0,
+        source: str = "tool",
+        metadata: dict[str, str] | None = None,
+    ) -> dict[str, Any]: ...
+
+    def recall(
+        self,
+        query: str,
+        *,
+        kind: str | None = None,
+        scope: dict[str, str] | None = None,  # 子集匹配：item.scope 须包含其全部键值
+        top_k: int = 5,
+        min_score: float = 0.0,
+    ) -> list[dict[str, Any]]: ...  # 每项 = MemoryItem dict + "score"，按 score 降序
+
+    def list(self, *, kind: str | None = None, limit: int = 50) -> list[dict[str, Any]]: ...
+    def delete(self, memory_id: str) -> bool: ...  # 不存在返回 False（跨租户同不存在）
+    def clear(self) -> None: ...

@@ -32,7 +32,8 @@ export type EditorNode = Node<EditorNodeData>
 export type { NodeKind }
 
 // 会话级断点：键存在即启用；expression 非空为条件断点。不落 Graph JSON，刷新即失（04 §5.12）。
-export type Breakpoint = { expression?: string }
+// B 包（docs/27 §4.2）：hitCount 每 N 次命中暂停；logMessage 非空即日志断点（只记日志不暂停）。
+export type Breakpoint = { expression?: string; hitCount?: number; logMessage?: string }
 
 type EditorState = {
   nodes: EditorNode[]
@@ -69,6 +70,8 @@ type EditorState = {
   appendLog: (message: string) => void
   toggleBreakpoint: (nodeId: string) => void
   setBreakpointExpression: (nodeId: string, expression: string) => void
+  setBreakpointHitCount: (nodeId: string, hitCount: number | null) => void
+  setBreakpointLogMessage: (nodeId: string, logMessage: string) => void
   clearBreakpoints: () => void
   setNlWarnings: (warnings: string[]) => void
 }
@@ -451,6 +454,30 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       breakpoints: {
         ...state.breakpoints,
         [nodeId]: { ...state.breakpoints[nodeId], expression },
+      },
+    })),
+
+  setBreakpointHitCount: (nodeId, hitCount) =>
+    set((state) => ({
+      breakpoints: {
+        ...state.breakpoints,
+        // null/<1 视为缺省（每次命中暂停），不向下传非法值。
+        [nodeId]: {
+          ...state.breakpoints[nodeId],
+          hitCount: hitCount !== null && hitCount >= 1 ? hitCount : undefined,
+        },
+      },
+    })),
+
+  setBreakpointLogMessage: (nodeId, logMessage) =>
+    set((state) => ({
+      breakpoints: {
+        ...state.breakpoints,
+        // 空白串视为缺省（非空才是日志断点，与后端 strip 口径一致）。
+        [nodeId]: {
+          ...state.breakpoints[nodeId],
+          logMessage: logMessage.trim() ? logMessage : undefined,
+        },
       },
     })),
 

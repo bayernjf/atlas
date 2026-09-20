@@ -38,6 +38,7 @@ from atlas.debug import DebugController, DebugStopped
 from atlas.graph.conditions import validate_expression
 from atlas.graph.dsl import GraphDSL, GraphValidationError, parse_graph
 from atlas.graph.loader import compile_graph, run_graph, tool_input_schemas
+from atlas.collaboration.cancellations import RunCancelled
 from atlas.tracing import Tracer
 from atlas.harness.base import Permission
 from atlas.harness.registry import AdapterRegistry
@@ -47,10 +48,12 @@ from atlas.iam.deps import get_principal, require, services_for, session_store, 
 from atlas.iam.principals import Principal, authenticate
 from atlas.iam.registry import STORAGE_BACKEND, TenantServices
 from atlas.llm.nl_generate import generate_graph, validate_param_fills
+from atlas.memory.adapter import MemoryHarnessAdapter
 from atlas.message.adapter import MessageHarnessAdapter
 from atlas.monitoring import RUN_RING_SIZE, extract_business, extract_node_results
 from atlas.recording import (
     RecordingCreateRequest,
+    clock_anchor,
     collect_steps,
     collect_subgraph_snapshots,
     compare as compare_recording,
@@ -211,6 +214,8 @@ _demo_registry.register(
 )
 # 全局注册表里的 message 实例仅供适配器发现；执行期注册表替换为租户消息服务
 _demo_registry.register(MessageHarnessAdapter(granted_permissions=_FULL_PERMISSIONS))
+# 全局注册表里的 memory 实例仅供适配器发现；执行期注册表替换为租户记忆存储（docs/26 §5.1）
+_demo_registry.register(MemoryHarnessAdapter(granted_permissions=_FULL_PERMISSIONS))
 
 
 @app.exception_handler(GraphValidationError)
@@ -246,6 +251,10 @@ def _runtime_registry(services: TenantServices) -> AdapterRegistry:
         if item["id"] == "message":
             adapter = MessageHarnessAdapter(
                 service=services.message_service, granted_permissions=_FULL_PERMISSIONS
+            )
+        if item["id"] == "memory":
+            adapter = MemoryHarnessAdapter(
+                repo=services.memory_store, granted_permissions=_FULL_PERMISSIONS
             )
         registry.register(adapter)
     return registry
@@ -753,6 +762,7 @@ def replay_recording(
     try:
         graph = parse_graph(case.graph)
         emit, take_steps = collect_steps()
+        anchor, clock_note = clock_anchor(case)
         inputs = dict(case.inputs or {})
         presets = preset_approvals(case.steps)
         if presets:
@@ -769,19 +779,23 @@ def replay_recording(
             graph_resolver=inline_first_resolver(
                 case.subgraphs, _tenant_graph_resolver(services)
             ),
+            now_override=anchor,
         )
         replay_steps = take_steps()
         tools_by_node = {
             node.id: (node.config.get("tool") if node.type == "tool_call" else None)
             for node in graph.nodes
         }
-        return compare_recording(
+        report = compare_recording(
             case.steps,
             replay_steps,
             tools_by_node=tools_by_node,
             baseline_status=case.status,
             replay_status=result["status"],
         )
+        if clock_note:
+            report["clock_note"] = clock_note
+        return report
     except Exception as exc:  # 回放失败折叠为报告而非 500
         return {
             "matches": False,
@@ -923,7 +937,29 @@ def _validate_debug(graph, debug: Any) -> list[dict[str, Any]]:
                     f"断点 {node_id} 表达式：{message}"
                     for message in validate_expression(expression)
                 )
-        normalized.append({"node_id": node_id, "expression": expression})
+        # B 包（docs/27 §4.2）：hitCount 正整数、logMessage 字符串（非空即日志断点）。
+        hit_count = point.get("hitCount")
+        if hit_count is not None and (
+            not isinstance(hit_count, int)
+            or isinstance(hit_count, bool)
+            or hit_count < 1
+        ):
+            errors.append(f"断点 {node_id} 的 hitCount 必须为正整数")
+        log_message = point.get("logMessage")
+        if log_message is not None and not isinstance(log_message, str):
+            errors.append(f"断点 {node_id} 的 logMessage 必须为字符串")
+        normalized.append(
+            {
+                "node_id": node_id,
+                "expression": expression,
+                "hitCount": hit_count if isinstance(hit_count, int) and hit_count > 0 else None,
+                "logMessage": (
+                    log_message
+                    if isinstance(log_message, str) and log_message.strip()
+                    else None
+                ),
+            }
+        )
     if errors:
         raise HTTPException(status_code=422, detail="；".join(errors))
     return normalized
@@ -1034,6 +1070,9 @@ def run_saved_graph_stream(
     run_store = services.run_store
     run_id = uuid.uuid4().hex
     frame_sink = _frame_sink_for(principal.tenant_id, run_store, run_id)
+    # B 包（docs/27 §4.1）：worker 启动前登记取消事件（请求线程，确保端点可达时句柄已在）。
+    cancellation_broker = services.cancellation_broker
+    cancel_event = cancellation_broker.register(run_id)
     # M10：真实运行（非 debug）建 tracer 并显式透传 worker（06 §6.12 后台线程不靠全局）；
     # debug 单步会话显式传 None 不埋点（04 §5.13/§5.15，SSE 帧保持旧形状）。
     tracer: Tracer | None = (
@@ -1049,14 +1088,18 @@ def run_saved_graph_stream(
             events.put(event)
 
         debug_controller = (
-            DebugController(debug_session, emit) if debug_session is not None else None
+            DebugController(debug_session, emit, is_cancelled=cancel_event.is_set)
+            if debug_session is not None
+            else None
         )
         # debug 会话不是真实运行，全程不埋点（04 §5.13）
         monitored = debug_controller is None
         collected: dict[str, Any] = {}
 
         def recording_emit(event: dict[str, Any]) -> None:
-            if event.get("type") == "node_end":
+            # A 包（docs/27 §10.1）：监控/运行产出只收顶层 node_end；带 subgraphPath 的
+            # 子图内部节点不进 collected（子图结果归在 subgraph 节点），但仍转发 SSE 上屏。
+            if event.get("type") == "node_end" and not event.get("subgraphPath"):
                 collected[event["node_id"]] = event.get("output")
             emit(event)
 
@@ -1078,6 +1121,7 @@ def run_saved_graph_stream(
                     frame_sink=frame_sink,
                     tracer=tracer,
                     graph_version=tracer.graph_version if tracer is not None else None,
+                    is_cancelled=cancel_event.is_set,
                 )
                 if monitored:
                     run_store.finish(
@@ -1101,6 +1145,22 @@ def run_saved_graph_stream(
                 events.put({"__result__": result})
             except DebugStopped as exc:
                 events.put({"__stopped__": exc.node_id})
+            except RunCancelled as exc:
+                # 协作式急停：普通流记 cancelled（用户主动，不进灰度门控评估、不算失败）。
+                # 必须排在 except Exception 前（RunCancelled 是 Exception 子类）。
+                if monitored:
+                    run_store.finish(run_id=run_id, status="cancelled")
+                    monitoring.record_run(
+                        graph_id=graph_id,
+                        mode="stream",
+                        status="cancelled",
+                        started_at=started_at,
+                        duration_ms=(time.monotonic() - started) * 1000,
+                        nodes=extract_node_results(graph_view, collected),
+                        trace_id=tracer.trace_id if tracer is not None else "",
+                        resolved_version=resolved_version,
+                    )
+                events.put({"__cancelled__": exc.node_id})
             except Exception as exc:  # 运行期异常经 SSE error 帧下发，不静默吞线程
                 if monitored:
                     run_store.finish(
@@ -1120,6 +1180,8 @@ def run_saved_graph_stream(
                     )
                     evaluate_after_run(services, record)
                 events.put({"__error__": f"{type(exc).__name__}: {exc}"})
+            finally:
+                cancellation_broker.unregister(run_id)
 
         thread = threading.Thread(target=worker, daemon=True)
         thread.start()
@@ -1155,6 +1217,20 @@ def run_saved_graph_stream(
                     + "\n\n"
                 )
                 break
+            if "__cancelled__" in event:
+                yield (
+                    "event: cancelled\ndata: "
+                    + json.dumps(
+                        {
+                            "type": "cancelled",
+                            "node_id": event["__cancelled__"],
+                            "reason": "user_cancel",
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n\n"
+                )
+                break
             if "__error__" in event:
                 yield f"event: error\ndata: {json.dumps({'detail': event['__error__']}, ensure_ascii=False)}\n\n"
                 break
@@ -1171,7 +1247,7 @@ def list_runs(
 ) -> dict[str, list[dict[str, Any]]]:
     """本租户运行列表（新→旧；status 缺省=全部）（M5b，docs/24 §4）。"""
     if status is not None and status not in {
-        "running", "suspended", "completed", "failed", "interrupted",
+        "running", "suspended", "completed", "failed", "interrupted", "cancelled",
     }:
         raise HTTPException(status_code=422, detail="非法的 status 过滤值")
     if not 1 <= limit <= 200:
@@ -1189,6 +1265,22 @@ def get_run(
     if run is None:
         raise HTTPException(status_code=404, detail="运行不存在")
     return run
+
+
+@app.post("/api/runs/{run_id}/cancel")
+def cancel_run(
+    run_id: str,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """协作式急停（docs/27 §4.1）：置位本租户该 run 的取消事件，下一节点边界生效，
+    不在 wait/approval/tool 阻塞中点强杀。运行中（含调试流）200，重复取消幂等 200；
+    已结束且无注册句柄 409；run 不存在/跨租户 404。"""
+    services = services_for(principal)
+    if services.cancellation_broker.cancel(run_id):
+        return {"run_id": run_id, "cancelled": True}
+    if services.run_store.get(run_id) is None:
+        raise HTTPException(status_code=404, detail="运行不存在")
+    raise HTTPException(status_code=409, detail="运行已结束，无法取消")
 
 
 @app.get("/api/tasks")
@@ -1288,6 +1380,8 @@ def decide_approval(
 
 class ResumeDebugRequest(BaseModel):
     action: Literal["step", "continue", "stop"]
+    # B 包（docs/27 §4.3）：可选 globals 顶层键浅合并覆盖；stop 时忽略。
+    globals: dict[str, Any] | None = None
 
 
 @app.get("/api/debug")
@@ -1308,6 +1402,12 @@ def resume_debug(
     session = broker.get_session(token)
     if session is None:
         raise HTTPException(status_code=404, detail=f"调试暂停不存在或已恢复：{token}")
+    # 变量覆盖在 resolve（首决）前校验暂存；action=stop 忽略覆盖（§4.3）。
+    if request.globals is not None and request.action != "stop":
+        try:
+            session.apply_overrides(token, request.globals)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     if not session.resolve(token, request.action):
         raise HTTPException(status_code=409, detail="该调试暂停已恢复，重复提交不生效")
     return {"token": token, "action": request.action}
@@ -1445,6 +1545,55 @@ def demo_messages(
 ) -> dict[str, Any]:
     """消息适配器演示查看（04 §4.8）：本租户进程内已记录消息，重启/reset 清空，无真实投递。"""
     return {"items": services_for(principal).message_service.list()}
+
+
+# ---- M11 长期记忆（docs/26 §6）：按租户只读 + admin 删；写入只走图内 remember 工具 ----
+
+
+@app.get("/api/memories")
+def list_memories(
+    kind: str | None = None,
+    limit: int = 50,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """当前租户记忆倒序列表（不含 embedding）；kind 可选过滤，limit 缺省 50、上限 200。"""
+    if kind is not None and kind not in ("fact", "preference"):
+        raise HTTPException(status_code=422, detail="kind 必须是 fact 或 preference")
+    limit = max(1, min(limit, 200))
+    return {"items": services_for(principal).memory_store.list(kind=kind, limit=limit)}
+
+
+@app.get("/api/memories/search")
+def search_memories(
+    q: str = "",
+    kind: str | None = None,
+    top_k: int = 5,
+    min_score: float = 0.0,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """语义检索当前租户记忆；q 空白返 422，无命中返空数组（成功不报错）。"""
+    if not q or not q.strip():
+        raise HTTPException(status_code=422, detail="q 必须是非空检索词")
+    if kind is not None and kind not in ("fact", "preference"):
+        raise HTTPException(status_code=422, detail="kind 必须是 fact 或 preference")
+    top_k = max(1, min(top_k, 20))
+    min_score = max(0.0, min(min_score, 1.0))
+    results = services_for(principal).memory_store.recall(
+        q.strip(), kind=kind, top_k=top_k, min_score=min_score
+    )
+    return {"results": results}
+
+
+@app.delete("/api/memories/{memory_id}")
+def delete_memory(
+    memory_id: str,
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, bool]:
+    """删除一条记忆（admin only）；不存在或跨租户一律 404（不泄漏存在性，T15）。"""
+    deleted = services_for(principal).memory_store.delete(memory_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="记忆不存在")
+    return {"deleted": True}
 
 
 @app.post("/api/demo/reset")

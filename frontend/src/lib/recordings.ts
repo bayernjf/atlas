@@ -9,6 +9,9 @@ export function toSteps(events: RunEvent[]): RecordStep[] {
   const order: string[] = []
   for (const event of events) {
     if (event.type !== 'node_end') continue
+    // A 包（docs/27 §3.2/§10.1）：带 subgraphPath 的是子图内部节点，录制只收顶层节点
+    // （子图结果归在 subgraph 节点自身的 node_end），与后端 collect_steps 口径一致。
+    if (event.subgraphPath && event.subgraphPath.length > 0) continue
     const output =
       event.output && typeof event.output === 'object'
         ? (event.output as Record<string, unknown>)

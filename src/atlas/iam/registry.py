@@ -10,6 +10,7 @@ import os
 import threading
 from dataclasses import dataclass
 
+from atlas.collaboration.cancellations import RunCancellationBroker
 from atlas.coordination import TaskStore
 from atlas.message.service import MessageService
 from atlas.recording import ReportStore
@@ -19,6 +20,7 @@ from atlas.storage.base import (
     DebugRepository,
     FeedbackRepository,
     GraphRepository,
+    MemoryRepository,
     MonitoringRepository,
     RecordingRepository,
     RunRepository,
@@ -28,6 +30,7 @@ from atlas.storage.memory import (
     DebuggerBroker,
     FeedbackStore,
     GraphStore,
+    MemoryStore,
     MonitoringStore,
     RecordingStore,
     RunStore,
@@ -48,11 +51,13 @@ class TenantServices:
     message_service: object  # MessageService 是服务非存储，不进 Repository 抽象（docs/24 §1.1）
     approval_broker: ApprovalRepository
     debug_broker: DebugRepository
+    cancellation_broker: RunCancellationBroker  # B 包协作式急停（进程内，memory/PG 档均内存实例）
     monitoring: MonitoringRepository
     run_store: RunRepository
     task_store: TaskStore
     routing_store: RoutingStore
     report_store: ReportStore  # D26 报告 v1：批量回放报告 ring（进程内，memory/PG 档均挂内存实例）
+    memory_store: MemoryRepository  # M11 长期记忆 fact/preference（批 3 PG 档换 PgMemoryStore）
 
 
 class TenantRegistry:
@@ -87,11 +92,13 @@ class TenantRegistry:
                 message_service=MessageService(),
                 approval_broker=ApprovalBroker(),
                 debug_broker=DebuggerBroker(),
+                cancellation_broker=RunCancellationBroker(),
                 monitoring=backend.monitoring_store(tenant_id),
                 run_store=backend.run_store(tenant_id),
                 task_store=TaskStore(),
                 routing_store=RoutingStore(),
                 report_store=ReportStore(),
+                memory_store=backend.memory_store(tenant_id),
             )
         return TenantServices(
             graph_store=GraphStore(),
@@ -100,22 +107,26 @@ class TenantRegistry:
             message_service=MessageService(),
             approval_broker=ApprovalBroker(),
             debug_broker=DebuggerBroker(),
+            cancellation_broker=RunCancellationBroker(),
             monitoring=MonitoringStore(),
             run_store=RunStore(),
             task_store=TaskStore(),
             routing_store=RoutingStore(),
             report_store=ReportStore(),
+            memory_store=MemoryStore(),
         )
 
     def reset_tenant(self, tenant_id: str) -> None:
-        """本租户运行时数据重置：图/消息/审批/调试/监控/运行状态/灰度路由/批量回放报告清空，规则回默认；
+        """本租户运行时数据重置：图/消息/审批/调试/监控/运行状态/灰度路由/批量回放报告/长期记忆清空，规则回默认；
         录制用例与反馈沿用「reset 不清除」语义保留；监控运行计数器不重置。"""
         services = self.get(tenant_id)
         services.graph_store.clear()
         services.message_service.reset()
         services.approval_broker.reset()
         services.debug_broker.reset()
+        services.cancellation_broker.reset()
         services.monitoring.reset()
         services.run_store.reset()
         services.routing_store.reset()
         services.report_store.reset()
+        services.memory_store.clear()

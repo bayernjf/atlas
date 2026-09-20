@@ -43,6 +43,10 @@ export type DebugAction = 'step' | 'continue' | 'stop'
 export type DebugBreakpoint = {
   node_id: string
   expression?: string
+  /** B 包（docs/27 §4.2）：每 N 次命中暂停一次（正整数）；缺省每次命中暂停。 */
+  hitCount?: number
+  /** B 包：非空即日志断点（logpoint），命中只发 debug_log 不暂停。 */
+  logMessage?: string
 }
 
 export type DebugRequest = {
@@ -65,6 +69,22 @@ export type StoppedFrame = {
   reason: 'user_stop'
 }
 
+/** B 包（docs/27 §4.2）：日志断点命中帧，不暂停运行。 */
+export type DebugLogFrame = {
+  type: 'debug_log'
+  node_id: string
+  hits: number
+  message: string
+  subgraphPath?: string[]
+}
+
+/** B 包（docs/27 §4.1）：普通（非调试）运行被协作式急停的终帧。 */
+export type CancelledFrame = {
+  type: 'cancelled'
+  node_id: string
+  reason: 'user_cancel'
+}
+
 /** 调试运行被「停止」结束（stopped 帧）；无 result，属正常终止而非请求失败。 */
 export class DebugRunStoppedError extends Error {
   nodeId: string
@@ -75,12 +95,38 @@ export class DebugRunStoppedError extends Error {
   }
 }
 
+/** 普通运行被协作式急停结束（cancelled 帧）；用户主动，非请求失败。 */
+export class RunCancelledError extends Error {
+  nodeId: string
+  constructor(nodeId: string) {
+    super(`运行已取消：${nodeId}`)
+    this.name = 'RunCancelledError'
+    this.nodeId = nodeId
+  }
+}
+
 export type RunEvent =
-  | { type: 'node_start'; node_id: string; node_type: string; approval?: ApprovalRequest }
-  | { type: 'node_end'; node_id: string; node_type: string; output: unknown }
+  | {
+      type: 'node_start'
+      node_id: string
+      node_type: string
+      approval?: ApprovalRequest
+      /** A 包（docs/27 §3.1）：子图内部节点携带每层父图 subgraph 节点 id 路径；顶层节点缺省。 */
+      subgraphPath?: string[]
+    }
+  | {
+      type: 'node_end'
+      node_id: string
+      node_type: string
+      output: unknown
+      /** A 包（docs/27 §3.1）：子图内部节点携带每层父图 subgraph 节点 id 路径；顶层节点缺省。 */
+      subgraphPath?: string[]
+    }
   | ({ type: 'run_end' } & Partial<RunResult>)
   | PausedFrame
   | StoppedFrame
+  | DebugLogFrame
+  | CancelledFrame
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
@@ -332,11 +378,36 @@ export async function decideCardAction(
 export async function resumeDebug(
   token: string,
   action: DebugAction,
+  globals?: Record<string, unknown>,
 ): Promise<{ token: string; action: DebugAction }> {
+  // B 包（docs/27 §4.3）：step/continue 可带 globals 顶层键浅合并覆盖；stop 忽略。
+  const body = globals !== undefined ? JSON.stringify({ action, globals }) : JSON.stringify({ action })
   return request(`/api/debug/${token}/resume`, {
     method: 'POST',
-    body: JSON.stringify({ action }),
+    body,
   })
+}
+
+/**
+ * B 包（docs/27 §4.1）协作式急停：取本图最新在途 run（running；wait 阻塞为 suspended，
+ * broker 句柄仍在亦可取消），置取消事件，下一节点边界生效。无在途 run 返回 null。
+ * 不在 wait/approval/tool 阻塞中点强杀。
+ */
+export async function cancelActiveRun(
+  graphId: string,
+): Promise<{ runId: string } | null> {
+  const runs = await request<{
+    items: Array<{ runId: string; graphId: string; status: string }>
+  }>('/api/runs?limit=50')
+  const target = runs.items.find(
+    (r) => r.graphId === graphId && (r.status === 'running' || r.status === 'suspended'),
+  )
+  if (!target) return null
+  await request<{ run_id: string; cancelled: boolean }>(
+    `/api/runs/${target.runId}/cancel`,
+    { method: 'POST' },
+  )
+  return { runId: target.runId }
 }
 
 export type FeedbackType = 'bug' | 'suggestion'
@@ -443,6 +514,7 @@ export async function streamRun(
   let buffer = ''
   let result: RunResult | null = null
   let stoppedNodeId: string | null = null
+  let cancelledNodeId: string | null = null
 
   while (true) {
     const { done, value } = await reader.read()
@@ -459,12 +531,16 @@ export async function streamRun(
       } else if (payload.type === 'stopped') {
         stoppedNodeId = payload.node_id
         onEvent(payload as StoppedFrame)
+      } else if (payload.type === 'cancelled') {
+        cancelledNodeId = payload.node_id
+        onEvent(payload as CancelledFrame)
       } else {
         onEvent(payload as RunEvent)
       }
     }
   }
   if (stoppedNodeId !== null) throw new DebugRunStoppedError(stoppedNodeId)
+  if (cancelledNodeId !== null) throw new RunCancelledError(cancelledNodeId)
   if (!result) throw new Error('SSE 流缺少最终运行结果')
   return result
 }
@@ -833,4 +909,49 @@ export async function promoteRollout(graphId: string): Promise<RolloutSnapshot> 
 
 export async function rollbackRollout(graphId: string): Promise<RolloutSnapshot> {
   return request(`/api/graphs/${graphId}/rollout/rollback`, { method: 'POST' })
+}
+
+// --- M11 长期记忆（docs/26 §6；只读浏览 + admin 删除，写入只走图工具） --------
+
+export type MemoryKind = 'fact' | 'preference'
+
+export type MemoryItem = {
+  id: string
+  kind: MemoryKind
+  content: string
+  scope: Record<string, string>
+  confidence: number
+  source: string
+  metadata: Record<string, string>
+  created_at: string
+}
+
+export type MemorySearchResult = MemoryItem & { score: number }
+
+export async function listMemories(
+  kind?: MemoryKind,
+  limit = 50,
+): Promise<MemoryItem[]> {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (kind) params.set('kind', kind)
+  const body = await request<{ items: MemoryItem[] }>(`/api/memories?${params.toString()}`)
+  return body.items
+}
+
+export async function searchMemories(
+  q: string,
+  opts: { kind?: MemoryKind; topK?: number; minScore?: number } = {},
+): Promise<MemorySearchResult[]> {
+  const params = new URLSearchParams({ q })
+  if (opts.kind) params.set('kind', opts.kind)
+  if (opts.topK !== undefined) params.set('top_k', String(opts.topK))
+  if (opts.minScore !== undefined) params.set('min_score', String(opts.minScore))
+  const body = await request<{ results: MemorySearchResult[] }>(
+    `/api/memories/search?${params.toString()}`,
+  )
+  return body.results
+}
+
+export async function deleteMemory(id: string): Promise<void> {
+  await request(`/api/memories/${id}`, { method: 'DELETE' })
 }

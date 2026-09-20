@@ -35,8 +35,8 @@
 | `db_sql_params` | 04 / 四、工具/适配器组件 4.7 数据适配器（通用 SQL）v1 契约（权威 blockquote）+ `src/atlas/database/{service,adapter}.py`（query/execute 两能力） | ### 4.7 数据适配器（通用 SQL）v1 契约 |
 | `message_send_params` | 04 / 四、工具/适配器组件 4.8 消息适配器（进程内消息服务）v1 契约（权威 blockquote）+ `src/atlas/message/{service,adapter}.py`（单能力 message/send） | ### 4.8 消息适配器（进程内消息服务）v1 契约 |
 | `template_catalog` | 04 / 五、逻辑组件 5.10 流程模板库（内置只读）v1 契约（权威 blockquote）+ `src/atlas/template/catalog.py`（5 个内置模板元数据与 graph） | ### 5.10 流程模板库（内置只读） |
-| `recording_case` | 04 / 五、逻辑组件 5.11 操作录制与回放 v1 契约（权威 blockquote）+ `src/atlas/recording/{cases,replay,gate,snapshots}.py`（录制用例模型与进程内存储；M9 增 gate 发布前批量回放门禁；D26-b 增 `subgraphs` 快照内联，仅 replay 内联、gate 保持实时，见下行 `release_gate`） | ### 5.11 操作录制与回放 |
-| `debug_session` | 04 / 五、逻辑组件 5.12 单步调试与断点 v1 契约（权威 blockquote）+ `src/atlas/debug/{sessions,controller}.py`（运行期调试会话、暂停状态机、paused/stopped 帧） | ### 5.12 单步调试与断点 |
+| `recording_case` | 04 / 五、逻辑组件 5.11 操作录制与回放 v1 契约（权威 blockquote）+ `src/atlas/recording/{cases,replay,gate,snapshots}.py`（录制用例模型与进程内存储；M9 增 gate 发布前批量回放门禁；D26-b 增 `subgraphs` 快照内联，仅 replay 内联、gate 保持实时，见下行 `release_gate`；C 包 `3415377` 增 `recorded_at` 回放冻结时钟锚点与 today/now/datetime/hoursBetween 时钟函数，权威见 04 §5.1 C 注记） | ### 5.11 操作录制与回放 |
+| `debug_session` | 04 / 五、逻辑组件 5.12 单步调试与断点 v1 契约（权威 blockquote）+ `src/atlas/debug/{sessions,controller}.py`（运行期调试会话、暂停状态机、paused/stopped/debug_log 帧、hitCount/logpoint、resume globals 浅合并）+ `src/atlas/collaboration/cancellations.py`（B 包 f9a1301：RunCancelled/RunCancellationBroker 协作式急停、cancelled 帧） | ### 5.12 单步调试与断点 |
 | `monitoring` | 04 / 五、逻辑组件 5.13 基础监控告警 v1 契约（权威 blockquote）+ `src/atlas/monitoring/{records,metrics,alerts,business}.py`（运行记录 ring、指标聚合、规则求值与告警状态机；M9 增业务结果指标与 rollout_gate 告警动作，见下行 `business_metrics`） | ### 5.13 基础监控告警 |
 | `identity_session` | 04 / 五、逻辑组件 5.14 多租户与权限 v1 契约（权威 blockquote）+ `src/atlas/iam/{principals,sessions,registry,deps}.py`（种子租户/账号、Principal、sess- token、按租户服务注册表、Bearer 依赖） | ### 5.14 多租户与权限 |
 | `trace_span` | 04 / 五、逻辑组件 5.15 链路追踪 v1 契约（**M10 已落码 2026-09-18**；权威 blockquote）+ `src/atlas/tracing/`（与 OTel 同形最小 Span/Tracer、contextvars 进程内传播、to_tree 折叠开关） | ### 5.15 链路追踪（span v1） |
@@ -301,6 +301,7 @@ category: enum[communication, data_processing, business_logic, integration, repo
 
 ```yaml
 ```
+> **M11 边界（2026-09-19 立项，docs-only）**：05 文档的五层记忆策略 Schema（memory_config）为**愿景**，v1 不实现策略配置表单（缓做 D35）。M11 仅取回最小可用长期记忆：统一 `memory_item`（fact/preference）+ 本地确定性 embedding + `memory/remember`、`memory/recall` 两适配器工具，见文末 `memory_item` / `memory_remember` 契约（权威＝docs/26、ADR T23）。
 
 ### `collaboration_message` — 字段概览（完整定义见 05-组件设计-运营体五项核心.md #323，上下文章节：## 3.3 协同通信协议（示例））
 
@@ -438,6 +439,7 @@ node_type: enum[trigger, ai_decision, tool_call]
 traceId: string          # M10：本次 run 的 trace id（32hex），整棵树一致
 spanId: string           # M10：本节点 span id（16hex）
 parentSpanId: string     # M10：父 span id（run root；subgraph 内为 subgraph span）
+subgraphPath: string[]  # A 包(e594a4b)：仅子图内部节点事件携带，按进入层级存每层父图 subgraph 节点 id；顶层节点缺省此键
 # 节点结束
 type: "node_end"
 node_id: string
@@ -446,13 +448,14 @@ output: object          # 该节点产出（决策 dict / 工具 ActionResult �
 traceId: string          # M10：同 node_start
 spanId: string
 parentSpanId: string
+subgraphPath: string[]  # A 包：同 node_start，仅子图内部 node_end 携带；录制/监控采集只收无此键的顶层 node_end
 # 运行结束（SSE 末帧为 event: result，载荷 {id, status, outputs, traces}）
 type: "run_end"         # 随 run_graph 返回值展开
 traceId: string          # M10：run root span 的 trace id
 spanId: string           # M10：run root span id（parentSpanId 缺省）
 graphVersion: string     # M10：`graphId@<releaseVersion:int>`（发布版本，无 v 前缀，对齐 M6 钉版）/`graphId@draft`（草稿）
 ```
-> M10 起三帧均为 **19 §2.3.4 Trace 事件超集**：只新增 traceId/spanId/parentSpanId（run_end 另加 graphVersion），现有字段与帧类型不变，前端忽略未知字段即零改动。span 三元组位于事件顶层、**不进节点 output**（录制回放 collect_steps 只取 output，天然不受随机 id/时间影响）；完整 span 树经 `tracing` 包进程内导出，不进 SSE 高频帧。subgraph 子图以 `emit=None` 重入、事件仍不外泄，子图内部 span 经 `to_tree(include_internal=False)` 折叠（见下 `trace_span`）。
+> M10 起三帧均为 **19 §2.3.4 Trace 事件超集**：只新增 traceId/spanId/parentSpanId（run_end 另加 graphVersion），现有字段与帧类型不变，前端忽略未知字段即零改动。span 三元组位于事件顶层、**不进节点 output**（录制回放 collect_steps 只取 output，天然不受随机 id/时间影响）；完整 span 树经 `tracing` 包进程内导出，不进 SSE 高频帧。子图内部 span 经 `to_tree(include_internal=False)` 折叠（见下 `trace_span`，A 包后 span 树折叠口径不变）；A 包（`e594a4b`）后子图内部 node_start/node_end 改经可选 `subgraphPath` 上 SSE（见下），与 span 折叠相互独立。
 
 ### `trace_span` — 字段概览（**M10 已落码收口 2026-09-18（ba9e0d2 起，08 M10 落码条）**；权威＝docs/19 §2.3.4 + 10 §4 ADR T21 + 08 M10 立项条，落码承载 `src/atlas/tracing/`）
 
@@ -477,7 +480,7 @@ Span:
 > M7 `task_envelope.traceId/graphVersion` 落码时为占位（traceId=runId）；**M10 起填真实 traceId 并记录 parentSpanId**（dispatch 建 task_dispatch span、complete 建 task_done span，actor=assignee）。`RunRecord` 同期加可选 `trace_id`（见监控段；M9 再加 `resolved_version`/`business`，见下 `business_metrics`）。
 
 
-> `node_type` 实际已随 Phase 2 扩展为全部可编译类型（含 subgraph）。subgraph 节点内部子图以 `emit=None` 重入执行，**不产生 node_start/node_end/run_end 事件**；子图 trace 与 outputs 收入 subgraph 节点产出（权威形状见 04 §5.7）。
+> `node_type` 实际已随 Phase 2 扩展为全部可编译类型（含 subgraph）。**A 包（2026-09-19 `e594a4b`，docs/27 §3）起，subgraph 子图重入时内部 `node_start`/`node_end` 以可选 `subgraphPath: string[]`（按进入层级存每层父图 subgraph 节点 id；顶层节点缺省此键）命名空间上 SSE**，只转发节点级事件（含 node_start 的 approval 载荷）、吞掉子层 `run_end`/result 终帧（整图仅父层发一个 run_end）；子图内 human_approval 凭上屏 payload 的全局唯一 token，复用共享 ApprovalBroker 与既有 `/api/approvals/{token}/decision` 交互（无新端点）。子图 trace 与 outputs 仍收入 subgraph 节点产出（权威形状见 04 §5.7）。录制 `collect_steps` 与 SSE worker 监控采集只收无 `subgraphPath` 的顶层 node_end，内部事件不污染录制 steps/监控指标，但仍实时上屏。
 
 ### `subgraph_node_output` — 字段概览（Phase 2 第六项；subgraph 节点 outputs[id]）
 
@@ -549,6 +552,7 @@ graph_id: string           # M9 新增纯超集：所属图 id（创建请求已
 graph: graph_definition    # 录制时的图快照（冻结，非 graph_id 活引用）
 subgraphs: {graphId: raw}  # D26-b（2026-09-19，29bb3d9）纯超集：录制时递归冻结的子图 raw（深度≤3、visited 防环、引用缺失不阻断）；旧用例缺省 {}
 created_at: string         # UTC ISO-8601
+recorded_at: string | null # C 包（2026-09-19，3415377）纯超集：回放冻结时钟锚点（UTC ISO）；新用例入库时与 created_at 同 stamp（端点不重跑 baseline，锚点＝入库时刻），旧用例为 null（回放回退 created_at）；进程内/PG 两档一致（迁移 007）
 # GET /api/recordings 列表投影（不含 graph/steps）
 items: [{id, name, graph_id, node_count, step_count, status, created_at}]
 # POST /api/recordings/{id}/replay 响应（ReplayReport）
@@ -558,12 +562,15 @@ matches: boolean           # 操作序列与逐节点归一化产出全部一致
 baseline_status: string
 replay_status: string      # 回放异常（如子图引用缺失）折叠为 "failed"
 steps: [{node_id, match, note, diff_keys?}]  # diff_keys 为归一化后差异顶层键
+clock_note?: string        # C 包（3415377）：仅当用例缺 recorded_at/created_at、无法冻结时钟时附（中文，提示 today()/now() 时间分支可能漂移）；单用例 replay 挂响应顶层，发布门禁挂对应 case 项
 ```
 > 进程内存储（重启清空，持久化随 11 S1）；`/api/demo/reset` 不清除（测试资产，同 feedback）。回放从 human_approval 步骤抽解决策预置为 inputs.approvals，不挂起；比对前递归剔除 token/sent_at、消息记录 uuid id、HTTP headers date。权威契约见 04 §5.11，REST 见 12 §5。
 >
 > **M9 发布门禁（2026-09-18 已落码，D26 部分取回）**：`graph_id` 用于发布前批量回放筛选；`POST /api/graphs/{id}/release-gate` 对当前 latest 草稿逐例重跑 + compare 产 `release_gate` 报告（见下），publish 可带 `gate:true` 拦截坏版本。用例集趋势报告/影子模式/Mock 外部系统仍缓做 14 D26。
 >
 > **租户注记（2026-09-16，§5.14）**：录制用例按租户分区（rec-N 计数各自从 1，图快照取自本租户 GraphStore）；跨租户访问录制 id → 404，reset 不清除。
+>
+> **C 包冻结时钟（2026-09-19 已落码，`3415377`，docs/27 §2，D15 余部）**：`run_graph(now_override=)` 单次运行固定一个 UTC 时钟并透传 condition/loop/subgraph/调试断点；回放单用例与发布门禁经 `recording.replay.clock_anchor(case)`（recorded_at→created_at→真实时钟）取锚点注入，含 `today()/now()` 的分支录制与回放确定可比。**已知 PG 缺口（非本包引入、归属 D26 用例 PG 持久化）**：PG 档 `PgRecordingStore.add` 未实现富字段 `graph_id`/`subgraphs`，PG 后端下 `POST /api/recordings` 500（TypeError）；`recorded_at` 已两档一致，富字段 PG 化随 D26（见 docs/14 D26）。
 
 ### `debug_session` — 字段概览（Phase 2 能力项，2026-09-15；`/api/debug*` 与 /run/stream 的 debug 入参）
 
@@ -573,6 +580,8 @@ debug:
   breakpoints:
     - node_id: string          # 必须是本图节点（未知 422）
       expression: string?      # 可选，§5.1 白名单表达式；校验失败 422，运行时求值异常 fail-safe 不命中
+      hitCount: int?           # B 包(f9a1301)：正整数 N，每第 N 次命中才暂停（hits%N==0）；缺省=每次命中；非正整数/布尔 422
+      logMessage: string?      # B 包：非空＝日志断点 logpoint，命中只发 debug_log 不暂停（消息原样不插值）；v1 不与 hitCount 组合
 # 启动即 step 模式（每个节点执行前暂停）；断点不进 Graph JSON、会话级。
 # SSE event: paused
 type: "paused"
@@ -583,11 +592,24 @@ reason: "step" | "breakpoint" | "condition"
 globals: object                # 当前全局变量快照（深拷贝，只读）
 outputs: object                # 截至暂停点全部已完成节点终态产出（深拷贝，只读）
 # POST /api/debug/{token}/resume 请求体
-action: "step" | "continue" | "stop"   # step=下一节点再停；continue=关逐节点仅断点停；stop=取消运行
-# SSE event: stopped（无 result 帧）
+action: "step" | "continue" | "stop"   # step=下一节点再停；continue=关逐节点仅断点停；stop=取消运行（忽略 globals）
+globals: object?                       # B 包(f9a1301)：仅 action=step/continue；global 顶层键浅合并覆盖（dict 值整体替换、不深 merge、不删未提供键）；键名 ^[A-Za-z_][A-Za-z0-9_]*$、值 JSON 可序列化，非法 422
+# SSE event: stopped（无 result 帧；调试流急停也折叠为此帧，不另发 cancelled）
 type: "stopped"
 node_id: string
 reason: "user_stop"
+# SSE event: debug_log（B 包，仅调试流；logpoint 命中，不暂停）
+type: "debug_log"
+node_id: string
+hits: int                  # 该节点断点累计命中次数
+message: string            # logMessage 原样
+subgraphPath: string[]?    # 预留（子图断点仍缓做，v1 缺省）
+# 普通（非调试）运行急停：SSE event: cancelled
+type: "cancelled"
+node_id: string            # 取消生效的下一节点边界 id（wait/approval/tool 阻塞中点不强杀）
+reason: "user_cancel"
+# POST /api/runs/{run_id}/cancel（operate）：置位协作式取消事件 → {run_id,cancelled:true}
+#   run 不存在/跨租户 404；已结束无注册句柄 409；窗口内重复取消幂等 200；viewer 403
 # GET /api/debug → {items:[{token, node_id, node_type, graph_id, reason}]}
 ```
 > 进程内会话（threading.Event，重启即失，持久化中断随 11 S1/14 D19/D20）；未知 token 404、重复 resume 409；`/api/demo/reset` 按 stop 释放全部暂停；parallel 暂停串行化、`__join__` 网关与 subgraph 内部不暂停。权威契约见 04 §5.12，REST 见 12 §5。
@@ -601,7 +623,7 @@ reason: "user_stop"
 id: string                 # run-{自增}
 graph_id: string
 mode: "sync" | "stream"    # 仅真实运行；debug/回放/子图重入不记录
-status: "completed" | "error"   # 未捕获异常=error；节点 FAILED 是数据不是异常
+status: "completed" | "error" | "cancelled"   # 未捕获异常=error；节点 FAILED 是数据不是异常；B 包(f9a1301)起协作式急停=cancelled（健康判定认 completed/cancelled 且无失败节点，不刷 streak/不告警）
 started_at: string         # ISO 8601 UTC
 finished_at: string
 duration_ms: number
@@ -867,4 +889,32 @@ amount_diff: boolean          # 两者皆在且不等
 ```
 > demo shop 不返回退款金额，沙盘现状 refund_amount_diff_rate 恒为 0：**门控机制与阈值先行、真实金额字段随正式 shop 接入**；不改造 demo shop、不碰录制归一化（避免破坏黄金用例比对）。自动回滚不改外部已发生事实（已退款不可逆，切流只影响新流量）。
 
+### `memory_item` — 字段概览（**M11 已落码收口 2026-09-19**，commit `5441902`/`73e53bd`；权威＝docs/26 + 10 ADR T23，承载 `src/atlas/memory/{models,embeddings,items,adapter}.py`、`storage` MemoryRepository/PgMemoryStore）
 
+```yaml
+# 统一记忆条目（fact/preference 以 kind 区分；进程内为 dict、PG memory_items 一行）
+id: string                      # mem-{自增}（进程内租户计数；PG 取 storage_id_seq）
+kind: "fact" | "preference"     # 必填：长期事实 / 用户偏好
+content: string                 # 记忆文本，1-2000 字；remember 时据此算 embedding
+scope: {string: string}         # 业务绑定（如 user_id/order_id），缺省 {}；recall 子集匹配
+confidence: number              # 0-1，缺省 1.0（自动提取 <1 随 D35 缓做）
+source: "tool" | "manual" | "run"   # 缺省 tool；v1 仅经工具写
+metadata: object                # 附加信息，缺省 {}（PG 列名 meta，JSONB）
+created_at: string              # UTC ISO-8601；两档均 TEXT 存 Python ISO 字符串（对齐迁移 002）；v1 不可变（只追加/删，无 update）
+# embedding: number[256]        # 内部字段，LocalDeterministicEmbedder 产出，不进 API 响应
+```
+> 第九个 Repository `MemoryRepository`（remember/recall/list/delete/clear，RESET_RESETTABLE）：进程内 `MemoryStore` + PG/pgvector `PgMemoryStore` 两档，租户分区（构造期注入 tenant_id，不进方法签名/资源 JSON）。`EmbeddingProvider` Protocol + 本地确定性 embedder（EMBED_DIM=256、signed hashing、中文 unigram+bigram、纯 stdlib、离线且回放确定；商业 embedding 缓做 D35）；PG 迁移 `006_memory.sql` vector(256)+ivfflat(lists=100)、`embedding <=> CAST(:q AS vector(256))` 余弦（score=1−distance）、`scope @> CAST(:scope AS jsonb)` 子集（SQLAlchemy text() 中 `:p::type` 与绑定参数冲突，故用 CAST）。本地词法向量只验证机制与接缝、非真实语义。权威设计见 docs/26 §2–§4。
+
+### `memory_remember` / `memory_recall` — 工具契约（**M11 已落码收口 2026-09-19**，commit `58d936c`；`memory` Harness 适配器，adapter_id/type="memory"；零新节点、零 DSL/编译器改动；图接入须把 `memory` 加入 loader GENERIC_JSON_ADAPTERS）
+
+```yaml
+# 能力 memory/remember（action=memory_remember，permission=write，非幂等）
+input:  {kind: enum[fact,preference]（必填）, content: string 1-2000（必填，支持 {{变量}}）,
+         scope?: {string:string}, confidence?: number 0-1, metadata?: {string:string}}
+output: {id, kind, content, confidence, source, scope, created_at}
+# 能力 memory/recall（action=memory_recall，permission=read，幂等）
+input:  {query: string（必填，支持 {{变量}}）, kind?: enum[fact,preference],
+         scope?: {string:string}, top_k?: int 1-20=5, min_score?: number 0-1=0}
+output: {results: [{id, kind, content, score: number, confidence, scope, created_at}]}  # 无命中 results=[]
+```
+> 走现有 tool_call/harness 链路（params 由 M3 FormRenderer 按 input_schema 自动生成、M2 变量补全零额外）；schema 守 Capability keyword 白名单（无 x- 扩展）。装配照 message 两段式：全局注册仅供发现，`_runtime_registry` 按租户克隆注入 `services.memory_store`。REST：`GET /api/memories`（viewer+，kind 过滤）、`GET /api/memories/search?q=`（viewer+，q 空 422）、`DELETE /api/memories/{id}`（**admin**，跨租户 404）；**写入不开 REST**（只走图工具）。docs/12 原 `GET/PUT /api/memories/{operator_id}` 据此订正为按租户、operator 降为 `scope.user_id`。错误码：repo 缺省的发现实例执行期返 `MEMORY_NOT_CONFIGURED`、入参校验失败折 `MEMORY_INVALID_INPUT`；tool_call 成功后节点输出包一层 `{"result": <工具 output>, "action_status": "SUCCESS"}`。working/summary/case 层、自动提取、决策隐式注入、PII/更新策略均缓做（D35）。

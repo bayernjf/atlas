@@ -562,3 +562,35 @@ describe('validateNodeId（D30/B3）', () => {
     expect(validateNodeId('  ', 'tool-1', ['tool-1'])).toContain('不能为空')
   })
 })
+
+
+describe('B 包断点增强（docs/27 §4.2，U135）', () => {
+  it('setBreakpointHitCount 存正整数，null/<1 归一为 undefined', () => {
+    useEditorStore.setState({ breakpoints: { 'tool-1': {} } })
+    useEditorStore.getState().setBreakpointHitCount('tool-1', 3)
+    expect(useEditorStore.getState().breakpoints['tool-1']?.hitCount).toBe(3)
+    useEditorStore.getState().setBreakpointHitCount('tool-1', null)
+    expect(useEditorStore.getState().breakpoints['tool-1']?.hitCount).toBeUndefined()
+    useEditorStore.getState().setBreakpointHitCount('tool-1', 0)
+    expect(useEditorStore.getState().breakpoints['tool-1']?.hitCount).toBeUndefined()
+  })
+
+  it('setBreakpointLogMessage 非空才记，空白归一为 undefined', () => {
+    useEditorStore.setState({ breakpoints: { 'tool-1': {} } })
+    useEditorStore.getState().setBreakpointLogMessage('tool-1', '到达退款节点')
+    expect(useEditorStore.getState().breakpoints['tool-1']?.logMessage).toBe('到达退款节点')
+    useEditorStore.getState().setBreakpointLogMessage('tool-1', '   ')
+    expect(useEditorStore.getState().breakpoints['tool-1']?.logMessage).toBeUndefined()
+  })
+
+  it('hitCount/logMessage 与 expression 共存不互相覆盖', () => {
+    useEditorStore.setState({ breakpoints: { 'tool-1': { expression: '{{global.x}} > 1' } } })
+    useEditorStore.getState().setBreakpointHitCount('tool-1', 2)
+    useEditorStore.getState().setBreakpointLogMessage('tool-1', 'hit')
+    expect(useEditorStore.getState().breakpoints['tool-1']).toEqual({
+      expression: '{{global.x}} > 1',
+      hitCount: 2,
+      logMessage: 'hit',
+    })
+  })
+})

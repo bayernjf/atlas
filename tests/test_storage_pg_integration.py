@@ -49,6 +49,7 @@ def _cleanup(engine) -> None:
     tables = [
         "graphs", "graph_versions", "runs", "interruptions", "iam_sessions",
         "recordings", "feedback", "monitoring_runs", "monitoring_alerts", "monitoring_rules",
+        "memory_items",
     ]
     with engine.begin() as conn:
         for table in tables:
@@ -131,6 +132,27 @@ def test_feedback_and_recording_persistent(backend):
     assert recording.get(case.id).name == "用例"
     assert recording.delete(case.id) is True
     assert recording.get(case.id) is None
+
+
+def test_recording_recorded_at_roundtrip(backend):
+    # C（docs/27 §2.4）：recorded_at 在 PG 档落库并往返，缺省与 created_at 同刻。
+    from atlas.recording.cases import RecordStep
+
+    recording = backend.recording_store(TENANT)
+    auto = recording.add(
+        name="自动锚点", graph={"version": 1}, inputs=None,
+        steps=[RecordStep(node_id="t", node_type="trigger", output={})], status="ok",
+    )
+    assert auto.recorded_at == auto.created_at
+    got = recording.get(auto.id)
+    assert got is not None and got.recorded_at == auto.created_at
+    assert all(c.recorded_at for c in recording.list())
+    fixed = recording.add(
+        name="显式锚点", graph={"version": 1}, inputs=None,
+        steps=[RecordStep(node_id="t", node_type="trigger", output={})], status="ok",
+        recorded_at="2026-01-02T03:04:05+00:00",
+    )
+    assert recording.get(fixed.id).recorded_at == "2026-01-02T03:04:05+00:00"
 
 
 def test_monitoring_roundtrip(backend):

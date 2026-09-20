@@ -16,7 +16,7 @@ from typing import Any
 from ..graph.dsl import parse_graph
 from ..graph.loader import run_graph
 from .cases import RecordingCase
-from .replay import collect_steps, compare, preset_approvals
+from .replay import clock_anchor, collect_steps, compare, preset_approvals
 
 
 def _replay_one(
@@ -30,6 +30,7 @@ def _replay_one(
     """对草稿重跑单用例，返回 compare 报告；执行异常折叠为 failed/matches=false。"""
     try:
         emit, take_steps = collect_steps()
+        anchor, clock_note = clock_anchor(case)
         inputs = dict(case.inputs or {})
         presets = preset_approvals(case.steps)
         if presets:
@@ -44,19 +45,23 @@ def _replay_one(
             graph_id=f"gate-{case.id}",
             emit=emit,
             graph_resolver=graph_resolver,
+            now_override=anchor,
         )
         replay_steps = take_steps()
         tools_by_node = {
             node.id: (node.config.get("tool") if node.type == "tool_call" else None)
             for node in graph.nodes
         }
-        return compare(
+        report = compare(
             case.steps,
             replay_steps,
             tools_by_node=tools_by_node,
             baseline_status=case.status,
             replay_status=result["status"],
         )
+        if clock_note:
+            report["clock_note"] = clock_note
+        return report
     except Exception as exc:  # 回放失败折叠为不匹配，不抛 500（对齐 replay 端点，06 §6.9）
         return {
             "matches": False,

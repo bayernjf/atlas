@@ -9,9 +9,10 @@ type DashboardProps = {
   onLogout: () => void
   onOpenEditor: () => void
   onOpenMonitoring: () => void
+  onOpenMemory: () => void
 }
 
-export function Dashboard({ principal, onLogout, onOpenEditor, onOpenMonitoring }: DashboardProps) {
+export function Dashboard({ principal, onLogout, onOpenEditor, onOpenMonitoring, onOpenMemory }: DashboardProps) {
   return (
     <Layout className="page-layout">
       <Header className="page-header" style={{ justifyContent: 'space-between' }}>
@@ -31,6 +32,7 @@ export function Dashboard({ principal, onLogout, onOpenEditor, onOpenMonitoring 
                 打开流程编辑器
               </Button>
               <Button onClick={onOpenMonitoring}>监控告警</Button>
+              <Button onClick={onOpenMemory}>长期记忆</Button>
             </Space>
           </Card>
           <Row gutter={16}>
