@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### feat(recording)：docs/28 批 1 D26 四项落码收口——PG 富字段修复 + Mock 回放 + 用例编辑 + 跨图看板（2026-09-20，四原子 `d1f455b`/`c7bf138`/`89e21fc`/`0e8ebe7`，U139–U148 转正式，形状权威 docs/28 §2，D26 部分取回不解除）
+
+- 立项（`b0d8023`）后批 1 四原子全部落码，零新依赖、不新增 ADR、纯超集/新端点、**不解除 D26**。
+- **① PG 富字段缺口修复（`d1f455b`，fix(storage)）**：新建迁移 `db/migrations/008_recording_graph_subgraphs_tool_calls.sql`（recordings 加 `graph_id TEXT NOT NULL DEFAULT ''`、`subgraphs JSONB NOT NULL DEFAULT '{}'`，monitoring_runs 加 `tool_calls JSONB DEFAULT '[]'`〔批 3 预留〕，均 ADD COLUMN IF NOT EXISTS＋幂等回填，已手动应用 atlas-pg）；`PgRecordingStore.add` 对齐进程内签名（graph_id/subgraphs）、INSERT 补列、抽 `_SELECT_COLS`、`_row_to_case` 补 graph_id/subgraphs，get/list 同步；`RecordingRepository.add` 协议改超集。PG 档「录为用例」500（TypeError: graph_id）缺口闭合，d26_smoke 从此两档全过。
+- **② Mock 工具回放（`c7bf138`，feat(recording)）**：loader 全链加内部参数 `tool_mocks`（compile/run/resume 透传），executor 工具分支前插桩分支——命中取录制原始 output、不触达 registry、不发 tool span/tool_metric，其余与真实分支同构；子图重入 run_graph 刻意不透传（子图内工具不桩）。`replay.build_tool_mocks(case)` 纯函数仅收顶层 node_type=tool_call 步骤、dedupe 保末；`POST /api/recordings/{id}/replay` body 从无改为可选 `ReplayRequest{mock_tools?:bool, inputs_override?:dict}`（inputs_override 顶层键浅合并、一次性不落库、非对象 422），响应纯超集加 `mocked_tools:string[]`；**发布门禁 gate.run_release_gate 不接 mock**（仍实时跑真实适配器）。坑：pydantic v2 把字符串 "true" 宽松转 bool，非法 bool 测试须传 list/dict。
+- **③ 用例编辑（`89e21fc`，feat(recording)）**：`RecordingUpdateRequest{name?:1-100, inputs?:dict}`；进程内 `RecordingStore.update_meta`（model_copy 原地替换保序、无字段返原 item、不存在 None）、`PgRecordingStore.update_meta`（动态 UPDATE SET、rowcount=0→None）、Protocol 补 update_meta；新增 `PUT /api/recordings/{id}`（operate，404/422，仅 name/inputs 可改、steps/graph/subgraphs/graph_id/时间戳不可改，返完整 case）。
+- **④ 跨图报告看板（`89e21fc`）**：`ReportStore.list_all_summary(limit=100)`（跨租户 ring 倒序切片、clamp 1-200、去 cases、不进 Repository/不 PG）；新增 `GET /api/release-reports?limit=`（read，非整数 422，viewer 可读）。
+- **前端（`0e8ebe7`，feat(frontend)）**：apiClient 补 RecordingCase graph_id/subgraphs/recorded_at、ReplayReport clock_note/mocked_tools 与 getRecording/updateRecording/listAllReleaseReports；Editor 录制 Modal 每用例加「编辑」按钮（拉详情预填 name/inputs、保存/取消、不可改字段说明）、per-case Mock Checkbox、入参覆写 TextArea、回放结果「Mock N 工具」蓝 Tag；Monitoring 指标卡下加「跨图用例集报告」Card＋Table（倒序、通过率彩色 Tag、阻塞列）。坑：parseInputsObject 判别联合须用 `ok` 字段而非 `'error' in`（Record 索引签名致 error 为 unknown，tsc TS2345）。
+- 验证：后端 **720 passed/20 skipped**（B 基线 712/18，净增 8 个非 integration＋2 个 PG integration 默认 skip）、PG integration 显式 **8 passed**、前端 **472 passed/2 skipped/39 文件**（不增不减）、pnpm build 过、oxlint **0 error/2 既有 warning**；d26_smoke 内存＋PG 两档 24 断言全过、m11_smoke 两档 ALL_PASS、PG 档新端点 HTTP 冒烟 14 项全过；真实浏览器冒烟（PG 档 admin-a）三场景全过、3 截图 `docs/assets/batch1-cross-graph-board.png`/`batch1-edit-panel.png`/`batch1-mock-replay.png`。同步面：docs/28 顶部批 1 注记、03（recording_case/release_report/索引行）、12 §5（PUT/跨图 GET/replay body 鉴权契约）、13 U139–U148、14 D26、handoff、本文件。
+
 ### docs(contracts)：工程内可闭环缓做项 11 项打包 docs-only 立项（2026-09-20，单原子 `b0d8023`，D26/D27/D28/D35/D21 部分取回，形状权威 docs/28，0 落码）
 
 - C+A+B 收口（后端 712/前端 472）后，用户拍板「能一起推进的话，一起搞了」：把 11 项**不依赖外部真实世界、工程内可闭环**的缓做余部一次打包，全部取**进程内 v1 形态**，零新依赖、不新增 ADR、**不解除任何缓做条目**（docs/14 仅加部分取回注记）。新建 docs/28 形状权威（10 章：§0 八条已拍板、§1 范围表/非目标、§2–§5 四批设计、§6 REST/SSE/Schema 汇总、§7 前端落点、§8 原子序与 U139–U186 候选、§9 契约同步矩阵、§10 风险）。
