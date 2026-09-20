@@ -133,6 +133,7 @@ class MonitoringStore:
                 first_seen=record.finished_at,
                 last_seen=record.finished_at,
                 last_run_id=record.id,
+                rule_name=event.rule_name,
             )
         )
 

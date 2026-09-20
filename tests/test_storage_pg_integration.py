@@ -258,6 +258,43 @@ def test_tool_calls_roundtrip(backend):
     store.reset()
 
 
+def test_custom_rules_roundtrip(backend):
+    """docs/28 §4.2 ⑨：自定义规则随 monitoring_rules.config JSONB 往返（无 DDL），
+    custom:{cid} 告警 rule_id 为 TEXT 可落库。"""
+    store = backend.monitoring_store(TENANT)
+    store.update_rules({
+        "run_error": {"enabled": True},
+        "node_failed": {"enabled": False},
+        "consecutive_failures": {"enabled": True, "threshold": 3},
+        "failure_rate": {"enabled": True, "window": 20, "min_samples": 5, "rate": 0.5},
+        "custom": [
+            {"cid": "cid-1", "name": "错误即告警",
+             "expression": "{{status}} == 'error' || {{hasError}}", "severity": "critical"},
+        ],
+    })
+    rules = store.get_rules()
+    assert len(rules.custom) == 1
+    assert rules.custom[0].cid == "cid-1"
+    assert rules.custom[0].expression == "{{status}} == 'error' || {{hasError}}"
+    # 触发一次 error 运行 → custom:cid-1 落 monitoring_alerts（rule_id TEXT）
+    store.record_run(
+        graph_id="graph-custom", mode="sync", status="error",
+        started_at="2026-09-20T00:00:00+00:00", duration_ms=10.0, nodes=[],
+        error="boom",
+    )
+    alerts = [a for a in store.list_alerts() if a.rule_id == "custom:cid-1"]
+    assert len(alerts) == 1
+    assert alerts[0].severity == "critical"
+    # 旧配置（无 custom 段）写回后缺省为空，不报错
+    store.update_rules({
+        "run_error": {"enabled": True}, "node_failed": {"enabled": True},
+        "consecutive_failures": {"enabled": True, "threshold": 3},
+        "failure_rate": {"enabled": True, "window": 20, "min_samples": 5, "rate": 0.5},
+    })
+    assert store.get_rules().custom == []
+    store.reset()
+
+
 def test_interruption_frame_roundtrip(backend):
     from atlas.storage.frame import build_frame, deadline_iso
     from atlas.storage.recovery import clear_frame, load_pending_frames, make_frame_sink
