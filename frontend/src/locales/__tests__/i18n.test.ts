@@ -23,6 +23,12 @@ const WIRED_KEYS = [
 /** 纯插值模板：中文来自插值变量，单独验证渲染结果。 */
 const TEMPLATE_KEYS = ['auth.login.seed.accountLine']
 
+/** Dashboard.tsx 在 dashboard namespace 下接线的页面专属 key（M12 续批）。 */
+const DASHBOARD_KEYS = ['demo.title', 'demo.description', 'demo.cards.graph', 'demo.cards.loop', 'demo.cards.harness']
+
+/** Dashboard 经 common: 前缀取用的跨页通用 key（品牌名/主导航）。 */
+const SHARED_NAV_KEYS = ['common:brand.appName', 'common:nav.openEditor', 'common:nav.monitoring', 'common:nav.memory']
+
 const hasChinese = (s: string): boolean => /[\u4e00-\u9fff]/.test(s)
 
 afterEach(() => {
@@ -105,6 +111,38 @@ describe('zero-dependency i18n skeleton (docs/17 §2.3, M12)', () => {
     changeLanguage('en-US')
     for (const key of [...WIRED_KEYS, ...TEMPLATE_KEYS]) {
       expect(t(key)).not.toBe(key)
+    }
+  })
+
+  it('resolves dashboard namespace copy for the home page (second wired namespace)', () => {
+    for (const key of DASHBOARD_KEYS) {
+      const value = t(key, { ns: 'dashboard' })
+      expect(value).not.toBe(key)
+      expect(value.length).toBeGreaterThan(0)
+      expect(hasChinese(value), `${key} should carry Chinese copy`).toBe(true)
+    }
+    expect(t('demo.title', { ns: 'dashboard' })).toContain('电商退款自动化')
+  })
+
+  it('reaches shared brand/nav copy via the common: prefix from a dashboard hook', () => {
+    // Mirrors Dashboard.tsx: useTranslation('dashboard') then t('common:...')
+    expect(t('common:brand.appName', { ns: 'dashboard' })).toBe('Atlas 运营体编排平台')
+    expect(t('common:nav.openEditor', { ns: 'dashboard' })).toBe('打开流程编辑器')
+    for (const key of SHARED_NAV_KEYS) {
+      const value = t(key, { ns: 'dashboard' })
+      expect(value).not.toBe(key)
+      expect(hasChinese(value), `${key} should carry Chinese copy`).toBe(true)
+    }
+  })
+
+  it('falls back to zh-CN for dashboard copy under the empty en-US skeleton', () => {
+    changeLanguage('en-US')
+    // en-US/dashboard.json stays {} (no translation yet); Chinese must still render
+    for (const key of DASHBOARD_KEYS) {
+      expect(t(key, { ns: 'dashboard' })).not.toBe(key)
+    }
+    for (const key of SHARED_NAV_KEYS) {
+      expect(t(key, { ns: 'dashboard' })).not.toBe(key)
     }
   })
 })

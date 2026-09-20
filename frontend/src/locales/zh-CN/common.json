@@ -1,8 +1,16 @@
 {
+  "brand": {
+    "appName": "Atlas 运营体编排平台"
+  },
   "role": {
     "viewer": "访客",
     "operator": "运营",
     "admin": "管理员"
+  },
+  "nav": {
+    "openEditor": "打开流程编辑器",
+    "monitoring": "监控告警",
+    "memory": "长期记忆"
   },
   "button": {
     "confirm": "确定",
