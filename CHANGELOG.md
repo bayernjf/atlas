@@ -4,6 +4,20 @@
 
 ## [Unreleased]
 
+### feat(i18n)：M12 零依赖文案抽取骨架落码收口（2026-09-20，两原子 `9f1963f`/`a894fa7`，U212–U218 转正式，D12 部分取回不解除）
+
+- 立项（`3197e07`）后按零依赖＋样板先行落码，**不引入 i18next/react-i18next**、无语言切换 UI、无 en-US 翻译、后端零改动。
+- **骨架（`9f1963f`）**：新增 `frontend/src/locales/`，`index.ts` 用纯 TS＋已有 react 的 `useSyncExternalStore` 实现对齐 i18next 签名的 `t(key,options)`/`useTranslation(ns)`：点路径嵌套、`{{var}}` 插值（缺变量保留占位）、`ns:` 前缀、缺键依次回退 common namespace 与 zh-CN、最终返回 key 本身；默认 zh-CN，`changeLanguage`/localStorage 语言位预留但不启用、不做 navigator 自动探测。`zh-CN/common.json` 放 role/auth.login/auth.session/error.auth 与少量 button/status 外壳键；editor/dashboard/demo 与整个 en-US 树为空对象占位。13 个纯函数 vitest（U212–U218）。
+- **接线（`a894fa7`）**：Login、UserBadge、`auth.ROLE_LABELS` 改走 t()/common.json；ROLE_LABELS 从 common.json role 段派生、中文逐字不变（auth.test 零改动）；种子账号提示重构为结构化数据，经 `accountLine` 插值模板与 role.* 渲染；后端登录失败中文 detail 上屏维持 docs/17 允许的过渡状态（D7 结构化 code 留待触发批）。oxlint exhaustive-deps 抓到一处多余 useCallback 依赖并修复（不新增 warning）。
+- 验证：前端 **495 passed/2 skipped/40 文件**（基线 482 净增 13）、tsc+vite build 过、oxlint **0 error/2 既有 warning**；后端零改动 **782 passed/24 skipped 不变**；真实浏览器 admin-a 登录页与登录后 UserBadge 中文零视觉差异、退出登录正常，2 截图 `docs/assets/m12-{login,userbadge}.png`。同步面：docs/17（§4 骨架行）、08（M12 落码收口条）、14（D12 落码注记）、13 U212–U218、09（locales 树）、handoff、本文件。i18next 引入/切换 UI/en-US 翻译/后端错误码仍缓做于 D12 触发条件，D13 不动。
+
+### docs(i18n)：M12 零依赖文案抽取骨架立项（2026-09-20，docs-only，D12 部分取回不解除）
+
+- 用户拍板提前推进 D12 的无依赖前置部分，两处分叉选定：**零依赖骨架**（不装 i18next，自写 t()/useTranslation 对齐 i18next 签名，触发时零返工替换）＋**样板先行**（zh-CN/common 全量样板 + 登录页/UserBadge 接线，余 namespace 与 en-US 空对象占位）。
+- 显式非目标：不引入 i18next/react-i18next、不做语言切换 UI、不翻译 en-US、不接 AntD locale、不动后端错误码（D7 结构化 code 仍为 i18next 触发第一批债）、不接线 editor/dashboard/demo；D13 组件描述多语言仍随 Phase 2 模板库。
+- 本原子仅文档：docs/17（状态行 + §4 落地节奏加骨架行）、docs/08（M12 立项条/契约门/原子序）、docs/14（D12 部分取回注记）、docs/13（U212 起候选行）、handoff（Active work 23）。落码与收口另起原子，候选用例 U212 起。
+
+
 ### feat(memory/versioning/frontend)：docs/28 批 4 两项落码收口——记忆 REST 新建/编辑 + 发布前子图升级体检（2026-09-20，三原子 `ec0fd81`/`ba97088`/`19f31b4`，U192–U211 转正式，形状权威 docs/28 §5，D35/D21 部分取回不解除；至此 docs/28 四批 11 项全部收口）
 
 - 立项（`b0d8023`）后批 4 三原子全部落码，零新依赖、不新增 ADR、纯超集/新端点、**不解除 D35/D21**。

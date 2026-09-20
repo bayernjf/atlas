@@ -1,0 +1,53 @@
+{
+  "role": {
+    "viewer": "访客",
+    "operator": "运营",
+    "admin": "管理员"
+  },
+  "button": {
+    "confirm": "确定",
+    "cancel": "取消",
+    "save": "保存",
+    "delete": "删除",
+    "close": "关闭",
+    "submit": "提交",
+    "reset": "重置",
+    "refresh": "刷新",
+    "create": "新建",
+    "edit": "编辑"
+  },
+  "status": {
+    "success": "成功",
+    "failed": "失败",
+    "loading": "加载中…"
+  },
+  "auth": {
+    "login": {
+      "title": "Atlas 运营体编排平台",
+      "subtitle": "登录后进入当前租户的工作台（04 §5.14）",
+      "username": "用户名",
+      "usernameRequired": "请输入用户名",
+      "password": "密码",
+      "passwordRequired": "请输入密码",
+      "submit": "登录",
+      "failed": "登录失败",
+      "seedHintTitle": "Demo 种子账号（明文仅用于演示）：",
+      "seed": {
+        "tenantA": "演示企业 A（t1）",
+        "tenantB": "演示企业 B（t2）",
+        "accountLine": "{{user}} / {{pass}}（{{role}}）"
+      }
+    },
+    "session": {
+      "logout": "退出登录"
+    }
+  },
+  "error": {
+    "auth": {
+      "invalidCredentials": "用户名或密码错误",
+      "unauthenticated": "未登录或登录已过期，请重新登录",
+      "forbidden": "没有权限执行该操作",
+      "notFound": "资源不存在或无权访问"
+    }
+  }
+}

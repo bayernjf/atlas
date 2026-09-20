@@ -1,5 +1,6 @@
 import { Button, Space, Tag, Typography } from 'antd'
-import { ROLE_LABELS, type Principal } from '../lib/auth'
+import { type Principal } from '../lib/auth'
+import { useTranslation } from '../locales'
 
 type UserBadgeProps = {
   principal: Principal
@@ -13,14 +14,15 @@ const ROLE_COLORS = {
 } as const
 
 export function UserBadge({ principal, onLogout }: UserBadgeProps) {
+  const { t } = useTranslation()
   return (
     <Space size="middle">
       <Typography.Text strong style={{ color: 'rgba(255,255,255,0.85)' }}>
         {principal.tenant_name} · {principal.display_name}
       </Typography.Text>
-      <Tag color={ROLE_COLORS[principal.role]}>{ROLE_LABELS[principal.role]}</Tag>
+      <Tag color={ROLE_COLORS[principal.role]}>{t(`role.${principal.role}`)}</Tag>
       <Button size="small" ghost onClick={onLogout}>
-        退出登录
+        {t('auth.session.logout')}
       </Button>
     </Space>
   )

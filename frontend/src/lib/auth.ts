@@ -1,7 +1,9 @@
 /**
  * 登录会话与角色（04 §5.14）：进程内 sess-token 存 localStorage，
  * 三角色端点级 RBAC 的前端镜像。持久化账号/注册流随 S1/D22 缓做。
+ * 角色中文标签的单一事实源在 locales/zh-CN/common.json 的 role.*（docs/17 §2.3）。
  */
+import zhCommon from '../locales/zh-CN/common.json'
 
 export type Role = 'viewer' | 'operator' | 'admin'
 export type Capability = 'read' | 'operate' | 'administer'
@@ -32,9 +34,9 @@ export function roleCan(role: Role, capability: Capability): boolean {
 }
 
 export const ROLE_LABELS: Record<Role, string> = {
-  viewer: '访客',
-  operator: '运营',
-  admin: '管理员',
+  viewer: zhCommon.role.viewer,
+  operator: zhCommon.role.operator,
+  admin: zhCommon.role.admin,
 }
 
 export function saveSession(token: string, principal: Principal): void {
