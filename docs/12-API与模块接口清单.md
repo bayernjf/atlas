@@ -591,6 +591,7 @@ class MemoryRepository(Protocol):
     def remember(self, *, kind, content, scope=None, confidence=1.0, source="tool", metadata=None) -> dict: ...
     def recall(self, query, *, kind=None, scope=None, top_k=5, min_score=0.0) -> list[dict]: ...  # 每项=记忆 dict+"score"，降序
     def list(self, *, kind=None, limit=50) -> list[dict]: ...
+    def update(self, memory_id: str, **fields) -> dict | None: ...  # docs/28 批 4⑩：白名单字段合并、source 归 manual、content 变重算 embedding，不存在/他租户 None
     def delete(self, id: str) -> bool: ...
     def clear(self) -> None: ...
 # 两档实现：memory/items.py MemoryStore（进程内，mem-N 租户计数）；storage/pg.py PgMemoryStore
@@ -625,6 +626,7 @@ class MemoryRepository(Protocol):
 | GET | /api/graphs/{id} | 读取 Graph（latest 草稿；`?releaseVersion=N` 读指定发布版本快照，未知/未发布 404） | — |
 | POST | /api/graphs/{id}/publish | 【operate】发布当前草稿为不可变版本（M6 立项 2026-09-17，docs/20 §4.1 / ADR T19）：冻结 Graph JSON + subgraph 钉版（递归，子图未发布则先递归发布其草稿为 v1），返回 `{id, releaseVersion}`；releaseVersion 从 1 递增、已发布版本只读。**M9 起请求体从无改为可选 `{gate?: boolean}`**：gate=true 先跑发布门禁（下行 release-gate），blocked → **409 带完整 GateReport 且不产新版本** | graph_definition / release_gate |
 | GET | /api/graphs/{id}/versions | 【read】已发布版本列表（M6）：`{items:[<releaseVersion>]}`（升序）；未发布过 → 空列表 | graph_definition |
+| GET | /api/graphs/{id}/subgraph-upgrades | 【read，docs/28 批 4⑪ 2026-09-20 `ba97088`】发布前子图版本升级体检（**纯只读、不产版本**）：返 `{items:[{node_id, sub_id, from_version:int\|null, to_version:int, first_pin:bool}]}`，只扫父图草稿顶层 subgraph 节点，列首次钉版或 from≠to 升级；草稿不存在 → 404；不阻断发布 | graph_definition |
 | POST | /api/graphs/{id}/release-gate | 【operate，M9 已落码 2026-09-18】发布前批量回放门禁（只跑门禁不发布，D26 部分取回）：对当前 latest 草稿逐例重放 `case.graph_id==id` 的录制用例（复用 replay.compare），返回 GateReport（D26 报告 v1 起纯超集加 `id`＝沉淀报告 rr-N）`{id,graph_id, target:"draft", total, passed, failed, skipped, blocked, cases:[{case_id,name,matches,replay_status,note?,clock_note?}]}`（**C 包 `3415377` 起每例回放冻结到该例 recorded_at〔回退 created_at〕，缺锚点的用例在该 case 项附 `clock_note`**）；total=0 时 skipped=true 不阻塞（明示未覆盖），total>0 任一不匹配 blocked=true；图不存在 404。**D26 报告 v1（2026-09-18 已落码）起每次运行沉淀一条 ReleaseReport（trigger=manual，含 skipped）**；publish `{gate:true}` 另沉淀 trigger=publish-gate（通过/blocked 均沉淀，409 报告体带 id） | release_gate / release_report / recording_case |
 | GET | /api/graphs/{id}/release-reports | 【read，D26 报告 v1 已落码 2026-09-18】本图批量回放报告历史（倒序摘要）：`{items:[{id,graph_id,trigger,total,passed,failed,skipped,blocked,pass_rate,created_at}]}`，不含 cases；图不存在 404，跨租户 404 | release_report |
 | GET | /api/graphs/{id}/release-reports/{rid} | 【read，D26 报告 v1 已落码 2026-09-18】报告详情（含 cases 逐例 ✓/✗/note）；报告不属于该图或不存在 404，跨租户不泄漏存在性 | release_report |
@@ -698,8 +700,10 @@ class MemoryRepository(Protocol):
 | GET | /api/memories | 【viewer+，M11 已落码 `58d936c`】列出本租户记忆，query `?kind=fact|preference&limit=`（默认 50、上限 200），返 `{items:[memory_item…]}`，不含 embedding | memory_item |
 | GET | /api/memories/search | 【viewer+，M11】语义检索，query `?q=&kind=&top_k=&min_score=`；q 空白 → 422；返 `{results:[{…memory_item, score}]}` 按 score 降序 | memory_item |
 | DELETE | /api/memories/{id} | 【**admin only**，M11】删除一条记忆；他租户/不存在 → 404 | memory_item |
+| POST | /api/memories | 【**operate**，docs/28 批 4⑩ 2026-09-20 `ec0fd81`】手动新建记忆，body `{kind, content, scope?:{str:str}, confidence?:0-1, metadata?:{str:str}}`；**source 固定 manual 不接受入参**（extra=forbid，传 source/id → 422），201 返 memory_item，校验失败 422 中文 | memory_item |
+| PUT | /api/memories/{id} | 【**operate**，批 4⑩】编辑白名单字段任意子集（exclude_unset，空体 422）；source 归 manual、content 变才重算 embedding、id/created_at 不变；不存在/他租户 → 404，校验失败 422 | memory_item |
 
-> **M11 记忆端点口径订正（2026-09-19，docs/26）**：上表取代原愿景 `GET/PUT /api/memories/{operator_id}`（memory_config 配置读写，05 §2.4）——五层策略配置随 D35 缓做，operator 维度降为记忆条目 `scope.user_id`，租户由会话 Principal 定。**M11 不开 POST/PUT 写入端点**：写入只走图工具 `memory/remember`，手动造数走 `scripts/dev/m11_seed.py`。
+> **M11 记忆端点口径订正（2026-09-19，docs/26；批 4⑩ 2026-09-20 修订）**：上表取代原愿景 `GET/PUT /api/memories/{operator_id}`（memory_config 配置读写，05 §2.4）——五层策略配置随 D35 缓做，operator 维度降为记忆条目 `scope.user_id`，租户由会话 Principal 定。**初版 M11 写入只走图工具 `memory/remember`（手动造数走 `scripts/dev/m11_seed.py`）；docs/28 批 4⑩（`ec0fd81`）起补开 `POST/PUT /api/memories`（operate，source 固定 manual）承担运营手动新建/编辑**——图工具仍是运行时自动写入主路径，REST 为手动补录/纠错通道，删除仍仅 admin。
 
 ## 6. 协同消息协议（依据 05 3.3 collaboration_message）
 
@@ -729,7 +733,7 @@ evaluation_task:
 - [x] 工具权限枚举：read/write/delete/financial（03 adapter_schema；W3-W4 落码于 `harness/base.py`）
 - [x] 适配器类型枚举：web/api/mobile/desktop/database/iot/message（W3-W4 已用于 `adapter_type` 字段；web 类型已实现；api 类型 2026-09-15 随 `httpapi/` 通用 HTTP 适配器落地，契约 04 §4.6；**database 与 message 类型 2026-09-15 随 `database/`（query/execute 双能力）、`message/`（message/send 进程内 sink）落地，契约 04 §4.7/§4.8**）
 - [ ] 记忆检索分层与 memory_config 阈值（05 2.3）——**愿景，M11 不实现、缓做 D35**（working/summary/case/决策隐式注入）
-- [x] **M11（2026-09-19 四批落码收口 `5441902`/`58d936c`/`73e53bd`/`75c4150`，docs/26/ADR T23；U72–U99 转正式）**：MemoryItem fact/preference 字段与 EMBED_DIM=256 迁移严格一致；EmbeddingProvider 本地确定性（纯 stdlib、录制回放确定）；MemoryRepository 第九个两档（进程内 / pgvector）remember/recall/list/delete/clear；memory/remember(write)·memory/recall(read) 两能力 schema 过 Capability 白名单；REST `GET /api/memories`、`GET /api/memories/search`（viewer+）+ `DELETE /api/memories/{id}`（admin）、**无 POST/PUT 写入**；reset 清空、跨租户 404
+- [x] **M11（2026-09-19 四批落码收口 `5441902`/`58d936c`/`73e53bd`/`75c4150`，docs/26/ADR T23；U72–U99 转正式）**：MemoryItem fact/preference 字段与 EMBED_DIM=256 迁移严格一致；EmbeddingProvider 本地确定性（纯 stdlib、录制回放确定）；MemoryRepository 第九个两档（进程内 / pgvector）remember/recall/list/**update**/delete/clear；memory/remember(write)·memory/recall(read) 两能力 schema 过 Capability 白名单；REST `GET /api/memories`、`GET /api/memories/search`（viewer+）+ `DELETE /api/memories/{id}`（admin）+ docs/28 批 4⑩ `POST/PUT /api/memories`（operate，source=manual，U192–U201）；批 4⑪ `GET /api/graphs/{id}/subgraph-upgrades`（read，U202–U211）；reset 清空、跨租户 404
 - [ ] 评估指标三元组（06 9.2 metrics）
 
 ---

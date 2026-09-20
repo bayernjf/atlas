@@ -581,7 +581,7 @@ mocked_tools?: string[]     # docs/28 §2.2（c7bf138）：本次被桩替代的
 ```
 > 进程内存储（重启清空，持久化随 11 S1）；`/api/demo/reset` 不清除（测试资产，同 feedback）。回放从 human_approval 步骤抽解决策预置为 inputs.approvals，不挂起；比对前递归剔除 token/sent_at、消息记录 uuid id、HTTP headers date。权威契约见 04 §5.11，REST 见 12 §5。
 >
-> **M9 发布门禁（2026-09-18 已落码，D26 部分取回）**：`graph_id` 用于发布前批量回放筛选；`POST /api/graphs/{id}/release-gate` 对当前 latest 草稿逐例重跑 + compare 产 `release_gate` 报告（见下），publish 可带 `gate:true` 拦截坏版本。用例集趋势报告/影子模式/Mock 外部系统仍缓做 14 D26。
+> **M9 发布门禁（2026-09-18 已落码，D26 部分取回）**：`graph_id` 用于发布前批量回放筛选；`POST /api/graphs/{id}/release-gate` 对当前 latest 草稿逐例重跑 + compare 产 `release_gate` 报告（见下），publish 可带 `gate:true` 拦截坏版本。用例集趋势报告/影子模式/Mock 外部系统仍缓做 14 D26。 **docs/28 批 4⑪（2026-09-20 `ba97088`）增发布前子图版本升级体检**：`GET /api/graphs/{id}/subgraph-upgrades`（read、纯只读不产版本）返 `{items:[{node_id, sub_id, from_version: int|null, to_version: int, first_pin: bool}]}`，对父图草稿顶层 subgraph 节点比对「本次发布将钉版本 to（子图最新发布版，无则 1）vs 父图最新发布快照所钉 from」，仅列首次钉版（first_pin=true）或 from≠to 的升级；草稿不存在 404。纯函数在 `versioning/upgrades.py`（与 publish.py 同包，两档同构）；v1 只扫顶层、不阻断发布、不做草稿 pin 编辑器、不检测子图草稿 dirty，发布门禁回归仍是发布前权威门；前端 ReleaseModal 门禁表上方只读体检区。显式 pin 编辑/子图市场仍缓做 D21。
 >
 > **租户注记（2026-09-16，§5.14）**：录制用例按租户分区（rec-N 计数各自从 1，图快照取自本租户 GraphStore）；跨租户访问录制 id → 404，reset 不清除。
 >
@@ -943,12 +943,12 @@ kind: "fact" | "preference"     # 必填：长期事实 / 用户偏好
 content: string                 # 记忆文本，1-2000 字；remember 时据此算 embedding
 scope: {string: string}         # 业务绑定（如 user_id/order_id），缺省 {}；recall 子集匹配
 confidence: number              # 0-1，缺省 1.0（自动提取 <1 随 D35 缓做）
-source: "tool" | "manual" | "run"   # 缺省 tool；v1 仅经工具写
+source: "tool" | "manual" | "run"   # 缺省 tool；图工具通道写 tool/run，REST 手动新建/编辑固定 manual（docs/28 批 4⑩）
 metadata: object                # 附加信息，缺省 {}（PG 列名 meta，JSONB）
-created_at: string              # UTC ISO-8601；两档均 TEXT 存 Python ISO 字符串（对齐迁移 002）；v1 不可变（只追加/删，无 update）
+created_at: string              # UTC ISO-8601；两档均 TEXT 存 Python ISO 字符串（对齐迁移 002）；创建后不变。白名单字段（kind/content/scope/confidence/metadata）可经 PUT 手动改（source 归 manual、content 变重算 embedding），id/created_at 不变（docs/28 批 4⑩，原「v1 不可变无 update」口径已订正）
 # embedding: number[256]        # 内部字段，LocalDeterministicEmbedder 产出，不进 API 响应
 ```
-> 第九个 Repository `MemoryRepository`（remember/recall/list/delete/clear，RESET_RESETTABLE）：进程内 `MemoryStore` + PG/pgvector `PgMemoryStore` 两档，租户分区（构造期注入 tenant_id，不进方法签名/资源 JSON）。`EmbeddingProvider` Protocol + 本地确定性 embedder（EMBED_DIM=256、signed hashing、中文 unigram+bigram、纯 stdlib、离线且回放确定；商业 embedding 缓做 D35）；PG 迁移 `006_memory.sql` vector(256)+ivfflat(lists=100)、`embedding <=> CAST(:q AS vector(256))` 余弦（score=1−distance）、`scope @> CAST(:scope AS jsonb)` 子集（SQLAlchemy text() 中 `:p::type` 与绑定参数冲突，故用 CAST）。本地词法向量只验证机制与接缝、非真实语义。权威设计见 docs/26 §2–§4。
+> 第九个 Repository `MemoryRepository`（remember/recall/list/**update**/delete/clear，RESET_RESETTABLE；docs/28 批 4⑩ 起加 `update(memory_id, **fields) -> dict | None`：白名单字段合并、source 归 manual、content 变才重算 embedding，不存在/他租户返 None）：进程内 `MemoryStore` + PG/pgvector `PgMemoryStore` 两档，租户分区（构造期注入 tenant_id，不进方法签名/资源 JSON）。`EmbeddingProvider` Protocol + 本地确定性 embedder（EMBED_DIM=256、signed hashing、中文 unigram+bigram、纯 stdlib、离线且回放确定；商业 embedding 缓做 D35）；PG 迁移 `006_memory.sql` vector(256)+ivfflat(lists=100)、`embedding <=> CAST(:q AS vector(256))` 余弦（score=1−distance）、`scope @> CAST(:scope AS jsonb)` 子集（SQLAlchemy text() 中 `:p::type` 与绑定参数冲突，故用 CAST）。本地词法向量只验证机制与接缝、非真实语义。权威设计见 docs/26 §2–§4。
 
 ### `memory_remember` / `memory_recall` — 工具契约（**M11 已落码收口 2026-09-19**，commit `58d936c`；`memory` Harness 适配器，adapter_id/type="memory"；零新节点、零 DSL/编译器改动；图接入须把 `memory` 加入 loader GENERIC_JSON_ADAPTERS）
 
@@ -962,4 +962,4 @@ input:  {query: string（必填，支持 {{变量}}）, kind?: enum[fact,prefere
          scope?: {string:string}, top_k?: int 1-20=5, min_score?: number 0-1=0}
 output: {results: [{id, kind, content, score: number, confidence, scope, created_at}]}  # 无命中 results=[]
 ```
-> 走现有 tool_call/harness 链路（params 由 M3 FormRenderer 按 input_schema 自动生成、M2 变量补全零额外）；schema 守 Capability keyword 白名单（无 x- 扩展）。装配照 message 两段式：全局注册仅供发现，`_runtime_registry` 按租户克隆注入 `services.memory_store`。REST：`GET /api/memories`（viewer+，kind 过滤）、`GET /api/memories/search?q=`（viewer+，q 空 422）、`DELETE /api/memories/{id}`（**admin**，跨租户 404）；**写入不开 REST**（只走图工具）。docs/12 原 `GET/PUT /api/memories/{operator_id}` 据此订正为按租户、operator 降为 `scope.user_id`。错误码：repo 缺省的发现实例执行期返 `MEMORY_NOT_CONFIGURED`、入参校验失败折 `MEMORY_INVALID_INPUT`；tool_call 成功后节点输出包一层 `{"result": <工具 output>, "action_status": "SUCCESS"}`。working/summary/case 层、自动提取、决策隐式注入、PII/更新策略均缓做（D35）。
+> 走现有 tool_call/harness 链路（params 由 M3 FormRenderer 按 input_schema 自动生成、M2 变量补全零额外）；schema 守 Capability keyword 白名单（无 x- 扩展）。装配照 message 两段式：全局注册仅供发现，`_runtime_registry` 按租户克隆注入 `services.memory_store`。REST：`GET /api/memories`（viewer+，kind 过滤）、`GET /api/memories/search?q=`（viewer+，q 空 422）、`DELETE /api/memories/{id}`（**admin**，跨租户 404）；docs/28 批 4⑩（2026-09-20 `ec0fd81`）起**开 `POST /api/memories` 与 `PUT /api/memories/{id}`（均 operate，source 固定 manual，白名单字段、extra forbid、空体 PUT 422、不存在/他租户 404）**——图工具仍是运行时自动写入主路径，REST 仅手动新建/编辑，删除仍仅 admin。docs/12 原 `GET/PUT /api/memories/{operator_id}` 据此订正为按租户、operator 降为 `scope.user_id`。错误码：repo 缺省的发现实例执行期返 `MEMORY_NOT_CONFIGURED`、入参校验失败折 `MEMORY_INVALID_INPUT`；tool_call 成功后节点输出包一层 `{"result": <工具 output>, "action_status": "SUCCESS"}`。working/summary/case 层、自动提取、决策隐式注入、PII/更新策略均缓做（D35）。
