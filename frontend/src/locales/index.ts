@@ -159,7 +159,7 @@ export function useTranslation(namespace: Namespace = 'common'): UseTranslationR
   const lang = useSyncExternalStore(subscribe, getLanguageSnapshot, getLanguageSnapshot)
   const translate = useCallback(
     (key: string, options?: Omit<TranslateOptions, 'ns'>) => t(key, { ...options, ns: namespace }),
-    [namespace, lang],
+    [namespace],
   )
   return { t: translate, i18n: { language: lang, changeLanguage } }
 }
