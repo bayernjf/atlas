@@ -33,7 +33,13 @@ export type { NodeKind }
 
 // 会话级断点：键存在即启用；expression 非空为条件断点。不落 Graph JSON，刷新即失（04 §5.12）。
 // B 包（docs/27 §4.2）：hitCount 每 N 次命中暂停；logMessage 非空即日志断点（只记日志不暂停）。
-export type Breakpoint = { expression?: string; hitCount?: number; logMessage?: string }
+export type Breakpoint = {
+  expression?: string
+  hitCount?: number
+  logMessage?: string
+  /** docs/28 §3.2：异常断点（节点抛异常时暂停，resume 后原样重抛）。 */
+  onException?: boolean
+}
 
 type EditorState = {
   nodes: EditorNode[]
@@ -72,6 +78,7 @@ type EditorState = {
   setBreakpointExpression: (nodeId: string, expression: string) => void
   setBreakpointHitCount: (nodeId: string, hitCount: number | null) => void
   setBreakpointLogMessage: (nodeId: string, logMessage: string) => void
+  toggleBreakpointException: (nodeId: string) => void
   clearBreakpoints: () => void
   setNlWarnings: (warnings: string[]) => void
 }
@@ -480,6 +487,23 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         },
       },
     })),
+
+  toggleBreakpointException: (nodeId) =>
+    set((state) => {
+      const current = state.breakpoints[nodeId]
+      const next = { ...state.breakpoints }
+      if (!current?.onException) {
+        // 开启异常断点：无条件表达式/hitCount/logMessage 时为纯异常（continue 模式
+        // 仅在节点抛异常时停，不在正常经过时停）；与条件字段可共存。
+        next[nodeId] = { ...current, onException: true }
+      } else {
+        const { onException: _drop, ...rest } = current
+        // 关闭后若无其它断点字段则整条删除，避免遗留空的无条件普通断点。
+        if (Object.keys(rest).length === 0) delete next[nodeId]
+        else next[nodeId] = rest
+      }
+      return { breakpoints: next }
+    }),
 
   clearBreakpoints: () => set({ breakpoints: {} }),
 

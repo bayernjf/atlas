@@ -4,6 +4,7 @@ import {
   Button,
   Card,
   Checkbox,
+  Collapse,
   Layout,
   Modal,
   Popconfirm,
@@ -83,6 +84,14 @@ function parseInputsObject(
     return { ok: false, error: '入参必须是顶层 JSON 对象（{}）' }
   }
   return { ok: true, value: parsed as Record<string, unknown> }
+}
+
+// docs/28 §3：调试暂停原因中文映射（含批 2 异常断点）。
+const DEBUG_REASON_LABELS: Record<string, string> = {
+  step: '单步',
+  breakpoint: '断点',
+  condition: '条件',
+  exception: '异常',
 }
 
 const DEMO_ORDERS: Array<{ order_id: string; reason: string; amount: number }> = [
@@ -194,6 +203,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                   ? { hitCount: breakpoint.hitCount }
                   : {}),
                 ...(logMessage ? { logMessage } : {}),
+                ...(breakpoint.onException ? { onException: true } : {}),
               }
             }),
         }
@@ -243,8 +253,10 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
           setPausedFrame(event)
           setResumeBusy(null)
           setVarFilter('')
-          const reasonLabel = { step: '单步', breakpoint: '断点', condition: '条件' }[event.reason]
-          appendLog(`⏸ 调试暂停：${event.node_id}（${reasonLabel}）`)
+          const reasonLabel = DEBUG_REASON_LABELS[event.reason] ?? event.reason
+          appendLog(
+            `⏸ 调试暂停：${subgraphPathPrefix(event.subgraphPath)}${event.node_id}（${reasonLabel}）`,
+          )
         } else if (event.type === 'stopped') {
           setPausedFrame(null)
           setNodeStatus(event.node_id, 'idle')
@@ -1191,9 +1203,12 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
           title={
             <Space size={8} wrap>
               <span>调试暂停于</span>
+              {pausedFrame.subgraphPath && pausedFrame.subgraphPath.length > 0 && (
+                <Tag color="geekblue">{subgraphPathLabel(pausedFrame.subgraphPath)}</Tag>
+              )}
               <Tag color="orange">{pausedFrame.node_id}</Tag>
-              <Tag>
-                {{ step: '单步', breakpoint: '断点', condition: '条件' }[pausedFrame.reason]}
+              <Tag color={pausedFrame.reason === 'exception' ? 'red' : 'default'}>
+                {DEBUG_REASON_LABELS[pausedFrame.reason] ?? pausedFrame.reason}
               </Tag>
             </Space>
           }
@@ -1260,6 +1275,61 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                 {JSON.stringify(filterSnapshot(pausedFrame.outputs, varFilter), null, 2)}
               </pre>
             </div>
+            {pausedFrame.reason === 'exception' && pausedFrame.error && (
+              <Alert
+                type="error"
+                showIcon
+                message={`异常断点捕获：${pausedFrame.error.type}`}
+                description={
+                  <Space direction="vertical" size={0}>
+                    <Typography.Text>{pausedFrame.error.message}</Typography.Text>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      下一步/继续后将原样抛出该异常（v1 不支持忽略继续），停止则结束本次调试。
+                    </Typography.Text>
+                  </Space>
+                }
+              />
+            )}
+            {pausedFrame.history && pausedFrame.history.length > 0 && (
+              <Collapse
+                size="small"
+                items={[
+                  {
+                    key: 'variable-history',
+                    label: `变量变化历史（${pausedFrame.history.length}）`,
+                    children: pausedFrame.history.map((item) => (
+                      <div key={item.seq} style={{ marginBottom: 8 }}>
+                        <Space size={4} wrap>
+                          <Tag color="orange">{item.node_id}</Tag>
+                          <Tag>{DEBUG_REASON_LABELS[item.reason] ?? item.reason}</Tag>
+                          {item.since_nodes.length > 0 && (
+                            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                              经过节点 {item.since_nodes.join(' → ')}
+                            </Typography.Text>
+                          )}
+                        </Space>
+                        {item.changes.length === 0 ? (
+                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                            本次暂停无 global 顶层键变化
+                          </Typography.Text>
+                        ) : (
+                          <pre className="debug-toolbar-json" style={{ marginTop: 4 }}>
+                            {item.changes
+                              .map(
+                                (change) =>
+                                  `${change.key}: ${JSON.stringify(change.old)} → ${JSON.stringify(
+                                    change.new,
+                                  )}`,
+                              )
+                              .join('\n')}
+                          </pre>
+                        )}
+                      </div>
+                    )),
+                  },
+                ]}
+              />
+            )}
           </Space>
         </Card>
       )}

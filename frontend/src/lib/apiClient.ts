@@ -47,20 +47,47 @@ export type DebugBreakpoint = {
   hitCount?: number
   /** B 包：非空即日志断点（logpoint），命中只发 debug_log 不暂停。 */
   logMessage?: string
+  /** docs/28 §3.2：异常断点——节点逻辑抛异常时先暂停，resume 后原样重抛。 */
+  onException?: boolean
 }
 
 export type DebugRequest = {
   breakpoints: DebugBreakpoint[]
 }
 
+/** docs/28 §3.1：单个 global 顶层键在相邻暂停间的变化（新增 old=null）。 */
+export type VariableChangeEntry = {
+  key: string
+  old: unknown
+  new: unknown
+}
+
+/** docs/28 §3.1：一次暂停对应的变量变化历史条目。 */
+export type VariableHistoryItem = {
+  seq: number
+  node_id: string
+  reason: string
+  since_nodes: string[]
+  changes: VariableChangeEntry[]
+}
+
+/** docs/28 §3.2：异常断点暂停时携带的异常类型与消息。 */
+export type PausedError = { type: string; message: string }
+
 export type PausedFrame = {
   type: 'paused'
   token: string
   node_id: string
   node_type: string
-  reason: 'step' | 'breakpoint' | 'condition'
+  reason: 'step' | 'breakpoint' | 'condition' | 'exception'
   globals: Record<string, unknown>
   outputs: Record<string, unknown>
+  /** docs/28 §3.1：截至本次暂停的变量变化历史（易失、随调试会话）。 */
+  history?: VariableHistoryItem[]
+  /** docs/28 §3.2：仅 reason=exception 时存在。 */
+  error?: PausedError
+  /** docs/28 §3.3：子图内部暂停时父图 subgraph 节点 id 路径；顶层节点无此键。 */
+  subgraphPath?: string[]
 }
 
 export type StoppedFrame = {
