@@ -29,6 +29,7 @@ from langgraph.graph import END, START, StateGraph
 from atlas.cards.catalog import get_card
 from atlas.collaboration.approvals import ApprovalBroker
 from atlas.collaboration.cancellations import RunCancelled
+from atlas.debug.sessions import DebugStopped
 from atlas.database.adapter import DatabaseHarnessAdapter
 from atlas.database.service import DatabaseClient, demo_engine
 from atlas.harness.base import ActionRequest, ActionStatus
@@ -256,117 +257,126 @@ def _make_executor(
                         card_template_id=approval_payload.get("cardTemplateId", ""),
                     )
 
-            if node.type == "trigger":
-                output = {
-                    "context": {
-                        "triggerType": node.config.get("triggerType", "manual"),
-                        "cron": node.config.get("cron", ""),
-                        "webhookUrl": node.config.get("webhookUrl", ""),
-                        "payload": trigger_payload,
+            try:
+                if node.type == "trigger":
+                    output = {
+                        "context": {
+                            "triggerType": node.config.get("triggerType", "manual"),
+                            "cron": node.config.get("cron", ""),
+                            "webhookUrl": node.config.get("webhookUrl", ""),
+                            "payload": trigger_payload,
+                        }
                     }
-                }
-                message = f"{node.id}({node.type}): executed"
-            elif node.type == "ai_decision":
-                payload = trigger_payload or {}
-                prompt = interpolate(node.config.get("promptTemplate", ""), context)
-                try:
-                    limit = float(context["global"].get("approval_limit", 500))
-                except (TypeError, ValueError):
-                    limit = 500.0
-                result = decision_client.decide_refund(
-                    reason=str(payload.get("reason", "")),
-                    amount=float(payload.get("amount", 0)),
-                    limit=limit,
-                )
-                output = {"decision": result, "prompt_rendered": prompt}
-                message = f"{node.id}({node.type}): executed"
-            elif node.type == "condition":
-                output = _execute_condition(node, state, context, now=now)
-                message = f"{node.id}: branch={output['branch']} → {output['target']}"
-            elif node.type == "loop":
-                output = _execute_loop(node, state, context, now=now)
-                if output["exitReason"] is None:
-                    message = (
-                        f"{node.id}: continue ({output['iterations']}/"
-                        f"{node.config.get('maxIterations')}) → {output['target']}"
+                    message = f"{node.id}({node.type}): executed"
+                elif node.type == "ai_decision":
+                    payload = trigger_payload or {}
+                    prompt = interpolate(node.config.get("promptTemplate", ""), context)
+                    try:
+                        limit = float(context["global"].get("approval_limit", 500))
+                    except (TypeError, ValueError):
+                        limit = 500.0
+                    result = decision_client.decide_refund(
+                        reason=str(payload.get("reason", "")),
+                        amount=float(payload.get("amount", 0)),
+                        limit=limit,
                     )
-                else:
-                    message = (
-                        f"{node.id}: exit ({output['exitReason']}) after "
-                        f"{output['iterations']} → {output['target']}"
-                    )
-            elif node.type == "parallel":
-                output = _parallel_running_output(node)
-                targets = [branch["target"] for branch in node.config.get("branches", [])]
-                message = f"{node.id}: fork {len(targets)} branches → {', '.join(targets)}"
-            elif node.type == "wait":
-                seconds = int(node.config["durationSeconds"])
-                if resume_here:
-                    # 续跑：按剩余时长等待（绝对 deadline 照扣，docs/24 §3.1）。
-                    seconds = int(remaining_seconds(resume.get("deadline_at")))
-                else:
-                    _emit_frame(
-                        frame_sink,
+                    output = {"decision": result, "prompt_rendered": prompt}
+                    message = f"{node.id}({node.type}): executed"
+                elif node.type == "condition":
+                    output = _execute_condition(node, state, context, now=now)
+                    message = f"{node.id}: branch={output['branch']} → {output['target']}"
+                elif node.type == "loop":
+                    output = _execute_loop(node, state, context, now=now)
+                    if output["exitReason"] is None:
+                        message = (
+                            f"{node.id}: continue ({output['iterations']}/"
+                            f"{node.config.get('maxIterations')}) → {output['target']}"
+                        )
+                    else:
+                        message = (
+                            f"{node.id}: exit ({output['exitReason']}) after "
+                            f"{output['iterations']} → {output['target']}"
+                        )
+                elif node.type == "parallel":
+                    output = _parallel_running_output(node)
+                    targets = [branch["target"] for branch in node.config.get("branches", [])]
+                    message = f"{node.id}: fork {len(targets)} branches → {', '.join(targets)}"
+                elif node.type == "wait":
+                    seconds = int(node.config["durationSeconds"])
+                    if resume_here:
+                        # 续跑：按剩余时长等待（绝对 deadline 照扣，docs/24 §3.1）。
+                        seconds = int(remaining_seconds(resume.get("deadline_at")))
+                    else:
+                        _emit_frame(
+                            frame_sink,
+                            node,
+                            state,
+                            token=uuid.uuid4().hex,
+                            kind="wait",
+                            graph_id=graph_id,
+                            graph_snapshot=graph_snapshot,
+                            trigger_payload=trigger_payload,
+                            timeout_seconds=seconds,
+                        )
+                    time.sleep(max(seconds, 0))
+                    output = {"mode": "wait", "waitType": "duration", "durationSeconds": seconds}
+                    message = f"{node.id}: waited {seconds}s"
+                elif node.type == "human_approval":
+                    output, message = _await_human_approval(
                         node,
-                        state,
-                        token=uuid.uuid4().hex,
-                        kind="wait",
-                        graph_id=graph_id,
-                        graph_snapshot=graph_snapshot,
+                        token=approval_payload["token"],
                         trigger_payload=trigger_payload,
-                        timeout_seconds=seconds,
+                        broker=approval_broker,
                     )
-                time.sleep(max(seconds, 0))
-                output = {"mode": "wait", "waitType": "duration", "durationSeconds": seconds}
-                message = f"{node.id}: waited {seconds}s"
-            elif node.type == "human_approval":
-                output, message = _await_human_approval(
-                    node,
-                    token=approval_payload["token"],
-                    trigger_payload=trigger_payload,
-                    broker=approval_broker,
-                )
-            elif node.type == "subgraph":
-                output, message = _execute_subgraph(
-                    node,
-                    context=context,
-                    registry=registry,
-                    decision_client=decision_client,
-                    approval_broker=approval_broker,
-                    resolver=graph_resolver,
-                    depth=subgraph_depth,
-                    tracer=tracer,
-                    now=now,
-                    emit=emit,
-                    subgraph_path=subgraph_path,
-                    is_cancelled=is_cancelled,
-                )
-            elif tool_mocks is not None and node.id in tool_mocks:
-                # Mock 回放（docs/28 §2.2）：以录制桩 output 替代真实适配器调用，
-                # 隔离外部系统；不触达 registry/harness、不发 tool span、不发 tool_metric。
-                # node_end/outputs/trace 与真实分支同构，比对两端各自 normalize 必然一致。
-                # 子图重入不透传 tool_mocks（steps 只录顶层 node_end）。
-                output = tool_mocks[node.id]
-                message = f"{node.id}({node.type}): executed"
-            else:
-                # M10：工具调用包 tool span（parent 经 contextvars 就近取当前 node span）。
-                tool_name = node.config.get("tool", "")
-                if tracer is not None and "/" in tool_name:
-                    adapter_id, capability_name = tool_name.split("/", 1)
-                    tool_cm = tracer.span(
-                        f"tool:{tool_name}",
-                        kind=KIND_TOOL,
-                        adapter=adapter_id,
-                        capability=capability_name,
-                        internal=internal_spans,
+                elif node.type == "subgraph":
+                    output, message = _execute_subgraph(
+                        node,
+                        context=context,
+                        registry=registry,
+                        decision_client=decision_client,
+                        approval_broker=approval_broker,
+                        resolver=graph_resolver,
+                        depth=subgraph_depth,
+                        tracer=tracer,
+                        now=now,
+                        emit=emit,
+                        subgraph_path=subgraph_path,
+                        is_cancelled=is_cancelled,
                     )
+                elif tool_mocks is not None and node.id in tool_mocks:
+                    # Mock 回放（docs/28 §2.2）：以录制桩 output 替代真实适配器调用，
+                    # 隔离外部系统；不触达 registry/harness、不发 tool span、不发 tool_metric。
+                    # node_end/outputs/trace 与真实分支同构，比对两端各自 normalize 必然一致。
+                    # 子图重入不透传 tool_mocks（steps 只录顶层 node_end）。
+                    output = tool_mocks[node.id]
+                    message = f"{node.id}({node.type}): executed"
                 else:
-                    tool_cm = nullcontext()
-                with tool_cm as tool_span:
-                    output = _execute_tool(node, context, registry)
-                    if isinstance(tool_span, Span) and _node_failure(output):
-                        tool_span.end("error")
-                message = f"{node.id}({node.type}): executed"
+                    # M10：工具调用包 tool span（parent 经 contextvars 就近取当前 node span）。
+                    tool_name = node.config.get("tool", "")
+                    if tracer is not None and "/" in tool_name:
+                        adapter_id, capability_name = tool_name.split("/", 1)
+                        tool_cm = tracer.span(
+                            f"tool:{tool_name}",
+                            kind=KIND_TOOL,
+                            adapter=adapter_id,
+                            capability=capability_name,
+                            internal=internal_spans,
+                        )
+                    else:
+                        tool_cm = nullcontext()
+                    with tool_cm as tool_span:
+                        output = _execute_tool(node, context, registry)
+                        if isinstance(tool_span, Span) and _node_failure(output):
+                            tool_span.end("error")
+                    message = f"{node.id}({node.type}): executed"
+            except (RunCancelled, DebugStopped):
+                raise
+            except Exception as exc:
+                # docs/28 §3.2：仅调试流且该节点配置异常断点时暂停观测；
+                # 未配置 on_exception 立即返回，随后裸 raise，失败语义与现状一致。
+                if debug_controller is not None:
+                    debug_controller.on_exception(node, exc, state)
+                raise
 
             end_event: dict[str, Any] = {
                 "type": "node_end",

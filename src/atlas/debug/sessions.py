@@ -67,6 +67,8 @@ class BreakpointSpec:
     expression: str | None = None
     hit_count: int | None = None
     log_message: str | None = None
+    # docs/28 §3.2：异常断点——节点逻辑抛异常时先暂停，resume 后原样重抛。
+    exception: bool = False
 
 
 @dataclass
@@ -290,6 +292,7 @@ class DebuggerBroker:
                 expression=expression,
                 hit_count=bp.get("hitCount"),
                 log_message=bp.get("logMessage"),
+                exception=bool(bp.get("onException") or False),
             )
         session = DebugSession(graph_id=graph_id, breakpoints=table)
         with self._lock:

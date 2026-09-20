@@ -1000,6 +1000,11 @@ def _validate_debug(graph, debug: Any) -> list[dict[str, Any]]:
         log_message = point.get("logMessage")
         if log_message is not None and not isinstance(log_message, str):
             errors.append(f"断点 {node_id} 的 logMessage 必须为字符串")
+        # docs/28 §3.2：onException 布尔（异常断点）；bool 是 int 子类须先判 bool。
+        on_exception = point.get("onException", False)
+        if not isinstance(on_exception, bool):
+            errors.append(f"断点 {node_id} 的 onException 必须为布尔值")
+            on_exception = False
         normalized.append(
             {
                 "node_id": node_id,
@@ -1010,6 +1015,7 @@ def _validate_debug(graph, debug: Any) -> list[dict[str, Any]]:
                     if isinstance(log_message, str) and log_message.strip()
                     else None
                 ),
+                "onException": on_exception,
             }
         )
     if errors:
