@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### docs(contracts)：工程内可闭环缓做项 11 项打包 docs-only 立项（2026-09-20，D26/D27/D28/D35/D21 部分取回，形状权威 docs/28，0 落码）
+
+- C+A+B 收口（后端 712/前端 472）后，用户拍板「能一起推进的话，一起搞了」：把 11 项**不依赖外部真实世界、工程内可闭环**的缓做余部一次打包，全部取**进程内 v1 形态**，零新依赖、不新增 ADR、**不解除任何缓做条目**（docs/14 仅加部分取回注记）。新建 docs/28 形状权威（10 章：§0 八条已拍板、§1 范围表/非目标、§2–§5 四批设计、§6 REST/SSE/Schema 汇总、§7 前端落点、§8 原子序与 U139–U186 候选、§9 契约同步矩阵、§10 风险）。
+- **批 1 D26 四项**：①迁移 008 修 PG 档 recordings 富字段缺口（recordings 加 graph_id/subgraphs、PgRecordingStore 四读写路径与 Repository 协议同步；现状 PG 档「录为用例」500、d26_smoke 仅内存档全过）；②Mock 工具响应回放（run_graph 全链透传 tool_mocks，键＝节点 id、值＝录制原始 output；仅单用例 replay 端点 body `{mock_tools?,inputs_override?}`，发布门禁不接、子图不传、桩不发 span/tool_metric）；③PUT /api/recordings/{id} 仅 name/inputs 可改＋回放入参浅合并覆写；④GET /api/release-reports 跨图看板（ReportStore.list_all_summary 进程内 ring 不 PG 化＋Monitoring Card）。
+- **批 2 D27 三项**：⑤暂停帧变量变化历史（DebugSession 易失 list 上限 50、相邻暂停 global 顶层键 diff＋经过节点区间、resume 用户改写同步基线不入历史、paused 帧纯超集 history）；⑥异常断点（BreakpointSpec.exception/onException，仅调试流包 try/except、RunCancelled/DebugStopped 前置穿透，命中 reason=exception 帧＋error，resume/continue 后原样重抛、不做「忽略继续」）；⑦子图内部断点（debug_controller 透传子层重入、_namespaced_emit 放行 paused/debug_log、同一 session 门闩同线程顺序安全、终帧仍吞）。
+- **批 3 D28 两项**：⑧适配器调用级埋点（executor tool 三出口 monotonic 计时发 tool_metric，SIMULATED 照记、mock/子图不发，两真实运行入口收集入 RunRecord.tool_calls，迁移 008 给 monitoring_runs 加 tool_calls JSONB，metrics 增 tool 段 p50/p95/错误码分布，顺手订正 record_run 协议签名漂移 cancelled/trace_id/business，Monitoring「适配器调用」Card）；⑨自定义告警规则 DSL（RuleConfig.custom 纯超集缺省 [] 不 422，复用 graph.conditions 递归下降求值、禁 eval，扁平白名单上下文 status/durationMs/failedCount/hasError〔不含 graphId〕，结果必须 bool、异常 fail-safe 不告警，rule_id=custom:{cid}、Alert 加 rule_name，PG config JSONB 自动兼容无 DDL，前端 List 编辑器＋同构静态校验）。
+- **批 4 两项**：⑩D35 记忆写入/编辑（MemoryRepository.update 两档同构、白名单字段合并整体过 validate_remember_params、content 变重算 256 维 embedding、source 标 manual；POST /api/memories 与 PUT /api/memories/{id} 均 operate、201/404，删除维持 admin；前端新建/编辑 Modal）；⑪D21 子图版本升级体检（新纯函数 versioning/upgrades.py 对比「草稿下次发布将钉版本」与「父图最新发布快照所钉」，GET /api/graphs/{id}/subgraph-upgrades read，ReleaseModal 门禁表上方只读体检区；不做草稿 pin 编辑器、不阻断发布、不检测未发布草稿 dirty、v1 只扫顶层子图）。
+- 同步面：docs/28 新建、08 立项条（2026-09-20）、14（D21/D26/D27/D28/D35 五行部分取回注记＋变更记录，不解除）、00 地图（28 行＋docs/27 状态刷新为已收口）、handoff（Active work 22＋Project documents 28）、本文件。**本原子仅文档，0 落码；落码按 docs/28 §8 原子序分四批推进，测试 U139 起，批 1 验收硬点＝迁移 008 应用后 PG 档 d26_smoke 24 断言全过。**
+
 ### feat(debug)：B 包落码收口——协作式运行急停 + hitCount/logpoint 断点 + 暂停 globals 改写续跑（2026-09-20，单原子 `f9a1301`，U124–U138 转正式，形状权威 docs/27 §4，D27 进程内三项取回）
 
 - C+A+B 打包原子序④，**零新依赖**（纯标准库 `threading.Event`，已在用）、不新增 ADR、全部向后兼容纯超集（新字段可选、新端点独立、旧断点缺省降级），**不解除 D27**（持久化中断/多实例随 D19/D20/S1、断点落 Graph JSON/团队共享、变量变化历史/来源追踪、异常断点、子图内部断点、阻塞中点强杀、多会话锁粒度仍缓做）。
