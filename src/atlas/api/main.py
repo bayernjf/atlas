@@ -53,6 +53,7 @@ from atlas.message.adapter import MessageHarnessAdapter
 from atlas.monitoring import RUN_RING_SIZE, extract_business, extract_node_results
 from atlas.recording import (
     RecordingCreateRequest,
+    RecordingUpdateRequest,
     ReplayRequest,
     build_tool_mocks,
     clock_anchor,
@@ -444,6 +445,19 @@ def list_graph_release_reports(
     return {"items": services.report_store.list_summary(graph_id)}
 
 
+@app.get("/api/release-reports")
+def list_all_release_reports(
+    limit: int = 100, principal: Principal = Depends(require("read"))
+) -> dict[str, Any]:
+    """跨图批量回放报告看板（docs/28 §2.4）：倒序摘要，不含 cases，read 角色。
+
+    limit 默认 100、上限 200（非整数 query 由 FastAPI 422）；报告进程内 ring 不 PG 化。
+    """
+    services = services_for(principal)
+    bounded = max(1, min(limit, 200))
+    return {"items": services.report_store.list_all_summary(limit=bounded)}
+
+
 @app.get("/api/graphs/{graph_id}/release-reports/{report_id}")
 def get_graph_release_report(
     graph_id: str, report_id: str, principal: Principal = Depends(require("read"))
@@ -736,6 +750,25 @@ def get_recording(
     if case is None:
         raise HTTPException(status_code=404, detail=f"录制用例不存在：{case_id}")
     return case.model_dump()
+
+
+@app.put("/api/recordings/{case_id}")
+def update_recording(
+    case_id: str,
+    request: RecordingUpdateRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """编辑用例元信息（docs/28 §2.3）：仅 name/inputs 可改，其余录制事实不可改。
+
+    字段缺省不改；name 空串/超长、inputs 非对象 → 422；用例不存在 → 404。
+    """
+    services = services_for(principal)
+    updated = services.recording_store.update_meta(
+        case_id, name=request.name, inputs=request.inputs
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail=f"录制用例不存在：{case_id}")
+    return updated.model_dump()
 
 
 @app.delete("/api/recordings/{case_id}")

@@ -863,6 +863,44 @@ def test_replay_inputs_override_shallow_merges_and_validates():
     ).status_code == 422
 
 
+def test_recording_update_meta_endpoint():
+    case_id = _record_mockable_tool_case()
+
+    # 改名 + 改 inputs
+    resp = client.put(f"/api/recordings/{case_id}", json={"name": "新名", "inputs": {"amount": 5}})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["name"] == "新名" and body["inputs"] == {"amount": 5}
+    # 录制事实不动（steps/graph_id/status/graph 快照）
+    assert len(body["steps"]) == 2 and body["status"] == "completed"
+    assert body["graph_id"] and isinstance(body["graph"], dict)
+    # 详情与列表投影反映新值
+    got = client.get(f"/api/recordings/{case_id}").json()
+    assert got["name"] == "新名" and got["inputs"] == {"amount": 5}
+    proj = next(i for i in client.get("/api/recordings").json()["items"] if i["id"] == case_id)
+    assert proj["name"] == "新名"
+    # 仅改名时 inputs 保留
+    only_name = client.put(f"/api/recordings/{case_id}", json={"name": "只改名"}).json()
+    assert only_name["name"] == "只改名" and only_name["inputs"] == {"amount": 5}
+    # 空 body（无字段）原样返回 200
+    assert client.put(f"/api/recordings/{case_id}", json={}).json()["name"] == "只改名"
+    # 404 / 422
+    assert client.put("/api/recordings/rec-nope", json={"name": "x"}).status_code == 404
+    assert client.put(f"/api/recordings/{case_id}", json={"name": ""}).status_code == 422
+    assert client.put(f"/api/recordings/{case_id}", json={"name": "x" * 101}).status_code == 422
+    assert client.put(f"/api/recordings/{case_id}", json={"inputs": "bad"}).status_code == 422
+    # viewer（read）不可编辑（operate）
+    viewer_token = client.post(
+        "/api/auth/login", json={"username": "viewer-a", "password": "viewer123"}
+    ).json()["token"]
+    denied = client.put(
+        f"/api/recordings/{case_id}",
+        json={"name": "x"},
+        headers={"Authorization": f"Bearer {viewer_token}"},
+    )
+    assert denied.status_code == 403
+
+
 def test_recordings_survive_reset_but_delete_removes_them():
     case_id, _, _ = _record_approval_timeout_case()
     client.post("/api/demo/reset")  # GraphStore 清空，但用例图已快照

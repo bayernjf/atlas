@@ -182,6 +182,29 @@ def test_recording_graph_id_subgraphs_roundtrip(backend):
     assert legacy_got.graph_id == "" and legacy_got.subgraphs == {}
 
 
+def test_recording_update_meta_roundtrip(backend):
+    # 批 1 D26③（docs/28 §2.3）：PUT 仅改 name/inputs，PG 往返且录制事实不动。
+    from atlas.recording.cases import RecordStep
+
+    recording = backend.recording_store(TENANT)
+    case = recording.add(
+        name="原名", graph={"version": 1}, inputs={"x": 1},
+        steps=[RecordStep(node_id="t", node_type="trigger", output={"a": 1})],
+        status="completed", graph_id="g-upd",
+        subgraphs={"s@1": {"version": 1}},
+    )
+    updated = recording.update_meta(case.id, name="新名", inputs={"x": 9})
+    assert updated is not None
+    assert updated.name == "新名" and updated.inputs == {"x": 9}
+    got = recording.get(case.id)
+    assert got.name == "新名" and got.inputs == {"x": 9}
+    # 录制事实不动
+    assert got.graph_id == "g-upd" and got.subgraphs == {"s@1": {"version": 1}}
+    assert len(got.steps) == 1 and got.graph == {"version": 1}
+    # 不存在 → None
+    assert recording.update_meta("rec-nope", name="x") is None
+
+
 def test_monitoring_roundtrip(backend):
     store = backend.monitoring_store(TENANT)
     record = store.record_run(

@@ -402,6 +402,36 @@ class PgRecordingStore:
             ).first()
         return self._row_to_case(row) if row else None
 
+    def update_meta(
+        self,
+        case_id: str,
+        *,
+        name: str | None = None,
+        inputs: dict[str, Any] | None = None,
+    ) -> RecordingCase | None:
+        """仅改 name/inputs（docs/28 §2.3）；不存在返 None，无变更字段时回读原样返回。"""
+        sets: list[str] = []
+        params: dict[str, Any] = {}
+        if name is not None:
+            sets.append("name = :name")
+            params["name"] = name
+        if inputs is not None:
+            sets.append("inputs = :inputs")
+            params["inputs"] = json.dumps(inputs, ensure_ascii=False)
+        if sets:
+            params.update({"id": case_id, "tenant_id": self._tenant_id})
+            with self._engine.begin() as conn:
+                result = conn.execute(
+                    text(
+                        "UPDATE recordings SET " + ", ".join(sets)
+                        + " WHERE id = :id AND tenant_id = :tenant_id"
+                    ),
+                    params,
+                )
+            if result.rowcount == 0:
+                return None
+        return self.get(case_id)
+
     def delete(self, case_id: str) -> bool:
         with self._engine.begin() as conn:
             result = conn.execute(

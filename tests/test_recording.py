@@ -379,6 +379,33 @@ def test_recording_store_crud_and_counter_ids():
     assert store.delete("rec-1") is False
 
 
+def test_recording_store_update_meta_only_name_inputs():
+    store = RecordingStore()
+    graph = {"version": 1, "nodes": [{"id": "t", "type": "trigger"}]}
+    steps = [RecordStep(node_id="t", node_type="trigger", output={"a": 1})]
+    case = store.add(name="原名", graph=graph, inputs={"x": 1}, steps=steps,
+                     status="completed", graph_id="g-1",
+                     subgraphs={"s@1": {"version": 1}})
+
+    # 仅改名
+    renamed = store.update_meta(case.id, name="新名")
+    assert renamed is not None and renamed.name == "新名"
+    assert renamed.inputs == {"x": 1} and renamed.graph_id == "g-1"
+    # 仅改 inputs；steps/graph/subgraphs/graph_id/时间戳不动
+    re_input = store.update_meta(case.id, inputs={"x": 2, "y": 3})
+    assert re_input is not None and re_input.inputs == {"x": 2, "y": 3}
+    assert re_input.name == "新名"
+    assert re_input.steps == steps and re_input.graph == graph
+    assert re_input.subgraphs == {"s@1": {"version": 1}} and re_input.graph_id == "g-1"
+    assert re_input.created_at == case.created_at and re_input.recorded_at == case.recorded_at
+    # 读回应为更新后的同一存储项
+    assert store.get(case.id).name == "新名" and store.get(case.id).inputs == {"x": 2, "y": 3}
+    # 无变更字段：原样返回（不报错）
+    assert store.update_meta(case.id) is store.get(case.id)
+    # 不存在 → None
+    assert store.update_meta("rec-missing", name="x") is None
+
+
 def test_recording_create_request_validation():
     payload = {
         "name": "x" * 101,

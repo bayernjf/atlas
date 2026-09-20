@@ -1,4 +1,11 @@
-from .cases import RecordStep, RecordingCase, RecordingCreateRequest, RecordingStore, ReplayRequest
+from .cases import (
+    RecordStep,
+    RecordingCase,
+    RecordingCreateRequest,
+    RecordingStore,
+    RecordingUpdateRequest,
+    ReplayRequest,
+)
 from .gate import run_release_gate
 from .reports import ReleaseReport, ReportCaseRow, ReportStore, report_to_csv
 from .replay import (
@@ -17,6 +24,7 @@ __all__ = [
     "RecordingCase",
     "RecordingCreateRequest",
     "RecordingStore",
+    "RecordingUpdateRequest",
     "ReplayRequest",
     "run_release_gate",
     "ReleaseReport",
