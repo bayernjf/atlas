@@ -589,15 +589,19 @@ debug:
       expression: string?      # 可选，§5.1 白名单表达式；校验失败 422，运行时求值异常 fail-safe 不命中
       hitCount: int?           # B 包(f9a1301)：正整数 N，每第 N 次命中才暂停（hits%N==0）；缺省=每次命中；非正整数/布尔 422
       logMessage: string?      # B 包：非空＝日志断点 logpoint，命中只发 debug_log 不暂停（消息原样不插值）；v1 不与 hitCount 组合
+      onException: bool?       # 批2(9b378c2)：true=异常断点，节点抛异常时先暂停（reason="exception"），resume 原样重抛不忽略；纯异常（无 expression/hitCount/logMessage）before 早退不误停
 # 启动即 step 模式（每个节点执行前暂停）；断点不进 Graph JSON、会话级。
 # SSE event: paused
 type: "paused"
 token: string                  # dbg-<uuid>，resume 凭据
 node_id: string                # 暂停在该节点 node_start 之后、逻辑之前
 node_type: string
-reason: "step" | "breakpoint" | "condition"
+reason: "step" | "breakpoint" | "condition" | "exception"   # 批2(9b378c2) 增 exception
 globals: object                # 当前全局变量快照（深拷贝，只读）
 outputs: object                # 截至暂停点全部已完成节点终态产出（深拷贝，只读）
+history: object[]?             # 批2(038dcaa)：变量变化历史（易失、不持久化、上限50丢最旧），每条 {seq,node_id,reason,since_nodes,changes:[{key,old,new}]}；首暂停 changes=[]，键删除 v1 不记，不可序列化值 fail-safe 跳过；resume 手动改写 seed 基线不记为变化
+error: {type: string, message: string}?  # 批2(9b378c2)：仅 reason="exception" 携带，异常类名与 str(e)；step/continue 后原样重抛（v1 不支持忽略继续），stop 抛 DebugStopped
+subgraphPath: string[]?        # 批2(f6f7d30)：子图内部暂停时按进入层级存每层父图 subgraph 节点 id（如 ["subgraph-1"]）；顶层节点缺省此键
 # POST /api/debug/{token}/resume 请求体
 action: "step" | "continue" | "stop"   # step=下一节点再停；continue=关逐节点仅断点停；stop=取消运行（忽略 globals）
 globals: object?                       # B 包(f9a1301)：仅 action=step/continue；global 顶层键浅合并覆盖（dict 值整体替换、不深 merge、不删未提供键）；键名 ^[A-Za-z_][A-Za-z0-9_]*$、值 JSON 可序列化，非法 422
@@ -610,7 +614,7 @@ type: "debug_log"
 node_id: string
 hits: int                  # 该节点断点累计命中次数
 message: string            # logMessage 原样
-subgraphPath: string[]?    # 预留（子图断点仍缓做，v1 缺省）
+subgraphPath: string[]?    # 批2(f6f7d30)：子图内部 logpoint/暂停帧携带，按进入层级存每层父图 subgraph 节点 id；顶层缺省
 # 普通（非调试）运行急停：SSE event: cancelled
 type: "cancelled"
 node_id: string            # 取消生效的下一节点边界 id（wait/approval/tool 阻塞中点不强杀）
@@ -619,7 +623,7 @@ reason: "user_cancel"
 #   run 不存在/跨租户 404；已结束无注册句柄 409；窗口内重复取消幂等 200；viewer 403
 # GET /api/debug → {items:[{token, node_id, node_type, graph_id, reason}]}
 ```
-> 进程内会话（threading.Event，重启即失，持久化中断随 11 S1/14 D19/D20）；未知 token 404、重复 resume 409；`/api/demo/reset` 按 stop 释放全部暂停；parallel 暂停串行化、`__join__` 网关与 subgraph 内部不暂停。权威契约见 04 §5.12，REST 见 12 §5。
+> 进程内会话（threading.Event，重启即失，持久化中断随 11 S1/14 D19/D20）；未知 token 404、重复 resume 409；`/api/demo/reset` 按 stop 释放全部暂停；parallel 暂停串行化、`__join__` 网关不暂停；**批 2（f6f7d30）起 subgraph 内部可逐帧暂停、可命中断点与 logpoint**（重入透传同一 DebugSession/controller，子层 paused/debug_log 带 `subgraphPath`，子层 stop 穿透 DebugStopped 不折叠为 failed，终帧仍只父层一个）。权威契约见 04 §5.12，REST 见 12 §5。
 >
 > **租户注记（2026-09-16，§5.14）**：调试会话按租户分区（dbg- token 绑定所属租户 broker）；持他租户 token 调 resume/查询 → 404。审批会话（human_approval 的 approval token）同理，按租户 broker 分区。
 
