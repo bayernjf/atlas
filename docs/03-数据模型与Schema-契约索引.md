@@ -38,7 +38,7 @@
 | `recording_case` | 04 / 五、逻辑组件 5.11 操作录制与回放 v1 契约（权威 blockquote）+ `src/atlas/recording/{cases,replay,gate,snapshots}.py`（录制用例模型与进程内存储；M9 增 gate 发布前批量回放门禁；D26-b 增 `subgraphs` 快照内联，仅 replay 内联、gate 保持实时，见下行 `release_gate`；C 包 `3415377` 增 `recorded_at` 回放冻结时钟锚点与 today/now/datetime/hoursBetween 时钟函数，权威见 04 §5.1 C 注记；docs/28 批 1（2026-09-20）：PG 富字段 graph_id/subgraphs 持久化修复（d1f455b，迁移 008）、单用例 Mock 工具回放＋入参覆写（c7bf138）、PUT 用例编辑（89e21fc）） | ### 5.11 操作录制与回放 |
 | `debug_session` | 04 / 五、逻辑组件 5.12 单步调试与断点 v1 契约（权威 blockquote）+ `src/atlas/debug/{sessions,controller}.py`（运行期调试会话、暂停状态机、paused/stopped/debug_log 帧、hitCount/logpoint、resume globals 浅合并）+ `src/atlas/collaboration/cancellations.py`（B 包 f9a1301：RunCancelled/RunCancellationBroker 协作式急停、cancelled 帧） | ### 5.12 单步调试与断点 |
 | `monitoring` | 04 / 五、逻辑组件 5.13 基础监控告警 v1 契约（权威 blockquote）+ `src/atlas/monitoring/{records,metrics,alerts,business}.py`（运行记录 ring、指标聚合、规则求值与告警状态机；M9 增业务结果指标与 rollout_gate 告警动作，见下行 `business_metrics`） | ### 5.13 基础监控告警 |
-| `identity_session` | 04 / 五、逻辑组件 5.14 多租户与权限 v1 契约（权威 blockquote）+ `src/atlas/iam/{principals,sessions,registry,deps}.py`（种子租户/账号、Principal、sess- token、按租户服务注册表、Bearer 依赖）；docs/31 候选：补 `expires_at` 绝对 TTL（迁移 011） | ### 5.14 多租户与权限 |
+| `identity_session` | 04 / 五、逻辑组件 5.14 多租户与权限 v1 契约（权威 blockquote）+ `src/atlas/iam/{principals,sessions,registry,deps}.py`（种子租户/账号、Principal、sess- token、按租户服务注册表、Bearer 依赖）；docs/31 步骤 5 已落码：`expires_at` 绝对 TTL（迁移 011，ATLAS_SESSION_TTL_HOURS 缺省 12h）；步骤 6 节流待落 | ### 5.14 多租户与权限 |
 | `identity_user` | 04 / docs/31 §2/§3 + `src/atlas/iam/{passwords,accounts}.py`＋`iam_users` 表（迁移 010）：scrypt 哈希、UserStore/PgUserStore、幂等 seeder、`/api/users` 管理端点与 `/api/auth/change-password`（2026-09-21 步骤 2-4 已落码）；TTL/节流随步骤 5/6 | docs/31 §2/§3（收口升格 04 §5.15） |
 | `trace_span` | 04 / 五、逻辑组件 5.15 链路追踪 v1 契约（**M10 已落码 2026-09-18**；权威 blockquote）+ `src/atlas/tracing/`（与 OTel 同形最小 Span/Tracer、contextvars 进程内传播、to_tree 折叠开关） | ### 5.15 链路追踪（span v1） |
 | `rollout_config` | **M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；04 / 五、逻辑组件 5.16 灰度发布与门控回滚 v1 契约（权威 blockquote）+ `src/atlas/routing/{models,router,store,gate}.py`（rollout 配置/三段分桶/状态机/门控；ADR T22）；形状来源 docs/19 §2.3.3 提案转权威 | ### 5.16 灰度发布与门控回滚 |
@@ -736,7 +736,7 @@ username: string
 password: string
 # 登录响应 / GET /api/auth/me
 token: string                 # sess-<uuid4.hex>，PG 档落 iam_sessions（docs/30）
-expires_at: string            # 📋 docs/31 候选（迁移 011）：UTC ISO，签发时刻 + ATLAS_SESSION_TTL_HOURS（缺省 12h）；绝对 TTL、不滑动续期；过期 → 401 惰性删行
+expires_at: string            # docs/31 §4 步骤 5 已落码：UTC ISO，签发时刻 + ATLAS_SESSION_TTL_HOURS（缺省 12h，合法 1-168）；绝对 TTL、不滑动续期；过期 → 401 惰性删行；NULL（回填时 issued_at 不可解析）视为不过期
 principal:
   tenant_id: string           # "t1" | "t2"（v1 种子租户；不写进资源 JSON，由 token 推断）
   tenant_name: string         # 演示企业 A / 演示企业 B

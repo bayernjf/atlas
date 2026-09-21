@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from sqlalchemy import Engine, text
@@ -224,18 +224,24 @@ class PgSessionStore:
 
     def issue(self, principal: Principal) -> str:
         token = f"sess-{uuid.uuid4().hex}"
+        now = datetime.now(timezone.utc)
+        from atlas.iam.sessions import session_ttl_seconds
+
+        expires_at = (now + timedelta(seconds=session_ttl_seconds())).isoformat()
         with self._engine.begin() as conn:
             conn.execute(
                 text(
-                    "INSERT INTO iam_sessions (token, tenant_id, username, role, issued_at) "
-                    "VALUES (:token, :tenant_id, :username, :role, :issued_at)"
+                    "INSERT INTO iam_sessions "
+                    "(token, tenant_id, username, role, issued_at, expires_at) "
+                    "VALUES (:token, :tenant_id, :username, :role, :issued_at, :expires_at)"
                 ),
                 {
                     "token": token,
                     "tenant_id": principal.tenant_id,
                     "username": principal.username,
                     "role": principal.role.value,
-                    "issued_at": _now_iso(),
+                    "issued_at": now.isoformat(),
+                    "expires_at": expires_at,
                 },
             )
         return token
@@ -246,16 +252,26 @@ class PgSessionStore:
         with self._engine.connect() as conn:
             row = conn.execute(
                 text(
-                    "SELECT tenant_id, username, role FROM iam_sessions WHERE token = :token"
+                    "SELECT tenant_id, username, role, expires_at FROM iam_sessions "
+                    "WHERE token = :token"
                 ),
                 {"token": token},
             ).first()
         if row is None:
             return None
-        from atlas.iam.principals import SEED_TENANTS, SEED_USERS
-
         tenant_id = row[0]
         username = row[1]
+        expires_at_raw = row[3]
+        if expires_at_raw is not None:
+            try:
+                expires_at = datetime.fromisoformat(expires_at_raw)
+            except ValueError:
+                expires_at = None
+            if expires_at is not None and expires_at <= datetime.now(timezone.utc):
+                self.revoke(token)
+                return None
+        from atlas.iam.principals import SEED_TENANTS, SEED_USERS
+
         role = Role(row[2])
         user = next((u for u in SEED_USERS if u.username == username), None)
         display_name = user.display_name if user else username

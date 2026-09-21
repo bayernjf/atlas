@@ -49,6 +49,7 @@ def backend():
 
     engine = create_database_engine(DATABASE_URL, pool_size=2)
     _run_migration(engine, "010_iam_users.sql")
+    _run_migration(engine, "011_iam_session_ttl.sql")
     yield PgBackend(engine)
     with engine.begin() as conn:
         conn.execute(text("DELETE FROM iam_users WHERE tenant_id LIKE 'iutest%'"))
