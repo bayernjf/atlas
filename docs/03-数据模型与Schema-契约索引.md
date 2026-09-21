@@ -672,6 +672,7 @@ tool_calls:                  # docs/28 §4.1 ⑧（D28 批3，2026-09-20，a318d
     action_status: "SUCCESS" | "FAILED" | "SIMULATED"
     error_code: string?      # result.code，无结构化 code（如未注册适配器）为 null
 # 仅两个真实运行入口（同步 /run、流式 /run/stream）采集无 subgraphPath 的顶层工具；mock 命中、子图内、debug/回放/门禁不采集
+spans: object?             # docs/33 §4 ⑤（2026-09-21，4579843）：tracer.to_tree() 根 span dict（kind="run"，DFS 含 node/tool 子 span）；纯超集缺省 null；PG 迁移 012 加 monitoring_runs.spans JSONB；列表端点剔除、GET /api/monitoring/runs/{id}/trace 懒加载
 # GET /api/monitoring/metrics
 total: integer
 healthy: integer                 # completed 且无失败节点
@@ -700,6 +701,7 @@ run_error:            {enabled: boolean}
 node_failed:          {enabled: boolean}
 consecutive_failures: {enabled: boolean, threshold: 1..200 整数}
 failure_rate:         {enabled: boolean, window: 1..200, min_samples: 1..200, rate: 0..1}
+escalation_ack_minutes: integer?  # docs/33 §5 ⑩（2026-09-21，00bba8c）：open warning 超此分钟未确认惰性升 critical；缺省/null=不升级，显式 0 或非 1..10080 整数/非 bool → PUT 422；进程内 v1 不 PG 化（PG 读回默认不升级）
 custom:                      # docs/28 §4.2 ⑨（D28 批3，2026-09-20，11b1ba7）：自定义规则，纯超集缺省 []，旧配置/PG JSONB 不 422
   - cid: string             # 客户端 crypto.randomUUID()，strip 非空、同配置唯一、≤64
     name: string            # strip 非空、≤50
@@ -727,10 +729,71 @@ action:                    # M9 纯超集，仅 rollout_gate 告警携带；其�
   to_version: int          # 接全量的 stable
   reason: string           # 越阈指标/阈值/观察窗
   actor: "auto" | "manual"
+escalated_at: string?      # docs/33 §5 ⑩（00bba8c）：open warning 超 escalation_ack_minutes 未确认的惰性升级时刻（list/get 读时按 first_seen 评估、幂等，升级后按 critical 视口；critical/ack/resolved/关配置/已升级不重复升）；进程内、PG 读回 null 后重评
+assignee: string?         # docs/33 §5 ⑩：告警「新建」时指派的当前值班人（合并/静默不指派）；进程内 OpsStore map，PG 读回 null
 ```
 > 进程内 ring buffer（200 条，满则丢最旧）+ 单锁同步评估（写运行→按图 streak→四规则），重启即失；`/api/demo/reset` 清空运行/告警并恢复默认规则（持久化随 11 S1/D11/D28）。未知告警 404、重复状态迁移 409。权威契约见 04 §5.13，内部接口见 12 §3.9，REST 见 12 §5。
 >
 > **租户注记（2026-09-16，§5.14）**：运行记录、指标、告警、规则均按租户分区（每租户独立 MonitoringStore 实例，run-/alt- 计数各租户从 1 起）；reset 仅清调用方租户的运行/告警并恢复该租户默认规则（计数器不重置）。
+
+### `monitoring_shadow_run` — 影子运行族（docs/33 §3，批 2 ④，2026-09-21，cea7111/c29ce15；进程内 ring 100/租户，不 PG 化、reset 清空）
+
+```yaml
+# ShadowRun：POST /api/graphs/{graph_id}/shadow-runs 发起（sync）、GET /api/shadow-runs 列表、GET /api/shadow-runs/{sid} 详情、POST /api/shadow-runs/{sid}/compare 补录人工结果并回对比
+id: string                 # sr-N（租户级单调计数，ShadowStore ring 100/租户，进程内不 PG 化）
+graph_id: string
+inputs: object?            # 影子入站 payload（同正常 run 渲染）
+status: "completed" | "error"
+error: string?
+trace_id: string
+auto_action: string?       # 系统推断的写动作分类
+human_outcome:             # 人工实际处理（发起时可带或事后补录）
+  action: string           # refunded | human_review | 自定义动作串
+  note: string?
+comparison:
+  match: boolean?          # true 一致 / false 不一致 / null 系统无写意图无法判定
+  auto_action: string?
+  human_action: string?
+  diffs: [string]
+decisions:                 # 路由决策（condition/human_approval/loop）
+  - node_id: string
+    node_type: string
+    target: string?
+tool_intents:              # 工具节点旁路意图
+  - node_id: string
+    tool: string           # adapter/capability；SIMULATED 为裸工具名
+    permission: "read"|"write"|"delete"|"financial"|null   # SIMULATED 为 null
+    dry_run: boolean       # true＝写能力被短路返 SHADOW_DRY_RUN；false＝READ 透传真实执行或 SIMULATED
+    parameters: object?    # 脱敏后最终参数（v1 沙盘无密钥原样记录）
+    action_status: "SHADOW_DRY_RUN"|"SUCCESS"|"FAILED"|"SIMULATED"
+created_at: string
+# 硬语义（零污染）：不写 RunRecord/run_store、不调 evaluate_after_run、不发 tool_metric、不进告警/灰度门控；
+# human_approval 预置 approved 秒过并记意图；permission != READ 的能力不调 adapter.execute（http/request 声明 WRITE，v1 GET 也保守短路）。
+```
+
+> ShadowStore ring 100/租户（照 ReportStore 先例进程内、不 PG 化、reset 清空）；dry-run 判定依据**编译期 adapter/capability → permission 表**（照 `_tool_output_schemas` 模式），不做能力名启发式，READ 透传、WRITE/DELETE/FINANCIAL 短路为 SHADOW_DRY_RUN 意图回执，全链透传含子图。权威见 docs/33 §3、04 影子落码块、06 §6.9、REST 见 12。
+
+### `monitoring_silence_oncall` — 静默与值班（docs/33 §5，批 4 ⑩，2026-09-21，00bba8c/1804255；进程内 OpsStore，不 PG 化、reset 清空）
+
+```yaml
+# Silence：POST/GET /api/monitoring/silences（GET 可选 ?active=true|false，非法值 422）、DELETE /api/monitoring/silences/{id}
+id: string                 # sil-N（租户自增；上限 100，满则淘汰最旧；创建时惰性清过期，无定时器）
+rule_id: string?           # 与 graph_id 组合；null 表示不按规则限定
+graph_id: string?          # null 表示不按图限定；rule_id/graph_id 皆 null＝全局静默
+reason: string             # strip 非空、≤200，否则 422
+created_by: string
+created_at: string
+expires_at: string         # created_at + duration_minutes（1..10080 分钟，越界 422）；惰性过期
+suppressed_count: integer  # 命中（now<expires 且 rule/graph 为空或相等）的压下次数；命中不新建/不合并/不升级告警，仅 +1
+# GET 列表项另带计算字段 active: boolean
+# OnCallSchedule：GET/PUT /api/monitoring/on-call、POST /api/monitoring/on-call/rotate
+members: [string]          # 1..20 非空串；PUT 去重保序并重置 index；空表 rotate → 409
+index: integer             # 当前值班下标；rotate 推进，当前值班 = members[index % len]
+updated_at: string?
+updated_by: string?
+```
+
+> 静默/值班/assignee/escalated_at 全部进程内（内存与 PG 两档共用 OpsStore，挂 per-tenant 常驻 store、单锁），不落库、重启清空；PG 档告警在库、assignee 在 OpsStore `_assignees` map、escalated_at 读回由 `apply_escalation` 按 first_seen 重新幂等评估。权限：GET 为 read，POST/PUT/DELETE 为 administer（viewer 写 403）；删不存在静默 404。权威见 docs/33 §5、04 §5.13 落码块、06 §6.11、REST 见 12。
 
 ### `identity_session` — 字段概览（Phase 2 能力项，2026-09-16；`/api/auth/*` 与 `Authorization: Bearer`）
 

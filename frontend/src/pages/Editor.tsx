@@ -25,6 +25,7 @@ import { UserBadge } from '../components/UserBadge'
 import { ApprovalCardGate } from '../components/approval/CardRenderer'
 import { ReleaseModal } from '../components/release/ReleaseModal'
 import { RolloutModal } from '../components/release/RolloutModal'
+import { ShadowRunModal } from '../components/shadow/ShadowRunModal'
 import { roleCan, type Principal } from '../lib/auth'
 import { useTranslation } from '../locales'
 import { useEditorStore } from '../store/editorStore'
@@ -177,6 +178,8 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
   const [rolloutOpen, setRolloutOpen] = useState(false)
   const [releaseGraphId, setReleaseGraphId] = useState<string | null>(null)
   const [rolloutGraphId, setRolloutGraphId] = useState<string | null>(null)
+  const [shadowOpen, setShadowOpen] = useState(false)
+  const [shadowGraphId, setShadowGraphId] = useState<string | null>(null)
   const [publishedRef, setPublishedRef] = useState<{ id: string; versions: number[] } | null>(null)
   const [draftGraphId, setDraftGraphId] = useState<string | null>(null)
   const [runTarget, setRunTarget] = useState<'draft' | number>('draft')
@@ -554,6 +557,18 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
     }
   }
 
+  async function openShadow() {
+    setReleaseBusy(true)
+    try {
+      setShadowGraphId(await ensureGraphId())
+      setShadowOpen(true)
+    } catch (error) {
+      setRunError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setReleaseBusy(false)
+    }
+  }
+
   const onPublished = (version: number) => {
     const id = draftGraphId ?? publishedRef?.id
     if (!id) return
@@ -875,6 +890,11 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
               <Button loading={releaseBusy} onClick={openRollout}>
                 {t('header.rollout')}
               </Button>
+              {canOperate && (
+                <Button loading={releaseBusy} onClick={openShadow}>
+                  {t('header.shadowRun')}
+                </Button>
+              )}
               <Button
                 loading={running}
                 disabled={runTarget !== 'draft'}
@@ -1459,6 +1479,11 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
         graphId={rolloutGraphId}
         tenant={principal.tenant_id}
         onClose={() => setRolloutOpen(false)}
+      />
+      <ShadowRunModal
+        open={shadowOpen}
+        graphId={shadowGraphId}
+        onClose={() => setShadowOpen(false)}
       />
     </Layout>
   )

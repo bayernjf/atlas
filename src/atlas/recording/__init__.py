@@ -8,6 +8,19 @@ from .cases import (
 )
 from .gate import run_release_gate
 from .reports import ReleaseReport, ReportCaseRow, ReportStore, report_to_csv
+from .shadow import (
+    HumanOutcome,
+    ShadowComparison,
+    ShadowDecision,
+    ShadowRun,
+    ShadowStore,
+    ToolIntent,
+    compare_shadow,
+    extract_shadow_events,
+    infer_auto_action,
+    normalize_human_action,
+    preset_all_approvals,
+)
 from .replay import (
     build_tool_mocks,
     clock_anchor,
@@ -31,6 +44,17 @@ __all__ = [
     "ReportCaseRow",
     "ReportStore",
     "report_to_csv",
+    "HumanOutcome",
+    "ShadowComparison",
+    "ShadowDecision",
+    "ShadowRun",
+    "ShadowStore",
+    "ToolIntent",
+    "compare_shadow",
+    "extract_shadow_events",
+    "infer_auto_action",
+    "normalize_human_action",
+    "preset_all_approvals",
     "clock_anchor",
     "collect_steps",
     "build_tool_mocks",

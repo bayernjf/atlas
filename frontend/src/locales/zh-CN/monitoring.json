@@ -34,7 +34,8 @@
     "errorCodes": "错误码分布",
     "node": "节点",
     "type": "类型",
-    "error": "错误"
+    "error": "错误",
+    "assignee": "值班"
   },
   "severity": {
     "critical": "严重",
@@ -137,7 +138,9 @@
     "minSamples": "最少样本",
     "failureRate": "失败率",
     "rate": "比率",
-    "unitTimes": "次"
+    "unitTimes": "次",
+    "escalationLabel": "未确认升级：warning 告警超过",
+    "escalationUnit": "分钟未确认，自动升为 critical"
   },
   "custom": {
     "title": "自定义规则（表达式，docs/28 §4.2）",
@@ -156,5 +159,140 @@
     "tools": "暂无工具调用（运行含工具节点的图后出现）",
     "alerts": "暂无告警",
     "runs": "暂无运行"
+  },
+  "shadow": {
+    "modal": {
+      "title": "影子运行（旁路演练）",
+      "hint": "对当前已保存图的最新草稿旁路跑一遍：只读操作照常执行，退款/写库/发消息等写操作不会真正触达，仅记录「系统本会怎么做」；不产生运行记录、不触发告警与灰度门控。",
+      "submit": "发起影子运行",
+      "inputsLabel": "运行输入（可选，JSON 对象）",
+      "inputsHelp": "留空时使用触发节点的示例 payload；例如退款 webhook 传入 order_id。",
+      "humanLabel": "人工实际处理（可选）",
+      "humanPlaceholder": "不补录，仅看系统决策",
+      "noteLabel": "人工备注",
+      "notePlaceholder": "可选备注，随人工结果记录"
+    },
+    "result": {
+      "error": "影子运行执行异常",
+      "verdict": "对比结论",
+      "autoAction": "系统自动动作",
+      "humanAction": "人工实际处理",
+      "noHuman": "未补录",
+      "empty": "本次运行未捕获工具调用或路由决策",
+      "intentsTitle": "工具调用意图",
+      "decisionsTitle": "路由决策"
+    },
+    "card": {
+      "title": "影子运行",
+      "autoAction": "系统动作",
+      "verdict": "对比",
+      "human": "人工处理",
+      "noHuman": "未补录",
+      "selectHuman": "选择人工动作",
+      "attach": "补录",
+      "empty": "暂无影子运行，可在编辑器中对已保存图发起"
+    },
+    "col": {
+      "id": "影子编号",
+      "graph": "图",
+      "node": "节点",
+      "nodeType": "节点类型",
+      "target": "目标",
+      "tool": "工具",
+      "permission": "权限",
+      "intent": "意图",
+      "parameters": "参数",
+      "createdAt": "时间"
+    },
+    "intent": {
+      "dryRun": "写操作短路",
+      "passThrough": "读透传",
+      "simulated": "模拟",
+      "failed": "执行失败"
+    },
+    "verdict": {
+      "consistent": "一致",
+      "mismatch": "不一致",
+      "pending": "待判定"
+    },
+    "action": {
+      "refunded": "自动退款",
+      "humanReview": "转人工审核"
+    },
+    "error": {
+      "inputsInvalidJson": "运行输入不是合法 JSON",
+      "inputsNotObject": "运行输入必须是 JSON 对象"
+    }
+  },
+  "trace": {
+    "tabNodes": "节点结果",
+    "tabTimeline": "Trace 时间线",
+    "error": "Trace 加载失败",
+    "retry": "重试",
+    "empty": "该运行无 Trace（历史数据或 debug/回放）",
+    "col": {
+      "name": "名称",
+      "timeline": "时间轴"
+    },
+    "kind": {
+      "run": "运行",
+      "node": "节点",
+      "tool": "工具",
+      "parallel": "并行",
+      "subgraph": "子图",
+      "taskDispatch": "任务派发",
+      "taskDone": "任务完成",
+      "approval": "审批"
+    }
+  },
+  "escalation": {
+    "tag": "已升级"
+  },
+  "onCall": {
+    "label": "当前值班",
+    "loading": "加载中…",
+    "nobody": "未排班",
+    "rotationHint": "轮值第 {{index}}/{{total}} 位",
+    "rotate": "轮换",
+    "configure": "设置轮值表",
+    "modalTitle": "设置值班轮值表",
+    "modalHint": "每行一个成员，也可用逗号、分号分隔；保存后从第一位开始值班，轮换按顺序循环。",
+    "placeholder": "例如：张三, 李四, 王五",
+    "save": "保存轮值表",
+    "error": {
+      "empty": "请至少填写一名值班成员",
+      "tooMany": "值班成员最多 20 人"
+    }
+  },
+  "silence": {
+    "action": "静默",
+    "popTitle": "静默该告警",
+    "durationLabel": "静默时长",
+    "durationMinutes": "{{minutes}} 分钟",
+    "durationCustom": "自定义…",
+    "reasonLabel": "原因",
+    "reasonPlaceholder": "例如：发布窗口维护",
+    "confirm": "确认静默",
+    "error": {
+      "reasonRequired": "请填写静默原因",
+      "durationRange": "时长需为 1-10080 分钟的整数"
+    },
+    "managerTitle": "静默规则（生效 {{active}} / 共 {{total}}）",
+    "col": {
+      "rule": "规则",
+      "graph": "图",
+      "reason": "原因",
+      "createdBy": "创建人",
+      "expiresAt": "到期时间",
+      "suppressed": "压下次数",
+      "status": "状态",
+      "actions": "操作"
+    },
+    "allRules": "全部规则",
+    "allGraphs": "全部图",
+    "active": "生效中",
+    "expired": "已过期",
+    "delete": "解除",
+    "deleteConfirm": "确定提前解除该静默规则？解除后匹配的告警将恢复产生。"
   }
 }

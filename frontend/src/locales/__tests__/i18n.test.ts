@@ -299,6 +299,105 @@ const MONITORING_KEYS = [
   'empty.tools',
   'empty.alerts',
   'empty.runs',
+  'shadow.modal.title',
+  'shadow.modal.hint',
+  'shadow.modal.submit',
+  'shadow.modal.inputsLabel',
+  'shadow.modal.inputsHelp',
+  'shadow.modal.humanLabel',
+  'shadow.modal.humanPlaceholder',
+  'shadow.modal.noteLabel',
+  'shadow.modal.notePlaceholder',
+  'shadow.result.error',
+  'shadow.result.verdict',
+  'shadow.result.autoAction',
+  'shadow.result.humanAction',
+  'shadow.result.noHuman',
+  'shadow.result.empty',
+  'shadow.result.intentsTitle',
+  'shadow.result.decisionsTitle',
+  'shadow.card.title',
+  'shadow.card.autoAction',
+  'shadow.card.verdict',
+  'shadow.card.human',
+  'shadow.card.noHuman',
+  'shadow.card.selectHuman',
+  'shadow.card.attach',
+  'shadow.card.empty',
+  'shadow.col.id',
+  'shadow.col.graph',
+  'shadow.col.node',
+  'shadow.col.nodeType',
+  'shadow.col.target',
+  'shadow.col.tool',
+  'shadow.col.permission',
+  'shadow.col.intent',
+  'shadow.col.parameters',
+  'shadow.col.createdAt',
+  'shadow.intent.dryRun',
+  'shadow.intent.passThrough',
+  'shadow.intent.simulated',
+  'shadow.intent.failed',
+  'shadow.verdict.consistent',
+  'shadow.verdict.mismatch',
+  'shadow.verdict.pending',
+  'shadow.action.refunded',
+  'shadow.action.humanReview',
+  'shadow.error.inputsInvalidJson',
+  'shadow.error.inputsNotObject',
+  'trace.tabNodes',
+  'trace.tabTimeline',
+  'trace.error',
+  'trace.retry',
+  'trace.empty',
+  'trace.col.name',
+  'trace.col.timeline',
+  'trace.kind.run',
+  'trace.kind.node',
+  'trace.kind.tool',
+  'trace.kind.parallel',
+  'trace.kind.subgraph',
+  'trace.kind.taskDispatch',
+  'trace.kind.taskDone',
+  'trace.kind.approval',
+  'col.assignee',
+  'escalation.tag',
+  'ruleForm.escalationLabel',
+  'ruleForm.escalationUnit',
+  'onCall.label',
+  'onCall.loading',
+  'onCall.nobody',
+  'onCall.rotate',
+  'onCall.configure',
+  'onCall.modalTitle',
+  'onCall.modalHint',
+  'onCall.placeholder',
+  'onCall.save',
+  'onCall.error.empty',
+  'onCall.error.tooMany',
+  'silence.action',
+  'silence.popTitle',
+  'silence.durationLabel',
+  'silence.durationCustom',
+  'silence.reasonLabel',
+  'silence.reasonPlaceholder',
+  'silence.confirm',
+  'silence.error.reasonRequired',
+  'silence.error.durationRange',
+  'silence.col.rule',
+  'silence.col.graph',
+  'silence.col.reason',
+  'silence.col.createdBy',
+  'silence.col.expiresAt',
+  'silence.col.suppressed',
+  'silence.col.status',
+  'silence.col.actions',
+  'silence.allRules',
+  'silence.allGraphs',
+  'silence.active',
+  'silence.expired',
+  'silence.delete',
+  'silence.deleteConfirm',
 ]
 
 /** monitoring namespace 带插值的 key：给齐变量后不得残留 {{，且应含中文。 */
@@ -308,6 +407,9 @@ const MONITORING_TEMPLATE_KEYS: Array<{ key: string; vars: Record<string, unknow
   { key: 'run.uncaughtError', vars: { error: 'RuntimeError: x' } },
   { key: 'rules.nameEmpty', vars: { cid: 'c-1' } },
   { key: 'rules.exprInvalid', vars: { name: '错误即告警', errors: '变量未定义' } },
+  { key: 'onCall.rotationHint', vars: { index: 1, total: 3 } },
+  { key: 'silence.durationMinutes', vars: { minutes: 30 } },
+  { key: 'silence.managerTitle', vars: { active: 1, total: 2 } },
 ]
 
 /**
@@ -622,6 +724,19 @@ describe('zero-dependency i18n skeleton (docs/17 §2.3, M12)', () => {
     }
     expect(t('custom.hint', { ns: 'monitoring' })).toContain('{{status}}')
     changeLanguage('zh-CN')
+  })
+
+  it('resolves shadow mode copy and the editor entry, and lib label keys via t()', () => {
+    expect(t('shadow.modal.title', { ns: 'monitoring' })).toBe('影子运行（旁路演练）')
+    expect(t('shadow.intent.dryRun', { ns: 'monitoring' })).toBe('写操作短路')
+    expect(t('shadow.verdict.consistent', { ns: 'monitoring' })).toBe('一致')
+    expect(t('shadow.action.humanReview', { ns: 'monitoring' })).toBe('转人工审核')
+    // lib/shadow.ts returns i18n keys for standard actions; unknown actions stay verbatim.
+    expect(t('shadow.action.refunded', { ns: 'monitoring' })).toBe('自动退款')
+    // editor toolbar entry lives in the editor namespace.
+    expect(t('header.shadowRun', { ns: 'editor' })).toBe('影子运行')
+    // technical enum values are not translated: missing key returns the raw string.
+    expect(t('SHADOW_DRY_RUN', { ns: 'monitoring' })).toBe('SHADOW_DRY_RUN')
   })
 
   it('resolves memory namespace static copy for the memory page', () => {

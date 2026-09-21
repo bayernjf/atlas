@@ -37,7 +37,7 @@ from atlas.database.service import DatabaseClient, demo_engine
 from atlas.debug import DebugController, DebugStopped
 from atlas.graph.conditions import validate_expression
 from atlas.graph.dsl import GraphDSL, GraphValidationError, parse_graph
-from atlas.graph.loader import compile_graph, run_graph, tool_input_schemas
+from atlas.graph.loader import _tool_permissions, compile_graph, run_graph, tool_input_schemas
 from atlas.collaboration.cancellations import RunCancelled
 from atlas.tracing import Tracer
 from atlas.harness.base import Permission
@@ -63,6 +63,7 @@ from atlas.memory.adapter import MemoryHarnessAdapter
 from atlas.memory.models import MemoryValidationError
 from atlas.message.adapter import MessageHarnessAdapter
 from atlas.monitoring import RUN_RING_SIZE, extract_business, extract_node_results
+from atlas.monitoring.silences import OnCallEmpty, current_assignee, is_silence_active
 from atlas.recording import (
     RecordingCreateRequest,
     RecordingUpdateRequest,
@@ -72,7 +73,10 @@ from atlas.recording import (
     collect_steps,
     collect_subgraph_snapshots,
     compare as compare_recording,
+    extract_shadow_events,
+    HumanOutcome,
     inline_first_resolver,
+    preset_all_approvals,
     preset_approvals,
     report_to_csv,
     run_release_gate,
@@ -87,7 +91,7 @@ from atlas.routing import (
 from atlas.shop.adapter import ShopHarnessAdapter
 from atlas.shop.service import DemoShopService
 from atlas.storage.frame import card_context_from_frame, remaining_seconds
-from atlas.storage.memory import FeedbackRequest
+from atlas.storage.memory import ApprovalBroker, FeedbackRequest
 from atlas.storage.pg import get_pg_backend
 from atlas.storage.recovery import (
     clear_frame,
@@ -670,6 +674,129 @@ def export_graph_release_report(
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{report_id}.csv"'},
     )
+
+
+# --- D26 影子模式（docs/33 §3）：线上旁路录制，进程内 v1 -----------------------------
+
+
+def _parse_human_outcome(raw: Any) -> HumanOutcome | None:
+    """校验并构造人工实际处理；action 必须是非空串，非法由端点转 422。"""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=422, detail="human_outcome 必须是对象")
+    action = str(raw.get("action") or "").strip()
+    if not action:
+        raise HTTPException(status_code=422, detail="human_outcome.action 不能为空")
+    note = raw.get("note")
+    return HumanOutcome(action=action, note=str(note) if note else None)
+
+
+@app.post("/api/graphs/{graph_id}/shadow-runs", status_code=201)
+def create_shadow_run(
+    graph_id: str,
+    payload: dict[str, Any] | None = None,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """影子运行：旁路跑完整决策链，读透传/写短路，不进生产观测面（docs/33 §3.4）。
+
+    预置全部 human_approval 节点 approved 秒过；不写 run_store/RunRecord、不触发告警与灰度
+    门控、不产 tool_metric（loader shadow 短路）；独立 tracer（trace_id 入记录）与独立审批
+    broker（不污染租户 pending）；异常也沉淀 status=error 记录。
+    """
+    services = services_for(principal)
+    graph = _load_graph_or_404(services, graph_id, None)
+    body = payload or {}
+    raw_inputs = body.get("inputs") if isinstance(body.get("inputs"), dict) else {}
+    # approvals 是运行控制键（不进全局变量、不回记入记录 inputs）。
+    inputs = dict(raw_inputs)
+    presets = preset_all_approvals(graph)
+    if presets:
+        inputs["approvals"] = {**presets, **(inputs.get("approvals") or {})}
+    outcome = _parse_human_outcome(body.get("human_outcome"))
+
+    registry = _runtime_registry(services)
+    tool_permissions = _tool_permissions(registry)
+    node_index = {node.id: node for node in graph.nodes}
+    top_events: list[tuple[str, dict[str, Any]]] = []
+
+    def shadow_emit(event: dict[str, Any]) -> None:
+        # 只收顶层 node_end（子图内部事件带 subgraphPath，与监控 tool_calls 同口径排除）。
+        if event.get("type") == "node_end" and not event.get("subgraphPath"):
+            output = event.get("output")
+            if isinstance(output, dict):
+                top_events.append((event["node_id"], output))
+
+    tracer = Tracer(graph_id=graph_id)
+    shadow_broker = ApprovalBroker()  # 独立 broker：预置秒过且不污染租户 pending
+    status = "completed"
+    error: str | None = None
+    try:
+        run_graph(
+            graph,
+            inputs=inputs,
+            registry=registry,
+            approval_broker=shadow_broker,
+            graph_id=graph_id,
+            graph_resolver=_tenant_graph_resolver(services),
+            emit=shadow_emit,
+            tracer=tracer,
+            shadow=True,
+        )
+    except Exception as exc:  # 影子异常也沉淀记录，绝不影响生产链路
+        status = "error"
+        error = f"{type(exc).__name__}: {exc}"
+
+    decisions, intents = extract_shadow_events(top_events, node_index, tool_permissions)
+    return services.shadow_store.add(
+        graph_id=graph_id,
+        trace_id=tracer.trace_id,
+        decisions=decisions,
+        tool_intents=intents,
+        inputs=raw_inputs or None,
+        status=status,
+        error=error,
+        human_outcome=outcome,
+    )
+
+
+@app.get("/api/shadow-runs")
+def list_shadow_runs(
+    graph_id: str | None = None,
+    limit: int = 50,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """本租户影子运行记录倒序（可按图过滤，limit 1–200，默认 50）。"""
+    services = services_for(principal)
+    bounded = max(1, min(int(limit), 200))
+    return {"items": services.shadow_store.list(graph_id=graph_id, limit=bounded)}
+
+
+@app.get("/api/shadow-runs/{sid}")
+def get_shadow_run(sid: str, principal: Principal = Depends(require("read"))) -> dict[str, Any]:
+    services = services_for(principal)
+    run = services.shadow_store.get(sid)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"影子运行不存在：{sid}")
+    return run
+
+
+@app.post("/api/shadow-runs/{sid}/compare")
+def compare_shadow_run(
+    sid: str,
+    payload: dict[str, Any] | None = None,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """补录/覆盖人工实际处理并重算对比（docs/33 §3.4）；action 非空，非法 422，不存在 404。"""
+    services = services_for(principal)
+    body = payload or {}
+    outcome = _parse_human_outcome(body.get("human_outcome"))
+    if outcome is None:
+        raise HTTPException(status_code=422, detail="human_outcome.action 不能为空")
+    run = services.shadow_store.attach_outcome(sid, outcome)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"影子运行不存在：{sid}")
+    return run
 
 
 @app.post("/api/graphs/{graph_id}/publish", response_model=PublishGraphResponse)
@@ -1270,6 +1397,7 @@ def run_saved_graph(
             trace_id=tracer.trace_id,
             resolved_version=resolved_version,
             tool_calls=tool_calls,
+            spans=tracer.to_tree(),
         )
         evaluate_after_run(services, record)  # M9：异常运行同样计入 candidate 门控
         raise
@@ -1288,6 +1416,7 @@ def run_saved_graph(
         resolved_version=resolved_version,
         business=extract_business(graph_view, result["outputs"], event_payload=event_payload),
         tool_calls=tool_calls,
+        spans=result["traceTree"],
     )
     evaluate_after_run(services, record)  # M9：灰度门控越阈自动回滚
     return RunGraphResponse(id=graph_id, **result)
@@ -1402,6 +1531,7 @@ def run_saved_graph_stream(
                             graph_view, result["outputs"], event_payload=event_payload
                         ),
                         tool_calls=tool_calls,
+                        spans=result["traceTree"],
                     )
                     evaluate_after_run(services, record)
                 events.put({"__result__": result})
@@ -1422,6 +1552,7 @@ def run_saved_graph_stream(
                         trace_id=tracer.trace_id if tracer is not None else "",
                         resolved_version=resolved_version,
                         tool_calls=tool_calls,
+                        spans=tracer.to_tree() if tracer is not None else None,
                     )
                 events.put({"__cancelled__": exc.node_id})
             except Exception as exc:  # 运行期异常经 SSE error 帧下发，不静默吞线程
@@ -1441,6 +1572,7 @@ def run_saved_graph_stream(
                         trace_id=tracer.trace_id if tracer is not None else "",
                         resolved_version=resolved_version,
                         tool_calls=tool_calls,
+                        spans=tracer.to_tree() if tracer is not None else None,
                     )
                     evaluate_after_run(services, record)
                 events.put({"__error__": f"{type(exc).__name__}: {exc}"})
@@ -1695,7 +1827,25 @@ def monitoring_runs(
     if limit < 1 or limit > RUN_RING_SIZE:
         raise HTTPException(status_code=422, detail=f"limit 必须是 1-{RUN_RING_SIZE} 之间的整数")
     runs = services_for(principal).monitoring.list_runs(graph_id=graph_id, limit=limit)
-    return {"items": [run.model_dump() for run in runs]}
+    # docs/33 §4：列表投影剔除 spans（大 payload，仅 trace 端点按需返回）。
+    return {
+        "items": [
+            {key: value for key, value in run.model_dump().items() if key != "spans"}
+            for run in runs
+        ]
+    }
+
+
+@app.get("/api/monitoring/runs/{run_id}/trace")
+def monitoring_run_trace(
+    run_id: str,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """docs/33 §4：单运行 span 树懒加载；历史/debug/回放无 spans 记录返 null，不存在 404。"""
+    run = services_for(principal).monitoring.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="运行记录不存在")
+    return {"id": run.id, "trace_id": run.trace_id, "spans": run.spans}
 
 
 @app.get("/api/monitoring/rules")
@@ -1755,6 +1905,104 @@ def resolve_alert(
     if alert is False:
         raise HTTPException(status_code=409, detail="该告警已关闭，重复提交不生效")
     return alert.model_dump()
+
+
+def _normalize_optional_id(value: object, field: str, errors: list[str]) -> str | None:
+    """静默 body 的 rule_id/graph_id：None/空白→None；非空 str 去空白；其余记 422。"""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        errors.append(f"{field} 必须是字符串或 null")
+        return None
+    text = value.strip()
+    return text or None
+
+
+@app.post("/api/monitoring/silences", status_code=201)
+def create_silence(
+    body: dict[str, Any], principal: Principal = Depends(require("administer"))
+) -> dict[str, Any]:
+    """docs/33 §5.1：创建静默（administer）；duration 1-10080 分钟、reason 非空≤200。"""
+    errors: list[str] = []
+    rule_id = _normalize_optional_id(body.get("rule_id"), "rule_id", errors)
+    graph_id = _normalize_optional_id(body.get("graph_id"), "graph_id", errors)
+    duration = body.get("duration_minutes")
+    if not isinstance(duration, int) or isinstance(duration, bool) or not 1 <= duration <= 10080:
+        errors.append("duration_minutes 必须是 1-10080 的整数")
+    reason = body.get("reason")
+    if not isinstance(reason, str) or not reason.strip() or len(reason.strip()) > 200:
+        errors.append("reason 必须是非空且不超过 200 字的字符串")
+    if errors:
+        raise HTTPException(status_code=422, detail="；".join(errors))
+    monitoring = services_for(principal).monitoring
+    silence = monitoring.create_silence(
+        rule_id=rule_id,
+        graph_id=graph_id,
+        duration_minutes=duration,
+        reason=reason.strip(),
+        created_by=principal.username,
+    )
+    return {**silence.model_dump(), "active": True}
+
+
+@app.get("/api/monitoring/silences")
+def list_silences(
+    active: str | None = None, principal: Principal = Depends(require("read"))
+) -> dict[str, list[dict[str, Any]]]:
+    """docs/33 §5.1：静默列表（read），?active=true|false 过滤，每条带 active 计算字段。"""
+    active_filter: bool | None = None
+    if active is not None:
+        if active not in ("true", "false"):
+            raise HTTPException(status_code=422, detail="active 只允许 true 或 false")
+        active_filter = active == "true"
+    monitoring = services_for(principal).monitoring
+    items = monitoring.list_silences(active_filter)
+    return {"items": [{**s.model_dump(), "active": is_silence_active(s)} for s in items]}
+
+
+@app.delete("/api/monitoring/silences/{silence_id}")
+def delete_silence(
+    silence_id: str, principal: Principal = Depends(require("administer"))
+) -> dict[str, Any]:
+    """docs/33 §5.1：提前解除（administer）；不存在 404。"""
+    monitoring = services_for(principal).monitoring
+    if not monitoring.delete_silence(silence_id):
+        raise HTTPException(status_code=404, detail=f"静默规则不存在：{silence_id}")
+    return {"id": silence_id, "deleted": True}
+
+
+@app.get("/api/monitoring/on-call")
+def get_on_call(principal: Principal = Depends(require("read"))) -> dict[str, Any]:
+    """docs/33 §5.3：值班表（read），current 为当前值班人（空表 null）。"""
+    schedule = services_for(principal).monitoring.get_oncall()
+    return {**schedule.model_dump(), "current": current_assignee(schedule)}
+
+
+@app.put("/api/monitoring/on-call")
+def update_on_call(
+    body: dict[str, Any], principal: Principal = Depends(require("administer"))
+) -> dict[str, Any]:
+    """docs/33 §5.3：设置轮值表（administer）；members 1-20 个非空串，去重保序、重置 index=0。"""
+    members = body.get("members")
+    if not isinstance(members, list) or not 1 <= len(members) <= 20:
+        raise HTTPException(status_code=422, detail="members 必须是 1-20 个用户名字符串组成的数组")
+    if any(not isinstance(m, str) or not m.strip() for m in members):
+        raise HTTPException(status_code=422, detail="members 每项必须是非空字符串")
+    schedule = services_for(principal).monitoring.set_oncall(
+        members=members, updated_by=principal.username
+    )
+    return {**schedule.model_dump(), "current": current_assignee(schedule)}
+
+
+@app.post("/api/monitoring/on-call/rotate")
+def rotate_on_call(principal: Principal = Depends(require("administer"))) -> dict[str, Any]:
+    """docs/33 §5.3：手动轮换（administer）；空表 409。"""
+    monitoring = services_for(principal).monitoring
+    try:
+        schedule = monitoring.rotate_oncall(updated_by=principal.username)
+    except OnCallEmpty as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {**schedule.model_dump(), "current": current_assignee(schedule)}
 
 
 @app.post("/api/nl/generate")

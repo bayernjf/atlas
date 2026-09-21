@@ -806,6 +806,10 @@ export type AlertItem = {
   action?: RolloutAlertAction | null
   /** docs/28 §4.2 ⑨：自定义规则名（内置规则缺省；PG 档 v1 不持久化，可能为空）。 */
   rule_name?: string | null
+  /** docs/33 §5.2：惰性升级时间（进程内，可能为空）。 */
+  escalated_at?: string | null
+  /** docs/33 §5.3：新建时值班人（进程内，可能为空）。 */
+  assignee?: string | null
 }
 
 /** docs/28 §4.2 ⑨ 自定义告警规则（表达式复用安全条件引擎，禁 eval）。 */
@@ -824,6 +828,8 @@ export type RuleConfig = {
   failure_rate: { enabled: boolean; window: number; min_samples: number; rate: number }
   /** 纯超集：旧后端/旧配置缺省为空数组，不报错。 */
   custom?: CustomRuleConfig[]
+  /** docs/33 §5.2：warning 未确认 N 分钟升 critical；null/缺省关闭。 */
+  escalation_ack_minutes?: number | null
 }
 
 export async function getMetrics(): Promise<MetricsSummary> {
@@ -835,6 +841,32 @@ export async function getRuns(graphId?: string, limit = 50): Promise<RunRecord[]
   if (graphId) params.set('graph_id', graphId)
   const body = await request<{ items: RunRecord[] }>(`/api/monitoring/runs?${params}`)
   return body.items
+}
+
+// docs/33 §4：Trace span 树（递归 children）；列表 RunRecord 不含 spans，trace 端点懒加载。
+export type TraceSpanNode = {
+  traceId: string
+  spanId: string
+  name: string
+  kind: string
+  startedAt: string
+  durationMs: number
+  status: string
+  parentSpanId?: string | null
+  graphVersion?: number | null
+  internal?: boolean
+  attrs?: Record<string, unknown>
+  children?: TraceSpanNode[]
+}
+
+export type RunTrace = {
+  id: string
+  trace_id: string
+  spans: TraceSpanNode | null // 历史/debug/回放记录为 null
+}
+
+export async function getRunTrace(runId: string): Promise<RunTrace> {
+  return request(`/api/monitoring/runs/${encodeURIComponent(runId)}/trace`)
 }
 
 export async function getRules(): Promise<RuleConfig> {
@@ -858,6 +890,58 @@ export async function acknowledgeAlert(id: string): Promise<AlertItem> {
 
 export async function resolveAlert(id: string): Promise<AlertItem> {
   return request(`/api/alerts/${id}/resolve`, { method: 'POST' })
+}
+
+// docs/33 §5：静默 / 值班（进程内 v1，重启清空）
+export type Silence = {
+  id: string
+  rule_id: string | null
+  graph_id: string | null
+  reason: string
+  created_by: string
+  created_at: string
+  expires_at: string
+  suppressed_count: number
+  active?: boolean
+}
+
+export type OnCallSchedule = {
+  members: string[]
+  index: number
+  current: string | null
+  updated_at: string | null
+  updated_by: string | null
+}
+
+export async function createSilence(body: {
+  rule_id?: string | null
+  graph_id?: string | null
+  duration_minutes: number
+  reason: string
+}): Promise<Silence> {
+  return request('/api/monitoring/silences', { method: 'POST', body: JSON.stringify(body) })
+}
+
+export async function listSilences(active?: boolean): Promise<Silence[]> {
+  const query = active === undefined ? '' : `?active=${active ? 'true' : 'false'}`
+  const body = await request<{ items: Silence[] }>(`/api/monitoring/silences${query}`)
+  return body.items
+}
+
+export async function deleteSilence(id: string): Promise<void> {
+  await request(`/api/monitoring/silences/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export async function getOnCall(): Promise<OnCallSchedule> {
+  return request('/api/monitoring/on-call')
+}
+
+export async function updateOnCall(members: string[]): Promise<OnCallSchedule> {
+  return request('/api/monitoring/on-call', { method: 'PUT', body: JSON.stringify({ members }) })
+}
+
+export async function rotateOnCall(): Promise<OnCallSchedule> {
+  return request('/api/monitoring/on-call/rotate', { method: 'POST' })
 }
 
 // --- M9 版本发布 / 发布门禁 / 灰度发布（03 release_gate/rollout_config，04 §5.11/§5.16） ---
@@ -1180,4 +1264,89 @@ export async function updateMemory(
   payload: Partial<MemoryWritePayload>,
 ): Promise<MemoryItem> {
   return request(`/api/memories/${id}`, { method: 'PUT', body: JSON.stringify(payload) })
+}
+
+// --- D26 影子模式（docs/33 §3；线上旁路录制，sync、无 SSE） ---
+
+/** 一次工具节点的旁路意图（action_status：SHADOW_DRY_RUN/SUCCESS/FAILED/SIMULATED）。 */
+export type ToolIntent = {
+  node_id: string
+  tool: string
+  permission: string | null
+  dry_run: boolean
+  parameters: Record<string, unknown> | null
+  action_status: string
+}
+
+/** 路由决策节点（condition/human_approval/loop）的产出目标。 */
+export type ShadowDecision = {
+  node_id: string
+  node_type: string
+  target: string | null
+}
+
+/** 人工实际处理（创建时可带，或事后补录）。 */
+export type HumanOutcome = {
+  action: string
+  note?: string | null
+}
+
+export type ShadowComparison = {
+  /** true 一致 / false 不一致 / null 无法判定（系统无写意图或尚无人工结果）。 */
+  match: boolean | null
+  auto_action: string | null
+  human_action: string | null
+  diffs: string[]
+}
+
+export type ShadowRun = {
+  id: string
+  graph_id: string
+  inputs: Record<string, unknown> | null
+  status: string // completed | error
+  error: string | null
+  decisions: ShadowDecision[]
+  tool_intents: ToolIntent[]
+  trace_id: string
+  auto_action: string | null
+  human_outcome: HumanOutcome | null
+  comparison: ShadowComparison
+  created_at: string
+}
+
+/** 对已保存图发起一次影子运行（operate；latest 草稿、预置全 approved、零副作用）。 */
+export async function createShadowRun(
+  graphId: string,
+  body: { inputs?: Record<string, unknown>; human_outcome?: HumanOutcome },
+): Promise<ShadowRun> {
+  return request(`/api/graphs/${graphId}/shadow-runs`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+/** 列出影子运行（read；倒序，可按图过滤，limit 1–200 默认 50）。 */
+export async function listShadowRuns(
+  graphId?: string,
+  limit = 50,
+): Promise<ShadowRun[]> {
+  const qs = new URLSearchParams({ limit: String(limit) })
+  if (graphId) qs.set('graph_id', graphId)
+  const body = await request<{ items: ShadowRun[] }>(`/api/shadow-runs?${qs.toString()}`)
+  return body.items
+}
+
+export async function getShadowRun(id: string): Promise<ShadowRun> {
+  return request(`/api/shadow-runs/${id}`)
+}
+
+/** 补录人工实际处理并重算对比（operate）。 */
+export async function compareShadowRun(
+  id: string,
+  humanOutcome: HumanOutcome,
+): Promise<ShadowRun> {
+  return request(`/api/shadow-runs/${id}/compare`, {
+    method: 'POST',
+    body: JSON.stringify({ human_outcome: humanOutcome }),
+  })
 }

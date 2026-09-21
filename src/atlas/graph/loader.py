@@ -153,6 +153,8 @@ def _make_executor(
     subgraph_path: tuple[str, ...] = (),
     is_cancelled: Callable[[], bool] | None = None,
     tool_mocks: dict[str, Any] | None = None,
+    shadow: bool = False,
+    tool_permissions: dict[str, str] | None = None,
 ):
     def execute(state: GraphState) -> dict:
         context = {"global": state["variables"].get("global", {}), **state["outputs"]}
@@ -343,6 +345,7 @@ def _make_executor(
                         subgraph_path=subgraph_path,
                         is_cancelled=is_cancelled,
                         debug_controller=debug_controller,
+                        shadow=shadow,
                     )
                 elif tool_mocks is not None and node.id in tool_mocks:
                     # Mock 回放（docs/28 §2.2）：以录制桩 output 替代真实适配器调用，
@@ -367,12 +370,19 @@ def _make_executor(
                         tool_cm = nullcontext()
                     tool_started = time.monotonic()
                     with tool_cm as tool_span:
-                        output = _execute_tool(node, context, registry)
+                        output = _execute_tool(
+                            node,
+                            context,
+                            registry,
+                            shadow=shadow,
+                            tool_permissions=tool_permissions,
+                        )
                         if isinstance(tool_span, Span) and _node_failure(output):
                             tool_span.end("error")
                     # docs/28 §4.1 ⑧：executor 无条件埋点（debug 流也 emit，worker 不采集）；
                     # mock 命中走上方分支不发，子层 tool_metric 经 _namespaced_emit 白名单吞掉。
-                    if emit is not None:
+                    # docs/33 §3.2：影子运行零监控污染——短路/透传工具均不发 tool_metric。
+                    if emit is not None and not shadow:
                         metric_event = _tool_metric_event(
                             node_id=node.id,
                             tool_name=tool_name,
@@ -581,8 +591,12 @@ def _execute_subgraph(
     subgraph_path: tuple[str, ...] = (),
     is_cancelled: Callable[[], bool] | None = None,
     debug_controller: Any = None,
+    shadow: bool = False,
 ) -> tuple[dict[str, Any], str]:
-    """进程内重入执行被引用子图（04 §5.7）；任何异常 fail-safe 为 failed，父 run 仍 completed。"""
+    """进程内重入执行被引用子图（04 §5.7）；任何异常 fail-safe 为 failed，父 run 仍 completed。
+
+    影子是运行级语义，子图重入必须透传 shadow（与 tool_mocks 不同）：子图内写能力同样短路。
+    """
     graph_ref = str(node.config.get("graphId", ""))
     # A 包（docs/27 §3.1）：本 subgraph 节点在父图中的完整路径，子层内部事件据此上屏。
     child_path = (*subgraph_path, node.id)
@@ -627,6 +641,7 @@ def _execute_subgraph(
                 is_cancelled=is_cancelled,
                 debug_controller=debug_controller,
                 _parent_span=sub_span if isinstance(sub_span, Span) else None,
+                shadow=shadow,
             )
     except (RunCancelled, DebugStopped):
         # 取消与调试急停/异常断点 stop 均须穿透子图 fail-safe 兜底，冒泡终止整图
@@ -898,7 +913,12 @@ def _make_break_gate(
 
 
 def _execute_tool(
-    node: NodeDSL, context: dict[str, Any], registry: AdapterRegistry | None
+    node: NodeDSL,
+    context: dict[str, Any],
+    registry: AdapterRegistry | None,
+    *,
+    shadow: bool = False,
+    tool_permissions: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     tool_name = node.config.get("tool", "")
     params_text = interpolate(node.config.get("params", ""), context)
@@ -910,6 +930,11 @@ def _execute_tool(
         adapter = registry.get(adapter_id)
     except KeyError:
         return {"result": {"status": "FAILED", "error": f"适配器未注册：{adapter_id}"}}
+
+    # 影子模式权限判定（docs/33 §3.2）：仅声明为 read 的能力透传，其余（含权限表缺失，
+    # 保守起见）一律短路为意图回执，不触达适配器。
+    permission = (tool_permissions or {}).get(tool_name)
+    shadow_blocked = shadow and permission != "read"
 
     if adapter_id in GENERIC_JSON_ADAPTERS:
         # 通用 JSON 通道（04 §4.6-4.8）：params 插值后必须是 JSON 对象并整体透传
@@ -925,6 +950,9 @@ def _execute_tool(
                 "result": {"status": "FAILED", "code": "INVALID_PARAMETER", "message": "params 必须是 JSON 对象"},
                 "action_status": "FAILED",
             }
+        # 短路点在 JSON 解析之后：非法 params 仍返 INVALID_PARAMETER，不伪造 dry-run（docs/33 §10.1）。
+        if shadow_blocked:
+            return _shadow_dry_run(tool_name, capability_name, permission, parameters)
         result = adapter.execute(ActionRequest(capability_name=capability_name, parameters=parameters))
         if result.status == ActionStatus.SUCCESS:
             return {"result": result.output, "action_status": result.status.value}
@@ -965,6 +993,10 @@ def _execute_tool(
     else:
         parameters["note"] = params_text
 
+    # 写能力短路点在专用参数组装（process_refund 的 decision/order_id/note 等）之后，
+    # 回执截获最终参数；process_refund 缺上游 decision 在上方已返 FAILED（配置错误不伪造 dry-run）。
+    if shadow_blocked:
+        return _shadow_dry_run(tool_name, capability_name, permission, parameters)
     result = adapter.execute(
         ActionRequest(capability_name=capability_name, parameters=parameters)
     )
@@ -1274,6 +1306,38 @@ def tool_input_schemas(registry: AdapterRegistry) -> dict[str, dict[str, Any]]:
     return table
 
 
+def _tool_permissions(registry: AdapterRegistry) -> dict[str, str]:
+    """影子模式编译期权限表（docs/33 §3.2）：``<adapter_id>/<tool> -> permission``。
+
+    照 ``_tool_output_schemas`` 遍历 ``registry.list_adapters()``；影子运行据此判定
+    读透传/写短路，不做能力名启发式（通用通道如 http/request 声明 write，保守短路）。
+    """
+    table: dict[str, str] = {}
+    for adapter in registry.list_adapters():
+        for tool in adapter["tools"]:
+            table[f"{adapter['id']}/{tool['name']}"] = tool["permission"]
+    return table
+
+
+def _shadow_dry_run(
+    tool_name: str, capability_name: str, permission: str | None, parameters: Any
+) -> dict[str, Any]:
+    """写能力在影子运行下的意图回执（docs/33 §3.2）：不触达适配器，仅记录「本会怎么做」。
+
+    ``parameters`` 为短路点之前已组装完成的最终参数（专用通道 dict / 通用通道解析后 JSON）。
+    """
+    return {
+        "result": {
+            "status": "SHADOW_DRY_RUN",
+            "tool": tool_name,
+            "capability": capability_name,
+            "permission": permission,
+            "parameters": parameters,
+        },
+        "action_status": "SHADOW_DRY_RUN",
+    }
+
+
 def compile_graph(
     graph: GraphDSL,
     *,
@@ -1296,6 +1360,7 @@ def compile_graph(
     _parent_span: Span | None = None,
     is_cancelled: Callable[[], bool] | None = None,
     tool_mocks: dict[str, Any] | None = None,
+    shadow: bool = False,
 ):
     decision_client = decision_client or get_decision_client()
     registry = registry if registry is not None else build_demo_registry()
@@ -1324,6 +1389,8 @@ def compile_graph(
     validation_graph = validate_with or graph
 
     tool_schemas = _tool_output_schemas(registry)
+    # 影子模式编译期权限表（docs/33 §3.2）：随执行器闭包透传，读透传/写短路据此判定。
+    tool_permissions = _tool_permissions(registry)
     # D30/B2：用 resolver 预算子图内部节点索引（解析不到则降级），供 outputs.<内部id> 存在性校验。
     subgraph_index = _subgraph_output_index(validation_graph, graph_resolver)
     # 编译期 L2 复查（04 §6.5 防绕过）：parse_graph 时无注册表，引用与工具深层路径在此补判。
@@ -1397,6 +1464,8 @@ def compile_graph(
             subgraph_path=_subgraph_path,
             is_cancelled=is_cancelled,
             tool_mocks=tool_mocks,
+            shadow=shadow,
+            tool_permissions=tool_permissions,
         )
         if node.id in skip_guards:
             parallel_id, safe_target = skip_guards[node.id]
@@ -1637,6 +1706,7 @@ def run_graph(
     _parent_span: Span | None = None,
     is_cancelled: Callable[[], bool] | None = None,
     tool_mocks: dict[str, Any] | None = None,
+    shadow: bool = False,
 ) -> dict[str, Any]:
     """编译并执行，返回状态/节点产出/轨迹。
 
@@ -1715,6 +1785,7 @@ def run_graph(
             is_cancelled=is_cancelled,
             _parent_span=_parent_span,
             tool_mocks=tool_mocks,
+            shadow=shadow,
         )
         state = initial_state(tail, inputs=resume_inputs)
         state["outputs"] = resume_state.get("outputs", {})
@@ -1747,6 +1818,7 @@ def run_graph(
         is_cancelled=is_cancelled,
         _parent_span=_parent_span,
         tool_mocks=tool_mocks,
+        shadow=shadow,
     )
     final_state = compiled.invoke(
         initial_state(graph, inputs=inputs),

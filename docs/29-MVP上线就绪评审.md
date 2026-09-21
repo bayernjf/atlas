@@ -110,3 +110,16 @@
 | git 链与 handoff 一致性 | ✅ dev HEAD `ea29da9`，无分叉 |
 
 原评审事实来源：`docker-compose.yml`、`Dockerfile`、`src/atlas/iam/{principals,sessions}.py`、`src/atlas/api/main.py`、`src/atlas/storage/{memory,pg}.py`、docs/18 §5/§8、docs/14、`TRIAL.md`，及该会话实测输出。
+
+
+---
+
+**2026-09-21 docs/33 打包收口补充复核（dev HEAD `8b29396`）——阻断 #1 的一处更具体代码缺口（新登记，非本包回归）**：
+
+| 复核项 | 结果 |
+|---|---|
+| PG 整栈 uvicorn 装配缺口：`PgUserStore` 缺 `bind_session_store` | ✅ 成立（源码核实）。[iam/deps.py](../src/atlas/iam/deps.py):39 在装配时**无条件**调用 `user_store.bind_session_store(session_store)`，而该方法仅内存版 `UserStore`（[iam/accounts.py](../src/atlas/iam/accounts.py):44）实现；PG 版 `PgUserStore`（[storage/pg.py](../src/atlas/storage/pg.py):312）无此方法。故设 `ATLAS_STORAGE_BACKEND=pg` 起整栈 uvicorn 时，装配阶段抛 `AttributeError: 'PgUserStore' object has no attribute 'bind_session_store'`，整栈 PG 模式当前不可启动；断言 `STORAGE_BACKEND=='pg''` 的端到端用例 U269 同因失败。 |
+
+- **影响边界**：这是阻断 #1（交付形态纯内存、PG 缺省不启用）之下的一处**具体装配缺口**，不改变原评审六项阻断结论。docs/33 本包（影子/Trace/静默升级值班/i18n）未触碰 iam，非本包引入；本包 PG 行为改由**直连 integration**（`ATLAS_RUN_INTEGRATION=1`＋`DATABASE_URL`，**不设** `ATLAS_STORAGE_BACKEND`，绕过 deps 整栈装配）覆盖，43 passed（含本包 U299 静默升级值班、trace U278 spans 迁移 012、M11 pgvector）。
+- **修复去向（建议，不在 docs/33 范围）**：随生产化 P0-1「交付 compose 启用 PG」同批，为 `PgUserStore` 补 `bind_session_store`（并决定会话存储是进程内绑定还是 PG 化，关联阻断 #2 的会话持久化），随后恢复整栈 PG uvicorn 与 U269。
+- 同期三道门实测：后端全量 **1051 passed/34 skipped**、前端 vitest/build/oxlint 全绿（oxlint 仅两处既有 warning）、内存档 d26/m11/d28 三 smoke 全过；这些不改变「可上线 MVP 不成立」的判定，仅更新 Demo/陪同试用形态的完成度证据。

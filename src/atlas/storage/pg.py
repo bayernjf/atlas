@@ -23,7 +23,14 @@ from sqlalchemy import Engine, text
 from sqlalchemy.exc import IntegrityError
 
 from atlas.iam.principals import Principal, Role
-from atlas.monitoring.alerts import Alert, RuleConfig, rules_from_raw, validate_rules
+from atlas.monitoring.alerts import (
+    Alert,
+    RuleConfig,
+    apply_escalation,
+    rules_from_raw,
+    validate_rules,
+)
+from atlas.monitoring.silences import OnCallSchedule, OpsStore, Silence
 from atlas.monitoring.records import RunRecord
 from atlas.recording.cases import RecordingCase, RecordStep
 
@@ -656,6 +663,8 @@ class PgMonitoringStore:
     def __init__(self, engine: Engine, tenant_id: str):
         self._engine = engine
         self._tenant_id = tenant_id
+        # docs/33 §5：静默/值班/assignee 进程内（v1 不落库，重启清空；TenantServices 常驻保活）
+        self._ops = OpsStore()
 
     def record_run(
         self,
@@ -671,6 +680,7 @@ class PgMonitoringStore:
         resolved_version: int | None = None,
         business=None,
         tool_calls: list | None = None,
+        spans: dict | None = None,
     ) -> RunRecord:
         from atlas.monitoring.alerts import evaluate_rules
         from atlas.monitoring.metrics import is_healthy
@@ -685,16 +695,16 @@ class PgMonitoringStore:
                 started_at=started_at, finished_at=_now_iso(),
                 duration_ms=duration_ms, nodes=nodes, error=error,
                 trace_id=trace_id, resolved_version=resolved_version,
-                business=business, tool_calls=tool_calls or [],
+                business=business, tool_calls=tool_calls or [], spans=spans,
             )
             conn.execute(
                 text(
                     "INSERT INTO monitoring_runs "
                     "(id, tenant_id, graph_id, mode, status, started_at, finished_at, "
-                    "duration_ms, nodes, error, trace_id, resolved_version, business, tool_calls) "
+                    "duration_ms, nodes, error, trace_id, resolved_version, business, tool_calls, spans) "
                     "VALUES (:id, :tenant_id, :graph_id, :mode, :status, :started_at, "
                     ":finished_at, :duration_ms, :nodes, :error, :trace_id, :resolved_version, "
-                    ":business, :tool_calls)"
+                    ":business, :tool_calls, :spans)"
                 ),
                 {
                     "id": run_id,
@@ -714,6 +724,7 @@ class PgMonitoringStore:
                         [m.model_dump() if hasattr(m, "model_dump") else m for m in record.tool_calls],
                         ensure_ascii=False,
                     ),
+                    "spans": json.dumps(spans, ensure_ascii=False) if spans else "{}",
                 },
             )
             rules = self._rules_locked(conn)
@@ -725,6 +736,9 @@ class PgMonitoringStore:
                 streak=streak, rules=rules,
             )
             for event in events:
+                # docs/33 §5.1：命中活跃静默则压下（不 INSERT/不合并/不升级）
+                if self._ops.suppress_if_matched(event.rule_id, record.graph_id):
+                    continue
                 self._raise_or_merge_locked(conn, event, record)
         return record
 
@@ -751,13 +765,13 @@ class PgMonitoringStore:
     def _recent_locked(self, conn: Any, graph_id: str) -> list[RunRecord]:
         rows = conn.execute(
             text(
-                f"SELECT {self._RUN_COLS} FROM monitoring_runs "
+                f"SELECT {self._RUN_LIST_COLS} FROM monitoring_runs "
                 "WHERE tenant_id = :tenant_id AND graph_id = :graph_id "
                 "ORDER BY finished_at DESC LIMIT 200"
             ),
             {"tenant_id": self._tenant_id, "graph_id": graph_id},
         ).all()
-        return [self._run_from_row(r) for r in rows]
+        return [self._run_list_from_row(r) for r in rows]
 
     def _raise_or_merge_locked(self, conn: Any, event: Any, record: RunRecord) -> None:
         row = conn.execute(
@@ -802,13 +816,14 @@ class PgMonitoringStore:
                 "last_run_id": record.id,
             },
         )
+        self._ops.remember_assignee(alert_id)
 
     def list_runs(self, graph_id: str | None = None, limit: int = 50) -> list[RunRecord]:
         with self._engine.connect() as conn:
             if graph_id:
                 rows = conn.execute(
                     text(
-                        f"SELECT {self._RUN_COLS} FROM monitoring_runs "
+                        f"SELECT {self._RUN_LIST_COLS} FROM monitoring_runs "
                         "WHERE tenant_id = :tenant_id AND graph_id = :graph_id "
                         "ORDER BY finished_at DESC LIMIT :limit"
                     ),
@@ -817,12 +832,24 @@ class PgMonitoringStore:
             else:
                 rows = conn.execute(
                     text(
-                        f"SELECT {self._RUN_COLS} FROM monitoring_runs "
+                        f"SELECT {self._RUN_LIST_COLS} FROM monitoring_runs "
                         "WHERE tenant_id = :tenant_id ORDER BY finished_at DESC LIMIT :limit"
                     ),
                     {"tenant_id": self._tenant_id, "limit": limit},
                 ).all()
-        return [self._run_from_row(r) for r in rows]
+        return [self._run_list_from_row(r) for r in rows]
+
+    def get_run(self, run_id: str) -> RunRecord | None:
+        """docs/33 §4：按 id 取单条运行（含 spans），供 trace 钻取；跨租户/不存在返 None。"""
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    f"SELECT {self._RUN_COLS} FROM monitoring_runs "
+                    "WHERE tenant_id = :tenant_id AND id = :id"
+                ),
+                {"tenant_id": self._tenant_id, "id": run_id},
+            ).first()
+        return self._run_from_row(row) if row else None
 
     @staticmethod
     def _run_from_row(r: Any) -> RunRecord:
@@ -830,12 +857,27 @@ class PgMonitoringStore:
             id=r[0], graph_id=r[1], mode=r[2], status=r[3], started_at=r[4],
             finished_at=r[5], duration_ms=r[6], nodes=r[7], error=r[8],
             trace_id=r[9] or "", resolved_version=r[10], business=r[11],
-            tool_calls=r[12] or [],
+            tool_calls=r[12] or [], spans=(r[13] if r[13] else None),
         )
+
+    @staticmethod
+    def _run_list_from_row(r: Any) -> RunRecord:
+        # 列表/告警评估投影不含 spans（大 payload，仅 trace 端点按需取）。
+        return RunRecord(
+            id=r[0], graph_id=r[1], mode=r[2], status=r[3], started_at=r[4],
+            finished_at=r[5], duration_ms=r[6], nodes=r[7], error=r[8],
+            trace_id=r[9] or "", resolved_version=r[10], business=r[11],
+            tool_calls=r[12] or [], spans=None,
+        )
+
+    _RUN_LIST_COLS = (
+        "id, graph_id, mode, status, started_at, finished_at, "
+        "duration_ms, nodes, error, trace_id, resolved_version, business, tool_calls"
+    )
 
     _RUN_COLS = (
         "id, graph_id, mode, status, started_at, finished_at, "
-        "duration_ms, nodes, error, trace_id, resolved_version, business, tool_calls"
+        "duration_ms, nodes, error, trace_id, resolved_version, business, tool_calls, spans"
     )
 
     @staticmethod
@@ -849,6 +891,11 @@ class PgMonitoringStore:
         "id, rule_id, graph_id, severity, message, status, first_seen, "
         "last_seen, last_run_id, count"
     )
+
+    def _decorate_alert(self, alert: Alert, rules: RuleConfig, now: str) -> Alert:
+        """docs/33 §5.2/§5.3：进程内补 assignee 并惰性升级（不写 PG，重启重评幂等）。"""
+        alert.assignee = self._ops.assignee_of(alert.id)
+        return apply_escalation(alert, rules, now)
 
     def list_alerts(self, status: str | None = None) -> list[Alert]:
         with self._engine.connect() as conn:
@@ -868,7 +915,9 @@ class PgMonitoringStore:
                     ),
                     {"tenant_id": self._tenant_id},
                 ).all()
-        return [self._alert_from_row(r) for r in rows]
+            rules = self._rules_locked(conn)
+        now = datetime.now(timezone.utc).isoformat()
+        return [self._decorate_alert(self._alert_from_row(r), rules, now) for r in rows]
 
     def get_alert(self, alert_id: str) -> Alert | None:
         with self._engine.connect() as conn:
@@ -879,7 +928,11 @@ class PgMonitoringStore:
                 ),
                 {"id": alert_id, "tenant_id": self._tenant_id},
             ).first()
-        return self._alert_from_row(row) if row else None
+            if not row:
+                return None
+            rules = self._rules_locked(conn)
+        now = datetime.now(timezone.utc).isoformat()
+        return self._decorate_alert(self._alert_from_row(row), rules, now)
 
     def acknowledge_alert(self, alert_id: str) -> Alert | Literal[False] | None:
         with self._engine.begin() as conn:
@@ -961,6 +1014,31 @@ class PgMonitoringStore:
             ).all()
         return summarize([self._run_from_row(r) for r in rows])
 
+    # docs/33 §5：静默 / 值班（进程内，委托 OpsStore）
+    def create_silence(
+        self, *, rule_id: str | None, graph_id: str | None, duration_minutes: int,
+        reason: str, created_by: str,
+    ) -> Silence:
+        return self._ops.create_silence(
+            rule_id=rule_id, graph_id=graph_id, duration_minutes=duration_minutes,
+            reason=reason, created_by=created_by,
+        )
+
+    def list_silences(self, active: bool | None = None) -> list[Silence]:
+        return self._ops.list_silences(active)
+
+    def delete_silence(self, silence_id: str) -> bool:
+        return self._ops.delete_silence(silence_id)
+
+    def get_oncall(self) -> OnCallSchedule:
+        return self._ops.get_oncall()
+
+    def set_oncall(self, *, members: list[str], updated_by: str) -> OnCallSchedule:
+        return self._ops.set_oncall(members=members, updated_by=updated_by)
+
+    def rotate_oncall(self, *, updated_by: str) -> OnCallSchedule:
+        return self._ops.rotate_oncall(updated_by=updated_by)
+
     def reset(self) -> None:
         with self._engine.begin() as conn:
             conn.execute(
@@ -975,6 +1053,7 @@ class PgMonitoringStore:
                 text("DELETE FROM monitoring_rules WHERE tenant_id = :tenant_id"),
                 {"tenant_id": self._tenant_id},
             )
+        self._ops.reset()
 
 
 class PgRunsStore:

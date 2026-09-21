@@ -4,6 +4,7 @@
 evaluate_rules 只产出「触发意图」，同键合并/计数由 store 负责。
 """
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -47,6 +48,8 @@ class RuleConfig(BaseModel):
     consecutive_failures: ConsecutiveRule = ConsecutiveRule()
     failure_rate: FailureRateRule = FailureRateRule()
     custom: list[CustomRule] = Field(default_factory=list)
+    # docs/33 §5.2：warning 未确认 N 分钟后惰性升级 critical；None/缺省关闭（1-10080）
+    escalation_ack_minutes: int | None = None
 
 
 class Alert(BaseModel):
@@ -64,6 +67,10 @@ class Alert(BaseModel):
     action: dict | None = None
     # docs/28 §4.2 ⑨：自定义规则名（内置规则缺省 None；PG 档 v1 不持久化此字段，读回为 None）
     rule_name: str | None = None
+    # docs/33 §5.2：惰性升级时间（v1 进程内，PG 读回 None 后重新惰性评估，语义幂等）
+    escalated_at: str | None = None
+    # docs/33 §5.3：新建时值班人（v1 进程内，PG alerts 不加列、读回 null）
+    assignee: str | None = None
 
 
 class AlertEvent(BaseModel):
@@ -116,6 +123,13 @@ def validate_rules(raw: object) -> list[str]:
             errors.append("failure_rate.rate 必须是 0-1 之间的数值")
     elif "failure_rate" in raw:
         errors.append("failure_rate 必须是对象")
+    # docs/33 §5.2：未确认升级分钟数（可选；null/缺省关闭，1-10080）
+    if "escalation_ack_minutes" in raw:
+        value = raw["escalation_ack_minutes"]
+        if value is not None and (
+            not isinstance(value, int) or _is_bool(value) or not 1 <= value <= 10080
+        ):
+            errors.append("escalation_ack_minutes 必须是 1-10080 的整数或 null")
     # docs/28 §4.2 ⑨：自定义规则段可选（缺省/空合法，旧配置与 PG JSONB 反序列化不 422）
     if "custom" in raw:
         custom_raw = raw["custom"]
@@ -180,6 +194,7 @@ def rules_from_raw(raw: dict) -> RuleConfig:
             for rule in raw.get("custom", [])
             if isinstance(rule, dict)
         ],
+        escalation_ack_minutes=raw.get("escalation_ack_minutes"),
     )
 
 
@@ -279,3 +294,24 @@ def _evaluate_custom_rules(*, rules: RuleConfig, record: object, graph_id: str, 
             )
         )
     return events
+
+
+def apply_escalation(alert: Alert, rules: RuleConfig, now: str) -> Alert:
+    """docs/33 §5.2：惰性未确认升级。仅 open + warning + 配置非空 + 距 first_seen（缺省 last_seen）
+    达 N 分钟且未升级过时，返 severity=critical/escalated_at=now 的副本；其余原样返回。
+
+    已 acknowledged/resolved 不升级；已升级幂等不重复。时间字符串均为 tz-aware ISO。
+    """
+    minutes = rules.escalation_ack_minutes
+    if alert.status != "open" or alert.severity != "warning" or not minutes:
+        return alert
+    if alert.escalated_at is not None:
+        return alert
+    base = alert.first_seen or alert.last_seen
+    try:
+        elapsed = (datetime.fromisoformat(now) - datetime.fromisoformat(base)).total_seconds()
+    except ValueError:
+        return alert
+    if elapsed >= minutes * 60:
+        return alert.model_copy(update={"severity": "critical", "escalated_at": now})
+    return alert

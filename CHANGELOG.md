@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+### feat：影子模式/Trace 钻取/告警静默升级值班/i18n 续批打包落码收口（2026-09-21，docs/33；dev 未 push）
+
+- 承接同题立项条，12 原子序全部落码，零新依赖、不新增 ADR、**不解除 D12/D26/D28**（仅进程内 v1 部分取回）。立项 `9fcf40b`。
+- 批 1 i18n 续批（M12）：editor 两原子（框架/画布/左栏 `97d61dc`/`ad12f98`、属性面板/调试台 `bf9cdb6`/`888daf8`）、Monitoring（`0c299ef`/`4bf7c7f`）、Memory（`3445576`/`f11dad5`）三 namespace zh-CN 抽取，en-US 各 json 仍空 `{}`，技术专名与后端中文 detail 不 key 化，i18n.test.ts 静态/插值键校验；仍不引 i18next。
+- 批 2 D26 影子模式（后端 `cea7111`/前端 `c29ce15`，U250–U269）：`recording/shadow.py`（ShadowRun 族＋编译期 adapter·capability→permission 表，READ 透传、写能力短路 SHADOW_DRY_RUN，infer/compare 纯函数，ShadowStore `sr-N` ring 100/租户进程内不 PG 化）；`run_graph(shadow=True)` 独立 tracer/broker、预置 approved、零污染（不写 run_store、不 evaluate_after_run、不发 tool_metric、不进告警/灰度，异常也沉淀 error）；4 REST（POST `/api/graphs/{id}/shadow-runs`、GET `/api/shadow-runs`、GET `/api/shadow-runs/{sid}`、POST `.../compare`）＋监控页影子卡/编辑器发起。
+- 批 3 D28 Trace 钻取（后端 `4579843`/前端 `ce6cc23`，U270–U278）：RunRecord.`spans`（tracer.to_tree 根 dict）＋迁移 **012** `monitoring_runs.spans JSONB`（本包唯一 DDL）＋`GET /api/monitoring/runs/{id}/trace` 懒加载（列表剔除、无 spans 返 null）＋前端 lib/traceTree.ts 纯函数与 TraceWaterfall 三级瀑布。
+- 批 4 D28 静默/惰性升级/值班（后端 `00bba8c`/前端 `1804255`，U285–U299，U299 为 PG 集成）：`monitoring/silences.py` OpsStore——静默 `sil-N`（rule/graph 可空、duration 1-10080 分钟、reason≤200、惰性过期无定时器、上限 100、命中只 suppressed_count+1 不建/合/升级；POST/GET/DELETE）、未确认惰性升级（RuleConfig.escalation_ack_minutes 1-10080、缺省不升级、显式 0/非法 422、仅 open warning、读时按 first_seen 幂等评估）、值班 OnCallSchedule（members 1-20 去重保序、index 取模、空表 rotate 409、仅告警新建指派 assignee；GET/PUT/rotate）；GET read/写 administer/viewer 写 403；escalated_at/assignee/静默/值班进程内不 PG 化（PG 读回 assignee 走 map、升级幂等重评，reset 清空）。前端 OnCallBar、SilenceManager、规则卡升级开关、告警值班列/红色已升级 Tag。
+- 缺陷修复 `90b942a`：通过告警行 Popover 建静默后端 201 但折叠 SilenceManager 不刷新（仅挂载拉一次），改为 reloadKey 驱动即时联动；d28_smoke 内存档扩充 trace/静默/升级/值班/权限断言 `8b29396`。
+- 门：后端内存档 **1051 passed/34 skipped**；PG 直连 integration（ATLAS_RUN_INTEGRATION=1＋DATABASE_URL，不设 ATLAS_STORAGE_BACKEND）**43 passed**（含 U299、trace U278、M11 pgvector）；前端 **555 passed/2 skipped/43 文件**、tsc+vite build ✓、oxlint **0 error/2 既有 warning**（ReleaseModal/RolloutModal，新代码零新增）；内存档 d26/m11/d28 三 smoke 全过；真实浏览器冒烟过 i18n 中文/值班轮换/静默闭环/未确认升级/适配器埋点表/Trace 三级瀑布/影子卡，4 截图 `docs/assets/d28-*.png`。
+- 已知既有阻断（非本包回归，登记 docs/29）：整栈 PG uvicorn 与 U269 受 `PgUserStore.bind_session_store` 缺失阻断（iam/deps.py:39 无条件调用、该方法仅内存 UserStore 实现），本包未碰 iam，PG 行为由直连 integration 覆盖，修复随生产化 P0-1。
+- 非目标（仍缓做、触发条件不变）：i18next/切换 UI/en-US 翻译/AntD locale；影子线上自动旁路/SSE/PG 化/多租户共享/报表趋势；OTel/Prometheus/Grafana（随 D11）、外部告警出口（随 D24）、自动轮换/排班表、静默值班升级 PG 化与多实例、长保留时序报表。打包二（LICENSE/Prometheus/.pre-commit）用户未选、不在本包。
+
 ### docs：影子模式/Trace 钻取/告警静默升级值班/i18n 续批打包立项（2026-09-21，docs/33；docs-only 未落码）
 
 - 用户拍板「打包一+打包三共 6 项」，从 docs/14 D12/D26/D28 取回工程内可闭环余部，全部进程内 v1、零新依赖、不新增 ADR、**不解除 D12/D26/D28**；形状权威＝docs/33（八项已拍板决策、11 新端点/Schema、12 原子序、同步矩阵、风险）。
