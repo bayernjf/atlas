@@ -616,8 +616,10 @@ def test_demo_reset_clears_shadow_runs():
 
 @pytest.mark.integration
 @pytest.mark.skipif(
-    os.environ.get("ATLAS_RUN_INTEGRATION") != "1",
-    reason="set ATLAS_RUN_INTEGRATION=1 and DATABASE_URL to run PG integration",
+    os.environ.get("ATLAS_RUN_INTEGRATION") != "1"
+    or os.environ.get("ATLAS_STORAGE_BACKEND", "memory") != "pg",
+    reason="set ATLAS_RUN_INTEGRATION=1, DATABASE_URL and ATLAS_STORAGE_BACKEND=pg "
+    "to run full-stack PG integration",
 )
 def test_pg_tenant_services_shadow_store_inprocess():
     assert os.environ.get("ATLAS_STORAGE_BACKEND", "memory") == "pg"
