@@ -156,5 +156,69 @@
     "tools": "暂无工具调用（运行含工具节点的图后出现）",
     "alerts": "暂无告警",
     "runs": "暂无运行"
+  },
+  "shadow": {
+    "modal": {
+      "title": "影子运行（旁路演练）",
+      "hint": "对当前已保存图的最新草稿旁路跑一遍：只读操作照常执行，退款/写库/发消息等写操作不会真正触达，仅记录「系统本会怎么做」；不产生运行记录、不触发告警与灰度门控。",
+      "submit": "发起影子运行",
+      "inputsLabel": "运行输入（可选，JSON 对象）",
+      "inputsHelp": "留空时使用触发节点的示例 payload；例如退款 webhook 传入 order_id。",
+      "humanLabel": "人工实际处理（可选）",
+      "humanPlaceholder": "不补录，仅看系统决策",
+      "noteLabel": "人工备注",
+      "notePlaceholder": "可选备注，随人工结果记录"
+    },
+    "result": {
+      "error": "影子运行执行异常",
+      "verdict": "对比结论",
+      "autoAction": "系统自动动作",
+      "humanAction": "人工实际处理",
+      "noHuman": "未补录",
+      "empty": "本次运行未捕获工具调用或路由决策",
+      "intentsTitle": "工具调用意图",
+      "decisionsTitle": "路由决策"
+    },
+    "card": {
+      "title": "影子运行",
+      "autoAction": "系统动作",
+      "verdict": "对比",
+      "human": "人工处理",
+      "noHuman": "未补录",
+      "selectHuman": "选择人工动作",
+      "attach": "补录",
+      "empty": "暂无影子运行，可在编辑器中对已保存图发起"
+    },
+    "col": {
+      "id": "影子编号",
+      "graph": "图",
+      "node": "节点",
+      "nodeType": "节点类型",
+      "target": "目标",
+      "tool": "工具",
+      "permission": "权限",
+      "intent": "意图",
+      "parameters": "参数",
+      "createdAt": "时间"
+    },
+    "intent": {
+      "dryRun": "写操作短路",
+      "passThrough": "读透传",
+      "simulated": "模拟",
+      "failed": "执行失败"
+    },
+    "verdict": {
+      "consistent": "一致",
+      "mismatch": "不一致",
+      "pending": "待判定"
+    },
+    "action": {
+      "refunded": "自动退款",
+      "humanReview": "转人工审核"
+    },
+    "error": {
+      "inputsInvalidJson": "运行输入不是合法 JSON",
+      "inputsNotObject": "运行输入必须是 JSON 对象"
+    }
   }
 }

@@ -299,6 +299,52 @@ const MONITORING_KEYS = [
   'empty.tools',
   'empty.alerts',
   'empty.runs',
+  'shadow.modal.title',
+  'shadow.modal.hint',
+  'shadow.modal.submit',
+  'shadow.modal.inputsLabel',
+  'shadow.modal.inputsHelp',
+  'shadow.modal.humanLabel',
+  'shadow.modal.humanPlaceholder',
+  'shadow.modal.noteLabel',
+  'shadow.modal.notePlaceholder',
+  'shadow.result.error',
+  'shadow.result.verdict',
+  'shadow.result.autoAction',
+  'shadow.result.humanAction',
+  'shadow.result.noHuman',
+  'shadow.result.empty',
+  'shadow.result.intentsTitle',
+  'shadow.result.decisionsTitle',
+  'shadow.card.title',
+  'shadow.card.autoAction',
+  'shadow.card.verdict',
+  'shadow.card.human',
+  'shadow.card.noHuman',
+  'shadow.card.selectHuman',
+  'shadow.card.attach',
+  'shadow.card.empty',
+  'shadow.col.id',
+  'shadow.col.graph',
+  'shadow.col.node',
+  'shadow.col.nodeType',
+  'shadow.col.target',
+  'shadow.col.tool',
+  'shadow.col.permission',
+  'shadow.col.intent',
+  'shadow.col.parameters',
+  'shadow.col.createdAt',
+  'shadow.intent.dryRun',
+  'shadow.intent.passThrough',
+  'shadow.intent.simulated',
+  'shadow.intent.failed',
+  'shadow.verdict.consistent',
+  'shadow.verdict.mismatch',
+  'shadow.verdict.pending',
+  'shadow.action.refunded',
+  'shadow.action.humanReview',
+  'shadow.error.inputsInvalidJson',
+  'shadow.error.inputsNotObject',
 ]
 
 /** monitoring namespace 带插值的 key：给齐变量后不得残留 {{，且应含中文。 */
@@ -622,6 +668,19 @@ describe('zero-dependency i18n skeleton (docs/17 §2.3, M12)', () => {
     }
     expect(t('custom.hint', { ns: 'monitoring' })).toContain('{{status}}')
     changeLanguage('zh-CN')
+  })
+
+  it('resolves shadow mode copy and the editor entry, and lib label keys via t()', () => {
+    expect(t('shadow.modal.title', { ns: 'monitoring' })).toBe('影子运行（旁路演练）')
+    expect(t('shadow.intent.dryRun', { ns: 'monitoring' })).toBe('写操作短路')
+    expect(t('shadow.verdict.consistent', { ns: 'monitoring' })).toBe('一致')
+    expect(t('shadow.action.humanReview', { ns: 'monitoring' })).toBe('转人工审核')
+    // lib/shadow.ts returns i18n keys for standard actions; unknown actions stay verbatim.
+    expect(t('shadow.action.refunded', { ns: 'monitoring' })).toBe('自动退款')
+    // editor toolbar entry lives in the editor namespace.
+    expect(t('header.shadowRun', { ns: 'editor' })).toBe('影子运行')
+    // technical enum values are not translated: missing key returns the raw string.
+    expect(t('SHADOW_DRY_RUN', { ns: 'monitoring' })).toBe('SHADOW_DRY_RUN')
   })
 
   it('resolves memory namespace static copy for the memory page', () => {

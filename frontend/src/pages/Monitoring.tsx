@@ -39,6 +39,7 @@ import {
 import { validateExpression } from '../lib/conditions'
 import { roleCan, type Principal } from '../lib/auth'
 import { UserBadge } from '../components/UserBadge'
+import { ShadowRunsCard } from '../components/shadow/ShadowRunsCard'
 import {
   ALERT_STATUS_COLORS,
   ALERT_STATUS_LABELS,
@@ -806,6 +807,7 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
               }}
             />
           </Card>
+          <ShadowRunsCard canOperate={canOperate} />
         </Space>
       </Content>
     </Layout>
