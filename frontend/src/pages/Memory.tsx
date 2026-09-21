@@ -39,6 +39,7 @@ import {
   kindLabel,
   type MemoryDraft,
 } from '../lib/memory'
+import { useTranslation } from '../locales'
 
 const { TextArea } = Input
 const { Content, Header } = Layout
@@ -60,6 +61,7 @@ const EMPTY_DRAFT: MemoryDraft = {
 }
 
 export function Memory({ principal, onLogout, onBack }: MemoryProps) {
+  const { t } = useTranslation('memory')
   const canAdmin = roleCan(principal.role, 'administer')
   const canOperate = roleCan(principal.role, 'operate')
   const [items, setItems] = useState<MemoryItem[]>([])
@@ -86,11 +88,11 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
       setItems(data)
       setListError('')
     } catch (error) {
-      setListError(error instanceof Error ? error.message : '加载记忆失败')
+      setListError(error instanceof Error ? error.message : t('error.loadList'))
     } finally {
       setLoadingList(false)
     }
-  }, [listKind])
+  }, [listKind, t])
 
   useEffect(() => {
     // eslint-disable-next-line react/set-state-in-effect -- 首帧拉取外部 API，setState 均在 await 之后
@@ -112,7 +114,7 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
   const runSearch = useCallback(async () => {
     const q = query.trim()
     if (!q) {
-      setSearchError('请输入检索内容')
+      setSearchError(t('search.queryRequired'))
       return
     }
     setSearching(true)
@@ -124,11 +126,11 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
       })
       setResults(data)
     } catch (error) {
-      setSearchError(error instanceof Error ? error.message : '检索失败')
+      setSearchError(error instanceof Error ? error.message : t('error.search'))
     } finally {
       setSearching(false)
     }
-  }, [query, searchKind])
+  }, [query, searchKind, t])
 
   const handleDelete = useCallback(
     async (id: string) => {
@@ -171,7 +173,7 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
   const handleSave = useCallback(async () => {
     const { payload, error } = buildMemoryPayload(draft)
     if (!payload) {
-      setFormError(error ?? '表单不合法')
+      setFormError(error ?? t('error.formInvalid'))
       return
     }
     setSaving(true)
@@ -185,35 +187,35 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
       setEditorOpen(false)
       await refresh()
     } catch (saveError) {
-      setFormError(saveError instanceof Error ? saveError.message : '保存失败')
+      setFormError(saveError instanceof Error ? saveError.message : t('error.save'))
     } finally {
       setSaving(false)
     }
-  }, [draft, editing, refresh])
+  }, [draft, editing, refresh, t])
 
   const listColumns: ColumnsType<MemoryItem> = [
     {
-      title: '内容',
+      title: t('col.content'),
       dataIndex: 'content',
       key: 'content',
       ellipsis: true,
     },
     {
-      title: '类型',
+      title: t('col.kind'),
       dataIndex: 'kind',
       key: 'kind',
       width: 90,
-      render: (kind: MemoryKind) => <Tag color={kindColor(kind)}>{kindLabel(kind)}</Tag>,
+      render: (kind: MemoryKind) => <Tag color={kindColor(kind)}>{t(kindLabel(kind))}</Tag>,
     },
     {
-      title: '置信度',
+      title: t('col.confidence'),
       dataIndex: 'confidence',
       key: 'confidence',
       width: 90,
       render: (value: number) => formatConfidence(value),
     },
     {
-      title: '作用域',
+      title: t('col.scope'),
       dataIndex: 'scope',
       key: 'scope',
       width: 200,
@@ -221,7 +223,7 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
         formatScope(scope) || <Typography.Text type="secondary">—</Typography.Text>,
     },
     {
-      title: '创建时间',
+      title: t('col.createdAt'),
       dataIndex: 'created_at',
       key: 'created_at',
       width: 180,
@@ -230,25 +232,25 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
     ...(canOperate
       ? [
           {
-            title: '操作',
+            title: t('col.actions'),
             key: 'actions',
             width: canAdmin ? 132 : 84,
             render: (_: unknown, record: MemoryItem) => (
               <Space size={4}>
                 <Button size="small" onClick={() => openEdit(record)}>
-                  编辑
+                  {t('button.edit')}
                 </Button>
                 {canAdmin && (
                   <Popconfirm
-                    title="删除该条记忆？"
-                    description="删除后不可恢复，且不影响已结束的运行。"
-                    okText="删除"
-                    cancelText="取消"
+                    title={t('deleteConfirm.title')}
+                    description={t('deleteConfirm.description')}
+                    okText={t('common:button.delete')}
+                    cancelText={t('common:button.cancel')}
                     okButtonProps={{ danger: true }}
                     onConfirm={() => handleDelete(record.id)}
                   >
                     <Button size="small" danger>
-                      删除
+                      {t('common:button.delete')}
                     </Button>
                   </Popconfirm>
                 )}
@@ -261,20 +263,20 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
 
   const searchColumns: ColumnsType<MemorySearchResult> = [
     {
-      title: '内容',
+      title: t('col.content'),
       dataIndex: 'content',
       key: 'content',
       ellipsis: true,
     },
     {
-      title: '类型',
+      title: t('col.kind'),
       dataIndex: 'kind',
       key: 'kind',
       width: 90,
-      render: (kind: MemoryKind) => <Tag color={kindColor(kind)}>{kindLabel(kind)}</Tag>,
+      render: (kind: MemoryKind) => <Tag color={kindColor(kind)}>{t(kindLabel(kind))}</Tag>,
     },
     {
-      title: '相似度',
+      title: t('col.score'),
       dataIndex: 'score',
       key: 'score',
       width: 200,
@@ -286,7 +288,7 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
       ),
     },
     {
-      title: '作用域',
+      title: t('col.scope'),
       dataIndex: 'scope',
       key: 'scope',
       width: 180,
@@ -300,11 +302,11 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
       <Header className="page-header">
         <Space style={{ width: '100%', justifyContent: 'space-between' }}>
           <Typography.Title level={3} style={{ margin: 0 }}>
-            长期记忆
+            {t('title')}
           </Typography.Title>
           <Space>
-            <Button onClick={handleManualRefresh}>刷新</Button>
-            <Button onClick={onBack}>返回 Dashboard</Button>
+            <Button onClick={handleManualRefresh}>{t('header.refresh')}</Button>
+            <Button onClick={onBack}>{t('header.back')}</Button>
             <UserBadge principal={principal} onLogout={onLogout} />
           </Space>
         </Space>
@@ -314,35 +316,35 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
           <Alert
             type="info"
             showIcon
-            message="本地词法向量，用于机制演示，非真实语义"
-            description="相似度由内置确定性词法向量计算（离线可复现），不代表商业语义模型效果；运行中的流程会经记忆工具自动写入，运营（operate）可在此手动新建/编辑记忆（标记为 manual），删除需管理员（admin）。"
+            message={t('notice.message')}
+            description={t('notice.description')}
           />
 
           <Card
-            title="语义搜索"
+            title={t('search.cardTitle')}
             extra={
               <Select<KindFilter>
                 value={searchKind}
                 onChange={setSearchKind}
                 style={{ width: 120 }}
                 options={[
-                  { value: 'all', label: '全部类型' },
-                  { value: 'fact', label: '事实' },
-                  { value: 'preference', label: '偏好' },
+                  { value: 'all', label: t('filter.allKinds') },
+                  { value: 'fact', label: t('kind.fact') },
+                  { value: 'preference', label: t('kind.preference') },
                 ]}
               />
             }
           >
             <Space.Compact style={{ width: '100%' }}>
               <Input
-                placeholder="输入自然语言，如：客户的配送偏好"
+                placeholder={t('search.placeholder')}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 onPressEnter={() => void runSearch()}
                 allowClear
               />
               <Button type="primary" loading={searching} onClick={() => void runSearch()}>
-                搜索
+                {t('button.search')}
               </Button>
             </Space.Compact>
             {searchError && (
@@ -351,7 +353,7 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
             {results !== null && !searchError && (
               <div style={{ marginTop: 16 }}>
                 {results.length === 0 ? (
-                  <Empty description="无匹配记忆" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+                  <Empty description={t('search.empty')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
                 ) : (
                   <Table<MemorySearchResult>
                     rowKey="id"
@@ -366,12 +368,12 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
           </Card>
 
           <Card
-            title="记忆列表"
+            title={t('list.cardTitle')}
             extra={
               <Space>
                 {canOperate && (
                   <Button type="primary" onClick={openCreate}>
-                    新建记忆
+                    {t('list.create')}
                   </Button>
                 )}
                 <Select<KindFilter>
@@ -379,9 +381,9 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
                   onChange={handleListKindChange}
                   style={{ width: 120 }}
                   options={[
-                    { value: 'all', label: '全部类型' },
-                    { value: 'fact', label: '事实' },
-                    { value: 'preference', label: '偏好' },
+                    { value: 'all', label: t('filter.allKinds') },
+                    { value: 'fact', label: t('kind.fact') },
+                    { value: 'preference', label: t('kind.preference') },
                   ]}
                 />
               </Space>
@@ -395,56 +397,52 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
               loading={loadingList}
               pagination={{ pageSize: 10, showSizeChanger: false }}
               size="small"
-              locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无记忆" /> }}
+              locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('list.empty')} /> }}
             />
           </Card>
         </Space>
       </Content>
 
       <Modal
-        title={editing ? '编辑记忆' : '新建记忆'}
+        title={editing ? t('modal.editTitle') : t('modal.createTitle')}
         open={editorOpen}
         onCancel={() => setEditorOpen(false)}
         onOk={() => void handleSave()}
         confirmLoading={saving}
-        okText="保存"
-        cancelText="取消"
+        okText={t('common:button.save')}
+        cancelText={t('common:button.cancel')}
         okButtonProps={{ disabled: !draftValid }}
         destroyOnClose
       >
         <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
           {formError && <Alert type="error" showIcon message={formError} />}
-          <Alert
-            type="info"
-            showIcon
-            message="手动新建/编辑的记忆将以 source=manual 保存；内容修改后会重新计算向量。"
-          />
+          <Alert type="info" showIcon message={t('modal.sourceHint')} />
           <div>
-            <Typography.Text type="secondary">类型</Typography.Text>
+            <Typography.Text type="secondary">{t('modal.kindLabel')}</Typography.Text>
             <Select<MemoryKind>
               value={draft.kind}
               onChange={(kind) => patchDraft({ kind })}
               style={{ width: '100%', marginTop: 4 }}
               options={[
-                { value: 'fact', label: '事实' },
-                { value: 'preference', label: '偏好' },
+                { value: 'fact', label: t('kind.fact') },
+                { value: 'preference', label: t('kind.preference') },
               ]}
             />
           </div>
           <div>
-            <Typography.Text type="secondary">内容</Typography.Text>
+            <Typography.Text type="secondary">{t('modal.contentLabel')}</Typography.Text>
             <TextArea
               rows={3}
               maxLength={2000}
               showCount
               value={draft.content}
               onChange={(event) => patchDraft({ content: event.target.value })}
-              placeholder="记忆内容（必填，最长 2000 字）"
+              placeholder={t('modal.contentPlaceholder')}
               style={{ marginTop: 4 }}
             />
           </div>
           <div>
-            <Typography.Text type="secondary">置信度（0-1）</Typography.Text>
+            <Typography.Text type="secondary">{t('modal.confidenceLabel')}</Typography.Text>
             <InputNumber
               min={0}
               max={1}
@@ -455,7 +453,7 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
             />
           </div>
           <div>
-            <Typography.Text type="secondary">作用域（JSON 对象，键值均为字符串，可空）</Typography.Text>
+            <Typography.Text type="secondary">{t('modal.scopeLabel')}</Typography.Text>
             <TextArea
               rows={2}
               value={draft.scopeText}
@@ -465,7 +463,7 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
             />
           </div>
           <div>
-            <Typography.Text type="secondary">元数据（JSON 对象，键值均为字符串，可空）</Typography.Text>
+            <Typography.Text type="secondary">{t('modal.metadataLabel')}</Typography.Text>
             <TextArea
               rows={2}
               value={draft.metadataText}

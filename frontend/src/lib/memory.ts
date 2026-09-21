@@ -4,9 +4,10 @@
  */
 import type { MemoryKind, MemoryWritePayload } from './apiClient'
 
+// kind 展示标签映射到 memory namespace 的 i18n key（纯函数不引 hook，由组件 t() 解析）。
 export const MEMORY_KIND_LABELS: Record<MemoryKind, string> = {
-  fact: '事实',
-  preference: '偏好',
+  fact: 'kind.fact',
+  preference: 'kind.preference',
 }
 
 /** fact 蓝 / preference 紫（docs/26 §7）。 */

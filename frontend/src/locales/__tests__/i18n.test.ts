@@ -310,6 +310,53 @@ const MONITORING_TEMPLATE_KEYS: Array<{ key: string; vars: Record<string, unknow
   { key: 'rules.exprInvalid', vars: { name: '错误即告警', errors: '变量未定义' } },
 ]
 
+/**
+ * Memory.tsx 在 memory namespace 下接线的全部静态 key（M12 续批 memory；本 namespace 无插值键）。
+ * lib/memory.ts 的 MEMORY_KIND_LABELS 改返 i18n key 由页面 t() 解析；buildMemoryPayload/parseStringMapText
+ * 的表单校验 message 与 conditions 校验 message 同例原样上屏（不抽 key）；JSON 示例 placeholder 不抽。
+ */
+const MEMORY_KEYS = [
+  'title',
+  'header.refresh',
+  'header.back',
+  'notice.message',
+  'notice.description',
+  'col.content',
+  'col.kind',
+  'col.confidence',
+  'col.scope',
+  'col.createdAt',
+  'col.actions',
+  'col.score',
+  'kind.fact',
+  'kind.preference',
+  'button.edit',
+  'button.search',
+  'deleteConfirm.title',
+  'deleteConfirm.description',
+  'filter.allKinds',
+  'search.cardTitle',
+  'search.placeholder',
+  'search.empty',
+  'search.queryRequired',
+  'list.cardTitle',
+  'list.create',
+  'list.empty',
+  'error.loadList',
+  'error.search',
+  'error.save',
+  'error.formInvalid',
+  'modal.createTitle',
+  'modal.editTitle',
+  'modal.sourceHint',
+  'modal.kindLabel',
+  'modal.contentLabel',
+  'modal.contentPlaceholder',
+  'modal.confidenceLabel',
+  'modal.scopeLabel',
+  'modal.metadataLabel',
+]
+
 const hasChinese = (s: string): boolean => /[\u4e00-\u9fff]/.test(s)
 
 afterEach(() => {
@@ -577,10 +624,38 @@ describe('zero-dependency i18n skeleton (docs/17 §2.3, M12)', () => {
     changeLanguage('zh-CN')
   })
 
-  it('keeps the still-empty memory namespace registered without breaking resolution', () => {
-    // memory.json is a {} placeholder until the memory page batch; missing keys return the key
-    // rather than throwing, and common fallback still works from it.
+  it('resolves memory namespace static copy for the memory page', () => {
+    for (const key of MEMORY_KEYS) {
+      const value = t(key, { ns: 'memory' })
+      expect(value, `${key} must resolve`).not.toBe(key)
+      expect(value.length, `${key} must be non-empty`).toBeGreaterThan(0)
+      expect(hasChinese(value), `${key} should carry Chinese copy`).toBe(true)
+    }
+  })
+
+  it('resolves lib kind labels via t() and keeps an unknown kind verbatim', () => {
+    // lib/memory.ts returns i18n keys for fact/preference; the page resolves via t().
+    expect(t('kind.fact', { ns: 'memory' })).toBe('事实')
+    expect(t('kind.preference', { ns: 'memory' })).toBe('偏好')
+    // kindLabel() falls back to the raw kind for an unexpected value; a missing key returns it.
+    expect(t('other', { ns: 'memory' })).toBe('other')
+    // Missing keys still return the key rather than throwing (skeleton behaviour preserved).
     expect(t('memory.anything', { ns: 'memory' })).toBe('memory.anything')
+  })
+
+  it('reaches shared save/cancel/delete actions via common: prefix from a memory hook', () => {
     expect(t('common:button.save', { ns: 'memory' })).toBe('保存')
+    expect(t('common:button.cancel', { ns: 'memory' })).toBe('取消')
+    expect(t('common:button.delete', { ns: 'memory' })).toBe('删除')
+  })
+
+  it('falls back to zh-CN for memory copy under the empty en-US skeleton', () => {
+    changeLanguage('en-US')
+    // en-US/memory.json stays {} (no translation yet); Chinese must still render, never a raw key.
+    for (const key of MEMORY_KEYS) {
+      expect(t(key, { ns: 'memory' })).not.toBe(key)
+    }
+    expect(t('kind.fact', { ns: 'memory' })).toBe('事实')
+    changeLanguage('zh-CN')
   })
 })
