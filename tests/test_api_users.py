@@ -274,3 +274,46 @@ def test_change_password_keeps_current_session_and_revokes_others() -> None:
     ).status_code == 401
     relogin, _ = _login(username, "Changedpass-3")
     assert anon.get("/api/auth/me", headers=relogin).status_code == 200
+
+
+def test_login_throttle_429_after_five_failures_then_reset_on_success() -> None:
+    username = _new_username()
+
+    def login(password: str):
+        return anon.post(
+            "/api/auth/login", json={"username": username, "password": password}
+        )
+
+    for _ in range(5):
+        assert login("bad-password").status_code == 401
+    locked = login("bad-password")
+    assert locked.status_code == 429
+    assert locked.json()["detail"] == "登录尝试过于频繁，请稍后再试"
+    # 锁定时不校验口令：用户不存在/口令错不再区分，计数也不再增长
+
+    # 成功登录清零：另建一个真实用户，4 次失败后成功 → 计数归零
+    real_user = _new_username()
+    admin = _admin_a()
+    anon.post(
+        "/api/users",
+        headers=admin,
+        json={
+            "username": real_user,
+            "password": "Strongpass-1",
+            "displayName": "节流恢复",
+            "role": "viewer",
+        },
+    ).raise_for_status()
+    for _ in range(4):
+        resp = anon.post(
+            "/api/auth/login", json={"username": real_user, "password": "wrong"}
+        )
+        assert resp.status_code == 401
+    ok = anon.post(
+        "/api/auth/login", json={"username": real_user, "password": "Strongpass-1"}
+    )
+    assert ok.status_code == 200
+    again = anon.post(
+        "/api/auth/login", json={"username": real_user, "password": "wrong"}
+    )
+    assert again.status_code == 401

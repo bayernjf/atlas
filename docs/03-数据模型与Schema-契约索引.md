@@ -766,7 +766,7 @@ created_at / updated_at: string
 # POST /api/users/{username}/reset-password（{newPassword}，吊销该用户全部会话）
 ```
 
-> 禁用/重置/改密均吊销对应用户会话（memory/PG 两档同构）；disabled 登录 → 403「账号已停用，请联系管理员」；未知用户/坏口令统一 401；登录节流 600s/5 次失败 → 429（进程内滑动窗口）。权威（候选）＝docs/31；非目标（SSO/MFA/邮箱找回/JWT/审计/多实例节流）见 docs/31 §1.2。
+> 禁用/重置/改密均吊销对应用户会话（memory/PG 两档同构）；disabled 登录 → 403「账号已停用，请联系管理员」；未知用户/坏口令统一 401；登录节流 600s/5 次失败 → 429「登录尝试过于频繁，请稍后再试」（进程内滑动窗口，键 username\|client_ip，docs/31 步骤 6 已落码）。权威＝docs/31（收口升格 04 §5.15）；非目标（SSO/MFA/邮箱找回/JWT/审计/多实例节流）见 docs/31 §1.2。
 
 ### `interruption_frame` — 字段概览（M5 契约设计轮 2026-09-17 新增，**设计已定、T18 已拍板（B）、2026-09-17 已随 M5b 落码**；权威＝docs/24 §2.3/§5，落码承载 `src/atlas/storage/frame.py` + `recovery.py`）
 

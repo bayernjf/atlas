@@ -10,6 +10,7 @@ from .passwords import verify_password
 from .principals import Capability, Principal, SEED_TENANTS, can
 from .registry import TenantRegistry, TenantServices
 from .sessions import SessionStore
+from .throttle import LoginThrottle
 
 
 def select_session_store():
@@ -39,6 +40,7 @@ user_store.bind_session_store(session_store)
 if os.environ.get("ATLAS_STORAGE_BACKEND", "memory") != "pg":
     user_store.seed()
 tenant_registry = TenantRegistry()
+login_throttle = LoginThrottle()
 
 _UNAUTHENTICATED = "缺少或无效的登录凭证"
 _FORBIDDEN = "当前角色无权执行此操作"

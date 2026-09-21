@@ -47,6 +47,7 @@ from atlas.httpapi.service import HttpApiClient
 from atlas.iam.deps import (
     authenticate_login,
     get_principal,
+    login_throttle,
     require,
     services_for,
     session_store,
@@ -335,9 +336,22 @@ def _bearer_token(request: Request) -> str | None:
 
 
 @app.post("/api/auth/login", response_model=LoginResponse)
-def login(request: LoginRequest) -> LoginResponse:
-    """账号登录换 sess-token（04 §5.14，docs/31 §2.2）；坏凭证 401、停用 403、节流 429。"""
-    principal = authenticate_login(request.username, request.password)
+def login(request: LoginRequest, http_request: Request) -> LoginResponse:
+    """账号登录换 sess-token（04 §5.14，docs/31 §2.2/§5）。
+
+    坏凭证 401、停用 403；600s 内同 username+IP 5 次失败 → 429（锁定时不校验口令）；成功清零。
+    """
+    client_ip = http_request.client.host if http_request.client else ""
+    throttle_key = f"{request.username}|{client_ip}"
+    now = time.time()
+    if login_throttle.is_locked(throttle_key, now):
+        raise HTTPException(status_code=429, detail="登录尝试过于频繁，请稍后再试")
+    try:
+        principal = authenticate_login(request.username, request.password)
+    except HTTPException:
+        login_throttle.record_failure(throttle_key, now)
+        raise
+    login_throttle.reset(throttle_key)
     token = session_store.issue(principal)
     # 触发租户装配，登录后该租户即有独立服务实例
     tenant_registry.get(principal.tenant_id)
