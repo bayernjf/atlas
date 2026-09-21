@@ -30,6 +30,14 @@ class SessionStore:
         with self._lock:
             self._tokens.pop(token, None)
 
+    def revoke_for_user(self, tenant_id: str, username: str, *, keep_token: str | None = None) -> None:
+        with self._lock:
+            for token, principal in list(self._tokens.items()):
+                if token == keep_token:
+                    continue
+                if principal.tenant_id == tenant_id and principal.username == username:
+                    del self._tokens[token]
+
     def reset(self) -> None:
         with self._lock:
             self._tokens.clear()

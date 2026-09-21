@@ -21,7 +21,22 @@ def select_session_store():
     return SessionStore()
 
 
+def select_user_store():
+    # ADR T25（docs/31 §2）：PG 档账号落 iam_users；内存档惰性播种。
+    if os.environ.get("ATLAS_STORAGE_BACKEND", "memory") == "pg":
+        from atlas.storage.pg import get_pg_backend
+
+        return get_pg_backend().user_store()
+    from .accounts import UserStore
+
+    return UserStore()
+
+
 session_store = select_session_store()
+user_store = select_user_store()
+user_store.bind_session_store(session_store)
+if os.environ.get("ATLAS_STORAGE_BACKEND", "memory") != "pg":
+    user_store.seed()
 tenant_registry = TenantRegistry()
 
 _UNAUTHENTICATED = "缺少或无效的登录凭证"
