@@ -892,7 +892,12 @@ def test_subgraph_compile_aggregates_child_validation_errors():
 
 def _http_registry(handler):
     transport = httpx.MockTransport(handler)
-    client = HttpApiClient(base_url="http://demo.test", client=httpx.Client(transport=transport))
+    # 注入假 resolver（域名解析到公网 IP），使 SSRF egress 校验离线确定、零真实 DNS
+    client = HttpApiClient(
+        base_url="http://demo.test",
+        client=httpx.Client(transport=transport),
+        resolver=lambda host: ["93.184.216.34"],
+    )
     registry = AdapterRegistry()
     registry.register(HttpApiHarnessAdapter(client=client, granted_permissions={"write"}))
     return registry

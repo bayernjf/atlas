@@ -3,15 +3,23 @@
 进程内同步 httpx 调用，运行于 graph 线程池工作线程（与 wait/human_approval
 同为阻塞模型）。任何拿到 HTTP 响应的结果都由调用方按 SUCCESS 处理（含
 4xx/5xx），仅传输层异常转 StructuredError。
+
+出向安全准入（docs/32）：请求在拼出最终绝对 URL 后、建连前先过
+:class:`EgressGuard` 的 SSRF 校验（私网/元数据恒拦、可选白名单），拒绝
+折叠为 EGRESS_DENIED/EGRESS_INVALID_URL，不产生网络请求、不重试、不计熔断；
+客户端不跨 host 跟随重定向（follow_redirects=False）。
 """
 
 from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from urllib.parse import urljoin
 
 import httpx
+
+from atlas.security.egress import EgressDenied, EgressGuard
 
 ALLOWED_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 DEFAULT_TIMEOUT = 30.0
@@ -31,12 +39,17 @@ class HttpApiClient:
         base_url: str = "",
         default_headers: dict[str, str] | None = None,
         client: httpx.Client | None = None,
+        *,
+        egress: EgressGuard | None = None,
+        resolver: Callable[[str], list[str]] | None = None,
     ) -> None:
         self.base_url = (base_url or "").strip()
         self.default_headers: dict[str, str] = {
             str(k): str(v) for k, v in (default_headers or {}).items()
         }
         self._client = client
+        # egress 恒启用；resolver 仅供离线测试注入（生产用系统 DNS）
+        self._egress = egress or (EgressGuard(resolver=resolver) if resolver else EgressGuard())
         self.last_request: dict[str, object] | None = None
 
     @classmethod
@@ -60,7 +73,11 @@ class HttpApiClient:
         token = os.getenv("ATLAS_HTTPAPI_TOKEN", "").strip()
         if token:
             headers.setdefault("Authorization", f"Bearer {token}")
-        return cls(base_url=os.getenv("ATLAS_HTTPAPI_BASE_URL", ""), default_headers=headers)
+        return cls(
+            base_url=os.getenv("ATLAS_HTTPAPI_BASE_URL", ""),
+            default_headers=headers,
+            egress=EgressGuard.from_env(),
+        )
 
     def request(
         self,
@@ -91,6 +108,11 @@ class HttpApiClient:
             **{str(k): str(v) for k, v in (headers or {}).items()},
         }
         target = self._resolve_url(url.strip())
+        # SSRF 出向校验：在拼出最终绝对 URL 后、建连前；拒绝零外呼、不写 last_request
+        try:
+            self._egress.check(target)
+        except EgressDenied as exc:
+            raise HttpApiCallError(exc.code, str(exc)) from exc
 
         self.last_request = {"method": method, "url": target}
         try:
@@ -129,5 +151,6 @@ class HttpApiClient:
 
     def _get_client(self) -> httpx.Client:
         if self._client is None:
-            self._client = httpx.Client()
+            # 不跨 host 自动跟随重定向，避免 302 跳内网绕过 egress 校验（docs/32 §3）
+            self._client = httpx.Client(follow_redirects=False)
         return self._client
