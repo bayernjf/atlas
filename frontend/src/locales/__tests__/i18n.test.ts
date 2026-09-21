@@ -345,6 +345,21 @@ const MONITORING_KEYS = [
   'shadow.action.humanReview',
   'shadow.error.inputsInvalidJson',
   'shadow.error.inputsNotObject',
+  'trace.tabNodes',
+  'trace.tabTimeline',
+  'trace.error',
+  'trace.retry',
+  'trace.empty',
+  'trace.col.name',
+  'trace.col.timeline',
+  'trace.kind.run',
+  'trace.kind.node',
+  'trace.kind.tool',
+  'trace.kind.parallel',
+  'trace.kind.subgraph',
+  'trace.kind.taskDispatch',
+  'trace.kind.taskDone',
+  'trace.kind.approval',
 ]
 
 /** monitoring namespace 带插值的 key：给齐变量后不得残留 {{，且应含中文。 */

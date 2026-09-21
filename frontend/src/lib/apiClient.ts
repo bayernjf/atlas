@@ -837,6 +837,32 @@ export async function getRuns(graphId?: string, limit = 50): Promise<RunRecord[]
   return body.items
 }
 
+// docs/33 §4：Trace span 树（递归 children）；列表 RunRecord 不含 spans，trace 端点懒加载。
+export type TraceSpanNode = {
+  traceId: string
+  spanId: string
+  name: string
+  kind: string
+  startedAt: string
+  durationMs: number
+  status: string
+  parentSpanId?: string | null
+  graphVersion?: number | null
+  internal?: boolean
+  attrs?: Record<string, unknown>
+  children?: TraceSpanNode[]
+}
+
+export type RunTrace = {
+  id: string
+  trace_id: string
+  spans: TraceSpanNode | null // 历史/debug/回放记录为 null
+}
+
+export async function getRunTrace(runId: string): Promise<RunTrace> {
+  return request(`/api/monitoring/runs/${encodeURIComponent(runId)}/trace`)
+}
+
 export async function getRules(): Promise<RuleConfig> {
   return request('/api/monitoring/rules')
 }

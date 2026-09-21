@@ -14,6 +14,7 @@ import {
   Statistic,
   Switch,
   Table,
+  Tabs,
   Tag,
   Typography,
 } from 'antd'
@@ -40,6 +41,7 @@ import { validateExpression } from '../lib/conditions'
 import { roleCan, type Principal } from '../lib/auth'
 import { UserBadge } from '../components/UserBadge'
 import { ShadowRunsCard } from '../components/shadow/ShadowRunsCard'
+import { TraceWaterfall } from '../components/monitoring/TraceWaterfall'
 import {
   ALERT_STATUS_COLORS,
   ALERT_STATUS_LABELS,
@@ -776,9 +778,15 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
               pagination={{ pageSize: 8, showSizeChanger: false }}
               locale={{ emptyText: t('empty.runs') }}
               expandable={{
-                rowExpandable: (record) => record.nodes.length > 0 || record.error !== null,
-                expandedRowRender: (record) =>
-                  record.error ? (
+                rowExpandable: () => true,
+                expandedRowRender: (record) => (
+                  <Tabs
+                    size="small"
+                    items={[
+                      {
+                        key: 'nodes',
+                        label: t('trace.tabNodes'),
+                        children: record.error ? (
                     <Alert type="error" showIcon message={t('run.uncaughtError', { error: record.error })} />
                   ) : (
                     <Table
@@ -803,7 +811,16 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
                       ]}
                       dataSource={record.nodes}
                     />
-                  ),
+                        ),
+                      },
+                      {
+                        key: 'trace',
+                        label: t('trace.tabTimeline'),
+                        children: <TraceWaterfall runId={record.id} />,
+                      },
+                    ]}
+                  />
+                ),
               }}
             />
           </Card>

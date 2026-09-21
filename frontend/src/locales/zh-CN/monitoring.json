@@ -220,5 +220,26 @@
       "inputsInvalidJson": "运行输入不是合法 JSON",
       "inputsNotObject": "运行输入必须是 JSON 对象"
     }
+  },
+  "trace": {
+    "tabNodes": "节点结果",
+    "tabTimeline": "Trace 时间线",
+    "error": "Trace 加载失败",
+    "retry": "重试",
+    "empty": "该运行无 Trace（历史数据或 debug/回放）",
+    "col": {
+      "name": "名称",
+      "timeline": "时间轴"
+    },
+    "kind": {
+      "run": "运行",
+      "node": "节点",
+      "tool": "工具",
+      "parallel": "并行",
+      "subgraph": "子图",
+      "taskDispatch": "任务派发",
+      "taskDone": "任务完成",
+      "approval": "审批"
+    }
   }
 }
