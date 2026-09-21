@@ -2,13 +2,26 @@
 
 from __future__ import annotations
 
+import os
+
 from fastapi import Depends, HTTPException, Request
 
 from .principals import Capability, Principal, can
 from .registry import TenantRegistry, TenantServices
 from .sessions import SessionStore
 
-session_store = SessionStore()
+
+def select_session_store():
+    # docs/30 §4（ADR T24）：PG 档会话落 iam_sessions 表，进程重启/多实例共享令牌；
+    # 密码哈希/JWT 仍属生产鉴权批次，不在此列。
+    if os.environ.get("ATLAS_STORAGE_BACKEND", "memory") == "pg":
+        from atlas.storage.pg import get_pg_backend
+
+        return get_pg_backend().session_store()
+    return SessionStore()
+
+
+session_store = select_session_store()
 tenant_registry = TenantRegistry()
 
 _UNAUTHENTICATED = "缺少或无效的登录凭证"

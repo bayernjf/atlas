@@ -17,8 +17,15 @@ COPY src ./src
 RUN pip install --no-cache-dir .
 
 COPY --from=frontend /app/frontend/dist ./frontend/dist
+
+# 迁移 SQL、ops 脚本（入口启动时跑迁移；docs/30 §2）
+COPY db ./db
+COPY scripts ./scripts
+RUN chmod +x ./scripts/ops/docker-entrypoint.sh
+
 ENV ATLAS_FRONTEND_DIST=/app/frontend/dist \
     PYTHONUNBUFFERED=1
 
 EXPOSE 8000
+ENTRYPOINT ["./scripts/ops/docker-entrypoint.sh"]
 CMD ["uvicorn", "atlas.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

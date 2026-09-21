@@ -4,6 +4,25 @@
 
 ## [Unreleased]
 
+### docs：P0 批 2 生产认证立项（2026-09-21，docs/31；docs-only 未落码）
+
+- 依据 docs/29 阻断项 #2 立项：stdlib `hashlib.scrypt` 口令哈希（零新依赖）、`iam_users` 账号表（迁移 010）＋幂等 seeder、管理员代管账号生命周期（不开放注册/不删用户，禁用/重置/改密吊销会话）、不透明 token＋会话绝对 TTL（迁移 011，默认 12h，不引 JWT）、进程内滑动窗口登录节流、口令策略；ADR T25，U227–U232。
+
+### feat：P0 批 1 持久化交付落码收口（2026-09-21，docs/30；dev 未 push）
+
+- compose 缺省起 pgvector/pgvector:pg16＋命名卷＋healthcheck，atlas 以 PG 档运行，entrypoint 启动先跑迁移；新增迁移运行器（009 schema_migrations＋scripts/ops/apply_migrations.py，有序幂等、每文件一事务、--mark-existing），不引 Alembic。
+- PG 档会话 token 落 iam_sessions，重启/多实例不再登出（密码哈希/JWT 仍归批 2）。
+- scripts/ops backup.sh/restore.sh（pg_dump -Fc/pg_restore --clean）；真实删卷恢复演练通过：八项行数一致、旧 token 有效、挂起审批恢复后决策续跑完成。
+- 门：后端 792 passed/26 skipped、PG 集成 26 passed、前端 498 passed/2 skipped、build 过、lint 0 error；U222–U226 转正式。docs/29 阻断项 #1（单实例口径）解除。
+
+### docs：P0 批 1 持久化交付立项（2026-09-21，docs/30；docs-only 未落码）
+
+- 依据 docs/29 阻断项 #1 立项：compose 缺省 PG（pgvector:pg16＋命名卷）、schema_migrations 运行器（不引 Alembic）、会话 PG 接线、备份/恢复删卷演练；ADR T24，U222–U226。
+
+### docs：MVP 上线就绪项目级评审留档（2026-09-21，docs/29）
+
+- 留档另一会话的项目级评审并复核关键断言：可演示/陪同试用技术验证 MVP 达到（真实 HTTP/浏览器实测），客户自助接真实店铺的生产 MVP 未达到；六项阻断项与 P0/P1 清单见 docs/29。P0/P1 仅为立项候选，未排期未开工。
+
 ### feat(i18n)：M12 续批——dashboard namespace 首批生产接线（2026-09-20，U219–U221 转正式，D12 部分取回续批不解除）
 
 - M12 骨架的非 common namespace 此前只在单测里跑过、生产零调用；本批首次在真实页面接通第二个 namespace（登录后落地页 Dashboard）。
