@@ -146,7 +146,13 @@ export function SilencePopButton({
 }
 
 /** docs/33 §5.4：折叠的静默规则列表（规则/图/原因/创建人/到期/压下次数/状态/删除）。 */
-export function SilenceManager({ canAdmin }: { canAdmin: boolean }) {
+export function SilenceManager({
+  canAdmin,
+  reloadKey = 0,
+}: {
+  canAdmin: boolean
+  reloadKey?: number
+}) {
   const { t } = useTranslation('monitoring')
   const [silences, setSilences] = useState<Silence[]>([])
   const [loading, setLoading] = useState(true)
@@ -169,7 +175,7 @@ export function SilenceManager({ canAdmin }: { canAdmin: boolean }) {
     }
   }, [])
 
-  useEffect(() => reload(), [reload])
+  useEffect(() => reload(), [reload, reloadKey])
 
   const handleDelete = async (id: string) => {
     try {

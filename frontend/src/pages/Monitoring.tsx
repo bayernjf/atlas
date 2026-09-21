@@ -101,6 +101,7 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
   const [loadError, setLoadError] = useState('')
   const [ruleError, setRuleError] = useState('')
   const [ruleSaved, setRuleSaved] = useState(false)
+  const [silenceVersion, setSilenceVersion] = useState(0)
 
   const refresh = useCallback(async () => {
     try {
@@ -288,7 +289,14 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
         canOperate ? (
           <Space>
             {canAdmin && (
-              <SilencePopButton ruleId={alert.rule_id} graphId={alert.graph_id} onCreated={refresh} />
+              <SilencePopButton
+                ruleId={alert.rule_id}
+                graphId={alert.graph_id}
+                onCreated={() => {
+                  setSilenceVersion((v) => v + 1)
+                  refresh()
+                }}
+              />
             )}
             <Button
               size="small"
@@ -596,7 +604,7 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
               pagination={{ pageSize: 8, showSizeChanger: false }}
               locale={{ emptyText: t('empty.alerts') }}
             />
-            <SilenceManager canAdmin={canAdmin} />
+            <SilenceManager canAdmin={canAdmin} reloadKey={silenceVersion} />
           </Card>
 
           {rules && canAdmin && (
