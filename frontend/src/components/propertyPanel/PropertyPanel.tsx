@@ -28,8 +28,10 @@ import { SubgraphConfig } from './SubgraphConfig'
 import { HumanApprovalConfig } from './HumanApprovalConfig'
 import { ToolCallConfig } from './ToolCallConfig'
 import { NodeConfigForm } from '../../lib/forms/NodeConfigForm'
+import { useTranslation } from '../../locales'
 
 export function PropertyPanel() {
+  const { t } = useTranslation('editor')
   const nodes = useEditorStore((state) => state.nodes)
   const edges = useEditorStore((state) => state.edges)
   const variables = useEditorStore((state) => state.variables)
@@ -68,8 +70,8 @@ export function PropertyPanel() {
 
   if (!selectedNode) {
     return (
-      <Card className="side-card" title="属性面板" size="small">
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="选择或拖入节点后配置属性" />
+      <Card className="side-card" title={t('property.title')} size="small">
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('property.empty')} />
       </Card>
     )
   }
@@ -112,22 +114,22 @@ export function PropertyPanel() {
   return (
     <Card
       className="side-card"
-      title="属性面板"
+      title={t('property.title')}
       size="small"
       extra={
         <Button size="small" danger onClick={deleteSelectedNode}>
-          删除
+          {t('common:button.delete')}
         </Button>
       }
     >
       <Space orientation="vertical" style={{ width: '100%' }} size="small">
         <div>
-          <Typography.Text type="secondary">节点 ID</Typography.Text>
+          <Typography.Text type="secondary">{t('property.nodeId')}</Typography.Text>
           <Input
             size="small"
             value={idDraft}
             status={idError ? 'error' : undefined}
-            aria-label="节点 ID"
+            aria-label={t('property.nodeId')}
             onChange={(event) => {
               setIdDraft(event.target.value)
               setIdError(null)
@@ -144,19 +146,19 @@ export function PropertyPanel() {
           ) : null}
         </div>
         <div>
-          <Typography.Text type="secondary">类型</Typography.Text>
+          <Typography.Text type="secondary">{t('property.type')}</Typography.Text>
           <div>
             <Tag color={meta.color}>{meta.label}</Tag>
           </div>
         </div>
-        <Field label="节点名称">
+        <Field label={t('property.nodeName')}>
           <Input
             value={data.label}
             status={!data.label.trim() ? 'error' : undefined}
             onChange={(event) => updateSelectedNode({ label: event.target.value })}
           />
         </Field>
-        <Field label="描述">
+        <Field label={t('property.description')}>
           <Input.TextArea
             rows={2}
             value={data.description}
@@ -237,15 +239,15 @@ export function PropertyPanel() {
           />
         )}
 
-        <Typography.Text strong>调试（04 §5.12 会话级断点）</Typography.Text>
-        <Field label="执行到此节点前暂停">
+        <Typography.Text strong>{t('breakpoint.section')}</Typography.Text>
+        <Field label={t('breakpoint.pauseBefore')}>
           <Switch
             checked={selectedNode.id in breakpoints}
             onChange={() => toggleBreakpoint(selectedNode.id)}
           />
         </Field>
         {selectedNode.id in breakpoints && (
-          <Field label="条件表达式（可空；为真才暂停）">
+          <Field label={t('breakpoint.conditionLabel')}>
             <Input
               value={breakpoints[selectedNode.id]?.expression ?? ''}
               placeholder="{{trigger-1.context.payload.amount}} > 1000"
@@ -267,18 +269,16 @@ export function PropertyPanel() {
                   </Typography.Text>
                 ),
               )}
-            <Typography.Text type="secondary">
-              断点仅本会话有效，不随 Graph 保存；异常表达式 fail-safe 视为不命中。
-            </Typography.Text>
+            <Typography.Text type="secondary">{t('breakpoint.conditionHint')}</Typography.Text>
           </Field>
         )}
         {selectedNode.id in breakpoints && (
-          <Field label="命中计数 hitCount（每 N 次命中暂停一次；留空＝每次命中都暂停）">
+          <Field label={t('breakpoint.hitCountLabel')}>
             <InputNumber
               min={1}
               precision={0}
               style={{ width: '100%' }}
-              placeholder="如 3（循环/重入节点常用）"
+              placeholder={t('breakpoint.hitCountPlaceholder')}
               value={breakpoints[selectedNode.id]?.hitCount ?? null}
               onChange={(value) =>
                 setBreakpointHitCount(selectedNode.id, (value as number | null) ?? null)
@@ -287,34 +287,27 @@ export function PropertyPanel() {
           </Field>
         )}
         {selectedNode.id in breakpoints && (
-          <Field label="日志断点 logMessage（非空＝命中只记日志、不暂停）">
+          <Field label={t('breakpoint.logMessageLabel')}>
             <Input
               value={breakpoints[selectedNode.id]?.logMessage ?? ''}
-              placeholder="如：已到达退款节点（消息原样输出，不做插值）"
+              placeholder={t('breakpoint.logMessagePlaceholder')}
               onChange={(event) =>
                 setBreakpointLogMessage(selectedNode.id, event.target.value)
               }
             />
-            <Typography.Text type="secondary">
-              填写消息后该断点成为日志断点：命中仅在调试控制台输出，不暂停运行；v1 不与
-              hitCount 组合、消息原样不插值。
-            </Typography.Text>
+            <Typography.Text type="secondary">{t('breakpoint.logMessageHint')}</Typography.Text>
           </Field>
         )}
-        <Field label="异常断点（节点抛出异常时暂停，docs/28 §3.2）">
+        <Field label={t('breakpoint.exceptionLabel')}>
           <Switch
             checked={!!breakpoints[selectedNode.id]?.onException}
             onChange={() => toggleBreakpointException(selectedNode.id)}
           />
-          <Typography.Text type="secondary">
-            开启后节点逻辑抛异常会先暂停并展示异常类型与消息，下一步/继续后原样抛出
-            （v1 不支持忽略继续），停止则结束调试；不填条件表达式时，continue 模式仅在
-            该节点抛异常时暂停、正常经过不暂停。
-          </Typography.Text>
+          <Typography.Text type="secondary">{t('breakpoint.exceptionHint')}</Typography.Text>
         </Field>
 
-        <Typography.Text strong>重试与失败处理（04 §3.2 retry）</Typography.Text>
-        <Field label="最大重试次数">
+        <Typography.Text strong>{t('retry.section')}</Typography.Text>
+        <Field label={t('retry.maxRetries')}>
           <InputNumber
             min={0}
             value={data.retry.maxRetries}
@@ -323,7 +316,7 @@ export function PropertyPanel() {
             }
           />
         </Field>
-        <Field label="超时（秒）">
+        <Field label={t('retry.timeoutSeconds')}>
           <InputNumber
             min={1}
             value={data.retry.timeout}
@@ -332,7 +325,7 @@ export function PropertyPanel() {
             }
           />
         </Field>
-        <Field label="失败处理">
+        <Field label={t('retry.onError')}>
           <Select
             value={data.retry.onError}
             style={{ width: '100%' }}
@@ -348,7 +341,7 @@ export function PropertyPanel() {
             ))}
           </div>
         ) : (
-          <Typography.Text type="success">配置校验通过</Typography.Text>
+          <Typography.Text type="success">{t('property.valid')}</Typography.Text>
         )}
       </Space>
     </Card>
@@ -375,9 +368,10 @@ type VariableInsertProps = ConfigProps & {
 }
 
 function DecisionConfig({ config, update, variablePaths, onInsert }: VariableInsertProps) {
+  const { t } = useTranslation('editor')
   return (
     <>
-      <Field label="提示词模板（支持 {{路径}} 引用）">
+      <Field label={t('decision.promptTemplateLabel')}>
         <Input.TextArea
           rows={4}
           value={config.promptTemplate}
@@ -385,19 +379,19 @@ function DecisionConfig({ config, update, variablePaths, onInsert }: VariableIns
           onChange={(event) => update({ promptTemplate: event.target.value })}
         />
       </Field>
-      <Field label="插入变量引用">
+      <Field label={t('decision.insertVariable')}>
         <Select
           style={{ width: '100%' }}
           value={undefined}
-          placeholder="选择后追加到模板"
+          placeholder={t('decision.insertPlaceholder')}
           onChange={onInsert}
           options={variablePaths.map((path) => ({ value: path, label: `{{${path}}}` }))}
         />
       </Field>
-      <Field label="模型（空 = 系统默认）">
+      <Field label={t('decision.modelLabel')}>
         <Input value={config.model} onChange={(event) => update({ model: event.target.value })} />
       </Field>
-      <Field label="置信度阈值（06 §6.2 默认 0.6）">
+      <Field label={t('decision.confidenceLabel')}>
         <InputNumber
           min={0}
           max={1}

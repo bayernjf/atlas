@@ -172,5 +172,44 @@
     "compileRunFailed": "编译/运行失败",
     "inputsInvalidJson": "入参不是合法 JSON，请检查格式",
     "inputsNotObject": "入参必须是顶层 JSON 对象（{}）"
+  },
+  "property": {
+    "title": "属性面板",
+    "empty": "选择或拖入节点后配置属性",
+    "nodeId": "节点 ID",
+    "type": "类型",
+    "nodeName": "节点名称",
+    "description": "描述",
+    "valid": "配置校验通过"
+  },
+  "breakpoint": {
+    "section": "调试（04 §5.12 会话级断点）",
+    "pauseBefore": "执行到此节点前暂停",
+    "conditionLabel": "条件表达式（可空；为真才暂停）",
+    "conditionHint": "断点仅本会话有效，不随 Graph 保存；异常表达式 fail-safe 视为不命中。",
+    "hitCountLabel": "命中计数 hitCount（每 N 次命中暂停一次；留空＝每次命中都暂停）",
+    "hitCountPlaceholder": "如 3（循环/重入节点常用）",
+    "logMessageLabel": "日志断点 logMessage（非空＝命中只记日志、不暂停）",
+    "logMessagePlaceholder": "如：已到达退款节点（消息原样输出，不做插值）",
+    "logMessageHint": "填写消息后该断点成为日志断点：命中仅在调试控制台输出，不暂停运行；v1 不与 hitCount 组合、消息原样不插值。",
+    "exceptionLabel": "异常断点（节点抛出异常时暂停，docs/28 §3.2）",
+    "exceptionHint": "开启后节点逻辑抛异常会先暂停并展示异常类型与消息，下一步/继续后原样抛出（v1 不支持忽略继续），停止则结束调试；不填条件表达式时，continue 模式仅在该节点抛异常时暂停、正常经过不暂停。"
+  },
+  "retry": {
+    "section": "重试与失败处理（04 §3.2 retry）",
+    "maxRetries": "最大重试次数",
+    "timeoutSeconds": "超时（秒）",
+    "onError": "失败处理"
+  },
+  "decision": {
+    "promptTemplateLabel": "提示词模板（支持 {{路径}} 引用）",
+    "insertVariable": "插入变量引用",
+    "insertPlaceholder": "选择后追加到模板",
+    "modelLabel": "模型（空 = 系统默认）",
+    "confidenceLabel": "置信度阈值（06 §6.2 默认 0.6）"
+  },
+  "debugConsole": {
+    "title": "调试控制台",
+    "eventCount": "{{count}} 条事件"
   }
 }

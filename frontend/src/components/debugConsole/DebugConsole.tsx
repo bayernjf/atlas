@@ -1,16 +1,18 @@
 import { Card, Tag, Typography } from 'antd'
 import { useEditorStore } from '../../store/editorStore'
+import { useTranslation } from '../../locales'
 
 export function DebugConsole() {
   const logs = useEditorStore((state) => state.logs)
+  const { t } = useTranslation('editor')
 
   return (
     <Card
       className="debug-card"
       title={
         <div className="debug-title">
-          <span>调试控制台</span>
-          <Tag color="green">{logs.length} 条事件</Tag>
+          <span>{t('debugConsole.title')}</span>
+          <Tag color="green">{t('debugConsole.eventCount', { count: logs.length })}</Tag>
         </div>
       }
       size="small"

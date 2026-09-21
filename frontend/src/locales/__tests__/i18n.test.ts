@@ -158,6 +158,41 @@ const EDITOR_SHARED_COMMON_KEYS = [
   'common:status.loading',
 ]
 
+/**
+ * PropertyPanel.tsx + DebugConsole.tsx 在 editor namespace 下接线的静态（无插值）key（editor-b）。
+ * decision.promptTemplateLabel 携带字面 {{路径}} 教学语法，单独在花括号守护用例断言，不入此表；
+ * debugConsole.eventCount 为插值键，亦单独断言。后端校验 message / 节点目录 label 不抽 key。
+ */
+const EDITOR_B_KEYS = [
+  'property.title',
+  'property.empty',
+  'property.nodeId',
+  'property.type',
+  'property.nodeName',
+  'property.description',
+  'property.valid',
+  'breakpoint.section',
+  'breakpoint.pauseBefore',
+  'breakpoint.conditionLabel',
+  'breakpoint.conditionHint',
+  'breakpoint.hitCountLabel',
+  'breakpoint.hitCountPlaceholder',
+  'breakpoint.logMessageLabel',
+  'breakpoint.logMessagePlaceholder',
+  'breakpoint.logMessageHint',
+  'breakpoint.exceptionLabel',
+  'breakpoint.exceptionHint',
+  'retry.section',
+  'retry.maxRetries',
+  'retry.timeoutSeconds',
+  'retry.onError',
+  'decision.insertVariable',
+  'decision.insertPlaceholder',
+  'decision.modelLabel',
+  'decision.confidenceLabel',
+  'debugConsole.title',
+]
+
 const hasChinese = (s: string): boolean => /[\u4e00-\u9fff]/.test(s)
 
 afterEach(() => {
@@ -332,6 +367,27 @@ describe('zero-dependency i18n skeleton (docs/17 §2.3, M12)', () => {
     expect(t('debug.reason.step', { ns: 'editor' })).toBe('单步')
   })
 
+  it('resolves editor namespace static copy for property panel and debug console (editor-b)', () => {
+    for (const key of EDITOR_B_KEYS) {
+      const value = t(key, { ns: 'editor' })
+      expect(value, `${key} must resolve`).not.toBe(key)
+      expect(value.length, `${key} must be non-empty`).toBeGreaterThan(0)
+      expect(hasChinese(value), `${key} should carry Chinese copy`).toBe(true)
+    }
+  })
+
+  it('renders debug console event count and keeps literal braces in prompt label', () => {
+    // debugConsole.eventCount interpolates the live log count.
+    const count = t('debugConsole.eventCount', { ns: 'editor', count: 7 })
+    expect(count).toBe('7 条事件')
+    expect(count).not.toContain('{{')
+    // decision.promptTemplateLabel teaches the literal {{路径}} reference syntax; the Chinese
+    // variable name does not match the interpolate identifier rule and must survive verbatim.
+    const promptLabel = t('decision.promptTemplateLabel', { ns: 'editor' })
+    expect(promptLabel).toContain('{{路径}}')
+    expect(hasChinese(promptLabel)).toBe(true)
+  })
+
   it('falls back to zh-CN for editor copy under the empty en-US skeleton', () => {
     changeLanguage('en-US')
     for (const key of EDITOR_KEYS) {
@@ -340,6 +396,11 @@ describe('zero-dependency i18n skeleton (docs/17 §2.3, M12)', () => {
     for (const { key, vars } of EDITOR_TEMPLATE_KEYS) {
       expect(t(key, { ns: 'editor', ...vars })).not.toBe(key)
     }
+    for (const key of EDITOR_B_KEYS) {
+      expect(t(key, { ns: 'editor' })).not.toBe(key)
+    }
+    expect(t('debugConsole.eventCount', { ns: 'editor', count: 3 })).not.toContain('{{')
+    expect(t('decision.promptTemplateLabel', { ns: 'editor' })).toContain('{{路径}}')
   })
 
   it('registers empty monitoring/memory namespaces without breaking resolution', () => {
