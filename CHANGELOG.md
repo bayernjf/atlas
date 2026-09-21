@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### docs：P0 批 2 生产认证立项（2026-09-21，docs/31；docs-only 未落码）
+
+- 依据 docs/29 阻断项 #2 立项：stdlib `hashlib.scrypt` 口令哈希（零新依赖）、`iam_users` 账号表（迁移 010）＋幂等 seeder、管理员代管账号生命周期（不开放注册/不删用户，禁用/重置/改密吊销会话）、不透明 token＋会话绝对 TTL（迁移 011，默认 12h，不引 JWT）、进程内滑动窗口登录节流、口令策略；ADR T25，U227–U232。
+
 ### feat：P0 批 1 持久化交付落码收口（2026-09-21，docs/30；dev 未 push）
 
 - compose 缺省起 pgvector/pgvector:pg16＋命名卷＋healthcheck，atlas 以 PG 档运行，entrypoint 启动先跑迁移；新增迁移运行器（009 schema_migrations＋scripts/ops/apply_migrations.py，有序幂等、每文件一事务、--mark-existing），不引 Alembic。
