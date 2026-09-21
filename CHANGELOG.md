@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### docs：P0 批 3 真实接入安全准入立项（2026-09-21，docs/32；docs-only 未落码）
+
+- 依据 docs/29 阻断项 #3 与 14 D22 安全准入清单/D23 只读边界立项（用户拍板甲方案纯逻辑层、不写假集成）：凭证信封＋SecretProvider 运行时注入脱敏、HTTP SSRF egress 私网/云元数据拦截＋白名单、DB 只读强制＋SQL 静态审查、出向重试/按 host 熔断；ADR T26（真 AES-GCM 是否引 cryptography 待落码拍板），U233–U239（U240 可选 PG）；无新 REST 端点/无迁移/前端零改动；不解除 D22/D23/D24。
+
 ### feat：P0 批 2 生产认证落码收口（2026-09-21，docs/31；dev 未 push）
 
 - 口令哈希：标准库 `hashlib.scrypt`（n=2^14/r=8/p=1、16B 盐、`scrypt$16384$8$1$<salt>$<hash>` 串、`hmac.compare_digest` 恒定时间比较，零新依赖）；种子账号改由幂等 seeder 哈希写入 `iam_users`（迁移 010），只插缺失行、不覆盖后续改密（`cd1133a`）。
