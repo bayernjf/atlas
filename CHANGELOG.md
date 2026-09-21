@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### docs：影子模式/Trace 钻取/告警静默升级值班/i18n 续批打包立项（2026-09-21，docs/33；docs-only 未落码）
+
+- 用户拍板「打包一+打包三共 6 项」，从 docs/14 D12/D26/D28 取回工程内可闭环余部，全部进程内 v1、零新依赖、不新增 ADR、**不解除 D12/D26/D28**；形状权威＝docs/33（八项已拍板决策、11 新端点/Schema、12 原子序、同步矩阵、风险）。
+- 批 1 M12 i18n 续批四原子：editor-a（框架/画布/左栏，含 monitoring/memory namespace 注册骨架）、editor-b（属性面板/调试台）、Monitoring 页、Memory 页；仍不引 i18next、en-US 空 `{}` 占位、技术专名保留英文、后端错误码不接；ReleaseModal/RolloutModal/FeedbackButton/approval CardRenderer 不抽。
+- 批 2 D26 影子模式（进程内 v1）：dry-run 依编译期 `adapter/capability→permission` 表判定，READ 透传、WRITE/DELETE/FINANCIAL 短路返 SHADOW_DRY_RUN 意图回执；shadow 全链透传含子图，不写 RunRecord/run_store、不调 evaluate_after_run、不发 tool_metric、不进告警/灰度门控，human_approval 预置 approved 秒过并记意图；`recording/shadow.py`（ShadowStore ring 100/租户，不 PG 化）＋4 REST 端点（发起 sync/列表/详情/补录人工结果对比）＋编辑器 ShadowRunModal＋监控页 Card；无 SSE。
+- 批 3 D28 Trace 钻取：RunRecord 增 `spans` 纯超集字段，迁移 **012** 给 monitoring_runs 加 spans JSONB（唯一 PG 变更），列表端点不返、GET /api/monitoring/runs/{id}/trace 懒加载；前端 lib/traceTree.ts 纯函数（flatten/layout）＋TraceWaterfall 瀑布组件，运行展开区加 Trace Tab；采集口径不变（仅两真实运行入口）。
+- 批 4 D28 告警三件套（进程内 v1）：静默 sil-N（rule/graph/全局、惰性过期、suppressed_count、POST/GET/DELETE 3 端点）、未确认惰性升级（RuleConfig.escalation_ack_minutes、open warning 超时升 critical、读时评估无定时器）、值班手动轮换（OnCallSchedule members/index、GET/PUT/rotate 3 端点、新告警新建时指派 assignee）；escalated_at/assignee/静默/值班照 rule_name 先例不 PG 化。
+- 共 11 个新 REST 端点；候选用例 U240–U309；12 原子序（docs 立项→i18n×4→影子前后端→trace 前后端→告警前后端→总收口）。三道门基线（只许增测）：后端 1008 passed/31 skipped、前端 509 passed/2 skipped/40 文件、pnpm build 过、oxlint 0 error/2 既有 warning。
+- 非目标：i18next/切换 UI/en-US 翻译/AntD locale/后端错误码、影子自动旁路/SSE/PG 化/报表趋势、OTel/Prometheus/Grafana（随 D11）/span 实时 SSE、外部通知出口（随 D24）/按日自动轮换/排班表、静默值班升级 PG 化、新依赖/新 ADR/新节点类型/DSL 版本变更。打包二（LICENSE 类型待拍板、Prometheus 埋点、.pre-commit）用户未选、不在本包。
+
 ### feat：P0 批 3 真实接入安全准入落码收口（2026-09-21，docs/32；dev 五原子未 push、待 PR #48）
 
 - 范围：运营体出向调用真实外部系统前的纯逻辑安全层，进程内可离线单测；无新 REST 端点、无 DB 迁移、无 Graph 版本变更、前端零改动。ADR T26 定稿 (a)：新增 `cryptography>=44`（实测 50.0.1）落真 AES-256-GCM。
