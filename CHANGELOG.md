@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+### feat：P0 批 3 真实接入安全准入落码收口（2026-09-21，docs/32；dev 五原子未 push、待 PR #48）
+
+- 范围：运营体出向调用真实外部系统前的纯逻辑安全层，进程内可离线单测；无新 REST 端点、无 DB 迁移、无 Graph 版本变更、前端零改动。ADR T26 定稿 (a)：新增 `cryptography>=44`（实测 50.0.1）落真 AES-256-GCM。
+- HTTP SSRF egress 防护（`security/egress.py`，`06b2473`）：scheme http/https、严格域名判定、私网/环回/链路本地/云元数据 169.254.169.254/CGNAT/保留地址恒拦、整数/进制 IP 绕过、可注入 resolver、白名单 fail-closed、不读 X-Forwarded-For、`follow_redirects=False`；`permit_cidrs` 仅代码注入测试缝（默认空、无 env 通道）。接入 HttpApiClient 建连前校验。
+- DB 只读强制＋SQL 静态审查（`database/guard.py`，`a189dc1`）：词法感知扫描（字符串/引号标识符/注释替换等长空白、分号拒多语句、只放单条 SELECT/WITH…SELECT、拒可写 CTE/SELECT INTO/写/DDL/事务动词）；外部连接 query 触库前强制审查、execute fail-closed DB_WRITE_FORBIDDEN，PG 保留 postgresql_readonly；demo engine 直连建表/播种不受影响。
+- HTTP 重试＋按 host 熔断（`httpapi/resilience.py`，`5376e79`）：纯标准库、时钟/睡眠/随机源可注入；RetryPolicy 全抖动指数退避（max 3/base 0.5/max 8、429 优先 Retry-After、GET/HEAD/PUT/DELETE 天然幂等、POST/PATCH 需 idempotent、用尽折叠回 HTTP_TIMEOUT/HTTP_CONNECT_ERROR）；CircuitBreaker 按 host 进程内（连续失败 5→open HTTP_CIRCUIT_OPEN、冷却 30s→half-open 唯一试探、4xx 除 429 不计失败、SSRF 不进重试熔断）。
+- 凭证信封 secrets（`security/secrets.py`，`01a2f97`；依赖/环境 `a61680b`）：信封 `enc$v1$<kid>$<b64url iv>$<b64url ct||tag>` AES-256-GCM 与 plain 档、SecretProvider、build_from_env（未配主密钥落 Plaintext＋warning、配错 fail-closed）、secret:// 与 enc$ 引用解析、redact_headers 脱敏；接入 HttpApiClient，信封 kid 必须等于当前 provider kid，kid 不符/错 key/篡改即 SECRET_DECRYPT_ERROR。`.env.example` 增补出向安全准入段 8 个变量与主密钥生成命令。
+- 新增 7 错误码：EGRESS_DENIED、EGRESS_INVALID_URL、DB_SQL_NOT_READ_ONLY、DB_WRITE_FORBIDDEN、SECRET_UNAVAILABLE、SECRET_DECRYPT_ERROR、HTTP_CIRCUIT_OPEN。
+- 门：后端内存档 1008 passed/31 skipped（批2 基线 822，净增 186）、PG database 集成单文件 3 passed、前端零改动 509 passed/2 skipped/40 文件、tsc＋vite build 过、oxlint 0 error/2 既有 warning；离线运行时冒烟元数据/内网 URL→EGRESS_DENIED 零外呼、外部库 execute→DB_WRITE_FORBIDDEN、写 SQL→DB_SQL_NOT_READ_ONLY、缺秘密→SECRET_UNAVAILABLE、公网带 secret:// GET→200 全过；U233–U239 转正式（U240 不新增）。
+- 边界：仅解除 docs/29 阻断项 #3 的纯逻辑安全准入子集，**不解除 D22/D23/D24**——OAuth2/token 刷新/连接 CRUD、真实 SMTP/IM/webhook、真实数仓驱动/只读账号、秘密字段级 UI、多实例熔断/KMS/密钥轮换、NATS/Go 网关/CD/TLS/OTel、连接级 DNS-pinning transport（docs/32 §9 风险 1 DNS rebinding 残留）仍随真实渠道/部署批。
+
 ### docs：P0 批 3 真实接入安全准入立项（2026-09-21，docs/32；docs-only 未落码）
 
 - 依据 docs/29 阻断项 #3 与 14 D22 安全准入清单/D23 只读边界立项（用户拍板甲方案纯逻辑层、不写假集成）：凭证信封＋SecretProvider 运行时注入脱敏、HTTP SSRF egress 私网/云元数据拦截＋白名单、DB 只读强制＋SQL 静态审查、出向重试/按 host 熔断；ADR T26（真 AES-GCM 是否引 cryptography 待落码拍板），U233–U239（U240 可选 PG）；无新 REST 端点/无迁移/前端零改动；不解除 D22/D23/D24。
