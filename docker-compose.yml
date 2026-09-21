@@ -1,13 +1,28 @@
-# Atlas Demo 一键启动（Phase 1 种子客户交付形态）。
+# Atlas Demo 一键启动（持久化交付形态：pgvector + 命名卷，docs/30 ADR T24）。
 # 启动：docker compose up --build
 #   编辑器    http://localhost:8000
 #   模拟商家控制台  http://localhost:8000/demo/shop（demo/demo）
-# 重置 Demo 数据（恢复 5 笔种子退款单、清空已保存图）：
+# 重置本租户 Demo 数据（不删库，恢复 5 笔种子退款单）：
 #   curl -X POST http://localhost:8000/api/demo/reset
-#   （或 docker compose restart，进程内状态随重启清空）
+# 数据持久化在 atlas-pgdata 卷；备份/恢复见 scripts/ops/backup.sh、restore.sh。
 # 接真实 LLM：在 .env 或下方 environment 配 LITELLM_MODEL 与供应商 key（见 .env.example）。
 
 services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: atlas
+      POSTGRES_PASSWORD: atlas
+      POSTGRES_DB: atlas
+    volumes:
+      - atlas-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atlas -d atlas"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
   atlas:
     build:
       context: .
@@ -15,5 +30,13 @@ services:
     ports:
       - "8000:8000"
     environment:
+      ATLAS_STORAGE_BACKEND: pg
+      DATABASE_URL: postgresql+psycopg://atlas:atlas@db:5432/atlas
       LITELLM_MODEL: ${LITELLM_MODEL:-}
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
+
+volumes:
+  atlas-pgdata:
