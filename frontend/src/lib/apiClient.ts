@@ -806,6 +806,10 @@ export type AlertItem = {
   action?: RolloutAlertAction | null
   /** docs/28 §4.2 ⑨：自定义规则名（内置规则缺省；PG 档 v1 不持久化，可能为空）。 */
   rule_name?: string | null
+  /** docs/33 §5.2：惰性升级时间（进程内，可能为空）。 */
+  escalated_at?: string | null
+  /** docs/33 §5.3：新建时值班人（进程内，可能为空）。 */
+  assignee?: string | null
 }
 
 /** docs/28 §4.2 ⑨ 自定义告警规则（表达式复用安全条件引擎，禁 eval）。 */
@@ -824,6 +828,8 @@ export type RuleConfig = {
   failure_rate: { enabled: boolean; window: number; min_samples: number; rate: number }
   /** 纯超集：旧后端/旧配置缺省为空数组，不报错。 */
   custom?: CustomRuleConfig[]
+  /** docs/33 §5.2：warning 未确认 N 分钟升 critical；null/缺省关闭。 */
+  escalation_ack_minutes?: number | null
 }
 
 export async function getMetrics(): Promise<MetricsSummary> {
@@ -884,6 +890,58 @@ export async function acknowledgeAlert(id: string): Promise<AlertItem> {
 
 export async function resolveAlert(id: string): Promise<AlertItem> {
   return request(`/api/alerts/${id}/resolve`, { method: 'POST' })
+}
+
+// docs/33 §5：静默 / 值班（进程内 v1，重启清空）
+export type Silence = {
+  id: string
+  rule_id: string | null
+  graph_id: string | null
+  reason: string
+  created_by: string
+  created_at: string
+  expires_at: string
+  suppressed_count: number
+  active?: boolean
+}
+
+export type OnCallSchedule = {
+  members: string[]
+  index: number
+  current: string | null
+  updated_at: string | null
+  updated_by: string | null
+}
+
+export async function createSilence(body: {
+  rule_id?: string | null
+  graph_id?: string | null
+  duration_minutes: number
+  reason: string
+}): Promise<Silence> {
+  return request('/api/monitoring/silences', { method: 'POST', body: JSON.stringify(body) })
+}
+
+export async function listSilences(active?: boolean): Promise<Silence[]> {
+  const query = active === undefined ? '' : `?active=${active ? 'true' : 'false'}`
+  const body = await request<{ items: Silence[] }>(`/api/monitoring/silences${query}`)
+  return body.items
+}
+
+export async function deleteSilence(id: string): Promise<void> {
+  await request(`/api/monitoring/silences/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export async function getOnCall(): Promise<OnCallSchedule> {
+  return request('/api/monitoring/on-call')
+}
+
+export async function updateOnCall(members: string[]): Promise<OnCallSchedule> {
+  return request('/api/monitoring/on-call', { method: 'PUT', body: JSON.stringify({ members }) })
+}
+
+export async function rotateOnCall(): Promise<OnCallSchedule> {
+  return request('/api/monitoring/on-call/rotate', { method: 'POST' })
 }
 
 // --- M9 版本发布 / 发布门禁 / 灰度发布（03 release_gate/rollout_config，04 §5.11/§5.16） ---

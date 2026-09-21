@@ -16,6 +16,7 @@ import {
   Table,
   Tabs,
   Tag,
+  Tooltip,
   Typography,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
@@ -42,6 +43,8 @@ import { roleCan, type Principal } from '../lib/auth'
 import { UserBadge } from '../components/UserBadge'
 import { ShadowRunsCard } from '../components/shadow/ShadowRunsCard'
 import { TraceWaterfall } from '../components/monitoring/TraceWaterfall'
+import { OnCallBar } from '../components/monitoring/OnCallBar'
+import { SilenceManager, SilencePopButton } from '../components/monitoring/SilenceManager'
 import {
   ALERT_STATUS_COLORS,
   ALERT_STATUS_LABELS,
@@ -217,10 +220,23 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
           <Tag color={SEVERITY_COLORS[alert.severity]} style={{ marginTop: 2 }}>
             {alert.severity === 'critical' ? t('severity.critical') : t('severity.warning')}
           </Tag>
+          {alert.escalated_at && (
+            <Tooltip title={formatTime(alert.escalated_at)}>
+              <Tag color="red" style={{ marginTop: 2 }}>
+                {t('escalation.tag')}
+              </Tag>
+            </Tooltip>
+          )}
         </Space>
       ),
     },
     { title: t('col.graph'), dataIndex: 'graph_id', width: 140 },
+    {
+      title: t('col.assignee'),
+      dataIndex: 'assignee',
+      width: 100,
+      render: (assignee: string | null | undefined) => assignee ?? '—',
+    },
     {
       title: t('col.message'),
       key: 'message',
@@ -267,10 +283,13 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
     {
       title: t('col.actions'),
       key: 'actions',
-      width: 140,
+      width: 230,
       render: (_, alert) =>
         canOperate ? (
           <Space>
+            {canAdmin && (
+              <SilencePopButton ruleId={alert.rule_id} graphId={alert.graph_id} onCreated={refresh} />
+            )}
             <Button
               size="small"
               disabled={alert.status !== 'open'}
@@ -568,6 +587,7 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
               />
             }
           >
+            <OnCallBar canAdmin={canAdmin} onChanged={refresh} />
             <Table
               rowKey="id"
               size="small"
@@ -576,6 +596,7 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
               pagination={{ pageSize: 8, showSizeChanger: false }}
               locale={{ emptyText: t('empty.alerts') }}
             />
+            <SilenceManager canAdmin={canAdmin} />
           </Card>
 
           {rules && canAdmin && (
@@ -683,6 +704,29 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
                       })
                     }
                   />
+                </Space>
+                <Space wrap style={{ marginTop: 12 }}>
+                  <span>{t('ruleForm.escalationLabel')}</span>
+                  <Switch
+                    checked={rules.escalation_ack_minutes != null}
+                    onChange={(enabled) =>
+                      setRules({ ...rules, escalation_ack_minutes: enabled ? 30 : null })
+                    }
+                  />
+                  {rules.escalation_ack_minutes != null && (
+                    <>
+                      <InputNumber
+                        min={1}
+                        max={10080}
+                        value={rules.escalation_ack_minutes}
+                        onChange={(value) =>
+                          value !== null &&
+                          setRules({ ...rules, escalation_ack_minutes: value })
+                        }
+                      />
+                      <span>{t('ruleForm.escalationUnit')}</span>
+                    </>
+                  )}
                 </Space>
                 <Button type="primary" onClick={saveRules}>
                   {t('rules.save')}

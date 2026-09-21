@@ -34,7 +34,8 @@
     "errorCodes": "错误码分布",
     "node": "节点",
     "type": "类型",
-    "error": "错误"
+    "error": "错误",
+    "assignee": "值班"
   },
   "severity": {
     "critical": "严重",
@@ -137,7 +138,9 @@
     "minSamples": "最少样本",
     "failureRate": "失败率",
     "rate": "比率",
-    "unitTimes": "次"
+    "unitTimes": "次",
+    "escalationLabel": "未确认升级：warning 告警超过",
+    "escalationUnit": "分钟未确认，自动升为 critical"
   },
   "custom": {
     "title": "自定义规则（表达式，docs/28 §4.2）",
@@ -241,5 +244,55 @@
       "taskDone": "任务完成",
       "approval": "审批"
     }
+  },
+  "escalation": {
+    "tag": "已升级"
+  },
+  "onCall": {
+    "label": "当前值班",
+    "loading": "加载中…",
+    "nobody": "未排班",
+    "rotationHint": "轮值第 {{index}}/{{total}} 位",
+    "rotate": "轮换",
+    "configure": "设置轮值表",
+    "modalTitle": "设置值班轮值表",
+    "modalHint": "每行一个成员，也可用逗号、分号分隔；保存后从第一位开始值班，轮换按顺序循环。",
+    "placeholder": "例如：张三, 李四, 王五",
+    "save": "保存轮值表",
+    "error": {
+      "empty": "请至少填写一名值班成员",
+      "tooMany": "值班成员最多 20 人"
+    }
+  },
+  "silence": {
+    "action": "静默",
+    "popTitle": "静默该告警",
+    "durationLabel": "静默时长",
+    "durationMinutes": "{{minutes}} 分钟",
+    "durationCustom": "自定义…",
+    "reasonLabel": "原因",
+    "reasonPlaceholder": "例如：发布窗口维护",
+    "confirm": "确认静默",
+    "error": {
+      "reasonRequired": "请填写静默原因",
+      "durationRange": "时长需为 1-10080 分钟的整数"
+    },
+    "managerTitle": "静默规则（生效 {{active}} / 共 {{total}}）",
+    "col": {
+      "rule": "规则",
+      "graph": "图",
+      "reason": "原因",
+      "createdBy": "创建人",
+      "expiresAt": "到期时间",
+      "suppressed": "压下次数",
+      "status": "状态",
+      "actions": "操作"
+    },
+    "allRules": "全部规则",
+    "allGraphs": "全部图",
+    "active": "生效中",
+    "expired": "已过期",
+    "delete": "解除",
+    "deleteConfirm": "确定提前解除该静默规则？解除后匹配的告警将恢复产生。"
   }
 }
