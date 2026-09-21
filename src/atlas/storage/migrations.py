@@ -7,6 +7,7 @@ CLI 薄封装在 scripts/ops/apply_migrations.py。
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -21,7 +22,14 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 
 
 def default_migrations_dir() -> Path:
-    return Path(__file__).resolve().parents[3] / "db" / "migrations"
+    override = os.environ.get("ATLAS_MIGRATIONS_DIR")
+    if override:
+        return Path(override)
+    src_layout = Path(__file__).resolve().parents[3] / "db" / "migrations"
+    if src_layout.is_dir():
+        return src_layout
+    # 包装安装（site-packages）时退回工作目录（容器内 /app/db/migrations）。
+    return Path.cwd() / "db" / "migrations"
 
 
 def list_migration_versions(migrations_dir: Path) -> list[str]:

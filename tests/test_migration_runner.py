@@ -9,6 +9,7 @@ import pytest
 
 from atlas.storage.migrations import (
     apply_pending,
+    default_migrations_dir,
     ensure_schema_migrations,
     list_migration_versions,
 )
@@ -107,6 +108,15 @@ def migrations_dir(tmp_path: Path) -> Path:
 
 def test_list_versions_sorted(migrations_dir: Path) -> None:
     assert list_migration_versions(migrations_dir) == ["001_a.sql", "002_b.sql", "010_c.sql"]
+
+
+def test_default_migrations_dir_env_override(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    target = tmp_path / "custom_migrations"
+    target.mkdir()
+    monkeypatch.setenv("ATLAS_MIGRATIONS_DIR", str(target))
+    assert default_migrations_dir() == target
 
 
 def test_ensure_schema_migrations_runs_ddl() -> None:
