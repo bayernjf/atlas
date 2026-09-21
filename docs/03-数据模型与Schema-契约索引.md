@@ -38,8 +38,8 @@
 | `recording_case` | 04 / 五、逻辑组件 5.11 操作录制与回放 v1 契约（权威 blockquote）+ `src/atlas/recording/{cases,replay,gate,snapshots}.py`（录制用例模型与进程内存储；M9 增 gate 发布前批量回放门禁；D26-b 增 `subgraphs` 快照内联，仅 replay 内联、gate 保持实时，见下行 `release_gate`；C 包 `3415377` 增 `recorded_at` 回放冻结时钟锚点与 today/now/datetime/hoursBetween 时钟函数，权威见 04 §5.1 C 注记；docs/28 批 1（2026-09-20）：PG 富字段 graph_id/subgraphs 持久化修复（d1f455b，迁移 008）、单用例 Mock 工具回放＋入参覆写（c7bf138）、PUT 用例编辑（89e21fc）） | ### 5.11 操作录制与回放 |
 | `debug_session` | 04 / 五、逻辑组件 5.12 单步调试与断点 v1 契约（权威 blockquote）+ `src/atlas/debug/{sessions,controller}.py`（运行期调试会话、暂停状态机、paused/stopped/debug_log 帧、hitCount/logpoint、resume globals 浅合并）+ `src/atlas/collaboration/cancellations.py`（B 包 f9a1301：RunCancelled/RunCancellationBroker 协作式急停、cancelled 帧） | ### 5.12 单步调试与断点 |
 | `monitoring` | 04 / 五、逻辑组件 5.13 基础监控告警 v1 契约（权威 blockquote）+ `src/atlas/monitoring/{records,metrics,alerts,business}.py`（运行记录 ring、指标聚合、规则求值与告警状态机；M9 增业务结果指标与 rollout_gate 告警动作，见下行 `business_metrics`） | ### 5.13 基础监控告警 |
-| `identity_session` | 04 / 五、逻辑组件 5.14 多租户与权限 v1 契约（权威 blockquote）+ `src/atlas/iam/{principals,sessions,registry,deps}.py`（种子租户/账号、Principal、sess- token、按租户服务注册表、Bearer 依赖）；docs/31 步骤 5 已落码：`expires_at` 绝对 TTL（迁移 011，ATLAS_SESSION_TTL_HOURS 缺省 12h）；步骤 6 节流待落 | ### 5.14 多租户与权限 |
-| `identity_user` | 04 / docs/31 §2/§3 + `src/atlas/iam/{passwords,accounts}.py`＋`iam_users` 表（迁移 010）：scrypt 哈希、UserStore/PgUserStore、幂等 seeder、`/api/users` 管理端点与 `/api/auth/change-password`（2026-09-21 步骤 2-4 已落码）；TTL/节流随步骤 5/6 | docs/31 §2/§3（收口升格 04 §5.15） |
+| `identity_session` | 04 / 五、逻辑组件 5.14 多租户与权限 v1 契约（权威 blockquote）+ `src/atlas/iam/{principals,sessions,registry,deps}.py`（种子租户/账号、Principal、sess- token、按租户服务注册表、Bearer 依赖）；docs/31 已落码收口：`expires_at` 绝对 TTL（迁移 011，ATLAS_SESSION_TTL_HOURS 缺省 12h）＋登录滑动窗口节流（600s/5 次失败→429，`throttle.py`），权威块 04 §5.17 | ### 5.14 多租户与权限 |
+| `identity_user` | 04 §5.17（生产认证权威块）/ docs/31 + `src/atlas/iam/{passwords,accounts,throttle,sessions}.py`＋`iam_users` 表（迁移 010）：scrypt 哈希、UserStore/PgUserStore、幂等 seeder、`/api/users` 管理端点与 `/api/auth/change-password`；会话绝对 TTL（迁移 011）、登录滑动窗口节流（**2026-09-21 全部落码收口**，`cd1133a`/`097c056`/`e65e4df`/`4224578`/`36ab54e`＋前端 `222552d`） | docs/31 §2/§3（权威块 04 §5.17） |
 | `trace_span` | 04 / 五、逻辑组件 5.15 链路追踪 v1 契约（**M10 已落码 2026-09-18**；权威 blockquote）+ `src/atlas/tracing/`（与 OTel 同形最小 Span/Tracer、contextvars 进程内传播、to_tree 折叠开关） | ### 5.15 链路追踪（span v1） |
 | `rollout_config` | **M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；04 / 五、逻辑组件 5.16 灰度发布与门控回滚 v1 契约（权威 blockquote）+ `src/atlas/routing/{models,router,store,gate}.py`（rollout 配置/三段分桶/状态机/门控；ADR T22）；形状来源 docs/19 §2.3.3 提案转权威 | ### 5.16 灰度发布与门控回滚 |
 | `route_decision` | **M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；同上 04 §5.16 + `routing/router.py` resolve_version 纯函数（入站 event→发布版本/分桶段，pin-to-version） | ### 5.16 灰度发布与门控回滚 |
@@ -736,7 +736,7 @@ username: string
 password: string
 # 登录响应 / GET /api/auth/me
 token: string                 # sess-<uuid4.hex>，PG 档落 iam_sessions（docs/30）
-expires_at: string            # docs/31 §4 步骤 5 已落码：UTC ISO，签发时刻 + ATLAS_SESSION_TTL_HOURS（缺省 12h，合法 1-168）；绝对 TTL、不滑动续期；过期 → 401 惰性删行；NULL（回填时 issued_at 不可解析）视为不过期
+expires_at: string            # docs/31 已落码收口：UTC ISO，签发时刻 + ATLAS_SESSION_TTL_HOURS（缺省 12h，合法 1-168）；绝对 TTL、不滑动续期；过期 → 401 惰性删行；NULL（回填时 issued_at 不可解析）视为不过期
 principal:
   tenant_id: string           # "t1" | "t2"（v1 种子租户；不写进资源 JSON，由 token 推断）
   tenant_name: string         # 演示企业 A / 演示企业 B
@@ -746,9 +746,9 @@ principal:
 # POST /api/auth/logout：吊销当前 token，无返回体
 ```
 
-> 种子租户/账号为代码常量（非 DB，明文密码仅 Demo）：t1 演示企业 A = admin-a/admin123（admin）、operator-a/operator123（operator）、viewer-a/viewer123（viewer）；t2 演示企业 B = admin-b/admin123（admin）。除 login、health、静态、`/demo/shop`、`/api/demo/**` 外全部端点必须 Bearer：缺失/坏 token → 401「缺少或无效的登录凭证」；角色不足 → 403「当前角色无权执行此操作」；访问他租户对象 → 404（不泄漏存在性）。角色矩阵（端点级白名单）、分区资源与全局基础设施清单、reset 本租户语义权威见 04 §5.14；内部接口（iam 包）见 12 §3.10；REST 鉴权列见 12 §5。持久化账号/密码哈希/SSO/JWT 缓做 11 S1 + 14 D22（其中哈希/账号/生命周期端点已随 docs/31 步骤 2-4 落码；TTL＝步骤 5、节流＝步骤 6）。
+> 种子租户为代码常量；种子账号由幂等 seeder 写入 `iam_users`（迁移 010，口令以 scrypt 哈希存储、不写明文；seeder 只插缺失行、不覆盖后续改密，系统通道不经弱口令策略）：t1 演示企业 A = admin-a/admin123（admin）、operator-a/operator123（operator）、viewer-a/viewer123（viewer）；t2 演示企业 B = admin-b/admin123（admin）。除 login、health、静态、`/demo/shop`、`/api/demo/**` 外全部端点必须 Bearer：缺失/坏 token → 401「缺少或无效的登录凭证」；角色不足 → 403「当前角色无权执行此操作」；访问他租户对象 → 404（不泄漏存在性）。角色矩阵（端点级白名单）、分区资源与全局基础设施清单、reset 本租户语义权威见 04 §5.14；内部接口（iam 包）见 12 §3.10；REST 鉴权列见 12 §5。持久化账号/口令哈希已随 docs/31（2026-09-21）落码收口（`iam_users` 迁移 010、scrypt、生命周期五端点、会话绝对 TTL 迁移 011、登录节流，权威块 04 §5.17）；SSO/JWT/审计/多实例共享节流仍缓做 11 S1 + 14 D22。
 
-### `identity_user` — 字段概览（docs/31；2026-09-21 步骤 2-4 已落码：哈希/账号/生命周期端点；TTL＝步骤 5、节流＝步骤 6 待落）
+### `identity_user` — 字段概览（docs/31；2026-09-21 全部落码收口：哈希/账号/生命周期端点/会话绝对 TTL/登录节流；权威块 04 §5.17）
 
 ```yaml
 # iam_users 表（迁移 010）；(tenant_id, username) 复合 PK
@@ -766,7 +766,7 @@ created_at / updated_at: string
 # POST /api/users/{username}/reset-password（{newPassword}，吊销该用户全部会话）
 ```
 
-> 禁用/重置/改密均吊销对应用户会话（memory/PG 两档同构）；disabled 登录 → 403「账号已停用，请联系管理员」；未知用户/坏口令统一 401；登录节流 600s/5 次失败 → 429「登录尝试过于频繁，请稍后再试」（进程内滑动窗口，键 username\|client_ip，docs/31 步骤 6 已落码）。权威＝docs/31（收口升格 04 §5.15）；非目标（SSO/MFA/邮箱找回/JWT/审计/多实例节流）见 docs/31 §1.2。
+> 禁用/重置/改密均吊销对应用户会话（memory/PG 两档同构）；disabled 登录 → 403「账号已停用，请联系管理员」；未知用户/坏口令统一 401；登录节流 600s/5 次失败 → 429「登录尝试过于频繁，请稍后再试」（进程内滑动窗口，键 username\|client_ip，docs/31 步骤 6 已落码）。权威＝docs/31 与 04 §5.17（立项原文所写 §5.15 编号作废，该号已为链路追踪）；非目标（SSO/MFA/邮箱找回/JWT/审计/多实例节流）见 docs/31 §1.2 与 14。
 
 ### `interruption_frame` — 字段概览（M5 契约设计轮 2026-09-17 新增，**设计已定、T18 已拍板（B）、2026-09-17 已随 M5b 落码**；权威＝docs/24 §2.3/§5，落码承载 `src/atlas/storage/frame.py` + `recovery.py`）
 

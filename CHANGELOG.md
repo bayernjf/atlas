@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### feat：P0 批 2 生产认证落码收口（2026-09-21，docs/31；dev 未 push）
+
+- 口令哈希：标准库 `hashlib.scrypt`（n=2^14/r=8/p=1、16B 盐、`scrypt$16384$8$1$<salt>$<hash>` 串、`hmac.compare_digest` 恒定时间比较，零新依赖）；种子账号改由幂等 seeder 哈希写入 `iam_users`（迁移 010），只插缺失行、不覆盖后续改密（`cd1133a`）。
+- 账号存储与生命周期：`iam_users`（`(tenant_id,username)` 复合 PK）＋UserStore/PgUserStore 内存·PG 两档；管理员代管（建/列/改显示名·角色·状态/重置密码，不开放注册、禁用替代删除），登录用户改本人密码；改密吊销本人其他会话（保留当前会话）、禁用/重置吊销该用户全部会话（`097c056`、`e65e4df`）。
+- 会话绝对 TTL：迁移 011 给 `iam_sessions` 加 `expires_at`（默认 12h、`ATLAS_SESSION_TTL_HOURS` 1–168、绝对到期不滑动续期、过期惰性删行、回填 NULL 视为不过期）（`4224578`）。
+- 登录节流：进程内滑动窗口（键 `username|client_ip`、600s 窗 5 次失败→429「登录尝试过于频繁，请稍后再试」、登录成功清零）（`36ab54e`）。
+- 前端：用户管理页（表格/新建/编辑 Modal/停用开关/重置密码＋生成口令）与 Header UserBadge 修改密码 Modal、apiClient 五端点、`users.*` 中文案、非登录端点 401 自动踢回登录页（`222552d`）。
+- 门：后端内存档 822 passed/31 skipped（PG 集成 U232 已写、给 `DATABASE_URL`+`ATLAS_RUN_INTEGRATION=1` 时跑）、前端 509 passed/2 skipped/40 文件、oxlint 0 error/2 既有 warning、tsc＋build 过；curl 23 项 HTTP 契约全绿；真实浏览器 9 项冒烟过、8 截图 `docs/assets/p0b2-*.png`；U227–U232 转正式。docs/29 阻断项 #2（生产鉴权）就此解除（单实例口径；SSO/MFA/邮箱找回/JWT/账号审计/多实例共享节流仍缓做 14）。
+
 ### docs：P0 批 2 生产认证立项（2026-09-21，docs/31；docs-only 未落码）
 
 - 依据 docs/29 阻断项 #2 立项：stdlib `hashlib.scrypt` 口令哈希（零新依赖）、`iam_users` 账号表（迁移 010）＋幂等 seeder、管理员代管账号生命周期（不开放注册/不删用户，禁用/重置/改密吊销会话）、不透明 token＋会话绝对 TTL（迁移 011，默认 12h，不引 JWT）、进程内滑动窗口登录节流、口令策略；ADR T25，U227–U232。
