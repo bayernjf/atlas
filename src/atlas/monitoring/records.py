@@ -47,6 +47,7 @@ class RunRecord(BaseModel):
     resolved_version: int | None = None  # M9：入站 event 经 Router 解析钉住的发布版本（手动运行/草稿为 None）
     business: BusinessOutcome | None = None  # M9：业务结果（退款/人工升级/金额差异）；无业务结果为 None
     tool_calls: list[ToolCallMetric] = Field(default_factory=list)  # docs/28 §4.1：顶层工具调用埋点（子图/mock/debug/回放不采）
+    spans: dict | None = None  # docs/33 §4：tracer.to_tree() 根 span（trace 端点懒加载；列表 API 不返；历史/debug/回放为 None）
 
 
 def _now_iso() -> str:
@@ -77,6 +78,7 @@ class MonitoringStore:
         resolved_version: int | None = None,
         business: BusinessOutcome | None = None,
         tool_calls: list | None = None,
+        spans: dict | None = None,
     ) -> RunRecord:
         with self._lock:
             self._run_counter += 1
@@ -94,6 +96,7 @@ class MonitoringStore:
                 resolved_version=resolved_version,
                 business=business,
                 tool_calls=tool_calls or [],
+                spans=spans,
             )
             self._runs.append(record)
             healthy = is_healthy(record)
@@ -183,6 +186,11 @@ class MonitoringStore:
         if graph_id:
             runs = [run for run in runs if run.graph_id == graph_id]
         return list(reversed(runs))[:limit]
+
+    def get_run(self, run_id: str) -> RunRecord | None:
+        """docs/33 §4：按 id 取单条运行（含 spans），供 trace 钻取端点；不存在返 None。"""
+        with self._lock:
+            return next((run for run in self._runs if run.id == run_id), None)
 
     def list_alerts(self, status: str | None = None) -> list[Alert]:
         with self._lock:

@@ -1396,6 +1396,7 @@ def run_saved_graph(
             trace_id=tracer.trace_id,
             resolved_version=resolved_version,
             tool_calls=tool_calls,
+            spans=tracer.to_tree(),
         )
         evaluate_after_run(services, record)  # M9：异常运行同样计入 candidate 门控
         raise
@@ -1414,6 +1415,7 @@ def run_saved_graph(
         resolved_version=resolved_version,
         business=extract_business(graph_view, result["outputs"], event_payload=event_payload),
         tool_calls=tool_calls,
+        spans=result["traceTree"],
     )
     evaluate_after_run(services, record)  # M9：灰度门控越阈自动回滚
     return RunGraphResponse(id=graph_id, **result)
@@ -1528,6 +1530,7 @@ def run_saved_graph_stream(
                             graph_view, result["outputs"], event_payload=event_payload
                         ),
                         tool_calls=tool_calls,
+                        spans=result["traceTree"],
                     )
                     evaluate_after_run(services, record)
                 events.put({"__result__": result})
@@ -1548,6 +1551,7 @@ def run_saved_graph_stream(
                         trace_id=tracer.trace_id if tracer is not None else "",
                         resolved_version=resolved_version,
                         tool_calls=tool_calls,
+                        spans=tracer.to_tree() if tracer is not None else None,
                     )
                 events.put({"__cancelled__": exc.node_id})
             except Exception as exc:  # 运行期异常经 SSE error 帧下发，不静默吞线程
@@ -1567,6 +1571,7 @@ def run_saved_graph_stream(
                         trace_id=tracer.trace_id if tracer is not None else "",
                         resolved_version=resolved_version,
                         tool_calls=tool_calls,
+                        spans=tracer.to_tree() if tracer is not None else None,
                     )
                     evaluate_after_run(services, record)
                 events.put({"__error__": f"{type(exc).__name__}: {exc}"})
@@ -1821,7 +1826,25 @@ def monitoring_runs(
     if limit < 1 or limit > RUN_RING_SIZE:
         raise HTTPException(status_code=422, detail=f"limit 必须是 1-{RUN_RING_SIZE} 之间的整数")
     runs = services_for(principal).monitoring.list_runs(graph_id=graph_id, limit=limit)
-    return {"items": [run.model_dump() for run in runs]}
+    # docs/33 §4：列表投影剔除 spans（大 payload，仅 trace 端点按需返回）。
+    return {
+        "items": [
+            {key: value for key, value in run.model_dump().items() if key != "spans"}
+            for run in runs
+        ]
+    }
+
+
+@app.get("/api/monitoring/runs/{run_id}/trace")
+def monitoring_run_trace(
+    run_id: str,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """docs/33 §4：单运行 span 树懒加载；历史/debug/回放无 spans 记录返 null，不存在 404。"""
+    run = services_for(principal).monitoring.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="运行记录不存在")
+    return {"id": run.id, "trace_id": run.trace_id, "spans": run.spans}
 
 
 @app.get("/api/monitoring/rules")

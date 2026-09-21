@@ -671,6 +671,7 @@ class PgMonitoringStore:
         resolved_version: int | None = None,
         business=None,
         tool_calls: list | None = None,
+        spans: dict | None = None,
     ) -> RunRecord:
         from atlas.monitoring.alerts import evaluate_rules
         from atlas.monitoring.metrics import is_healthy
@@ -685,16 +686,16 @@ class PgMonitoringStore:
                 started_at=started_at, finished_at=_now_iso(),
                 duration_ms=duration_ms, nodes=nodes, error=error,
                 trace_id=trace_id, resolved_version=resolved_version,
-                business=business, tool_calls=tool_calls or [],
+                business=business, tool_calls=tool_calls or [], spans=spans,
             )
             conn.execute(
                 text(
                     "INSERT INTO monitoring_runs "
                     "(id, tenant_id, graph_id, mode, status, started_at, finished_at, "
-                    "duration_ms, nodes, error, trace_id, resolved_version, business, tool_calls) "
+                    "duration_ms, nodes, error, trace_id, resolved_version, business, tool_calls, spans) "
                     "VALUES (:id, :tenant_id, :graph_id, :mode, :status, :started_at, "
                     ":finished_at, :duration_ms, :nodes, :error, :trace_id, :resolved_version, "
-                    ":business, :tool_calls)"
+                    ":business, :tool_calls, :spans)"
                 ),
                 {
                     "id": run_id,
@@ -714,6 +715,7 @@ class PgMonitoringStore:
                         [m.model_dump() if hasattr(m, "model_dump") else m for m in record.tool_calls],
                         ensure_ascii=False,
                     ),
+                    "spans": json.dumps(spans, ensure_ascii=False) if spans else "{}",
                 },
             )
             rules = self._rules_locked(conn)
@@ -751,13 +753,13 @@ class PgMonitoringStore:
     def _recent_locked(self, conn: Any, graph_id: str) -> list[RunRecord]:
         rows = conn.execute(
             text(
-                f"SELECT {self._RUN_COLS} FROM monitoring_runs "
+                f"SELECT {self._RUN_LIST_COLS} FROM monitoring_runs "
                 "WHERE tenant_id = :tenant_id AND graph_id = :graph_id "
                 "ORDER BY finished_at DESC LIMIT 200"
             ),
             {"tenant_id": self._tenant_id, "graph_id": graph_id},
         ).all()
-        return [self._run_from_row(r) for r in rows]
+        return [self._run_list_from_row(r) for r in rows]
 
     def _raise_or_merge_locked(self, conn: Any, event: Any, record: RunRecord) -> None:
         row = conn.execute(
@@ -808,7 +810,7 @@ class PgMonitoringStore:
             if graph_id:
                 rows = conn.execute(
                     text(
-                        f"SELECT {self._RUN_COLS} FROM monitoring_runs "
+                        f"SELECT {self._RUN_LIST_COLS} FROM monitoring_runs "
                         "WHERE tenant_id = :tenant_id AND graph_id = :graph_id "
                         "ORDER BY finished_at DESC LIMIT :limit"
                     ),
@@ -817,12 +819,24 @@ class PgMonitoringStore:
             else:
                 rows = conn.execute(
                     text(
-                        f"SELECT {self._RUN_COLS} FROM monitoring_runs "
+                        f"SELECT {self._RUN_LIST_COLS} FROM monitoring_runs "
                         "WHERE tenant_id = :tenant_id ORDER BY finished_at DESC LIMIT :limit"
                     ),
                     {"tenant_id": self._tenant_id, "limit": limit},
                 ).all()
-        return [self._run_from_row(r) for r in rows]
+        return [self._run_list_from_row(r) for r in rows]
+
+    def get_run(self, run_id: str) -> RunRecord | None:
+        """docs/33 §4：按 id 取单条运行（含 spans），供 trace 钻取；跨租户/不存在返 None。"""
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    f"SELECT {self._RUN_COLS} FROM monitoring_runs "
+                    "WHERE tenant_id = :tenant_id AND id = :id"
+                ),
+                {"tenant_id": self._tenant_id, "id": run_id},
+            ).first()
+        return self._run_from_row(row) if row else None
 
     @staticmethod
     def _run_from_row(r: Any) -> RunRecord:
@@ -830,12 +844,27 @@ class PgMonitoringStore:
             id=r[0], graph_id=r[1], mode=r[2], status=r[3], started_at=r[4],
             finished_at=r[5], duration_ms=r[6], nodes=r[7], error=r[8],
             trace_id=r[9] or "", resolved_version=r[10], business=r[11],
-            tool_calls=r[12] or [],
+            tool_calls=r[12] or [], spans=(r[13] if r[13] else None),
         )
+
+    @staticmethod
+    def _run_list_from_row(r: Any) -> RunRecord:
+        # 列表/告警评估投影不含 spans（大 payload，仅 trace 端点按需取）。
+        return RunRecord(
+            id=r[0], graph_id=r[1], mode=r[2], status=r[3], started_at=r[4],
+            finished_at=r[5], duration_ms=r[6], nodes=r[7], error=r[8],
+            trace_id=r[9] or "", resolved_version=r[10], business=r[11],
+            tool_calls=r[12] or [], spans=None,
+        )
+
+    _RUN_LIST_COLS = (
+        "id, graph_id, mode, status, started_at, finished_at, "
+        "duration_ms, nodes, error, trace_id, resolved_version, business, tool_calls"
+    )
 
     _RUN_COLS = (
         "id, graph_id, mode, status, started_at, finished_at, "
-        "duration_ms, nodes, error, trace_id, resolved_version, business, tool_calls"
+        "duration_ms, nodes, error, trace_id, resolved_version, business, tool_calls, spans"
     )
 
     @staticmethod
