@@ -29,6 +29,135 @@ const DASHBOARD_KEYS = ['demo.title', 'demo.description', 'demo.cards.graph', 'd
 /** Dashboard 经 common: 前缀取用的跨页通用 key（品牌名/主导航）。 */
 const SHARED_NAV_KEYS = ['common:brand.appName', 'common:nav.openEditor', 'common:nav.monitoring', 'common:nav.memory']
 
+/**
+ * Editor.tsx + 画布/左栏面板在 editor namespace 下接线的静态（无插值）key（M12 续批 editor-a）。
+ * 业务数据（退款原因、节点目录 label/description、模板名、后端枚举）不在此列——它们不抽 key。
+ */
+const EDITOR_KEYS = [
+  'header.title',
+  'header.nlGenerate',
+  'header.newFromTemplate',
+  'header.recordings',
+  'header.exportJson',
+  'header.publish',
+  'header.rollout',
+  'header.debug',
+  'header.compileAndRun',
+  'header.emergencyStop',
+  'header.draftRun',
+  'tabs.nodes',
+  'tabs.variables',
+  'nodePanel.title',
+  'variables.title',
+  'variables.invalidName',
+  'variables.duplicateName',
+  'variables.column.ref',
+  'variables.column.name',
+  'variables.column.type',
+  'variables.column.value',
+  'variables.column.actions',
+  'variables.add',
+  'canvas.branchDefault',
+  'canvas.loopBody',
+  'canvas.loopExit',
+  'canvas.approvalApproved',
+  'canvas.approvalRejected',
+  'export.title',
+  'runResult.title',
+  'nl.title',
+  'nl.submit',
+  'template.title',
+  'template.replaceWarning',
+  'template.loading',
+  'template.use',
+  'recording.title',
+  'recording.namePlaceholder',
+  'recording.recordButton',
+  'recording.recordHint',
+  'recording.empty',
+  'recording.replay',
+  'recording.collapse',
+  'recording.edit',
+  'recording.deleteConfirm',
+  'recording.loadingCase',
+  'recording.inputsPlaceholder',
+  'recording.editHint',
+  'recording.mockCheckbox',
+  'recording.overridePlaceholder',
+  'recording.match',
+  'recording.mismatch',
+  'recording.editRequired',
+  'approval.title',
+  'approval.reject',
+  'approval.approve',
+  'approval.nodeLabel',
+  'approval.summaryLabel',
+  'approval.approverLabel',
+  'approval.approverUnspecified',
+  'approval.decisionApproved',
+  'approval.decisionRejected',
+  'approval.sourceHuman',
+  'approval.sourceTimeout',
+  'approval.sourceInput',
+  'debug.reason.step',
+  'debug.reason.breakpoint',
+  'debug.reason.condition',
+  'debug.reason.exception',
+  'debug.pausedTitle',
+  'debug.step',
+  'debug.continue',
+  'debug.stop',
+  'debug.varFilterPlaceholder',
+  'debug.globalsHint',
+  'debug.outputsHint',
+  'debug.exceptionHint',
+  'debug.historyEmpty',
+  'log.branchDefault',
+  'log.loopReasonConditionFalse',
+  'log.loopReasonMaxIterations',
+  'log.loopReasonExpressionError',
+  'log.unknownError',
+  'log.noActiveRun',
+  'error.compileRunFailed',
+  'error.inputsInvalidJson',
+  'error.inputsNotObject',
+]
+
+/** editor namespace 带插值的 key：给齐变量后不得残留 {{，且应含中文。 */
+const EDITOR_TEMPLATE_KEYS: Array<{ key: string; vars: Record<string, unknown> }> = [
+  { key: 'header.publishedRun', vars: { version: 3 } },
+  { key: 'runResult.compiled', vars: { entrypoints: 'start', terminals: 'end' } },
+  { key: 'runResult.status', vars: { status: 'completed' } },
+  { key: 'nl.paramWarning', vars: { warning: '缺少字段' } },
+  { key: 'template.nodeCount', vars: { count: 5 } },
+  { key: 'template.loaded', vars: { name: '退款模板', id: 'tpl-1' } },
+  { key: 'recording.listTitle', vars: { count: 2 } },
+  { key: 'recording.meta', vars: { nodes: 4, steps: 9, time: '2026/9/21' } },
+  { key: 'recording.saved', vars: { id: 'rr-9', steps: 7 } },
+  { key: 'recording.defaultName', vars: { graphId: 'g-1', time: 'now' } },
+  { key: 'recording.mockToolsTag', vars: { count: 2 } },
+  { key: 'recording.stepDiffKeys', vars: { keys: 'result' } },
+  { key: 'approval.timeoutHint', vars: { seconds: 30 } },
+  { key: 'approval.subgraphLabel', vars: { label: 'sub-refund' } },
+  {
+    key: 'approval.resultLog',
+    vars: { prefix: '', node: 'human_1', decision: '通过', source: '人工', target: 'refund' },
+  },
+  { key: 'debug.exceptionTitle', vars: { type: 'ValueError' } },
+  { key: 'debug.historyTitle', vars: { count: 3 } },
+  { key: 'debug.historySince', vars: { path: 'a → b' } },
+  { key: 'log.paused', vars: { prefix: '', node: 'cond_1', reason: '断点' } },
+  { key: 'log.runComplete', vars: { status: 'completed' } },
+]
+
+/** editor 页经 common: 前缀复用的跨页通用键（删除/取消/保存/加载中）。 */
+const EDITOR_SHARED_COMMON_KEYS = [
+  'common:button.delete',
+  'common:button.cancel',
+  'common:button.save',
+  'common:status.loading',
+]
+
 const hasChinese = (s: string): boolean => /[\u4e00-\u9fff]/.test(s)
 
 afterEach(() => {
@@ -144,5 +273,80 @@ describe('zero-dependency i18n skeleton (docs/17 §2.3, M12)', () => {
     for (const key of SHARED_NAV_KEYS) {
       expect(t(key, { ns: 'dashboard' })).not.toBe(key)
     }
+  })
+
+  it('resolves editor namespace static copy for frame, canvas and left panels (editor-a)', () => {
+    for (const key of EDITOR_KEYS) {
+      const value = t(key, { ns: 'editor' })
+      expect(value, `${key} must resolve`).not.toBe(key)
+      expect(value.length, `${key} must be non-empty`).toBeGreaterThan(0)
+      expect(hasChinese(value), `${key} should carry Chinese copy`).toBe(true)
+    }
+  })
+
+  it('renders editor interpolation templates without leftover placeholders', () => {
+    for (const { key, vars } of EDITOR_TEMPLATE_KEYS) {
+      const value = t(key, { ns: 'editor', ...vars })
+      expect(value, `${key} must resolve`).not.toBe(key)
+      expect(value, `${key} must not leave a {{placeholder}}`).not.toContain('{{')
+      expect(hasChinese(value), `${key} should carry Chinese copy`).toBe(true)
+    }
+  })
+
+  it('keeps literal braces in editor hint/override copy (Chinese var names and JSON samples)', () => {
+    // variables.hint teaches the {{变量路径}} / {{global.company_name}} syntax: neither token
+    // matches the interpolate identifier rule, so both must survive verbatim and stay Chinese.
+    const hint = t('variables.hint', { ns: 'editor' })
+    expect(hint).toContain('{{变量路径}}')
+    expect(hint).toContain('{{global.company_name}}')
+    // overridePlaceholder carries a single-brace JSON sample; it must render and never be treated
+    // as an interpolation (no double braces introduced).
+    const override = t('recording.overridePlaceholder', { ns: 'editor' })
+    expect(override).toContain('{"amount": 100}')
+    expect(override).not.toContain('{{')
+    // log.toolHttpStatus is a technical-proper-noun fragment (HTTP kept English per docs/17);
+    // it carries no Han characters but must still interpolate the status code cleanly.
+    const http = t('log.toolHttpStatus', { ns: 'editor', status: 200 })
+    expect(http).toBe('（HTTP 200）')
+    expect(http).not.toContain('{{')
+  })
+
+  it('reaches shared common copy via the common: prefix from an editor hook', () => {
+    for (const key of EDITOR_SHARED_COMMON_KEYS) {
+      const value = t(key, { ns: 'editor' })
+      expect(value, `${key} must resolve`).not.toBe(key)
+      expect(hasChinese(value), `${key} should carry Chinese copy`).toBe(true)
+    }
+    expect(t('common:button.delete', { ns: 'editor' })).toBe('删除')
+    expect(t('common:status.loading', { ns: 'editor' })).toBe('加载中…')
+  })
+
+  it('falls back from a missing editor key to common, then zh-CN (never a raw key)', () => {
+    // editor.json is now populated but still lacks common-only keys such as auth.login.submit;
+    // the namespace-level common fallback must still apply (regression guard for editor != {}).
+    expect(t('editor:auth.login.submit')).toBe('登录')
+    // Unknown debug reason enum falls back to the supplied defaultValue (backend data, untranslated).
+    expect(t('debug.reason.future_reason', { ns: 'editor', defaultValue: 'future_reason' })).toBe(
+      'future_reason',
+    )
+    expect(t('debug.reason.step', { ns: 'editor' })).toBe('单步')
+  })
+
+  it('falls back to zh-CN for editor copy under the empty en-US skeleton', () => {
+    changeLanguage('en-US')
+    for (const key of EDITOR_KEYS) {
+      expect(t(key, { ns: 'editor' })).not.toBe(key)
+    }
+    for (const { key, vars } of EDITOR_TEMPLATE_KEYS) {
+      expect(t(key, { ns: 'editor', ...vars })).not.toBe(key)
+    }
+  })
+
+  it('registers empty monitoring/memory namespaces without breaking resolution', () => {
+    // These namespaces are {} placeholders in this batch; missing keys return the key itself
+    // rather than throwing, and common fallback still works from them.
+    expect(t('monitoring.anything', { ns: 'monitoring' })).toBe('monitoring.anything')
+    expect(t('memory.anything', { ns: 'memory' })).toBe('memory.anything')
+    expect(t('common:button.save', { ns: 'monitoring' })).toBe('保存')
   })
 })

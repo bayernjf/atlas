@@ -18,13 +18,17 @@ import enCommon from './en-US/common.json'
 import enDashboard from './en-US/dashboard.json'
 import enDemo from './en-US/demo.json'
 import enEditor from './en-US/editor.json'
+import enMemory from './en-US/memory.json'
+import enMonitoring from './en-US/monitoring.json'
 import zhCommon from './zh-CN/common.json'
 import zhDashboard from './zh-CN/dashboard.json'
 import zhDemo from './zh-CN/demo.json'
 import zhEditor from './zh-CN/editor.json'
+import zhMemory from './zh-CN/memory.json'
+import zhMonitoring from './zh-CN/monitoring.json'
 
 export type Locale = 'zh-CN' | 'en-US'
-export type Namespace = 'common' | 'editor' | 'dashboard' | 'demo'
+export type Namespace = 'common' | 'editor' | 'dashboard' | 'demo' | 'monitoring' | 'memory'
 
 type Dict = Record<string, unknown>
 export type TranslateOptions = {
@@ -32,11 +36,25 @@ export type TranslateOptions = {
   ns?: Namespace
 } & Record<string, unknown>
 
-const NAMESPACES: Namespace[] = ['common', 'editor', 'dashboard', 'demo']
+const NAMESPACES: Namespace[] = ['common', 'editor', 'dashboard', 'demo', 'monitoring', 'memory']
 
 const resources: Record<Locale, Record<Namespace, Dict>> = {
-  'zh-CN': { common: zhCommon as Dict, editor: zhEditor as Dict, dashboard: zhDashboard as Dict, demo: zhDemo as Dict },
-  'en-US': { common: enCommon as Dict, editor: enEditor as Dict, dashboard: enDashboard as Dict, demo: enDemo as Dict },
+  'zh-CN': {
+    common: zhCommon as Dict,
+    editor: zhEditor as Dict,
+    dashboard: zhDashboard as Dict,
+    demo: zhDemo as Dict,
+    monitoring: zhMonitoring as Dict,
+    memory: zhMemory as Dict,
+  },
+  'en-US': {
+    common: enCommon as Dict,
+    editor: enEditor as Dict,
+    dashboard: enDashboard as Dict,
+    demo: enDemo as Dict,
+    monitoring: enMonitoring as Dict,
+    memory: enMemory as Dict,
+  },
 }
 
 export const DEFAULT_LOCALE: Locale = 'zh-CN'

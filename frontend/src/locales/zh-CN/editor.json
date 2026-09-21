@@ -1,1 +1,176 @@
-{}
+{
+  "header": {
+    "title": "Atlas 流程编辑器",
+    "nlGenerate": "自然语言生成",
+    "newFromTemplate": "从模板新建",
+    "recordings": "录制与回放",
+    "exportJson": "导出 Graph JSON",
+    "publish": "发布",
+    "rollout": "灰度发布",
+    "debug": "调试",
+    "compileAndRun": "编译并运行",
+    "emergencyStop": "急停",
+    "draftRun": "草稿运行",
+    "publishedRun": "已发布 v{{version}}"
+  },
+  "tabs": {
+    "nodes": "节点",
+    "variables": "变量"
+  },
+  "nodePanel": {
+    "title": "节点面板（拖入画布）"
+  },
+  "variables": {
+    "title": "全局变量（04 §6）",
+    "hint": "统一使用 {{变量路径}} 引用，如 {{global.company_name}}",
+    "namePlaceholder": "变量名（英文标识符）",
+    "valuePlaceholder": "初始值",
+    "add": "新增全局变量",
+    "invalidName": "变量名需以字母/下划线开头，仅含字母数字下划线",
+    "duplicateName": "变量名已存在",
+    "column": {
+      "ref": "引用",
+      "name": "名称",
+      "type": "类型",
+      "value": "值",
+      "actions": "操作"
+    }
+  },
+  "canvas": {
+    "branchDefault": "默认",
+    "loopBody": "循环体",
+    "loopExit": "退出",
+    "approvalApproved": "通过",
+    "approvalRejected": "拒绝"
+  },
+  "export": {
+    "title": "Graph 定义 JSON（W7-W8 DSL 编译输入）"
+  },
+  "runResult": {
+    "title": "编译并运行结果",
+    "compiled": "编译成功（{{entrypoints}} → {{terminals}}）",
+    "status": "运行状态：{{status}}"
+  },
+  "nl": {
+    "title": "自然语言生成流程草稿",
+    "defaultPrompt": "帮我做一个电商退款自动审批流程",
+    "submit": "生成并载入画布",
+    "paramWarning": "⚠ NL 参数提示：{{warning}}"
+  },
+  "template": {
+    "title": "从模板新建",
+    "replaceWarning": "加载模板将整体替换当前画布，未保存的修改会丢失。",
+    "loading": "模板加载中…",
+    "nodeCount": "{{count}} 个节点",
+    "use": "使用此模板",
+    "loaded": "已加载模板：{{name}}（{{id}}），画布已整体替换"
+  },
+  "recording": {
+    "title": "操作录制与回放",
+    "namePlaceholder": "用例名称",
+    "recordButton": "录制当前画布一次运行",
+    "recordHint": "按当前订单入参真实运行一次（审批弹窗照常交互），结束时冻结 Graph 快照入库",
+    "listTitle": "已录制用例（{{count}}）",
+    "empty": "暂无录制用例。",
+    "replay": "回放",
+    "collapse": "收起",
+    "edit": "编辑",
+    "deleteConfirm": "确认删除该录制用例？",
+    "meta": "{{nodes}} 节点 · {{steps}} 步骤 · {{time}}",
+    "loadingCase": "加载用例…",
+    "inputsPlaceholder": "回放入参（JSON 对象，保存时整体替换）",
+    "editHint": "仅名称/入参可改；步骤与 Graph 快照不可改（请重新录制）",
+    "mockCheckbox": "Mock 工具节点（命中录制输出、不触达适配器；发布门禁不接 mock）",
+    "overridePlaceholder": "入参覆写（可选，JSON 对象如 {\"amount\": 100}，仅本次回放浅合并、不落库）",
+    "match": "匹配",
+    "mismatch": "不匹配",
+    "mockToolsTag": "Mock {{count}} 工具",
+    "baselineReplay": "基线 {{baseline}} → 回放 {{replay}}",
+    "defaultName": "录制 {{graphId}} {{time}}",
+    "defaultNameTime": "录制 {{time}}",
+    "saved": "已保存录制用例：{{id}}（{{steps}} 个步骤）",
+    "stepDiffKeys": "（差异键：{{keys}}）",
+    "editRequired": "请至少修改名称或入参之一"
+  },
+  "approval": {
+    "title": "人工审批请求",
+    "reject": "拒绝",
+    "approve": "同意",
+    "nodeLabel": "节点",
+    "subgraphLabel": "子图内审批（所属 subgraph 节点：{{label}}）",
+    "summaryLabel": "审批说明",
+    "approverLabel": "审批人",
+    "approverUnspecified": "未指定",
+    "timeoutHint": "等待 {{seconds}} 秒后按超时策略自动决策；关闭弹窗后仍可在等待期内由 API 放行。",
+    "decisionApproved": "通过",
+    "decisionRejected": "拒绝",
+    "sourceHuman": "人工",
+    "sourceTimeout": "超时",
+    "sourceInput": "预置",
+    "waitingLog": "⏸ {{prefix}}{{node}} 等待人工审批：{{summary}}",
+    "resultLog": "✓ {{prefix}}{{node}} 人工审批：{{decision}}（{{source}}）→ {{target}}"
+  },
+  "debug": {
+    "reason": {
+      "step": "单步",
+      "breakpoint": "断点",
+      "condition": "条件",
+      "exception": "异常"
+    },
+    "pausedTitle": "调试暂停于",
+    "step": "下一步",
+    "continue": "继续",
+    "stop": "停止",
+    "varFilterPlaceholder": "按键过滤变量",
+    "globalsHint": "全局变量 globals（可编辑 JSON；下一步/继续时浅合并写回，停止忽略）",
+    "outputsHint": "节点产出 outputs（只读快照）",
+    "exceptionTitle": "异常断点捕获：{{type}}",
+    "exceptionHint": "下一步/继续后将原样抛出该异常（v1 不支持忽略继续），停止则结束本次调试。",
+    "historyTitle": "变量变化历史（{{count}}）",
+    "historySince": "经过节点 {{path}}",
+    "historyEmpty": "本次暂停无 global 顶层键变化"
+  },
+  "log": {
+    "runPublished": "运行已发布版本：{{graphId}}@{{version}}（不使用当前草稿）",
+    "draftUpdated": "已更新草稿：{{graphId}}",
+    "compileSuccess": "编译成功：入口 {{entrypoints}}",
+    "graphSaved": "已保存 Graph：{{graphId}}",
+    "paused": "⏸ 调试暂停：{{prefix}}{{node}}（{{reason}}）",
+    "logBreakpoint": "📝 {{prefix}}{{node}} 日志断点（第 {{hits}} 次）：{{message}}",
+    "nodeStart": "▶ {{prefix}}节点开始：{{node}}",
+    "nodeComplete": "✓ {{prefix}}节点完成：{{node}}",
+    "decision": "✓ {{node}} 决策：{{action}}",
+    "branch": "✓ {{node}} 分支：{{branch}} → {{target}}",
+    "branchDefault": "默认",
+    "parallelStarted": "✓ {{node}} 并行启动 {{count}} 个分支",
+    "parallelFailed": "✓ {{node}} 并行汇聚：{{count}} 个分支失败：{{detail}}（汇聚节点仍执行）",
+    "parallelAllOk": "✓ {{node}} 并行汇聚：全部成功",
+    "loopContinue": "✓ {{node}} 继续循环：第 {{iterations}} 轮 → {{target}}",
+    "loopExit": "✓ {{node}} 退出循环：{{reason}}，共 {{iterations}} 轮 → {{target}}",
+    "loopReasonConditionFalse": "条件不满足",
+    "loopReasonMaxIterations": "达到最大次数",
+    "loopReasonExpressionError": "表达式异常",
+    "waitDone": "✓ {{node}} 等待完成：{{seconds}} 秒",
+    "subgraphFailed": "✓ {{node}} 子图完成：{{graphId}}（失败：{{error}}）",
+    "subgraphOk": "✓ {{node}} 子图完成：{{graphId}}（成功）",
+    "toolSuccess": "✓ {{node}} 工具调用：SUCCESS{{http}}",
+    "toolHttpStatus": "（HTTP {{status}}）",
+    "toolFailed": "✗ {{node}} 工具调用：FAILED（{{code}} {{message}}）",
+    "rootComplete": "✓ 节点完成：{{node}}",
+    "runComplete": "运行结束：{{status}}",
+    "stopped": "调试已停止：{{node}}（无运行结果）",
+    "cancelled": "⏹ 运行已急停：{{node}}（协作式取消，无运行结果）",
+    "runFailed": "✗ 运行失败：{{message}}",
+    "resumeFailed": "✗ 调试放行失败：{{message}}",
+    "noActiveRun": "当前没有在途运行可取消",
+    "noActiveRunMaybeEnded": "当前没有在途运行可取消（可能已结束）",
+    "stopRequested": "⏹ 已请求急停 {{runId}}（下一节点边界生效）",
+    "stopFailed": "✗ 急停失败：{{message}}",
+    "unknownError": "未知错误"
+  },
+  "error": {
+    "compileRunFailed": "编译/运行失败",
+    "inputsInvalidJson": "入参不是合法 JSON，请检查格式",
+    "inputsNotObject": "入参必须是顶层 JSON 对象（{}）"
+  }
+}
