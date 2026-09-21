@@ -18,6 +18,7 @@ from atlas.harness.base import (
     StructuredError,
 )
 from atlas.httpapi.adapter import HttpApiHarnessAdapter
+from atlas.httpapi.resilience import RetryPolicy
 from atlas.httpapi.service import HttpApiCallError, HttpApiClient
 from atlas.security.egress import EgressGuard
 
@@ -40,6 +41,8 @@ def make_client(
         client=httpx.Client(transport=transport),
         resolver=resolver,
         egress=egress,
+        # 测试不真睡：退避 no-op（重试/熔断逻辑仍照常走）
+        retry=RetryPolicy(sleep=lambda _: None),
     )
 
 

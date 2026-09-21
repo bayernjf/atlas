@@ -15,14 +15,38 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Callable
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 
 from atlas.security.egress import EgressDenied, EgressGuard
 
+from .resilience import (
+    DEFAULT_BASE_DELAY,
+    DEFAULT_COOLDOWN,
+    DEFAULT_FAIL_THRESHOLD,
+    DEFAULT_MAX_ATTEMPTS,
+    CircuitBreaker,
+    CircuitOpenError,
+    RetryPolicy,
+)
+
 ALLOWED_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 DEFAULT_TIMEOUT = 30.0
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _float_env(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
 
 
 class HttpApiCallError(Exception):
@@ -42,6 +66,8 @@ class HttpApiClient:
         *,
         egress: EgressGuard | None = None,
         resolver: Callable[[str], list[str]] | None = None,
+        retry: RetryPolicy | None = None,
+        breaker: CircuitBreaker | None = None,
     ) -> None:
         self.base_url = (base_url or "").strip()
         self.default_headers: dict[str, str] = {
@@ -50,6 +76,9 @@ class HttpApiClient:
         self._client = client
         # egress 恒启用；resolver 仅供离线测试注入（生产用系统 DNS）
         self._egress = egress or (EgressGuard(resolver=resolver) if resolver else EgressGuard())
+        # 重试/熔断恒启用；可注入 no-op 睡眠策略与假时钟供离线测试
+        self._retry = retry or RetryPolicy()
+        self._breaker = breaker or CircuitBreaker()
         self.last_request: dict[str, object] | None = None
 
     @classmethod
@@ -73,10 +102,20 @@ class HttpApiClient:
         token = os.getenv("ATLAS_HTTPAPI_TOKEN", "").strip()
         if token:
             headers.setdefault("Authorization", f"Bearer {token}")
+        retry = RetryPolicy(
+            max_attempts=_int_env("ATLAS_HTTP_MAX_ATTEMPTS", DEFAULT_MAX_ATTEMPTS),
+            base_delay=_float_env("ATLAS_HTTP_RETRY_BASE_DELAY", DEFAULT_BASE_DELAY),
+        )
+        breaker = CircuitBreaker(
+            fail_threshold=_int_env("ATLAS_HTTP_CIRCUIT_FAIL_THRESHOLD", DEFAULT_FAIL_THRESHOLD),
+            cooldown=_float_env("ATLAS_HTTP_CIRCUIT_COOLDOWN", DEFAULT_COOLDOWN),
+        )
         return cls(
             base_url=os.getenv("ATLAS_HTTPAPI_BASE_URL", ""),
             default_headers=headers,
             egress=EgressGuard.from_env(),
+            retry=retry,
+            breaker=breaker,
         )
 
     def request(
@@ -86,6 +125,7 @@ class HttpApiClient:
         headers: dict[str, object] | None = None,
         body: object = None,
         timeout: float = DEFAULT_TIMEOUT,
+        idempotent: bool = False,
     ) -> dict[str, object]:
         method = (method or "GET").upper()
         if method not in ALLOWED_METHODS:
@@ -115,8 +155,14 @@ class HttpApiClient:
             raise HttpApiCallError(exc.code, str(exc)) from exc
 
         self.last_request = {"method": method, "url": target}
+        host = urlsplit(target).hostname or ""
         try:
-            response = self._get_client().request(
+            self._breaker.before_call(host)  # 开闸则请求不发出，快速失败
+        except CircuitOpenError as exc:
+            raise HttpApiCallError(exc.code, str(exc)) from exc
+
+        def _once() -> httpx.Response:
+            return self._get_client().request(
                 method,
                 target,
                 content=body if isinstance(body, str) else None,
@@ -124,11 +170,20 @@ class HttpApiClient:
                 headers=merged_headers,
                 timeout=timeout_value,
             )
-        except httpx.TimeoutException as exc:
-            raise HttpApiCallError("HTTP_TIMEOUT", f"HTTP 请求超时：{exc}") from exc
-        except httpx.RequestError as exc:
+
+        try:
+            response = self._retry.execute(_once, method=method, idempotent=idempotent)
+        except httpx.TransportError as exc:
+            self._breaker.record_failure(host)
+            if isinstance(exc, httpx.TimeoutException):
+                raise HttpApiCallError("HTTP_TIMEOUT", f"HTTP 请求超时：{exc}") from exc
             raise HttpApiCallError("HTTP_CONNECT_ERROR", f"HTTP 请求失败：{exc}") from exc
 
+        # 仅临时网关状态计熔断；拿到任何其他响应（含 4xx/500）视为对端在响应
+        if self._retry.is_transient_status(response.status_code):
+            self._breaker.record_failure(host)
+        else:
+            self._breaker.record_success(host)
         self.last_request["status"] = response.status_code
         try:
             parsed_body: object = response.json()
