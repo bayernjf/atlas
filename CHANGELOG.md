@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### docs：P0 批 1 持久化交付立项（2026-09-21，docs/30；docs-only 未落码）
+
+- 依据 docs/29 阻断项 #1 立项：compose 缺省 PG（pgvector:pg16＋命名卷）、schema_migrations 运行器（不引 Alembic）、会话 PG 接线、备份/恢复删卷演练；ADR T24，U222–U226。
+
 ### docs：MVP 上线就绪项目级评审留档（2026-09-21，docs/29）
 
 - 留档另一会话的项目级评审并复核关键断言：可演示/陪同试用技术验证 MVP 达到（真实 HTTP/浏览器实测），客户自助接真实店铺的生产 MVP 未达到；六项阻断项与 P0/P1 清单见 docs/29。P0/P1 仅为立项候选，未排期未开工。
