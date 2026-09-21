@@ -4,6 +4,14 @@
 隔离；未配置时由调用方回退到内置 SQLite demo（demo_engine）。query 走
 只读事务并 rollback，execute 提交返 rowcount。SQLAlchemy 异常不抛出，
 折叠为 DatabaseAdapterError(DB_SQL_ERROR)。
+
+只读强制（docs/32 §4）：``query`` 通道在 SQLite/PG 两档都先过静态 SQL
+审查（:func:`atlas.database.guard.assert_read_only_sql`，仅放行单条
+SELECT/WITH…SELECT，拒多语句与写/DDL），PG 档另叠加连接级
+postgresql_readonly 纵深；由外部 ATLAS_DATABASE_URL 构建的 client 标记
+read_only=True，``execute`` 在触库前 fail-closed 抛 DB_WRITE_FORBIDDEN；
+内置 demo engine（demo=True）read_only=False，其建表/播种走 engine 直连
+不经适配器 execute，不受影响。
 """
 
 from __future__ import annotations
@@ -15,6 +23,8 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.pool import StaticPool
+
+from .guard import ReadOnlyViolation, assert_read_only_sql
 
 ALLOWED_SCHEMES = ("postgresql+psycopg", "sqlite")
 DEFAULT_LIMIT = 500
@@ -98,10 +108,19 @@ def _validate_limit(limit: object) -> int:
 
 
 class DatabaseClient:
-    def __init__(self, engine: Engine, url: str = "", demo: bool = False) -> None:
+    def __init__(
+        self,
+        engine: Engine,
+        url: str = "",
+        demo: bool = False,
+        read_only: bool | None = None,
+    ) -> None:
         self.engine = engine
         self.url = url
         self.demo = demo
+        # 外部数据源（demo=False）默认只读；内置 demo engine 可写（播种/写能力）。
+        # read_only 可显式覆盖（测试用）。
+        self.read_only = (not demo) if read_only is None else read_only
         self.last_operation: dict[str, object] | None = None
 
     @classmethod
@@ -133,6 +152,10 @@ class DatabaseClient:
         sql_text = _validate_sql(sql)
         bound_params = _validate_params(params)
         limit_value = _validate_limit(limit)
+        try:
+            assert_read_only_sql(sql_text)
+        except ReadOnlyViolation as exc:
+            raise DatabaseAdapterError(exc.code, f"query 通道仅允许只读 SELECT：{exc}") from exc
 
         try:
             with self.engine.connect() as conn:
@@ -160,6 +183,11 @@ class DatabaseClient:
     def execute(self, sql: object, params: object = None) -> dict[str, object]:
         sql_text = _validate_sql(sql)
         bound_params = _validate_params(params)
+        if self.read_only:
+            # 外部数据源连接只读：写能力在触达数据库前 fail-closed
+            raise DatabaseAdapterError(
+                "DB_WRITE_FORBIDDEN", "外部数据源连接为只读，禁止 execute 写/DDL 操作"
+            )
 
         try:
             with self.engine.begin() as conn:

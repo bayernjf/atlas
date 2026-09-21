@@ -157,16 +157,29 @@ def test_from_env_none_when_unset(monkeypatch):
     assert DatabaseClient.from_env() is None
 
 
-def test_from_env_sqlite_file(monkeypatch, tmp_path):
-    db_path = tmp_path / "demo.db"
-    monkeypatch.setenv("ATLAS_DATABASE_URL", f"sqlite:///{db_path}")
+def test_from_env_sqlite_file_is_read_only(monkeypatch, tmp_path):
+    # docs/32 §4：外部数据源连接（含 sqlite 文件档）query 只读、execute fail-closed
+    from sqlalchemy import create_engine, text
 
+    db_path = tmp_path / "demo.db"
+    seeder = create_engine(f"sqlite:///{db_path}")
+    with seeder.begin() as conn:  # 独立可写连接模拟外部库已有数据
+        conn.execute(text("CREATE TABLE t (id INTEGER PRIMARY KEY)"))
+        conn.execute(text("INSERT INTO t (id) VALUES (1)"))
+    seeder.dispose()
+    assert db_path.exists()
+
+    monkeypatch.setenv("ATLAS_DATABASE_URL", f"sqlite:///{db_path}")
     client = DatabaseClient.from_env()
 
     assert client is not None
     assert client.demo is False
-    client.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)")
-    assert db_path.exists()
+    assert client.read_only is True
+    assert client.query("SELECT id FROM t ORDER BY id")["rows"] == [{"id": 1}]
+    with pytest.raises(DatabaseAdapterError) as exc_info:
+        client.execute("INSERT INTO t (id) VALUES (2)")
+    assert exc_info.value.code == "DB_WRITE_FORBIDDEN"
+    client.engine.dispose()
 
 
 def test_from_env_rejects_unknown_scheme(monkeypatch):
@@ -295,3 +308,73 @@ def test_adapter_observe_reports_masked_url_and_last_operation():
     assert observation.data["demo"] is True
     assert observation.data["last_operation"]["operation"] == "query"
     assert observation.data["last_operation"]["row_count"] == 1
+
+
+# --- docs/32 §4 只读强制（13 文档 U239 db 通道）---
+
+def make_external_readonly_client() -> DatabaseClient:
+    """以外部数据源身份（demo=False → read_only=True）连内存库承载数据。"""
+    return DatabaseClient(demo_engine(seed=True), url="sqlite:///:memory:", demo=False)
+
+
+def test_client_read_only_default_by_demo_flag():
+    assert make_external_readonly_client().read_only is True
+    assert make_client().read_only is False
+
+
+def test_external_readonly_query_select_ok():
+    output = make_external_readonly_client().query("SELECT COUNT(*) AS n FROM orders")
+    assert output["rows"][0]["n"] == 2
+
+
+def test_external_readonly_execute_forbidden_before_touching_db():
+    client = make_external_readonly_client()
+    with pytest.raises(DatabaseAdapterError) as exc_info:
+        client.execute(
+            "INSERT INTO orders (order_id) VALUES (:x)",
+            {"x": "z"},
+        )
+    assert exc_info.value.code == "DB_WRITE_FORBIDDEN"
+    # fail-closed 发生在触库前：行数不变
+    assert client.query("SELECT COUNT(*) AS n FROM orders")["rows"][0]["n"] == 2
+
+
+def test_query_channel_rejects_write_sql_even_on_writable_demo_client():
+    # 两档都强制 query 只读：即便 demo client 可写，query 通道写 SQL 仍被静态审查拒
+    with pytest.raises(DatabaseAdapterError) as exc_info:
+        make_client().query("DELETE FROM orders")
+    assert exc_info.value.code == "DB_SQL_NOT_READ_ONLY"
+
+
+def test_external_readonly_query_write_sql_rejected():
+    with pytest.raises(DatabaseAdapterError) as exc_info:
+        make_external_readonly_client().query("UPDATE orders SET status = 'x'")
+    assert exc_info.value.code == "DB_SQL_NOT_READ_ONLY"
+
+
+def test_explicit_read_only_override_blocks_demo_execute():
+    client = DatabaseClient(demo_engine(seed=True), demo=True, read_only=True)
+    assert client.read_only is True
+    with pytest.raises(DatabaseAdapterError) as exc_info:
+        client.execute("INSERT INTO orders (order_id) VALUES ('x')")
+    assert exc_info.value.code == "DB_WRITE_FORBIDDEN"
+
+
+def test_adapter_execute_on_readonly_client_folds_write_forbidden():
+    adapter = make_adapter(client=make_external_readonly_client())
+    result = adapter.execute(
+        ActionRequest(
+            capability_name="execute",
+            parameters={"sql": "INSERT INTO orders (order_id) VALUES ('1')"},
+        )
+    )
+    assert result.status is ActionStatus.FAILED
+    assert result.error.code == "DB_WRITE_FORBIDDEN"
+
+
+def test_adapter_query_write_sql_folds_not_read_only():
+    result = make_adapter().execute(
+        ActionRequest(capability_name="query", parameters={"sql": "DROP TABLE orders"})
+    )
+    assert result.status is ActionStatus.FAILED
+    assert result.error.code == "DB_SQL_NOT_READ_ONLY"
