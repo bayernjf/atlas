@@ -12,7 +12,16 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from .alerts import Alert, AlertEvent, RuleConfig, evaluate_rules, rules_from_raw, validate_rules
+from .alerts import (
+    Alert,
+    AlertEvent,
+    RuleConfig,
+    apply_escalation,
+    evaluate_rules,
+    rules_from_raw,
+    validate_rules,
+)
+from .silences import OnCallSchedule, OpsStore, Silence
 from .business import BusinessOutcome
 from .metrics import NodeResult, is_healthy
 
@@ -61,6 +70,7 @@ class MonitoringStore:
         self._alerts: list[Alert] = []
         self._streaks: dict[str, int] = {}
         self._rules = RuleConfig()
+        self._ops = OpsStore()
         self._run_counter = 0
         self._alert_counter = 0
 
@@ -111,6 +121,9 @@ class MonitoringStore:
                 rules=self._rules,
             )
             for event in events:
+                # docs/33 §5.1：命中活跃静默则不新建/不合并/不升级，仅累加压下计数
+                if self._ops.suppress_if_matched(event.rule_id, record.graph_id):
+                    continue
                 self._raise_or_merge(event=event, record=record)
             return record
 
@@ -137,6 +150,7 @@ class MonitoringStore:
                 last_seen=record.finished_at,
                 last_run_id=record.id,
                 rule_name=event.rule_name,
+                assignee=self._ops.current_assignee(),
             )
         )
 
@@ -192,8 +206,18 @@ class MonitoringStore:
         with self._lock:
             return next((run for run in self._runs if run.id == run_id), None)
 
+    def _apply_escalations_locked(self) -> None:
+        """docs/33 §5.2：读时惰性把超时 open warning 升级为 critical（回写进程内告警）。"""
+        now = _now_iso()
+        for alert in self._alerts:
+            upgraded = apply_escalation(alert, self._rules, now)
+            if upgraded is not alert:
+                alert.severity = upgraded.severity
+                alert.escalated_at = upgraded.escalated_at
+
     def list_alerts(self, status: str | None = None) -> list[Alert]:
         with self._lock:
+            self._apply_escalations_locked()
             alerts = list(self._alerts)
         if status:
             alerts = [alert for alert in alerts if alert.status == status]
@@ -201,6 +225,7 @@ class MonitoringStore:
 
     def get_alert(self, alert_id: str) -> Alert | None:
         with self._lock:
+            self._apply_escalations_locked()
             return next((alert for alert in self._alerts if alert.id == alert_id), None)
 
     def acknowledge_alert(self, alert_id: str) -> Alert | Literal[False] | None:
@@ -243,9 +268,35 @@ class MonitoringStore:
             runs = list(self._runs)
         return summarize(runs)
 
+    # docs/33 §5：静默 / 值班（进程内，委托 OpsStore）
+    def create_silence(
+        self, *, rule_id: str | None, graph_id: str | None, duration_minutes: int,
+        reason: str, created_by: str,
+    ) -> Silence:
+        return self._ops.create_silence(
+            rule_id=rule_id, graph_id=graph_id, duration_minutes=duration_minutes,
+            reason=reason, created_by=created_by,
+        )
+
+    def list_silences(self, active: bool | None = None) -> list[Silence]:
+        return self._ops.list_silences(active)
+
+    def delete_silence(self, silence_id: str) -> bool:
+        return self._ops.delete_silence(silence_id)
+
+    def get_oncall(self) -> OnCallSchedule:
+        return self._ops.get_oncall()
+
+    def set_oncall(self, *, members: list[str], updated_by: str) -> OnCallSchedule:
+        return self._ops.set_oncall(members=members, updated_by=updated_by)
+
+    def rotate_oncall(self, *, updated_by: str) -> OnCallSchedule:
+        return self._ops.rotate_oncall(updated_by=updated_by)
+
     def reset(self) -> None:
         with self._lock:
             self._runs.clear()
             self._alerts.clear()
             self._streaks.clear()
             self._rules = RuleConfig()
+            self._ops.reset()

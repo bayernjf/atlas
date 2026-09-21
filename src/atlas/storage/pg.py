@@ -23,7 +23,14 @@ from sqlalchemy import Engine, text
 from sqlalchemy.exc import IntegrityError
 
 from atlas.iam.principals import Principal, Role
-from atlas.monitoring.alerts import Alert, RuleConfig, rules_from_raw, validate_rules
+from atlas.monitoring.alerts import (
+    Alert,
+    RuleConfig,
+    apply_escalation,
+    rules_from_raw,
+    validate_rules,
+)
+from atlas.monitoring.silences import OnCallSchedule, OpsStore, Silence
 from atlas.monitoring.records import RunRecord
 from atlas.recording.cases import RecordingCase, RecordStep
 
@@ -656,6 +663,8 @@ class PgMonitoringStore:
     def __init__(self, engine: Engine, tenant_id: str):
         self._engine = engine
         self._tenant_id = tenant_id
+        # docs/33 §5：静默/值班/assignee 进程内（v1 不落库，重启清空；TenantServices 常驻保活）
+        self._ops = OpsStore()
 
     def record_run(
         self,
@@ -727,6 +736,9 @@ class PgMonitoringStore:
                 streak=streak, rules=rules,
             )
             for event in events:
+                # docs/33 §5.1：命中活跃静默则压下（不 INSERT/不合并/不升级）
+                if self._ops.suppress_if_matched(event.rule_id, record.graph_id):
+                    continue
                 self._raise_or_merge_locked(conn, event, record)
         return record
 
@@ -804,6 +816,7 @@ class PgMonitoringStore:
                 "last_run_id": record.id,
             },
         )
+        self._ops.remember_assignee(alert_id)
 
     def list_runs(self, graph_id: str | None = None, limit: int = 50) -> list[RunRecord]:
         with self._engine.connect() as conn:
@@ -879,6 +892,11 @@ class PgMonitoringStore:
         "last_seen, last_run_id, count"
     )
 
+    def _decorate_alert(self, alert: Alert, rules: RuleConfig, now: str) -> Alert:
+        """docs/33 §5.2/§5.3：进程内补 assignee 并惰性升级（不写 PG，重启重评幂等）。"""
+        alert.assignee = self._ops.assignee_of(alert.id)
+        return apply_escalation(alert, rules, now)
+
     def list_alerts(self, status: str | None = None) -> list[Alert]:
         with self._engine.connect() as conn:
             if status:
@@ -897,7 +915,9 @@ class PgMonitoringStore:
                     ),
                     {"tenant_id": self._tenant_id},
                 ).all()
-        return [self._alert_from_row(r) for r in rows]
+            rules = self._rules_locked(conn)
+        now = datetime.now(timezone.utc).isoformat()
+        return [self._decorate_alert(self._alert_from_row(r), rules, now) for r in rows]
 
     def get_alert(self, alert_id: str) -> Alert | None:
         with self._engine.connect() as conn:
@@ -908,7 +928,11 @@ class PgMonitoringStore:
                 ),
                 {"id": alert_id, "tenant_id": self._tenant_id},
             ).first()
-        return self._alert_from_row(row) if row else None
+            if not row:
+                return None
+            rules = self._rules_locked(conn)
+        now = datetime.now(timezone.utc).isoformat()
+        return self._decorate_alert(self._alert_from_row(row), rules, now)
 
     def acknowledge_alert(self, alert_id: str) -> Alert | Literal[False] | None:
         with self._engine.begin() as conn:
@@ -990,6 +1014,31 @@ class PgMonitoringStore:
             ).all()
         return summarize([self._run_from_row(r) for r in rows])
 
+    # docs/33 §5：静默 / 值班（进程内，委托 OpsStore）
+    def create_silence(
+        self, *, rule_id: str | None, graph_id: str | None, duration_minutes: int,
+        reason: str, created_by: str,
+    ) -> Silence:
+        return self._ops.create_silence(
+            rule_id=rule_id, graph_id=graph_id, duration_minutes=duration_minutes,
+            reason=reason, created_by=created_by,
+        )
+
+    def list_silences(self, active: bool | None = None) -> list[Silence]:
+        return self._ops.list_silences(active)
+
+    def delete_silence(self, silence_id: str) -> bool:
+        return self._ops.delete_silence(silence_id)
+
+    def get_oncall(self) -> OnCallSchedule:
+        return self._ops.get_oncall()
+
+    def set_oncall(self, *, members: list[str], updated_by: str) -> OnCallSchedule:
+        return self._ops.set_oncall(members=members, updated_by=updated_by)
+
+    def rotate_oncall(self, *, updated_by: str) -> OnCallSchedule:
+        return self._ops.rotate_oncall(updated_by=updated_by)
+
     def reset(self) -> None:
         with self._engine.begin() as conn:
             conn.execute(
@@ -1004,6 +1053,7 @@ class PgMonitoringStore:
                 text("DELETE FROM monitoring_rules WHERE tenant_id = :tenant_id"),
                 {"tenant_id": self._tenant_id},
             )
+        self._ops.reset()
 
 
 class PgRunsStore:

@@ -63,6 +63,7 @@ from atlas.memory.adapter import MemoryHarnessAdapter
 from atlas.memory.models import MemoryValidationError
 from atlas.message.adapter import MessageHarnessAdapter
 from atlas.monitoring import RUN_RING_SIZE, extract_business, extract_node_results
+from atlas.monitoring.silences import OnCallEmpty, current_assignee, is_silence_active
 from atlas.recording import (
     RecordingCreateRequest,
     RecordingUpdateRequest,
@@ -1904,6 +1905,104 @@ def resolve_alert(
     if alert is False:
         raise HTTPException(status_code=409, detail="该告警已关闭，重复提交不生效")
     return alert.model_dump()
+
+
+def _normalize_optional_id(value: object, field: str, errors: list[str]) -> str | None:
+    """静默 body 的 rule_id/graph_id：None/空白→None；非空 str 去空白；其余记 422。"""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        errors.append(f"{field} 必须是字符串或 null")
+        return None
+    text = value.strip()
+    return text or None
+
+
+@app.post("/api/monitoring/silences", status_code=201)
+def create_silence(
+    body: dict[str, Any], principal: Principal = Depends(require("administer"))
+) -> dict[str, Any]:
+    """docs/33 §5.1：创建静默（administer）；duration 1-10080 分钟、reason 非空≤200。"""
+    errors: list[str] = []
+    rule_id = _normalize_optional_id(body.get("rule_id"), "rule_id", errors)
+    graph_id = _normalize_optional_id(body.get("graph_id"), "graph_id", errors)
+    duration = body.get("duration_minutes")
+    if not isinstance(duration, int) or isinstance(duration, bool) or not 1 <= duration <= 10080:
+        errors.append("duration_minutes 必须是 1-10080 的整数")
+    reason = body.get("reason")
+    if not isinstance(reason, str) or not reason.strip() or len(reason.strip()) > 200:
+        errors.append("reason 必须是非空且不超过 200 字的字符串")
+    if errors:
+        raise HTTPException(status_code=422, detail="；".join(errors))
+    monitoring = services_for(principal).monitoring
+    silence = monitoring.create_silence(
+        rule_id=rule_id,
+        graph_id=graph_id,
+        duration_minutes=duration,
+        reason=reason.strip(),
+        created_by=principal.username,
+    )
+    return {**silence.model_dump(), "active": True}
+
+
+@app.get("/api/monitoring/silences")
+def list_silences(
+    active: str | None = None, principal: Principal = Depends(require("read"))
+) -> dict[str, list[dict[str, Any]]]:
+    """docs/33 §5.1：静默列表（read），?active=true|false 过滤，每条带 active 计算字段。"""
+    active_filter: bool | None = None
+    if active is not None:
+        if active not in ("true", "false"):
+            raise HTTPException(status_code=422, detail="active 只允许 true 或 false")
+        active_filter = active == "true"
+    monitoring = services_for(principal).monitoring
+    items = monitoring.list_silences(active_filter)
+    return {"items": [{**s.model_dump(), "active": is_silence_active(s)} for s in items]}
+
+
+@app.delete("/api/monitoring/silences/{silence_id}")
+def delete_silence(
+    silence_id: str, principal: Principal = Depends(require("administer"))
+) -> dict[str, Any]:
+    """docs/33 §5.1：提前解除（administer）；不存在 404。"""
+    monitoring = services_for(principal).monitoring
+    if not monitoring.delete_silence(silence_id):
+        raise HTTPException(status_code=404, detail=f"静默规则不存在：{silence_id}")
+    return {"id": silence_id, "deleted": True}
+
+
+@app.get("/api/monitoring/on-call")
+def get_on_call(principal: Principal = Depends(require("read"))) -> dict[str, Any]:
+    """docs/33 §5.3：值班表（read），current 为当前值班人（空表 null）。"""
+    schedule = services_for(principal).monitoring.get_oncall()
+    return {**schedule.model_dump(), "current": current_assignee(schedule)}
+
+
+@app.put("/api/monitoring/on-call")
+def update_on_call(
+    body: dict[str, Any], principal: Principal = Depends(require("administer"))
+) -> dict[str, Any]:
+    """docs/33 §5.3：设置轮值表（administer）；members 1-20 个非空串，去重保序、重置 index=0。"""
+    members = body.get("members")
+    if not isinstance(members, list) or not 1 <= len(members) <= 20:
+        raise HTTPException(status_code=422, detail="members 必须是 1-20 个用户名字符串组成的数组")
+    if any(not isinstance(m, str) or not m.strip() for m in members):
+        raise HTTPException(status_code=422, detail="members 每项必须是非空字符串")
+    schedule = services_for(principal).monitoring.set_oncall(
+        members=members, updated_by=principal.username
+    )
+    return {**schedule.model_dump(), "current": current_assignee(schedule)}
+
+
+@app.post("/api/monitoring/on-call/rotate")
+def rotate_on_call(principal: Principal = Depends(require("administer"))) -> dict[str, Any]:
+    """docs/33 §5.3：手动轮换（administer）；空表 409。"""
+    monitoring = services_for(principal).monitoring
+    try:
+        schedule = monitoring.rotate_oncall(updated_by=principal.username)
+    except OnCallEmpty as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {**schedule.model_dump(), "current": current_assignee(schedule)}
 
 
 @app.post("/api/nl/generate")
