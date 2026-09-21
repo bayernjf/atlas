@@ -1,0 +1,160 @@
+{
+  "title": "监控告警",
+  "header": {
+    "refresh": "刷新",
+    "back": "返回 Dashboard",
+    "unresolvedBadge": "未关闭告警"
+  },
+  "col": {
+    "rule": "规则",
+    "graph": "图",
+    "message": "内容",
+    "count": "次数",
+    "lastRun": "最近运行",
+    "status": "状态",
+    "lastSeen": "最近发生",
+    "actions": "操作",
+    "run": "运行",
+    "version": "版本",
+    "mode": "方式",
+    "nodes": "节点",
+    "duration": "耗时",
+    "started": "开始",
+    "time": "时间",
+    "graphId": "图 ID",
+    "trigger": "触发",
+    "passRate": "通过率",
+    "passTotal": "通过/总数",
+    "blocked": "阻塞",
+    "samples": "样本",
+    "tool": "工具（adapter/capability）",
+    "calls": "调用数",
+    "failed": "失败",
+    "simulated": "模拟",
+    "errorCodes": "错误码分布",
+    "node": "节点",
+    "type": "类型",
+    "error": "错误"
+  },
+  "severity": {
+    "critical": "严重",
+    "warning": "警告"
+  },
+  "rollback": {
+    "auto": "自动",
+    "manual": "手动",
+    "tag": "{{actor}}回滚 v{{from}} → v{{to}}"
+  },
+  "alertStatus": {
+    "open": "待处理",
+    "acknowledged": "已确认",
+    "resolved": "已关闭"
+  },
+  "alert": {
+    "acknowledge": "确认",
+    "resolve": "关闭"
+  },
+  "version": {
+    "draft": "草稿"
+  },
+  "mode": {
+    "sync": "同步",
+    "stream": "流式"
+  },
+  "health": {
+    "error": "异常",
+    "unhealthy": "节点失败",
+    "healthy": "健康"
+  },
+  "run": {
+    "nodeSummary": "{{ok}} 成 / {{failed}} 败",
+    "uncaughtError": "未捕获错误：{{error}}"
+  },
+  "trigger": {
+    "publishGate": "发布门禁",
+    "manualGate": "手动门禁"
+  },
+  "report": {
+    "uncovered": "未覆盖"
+  },
+  "blocked": {
+    "yes": "阻塞",
+    "no": "放行"
+  },
+  "nodeResult": {
+    "failed": "失败",
+    "success": "成功"
+  },
+  "metric": {
+    "total": "总运行",
+    "healthy": "健康",
+    "unhealthy": "不健康",
+    "successRate": "成功率",
+    "p50": "P50 耗时",
+    "p95": "P95 耗时"
+  },
+  "reportCard": {
+    "title": "跨图用例集报告（最近 100 条，docs/28 §2.4）",
+    "subtitle": "手动/发布门禁沉淀 · 倒序 · Demo 进程内数据"
+  },
+  "business": {
+    "autoRefundRate": "自动退款率（业务）",
+    "manualEscalationRate": "人工升级率（业务）",
+    "amountDiffRate": "退款金额差异率（业务）",
+    "cardTitle": "业务指标 · 按发布版本（灰度门控对照，04 §5.13）",
+    "colAutoRefundRate": "自动退款率",
+    "colManualEscalationRate": "人工升级率",
+    "colAmountDiffRate": "退款金额差异率"
+  },
+  "tool": {
+    "cardTitle": "适配器调用（docs/28 §4.1，真实运行埋点；SIMULATED 为本地模拟，不纳延迟分位）"
+  },
+  "alertCard": {
+    "title": "告警"
+  },
+  "filter": {
+    "allStatus": "全部状态",
+    "allGraphs": "全部图"
+  },
+  "rules": {
+    "cardTitle": "告警规则（仅管理员可改，阈值调整即时生效，进程内保存）",
+    "saveFailed": "规则保存失败",
+    "saved": "规则已保存",
+    "save": "保存规则",
+    "nameEmpty": "存在名称为空的自定义规则（cid {{cid}}）",
+    "exprInvalid": "自定义规则「{{name}}」表达式非法：{{errors}}"
+  },
+  "builtinRule": {
+    "runError": "运行异常",
+    "nodeFailed": "节点失败",
+    "consecutiveFailures": "连续失败",
+    "failureRateName": "失败率超标",
+    "rolloutGate": "灰度门控回滚"
+  },
+  "ruleForm": {
+    "threshold": "阈值",
+    "window": "窗口",
+    "minSamples": "最少样本",
+    "failureRate": "失败率",
+    "rate": "比率",
+    "unitTimes": "次"
+  },
+  "custom": {
+    "title": "自定义规则（表达式，docs/28 §4.2）",
+    "hint": "可用变量（双花括号引用）：status（completed / error / cancelled）、durationMs（整数毫秒）、failedCount（失败节点数）、hasError（是否有错误）；示例：{{status}} == 'error' || {{hasError}}。表达式复用安全条件引擎（禁 eval），结果须为布尔，否则运行时 fail-safe 不告警。",
+    "namePlaceholder": "规则名称",
+    "enabled": "启用",
+    "nameEmpty": "名称不能为空",
+    "add": "＋ 新增自定义规则"
+  },
+  "runsCard": {
+    "title": "最近运行"
+  },
+  "empty": {
+    "reports": "暂无批量回放报告",
+    "business": "暂无带业务结果的运行",
+    "tools": "暂无工具调用（运行含工具节点的图后出现）",
+    "alerts": "暂无告警",
+    "runs": "暂无运行"
+  }
+}

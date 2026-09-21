@@ -48,6 +48,7 @@ import {
   ruleLabel,
   SEVERITY_COLORS,
 } from '../lib/monitoring'
+import { useTranslation } from '../locales'
 
 const { Content, Header } = Layout
 
@@ -81,6 +82,7 @@ function rateText(rate: number | null): string {
 }
 
 export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
+  const { t } = useTranslation('monitoring')
   const canOperate = roleCan(principal.role, 'operate')
   const canAdmin = roleCan(principal.role, 'administer')
   const [metrics, setMetrics] = useState<MetricsSummary>(EMPTY_METRICS)
@@ -182,12 +184,12 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
     // docs/28 §4.2：保存前逐行前端校验（与后端 validate_rules 同构，禁 eval 引擎）
     for (const rule of rules.custom ?? []) {
       if (!rule.name.trim()) {
-        setRuleError(`存在名称为空的自定义规则（cid ${rule.cid}）`)
+        setRuleError(t('rules.nameEmpty', { cid: rule.cid }))
         return
       }
       const exprErrors = validateExpression(rule.expression)
       if (exprErrors.length > 0) {
-        setRuleError(`自定义规则「${rule.name}」表达式非法：${exprErrors.join('；')}`)
+        setRuleError(t('rules.exprInvalid', { name: rule.name, errors: exprErrors.join('；') }))
         return
       }
     }
@@ -203,61 +205,64 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
 
   const alertColumns: ColumnsType<AlertItem> = [
     {
-      title: '规则',
+      title: t('col.rule'),
       dataIndex: 'rule_id',
       width: 110,
       render: (ruleId: AlertItem['rule_id'], alert) => (
         <Space orientation="vertical" size={0}>
-          <span>{ruleLabel(ruleId, alert.rule_name)}</span>
+          <span>{t(ruleLabel(ruleId, alert.rule_name))}</span>
           <Tag color={SEVERITY_COLORS[alert.severity]} style={{ marginTop: 2 }}>
-            {alert.severity === 'critical' ? '严重' : '警告'}
+            {alert.severity === 'critical' ? t('severity.critical') : t('severity.warning')}
           </Tag>
         </Space>
       ),
     },
-    { title: '图', dataIndex: 'graph_id', width: 140 },
+    { title: t('col.graph'), dataIndex: 'graph_id', width: 140 },
     {
-      title: '内容',
+      title: t('col.message'),
       key: 'message',
       render: (_, alert) => (
         <Space orientation="vertical" size={2}>
           <span>{alert.message}</span>
           {alert.action?.type === 'rollback' && (
             <Tag color="volcano" style={{ marginTop: 2 }}>
-              {alert.action.actor === 'auto' ? '自动' : '手动'}回滚 v{alert.action.from_version} → v
-              {alert.action.to_version}
+              {t('rollback.tag', {
+                actor: alert.action.actor === 'auto' ? t('rollback.auto') : t('rollback.manual'),
+                from: alert.action.from_version,
+                to: alert.action.to_version,
+              })}
             </Tag>
           )}
         </Space>
       ),
     },
     {
-      title: '次数',
+      title: t('col.count'),
       dataIndex: 'count',
       width: 70,
       sorter: (a, b) => a.count - b.count,
     },
     {
-      title: '最近运行',
+      title: t('col.lastRun'),
       dataIndex: 'last_run_id',
       width: 90,
     },
     {
-      title: '状态',
+      title: t('col.status'),
       dataIndex: 'status',
       width: 90,
       render: (status: AlertStatus) => (
-        <Tag color={ALERT_STATUS_COLORS[status]}>{ALERT_STATUS_LABELS[status]}</Tag>
+        <Tag color={ALERT_STATUS_COLORS[status]}>{t(ALERT_STATUS_LABELS[status])}</Tag>
       ),
     },
     {
-      title: '最近发生',
+      title: t('col.lastSeen'),
       dataIndex: 'last_seen',
       width: 100,
       render: (value: string) => formatTime(value),
     },
     {
-      title: '操作',
+      title: t('col.actions'),
       key: 'actions',
       width: 140,
       render: (_, alert) =>
@@ -268,7 +273,7 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
               disabled={alert.status !== 'open'}
               onClick={() => mutateAlert(acknowledgeAlert, alert.id)}
             >
-              确认
+              {t('alert.acknowledge')}
             </Button>
             <Button
               size="small"
@@ -277,7 +282,7 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
               disabled={alert.status === 'resolved'}
               onClick={() => mutateAlert(resolveAlert, alert.id)}
             >
-              关闭
+              {t('alert.resolve')}
             </Button>
           </Space>
         ) : null,
@@ -285,47 +290,47 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
   ]
 
   const runColumns: ColumnsType<RunRecord> = [
-    { title: '运行', dataIndex: 'id', width: 90 },
-    { title: '图', dataIndex: 'graph_id', width: 130 },
+    { title: t('col.run'), dataIndex: 'id', width: 90 },
+    { title: t('col.graph'), dataIndex: 'graph_id', width: 130 },
     {
-      title: '版本',
+      title: t('col.version'),
       dataIndex: 'resolved_version',
       width: 80,
-      render: (value: number | null) => (value === null ? '草稿' : `v${value}`),
+      render: (value: number | null) => (value === null ? t('version.draft') : `v${value}`),
     },
     {
-      title: '方式',
+      title: t('col.mode'),
       dataIndex: 'mode',
       width: 80,
-      render: (mode: string) => (mode === 'sync' ? '同步' : '流式'),
+      render: (mode: string) => (mode === 'sync' ? t('mode.sync') : t('mode.stream')),
     },
     {
-      title: '状态',
+      title: t('col.status'),
       key: 'health',
       width: 90,
       render: (_, record) => {
         const health = runHealth(record)
-        if (health === 'error') return <Tag color="red">异常</Tag>
-        if (health === 'unhealthy') return <Tag color="orange">节点失败</Tag>
-        return <Tag color="green">健康</Tag>
+        if (health === 'error') return <Tag color="red">{t('health.error')}</Tag>
+        if (health === 'unhealthy') return <Tag color="orange">{t('health.unhealthy')}</Tag>
+        return <Tag color="green">{t('health.healthy')}</Tag>
       },
     },
     {
-      title: '节点',
+      title: t('col.nodes'),
       key: 'nodes',
       render: (_, record) => {
         const failed = record.nodes.filter((node) => node.status === 'failed').length
-        return `${record.nodes.length - failed} 成 / ${failed} 败`
+        return t('run.nodeSummary', { ok: record.nodes.length - failed, failed })
       },
     },
     {
-      title: '耗时',
+      title: t('col.duration'),
       dataIndex: 'duration_ms',
       width: 100,
       render: (value: number) => formatDuration(value),
     },
     {
-      title: '开始',
+      title: t('col.started'),
       dataIndex: 'started_at',
       width: 110,
       render: (value: string) => formatTime(value),
@@ -334,40 +339,40 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
 
   const crossReportColumns: ColumnsType<ReleaseReportSummary> = [
     {
-      title: '时间',
+      title: t('col.time'),
       dataIndex: 'created_at',
       width: 180,
       render: (value) => formatTime(value as string),
     },
-    { title: '图 ID', dataIndex: 'graph_id', ellipsis: true },
+    { title: t('col.graphId'), dataIndex: 'graph_id', ellipsis: true },
     {
-      title: '触发',
+      title: t('col.trigger'),
       dataIndex: 'trigger',
       width: 100,
-      render: (value) => (value === 'publish-gate' ? '发布门禁' : '手动门禁'),
+      render: (value) => (value === 'publish-gate' ? t('trigger.publishGate') : t('trigger.manualGate')),
     },
     {
-      title: '通过率',
+      title: t('col.passRate'),
       dataIndex: 'pass_rate',
       width: 110,
       render: (value) => {
         const rate = value as number | null
-        if (rate === null) return <Tag>未覆盖</Tag>
+        if (rate === null) return <Tag>{t('report.uncovered')}</Tag>
         const color = rate >= 1 ? 'green' : rate >= 0.8 ? 'orange' : 'red'
         return <Tag color={color}>{(rate * 100).toFixed(1)}%</Tag>
       },
     },
     {
-      title: '通过/总数',
+      title: t('col.passTotal'),
       width: 100,
       render: (_, record) => `${record.passed}/${record.total}`,
     },
     {
-      title: '阻塞',
+      title: t('col.blocked'),
       dataIndex: 'blocked',
       width: 90,
       render: (value) =>
-        value ? <Tag color="red">阻塞</Tag> : <Tag color="green">放行</Tag>,
+        value ? <Tag color="red">{t('blocked.yes')}</Tag> : <Tag color="green">{t('blocked.no')}</Tag>,
     },
   ]
 
@@ -376,13 +381,13 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
       <Header className="page-header">
         <Space style={{ width: '100%', justifyContent: 'space-between' }}>
           <Typography.Title level={3} style={{ margin: 0 }}>
-            监控告警
+            {t('title')}
           </Typography.Title>
           <Space>
-            <Badge count={unresolvedCount} title="未关闭告警">
-              <Button onClick={refresh}>刷新</Button>
+            <Badge count={unresolvedCount} title={t('header.unresolvedBadge')}>
+              <Button onClick={refresh}>{t('header.refresh')}</Button>
             </Badge>
-            <Button onClick={onBack}>返回 Dashboard</Button>
+            <Button onClick={onBack}>{t('header.back')}</Button>
             <UserBadge principal={principal} onLogout={onLogout} />
           </Space>
         </Space>
@@ -394,13 +399,13 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
           <Row gutter={16}>
             <Col span={4}>
               <Card>
-                <Statistic title="总运行" value={metrics.total} />
+                <Statistic title={t('metric.total')} value={metrics.total} />
               </Card>
             </Col>
             <Col span={4}>
               <Card>
                 <Statistic
-                  title="健康"
+                  title={t('metric.healthy')}
                   value={metrics.healthy}
                   styles={{ content: { color: 'var(--atlas-color-success)' } }}
                 />
@@ -409,7 +414,7 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
             <Col span={4}>
               <Card>
                 <Statistic
-                  title="不健康"
+                  title={t('metric.unhealthy')}
                   value={metrics.unhealthy}
                   styles={{ content: { color: metrics.unhealthy ? 'var(--atlas-color-danger)' : undefined } }}
                 />
@@ -417,26 +422,26 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
             </Col>
             <Col span={4}>
               <Card>
-                <Statistic title="成功率" value={rateText(metrics.success_rate)} />
+                <Statistic title={t('metric.successRate')} value={rateText(metrics.success_rate)} />
               </Card>
             </Col>
             <Col span={4}>
               <Card>
-                <Statistic title="P50 耗时" value={formatDuration(metrics.p50)} />
+                <Statistic title={t('metric.p50')} value={formatDuration(metrics.p50)} />
               </Card>
             </Col>
             <Col span={4}>
               <Card>
-                <Statistic title="P95 耗时" value={formatDuration(metrics.p95)} />
+                <Statistic title={t('metric.p95')} value={formatDuration(metrics.p95)} />
               </Card>
             </Col>
           </Row>
 
           <Card
-            title="跨图用例集报告（最近 100 条，docs/28 §2.4）"
+            title={t('reportCard.title')}
             extra={
               <Typography.Text type="secondary">
-                手动/发布门禁沉淀 · 倒序 · Demo 进程内数据
+                {t('reportCard.subtitle')}
               </Typography.Text>
             }
           >
@@ -446,51 +451,51 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
               pagination={false}
               dataSource={crossReports}
               columns={crossReportColumns}
-              locale={{ emptyText: '暂无批量回放报告' }}
+              locale={{ emptyText: t('empty.reports') }}
             />
           </Card>
 
           <Row gutter={16}>
             <Col span={8}>
               <Card>
-                <Statistic title="自动退款率（业务）" value={rateText(metrics.business?.auto_refund_rate ?? null)} />
+                <Statistic title={t('business.autoRefundRate')} value={rateText(metrics.business?.auto_refund_rate ?? null)} />
               </Card>
             </Col>
             <Col span={8}>
               <Card>
-                <Statistic title="人工升级率（业务）" value={rateText(metrics.business?.manual_escalation_rate ?? null)} />
+                <Statistic title={t('business.manualEscalationRate')} value={rateText(metrics.business?.manual_escalation_rate ?? null)} />
               </Card>
             </Col>
             <Col span={8}>
               <Card>
                 <Statistic
-                  title="退款金额差异率（业务）"
+                  title={t('business.amountDiffRate')}
                   value={rateText(metrics.business?.refund_amount_diff_rate ?? null)}
                 />
               </Card>
             </Col>
           </Row>
 
-          <Card title="业务指标 · 按发布版本（灰度门控对照，04 §5.13）">
+          <Card title={t('business.cardTitle')}>
             <Table
               size="small"
               pagination={false}
               rowKey={(row) => `${row.graph_id}@${row.resolved_version ?? 'draft'}`}
               dataSource={metrics.business?.per_version ?? []}
-              locale={{ emptyText: '暂无带业务结果的运行' }}
+              locale={{ emptyText: t('empty.business') }}
               columns={[
-                { title: '图', dataIndex: 'graph_id' },
+                { title: t('col.graph'), dataIndex: 'graph_id' },
                 {
-                  title: '版本',
+                  title: t('col.version'),
                   dataIndex: 'resolved_version',
                   width: 90,
-                  render: (value: number | null) => (value === null ? '草稿' : `v${value}`),
+                  render: (value: number | null) => (value === null ? t('version.draft') : `v${value}`),
                 },
-                { title: '样本', dataIndex: 'samples', width: 80 },
-                { title: '自动退款率', dataIndex: 'auto_refund_rate', render: rateText },
-                { title: '人工升级率', dataIndex: 'manual_escalation_rate', render: rateText },
+                { title: t('col.samples'), dataIndex: 'samples', width: 80 },
+                { title: t('business.colAutoRefundRate'), dataIndex: 'auto_refund_rate', render: rateText },
+                { title: t('business.colManualEscalationRate'), dataIndex: 'manual_escalation_rate', render: rateText },
                 {
-                  title: '退款金额差异率',
+                  title: t('business.colAmountDiffRate'),
                   dataIndex: 'refund_amount_diff_rate',
                   render: rateText,
                 },
@@ -498,29 +503,27 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
             />
           </Card>
 
-          <Card
-            title="适配器调用（docs/28 §4.1，真实运行埋点；SIMULATED 为本地模拟，不纳延迟分位）"
-          >
+          <Card title={t('tool.cardTitle')}>
             <Table<ToolMetricsRow>
               rowKey="tool"
               size="small"
               pagination={false}
               dataSource={metrics.tools ?? []}
-              locale={{ emptyText: '暂无工具调用（运行含工具节点的图后出现）' }}
+              locale={{ emptyText: t('empty.tools') }}
               columns={[
-                { title: '工具（adapter/capability）', dataIndex: 'tool' },
-                { title: '调用数', dataIndex: 'calls', width: 90 },
+                { title: t('col.tool'), dataIndex: 'tool' },
+                { title: t('col.calls'), dataIndex: 'calls', width: 90 },
                 {
-                  title: '失败',
+                  title: t('col.failed'),
                   dataIndex: 'failed',
                   width: 80,
                   render: (value: number) => (value > 0 ? <Tag color="red">{value}</Tag> : 0),
                 },
-                { title: '模拟', dataIndex: 'simulated', width: 80 },
+                { title: t('col.simulated'), dataIndex: 'simulated', width: 80 },
                 { title: 'P50', dataIndex: 'p50', width: 100, render: formatDuration },
                 { title: 'P95', dataIndex: 'p95', width: 100, render: formatDuration },
                 {
-                  title: '错误码分布',
+                  title: t('col.errorCodes'),
                   dataIndex: 'error_codes',
                   render: (codes: Record<string, number>) => {
                     const entries = Object.entries(codes)
@@ -544,8 +547,8 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
           <Card
             title={
               <Space>
-                告警
-                <Badge count={unresolvedCount} title="未关闭告警" />
+                {t('alertCard.title')}
+                <Badge count={unresolvedCount} title={t('header.unresolvedBadge')} />
               </Space>
             }
             extra={
@@ -554,10 +557,10 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
                 style={{ width: 140 }}
                 onChange={setStatusFilter}
                 options={[
-                  { value: 'all', label: '全部状态' },
-                  { value: 'open', label: '待处理' },
-                  { value: 'acknowledged', label: '已确认' },
-                  { value: 'resolved', label: '已关闭' },
+                  { value: 'all', label: t('filter.allStatus') },
+                  { value: 'open', label: t(ALERT_STATUS_LABELS.open) },
+                  { value: 'acknowledged', label: t(ALERT_STATUS_LABELS.acknowledged) },
+                  { value: 'resolved', label: t(ALERT_STATUS_LABELS.resolved) },
                 ]}
               />
             }
@@ -568,21 +571,21 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
               columns={alertColumns}
               dataSource={visibleAlerts}
               pagination={{ pageSize: 8, showSizeChanger: false }}
-              locale={{ emptyText: '暂无告警' }}
+              locale={{ emptyText: t('empty.alerts') }}
             />
           </Card>
 
           {rules && canAdmin && (
-            <Card title="告警规则（仅管理员可改，阈值调整即时生效，进程内保存）">
+            <Card title={t('rules.cardTitle')}>
               {ruleError && (
-                <Alert type="error" showIcon message="规则保存失败" description={ruleError} style={{ marginBottom: 12 }} />
+                <Alert type="error" showIcon message={t('rules.saveFailed')} description={ruleError} style={{ marginBottom: 12 }} />
               )}
               {ruleSaved && !ruleError && (
-                <Alert type="success" showIcon message="规则已保存" style={{ marginBottom: 12 }} />
+                <Alert type="success" showIcon message={t('rules.saved')} style={{ marginBottom: 12 }} />
               )}
               <Space wrap size="large">
                 <Space>
-                  <span>运行异常</span>
+                  <span>{t('builtinRule.runError')}</span>
                   <Switch
                     checked={rules.run_error.enabled}
                     onChange={(enabled) =>
@@ -591,7 +594,7 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
                   />
                 </Space>
                 <Space>
-                  <span>节点失败</span>
+                  <span>{t('builtinRule.nodeFailed')}</span>
                   <Switch
                     checked={rules.node_failed.enabled}
                     onChange={(enabled) =>
@@ -600,7 +603,7 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
                   />
                 </Space>
                 <Space>
-                  <span>连续失败</span>
+                  <span>{t('builtinRule.consecutiveFailures')}</span>
                   <Switch
                     checked={rules.consecutive_failures.enabled}
                     onChange={(enabled) =>
@@ -610,7 +613,7 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
                       })
                     }
                   />
-                  <span>阈值</span>
+                  <span>{t('ruleForm.threshold')}</span>
                   <InputNumber
                     min={1}
                     max={200}
@@ -622,11 +625,11 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
                         consecutive_failures: { ...rules.consecutive_failures, threshold: value },
                       })
                     }
-                    suffix="次"
+                    suffix={t('ruleForm.unitTimes')}
                   />
                 </Space>
                 <Space>
-                  <span>失败率</span>
+                  <span>{t('ruleForm.failureRate')}</span>
                   <Switch
                     checked={rules.failure_rate.enabled}
                     onChange={(enabled) =>
@@ -636,7 +639,7 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
                       })
                     }
                   />
-                  <span>窗口</span>
+                  <span>{t('ruleForm.window')}</span>
                   <InputNumber
                     min={1}
                     max={200}
@@ -648,9 +651,9 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
                         failure_rate: { ...rules.failure_rate, window: value },
                       })
                     }
-                    suffix="次"
+                    suffix={t('ruleForm.unitTimes')}
                   />
-                  <span>最少样本</span>
+                  <span>{t('ruleForm.minSamples')}</span>
                   <InputNumber
                     min={1}
                     max={200}
@@ -663,7 +666,7 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
                       })
                     }
                   />
-                  <span>比率</span>
+                  <span>{t('ruleForm.rate')}</span>
                   <InputNumber
                     min={0}
                     max={1}
@@ -679,16 +682,15 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
                   />
                 </Space>
                 <Button type="primary" onClick={saveRules}>
-                  保存规则
+                  {t('rules.save')}
                 </Button>
               </Space>
 
               <div style={{ marginTop: 16 }}>
-                <Typography.Text strong>自定义规则（表达式，docs/28 §4.2）</Typography.Text>
+                <Typography.Text strong>{t('custom.title')}</Typography.Text>
                 <Typography.Paragraph type="secondary" style={{ marginBottom: 8, marginTop: 4 }}>
-                  可用变量（双花括号引用）：status（completed / error / cancelled）、durationMs（整数毫秒）、
-                  failedCount（失败节点数）、hasError（是否有错误）；示例：{"{{status}} == 'error' || {{hasError}}"}。
-                  表达式复用安全条件引擎（禁 eval），结果须为布尔，否则运行时 fail-safe 不告警。
+                  {/* custom.hint 内含教学用字面 {{status}}/{{hasError}}，t() 不传这两个变量故原样保留 */}
+                  {t('custom.hint')}
                 </Typography.Paragraph>
                 {(rules.custom ?? []).map((rule, idx) => {
                   const exprErrors = validateExpression(rule.expression)
@@ -701,7 +703,7 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
                       style={{ display: 'flex', marginBottom: 8 }}
                     >
                       <Input
-                        placeholder="规则名称"
+                        placeholder={t('custom.namePlaceholder')}
                         value={rule.name}
                         style={{ width: 150 }}
                         status={nameEmpty ? 'error' : undefined}
@@ -719,44 +721,44 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
                         style={{ width: 100 }}
                         onChange={(severity) => updateCustom(idx, { severity })}
                         options={[
-                          { value: 'warning', label: '警告' },
-                          { value: 'critical', label: '严重' },
+                          { value: 'warning', label: t('severity.warning') },
+                          { value: 'critical', label: t('severity.critical') },
                         ]}
                       />
                       <Space style={{ marginTop: 4 }}>
-                        <span>启用</span>
+                        <span>{t('custom.enabled')}</span>
                         <Switch
                           checked={rule.enabled}
                           onChange={(enabled) => updateCustom(idx, { enabled })}
                         />
                       </Space>
                       <Button danger size="small" style={{ marginTop: 2 }} onClick={() => removeCustom(idx)}>
-                        删除
+                        {t('common:button.delete')}
                       </Button>
                       {(nameEmpty || exprErrors.length > 0) && (
                         <Typography.Text type="danger" style={{ marginTop: 6 }}>
-                          {nameEmpty ? '名称不能为空' : exprErrors.join('；')}
+                          {nameEmpty ? t('custom.nameEmpty') : exprErrors.join('；')}
                         </Typography.Text>
                       )}
                     </Space>
                   )
                 })}
                 <Button size="small" onClick={addCustom}>
-                  ＋ 新增自定义规则
+                  {t('custom.add')}
                 </Button>
               </div>
             </Card>
           )}
 
           <Card
-            title="最近运行"
+            title={t('runsCard.title')}
             extra={
               <Select
                 value={graphFilter}
                 style={{ width: 220 }}
                 onChange={setGraphFilter}
                 options={[
-                  { value: 'all', label: '全部图' },
+                  { value: 'all', label: t('filter.allGraphs') },
                   ...metrics.per_graph.map((item) => ({
                     value: item.graph_id,
                     label: item.graph_id,
@@ -771,32 +773,32 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
               columns={runColumns}
               dataSource={runs}
               pagination={{ pageSize: 8, showSizeChanger: false }}
-              locale={{ emptyText: '暂无运行' }}
+              locale={{ emptyText: t('empty.runs') }}
               expandable={{
                 rowExpandable: (record) => record.nodes.length > 0 || record.error !== null,
                 expandedRowRender: (record) =>
                   record.error ? (
-                    <Alert type="error" showIcon message={`未捕获错误：${record.error}`} />
+                    <Alert type="error" showIcon message={t('run.uncaughtError', { error: record.error })} />
                   ) : (
                     <Table
                       rowKey="node_id"
                       size="small"
                       pagination={false}
                       columns={[
-                        { title: '节点', dataIndex: 'node_id' },
-                        { title: '类型', dataIndex: 'node_type' },
+                        { title: t('col.node'), dataIndex: 'node_id' },
+                        { title: t('col.type'), dataIndex: 'node_type' },
                         {
-                          title: '状态',
+                          title: t('col.status'),
                           dataIndex: 'status',
                           width: 90,
                           render: (status: string) =>
                             status === 'failed' ? (
-                              <Tag color="red">失败</Tag>
+                              <Tag color="red">{t('nodeResult.failed')}</Tag>
                             ) : (
-                              <Tag color="green">成功</Tag>
+                              <Tag color="green">{t('nodeResult.success')}</Tag>
                             ),
                         },
-                        { title: '错误', dataIndex: 'error', render: (value: string | null) => value ?? '—' },
+                        { title: t('col.error'), dataIndex: 'error', render: (value: string | null) => value ?? '—' },
                       ]}
                       dataSource={record.nodes}
                     />

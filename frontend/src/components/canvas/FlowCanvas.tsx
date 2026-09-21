@@ -4,6 +4,7 @@ import '@xyflow/react/dist/style.css'
 import { useEditorStore, type EditorNode } from '../../store/editorStore'
 import type { NodeKind } from '../../lib/nodeCatalog'
 import { token } from '../../theme/tokens'
+import { useTranslation } from '../../locales'
 import { AtlasNode } from './AtlasNode'
 import { ProblemsPanel } from './ProblemsPanel'
 
@@ -26,6 +27,7 @@ function FlowCanvasInner() {
   const selectNode = useEditorStore((state) => state.selectNode)
   const addNodeAt = useEditorStore((state) => state.addNodeAt)
   const { screenToFlowPosition } = useReactFlow()
+  const { t } = useTranslation('editor')
 
   const nodeTypes = useMemo(() => ({ atlasNode: AtlasNode }), [])
 
@@ -37,14 +39,14 @@ function FlowCanvasInner() {
           if (branch.target) labels.set(`${node.id}->${branch.target}`, branch.label || branch.target)
         }
         if (node.data.config.defaultTarget) {
-          labels.set(`${node.id}->${node.data.config.defaultTarget}`, '默认')
+          labels.set(`${node.id}->${node.data.config.defaultTarget}`, t('canvas.branchDefault'))
         }
       } else if (node.data.kind === 'loop') {
         if (node.data.config.bodyTarget) {
-          labels.set(`${node.id}->${node.data.config.bodyTarget}`, '循环体')
+          labels.set(`${node.id}->${node.data.config.bodyTarget}`, t('canvas.loopBody'))
         }
         if (node.data.config.exitTarget) {
-          labels.set(`${node.id}->${node.data.config.exitTarget}`, '退出')
+          labels.set(`${node.id}->${node.data.config.exitTarget}`, t('canvas.loopExit'))
         }
       } else if (node.data.kind === 'parallel') {
         for (const branch of node.data.config.branches ?? []) {
@@ -52,15 +54,15 @@ function FlowCanvasInner() {
         }
       } else if (node.data.kind === 'human_approval') {
         if (node.data.config.approvedTarget) {
-          labels.set(`${node.id}->${node.data.config.approvedTarget}`, '通过')
+          labels.set(`${node.id}->${node.data.config.approvedTarget}`, t('canvas.approvalApproved'))
         }
         if (node.data.config.rejectedTarget) {
-          labels.set(`${node.id}->${node.data.config.rejectedTarget}`, '拒绝')
+          labels.set(`${node.id}->${node.data.config.rejectedTarget}`, t('canvas.approvalRejected'))
         }
       }
     }
     return labels
-  }, [nodes])
+  }, [nodes, t])
 
   const onDragOver = useCallback((event: React.DragEvent) => {
     event.preventDefault()

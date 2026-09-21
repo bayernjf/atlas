@@ -26,6 +26,7 @@ import { ApprovalCardGate } from '../components/approval/CardRenderer'
 import { ReleaseModal } from '../components/release/ReleaseModal'
 import { RolloutModal } from '../components/release/RolloutModal'
 import { roleCan, type Principal } from '../lib/auth'
+import { useTranslation } from '../locales'
 import { useEditorStore } from '../store/editorStore'
 import { useValidationEngine } from '../lib/validation/useValidationEngine'
 import { serializeGraph } from '../lib/graphSerializer'
@@ -70,7 +71,10 @@ import {
 const { Header, Sider, Content, Footer } = Layout
 const { TextArea } = Input
 
-/** docs/28 §2.2/§2.3：把 TextArea 文本解析为顶层 JSON 对象；非法返回 ok:false 与文案。 */
+/**
+ * docs/28 §2.2/§2.3：把 TextArea 文本解析为顶层 JSON 对象；非法返回 ok:false 与
+ * editor namespace 下的 i18n key（调用方经 t() 上屏，后端错误码 i18n 不在本批）。
+ */
 function parseInputsObject(
   text: string,
 ): { ok: true; value: Record<string, unknown> } | { ok: false; error: string } {
@@ -78,20 +82,12 @@ function parseInputsObject(
   try {
     parsed = JSON.parse(text)
   } catch {
-    return { ok: false, error: '入参不是合法 JSON，请检查格式' }
+    return { ok: false, error: 'error.inputsInvalidJson' }
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    return { ok: false, error: '入参必须是顶层 JSON 对象（{}）' }
+    return { ok: false, error: 'error.inputsNotObject' }
   }
   return { ok: true, value: parsed as Record<string, unknown> }
-}
-
-// docs/28 §3：调试暂停原因中文映射（含批 2 异常断点）。
-const DEBUG_REASON_LABELS: Record<string, string> = {
-  step: '单步',
-  breakpoint: '断点',
-  condition: '条件',
-  exception: '异常',
 }
 
 const DEMO_ORDERS: Array<{ order_id: string; reason: string; amount: number }> = [
@@ -103,7 +99,11 @@ const DEMO_ORDERS: Array<{ order_id: string; reason: string; amount: number }> =
 ]
 
 export function Editor({ principal, onLogout }: { principal: Principal; onLogout: () => void }) {
+  const { t } = useTranslation('editor')
   const canOperate = roleCan(principal.role, 'operate')
+  // docs/28 §3：调试暂停原因中文映射（含批 2 异常断点）；未知 reason 回退原值（后端枚举数据不译）。
+  const reasonLabel = (reason: string): string =>
+    t(`debug.reason.${reason}`, { defaultValue: reason })
   const nodes = useEditorStore((state) => state.nodes)
   const edges = useEditorStore((state) => state.edges)
   const variables = useEditorStore((state) => state.variables)
@@ -137,7 +137,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
   const [approvalBusy, setApprovalBusy] = useState(false)
   const [approvalError, setApprovalError] = useState<string | null>(null)
   const [selectedOrderId, setSelectedOrderId] = useState('12345')
-  const [nlPrompt, setNlPrompt] = useState('帮我做一个电商退款自动审批流程')
+  const [nlPrompt, setNlPrompt] = useState(t('nl.defaultPrompt'))
   const [recordingOpen, setRecordingOpen] = useState(false)
   const [recordings, setRecordings] = useState<RecordingSummary[]>([])
   const [recordingsLoading, setRecordingsLoading] = useState(false)
@@ -225,23 +225,23 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
       let graphId: string
       if (pinnedVersion !== undefined && publishedRef) {
         graphId = publishedRef.id
-        appendLog(`运行已发布版本：${graphId}@${pinnedVersion}（不使用当前草稿）`)
+        appendLog(t('log.runPublished', { graphId, version: pinnedVersion }))
       } else if (draftGraphId) {
         // 同一画布复用稳定 graph id：PUT 覆盖草稿、不新建图，录制用例与发布门禁才能匹配本图
         await saveGraphDraft(draftGraphId, serialized)
         graphId = draftGraphId
-        appendLog(`已更新草稿：${graphId}`)
+        appendLog(t('log.draftUpdated', { graphId }))
         const compiled = await compileGraph(graphId)
         setCompileResult(compiled)
-        appendLog(`编译成功：入口 ${compiled.entrypoints.join(', ')}`)
+        appendLog(t('log.compileSuccess', { entrypoints: compiled.entrypoints.join(', ') }))
       } else {
         const saved = await saveGraph(serialized)
         graphId = saved.id
         setDraftGraphId(graphId)
-        appendLog(`已保存 Graph：${graphId}`)
+        appendLog(t('log.graphSaved', { graphId }))
         const compiled = await compileGraph(graphId)
         setCompileResult(compiled)
-        appendLog(`编译成功：入口 ${compiled.entrypoints.join(', ')}`)
+        appendLog(t('log.compileSuccess', { entrypoints: compiled.entrypoints.join(', ')}))
       }
       const executed = await streamRun(
         graphId,
@@ -253,9 +253,12 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
           setPausedFrame(event)
           setResumeBusy(null)
           setVarFilter('')
-          const reasonLabel = DEBUG_REASON_LABELS[event.reason] ?? event.reason
           appendLog(
-            `⏸ 调试暂停：${subgraphPathPrefix(event.subgraphPath)}${event.node_id}（${reasonLabel}）`,
+            t('log.paused', {
+              prefix: subgraphPathPrefix(event.subgraphPath),
+              node: event.node_id,
+              reason: reasonLabel(event.reason),
+            }),
           )
         } else if (event.type === 'stopped') {
           setPausedFrame(null)
@@ -266,7 +269,12 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
         } else if (event.type === 'debug_log') {
           const logPrefix = subgraphPathPrefix(event.subgraphPath)
           appendLog(
-            `📝 ${logPrefix}${event.node_id} 日志断点（第 ${event.hits} 次）：${event.message}`,
+            t('log.logBreakpoint', {
+              prefix: logPrefix,
+              node: event.node_id,
+              hits: event.hits,
+              message: event.message,
+            }),
           )
         } else if (event.type === 'node_start') {
           // A 包（docs/27 §3.3）：子图内部节点事件带 subgraphPath，日志加路径前缀，
@@ -275,14 +283,20 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
           const startInSubgraph = isSubgraphInternal(event.subgraphPath)
           const startPrefix = subgraphPathPrefix(event.subgraphPath)
           if (!startInSubgraph) setNodeStatus(event.node_id, 'running')
-          appendLog(`▶ ${startPrefix}节点开始：${event.node_id}`)
+          appendLog(t('log.nodeStart', { prefix: startPrefix, node: event.node_id }))
           if (event.approval) {
             const approval = event.approval
             setPendingApprovals((items) => [
               ...items,
               { ...approval, nodeId: event.node_id, subgraphPath: startPath },
             ])
-            appendLog(`⏸ ${startPrefix}${event.node_id} 等待人工审批：${approval.summary}`)
+            appendLog(
+              t('approval.waitingLog', {
+                prefix: startPrefix,
+                node: event.node_id,
+                summary: approval.summary,
+              }),
+            )
           }
         } else if (event.type === 'node_end') {
           const endInSubgraph = isSubgraphInternal(event.subgraphPath)
@@ -309,82 +323,146 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
           if (endInSubgraph) {
             if (output?.mode === 'human_approval') {
               const subHumanDecision = output.decision as unknown as 'approved' | 'rejected'
-              const subDecisionLabel = subHumanDecision === 'approved' ? '通过' : '拒绝'
+              const subDecisionLabel =
+                subHumanDecision === 'approved'
+                  ? t('approval.decisionApproved')
+                  : t('approval.decisionRejected')
               const subSourceLabel =
-                { human: '人工', timeout: '超时', input: '预置' }[output.resolvedBy ?? ''] ??
-                output.resolvedBy
+                {
+                  human: t('approval.sourceHuman'),
+                  timeout: t('approval.sourceTimeout'),
+                  input: t('approval.sourceInput'),
+                }[output.resolvedBy ?? ''] ?? output.resolvedBy
               appendLog(
-                `✓ ${endPrefix}${event.node_id} 人工审批：${subDecisionLabel}（${subSourceLabel}）→ ${output.target}`,
+                t('approval.resultLog', {
+                  prefix: endPrefix,
+                  node: event.node_id,
+                  decision: subDecisionLabel,
+                  source: subSourceLabel,
+                  target: output.target,
+                }),
               )
               setPendingApprovals((items) => items.filter((item) => item.nodeId !== event.node_id))
               setApprovalError(null)
             } else {
-              appendLog(`✓ ${endPrefix}节点完成：${event.node_id}`)
+              appendLog(t('log.nodeComplete', { prefix: endPrefix, node: event.node_id }))
             }
             return
           }
           const decision = output?.decision
           if (output?.mode === 'human_approval') {
             const humanDecision = output.decision as unknown as 'approved' | 'rejected'
-            const decisionLabel = humanDecision === 'approved' ? '通过' : '拒绝'
-            const sourceLabel =
-              { human: '人工', timeout: '超时', input: '预置' }[output.resolvedBy ?? ''] ??
-              output.resolvedBy
+            const decisionText =
+              humanDecision === 'approved'
+                ? t('approval.decisionApproved')
+                : t('approval.decisionRejected')
+            const sourceText =
+              {
+                human: t('approval.sourceHuman'),
+                timeout: t('approval.sourceTimeout'),
+                input: t('approval.sourceInput'),
+              }[output.resolvedBy ?? ''] ?? output.resolvedBy
             appendLog(
-              `✓ ${event.node_id} 人工审批：${decisionLabel}（${sourceLabel}）→ ${output.target}`,
+              t('approval.resultLog', {
+                prefix: '',
+                node: event.node_id,
+                decision: decisionText,
+                source: sourceText,
+                target: output.target,
+              }),
             )
             setPendingApprovals((items) => items.filter((item) => item.nodeId !== event.node_id))
             setApprovalError(null)
           } else if (decision?.action) {
-            appendLog(`✓ ${event.node_id} 决策：${decision.action}`)
+            appendLog(t('log.decision', { node: event.node_id, action: decision.action }))
           } else if (output?.branch) {
-            const branchLabel = output.branch === '__default__' ? '默认' : output.branch
-            appendLog(`✓ ${event.node_id} 分支：${branchLabel} → ${output.target}`)
+            const branchText =
+              output.branch === '__default__' ? t('log.branchDefault') : output.branch
+            appendLog(
+              t('log.branch', { node: event.node_id, branch: branchText, target: output.target }),
+            )
           } else if (output?.mode === 'parallel') {
             if (output.status === 'running') {
-              appendLog(`✓ ${event.node_id} 并行启动 ${output.branches?.length ?? 0} 个分支`)
+              appendLog(
+                t('log.parallelStarted', {
+                  node: event.node_id,
+                  count: output.branches?.length ?? 0,
+                }),
+              )
             } else if (output.status === 'failed') {
               const failed = (output.branches ?? []).filter((branch) => branch.status === 'failed')
               const detail = failed.map((branch) => `${branch.label}（${branch.error}）`).join('，')
               appendLog(
-                `✓ ${event.node_id} 并行汇聚：${failed.length} 个分支失败：${detail}（汇聚节点仍执行）`,
+                t('log.parallelFailed', {
+                  node: event.node_id,
+                  count: failed.length,
+                  detail,
+                }),
               )
             } else {
-              appendLog(`✓ ${event.node_id} 并行汇聚：全部成功`)
+              appendLog(t('log.parallelAllOk', { node: event.node_id }))
             }
           } else if (output?.mode === 'while') {
             if (output.exitReason === null) {
-              appendLog(`✓ ${event.node_id} 继续循环：第 ${output.iterations} 轮 → ${output.target}`)
-            } else {
-              const reasonLabel = {
-                condition_false: '条件不满足',
-                max_iterations: '达到最大次数',
-                expression_error: '表达式异常',
-              }[output.exitReason ?? ''] ?? output.exitReason
               appendLog(
-                `✓ ${event.node_id} 退出循环：${reasonLabel}，共 ${output.iterations} 轮 → ${output.target}`,
+                t('log.loopContinue', {
+                  node: event.node_id,
+                  iterations: output.iterations,
+                  target: output.target,
+                }),
+              )
+            } else {
+              const loopReasonText =
+                {
+                  condition_false: t('log.loopReasonConditionFalse'),
+                  max_iterations: t('log.loopReasonMaxIterations'),
+                  expression_error: t('log.loopReasonExpressionError'),
+                }[output.exitReason ?? ''] ?? output.exitReason
+              appendLog(
+                t('log.loopExit', {
+                  node: event.node_id,
+                  reason: loopReasonText,
+                  iterations: output.iterations,
+                  target: output.target,
+                }),
               )
             }
           } else if (output?.mode === 'wait') {
-            appendLog(`✓ ${event.node_id} 等待完成：${output.durationSeconds} 秒`)
+            appendLog(
+              t('log.waitDone', { node: event.node_id, seconds: output.durationSeconds }),
+            )
           } else if (output?.mode === 'subgraph') {
             if (output.status === 'failed') {
-              appendLog(`✓ ${event.node_id} 子图完成：${output.graphId}（失败：${output.error ?? '未知错误'}）`)
+              appendLog(
+                t('log.subgraphFailed', {
+                  node: event.node_id,
+                  graphId: output.graphId,
+                  error: output.error ?? t('log.unknownError'),
+                }),
+              )
             } else {
-              appendLog(`✓ ${event.node_id} 子图完成：${output.graphId}（成功）`)
+              appendLog(
+                t('log.subgraphOk', { node: event.node_id, graphId: output.graphId }),
+              )
             }
           } else if (output?.action_status) {
             if (output.action_status === 'SUCCESS') {
               const httpStatus =
-                typeof output.result?.status === 'number' ? `（HTTP ${output.result.status}）` : ''
-              appendLog(`✓ ${event.node_id} 工具调用：SUCCESS${httpStatus}`)
+                typeof output.result?.status === 'number'
+                  ? t('log.toolHttpStatus', { status: output.result.status })
+                  : ''
+              appendLog(t('log.toolSuccess', { node: event.node_id, http: httpStatus }))
             } else {
               appendLog(
-                `✗ ${event.node_id} 工具调用：FAILED（${output.result?.code ?? 'UNKNOWN'} ${output.result?.message ?? ''}）`,
+                t('log.toolFailed', {
+                  node: event.node_id,
+                  code: output.result?.code ?? 'UNKNOWN',
+                  message: output.result?.message ?? '',
+                }),
               )
             }
           } else {
-            appendLog(`✓ 节点完成：${event.node_id}`)
+            appendLog(t('log.rootComplete', { node: event.node_id }))
           }
         }
       },
@@ -396,12 +474,13 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
           typeof output === 'object' && output !== null && 'result' in output,
       )
       const finalStatus = toolOutputs.find((output) => output.result?.status)?.result?.status
-      appendLog(`运行结束：${finalStatus ?? executed.status}`)
+      appendLog(t('log.runComplete', { status: finalStatus ?? executed.status }))
       setRunResult(executed)
       setPausedFrame(null)
       setRunOpen(true)
       if (shouldRecord) {
-        const name = caseName.trim() || `录制 ${graphId} ${new Date().toLocaleString()}`
+        const now = new Date().toLocaleString()
+        const name = caseName.trim() || t('recording.defaultName', { graphId, time: now })
         const savedCase = await saveRecording({
           name,
           graph_id: graphId,
@@ -409,20 +488,22 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
           steps: toSteps(collected),
           status: executed.status,
         })
-        appendLog(`已保存录制用例：${savedCase.id}（${savedCase.steps.length} 个步骤）`)
+        appendLog(
+          t('recording.saved', { id: savedCase.id, steps: savedCase.steps.length }),
+        )
         setRecordings(await listRecordings())
-        setCaseName(`录制 ${new Date().toLocaleString()}`)
+        setCaseName(t('recording.defaultNameTime', { time: now }))
       }
     } catch (error) {
       if (error instanceof DebugRunStoppedError) {
-        appendLog(`调试已停止：${error.nodeId}（无运行结果）`)
+        appendLog(t('log.stopped', { node: error.nodeId }))
       } else if (error instanceof RunCancelledError) {
-        appendLog(`⏹ 运行已急停：${error.nodeId}（协作式取消，无运行结果）`)
+        appendLog(t('log.cancelled', { node: error.nodeId }))
       } else {
         const message = error instanceof Error ? error.message : String(error)
         setRunError(message)
         if (shouldRecord) setRecordingError(message)
-        appendLog(`✗ 运行失败：${message}`)
+        appendLog(t('log.runFailed', { message }))
       }
     } finally {
       setRunning(false)
@@ -436,13 +517,13 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
     const current = serializeGraph(nodes, edges, variables)
     if (draftGraphId) {
       await saveGraphDraft(draftGraphId, current)
-      appendLog(`已更新草稿：${draftGraphId}`)
+      appendLog(t('log.draftUpdated', { graphId: draftGraphId }))
       return draftGraphId
     }
     const saved = await saveGraph(current)
     setDraftGraphId(saved.id)
     setPublishedRef((prev) => prev ?? { id: saved.id, versions: [] })
-    appendLog(`已保存 Graph：${saved.id}`)
+    appendLog(t('log.graphSaved', { graphId: saved.id }))
     return saved.id
   }
 
@@ -494,7 +575,9 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
       // loadGraph 会清空警告，故在其后写入；M3 表单化后按节点归到 params 根（04 §4.10）
       setNlWarnings(paramWarnings ?? [])
       setNlOpen(false)
-      paramWarnings?.forEach((warning) => appendLog(`⚠ NL 参数提示：${warning}`))
+      paramWarnings?.forEach((warning) =>
+        appendLog(t('nl.paramWarning', { warning })),
+      )
     } catch (error) {
       setNlError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -525,7 +608,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
       setDraftGraphId(null)
       setPublishedRef(null)
       setRunTarget('draft')
-      appendLog(`已加载模板：${detail.name}（${detail.id}），画布已整体替换`)
+      appendLog(t('template.loaded', { name: detail.name, id: detail.id }))
       setTemplateOpen(false)
     } catch (error) {
       setTemplateError(error instanceof Error ? error.message : String(error))
@@ -537,7 +620,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
   async function openRecordings() {
     setRecordingOpen(true)
     setRecordingError(null)
-    if (!caseName) setCaseName(`录制 ${new Date().toLocaleString()}`)
+    if (!caseName) setCaseName(t('recording.defaultNameTime', { time: new Date().toLocaleString() }))
     setRecordingsLoading(true)
     try {
       setRecordings(await listRecordings())
@@ -564,7 +647,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
       if (overrideText) {
         const parsed = parseInputsObject(overrideText)
         if (!parsed.ok) {
-          setRecordingError(parsed.error)
+          setRecordingError(t(parsed.error))
           return
         }
         body.inputs_override = parsed.value as RunInputs
@@ -611,13 +694,13 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
     if (inputsText) {
       const parsed = parseInputsObject(inputsText)
       if (!parsed.ok) {
-        setEditError(parsed.error)
+        setEditError(t(parsed.error))
         return
       }
       patch.inputs = parsed.value as RunInputs
     }
     if (!patch.name && !patch.inputs) {
-      setEditError('请至少修改名称或入参之一')
+      setEditError(t('recording.editRequired'))
       return
     }
     setSavingEdit(true)
@@ -711,7 +794,11 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
     try {
       await resumeDebug(frame.token, action, globals)
     } catch (error) {
-      appendLog(`✗ 调试放行失败：${error instanceof Error ? error.message : String(error)}`)
+      appendLog(
+        t('log.resumeFailed', {
+          message: error instanceof Error ? error.message : String(error),
+        }),
+      )
       setResumeBusy(null)
     }
   }
@@ -725,18 +812,22 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
     }
     const activeGraphId = draftGraphId ?? publishedRef?.id
     if (!activeGraphId) {
-      appendLog('当前没有在途运行可取消')
+      appendLog(t('log.noActiveRun'))
       return
     }
     try {
       const cancelled = await cancelActiveRun(activeGraphId)
       if (cancelled) {
-        appendLog(`⏹ 已请求急停 ${cancelled.runId}（下一节点边界生效）`)
+        appendLog(t('log.stopRequested', { runId: cancelled.runId }))
       } else {
-        appendLog('当前没有在途运行可取消（可能已结束）')
+        appendLog(t('log.noActiveRunMaybeEnded'))
       }
     } catch (error) {
-      appendLog(`✗ 急停失败：${error instanceof Error ? error.message : String(error)}`)
+      appendLog(
+        t('log.stopFailed', {
+          message: error instanceof Error ? error.message : String(error),
+        }),
+      )
     }
   }
 
@@ -745,7 +836,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
       <Header className="editor-header">
         <Space align="center">
           <Typography.Title level={3} style={{ margin: 0 }}>
-            Atlas 流程编辑器
+            {t('header.title')}
           </Typography.Title>
           <UserBadge principal={principal} onLogout={onLogout} />
         </Space>
@@ -759,10 +850,10 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
               label: `${order.order_id}｜${order.reason}｜¥${order.amount}`,
             }))}
           />
-          {canOperate && <Button onClick={() => setNlOpen(true)}>自然语言生成</Button>}
-          <Button onClick={openTemplateBrowser}>从模板新建</Button>
-          {canOperate && <Button onClick={openRecordings}>录制与回放</Button>}
-          <Button onClick={() => setExportOpen(true)}>导出 Graph JSON</Button>
+          {canOperate && <Button onClick={() => setNlOpen(true)}>{t('header.nlGenerate')}</Button>}
+          <Button onClick={openTemplateBrowser}>{t('header.newFromTemplate')}</Button>
+          {canOperate && <Button onClick={openRecordings}>{t('header.recordings')}</Button>}
+          <Button onClick={() => setExportOpen(true)}>{t('header.exportJson')}</Button>
           <FeedbackButton />
           {canOperate && (
             <>
@@ -771,29 +862,32 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                 style={{ width: 130 }}
                 onChange={(value) => setRunTarget(value as 'draft' | number)}
                 options={[
-                  { value: 'draft', label: '草稿运行' },
-                  ...(publishedRef?.versions ?? []).map((v) => ({ value: v, label: `已发布 v${v}` })),
+                  { value: 'draft', label: t('header.draftRun') },
+                  ...(publishedRef?.versions ?? []).map((v) => ({
+                    value: v,
+                    label: t('header.publishedRun', { version: v }),
+                  })),
                 ]}
               />
               <Button loading={releaseBusy} onClick={openRelease}>
-                发布
+                {t('header.publish')}
               </Button>
               <Button loading={releaseBusy} onClick={openRollout}>
-                灰度发布
+                {t('header.rollout')}
               </Button>
               <Button
                 loading={running}
                 disabled={runTarget !== 'draft'}
                 onClick={() => compileAndRun(false, true)}
               >
-                调试
+                {t('header.debug')}
               </Button>
               <Button type="primary" loading={running} onClick={() => compileAndRun()}>
-                编译并运行
+                {t('header.compileAndRun')}
               </Button>
               {running && (
                 <Button danger onClick={handleEmergencyStop}>
-                  急停
+                  {t('header.emergencyStop')}
                 </Button>
               )}
             </>
@@ -806,8 +900,8 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
             defaultActiveKey="nodes"
             style={{ height: '100%' }}
             items={[
-              { key: 'nodes', label: '节点', children: <NodePanel /> },
-              { key: 'variables', label: '变量', children: <VariablesPanel /> },
+              { key: 'nodes', label: t('tabs.nodes'), children: <NodePanel /> },
+              { key: 'variables', label: t('tabs.variables'), children: <VariablesPanel /> },
             ]}
           />
         </Sider>
@@ -822,7 +916,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
         <DebugConsole />
       </Footer>
       <Modal
-        title="Graph 定义 JSON（W7-W8 DSL 编译输入）"
+        title={t('export.title')}
         open={exportOpen}
         onCancel={() => setExportOpen(false)}
         onOk={() => setExportOpen(false)}
@@ -831,7 +925,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
         <pre className="graph-json-preview">{graphJson}</pre>
       </Modal>
       <Modal
-        title="编译并运行结果"
+        title={t('runResult.title')}
         open={runOpen}
         onCancel={() => setRunOpen(false)}
         onOk={() => setRunOpen(false)}
@@ -840,26 +934,28 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
         {compileResult && (
           <div className="run-result-section">
             <Typography.Text strong>
-              编译成功（{compileResult.entrypoints.join(', ')} →{' '}
-              {compileResult.terminals.join(', ')}）
+              {t('runResult.compiled', {
+                entrypoints: compileResult.entrypoints.join(', '),
+                terminals: compileResult.terminals.join(', '),
+              })}
             </Typography.Text>
             <pre className="graph-json-preview">{JSON.stringify(compileResult, null, 2)}</pre>
           </div>
         )}
         {runResult && (
           <div className="run-result-section">
-            <Typography.Text strong>运行状态：{runResult.status}</Typography.Text>
+            <Typography.Text strong>{t('runResult.status', { status: runResult.status })}</Typography.Text>
             <pre className="graph-json-preview">{JSON.stringify(runResult, null, 2)}</pre>
           </div>
         )}
       </Modal>
       <Modal
-        title="自然语言生成流程草稿"
+        title={t('nl.title')}
         open={nlOpen}
         onCancel={() => setNlOpen(false)}
         onOk={generateDraft}
         confirmLoading={nlLoading}
-        okText="生成并载入画布"
+        okText={t('nl.submit')}
       >
         <TextArea
           rows={3}
@@ -869,7 +965,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
         {nlError && <Alert type="error" showIcon title={nlError} style={{ marginTop: 12 }} />}
       </Modal>
       <Modal
-        title="从模板新建"
+        title={t('template.title')}
         open={templateOpen}
         onCancel={() => setTemplateOpen(false)}
         footer={null}
@@ -878,11 +974,13 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
         <Alert
           type="warning"
           showIcon
-          title="加载模板将整体替换当前画布，未保存的修改会丢失。"
+          title={t('template.replaceWarning')}
           style={{ marginBottom: 12 }}
         />
         <Space orientation="vertical" size={12} style={{ width: '100%' }}>
-          {templatesLoading && <Typography.Text type="secondary">模板加载中…</Typography.Text>}
+          {templatesLoading && (
+            <Typography.Text type="secondary">{t('template.loading')}</Typography.Text>
+          )}
           {templates.map((template) => (
             <div
               key={template.id}
@@ -901,7 +999,9 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                   {template.tags.map((tag) => (
                     <Tag key={tag}>{tag}</Tag>
                   ))}
-                  <Typography.Text type="secondary">{template.node_count} 个节点</Typography.Text>
+                  <Typography.Text type="secondary">
+                    {t('template.nodeCount', { count: template.node_count })}
+                  </Typography.Text>
                 </Space>
                 <div>
                   <Typography.Text type="secondary">{template.description}</Typography.Text>
@@ -913,7 +1013,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                 disabled={applyingTemplateId !== null}
                 onClick={() => applyTemplate(template.id)}
               >
-                使用此模板
+                {t('template.use')}
               </Button>
             </div>
           ))}
@@ -921,7 +1021,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
         {templateError && <Alert type="error" showIcon title={templateError} style={{ marginTop: 12 }} />}
       </Modal>
       <Modal
-        title="操作录制与回放"
+        title={t('recording.title')}
         open={recordingOpen}
         onCancel={() => setRecordingOpen(false)}
         footer={null}
@@ -932,22 +1032,26 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
             <Input
               value={caseName}
               onChange={(event) => setCaseName(event.target.value)}
-              placeholder="用例名称"
+              placeholder={t('recording.namePlaceholder')}
             />
             <Space size={8} wrap>
               <Button type="primary" loading={recordBusy} onClick={recordCurrentRun}>
-                录制当前画布一次运行
+                {t('recording.recordButton')}
               </Button>
               <Typography.Text type="secondary">
-                按当前订单入参真实运行一次（审批弹窗照常交互），结束时冻结 Graph 快照入库
+                {t('recording.recordHint')}
               </Typography.Text>
             </Space>
           </Space>
           {recordingError && <Alert type="error" showIcon title={recordingError} />}
-          <Typography.Text strong>已录制用例（{recordings.length}）</Typography.Text>
-          {recordingsLoading && <Typography.Text type="secondary">加载中…</Typography.Text>}
+          <Typography.Text strong>
+            {t('recording.listTitle', { count: recordings.length })}
+          </Typography.Text>
+          {recordingsLoading && (
+            <Typography.Text type="secondary">{t('common:status.loading')}</Typography.Text>
+          )}
           {!recordingsLoading && recordings.length === 0 && (
-            <Typography.Text type="secondary">暂无录制用例。</Typography.Text>
+            <Typography.Text type="secondary">{t('recording.empty')}</Typography.Text>
           )}
           {recordings.map((rec) => {
             const report = reports[rec.id]
@@ -972,8 +1076,11 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                     </Space>
                     <div>
                       <Typography.Text type="secondary">
-                        {rec.node_count} 节点 · {rec.step_count} 步骤 ·{' '}
-                        {new Date(rec.created_at).toLocaleString()}
+                        {t('recording.meta', {
+                          nodes: rec.node_count,
+                          steps: rec.step_count,
+                          time: new Date(rec.created_at).toLocaleString(),
+                        })}
                       </Typography.Text>
                     </div>
                   </div>
@@ -983,7 +1090,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                       loading={replayBusyId === rec.id}
                       onClick={() => runReplay(rec.id)}
                     >
-                      回放
+                      {t('recording.replay')}
                     </Button>
                     <Button
                       type="link"
@@ -992,17 +1099,19 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                         editingId === rec.id ? cancelEdit() : openEdit(rec)
                       }
                     >
-                      {editingId === rec.id ? '收起' : '编辑'}
+                      {editingId === rec.id
+                        ? t('recording.collapse')
+                        : t('recording.edit')}
                     </Button>
                     <Popconfirm
-                      title="确认删除该录制用例？"
-                      okText="删除"
+                      title={t('recording.deleteConfirm')}
+                      okText={t('common:button.delete')}
                       okButtonProps={{ danger: true }}
-                      cancelText="取消"
+                      cancelText={t('common:button.cancel')}
                       onConfirm={() => removeRecording(rec.id)}
                     >
                       <Button type="link" danger loading={deletingId === rec.id}>
-                        删除
+                        {t('common:button.delete')}
                       </Button>
                     </Popconfirm>
                   </Space>
@@ -1017,19 +1126,21 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                     }}
                   >
                     {loadingEditId === rec.id ? (
-                      <Typography.Text type="secondary">加载用例…</Typography.Text>
+                      <Typography.Text type="secondary">
+                        {t('recording.loadingCase')}
+                      </Typography.Text>
                     ) : (
                       <Space orientation="vertical" size={8} style={{ width: '100%' }}>
                         <Input
                           value={editName}
                           onChange={(event) => setEditName(event.target.value)}
-                          placeholder="用例名称"
+                          placeholder={t('recording.namePlaceholder')}
                         />
                         <TextArea
                           autoSize={{ minRows: 2, maxRows: 6 }}
                           value={editInputsText}
                           onChange={(event) => setEditInputsText(event.target.value)}
-                          placeholder="回放入参（JSON 对象，保存时整体替换）"
+                          placeholder={t('recording.inputsPlaceholder')}
                         />
                         {editError && <Alert type="error" showIcon title={editError} />}
                         <Space size={8} wrap>
@@ -1039,13 +1150,13 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                             loading={savingEdit}
                             onClick={() => saveEdit(rec.id)}
                           >
-                            保存
+                            {t('common:button.save')}
                           </Button>
                           <Button size="small" onClick={cancelEdit}>
-                            取消
+                            {t('common:button.cancel')}
                           </Button>
                           <Typography.Text type="secondary">
-                            仅名称/入参可改；步骤与 Graph 快照不可改（请重新录制）
+                            {t('recording.editHint')}
                           </Typography.Text>
                         </Space>
                       </Space>
@@ -1062,7 +1173,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                         }))
                       }
                     >
-                      Mock 工具节点（命中录制输出、不触达适配器；发布门禁不接 mock）
+                      {t('recording.mockCheckbox')}
                     </Checkbox>
                     <TextArea
                       autoSize={{ minRows: 1, maxRows: 3 }}
@@ -1074,7 +1185,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                           [rec.id]: event.target.value,
                         }))
                       }
-                      placeholder='入参覆写（可选，JSON 对象如 {"amount": 100}，仅本次回放浅合并、不落库）'
+                      placeholder={t('recording.overridePlaceholder')}
                     />
                   </div>
                 )}
@@ -1082,15 +1193,18 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                   <div style={{ marginTop: 8 }}>
                     <Space size={8} wrap>
                       <Tag color={report.matches ? 'green' : 'red'}>
-                        {report.matches ? '匹配' : '不匹配'}
+                        {report.matches ? t('recording.match') : t('recording.mismatch')}
                       </Tag>
                       {report.mocked_tools && report.mocked_tools.length > 0 && (
                         <Tag color="blue" title={report.mocked_tools.join(', ')}>
-                          Mock {report.mocked_tools.length} 工具
+                          {t('recording.mockToolsTag', { count: report.mocked_tools.length })}
                         </Tag>
                       )}
                       <Typography.Text type="secondary">
-                        基线 {report.baseline_status} → 回放 {report.replay_status}
+                        {t('recording.baselineReplay', {
+                          baseline: report.baseline_status,
+                          replay: report.replay_status,
+                        })}
                       </Typography.Text>
                     </Space>
                     <div style={{ marginTop: 4 }}>
@@ -1100,7 +1214,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                             {row.match ? '✓' : '✗'} {row.node_id}
                             {row.note ? `：${row.note}` : ''}
                             {row.diff_keys && row.diff_keys.length > 0
-                              ? `（差异键：${row.diff_keys.join(', ')}）`
+                              ? t('recording.stepDiffKeys', { keys: row.diff_keys.join(', ') })
                               : ''}
                           </Typography.Text>
                         </div>
@@ -1114,7 +1228,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
         </Space>
       </Modal>
       <Modal
-        title="人工审批请求"
+        title={t('approval.title')}
         open={currentApproval !== null}
         onCancel={dismissCurrentApproval}
         mask={{ closable: false }}
@@ -1128,7 +1242,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                   loading={approvalBusy}
                   onClick={() => resolveCurrentApproval('rejected')}
                 >
-                  拒绝
+                  {t('approval.reject')}
                 </Button>,
                 <Button
                   key="approve"
@@ -1136,7 +1250,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                   loading={approvalBusy}
                   onClick={() => resolveCurrentApproval('approved')}
                 >
-                  同意
+                  {t('approval.approve')}
                 </Button>,
               ]
             : null
@@ -1145,7 +1259,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
         {currentApproval && (
           <Space orientation="vertical" size={8} style={{ width: '100%' }}>
             <div>
-              <Typography.Text type="secondary">节点</Typography.Text>
+              <Typography.Text type="secondary">{t('approval.nodeLabel')}</Typography.Text>
               <div>
                 {currentApproval.subgraphPath && currentApproval.subgraphPath.length > 0
                   ? `[${subgraphPathLabel(currentApproval.subgraphPath)}] ${currentApproval.nodeId}`
@@ -1154,7 +1268,9 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
               {currentApproval.subgraphPath && currentApproval.subgraphPath.length > 0 && (
                 <div>
                   <Typography.Text type="secondary">
-                    子图内审批（所属 subgraph 节点：{subgraphPathLabel(currentApproval.subgraphPath)}）
+                    {t('approval.subgraphLabel', {
+                      label: subgraphPathLabel(currentApproval.subgraphPath),
+                    })}
                   </Typography.Text>
                 </div>
               )}
@@ -1169,17 +1285,16 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
               />
             ) : (
               <div>
-                <Typography.Text type="secondary">审批说明</Typography.Text>
+                <Typography.Text type="secondary">{t('approval.summaryLabel')}</Typography.Text>
                 <div>{currentApproval.summary}</div>
               </div>
             )}
             <div>
-              <Typography.Text type="secondary">审批人</Typography.Text>
-              <div>{currentApproval.approver || '未指定'}</div>
+              <Typography.Text type="secondary">{t('approval.approverLabel')}</Typography.Text>
+              <div>{currentApproval.approver || t('approval.approverUnspecified')}</div>
             </div>
             <Typography.Text type="secondary">
-              等待 {currentApproval.timeoutSeconds} 秒后按超时策略自动决策；关闭弹窗后仍可在等待期内由
-              API 放行。
+              {t('approval.timeoutHint', { seconds: currentApproval.timeoutSeconds })}
             </Typography.Text>
             {approvalError && <Alert type="error" showIcon title={approvalError} />}
           </Space>
@@ -1189,7 +1304,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
         <Alert
           type="error"
           showIcon
-          title="编译/运行失败"
+          title={t('error.compileRunFailed')}
           description={runError}
           closable
           onClose={() => setRunError(null)}
@@ -1202,13 +1317,13 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
           className="debug-toolbar"
           title={
             <Space size={8} wrap>
-              <span>调试暂停于</span>
+              <span>{t('debug.pausedTitle')}</span>
               {pausedFrame.subgraphPath && pausedFrame.subgraphPath.length > 0 && (
                 <Tag color="geekblue">{subgraphPathLabel(pausedFrame.subgraphPath)}</Tag>
               )}
               <Tag color="orange">{pausedFrame.node_id}</Tag>
               <Tag color={pausedFrame.reason === 'exception' ? 'red' : 'default'}>
-                {DEBUG_REASON_LABELS[pausedFrame.reason] ?? pausedFrame.reason}
+                {reasonLabel(pausedFrame.reason)}
               </Tag>
             </Space>
           }
@@ -1222,7 +1337,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                 disabled={resumeBusy !== null}
                 onClick={() => resumeCurrentDebug('step')}
               >
-                下一步
+                {t('debug.step')}
               </Button>
               <Button
                 size="small"
@@ -1230,7 +1345,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                 disabled={resumeBusy !== null}
                 onClick={() => resumeCurrentDebug('continue')}
               >
-                继续
+                {t('debug.continue')}
               </Button>
               <Button
                 size="small"
@@ -1239,19 +1354,19 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                 disabled={resumeBusy !== null}
                 onClick={() => resumeCurrentDebug('stop')}
               >
-                停止
+                {t('debug.stop')}
               </Button>
             </Space>
             <Input
               size="small"
               allowClear
-              placeholder="按键过滤变量"
+              placeholder={t('debug.varFilterPlaceholder')}
               value={varFilter}
               onChange={(event) => setVarFilter(event.target.value)}
             />
             <div>
               <Typography.Text type="secondary">
-                全局变量 globals（可编辑 JSON；下一步/继续时浅合并写回，停止忽略）
+                {t('debug.globalsHint')}
               </Typography.Text>
               <TextArea
                 size="small"
@@ -1270,7 +1385,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
               ) : null}
             </div>
             <div>
-              <Typography.Text type="secondary">节点产出 outputs（只读快照）</Typography.Text>
+              <Typography.Text type="secondary">{t('debug.outputsHint')}</Typography.Text>
               <pre className="debug-toolbar-json">
                 {JSON.stringify(filterSnapshot(pausedFrame.outputs, varFilter), null, 2)}
               </pre>
@@ -1279,12 +1394,12 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
               <Alert
                 type="error"
                 showIcon
-                message={`异常断点捕获：${pausedFrame.error.type}`}
+                message={t('debug.exceptionTitle', { type: pausedFrame.error.type })}
                 description={
                   <Space direction="vertical" size={0}>
                     <Typography.Text>{pausedFrame.error.message}</Typography.Text>
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      下一步/继续后将原样抛出该异常（v1 不支持忽略继续），停止则结束本次调试。
+                      {t('debug.exceptionHint')}
                     </Typography.Text>
                   </Space>
                 }
@@ -1296,21 +1411,21 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                 items={[
                   {
                     key: 'variable-history',
-                    label: `变量变化历史（${pausedFrame.history.length}）`,
+                    label: t('debug.historyTitle', { count: pausedFrame.history.length }),
                     children: pausedFrame.history.map((item) => (
                       <div key={item.seq} style={{ marginBottom: 8 }}>
                         <Space size={4} wrap>
                           <Tag color="orange">{item.node_id}</Tag>
-                          <Tag>{DEBUG_REASON_LABELS[item.reason] ?? item.reason}</Tag>
+                          <Tag>{reasonLabel(item.reason)}</Tag>
                           {item.since_nodes.length > 0 && (
                             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                              经过节点 {item.since_nodes.join(' → ')}
+                              {t('debug.historySince', { path: item.since_nodes.join(' → ') })}
                             </Typography.Text>
                           )}
                         </Space>
                         {item.changes.length === 0 ? (
                           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                            本次暂停无 global 顶层键变化
+                            {t('debug.historyEmpty')}
                           </Typography.Text>
                         ) : (
                           <pre className="debug-toolbar-json" style={{ marginTop: 4 }}>

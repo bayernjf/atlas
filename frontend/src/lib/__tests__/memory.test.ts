@@ -13,10 +13,10 @@ import {
 } from '../memory'
 
 describe('M11 memory 纯函数（U98）', () => {
-  it('kind 标签：fact 事实 / preference 偏好', () => {
-    expect(kindLabel('fact')).toBe('事实')
-    expect(kindLabel('preference')).toBe('偏好')
-    expect(MEMORY_KIND_LABELS.fact).toBe('事实')
+  it('kind 标签映射到 i18n key（fact/preference，由页面 t() 解析）', () => {
+    expect(kindLabel('fact')).toBe('kind.fact')
+    expect(kindLabel('preference')).toBe('kind.preference')
+    expect(MEMORY_KIND_LABELS.fact).toBe('kind.fact')
   })
 
   it('kind 颜色：fact 蓝 / preference 紫', () => {

@@ -1,0 +1,63 @@
+{
+  "title": "长期记忆",
+  "header": {
+    "refresh": "刷新",
+    "back": "返回 Dashboard"
+  },
+  "notice": {
+    "message": "本地词法向量，用于机制演示，非真实语义",
+    "description": "相似度由内置确定性词法向量计算（离线可复现），不代表商业语义模型效果；运行中的流程会经记忆工具自动写入，运营（operate）可在此手动新建/编辑记忆（标记为 manual），删除需管理员（admin）。"
+  },
+  "col": {
+    "content": "内容",
+    "kind": "类型",
+    "confidence": "置信度",
+    "scope": "作用域",
+    "createdAt": "创建时间",
+    "actions": "操作",
+    "score": "相似度"
+  },
+  "kind": {
+    "fact": "事实",
+    "preference": "偏好"
+  },
+  "button": {
+    "edit": "编辑",
+    "search": "搜索"
+  },
+  "deleteConfirm": {
+    "title": "删除该条记忆？",
+    "description": "删除后不可恢复，且不影响已结束的运行。"
+  },
+  "filter": {
+    "allKinds": "全部类型"
+  },
+  "search": {
+    "cardTitle": "语义搜索",
+    "placeholder": "输入自然语言，如：客户的配送偏好",
+    "empty": "无匹配记忆",
+    "queryRequired": "请输入检索内容"
+  },
+  "list": {
+    "cardTitle": "记忆列表",
+    "create": "新建记忆",
+    "empty": "暂无记忆"
+  },
+  "error": {
+    "loadList": "加载记忆失败",
+    "search": "检索失败",
+    "save": "保存失败",
+    "formInvalid": "表单不合法"
+  },
+  "modal": {
+    "createTitle": "新建记忆",
+    "editTitle": "编辑记忆",
+    "sourceHint": "手动新建/编辑的记忆将以 source=manual 保存；内容修改后会重新计算向量。",
+    "kindLabel": "类型",
+    "contentLabel": "内容",
+    "contentPlaceholder": "记忆内容（必填，最长 2000 字）",
+    "confidenceLabel": "置信度（0-1）",
+    "scopeLabel": "作用域（JSON 对象，键值均为字符串，可空）",
+    "metadataLabel": "元数据（JSON 对象，键值均为字符串，可空）"
+  }
+}
