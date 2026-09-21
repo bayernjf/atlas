@@ -16,10 +16,11 @@ from __future__ import annotations
 import json
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from sqlalchemy import Engine, text
+from sqlalchemy.exc import IntegrityError
 
 from atlas.iam.principals import Principal, Role
 from atlas.monitoring.alerts import Alert, RuleConfig, rules_from_raw, validate_rules
@@ -52,6 +53,9 @@ class PgBackend:
     def session_store(self) -> "PgSessionStore":
         # SessionStore 是全局单例（不分租户）：token 全局唯一、principal_for_token 跨租户查。
         return PgSessionStore(self._engine)
+
+    def user_store(self) -> "PgUserStore":
+        return PgUserStore(self._engine, self)
 
     def feedback_store(self, tenant_id: str) -> "PgFeedbackStore":
         return PgFeedbackStore(self._engine, tenant_id)
@@ -220,18 +224,24 @@ class PgSessionStore:
 
     def issue(self, principal: Principal) -> str:
         token = f"sess-{uuid.uuid4().hex}"
+        now = datetime.now(timezone.utc)
+        from atlas.iam.sessions import session_ttl_seconds
+
+        expires_at = (now + timedelta(seconds=session_ttl_seconds())).isoformat()
         with self._engine.begin() as conn:
             conn.execute(
                 text(
-                    "INSERT INTO iam_sessions (token, tenant_id, username, role, issued_at) "
-                    "VALUES (:token, :tenant_id, :username, :role, :issued_at)"
+                    "INSERT INTO iam_sessions "
+                    "(token, tenant_id, username, role, issued_at, expires_at) "
+                    "VALUES (:token, :tenant_id, :username, :role, :issued_at, :expires_at)"
                 ),
                 {
                     "token": token,
                     "tenant_id": principal.tenant_id,
                     "username": principal.username,
                     "role": principal.role.value,
-                    "issued_at": _now_iso(),
+                    "issued_at": now.isoformat(),
+                    "expires_at": expires_at,
                 },
             )
         return token
@@ -242,16 +252,26 @@ class PgSessionStore:
         with self._engine.connect() as conn:
             row = conn.execute(
                 text(
-                    "SELECT tenant_id, username, role FROM iam_sessions WHERE token = :token"
+                    "SELECT tenant_id, username, role, expires_at FROM iam_sessions "
+                    "WHERE token = :token"
                 ),
                 {"token": token},
             ).first()
         if row is None:
             return None
-        from atlas.iam.principals import SEED_TENANTS, SEED_USERS
-
         tenant_id = row[0]
         username = row[1]
+        expires_at_raw = row[3]
+        if expires_at_raw is not None:
+            try:
+                expires_at = datetime.fromisoformat(expires_at_raw)
+            except ValueError:
+                expires_at = None
+            if expires_at is not None and expires_at <= datetime.now(timezone.utc):
+                self.revoke(token)
+                return None
+        from atlas.iam.principals import SEED_TENANTS, SEED_USERS
+
         role = Role(row[2])
         user = next((u for u in SEED_USERS if u.username == username), None)
         display_name = user.display_name if user else username
@@ -268,9 +288,198 @@ class PgSessionStore:
         with self._engine.begin() as conn:
             conn.execute(text("DELETE FROM iam_sessions WHERE token = :token"), {"token": token})
 
+    def revoke_for_user(self, tenant_id: str, username: str, *, keep_token: str | None = None) -> None:
+        sql = "DELETE FROM iam_sessions WHERE tenant_id = :tenant_id AND username = :username"
+        params: dict[str, Any] = {"tenant_id": tenant_id, "username": username}
+        if keep_token is not None:
+            sql += " AND token != :keep_token"
+            params["keep_token"] = keep_token
+        with self._engine.begin() as conn:
+            conn.execute(text(sql), params)
+
     def reset(self) -> None:
         with self._engine.begin() as conn:
             conn.execute(text("DELETE FROM iam_sessions"))
+
+
+class PgUserStore:
+    """账号 PG 实现（全局单例：username 登录全局查；会话吊销经 PgBackend.session_store）。"""
+
+    def __init__(self, engine: Engine, backend: "PgBackend"):
+        self._engine = engine
+        self._backend = backend
+
+    def _row_to_account(self, row: Any) -> "UserAccount":
+        from atlas.iam.accounts import UserAccount
+
+        return UserAccount(
+            tenant_id=row[0],
+            username=row[1],
+            password_hash=row[2],
+            display_name=row[3],
+            role=Role(row[4]),
+            status=row[5],
+            created_at=row[6],
+            updated_at=row[7],
+        )
+
+    _COLUMNS = "tenant_id, username, password_hash, display_name, role, status, created_at, updated_at"
+
+    def seed(self, users: list | None = None) -> int:
+        from atlas.iam.accounts import SEED_USERS as _default
+        from atlas.iam.passwords import hash_password
+
+        inserted = 0
+        for user in users or _default:
+            now = _now_iso()
+            with self._engine.begin() as conn:
+                result = conn.execute(
+                    text(
+                        "INSERT INTO iam_users (tenant_id, username, password_hash, display_name, "
+                        "role, status, created_at, updated_at) "
+                        "VALUES (:tenant_id, :username, :password_hash, :display_name, :role, "
+                        "'active', :created_at, :updated_at) ON CONFLICT DO NOTHING"
+                    ),
+                    {
+                        "tenant_id": user.tenant_id,
+                        "username": user.username,
+                        "password_hash": hash_password(user.password),
+                        "display_name": user.display_name,
+                        "role": user.role.value,
+                        "created_at": now,
+                        "updated_at": now,
+                    },
+                )
+                inserted += result.rowcount
+        return inserted
+
+    def get(self, tenant_id: str, username: str) -> "UserAccount | None":
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(f"SELECT {self._COLUMNS} FROM iam_users WHERE tenant_id = :t AND username = :u"),
+                {"t": tenant_id, "u": username},
+            ).first()
+        return self._row_to_account(row) if row else None
+
+    def get_by_username(self, username: str) -> "UserAccount | None":
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(f"SELECT {self._COLUMNS} FROM iam_users WHERE username = :u"),
+                {"u": username},
+            ).first()
+        return self._row_to_account(row) if row else None
+
+    def list(self, tenant_id: str) -> list["UserAccount"]:
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    f"SELECT {self._COLUMNS} FROM iam_users WHERE tenant_id = :t ORDER BY username"
+                ),
+                {"t": tenant_id},
+            ).all()
+        return [self._row_to_account(row) for row in rows]
+
+    def create(
+        self,
+        *,
+        tenant_id: str,
+        username: str,
+        password: str,
+        display_name: str,
+        role: Role,
+    ) -> "UserAccount":
+        from atlas.iam.accounts import UserAccount, UserExists
+        from atlas.iam.passwords import hash_password
+
+        now = _now_iso()
+        try:
+            with self._engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "INSERT INTO iam_users (tenant_id, username, password_hash, display_name, "
+                        "role, status, created_at, updated_at) "
+                        "VALUES (:tenant_id, :username, :password_hash, :display_name, :role, "
+                        "'active', :created_at, :updated_at)"
+                    ),
+                    {
+                        "tenant_id": tenant_id,
+                        "username": username,
+                        "password_hash": hash_password(password),
+                        "display_name": display_name,
+                        "role": role.value,
+                        "created_at": now,
+                        "updated_at": now,
+                    },
+                )
+        except IntegrityError:
+            raise UserExists(username)
+        account = self.get(tenant_id, username)
+        assert account is not None
+        return account
+
+    def update(
+        self,
+        tenant_id: str,
+        username: str,
+        *,
+        display_name: str | None = None,
+        role: Role | None = None,
+        status: str | None = None,
+    ) -> "UserAccount | None":
+        fields: dict[str, Any] = {}
+        if display_name is not None:
+            fields["display_name"] = display_name
+        if role is not None:
+            fields["role"] = role.value
+        if status is not None:
+            fields["status"] = status
+        if not fields:
+            return self.get(tenant_id, username)
+        assignments = ", ".join(f"{key} = :{key}" for key in fields)
+        fields.update({"t": tenant_id, "u": username, "updated_at": _now_iso()})
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                text(
+                    f"UPDATE iam_users SET {assignments}, updated_at = :updated_at "
+                    "WHERE tenant_id = :t AND username = :u"
+                ),
+                fields,
+            )
+            if result.rowcount == 0:
+                return None
+        if status == "disabled":
+            self._backend.session_store().revoke_for_user(tenant_id, username)
+        return self.get(tenant_id, username)
+
+    def set_password(
+        self,
+        tenant_id: str,
+        username: str,
+        password: str,
+        *,
+        keep_token: str | None = None,
+    ) -> "UserAccount | None":
+        from atlas.iam.passwords import hash_password
+
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                text(
+                    "UPDATE iam_users SET password_hash = :password_hash, updated_at = :updated_at "
+                    "WHERE tenant_id = :t AND username = :u"
+                ),
+                {
+                    "password_hash": hash_password(password),
+                    "updated_at": _now_iso(),
+                    "t": tenant_id,
+                    "u": username,
+                },
+            )
+            if result.rowcount == 0:
+                return None
+        self._backend.session_store().revoke_for_user(
+            tenant_id, username, keep_token=keep_token
+        )
+        return self.get(tenant_id, username)
 
 
 class PgFeedbackStore:

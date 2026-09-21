@@ -1,14 +1,17 @@
 """种子租户/账号、Principal 与三角色能力矩阵（04 §5.14）。
 
-明文密码仅用于 Demo；持久化账号、密码哈希、注册/改密/SSO/JWT 缓做 11 S1 + 14 D22。
+种子账号登录经 ADR T25（docs/31）的 scrypt 哈希校验；持久化账号随 iam_users。
 """
 
 from __future__ import annotations
 
+import threading
 from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel
+
+from .passwords import hash_password, verify_password
 
 Capability = Literal["read", "operate", "administer"]
 
@@ -56,9 +59,20 @@ SEED_USERS: list[TenantUser] = [
                display_name="B 企业管理员", role=Role.ADMIN),
 ]
 
-_USER_INDEX: dict[tuple[str, str], TenantUser] = {
-    (user.username, user.password): user for user in SEED_USERS
-}
+_USERNAME_INDEX: dict[str, TenantUser] = {user.username: user for user in SEED_USERS}
+
+_SEED_HASHES: dict[str, str] = {}
+_SEED_HASH_LOCK = threading.Lock()
+
+
+def _seed_hash(username: str) -> str:
+    with _SEED_HASH_LOCK:
+        stored = _SEED_HASHES.get(username)
+        if stored is None:
+            stored = hash_password(_USERNAME_INDEX[username].password)
+            _SEED_HASHES[username] = stored
+        return stored
+
 
 ROLE_RANK: dict[Role, int] = {Role.VIEWER: 1, Role.OPERATOR: 2, Role.ADMIN: 3}
 
@@ -66,8 +80,8 @@ _CAPABILITY_RANK: dict[str, int] = {"read": 1, "operate": 2, "administer": 3}
 
 
 def authenticate(username: str, password: str) -> Principal | None:
-    user = _USER_INDEX.get((username, password))
-    if user is None:
+    user = _USERNAME_INDEX.get(username)
+    if user is None or not verify_password(password, _seed_hash(username)):
         return None
     tenant = SEED_TENANTS[user.tenant_id]
     return Principal(

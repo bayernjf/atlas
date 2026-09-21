@@ -6,9 +6,11 @@ import os
 
 from fastapi import Depends, HTTPException, Request
 
-from .principals import Capability, Principal, can
+from .passwords import verify_password
+from .principals import Capability, Principal, SEED_TENANTS, can
 from .registry import TenantRegistry, TenantServices
 from .sessions import SessionStore
+from .throttle import LoginThrottle
 
 
 def select_session_store():
@@ -21,11 +23,47 @@ def select_session_store():
     return SessionStore()
 
 
+def select_user_store():
+    # ADR T25（docs/31 §2）：PG 档账号落 iam_users；内存档惰性播种。
+    if os.environ.get("ATLAS_STORAGE_BACKEND", "memory") == "pg":
+        from atlas.storage.pg import get_pg_backend
+
+        return get_pg_backend().user_store()
+    from .accounts import UserStore
+
+    return UserStore()
+
+
 session_store = select_session_store()
+user_store = select_user_store()
+user_store.bind_session_store(session_store)
+if os.environ.get("ATLAS_STORAGE_BACKEND", "memory") != "pg":
+    user_store.seed()
 tenant_registry = TenantRegistry()
+login_throttle = LoginThrottle()
 
 _UNAUTHENTICATED = "缺少或无效的登录凭证"
 _FORBIDDEN = "当前角色无权执行此操作"
+
+
+def authenticate_login(username: str, password: str) -> Principal:
+    """登录认证（docs/31 §2.2）：user_store 全局按 username 查、验哈希。
+
+    用户不存在/口令错 → 401（不区分，防枚举）；停用账号口令正确 → 403。
+    """
+    account = user_store.get_by_username(username)
+    if account is None or not verify_password(password, account.password_hash):
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+    if account.status == "disabled":
+        raise HTTPException(status_code=403, detail="账号已停用，请联系管理员")
+    tenant = SEED_TENANTS.get(account.tenant_id)
+    return Principal(
+        tenant_id=account.tenant_id,
+        tenant_name=tenant.name if tenant is not None else account.tenant_id,
+        username=account.username,
+        display_name=account.display_name,
+        role=account.role,
+    )
 
 
 def get_principal(request: Request) -> Principal:

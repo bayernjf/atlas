@@ -401,7 +401,7 @@ def evaluate_rules(*, record, healthy, recent_by_graph: list[RunRecord],
 
 埋点只在 `src/atlas/api/main.py`：sync `/run` 包装（异常记录 error 后原样 raise，保持 500），`/run/stream` worker 非 debug 时以 emit 包装收集 node_end output，`__result__` 记 completed、`__error__` 记 error（部分节点）、`__stopped__`（debug）不记。**docs/28 §4.1 ⑧（a318d97）起两入口另以同形 emit 收集无 `subgraphPath` 的顶层 `tool_metric` 事件（executor `graph/loader.py` 对真实工具分支 `time.monotonic()` 计时、经模块级 `_tool_metric_event` 归一后 emit；mock 命中不发、子图内被命名空间白名单吞掉、debug 流发而不采、replay/gate/子图重入不采），completed/cancelled/error 三出口 `record_run(..., tool_calls=)` 传入。**录制 replay 端点与 subgraph 重入零改动。**M9 起两个真实运行入口在 `record_run` 之后调用 `routing.gate.evaluate_after_run(services, record)`（门控自动回滚，见 §3.12）；replay/debug/subgraph 重入同口径不触发。**
 
-### 3.10 多租户与权限（04 §5.14，06 §6.12）
+### 3.10 多租户与权限（04 §5.14/§5.17，06 §6.12）
 
 ```python
 # src/atlas/iam/principals.py
@@ -617,9 +617,14 @@ class MemoryRepository(Protocol):
 
 | 方法 | 路径 | 功能 | 关联 |
 |---|---|---|---|
-| POST | /api/auth/login | 登录换会话（公开）：请求体 `{username, password}`，坏凭证 401「用户名或密码错误」；200 返回 `{token:"sess-<uuid hex>", principal:{tenant_id, tenant_name, username, display_name, role}}`（identity_session） | identity_session |
+| POST | /api/auth/login | 登录换会话（公开）：请求体 `{username, password}`，坏凭证 401「用户名或密码错误」（未知用户同文案防枚举）、停用账号 403「账号已停用，请联系管理员」、连续失败触发节流 429「登录尝试过于频繁，请稍后再试」（滑动窗口 600s/5 次、键 username|client_ip，docs/31/04 §5.17）；200 返回 `{token:"sess-<uuid hex>", principal:{tenant_id, tenant_name, username, display_name, role}}`（identity_session） | identity_session |
 | GET | /api/auth/me | 回显当前 Bearer 会话的 Principal（viewer+） | identity_session |
 | POST | /api/auth/logout | 吊销当前 token（viewer+；幂等，204/200） | identity_session |
+| POST | /api/auth/change-password | 【viewer+】登录用户改本人密码（docs/31/04 §5.17，已落码）：body `{oldPassword,newPassword}`；旧口令错 400「原密码错误」；新口令不达策略（8-128 位、弱口令黑名单）或与旧口令相同 → 422；成功吊销本人**除当前会话外**全部会话，返 `{changed:true}` | identity_user |
+| GET | /api/users | 【admin】列本租户用户（docs/31 §3）：`[{username,displayName,role,status,createdAt,updatedAt}]`，**不含 password_hash** | identity_user |
+| POST | /api/users | 【admin】本租户建用户（201）：body `{username,password,displayName,role}`；用户名 3-64 位 `[a-z0-9_.-]`、口令策略不达标、显示名为空 → 422；租户内重名 → 409「用户名已存在」 | identity_user |
+| PATCH | /api/users/{username} | 【admin】改本租户用户：body `{displayName?,role?,status?}`（仅传需改字段）；他租户/不存在 → 404「用户不存在」；status 改 disabled 时吊销该用户全部会话 | identity_user |
+| POST | /api/users/{username}/reset-password | 【admin】重置本租户用户密码：body `{newPassword}`；404/422 同上；成功吊销该用户全部会话，返 `{reset:true}` | identity_user |
 | POST | /api/graphs | 保存 Graph 定义（DSL）：总是新建 graph-N（首次建图） | node_schema / graph_definition |
 | PUT | /api/graphs/{id} | 【operate，M9】同图迭代覆盖 latest 草稿（`GraphRepository.update_draft`）：body 同 POST 的 SerializedGraph、过 parse_graph 校验，**不新建 id、不动不可变发布版**，刷 updated_at，返 `{id, version}`；图不存在/跨租户 → 404（KeyError）。前端编辑器对同一画布首次 POST 之后的运行/录制/发布统一走此端点（修复早期每次运行新建 graph-N 致录制用例与门禁 graph_id 错位） | graph_definition |
 | GET | /api/graphs | 列出已保存图（`{items:[{id, node_count, updated_at}]}`，进程内存储；Phase 2 第六项，供 subgraph 节点选择器） | graph_definition |

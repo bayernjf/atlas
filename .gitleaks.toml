@@ -13,3 +13,9 @@ paths = [
   '''(.*/)?.*\.sqlite$''',
   '''(.*/)?\.env\.example$''',
 ]
+# 公开的口令生成字符集常量（非密钥，generic-api-key 据熵值误报）；
+# 一条匹配声明行，一条匹配该固定公开字符集值本身
+regexes = [
+  '''GENERATED_PASSWORD_ALPHABET\s*=''',
+  '''abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789''',
+]

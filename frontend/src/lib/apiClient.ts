@@ -214,6 +214,70 @@ export async function logout(): Promise<void> {
   }
 }
 
+// --- 用户管理与改密（docs/31 §3，步骤 7） -----------------------------------
+
+export type UserRole = 'viewer' | 'operator' | 'admin'
+
+export type UserAccountView = {
+  username: string
+  displayName: string
+  role: UserRole
+  status: 'active' | 'disabled'
+  createdAt: string
+  updatedAt: string
+}
+
+export type CreateUserInput = {
+  username: string
+  password: string
+  displayName: string
+  role: UserRole
+}
+
+export type UpdateUserPatch = {
+  displayName?: string
+  role?: UserRole
+  status?: 'active' | 'disabled'
+}
+
+export async function changePassword(
+  oldPassword: string,
+  newPassword: string,
+): Promise<{ changed: boolean }> {
+  return request('/api/auth/change-password', {
+    method: 'POST',
+    body: JSON.stringify({ oldPassword: oldPassword, newPassword: newPassword }),
+  })
+}
+
+export async function listUsers(): Promise<UserAccountView[]> {
+  return request<UserAccountView[]>('/api/users')
+}
+
+export async function createUser(input: CreateUserInput): Promise<UserAccountView> {
+  return request('/api/users', { method: 'POST', body: JSON.stringify(input) })
+}
+
+export async function updateUser(
+  username: string,
+  patch: UpdateUserPatch,
+): Promise<UserAccountView> {
+  return request(`/api/users/${encodeURIComponent(username)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
+}
+
+export async function resetUserPassword(
+  username: string,
+  newPassword: string,
+): Promise<{ reset: boolean }> {
+  return request(`/api/users/${encodeURIComponent(username)}/reset-password`, {
+    method: 'POST',
+    body: JSON.stringify({ newPassword: newPassword }),
+  })
+}
+
 export type { Principal }
 
 export type SavedGraphSummary = {

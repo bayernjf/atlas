@@ -44,8 +44,19 @@ from atlas.harness.base import Permission
 from atlas.harness.registry import AdapterRegistry
 from atlas.httpapi.adapter import HttpApiHarnessAdapter
 from atlas.httpapi.service import HttpApiClient
-from atlas.iam.deps import get_principal, require, services_for, session_store, tenant_registry
-from atlas.iam.principals import Principal, authenticate
+from atlas.iam.deps import (
+    authenticate_login,
+    get_principal,
+    login_throttle,
+    require,
+    services_for,
+    session_store,
+    tenant_registry,
+    user_store,
+)
+from atlas.iam.accounts import UserExists
+from atlas.iam.passwords import validate_password, validate_username, verify_password
+from atlas.iam.principals import Principal, Role
 from atlas.iam.registry import STORAGE_BACKEND, TenantServices
 from atlas.llm.nl_generate import generate_graph, validate_param_fills
 from atlas.memory.adapter import MemoryHarnessAdapter
@@ -325,11 +336,22 @@ def _bearer_token(request: Request) -> str | None:
 
 
 @app.post("/api/auth/login", response_model=LoginResponse)
-def login(request: LoginRequest) -> LoginResponse:
-    """账号登录换进程内 sess-token（04 §5.14）；坏凭证 401，不区分用户名/密码错误。"""
-    principal = authenticate(request.username, request.password)
-    if principal is None:
-        raise HTTPException(status_code=401, detail="用户名或密码错误")
+def login(request: LoginRequest, http_request: Request) -> LoginResponse:
+    """账号登录换 sess-token（04 §5.14，docs/31 §2.2/§5）。
+
+    坏凭证 401、停用 403；600s 内同 username+IP 5 次失败 → 429（锁定时不校验口令）；成功清零。
+    """
+    client_ip = http_request.client.host if http_request.client else ""
+    throttle_key = f"{request.username}|{client_ip}"
+    now = time.time()
+    if login_throttle.is_locked(throttle_key, now):
+        raise HTTPException(status_code=429, detail="登录尝试过于频繁，请稍后再试")
+    try:
+        principal = authenticate_login(request.username, request.password)
+    except HTTPException:
+        login_throttle.record_failure(throttle_key, now)
+        raise
+    login_throttle.reset(throttle_key)
     token = session_store.issue(principal)
     # 触发租户装配，登录后该租户即有独立服务实例
     tenant_registry.get(principal.tenant_id)
@@ -347,6 +369,144 @@ def logout(request: Request, principal: Principal = Depends(get_principal)) -> d
     if token:
         session_store.revoke(token)
     return {"logged_out": True}
+
+
+class ChangePasswordRequest(BaseModel):
+    oldPassword: str
+    newPassword: str
+
+
+class UserResponse(BaseModel):
+    username: str
+    displayName: str
+    role: Role
+    status: str
+    createdAt: str
+    updatedAt: str
+
+
+class CreateUserRequest(BaseModel):
+    username: str
+    password: str
+    displayName: str
+    role: Role
+
+
+class UpdateUserRequest(BaseModel):
+    displayName: str | None = None
+    role: Role | None = None
+    status: Literal["active", "disabled"] | None = None
+
+
+class ResetPasswordRequest(BaseModel):
+    newPassword: str
+
+
+def _user_response(account: Any) -> UserResponse:
+    return UserResponse(
+        username=account.username,
+        displayName=account.display_name,
+        role=account.role,
+        status=account.status,
+        createdAt=account.created_at,
+        updatedAt=account.updated_at,
+    )
+
+
+def _validate_password_or_422(password: str) -> None:
+    try:
+        validate_password(password)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/auth/change-password")
+def change_password(
+    raw: ChangePasswordRequest,
+    request: Request,
+    principal: Principal = Depends(get_principal),
+) -> dict[str, bool]:
+    """登录用户改本人密码（docs/31 §3）：旧口令错 400；成功吊销本人其他会话、保留当前。"""
+    account = user_store.get(principal.tenant_id, principal.username)
+    if account is None or not verify_password(raw.oldPassword, account.password_hash):
+        raise HTTPException(status_code=400, detail="原密码错误")
+    _validate_password_or_422(raw.newPassword)
+    if raw.newPassword == raw.oldPassword:
+        raise HTTPException(status_code=422, detail="新密码不能与原密码相同")
+    user_store.set_password(
+        principal.tenant_id,
+        principal.username,
+        raw.newPassword,
+        keep_token=_bearer_token(request),
+    )
+    return {"changed": True}
+
+
+@app.get("/api/users")
+def list_users(principal: Principal = Depends(require("administer"))) -> list[UserResponse]:
+    """admin 列本租户用户（docs/31 §3），不含 password_hash。"""
+    return [_user_response(account) for account in user_store.list(principal.tenant_id)]
+
+
+@app.post("/api/users", status_code=201)
+def create_user(
+    raw: CreateUserRequest,
+    principal: Principal = Depends(require("administer")),
+) -> UserResponse:
+    """admin 在本租户建用户（docs/31 §3）：重名 409、策略不达标 422。"""
+    try:
+        validate_username(raw.username)
+        validate_password(raw.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not raw.displayName.strip():
+        raise HTTPException(status_code=422, detail="显示名不能为空")
+    try:
+        account = user_store.create(
+            tenant_id=principal.tenant_id,
+            username=raw.username,
+            password=raw.password,
+            display_name=raw.displayName.strip(),
+            role=raw.role,
+        )
+    except UserExists as exc:
+        raise HTTPException(status_code=409, detail="用户名已存在") from exc
+    return _user_response(account)
+
+
+@app.patch("/api/users/{username}")
+def update_user(
+    username: str,
+    raw: UpdateUserRequest,
+    principal: Principal = Depends(require("administer")),
+) -> UserResponse:
+    """admin 改本租户用户 displayName/role/status（docs/31 §3）；跨租户/不存在 → 404。"""
+    if user_store.get(principal.tenant_id, username) is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    data = raw.model_dump(exclude_unset=True)
+    updated = user_store.update(
+        principal.tenant_id,
+        username,
+        display_name=data.get("displayName"),
+        role=raw.role,
+        status=data.get("status"),
+    )
+    assert updated is not None
+    return _user_response(updated)
+
+
+@app.post("/api/users/{username}/reset-password")
+def reset_password(
+    username: str,
+    raw: ResetPasswordRequest,
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, bool]:
+    """admin 重置本租户用户密码（docs/31 §3）：404/422；成功吊销该用户全部会话。"""
+    if user_store.get(principal.tenant_id, username) is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    _validate_password_or_422(raw.newPassword)
+    user_store.set_password(principal.tenant_id, username, raw.newPassword)
+    return {"reset": True}
 
 
 @app.get("/api/adapters")

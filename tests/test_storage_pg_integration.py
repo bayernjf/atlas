@@ -112,6 +112,31 @@ def test_session_store_roundtrip(backend):
     store.reset()
 
 
+def test_expired_session_rejected_and_lazily_deleted(backend):
+    from datetime import datetime, timedelta, timezone
+
+    from atlas.iam.principals import Principal, Role
+
+    store = backend.session_store()
+    principal = Principal(
+        tenant_id=TENANT, tenant_name="测试租户", username="expired-user",
+        display_name="过期用户", role=Role.VIEWER,
+    )
+    token = store.issue(principal)
+    past = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
+    with backend.engine.begin() as conn:
+        conn.execute(
+            text("UPDATE iam_sessions SET expires_at = :exp WHERE token = :token"),
+            {"exp": past, "token": token},
+        )
+    assert store.principal_for_token(token) is None
+    with backend.engine.connect() as conn:
+        remaining = conn.execute(
+            text("SELECT 1 FROM iam_sessions WHERE token = :token"), {"token": token}
+        ).first()
+    assert remaining is None
+
+
 def test_feedback_and_recording_persistent(backend):
     from atlas.recording.cases import RecordStep
     from atlas.storage.memory import FeedbackRequest
