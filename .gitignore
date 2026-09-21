@@ -61,3 +61,6 @@ Thumbs.db
 
 # CodeGraph local index
 .codegraph/
+
+# Atlas pg backups (docs/30 §5.1)
+backups/
