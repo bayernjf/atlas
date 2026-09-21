@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### feat：P0 批 1 持久化交付落码收口（2026-09-21，docs/30；dev 未 push）
+
+- compose 缺省起 pgvector/pgvector:pg16＋命名卷＋healthcheck，atlas 以 PG 档运行，entrypoint 启动先跑迁移；新增迁移运行器（009 schema_migrations＋scripts/ops/apply_migrations.py，有序幂等、每文件一事务、--mark-existing），不引 Alembic。
+- PG 档会话 token 落 iam_sessions，重启/多实例不再登出（密码哈希/JWT 仍归批 2）。
+- scripts/ops backup.sh/restore.sh（pg_dump -Fc/pg_restore --clean）；真实删卷恢复演练通过：八项行数一致、旧 token 有效、挂起审批恢复后决策续跑完成。
+- 门：后端 792 passed/26 skipped、PG 集成 26 passed、前端 498 passed/2 skipped、build 过、lint 0 error；U222–U226 转正式。docs/29 阻断项 #1（单实例口径）解除。
+
 ### docs：P0 批 1 持久化交付立项（2026-09-21，docs/30；docs-only 未落码）
 
 - 依据 docs/29 阻断项 #1 立项：compose 缺省 PG（pgvector:pg16＋命名卷）、schema_migrations 运行器（不引 Alembic）、会话 PG 接线、备份/恢复删卷演练；ADR T24，U222–U226。
