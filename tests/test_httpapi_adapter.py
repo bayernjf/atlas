@@ -1,6 +1,7 @@
-"""API 适配器（通用 HTTP）单元测试（13 文档 U25/I9-I11）。
+"""API 适配器（通用 HTTP）单元测试（13 文档 U25/I9-I11，SSRF 接线 U239）。
 
-全部外呼经 httpx MockTransport 注入，零真实网络出口。
+全部外呼经 httpx MockTransport 注入；出向域名的 DNS 解析经注入的假
+resolver 返回固定公网 IP，零真实网络出口。
 """
 
 from __future__ import annotations
@@ -17,15 +18,31 @@ from atlas.harness.base import (
     StructuredError,
 )
 from atlas.httpapi.adapter import HttpApiHarnessAdapter
+from atlas.httpapi.resilience import RetryPolicy
 from atlas.httpapi.service import HttpApiCallError, HttpApiClient
+from atlas.security.egress import EgressGuard
+
+# 假 resolver：任何域名都解析到 example.com 公网 IP（不真实连接）
+PUBLIC_RESOLVER = lambda host: ["93.184.216.34"]
 
 
-def make_client(handler, base_url="http://demo.test", default_headers=None):
+def make_client(
+    handler,
+    base_url="http://demo.test",
+    default_headers=None,
+    *,
+    resolver=PUBLIC_RESOLVER,
+    egress=None,
+):
     transport = httpx.MockTransport(handler)
     return HttpApiClient(
         base_url=base_url,
         default_headers=default_headers,
         client=httpx.Client(transport=transport),
+        resolver=resolver,
+        egress=egress,
+        # 测试不真睡：退避 no-op（重试/熔断逻辑仍照常走）
+        retry=RetryPolicy(sleep=lambda _: None),
     )
 
 
@@ -76,8 +93,10 @@ def test_connect_error_maps_to_structured_error():
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("connection refused", request=request)
 
+    # 目标用公网域名（假 resolver 放行）；127.0.0.1 这类内网字面量现在会在
+    # 建连前被 egress 拦成 EGRESS_DENIED，见下方 SSRF 接线测试
     with pytest.raises(HttpApiCallError) as exc_info:
-        make_client(handler, base_url="http://127.0.0.1:1").request(url="/orders")
+        make_client(handler, base_url="http://down.example.com:1").request(url="/orders")
 
     assert exc_info.value.code == "HTTP_CONNECT_ERROR"
 
@@ -263,3 +282,70 @@ def test_adapter_observe_reports_base_url_and_last_request():
 
     assert observation.url == "http://demo.test"
     assert observation.data["last_request"] == {"method": "GET", "url": "http://demo.test/orders", "status": 200}
+
+
+# --- SSRF egress 接线（docs/32 §3，U239 http 部分） ---
+
+def test_egress_blocks_metadata_ip_without_any_outbound_call():
+    called = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        called.append(str(request.url))
+        return httpx.Response(200, json={}, request=request)
+
+    client = make_client(handler)
+    with pytest.raises(HttpApiCallError) as exc_info:
+        client.request(url="http://169.254.169.254/latest/meta-data/")
+
+    assert exc_info.value.code == "EGRESS_DENIED"
+    assert called == []  # 零真实外呼
+    assert client.last_request is None  # 被拒不写 last_request
+
+
+@pytest.mark.parametrize(
+    "url,code",
+    [
+        ("http://127.0.0.1:8000/internal", "EGRESS_DENIED"),
+        ("http://10.0.0.5/x", "EGRESS_DENIED"),
+        ("file:///etc/passwd", "EGRESS_INVALID_URL"),
+        ("http://2130706433/", "EGRESS_DENIED"),
+    ],
+)
+def test_egress_blocks_private_and_obfuscated(url, code):
+    client = make_client(lambda r: httpx.Response(200, json={}, request=r))
+    with pytest.raises(HttpApiCallError) as exc_info:
+        client.request(url=url)
+    assert exc_info.value.code == code
+
+
+def test_egress_blocks_domain_resolving_to_private():
+    def private_resolver(_host):
+        return ["10.0.0.7"]
+
+    client = make_client(lambda r: httpx.Response(200, json={}, request=r), resolver=private_resolver)
+    with pytest.raises(HttpApiCallError) as exc_info:
+        client.request(url="http://rebind.example/x")
+    assert exc_info.value.code == "EGRESS_DENIED"
+
+
+def test_egress_allowlist_blocks_unlisted_public_host():
+    guard = EgressGuard(allowlist=["api.allowed.test"], resolver=PUBLIC_RESOLVER)
+    client = make_client(lambda r: httpx.Response(200, json={}, request=r), egress=guard)
+    with pytest.raises(HttpApiCallError) as exc_info:
+        client.request(url="http://other.test/x")
+    assert exc_info.value.code == "EGRESS_DENIED"
+    # 命中白名单的公网目标正常
+    listed = make_client(
+        lambda r: httpx.Response(200, json={"ok": True}, request=r),
+        egress=EgressGuard(allowlist=["api.allowed.test"], resolver=PUBLIC_RESOLVER),
+    )
+    assert listed.request(url="http://api.allowed.test/x")["status"] == 200
+
+
+def test_adapter_maps_egress_denied_to_failed():
+    adapter = make_adapter()
+    result = adapter.execute(
+        ActionRequest(capability_name="request", parameters={"url": "http://127.0.0.1:8000/"})
+    )
+    assert result.status is ActionStatus.FAILED
+    assert result.error.code == "EGRESS_DENIED"

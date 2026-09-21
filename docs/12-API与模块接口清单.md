@@ -106,13 +106,23 @@ click(element_desc, selector=None):
 ```python
 # src/atlas/httpapi/service.py（进程内，channel 包 httpapi，adapter_id="http"）
 class HttpApiClient:
-    def __init__(self, base_url="", default_headers=None, client: httpx.Client | None=None)
+    def __init__(self, base_url="", default_headers=None, client: httpx.Client | None=None,
+                 *, egress=None, resolver=None, retry=None, breaker=None, secret_provider=None)
+    #   egress=EgressGuard（security/egress.py）；retry=RetryPolicy、breaker=CircuitBreaker（httpapi/resilience.py）；
+    #   secret_provider=SecretProvider（security/secrets.py）
     @classmethod
-    def from_env(cls)  # ATLAS_HTTPAPI_BASE_URL / _HEADERS(JSON) / _TOKEN(Bearer)
+    def from_env(cls)  # ATLAS_HTTPAPI_BASE_URL/_HEADERS(JSON)/_TOKEN(Bearer)
+                       # ＋ATLAS_HTTP_EGRESS_ALLOWLIST、ATLAS_HTTP_MAX_ATTEMPTS/_RETRY_BASE_DELAY/
+                       #   _CIRCUIT_FAIL_THRESHOLD/_CIRCUIT_COOLDOWN、ATLAS_MASTER_KEY(_ID)/ATLAS_SECRETS
     def request(self, method="GET", url="", headers=None, body=None,
-                timeout=30.0) -> dict
-    # → {"status": int, "headers": dict, "body": object|str}
-    # 传输层异常 → StructuredError HTTP_TIMEOUT / HTTP_CONNECT_ERROR（不抛出）
+                timeout=30.0, idempotent=False) -> dict
+    # 管线：凭证解析(secret://、enc$) → 拼绝对URL → egress 校验 → 熔断 before_call → 重试包传输 → 成败记账
+    # → {"status": int, "headers": dict(敏感头已 ***), "body": object|str}
+    # 拿到任何 HTTP 响应即 SUCCESS；折叠错误码（HttpApiCallError.code → StructuredError）：
+    #   EGRESS_DENIED / EGRESS_INVALID_URL（私网/元数据/非 http(s)，零外呼、不重试、不计熔断）
+    #   SECRET_UNAVAILABLE / SECRET_DECRYPT_ERROR（凭证缺失/解密失败，零外呼）
+    #   HTTP_CIRCUIT_OPEN（熔断开闸，请求不发出）
+    #   HTTP_TIMEOUT / HTTP_CONNECT_ERROR（传输层，重试用尽后）；4xx/5xx 不报错（按 status 分支）
 
 # adapter.py：HttpApiHarnessAdapter(HarnessAdapter)
 #   单能力 request（permission=write, is_idempotent=false）
@@ -125,17 +135,21 @@ class HttpApiClient:
 ```python
 # src/atlas/database/service.py（进程内，channel 包 database，adapter_id="database"）
 class DatabaseAdapterError(Exception):  # .code: DB_NOT_CONFIGURED / DB_SQL_ERROR / MISSING_PARAMETER / INVALID_PARAMETER
+                                            #         DB_SQL_NOT_READ_ONLY（query 非单条只读 SELECT）/ DB_WRITE_FORBIDDEN（外部只读连接 execute）
 
 class DatabaseClient:
-    def __init__(self, engine: Engine, url: str = "", demo: bool = False)
+    def __init__(self, engine: Engine, url: str = "", demo: bool = False, read_only: bool | None = None)
+    #   read_only=None → 解析为 not demo（外部 from_env 连接 True，demo engine False）
     @classmethod
-    def from_env(cls)             # ATLAS_DATABASE_URL；scheme 白名单 postgresql+psycopg/sqlite；未配置返 None
+    def from_env(cls)             # ATLAS_DATABASE_URL；scheme 白名单 postgresql+psycopg/sqlite；未配置返 None（外部连接 read_only=True）
     @staticmethod
-    def demo_engine(seed: bool = True)  # sqlite:///:memory: + StaticPool，建 orders 表 seed 两笔
+    def demo_engine(seed: bool = True)  # sqlite:///:memory: + StaticPool，建 orders 表 seed 两笔（engine 直连，不经适配器 execute）
     def query(self, sql, params=None, limit=500) -> dict
     # → {"columns": [...], "rows": [{...}], "row_count": int, "truncated": bool}
-    # PG: execution_options(postgresql_readonly=True)，结束 rollback；SQLAlchemyError → DB_SQL_ERROR（URL 脱敏）
-    def execute(self, sql, params=None) -> dict   # commit → {"rowcount": int}
+    # 触库前 assert_read_only_sql（database/guard.py，两档强制）：去注释/拒多语句/只放单条 SELECT·WITH…SELECT
+    #   违例 → DB_SQL_NOT_READ_ONLY；PG 再 execution_options(postgresql_readonly=True)，结束 rollback；
+    #   SQLAlchemyError → DB_SQL_ERROR（URL 脱敏）
+    def execute(self, sql, params=None) -> dict   # read_only 客户端触库前直接 DB_WRITE_FORBIDDEN；否则 commit → {"rowcount": int}
     @property
     def masked_url(self) -> str                  # render_as_string(hide_password=True)
 

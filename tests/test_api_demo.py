@@ -459,11 +459,16 @@ def _registry_with_http(monkeypatch, base_url: str):
     from atlas.harness.registry import AdapterRegistry
     from atlas.httpapi.adapter import HttpApiHarnessAdapter
     from atlas.httpapi.service import HttpApiClient
+    from atlas.security.egress import EgressGuard
 
     registry = AdapterRegistry()
     registry.register(
         HttpApiHarnessAdapter(
-            client=HttpApiClient(base_url=base_url),
+            # 回环 e2e：HTTP 节点回调本机 uvicorn mock，显式 opt-in 放行 127/8（仅此测试进程）
+            client=HttpApiClient(
+                base_url=base_url,
+                egress=EgressGuard(permit_cidrs=("127.0.0.0/8",)),
+            ),
             granted_permissions={"read", "write", "delete", "financial"},
         )
     )
