@@ -1,6 +1,6 @@
 import { Button, Card, Col, Layout, Row, Space, Typography } from 'antd'
 import { UserBadge } from '../components/UserBadge'
-import type { Principal } from '../lib/auth'
+import { roleCan, type Principal } from '../lib/auth'
 import { useTranslation } from '../locales'
 
 const { Content, Header } = Layout
@@ -11,9 +11,10 @@ type DashboardProps = {
   onOpenEditor: () => void
   onOpenMonitoring: () => void
   onOpenMemory: () => void
+  onOpenUsers: () => void
 }
 
-export function Dashboard({ principal, onLogout, onOpenEditor, onOpenMonitoring, onOpenMemory }: DashboardProps) {
+export function Dashboard({ principal, onLogout, onOpenEditor, onOpenMonitoring, onOpenMemory, onOpenUsers }: DashboardProps) {
   // 页面专属文案走 dashboard namespace；品牌名/主导航是跨页通用文案，显式取 common: 前缀。
   const { t } = useTranslation('dashboard')
   return (
@@ -33,6 +34,9 @@ export function Dashboard({ principal, onLogout, onOpenEditor, onOpenMonitoring,
               </Button>
               <Button onClick={onOpenMonitoring}>{t('common:nav.monitoring')}</Button>
               <Button onClick={onOpenMemory}>{t('common:nav.memory')}</Button>
+              {roleCan(principal.role, 'administer') && (
+                <Button onClick={onOpenUsers}>{t('common:nav.users')}</Button>
+              )}
             </Space>
           </Card>
           <Row gutter={16}>
