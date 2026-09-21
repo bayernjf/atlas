@@ -435,7 +435,14 @@ class PgUserStore:
             self._backend.session_store().revoke_for_user(tenant_id, username)
         return self.get(tenant_id, username)
 
-    def set_password(self, tenant_id: str, username: str, password: str) -> "UserAccount | None":
+    def set_password(
+        self,
+        tenant_id: str,
+        username: str,
+        password: str,
+        *,
+        keep_token: str | None = None,
+    ) -> "UserAccount | None":
         from atlas.iam.passwords import hash_password
 
         with self._engine.begin() as conn:
@@ -453,7 +460,9 @@ class PgUserStore:
             )
             if result.rowcount == 0:
                 return None
-        self._backend.session_store().revoke_for_user(tenant_id, username)
+        self._backend.session_store().revoke_for_user(
+            tenant_id, username, keep_token=keep_token
+        )
         return self.get(tenant_id, username)
 
 

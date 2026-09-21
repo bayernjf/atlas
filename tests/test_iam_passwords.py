@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import base64
 
+import pytest
+
 from atlas.iam.passwords import (
     ALGORITHM,
     DKLEN,
@@ -11,6 +13,8 @@ from atlas.iam.passwords import (
     SCRYPT_P,
     SCRYPT_R,
     hash_password,
+    validate_password,
+    validate_username,
     verify_password,
 )
 
@@ -46,3 +50,24 @@ def test_verify_rejects_malformed_stored() -> None:
     assert not verify_password("admin123", "scrypt$1$8$1$!!$!!")
     assert not verify_password("admin123", "bcrypt$16384$8$1$YWJj$YWJj")
     assert not verify_password("admin123", "scrypt$notint$8$1$YWJj$YWJj")
+
+
+def test_validate_password_accepts_length_and_rejects_short_weak_long() -> None:
+    validate_password("Strongpass-1")
+    validate_password("x" * 128)
+    with pytest.raises(ValueError):
+        validate_password("short")
+    with pytest.raises(ValueError):
+        validate_password("x" * 129)
+    with pytest.raises(ValueError):
+        validate_password("admin123")
+    with pytest.raises(ValueError):
+        validate_password("ADMIN123")
+
+
+def test_validate_username_rules() -> None:
+    validate_username("admin-a")
+    validate_username("a" * 64)
+    for bad in ("ab", "a" * 65, "BadUser", "bad/user", "用户名字", ""):
+        with pytest.raises(ValueError):
+            validate_username(bad)

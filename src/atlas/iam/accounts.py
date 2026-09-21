@@ -137,7 +137,14 @@ class UserStore:
             self._session_store.revoke_for_user(tenant_id, username)
         return result
 
-    def set_password(self, tenant_id: str, username: str, password: str) -> UserAccount | None:
+    def set_password(
+        self,
+        tenant_id: str,
+        username: str,
+        password: str,
+        *,
+        keep_token: str | None = None,
+    ) -> UserAccount | None:
         with self._lock:
             account = self._users.get((tenant_id, username))
             if account is None:
@@ -146,5 +153,5 @@ class UserStore:
             account.updated_at = _now_iso()
             result = account.model_copy(deep=True)
         if self._session_store is not None:
-            self._session_store.revoke_for_user(tenant_id, username)
+            self._session_store.revoke_for_user(tenant_id, username, keep_token=keep_token)
         return result
