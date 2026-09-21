@@ -26,6 +26,8 @@ dependencies = [
     "psycopg[binary]>=3.3,<4",
     "sqlalchemy>=2.0,<3",
     "pgvector>=0.5",
+    # Secret envelope encryption (docs/32 §2, ADR T26=a): AES-256-GCM master key
+    "cryptography>=44",
 ]
 
 [project.optional-dependencies]
