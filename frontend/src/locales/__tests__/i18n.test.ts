@@ -193,6 +193,123 @@ const EDITOR_B_KEYS = [
   'debugConsole.title',
 ]
 
+/**
+ * Monitoring.tsx 在 monitoring namespace 下接线的静态（无插值）key（M12 续批 monitoring）。
+ * 插值键见 MONITORING_TEMPLATE_KEYS；custom.hint 携带教学用字面 {{status}}/{{hasError}}，单独守护；
+ * 后端告警 message / 校验 message / 英文表达式 placeholder / 技术数据（ruleId、错误码）不抽 key。
+ */
+const MONITORING_KEYS = [
+  'title',
+  'header.refresh',
+  'header.back',
+  'header.unresolvedBadge',
+  'col.rule',
+  'col.graph',
+  'col.message',
+  'col.count',
+  'col.lastRun',
+  'col.status',
+  'col.lastSeen',
+  'col.actions',
+  'col.run',
+  'col.version',
+  'col.mode',
+  'col.nodes',
+  'col.duration',
+  'col.started',
+  'col.time',
+  'col.graphId',
+  'col.trigger',
+  'col.passRate',
+  'col.passTotal',
+  'col.blocked',
+  'col.samples',
+  'col.tool',
+  'col.calls',
+  'col.failed',
+  'col.simulated',
+  'col.errorCodes',
+  'col.node',
+  'col.type',
+  'col.error',
+  'severity.critical',
+  'severity.warning',
+  'rollback.auto',
+  'rollback.manual',
+  'alertStatus.open',
+  'alertStatus.acknowledged',
+  'alertStatus.resolved',
+  'alert.acknowledge',
+  'alert.resolve',
+  'version.draft',
+  'mode.sync',
+  'mode.stream',
+  'health.error',
+  'health.unhealthy',
+  'health.healthy',
+  'trigger.publishGate',
+  'trigger.manualGate',
+  'report.uncovered',
+  'blocked.yes',
+  'blocked.no',
+  'nodeResult.failed',
+  'nodeResult.success',
+  'metric.total',
+  'metric.healthy',
+  'metric.unhealthy',
+  'metric.successRate',
+  'metric.p50',
+  'metric.p95',
+  'reportCard.title',
+  'reportCard.subtitle',
+  'business.autoRefundRate',
+  'business.manualEscalationRate',
+  'business.amountDiffRate',
+  'business.cardTitle',
+  'business.colAutoRefundRate',
+  'business.colManualEscalationRate',
+  'business.colAmountDiffRate',
+  'tool.cardTitle',
+  'alertCard.title',
+  'filter.allStatus',
+  'filter.allGraphs',
+  'rules.cardTitle',
+  'rules.saveFailed',
+  'rules.saved',
+  'rules.save',
+  'builtinRule.runError',
+  'builtinRule.nodeFailed',
+  'builtinRule.consecutiveFailures',
+  'builtinRule.failureRateName',
+  'builtinRule.rolloutGate',
+  'ruleForm.threshold',
+  'ruleForm.window',
+  'ruleForm.minSamples',
+  'ruleForm.failureRate',
+  'ruleForm.rate',
+  'ruleForm.unitTimes',
+  'custom.title',
+  'custom.namePlaceholder',
+  'custom.enabled',
+  'custom.nameEmpty',
+  'custom.add',
+  'runsCard.title',
+  'empty.reports',
+  'empty.business',
+  'empty.tools',
+  'empty.alerts',
+  'empty.runs',
+]
+
+/** monitoring namespace 带插值的 key：给齐变量后不得残留 {{，且应含中文。 */
+const MONITORING_TEMPLATE_KEYS: Array<{ key: string; vars: Record<string, unknown> }> = [
+  { key: 'rollback.tag', vars: { actor: '自动', from: 3, to: 2 } },
+  { key: 'run.nodeSummary', vars: { ok: 3, failed: 1 } },
+  { key: 'run.uncaughtError', vars: { error: 'RuntimeError: x' } },
+  { key: 'rules.nameEmpty', vars: { cid: 'c-1' } },
+  { key: 'rules.exprInvalid', vars: { name: '错误即告警', errors: '变量未定义' } },
+]
+
 const hasChinese = (s: string): boolean => /[\u4e00-\u9fff]/.test(s)
 
 afterEach(() => {
@@ -403,11 +520,67 @@ describe('zero-dependency i18n skeleton (docs/17 §2.3, M12)', () => {
     expect(t('decision.promptTemplateLabel', { ns: 'editor' })).toContain('{{路径}}')
   })
 
-  it('registers empty monitoring/memory namespaces without breaking resolution', () => {
-    // These namespaces are {} placeholders in this batch; missing keys return the key itself
-    // rather than throwing, and common fallback still works from them.
-    expect(t('monitoring.anything', { ns: 'monitoring' })).toBe('monitoring.anything')
+  it('resolves monitoring namespace static copy for the monitoring page', () => {
+    for (const key of MONITORING_KEYS) {
+      const value = t(key, { ns: 'monitoring' })
+      expect(value, `${key} must resolve`).not.toBe(key)
+      expect(value.length, `${key} must be non-empty`).toBeGreaterThan(0)
+      expect(hasChinese(value), `${key} should carry Chinese copy`).toBe(true)
+    }
+  })
+
+  it('renders monitoring interpolation templates without leftover placeholders', () => {
+    for (const { key, vars } of MONITORING_TEMPLATE_KEYS) {
+      const value = t(key, { ns: 'monitoring', ...vars })
+      expect(value, `${key} must resolve`).not.toBe(key)
+      expect(value, `${key} must not leave a {{placeholder}}`).not.toContain('{{')
+      expect(hasChinese(value), `${key} should carry Chinese copy`).toBe(true)
+    }
+    // Spot-check the composed rollback tag and node summary shapes.
+    expect(t('rollback.tag', { ns: 'monitoring', actor: '自动', from: 3, to: 2 })).toBe(
+      '自动回滚 v3 → v2',
+    )
+    expect(t('run.nodeSummary', { ns: 'monitoring', ok: 3, failed: 1 })).toBe('3 成 / 1 败')
+  })
+
+  it('keeps the literal teaching braces in the custom-rule hint and resolves lib label keys', () => {
+    // custom.hint teaches {{status}}/{{hasError}}; the page calls t() without those variables,
+    // so the tokens must survive verbatim while the surrounding guidance stays Chinese.
+    const hint = t('custom.hint', { ns: 'monitoring' })
+    expect(hint).toContain('{{status}}')
+    expect(hint).toContain('{{hasError}}')
+    expect(hasChinese(hint)).toBe(true)
+    // lib/monitoring.ts returns i18n keys for built-in rules/status; the page resolves via t().
+    expect(t('builtinRule.runError', { ns: 'monitoring' })).toBe('运行异常')
+    expect(t('builtinRule.consecutiveFailures', { ns: 'monitoring' })).toBe('连续失败')
+    expect(t('alertStatus.open', { ns: 'monitoring' })).toBe('待处理')
+    // ruleLabel() fallbacks: a custom rule_name (any string) or a custom:{cid} id must surface
+    // verbatim — missing dotted key returns the string, unknown namespace prefix returns it too.
+    expect(t('错误即告警', { ns: 'monitoring' })).toBe('错误即告警')
+    expect(t('custom:abc', { ns: 'monitoring' })).toBe('custom:abc')
+  })
+
+  it('reaches the shared delete action via common: prefix from a monitoring hook', () => {
+    expect(t('common:button.delete', { ns: 'monitoring' })).toBe('删除')
+  })
+
+  it('falls back to zh-CN for monitoring copy under the empty en-US skeleton', () => {
+    changeLanguage('en-US')
+    // en-US/monitoring.json stays {} (no translation yet); Chinese must still render, never a raw key.
+    for (const key of MONITORING_KEYS) {
+      expect(t(key, { ns: 'monitoring' })).not.toBe(key)
+    }
+    for (const { key, vars } of MONITORING_TEMPLATE_KEYS) {
+      expect(t(key, { ns: 'monitoring', ...vars })).not.toBe(key)
+    }
+    expect(t('custom.hint', { ns: 'monitoring' })).toContain('{{status}}')
+    changeLanguage('zh-CN')
+  })
+
+  it('keeps the still-empty memory namespace registered without breaking resolution', () => {
+    // memory.json is a {} placeholder until the memory page batch; missing keys return the key
+    // rather than throwing, and common fallback still works from it.
     expect(t('memory.anything', { ns: 'memory' })).toBe('memory.anything')
-    expect(t('common:button.save', { ns: 'monitoring' })).toBe('保存')
+    expect(t('common:button.save', { ns: 'memory' })).toBe('保存')
   })
 })

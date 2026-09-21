@@ -50,11 +50,11 @@ describe('formatDuration', () => {
 })
 
 describe('monitoring display maps', () => {
-  it('maps rule ids, severity colors and alert status labels to Chinese', () => {
-    expect(ruleLabel('run_error')).toBe('运行异常')
-    expect(ruleLabel('consecutive_failures')).toBe('连续失败')
+  it('maps built-in rule ids and alert status to i18n keys (resolved by t() in the page)', () => {
+    expect(ruleLabel('run_error')).toBe('builtinRule.runError')
+    expect(ruleLabel('consecutive_failures')).toBe('builtinRule.consecutiveFailures')
     expect(SEVERITY_COLORS.critical).toBe('red')
-    expect(ALERT_STATUS_LABELS.open).toBe('待处理')
+    expect(ALERT_STATUS_LABELS.open).toBe('alertStatus.open')
     expect(formatTime('not-a-date')).toBe('not-a-date')
   })
 

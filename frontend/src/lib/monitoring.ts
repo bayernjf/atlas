@@ -20,17 +20,19 @@ export function formatTime(iso: string): string {
     : date.toLocaleTimeString('zh-CN', { hour12: false })
 }
 
+// 内置规则名映射到 monitoring namespace 的 i18n key（纯函数不引 hook，由组件 t() 解析）；
+// 自定义规则名/rule_id 不经此表，ruleLabel 原样返回、t() 缺键时原样显示（docs/28 §4.2、docs/33 §2）。
 export const RULE_LABELS: Record<string, string> = {
-  run_error: '运行异常',
-  node_failed: '节点失败',
-  consecutive_failures: '连续失败',
-  failure_rate: '失败率超标',
-  rollout_gate: '灰度门控回滚',
+  run_error: 'builtinRule.runError',
+  node_failed: 'builtinRule.nodeFailed',
+  consecutive_failures: 'builtinRule.consecutiveFailures',
+  failure_rate: 'builtinRule.failureRateName',
+  rollout_gate: 'builtinRule.rolloutGate',
 }
 
 /**
- * 告警规则名：自定义规则优先用后端 rule_name；内置规则用本地映射；
- * custom:{cid} 且无 rule_name（PG 档 v1 不持久化）时回退显示 rule_id（docs/28 §4.2）。
+ * 告警规则名：自定义规则优先用后端 rule_name；内置规则返回 i18n key（组件 t() 解析）；
+ * custom:{cid} 且无 rule_name（PG 档 v1 不持久化）时回退返回 rule_id 原文（docs/28 §4.2）。
  */
 export function ruleLabel(ruleId: string, ruleName?: string | null): string {
   if (ruleName) return ruleName
@@ -42,10 +44,11 @@ export const SEVERITY_COLORS = {
   warning: 'orange',
 } as const
 
+// 告警状态映射到 monitoring namespace 的 i18n key（组件 t() 解析，纯函数不引 hook）。
 export const ALERT_STATUS_LABELS: Record<AlertStatus, string> = {
-  open: '待处理',
-  acknowledged: '已确认',
-  resolved: '已关闭',
+  open: 'alertStatus.open',
+  acknowledged: 'alertStatus.acknowledged',
+  resolved: 'alertStatus.resolved',
 }
 
 export const ALERT_STATUS_COLORS: Record<AlertStatus, string> = {
