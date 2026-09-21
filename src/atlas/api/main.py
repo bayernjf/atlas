@@ -37,7 +37,7 @@ from atlas.database.service import DatabaseClient, demo_engine
 from atlas.debug import DebugController, DebugStopped
 from atlas.graph.conditions import validate_expression
 from atlas.graph.dsl import GraphDSL, GraphValidationError, parse_graph
-from atlas.graph.loader import compile_graph, run_graph, tool_input_schemas
+from atlas.graph.loader import _tool_permissions, compile_graph, run_graph, tool_input_schemas
 from atlas.collaboration.cancellations import RunCancelled
 from atlas.tracing import Tracer
 from atlas.harness.base import Permission
@@ -72,7 +72,10 @@ from atlas.recording import (
     collect_steps,
     collect_subgraph_snapshots,
     compare as compare_recording,
+    extract_shadow_events,
+    HumanOutcome,
     inline_first_resolver,
+    preset_all_approvals,
     preset_approvals,
     report_to_csv,
     run_release_gate,
@@ -87,7 +90,7 @@ from atlas.routing import (
 from atlas.shop.adapter import ShopHarnessAdapter
 from atlas.shop.service import DemoShopService
 from atlas.storage.frame import card_context_from_frame, remaining_seconds
-from atlas.storage.memory import FeedbackRequest
+from atlas.storage.memory import ApprovalBroker, FeedbackRequest
 from atlas.storage.pg import get_pg_backend
 from atlas.storage.recovery import (
     clear_frame,
@@ -670,6 +673,129 @@ def export_graph_release_report(
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{report_id}.csv"'},
     )
+
+
+# --- D26 影子模式（docs/33 §3）：线上旁路录制，进程内 v1 -----------------------------
+
+
+def _parse_human_outcome(raw: Any) -> HumanOutcome | None:
+    """校验并构造人工实际处理；action 必须是非空串，非法由端点转 422。"""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=422, detail="human_outcome 必须是对象")
+    action = str(raw.get("action") or "").strip()
+    if not action:
+        raise HTTPException(status_code=422, detail="human_outcome.action 不能为空")
+    note = raw.get("note")
+    return HumanOutcome(action=action, note=str(note) if note else None)
+
+
+@app.post("/api/graphs/{graph_id}/shadow-runs", status_code=201)
+def create_shadow_run(
+    graph_id: str,
+    payload: dict[str, Any] | None = None,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """影子运行：旁路跑完整决策链，读透传/写短路，不进生产观测面（docs/33 §3.4）。
+
+    预置全部 human_approval 节点 approved 秒过；不写 run_store/RunRecord、不触发告警与灰度
+    门控、不产 tool_metric（loader shadow 短路）；独立 tracer（trace_id 入记录）与独立审批
+    broker（不污染租户 pending）；异常也沉淀 status=error 记录。
+    """
+    services = services_for(principal)
+    graph = _load_graph_or_404(services, graph_id, None)
+    body = payload or {}
+    raw_inputs = body.get("inputs") if isinstance(body.get("inputs"), dict) else {}
+    # approvals 是运行控制键（不进全局变量、不回记入记录 inputs）。
+    inputs = dict(raw_inputs)
+    presets = preset_all_approvals(graph)
+    if presets:
+        inputs["approvals"] = {**presets, **(inputs.get("approvals") or {})}
+    outcome = _parse_human_outcome(body.get("human_outcome"))
+
+    registry = _runtime_registry(services)
+    tool_permissions = _tool_permissions(registry)
+    node_index = {node.id: node for node in graph.nodes}
+    top_events: list[tuple[str, dict[str, Any]]] = []
+
+    def shadow_emit(event: dict[str, Any]) -> None:
+        # 只收顶层 node_end（子图内部事件带 subgraphPath，与监控 tool_calls 同口径排除）。
+        if event.get("type") == "node_end" and not event.get("subgraphPath"):
+            output = event.get("output")
+            if isinstance(output, dict):
+                top_events.append((event["node_id"], output))
+
+    tracer = Tracer(graph_id=graph_id)
+    shadow_broker = ApprovalBroker()  # 独立 broker：预置秒过且不污染租户 pending
+    status = "completed"
+    error: str | None = None
+    try:
+        run_graph(
+            graph,
+            inputs=inputs,
+            registry=registry,
+            approval_broker=shadow_broker,
+            graph_id=graph_id,
+            graph_resolver=_tenant_graph_resolver(services),
+            emit=shadow_emit,
+            tracer=tracer,
+            shadow=True,
+        )
+    except Exception as exc:  # 影子异常也沉淀记录，绝不影响生产链路
+        status = "error"
+        error = f"{type(exc).__name__}: {exc}"
+
+    decisions, intents = extract_shadow_events(top_events, node_index, tool_permissions)
+    return services.shadow_store.add(
+        graph_id=graph_id,
+        trace_id=tracer.trace_id,
+        decisions=decisions,
+        tool_intents=intents,
+        inputs=raw_inputs or None,
+        status=status,
+        error=error,
+        human_outcome=outcome,
+    )
+
+
+@app.get("/api/shadow-runs")
+def list_shadow_runs(
+    graph_id: str | None = None,
+    limit: int = 50,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """本租户影子运行记录倒序（可按图过滤，limit 1–200，默认 50）。"""
+    services = services_for(principal)
+    bounded = max(1, min(int(limit), 200))
+    return {"items": services.shadow_store.list(graph_id=graph_id, limit=bounded)}
+
+
+@app.get("/api/shadow-runs/{sid}")
+def get_shadow_run(sid: str, principal: Principal = Depends(require("read"))) -> dict[str, Any]:
+    services = services_for(principal)
+    run = services.shadow_store.get(sid)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"影子运行不存在：{sid}")
+    return run
+
+
+@app.post("/api/shadow-runs/{sid}/compare")
+def compare_shadow_run(
+    sid: str,
+    payload: dict[str, Any] | None = None,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """补录/覆盖人工实际处理并重算对比（docs/33 §3.4）；action 非空，非法 422，不存在 404。"""
+    services = services_for(principal)
+    body = payload or {}
+    outcome = _parse_human_outcome(body.get("human_outcome"))
+    if outcome is None:
+        raise HTTPException(status_code=422, detail="human_outcome.action 不能为空")
+    run = services.shadow_store.attach_outcome(sid, outcome)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"影子运行不存在：{sid}")
+    return run
 
 
 @app.post("/api/graphs/{graph_id}/publish", response_model=PublishGraphResponse)

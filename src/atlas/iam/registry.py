@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from atlas.collaboration.cancellations import RunCancellationBroker
 from atlas.coordination import TaskStore
 from atlas.message.service import MessageService
-from atlas.recording import ReportStore
+from atlas.recording import ReportStore, ShadowStore
 from atlas.routing import RoutingStore
 from atlas.storage.base import (
     ApprovalRepository,
@@ -57,6 +57,7 @@ class TenantServices:
     task_store: TaskStore
     routing_store: RoutingStore
     report_store: ReportStore  # D26 报告 v1：批量回放报告 ring（进程内，memory/PG 档均挂内存实例）
+    shadow_store: ShadowStore  # D26 影子模式：旁路运行记录 ring（进程内，两档均挂内存实例，docs/33 §3）
     memory_store: MemoryRepository  # M11 长期记忆 fact/preference（批 3 PG 档换 PgMemoryStore）
 
 
@@ -98,6 +99,7 @@ class TenantRegistry:
                 task_store=TaskStore(),
                 routing_store=RoutingStore(),
                 report_store=ReportStore(),
+                shadow_store=ShadowStore(),
                 memory_store=backend.memory_store(tenant_id),
             )
         return TenantServices(
@@ -113,6 +115,7 @@ class TenantRegistry:
             task_store=TaskStore(),
             routing_store=RoutingStore(),
             report_store=ReportStore(),
+            shadow_store=ShadowStore(),
             memory_store=MemoryStore(),
         )
 
@@ -129,4 +132,5 @@ class TenantRegistry:
         services.run_store.reset()
         services.routing_store.reset()
         services.report_store.reset()
+        services.shadow_store.reset()
         services.memory_store.clear()
