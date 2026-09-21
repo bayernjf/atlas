@@ -20,6 +20,12 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 
 from atlas.security.egress import EgressDenied, EgressGuard
+from atlas.security.secrets import (
+    SecretError,
+    build_secret_provider_from_env,
+    redact_headers,
+    resolve_references,
+)
 
 from .resilience import (
     DEFAULT_BASE_DELAY,
@@ -68,6 +74,7 @@ class HttpApiClient:
         resolver: Callable[[str], list[str]] | None = None,
         retry: RetryPolicy | None = None,
         breaker: CircuitBreaker | None = None,
+        secret_provider=None,
     ) -> None:
         self.base_url = (base_url or "").strip()
         self.default_headers: dict[str, str] = {
@@ -79,6 +86,7 @@ class HttpApiClient:
         # 重试/熔断恒启用；可注入 no-op 睡眠策略与假时钟供离线测试
         self._retry = retry or RetryPolicy()
         self._breaker = breaker or CircuitBreaker()
+        self._secrets = secret_provider
         self.last_request: dict[str, object] | None = None
 
     @classmethod
@@ -116,6 +124,7 @@ class HttpApiClient:
             egress=EgressGuard.from_env(),
             retry=retry,
             breaker=breaker,
+            secret_provider=build_secret_provider_from_env(),
         )
 
     def request(
@@ -147,7 +156,17 @@ class HttpApiClient:
             **self.default_headers,
             **{str(k): str(v) for k, v in (headers or {}).items()},
         }
-        target = self._resolve_url(url.strip())
+        # 凭证解析：secret:// 引用与 enc$ 信封在拼 URL/建连前替换为明文；
+        # 缺失或解密失败 fail-closed（不写 last_request、零外呼、不进重试/熔断）
+        try:
+            resolved_url = resolve_references(url.strip(), self._secrets)
+            resolved_headers = {
+                str(key): str(resolve_references(value, self._secrets))
+                for key, value in merged_headers.items()
+            }
+        except SecretError as exc:
+            raise HttpApiCallError(exc.code, str(exc)) from exc
+        target = self._resolve_url(resolved_url)
         # SSRF 出向校验：在拼出最终绝对 URL 后、建连前；拒绝零外呼、不写 last_request
         try:
             self._egress.check(target)
@@ -167,7 +186,7 @@ class HttpApiClient:
                 target,
                 content=body if isinstance(body, str) else None,
                 json=body if isinstance(body, (dict, list)) else None,
-                headers=merged_headers,
+                headers=resolved_headers,
                 timeout=timeout_value,
             )
 
@@ -191,7 +210,7 @@ class HttpApiClient:
             parsed_body = response.text
         return {
             "status": response.status_code,
-            "headers": dict(response.headers),
+            "headers": redact_headers(dict(response.headers)),
             "body": parsed_body,
         }
 
