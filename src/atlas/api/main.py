@@ -710,6 +710,7 @@ _webhook_deliverer = WebhookDeliverer(
     resolver=_webhook_resolve,
     trigger=_webhook_trigger,
     auditor=_webhook_audit,
+    store_provider=lambda tenant: tenant_registry.get(tenant).webhook_deliveries,
 )
 
 
@@ -847,6 +848,59 @@ def put_webhook_subscriptions(
 
     items = services.channel_registry.set_subscriptions(binding_id, normalized)
     return {"items": items}
+
+
+@app.get("/api/channels/webhooks/dead-letters")
+def list_webhook_dead_letters(
+    topic: str | None = None,
+    bindingId: str | None = None,
+    limit: int = 100,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    store = services_for(principal).webhook_deliveries
+    items = store.list_dead(
+        principal.tenant_id, topic=topic, binding_id=bindingId, limit=limit
+    )
+    return {"items": items}
+
+
+@app.post("/api/channels/webhooks/dead-letters/{webhook_id}/replay")
+def replay_webhook_dead_letter(
+    webhook_id: str, principal: Principal = Depends(require("operate"))
+) -> dict[str, Any]:
+    services = services_for(principal)
+    store = services.webhook_deliveries
+    dead = store.get_dead(principal.tenant_id, webhook_id)
+    if dead is None:
+        raise HTTPException(status_code=404, detail="死信投递不存在或已处理")
+    binding = services.channel_registry._store.get(dead["bindingId"])
+    if binding is None:
+        raise HTTPException(status_code=404, detail="死信所属的渠道绑定不存在")
+    result = _webhook_deliverer.replay(
+        principal.tenant_id,
+        {"id": binding.id, "webhook_subscriptions": binding.webhook_subscriptions},
+        webhook_id,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="死信投递不存在或已处理")
+    return result
+
+
+@app.delete("/api/channels/webhooks/dead-letters/{webhook_id}")
+def delete_webhook_dead_letter(
+    webhook_id: str, principal: Principal = Depends(require("administer"))
+) -> dict[str, Any]:
+    store = services_for(principal).webhook_deliveries
+    deleted = store.delete(principal.tenant_id, webhook_id)
+    return {"deleted": deleted}
+
+
+@app.get("/api/channels/webhooks/metrics")
+def webhook_delivery_metrics(
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    store = services_for(principal).webhook_deliveries
+    return store.metrics(principal.tenant_id)
 
 
 @app.get("/connections/callback", response_class=HTMLResponse, include_in_schema=False)

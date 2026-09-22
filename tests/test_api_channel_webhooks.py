@@ -141,16 +141,14 @@ def test_ingress_valid_signature_without_subscription_ignored():
 def test_ingress_duplicate_webhook_id_returns_duplicate():
     admin = _login("admin")
     _, bid = _create_binding(admin)
-    # 无订阅也走幂等环：同一 webhook id 第二次 duplicate
-    for _ in range(2):
-        pass
+    # docs/40：ignored 投递不留行，重复投递仍判 ignored（不做跨重试计数）
     body = b'{"id":1}'
     first = _post_hook(bid, body, _wh_headers(webhook_id="wh-dup",
                                               signature=_sign(body), body=body))
     assert first.json() == {"ignored": True}
     second = _post_hook(bid, body, _wh_headers(webhook_id="wh-dup",
                                                signature=_sign(body), body=body))
-    assert second.status_code == 200 and second.json() == {"duplicate": True}
+    assert second.status_code == 200 and second.json() == {"ignored": True}
 
 
 def test_ingress_missing_header_after_verified_signature_returns_400():
