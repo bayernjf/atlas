@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### feat：Shopify 侧 Webhook 注册批落码收口（docs/41，2026-09-23；dev、未 push；无 ADR）
+
+Shopify 店铺侧 webhook 注册由「人工复制 URL 到后台」变为订阅弹窗内一键注册，五原子＋一 fix（`93cd1a0`→`6b86a1d`→`cefc4fe`→`3eccc6d`）：
+
+- 后端：client 三方法、registry 地址钉版（ATLAS_PUBLIC_URL 非 https 明确 422、UNAUTHORIZED 落 binding error 态）、REST 三端点、demo mock 缝。
+- 前端：订阅弹窗「Shopify 店铺侧注册」区（viewer readonly）。
+- 门：后端 1293 passed/48 skipped（净增 17）、前端 584 passed/2 skipped/45 files（净增 3）；mock 缝浏览器冒烟注册→409→取消全绿（3 截图 docs/screenshots/41-shot-*）。
+- D22 不解除：真实店铺+公网 HTTPS 联调、Amazon/通用渠道、双向自动同步仍缓做。
+
 ### docs：Shopify 侧 Webhook 注册批立项（docs/41，2026-09-23；dev、未 push；无 ADR）
 
 docs/39/40 已收口入站口与可靠性，但 Shopify 店铺侧注册仍靠人工复制 URL。docs-only 契约先行（00/03/12/13/14/08/handoff 同步），**零新依赖、零迁移、D22 部分取回不解除**：

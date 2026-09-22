@@ -6,6 +6,8 @@
 >
 > **形状权威**：本文；01–08 规格冲突时以规格为准。
 >
+> **落码收口**：2026-09-23（五原子＋一 fix，详见 handoff Active work 37）。后端 **1293 passed/48 skipped**、前端 **584 passed/2 skipped/45 files**；mock 缝浏览器冒烟（注册→重复 409→取消，3 截图 docs/screenshots/41-shot-*）。实现期两处契约细化：① DELETE topic 路径含斜杠，路由用 `{topic:path}`；② GET 渠道 UNAUTHORIZED 折 200+error 时 registry 同步落 binding error 态（与 test() 先例对齐）。
+>
 > **边界**：只做 Shopify Admin REST `webhooks` 资源（JSON 格式）；不做 webhook 签名密钥轮换、fields/include_filter、私有 app/API version 迁移；不自动同步远端与本地订阅（两个动作各自显式触发）；不改公开入口状态码契约（docs/39 §C 原样）。
 
 ## 1. 范围
