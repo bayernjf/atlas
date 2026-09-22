@@ -30,6 +30,7 @@ from langgraph.graph import END, START, StateGraph
 from atlas.cards.catalog import get_card
 from atlas.collaboration.approvals import ApprovalBroker
 from atlas.collaboration.cancellations import RunCancelled
+from atlas.collaboration.event_waits import EventWaitBroker
 from atlas.collaboration.notifications import ApprovalNotifier
 from atlas.debug.sessions import DebugStopped
 from atlas.database.adapter import DatabaseHarnessAdapter
@@ -60,6 +61,7 @@ from .dsl import (
     Issue,
     _loc,
     _loop_body_set,
+    valid_event_key,
     validate_graph_report,
 )
 from .interpolation import interpolate, resolve_path
@@ -78,6 +80,16 @@ _AUTO_TRACER = object()
 logger = logging.getLogger(__name__)
 
 _default_approval_broker = ApprovalBroker()
+_default_event_wait_broker = EventWaitBroker()
+
+
+class WaitNodeFailure(Exception):
+    """wait 节点确定性失败（docs/47 §3.4）；run 标记 failed，不沿出边继续。"""
+
+    def __init__(self, node_id: str, code: str, message: str) -> None:
+        super().__init__(f"{code}: {message}")
+        self.node_id = node_id
+        self.code = code
 
 
 def _merge_outputs(left: dict, right: dict) -> dict:
@@ -143,6 +155,7 @@ def _make_executor(
     decision_client: Any,
     registry: AdapterRegistry | None,
     approval_broker: ApprovalBroker,
+    event_wait_broker: EventWaitBroker,
     graph_id: str,
     emit: EventCallback,
     approval_notifier: ApprovalNotifier | None = None,
@@ -318,25 +331,107 @@ def _make_executor(
                     targets = [branch["target"] for branch in node.config.get("branches", [])]
                     message = f"{node.id}: fork {len(targets)} branches → {', '.join(targets)}"
                 elif node.type == "wait":
-                    seconds = int(node.config["durationSeconds"])
-                    if resume_here:
-                        # 续跑：按剩余时长等待（绝对 deadline 照扣，docs/24 §3.1）。
-                        seconds = int(remaining_seconds(resume.get("deadline_at")))
+                    if node.config["waitType"] == "event":
+                        preset_events = trigger_payload.get("waitEvents") or {}
+                        preset = preset_events.get(node.id)
+                        if preset is not None:
+                            # run inputs 预置：不登记 broker、不阻塞（docs/47 §3.3）。
+                            event_payload = preset if isinstance(preset, dict) else {}
+                            output = {
+                                "mode": "wait",
+                                "waitType": "event",
+                                "eventKey": "",
+                                "signaled": True,
+                                "payload": event_payload,
+                                "waitedSeconds": 0,
+                                "resolvedBy": "input",
+                                "token": "",
+                            }
+                            message = f"{node.id}: event preset from inputs"
+                        else:
+                            template = str(node.config["eventKey"])
+                            event_key = interpolate(template, context).strip()
+                            if not valid_event_key(event_key):
+                                raise WaitNodeFailure(
+                                    node.id,
+                                    "WAIT_EVENT_KEY_INVALID",
+                                    f"等待节点 {node.id} 渲染后的事件标识非法：{event_key}",
+                                )
+                            timeout_seconds = int(node.config["timeoutSeconds"])
+                            token = event_wait_broker.request(
+                                event_key=event_key,
+                                node_id=node.id,
+                                graph_id=graph_id,
+                                timeout_seconds=timeout_seconds,
+                            )
+                            wait_info = {
+                                "token": token,
+                                "eventKey": event_key,
+                                "timeoutSeconds": timeout_seconds,
+                                "onTimeout": node.config.get("onTimeout", "continue"),
+                            }
+                            # 第二个 node_start 携带 wait 载荷，前端据此展示等待态。
+                            emit({**start_event, "wait": wait_info})
+                            started = time.monotonic()
+                            event_payload = event_wait_broker.wait(
+                                token, is_cancelled=is_cancelled
+                            )
+                            waited = int(time.monotonic() - started)
+                            if event_payload is not None:
+                                output = {
+                                    "mode": "wait",
+                                    "waitType": "event",
+                                    "eventKey": event_key,
+                                    "signaled": True,
+                                    "payload": event_payload,
+                                    "waitedSeconds": waited,
+                                    "resolvedBy": "signal",
+                                    "token": token,
+                                }
+                                message = (
+                                    f"{node.id}: event {event_key} signaled after {waited}s"
+                                )
+                            elif node.config.get("onTimeout", "continue") == "fail":
+                                raise WaitNodeFailure(
+                                    node.id,
+                                    "WAIT_TIMEOUT_FAILED",
+                                    f"等待事件 {event_key} 超时",
+                                )
+                            else:
+                                output = {
+                                    "mode": "wait",
+                                    "waitType": "event",
+                                    "eventKey": event_key,
+                                    "signaled": False,
+                                    "payload": {},
+                                    "waitedSeconds": timeout_seconds,
+                                    "resolvedBy": "timeout",
+                                    "token": token,
+                                }
+                                message = (
+                                    f"{node.id}: event {event_key} timeout after "
+                                    f"{timeout_seconds}s (continue)"
+                                )
                     else:
-                        _emit_frame(
-                            frame_sink,
-                            node,
-                            state,
-                            token=uuid.uuid4().hex,
-                            kind="wait",
-                            graph_id=graph_id,
-                            graph_snapshot=graph_snapshot,
-                            trigger_payload=trigger_payload,
-                            timeout_seconds=seconds,
-                        )
-                    time.sleep(max(seconds, 0))
-                    output = {"mode": "wait", "waitType": "duration", "durationSeconds": seconds}
-                    message = f"{node.id}: waited {seconds}s"
+                        seconds = int(node.config["durationSeconds"])
+                        if resume_here:
+                            # 续跑：按剩余时长等待（绝对 deadline 照扣，docs/24 §3.1）。
+                            seconds = int(remaining_seconds(resume.get("deadline_at")))
+                        else:
+                            _emit_frame(
+                                frame_sink,
+                                node,
+                                state,
+                                token=uuid.uuid4().hex,
+                                kind="wait",
+                                graph_id=graph_id,
+                                graph_snapshot=graph_snapshot,
+                                trigger_payload=trigger_payload,
+                                timeout_seconds=seconds,
+                            )
+                        time.sleep(max(seconds, 0))
+                        output = {"mode": "wait", "waitType": "duration", "durationSeconds": seconds}
+                        message = f"{node.id}: waited {seconds}s"
                 elif node.type == "human_approval":
                     output, message = _await_human_approval(
                         node,
@@ -352,6 +447,7 @@ def _make_executor(
                         registry=registry,
                         decision_client=decision_client,
                         approval_broker=approval_broker,
+                        event_wait_broker=event_wait_broker,
                         approval_notifier=approval_notifier,
                         resolver=graph_resolver,
                         depth=subgraph_depth,
@@ -658,6 +754,7 @@ def _execute_subgraph(
     registry: AdapterRegistry | None,
     decision_client: Any,
     approval_broker: ApprovalBroker,
+    event_wait_broker: EventWaitBroker,
     approval_notifier: ApprovalNotifier | None = None,
     resolver: Callable[[str], GraphDSL] | None,
     depth: int,
@@ -707,6 +804,7 @@ def _execute_subgraph(
                 decision_client=decision_client,
                 registry=registry,
                 approval_broker=approval_broker,
+                event_wait_broker=event_wait_broker,
                 approval_notifier=approval_notifier,
                 graph_id=graph_ref,
                 emit=child_emit,
@@ -1563,6 +1661,7 @@ def compile_graph(
     decision_client: Any | None = None,
     registry: AdapterRegistry | None = None,
     approval_broker: ApprovalBroker | None = None,
+    event_wait_broker: EventWaitBroker | None = None,
     approval_notifier: ApprovalNotifier | None = None,
     graph_id: str = "adhoc",
     emit: EventCallback | None = None,
@@ -1585,6 +1684,7 @@ def compile_graph(
     decision_client = decision_client or get_decision_client()
     registry = registry if registry is not None else build_demo_registry()
     approval_broker = approval_broker or _default_approval_broker
+    event_wait_broker = event_wait_broker or _default_event_wait_broker
     # C（docs/27 §2.1）：单次编译/运行固定一个 UTC 时钟，供 today()/now() 与条件断点求值；
     # 录制/回放由 run_graph(now_override=) 注入冻结时刻，未注入则入口取一次当前 UTC。
     if now is None:
@@ -1669,6 +1769,7 @@ def compile_graph(
             decision_client=decision_client,
             registry=registry,
             approval_broker=approval_broker,
+            event_wait_broker=event_wait_broker,
             approval_notifier=approval_notifier,
             graph_id=graph_id,
             emit=emit,
@@ -1919,6 +2020,7 @@ def run_graph(
     decision_client: Any | None = None,
     registry: AdapterRegistry | None = None,
     approval_broker: ApprovalBroker | None = None,
+    event_wait_broker: EventWaitBroker | None = None,
     approval_notifier: ApprovalNotifier | None = None,
     graph_id: str = "adhoc",
     emit: EventCallback | None = None,
@@ -1997,6 +2099,7 @@ def run_graph(
             decision_client=decision_client,
             registry=registry,
             approval_broker=approval_broker,
+            event_wait_broker=event_wait_broker,
             approval_notifier=approval_notifier,
             graph_id=resume_graph_id,
             emit=emit,
@@ -2033,6 +2136,7 @@ def run_graph(
         decision_client=decision_client,
         registry=registry,
         approval_broker=approval_broker,
+        event_wait_broker=event_wait_broker,
         approval_notifier=approval_notifier,
         graph_id=graph_id,
         emit=emit,

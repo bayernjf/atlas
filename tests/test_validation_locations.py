@@ -88,7 +88,7 @@ def test_node_field_errors_carry_node_id_and_pointer():
             _node("trig", "trigger", triggerType="schedule", cron=""),
             _node("ai-1", "ai_decision", promptTemplate=""),
             _node("tool-1", "tool_call", tool=""),
-            _node("wait-1", "wait", name="", waitType="event", durationSeconds=5),
+            _node("wait-1", "wait", name="", waitType="until", durationSeconds=5),
         ],
     )
     graph = GraphDSL.model_validate(raw)

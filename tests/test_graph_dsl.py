@@ -670,14 +670,21 @@ def test_parse_valid_wait_inside_loop_body():
 @pytest.mark.parametrize(
     "config, expected",
     [
-        ({"waitType": "event", "durationSeconds": 2}, "事件等待（event）暂不支持"),
-        ({"waitType": "until", "durationSeconds": 2}, "等待类型（waitType）必须是 duration"),
+        ({"waitType": "until", "durationSeconds": 2}, "等待类型（waitType）必须是 duration 或 event"),
         ({"waitType": "duration", "durationSeconds": "2"}, "必须是整数秒"),
         ({"waitType": "duration", "durationSeconds": True}, "必须是整数秒"),
         ({"waitType": "duration", "durationSeconds": None}, "必须是整数秒"),
         ({"waitType": "duration", "durationSeconds": 0}, "需在 1-600 秒之间"),
         ({"waitType": "duration", "durationSeconds": -1}, "需在 1-600 秒之间"),
         ({"waitType": "duration", "durationSeconds": 601}, "需在 1-600 秒之间"),
+        ({"waitType": "event", "eventKey": None, "timeoutSeconds": 300}, "事件标识（eventKey）为必填"),
+        ({"waitType": "event", "eventKey": "bad key", "timeoutSeconds": 300}, "只允许字母、数字及 :_-"),
+        ({"waitType": "event", "eventKey": "x" * 129, "timeoutSeconds": 300}, "长度不能超过 128"),
+        ({"waitType": "event", "eventKey": "order_paid", "timeoutSeconds": 0}, "需在 1-3600 秒之间"),
+        ({"waitType": "event", "eventKey": "order_paid", "timeoutSeconds": 3601}, "需在 1-3600 秒之间"),
+        ({"waitType": "event", "eventKey": "order_paid", "timeoutSeconds": "300"}, "必须是整数秒"),
+        ({"waitType": "event", "eventKey": "order_paid", "timeoutSeconds": 300,
+          "onTimeout": "abort"}, "超时策略（onTimeout）必须是 continue 或 fail"),
     ],
 )
 def test_reject_wait_bad_type_and_duration(config, expected):
@@ -686,6 +693,23 @@ def test_reject_wait_bad_type_and_duration(config, expected):
     with pytest.raises(GraphValidationError) as exc:
         parse_graph(raw)
     assert any(expected in error for error in exc.value.errors)
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"waitType": "event", "eventKey": "order_paid", "timeoutSeconds": 1},
+        {"waitType": "event", "eventKey": "order_paid_{{trigger-1.context.payload.id}}",
+         "timeoutSeconds": 3600, "onTimeout": "fail"},
+        {"waitType": "event", "eventKey": "evt:paid-x_1", "timeoutSeconds": 300,
+         "onTimeout": "continue"},
+    ],
+)
+def test_parse_valid_event_wait(config):
+    raw = make_wait_graph()
+    raw["nodes"][1] = _wait_node(**config)
+    parse_graph(raw)
+
 
 
 def test_reject_wait_without_outgoing_edge():

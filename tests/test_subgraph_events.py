@@ -14,6 +14,7 @@ import threading
 import time
 
 from atlas.collaboration.approvals import ApprovalBroker
+from atlas.collaboration.event_waits import EventWaitBroker
 from atlas.graph.dsl import parse_graph
 from atlas.graph.loader import run_graph
 from atlas.recording.replay import collect_steps
@@ -266,6 +267,7 @@ def test_subgraph_runtime_failure_is_folded_without_leaking_frames():
         registry=None,
         decision_client=None,
         approval_broker=ApprovalBroker(),
+        event_wait_broker=EventWaitBroker(),
         resolver=lambda gid: None,
         depth=0,
         emit=events.append,
@@ -290,6 +292,7 @@ def test_failed_subgraph_keeps_parent_run_completed():
         registry=None,
         decision_client=None,
         approval_broker=ApprovalBroker(),
+        event_wait_broker=EventWaitBroker(),
         resolver=lambda gid: None,
         depth=0,
         subgraph_path=(),

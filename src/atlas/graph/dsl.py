@@ -18,6 +18,9 @@ from atlas.graph.conditions import parse as parse_condition
 from atlas.graph.conditions import validate_expression
 
 IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+EVENT_KEY_PLACEHOLDER_RE = re.compile(r"\{\{.*?\}\}")
+EVENT_KEY_RE = re.compile(r"[A-Za-z0-9:_-]{1,128}")
+EVENT_KEY_STATIC_RE = re.compile(r"[A-Za-z0-9:_-]*")
 
 SUPPORTED_NODE_TYPES = (
     "trigger",
@@ -37,6 +40,10 @@ MAX_PARALLEL_BRANCHES = 10
 PARALLEL_JOIN_STRATEGIES = ("all_success", "all_completed", "any_success")
 MIN_WAIT_SECONDS = 1
 MAX_WAIT_SECONDS = 600
+MIN_EVENT_WAIT_SECONDS = 1
+MAX_EVENT_WAIT_SECONDS = 3600
+MAX_EVENT_KEY_LENGTH = 128
+WAIT_TIMEOUT_POLICIES = ("continue", "fail")
 MAX_SUBGRAPH_DEPTH = 3
 MIN_APPROVAL_TIMEOUT = 10
 MAX_APPROVAL_TIMEOUT = 3600
@@ -669,10 +676,20 @@ def _validate_parallel_config(
     return issues
 
 
+def _event_key_static_parts(template: str) -> str:
+    """剔除 {{...}} 占位后拼接的静态部分（docs/47 §2；占位内不检查）。"""
+    return EVENT_KEY_PLACEHOLDER_RE.sub("", template)
+
+
+def valid_event_key(key: str) -> bool:
+    """运行时渲染后 eventKey：1-128 且字符集 [A-Za-z0-9:_-]（docs/47 §2）。"""
+    return bool(EVENT_KEY_RE.fullmatch(key))
+
+
 def _validate_wait_config(
     node: NodeDSL, node_ids: set[str], outgoing: dict[str, set[str]]
 ) -> list[Issue]:
-    """wait config 与单出边拓扑校验（契约 04 §5.5）。"""
+    """wait config 与单出边拓扑校验（契约 04 §5.5；event 分支 docs/47）。"""
     issues: list[Issue] = []
     prefix = f"等待节点 {node.id}"
     config = node.config
@@ -685,21 +702,50 @@ def _validate_wait_config(
         issues.append((message, _loc(node.id)))
 
     wait_type = config.get("waitType")
-    if wait_type != "duration":
-        if wait_type == "event":
-            add(f"{prefix} 事件等待（event）暂不支持，v1 仅支持定时等待（duration）", "/waitType")
+    if wait_type == "duration":
+        seconds = config.get("durationSeconds")
+        if isinstance(seconds, bool) or not isinstance(seconds, int):
+            add(f"{prefix} 等待时长（durationSeconds）必须是整数秒", "/durationSeconds")
+        elif not MIN_WAIT_SECONDS <= seconds <= MAX_WAIT_SECONDS:
+            add(
+                f"{prefix} 等待时长需在 {MIN_WAIT_SECONDS}-{MAX_WAIT_SECONDS} 秒之间"
+                f"（当前 {seconds}）",
+                "/durationSeconds",
+            )
+    elif wait_type == "event":
+        event_key = config.get("eventKey")
+        if not isinstance(event_key, str) or not event_key.strip():
+            add(f"{prefix} 事件标识（eventKey）为必填字符串", "/eventKey")
         else:
-            add(f"{prefix} 等待类型（waitType）必须是 duration", "/waitType")
-
-    seconds = config.get("durationSeconds")
-    if isinstance(seconds, bool) or not isinstance(seconds, int):
-        add(f"{prefix} 等待时长（durationSeconds）必须是整数秒", "/durationSeconds")
-    elif not MIN_WAIT_SECONDS <= seconds <= MAX_WAIT_SECONDS:
-        add(
-            f"{prefix} 等待时长需在 {MIN_WAIT_SECONDS}-{MAX_WAIT_SECONDS} 秒之间"
-            f"（当前 {seconds}）",
-            "/durationSeconds",
-        )
+            if len(event_key) > MAX_EVENT_KEY_LENGTH:
+                add(
+                    f"{prefix} 事件标识长度不能超过 {MAX_EVENT_KEY_LENGTH} 字符"
+                    f"（当前 {len(event_key)}）",
+                    "/eventKey",
+                )
+            if not EVENT_KEY_STATIC_RE.fullmatch(_event_key_static_parts(event_key)):
+                add(
+                    f"{prefix} 事件标识静态部分只允许字母、数字及 :_-，"
+                    "占位内内容不检查",
+                    "/eventKey",
+                )
+        timeout = config.get("timeoutSeconds")
+        if isinstance(timeout, bool) or not isinstance(timeout, int):
+            add(f"{prefix} 超时时间（timeoutSeconds）必须是整数秒", "/timeoutSeconds")
+        elif not MIN_EVENT_WAIT_SECONDS <= timeout <= MAX_EVENT_WAIT_SECONDS:
+            add(
+                f"{prefix} 超时时间需在 {MIN_EVENT_WAIT_SECONDS}-"
+                f"{MAX_EVENT_WAIT_SECONDS} 秒之间（当前 {timeout}）",
+                "/timeoutSeconds",
+            )
+        on_timeout = config.get("onTimeout", "continue")
+        if on_timeout not in WAIT_TIMEOUT_POLICIES:
+            add(
+                f"{prefix} 超时策略（onTimeout）必须是 continue 或 fail",
+                "/onTimeout",
+            )
+    else:
+        add(f"{prefix} 等待类型（waitType）必须是 duration 或 event", "/waitType")
 
     targets = outgoing.get(node.id, set())
     if len(targets) != 1:
@@ -1017,7 +1063,7 @@ _STATIC_OUTPUT_KEYS: dict[str, tuple[str, ...]] = {
     "condition": ("branch", "target"),
     "loop": ("index", "iterations"),
     "parallel": ("status", "branches", "joinStrategy", "joinTarget"),
-    "wait": ("mode", "waitType", "durationSeconds"),
+    "wait": ("mode", "waitType", "durationSeconds", "eventKey", "timeoutSeconds", "onTimeout"),
     "subgraph": ("status", "outputs"),
     "human_approval": ("decision", "target", "summary", "approver", "resolvedBy", "comment", "card"),
 }

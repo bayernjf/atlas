@@ -16,6 +16,7 @@ from atlas.channels.pg_deliveries import PgDeliveryStore
 from atlas.connections.service import build_connection_service
 from atlas.connections.store import ConnectionStore
 from atlas.collaboration.cancellations import RunCancellationBroker
+from atlas.collaboration.event_waits import EventWaitBroker
 from atlas.coordination import TaskStore
 from atlas.observability.audit import AuditRepository, AuditStore
 from atlas.message.service import MessageService
@@ -62,6 +63,7 @@ class TenantServices:
     approval_broker: ApprovalRepository
     debug_broker: DebugRepository
     cancellation_broker: RunCancellationBroker  # B 包协作式急停（进程内，memory/PG 档均内存实例）
+    event_wait_broker: EventWaitBroker  # wait 节点事件等待（进程内 v1，docs/47；两档均内存实例）
     monitoring: MonitoringRepository
     run_store: RunRepository
     task_store: TaskStore
@@ -122,6 +124,7 @@ class TenantRegistry:
                 approval_broker=ApprovalBroker(),
                 debug_broker=DebuggerBroker(),
                 cancellation_broker=RunCancellationBroker(),
+                event_wait_broker=EventWaitBroker(),
                 monitoring=backend.monitoring_store(tenant_id),
                 run_store=backend.run_store(tenant_id),
                 task_store=TaskStore(),
@@ -147,6 +150,7 @@ class TenantRegistry:
             approval_broker=ApprovalBroker(),
             debug_broker=DebuggerBroker(),
             cancellation_broker=RunCancellationBroker(),
+            event_wait_broker=EventWaitBroker(),
             monitoring=MonitoringStore(),
             run_store=RunStore(),
             task_store=TaskStore(),
@@ -172,6 +176,7 @@ class TenantRegistry:
         services.approval_broker.reset()
         services.debug_broker.reset()
         services.cancellation_broker.reset()
+        services.event_wait_broker.reset()
         services.monitoring.reset()
         services.run_store.reset()
         services.routing_store.reset()
