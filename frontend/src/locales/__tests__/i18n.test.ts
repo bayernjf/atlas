@@ -459,6 +459,73 @@ const MEMORY_KEYS = [
   'modal.metadataLabel',
 ]
 
+const CONNECTIONS_KEYS = [
+  'title',
+  'header.back',
+  'header.refresh',
+  'notice.title',
+  'notice.description',
+  'list.cardTitle',
+  'empty',
+  'col.displayName',
+  'col.status',
+  'col.scopes',
+  'col.expiresAt',
+  'col.createdAt',
+  'col.actions',
+  'status.draft',
+  'status.connected',
+  'status.error',
+  'button.create',
+  'button.edit',
+  'button.authorize',
+  'button.completeAuth',
+  'button.refresh',
+  'button.test',
+  'deleteConfirm.title',
+  'deleteConfirm.description',
+  'modal.createTitle',
+  'modal.editTitle',
+  'modal.secretKeepHint',
+  'form.provider',
+  'form.providerPlaceholder',
+  'form.displayName',
+  'form.displayNamePlaceholder',
+  'form.authUrl',
+  'form.tokenUrl',
+  'form.clientId',
+  'form.clientIdPlaceholder',
+  'form.clientSecret',
+  'form.clientSecretPlaceholder',
+  'form.clientSecretKeepPlaceholder',
+  'form.clientSecretHint',
+  'form.scopes',
+  'form.scopesHint',
+  'form.redirectUri',
+  'form.redirectUriHint',
+  'authModal.title',
+  'authModal.hint',
+  'authModal.submit',
+  'authModal.stateLabel',
+  'authModal.statePlaceholder',
+  'authModal.codeLabel',
+  'authModal.codePlaceholder',
+  'authModal.codeStateRequired',
+  'message.saved',
+  'message.deleted',
+  'message.authorized',
+  'message.refreshed',
+  'message.testOk',
+  'message.testFail',
+  'error.loadList',
+  'error.save',
+  'error.authorize',
+  'error.refresh',
+  'error.test',
+  'error.delete',
+  'error.formInvalid',
+]
+
 const hasChinese = (s: string): boolean => /[\u4e00-\u9fff]/.test(s)
 
 afterEach(() => {
@@ -771,6 +838,26 @@ describe('zero-dependency i18n skeleton (docs/17 §2.3, M12)', () => {
       expect(t(key, { ns: 'memory' })).not.toBe(key)
     }
     expect(t('kind.fact', { ns: 'memory' })).toBe('事实')
+    changeLanguage('zh-CN')
+  })
+
+  it('resolves connections namespace static copy for the connections page (T4)', () => {
+    for (const key of CONNECTIONS_KEYS) {
+      const value = t(key, { ns: 'connections' })
+      expect(value, `${key} must resolve`).not.toBe(key)
+      expect(value.length, `${key} must be non-empty`).toBeGreaterThan(0)
+      expect(hasChinese(value), `${key} should carry Chinese copy`).toBe(true)
+    }
+    expect(t('status.connected', { ns: 'connections' })).toBe('已连接')
+    // Dashboard 入口在 common namespace
+    expect(t('common:nav.connections', { ns: 'connections' })).toBe('连接管理')
+  })
+
+  it('falls back to zh-CN for connections copy under the empty en-US skeleton', () => {
+    changeLanguage('en-US')
+    for (const key of CONNECTIONS_KEYS) {
+      expect(t(key, { ns: 'connections' })).not.toBe(key)
+    }
     changeLanguage('zh-CN')
   })
 })

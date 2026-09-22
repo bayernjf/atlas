@@ -65,6 +65,7 @@ from atlas.memory.models import MemoryValidationError
 from atlas.message.adapter import MessageHarnessAdapter
 from atlas.monitoring import RUN_RING_SIZE, extract_business, extract_node_results
 from atlas.observability.audit import AUDITED_METHODS, LOGIN_PATH
+from atlas.connections.service import ConnectionServiceError
 from atlas.observability.health import check_ready
 from atlas.observability.metrics_export import render_prometheus
 from atlas.monitoring.silences import OnCallEmpty, current_assignee, is_silence_active
@@ -419,6 +420,204 @@ def export_audit_events(
         media_type="application/x-ndjson; charset=utf-8",
         headers=headers,
     )
+
+
+# ================= OAuth2 连接管理（docs/35 §4，T4；generic，平台无关）=================
+
+class ConnectionUpsertRequest(BaseModel):
+    provider: str | None = None
+    displayName: str | None = None
+    authUrl: str | None = None
+    tokenUrl: str | None = None
+    clientId: str | None = None
+    clientSecret: str | None = None
+    scopes: list[str] | None = None
+    redirectUri: str | None = None
+
+
+class ConnectionCreateRequest(ConnectionUpsertRequest):
+    provider: str
+    displayName: str
+    authUrl: str
+    tokenUrl: str
+    clientId: str
+
+
+class ConnectionExchangeRequest(BaseModel):
+    code: str
+    state: str
+
+
+def _conn_http_error(exc: ConnectionServiceError) -> "HTTPException":
+    return HTTPException(status_code=exc.status_code, detail=str(exc))
+
+
+@app.post("/api/connections", status_code=201)
+def create_connection(
+    body: ConnectionCreateRequest,
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, Any]:
+    """创建 OAuth2 连接配置（admin only）；授权/token URL 过出向校验，client_secret 立即加密。"""
+    try:
+        return services_for(principal).connection_service.create(
+            body.model_dump(), created_by=principal.username
+        )
+    except ConnectionServiceError as exc:
+        raise _conn_http_error(exc)
+
+
+@app.get("/api/connections")
+def list_connections(principal: Principal = Depends(require("read"))) -> dict[str, Any]:
+    return {"items": services_for(principal).connection_service.list()}
+
+
+@app.get("/api/connections/{conn_id}")
+def get_connection(conn_id: str, principal: Principal = Depends(require("read"))) -> dict[str, Any]:
+    try:
+        return services_for(principal).connection_service.get(conn_id)
+    except ConnectionServiceError as exc:
+        raise _conn_http_error(exc)
+
+
+@app.put("/api/connections/{conn_id}")
+def update_connection(
+    conn_id: str,
+    body: ConnectionUpsertRequest,
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, Any]:
+    """更新连接白名单字段（admin only）；client_secret 未传/空串保留原信封。"""
+    try:
+        return services_for(principal).connection_service.update(
+            conn_id, body.model_dump(exclude_unset=True)
+        )
+    except ConnectionServiceError as exc:
+        raise _conn_http_error(exc)
+
+
+@app.delete("/api/connections/{conn_id}")
+def delete_connection(conn_id: str, principal: Principal = Depends(require("administer"))) -> dict[str, Any]:
+    try:
+        deleted = services_for(principal).connection_service.delete(conn_id)
+    except ConnectionServiceError as exc:
+        raise _conn_http_error(exc)
+    return {"deleted": deleted}
+
+
+@app.post("/api/connections/{conn_id}/authorize")
+def authorize_connection(conn_id: str, principal: Principal = Depends(require("operate"))) -> dict[str, Any]:
+    """返回授权 URL 与 state（前端 window.open 打开，state 10 分钟有效，仅防 CSRF）。"""
+    try:
+        return services_for(principal).connection_service.authorize(conn_id)
+    except ConnectionServiceError as exc:
+        raise _conn_http_error(exc)
+
+
+@app.post("/api/connections/{conn_id}/exchange")
+def exchange_connection(
+    conn_id: str,
+    body: ConnectionExchangeRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """校验 state→授权码换 token→加密落库；token 失败置 status=error。"""
+    try:
+        return services_for(principal).connection_service.exchange(conn_id, body.code, body.state)
+    except ConnectionServiceError as exc:
+        raise _conn_http_error(exc)
+
+
+@app.post("/api/connections/{conn_id}/refresh")
+def refresh_connection(conn_id: str, principal: Principal = Depends(require("operate"))) -> dict[str, Any]:
+    try:
+        return services_for(principal).connection_service.refresh(conn_id)
+    except ConnectionServiceError as exc:
+        raise _conn_http_error(exc)
+
+
+@app.post("/api/connections/{conn_id}/test")
+def test_connection(conn_id: str, principal: Principal = Depends(require("operate"))) -> dict[str, Any]:
+    """连接测试：过期先刷新；draft/error 返回 ok=false 与中文原因。generic 框架不调用真实业务 API。"""
+    try:
+        return services_for(principal).connection_service.test(conn_id)
+    except ConnectionServiceError as exc:
+        raise _conn_http_error(exc)
+
+
+@app.get("/connections/callback", response_class=HTMLResponse, include_in_schema=False)
+def oauth_callback_page() -> HTMLResponse:
+    """OAuth provider 回调落地页（无鉴权、无服务端副作用、不发 token）：展示 code/state 并引导
+    回到「连接管理 → 完成授权」粘贴。code 仅停留在本页与用户剪贴板。"""
+    return HTMLResponse(content=_OAUTH_CALLBACK_HTML)
+
+
+_OAUTH_CALLBACK_HTML = """
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Atlas · 授权回调</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f5f6f8;
+       display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;color:#1f2329}
+  .card{background:#fff;border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,.08);
+        padding:32px;max-width:560px;width:92%}
+  h1{font-size:18px;margin:0 0 8px}
+  p{color:#646a73;font-size:14px;line-height:1.7;margin:8px 0}
+  .field{margin-top:16px}
+  label{font-size:12px;color:#8f959e;display:block;margin-bottom:4px}
+  .row{display:flex;gap:8px}
+  code{flex:1;background:#f2f3f5;border-radius:6px;padding:10px;font-size:13px;
+       word-break:break-all;white-space:pre-wrap;min-height:20px}
+  button{border:1px solid #d0d3d6;background:#fff;border-radius:6px;padding:0 14px;
+         font-size:13px;cursor:pointer;height:38px}
+  button:hover{background:#f2f3f5}
+  .tip{margin-top:20px;background:#eef4ff;border-radius:8px;padding:12px;font-size:13px;color:#2b5fd9}
+  .err{color:#d83931;font-size:13px;margin-top:12px;display:none}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>已收到平台授权回调</h1>
+  <p>本页不会自动提交任何凭据。请复制下方 <b>授权码（code）</b>，回到 Atlas「连接管理」，
+     在对应连接上点击「完成授权」并粘贴该授权码。</p>
+  <div class="field">
+    <label>授权码 code</label>
+    <div class="row">
+      <code id="code"></code>
+      <button onclick="copy('code')">复制</button>
+    </div>
+  </div>
+  <div class="field">
+    <label>state</label>
+    <div class="row">
+      <code id="state"></code>
+      <button onclick="copy('state')">复制</button>
+    </div>
+  </div>
+  <div class="tip" id="tip">提示：授权码通常只能使用一次且很快过期，请尽快完成「完成授权」。</div>
+  <div class="err" id="err"></div>
+</div>
+<script>
+  var q = new URLSearchParams(window.location.search);
+  var code = q.get('code') || '';
+  var state = q.get('state') || '';
+  document.getElementById('code').textContent = code || '（回调中未找到 code）';
+  document.getElementById('state').textContent = state || '（回调中未找到 state）';
+  var err = document.getElementById('err');
+  if (!code) { err.style.display='block'; err.textContent='回调地址缺少 code 参数，请重新发起授权。'; }
+  function copy(id){
+    var text = document.getElementById(id).textContent;
+    navigator.clipboard.writeText(text).then(function(){
+      document.getElementById('tip').textContent = '已复制：' + id + '。请回到连接管理完成授权。';
+    }, function(){
+      window.prompt('请手动复制：', text);
+    });
+  }
+</script>
+</body>
+</html>
+"""
+
 
 class LoginRequest(BaseModel):
     username: str

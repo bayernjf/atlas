@@ -28,6 +28,7 @@ from atlas.recording.cases import RecordingCase, RecordStep
 if TYPE_CHECKING:
     # 仅类型标注用；运行时避免 import iam（iam.__init__ → deps → registry → storage 会成环）
     from atlas.iam.principals import Principal
+    from atlas.connections.models import Connection
 
 # ---- reset 分档（docs/24 §1.2③；/api/demo/reset 语义，12 §5） ----
 RESET_RESETTABLE = "resettable"  # graph/approval/debug/monitoring/session/message/memory
@@ -239,3 +240,20 @@ class MemoryRepository(Protocol):
     ) -> dict[str, Any] | None: ...  # docs/28 §5.1 手动编辑白名单字段；不存在返回 None（跨租户同不存在）
     def delete(self, memory_id: str) -> bool: ...  # 不存在返回 False（跨租户同不存在）
     def clear(self) -> None: ...
+
+
+@runtime_checkable
+class ConnectionRepository(Protocol):
+    """OAuth2 连接配置（docs/35 §4，T4；generic OAuth2，平台无关）。
+
+    存 Connection 对象，秘密字段为 SecretProvider 信封；租户分区是构造期关切
+    （PgConnectionStore 行内 tenant_id 过滤）。连接属租户配置+凭据，
+    demo reset 不清除（与审计/录制一致）。
+    """
+
+    def create(self, conn: "Connection") -> "Connection": ...
+    def get(self, conn_id: str) -> "Connection | None": ...
+    def list(self) -> list["Connection"]: ...
+    def save(self, conn: "Connection") -> "Connection": ...
+    def delete(self, conn_id: str) -> bool: ...
+    def reset(self) -> None: ...
