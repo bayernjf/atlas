@@ -39,9 +39,13 @@ from atlas.database.adapter import DatabaseHarnessAdapter
 from atlas.database.service import DatabaseClient, demo_engine
 from atlas.debug import DebugController, DebugStopped
 from atlas.graph.conditions import validate_expression
-from atlas.graph.dsl import GraphDSL, GraphValidationError, parse_graph
+from atlas.graph.dsl import GraphDSL, GraphValidationError, parse_graph, valid_event_key
 from atlas.graph.loader import _tool_permissions, compile_graph, run_graph, tool_input_schemas
 from atlas.collaboration.cancellations import RunCancelled
+from atlas.collaboration.event_waits import (
+    WaitAlreadySignaled,
+    WaitTokenNotFound,
+)
 from atlas.collaboration.notifications import EmailApprovalNotifier
 from atlas.collaboration.email_token import EmailTokenError, TokenIssuer
 from atlas.tracing import Tracer
@@ -131,6 +135,9 @@ logger = logging.getLogger(__name__)
 
 # docs/35 §2（T2）：审批挂起邮件中的应用入口（前端地址）。
 _PUBLIC_URL = os.getenv("ATLAS_PUBLIC_URL", "http://localhost:5174")
+
+MAX_WAIT_PAYLOAD_BYTES = 4096
+MAX_WAIT_PAYLOAD_KEYS = 50
 # docs/36 §3：邮件深链验签单例（密钥取 ATLAS_APPROVAL_HMAC_SECRET）。
 _email_token_issuer = TokenIssuer()
 
@@ -186,6 +193,7 @@ def _resume_run(engine, services: TenantServices, frame: dict) -> None:
             inputs=frame["resume_state"].get("inputs", {}),
             registry=_runtime_registry(services),
             approval_broker=services.approval_broker,
+            event_wait_broker=services.event_wait_broker,
             graph_id=frame["resume_state"].get("graph_id", ""),
             graph_resolver=_tenant_graph_resolver(services),
             frame_sink=make_frame_sink(engine, frame["tenant_id"], run_id),
@@ -590,7 +598,7 @@ def _channel_http_error(exc: ChannelError) -> "HTTPException":
     return HTTPException(status_code=exc.status_code, detail=str(exc))
 
 
-def _record_channel_audit(
+def _record_audit(
     services: TenantServices, principal: Principal,
     http_request: Request, action: str, status_code: int,
 ) -> None:
@@ -604,7 +612,10 @@ def _record_channel_audit(
             ip=http_request.client.host if http_request.client else "",
         )
     except Exception as exc:
-        logger.warning("channel audit record failed: %s", exc)
+        logger.warning("audit record failed: %s", exc)
+
+
+_record_channel_audit = _record_audit
 
 
 @app.get("/api/channels")
@@ -755,6 +766,7 @@ def _webhook_run_worker(
             inputs={"event": event.model_dump()},
             registry=_runtime_registry(services),
             approval_broker=services.approval_broker,
+            event_wait_broker=services.event_wait_broker,
             graph_id=graph_id,
             graph_resolver=_tenant_graph_resolver(services),
             frame_sink=_frame_sink_for(tenant_id, run_store, run_id),
@@ -1673,6 +1685,14 @@ def create_shadow_run(
     presets = preset_all_approvals(graph)
     if presets:
         inputs["approvals"] = {**presets, **(inputs.get("approvals") or {})}
+    # 事件等待无法在影子中被信号放行：预置空 payload 秒过（docs/47 非目标）。
+    event_presets = {
+        node.id: {}
+        for node in graph.nodes
+        if node.type == "wait" and node.config.get("waitType") == "event"
+    }
+    if event_presets:
+        inputs["waitEvents"] = {**event_presets, **(inputs.get("waitEvents") or {})}
     outcome = _parse_human_outcome(body.get("human_outcome"))
 
     registry = _runtime_registry(services)
@@ -2088,6 +2108,7 @@ def replay_recording(
             inputs=inputs,
             registry=_runtime_registry(services),
             approval_broker=services.approval_broker,
+            event_wait_broker=services.event_wait_broker,
             graph_id=f"replay-{case.id}",
             emit=emit,
             graph_resolver=inline_first_resolver(
@@ -2335,6 +2356,7 @@ def run_saved_graph(
             inputs=body.get("inputs"),
             registry=_runtime_registry(services),
             approval_broker=services.approval_broker,
+            event_wait_broker=services.event_wait_broker,
             approval_notifier=EmailApprovalNotifier(
                 services.message_service, _PUBLIC_URL, principal.tenant_id
             ),
@@ -2410,6 +2432,11 @@ def run_saved_graph_stream(
     if debug is not None:
         breakpoints = _validate_debug(graph, debug)
         debug_session = services.debug_broker.create(graph_id=graph_id, breakpoints=breakpoints)
+        if any(
+            node.type == "wait" and node.config.get("waitType") == "event"
+            for node in graph.nodes
+        ):
+            raise HTTPException(status_code=422, detail="事件等待不支持单步调试")
 
     # worker 启动前固定当前租户的分区对象，避免跨租户串用
     registry = _runtime_registry(services)
@@ -2470,6 +2497,7 @@ def run_saved_graph_stream(
                     inputs=inputs,
                     registry=registry,
                     approval_broker=approval_broker,
+                    event_wait_broker=services.event_wait_broker,
                     approval_notifier=approval_notifier,
                     graph_id=graph_id,
                     emit=recording_emit if monitored else emit,
@@ -2694,6 +2722,99 @@ def list_approvals(
 ) -> dict[str, list[dict[str, Any]]]:
     """列出当前租户 pending 的人工审批请求（进程内 broker，重启即失）。"""
     return {"items": services_for(principal).approval_broker.list_pending()}
+
+
+def _parse_wait_event_key(body: dict[str, Any]) -> str:
+    raw = body.get("eventKey")
+    event_key = raw.strip() if isinstance(raw, str) else ""
+    if not valid_event_key(event_key):
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "WAIT_EVENT_KEY_INVALID",
+                    "message": "eventKey 必须是 1-128 位字母、数字及 :_- 组合"},
+        )
+    return event_key
+
+
+def _parse_wait_payload(body: dict[str, Any]) -> dict[str, Any]:
+    raw = body.get("payload", {})
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "WAIT_EVENT_PAYLOAD_INVALID",
+                    "message": "payload 必须是 JSON 对象"},
+        )
+    if len(raw) > MAX_WAIT_PAYLOAD_KEYS:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "WAIT_EVENT_PAYLOAD_INVALID",
+                    "message": f"payload 顶层键不能超过 {MAX_WAIT_PAYLOAD_KEYS} 个"},
+        )
+    serialized = json.dumps(raw, ensure_ascii=False)
+    if len(serialized.encode("utf-8")) > MAX_WAIT_PAYLOAD_BYTES:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "WAIT_EVENT_PAYLOAD_INVALID",
+                    "message": f"payload 序列化后不能超过 {MAX_WAIT_PAYLOAD_BYTES} 字节"},
+        )
+    return raw
+
+
+@app.get("/api/waits")
+def list_waits(
+    principal: Principal = Depends(require("read")),
+) -> dict[str, list[dict[str, Any]]]:
+    """列出当前租户 pending 的事件等待（进程内 broker，重启即失，docs/47 §4）。"""
+    return {"items": services_for(principal).event_wait_broker.list_pending()}
+
+
+@app.post("/api/waits/events")
+def signal_wait_event(
+    http_request: Request,
+    body: dict[str, Any] | None = None,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """按 eventKey 广播信号，释放同 key 全部等待；无 pending 返回 released=0。"""
+    data = body or {}
+    event_key = _parse_wait_event_key(data)
+    payload = _parse_wait_payload(data)
+    services = services_for(principal)
+    released = services.event_wait_broker.signal_key(event_key, payload)
+    _record_audit(services, principal, http_request, "wait.signal_event", 200)
+    return {"released": released}
+
+
+@app.post("/api/waits/{token}/signal")
+def signal_wait_token(
+    token: str,
+    http_request: Request,
+    body: dict[str, Any] | None = None,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """按 token 直投信号：未知/已取走 404，重复信号 409。"""
+    data = body or {}
+    payload = _parse_wait_payload(data)
+    services = services_for(principal)
+    try:
+        services.event_wait_broker.signal_token(token, payload)
+    except WaitTokenNotFound:
+        _record_audit(services, principal, http_request, "wait.signal_token", 404)
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "WAIT_TOKEN_NOT_FOUND",
+                    "message": f"等待不存在或已清理：{token}"},
+        )
+    except WaitAlreadySignaled:
+        _record_audit(services, principal, http_request, "wait.signal_token", 409)
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "WAIT_ALREADY_SIGNALED",
+                    "message": "该等待已有信号，重复提交不生效"},
+        )
+    _record_audit(services, principal, http_request, "wait.signal_token", 200)
+    return {"token": token, "released": True}
 
 
 @app.get("/api/approvals/decided")
