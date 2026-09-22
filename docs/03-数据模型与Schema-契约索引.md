@@ -120,8 +120,11 @@ type: object               # 节点类型专属配置；condition 节点 config 
                            #   {joinStrategy: all_success|all_completed|any_success, branches:[{label,target}], joinTarget}  # any_success(D18) 语义见 04 §5.4
                            #   唯一权威见 04 §5.4「parallel 节点 config 契约」
                            # wait 节点 config 形状：
-                           #   {waitType:"duration", durationSeconds: 1-600 整数}
-                           #   唯一权威见 04 §5.5「wait 节点 config 契约」
+                           #   duration: {waitType:"duration", durationSeconds: 1-600 整数}
+                           #   event:    {waitType:"event", eventKey(≤128,静态白名单[A-Za-z0-9:_-],支持{{}}插值),
+                           #              timeoutSeconds: 1-3600 整数, onTimeout: continue|fail}  # D19 进程内 v1，2026-09-23 立项 docs/47
+                           #   event 产出 {eventKey,signaled,payload,waitedSeconds,resolvedBy:signal|timeout|input,token}
+                           #   唯一权威见 04 §5.5「wait 节点 config 契约」（含事件等待 v1 追加段）
                            # human_approval 节点 config 形状：
                            #   {summary, approver?, timeoutSeconds: 10-3600 整数, onTimeout: approve|reject(默认reject),
                            #    approvedTarget, rejectedTarget, cardTemplateId?（M8 新增，可选内置卡片 id，不填走 summary 旧路径）,

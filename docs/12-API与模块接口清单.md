@@ -695,6 +695,22 @@ class ChannelRegistry:
 
 无迁移；demo mock 缝见 docs/41 §1D。
 
+### 3.17 事件等待内部接口（waitType=event 进程内 v1；docs/47，2026-09-23 docs-only 立项）
+
+```python
+# src/atlas/collaboration/event_waits.py
+class EventWaitBroker:
+    def request(self, *, event_key, node_id, graph_id, timeout_seconds) -> str: ...  # token="wait-"+uuid4
+    def wait(self, token, *, is_cancelled=None) -> bool: ...  # 0.2s 切片查取消；返 signaled；超时 False
+    def signal_key(self, event_key, payload) -> int: ...      # 广播释放同 key 全部，返释放数
+    def signal_token(self, token, payload) -> None: ...       # 未知 KeyError；已 signaled → AlreadySignaled
+    def list_pending(self) -> list[dict]: ...
+    def reset(self) -> None: ...
+# per-tenant 挂 TenantServices.event_wait_broker；内存/PG 两档均内存实例
+```
+
+错误码：WAIT_EVENT_KEY_INVALID / WAIT_EVENT_PAYLOAD_INVALID / WAIT_TOKEN_NOT_FOUND / WAIT_ALREADY_SIGNALED / WAIT_TIMEOUT_FAILED。
+
 ## 4. 记忆检索接口（依据 06 6.2 / 05 2.3）
 
 > **M11 实现边界（2026-09-19 已落码收口；权威＝docs/26、ADR T23）**：下列 `memory_retriever.query` 五层分层检索为**愿景**（working Redis / summary / fact pgvector / case / preference + 决策节点隐式注入），v1 不实现，缓做 14 D35。M11 取回的是下方「4.1 M11 长期记忆最小接口」——统一 memory_item（fact/preference）+ 显式 remember/recall 两工具，**不做决策隐式注入**。
@@ -844,6 +860,9 @@ class MemoryRepository(Protocol):
 | GET | /api/approvals/email-view | **公开（无登录）**审批只读视图：query `?token=<签名 capability token>`；返回 `{status, summary, nodeId, graphId, approver, timeoutSeconds, createdAt, remainingSeconds, decision?, resolvedBy?, card?}`（card＝email 渠道渲染投影，仅 cardTemplateId 审批）；只读幂等、GET 无副作用不写审计；坏/过期 token、未装配租户（peek 不创建）、未知审批、租户与审批不符 → 统一 404「审批链接无效或已过期」（审批闭环批 2026-09-22） | email_decision_token |
 | POST | /api/approvals/email-decision | **公开（无登录）**邮件一键决策：体 `{token（必填）, decision?:"approved"|"rejected", comment?≤500, actionId?, form?}`；与登录态 decision 共用 `_apply_approval_decision`（卡片走 map_action_output）；200 返 `{token, decision, resolvedBy, actionId?}`，成功后 fail-safe 写审计 actor `email-link`、action `approval.email_decision:{decision}`（不记 token/comment）；重复 409、卡片错误/缺 decision 422、坏 token 等统一 404（同上，审批闭环批 2026-09-22） | email_decision_token |
 | POST | /api/approvals/{token}/decision | 人工审批决策，请求体 `{decision: "approved"|"rejected", comment?}`（comment v1 仅接收不展示）；**M8 起纯超集加可选 `{actionId?, form?}`**——命中卡片时前端可提交 `{actionId, form:{<name>:<value>}}`（decision/comment 可省，服务端经 `map_action_output` 按卡片 action.output 映射，`{{form.*}}` 回填 comment），也仍接受旧 `{decision,comment?}`；首决生效，200 返回决策结果；未知 token 404、已决重复提交 409、坏 actionId 或 action.output 缺必填 form 字段 422（中文 detail）；Phase 2 第五项 | human_approval / card_template |
+| POST | /api/waits/events | 事件等待按 key 广播信号（D19 进程内 v1，2026-09-23 docs-only 立项 docs/47；operate）：体 `{eventKey（必填 1-128、白名单 [A-Za-z0-9:_-]）, payload?: object}`（payload 序列化 ≤4096、顶层键 ≤50）；返 `{released: n}`，同 key 多个 pending 全释放，无 pending 返 0（信号不留存）；eventKey 非法 422 WAIT_EVENT_KEY_INVALID、payload 超限 422 WAIT_EVENT_PAYLOAD_INVALID | wait_event |
+| POST | /api/waits/{token}/signal | 事件等待直投信号（operate）：体 `{payload?: object}`（限制同上）；200 返 `{token, released: true}`；未知/已取走 token 404 WAIT_TOKEN_NOT_FOUND；条目已 signaled 409 WAIT_ALREADY_SIGNALED | wait_event |
+| GET | /api/waits | 列出本租户 pending 事件等待（viewer+）：`{items:[{token, eventKey, nodeId, graphId, timeoutSeconds, deadlineAt}]}`；进程内、重启即失 | wait_event |
 | POST | /api/feedback | 提交种子试用反馈（type=bug/suggestion、content、contact 选填，201；进程内存储，reset 不清除；Phase 1） | feedback_item |
 | GET | /api/feedback | 导出反馈（陪同试用收集用，`{items: [...]}`，Phase 1；2026-09-16 起 **admin only** 且只列本租户，04 §5.14） | feedback_item |
 | GET | /demo/shop | 模拟商家售后控制台 HTML 页面（W9-W10，自动登录/抓取演示目标系统） | — |

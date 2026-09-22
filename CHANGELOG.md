@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### docs：wait 事件等待进程内 v1 批 docs-only 立项（docs/47，2026-09-23；dev、未 push；无 ADR）
+
+- wait 节点新增 `waitType=event`（D19 部分取回、不解除）：per-tenant EventWaitBroker 进程内挂起，REST 广播/直投信号或 run inputs waitEvents 预置恢复，timeoutSeconds 1-3600、onTimeout continue/fail（fail → WAIT_TIMEOUT_FAILED），输出携带 payload。
+- 新增三端点：POST /api/waits/events、POST /api/waits/{token}/signal（operate）、GET /api/waits（read）。
+- 零新依赖、零迁移；中断帧/恢复扫描器/多实例、动态/表达式时长、多事件竞速取消、公开免登录信号口仍缓做。立项基线后端 1398/59、前端 602/2。
+
 ### feat：OpenAPI HTTP Basic 凭证子集批落码收口（docs/46，2026-09-23；dev、未 push；无 ADR）
 
 - parser 收录 `type:http,scheme:basic`（kind=basic）；PUT credentials basic 值为 `{username,password}`（信封明文 JSON），适配器渲染 `Authorization: Basic base64(u:p)`；前端用户名/密码双输入。
