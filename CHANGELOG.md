@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### feat：真实渠道适配批全部落码收口（docs/38，2026-09-23；dev 六 commit、未 push）
+
+承接 docs/34 P0 #1「打通一个真实电商渠道」，在 T4 平台无关 OAuth2 连接之上落首个真实平台业务 API 适配层，**零新依赖、零外部资源、不解除 D22**（真实店铺 OAuth 联调/入站 webhook/Amazon/订单同步仍缓做）：
+
+- **内核（34472ce）**：新包 `src/atlas/channels/`——ShopifyChannelClient 对 Shopify Admin API（`https://{shop}.myshopify.com/admin/api/{api_version}`，默认版本 2025-01，`X-Shopify-Access-Token` 头）封装 list_orders/get_order（读）与 create_refund（**财务**写）；ChannelBinding/ChannelConfig pydantic 模型；ChannelRegistry＋内存 ChannelStore；结构化错误码 CHANNEL_NOT_BOUND/UNAUTHORIZED/UPSTREAM_FAILED/INVALID_RESPONSE/INVALID_PARAMETER/ALREADY_BOUND；ShopifyHarnessAdapter 按绑定产出 `channel:shopify:{binding_id}`，三工具 shop/list_orders·shop/get_order〔read〕·shop/create_refund〔financial〕；access token 每次调用现解密、不缓存明文、不记日志。
+- **API 与动态接线（6dcc20b）**：`/api/channels` 五端点（POST 绑定 operate＋channel.bind 审计、GET 列表/单条 read、POST /test operate、DELETE administer＋channel.unbind 审计）；绑定按租户分区、reset 不清；绑定建立/删除时向当前租户动态注册/注销适配器，重复绑定 409。
+- **存储（aa044ab）**：迁移 `015_channel_bindings`（binding 七字段＋updated_at）与 PgChannelStore（4 集成测试 skipif 门控）；TenantServices 两档装配。
+- **前端（242ef5e）**：Connections 页底部「销售渠道绑定」卡（`components/ChannelBindingsCard.tsx`：Table 空态、绑定弹窗 provider 固定 Shopify＋连接下拉＋shop 名＋apiVersion，operate 可绑、admin 可删，探活失败以 warning＋error 状态呈现），新增 channels i18n namespace（zh 填实/en-US 空 `{}`）。
+- **验证**：后端 1220 passed/40 skipped（1190 基线净增 30＝内核 14/registry 10/API 6，零回归；4 PG 集成 skip）；前端 577 passed/2 skipped/45 files（净增 6＝apiClient 4＋i18n 2）、build 过；浏览器冒烟三场景（空态/绑定弹窗/未授权 draft 连接探活→绑定 error 态「绑定连接未完成授权或令牌不可用」，test 端点不返 5xx），控制台仅 antd 既有 deprecation 与一次预期 401，3 截图 docs/smoke-shots/。ADR T28，三处同步 10→02→09 已完成。
+
 ### chore：删除 LICENSE，项目保持不开放（2026-09-22，f721c18）
 
 - 用户拍板回到早期「不要 LICENSE」指示：移除根目录 `LICENSE`（MIT 曾随 PR #53 短暂在 main），同步删除 pyproject.toml 与 frontend/package.json 的 license 字段；docs/34 待拍板项标记已决。
