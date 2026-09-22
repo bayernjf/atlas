@@ -1139,7 +1139,9 @@ ChannelBinding = {
 ```
 > REST 请求体：`{provider, connectionId, config:{shop, apiVersion?}}`；REST 投影：`{id, provider, connectionId, config:{shop,apiVersion}, status, lastError, createdBy, createdAt}`（不含 token/secret）。PG 迁移 `015_channel_bindings.sql`：`id TEXT PK, tenant_id TEXT, provider TEXT, connection_id TEXT UNIQUE, config JSONB, status TEXT, last_error TEXT, created_by TEXT, created_at TEXT, updated_at TEXT`，不 FK 强约束（跨表均 TEXT）；绑定按租户引用 T4 connection、属客户配置 **reset 不清除**（同 connections/audit），引用的 connection 被删 → status=error 不级联。**迁移 `016_channel_webhook_subscriptions.sql`（docs/39，ADR T29）：`ALTER TABLE channel_bindings ADD COLUMN webhook_subscriptions JSONB NOT NULL DEFAULT '[]'::jsonb;`——JSON `WebhookSubscription[]`＝`{topic, graph_id, enabled}`（topic 三选一、topic+graph_id 同绑定唯一、≤10；REST 投影驼峰 `{topic, graphId, enabled}`）；订阅 GET/PUT 见 12 文档，形状权威 docs/39 §1B**。工具输入/输出形状以 docs/38 §1B 为权威（shop/list_orders、shop/get_order 为 read，shop/create_refund 为 financial），订单投影字段 `{id,name,email,financialStatus,fulfillStatus,totalPrice,currency,createdAt}` 以 docs/38 §1A 为权威。错误码：CHANNEL_NOT_BOUND / CHANNEL_UNAUTHORIZED / CHANNEL_UPSTREAM_FAILED / CHANNEL_INVALID_RESPONSE / CHANNEL_INVALID_PARAMETER / CHANNEL_ALREADY_BOUND；**webhook：WEBHOOK_BAD_SIGNATURE(401) / WEBHOOK_MALFORMED(400) / WEBHOOK_SECRET_UNAVAILABLE(503)**。
 
-### `openapi_import` — 字段概览（OpenAPI 导入与工具自动生成批，docs/42；2026-09-23 docs-only 立项；承载 `src/atlas/openapi/`）
+### `openapi_import` — 字段概览（OpenAPI 导入与工具自动生成批，docs/42；2026-09-23 落码收口；承载 `src/atlas/openapi/`）
+
+> **存储两档（docs/43，2026-09-23 docs-only 立项）**：内存档 ImportStore 进程内 per-tenant；PG 档表 `openapi_imports`（迁移 018，(tenant_id,spec_id) PK、seq 排序、operations JSONB）＋PgImportStore，形状不变，跨重启/多实例。
 
 ```text
 ImportedSpec = {

@@ -70,7 +70,7 @@
 - YAML/Swagger 2.0 文档支持（零新依赖约束下不引 PyYAML；触发＝真实接入需要时评估）；
 - `securitySchemes`（oauth2/apiKey/bearer）自动接线——后续与 connections 实体绑定联动；
 - `multipart/form-data`、`oneOf/anyOf`、回调/webhooks、外部 `$ref` 抓取、响应 schema 校验与结果类型化；
-- 导入规格 PG 持久化/多实例共享（v1 进程内，重启后需重新导入）；
+- 导入规格 PG 持久化/多实例共享（v1 进程内，重启后需重新导入；**2026-09-23 PG 档已随 docs/43 取回——迁移 018 openapi_imports＋PgImportStore，内存档保留**）；
 - 按 operation 的重试策略/熔断差异化配置（现走 httpapi 统一默认）；
 - OpenAPI 文档版本升级 diff、导入市场共享、批量导出。
 

@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### docs：OpenAPI 导入规格 PG 持久化批 docs-only 立项（docs/43，2026-09-23；无 ADR）
+
+docs/42 导入规格仅进程内 per-tenant 存储、重启即失（本会话冒烟两度踩中）。docs-only 契约先行（00/03/42 §2/08/14/handoff 同步），**零新依赖、无选型变更、D22 部分取回不解除**：
+
+- 迁移 018 `openapi_imports`：(tenant_id,id) PK、seq 走全局 storage_id_seq、operations JSONB，手写幂等 SQL 不引 Alembic。
+- `PgImportStore` 与 ImportStore 同形（add/list/get/delete、5 specs/200 ops、OPENAPI_LIMIT_EXCEEDED 422、reset 不清），仅在 `ATLAS_STORAGE_BACKEND=pg` 装配；发现按请求读 store 动态构建适配器，重启无需预热。
+- REST 五端点、前端页面、编辑器、执行链路零改动、无新错误码；立项基线：后端 1352 passed/48 skipped、前端 591 passed/2 skipped/46 files。
+
 ### feat：OpenAPI 导入与工具自动生成批落码收口（docs/42，2026-09-23；dev、未 push；无 ADR）
 
 OpenAPI 3.x JSON 文档驱动的 API 适配器自动形态落地，四代码原子（`139848a`→`90b8179`→`712f28a`→`3f40b10`）：
