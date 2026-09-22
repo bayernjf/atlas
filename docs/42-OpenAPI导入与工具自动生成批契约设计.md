@@ -68,7 +68,7 @@
 ## 2. 非目标（写入 docs/14 D22 注记）
 
 - YAML/Swagger 2.0 文档支持（零新依赖约束下不引 PyYAML；触发＝真实接入需要时评估）；
-- `securitySchemes`（oauth2/apiKey/bearer）自动接线——后续与 connections 实体绑定联动；
+- `securitySchemes`（oauth2/apiKey/bearer）自动接线——后续与 connections 实体绑定联动；**2026-09-23 注：静态密钥子集（apiKey header/query、HTTP Bearer）随 [docs/44](44-OpenAPI-securitySchemes静态密钥批契约设计.md) 取回（信封加密、缺密钥 fail-closed）；oauth2/openIdConnect/basic/cookie 仍缓做 D22**；
 - `multipart/form-data`、`oneOf/anyOf`、回调/webhooks、外部 `$ref` 抓取、响应 schema 校验与结果类型化；
 - 导入规格 PG 持久化/多实例共享（v1 进程内，重启后需重新导入；**2026-09-23 PG 档已随 docs/43 取回——迁移 018 openapi_imports＋PgImportStore，内存档保留**）；
 - 按 operation 的重试策略/熔断差异化配置（现走 httpapi 统一默认）；

@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### docs：OpenAPI securitySchemes 静态密钥批立项（docs/44，2026-09-23；无 ADR）
+
+docs-only 契约：接通导入 API 的静态鉴权——apiKey（header/query）与 HTTP Bearer 方案解析、密钥经 SecretProvider 信封（T26）加密随规格落内存/PG（迁移 019 拟加 security_schemes/credential_envelopes 两列）、适配器执行逐次解密注入，缺密钥 OPENAPI_CREDENTIAL_MISSING fail-closed；新 PUT credentials 端点与前端密钥录入。oauth2/openIdConnect/basic/cookie、真实 API 联调仍缓做 D22（部分取回、不解除）。立项基线后端 1352/56、前端 591/2/46。
+
 ### feat：OpenAPI 导入规格 PG 持久化批落码收口（docs/43，2026-09-23；dev、未 push；无 ADR）
 
 导入规格两档存储落地，一代码原子（`f39d86b` docs→`7bf13f5` feat→docs 本步）：

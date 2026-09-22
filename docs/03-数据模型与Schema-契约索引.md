@@ -1150,6 +1150,15 @@ ImportedSpec = {
   base_url:   str                   # servers[0].url，必须绝对 URL
   created_at: str                   # epoch 秒文本
   operations: [OperationDescriptor]
+  security_schemes:      {name: SecurityScheme}   # docs/44 立项；支持项 apiKey header/query、bearer
+  credential_envelopes:  {name: str}              # docs/44；scheme 名→SecretProvider 信封（投影不含明文）
+}
+SecurityScheme = {
+  name:     str                     # components.securitySchemes 的 key
+  kind:     "api_key" | "bearer"
+  location: "header" | "query" | null
+  param:    str                     # apiKey 取声明 name；bearer 固定 Authorization
+  prefix:   str                     # bearer "Bearer "；apiKey ""
 }
 OperationDescriptor = {
   name:        str                  # operationId 清洗或 method+path 合成，spec 内唯一
@@ -1159,8 +1168,9 @@ OperationDescriptor = {
   permission:  str                  # read (GET/HEAD) | write（其余；永不 financial）
   idempotent:  bool                 # 仅 GET/HEAD
   input_schema: object              # Capability JSON Schema 子集：path/query/header 参数 + body
+  security:    [[str]]              # docs/44 立项；有效要求 OR-of-AND（operation 覆盖全局），[] 无需密钥
   skipped:     bool
   skip_reason: str | null
 }
 ```
-> preview/import 请求体：`{content?: str, url?: str}`（恰好其一，同时给/都不给 422）。preview 响应：`{title, base_url, operations:[OperationDescriptor], imported_count, skipped_count}`（不落库，含 skipped 行）；import 201 响应＝ImportedSpec（仅成功 operations）；全 skipped → 422。`GET /api/openapi/imports` 返 `{items:[ImportedSpec]}`，单项返 ImportedSpec；DELETE 200 `{deleted:true}`。进程内 per-tenant、**reset 不清**；上限 5 specs/租户、200 operations/spec。适配器 id `openapi:{spec_id}`、type `api`，合并进 `/api/adapters`。错误码（422 除注明）：OPENAPI_INVALID_DOCUMENT / OPENAPI_UNSUPPORTED_VERSION / OPENAPI_FETCH_FAILED / OPENAPI_NO_IMPORTABLE_OPERATION / OPENAPI_LIMIT_EXCEEDED；运行期 OPENAPI_INVALID_PARAMETER（失败 Observation）。形状权威 docs/42 §1–§3。
+> preview/import 请求体：`{content?: str, url?: str, credentials?: {scheme: str}}`（content/url 恰好其一，同时给/都不给 422；credentials key 须为 preview 方案名，否则 422 OPENAPI_INVALID_CREDENTIAL）。preview 响应：`{title, base_url, operations:[OperationDescriptor], imported_count, skipped_count, security_schemes:[SecurityScheme]}`（不落库，含 skipped 行，永不接收密钥）；import 201 响应＝ImportedSpec（仅成功 operations）；全 skipped → 422。`GET /api/openapi/imports` 返 `{items:[ImportedSpec]}`，单项返 ImportedSpec；`PUT /api/openapi/imports/{spec_id}/credentials`（operate）upsert/空串删除信封，返 `{configured:[name]}`；DELETE 200 `{deleted:true}`。进程内 per-tenant、**reset 不清**；上限 5 specs/租户、200 operations/spec。适配器 id `openapi:{spec_id}`、type `api`，合并进 `/api/adapters`；执行时逐次解密注入，缺密钥不发请求→失败结果 OPENAPI_CREDENTIAL_MISSING。错误码（422 除注明）：OPENAPI_INVALID_DOCUMENT / OPENAPI_UNSUPPORTED_VERSION / OPENAPI_FETCH_FAILED / OPENAPI_NO_IMPORTABLE_OPERATION / OPENAPI_LIMIT_EXCEEDED / OPENAPI_INVALID_CREDENTIAL；运行期 OPENAPI_INVALID_PARAMETER、OPENAPI_CREDENTIAL_MISSING（失败 Observation）。形状权威 docs/42 §1–§3、docs/44。
