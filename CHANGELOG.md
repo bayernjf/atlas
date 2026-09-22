@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### feat：OpenAPI 导入规格 PG 持久化批落码收口（docs/43，2026-09-23；dev、未 push；无 ADR）
+
+导入规格两档存储落地，一代码原子（`f39d86b` docs→`7bf13f5` feat→docs 本步）：
+
+- 迁移 018 `openapi_imports`：(tenant_id,id) PK、seq 走 storage_id_seq、operations JSONB，手写幂等 SQL 不引 Alembic。
+- 后端：`PgImportStore` 与 ImportStore 同形（add/list/get/delete；5 specs/200 ops、OPENAPI_LIMIT_EXCEEDED 422 不变；行级 tenant 过滤、reset 不清），iam/registry 仅 PG 档换装配、字段类型放宽；发现按请求读 store 动态重建适配器，重启无需预热。
+- 门：后端内存档 1352 passed/56 skipped（内存零回归；新增 8 PG 测默认 skip）、PG 直连 atlas-pg 8 passed（往返/排序/模拟重启/跨租户/删除幂等/双上限/reset 不清），前端 591/2/46 零改动。
+- PG 档浏览器冒烟 2 截图 docs/smoke-shots/openapi-pg-smoke-*：重启后 openapi-768 列表与适配器仍在，编辑器 list_pets limit=10 运行 SUCCESS（HTTP 200、body Rex），控制台仅一次预期旧 token 401；收口后恢复普通内存档后端。
+- D22 不解除：YAML/securitySchemes/原始文档留存/导入去重/软删除/共享/真实 API 联调仍缓做。
+
 ### docs：OpenAPI 导入规格 PG 持久化批 docs-only 立项（docs/43，2026-09-23；无 ADR）
 
 docs/42 导入规格仅进程内 per-tenant 存储、重启即失（本会话冒烟两度踩中）。docs-only 契约先行（00/03/42 §2/08/14/handoff 同步），**零新依赖、无选型变更、D22 部分取回不解除**：

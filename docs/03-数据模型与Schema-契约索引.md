@@ -1141,7 +1141,7 @@ ChannelBinding = {
 
 ### `openapi_import` — 字段概览（OpenAPI 导入与工具自动生成批，docs/42；2026-09-23 落码收口；承载 `src/atlas/openapi/`）
 
-> **存储两档（docs/43，2026-09-23 docs-only 立项）**：内存档 ImportStore 进程内 per-tenant；PG 档表 `openapi_imports`（迁移 018，(tenant_id,spec_id) PK、seq 排序、operations JSONB）＋PgImportStore，形状不变，跨重启/多实例。
+> **存储两档（docs/43，2026-09-23 落码收口）**：内存档 ImportStore 进程内 per-tenant；PG 档表 `openapi_imports`（迁移 018，(tenant_id,spec_id) PK、seq 走 storage_id_seq 排序、operations JSONB）＋PgImportStore（同形、双上限/错误码不变、reset 不清），形状不变，跨重启/多实例，发现按请求动态重建适配器、重启无需预热。
 
 ```text
 ImportedSpec = {

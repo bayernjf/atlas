@@ -70,3 +70,12 @@
 1. docs-only 立项：本文＋03 注记＋docs/42 §2 注记＋08＋14（D22 尾注）＋00 地图＋handoff＋CHANGELOG；
 2. `feat(openapi): persist imported specs in postgres with two-tier store` ＋迁移 018＋PgImportStore＋装配＋PG 集成测试；`.venv/bin/pytest`；
 3. docs 收口：PG 档浏览器冒烟（≥1 截图）＋CHANGELOG＋handoff/08/43 落码注记。
+
+## 7. 落码注记（2026-09-23 收口）
+
+- 三原子序全部完成：①docs 立项 `f39d86b` → ②迁移 018＋PgImportStore＋PG 档装配 `7bf13f5` → ③docs 收口（本步）。均在 dev、未 push。
+- 收口门：后端内存档 **1352 passed / 56 skipped**（立项 48 skip，新增 8 PG 集成在无 DATABASE_URL 时 skip，内存数字零回归）；PG 直连（atlas-pg，ATLAS_RUN_INTEGRATION=1 DATABASE_URL='postgresql+psycopg://atlas:atlas@localhost:5432/atlas' pytest tests/test_openapi_imports_pg_integration.py）**8 passed**：add 往返逐字段（JSONB 反序列化 model_dump 全等）、skipped operations 不入表、seq id 与 list 排序＋模拟重启（新 store 实例读同库）、跨租户 get None、delete false→true、5 份与 200 ops 双上限 OPENAPI_LIMIT_EXCEEDED 422、reset_tenant 不清。
+- 浏览器冒烟（PG 档后端，2 截图 docs/smoke-shots/openapi-pg-smoke-*）：API 导入 `openapi-768`（全局 seq 当值 768）→ **重启后端** →「API 导入」页列表仍在、`/api/adapters` 自动重建 `openapi:openapi-768`（无预热）→ 编辑器 tool_call 切 `openapi:openapi-768/list_pets`（read·幂等），limit 参数由 M3 Schema 内核自动渲染，填 10 编译运行：`tool_call-1` **action_status SUCCESS，status 200**，body `{"pets":[{"id":1,"name":"Rex"}]}`。控制台仅一次预期旧 token 401（重登后消失）。
+- 冒烟缝（/tmp/atlas_smoke_launcher.py，假 DNS＋httpx MockTransport）在仓库外、未提交；收口后已恢复普通内存档 uvicorn 启动。
+- 迁移 018 已对本地 atlas-pg 实跑（apply_migrations.py）；无新依赖、无 ADR、无新错误码；REST/前端/编辑器/执行链路零改动如约。
+- **D22 部分取回、不解除**：YAML/Swagger2、securitySchemes 接线、multipart、原始文档留存、导入去重、软删除、跨租户共享、真实外部 API 联调仍缓做。
