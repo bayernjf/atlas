@@ -50,12 +50,22 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
   // ⑪ 子图版本升级体检（只读，与门禁并行加载；失败 fail-safe 不阻断）
   const [upgrades, setUpgrades] = useState<SubgraphUpgrade[] | null>(null)
 
-  const loadUpgrades = useCallback(async () => {
-    if (!graphId) {
+  // 打开弹窗时重置上一轮状态（渲染期按 prop 变化重置，避免 effect 内同步 setState）
+  const [prevOpen, setPrevOpen] = useState(open)
+  if (open !== prevOpen) {
+    setPrevOpen(open)
+    if (open) {
+      setLoading(true)
+      setError(null)
+      setReport(null)
+      setPublishedVersion(null)
       setUpgrades(null)
-      return
     }
-    setUpgrades(null)
+  }
+
+  const loadUpgrades = useCallback(async () => {
+    if (!graphId) return
+    // 重置由打开弹窗时的渲染期逻辑负责
     try {
       setUpgrades(await getSubgraphUpgrades(graphId))
     } catch {
@@ -75,10 +85,7 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
 
   const loadGate = useCallback(async () => {
     if (!graphId) return
-    setLoading(true)
-    setError(null)
-    setReport(null)
-    setPublishedVersion(null)
+    // 加载态/重置由打开弹窗时的渲染期逻辑负责，此处只做异步获取
     try {
       setReport(await runReleaseGate(graphId))
     } catch (loadError) {
@@ -90,8 +97,11 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
   }, [graphId, loadHistory])
 
   useEffect(() => {
+    // 数据获取 effect（fetch-on-mount）：两个 loader 的 setState 均在 await 之后，无同步级联渲染
     if (open) {
+      // oxlint-disable-next-line react/set-state-in-effect
       void loadGate()
+      // oxlint-disable-next-line react/set-state-in-effect
       void loadUpgrades()
     }
   }, [open, loadGate, loadUpgrades])
