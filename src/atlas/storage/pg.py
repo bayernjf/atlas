@@ -79,6 +79,12 @@ class PgBackend:
     def memory_store(self, tenant_id: str) -> "PgMemoryStore":
         return PgMemoryStore(self._engine, tenant_id)
 
+    def audit_store(self, tenant_id: str) -> "PgAuditStore":
+        return PgAuditStore(self._engine, tenant_id)
+
+    def connection_store(self, tenant_id: str) -> "PgConnectionStore":
+        return PgConnectionStore(self._engine, tenant_id)
+
 
 _pg_backend: PgBackend | None = None
 _pg_backend_lock = threading.Lock()
@@ -1390,4 +1396,267 @@ class PgMemoryStore:
             conn.execute(
                 text("DELETE FROM memory_items WHERE tenant_id = :tenant_id"),
                 {"tenant_id": self._tenant_id},
+            )
+
+class PgAuditStore:
+    """审计事件 PG 实现（docs/35 §6，T6）。
+
+    仅写操作元数据；id 用全局 storage_id_seq（aud-N），seq 存数字部分供同租户排序。
+    行内 tenant_id 过滤（不用 RLS）；demo reset 不清理本表。
+    """
+
+    def __init__(self, engine: Engine, tenant_id: str):
+        self._engine = engine
+        self._tenant_id = tenant_id
+
+    @staticmethod
+    def _row_to_dict(row: Any) -> dict[str, Any]:
+        return {
+            "id": row[0],
+            "tenantId": row[1],
+            "actor": row[2],
+            "action": row[3],
+            "statusCode": int(row[4]),
+            "path": row[5],
+            "ip": row[6] or "",
+            "at": row[7],
+        }
+
+    _COLS = "id, tenant_id, actor, action, status_code, path, ip, at"
+
+    def record(
+        self,
+        *,
+        tenant_id: str,
+        actor: str,
+        action: str,
+        status_code: int,
+        path: str,
+        ip: str,
+    ) -> dict[str, Any]:
+        from atlas.observability.audit import now_iso
+
+        with self._engine.begin() as conn:
+            seq = int(conn.execute(text("SELECT nextval('storage_id_seq')")).scalar_one())
+            audit_id = f"aud-{seq}"
+            at = now_iso()
+            conn.execute(
+                text(
+                    "INSERT INTO audit_events (id, tenant_id, seq, actor, action, status_code, path, ip, at) "
+                    "VALUES (:id, :tenant_id, :seq, :actor, :action, :status_code, :path, :ip, :at)"
+                ),
+                {
+                    "id": audit_id,
+                    "tenant_id": tenant_id,
+                    "seq": seq,
+                    "actor": actor or "anonymous",
+                    "action": action,
+                    "status_code": int(status_code),
+                    "path": path,
+                    "ip": ip or "",
+                    "at": at,
+                },
+            )
+        return {
+            "id": audit_id,
+            "tenantId": tenant_id,
+            "actor": actor or "anonymous",
+            "action": action,
+            "statusCode": int(status_code),
+            "path": path,
+            "ip": ip or "",
+            "at": at,
+        }
+
+    @staticmethod
+    def _escape_prefix(prefix: str) -> str:
+        return prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+    def _where(self, args: dict[str, Any], action_prefix: str | None) -> str:
+        clauses = ["tenant_id = :tenant_id"]
+        if action_prefix:
+            clauses.append("action LIKE :prefix ESCAPE '\\'")
+            args["prefix"] = self._escape_prefix(action_prefix) + "%"
+        return " AND ".join(clauses)
+
+    def list(self, *, limit: int = 100, action_prefix: str | None = None) -> list[dict[str, Any]]:
+        bounded = max(1, min(int(limit), 500))
+        args: dict[str, Any] = {"tenant_id": self._tenant_id, "limit": bounded}
+        where = self._where(args, action_prefix)
+        sql = f"SELECT {self._COLS} FROM audit_events WHERE {where} ORDER BY seq DESC LIMIT :limit"
+        with self._engine.connect() as conn:
+            rows = conn.execute(text(sql), args).all()
+        return [self._row_to_dict(row) for row in rows]
+
+    def export_jsonl(self, *, action_prefix: str | None = None) -> str:
+        args: dict[str, Any] = {"tenant_id": self._tenant_id}
+        where = self._where(args, action_prefix)
+        sql = f"SELECT {self._COLS} FROM audit_events WHERE {where} ORDER BY seq ASC"
+        with self._engine.connect() as conn:
+            rows = conn.execute(text(sql), args).all()
+        return "\n".join(
+            json.dumps(self._row_to_dict(row), ensure_ascii=False) for row in rows
+        )
+
+    def clear(self) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                text("DELETE FROM audit_events WHERE tenant_id = :tenant_id"),
+                {"tenant_id": self._tenant_id},
+            )
+
+
+class PgConnectionStore:
+    """OAuth2 连接 PG 实现（docs/35 §4，T4；generic OAuth2，平台无关）。
+
+    秘密字段存 SecretProvider 信封 TEXT；id 用全局 storage_id_seq（conn-N），
+    seq 存数字部分供同租户排序；行内 tenant_id 过滤；demo reset 不清本表。
+    """
+
+    _COLS = (
+        "id, tenant_id, seq, provider, display_name, auth_url, token_url, client_id, "
+        "client_secret_envelope, scopes, redirect_uri, status, access_token_envelope, "
+        "refresh_token_envelope, token_type, expires_at, last_error, created_by, "
+        "created_at, updated_at"
+    )
+
+    def __init__(self, engine: Engine, tenant_id: str):
+        self._engine = engine
+        self._tenant_id = tenant_id
+
+    @staticmethod
+    def _row_to_conn(row: Any):
+        from atlas.connections.models import Connection
+
+        # 列序：0 id,1 tenant_id,2 seq,3 provider,4 display_name,5 auth_url,6 token_url,
+        # 7 client_id,8 client_secret_envelope,9 scopes,10 redirect_uri,11 status,
+        # 12 access_token_envelope,13 refresh_token_envelope,14 token_type,15 expires_at,
+        # 16 last_error,17 created_by,18 created_at,19 updated_at
+        try:
+            scopes = json.loads(row[9]) if row[9] else []
+        except (TypeError, ValueError):
+            scopes = []
+        return Connection(
+            id=row[0],
+            tenant_id=row[1],
+            provider=row[3],
+            display_name=row[4],
+            auth_url=row[5],
+            token_url=row[6],
+            client_id=row[7],
+            client_secret_envelope=row[8],
+            scopes=scopes if isinstance(scopes, list) else [],
+            redirect_uri=row[10] or "",
+            status=row[11],
+            access_token_envelope=row[12],
+            refresh_token_envelope=row[13],
+            token_type=row[14],
+            expires_at=row[15],
+            last_error=row[16],
+            created_by=row[17],
+            created_at=row[18],
+            updated_at=row[19],
+        )
+
+    def create(self, conn: Any):
+        with self._engine.begin() as db:
+            seq = int(db.execute(text("SELECT nextval('storage_id_seq')")).scalar_one())
+            conn.id = f"conn-{seq}"
+            now = _now_iso()
+            conn.created_at = now
+            conn.updated_at = now
+            db.execute(
+                text(
+                    "INSERT INTO oauth_connections (id, tenant_id, seq, provider, display_name, "
+                    "auth_url, token_url, client_id, client_secret_envelope, scopes, redirect_uri, "
+                    "status, access_token_envelope, refresh_token_envelope, token_type, expires_at, "
+                    "last_error, created_by, created_at, updated_at) VALUES (:id, :tenant_id, :seq, "
+                    ":provider, :display_name, :auth_url, :token_url, :client_id, :cse, :scopes, "
+                    ":redirect_uri, :status, :ate, :rte, :token_type, :expires_at, :last_error, "
+                    ":created_by, :created_at, :updated_at)"
+                ),
+                {
+                    "id": conn.id,
+                    "tenant_id": self._tenant_id,
+                    "seq": seq,
+                    "provider": conn.provider,
+                    "display_name": conn.display_name,
+                    "auth_url": conn.auth_url,
+                    "token_url": conn.token_url,
+                    "client_id": conn.client_id,
+                    "cse": conn.client_secret_envelope,
+                    "scopes": json.dumps(conn.scopes, ensure_ascii=False),
+                    "redirect_uri": conn.redirect_uri,
+                    "status": conn.status,
+                    "ate": conn.access_token_envelope,
+                    "rte": conn.refresh_token_envelope,
+                    "token_type": conn.token_type,
+                    "expires_at": conn.expires_at,
+                    "last_error": conn.last_error,
+                    "created_by": conn.created_by,
+                    "created_at": conn.created_at,
+                    "updated_at": conn.updated_at,
+                },
+            )
+        return conn
+
+    def get(self, conn_id: str):
+        sql = f"SELECT {self._COLS} FROM oauth_connections WHERE tenant_id = :t AND id = :id"
+        with self._engine.connect() as db:
+            row = db.execute(text(sql), {"t": self._tenant_id, "id": conn_id}).first()
+        return self._row_to_conn(row) if row else None
+
+    def list(self):
+        sql = f"SELECT {self._COLS} FROM oauth_connections WHERE tenant_id = :t ORDER BY seq"
+        with self._engine.connect() as db:
+            rows = db.execute(text(sql), {"t": self._tenant_id}).all()
+        return [self._row_to_conn(row) for row in rows]
+
+    def save(self, conn: Any):
+        conn.updated_at = _now_iso()
+        with self._engine.begin() as db:
+            db.execute(
+                text(
+                    "UPDATE oauth_connections SET provider = :provider, display_name = :display_name, "
+                    "auth_url = :auth_url, token_url = :token_url, client_id = :client_id, "
+                    "client_secret_envelope = :cse, scopes = :scopes, redirect_uri = :redirect_uri, "
+                    "status = :status, access_token_envelope = :ate, refresh_token_envelope = :rte, "
+                    "token_type = :token_type, expires_at = :expires_at, last_error = :last_error, "
+                    "updated_at = :updated_at WHERE tenant_id = :t AND id = :id"
+                ),
+                {
+                    "provider": conn.provider,
+                    "display_name": conn.display_name,
+                    "auth_url": conn.auth_url,
+                    "token_url": conn.token_url,
+                    "client_id": conn.client_id,
+                    "cse": conn.client_secret_envelope,
+                    "scopes": json.dumps(conn.scopes, ensure_ascii=False),
+                    "redirect_uri": conn.redirect_uri,
+                    "status": conn.status,
+                    "ate": conn.access_token_envelope,
+                    "rte": conn.refresh_token_envelope,
+                    "token_type": conn.token_type,
+                    "expires_at": conn.expires_at,
+                    "last_error": conn.last_error,
+                    "updated_at": conn.updated_at,
+                    "t": self._tenant_id,
+                    "id": conn.id,
+                },
+            )
+        return conn
+
+    def delete(self, conn_id: str) -> bool:
+        with self._engine.begin() as db:
+            result = db.execute(
+                text("DELETE FROM oauth_connections WHERE tenant_id = :t AND id = :id"),
+                {"t": self._tenant_id, "id": conn_id},
+            )
+            return bool(result.rowcount)
+
+    def reset(self) -> None:
+        with self._engine.begin() as db:
+            db.execute(
+                text("DELETE FROM oauth_connections WHERE tenant_id = :t"),
+                {"t": self._tenant_id},
             )

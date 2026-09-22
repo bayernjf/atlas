@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import operator
 import time
 import uuid
@@ -29,6 +30,7 @@ from langgraph.graph import END, START, StateGraph
 from atlas.cards.catalog import get_card
 from atlas.collaboration.approvals import ApprovalBroker
 from atlas.collaboration.cancellations import RunCancelled
+from atlas.collaboration.notifications import ApprovalNotifier
 from atlas.debug.sessions import DebugStopped
 from atlas.database.adapter import DatabaseHarnessAdapter
 from atlas.database.service import DatabaseClient, demo_engine
@@ -72,6 +74,8 @@ BREAK_GATE_PREFIX = "__break__"
 _AUTO_TRACER = object()
 
 # 进程内审批信号单例（04 §5.6）；API/测试可注入自己的实例。
+logger = logging.getLogger(__name__)
+
 _default_approval_broker = ApprovalBroker()
 
 
@@ -140,6 +144,7 @@ def _make_executor(
     approval_broker: ApprovalBroker,
     graph_id: str,
     emit: EventCallback,
+    approval_notifier: ApprovalNotifier | None = None,
     graph_resolver: Callable[[str], GraphDSL] | None,
     subgraph_depth: int,
     debug_controller: Any = None,
@@ -209,6 +214,7 @@ def _make_executor(
                         trigger_payload=trigger_payload,
                         broker=approval_broker,
                         graph_id=graph_id,
+                        notifier=approval_notifier,
                     )
                     start_event["approval"] = approval_payload
                     _emit_frame(
@@ -241,6 +247,7 @@ def _make_executor(
                         trigger_payload=trigger_payload,
                         broker=approval_broker,
                         graph_id=graph_id,
+                        notifier=approval_notifier,
                     )
                     # 第二个 node_start 携带 approval 载荷，前端据此打开审批 Modal。
                     emit({**start_event, "approval": approval_payload})
@@ -337,6 +344,7 @@ def _make_executor(
                         registry=registry,
                         decision_client=decision_client,
                         approval_broker=approval_broker,
+                        approval_notifier=approval_notifier,
                         resolver=graph_resolver,
                         depth=subgraph_depth,
                         tracer=tracer,
@@ -469,6 +477,7 @@ def _register_approval(
     trigger_payload: dict[str, Any],
     broker: ApprovalBroker,
     graph_id: str,
+    notifier: ApprovalNotifier | None = None,
 ) -> dict[str, Any]:
     """登记 pending 审批请求并返回随 node_start 下发的 approval 载荷（04 §5.6）。"""
     config = node.config
@@ -489,15 +498,55 @@ def _register_approval(
         card_template_id=card_template_id,
         card_context=card_context,
     )
+    # docs/35 §2：挂起通知（旁路，fail-safe）；收件人运行时插值、过滤空值/无 @。
+    notified = False
+    notify_error: str | None = None
+    if notifier is not None:
+        recipients = _resolve_notify_recipients(config.get("notifyEmails"), context)
+        if recipients:
+            try:
+                notifier.notify_pending(
+                    graph_id=graph_id,
+                    node_id=node.id,
+                    token=token,
+                    summary=summary,
+                    approver=approver,
+                    timeout_seconds=timeout_seconds,
+                    recipients=recipients,
+                )
+                notified = True
+            except Exception as exc:  # noqa: BLE001 旁路通知任何异常都不得阻断图
+                notify_error = str(exc)
+                logger.warning("审批挂起通知失败 node=%s: %s", node.id, exc)
     payload: dict[str, Any] = {
         "token": token,
         "summary": summary,
         "approver": approver,
         "timeoutSeconds": timeout_seconds,
+        "notified": notified,
     }
+    if notify_error is not None:
+        payload["notifyError"] = notify_error
     if card_template_id:
         payload["cardTemplateId"] = card_template_id
     return payload
+
+
+def _resolve_notify_recipients(raw: Any, context: dict[str, Any]) -> list[str]:
+    # docs/35 §2.1：notifyEmails 运行时插值，剔除空值与插值后无 @ 的项，去重保序。
+    if not isinstance(raw, list):
+        return []
+    recipients: list[str] = []
+    for item in raw:
+        rendered = interpolate(str(item), context).strip()
+        if not rendered:
+            continue
+        if "@" not in rendered:
+            logger.warning("审批通知邮箱插值后不含 @，已丢弃：%r", item)
+            continue
+        if rendered not in recipients:
+            recipients.append(rendered)
+    return recipients
 
 
 def _await_human_approval(
@@ -583,6 +632,7 @@ def _execute_subgraph(
     registry: AdapterRegistry | None,
     decision_client: Any,
     approval_broker: ApprovalBroker,
+    approval_notifier: ApprovalNotifier | None = None,
     resolver: Callable[[str], GraphDSL] | None,
     depth: int,
     tracer: Tracer | None = None,
@@ -631,6 +681,7 @@ def _execute_subgraph(
                 decision_client=decision_client,
                 registry=registry,
                 approval_broker=approval_broker,
+                approval_notifier=approval_notifier,
                 graph_id=graph_ref,
                 emit=child_emit,
                 graph_resolver=resolver,
@@ -1344,6 +1395,7 @@ def compile_graph(
     decision_client: Any | None = None,
     registry: AdapterRegistry | None = None,
     approval_broker: ApprovalBroker | None = None,
+    approval_notifier: ApprovalNotifier | None = None,
     graph_id: str = "adhoc",
     emit: EventCallback | None = None,
     trigger_payload: dict[str, Any] | None = None,
@@ -1449,6 +1501,7 @@ def compile_graph(
             decision_client=decision_client,
             registry=registry,
             approval_broker=approval_broker,
+            approval_notifier=approval_notifier,
             graph_id=graph_id,
             emit=emit,
             graph_resolver=graph_resolver,
@@ -1692,6 +1745,7 @@ def run_graph(
     decision_client: Any | None = None,
     registry: AdapterRegistry | None = None,
     approval_broker: ApprovalBroker | None = None,
+    approval_notifier: ApprovalNotifier | None = None,
     graph_id: str = "adhoc",
     emit: EventCallback | None = None,
     graph_resolver: Callable[[str], GraphDSL] | None = None,
@@ -1769,6 +1823,7 @@ def run_graph(
             decision_client=decision_client,
             registry=registry,
             approval_broker=approval_broker,
+            approval_notifier=approval_notifier,
             graph_id=resume_graph_id,
             emit=emit,
             trigger_payload=resume_inputs,
@@ -1804,6 +1859,7 @@ def run_graph(
         decision_client=decision_client,
         registry=registry,
         approval_broker=approval_broker,
+        approval_notifier=approval_notifier,
         graph_id=graph_id,
         emit=emit,
         trigger_payload=inputs,

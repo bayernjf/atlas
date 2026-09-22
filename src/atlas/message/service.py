@@ -3,13 +3,16 @@
 默认只记录、不真实投递：send 返回消息记录并保存在进程内列表，重启清空、
 reset 清空，GET /api/demo/messages 陪同查看。channel=email 且注入了
 SmtpSender（ATLAS_SMTP_HOST 已配置）时真实发信，记录标 delivered="smtp"；
-IM/短信/webhook 渠道仍缓做 docs/14 D24。
+channel=webhook 且注入 WebhookSender 时向单个 URL POST JSON、标 delivered="webhook"
+（docs/35 §3 T3，先过 SSRF 出向校验）；IM/短信渠道仍缓做 docs/14 D24。
 """
 
 from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+
+from atlas.security.egress import EgressDenied
 
 MAX_RECIPIENTS = 20
 
@@ -44,10 +47,13 @@ def _normalize_recipients(to: object) -> list[str]:
 
 
 class MessageService:
-    def __init__(self, email_sender: object | None = None) -> None:
+    def __init__(self, email_sender: object | None = None, webhook_sender: object | None = None) -> None:
         # email_sender 需实现 send(to: list[str], subject: str, body: str)，
         # 生产为 message.smtp.SmtpSender；None 时 email 也只记录不投递（demo）。
         self._email_sender = email_sender
+        # webhook_sender 需实现 send(url: str, payload: dict)，生产为 message.webhook.DefaultWebhookSender；
+        # None 时 webhook 仅进程内记录（demo/测试）。
+        self._webhook_sender = webhook_sender
         self._messages: list[dict[str, object]] = []
         self.last_send: dict[str, object] | None = None
 
@@ -55,6 +61,9 @@ class MessageService:
         channel_value = _require_non_empty(channel, "channel").strip()
         subject_value = _require_non_empty(subject, "subject")
         body_value = _require_non_empty(body, "body")
+        # webhook 渠道只接受单个 URL 字符串（数组即使单元素也 422，docs/35 §3）。
+        if channel_value == "webhook" and isinstance(to, list):
+            raise MessageSendError("INVALID_PARAMETER", "webhook 渠道的 to 必须是单个 URL 字符串")
         recipients = _normalize_recipients(to)
         if channel_value == "email" and any("@" not in address for address in recipients):
             raise MessageSendError("INVALID_PARAMETER", "email 渠道的收件地址必须包含 @")
@@ -76,6 +85,24 @@ class MessageService:
                 code = getattr(exc, "code", "SMTP_SEND_FAILED")
                 raise MessageSendError("SMTP_SEND_FAILED", f"邮件投递失败：{exc}") from exc
             record["delivered"] = "smtp"
+        elif channel_value == "webhook" and self._webhook_sender is not None:
+            url = recipients[0]
+            payload = {
+                "id": record["id"],
+                "channel": "webhook",
+                "subject": subject_value,
+                "body": body_value,
+                "sent_at": record["sent_at"],
+            }
+            try:
+                self._webhook_sender.send(url, payload)
+            except EgressDenied as exc:
+                # SSRF/非法 URL：透传安全错误码（EGRESS_DENIED/EGRESS_INVALID_URL），不写记录
+                raise MessageSendError(exc.code, f"webhook 出向被拦截：{exc}") from exc
+            except Exception as exc:
+                # 网络/超时/非 2xx：统一 WEBHOOK_SEND_FAILED，不写记录
+                raise MessageSendError("WEBHOOK_SEND_FAILED", f"webhook 投递失败：{exc}") from exc
+            record["delivered"] = "webhook"
         self._messages.append(record)
         self.last_send = {k: record[k] for k in ("id", "channel", "to", "sent_at")}
         return record

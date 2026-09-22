@@ -10,10 +10,14 @@ import os
 import threading
 from dataclasses import dataclass
 
+from atlas.connections.service import build_connection_service
+from atlas.connections.store import ConnectionStore
 from atlas.collaboration.cancellations import RunCancellationBroker
 from atlas.coordination import TaskStore
+from atlas.observability.audit import AuditRepository, AuditStore
 from atlas.message.service import MessageService
 from atlas.message.smtp import get_smtp_sender
+from atlas.message.webhook import get_webhook_sender
 from atlas.recording import ReportStore, ShadowStore
 from atlas.routing import RoutingStore
 from atlas.storage.base import (
@@ -60,6 +64,8 @@ class TenantServices:
     report_store: ReportStore  # D26 报告 v1：批量回放报告 ring（进程内，memory/PG 档均挂内存实例）
     shadow_store: ShadowStore  # D26 影子模式：旁路运行记录 ring（进程内，两档均挂内存实例，docs/33 §3）
     memory_store: MemoryRepository  # M11 长期记忆 fact/preference（批 3 PG 档换 PgMemoryStore）
+    audit_store: AuditRepository  # T6 写操作审计（docs/35 §6；ring/PG 两档，reset 不清）
+    connection_service: object  # T4 OAuth2 连接（docs/35 §4；业务服务，内存/PG 两档 store，reset 不清）
 
 
 class TenantRegistry:
@@ -96,7 +102,7 @@ class TenantRegistry:
                 graph_store=backend.graph_store(tenant_id),
                 recording_store=backend.recording_store(tenant_id),
                 feedback_store=backend.feedback_store(tenant_id),
-                message_service=MessageService(email_sender=get_smtp_sender()),
+                message_service=MessageService(email_sender=get_smtp_sender(), webhook_sender=get_webhook_sender()),
                 approval_broker=ApprovalBroker(),
                 debug_broker=DebuggerBroker(),
                 cancellation_broker=RunCancellationBroker(),
@@ -107,12 +113,16 @@ class TenantRegistry:
                 report_store=ReportStore(),
                 shadow_store=ShadowStore(),
                 memory_store=backend.memory_store(tenant_id),
+                audit_store=backend.audit_store(tenant_id),
+                connection_service=build_connection_service(
+                    backend.connection_store(tenant_id), tenant_id=tenant_id
+                ),
             )
         return TenantServices(
             graph_store=GraphStore(),
             recording_store=RecordingStore(),
             feedback_store=FeedbackStore(),
-            message_service=MessageService(email_sender=get_smtp_sender()),
+            message_service=MessageService(email_sender=get_smtp_sender(), webhook_sender=get_webhook_sender()),
             approval_broker=ApprovalBroker(),
             debug_broker=DebuggerBroker(),
             cancellation_broker=RunCancellationBroker(),
@@ -123,6 +133,8 @@ class TenantRegistry:
             report_store=ReportStore(),
             shadow_store=ShadowStore(),
             memory_store=MemoryStore(),
+            audit_store=AuditStore(),
+            connection_service=build_connection_service(ConnectionStore(), tenant_id=tenant_id),
         )
 
     def reset_tenant(self, tenant_id: str) -> None:

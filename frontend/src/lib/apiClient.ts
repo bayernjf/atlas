@@ -1350,3 +1350,89 @@ export async function compareShadowRun(
     body: JSON.stringify({ human_outcome: humanOutcome }),
   })
 }
+
+// --- OAuth2 连接管理（docs/35 §4，T4；generic，平台无关） --------------------
+
+export type ConnectionStatus = 'draft' | 'connected' | 'error'
+
+/** 连接对外投影：后端 public_view 已删除全部信封/明文秘密。 */
+export type ConnectionView = {
+  id: string
+  provider: string
+  displayName: string
+  authUrl: string
+  tokenUrl: string
+  clientId: string
+  hasClientSecret: boolean
+  scopes: string[]
+  redirectUri: string
+  status: ConnectionStatus
+  tokenType: string | null
+  expiresAt: string | null
+  lastError: string | null
+  createdBy: string | null
+  createdAt: string | null
+  updatedAt: string | null
+}
+
+export type ConnectionInput = {
+  provider: string
+  displayName: string
+  authUrl: string
+  tokenUrl: string
+  clientId: string
+  clientSecret?: string
+  scopes?: string[]
+  redirectUri?: string
+}
+
+export type AuthorizeInfo = { authorizeUrl: string; state: string; expiresIn: number }
+export type ConnectionTestResult = {
+  ok: boolean
+  status: ConnectionStatus
+  expiresAt: string | null
+  reason?: string
+}
+
+export async function listConnections(): Promise<ConnectionView[]> {
+  const body = await request<{ items: ConnectionView[] }>('/api/connections')
+  return body.items
+}
+
+export async function createConnection(input: ConnectionInput): Promise<ConnectionView> {
+  return request('/api/connections', { method: 'POST', body: JSON.stringify(input) })
+}
+
+export async function updateConnection(
+  id: string,
+  input: Partial<ConnectionInput>,
+): Promise<ConnectionView> {
+  return request(`/api/connections/${id}`, { method: 'PUT', body: JSON.stringify(input) })
+}
+
+export async function deleteConnection(id: string): Promise<{ deleted: boolean }> {
+  return request(`/api/connections/${id}`, { method: 'DELETE' })
+}
+
+export async function authorizeConnection(id: string): Promise<AuthorizeInfo> {
+  return request(`/api/connections/${id}/authorize`, { method: 'POST' })
+}
+
+export async function exchangeConnection(
+  id: string,
+  code: string,
+  state: string,
+): Promise<ConnectionView> {
+  return request(`/api/connections/${id}/exchange`, {
+    method: 'POST',
+    body: JSON.stringify({ code, state }),
+  })
+}
+
+export async function refreshConnection(id: string): Promise<ConnectionView> {
+  return request(`/api/connections/${id}/refresh`, { method: 'POST' })
+}
+
+export async function testConnection(id: string): Promise<ConnectionTestResult> {
+  return request(`/api/connections/${id}/test`, { method: 'POST' })
+}

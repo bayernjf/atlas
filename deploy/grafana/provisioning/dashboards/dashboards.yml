@@ -1,0 +1,16 @@
+# Grafana 仪表盘 provider 自动装配（docs/35 §5，D11 Grafana 子集）。
+# 从容器内 /var/lib/grafana/dashboards 加载 JSON 仪表盘（compose 只读挂载
+# 宿主 deploy/grafana/dashboards/）。
+apiVersion: 1
+
+providers:
+  - name: atlas
+    orgId: 1
+    folder: Atlas
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

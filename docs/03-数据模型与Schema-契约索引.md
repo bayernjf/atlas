@@ -50,6 +50,8 @@
 | `release_gate` | **M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；04 §5.11 末发布前批量门禁段 + `src/atlas/recording/gate.py`（GateReport，D26 部分取回；D26 报告 v1 起响应纯超集加 `id` 并沉淀，见下行） | ### 5.11 操作录制与回放 |
 | `release_report` | **D26 报告 v1 已落码收口（2026-09-18，U60 转正式）；2026-09-19 收尾批补 CSV/JSON 导出（`8a37b4e`，`.../export?format=csv|json`）**；04 §5.11 末用例集报告段 + `src/atlas/recording/reports.py`（ReleaseReport 沉淀/按图历史/通过率趋势/导出，ring 100/租户、reset 清空、不 PG 化；docs/28 批 1④（2026-09-20，89e21fc）增跨图聚合 GET /api/release-reports?limit= 看板） | ### 5.11 操作录制与回放 |
 | `business_metrics` | **M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；04 §5.13 末业务指标段 + `src/atlas/monitoring/business.py`（extract_business 业务结果三率，金融灰度门控信号源） | ### 5.13 基础监控告警 |
+| `connection` | **docs/35 T4 已落码收口 2026-09-22（`a57164d`，generic OAuth2 连接管理 v1，D22 子集不解除缓做）**；权威 docs/35 §4 + `src/atlas/connections/{models,oauth,store,service}.py`＋`storage/pg.py` PgConnectionStore（表 `oauth_connections`，迁移 014，20 列，reset 不清）。字段：id `conn-N`(per-tenant 序号)/tenant_id/provider(自由字符串非空)/display_name/auth_url/token_url(https 创建过 EgressGuard 真实 DNS)/client_id(明文公开)/client_secret_envelope/scopes:list/redirect_uri(空→ATLAS_OAUTH_REDIRECT_URI→默认 /connections/callback)/status(draft·connected·error)/access_token_envelope/refresh_token_envelope/token_type/expires_at(UTC iso 可空)/last_error/created_by/created_at/updated_at。**所有 secret 经 SecretProvider AES-GCM 信封，`public_view()` 驼峰投影仅出 hasClientSecret、绝无信封/明文**；9 端点+无鉴权回调页见 12 文档 | docs/35 §4（工程契约） |
+| `audit_event` | **docs/35 T6 已落码收口 2026-09-22（`f243e04`，审计日志，docs/34 P1 #8）**；权威 docs/35 §6 + `src/atlas/observability/audit.py`（AuditEvent/AuditStore ring 2000/租户/AuditRepository）＋`storage/pg.py` PgAuditStore（表 `audit_events`，迁移 013，reset 不清）。仅 8 个元数据字段：id `aud-N`/tenant_id/actor(用户或 anonymous)/action(如 graph.run/create)/method/path_format(路由模板，解析失败降级实际 path)/status_code/client_ip/request_id/occurred_at；**绝不记请求体、响应体、Authorization/Cookie 或任何凭据**；仅 /api 写方法（POST/PUT/PATCH/DELETE）经 HTTP 中间件记录，login 成功显式记一条，GET 不记；GET /api/audit/events 与 /api/audit/export?format=jsonl 均 administer | docs/35 §6（工程契约） |
 
 ---
 
@@ -115,7 +117,8 @@ type: object               # 节点类型专属配置；condition 节点 config 
                            #   唯一权威见 04 §5.5「wait 节点 config 契约」
                            # human_approval 节点 config 形状：
                            #   {summary, approver?, timeoutSeconds: 10-3600 整数, onTimeout: approve|reject(默认reject),
-                           #    approvedTarget, rejectedTarget, cardTemplateId?（M8 新增，可选内置卡片 id，不填走 summary 旧路径）}
+                           #    approvedTarget, rejectedTarget, cardTemplateId?（M8 新增，可选内置卡片 id，不填走 summary 旧路径）,
+                           #    notifyEmails?（docs/35 T2 新增，可选 string[]≤5、元素支持 {{}} 插值、编译期校验含 @、pointer /notifyEmails；挂起后 EmailApprovalNotifier fail-safe 发信，不阻断图；权威 docs/35 §2）}
                            #   唯一权威见 04 §5.6「human_approval 节点 config 契约」（含 M8 cardTemplateId 追加段）
                            # subgraph 节点 config 形状：
                            #   {graphId, inputs?: {<子图入参键>: "<父图 {{路径}}/字面量>"}}

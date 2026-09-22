@@ -733,6 +733,18 @@ class MemoryRepository(Protocol):
 | DELETE | /api/memories/{id} | 【**admin only**，M11】删除一条记忆；他租户/不存在 → 404 | memory_item |
 | POST | /api/memories | 【**operate**，docs/28 批 4⑩ 2026-09-20 `ec0fd81`】手动新建记忆，body `{kind, content, scope?:{str:str}, confidence?:0-1, metadata?:{str:str}}`；**source 固定 manual 不接受入参**（extra=forbid，传 source/id → 422），201 返 memory_item，校验失败 422 中文 | memory_item |
 | PUT | /api/memories/{id} | 【**operate**，批 4⑩】编辑白名单字段任意子集（exclude_unset，空体 422）；source 归 manual、content 变才重算 embedding、id/created_at 不变；不存在/他租户 → 404，校验失败 422 | memory_item |
+| POST | /api/connections | 【**administer**，docs/35 T4 2026-09-22 `a57164d`，201】建 OAuth2 连接（provider/displayName/authUrl/tokenUrl/clientId 必填，创建即对 authUrl/tokenUrl 过 EgressGuard 真实 DNS，不可解析 400）；secret 一律信封存储，返 public_view（无任何信封/明文） | connection |
+| GET | /api/connections | 【**read**，T4】列出本租户连接 `{items:[connection 投影…]}`（不含秘密） | connection |
+| GET | /api/connections/{id} | 【**read**，T4】取单连接投影；他租户/不存在 → 404 | connection |
+| PUT | /api/connections/{id} | 【**administer**，T4】更新连接；clientSecret 缺省/空串保留原信封；他租户/不存在 → 404 | connection |
+| DELETE | /api/connections/{id} | 【**administer**，T4】删除，返 `{deleted:true}`；reset 不清连接 | connection |
+| POST | /api/connections/{id}/authorize | 【**operate**，T4】签发授权：返 `{authorizeUrl,state,expiresIn:600}`（HMAC 自签名 state 防 CSRF，本步不触网） | connection |
+| POST | /api/connections/{id}/exchange | 【**operate**，T4】body `{code,state}`，校验 state 后换 token 并加密落库、置 connected；state 非法 400 不改状态，token 端点异常置 error+last_error 抛 502 | connection |
+| POST | /api/connections/{id}/refresh | 【**operate**，T4】用 refresh_token 刷新访问令牌（过期前 60s 视为过期）；异常置 error 抛 502 | connection |
+| POST | /api/connections/{id}/test | 【**operate**，T4】仅验证令牌状态（过期先刷新；draft/error 返 `{ok:false,reason}`，**不调真实业务 API**） | connection |
+| GET | /connections/callback | 【**无鉴权**，T4】OAuth 提供方回调落地静态 HTML 页（include_in_schema=False，注册于 StaticFiles 挂载前优先匹配；纯静态引导用户回填 code/state，无副作用、不读 query 外秘密） | — |
+| GET | /api/audit/events | 【**administer**，docs/35 T6 `f243e04`】分页查本租户审计事件（query limit/offset/actor/action），仅 8 元数据字段、绝无请求体/凭据 | audit_event |
+| GET | /api/audit/export | 【**administer**，T6】`?format=jsonl` 导出审计（StreamingResponse 附件，逐行 JSON）；reset 不清审计 | audit_event |
 
 > **M11 记忆端点口径订正（2026-09-19，docs/26；批 4⑩ 2026-09-20 修订）**：上表取代原愿景 `GET/PUT /api/memories/{operator_id}`（memory_config 配置读写，05 §2.4）——五层策略配置随 D35 缓做，operator 维度降为记忆条目 `scope.user_id`，租户由会话 Principal 定。**初版 M11 写入只走图工具 `memory/remember`（手动造数走 `scripts/dev/m11_seed.py`）；docs/28 批 4⑩（`ec0fd81`）起补开 `POST/PUT /api/memories`（operate，source 固定 manual）承担运营手动新建/编辑**——图工具仍是运行时自动写入主路径，REST 为手动补录/纠错通道，删除仍仅 admin。
 

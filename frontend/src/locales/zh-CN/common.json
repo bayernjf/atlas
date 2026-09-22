@@ -11,7 +11,8 @@
     "openEditor": "打开流程编辑器",
     "monitoring": "监控告警",
     "memory": "长期记忆",
-    "users": "用户管理"
+    "users": "用户管理",
+    "connections": "连接管理"
   },
   "button": {
     "confirm": "确定",

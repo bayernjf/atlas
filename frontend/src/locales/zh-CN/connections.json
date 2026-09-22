@@ -1,0 +1,90 @@
+{
+  "title": "连接管理",
+  "header": {
+    "back": "返回",
+    "refresh": "刷新"
+  },
+  "notice": {
+    "title": "通用 OAuth2 连接（平台无关）",
+    "description": "在此配置标准 OAuth2 授权码流程连接：填写平台提供的授权/令牌端点与客户端凭据，发起授权后把回调页中的授权码粘贴回「完成授权」。本版本不内置任何具体平台，也不会自动调用平台业务接口。"
+  },
+  "list": {
+    "cardTitle": "OAuth2 连接"
+  },
+  "empty": "暂无连接，点击「新建连接」添加",
+  "col": {
+    "displayName": "连接",
+    "status": "状态",
+    "scopes": "权限范围",
+    "expiresAt": "访问令牌过期时间",
+    "createdAt": "创建时间",
+    "actions": "操作"
+  },
+  "status": {
+    "draft": "未授权",
+    "connected": "已连接",
+    "error": "错误"
+  },
+  "button": {
+    "create": "新建连接",
+    "edit": "编辑",
+    "authorize": "授权",
+    "completeAuth": "完成授权",
+    "refresh": "刷新令牌",
+    "test": "测试"
+  },
+  "deleteConfirm": {
+    "title": "删除该连接？",
+    "description": "将同时清除已保存的令牌，且不可恢复。"
+  },
+  "modal": {
+    "createTitle": "新建 OAuth2 连接",
+    "editTitle": "编辑 OAuth2 连接",
+    "secretKeepHint": "留空表示保持原客户端密钥不变；填写则替换。"
+  },
+  "form": {
+    "provider": "平台标识（provider）",
+    "providerPlaceholder": "如 generic / shopify（仅作标签，可自定义）",
+    "displayName": "展示名",
+    "displayNamePlaceholder": "如 某平台店铺连接",
+    "authUrl": "授权端点（authUrl，https）",
+    "tokenUrl": "令牌端点（tokenUrl，https）",
+    "clientId": "客户端 ID（clientId）",
+    "clientIdPlaceholder": "平台分配的 client_id",
+    "clientSecret": "客户端密钥（clientSecret）",
+    "clientSecretPlaceholder": "平台分配的 client_secret",
+    "clientSecretKeepPlaceholder": "留空保持原密钥不变",
+    "clientSecretHint": "密钥经服务端信封加密存储，任何列表/详情都不会回显。",
+    "scopes": "权限范围（scopes，空格分隔）",
+    "scopesHint": "多个 scope 用空格分隔，可留空。",
+    "redirectUri": "回调地址（redirectUri，可留空用默认）",
+    "redirectUriHint": "需与平台后台登记的回调一致；留空使用服务端默认 /connections/callback。"
+  },
+  "authModal": {
+    "title": "完成授权",
+    "hint": "在新打开的平台页面同意授权后，回调页会展示授权码 code 与 state。把它们粘贴到下方（点「授权」已自动带入 state），提交后服务端换取并加密保存令牌。",
+    "submit": "完成授权",
+    "stateLabel": "state（防 CSRF）",
+    "statePlaceholder": "通常已由「授权」自动带入；如未带入请从回调页复制",
+    "codeLabel": "授权码 code",
+    "codePlaceholder": "粘贴回调页中的 code",
+    "codeStateRequired": "请同时填写授权码 code 与 state"
+  },
+  "message": {
+    "saved": "连接已保存",
+    "deleted": "连接已删除",
+    "authorized": "授权完成，令牌已保存",
+    "refreshed": "令牌已刷新",
+    "testOk": "连接可用",
+    "testFail": "连接测试未通过"
+  },
+  "error": {
+    "loadList": "连接列表加载失败",
+    "save": "连接保存失败",
+    "authorize": "授权失败",
+    "refresh": "令牌刷新失败",
+    "test": "连接测试失败",
+    "delete": "删除失败",
+    "formInvalid": "表单校验未通过"
+  }
+}

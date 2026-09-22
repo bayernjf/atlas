@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -39,6 +39,7 @@ from atlas.graph.conditions import validate_expression
 from atlas.graph.dsl import GraphDSL, GraphValidationError, parse_graph
 from atlas.graph.loader import _tool_permissions, compile_graph, run_graph, tool_input_schemas
 from atlas.collaboration.cancellations import RunCancelled
+from atlas.collaboration.notifications import EmailApprovalNotifier
 from atlas.tracing import Tracer
 from atlas.harness.base import Permission
 from atlas.harness.registry import AdapterRegistry
@@ -63,6 +64,8 @@ from atlas.memory.adapter import MemoryHarnessAdapter
 from atlas.memory.models import MemoryValidationError
 from atlas.message.adapter import MessageHarnessAdapter
 from atlas.monitoring import RUN_RING_SIZE, extract_business, extract_node_results
+from atlas.observability.audit import AUDITED_METHODS, LOGIN_PATH
+from atlas.connections.service import ConnectionServiceError
 from atlas.observability.health import check_ready
 from atlas.observability.metrics_export import render_prometheus
 from atlas.monitoring.silences import OnCallEmpty, current_assignee, is_silence_active
@@ -106,6 +109,9 @@ from atlas.versioning.publish import publish as publish_graph_version
 from atlas.versioning.upgrades import subgraph_upgrade_plan
 
 logger = logging.getLogger(__name__)
+
+# docs/35 §2（T2）：审批挂起邮件中的应用入口（前端地址）。
+_PUBLIC_URL = os.getenv("ATLAS_PUBLIC_URL", "http://localhost:5174")
 
 
 def recover_pending() -> None:
@@ -249,6 +255,36 @@ def graph_validation_handler(_request: Request, exc: GraphValidationError) -> JS
     return JSONResponse(status_code=422, content=content)
 
 
+@app.middleware("http")
+async def audit_write_actions(request: Request, call_next):
+    """T6 审计中间件（docs/35 §6）：仅 /api/ 写方法在响应后记录元数据（actor/路由模板/
+    status/实际 path/IP）；登录路径跳过（端点内仅成功才记）；审计异常只告警、绝不阻断主请求。
+    绝不读取请求体或 Authorization 头。"""
+    response = await call_next(request)
+    try:
+        path = request.url.path
+        if (
+            path.startswith("/api/")
+            and request.method in AUDITED_METHODS
+            and path != LOGIN_PATH
+        ):
+            principal = getattr(request.state, "principal", None)
+            if principal is not None:
+                route = request.scope.get("route")
+                template = getattr(route, "path_format", None) or path
+                services_for(principal).audit_store.record(
+                    tenant_id=principal.tenant_id,
+                    actor=principal.username,
+                    action=f"{request.method} {template}",
+                    status_code=response.status_code,
+                    path=path,
+                    ip=request.client.host if request.client else "",
+                )
+    except Exception as exc:  # 审计绝不阻断业务
+        logger.warning("audit record failed: %s", exc)
+    return response
+
+
 def _tenant_graph_resolver(services: TenantServices):
     """subgraph 节点 graph_resolver（04 §5.7）：在当前租户 GraphStore 内按 id 解析，缺失抛 KeyError。"""
 
@@ -351,6 +387,238 @@ def prometheus_metrics() -> Response:
     return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")
 
 
+@app.get("/api/audit/events")
+def list_audit_events(
+    principal: Principal = Depends(require("administer")),
+    limit: int = 100,
+    action: str | None = None,
+) -> dict[str, Any]:
+    """写操作审计事件（docs/35 §6，T6）：倒序（最新在前），admin only，只读本租户；
+    limit clamp 到 1–500；action 为路由动作前缀过滤（如 ``POST /api/graphs``）。"""
+    bounded = max(1, min(int(limit), 500))
+    action_prefix = action.strip() if action and action.strip() else None
+    items = services_for(principal).audit_store.list(
+        limit=bounded, action_prefix=action_prefix
+    )
+    return {"items": items, "limit": bounded}
+
+
+@app.get("/api/audit/export")
+def export_audit_events(
+    principal: Principal = Depends(require("administer")),
+    action: str | None = None,
+    fmt: str | None = Query(default="jsonl", alias="format"),
+) -> StreamingResponse:
+    """导出审计为 JSONL 附件（admin only，正序旧→新）；v1 仅支持 format=jsonl。"""
+    if fmt != "jsonl":
+        raise HTTPException(status_code=422, detail="仅支持 format=jsonl")
+    action_prefix = action.strip() if action and action.strip() else None
+    body = services_for(principal).audit_store.export_jsonl(action_prefix=action_prefix)
+    headers = {"Content-Disposition": 'attachment; filename="atlas-audit.jsonl"'}
+    return StreamingResponse(
+        iter([body.encode("utf-8")]),
+        media_type="application/x-ndjson; charset=utf-8",
+        headers=headers,
+    )
+
+
+# ================= OAuth2 连接管理（docs/35 §4，T4；generic，平台无关）=================
+
+class ConnectionUpsertRequest(BaseModel):
+    provider: str | None = None
+    displayName: str | None = None
+    authUrl: str | None = None
+    tokenUrl: str | None = None
+    clientId: str | None = None
+    clientSecret: str | None = None
+    scopes: list[str] | None = None
+    redirectUri: str | None = None
+
+
+class ConnectionCreateRequest(ConnectionUpsertRequest):
+    provider: str
+    displayName: str
+    authUrl: str
+    tokenUrl: str
+    clientId: str
+
+
+class ConnectionExchangeRequest(BaseModel):
+    code: str
+    state: str
+
+
+def _conn_http_error(exc: ConnectionServiceError) -> "HTTPException":
+    return HTTPException(status_code=exc.status_code, detail=str(exc))
+
+
+@app.post("/api/connections", status_code=201)
+def create_connection(
+    body: ConnectionCreateRequest,
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, Any]:
+    """创建 OAuth2 连接配置（admin only）；授权/token URL 过出向校验，client_secret 立即加密。"""
+    try:
+        return services_for(principal).connection_service.create(
+            body.model_dump(), created_by=principal.username
+        )
+    except ConnectionServiceError as exc:
+        raise _conn_http_error(exc)
+
+
+@app.get("/api/connections")
+def list_connections(principal: Principal = Depends(require("read"))) -> dict[str, Any]:
+    return {"items": services_for(principal).connection_service.list()}
+
+
+@app.get("/api/connections/{conn_id}")
+def get_connection(conn_id: str, principal: Principal = Depends(require("read"))) -> dict[str, Any]:
+    try:
+        return services_for(principal).connection_service.get(conn_id)
+    except ConnectionServiceError as exc:
+        raise _conn_http_error(exc)
+
+
+@app.put("/api/connections/{conn_id}")
+def update_connection(
+    conn_id: str,
+    body: ConnectionUpsertRequest,
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, Any]:
+    """更新连接白名单字段（admin only）；client_secret 未传/空串保留原信封。"""
+    try:
+        return services_for(principal).connection_service.update(
+            conn_id, body.model_dump(exclude_unset=True)
+        )
+    except ConnectionServiceError as exc:
+        raise _conn_http_error(exc)
+
+
+@app.delete("/api/connections/{conn_id}")
+def delete_connection(conn_id: str, principal: Principal = Depends(require("administer"))) -> dict[str, Any]:
+    try:
+        deleted = services_for(principal).connection_service.delete(conn_id)
+    except ConnectionServiceError as exc:
+        raise _conn_http_error(exc)
+    return {"deleted": deleted}
+
+
+@app.post("/api/connections/{conn_id}/authorize")
+def authorize_connection(conn_id: str, principal: Principal = Depends(require("operate"))) -> dict[str, Any]:
+    """返回授权 URL 与 state（前端 window.open 打开，state 10 分钟有效，仅防 CSRF）。"""
+    try:
+        return services_for(principal).connection_service.authorize(conn_id)
+    except ConnectionServiceError as exc:
+        raise _conn_http_error(exc)
+
+
+@app.post("/api/connections/{conn_id}/exchange")
+def exchange_connection(
+    conn_id: str,
+    body: ConnectionExchangeRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """校验 state→授权码换 token→加密落库；token 失败置 status=error。"""
+    try:
+        return services_for(principal).connection_service.exchange(conn_id, body.code, body.state)
+    except ConnectionServiceError as exc:
+        raise _conn_http_error(exc)
+
+
+@app.post("/api/connections/{conn_id}/refresh")
+def refresh_connection(conn_id: str, principal: Principal = Depends(require("operate"))) -> dict[str, Any]:
+    try:
+        return services_for(principal).connection_service.refresh(conn_id)
+    except ConnectionServiceError as exc:
+        raise _conn_http_error(exc)
+
+
+@app.post("/api/connections/{conn_id}/test")
+def test_connection(conn_id: str, principal: Principal = Depends(require("operate"))) -> dict[str, Any]:
+    """连接测试：过期先刷新；draft/error 返回 ok=false 与中文原因。generic 框架不调用真实业务 API。"""
+    try:
+        return services_for(principal).connection_service.test(conn_id)
+    except ConnectionServiceError as exc:
+        raise _conn_http_error(exc)
+
+
+@app.get("/connections/callback", response_class=HTMLResponse, include_in_schema=False)
+def oauth_callback_page() -> HTMLResponse:
+    """OAuth provider 回调落地页（无鉴权、无服务端副作用、不发 token）：展示 code/state 并引导
+    回到「连接管理 → 完成授权」粘贴。code 仅停留在本页与用户剪贴板。"""
+    return HTMLResponse(content=_OAUTH_CALLBACK_HTML)
+
+
+_OAUTH_CALLBACK_HTML = """
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Atlas · 授权回调</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f5f6f8;
+       display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;color:#1f2329}
+  .card{background:#fff;border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,.08);
+        padding:32px;max-width:560px;width:92%}
+  h1{font-size:18px;margin:0 0 8px}
+  p{color:#646a73;font-size:14px;line-height:1.7;margin:8px 0}
+  .field{margin-top:16px}
+  label{font-size:12px;color:#8f959e;display:block;margin-bottom:4px}
+  .row{display:flex;gap:8px}
+  code{flex:1;background:#f2f3f5;border-radius:6px;padding:10px;font-size:13px;
+       word-break:break-all;white-space:pre-wrap;min-height:20px}
+  button{border:1px solid #d0d3d6;background:#fff;border-radius:6px;padding:0 14px;
+         font-size:13px;cursor:pointer;height:38px}
+  button:hover{background:#f2f3f5}
+  .tip{margin-top:20px;background:#eef4ff;border-radius:8px;padding:12px;font-size:13px;color:#2b5fd9}
+  .err{color:#d83931;font-size:13px;margin-top:12px;display:none}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>已收到平台授权回调</h1>
+  <p>本页不会自动提交任何凭据。请复制下方 <b>授权码（code）</b>，回到 Atlas「连接管理」，
+     在对应连接上点击「完成授权」并粘贴该授权码。</p>
+  <div class="field">
+    <label>授权码 code</label>
+    <div class="row">
+      <code id="code"></code>
+      <button onclick="copy('code')">复制</button>
+    </div>
+  </div>
+  <div class="field">
+    <label>state</label>
+    <div class="row">
+      <code id="state"></code>
+      <button onclick="copy('state')">复制</button>
+    </div>
+  </div>
+  <div class="tip" id="tip">提示：授权码通常只能使用一次且很快过期，请尽快完成「完成授权」。</div>
+  <div class="err" id="err"></div>
+</div>
+<script>
+  var q = new URLSearchParams(window.location.search);
+  var code = q.get('code') || '';
+  var state = q.get('state') || '';
+  document.getElementById('code').textContent = code || '（回调中未找到 code）';
+  document.getElementById('state').textContent = state || '（回调中未找到 state）';
+  var err = document.getElementById('err');
+  if (!code) { err.style.display='block'; err.textContent='回调地址缺少 code 参数，请重新发起授权。'; }
+  function copy(id){
+    var text = document.getElementById(id).textContent;
+    navigator.clipboard.writeText(text).then(function(){
+      document.getElementById('tip').textContent = '已复制：' + id + '。请回到连接管理完成授权。';
+    }, function(){
+      window.prompt('请手动复制：', text);
+    });
+  }
+</script>
+</body>
+</html>
+"""
+
+
 class LoginRequest(BaseModel):
     username: str
     password: str
@@ -385,7 +653,20 @@ def login(request: LoginRequest, http_request: Request) -> LoginResponse:
     login_throttle.reset(throttle_key)
     token = session_store.issue(principal)
     # 触发租户装配，登录后该租户即有独立服务实例
-    tenant_registry.get(principal.tenant_id)
+    login_services = tenant_registry.get(principal.tenant_id)
+    # T6 审计：登录成功显式记一条（失败在上方抛 401/403 不记；中间件跳过 login 路径）。
+    # 审计失败不影响登录本身（fail-safe）。
+    try:
+        login_services.audit_store.record(
+            tenant_id=principal.tenant_id,
+            actor=principal.username,
+            action="POST /api/auth/login",
+            status_code=200,
+            path=LOGIN_PATH,
+            ip=client_ip,
+        )
+    except Exception as exc:  # 审计绝不阻断登录
+        logger.warning("login audit record failed: %s", exc)
     return LoginResponse(token=token, principal=principal)
 
 
@@ -1402,6 +1683,7 @@ def run_saved_graph(
             inputs=body.get("inputs"),
             registry=_runtime_registry(services),
             approval_broker=services.approval_broker,
+            approval_notifier=EmailApprovalNotifier(services.message_service, _PUBLIC_URL),
             graph_id=graph_id,
             graph_resolver=_tenant_graph_resolver(services),
             emit=_metric_collect,
@@ -1478,6 +1760,7 @@ def run_saved_graph_stream(
     # worker 启动前固定当前租户的分区对象，避免跨租户串用
     registry = _runtime_registry(services)
     approval_broker = services.approval_broker
+    approval_notifier = EmailApprovalNotifier(services.message_service, _PUBLIC_URL)
     graph_resolver = _tenant_graph_resolver(services)
     monitoring = services.monitoring
     run_store = services.run_store
@@ -1531,6 +1814,7 @@ def run_saved_graph_stream(
                     inputs=inputs,
                     registry=registry,
                     approval_broker=approval_broker,
+                    approval_notifier=approval_notifier,
                     graph_id=graph_id,
                     emit=recording_emit if monitored else emit,
                     graph_resolver=graph_resolver,

@@ -1,0 +1,18 @@
+# Prometheus 抓取配置（docs/35 §5，D11 Grafana 子集）。
+# 仅在 docker compose --profile observability 启动时生效：
+#   docker compose --profile observability up -d
+# atlas 服务在 compose 网络内的服务名与端口为 atlas:8000，指标路径 /metrics
+# （无鉴权；生产环境请只在内网/反代网段白名单内暴露，见 deploy/Caddyfile 与 deploy/README.md）。
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: atlas
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      - targets:
+          - atlas:8000
+        labels:
+          service: atlas

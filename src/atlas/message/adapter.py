@@ -20,7 +20,7 @@ from .service import MAX_RECIPIENTS, MessageSendError, MessageService
 _SEND_INPUT_SCHEMA = {
     "type": "object",
     "properties": {
-        "channel": {"type": "string", "description": "email/sms/im 或任意非空渠道标识（v1 不路由）"},
+        "channel": {"type": "string", "description": "email（SMTP 真实发信）/webhook（向单个 URL POST JSON，过 SSRF 校验）真实投递；sms/im 或其他标识仅进程内记录（v1 不路由）"},
         "to": {
             "description": "收件人字符串或字符串数组（群发上限 20；email 渠道须含 @）",
             "oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}, "maxItems": MAX_RECIPIENTS}],

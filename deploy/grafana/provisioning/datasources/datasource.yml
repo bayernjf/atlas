@@ -1,0 +1,13 @@
+# Grafana 数据源自动装配（docs/35 §5，D11 Grafana 子集）。
+# compose observability profile 下挂到 /etc/grafana/provisioning/datasources/。
+apiVersion: 1
+
+datasources:
+  - name: Atlas Prometheus
+    uid: atlas-prometheus
+    type: prometheus
+    access: proxy
+    # prometheus 是 compose observability profile 内的服务名。
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
