@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### feat：入站可靠性补强批全部落码收口（docs/40，2026-09-23；dev、未 push；无 ADR）
+
+承接 docs/39 公开入站口的三个可靠性口子，六原子全部落完，**零新依赖、D24 部分取回不解除**：
+
+- **② channels 内核（8cfcf6f）**：`channels/deliveries.py` InMemoryDeliveryStore（DeliveryRecord＋note_duplicate_if_seen/record_received/record_dead/get_dead/list_dead/resolve_replay/delete/metrics）；WebhookDeliverer 接 store_provider，ignored 不留行，全订阅未触发（NO_PUBLISHED_VERSION/RESOLVE_FAILED/TRIGGER_FAILED/MISSING_GRAPH_ID）才 dead 存验签后 payload，replay 绕过去重按当前订阅；16 内核测试。
+- **③ storage（3bc00a5）**：迁移 017 `webhook_deliveries`（PK(tenant,webhook_id)、reasons/payload JSONB、duplicates 计数、tenant_status 索引）；PgDeliveryStore（ON CONFLICT 计数、CAST jsonb）；TenantServices 两档接线、reset 不清；+4 PG 集成。
+- **④ API（778acc7）**：dead-letters 列表(read，topic/bindingId/limit 过滤)、重放(operate)、删除(administer)、metrics(read)；8 API 测试。
+- **⑤ frontend（3036acc）**：`components/monitoring/WebhookReliabilityCard.tsx`（指标＋按 topic 表＋死信表，viewer 无操作列）挂 Monitoring；apiClient 四函数＋类型（+2 测）；webhookReliability i18n（zh 填实、en-US `{}`）。
+- **验证**：后端 1276 passed/48 skipped（1252 立项基线净增 24＋4 PG 集成，零回归）；前端 581 passed/2 skipped、lint/build 过；真实 HMAC HTTP 冒烟——未发布订阅投递产生死信、发布放量后一键重放恢复（received、死信清空、成功投递 1），3 截图 docs/smoke-shots/docs40-*。
+
 ### docs：入站可靠性补强批立项（docs/40，2026-09-23；dev、未 push；无 ADR）
 
 承接 docs/39 公开入站口的三个可靠性口子，docs-only 契约先行（00/03/12/13/14/08/handoff 同步），**零新依赖、D24 部分取回不解除**：
