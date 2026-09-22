@@ -106,15 +106,23 @@ def _security_schemes(components: dict[str, Any]) -> dict[str, SecurityScheme]:
                 name=name, kind="api_key", location=location, param=param
             )
         elif scheme_type == "http":
-            if str(raw.get("scheme", "")).lower() != "bearer":
-                continue
-            result[name] = SecurityScheme(
-                name=name,
-                kind="bearer",
-                location=None,
-                param="Authorization",
-                prefix="Bearer ",
-            )
+            http_scheme = str(raw.get("scheme", "")).lower()
+            if http_scheme == "bearer":
+                result[name] = SecurityScheme(
+                    name=name,
+                    kind="bearer",
+                    location=None,
+                    param="Authorization",
+                    prefix="Bearer ",
+                )
+            elif http_scheme == "basic":
+                result[name] = SecurityScheme(
+                    name=name,
+                    kind="basic",
+                    location=None,
+                    param="Authorization",
+                    prefix="Basic ",
+                )
     return result
 
 

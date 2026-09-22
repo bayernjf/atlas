@@ -11,7 +11,7 @@ HTTP_METHODS = ("get", "post", "put", "patch", "delete", "head", "options")
 
 class SecurityScheme(BaseModel):
     name: str
-    kind: Literal["api_key", "bearer"]
+    kind: Literal["api_key", "bearer", "basic"]
     location: Literal["header", "query"] | None
     param: str
     prefix: str = ""

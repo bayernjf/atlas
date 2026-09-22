@@ -397,6 +397,7 @@ def _security_doc(**extra):
                 "ApiKeyQuery": {"type": "apiKey", "in": "query", "name": "api_key"},
                 "BearerAuth": {"type": "http", "scheme": "bearer"},
                 "BasicAuth": {"type": "http", "scheme": "basic"},
+                "DigestAuth": {"type": "http", "scheme": "digest"},
                 "CookieKey": {"type": "apiKey", "in": "cookie", "name": "session"},
                 "OAuth": {
                     "type": "oauth2",
@@ -411,18 +412,20 @@ def _security_doc(**extra):
 
 def test_supported_security_schemes_are_collected():
     spec = _parse(_security_doc())
-    assert set(spec.security_schemes) == {"ApiKeyHeader", "ApiKeyQuery", "BearerAuth"}
+    assert set(spec.security_schemes) == {"ApiKeyHeader", "ApiKeyQuery", "BearerAuth", "BasicAuth"}
     header = spec.security_schemes["ApiKeyHeader"]
     assert header.kind == "api_key" and header.location == "header" and header.param == "X-API-Key"
     query = spec.security_schemes["ApiKeyQuery"]
     assert query.location == "query" and query.param == "api_key"
     bearer = spec.security_schemes["BearerAuth"]
     assert bearer.kind == "bearer" and bearer.param == "Authorization" and bearer.prefix == "Bearer "
+    basic = spec.security_schemes["BasicAuth"]
+    assert basic.kind == "basic" and basic.param == "Authorization" and basic.prefix == "Basic "
 
 
 def test_unsupported_schemes_are_ignored():
     spec = _parse(_security_doc())
-    assert "BasicAuth" not in spec.security_schemes
+    assert "DigestAuth" not in spec.security_schemes
     assert "CookieKey" not in spec.security_schemes
     assert "OAuth" not in spec.security_schemes
 
@@ -472,6 +475,12 @@ def test_security_scheme_ref_is_resolved():
     spec = _parse(doc)
     assert "AliasKey" in spec.security_schemes
     assert spec.operations[0].security == [["AliasKey"]]
+
+
+def test_basic_security_requirement_is_resolved():
+    doc = _security_doc(security=[{"BasicAuth": []}])
+    spec = _parse(doc)
+    assert spec.operations[0].security == [["BasicAuth"]]
 
 
 def test_and_group_requires_all_schemes():
