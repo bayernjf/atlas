@@ -202,6 +202,15 @@ class ConnectionService:
         conn = self._require(conn_id)
         return self._store.delete(conn.id)
 
+    def access_token_for(self, conn_id: str) -> str | None:
+        """现解密并返回 access token（渠道层调用）；未完成授权/已过期 → None。"""
+        conn = self._require(conn_id)
+        if conn.status != STATUS_CONNECTED or not conn.access_token_envelope:
+            return None
+        if is_expired(conn.expires_at):
+            return None
+        return self._decrypt(conn.access_token_envelope)
+
     # ---------------- OAuth 流程 ----------------
 
     def authorize(self, conn_id: str) -> dict:
