@@ -21,6 +21,7 @@ from atlas.observability.audit import AuditRepository, AuditStore
 from atlas.message.service import MessageService
 from atlas.message.smtp import get_smtp_sender
 from atlas.message.webhook import get_webhook_sender
+from atlas.openapi.pg_store import PgImportStore
 from atlas.openapi.store import ImportStore
 from atlas.recording import ReportStore, ShadowStore
 from atlas.routing import RoutingStore
@@ -72,7 +73,7 @@ class TenantServices:
     connection_service: object  # T4 OAuth2 连接（docs/35 §4；业务服务，内存/PG 两档 store，reset 不清）
     channel_registry: object  # 真实渠道绑定（docs/38；ADR T28，reset 不清）
     webhook_deliveries: object  # 入站投递去重/死信（docs/40；内存/PG 两档，reset 不清）
-    openapi_imports: ImportStore  # OpenAPI 导入规格（docs/42；进程内，reset 不清）
+    openapi_imports: ImportStore | PgImportStore  # OpenAPI 导入规格（docs/42/43；内存/PG 两档，reset 不清）
 
 
 class TenantRegistry:
@@ -135,7 +136,7 @@ class TenantRegistry:
                     store=backend.channel_store(tenant_id),
                 ),
                 webhook_deliveries=PgDeliveryStore(backend.engine, tenant_id),
-                openapi_imports=ImportStore(),
+                openapi_imports=PgImportStore(backend.engine, tenant_id),
             )
         connection_service = build_connection_service(ConnectionStore(), tenant_id=tenant_id)
         return TenantServices(
