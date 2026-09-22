@@ -7,6 +7,8 @@ operation 一个 Capability。执行时按描述符渲染 path/query/header/body
 
 from __future__ import annotations
 
+import base64
+import json
 import re
 from urllib.parse import quote, urlencode
 
@@ -129,6 +131,20 @@ class ImportedApiHarnessAdapter(HarnessAdapter):
                         "SECRET_DECRYPT_ERROR", f"密钥解密失败：{name}"
                     )
                 scheme = schemes[name]
+                if scheme.kind == "basic":
+                    try:
+                        fields = json.loads(value)
+                        username = fields["username"]
+                        password = fields["password"]
+                    except (json.JSONDecodeError, TypeError, KeyError) as exc:
+                        return StructuredError(
+                            "SECRET_DECRYPT_ERROR", f"密钥解密失败：{name}"
+                        )
+                    token = base64.b64encode(
+                        f"{username}:{password}".encode()
+                    ).decode("ascii")
+                    headers[scheme.param] = f"{scheme.prefix}{token}"
+                    continue
                 rendered = f"{scheme.prefix}{value}"
                 if scheme.kind == "api_key" and scheme.location == "query":
                     query[scheme.param] = rendered

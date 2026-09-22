@@ -448,6 +448,64 @@ def test_bearer_header_injected():
     assert seen["auth"] == "Bearer tok-123"
 
 
+def test_basic_header_injected():
+    seen = {}
+
+    def handler(request):
+        seen["auth"] = request.headers.get("Authorization")
+        return httpx.Response(200, json={}, request=request)
+
+    doc = {
+        "openapi": "3.0.3",
+        "info": {"title": "Basic", "version": "1.0"},
+        "servers": [{"url": "https://secured.example.com"}],
+        "paths": {"/basic": {"get": {"operationId": "basic_op"}}},
+        "components": {
+            "securitySchemes": {"BasicAuth": {"type": "http", "scheme": "basic"}}
+        },
+        "security": [{"BasicAuth": []}],
+    }
+    parsed = parse_document(json.dumps(doc))
+    provider = PlaintextSecretProvider()
+    plaintext = json.dumps({"username": "alice", "password": "wonderland"})
+    imported = ImportStore().add(
+        parsed, envelopes={"BasicAuth": provider.encrypt(plaintext)}
+    )
+    adapter = _secure_adapter(handler, imported, provider)
+    result = adapter.execute(ActionRequest(capability_name="basic_op", parameters={}))
+    assert result.status is ActionStatus.SUCCESS
+    assert seen["auth"] == "Basic YWxpY2U6d29uZGVybGFuZA=="
+
+
+def test_basic_corrupt_envelope_fails_without_request():
+    called = []
+
+    def handler(request):
+        called.append(request)
+        return httpx.Response(200)
+
+    doc = {
+        "openapi": "3.0.3",
+        "info": {"title": "Basic", "version": "1.0"},
+        "servers": [{"url": "https://secured.example.com"}],
+        "paths": {"/basic": {"get": {"operationId": "basic_op"}}},
+        "components": {
+            "securitySchemes": {"BasicAuth": {"type": "http", "scheme": "basic"}}
+        },
+        "security": [{"BasicAuth": []}],
+    }
+    parsed = parse_document(json.dumps(doc))
+    provider = PlaintextSecretProvider()
+    imported = ImportStore().add(
+        parsed, envelopes={"BasicAuth": provider.encrypt("not-json")}
+    )
+    adapter = _secure_adapter(handler, imported, provider)
+    result = adapter.execute(ActionRequest(capability_name="basic_op", parameters={}))
+    assert result.status is ActionStatus.FAILED
+    assert result.error.code == "SECRET_DECRYPT_ERROR"
+    assert called == []
+
+
 def test_missing_credential_fails_without_request():
     called = []
 

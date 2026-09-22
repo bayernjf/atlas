@@ -367,6 +367,91 @@ def test_put_credentials_upsert_delete_and_404():
     assert bad_scheme.json()["detail"]["code"] == "OPENAPI_INVALID_CREDENTIAL"
 
 
+BASIC_DOC = {
+    "openapi": "3.0.3",
+    "info": {"title": "Basic Secured", "version": "1.0.0"},
+    "servers": [{"url": "https://api.example.com"}],
+    "paths": {
+        "/profile": {"get": {"operationId": "getProfile"}},
+    },
+    "components": {
+        "securitySchemes": {
+            "BasicAuth": {"type": "http", "scheme": "basic"},
+            "BearerAuth": {"type": "http", "scheme": "bearer"},
+        }
+    },
+    "security": [{"BasicAuth": []}, {"BearerAuth": []}],
+}
+
+
+def _basic_import():
+    return client.post(
+        "/api/openapi/imports",
+        json={"content": json.dumps(BASIC_DOC)},
+        headers=OPERATOR_A,
+    ).json()
+
+
+def test_put_basic_credentials_encrypts_object():
+    spec_id = _basic_import()["spec_id"]
+    response = client.put(
+        f"/api/openapi/imports/{spec_id}/credentials",
+        json={"credentials": {"BasicAuth": {"username": "alice", "password": "wonderland"}}},
+        headers=OPERATOR_A,
+    )
+    assert response.status_code == 200
+    assert response.json()["configured"] == ["BasicAuth"]
+    stored = client.get(f"/api/openapi/imports/{spec_id}", headers=VIEWER_A).json()
+    assert set(stored["credential_envelopes"]) == {"BasicAuth"}
+    assert "alice" not in response.text and "wonderland" not in response.text
+
+
+def test_put_basic_credentials_requires_both_fields():
+    spec_id = _basic_import()["spec_id"]
+    for bad in ({"username": "alice"}, {"password": "x"}, {"username": "", "password": "x"}):
+        response = client.put(
+            f"/api/openapi/imports/{spec_id}/credentials",
+            json={"credentials": {"BasicAuth": bad}},
+            headers=OPERATOR_A,
+        )
+        assert response.status_code == 422
+        assert response.json()["detail"]["code"] == "OPENAPI_INVALID_CREDENTIAL"
+
+
+def test_put_basic_null_or_string_deletes_envelope():
+    spec_id = _basic_import()["spec_id"]
+    client.put(
+        f"/api/openapi/imports/{spec_id}/credentials",
+        json={"credentials": {"BasicAuth": {"username": "a", "password": "b"}}},
+        headers=OPERATOR_A,
+    )
+    response = client.put(
+        f"/api/openapi/imports/{spec_id}/credentials",
+        json={"credentials": {"BasicAuth": None}},
+        headers=OPERATOR_A,
+    )
+    assert response.status_code == 200
+    assert response.json()["configured"] == []
+    stored = client.get(f"/api/openapi/imports/{spec_id}", headers=VIEWER_A).json()
+    assert stored["credential_envelopes"] == {}
+
+
+def test_put_basic_and_bearer_distinguished_by_name():
+    spec_id = _basic_import()["spec_id"]
+    response = client.put(
+        f"/api/openapi/imports/{spec_id}/credentials",
+        json={
+            "credentials": {
+                "BasicAuth": {"username": "a", "password": "b"},
+                "BearerAuth": "token-xyz",
+            }
+        },
+        headers=OPERATOR_A,
+    )
+    assert response.status_code == 200
+    assert response.json()["configured"] == ["BasicAuth", "BearerAuth"]
+
+
 def test_no_response_ever_contains_plaintext_secret():
     secret = "PLAINTEXT-PROBE-8675309"
     client.post(

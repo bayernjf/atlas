@@ -1299,13 +1299,13 @@ class OpenApiSourceRequest(BaseModel):
 
 
 class OpenApiCredentialsRequest(BaseModel):
-    credentials: dict[str, str]
+    credentials: dict[str, str | dict[str, str] | None]
 
 
-def _credential_error(name: str) -> HTTPException:
+def _credential_error(name: str, message: str = "未知鉴权方案") -> HTTPException:
     return HTTPException(
         status_code=422,
-        detail={"code": "OPENAPI_INVALID_CREDENTIAL", "message": f"未知鉴权方案：{name}"},
+        detail={"code": "OPENAPI_INVALID_CREDENTIAL", "message": f"{message}：{name}"},
     )
 
 
@@ -1448,7 +1448,26 @@ def put_openapi_credentials(
     for name, value in raw.credentials.items():
         if name not in imported.security_schemes:
             raise _credential_error(name)
-        if not isinstance(value, str) or not value.strip():
+        scheme = imported.security_schemes[name]
+        if scheme.kind == "basic":
+            if not isinstance(value, dict):
+                envelopes.pop(name, None)
+                continue
+            username = value.get("username")
+            password = value.get("password")
+            if (
+                not isinstance(username, str)
+                or not username.strip()
+                or not isinstance(password, str)
+                or not password.strip()
+            ):
+                raise _credential_error(name, "Basic 鉴权需同时提供非空用户名与密码")
+            plaintext = json.dumps(
+                {"username": username.strip(), "password": password.strip()},
+                ensure_ascii=False,
+            )
+            envelopes[name] = _secret_provider.encrypt(plaintext)
+        elif not isinstance(value, str) or not value.strip():
             envelopes.pop(name, None)
         else:
             envelopes[name] = _secret_provider.encrypt(value.strip())
