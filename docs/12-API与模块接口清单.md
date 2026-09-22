@@ -578,6 +578,40 @@ def evaluate_after_run(services: TenantServices, record: RunRecord) -> None: ...
     # 无任何自动 promote 代码；回滚只切新流量，不改外部已发生事实。
 ```
 
+### 3.13 平台渠道适配内部接口（真实渠道适配批 docs/38，2026-09-22 docs-only 立项，ADR T28）
+
+```python
+# src/atlas/channels/base.py
+class ChannelError(Exception):
+    code: str  # CHANNEL_NOT_BOUND | CHANNEL_UNAUTHORIZED | CHANNEL_UPSTREAM_FAILED
+               # | CHANNEL_INVALID_RESPONSE | CHANNEL_INVALID_PARAMETER
+
+class ChannelTransport(Protocol):
+    def request(self, method: str, url: str, headers: dict,
+                json_body: object, timeout: float) -> dict: ...   # {status, headers, body}
+# HttpChannelTransport：stdlib urllib；每次先 EgressGuard.check；10s 超时、follow_redirects=False
+
+# src/atlas/channels/registry.py
+class ChannelStore(Protocol):
+    def list(self) -> list[dict]: ...
+    def get(self, binding_id: str) -> dict | None: ...
+    def save(self, binding: dict) -> dict: ...          # ch-N
+    def delete(self, binding_id: str) -> bool: ...
+
+class ChannelRegistry:
+    def bind(self, provider: str, connection_id: str, config: dict,
+             created_by: str) -> dict: ...
+        # provider 仅 "shopify"；connection 须同租户存在（不存在/跨租户 → 404 不泄漏）；
+        # 同 connection_id 唯一绑定（重复 → 409）
+    def client_for(self, binding: dict): ...
+        # 每次从 connection service 现解密 access_token（未完成授权 → CHANNEL_UNAUTHORIZED），
+        # 构造 ShopifyChannelClient；token 不缓存明文、不记日志
+    def test(self, binding_id: str) -> dict: ...        # {ok, status, reason}；GET /shop.json 探活
+    def adapters_for_tenant(self) -> list: ...
+        # 按绑定动态产出 ShopifyHarnessAdapter（adapter_id="channel:shopify:{binding_id}"）
+# 内存实现 channels/memory.py；PG 实现 channels/pg.py PgChannelStore（迁移 015，reset 不清）
+```
+
 ## 4. 记忆检索接口（依据 06 6.2 / 05 2.3）
 
 > **M11 实现边界（2026-09-19 已落码收口；权威＝docs/26、ADR T23）**：下列 `memory_retriever.query` 五层分层检索为**愿景**（working Redis / summary / fact pgvector / case / preference + 决策节点隐式注入），v1 不实现，缓做 14 D35。M11 取回的是下方「4.1 M11 长期记忆最小接口」——统一 memory_item（fact/preference）+ 显式 remember/recall 两工具，**不做决策隐式注入**。
@@ -748,6 +782,11 @@ class MemoryRepository(Protocol):
 | GET | /connections/callback | 【**无鉴权**，T4】OAuth 提供方回调落地静态 HTML 页（include_in_schema=False，注册于 StaticFiles 挂载前优先匹配；纯静态引导用户回填 code/state，无副作用、不读 query 外秘密） | — |
 | GET | /api/audit/events | 【**administer**，docs/35 T6 `f243e04`】分页查本租户审计事件（query limit/offset/actor/action），仅 8 元数据字段、绝无请求体/凭据 | audit_event |
 | GET | /api/audit/export | 【**administer**，T6】`?format=jsonl` 导出审计（StreamingResponse 附件，逐行 JSON）；reset 不清审计 | audit_event |
+| GET | /api/channels | 【**read**，真实渠道适配批 docs/38，ADR T28】列出本租户渠道绑定（投影不含 token/secret） | channel_binding |
+| POST | /api/channels | 【**operate**，201】body `{provider, connectionId, config:{shop, apiVersion?}}` 建立绑定；provider 仅 shopify；connection 不存在/跨租户 → 404「渠道绑定不存在」，同 connection 重复绑定 → 409；写审计 `channel.bind`（不含 token，config.shop 在 path/query 外不记录） | channel_binding |
+| GET | /api/channels/{id} | 【**read**】单个绑定；未知绑定/不属于本租户 → 404 | channel_binding |
+| POST | /api/channels/{id}/test | 【**read**】真实上游探活（GET /shop.json，不触发业务写）；连接错误 200 体 `{ok:false}` 不 5xx；未知绑定 404 | channel_binding |
+| DELETE | /api/channels/{id} | 【**administer**】删除绑定（不影响底层 connection），写审计 `channel.unbind`；**reset 不清绑定**；未知绑定 404 | channel_binding |
 
 > **M11 记忆端点口径订正（2026-09-19，docs/26；批 4⑩ 2026-09-20 修订）**：上表取代原愿景 `GET/PUT /api/memories/{operator_id}`（memory_config 配置读写，05 §2.4）——五层策略配置随 D35 缓做，operator 维度降为记忆条目 `scope.user_id`，租户由会话 Principal 定。**初版 M11 写入只走图工具 `memory/remember`（手动造数走 `scripts/dev/m11_seed.py`）；docs/28 批 4⑩（`ec0fd81`）起补开 `POST/PUT /api/memories`（operate，source 固定 manual）承担运营手动新建/编辑**——图工具仍是运行时自动写入主路径，REST 为手动补录/纠错通道，删除仍仅 admin。
 
