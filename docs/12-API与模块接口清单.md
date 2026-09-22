@@ -880,6 +880,11 @@ class MemoryRepository(Protocol):
 | GET | /api/channels/{binding_id}/remote-webhooks | 【**read**】`{items:[{remoteId,topic,address}],error?:string}`；渠道令牌失效 200 空 items＋error；未知绑定 404 | shopify_remote_webhook |
 | POST | /api/channels/{binding_id}/remote-webhooks | 【**operate**】body `{topic}`；201 `{remoteId,topic,address}`；409 已注册、422 topic 非法/非 https、404 绑定；写审计 | shopify_remote_webhook |
 | DELETE | /api/channels/{binding_id}/remote-webhooks/{topic} | 【**operate**】200 `{deleted:bool}` 幂等（未注册 false）；404 绑定；写审计 | shopify_remote_webhook |
+| POST | /api/openapi/preview | 【**operate**】body `{content?:str, url?:str}`（恰好其一）；`{title, base_url, operations:[...], imported_count, skipped_count}`；url 经 egress 抓取，EGRESS_DENIED/取数失败 422 OPENAPI_FETCH_FAILED；不落库 | openapi_import |
+| POST | /api/openapi/imports | 【**operate**】同上入参；201 ImportedSpec（仅成功 ops）；全 skipped 422 OPENAPI_NO_IMPORTABLE_OPERATION；超 5 specs/200 ops 422 OPENAPI_LIMIT_EXCEEDED；写审计（不记文档内容） | openapi_import |
+| GET | /api/openapi/imports | 【**read**】`{items:[ImportedSpec]}`（本租户） | openapi_import |
+| GET | /api/openapi/imports/{spec_id} | 【**read**】ImportedSpec；不存在/他租户 404 | openapi_import |
+| DELETE | /api/openapi/imports/{spec_id} | 【**administer**】200 `{deleted:true}`，运行时注册表同步摘除；404；写审计 | openapi_import |
 
 > **M11 记忆端点口径订正（2026-09-19，docs/26；批 4⑩ 2026-09-20 修订）**：上表取代原愿景 `GET/PUT /api/memories/{operator_id}`（memory_config 配置读写，05 §2.4）——五层策略配置随 D35 缓做，operator 维度降为记忆条目 `scope.user_id`，租户由会话 Principal 定。**初版 M11 写入只走图工具 `memory/remember`（手动造数走 `scripts/dev/m11_seed.py`）；docs/28 批 4⑩（`ec0fd81`）起补开 `POST/PUT /api/memories`（operate，source 固定 manual）承担运营手动新建/编辑**——图工具仍是运行时自动写入主路径，REST 为手动补录/纠错通道，删除仍仅 admin。
 

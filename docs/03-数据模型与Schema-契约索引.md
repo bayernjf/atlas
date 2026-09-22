@@ -1138,3 +1138,27 @@ ChannelBinding = {
 }
 ```
 > REST 请求体：`{provider, connectionId, config:{shop, apiVersion?}}`；REST 投影：`{id, provider, connectionId, config:{shop,apiVersion}, status, lastError, createdBy, createdAt}`（不含 token/secret）。PG 迁移 `015_channel_bindings.sql`：`id TEXT PK, tenant_id TEXT, provider TEXT, connection_id TEXT UNIQUE, config JSONB, status TEXT, last_error TEXT, created_by TEXT, created_at TEXT, updated_at TEXT`，不 FK 强约束（跨表均 TEXT）；绑定按租户引用 T4 connection、属客户配置 **reset 不清除**（同 connections/audit），引用的 connection 被删 → status=error 不级联。**迁移 `016_channel_webhook_subscriptions.sql`（docs/39，ADR T29）：`ALTER TABLE channel_bindings ADD COLUMN webhook_subscriptions JSONB NOT NULL DEFAULT '[]'::jsonb;`——JSON `WebhookSubscription[]`＝`{topic, graph_id, enabled}`（topic 三选一、topic+graph_id 同绑定唯一、≤10；REST 投影驼峰 `{topic, graphId, enabled}`）；订阅 GET/PUT 见 12 文档，形状权威 docs/39 §1B**。工具输入/输出形状以 docs/38 §1B 为权威（shop/list_orders、shop/get_order 为 read，shop/create_refund 为 financial），订单投影字段 `{id,name,email,financialStatus,fulfillStatus,totalPrice,currency,createdAt}` 以 docs/38 §1A 为权威。错误码：CHANNEL_NOT_BOUND / CHANNEL_UNAUTHORIZED / CHANNEL_UPSTREAM_FAILED / CHANNEL_INVALID_RESPONSE / CHANNEL_INVALID_PARAMETER / CHANNEL_ALREADY_BOUND；**webhook：WEBHOOK_BAD_SIGNATURE(401) / WEBHOOK_MALFORMED(400) / WEBHOOK_SECRET_UNAVAILABLE(503)**。
+
+### `openapi_import` — 字段概览（OpenAPI 导入与工具自动生成批，docs/42；2026-09-23 docs-only 立项；承载 `src/atlas/openapi/`）
+
+```text
+ImportedSpec = {
+  spec_id:    str                   # openapi-N
+  title:      str
+  base_url:   str                   # servers[0].url，必须绝对 URL
+  created_at: str                   # epoch 秒文本
+  operations: [OperationDescriptor]
+}
+OperationDescriptor = {
+  name:        str                  # operationId 清洗或 method+path 合成，spec 内唯一
+  method:      str                  # get|post|put|patch|delete|head|options
+  path:        str
+  summary:     str
+  permission:  str                  # read (GET/HEAD) | write（其余；永不 financial）
+  idempotent:  bool                 # 仅 GET/HEAD
+  input_schema: object              # Capability JSON Schema 子集：path/query/header 参数 + body
+  skipped:     bool
+  skip_reason: str | null
+}
+```
+> preview/import 请求体：`{content?: str, url?: str}`（恰好其一，同时给/都不给 422）。preview 响应：`{title, base_url, operations:[OperationDescriptor], imported_count, skipped_count}`（不落库，含 skipped 行）；import 201 响应＝ImportedSpec（仅成功 operations）；全 skipped → 422。`GET /api/openapi/imports` 返 `{items:[ImportedSpec]}`，单项返 ImportedSpec；DELETE 200 `{deleted:true}`。进程内 per-tenant、**reset 不清**；上限 5 specs/租户、200 operations/spec。适配器 id `openapi:{spec_id}`、type `api`，合并进 `/api/adapters`。错误码（422 除注明）：OPENAPI_INVALID_DOCUMENT / OPENAPI_UNSUPPORTED_VERSION / OPENAPI_FETCH_FAILED / OPENAPI_NO_IMPORTABLE_OPERATION / OPENAPI_LIMIT_EXCEEDED；运行期 OPENAPI_INVALID_PARAMETER（失败 Observation）。形状权威 docs/42 §1–§3。

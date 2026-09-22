@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### docs：OpenAPI 导入与工具自动生成批 docs-only 立项（docs/42，2026-09-23；无 ADR）
+
+- 契约：OpenAPI 3.x JSON 粘贴/URL（egress 抓取）→ 逐 operation 自动生成适配器与 Capability（input_schema 派生、$ref 内联、operation 级 skipped 带 reason、权限最高 write），进程内 per-tenant ImportStore（reset 不清），REST preview/imports 五端点，`/api/adapters` 合并，前端「API 导入」新页、编辑器零改动。
+- 治理同步：docs/00 地图、03 `openapi_import`、04 §4.6 注记、08 立项、12 五端点、13 U390 候选、14 D22 部分取回不解除、handoff Active 38。
+
 ### feat：Shopify 侧 Webhook 注册批落码收口（docs/41，2026-09-23；dev、未 push；无 ADR）
 
 Shopify 店铺侧 webhook 注册由「人工复制 URL 到后台」变为订阅弹窗内一键注册，五原子＋一 fix（`93cd1a0`→`6b86a1d`→`cefc4fe`→`3eccc6d`）：
