@@ -465,6 +465,56 @@ export async function listApprovalsQueue(): Promise<QueueApprovalItem[]> {
   return body.items
 }
 
+export type DecidedApprovalItem = {
+  token: string
+  node_id: string
+  graph_id: string
+  summary: string
+  approver: string
+  decision: 'approved' | 'rejected'
+  resolvedBy: 'human' | 'email-link' | 'timeout' | 'input'
+  comment: string
+  createdAt: number
+  cardTemplateId?: string
+}
+
+export async function listDecidedApprovals(
+  limit = 50,
+): Promise<{ items: DecidedApprovalItem[]; limit: number }> {
+  return request(`/api/approvals/decided?limit=${limit}`)
+}
+
+export type AuditEventItem = {
+  id: string
+  tenantId: string
+  actor: string
+  action: string
+  statusCode: number
+  path: string
+  ip: string
+  at: string
+}
+
+export async function listAuditEvents(
+  limit: number,
+  action?: string,
+): Promise<{ items: AuditEventItem[]; limit: number }> {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (action) params.set('action', action)
+  return request(`/api/audit/events?${params.toString()}`)
+}
+
+export async function exportAuditJsonl(action?: string): Promise<Blob> {
+  const params = new URLSearchParams({ format: 'jsonl' })
+  if (action) params.set('action', action)
+  const headers = new Headers()
+  const token = getToken()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  const response = await fetch(`/api/audit/export?${params.toString()}`, { headers })
+  if (!response.ok) throw new Error(`导出失败：${response.status}`)
+  return response.blob()
+}
+
 // --- M8 交互卡片（04 §5.6 追加段 / 12 §3.11） ------------------------------
 
 /** 内置卡片目录项（GET /api/cards，只读代码常量）。 */

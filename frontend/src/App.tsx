@@ -8,13 +8,14 @@ import { Memory } from './pages/Memory'
 import { Connections } from './pages/Connections'
 import { Users } from './pages/Users'
 import { Approvals } from './pages/Approvals'
+import { AuditLog } from './pages/AuditLog'
 import { EmailApproval } from './pages/EmailApproval'
 import { logout as logoutApi } from './lib/apiClient'
 import { getStoredPrincipal, roleCan, UNAUTHORIZED_EVENT, type Principal } from './lib/auth'
 import { extractEmailToken } from './lib/approvals'
 import { antdTheme } from './theme/tokens'
 
-type Page = 'dashboard' | 'editor' | 'monitoring' | 'memory' | 'connections' | 'users' | 'approvals'
+type Page = 'dashboard' | 'editor' | 'monitoring' | 'memory' | 'connections' | 'users' | 'approvals' | 'audit'
 
 function App() {
   const emailToken = extractEmailToken(window.location.pathname)
@@ -72,9 +73,16 @@ function App() {
           onOpenConnections={() => setPage('connections')}
           onOpenUsers={() => setPage('users')}
           onOpenApprovals={() => setPage('approvals')}
+          onOpenAudit={() => setPage('audit')}
         />
       ) : page === 'approvals' ? (
         <Approvals
+          principal={principal}
+          onLogout={handleLogout}
+          onBack={() => setPage('dashboard')}
+        />
+      ) : page === 'audit' && roleCan(principal.role, 'administer') ? (
+        <AuditLog
           principal={principal}
           onLogout={handleLogout}
           onBack={() => setPage('dashboard')}
