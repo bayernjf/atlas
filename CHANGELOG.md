@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### docs：真实接入交付批立项（docs/35，T2–T6）+ T1 治理（PR #53 合 main）
+
+- **T1 治理完成**：docs/34 对外交付层小批（LICENSE/pre-commit/SMTP//ready//metrics/Caddy/oxlint 清零，7 commits）经 **PR #53 合 main**（merge `c1fe886`，CI gitleaks/Backend pytest/Frontend vitest+build 三道门全绿）。
+- 新增 [docs/35-真实接入交付批契约设计.md](docs/35-真实接入交付批契约设计.md)：承接 docs/34 §五 P0/P1，工程内可闭环五包一次立项，**均部分取回缓做项、不解除**——T2 审批挂起邮件通知（D20 邮件子集，human_approval 可选 notifyEmails、notifier fail-safe）；T3 webhook 渠道（D24 子集，单 URL POST JSON 过 SSRF egress、WEBHOOK_SEND_FAILED）；T4 generic OAuth2 连接管理 v1（D22 子集，连接 CRUD/授权码流程/HMAC state CSRF/token AES-GCM 信封/刷新/连接测试/迁移 014/9 端点/连接管理 UI/无副作用回调静态页，平台无关、不写死真实平台、不做真实业务 API 联调）；T5 Grafana/Prometheus provisioning 样例（D11 子集，compose observability profile，纯配置零新 Python 依赖）；T6 审计日志 ring+PG（迁移 013）+写操作中间件+jsonl 导出（P1 #8，administer，不记请求体/凭据，reset 不清）。含数据模型、REST、前端、测试矩阵、安全非目标、九步原子序。docs/08/14/00/handoff 同步立项。
+
 ### docs：MVP 上线就绪 2026-09-22 复审（docs/34）+ LICENSE/pre-commit 交付层小批
 
 - 新增 [docs/34-MVP上线就绪评审-2026-09-22复审.md](docs/34-MVP上线就绪评审-2026-09-22复审.md)：docs/29 初评后 P0 三批（持久化 PR #46 / 生产认证 PR #47 / 安全准入 PR #48）+ docs/33 影子·Trace·静默值班·i18n + 整栈 PG 装配修复（PR #52）全部落码后的第二次项目级判定。双口径结论：陪同演示/内测试用的技术验证 MVP **达到**且更扎实；客户自助接真实店铺的生产 MVP **未达到**——阻断 #1/#2/#3 纯逻辑子集已解除（compose 已 PG、scrypt+会话 TTL、SSRF/AES-256-GCM/SQL guard/重试熔断），阻断 #4（TLS/反代/CD/LICENSE）、#5（零真实客户数据）、#3 真实渠道投递（OAuth2/SMTP/IM/webhook）仍缺。含实测证据表、测试基线（后端 collect 1084 / 前端 555）、分场景建议、P0/P1 最小必做清单。
