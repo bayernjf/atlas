@@ -72,3 +72,10 @@
 3. `feat(openapi): accept and inject basic credentials`（PUT 校验＋适配器渲染＋API/适配器测试；`.venv/bin/pytest`）；
 4. `feat(frontend): collect basic username and password inputs`（页面＋前端测试；`pnpm lint && pnpm test && pnpm build`）；
 5. docs 收口：浏览器冒烟（截图）＋CHANGELOG＋handoff/08/本文落码注记。
+
+## 7. 落码注记（2026-09-23 收口）
+
+- 原子提交：0252ffd docs-only → 2f3b12b parser → 685c3a6 PUT 校验＋适配器渲染 → 11b3cbc 前端双输入 → f24ee8a `fix(graph): pass json params to imported openapi tools`（冒烟中取回的既有缺口：tool_call 对 `openapi:*` 适配器此前不走 params JSON 解析，路径参数无法下发）→ 本收口。
+- 门禁：后端全量 `.venv/bin/pytest` 1398 passed / 59 skipped（基线 1391/59，净 +7）；前端 `pnpm test` 602 passed / 2 skipped（基线 597/2，净 +5），`pnpm lint` 零新增告警，`pnpm build` 通过。
+- 浏览器冒烟（4 截图 docs/smoke-shots/basic46-*；真实 https://httpbin.org）：①预览 basic 双输入；②无凭证运行 fail-closed FAILED「OPENAPI_CREDENTIAL_MISSING…缺少：BasicAuth」；③UI 配置后鉴权列「已配置 1/1」；④配凭证运行 SUCCESS、HTTP 200，body `{"authenticated":true,"user":"alice"}`（错误凭证 httpbin 将返 401，等价证明 `Authorization: Basic base64(alice:secret)` 被接受）；控制台零产品错误（仅有重启后旧 token 的一次预期 401）。
+- 仍缓做（docs/14 D22 不解除）：digest/cookie、oauth2/openId、连接测试、凭证轮换、真实账号体系（11 S1）。

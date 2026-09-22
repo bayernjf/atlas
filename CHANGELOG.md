@@ -4,10 +4,12 @@
 
 ## [Unreleased]
 
-### docs：OpenAPI HTTP Basic 凭证子集批 docs-only 立项（docs/46，2026-09-23；无 ADR）
+### feat：OpenAPI HTTP Basic 凭证子集批落码收口（docs/46，2026-09-23；dev、未 push；无 ADR）
 
-- parser 拟收录 `type:http,scheme:basic`（kind=basic）；PUT credentials basic 值拟为 `{username,password}`（信封明文 JSON），适配器渲染 `Authorization: Basic base64(u:p)`；前端双输入。
-- 零新依赖、零迁移、零新 REST/错误码；digest/cookie/oauth2/连接测试/凭证轮换仍缓做，D22 部分取回不解除。
+- parser 收录 `type:http,scheme:basic`（kind=basic）；PUT credentials basic 值为 `{username,password}`（信封明文 JSON），适配器渲染 `Authorization: Basic base64(u:p)`；前端用户名/密码双输入。
+- 冒烟修复 f24ee8a：tool_call 对 `openapi:*` 适配器接通 params JSON 解析。
+- 收口门：后端 1398/59、前端 602/2；真实 httpbin.org 冒烟 4 截图（fail-closed → 已配置 1/1 → SUCCESS 200 authenticated:true）。
+- digest/cookie/oauth2/连接测试/凭证轮换仍缓做，D22 部分取回不解除。
 
 ### feat：循环 foreach 批落码收口（docs/45，2026-09-23；dev、未 push；无 ADR）
 
