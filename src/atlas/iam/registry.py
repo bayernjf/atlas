@@ -75,6 +75,11 @@ class TenantRegistry:
                 self._tenants[tenant_id] = services
             return services
 
+    def all_tenant_ids(self) -> list[str]:
+        """已装配（曾被访问过）的租户 id 快照；不触发惰性创建（/metrics 用）。"""
+        with self._lock:
+            return list(self._tenants.keys())
+
     @staticmethod
     def _create_services(tenant_id: str) -> TenantServices:
         # M5a：八个进程内 store 统一自 storage.memory 构造（GraphStore/FeedbackStore
