@@ -156,6 +156,7 @@ class WebhookDeliverer:
         clock: Callable[[], float] = time.time,
         ring_size: int = IDEMPOTENCY_RING_SIZE,
         ring_ttl: float = IDEMPOTENCY_TTL_SECONDS,
+        store_provider: Callable[[str], Any] | None = None,
     ) -> None:
         self._resolve = resolver
         self._trigger = trigger
@@ -163,13 +164,23 @@ class WebhookDeliverer:
         self._clock = clock
         self._ring_size = ring_size
         self._ring_ttl = ring_ttl
+        self._store_provider = store_provider
         self._rings: dict[str, _IdempotencyRing] = {}
         self._rings_lock = threading.Lock()
 
     def deliver(self, tenant_id: str, binding: dict, envelope: WebhookEnvelope) -> dict:
-        ring = self._ring_for(tenant_id)
-        if ring.duplicate(envelope.webhook_id):
-            return {"duplicate": True}
+        store = self._store_for(tenant_id)
+        if store is not None:
+            try:
+                if store.note_duplicate_if_seen(tenant_id, envelope.webhook_id):
+                    return {"duplicate": True}
+            except Exception:
+                logger.warning("webhook 投递存储不可用，退回进程内环", exc_info=True)
+                store = None
+        if store is None:
+            ring = self._ring_for(tenant_id)
+            if ring.duplicate(envelope.webhook_id):
+                return {"duplicate": True}
 
         if self._audit is not None:
             try:
@@ -190,9 +201,12 @@ class WebhookDeliverer:
             return {"ignored": True}
 
         event = build_trigger_event(envelope)
+        reasons: list[dict[str, str]] = []
+        triggered = 0
         for sub in subscriptions:
             graph_id = sub.get("graph_id")
             if not graph_id:
+                reasons.append({"graphId": str(graph_id or ""), "code": "MISSING_GRAPH_ID"})
                 continue
             try:
                 version = (
@@ -202,6 +216,7 @@ class WebhookDeliverer:
                 )
             except Exception:
                 logger.warning("webhook 路由解析失败 graph=%s", graph_id, exc_info=True)
+                reasons.append({"graphId": graph_id, "code": "RESOLVE_FAILED"})
                 continue
             if version is None:
                 logger.warning(
@@ -209,13 +224,126 @@ class WebhookDeliverer:
                     graph_id,
                     envelope.topic,
                 )
+                reasons.append({"graphId": graph_id, "code": "NO_PUBLISHED_VERSION"})
                 continue
             try:
                 if self._trigger is not None:
                     self._trigger(graph_id, version, event, tenant_id)
             except Exception:
                 logger.warning("webhook 触发图运行失败 graph=%s", graph_id, exc_info=True)
+                reasons.append({"graphId": graph_id, "code": "TRIGGER_FAILED"})
+                continue
+            triggered += 1
+
+        if store is not None:
+            self._persist_outcome(
+                store, tenant_id, binding, envelope,
+                reasons=reasons if triggered == 0 else None,
+            )
         return {"received": True}
+
+    def replay(
+        self, tenant_id: str, binding: dict, webhook_id: str
+    ) -> dict | None:
+        """死信重放：以存储 payload 重建信封、绕过去重，按当前订阅重投。"""
+        store = self._store_for(tenant_id)
+        if store is None:
+            return None
+        try:
+            dead = store.get_dead(tenant_id, webhook_id)
+        except Exception:
+            logger.warning("webhook 读取死信失败", exc_info=True)
+            return None
+        if dead is None:
+            return None
+
+        topic = dead.get("topic")
+        subscriptions = _active_subscriptions(binding, topic) if topic in SUPPORTED_TOPICS else []
+        if not subscriptions:
+            return {"webhookId": webhook_id, "status": "ignored", "reasons": []}
+
+        envelope = WebhookEnvelope(
+            shop_domain=dead.get("shop", ""),
+            topic=topic,
+            webhook_id=webhook_id,
+            triggered_at=None,
+            data=dead.get("data") or {},
+        )
+        event = build_trigger_event(envelope)
+        reasons: list[dict[str, str]] = []
+        triggered = 0
+        for sub in subscriptions:
+            graph_id = sub.get("graph_id")
+            if not graph_id:
+                reasons.append({"graphId": "", "code": "MISSING_GRAPH_ID"})
+                continue
+            try:
+                version = (
+                    self._resolve(graph_id, tenant_id, event)
+                    if self._resolve is not None
+                    else None
+                )
+            except Exception:
+                reasons.append({"graphId": graph_id, "code": "RESOLVE_FAILED"})
+                continue
+            if version is None:
+                reasons.append({"graphId": graph_id, "code": "NO_PUBLISHED_VERSION"})
+                continue
+            try:
+                if self._trigger is not None:
+                    self._trigger(graph_id, version, event, tenant_id)
+            except Exception:
+                reasons.append({"graphId": graph_id, "code": "TRIGGER_FAILED"})
+                continue
+            triggered += 1
+
+        received = triggered > 0
+        try:
+            store.resolve_replay(
+                tenant_id, webhook_id, received=received,
+                reasons=None if received else reasons,
+            )
+        except Exception:
+            logger.warning("webhook 重放状态写回失败", exc_info=True)
+        return {
+            "webhookId": webhook_id,
+            "status": "received" if received else "dead",
+            "reasons": [] if received else reasons,
+        }
+
+    def _persist_outcome(
+        self,
+        store: Any,
+        tenant_id: str,
+        binding: dict,
+        envelope: WebhookEnvelope,
+        *,
+        reasons: list[dict[str, str]] | None,
+    ) -> None:
+        common = {
+            "webhook_id": envelope.webhook_id,
+            "binding_id": binding.get("id", ""),
+            "topic": envelope.topic,
+            "shop": envelope.shop_domain,
+        }
+        try:
+            if reasons is None:
+                store.record_received(tenant_id, **common)
+            else:
+                store.record_dead(
+                    tenant_id, reasons=reasons, payload=envelope.data, **common
+                )
+        except Exception:
+            logger.warning("webhook 投递结果写库失败", exc_info=True)
+
+    def _store_for(self, tenant_id: str) -> Any:
+        if self._store_provider is None:
+            return None
+        try:
+            return self._store_provider(tenant_id)
+        except Exception:
+            logger.warning("webhook 投递存储解析失败", exc_info=True)
+            return None
 
     def _ring_for(self, tenant_id: str) -> _IdempotencyRing:
         with self._rings_lock:
