@@ -31,6 +31,13 @@ logger = logging.getLogger(__name__)
 SUPPORTED_PROVIDERS = ("shopify",)
 
 
+class _PassthroughEgress:
+    """"仅测试缝：显式关闭出向校验（HttpChannelTransport 默认会从 env 建守卫）。"""
+
+    def check(self, url: str) -> None:
+        return None
+
+
 class ChannelRegistry:
     def __init__(
         self,
@@ -229,7 +236,7 @@ def build_channel_registry(
     """
     admin_base = os.getenv("ATLAS_SHOPIFY_ADMIN_BASE_URL")
     if admin_base:
-        transport: ChannelTransport = HttpChannelTransport()
+        transport: ChannelTransport = HttpChannelTransport(egress=_PassthroughEgress())
         base_url = admin_base.rstrip("/")
     else:
         from atlas.connections.service import get_egress_guard
