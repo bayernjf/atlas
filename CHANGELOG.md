@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### docs：入站 Webhook 批 docs-only 立项（docs/39，2026-09-23；ADR T29，未落码）
+
+- 在 docs/38 Shopify 出向渠道之上补首个公开免登录入站触发口契约：channels/webhooks.py Shopify HMAC-SHA256 验签（原始 body、compare_digest、先于 JSON 解析）＋WebhookDeliverer 异步投递（经 M9 Router resolve 钉版本，幂等环进程内 ring 200/1h）。
+- 订阅 WebhookSubscription（topic×graph、≤10），迁移 016 webhook_subscriptions（reset 不清）；公开 hook 端 received/duplicate/ignored（401/400/404/503）＋订阅 GET(read)/PUT(administer)；前端绑定卡 Webhook 订阅 Modal。
+- 零新依赖/零外部资源；D22/D24 不解除；立项基线后端 1220/40、前端 577/2/45，测试候选 U370 起。
+
 ### feat：真实渠道适配批全部落码收口（docs/38，2026-09-23；dev 六 commit、未 push）
 
 承接 docs/34 P0 #1「打通一个真实电商渠道」，在 T4 平台无关 OAuth2 连接之上落首个真实平台业务 API 适配层，**零新依赖、零外部资源、不解除 D22**（真实店铺 OAuth 联调/入站 webhook/Amazon/订单同步仍缓做）：

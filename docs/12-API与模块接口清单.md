@@ -612,6 +612,35 @@ class ChannelRegistry:
 # 内存实现 channels/memory.py；PG 实现 channels/pg.py PgChannelStore（迁移 015，reset 不清）
 ```
 
+### 3.14 入站 Webhook 内部接口（入站 Webhook 批 docs/39，2026-09-23 docs-only 立项，ADR T29）
+
+```python
+# src/atlas/channels/webhooks.py
+def verify_shopify_hmac(raw_body: bytes, provided: str | None,
+                        client_secret: str) -> bool:
+    # base64(hmac_sha256(client_secret.encode(), raw_body))，hmac.compare_digest；
+    # provided 缺失/坏 base64 → False；不抛、不记 body/secret
+
+SUPPORTED_TOPICS = {"orders/create", "orders/updated", "refunds/create"}
+
+class WebhookEnvelope:
+    shop_domain: str; topic: str; webhook_id: str
+    triggered_at: str | None; data: dict
+    # 必需头 X-Shopify-Shop-Domain/X-Shopify-Topic/X-Shopify-Webhook-Id（缺任一 → 400）
+
+def build_trigger_event(envelope: WebhookEnvelope) -> TriggerEvent:
+    # channel="webhook"；payload={"topic", "shop", "data"}（data 原始 body 不投影）
+
+class WebhookDeliverer:
+    def deliver(self, tenant_id: str, binding: dict,
+                envelope: WebhookEnvelope) -> dict:
+        # 幂等环 per-tenant 进程内 ring 200、惰性剔 1h → {duplicate: True}
+        # topic 无启用订阅 → {ignored: True}
+        # 逐订阅 routing_store.resolve(graph_id, tenant, event)：
+        #   版本 None → warning 跳过；有版本 → 后台线程异步触发图运行
+        # 投递异常仅 warning，调用方响应已先行返回
+```
+
 ## 4. 记忆检索接口（依据 06 6.2 / 05 2.3）
 
 > **M11 实现边界（2026-09-19 已落码收口；权威＝docs/26、ADR T23）**：下列 `memory_retriever.query` 五层分层检索为**愿景**（working Redis / summary / fact pgvector / case / preference + 决策节点隐式注入），v1 不实现，缓做 14 D35。M11 取回的是下方「4.1 M11 长期记忆最小接口」——统一 memory_item（fact/preference）+ 显式 remember/recall 两工具，**不做决策隐式注入**。
@@ -787,6 +816,9 @@ class MemoryRepository(Protocol):
 | GET | /api/channels/{id} | 【**read**】单个绑定；未知绑定/不属于本租户 → 404 | channel_binding |
 | POST | /api/channels/{id}/test | 【**read**】真实上游探活（GET /shop.json，不触发业务写）；连接错误 200 体 `{ok:false}` 不 5xx；未知绑定 404 | channel_binding |
 | DELETE | /api/channels/{id} | 【**administer**】删除绑定（不影响底层 connection），写审计 `channel.unbind`；**reset 不清绑定**；未知绑定 404 | channel_binding |
+| POST | /api/channels/hooks/shopify/{binding_id} | 【**公开免登录**，入站 Webhook 批 docs/39，ADR T29】原始 body 经 Shopify HMAC-SHA256 验签（X-Shopify-Hmac-SHA256，先于 JSON 解析）；必需头 shop-domain/topic/webhook-id。200 三态 `{received|duplicate|ignored}:true`（unsupported topic/无订阅均 ignored）；400 缺头/非 JSON 对象；401 签名缺失或不匹配（不区分）；404 未知绑定（统一文案）；503 client_secret 信封缺失/解密失败；**验签通过后绝不非 2xx**；审计 `channel.webhook_received:{topic}`（无 body） | channel_webhook |
+| GET | /api/channels/{binding_id}/webhooks | 【**read**】订阅列表投影 `{items:[{topic, graphId, enabled}]}`；未知绑定 404 | channel_webhook |
+| PUT | /api/channels/{binding_id}/webhooks | 【**administer**】全量替换订阅，body `{items:[{topic, graphId, enabled}]}`：topic 白名单、graph 属本租户且存在（否则 404）、topic+graphId 唯一、≤10、enabled bool；坏形状聚合中文 422；写审计 | channel_webhook |
 
 > **M11 记忆端点口径订正（2026-09-19，docs/26；批 4⑩ 2026-09-20 修订）**：上表取代原愿景 `GET/PUT /api/memories/{operator_id}`（memory_config 配置读写，05 §2.4）——五层策略配置随 D35 缓做，operator 维度降为记忆条目 `scope.user_id`，租户由会话 Principal 定。**初版 M11 写入只走图工具 `memory/remember`（手动造数走 `scripts/dev/m11_seed.py`）；docs/28 批 4⑩（`ec0fd81`）起补开 `POST/PUT /api/memories`（operate，source 固定 manual）承担运营手动新建/编辑**——图工具仍是运行时自动写入主路径，REST 为手动补录/纠错通道，删除仍仅 admin。
 
