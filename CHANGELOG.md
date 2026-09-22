@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### feat：OpenAPI 导入与工具自动生成批落码收口（docs/42，2026-09-23；dev、未 push；无 ADR）
+
+OpenAPI 3.x JSON 文档驱动的 API 适配器自动形态落地，四代码原子（`139848a`→`90b8179`→`712f28a`→`3f40b10`）：
+
+- 后端：新包 `src/atlas/openapi/`——parser 纯函数（YAML/Swagger2 拒绝）、Schema 子集转换（$ref 内联深度 8/环守卫、allOf 合并，oneOf/form-data 等 operation 级 skipped 带 reason）、进程内 per-tenant ImportStore（reset 不清，5 specs/200 ops）、ImportedApiHarnessAdapter `openapi:{spec_id}`（出向过 EgressGuard、任何 HTTP 响应均 SUCCESS），REST preview/imports 五端点，`/api/adapters` 合并。
+- 前端：新页「API 导入」（粘贴/URL Tab→预览 skipped 灰行→导入、列表展开、admin 删除 Popconfirm、viewer 只读），Dashboard operator+ 入口，openapi i18n namespace；**编辑器零改动**，工具选择器与参数表单由 M3 Schema 内核自动承接。
+- 门：后端 1352 passed/48 skipped（净增 59）、前端 591 passed/2 skipped/46 files（净增 7）；mock 缝浏览器冒烟：导入→选择器 openapi:*→limit=10 真实运行 SUCCESS（HTTP 200）→operator 删除 403/admin 删除后适配器消失，4 截图 docs/smoke-shots/openapi-smoke-*。
+- D22 不解除：YAML/securitySchemes 接线/multipart/PG 持久化/真实外部 API 联调仍缓做。
+
 ### docs：OpenAPI 导入与工具自动生成批 docs-only 立项（docs/42，2026-09-23；无 ADR）
 
 - 契约：OpenAPI 3.x JSON 粘贴/URL（egress 抓取）→ 逐 operation 自动生成适配器与 Capability（input_schema 派生、$ref 内联、operation 级 skipped 带 reason、权限最高 write），进程内 per-tenant ImportStore（reset 不清），REST preview/imports 五端点，`/api/adapters` 合并，前端「API 导入」新页、编辑器零改动。

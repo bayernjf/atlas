@@ -102,3 +102,12 @@
 4. `feat(api): add openapi preview/import endpoints and merge into discovery` ＋API 测试；
 5. `feat(frontend): add openapi import page with preview and spec list` ＋apiClient/i18n/测试；`pnpm lint && pnpm test && pnpm build`；
 6. docs 收口：浏览器冒烟（≥3 截图）＋CHANGELOG＋handoff/08/42 落码注记。
+
+## 7. 落码注记（2026-09-23 收口）
+
+- 六原子序全部完成：①docs 立项 `8c9c512` → ②parser 内核 `139848a` → ③store＋执行适配器 `90b8179` → ④API 端点＋发现合并 `712f28a` → ⑤前端页面 `3f40b10` → ⑥docs 收口（本步）。均在 dev、未 push。
+- 收口门：后端 **1352 passed / 48 skipped**（立项基线 1293/48，净增 59 常跑测、零回归）；前端 **591 passed / 2 skipped / 46 files**（立项基线 584/2/45，净增 7）；`pnpm lint` 与 `pnpm build` 过（仅既有 chunk-size 提示）。
+- 浏览器冒烟全绿（4 截图 docs/smoke-shots/openapi-smoke-*）：粘贴 petstore 预览（3 operations、oneOf 行 operation 级 skipped 灰显）→ 导入后列表展开可见 2 工具 → 编辑器工具选择器出现 `openapi:openapi-1/*`、`limit` 参数由 M3 Schema 内核自动渲染（零编辑器改动）→ 配置 limit=10 编译并运行，`tool_call-1` **SUCCESS（HTTP 200）**，body 为 mock 返回 `{"pets":[{"id":1,"name":"Rex"}]}`。删除语义：operator DELETE 403、admin 删除 `{deleted:true}`，删除后 `/api/adapters` 不再含该适配器、spec GET 404。
+- 冒烟缝为临时启动器（假 DNS＋httpx MockTransport，仓库外 /tmp，未提交）；收口后已恢复普通 uvicorn 启动，真实后端保持 egress 全量约束。
+- 运行期注记：出向连接由导入 `base_url` 构造的 HttpApiClient 执行，`EGRESS_DENIED`/解析失败原样折为失败 Observation；删除导入后已保存图中的旧引用不改写，后续运行报 UNKNOWN_CAPABILITY（§4 已明示）。
+- **D22 部分取回、不解除**：YAML/Swagger2、securitySchemes 自动接线、multipart、PG 持久化、真实外部 API 联调仍缓做。
