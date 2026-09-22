@@ -103,3 +103,20 @@
 6. docs 收口：浏览器/HTTP 冒烟（openssl/hmac 签名真实投递、重复投递、未订阅 ignored；≥3 截图）＋CHANGELOG＋handoff/08/39 落码注记。
 
 每代码原子后跑对应门；后端 `.venv/bin/pytest`，前端 `cd frontend && pnpm lint && pnpm test && pnpm build`。
+
+## 8. 落码收口（2026-09-23）
+
+六原子全部交付（③④实际顺序倒置：先 storage 后 api，零影响）：
+
+| 原子 | 提交 |
+|---|---|
+| ② feat(channels) | `24076c9` |
+| ④ feat(storage) 016 | `8313e7b` |
+| ③ feat(api) | `3b19ac9` |
+| ⑤ feat(frontend) | `695e5f2` |
+
+实际测试落账：后端 **1252 passed/44 skipped**（1220 + 21 kernel + 11 API；+4 为新增 PG 集成 skip），前端 **579 passed/2 skipped/45 files**（+2 apiClient）；lint/build 通过。
+
+真实 HTTP 冒烟（uvicorn 重启后 httpx 打 localhost:8000）：验签订阅投递 200 `received`、同一 webhook id 重放 200 `duplicate`、未订阅 topic（orders/updated）200 `ignored`、坏签名 401、未知绑定 404；被触发的图 graph-1 后台运行 `completed`。截图：[webhooks-smoke-1-bindings.png](smoke-shots/webhooks-smoke-1-bindings.png)、[webhooks-smoke-2-modal.png](smoke-shots/webhooks-smoke-2-modal.png)、[webhooks-smoke-3-two-rows.png](smoke-shots/webhooks-smoke-3-two-rows.png)。
+
+落地偏差（均在 docs/39 设计内）：①API worker 以 `mode="webhook"` 独立记 run（失败落 failed，不回传 Shopify）；②AuditStore 无 metadata 列，`bindingId/webhookId/shop` 编码进审计 path（不含 body/密钥）；③canary 状态机要求两个发布版，发布即全量的钉版场景由 RoutingStore full 态承载。

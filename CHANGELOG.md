@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### feat：入站 Webhook 批全部落码收口（docs/39，2026-09-23；dev、未 push；ADR T29）
+
+在 docs/38 Shopify 出向渠道之上补首个公开免登录入站触发口，**零新依赖、零外部资源、不解除 D22/D24**：
+
+- **② channels 内核（24076c9）**：`channels/webhooks.py`——`verify_shopify_hmac`（原始 body HMAC-SHA256、compare_digest）、WebhookEnvelope/build_envelope（必需头缺失 WEBHOOK_MALFORMED）、build_trigger_event（channel=webhook）、WebhookDeliverer（per-tenant 幂等环 ring 200/1h；逐订阅 routing_store.resolve 钉版本、无版本 warning 跳过；后台触发异常吞掉）。
+- **④ storage（8313e7b）**：迁移 `016_channel_webhook_subscriptions`（channel_bindings 增 JSONB webhook_subscriptions 默认 '[]'）；ChannelBinding 增字段与 camelCase 投影，PgChannelStore create/get/save 读写，+4 PG 集成（往返/默认/隔离/reset 不清）。
+- **③ API（3b19ac9）**：公开 `POST /api/channels/hooks/shopify/{binding_id}`——跨租户定位不惰性建租户（PG 直查/内存扫已装配租户），client_secret 每次现解密（503），先验签后解析 JSON，200 received/duplicate/ignored、400/401/404/503；订阅 GET(read)/PUT(administer，topic 白名单/graph 同租户存在/pair 唯一/≤10，聚合中文 422)；触发 worker 以 mode="webhook" 独立记 run。
+- **⑤ frontend（695e5f2）**：绑定卡操作列「Webhook」按钮（admin）→ WebhookSubscriptionsModal（回调地址只读＋复制、Shopify 手动配置提示、topic/graph/启用行增删）；apiClient get/putWebhookSubscriptions（+2 测）；channels.webhook zh 键填实、en-US 维持空骨架回退。
+- **验证**：后端 1252 passed/44 skipped（1220 基线净增 32＋4 PG skip，零回归）；前端 579 passed/2 skipped/45 files、lint/build 过；真实 HMAC HTTP 冒烟三态（received/duplicate/ignored）＋坏签名 401/未知绑定 404，触发图后台 completed，3 截图 docs/smoke-shots/webhooks-smoke-*。
+
 ### docs：入站 Webhook 批 docs-only 立项（docs/39，2026-09-23；ADR T29，未落码）
 
 - 在 docs/38 Shopify 出向渠道之上补首个公开免登录入站触发口契约：channels/webhooks.py Shopify HMAC-SHA256 验签（原始 body、compare_digest、先于 JSON 解析）＋WebhookDeliverer 异步投递（经 M9 Router resolve 钉版本，幂等环进程内 ring 200/1h）。
