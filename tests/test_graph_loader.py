@@ -575,7 +575,11 @@ def test_human_approval_node_start_carries_approval_payload_before_continuation(
     )
     starts = [e for e in events if e["type"] == "node_start"]
     human_start = next(e for e in starts if e["node_id"] == "human-1")
-    assert set(human_start["approval"]) == {"token", "summary", "approver", "timeoutSeconds"}
+    # docs/35 §2（T2）：approval 载荷新增 notified（未配 notifyEmails/未注入 notifier 时 False）
+    assert set(human_start["approval"]) == {
+        "token", "summary", "approver", "timeoutSeconds", "notified",
+    }
+    assert human_start["approval"]["notified"] is False
     human_index = starts.index(human_start)
     reject_start = next(e for e in starts if e["node_id"] == "tool-reject")
     assert human_index < starts.index(reject_start)

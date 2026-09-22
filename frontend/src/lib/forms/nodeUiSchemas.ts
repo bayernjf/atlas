@@ -26,6 +26,7 @@ export const humanApprovalUiSchema: UiSchema = {
     approvedTarget: '通过目标（人工同意 / 超时自动通过时进入）',
     rejectedTarget: '拒绝目标（人工拒绝 / 超时自动拒绝时进入）',
     cardTemplateId: '交互卡片（可选；留空使用默认审批说明，选择后按卡片字段与动作渲染）',
+    notifyEmails: '挂起通知邮箱（可选，最多 5 个；支持 {{路径}} 插值，留空不发通知）',
   },
   placeholders: {
     summary:
@@ -34,6 +35,7 @@ export const humanApprovalUiSchema: UiSchema = {
     approvedTarget: '选择通过目标节点',
     rejectedTarget: '选择拒绝目标节点',
     cardTemplateId: '选择交互卡片（留空＝默认审批说明）',
+    notifyEmails: 'ops@example.com（点添加逐项填写，可用 {{trigger-1.context.payload.email}}）',
   },
   optionLabels: {
     onTimeout: { reject: '超时自动拒绝', approve: '超时自动通过' },

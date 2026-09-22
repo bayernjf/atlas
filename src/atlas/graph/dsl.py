@@ -37,6 +37,7 @@ MAX_SUBGRAPH_DEPTH = 3
 MIN_APPROVAL_TIMEOUT = 10
 MAX_APPROVAL_TIMEOUT = 3600
 APPROVAL_TIMEOUT_ACTIONS = ("approve", "reject")
+MAX_NOTIFY_EMAILS = 5  # docs/35 §2.1：单个审批节点通知邮箱上限
 
 NodeType = str
 
@@ -748,6 +749,35 @@ def _validate_human_approval_config(
     approver = config.get("approver", "")
     if approver != "" and not isinstance(approver, str):
         add(f"{prefix} 审批人（approver）必须是文本", "/approver")
+
+    # docs/35 §2.1：可选通知邮箱 notifyEmails（string[]，≤5；支持 {{路径}} 插值）。
+    notify_emails = config.get("notifyEmails", [])
+    if notify_emails is None:
+        notify_emails = []
+    if not isinstance(notify_emails, list):
+        add(f"{prefix} 通知邮箱（notifyEmails）必须是数组", "/notifyEmails")
+    else:
+        if len(notify_emails) > MAX_NOTIFY_EMAILS:
+            add(
+                f"{prefix} 通知邮箱（notifyEmails）最多 {MAX_NOTIFY_EMAILS} 个（当前 {len(notify_emails)}）",
+                "/notifyEmails",
+            )
+        for item in notify_emails:
+            if not isinstance(item, str):
+                add(f"{prefix} 通知邮箱（notifyEmails）每一项必须是文本", "/notifyEmails")
+                break
+            stripped = item.strip()
+            has_placeholder = "{{" in item and "}}" in item
+            if not has_placeholder:
+                # 静态字面值：空或不含 @ 编译期即非法；含插值的项运行时再过滤。
+                if not stripped:
+                    add(f"{prefix} 通知邮箱（notifyEmails）不能包含空地址", "/notifyEmails")
+                    break
+                if "@" not in stripped:
+                    add(
+                        f"{prefix} 通知邮箱（notifyEmails）不是合法邮箱地址（缺少 @）：{stripped}",
+                        "/notifyEmails",
+                    )
 
     card_template_id = config.get("cardTemplateId")
     if card_template_id is not None and card_template_id != "":

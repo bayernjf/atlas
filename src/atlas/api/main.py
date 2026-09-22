@@ -39,6 +39,7 @@ from atlas.graph.conditions import validate_expression
 from atlas.graph.dsl import GraphDSL, GraphValidationError, parse_graph
 from atlas.graph.loader import _tool_permissions, compile_graph, run_graph, tool_input_schemas
 from atlas.collaboration.cancellations import RunCancelled
+from atlas.collaboration.notifications import EmailApprovalNotifier
 from atlas.tracing import Tracer
 from atlas.harness.base import Permission
 from atlas.harness.registry import AdapterRegistry
@@ -107,6 +108,9 @@ from atlas.versioning.publish import publish as publish_graph_version
 from atlas.versioning.upgrades import subgraph_upgrade_plan
 
 logger = logging.getLogger(__name__)
+
+# docs/35 §2（T2）：审批挂起邮件中的应用入口（前端地址）。
+_PUBLIC_URL = os.getenv("ATLAS_PUBLIC_URL", "http://localhost:5174")
 
 
 def recover_pending() -> None:
@@ -1480,6 +1484,7 @@ def run_saved_graph(
             inputs=body.get("inputs"),
             registry=_runtime_registry(services),
             approval_broker=services.approval_broker,
+            approval_notifier=EmailApprovalNotifier(services.message_service, _PUBLIC_URL),
             graph_id=graph_id,
             graph_resolver=_tenant_graph_resolver(services),
             emit=_metric_collect,
@@ -1556,6 +1561,7 @@ def run_saved_graph_stream(
     # worker 启动前固定当前租户的分区对象，避免跨租户串用
     registry = _runtime_registry(services)
     approval_broker = services.approval_broker
+    approval_notifier = EmailApprovalNotifier(services.message_service, _PUBLIC_URL)
     graph_resolver = _tenant_graph_resolver(services)
     monitoring = services.monitoring
     run_store = services.run_store
@@ -1609,6 +1615,7 @@ def run_saved_graph_stream(
                     inputs=inputs,
                     registry=registry,
                     approval_broker=approval_broker,
+                    approval_notifier=approval_notifier,
                     graph_id=graph_id,
                     emit=recording_emit if monitored else emit,
                     graph_resolver=graph_resolver,

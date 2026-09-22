@@ -28,6 +28,14 @@ export const humanApprovalSchema: NodeConfigSchema = {
     },
     // M8：可选交互卡片 id；留空走 summary 旧路径，非空须命中内置卡片目录（后端编译期校验）。
     cardTemplateId: { type: 'string', 'x-widget': 'card-select' },
+    // docs/35 §2（T2）：审批挂起通知邮箱，可选，最多 5 个；每项支持 {{路径}} 插值，
+    // 后端编译期校验静态地址、运行时插值过滤空值/非法值；旧图无此字段行为不变。
+    notifyEmails: {
+      type: 'array',
+      items: { type: 'string' },
+      maxItems: 5,
+      default: [],
+    },
   },
   required: ['summary', 'timeoutSeconds', 'approvedTarget', 'rejectedTarget'],
   'x-outputSchema': {
