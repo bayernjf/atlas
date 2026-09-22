@@ -21,6 +21,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
+import httpx
+
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -79,6 +81,11 @@ from atlas.channels.webhooks import (
 from atlas.connections.service import ConnectionServiceError
 from atlas.observability.health import check_ready
 from atlas.observability.metrics_export import render_prometheus
+from atlas.openapi.adapter import ImportedApiHarnessAdapter
+from atlas.openapi.errors import OpenApiError
+from atlas.openapi.parser import parse_document
+from atlas.openapi.store import ImportStoreError
+from atlas.security.egress import EgressDenied, EgressGuard
 from atlas.monitoring.silences import OnCallEmpty, current_assignee, is_silence_active
 from atlas.recording import (
     RecordingCreateRequest,
@@ -333,6 +340,12 @@ def _runtime_registry(services: TenantServices) -> AdapterRegistry:
             ShopifyHarnessAdapter(
                 view["id"], services.channel_registry,
                 granted_permissions=_FULL_PERMISSIONS,
+            )
+        )
+    for imported in services.openapi_imports.list():
+        registry.register(
+            ImportedApiHarnessAdapter(
+                imported, granted_permissions=_FULL_PERMISSIONS
             )
         )
     return registry
@@ -1252,6 +1265,128 @@ def reset_password(
 def list_adapters(principal: Principal = Depends(require("read"))) -> list[dict[str, Any]]:
     # 执行期注册表在全局基础设施之上合并本租户渠道适配器（docs/38 §1E）
     return _runtime_registry(services_for(principal)).list_adapters()
+
+
+_OPENAPI_FETCH_TIMEOUT = 10.0
+_openapi_egress = EgressGuard.from_env()
+
+
+def _fetch_openapi_spec(url: str) -> str:
+    """API 层 URL 抓取（docs/42 §4）：出向过 EgressGuard，10s、不跟重定向；
+    任何取数失败统一折 OPENAPI_FETCH_FAILED。"""
+    try:
+        _openapi_egress.check(url)
+        with httpx.Client(follow_redirects=False) as client:
+            response = client.get(url, timeout=_OPENAPI_FETCH_TIMEOUT)
+    except (EgressDenied, httpx.HTTPError, ValueError) as exc:
+        raise OpenApiError("OPENAPI_FETCH_FAILED", f"规格抓取失败：{exc}") from exc
+    if response.status_code >= 400:
+        raise OpenApiError(
+            "OPENAPI_FETCH_FAILED", f"规格抓取失败：HTTP {response.status_code}"
+        )
+    return response.text
+
+
+class OpenApiSourceRequest(BaseModel):
+    content: str | None = None
+    url: str | None = None
+
+
+def _openapi_http_error(exc: OpenApiError) -> HTTPException:
+    return HTTPException(
+        status_code=422,
+        detail={"code": exc.code, "message": exc.message},
+    )
+
+
+def _parse_openapi_source(raw: OpenApiSourceRequest):
+    if (raw.content is None) == (raw.url is None):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "OPENAPI_INVALID_DOCUMENT",
+                "message": "content 与 url 必须二选一",
+            },
+        )
+    if raw.content is not None:
+        text = raw.content
+    else:
+        try:
+            text = _fetch_openapi_spec(raw.url)
+        except OpenApiError as exc:
+            raise _openapi_http_error(exc) from exc
+    try:
+        return parse_document(text)
+    except OpenApiError as exc:
+        raise _openapi_http_error(exc) from exc
+
+
+@app.post("/api/openapi/preview")
+def preview_openapi(
+    raw: OpenApiSourceRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    spec = _parse_openapi_source(raw)
+    return {
+        "title": spec.title,
+        "base_url": spec.base_url,
+        "operations": [op.model_dump() for op in spec.operations],
+        "imported_count": sum(not op.skipped for op in spec.operations),
+        "skipped_count": sum(op.skipped for op in spec.operations),
+    }
+
+
+@app.post("/api/openapi/imports", status_code=201)
+def import_openapi(
+    raw: OpenApiSourceRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    spec = _parse_openapi_source(raw)
+    if not any(not op.skipped for op in spec.operations):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "OPENAPI_NO_IMPORTABLE_OPERATION",
+                "message": "没有可导入的 operation（文档内操作全部被跳过）",
+            },
+        )
+    try:
+        imported = services_for(principal).openapi_imports.add(spec)
+    except ImportStoreError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    return imported.model_dump()
+
+
+@app.get("/api/openapi/imports")
+def list_openapi_imports(
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    items = services_for(principal).openapi_imports.list()
+    return {"items": [spec.model_dump() for spec in items]}
+
+
+@app.get("/api/openapi/imports/{spec_id}")
+def get_openapi_import(
+    spec_id: str,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    imported = services_for(principal).openapi_imports.get(spec_id)
+    if imported is None:
+        raise HTTPException(status_code=404, detail="导入规格不存在")
+    return imported.model_dump()
+
+
+@app.delete("/api/openapi/imports/{spec_id}")
+def delete_openapi_import(
+    spec_id: str,
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, bool]:
+    if not services_for(principal).openapi_imports.delete(spec_id):
+        raise HTTPException(status_code=404, detail="导入规格不存在")
+    return {"deleted": True}
 
 
 @app.post("/api/graphs", response_model=SaveGraphResponse)
