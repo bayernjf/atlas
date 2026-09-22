@@ -24,7 +24,7 @@
 ### B. 订阅模型
 
 - `WebhookSubscription`：`{topic: str, graph_id: str, enabled: bool = true}`；topic ∈ SUPPORT_TOPICS；同一绑定内 topic+graph_id 唯一；每绑定 ≤10 条。
-- 存于 channel_bindings 新增列 `webhook_subscriptions TEXT NOT NULL DEFAULT '[]'`（迁移 016，JSON 字符串，与 config 同构）。
+- 存于 channel_bindings 新增列 `webhook_subscriptions JSONB NOT NULL DEFAULT '[]'::jsonb`（迁移 016，JSON 字符串，与 config 同构）。
 
 ### C. REST
 
@@ -44,7 +44,7 @@
 
 ### D. PG 持久化（迁移 016）
 
-- `db/migrations/016_channel_webhook_subscriptions.sql`：`ALTER TABLE channel_bindings ADD COLUMN webhook_subscriptions TEXT NOT NULL DEFAULT '[]';`
+- `db/migrations/016_channel_webhook_subscriptions.sql`：`ALTER TABLE channel_bindings ADD COLUMN webhook_subscriptions JSONB NOT NULL DEFAULT '[]'::jsonb;`
 - PgChannelStore：行读写补该列（get/list/save），save 默认保留原值；Repository/内存 ChannelStore 同步。
 - PG 集成测试 +4：016 往返、默认 `[]`、租户隔离、reset 不清。
 

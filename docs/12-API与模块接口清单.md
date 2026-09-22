@@ -641,6 +641,34 @@ class WebhookDeliverer:
         # 投递异常仅 warning，调用方响应已先行返回
 ```
 
+### 3.15 投递可靠性内部接口（入站可靠性补强批 docs/40，2026-09-23 docs-only 立项，无 ADR）
+
+```python
+# src/atlas/channels/deliveries.py
+class DeliveryStore:                      # 内存 InMemoryDeliveryStore / PG PgDeliveryStore
+    def check_and_record(self, tenant_id, *, webhook_id, binding_id, topic,
+                         shop) -> bool:   # 已存在 → duplicates+=1 返 True；ignored 投递不落表
+    def mark_dead(self, tenant_id, webhook_id, *, reasons, payload) -> None
+    def mark_received(self, tenant_id, webhook_id) -> None
+    def list_dead(self, tenant_id, *, topic=None, binding_id=None,
+                  limit=100) -> list[dict]   # 投影不含 payload
+    def get(self, tenant_id, webhook_id) -> DeliveryRecord | None
+    def mark_replayed(self, tenant_id, webhook_id, *, received: bool,
+                      reasons=None) -> None  # received → 清 payload、写 replayed_at
+    def delete(self, tenant_id, webhook_id) -> bool
+    def metrics(self, tenant_id) -> dict      # {byTopic, totals} 实时聚合
+
+# src/atlas/channels/webhooks.py（docs/40 扩展）
+class WebhookDeliverer:
+    # 构造新增可选 delivery_store；注入后去重以 store 为准（环仅无 store 时兜底）
+    # deliver：全部订阅未触发 → mark_dead(payload=envelope.data)，仍回 {received:true}
+    def replay(self, tenant_id, binding, webhook_id) -> dict | None:
+        # dead 记录取 payload 重建信封、绕过去重按当前订阅重投；
+        # binding 已删/无订阅 → {status:"ignored"} 不改状态
+```
+
+TenantServices 两档新增 `webhook_deliveries`（reset 不清）；迁移 017 见 03 文档 `webhook_delivery`。
+
 ## 4. 记忆检索接口（依据 06 6.2 / 05 2.3）
 
 > **M11 实现边界（2026-09-19 已落码收口；权威＝docs/26、ADR T23）**：下列 `memory_retriever.query` 五层分层检索为**愿景**（working Redis / summary / fact pgvector / case / preference + 决策节点隐式注入），v1 不实现，缓做 14 D35。M11 取回的是下方「4.1 M11 长期记忆最小接口」——统一 memory_item（fact/preference）+ 显式 remember/recall 两工具，**不做决策隐式注入**。
@@ -819,6 +847,10 @@ class MemoryRepository(Protocol):
 | POST | /api/channels/hooks/shopify/{binding_id} | 【**公开免登录**，入站 Webhook 批 docs/39，ADR T29】原始 body 经 Shopify HMAC-SHA256 验签（X-Shopify-Hmac-SHA256，先于 JSON 解析）；必需头 shop-domain/topic/webhook-id。200 三态 `{received|duplicate|ignored}:true`（unsupported topic/无订阅均 ignored）；400 缺头/非 JSON 对象；401 签名缺失或不匹配（不区分）；404 未知绑定（统一文案）；503 client_secret 信封缺失/解密失败；**验签通过后绝不非 2xx**；审计 `channel.webhook_received:{topic}`（无 body） | channel_webhook |
 | GET | /api/channels/{binding_id}/webhooks | 【**read**】订阅列表投影 `{items:[{topic, graphId, enabled}]}`；未知绑定 404 | channel_webhook |
 | PUT | /api/channels/{binding_id}/webhooks | 【**administer**】全量替换订阅，body `{items:[{topic, graphId, enabled}]}`：topic 白名单、graph 属本租户且存在（否则 404）、topic+graphId 唯一、≤10、enabled bool；坏形状聚合中文 422；写审计 | channel_webhook |
+| GET | /api/channels/webhooks/dead-letters | 【**read**】死信列表 `{items:[{webhookId,bindingId,topic,shop,reasons,createdAt,replayedAt}]}`；query `topic, bindingId, limit(≤100)`；不含 payload | webhook_delivery |
+| POST | /api/channels/webhooks/dead-letters/{webhook_id}/replay | 【**operate**】以存储 payload 绕过去重按当前订阅重投；200 `{webhookId,status,reasons}`（status：received/dead/ignored）；非 dead/不存在 → 404；写审计 | webhook_delivery |
+| DELETE | /api/channels/webhooks/dead-letters/{webhook_id} | 【**administer**】删除投递行；200 `{deleted:true}`；不存在 404；写审计 | webhook_delivery |
+| GET | /api/channels/webhooks/metrics | 【**read**】`{byTopic:{topic:{received,dead,duplicates}}, totals}` 全量实时聚合 | webhook_delivery |
 
 > **M11 记忆端点口径订正（2026-09-19，docs/26；批 4⑩ 2026-09-20 修订）**：上表取代原愿景 `GET/PUT /api/memories/{operator_id}`（memory_config 配置读写，05 §2.4）——五层策略配置随 D35 缓做，operator 维度降为记忆条目 `scope.user_id`，租户由会话 Principal 定。**初版 M11 写入只走图工具 `memory/remember`（手动造数走 `scripts/dev/m11_seed.py`）；docs/28 批 4⑩（`ec0fd81`）起补开 `POST/PUT /api/memories`（operate，source 固定 manual）承担运营手动新建/编辑**——图工具仍是运行时自动写入主路径，REST 为手动补录/纠错通道，删除仍仅 admin。
 

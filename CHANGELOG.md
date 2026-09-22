@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### docs：入站可靠性补强批立项（docs/40，2026-09-23；dev、未 push；无 ADR）
+
+承接 docs/39 公开入站口的三个可靠性口子，docs-only 契约先行（00/03/12/13/14/08/handoff 同步），**零新依赖、D24 部分取回不解除**：
+
+- 投递去重 PG 化：`channels/deliveries.py` DeliveryStore 两档＋迁移 017 `webhook_deliveries`（PK(tenant,webhook_id)、duplicates 计数、跨重启/多实例；ignored 不落表、reset 不清）。
+- 死信：全部订阅未触发（NO_PUBLISHED_VERSION/RESOLVE_FAILED/TRIGGER_FAILED/MISSING_GRAPH_ID）才 mark_dead、payload 仅 dead 行存；一键重放（operate）按当前订阅重投。
+- 投递指标 GET metrics（byTopic/totals 实时聚合）；前端 Monitoring 加 WebhookReliabilityCard。
+- 顺手订正 016 列类型的文档漂移：实际为 JSONB（docs/03、docs/39 原文误写 TEXT）。
+
 ### feat：入站 Webhook 批全部落码收口（docs/39，2026-09-23；dev、未 push；ADR T29）
 
 在 docs/38 Shopify 出向渠道之上补首个公开免登录入站触发口，**零新依赖、零外部资源、不解除 D22/D24**：
