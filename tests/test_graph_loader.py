@@ -260,6 +260,132 @@ def test_loop_expression_error_exits_immediately():
     assert loop_output["expression_errors"]
 
 
+def _foreach_graph(
+    items_expression: str = "{{global.order_ids}}",
+    *,
+    collect: bool = True,
+    item_name: str | None = None,
+):
+    config = {
+        "mode": "foreach",
+        "itemsExpression": items_expression,
+        "bodyTarget": "tool-body",
+        "exitTarget": "tool-exit",
+    }
+    if collect:
+        config["collectTarget"] = "tool-body"
+    if item_name is not None:
+        config["itemName"] = item_name
+    return parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "loop-1", "type": "loop", "name": "遍历循环", "config": config},
+                {"id": "tool-body", "type": "tool_call", "name": "循环体",
+                 "config": {"tool": "body-op",
+                            "params": "item={{loop-1.item}}&index={{loop-1.index}}"}},
+                {"id": "tool-exit", "type": "tool_call", "name": "退出",
+                 "config": {"tool": "exit-op"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "loop-1"},
+                {"id": "e2", "source": "loop-1", "target": "tool-body"},
+                {"id": "e3", "source": "tool-body", "target": "loop-1"},
+                {"id": "e4", "source": "loop-1", "target": "tool-exit"},
+            ],
+        }
+    )
+
+
+def test_foreach_serial_items_with_exposure_and_completed():
+    result = run_graph(_foreach_graph(), inputs={"order_ids": ["a", "b", "c"]})
+    assert result["status"] == "completed"
+    body_runs = sum(1 for line in result["trace"] if line.startswith("tool-body"))
+    assert body_runs == 3
+    loop_output = result["outputs"]["loop-1"]
+    assert loop_output["mode"] == "foreach"
+    assert loop_output["items"] == ["a", "b", "c"]
+    assert loop_output["index"] == 3
+    assert loop_output["iterations"] == 3
+    assert loop_output["exitReason"] == "completed"
+    assert loop_output["target"] == "tool-exit"
+    body_output = result["outputs"]["tool-body"]
+    assert body_output["params_rendered"] == "item=c&index=2"
+    assert any("foreach item 1/3 → tool-body" in line for line in result["trace"])
+    assert any("foreach item 2/3 → tool-body" in line for line in result["trace"])
+    assert any("exit (completed) after 3 → tool-exit" in line for line in result["trace"])
+
+
+def test_foreach_collect_target_aggregates_body_outputs_in_order():
+    result = run_graph(_foreach_graph(), inputs={"order_ids": [10, 20, 30]})
+    loop_output = result["outputs"]["loop-1"]
+    results = loop_output["results"]
+    assert [r["result"]["tool"] for r in results] == ["body-op"] * 3
+    assert [r["params_rendered"] for r in results] == [
+        "item=10&index=0",
+        "item=20&index=1",
+        "item=30&index=2",
+    ]
+
+
+def test_foreach_empty_array_exits_with_empty_reason():
+    result = run_graph(_foreach_graph(), inputs={"order_ids": []})
+    assert "tool-body" not in result["outputs"]
+    loop_output = result["outputs"]["loop-1"]
+    assert loop_output["items"] == []
+    assert loop_output["index"] == 0
+    assert loop_output["exitReason"] == "empty"
+    assert loop_output["target"] == "tool-exit"
+    assert "tool-exit" in result["outputs"]
+
+
+def test_foreach_expression_error_exits_fail_safe():
+    result = run_graph(_foreach_graph("{{global.missing.deep}}"))
+    assert result["status"] == "completed"
+    assert "tool-body" not in result["outputs"]
+    loop_output = result["outputs"]["loop-1"]
+    assert loop_output["exitReason"] == "expression_error"
+    assert loop_output["expression_errors"]
+
+
+def test_foreach_non_array_result_exits_with_expression_error():
+    result = run_graph(_foreach_graph(), inputs={"order_ids": "not-a-list"})
+    assert "tool-body" not in result["outputs"]
+    loop_output = result["outputs"]["loop-1"]
+    assert loop_output["exitReason"] == "expression_error"
+    assert any("数组" in msg for msg in loop_output["expression_errors"])
+
+
+def test_foreach_items_over_cap_exit_with_items_too_large():
+    result = run_graph(_foreach_graph(), inputs={"order_ids": list(range(101))})
+    assert "tool-body" not in result["outputs"]
+    loop_output = result["outputs"]["loop-1"]
+    assert loop_output["exitReason"] == "items_too_large"
+    assert any("101" in msg for msg in loop_output["expression_errors"])
+
+
+def test_foreach_without_collect_target_keeps_empty_results():
+    result = run_graph(_foreach_graph(collect=False), inputs={"order_ids": [1, 2]})
+    assert result["status"] == "completed"
+    loop_output = result["outputs"]["loop-1"]
+    assert loop_output["results"] == []
+    assert loop_output["exitReason"] == "completed"
+
+
+def test_foreach_items_expression_evaluated_once_and_frozen():
+    # 表达式引用 trigger payload；即使后续状态变化，items 在首轮冻结不再重算。
+    graph = _foreach_graph("{{trigger-1.context.payload.order_ids}}")
+    result = run_graph(graph, inputs={"order_ids": ["x", "y"]})
+    loop_output = result["outputs"]["loop-1"]
+    assert loop_output["items"] == ["x", "y"]
+    assert loop_output["exitReason"] == "completed"
+    # 每次回边进入循环节点都不应产生表达式错误（证明未重新求值缺失路径）。
+    assert loop_output["expression_errors"] == []
+
+
 def _parallel_graph(strategy: str = "all_success", b_tool: str = "op-b"):
     return parse_graph(
         {
@@ -1130,6 +1256,62 @@ def test_loop_break_graph_validates_d17_a2():
     # 含 condition break 出口的图应当通过 DSL 校验（旧规则会误判“循环体连到退出目标”）；
     # parse_graph 内部已跑完整静态校验，能成功构造即通过。
     assert _loop_break_graph() is not None
+
+
+def _foreach_break_graph():
+    """foreach + 体内 condition break：第 2 个元素后中断，已收集结果保留。"""
+    return parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "loop-1", "type": "loop", "name": "遍历循环",
+                 "config": {
+                     "mode": "foreach",
+                     "itemsExpression": "{{global.order_ids}}",
+                     "collectTarget": "tool-body",
+                     "bodyTarget": "tool-body",
+                     "exitTarget": "tool-exit",
+                 }},
+                {"id": "tool-body", "type": "tool_call", "name": "循环体",
+                 "config": {"tool": "body-op", "params": "item={{loop-1.item}}"}},
+                {"id": "condition-break", "type": "condition", "name": "中断判断",
+                 "config": {
+                     "branches": [
+                         {"label": "stop", "expression": "{{loop-1.index}} >= 1",
+                          "target": "tool-exit"}
+                     ],
+                     "defaultTarget": "loop-1",
+                 }},
+                {"id": "tool-exit", "type": "tool_call", "name": "退出",
+                 "config": {"tool": "exit-op"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "loop-1"},
+                {"id": "e2", "source": "loop-1", "target": "tool-body"},
+                {"id": "e3", "source": "loop-1", "target": "tool-exit"},
+                {"id": "e4", "source": "tool-body", "target": "condition-break"},
+                {"id": "e5", "source": "condition-break", "target": "loop-1"},
+                {"id": "e6", "source": "condition-break", "target": "tool-exit"},
+            ],
+        }
+    )
+
+
+def test_foreach_break_retains_collected_results():
+    result = run_graph(_foreach_break_graph(), inputs={"order_ids": ["a", "b", "c"]})
+    assert result["status"] == "completed"
+    body_runs = sum(1 for line in result["trace"] if line.startswith("tool-body"))
+    assert body_runs == 2
+    loop_output = result["outputs"]["loop-1"]
+    assert loop_output["exitReason"] == "break"
+    assert loop_output["index"] == 2
+    assert loop_output["item"] == "b"
+    results = loop_output["results"]
+    assert [r["params_rendered"] for r in results] == ["item=a", "item=b"]
+    assert not any(key.startswith("__break__") for key in result["outputs"])
 
 
 def test_loop_non_condition_body_node_cannot_reach_exit_target_d17_a2():

@@ -52,6 +52,7 @@ from atlas.tracing import (
 )
 from .conditions import ConditionEvalError, evaluate_expression
 from .dsl import (
+    MAX_LOOP_ITERATIONS,
     MAX_SUBGRAPH_DEPTH,
     GraphDSL,
     GraphValidationError,
@@ -297,10 +298,16 @@ def _make_executor(
                 elif node.type == "loop":
                     output = _execute_loop(node, state, context, now=now)
                     if output["exitReason"] is None:
-                        message = (
-                            f"{node.id}: continue ({output['iterations']}/"
-                            f"{node.config.get('maxIterations')}) → {output['target']}"
-                        )
+                        if output["mode"] == "foreach":
+                            message = (
+                                f"{node.id}: foreach item {output['index']}/"
+                                f"{len(output['items'])} → {output['target']}"
+                            )
+                        else:
+                            message = (
+                                f"{node.id}: continue ({output['iterations']}/"
+                                f"{node.config.get('maxIterations')}) → {output['target']}"
+                            )
                     else:
                         message = (
                             f"{node.id}: exit ({output['exitReason']}) after "
@@ -899,6 +906,8 @@ def _execute_loop(
 ) -> dict[str, Any]:
     """条件循环重入求值（04 §5.3）；达上限/求值异常 fail-safe 走 exitTarget。"""
     config = node.config
+    if config.get("mode") == "foreach":
+        return _execute_foreach(node, state, context, now=now)
     body_target = config["bodyTarget"]
     exit_target = config["exitTarget"]
     max_iterations = int(config.get("maxIterations", 10))
@@ -946,6 +955,124 @@ def _execute_loop(
     }
 
 
+def _foreach_output(
+    *,
+    items: list[Any],
+    index: int,
+    item: Any,
+    results: list[Any],
+    target: str,
+    exit_reason: str | None,
+    expression_errors: list[str],
+) -> dict[str, Any]:
+    return {
+        "mode": "foreach",
+        "items": items,
+        "index": index,
+        "iterations": index,
+        "item": item,
+        "results": results,
+        "target": target,
+        "exitReason": exit_reason,
+        "expression_errors": expression_errors,
+    }
+
+
+def _execute_foreach(
+    node: NodeDSL, state: GraphState, context: dict[str, Any], *, now: datetime | None = None
+) -> dict[str, Any]:
+    """遍历循环（04 §5.3 foreach 段，docs/45）：数组首轮求值冻结、串行逐项、回边聚合。"""
+    config = node.config
+    body_target = config["bodyTarget"]
+    exit_target = config["exitTarget"]
+
+    previous = state["outputs"].get(node.id, {})
+    if not isinstance(previous, dict):
+        previous = {}
+
+    def fail_exit(message: str, exit_reason: str) -> dict[str, Any]:
+        return _foreach_output(
+            items=[],
+            index=0,
+            item=None,
+            results=[],
+            target=exit_target,
+            exit_reason=exit_reason,
+            expression_errors=[message],
+        )
+
+    if "items" not in previous:
+        seed_context = {**context, node.id: {"index": 0, "iterations": 0}}
+        try:
+            items = evaluate_expression(config["itemsExpression"], seed_context, now=now)
+        except ConditionEvalError as exc:
+            return fail_exit(str(exc), "expression_error")
+        if not isinstance(items, list):
+            return fail_exit(
+                f"遍历对象必须是数组，实际为 {type(items).__name__}", "expression_error"
+            )
+        if len(items) > MAX_LOOP_ITERATIONS:
+            return fail_exit(
+                f"遍历数组长度 {len(items)} 超过上限 {MAX_LOOP_ITERATIONS}",
+                "items_too_large",
+            )
+        if not items:
+            return _foreach_output(
+                items=[],
+                index=0,
+                item=None,
+                results=[],
+                target=exit_target,
+                exit_reason="empty",
+                expression_errors=[],
+            )
+        return _foreach_output(
+            items=items,
+            index=0,
+            item=items[0],
+            results=[],
+            target=body_target,
+            exit_reason=None,
+            expression_errors=[],
+        )
+
+    items = previous["items"]
+    index = int(previous.get("index", 0))
+    results = list(previous.get("results", []))
+
+    collect_target = config.get("collectTarget") or ""
+    expression_errors: list[str] = []
+    if collect_target:
+        collected = state["outputs"].get(collect_target)
+        if collected is None:
+            expression_errors.append(
+                f"聚合节点 {collect_target} 无产出，跳过本轮收集"
+            )
+        else:
+            results.append(collected)
+
+    next_index = index + 1
+    if next_index >= len(items):
+        return _foreach_output(
+            items=items,
+            index=next_index,
+            item=items[index],
+            results=results,
+            target=exit_target,
+            exit_reason="completed",
+            expression_errors=expression_errors,
+        )
+    return _foreach_output(
+        items=items,
+        index=next_index,
+        item=items[next_index],
+        results=results,
+        target=body_target,
+        exit_reason=None,
+        expression_errors=expression_errors,
+    )
+
+
 def _make_break_gate(
     loop_node: NodeDSL,
     emit: EventCallback,
@@ -960,21 +1087,43 @@ def _make_break_gate(
     outputs 为浅合并，故须先读 loop 节点既有产出（iterations/index）再整体回写。
     """
     exit_target = loop_node.config["exitTarget"]
+    is_foreach = loop_node.config.get("mode") == "foreach"
 
     def gate(state: GraphState) -> dict[str, Any]:
         previous = state["outputs"].get(loop_node.id, {})
         if not isinstance(previous, dict):
             previous = {}
         iterations = int(previous.get("iterations", 0))
-        output = {
-            "mode": "while",
-            "iterations": iterations,
-            "index": iterations,
-            "target": exit_target,
-            "exitReason": "break",
-            "expression_errors": [],
-        }
-        message = f"{loop_node.id}: exit (break) after {iterations} → {exit_target}"
+        if is_foreach:
+            # break 发生在当前元素的体执行之后、下一次回边之前；collectTarget 本轮产出
+            # 尚未经回边追加，在此补收，保证已执行体的结果不丢。
+            results = list(previous.get("results", []))
+            collect_target = loop_node.config.get("collectTarget") or ""
+            if collect_target:
+                collected = state["outputs"].get(collect_target)
+                if collected is not None:
+                    results.append(collected)
+            final_index = iterations + 1
+            output = _foreach_output(
+                items=previous.get("items", []),
+                index=final_index,
+                item=previous.get("item"),
+                results=results,
+                target=exit_target,
+                exit_reason="break",
+                expression_errors=[],
+            )
+        else:
+            output = {
+                "mode": "while",
+                "iterations": iterations,
+                "index": iterations,
+                "target": exit_target,
+                "exitReason": "break",
+                "expression_errors": [],
+            }
+        count = final_index if is_foreach else iterations
+        message = f"{loop_node.id}: exit (break) after {count} → {exit_target}"
         # 以 loop 节点自身补发 node_end（同 __join__ 汇聚补发模式），供画布展示 break 终态。
         emit({"type": "node_end", "node_id": loop_node.id, "node_type": "loop", "output": output})
         return {"outputs": {loop_node.id: output}, "messages": [message]}
@@ -1705,7 +1854,13 @@ def _recursion_limit(graph: GraphDSL) -> int:
             body = _loop_body_set(
                 node.config["bodyTarget"], node.id, node.config["exitTarget"], outgoing
             )
-            loop_steps += int(node.config.get("maxIterations", 10)) * (len(body) + 1)
+            # foreach 长度运行期才可知，按上限 100 预留（实际 ≤100）。
+            iterations_cap = (
+                MAX_LOOP_ITERATIONS
+                if node.config.get("mode") == "foreach"
+                else int(node.config.get("maxIterations", 10))
+            )
+            loop_steps += iterations_cap * (len(body) + 1)
     # parallel 汇聚网关在不等长分支下按超步空转等待，每个区域节点至多贡献两轮。
     parallel_wait = 0
     for node in graph.nodes:

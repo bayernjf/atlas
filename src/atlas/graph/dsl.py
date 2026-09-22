@@ -13,7 +13,11 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from atlas.cards.catalog import get_card
+from atlas.graph.conditions import ConditionEvalError
+from atlas.graph.conditions import parse as parse_condition
 from atlas.graph.conditions import validate_expression
+
+IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 SUPPORTED_NODE_TYPES = (
     "trigger",
@@ -384,25 +388,44 @@ def _validate_loop_config(
         # 节点级拓扑错误（出边/回路/区域）：挂 nodeId、无字段 pointer（06 §6.13）。
         issues.append((message, _loc(node.id)))
 
-    if config.get("mode", "while") != "while":
-        add(f"{prefix} v1 仅支持条件循环（mode=while）", "/mode")
+    mode = config.get("mode", "while")
+    if mode not in ("while", "foreach"):
+        add(f"{prefix} 模式（mode）仅支持 while 或 foreach，已按 mode=while 继续校验", "/mode")
+        mode = "while"
 
-    expression = config.get("continueExpression")
-    if not isinstance(expression, str) or not expression.strip():
-        add(f"{prefix} 必须填写继续条件表达式（continueExpression）", "/continueExpression")
+    if mode == "foreach":
+        items_expression = config.get("itemsExpression")
+        if not isinstance(items_expression, str) or not items_expression.strip():
+            add(f"{prefix} 必须填写遍历数组表达式（itemsExpression）", "/itemsExpression")
+        else:
+            try:
+                parse_condition(items_expression)
+            except ConditionEvalError as exc:
+                add(f"{prefix} 遍历数组表达式{exc}", "/itemsExpression")
+
+        item_name = config.get("itemName", "item")
+        if not isinstance(item_name, str) or not IDENTIFIER_RE.fullmatch(item_name):
+            add(
+                f"{prefix} 元素别名（itemName）须为标识符（字母/下划线开头）",
+                "/itemName",
+            )
     else:
-        for expr_error in validate_expression(expression):
-            add(f"{prefix} 继续条件表达式{expr_error}", "/continueExpression")
+        expression = config.get("continueExpression")
+        if not isinstance(expression, str) or not expression.strip():
+            add(f"{prefix} 必须填写继续条件表达式（continueExpression）", "/continueExpression")
+        else:
+            for expr_error in validate_expression(expression):
+                add(f"{prefix} 继续条件表达式{expr_error}", "/continueExpression")
 
-    max_iterations = config.get("maxIterations")
-    if isinstance(max_iterations, bool) or not isinstance(max_iterations, int):
-        add(f"{prefix} 最大次数（maxIterations）必须是整数", "/maxIterations")
-        max_iterations = None
-    elif not 1 <= max_iterations <= MAX_LOOP_ITERATIONS:
-        add(
-            f"{prefix} 最大次数需在 1-{MAX_LOOP_ITERATIONS} 之间",
-            "/maxIterations",
-        )
+        max_iterations = config.get("maxIterations")
+        if isinstance(max_iterations, bool) or not isinstance(max_iterations, int):
+            add(f"{prefix} 最大次数（maxIterations）必须是整数", "/maxIterations")
+            max_iterations = None
+        elif not 1 <= max_iterations <= MAX_LOOP_ITERATIONS:
+            add(
+                f"{prefix} 最大次数需在 1-{MAX_LOOP_ITERATIONS} 之间",
+                "/maxIterations",
+            )
 
     body_target = config.get("bodyTarget")
     exit_target = config.get("exitTarget")
@@ -446,6 +469,20 @@ def _validate_loop_config(
     if body_target in node_ids and body_target != node.id and exit_target not in (None, node.id):
         body = _loop_body_set(body_target, node.id, exit_target, outgoing)
 
+        if mode == "foreach":
+            collect_target = config.get("collectTarget", "")
+            if collect_target:
+                if not isinstance(collect_target, str):
+                    add(f"{prefix} 聚合节点（collectTarget）必须是节点 id", "/collectTarget")
+                elif collect_target == node.id:
+                    add(f"{prefix} 聚合节点不能指向循环节点自身", "/collectTarget")
+                elif collect_target not in node_ids:
+                    add(f"{prefix} 聚合节点不存在：{collect_target}", "/collectTarget")
+                elif collect_target not in body:
+                    add(
+                        f"{prefix} 聚合节点 {collect_target} 不在循环体内",
+                        "/collectTarget",
+                    )
         nested_loops = sorted(member for member in body if node_types.get(member) == "loop")
         for member in nested_loops:
             add_graph(f"{prefix} v1 不支持嵌套循环，循环体内不能包含循环节点：{member}")
@@ -1309,6 +1346,13 @@ def _validate_template_refs(
 
                 static_keys = _STATIC_OUTPUT_KEYS.get(ref_type)
                 if static_keys is not None:
+                    if ref_type == "loop":
+                        ref_loop = next((candidate for candidate in graph.nodes if candidate.id == head), None)
+                        if ref_loop is not None and ref_loop.config.get("mode") == "foreach":
+                            static_keys = (
+                                "mode", "items", "index", "iterations", "item",
+                                "results", "target", "exitReason", "expression_errors",
+                            )
                     root, *rest = tail
                     if root not in static_keys or rest:
                         add(

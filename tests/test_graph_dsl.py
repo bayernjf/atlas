@@ -266,6 +266,87 @@ def test_reject_nested_loop_in_body():
     assert any("不支持嵌套循环" in error and "loop-2" in error for error in exc.value.errors)
 
 
+def make_foreach_graph(**config_overrides):
+    config = {
+        "mode": "foreach",
+        "itemsExpression": "{{global.order_ids}}",
+        "itemName": "order",
+        "collectTarget": "tool-body",
+        "bodyTarget": "tool-body",
+        "exitTarget": "tool-exit",
+    }
+    config.update(config_overrides)
+    return {
+        "version": 1,
+        "variables": [],
+        "nodes": [
+            _trigger(),
+            {"id": "loop-1", "type": "loop", "name": "遍历循环", "position": {"x": 1, "y": 0},
+             "config": config,
+             "retry": {"max_retries": 0, "backoff": "1s", "timeout": 30, "on_error": "stop"}},
+            _tool("tool-body", "循环体操作"),
+            _tool("tool-exit", "退出后操作"),
+        ],
+        "edges": [
+            {"id": "e1", "source": "trigger-1", "target": "loop-1"},
+            {"id": "e2", "source": "loop-1", "target": "tool-body"},
+            {"id": "e3", "source": "tool-body", "target": "loop-1"},
+            {"id": "e4", "source": "loop-1", "target": "tool-exit"},
+        ],
+    }
+
+
+def test_parse_valid_foreach_graph():
+    graph = parse_graph(make_foreach_graph())
+    loop = next(node for node in graph.nodes if node.type == "loop")
+    assert loop.config["mode"] == "foreach"
+    assert loop.config["itemsExpression"] == "{{global.order_ids}}"
+    assert loop.config["collectTarget"] == "tool-body"
+
+
+def test_reject_foreach_without_items_expression():
+    raw = make_foreach_graph()
+    del raw["nodes"][1]["config"]["itemsExpression"]
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("itemsExpression" in error for error in exc.value.errors)
+
+
+def test_reject_foreach_with_syntax_error_items_expression():
+    raw = make_foreach_graph(itemsExpression="{{global.order_ids}")
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("遍历数组表达式" in error for error in exc.value.errors)
+
+
+def test_reject_foreach_with_invalid_item_name():
+    raw = make_foreach_graph(itemName="123-bad")
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("itemName" in error for error in exc.value.errors)
+
+
+def test_reject_foreach_collect_target_outside_body():
+    raw = make_foreach_graph(collectTarget="tool-exit")
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("聚合节点" in error and "不在循环体内" in error for error in exc.value.errors)
+
+
+def test_reject_foreach_collect_target_self():
+    raw = make_foreach_graph(collectTarget="loop-1")
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("聚合节点" in error for error in exc.value.errors)
+
+
+def test_reject_unsupported_loop_mode():
+    raw = make_foreach_graph(mode="until")
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("mode" in error for error in exc.value.errors)
+
+
 def test_reject_trigger_inside_loop_body():
     raw = make_loop_graph()
     raw["nodes"][2]["id"] = "tool-body"
@@ -283,7 +364,7 @@ def test_reject_trigger_inside_loop_body():
 def test_reject_loop_bad_config_and_missing_edges():
     raw = make_loop_graph()
     raw["nodes"][1]["config"] = {
-        "mode": "foreach",
+        "mode": "until",
         "continueExpression": "index >",
         "maxIterations": 0,
         "bodyTarget": "tool-exit",
