@@ -12,7 +12,8 @@
     "monitoring": "监控告警",
     "memory": "长期记忆",
     "users": "用户管理",
-    "connections": "连接管理"
+    "connections": "连接管理",
+    "approvals": "审批队列"
   },
   "button": {
     "confirm": "确定",
