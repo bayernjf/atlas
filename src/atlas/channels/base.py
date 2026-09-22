@@ -98,6 +98,8 @@ class ChannelBinding:
     created_by: str | None = None
     created_at: str | None = None  # UTC iso
     updated_at: str | None = None
+    # docs/39：[{topic, graph_id, enabled}]（snake_case；REST 投影 camelCase）
+    webhook_subscriptions: list[dict[str, Any]] = field(default_factory=list)
 
     def view(self) -> dict[str, Any]:
         return {
@@ -110,6 +112,12 @@ class ChannelBinding:
             "lastError": self.last_error,
             "createdBy": self.created_by,
             "createdAt": self.created_at,
+            "webhookSubscriptions": [
+                {"topic": sub.get("topic"),
+                 "graphId": sub.get("graph_id"),
+                 "enabled": sub.get("enabled", True)}
+                for sub in self.webhook_subscriptions
+            ],
         }
 
 

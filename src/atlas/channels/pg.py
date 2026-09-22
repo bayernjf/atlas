@@ -24,7 +24,7 @@ def _now_iso() -> str:
 class PgChannelStore:
     _COLS = (
         "id, tenant_id, provider, connection_id, config, status, "
-        "last_error, created_by, created_at, updated_at"
+        "last_error, created_by, created_at, updated_at, webhook_subscriptions"
     )
 
     def __init__(self, engine: Engine, tenant_id: str):
@@ -32,28 +32,28 @@ class PgChannelStore:
         self._tenant_id = tenant_id
 
     @staticmethod
-    def _row_to_binding(row: Any) -> ChannelBinding:
-        # 列序：0 id,1 tenant_id,2 provider,3 connection_id,4 config,5 status,
-        # 6 last_error,7 created_by,8 created_at,9 updated_at
-        config = row[4]
-        if isinstance(config, str):
+    def _jsonb(raw: Any, default: Any) -> Any:
+        if isinstance(raw, str):
             try:
-                config = json.loads(config)
+                raw = json.loads(raw)
             except (TypeError, ValueError):
-                config = {}
-        if not isinstance(config, dict):
-            config = {}
+                return default
+        return raw if isinstance(raw, type(default)) else default
+
+    @staticmethod
+    def _row_to_binding(row: Any) -> ChannelBinding:
         return ChannelBinding(
             id=row[0],
             tenant_id=row[1],
             provider=row[2],
             connection_id=row[3],
-            config=config,
+            config=PgChannelStore._jsonb(row[4], {}),
             status=row[5],
             last_error=row[6],
             created_by=row[7],
             created_at=row[8],
             updated_at=row[9],
+            webhook_subscriptions=PgChannelStore._jsonb(row[10], []),
         )
 
     def create(self, binding: ChannelBinding) -> ChannelBinding:
@@ -66,9 +66,11 @@ class PgChannelStore:
             db.execute(
                 text(
                     "INSERT INTO channel_bindings (id, tenant_id, provider, connection_id, "
-                    "config, status, last_error, created_by, created_at, updated_at) VALUES "
+                    "config, status, last_error, created_by, created_at, updated_at, "
+                    "webhook_subscriptions) VALUES "
                     "(:id, :tenant_id, :provider, :connection_id, CAST(:config AS jsonb), "
-                    ":status, :last_error, :created_by, :created_at, :updated_at)"
+                    ":status, :last_error, :created_by, :created_at, :updated_at, "
+                    "CAST(:subs AS jsonb))"
                 ),
                 {
                     "id": binding.id,
@@ -81,6 +83,7 @@ class PgChannelStore:
                     "created_by": binding.created_by,
                     "created_at": binding.created_at,
                     "updated_at": binding.updated_at,
+                    "subs": json.dumps(binding.webhook_subscriptions, ensure_ascii=False),
                 },
             )
         return binding
@@ -107,7 +110,8 @@ class PgChannelStore:
                 text(
                     "UPDATE channel_bindings SET provider = :provider, "
                     "connection_id = :connection_id, config = CAST(:config AS jsonb), "
-                    "status = :status, last_error = :last_error, updated_at = :updated_at "
+                    "status = :status, last_error = :last_error, updated_at = :updated_at, "
+                    "webhook_subscriptions = CAST(:subs AS jsonb) "
                     "WHERE tenant_id = :t AND id = :id"
                 ),
                 {
@@ -117,6 +121,7 @@ class PgChannelStore:
                     "status": binding.status,
                     "last_error": binding.last_error,
                     "updated_at": binding.updated_at,
+                    "subs": json.dumps(binding.webhook_subscriptions, ensure_ascii=False),
                     "t": self._tenant_id,
                     "id": binding.id,
                 },
