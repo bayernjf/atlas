@@ -85,6 +85,11 @@ class PgBackend:
     def connection_store(self, tenant_id: str) -> "PgConnectionStore":
         return PgConnectionStore(self._engine, tenant_id)
 
+    def channel_store(self, tenant_id: str):
+        from atlas.channels.pg import PgChannelStore
+
+        return PgChannelStore(self._engine, tenant_id)
+
 
 _pg_backend: PgBackend | None = None
 _pg_backend_lock = threading.Lock()

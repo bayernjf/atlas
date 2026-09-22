@@ -14,7 +14,7 @@ from atlas.channels.base import (
     TransportResponse,
 )
 from atlas.channels.memory import ChannelStore
-from atlas.channels.registry import ChannelRegistry
+from atlas.channels.registry import ChannelRegistry, build_channel_registry
 from atlas.channels.shopify import ShopifyChannelClient, normalize_shop
 
 __all__ = [
@@ -26,5 +26,6 @@ __all__ = [
     "HttpChannelTransport",
     "ShopifyChannelClient",
     "TransportResponse",
+    "build_channel_registry",
     "normalize_shop",
 ]

@@ -10,7 +10,9 @@ from atlas.channels.base import (
     ChannelBinding,
     ChannelError,
     ChannelTransport,
+    HttpChannelTransport,
 )
+from atlas.channels.memory import ChannelStore
 from atlas.channels.shopify import (
     DEFAULT_API_VERSION,
     API_VERSION_RE,
@@ -134,3 +136,21 @@ class ChannelRegistry:
     def delete(self, binding_id: str) -> bool:
         binding = self._require(binding_id)
         return self._store.delete(binding.id)
+
+
+def build_channel_registry(
+    connection_service: ConnectionService,
+    *,
+    tenant_id: str,
+    store: Any | None = None,
+) -> ChannelRegistry:
+    """每租户一个：绑定 store（默认内存，PG 档注入 PgChannelStore）+ 共享出向守卫的 HTTP 传输。"""
+    from atlas.connections.service import get_egress_guard
+
+    transport = HttpChannelTransport(egress=get_egress_guard())
+    return ChannelRegistry(
+        store if store is not None else ChannelStore(),
+        tenant_id=tenant_id,
+        connection_service=connection_service,
+        transport=transport,
+    )
