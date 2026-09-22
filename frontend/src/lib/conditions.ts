@@ -576,6 +576,16 @@ function staticTypeErrors(node: AstNode): string[] {
   return errors
 }
 
+/** 语法检查：仅解析，不做静态类型/顶层布尔约束（foreach itemsExpression 用）；错误或 null。 */
+export function parseExpression(expression: string): string | null {
+  try {
+    new Parser(tokenize(expression)).parse()
+    return null
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error)
+  }
+}
+
 /** 校验期检查：语法 + 静态类型（常量折叠 + 顶层须为布尔）；返回中文错误列表。 */
 export function validateExpression(expression: string): string[] {
   if (!expression.trim()) return ['表达式不能为空']

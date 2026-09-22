@@ -234,6 +234,31 @@ describe('covered:false hand cross-field rules (U37③)', () => {
     expect(codes.has(FIELD_CODES.LOOP_TARGET_COLLISION)).toBe(true)
   })
 
+  it('foreach items expression syntax and itemName identifier (docs/45)', () => {
+    const diagnostics = fields('loop', {
+      mode: 'foreach',
+      itemsExpression: '{{global.ids} + 1',
+      itemName: '1bad',
+      bodyTarget: 'tool-body',
+      exitTarget: 'tool-exit',
+    })
+    const byPointer = new Map(diagnostics.map((d) => [d.loc.pointer, d]))
+    expect(byPointer.get('/itemsExpression')?.code).toBe(FIELD_CODES.EXPRESSION_SYNTAX)
+    expect(byPointer.get('/itemName')?.code).toBe(FIELD_CODES.EXPRESSION_SYNTAX)
+  })
+
+  it('foreach valid expression and identifier yields no field diagnostics (docs/45)', () => {
+    const diagnostics = fields('loop', {
+      mode: 'foreach',
+      itemsExpression: '{{global.ids}}',
+      itemName: 'order_id',
+      collectTarget: 'tool-body',
+      bodyTarget: 'tool-body',
+      exitTarget: 'tool-exit',
+    })
+    expect(diagnostics).toEqual([])
+  })
+
   it('parallel duplicates and join collision', () => {
     const diagnostics = fields('parallel', {
       joinStrategy: 'all_success',

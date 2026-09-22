@@ -68,25 +68,41 @@ export const triggerUiSchema: UiSchema = {
 }
 
 /**
- * loop（04 §5.3）：continueExpression 走 variable-input（schema x-variable，语法/
- * 非空/L2 引用由 L1 承接），maxIterations 走 number，body/exit 走 target-select。
- * mode 是 v1 内部字段（仅 while），静态隐藏；表达式语法红字经 diagnostics 落字段。
+ * loop（04 §5.3）：mode 选择 while / foreach（docs/45）。while 显
+ * continueExpression（variable-input）+ maxIterations；foreach 显 itemsExpression
+ * （首轮冻结的数组表达式）+ itemName + collectTarget；body/exit 两模式恒显。
+ * 表达式语法、body/exit 互异等跨字段规则由 L1 手写承接，红字经 diagnostics 落字段。
  */
 export const loopUiSchema: UiSchema = {
   labels: {
+    mode: '循环模式',
     continueExpression:
       '继续条件（每轮重入时求值；体内可用 {{loop-x.index}} 引用当前轮次，从 1 开始）',
     maxIterations: `最大次数（达到后强制退出，1-${MAX_LOOP_ITERATIONS}）`,
-    bodyTarget: '循环体入口（条件为真时进入；体内节点连线回本节点即 continue，重新求值继续条件）',
+    itemsExpression:
+      '遍历数组表达式（首轮进入时求值一次并冻结；结果必须是数组，长度 1-100；体内用 {{loop-x.item}} 引用当前元素）',
+    itemName: '元素别名（可选，仅展示用；运行时引用路径仍为 {{loop-x.item}}）',
+    collectTarget:
+      '聚合节点（可选；须为体内节点，每轮回边时把其整体产出按序追加到 results）',
+    bodyTarget: '循环体入口（进入循环/开始遍历时执行；体内节点连线回本节点即进入下一轮/下一项）',
     exitTarget:
-      '退出目标（条件为假 / 达上限 / 表达式异常时进入；体内 condition 的分支连此目标即 break，立即中断退出）',
+      '退出目标（条件为假 / 达上限 / 表达式异常 / 遍历完成时进入；体内 condition 的分支连此目标即 break，立即中断退出）',
   },
   placeholders: {
     continueExpression: '{{loop-1.index}} < 3',
+    itemsExpression: '{{global.order_ids}}',
+    itemName: 'item',
+    collectTarget: '选择体内节点作为聚合来源',
     bodyTarget: '选择循环体入口节点',
     exitTarget: '选择退出目标节点',
   },
-  hideFields: ['mode'],
+  optionLabels: {
+    mode: { while: '条件循环（while）', foreach: '遍历循环（foreach）' },
+  },
+  hiddenWhen: [
+    { field: 'mode', equals: 'while', show: ['continueExpression', 'maxIterations'] },
+    { field: 'mode', equals: 'foreach', show: ['itemsExpression', 'itemName', 'collectTarget'] },
+  ],
 }
 
 /**

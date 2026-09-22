@@ -8,7 +8,7 @@
  * 不引 AJV（ADR T16 收口）；L3 权威仍在后端 dsl.py，本文件不产 graph 诊断。
  */
 
-import { validateExpression } from '../conditions'
+import { parseExpression, validateExpression } from '../conditions'
 import type { ConditionBranch, NodeConfig, ParallelBranch } from '../nodeCatalog'
 import { schemaRegistry } from '../schemas'
 import type { MetaSchema, NodeConfigSchema } from '../schemas/metaSchema'
@@ -265,6 +265,7 @@ function schemaFieldMessage(kind: string, finding: SchemaFinding, config: NodeCo
     case 'loop':
       if (finding.pointer === '/continueExpression') return '必须填写继续条件表达式'
       if (finding.pointer === '/maxIterations') return `最大次数需为 1-${MAX_LOOP_ITERATIONS} 的整数`
+      if (finding.pointer === '/itemsExpression') return '必须填写遍历数组表达式'
       if (finding.pointer === '/bodyTarget') return '必须选择循环体入口'
       if (finding.pointer === '/exitTarget') return '必须选择退出目标'
       break
@@ -347,7 +348,21 @@ function handFieldDiagnostics(kind: string, config: NodeConfig): Diagnostic[] {
       break
     }
     case 'loop': {
-      if (config.continueExpression?.trim()) {
+      if (config.mode === 'foreach') {
+        if (config.itemsExpression?.trim()) {
+          const syntaxError = parseExpression(config.itemsExpression)
+          if (syntaxError) {
+            diagnostics.push(
+              fieldDiag(FIELD_CODES.EXPRESSION_SYNTAX, `遍历数组表达式${syntaxError}`, '/itemsExpression'),
+            )
+          }
+        }
+        if (config.itemName && !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(config.itemName)) {
+          diagnostics.push(
+            fieldDiag(FIELD_CODES.EXPRESSION_SYNTAX, '元素别名须为标识符（字母/下划线开头）', '/itemName'),
+          )
+        }
+      } else if (config.continueExpression?.trim()) {
         for (const exprError of validateExpression(config.continueExpression)) {
           diagnostics.push(
             fieldDiag(FIELD_CODES.EXPRESSION_SYNTAX, `继续条件表达式${exprError}`, '/continueExpression'),

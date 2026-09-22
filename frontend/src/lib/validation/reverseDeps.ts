@@ -53,6 +53,7 @@ export const TARGET_FIELD_PATHS: Record<string, ReadonlyArray<{ pointer: string;
   loop: [
     { pointer: '/bodyTarget', indexed: false },
     { pointer: '/exitTarget', indexed: false },
+    { pointer: '/collectTarget', indexed: false },
   ],
   parallel: [
     { pointer: '/branches/{i}/target', indexed: true },

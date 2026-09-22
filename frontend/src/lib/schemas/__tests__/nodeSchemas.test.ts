@@ -9,7 +9,7 @@ const EXPECTED_OUTPUT_KEYS: Record<string, string[] | Record<string, string[]>> 
   tool_call: ['result'],
   ai_decision: ['decision', 'prompt_rendered'],
   condition: ['branch', 'target'],
-  loop: ['index', 'iterations'],
+  loop: ['mode', 'index', 'iterations', 'items', 'item', 'results', 'target', 'exitReason', 'expression_errors'],
   parallel: ['status', 'branches', 'joinStrategy', 'joinTarget'],
   wait: ['mode', 'waitType', 'durationSeconds'],
   subgraph: ['status', 'outputs'],

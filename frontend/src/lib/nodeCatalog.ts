@@ -63,10 +63,13 @@ export type NodeConfig = {
   // condition（04 §5.2；target 存在性/出边覆盖等图级校验由后端 422 兜底）
   branches?: ConditionBranch[] | ParallelBranch[]
   defaultTarget?: string
-  // loop（04 §5.3；v1 仅 while 条件循环；回边/出边等图级校验由后端 422 兜底）
-  mode?: 'while'
+  // loop（04 §5.3；while 条件循环 / foreach 遍历循环；回边/出边等图级校验由后端 422 兜底）
+  mode?: 'while' | 'foreach'
   continueExpression?: string
   maxIterations?: number
+  itemsExpression?: string
+  itemName?: string
+  collectTarget?: string
   bodyTarget?: string
   exitTarget?: string
   // parallel（04 §5.4；v1 静态扇出/汇聚；区域拓扑等图级校验由后端 422 兜底）

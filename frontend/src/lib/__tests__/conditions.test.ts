@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { validateExpression } from '../conditions'
+import { parseExpression, validateExpression } from '../conditions'
 
 describe('validateExpression', () => {
   it('accepts the first-version whitelist', () => {
@@ -121,5 +121,11 @@ describe('validateExpression', () => {
     expect(validateExpression('{{notInWhitelist}} == 1')).toEqual([])
     // 纯算术（非布尔顶层）仍拒绝，与条件引擎一致
     expect(validateExpression('{{durationMs}} + 1')[0]).toContain('布尔值')
+  })
+
+  it('docs/45 parseExpression is syntax-only: arrays paths pass, malformed input errors', () => {
+    expect(parseExpression('{{global.order_ids}}')).toBeNull()
+    expect(parseExpression('1 + 2')).toBeNull()
+    expect(parseExpression('{{global.ids}')).toContain('语法错误')
   })
 })
