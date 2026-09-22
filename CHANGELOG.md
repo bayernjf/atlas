@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### docs：Shopify 侧 Webhook 注册批立项（docs/41，2026-09-23；dev、未 push；无 ADR）
+
+docs/39/40 已收口入站口与可靠性，但 Shopify 店铺侧注册仍靠人工复制 URL。docs-only 契约先行（00/03/12/13/14/08/handoff 同步），**零新依赖、零迁移、D22 部分取回不解除**：
+
+- `ShopifyChannelClient` 增 list/register/delete webhooks（Admin REST `/webhooks.json`；422 同 topic+address 已存在 → CHANNEL_ALREADY_REGISTERED；可选 base_url 测试缝）。
+- registry 三方法：地址服务端按 `{ATLAS_PUBLIC_URL}/api/channels/hooks/shopify/{binding_id}` 拼装钉版、非 https 拒绝；取消注册按 topic+address 双键匹配。
+- REST 三端点：GET remote-webhooks（read，令牌失效 200 空 items+error）、POST（operate，201/409/422）、DELETE（operate，幂等 {deleted:bool}）。
+- 前端订阅弹窗加店铺侧注册区（viewer 只读）；demo mock 缝（`/api/demo/mock/shopify-admin/webhooks.json`＋ATLAS_SHOPIFY_ADMIN_BASE_URL）仅供离线/浏览器冒烟。
+- 立项基线：后端 1276 passed/48 skipped、前端 581 passed/2 skipped/45 files（候选 U380 起）。
+
 ### feat：入站可靠性补强批全部落码收口（docs/40，2026-09-23；dev、未 push；无 ADR）
 
 承接 docs/39 公开入站口的三个可靠性口子，六原子全部落完，**零新依赖、D24 部分取回不解除**：

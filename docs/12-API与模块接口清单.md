@@ -669,6 +669,32 @@ class WebhookDeliverer:
 
 TenantServices 两档新增 `webhook_deliveries`（reset 不清）；迁移 017 见 03 文档 `webhook_delivery`。
 
+### 3.16 Shopify 侧注册内部接口（Shopify 侧 Webhook 注册批 docs/41，2026-09-23 docs-only 立项，无 ADR）
+
+```python
+# src/atlas/channels/shopify.py（docs/41 扩展）
+class ShopifyChannelClient:
+    def list_registered_webhooks(self, limit: int = 250) -> list[dict]:
+        # GET /webhooks.json → [{remoteId, topic, address}]
+    def register_webhook(self, *, topic: str, address: str) -> dict:
+        # POST /webhooks.json {"webhook": {"topic", "address", "format": "json"}}
+        # 422 → ChannelError("CHANNEL_ALREADY_REGISTERED")
+    def delete_registered_webhook(self, remote_id: str) -> bool:
+        # DELETE /webhooks/{id}.json
+    # 构造新增可选 base_url：覆盖 Admin base，仅 demo/测试缝
+
+# src/atlas/channels/registry.py（docs/41 扩展）
+class ChannelRegistry:
+    def remote_webhooks(self, binding_id) -> list[dict]: ...
+    def register_remote(self, binding_id, topic) -> dict:
+        # 地址服务端拼装 {ATLAS_PUBLIC_URL}/api/channels/hooks/shopify/{binding_id}；
+        # public_url 非 https → CHANNEL_INVALID_PARAMETER
+    def unregister_remote(self, binding_id, topic) -> bool:
+        # 列远端按 topic+address 双键匹配后删；找不到 False
+```
+
+无迁移；demo mock 缝见 docs/41 §1D。
+
 ## 4. 记忆检索接口（依据 06 6.2 / 05 2.3）
 
 > **M11 实现边界（2026-09-19 已落码收口；权威＝docs/26、ADR T23）**：下列 `memory_retriever.query` 五层分层检索为**愿景**（working Redis / summary / fact pgvector / case / preference + 决策节点隐式注入），v1 不实现，缓做 14 D35。M11 取回的是下方「4.1 M11 长期记忆最小接口」——统一 memory_item（fact/preference）+ 显式 remember/recall 两工具，**不做决策隐式注入**。
@@ -851,6 +877,9 @@ class MemoryRepository(Protocol):
 | POST | /api/channels/webhooks/dead-letters/{webhook_id}/replay | 【**operate**】以存储 payload 绕过去重按当前订阅重投；200 `{webhookId,status,reasons}`（status：received/dead/ignored）；非 dead/不存在 → 404；写审计 | webhook_delivery |
 | DELETE | /api/channels/webhooks/dead-letters/{webhook_id} | 【**administer**】删除投递行；200 `{deleted:true}`；不存在 404；写审计 | webhook_delivery |
 | GET | /api/channels/webhooks/metrics | 【**read**】`{byTopic:{topic:{received,dead,duplicates}}, totals}` 全量实时聚合 | webhook_delivery |
+| GET | /api/channels/{binding_id}/remote-webhooks | 【**read**】`{items:[{remoteId,topic,address}],error?:string}`；渠道令牌失效 200 空 items＋error；未知绑定 404 | shopify_remote_webhook |
+| POST | /api/channels/{binding_id}/remote-webhooks | 【**operate**】body `{topic}`；201 `{remoteId,topic,address}`；409 已注册、422 topic 非法/非 https、404 绑定；写审计 | shopify_remote_webhook |
+| DELETE | /api/channels/{binding_id}/remote-webhooks/{topic} | 【**operate**】200 `{deleted:bool}` 幂等（未注册 false）；404 绑定；写审计 | shopify_remote_webhook |
 
 > **M11 记忆端点口径订正（2026-09-19，docs/26；批 4⑩ 2026-09-20 修订）**：上表取代原愿景 `GET/PUT /api/memories/{operator_id}`（memory_config 配置读写，05 §2.4）——五层策略配置随 D35 缓做，operator 维度降为记忆条目 `scope.user_id`，租户由会话 Principal 定。**初版 M11 写入只走图工具 `memory/remember`（手动造数走 `scripts/dev/m11_seed.py`）；docs/28 批 4⑩（`ec0fd81`）起补开 `POST/PUT /api/memories`（operate，source 固定 manual）承担运营手动新建/编辑**——图工具仍是运行时自动写入主路径，REST 为手动补录/纠错通道，删除仍仅 admin。
 
