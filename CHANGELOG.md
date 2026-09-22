@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### feat：循环 foreach 批落码收口（docs/45，2026-09-23；dev、未 push；无 ADR）
+
+- loop 节点 `mode=foreach` 落码（D16 主体取回；efe5de4→1e79121→01296d5）：itemsExpression 首轮求值一次冻结（≤100），串行逐项暴露 `{{loop-x.item}}/index/results`，collectTarget 回边按序聚合 results（break 网关补在途结果）；exitReason 增 `completed/empty/expression_error/items_too_large`；DSL 静态输出键按 mode 放宽。
+- 前端 mode Select 切换 schema oneOf/字段显隐，L1 foreach 手写规则（parseExpression 纯语法）；后端 1391/59（净增 16）、前端 597/2、oxlint 45/1（46 files）、build 干净。
+- 浏览器冒烟（3 截图 docs/smoke-shots/foreach45-*）：3 元素 completed/results 长度 3（params item/index 按序渲染），空数组 empty/循环体不执行，HTTP 与画布一致。零新依赖、零迁移、零新 REST/错误码；嵌套循环、并行 map-reduce、裸 item 短名、skip-current、>100 分批仍缓做（D16 不解除）。
+
 ### feat：循环 foreach 批 docs-only 立项（docs/45，2026-09-23；dev、未 push；无 ADR）
 
 - loop 节点新增 `mode=foreach`（D16 主体取回）：itemsExpression 首轮求值一次冻结（≤100），按 0-based 游标串行逐项暴露 `{{loop-x.item}}`；collectTarget 回边时聚合节点产出进 results；exitReason 增 `completed/empty/expression_error/items_too_large`，break 网关沿用 D17。

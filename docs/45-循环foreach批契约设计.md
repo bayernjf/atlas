@@ -119,3 +119,10 @@
 2. `feat(graph): support foreach loop mode with frozen items and item exposure` ＋DSL/执行器单测；`.venv/bin/pytest`；
 3. `feat(frontend): add foreach mode fields and mode-switched loop form` ＋i18n；`cd frontend && pnpm lint && pnpm test && pnpm build`；
 4. docs 收口：浏览器冒烟（截图）＋CHANGELOG＋handoff/08/本文落码注记。
+
+## 7. 落码注记（2026-09-23 收口）
+
+- 原子序：①docs 立项 `efe5de4`；②`feat(graph): support foreach loop mode with frozen items and item exposure`（`1e79121`，DSL mode 分支校验 + foreach 执行器 + collectTarget 回边聚合 + break 网关补在途结果 + mode 感知静态输出键 + 递归预算）；③`feat(frontend): add foreach mode fields and mode-switched loop form`（`01296d5`，loop schema oneOf 两档 + hiddenWhen 字段显隐 + L1 foreach 手写规则 + parseExpression 纯语法校验 + reverseDeps /collectTarget）；④本文＋冒烟。
+- 收口门：后端 **1391 passed / 59 skipped**（净增 16 常跑：DSL 7、执行器 9）；前端 **597 passed / 2 skipped**、oxlint **45 passed / 1 skipped（46 files）**、`pnpm build` 干净。
+- 浏览器冒烟（http://localhost:5174，内存档 uvicorn :8000；3 截图 `docs/smoke-shots/foreach45-*`）：后端 HTTP 直跑 graph-1——`order_ids:["ORD-1","ORD-2","ORD-3"]` 得 exitReason=completed、results 长度 3 且工具 params 按序渲染 `item=ORD-1&index=0`…`item=ORD-3&index=2`，traces 三轮回边；`order_ids:[]` 得 exitReason=empty、循环体不执行。画布冒烟：经编辑器「编译并运行」跑同图——3 元素时 trigger/loop/tool-body/tool-exit 依次 completed；空数组时 tool-body 保持 idle、loop 与 tool-exit completed（立即走退出目标）。
+- 零新依赖/零迁移/零新 REST·错误码/无 ADR，与立项一致。D16 整体缓做不解除：嵌套循环、并行 map-reduce、裸 item 全局短名、skip-current、>100 分批触发条件不变（见 docs/14）。
