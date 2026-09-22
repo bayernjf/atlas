@@ -100,3 +100,62 @@ def test_reset_clears_and_releases_waiters_as_timeout_reject():
     assert result["decision"] == "rejected"
     assert broker.list_pending() == []
     assert broker.get(token) is None
+
+
+def test_list_decided_empty_and_excludes_pending():
+    broker = ApprovalBroker()
+    assert broker.list_decided() == []
+    token = _request(broker)
+    assert broker.list_decided() == []
+    broker.resolve(token, "approved", comment="ok")
+    items = broker.list_decided()
+    assert len(items) == 1
+    assert items[0]["token"] == token
+    assert items[0]["decision"] == "approved"
+    assert items[0]["resolvedBy"] == "human"
+    assert items[0]["comment"] == "ok"
+    assert items[0]["createdAt"] > 0
+
+
+def test_list_decided_newest_first_with_limit_clamp():
+    broker = ApprovalBroker()
+    t1 = _request(broker, node_id="n1")
+    t2 = _request(broker, node_id="n2")
+    broker.resolve(t1, "approved")
+    time.sleep(0.01)
+    broker.resolve(t2, "rejected")
+    items = broker.list_decided(limit=1)
+    assert [item["token"] for item in items] == [t2]
+    assert [item["token"] for item in broker.list_decided(0)] == [t2]
+    assert len(broker.list_decided(1000)) == 2
+
+
+def test_list_decided_does_not_leak_card_context():
+    broker = ApprovalBroker()
+    token = _request(
+        broker,
+        card_template_id="refund-approval",
+        card_context={"secret": "S", "amount": 100},
+    )
+    broker.resolve(token, "approved")
+    item = broker.list_decided()[0]
+    assert item.get("cardTemplateId") == "refund-approval"
+    assert "card_context" not in item and "secret" not in item
+
+
+def test_request_retains_notify_recipients():
+    broker = ApprovalBroker()
+    token = _request(broker, notify_recipients=["a@example.com", "a@example.com", "b@example.com"])
+    assert broker.get_notify_recipients(token) == [
+        "a@example.com", "a@example.com", "b@example.com"
+    ]
+    assert broker.get_notify_recipients("unknown") == []
+
+
+def test_timeout_records_resolved_at():
+    broker = ApprovalBroker()
+    token = _request(broker, timeout_seconds=0)
+    broker.wait(token)
+    broker.complete_timeout(token, "rejected")
+    assert broker.get(token)["resolvedBy"] == "timeout"
+    assert broker.list_decided()[0]["decision"] == "rejected"

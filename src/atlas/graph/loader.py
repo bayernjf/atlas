@@ -336,6 +336,7 @@ def _make_executor(
                         token=approval_payload["token"],
                         trigger_payload=trigger_payload,
                         broker=approval_broker,
+                        notifier=approval_notifier,
                     )
                 elif node.type == "subgraph":
                     output, message = _execute_subgraph(
@@ -489,6 +490,7 @@ def _register_approval(
     if card_template_id is not None and get_card(card_template_id) is None:
         card_template_id = None
     card_context = copy.deepcopy(context) if card_template_id else None
+    recipients = _resolve_notify_recipients(config.get("notifyEmails"), context)
     token = broker.request(
         node_id=node.id,
         graph_id=graph_id,
@@ -497,27 +499,26 @@ def _register_approval(
         timeout_seconds=timeout_seconds,
         card_template_id=card_template_id,
         card_context=card_context,
+        notify_recipients=recipients,
     )
-    # docs/35 §2：挂起通知（旁路，fail-safe）；收件人运行时插值、过滤空值/无 @。
+    # docs/35 §2：挂起通知（旁路，fail-safe）。
     notified = False
     notify_error: str | None = None
-    if notifier is not None:
-        recipients = _resolve_notify_recipients(config.get("notifyEmails"), context)
-        if recipients:
-            try:
-                notifier.notify_pending(
-                    graph_id=graph_id,
-                    node_id=node.id,
-                    token=token,
-                    summary=summary,
-                    approver=approver,
-                    timeout_seconds=timeout_seconds,
-                    recipients=recipients,
-                )
-                notified = True
-            except Exception as exc:  # noqa: BLE001 旁路通知任何异常都不得阻断图
-                notify_error = str(exc)
-                logger.warning("审批挂起通知失败 node=%s: %s", node.id, exc)
+    if notifier is not None and recipients:
+        try:
+            notifier.notify_pending(
+                graph_id=graph_id,
+                node_id=node.id,
+                token=token,
+                summary=summary,
+                approver=approver,
+                timeout_seconds=timeout_seconds,
+                recipients=recipients,
+            )
+            notified = True
+        except Exception as exc:  # noqa: BLE001 旁路通知任何异常都不得阻断图
+            notify_error = str(exc)
+            logger.warning("审批挂起通知失败 node=%s: %s", node.id, exc)
     payload: dict[str, Any] = {
         "token": token,
         "summary": summary,
@@ -555,6 +556,7 @@ def _await_human_approval(
     token: str,
     trigger_payload: dict[str, Any],
     broker: ApprovalBroker,
+    notifier: ApprovalNotifier | None = None,
 ) -> tuple[dict[str, Any], str]:
     """阻塞等待审批结果（预置 inputs/人工放行/超时），返回节点产出与 trace 行。"""
     config = node.config
@@ -571,6 +573,23 @@ def _await_human_approval(
 
     target = config["approvedTarget"] if decision == "approved" else config["rejectedTarget"]
     info = broker.get(token)
+    # docs/37 §4：超时/预置来源由 loader 发结果邮件（人工/邮件链接来源在 API helper 发，
+    # 避免双发）；旁路 fail-safe。
+    if notifier is not None and resolved_by in ("timeout", "input"):
+        recipients = broker.get_notify_recipients(token)
+        if recipients:
+            try:
+                notifier.notify_decided(
+                    graph_id=info["graph_id"],
+                    node_id=node.id,
+                    summary=info["summary"],
+                    decision=decision,
+                    resolved_by=resolved_by,
+                    comment=info.get("comment", ""),
+                    recipients=recipients,
+                )
+            except Exception as exc:  # noqa: BLE001 结果通知任何异常都不得阻断图
+                logger.warning("审批结果通知失败 node=%s: %s", node.id, exc)
     output: dict[str, Any] = {
         "mode": "human_approval",
         "decision": decision,

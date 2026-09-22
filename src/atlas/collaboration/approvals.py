@@ -34,6 +34,8 @@ class _Pending:
     card_template_id: str | None = None
     card_context: dict[str, Any] | None = None
     action_id: str | None = None
+    notify_recipients: list[str] = field(default_factory=list)
+    resolved_at: float = 0.0
 
 
 @dataclass
@@ -53,6 +55,7 @@ class ApprovalBroker:
         timeout_seconds: int,
         card_template_id: str | None = None,
         card_context: dict[str, Any] | None = None,
+        notify_recipients: list[str] | None = None,
     ) -> str:
         token = uuid.uuid4().hex
         with self._lock:
@@ -66,6 +69,7 @@ class ApprovalBroker:
                 created_at=time.time(),
                 card_template_id=card_template_id,
                 card_context=copy.deepcopy(card_context) if card_context is not None else None,
+                notify_recipients=list(notify_recipients or []),
             )
         return token
 
@@ -80,6 +84,7 @@ class ApprovalBroker:
         remaining_seconds: float,
         card_template_id: str | None = None,
         card_context: dict[str, Any] | None = None,
+        notify_recipients: list[str] | None = None,
     ) -> str:
         """恢复扫描器用：以帧内原 token 重建 pending（不生成新 token），剩余时长照扣。"""
         with self._lock:
@@ -93,6 +98,7 @@ class ApprovalBroker:
                 created_at=time.time(),
                 card_template_id=card_template_id,
                 card_context=copy.deepcopy(card_context) if card_context is not None else None,
+                notify_recipients=list(notify_recipients or []),
             )
         return token
 
@@ -122,6 +128,7 @@ class ApprovalBroker:
             pending.decision = decision
             pending.resolved_by = resolved_by
             pending.comment = comment
+            pending.resolved_at = time.time()
             if action_id is not None:
                 pending.action_id = action_id
             pending.event.set()
@@ -139,6 +146,7 @@ class ApprovalBroker:
             if pending.decision is None:
                 pending.decision = decision
                 pending.resolved_by = "timeout"
+                pending.resolved_at = time.time()
                 pending.event.set()
             return pending.decision, pending.resolved_by or "timeout"
 
@@ -176,6 +184,38 @@ class ApprovalBroker:
         with self._lock:
             tokens = [t for t, p in self._pending.items() if p.decision is None]
             return [self._public(t, self._pending[t]) for t in tokens]
+
+    def list_decided(self, limit: int = 50) -> list[dict]:
+        bounded = max(1, min(int(limit), 200))
+        with self._lock:
+            decided = [(p.resolved_at, t, p) for t, p in self._pending.items()
+                       if p.decision is not None]
+        decided.sort(key=lambda item: item[0], reverse=True)
+        return [self._decided(t, p) for _, t, p in decided[:bounded]]
+
+    def get_notify_recipients(self, token: str) -> list[str]:
+        with self._lock:
+            pending = self._pending.get(token)
+            if pending is None:
+                return []
+            return list(pending.notify_recipients)
+
+    @staticmethod
+    def _decided(token: str, pending: _Pending) -> dict:
+        result = {
+            "token": token,
+            "node_id": pending.node_id,
+            "graph_id": pending.graph_id,
+            "summary": pending.summary,
+            "approver": pending.approver,
+            "createdAt": pending.created_at,
+            "decision": pending.decision,
+            "resolvedBy": pending.resolved_by,
+            "comment": pending.comment,
+        }
+        if pending.card_template_id:
+            result["cardTemplateId"] = pending.card_template_id
+        return result
 
     @staticmethod
     def _public(token: str, pending: _Pending) -> dict:

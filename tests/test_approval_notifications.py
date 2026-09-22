@@ -59,12 +59,16 @@ class FakeMessages:
 class FakeNotifier:
     def __init__(self, exc: Exception | None = None):
         self.calls = []
+        self.decided_calls = []
         self.exc = exc
 
     def notify_pending(self, **kwargs):
         self.calls.append(kwargs)
         if self.exc is not None:
             raise self.exc
+
+    def notify_decided(self, **kwargs):
+        self.decided_calls.append(kwargs)
 
 
 class FakeIssuer:
@@ -266,3 +270,71 @@ def test_run_drops_interpolated_recipient_without_at():
     assert notifier.calls == []
     assert approval["notified"] is False
     assert "notifyError" not in approval
+
+
+# ============================ docs/37 决策结果邮件 ============================
+
+
+def test_email_notifier_decided_renders_result_without_token():
+    msgs = FakeMessages()
+    notifier = EmailApprovalNotifier(
+        msgs, "http://app.example.com", tenant_id="t1", issuer=FakeIssuer()
+    )
+    notifier.notify_decided(
+        graph_id="g1",
+        node_id="human-1",
+        summary="订单 O-1 退款审批",
+        decision="rejected",
+        resolved_by="human",
+        comment="材料不全",
+        recipients=["ops@example.com"],
+    )
+    mail = msgs.sent[0]
+    assert "审批已处理" in mail["subject"]
+    body = mail["body"]
+    assert "拒绝" in body and "人工处理" in body and "材料不全" in body
+    assert "http://app.example.com" in body
+    assert "/approvals/" not in body  # 结果邮件不含任何 token/决策链接
+
+
+def test_email_notifier_decided_truncates_long_comment():
+    msgs = FakeMessages()
+    notifier = EmailApprovalNotifier(
+        msgs, "http://app.example.com", tenant_id="t", issuer=FakeIssuer()
+    )
+    notifier.notify_decided(
+        graph_id="g", node_id="n", summary="s", decision="approved",
+        resolved_by="timeout", comment="", recipients=["a@example.com"],
+    )
+    body = msgs.sent[0]["body"]
+    assert "同意" in body and "超时自动处理" in body
+    assert "处理备注" not in body
+
+    notifier.notify_decided(
+        graph_id="g", node_id="n", summary="s", decision="approved",
+        resolved_by="input", comment="X" * 500, recipients=["a@example.com"],
+    )
+    assert msgs.sent[1]["body"].count("X") == 200
+
+
+def test_preset_input_triggers_decided_notification_once():
+    notifier = FakeNotifier()
+    _run_and_capture_approval(
+        _approval_graph(notify_emails=["ops@example.com"]), notifier
+    )
+    assert len(notifier.decided_calls) == 1
+    call = notifier.decided_calls[0]
+    assert call["decision"] == "approved"
+    assert call["resolved_by"] == "input"
+    assert call["recipients"] == ["ops@example.com"]
+
+
+def test_decided_notification_failure_does_not_block_graph():
+    class FailingNotifier(FakeNotifier):
+        def notify_decided(self, **kwargs):
+            raise RuntimeError("mailer down")
+
+    result, _ = _run_and_capture_approval(
+        _approval_graph(notify_emails=["ops@example.com"]), FailingNotifier()
+    )
+    assert result["status"] == "completed"
