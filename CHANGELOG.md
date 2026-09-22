@@ -4,7 +4,7 @@
 
 ## [Unreleased]
 
-### feat：真实接入交付批 T2–T6 全部落码收口（docs/35，2026-09-22，dev 未 push）
+### feat：真实接入交付批 T2–T6 全部落码收口（docs/35，2026-09-22；已 push origin/dev、待开 PR 合 main）
 
 承接 docs/34 §五 P0/P1，五包均为缓做项部分取回、**不解除** D11/D20/D22/D24：
 
@@ -21,7 +21,7 @@
 - **T1 治理完成**：docs/34 对外交付层小批（LICENSE/pre-commit/SMTP//ready//metrics/Caddy/oxlint 清零，7 commits）经 **PR #53 合 main**（merge `c1fe886`，CI gitleaks/Backend pytest/Frontend vitest+build 三道门全绿）。
 - 新增 [docs/35-真实接入交付批契约设计.md](docs/35-真实接入交付批契约设计.md)：承接 docs/34 §五 P0/P1，工程内可闭环五包一次立项，**均部分取回缓做项、不解除**——T2 审批挂起邮件通知（D20 邮件子集，human_approval 可选 notifyEmails、notifier fail-safe）；T3 webhook 渠道（D24 子集，单 URL POST JSON 过 SSRF egress、WEBHOOK_SEND_FAILED）；T4 generic OAuth2 连接管理 v1（D22 子集，连接 CRUD/授权码流程/HMAC state CSRF/token AES-GCM 信封/刷新/连接测试/迁移 014/9 端点/连接管理 UI/无副作用回调静态页，平台无关、不写死真实平台、不做真实业务 API 联调）；T5 Grafana/Prometheus provisioning 样例（D11 子集，compose observability profile，纯配置零新 Python 依赖）；T6 审计日志 ring+PG（迁移 013）+写操作中间件+jsonl 导出（P1 #8，administer，不记请求体/凭据，reset 不清）。含数据模型、REST、前端、测试矩阵、安全非目标、九步原子序。docs/08/14/00/handoff 同步立项。
 
-### docs：MVP 上线就绪 2026-09-22 复审（docs/34）+ LICENSE/pre-commit 交付层小批
+### docs：MVP 上线就绪 2026-09-22 复审（docs/34）+ LICENSE/pre-commit 交付层小批（已随 PR #53 合 main，merge `c1fe886`）
 
 - 新增 [docs/34-MVP上线就绪评审-2026-09-22复审.md](docs/34-MVP上线就绪评审-2026-09-22复审.md)：docs/29 初评后 P0 三批（持久化 PR #46 / 生产认证 PR #47 / 安全准入 PR #48）+ docs/33 影子·Trace·静默值班·i18n + 整栈 PG 装配修复（PR #52）全部落码后的第二次项目级判定。双口径结论：陪同演示/内测试用的技术验证 MVP **达到**且更扎实；客户自助接真实店铺的生产 MVP **未达到**——阻断 #1/#2/#3 纯逻辑子集已解除（compose 已 PG、scrypt+会话 TTL、SSRF/AES-256-GCM/SQL guard/重试熔断），阻断 #4（TLS/反代/CD/LICENSE）、#5（零真实客户数据）、#3 真实渠道投递（OAuth2/SMTP/IM/webhook）仍缺。含实测证据表、测试基线（后端 collect 1084 / 前端 555）、分场景建议、P0/P1 最小必做清单。
 - 交付层小批（工程内可闭环，零新依赖，D10b/D11/D24 部分取回、均不解除缓做）：
@@ -36,7 +36,7 @@
 
 
 
-### fix：整栈 PG 装配缺口——补 PgUserStore.bind_session_store、U269 转正（2026-09-22，`b2ac85d`；dev 未 push）
+### fix：整栈 PG 装配缺口——补 PgUserStore.bind_session_store、U269 转正（2026-09-22，`b2ac85d`；已随 PR #52 合 main，merge `a799fa6`）
 
 - 解除 docs/29 登记的具体装配缺口：`src/atlas/iam/deps.py`:39 模块级无条件调用 `user_store.bind_session_store(session_store)`，内存版 `UserStore` 有此方法、PG 版 `PgUserStore` 缺，导致 `ATLAS_STORAGE_BACKEND=pg` 时 import `atlas.api.main` 装配期抛 `AttributeError: 'PgUserStore' object has no attribute 'bind_session_store'`、整栈 PG uvicorn 不可启动、U269 同因阻断（PG 直连 integration 绕过 deps 整栈装配，故此前未暴露）。
 - 修法：为 `src/atlas/storage/pg.py` 的 `PgUserStore` 补与内存版同构的显式 no-op `bind_session_store`——PG 档会话吊销已在 `update`/`set_password` 内经 `PgBackend.session_store()` 单例现取（同一 `iam_sessions` 表），会话 PG 化由 `PgSessionStore` 承担（docs/30 §4），不重复绑定；不在 deps 加 backend 分叉、不把会话进程内化。
