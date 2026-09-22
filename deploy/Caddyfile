@@ -1,0 +1,34 @@
+# Atlas TLS 反向代理样例（docs/34 §五 P1；D10b 进程内子集）
+#
+# Caddy 2 配置：终结 TLS（填域名后自动申请/续期 Let's Encrypt 证书）、
+# gzip 压缩、把 /metrics 限制在监控网段，其余请求反代到 atlas:8000。
+#
+# 启用：
+#   1. 把下面站点地址的 atlas.example.com 改成你的真实域名（DNS 先指向本机）；
+#      本地无域名联调时用 ":80"（仅 HTTP，不申请证书）。
+#   2. docker compose --profile edge up -d
+#
+# 生产注意：
+#   - 启用 edge profile 后，建议把 docker-compose.yml 里 atlas 的 "8000:8000"
+#     端口映射去掉（只让 Caddy 暴露 80/443），避免应用端口绕过 TLS 直连。
+#   - /metrics 无鉴权（Prometheus pull 约定），靠下面的 remote_ip 网段白名单
+#     与网络层隔离；请把 10.0.0.0/8 换成你的监控网段。
+
+{
+	# 关闭管理 API（默认监听本机 2019，容器内不需要）
+	admin off
+}
+
+atlas.example.com {
+	encode gzip
+
+	# /metrics 仅允许监控网段与回环，其余来源 404
+	@metrics_blocked {
+		path /metrics
+		not remote_ip 10.0.0.0/8 127.0.0.1/32
+	}
+	respond @metrics_blocked "Not Found" 404
+
+	# 其余所有请求（含 /api/health、/api/ready、编辑器、SSE）透传
+	reverse_proxy atlas:8000
+}

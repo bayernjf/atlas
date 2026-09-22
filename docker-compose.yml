@@ -6,6 +6,11 @@
 #   curl -X POST http://localhost:8000/api/demo/reset
 # 数据持久化在 atlas-pgdata 卷；备份/恢复见 scripts/ops/backup.sh、restore.sh。
 # 接真实 LLM：在 .env 或下方 environment 配 LITELLM_MODEL 与供应商 key（见 .env.example）。
+#
+# TLS 反代（可选，docs/34 P1 / deploy/README.md）：
+#   docker compose --profile edge up -d --build
+# 起 Caddy（deploy/Caddyfile，填域名后自动 HTTPS）；生产请把下方 atlas 的
+# "8000:8000" 改为 "127.0.0.1:8000:8000"，只让 Caddy 暴露 80/443。
 
 services:
   db:
@@ -36,7 +41,32 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      # 就绪探针：PG 档真实 SELECT 1，失败返 503（docs/34 P1）
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/ready', timeout=3).status == 200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped
+
+  # 可选 TLS 反代（--profile edge 才启动）；配置见 deploy/Caddyfile
+  caddy:
+    image: caddy:2
+    profiles: ["edge"]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      atlas:
+        condition: service_started
     restart: unless-stopped
 
 volumes:
   atlas-pgdata:
+  caddy-data:
+  caddy-config:
