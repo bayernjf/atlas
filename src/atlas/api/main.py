@@ -63,6 +63,8 @@ from atlas.memory.adapter import MemoryHarnessAdapter
 from atlas.memory.models import MemoryValidationError
 from atlas.message.adapter import MessageHarnessAdapter
 from atlas.monitoring import RUN_RING_SIZE, extract_business, extract_node_results
+from atlas.observability.health import check_ready
+from atlas.observability.metrics_export import render_prometheus
 from atlas.monitoring.silences import OnCallEmpty, current_assignee, is_silence_active
 from atlas.recording import (
     RecordingCreateRequest,
@@ -321,7 +323,32 @@ class DemoLoginRequest(BaseModel):
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
+    """存活探针：进程在跑即 200（不检查依赖）。"""
     return {"status": "ok"}
+
+
+@app.get("/api/ready")
+def ready() -> JSONResponse:
+    """就绪探针：依赖（PG）可用才 200，否则 503，供 compose healthcheck/反代摘流。"""
+    ok, detail = check_ready()
+    detail = {"status": "ready" if ok else "not_ready", **detail}
+    return JSONResponse(detail, status_code=200 if ok else 503)
+
+
+@app.get("/metrics")
+def prometheus_metrics() -> Response:
+    """Prometheus 文本指标拉取端点（无鉴权，部署时由反代/网络层限制访问，见 deploy/）。
+
+    只暴露进程级与按租户聚合的计数/分位数；正式 OTel/Grafana 栈缓做 docs/14 D11。
+    """
+    snapshots: list[tuple[str, dict[str, Any]]] = []
+    for tenant_id in tenant_registry.all_tenant_ids():
+        try:
+            snapshots.append((tenant_id, tenant_registry.get(tenant_id).monitoring.snapshot_metrics()))
+        except Exception as exc:  # 指标端点绝不因单租户快照失败而 500
+            logger.warning("metrics snapshot failed for %s: %s", tenant_id, exc)
+    body = render_prometheus(storage_backend=STORAGE_BACKEND, tenant_snapshots=snapshots)
+    return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")
 
 
 class LoginRequest(BaseModel):

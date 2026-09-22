@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from atlas.collaboration.cancellations import RunCancellationBroker
 from atlas.coordination import TaskStore
 from atlas.message.service import MessageService
+from atlas.message.smtp import get_smtp_sender
 from atlas.recording import ReportStore, ShadowStore
 from atlas.routing import RoutingStore
 from atlas.storage.base import (
@@ -74,6 +75,11 @@ class TenantRegistry:
                 self._tenants[tenant_id] = services
             return services
 
+    def all_tenant_ids(self) -> list[str]:
+        """已装配（曾被访问过）的租户 id 快照；不触发惰性创建（/metrics 用）。"""
+        with self._lock:
+            return list(self._tenants.keys())
+
     @staticmethod
     def _create_services(tenant_id: str) -> TenantServices:
         # M5a：八个进程内 store 统一自 storage.memory 构造（GraphStore/FeedbackStore
@@ -90,7 +96,7 @@ class TenantRegistry:
                 graph_store=backend.graph_store(tenant_id),
                 recording_store=backend.recording_store(tenant_id),
                 feedback_store=backend.feedback_store(tenant_id),
-                message_service=MessageService(),
+                message_service=MessageService(email_sender=get_smtp_sender()),
                 approval_broker=ApprovalBroker(),
                 debug_broker=DebuggerBroker(),
                 cancellation_broker=RunCancellationBroker(),
@@ -106,7 +112,7 @@ class TenantRegistry:
             graph_store=GraphStore(),
             recording_store=RecordingStore(),
             feedback_store=FeedbackStore(),
-            message_service=MessageService(),
+            message_service=MessageService(email_sender=get_smtp_sender()),
             approval_broker=ApprovalBroker(),
             debug_broker=DebuggerBroker(),
             cancellation_broker=RunCancellationBroker(),

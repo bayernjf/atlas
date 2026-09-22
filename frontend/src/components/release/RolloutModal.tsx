@@ -75,10 +75,20 @@ export function RolloutModal({ open, graphId, tenant, onClose }: Props) {
   )
   const [lastResolved, setLastResolved] = useState<number | null | undefined>(undefined)
 
+  // 打开弹窗时重置上一轮状态（渲染期按 prop 变化重置，避免 effect 内同步 setState）
+  const [prevOpen, setPrevOpen] = useState(open)
+  if (open !== prevOpen) {
+    setPrevOpen(open)
+    if (open) {
+      setLoading(true)
+      setError(null)
+      setLastResolved(undefined)
+    }
+  }
+
   const refresh = useCallback(async () => {
     if (!graphId) return
-    setLoading(true)
-    setError(null)
+    // 加载态由打开弹窗时的渲染期重置与「刷新」按钮的事件处理负责，此处不再同步置位
     try {
       const [state, versionList] = await Promise.all([
         getRollout(graphId),
@@ -95,10 +105,9 @@ export function RolloutModal({ open, graphId, tenant, onClose }: Props) {
   }, [graphId, tenant])
 
   useEffect(() => {
-    if (open) {
-      setLastResolved(undefined)
-      void refresh()
-    }
+    // 数据获取 effect（fetch-on-mount）：refresh 内 setState 均在 await 之后，无同步级联渲染
+    // oxlint-disable-next-line react/set-state-in-effect
+    if (open) void refresh()
   }, [open, refresh])
 
   if (!draft) {
@@ -226,7 +235,7 @@ export function RolloutModal({ open, graphId, tenant, onClose }: Props) {
           >
             回滚到 stable
           </Button>
-          <Button loading={loading} onClick={() => void refresh()}>刷新</Button>
+          <Button loading={loading} onClick={() => { setLoading(true); void refresh() }}>刷新</Button>
         </Space>
 
         <div>

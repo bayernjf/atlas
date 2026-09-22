@@ -1,8 +1,9 @@
 """进程内消息服务（04 §4.8 权威契约 / 06 §6.7 运行时）。
 
-v1 只记录、不真实投递：send 返回消息记录并保存在进程内列表，重启清空、
-reset 清空，GET /api/demo/messages 陪同查看。SMTP/IM/短信/webhook 真实
-渠道缓做 docs/14 D24。
+默认只记录、不真实投递：send 返回消息记录并保存在进程内列表，重启清空、
+reset 清空，GET /api/demo/messages 陪同查看。channel=email 且注入了
+SmtpSender（ATLAS_SMTP_HOST 已配置）时真实发信，记录标 delivered="smtp"；
+IM/短信/webhook 渠道仍缓做 docs/14 D24。
 """
 
 from __future__ import annotations
@@ -43,7 +44,10 @@ def _normalize_recipients(to: object) -> list[str]:
 
 
 class MessageService:
-    def __init__(self) -> None:
+    def __init__(self, email_sender: object | None = None) -> None:
+        # email_sender 需实现 send(to: list[str], subject: str, body: str)，
+        # 生产为 message.smtp.SmtpSender；None 时 email 也只记录不投递（demo）。
+        self._email_sender = email_sender
         self._messages: list[dict[str, object]] = []
         self.last_send: dict[str, object] | None = None
 
@@ -55,14 +59,23 @@ class MessageService:
         if channel_value == "email" and any("@" not in address for address in recipients):
             raise MessageSendError("INVALID_PARAMETER", "email 渠道的收件地址必须包含 @")
 
-        record = {
+        record: dict[str, object] = {
             "id": str(uuid.uuid4()),
             "channel": channel_value,
             "to": recipients,
             "subject": subject_value,
             "body": body_value,
             "sent_at": datetime.now(timezone.utc).isoformat(),
+            "delivered": "in_process",
         }
+        if channel_value == "email" and self._email_sender is not None:
+            try:
+                self._email_sender.send(recipients, subject_value, body_value)
+            except Exception as exc:
+                # 投递失败不写记录（非幂等写能力，失败须显式），折算统一错误码
+                code = getattr(exc, "code", "SMTP_SEND_FAILED")
+                raise MessageSendError("SMTP_SEND_FAILED", f"邮件投递失败：{exc}") from exc
+            record["delivered"] = "smtp"
         self._messages.append(record)
         self.last_send = {k: record[k] for k in ("id", "channel", "to", "sent_at")}
         return record
