@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### docs：OpenAPI HTTP Basic 凭证子集批 docs-only 立项（docs/46，2026-09-23；无 ADR）
+
+- parser 拟收录 `type:http,scheme:basic`（kind=basic）；PUT credentials basic 值拟为 `{username,password}`（信封明文 JSON），适配器渲染 `Authorization: Basic base64(u:p)`；前端双输入。
+- 零新依赖、零迁移、零新 REST/错误码；digest/cookie/oauth2/连接测试/凭证轮换仍缓做，D22 部分取回不解除。
+
 ### feat：循环 foreach 批落码收口（docs/45，2026-09-23；dev、未 push；无 ADR）
 
 - loop 节点 `mode=foreach` 落码（D16 主体取回；efe5de4→1e79121→01296d5）：itemsExpression 首轮求值一次冻结（≤100），串行逐项暴露 `{{loop-x.item}}/index/results`，collectTarget 回边按序聚合 results（break 网关补在途结果）；exitReason 增 `completed/empty/expression_error/items_too_large`；DSL 静态输出键按 mode 放宽。
