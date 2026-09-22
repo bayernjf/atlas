@@ -4,7 +4,15 @@
 
 ## [Unreleased]
 
-### feat：影子模式/Trace 钻取/告警静默升级值班/i18n 续批打包落码收口（2026-09-21，docs/33；dev 未 push）
+### fix：整栈 PG 装配缺口——补 PgUserStore.bind_session_store、U269 转正（2026-09-22，`b2ac85d`；dev 未 push）
+
+- 解除 docs/29 登记的具体装配缺口：`src/atlas/iam/deps.py`:39 模块级无条件调用 `user_store.bind_session_store(session_store)`，内存版 `UserStore` 有此方法、PG 版 `PgUserStore` 缺，导致 `ATLAS_STORAGE_BACKEND=pg` 时 import `atlas.api.main` 装配期抛 `AttributeError: 'PgUserStore' object has no attribute 'bind_session_store'`、整栈 PG uvicorn 不可启动、U269 同因阻断（PG 直连 integration 绕过 deps 整栈装配，故此前未暴露）。
+- 修法：为 `src/atlas/storage/pg.py` 的 `PgUserStore` 补与内存版同构的显式 no-op `bind_session_store`——PG 档会话吊销已在 `update`/`set_password` 内经 `PgBackend.session_store()` 单例现取（同一 `iam_sessions` 表），会话 PG 化由 `PgSessionStore` 承担（docs/30 §4），不重复绑定；不在 deps 加 backend 分叉、不把会话进程内化。
+- 测试：U269（`tests/test_shadow_mode.py`）skipif 补 `ATLAS_STORAGE_BACKEND=='pg'` 条件，内存/PG 直连档正确 skip、仅整栈 PG 档执行。
+- 验证：整栈 PG uvicorn 真实启动 `GET /api/health` **HTTP 200 `{"status":"ok"}`**、无 AttributeError；U269 整栈 PG 档 **PASSED**；后端内存档 **1051 passed/34 skipped**（与基线一致、零回归）；PG 直连套件（不设 backend，7 文件）**56 passed/1 skipped**（U269 正确 skip）。前端零改动。
+- 边界：无新依赖/无新端点/无迁移/不新增 ADR/不解除任何缓做 D 项；仅解除阻断 #1 之下这处具体装配缺口，docs/29 六项阻断总评不变。
+
+### feat：影子模式/Trace 钻取/告警静默升级值班/i18n 续批打包落码收口（2026-09-21，docs/33；已随 PR #51 合 main merge `f0999f3`）
 
 - 承接同题立项条，12 原子序全部落码，零新依赖、不新增 ADR、**不解除 D12/D26/D28**（仅进程内 v1 部分取回）。立项 `9fcf40b`。
 - 批 1 i18n 续批（M12）：editor 两原子（框架/画布/左栏 `97d61dc`/`ad12f98`、属性面板/调试台 `bf9cdb6`/`888daf8`）、Monitoring（`0c299ef`/`4bf7c7f`）、Memory（`3445576`/`f11dad5`）三 namespace zh-CN 抽取，en-US 各 json 仍空 `{}`，技术专名与后端中文 detail 不 key 化，i18n.test.ts 静态/插值键校验；仍不引 i18next。
@@ -13,7 +21,7 @@
 - 批 4 D28 静默/惰性升级/值班（后端 `00bba8c`/前端 `1804255`，U285–U299，U299 为 PG 集成）：`monitoring/silences.py` OpsStore——静默 `sil-N`（rule/graph 可空、duration 1-10080 分钟、reason≤200、惰性过期无定时器、上限 100、命中只 suppressed_count+1 不建/合/升级；POST/GET/DELETE）、未确认惰性升级（RuleConfig.escalation_ack_minutes 1-10080、缺省不升级、显式 0/非法 422、仅 open warning、读时按 first_seen 幂等评估）、值班 OnCallSchedule（members 1-20 去重保序、index 取模、空表 rotate 409、仅告警新建指派 assignee；GET/PUT/rotate）；GET read/写 administer/viewer 写 403；escalated_at/assignee/静默/值班进程内不 PG 化（PG 读回 assignee 走 map、升级幂等重评，reset 清空）。前端 OnCallBar、SilenceManager、规则卡升级开关、告警值班列/红色已升级 Tag。
 - 缺陷修复 `90b942a`：通过告警行 Popover 建静默后端 201 但折叠 SilenceManager 不刷新（仅挂载拉一次），改为 reloadKey 驱动即时联动；d28_smoke 内存档扩充 trace/静默/升级/值班/权限断言 `8b29396`。
 - 门：后端内存档 **1051 passed/34 skipped**；PG 直连 integration（ATLAS_RUN_INTEGRATION=1＋DATABASE_URL，不设 ATLAS_STORAGE_BACKEND）**43 passed**（含 U299、trace U278、M11 pgvector）；前端 **555 passed/2 skipped/43 文件**、tsc+vite build ✓、oxlint **0 error/2 既有 warning**（ReleaseModal/RolloutModal，新代码零新增）；内存档 d26/m11/d28 三 smoke 全过；真实浏览器冒烟过 i18n 中文/值班轮换/静默闭环/未确认升级/适配器埋点表/Trace 三级瀑布/影子卡，4 截图 `docs/assets/d28-*.png`。
-- 已知既有阻断（非本包回归，登记 docs/29）：整栈 PG uvicorn 与 U269 受 `PgUserStore.bind_session_store` 缺失阻断（iam/deps.py:39 无条件调用、该方法仅内存 UserStore 实现），本包未碰 iam，PG 行为由直连 integration 覆盖，修复随生产化 P0-1。
+- 已知既有阻断（非本包回归，登记 docs/29）：整栈 PG uvicorn 与 U269 受 `PgUserStore.bind_session_store` 缺失阻断（iam/deps.py:39 无条件调用、该方法仅内存 UserStore 实现），本包未碰 iam，PG 行为由直连 integration 覆盖，修复随生产化 P0-1。**【2026-09-22 更新：该缺口已由 `b2ac85d` 修复，U269 转整栈 PG 正式、整栈 PG uvicorn `/api/health` 200，见上方 fix 条与 docs/29 解决注记。】**
 - 非目标（仍缓做、触发条件不变）：i18next/切换 UI/en-US 翻译/AntD locale；影子线上自动旁路/SSE/PG 化/多租户共享/报表趋势；OTel/Prometheus/Grafana（随 D11）、外部告警出口（随 D24）、自动轮换/排班表、静默值班升级 PG 化与多实例、长保留时序报表。打包二（LICENSE/Prometheus/.pre-commit）用户未选、不在本包。
 
 ### docs：影子模式/Trace 钻取/告警静默升级值班/i18n 续批打包立项（2026-09-21，docs/33；docs-only 未落码）

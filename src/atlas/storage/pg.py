@@ -316,6 +316,16 @@ class PgUserStore:
         self._engine = engine
         self._backend = backend
 
+    def bind_session_store(self, session_store: Any) -> None:
+        """与内存档 ``UserStore`` 装配接口同构（``iam/deps.py`` 模块级统一调用）。
+
+        PG 档会话吊销在 :meth:`update`/:meth:`set_password` 内经由
+        ``PgBackend.session_store()`` 单例现取（操作同一张 ``iam_sessions`` 表），
+        无需像内存档那样外部持有会话存储引用，故此处显式 no-op。会话 PG 化本身由
+        :class:`PgSessionStore` 承担（docs/30 §4），不在此重复绑定。
+        """
+        return None
+
     def _row_to_account(self, row: Any) -> "UserAccount":
         from atlas.iam.accounts import UserAccount
 
