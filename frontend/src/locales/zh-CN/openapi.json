@@ -5,7 +5,8 @@
     "back": "返回工作台",
     "preview": "预览",
     "import": "导入为工具",
-    "delete": "删除"
+    "delete": "删除",
+    "configure": "配置密钥"
   },
   "source": {
     "pasteTab": "粘贴 JSON",
@@ -28,6 +29,21 @@
       "skipReason": "跳过原因"
     }
   },
+  "credentials": {
+    "title": "配置鉴权密钥",
+    "hint": "密钥经信封加密后保存，仅在调用时解密；留空的字段不会保存，清空已有值可删除该密钥。",
+    "label": {
+      "header": "{{name}}（请求头）",
+      "query": "{{name}}（查询参数）",
+      "bearer": "{{name}}：Bearer 令牌"
+    },
+    "placeholder": "请输入密钥",
+    "save": "保存",
+    "sectionTitle": "鉴权密钥（可选）",
+    "sectionHint": "该文档声明了鉴权要求；可现在填写，也可导入后通过「配置密钥」补填。",
+    "configured": "已配置 {{configured}}/{{total}}",
+    "none": "未配置密钥"
+  },
   "imports": {
     "title": "已导入的 API",
     "empty": "尚未导入任何 API 规格",
@@ -35,6 +51,7 @@
       "title": "名称",
       "baseUrl": "Base URL",
       "operations": "工具数",
+      "auth": "鉴权",
       "createdAt": "导入时间",
       "actions": "操作"
     },
@@ -59,6 +76,7 @@
   },
   "message": {
     "importSuccess": "导入成功：{{title}}，已生成 {{count}} 个工具",
-    "deleted": "导入规格已删除"
+    "deleted": "导入规格已删除",
+    "credentialsSaved": "密钥配置已保存"
   }
 }

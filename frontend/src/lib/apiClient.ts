@@ -1720,6 +1720,13 @@ export type OpenApiSource = {
   url?: string
 }
 
+export type SecurityScheme = {
+  name: string
+  kind: 'api_key' | 'bearer'
+  location: 'header' | 'query' | null
+  param: string
+}
+
 export type OperationDescriptor = {
   name: string
   method: string
@@ -1730,6 +1737,7 @@ export type OperationDescriptor = {
   idempotent: boolean
   locations: Record<string, string>
   input_schema: JsonSchema
+  security: string[][]
   skipped: boolean
   skip_reason?: string | null
 }
@@ -1738,6 +1746,7 @@ export type OpenApiPreview = {
   title: string
   base_url: string
   operations: OperationDescriptor[]
+  security_schemes: SecurityScheme[]
   imported_count: number
   skipped_count: number
 }
@@ -1748,14 +1757,32 @@ export type ImportedSpec = {
   base_url: string
   created_at: string
   operations: OperationDescriptor[]
+  security_schemes: Record<string, SecurityScheme>
+  credential_envelopes: Record<string, string>
 }
 
 export async function previewOpenApi(source: OpenApiSource): Promise<OpenApiPreview> {
   return request('/api/openapi/preview', { method: 'POST', body: JSON.stringify(source) })
 }
 
-export async function importOpenApi(source: OpenApiSource): Promise<ImportedSpec> {
-  return request('/api/openapi/imports', { method: 'POST', body: JSON.stringify(source) })
+export async function importOpenApi(
+  source: OpenApiSource,
+  credentials?: Record<string, string>,
+): Promise<ImportedSpec> {
+  return request('/api/openapi/imports', {
+    method: 'POST',
+    body: JSON.stringify(credentials ? { ...source, credentials } : source),
+  })
+}
+
+export async function putOpenApiCredentials(
+  specId: string,
+  credentials: Record<string, string>,
+): Promise<{ configured: string[] }> {
+  return request(`/api/openapi/imports/${encodeURIComponent(specId)}/credentials`, {
+    method: 'PUT',
+    body: JSON.stringify({ credentials }),
+  })
 }
 
 export async function listOpenApiImports(): Promise<ImportedSpec[]> {

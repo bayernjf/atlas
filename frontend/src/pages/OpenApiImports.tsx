@@ -5,6 +5,7 @@ import {
   Card,
   Input,
   Layout,
+  Modal,
   Popconfirm,
   Space,
   Table,
@@ -20,9 +21,11 @@ import {
   importOpenApi,
   listOpenApiImports,
   previewOpenApi,
+  putOpenApiCredentials,
   type ImportedSpec,
   type OpenApiPreview,
   type OperationDescriptor,
+  type SecurityScheme,
 } from '../lib/apiClient'
 import { roleCan, type Principal } from '../lib/auth'
 import { formatDateTime } from '../lib/connections'
@@ -64,6 +67,52 @@ function permissionTag(permission: string, t: (key: string) => string) {
   )
 }
 
+function schemeLabel(
+  scheme: SecurityScheme,
+  t: (key: string, params?: Record<string, unknown>) => string,
+) {
+  if (scheme.kind === 'bearer') {
+    return t('credentials.label.bearer', { name: scheme.name })
+  }
+  const kind = scheme.location === 'query' ? 'query' : 'header'
+  return t(`credentials.label.${kind}`, { name: scheme.param })
+}
+
+function CredentialFields({
+  schemes,
+  values,
+  t,
+  onChange,
+}: {
+  schemes: SecurityScheme[]
+  values: Record<string, string>
+  t: (key: string, params?: Record<string, unknown>) => string
+  onChange: (name: string, value: string) => void
+}) {
+  if (schemes.length === 0) return null
+  return (
+    <Space orientation="vertical" size="middle" style={{ width: '100%', marginTop: 16 }}>
+      <div>
+        <Typography.Text strong>{t('credentials.sectionTitle')}</Typography.Text>
+        <div>
+          <Typography.Text type="secondary">{t('credentials.sectionHint')}</Typography.Text>
+        </div>
+      </div>
+      {schemes.map((scheme) => (
+        <div key={scheme.name}>
+          <Typography.Text>{schemeLabel(scheme, t)}</Typography.Text>
+          <Input.Password
+            value={values[scheme.name] ?? ''}
+            placeholder={t('credentials.placeholder')}
+            autoComplete="new-password"
+            onChange={(event) => onChange(scheme.name, event.target.value)}
+          />
+        </div>
+      ))}
+    </Space>
+  )
+}
+
 export function OpenApiImports({ principal, onLogout, onBack }: OpenApiImportsProps) {
   const { t } = useTranslation('openapi')
   const canOperate = roleCan(principal.role, 'operate')
@@ -76,6 +125,11 @@ export function OpenApiImports({ principal, onLogout, onBack }: OpenApiImportsPr
   const [previewError, setPreviewError] = useState('')
   const [previewing, setPreviewing] = useState(false)
   const [importing, setImporting] = useState(false)
+  const [credentialDraft, setCredentialDraft] = useState<Record<string, string>>({})
+
+  const [credentialSpec, setCredentialSpec] = useState<ImportedSpec | null>(null)
+  const [credentialValues, setCredentialValues] = useState<Record<string, string>>({})
+  const [savingCredentials, setSavingCredentials] = useState(false)
 
   const [items, setItems] = useState<ImportedSpec[]>([])
   const [loading, setLoading] = useState(true)
@@ -110,6 +164,7 @@ export function OpenApiImports({ principal, onLogout, onBack }: OpenApiImportsPr
     setPreviewing(true)
     try {
       const source = sourceTab === 'paste' ? { content } : { url: url.trim() }
+      setCredentialDraft({})
       setPreview(await previewOpenApi(source))
     } catch (error) {
       setPreview(null)
@@ -124,7 +179,13 @@ export function OpenApiImports({ principal, onLogout, onBack }: OpenApiImportsPr
     setImporting(true)
     try {
       const source = sourceTab === 'paste' ? { content } : { url: url.trim() }
-      const imported = await importOpenApi(source)
+      const credentials = Object.fromEntries(
+        Object.entries(credentialDraft).filter(([, value]) => value.trim()),
+      )
+      const imported = await importOpenApi(
+        source,
+        Object.keys(credentials).length > 0 ? credentials : undefined,
+      )
       antdMessage.success(
         t('message.importSuccess', { title: imported.title, count: imported.operations.length }),
       )
@@ -145,6 +206,29 @@ export function OpenApiImports({ principal, onLogout, onBack }: OpenApiImportsPr
       void refresh()
     } catch (error) {
       antdMessage.error(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const openCredentials = (spec: ImportedSpec) => {
+    setCredentialSpec(spec)
+    setCredentialValues({})
+  }
+
+  const handleSaveCredentials = async () => {
+    if (!credentialSpec) return
+    setSavingCredentials(true)
+    try {
+      const credentials = Object.fromEntries(
+        Object.entries(credentialValues).map(([name, value]) => [name, value.trim()]),
+      )
+      await putOpenApiCredentials(credentialSpec.spec_id, credentials)
+      antdMessage.success(t('message.credentialsSaved'))
+      setCredentialSpec(null)
+      void refresh()
+    } catch (error) {
+      antdMessage.error(error instanceof Error ? error.message : String(error))
+    } finally {
+      setSavingCredentials(false)
     }
   }
 
@@ -203,6 +287,37 @@ export function OpenApiImports({ principal, onLogout, onBack }: OpenApiImportsPr
       render: (ops: OperationDescriptor[]) => ops.length,
     },
     {
+      title: t('imports.column.auth'),
+      key: 'auth',
+      width: 220,
+      render: (_, record) => {
+        const schemes = Object.values(record.security_schemes)
+        if (schemes.length === 0) return <Tag>{record.operations.length ? '-' : ''}</Tag>
+        const configured = schemes.filter(
+          (scheme) => scheme.name in record.credential_envelopes,
+        ).length
+        return (
+          <Space orientation="vertical" size={4}>
+            <Space size={4} wrap>
+              {schemes.map((scheme) => (
+                <Tag
+                  key={scheme.name}
+                  color={scheme.name in record.credential_envelopes ? 'green' : 'default'}
+                >
+                  {scheme.name}
+                </Tag>
+              ))}
+            </Space>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {configured === 0
+                ? t('credentials.none')
+                : t('credentials.configured', { configured, total: schemes.length })}
+            </Typography.Text>
+          </Space>
+        )
+      },
+    },
+    {
       title: t('imports.column.createdAt'),
       dataIndex: 'created_at',
       width: 190,
@@ -211,21 +326,26 @@ export function OpenApiImports({ principal, onLogout, onBack }: OpenApiImportsPr
     {
       title: t('imports.column.actions'),
       key: 'actions',
-      width: 90,
+      width: 180,
       render: (_, record) =>
         canAdmin ? (
-          <Popconfirm
-            title={t('delete.confirmTitle')}
-            description={t('delete.confirm', { title: record.title })}
-            okText={t('button.delete')}
-            okButtonProps={{ danger: true }}
-            cancelText={t('common:button.cancel')}
-            onConfirm={() => handleDelete(record)}
-          >
-            <Button danger size="small">
-              {t('button.delete')}
+          <Space>
+            <Button size="small" onClick={() => openCredentials(record)}>
+              {t('button.configure')}
             </Button>
-          </Popconfirm>
+            <Popconfirm
+              title={t('delete.confirmTitle')}
+              description={t('delete.confirm', { title: record.title })}
+              okText={t('button.delete')}
+              okButtonProps={{ danger: true }}
+              cancelText={t('common:button.cancel')}
+              onConfirm={() => handleDelete(record)}
+            >
+              <Button danger size="small">
+                {t('button.delete')}
+              </Button>
+            </Popconfirm>
+          </Space>
         ) : null,
     },
   ]
@@ -317,6 +437,14 @@ export function OpenApiImports({ principal, onLogout, onBack }: OpenApiImportsPr
                 dataSource={preview.operations}
                 rowClassName={(record) => (record.skipped ? 'openapi-row-skipped' : '')}
               />
+              <CredentialFields
+                schemes={preview.security_schemes}
+                values={credentialDraft}
+                t={t}
+                onChange={(name, value) =>
+                  setCredentialDraft((current) => ({ ...current, [name]: value }))
+                }
+              />
             </Card>
           )}
 
@@ -347,6 +475,30 @@ export function OpenApiImports({ principal, onLogout, onBack }: OpenApiImportsPr
           </Card>
         </Space>
       </Content>
+
+      <Modal
+        title={t('credentials.title')}
+        open={credentialSpec !== null}
+        confirmLoading={savingCredentials}
+        okText={t('credentials.save')}
+        cancelText={t('common:button.cancel')}
+        onOk={handleSaveCredentials}
+        onCancel={() => setCredentialSpec(null)}
+      >
+        {credentialSpec && (
+          <>
+            <Alert type="info" showIcon style={{ marginBottom: 12 }} message={t('credentials.hint')} />
+            <CredentialFields
+              schemes={Object.values(credentialSpec.security_schemes)}
+              values={credentialValues}
+              t={t}
+              onChange={(name, value) =>
+                setCredentialValues((current) => ({ ...current, [name]: value }))
+              }
+            />
+          </>
+        )}
+      </Modal>
     </Layout>
   )
 }

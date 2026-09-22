@@ -5,6 +5,7 @@ import {
   importOpenApi,
   listOpenApiImports,
   previewOpenApi,
+  putOpenApiCredentials,
   type ImportedSpec,
   type OpenApiPreview,
 } from '../apiClient'
@@ -44,6 +45,7 @@ const preview: OpenApiPreview = {
         type: 'object',
         properties: { limit: { type: 'integer' } },
       },
+      security: [],
       skipped: false,
       skip_reason: null,
     },
@@ -57,10 +59,12 @@ const preview: OpenApiPreview = {
       idempotent: true,
       locations: {},
       input_schema: { type: 'object', properties: {} },
+      security: [],
       skipped: true,
       skip_reason: '参数 q 使用了暂不支持的 oneOf',
     },
   ],
+  security_schemes: [],
 }
 
 const imported: ImportedSpec = {
@@ -69,6 +73,8 @@ const imported: ImportedSpec = {
   base_url: 'https://petstore.example.com/v1',
   created_at: '2026-09-23T00:00:00+00:00',
   operations: [preview.operations[0]],
+  security_schemes: {},
+  credential_envelopes: {},
 }
 
 describe('OpenAPI apiClient（docs/42 §5）', () => {
@@ -141,6 +147,34 @@ describe('OpenAPI apiClient（docs/42 §5）', () => {
     expect(result.deleted).toBe(true)
     expect(String(fetchMock.mock.calls[0][0])).toBe('/api/openapi/imports/openapi-1')
     expect(fetchMock.mock.calls[0][1]?.method).toBe('DELETE')
+  })
+
+  it('importOpenApi 携带 credentials 加密入参', async () => {
+    const fetchMock = mockFetch(imported, 201)
+    vi.stubGlobal('fetch', fetchMock)
+
+    await importOpenApi({ content: '{}' }, { KeyHeader: 'secret-key' })
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+      content: '{}',
+      credentials: { KeyHeader: 'secret-key' },
+    })
+  })
+
+  it('putOpenApiCredentials PUT 到 credentials 子路径', async () => {
+    const fetchMock = mockFetch({ configured: ['KeyHeader'] })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await putOpenApiCredentials('openapi-1', { KeyHeader: 'k' })
+
+    expect(result.configured).toEqual(['KeyHeader'])
+    expect(String(fetchMock.mock.calls[0][0])).toBe(
+      '/api/openapi/imports/openapi-1/credentials',
+    )
+    expect(fetchMock.mock.calls[0][1]?.method).toBe('PUT')
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+      credentials: { KeyHeader: 'k' },
+    })
   })
 
   it('后端结构化错误码透传 message', async () => {
