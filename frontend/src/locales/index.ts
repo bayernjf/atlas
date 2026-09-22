@@ -17,6 +17,7 @@ import { useCallback, useSyncExternalStore } from 'react'
 import enCommon from './en-US/common.json'
 import enApprovals from './en-US/approvals.json'
 import enAudit from './en-US/audit.json'
+import enChannels from './en-US/channels.json'
 import enConnections from './en-US/connections.json'
 import enDashboard from './en-US/dashboard.json'
 import enDemo from './en-US/demo.json'
@@ -26,6 +27,7 @@ import enMonitoring from './en-US/monitoring.json'
 import zhCommon from './zh-CN/common.json'
 import zhApprovals from './zh-CN/approvals.json'
 import zhAudit from './zh-CN/audit.json'
+import zhChannels from './zh-CN/channels.json'
 import zhConnections from './zh-CN/connections.json'
 import zhDashboard from './zh-CN/dashboard.json'
 import zhDemo from './zh-CN/demo.json'
@@ -34,7 +36,7 @@ import zhMemory from './zh-CN/memory.json'
 import zhMonitoring from './zh-CN/monitoring.json'
 
 export type Locale = 'zh-CN' | 'en-US'
-export type Namespace = 'common' | 'approvals' | 'audit' | 'editor' | 'dashboard' | 'demo' | 'monitoring' | 'memory' | 'connections'
+export type Namespace = 'common' | 'approvals' | 'audit' | 'editor' | 'dashboard' | 'demo' | 'monitoring' | 'memory' | 'connections' | 'channels'
 
 type Dict = Record<string, unknown>
 export type TranslateOptions = {
@@ -42,13 +44,14 @@ export type TranslateOptions = {
   ns?: Namespace
 } & Record<string, unknown>
 
-const NAMESPACES: Namespace[] = ['common', 'approvals', 'audit', 'editor', 'dashboard', 'demo', 'monitoring', 'memory', 'connections']
+const NAMESPACES: Namespace[] = ['common', 'approvals', 'audit', 'editor', 'dashboard', 'demo', 'monitoring', 'memory', 'connections', 'channels']
 
 const resources: Record<Locale, Record<Namespace, Dict>> = {
   'zh-CN': {
     common: zhCommon as Dict,
     approvals: zhApprovals as Dict,
     audit: zhAudit as Dict,
+    channels: zhChannels as Dict,
     connections: zhConnections as Dict,
     editor: zhEditor as Dict,
     dashboard: zhDashboard as Dict,
@@ -60,6 +63,7 @@ const resources: Record<Locale, Record<Namespace, Dict>> = {
     common: enCommon as Dict,
     approvals: enApprovals as Dict,
     audit: enAudit as Dict,
+    channels: enChannels as Dict,
     connections: enConnections as Dict,
     editor: enEditor as Dict,
     dashboard: enDashboard as Dict,

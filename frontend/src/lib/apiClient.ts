@@ -1556,3 +1556,45 @@ export async function refreshConnection(id: string): Promise<ConnectionView> {
 export async function testConnection(id: string): Promise<ConnectionTestResult> {
   return request(`/api/connections/${id}/test`, { method: 'POST' })
 }
+
+export type ChannelBindingView = {
+  id: string
+  provider: string
+  connectionId: string
+  config: { shop: string; apiVersion: string }
+  status: 'connected' | 'error'
+  lastError: string | null
+  createdBy: string | null
+  createdAt: string | null
+}
+
+export type ChannelBindingInput = {
+  provider: string
+  connectionId: string
+  config: { shop: string; apiVersion?: string }
+}
+
+export type ChannelTestResult = {
+  ok: boolean
+  status: string
+  reason?: string
+}
+
+export async function listChannelBindings(): Promise<ChannelBindingView[]> {
+  const body = await request<{ items: ChannelBindingView[] }>('/api/channels')
+  return body.items
+}
+
+export async function createChannelBinding(
+  input: ChannelBindingInput,
+): Promise<ChannelBindingView> {
+  return request('/api/channels', { method: 'POST', body: JSON.stringify(input) })
+}
+
+export async function testChannelBinding(id: string): Promise<ChannelTestResult> {
+  return request(`/api/channels/${id}/test`, { method: 'POST' })
+}
+
+export async function deleteChannelBinding(id: string): Promise<{ deleted: boolean }> {
+  return request(`/api/channels/${id}`, { method: 'DELETE' })
+}

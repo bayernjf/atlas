@@ -28,6 +28,7 @@ import {
 } from '../lib/apiClient'
 import { roleCan, type Principal } from '../lib/auth'
 import { UserBadge } from '../components/UserBadge'
+import { ChannelBindingsCard } from '../components/ChannelBindingsCard'
 import {
   EMPTY_CONNECTION_DRAFT,
   buildConnectionInput,
@@ -344,6 +345,7 @@ export function Connections({ principal, onLogout, onBack }: ConnectionsProps) {
               locale={{ emptyText: t('empty') }}
             />
           </Card>
+          <ChannelBindingsCard principal={principal} connections={items} />
         </Space>
       </Content>
 

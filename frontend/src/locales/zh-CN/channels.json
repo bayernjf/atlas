@@ -1,0 +1,48 @@
+{
+  "cardTitle": "销售渠道绑定",
+  "empty": "暂无渠道绑定",
+  "col": {
+    "shop": "店铺",
+    "provider": "平台",
+    "status": "状态",
+    "connection": "来源连接",
+    "actions": "操作"
+  },
+  "provider": { "shopify": "Shopify" },
+  "status": {
+    "connected": "已连接",
+    "error": "异常"
+  },
+  "button": {
+    "bind": "绑定渠道",
+    "test": "测试"
+  },
+  "deleteConfirm": {
+    "title": "删除渠道绑定？",
+    "description": "仅移除本系统内的渠道绑定，不影响底层连接，也不会撤销平台侧授权。"
+  },
+  "modal": { "title": "绑定销售渠道" },
+  "form": {
+    "provider": "平台",
+    "connection": "选择连接",
+    "connectionPlaceholder": "选择已完成授权的 OAuth2 连接",
+    "connectionRequired": "请选择一个连接",
+    "shop": "店铺名",
+    "shopPlaceholder": "例如 acme（对应 acme.myshopify.com）",
+    "shopRequired": "请填写店铺名",
+    "apiVersion": "API 版本"
+  },
+  "message": {
+    "bound": "渠道绑定已建立",
+    "deleted": "绑定已删除",
+    "testOk": "探活成功",
+    "testFail": "探活失败"
+  },
+  "error": {
+    "loadList": "渠道绑定加载失败",
+    "bind": "绑定失败",
+    "test": "探活请求失败",
+    "delete": "删除失败",
+    "formInvalid": "请完整填写表单"
+  }
+}
