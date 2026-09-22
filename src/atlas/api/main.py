@@ -15,6 +15,7 @@ import queue
 import threading
 import time
 import uuid
+from itertools import count
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -901,6 +902,71 @@ def webhook_delivery_metrics(
 ) -> dict[str, Any]:
     store = services_for(principal).webhook_deliveries
     return store.metrics(principal.tenant_id)
+
+
+# --- Shopify 店铺侧 webhook 注册（docs/41） --------------------------------
+
+
+class RemoteWebhookRequest(BaseModel):
+    topic: str
+
+
+@app.get("/api/channels/{binding_id}/remote-webhooks")
+def list_remote_webhooks(
+    binding_id: str, principal: Principal = Depends(require("read"))
+) -> dict[str, Any]:
+    """渠道令牌失效不污染端点契约：200 空 items + error（binding error 态已由 registry 落库）。"""
+    registry = services_for(principal).channel_registry
+    try:
+        items = registry.remote_webhooks(binding_id)
+    except ChannelError as exc:
+        if exc.code == "CHANNEL_UNAUTHORIZED":
+            return {"items": [], "error": "CHANNEL_UNAUTHORIZED"}
+        raise _channel_http_error(exc)
+    return {"items": items}
+
+
+@app.post("/api/channels/{binding_id}/remote-webhooks", status_code=201)
+def register_remote_webhook(
+    binding_id: str,
+    body: RemoteWebhookRequest,
+    http_request: Request,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    services = services_for(principal)
+    try:
+        item = services.channel_registry.register_remote(binding_id, body.topic)
+    except ChannelError as exc:
+        _record_channel_audit(
+            services, principal, http_request, "channel.webhook.register",
+            exc.status_code,
+        )
+        raise _channel_http_error(exc)
+    _record_channel_audit(services, principal, http_request, "channel.webhook.register", 201)
+    return item
+
+
+@app.delete("/api/channels/{binding_id}/remote-webhooks/{topic:path}")
+def unregister_remote_webhook(
+    binding_id: str,
+    topic: str,
+    http_request: Request,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """幂等：未注册返回 {deleted:false}。"""
+    services = services_for(principal)
+    try:
+        deleted = services.channel_registry.unregister_remote(binding_id, topic)
+    except ChannelError as exc:
+        _record_channel_audit(
+            services, principal, http_request, "channel.webhook.unregister",
+            exc.status_code,
+        )
+        raise _channel_http_error(exc)
+    _record_channel_audit(
+        services, principal, http_request, "channel.webhook.unregister", 200
+    )
+    return {"deleted": deleted}
 
 
 @app.get("/connections/callback", response_class=HTMLResponse, include_in_schema=False)
@@ -2886,6 +2952,57 @@ def demo_mock_receipt(order_id: str, body: dict[str, Any] | None = None) -> dict
     return {"order_id": order_id, "body": body or {}, "received": True}
 
 
+# Shopify Admin webhooks 资源的同进程模拟（docs/41 §D；随 demo reset 清空）。
+_MOCK_SHOPIFY_WEBHOOKS: dict[int, dict[str, Any]] = {}
+_mock_shopify_webhook_seq = count(1)
+
+
+@app.get("/api/demo/mock/shopify-admin/webhooks.json")
+def mock_shopify_admin_webhooks_list() -> dict[str, Any]:
+    return {
+        "webhooks": [
+            {"id": remote_id, **record}
+            for remote_id, record in _MOCK_SHOPIFY_WEBHOOKS.items()
+        ]
+    }
+
+
+@app.post("/api/demo/mock/shopify-admin/webhooks.json")
+def mock_shopify_admin_webhooks_create(
+    body: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    webhook = (body or {}).get("webhook")
+    if (
+        not isinstance(webhook, dict)
+        or not isinstance(webhook.get("topic"), str)
+        or not isinstance(webhook.get("address"), str)
+        or webhook.get("format") != "json"
+    ):
+        raise HTTPException(status_code=422, detail="webhook 必填 topic、address 且 format=json")
+    for existing in _MOCK_SHOPIFY_WEBHOOKS.values():
+        if existing["topic"] == webhook["topic"] and existing["address"] == webhook["address"]:
+            raise HTTPException(
+                status_code=422,
+                detail="Topic and address combination has already been taken",
+            )
+    remote_id = next(_mock_shopify_webhook_seq)
+    record = {"topic": webhook["topic"], "address": webhook["address"], "format": "json"}
+    _MOCK_SHOPIFY_WEBHOOKS[remote_id] = record
+    return {"webhook": {"id": remote_id, **record}}
+
+
+@app.delete("/api/demo/mock/shopify-admin/webhooks/{webhook_id}.json")
+def mock_shopify_admin_webhooks_delete(webhook_id: str) -> dict[str, Any]:
+    try:
+        remote_id = int(webhook_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=404, detail="Not Found")
+    if remote_id not in _MOCK_SHOPIFY_WEBHOOKS:
+        raise HTTPException(status_code=404, detail="Not Found")
+    del _MOCK_SHOPIFY_WEBHOOKS[remote_id]
+    return {}
+
+
 @app.get("/api/demo/messages")
 def demo_messages(
     principal: Principal = Depends(require("read")),
@@ -3023,6 +3140,7 @@ def demo_reset(
         clear_tenant_frames(get_pg_backend().engine, principal.tenant_id)
     _demo_shop.reset()
     _db_client.reseed_demo()
+    _MOCK_SHOPIFY_WEBHOOKS.clear()
     return {"reset": True}
 
 

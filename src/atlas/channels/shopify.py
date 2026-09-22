@@ -106,7 +106,9 @@ class ShopifyChannelClient:
         )
         if resp.status == 422:
             raise ChannelError(
-                "CHANNEL_ALREADY_REGISTERED", "店铺侧已存在该回调注册（HTTP 422）"
+                "CHANNEL_ALREADY_REGISTERED",
+                "店铺侧已存在该回调注册（HTTP 422）",
+                status_code=409,
             )
         if resp.status in (401, 403):
             raise ChannelError(

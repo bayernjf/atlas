@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Callable
 
 from atlas.channels.base import (
@@ -19,6 +20,7 @@ from atlas.channels.shopify import (
     ShopifyChannelClient,
     normalize_shop,
 )
+from atlas.channels.webhooks import SUPPORTED_TOPICS
 from atlas.connections.service import (
     ConnectionService,
     ConnectionServiceError,
@@ -37,11 +39,13 @@ class ChannelRegistry:
         tenant_id: str,
         connection_service: ConnectionService,
         transport: ChannelTransport | None = None,
+        base_url: str | None = None,
     ) -> None:
         self._store = store
         self._tenant_id = tenant_id
         self._connections = connection_service
         self._transport = transport
+        self._base_url = base_url
 
     def list(self) -> list[dict[str, Any]]:
         return [b.view() for b in self._store.list()]
@@ -116,6 +120,7 @@ class ChannelRegistry:
             token,
             api_version=binding.config.get("apiVersion", DEFAULT_API_VERSION),
             transport=self._transport,
+            base_url=self._base_url,
         )
 
     def test(self, binding_id: str) -> dict[str, Any]:
@@ -146,6 +151,69 @@ class ChannelRegistry:
         self._store.save(binding)
         return binding.view()["webhookSubscriptions"]
 
+    @staticmethod
+    def _hook_address(binding_id: str) -> str:
+        public_url = os.getenv("ATLAS_PUBLIC_URL", "http://localhost:5174").rstrip("/")
+        return f"{public_url}/api/channels/hooks/shopify/{binding_id}"
+
+    def _fail_binding(self, binding: ChannelBinding, exc: ChannelError) -> None:
+        binding.status = "error"
+        binding.last_error = str(exc)
+        self._store.save(binding)
+
+    def remote_webhooks(self, binding_id: str) -> list[dict[str, Any]]:
+        binding = self._require(binding_id)
+        client = self.client_for(binding)
+        try:
+            return client.list_registered_webhooks()
+        except ChannelError as exc:
+            if exc.code == "CHANNEL_UNAUTHORIZED":
+                self._fail_binding(binding, exc)
+            raise
+
+    def register_remote(self, binding_id: str, topic: str) -> dict[str, Any]:
+        binding = self._require(binding_id)
+        if topic not in SUPPORTED_TOPICS:
+            raise ChannelError(
+                "CHANNEL_INVALID_PARAMETER", f"不支持的 Webhook topic：{topic}",
+                status_code=422,
+            )
+        address = self._hook_address(binding_id)
+        if not address.startswith("https://"):
+            raise ChannelError(
+                "CHANNEL_INVALID_PARAMETER",
+                "回调地址必须为 HTTPS，请配置 ATLAS_PUBLIC_URL",
+                status_code=422,
+            )
+        client = self.client_for(binding)
+        try:
+            return client.register_webhook(topic=topic, address=address)
+        except ChannelError as exc:
+            if exc.code == "CHANNEL_UNAUTHORIZED":
+                self._fail_binding(binding, exc)
+            raise
+
+    def unregister_remote(self, binding_id: str, topic: str) -> bool:
+        binding = self._require(binding_id)
+        if topic not in SUPPORTED_TOPICS:
+            raise ChannelError(
+                "CHANNEL_INVALID_PARAMETER", f"不支持的 Webhook topic：{topic}",
+                status_code=422,
+            )
+        address = self._hook_address(binding_id)
+        client = self.client_for(binding)
+        try:
+            registered = client.list_registered_webhooks()
+        except ChannelError as exc:
+            if exc.code == "CHANNEL_UNAUTHORIZED":
+                self._fail_binding(binding, exc)
+            raise
+        for item in registered:
+            if item.get("topic") == topic and item.get("address") == address:
+                client.delete_registered_webhook(item["remoteId"])
+                return True
+        return False
+
 
 def build_channel_registry(
     connection_service: ConnectionService,
@@ -153,13 +221,25 @@ def build_channel_registry(
     tenant_id: str,
     store: Any | None = None,
 ) -> ChannelRegistry:
-    """每租户一个：绑定 store（默认内存，PG 档注入 PgChannelStore）+ 共享出向守卫的 HTTP 传输。"""
-    from atlas.connections.service import get_egress_guard
+    """每租户一个：绑定 store（默认内存，PG 档注入 PgChannelStore）+ 共享出向守卫的 HTTP 传输。
 
-    transport = HttpChannelTransport(egress=get_egress_guard())
+    ATLAS_SHOPIFY_ADMIN_BASE_URL 设置时（仅开发/测试缝，docs/41 §D）：Admin base 指向
+    同进程 mock，传输显式不带 EgressGuard（localhost 恒被守卫 denylist 拦，无法 allowlist）；
+    未设置时生产路径原样。
+    """
+    admin_base = os.getenv("ATLAS_SHOPIFY_ADMIN_BASE_URL")
+    if admin_base:
+        transport: ChannelTransport = HttpChannelTransport()
+        base_url = admin_base.rstrip("/")
+    else:
+        from atlas.connections.service import get_egress_guard
+
+        transport = HttpChannelTransport(egress=get_egress_guard())
+        base_url = None
     return ChannelRegistry(
         store if store is not None else ChannelStore(),
         tenant_id=tenant_id,
         connection_service=connection_service,
         transport=transport,
+        base_url=base_url,
     )
