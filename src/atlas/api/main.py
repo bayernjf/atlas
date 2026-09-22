@@ -86,6 +86,7 @@ from atlas.openapi.errors import OpenApiError
 from atlas.openapi.parser import parse_document
 from atlas.openapi.store import ImportStoreError
 from atlas.security.egress import EgressDenied, EgressGuard
+from atlas.security.secrets import build_secret_provider_from_env
 from atlas.monitoring.silences import OnCallEmpty, current_assignee, is_silence_active
 from atlas.recording import (
     RecordingCreateRequest,
@@ -265,6 +266,8 @@ _demo_registry.register(MessageHarnessAdapter(granted_permissions=_FULL_PERMISSI
 # 全局注册表里的 memory 实例仅供适配器发现；执行期注册表替换为租户记忆存储（docs/26 §5.1）
 _demo_registry.register(MemoryHarnessAdapter(granted_permissions=_FULL_PERMISSIONS))
 
+_secret_provider = build_secret_provider_from_env()
+
 
 @app.exception_handler(GraphValidationError)
 def graph_validation_handler(_request: Request, exc: GraphValidationError) -> JSONResponse:
@@ -345,7 +348,9 @@ def _runtime_registry(services: TenantServices) -> AdapterRegistry:
     for imported in services.openapi_imports.list():
         registry.register(
             ImportedApiHarnessAdapter(
-                imported, granted_permissions=_FULL_PERMISSIONS
+                imported,
+                secret_provider=_secret_provider,
+                granted_permissions=_FULL_PERMISSIONS,
             )
         )
     return registry
@@ -1290,6 +1295,32 @@ def _fetch_openapi_spec(url: str) -> str:
 class OpenApiSourceRequest(BaseModel):
     content: str | None = None
     url: str | None = None
+    credentials: dict[str, str] | None = None
+
+
+class OpenApiCredentialsRequest(BaseModel):
+    credentials: dict[str, str]
+
+
+def _credential_error(name: str) -> HTTPException:
+    return HTTPException(
+        status_code=422,
+        detail={"code": "OPENAPI_INVALID_CREDENTIAL", "message": f"未知鉴权方案：{name}"},
+    )
+
+
+def _encrypt_credentials(
+    raw: dict[str, str] | None, scheme_names: set[str]
+) -> dict[str, str]:
+    envelopes: dict[str, str] = {}
+    if not raw:
+        return envelopes
+    for name, value in raw.items():
+        if name not in scheme_names:
+            raise _credential_error(name)
+        if isinstance(value, str) and value.strip():
+            envelopes[name] = _secret_provider.encrypt(value.strip())
+    return envelopes
 
 
 def _openapi_http_error(exc: OpenApiError) -> HTTPException:
@@ -1331,6 +1362,15 @@ def preview_openapi(
         "title": spec.title,
         "base_url": spec.base_url,
         "operations": [op.model_dump() for op in spec.operations],
+        "security_schemes": [
+            {
+                "name": scheme.name,
+                "kind": scheme.kind,
+                "location": scheme.location,
+                "param": scheme.param,
+            }
+            for scheme in spec.security_schemes.values()
+        ],
         "imported_count": sum(not op.skipped for op in spec.operations),
         "skipped_count": sum(op.skipped for op in spec.operations),
     }
@@ -1351,7 +1391,12 @@ def import_openapi(
             },
         )
     try:
-        imported = services_for(principal).openapi_imports.add(spec)
+        envelopes = _encrypt_credentials(
+            raw.credentials, set(spec.security_schemes)
+        )
+        imported = services_for(principal).openapi_imports.add(
+            spec, envelopes=envelopes
+        )
     except ImportStoreError as exc:
         raise HTTPException(
             status_code=exc.status_code,
@@ -1387,6 +1432,31 @@ def delete_openapi_import(
     if not services_for(principal).openapi_imports.delete(spec_id):
         raise HTTPException(status_code=404, detail="导入规格不存在")
     return {"deleted": True}
+
+
+@app.put("/api/openapi/imports/{spec_id}/credentials")
+def put_openapi_credentials(
+    spec_id: str,
+    raw: OpenApiCredentialsRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, list[str]]:
+    store = services_for(principal).openapi_imports
+    imported = store.get(spec_id)
+    if imported is None:
+        raise HTTPException(status_code=404, detail="导入规格不存在")
+    envelopes = dict(imported.credential_envelopes)
+    for name, value in raw.credentials.items():
+        if name not in imported.security_schemes:
+            raise _credential_error(name)
+        if not isinstance(value, str) or not value.strip():
+            envelopes.pop(name, None)
+        else:
+            envelopes[name] = _secret_provider.encrypt(value.strip())
+    updated = store.put_credentials(spec_id, envelopes)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="导入规格不存在")
+    configured = [name for name in updated.security_schemes if name in envelopes]
+    return {"configured": configured}
 
 
 @app.post("/api/graphs", response_model=SaveGraphResponse)

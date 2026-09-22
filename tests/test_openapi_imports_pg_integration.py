@@ -46,6 +46,7 @@ def setup():
     engine = create_database_engine(DATABASE_URL, pool_size=2)
     _run_migration(engine, "002_storage.sql")
     _run_migration(engine, "018_openapi_imports.sql")
+    _run_migration(engine, "019_openapi_auth_columns.sql")
     yield engine, PgImportStore
     with engine.begin() as conn:
         conn.execute(text("DELETE FROM openapi_imports WHERE tenant_id LIKE 'oipit%'"))
@@ -193,3 +194,89 @@ def test_imports_survive_reset(setup):
     except OperationalError:
         pytest.skip("tenant reset requires full schema in integration database")
     assert store.get(imported.spec_id) is not None
+
+
+# --- security schemes + credential envelopes（docs/44） --------------------
+
+def _secured_spec():
+    from atlas.openapi.models import OperationDescriptor, ParsedSpec, SecurityScheme
+
+    return ParsedSpec(
+        title="Secured Pit",
+        base_url="https://secured.example.com",
+        operations=[
+            OperationDescriptor(
+                name="secured_op",
+                method="get",
+                path="/things",
+                security=[["KeyHeader"], ["BearerAuth"]],
+            )
+        ],
+        security_schemes={
+            "KeyHeader": SecurityScheme(
+                name="KeyHeader", kind="api_key", location="header", param="X-API-Key"
+            ),
+            "BearerAuth": SecurityScheme(
+                name="BearerAuth",
+                kind="bearer",
+                location=None,
+                param="Authorization",
+                prefix="Bearer ",
+            ),
+        },
+    )
+
+
+def test_auth_fields_roundtrip(setup):
+    engine, Store = setup
+    from atlas.security.secrets import PlaintextSecretProvider
+
+    provider = PlaintextSecretProvider()
+    store = Store(engine, "oipit-auth")
+    envelopes = {"KeyHeader": provider.encrypt("secret-key")}
+    imported = store.add(_secured_spec(), envelopes=envelopes)
+    assert set(imported.security_schemes) == {"KeyHeader", "BearerAuth"}
+    assert set(imported.credential_envelopes) == {"KeyHeader"}
+
+    loaded = store.get(imported.spec_id)
+    assert loaded is not None
+    assert loaded.model_dump() == imported.model_dump()
+    assert provider.decrypt(loaded.credential_envelopes["KeyHeader"]) == "secret-key"
+
+
+def test_envelopes_survive_restart_and_put(setup):
+    engine, Store = setup
+    from atlas.security.secrets import PlaintextSecretProvider
+
+    provider = PlaintextSecretProvider()
+    tenant = "oipit-restart"
+    store = Store(engine, tenant)
+    imported = store.add(
+        _secured_spec(),
+        envelopes={"KeyHeader": provider.encrypt("k1")},
+    )
+
+    reopened = Store(engine, tenant)
+    reloaded = reopened.get(imported.spec_id)
+    assert reloaded is not None
+    assert provider.decrypt(reloaded.credential_envelopes["KeyHeader"]) == "k1"
+
+    updated = reopened.put_credentials(
+        imported.spec_id,
+        {
+            "KeyHeader": provider.encrypt("k2"),
+            "BearerAuth": provider.encrypt("tok"),
+        },
+    )
+    assert updated is not None
+    assert set(updated.credential_envelopes) == {"KeyHeader", "BearerAuth"}
+    assert Store(engine, tenant).get(imported.spec_id).credential_envelopes == updated.credential_envelopes
+
+
+def test_legacy_rows_default_to_empty_auth_fields(setup):
+    engine, Store = setup
+    store = Store(engine, "oipit-legacy")
+    imported = store.add(_spec(title="Legacy Pit"))
+    assert imported.security_schemes == {}
+    assert imported.credential_envelopes == {}
+    assert store.put_credentials(imported.spec_id, {}) is not None

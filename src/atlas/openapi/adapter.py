@@ -20,6 +20,7 @@ from atlas.harness.base import (
     StructuredError,
 )
 from atlas.httpapi.service import DEFAULT_TIMEOUT, HttpApiCallError, HttpApiClient
+from atlas.security.secrets import SecretProvider
 from .models import OperationDescriptor
 from .store import ImportedSpec
 
@@ -43,12 +44,14 @@ class ImportedApiHarnessAdapter(HarnessAdapter):
         self,
         spec: ImportedSpec,
         client: HttpApiClient | None = None,
+        secret_provider: SecretProvider | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.spec = spec
         self.adapter_id = f"openapi:{spec.spec_id}"
         self.client = client or HttpApiClient(base_url=spec.base_url)
+        self._secret_provider = secret_provider
 
     def list_capabilities(self) -> list[Capability]:
         return [self._capability(op) for op in self.spec.operations]
@@ -79,8 +82,12 @@ class ImportedApiHarnessAdapter(HarnessAdapter):
 
         params = request.parameters
         try:
-            url = self._build_url(descriptor, params)
-            headers = self._headers(descriptor, params)
+            resolved = self._resolve_credentials(descriptor)
+            if isinstance(resolved, StructuredError):
+                return ActionResult.failed(resolved)
+            extra_headers, extra_query = resolved
+            url = self._build_url(descriptor, params, extra_query)
+            headers = self._headers(descriptor, params, extra_headers)
             output = self.client.request(
                 method=descriptor.method,
                 url=url,
@@ -93,7 +100,53 @@ class ImportedApiHarnessAdapter(HarnessAdapter):
             return ActionResult.failed(StructuredError(exc.code, str(exc)))
         return ActionResult.success(output)
 
-    def _build_url(self, descriptor: OperationDescriptor, params: dict) -> str:
+    def _resolve_credentials(
+        self, descriptor: OperationDescriptor
+    ) -> tuple[dict[str, str], dict[str, str]] | StructuredError:
+        if not descriptor.security:
+            return {}, {}
+        envelopes = self.spec.credential_envelopes
+        schemes = self.spec.security_schemes
+        missing: list[str] = []
+        for group in descriptor.security:
+            if not group:
+                return {}, {}
+            absent = [name for name in group if name not in envelopes]
+            if absent:
+                missing.extend(absent)
+                continue
+            headers: dict[str, str] = {}
+            query: dict[str, str] = {}
+            for name in group:
+                if self._secret_provider is None:
+                    return StructuredError(
+                        "SECRET_UNAVAILABLE", "密钥提供者不可用，无法解密已配置的密钥"
+                    )
+                try:
+                    value = self._secret_provider.decrypt(envelopes[name])
+                except Exception as exc:
+                    return StructuredError(
+                        "SECRET_DECRYPT_ERROR", f"密钥解密失败：{name}"
+                    )
+                scheme = schemes[name]
+                rendered = f"{scheme.prefix}{value}"
+                if scheme.kind == "api_key" and scheme.location == "query":
+                    query[scheme.param] = rendered
+                else:
+                    headers[scheme.param] = rendered
+            return headers, query
+        names = "、".join(dict.fromkeys(missing))
+        return StructuredError(
+            "OPENAPI_CREDENTIAL_MISSING",
+            f"该接口需要鉴权但未配置密钥（缺少：{names}）",
+        )
+
+    def _build_url(
+        self,
+        descriptor: OperationDescriptor,
+        params: dict,
+        extra_query: dict[str, str] | None = None,
+    ) -> str:
         def replace(match: re.Match[str]) -> str:
             name = match.group(1)
             value = params.get(name)
@@ -115,14 +168,20 @@ class ImportedApiHarnessAdapter(HarnessAdapter):
                 query.extend((name, item) for item in value)
             else:
                 query.append((name, value))
+        for name, value in (extra_query or {}).items():
+            if not any(pair[0] == name for pair in query):
+                query.append((name, value))
         if query:
             rendered = f"{rendered}?{urlencode(query, doseq=True)}"
         return rendered
 
     def _headers(
-        self, descriptor: OperationDescriptor, params: dict
+        self,
+        descriptor: OperationDescriptor,
+        params: dict,
+        extra_headers: dict[str, str] | None = None,
     ) -> dict[str, str]:
-        headers: dict[str, str] = {}
+        headers: dict[str, str] = dict(extra_headers or {})
         for name, location in descriptor.locations.items():
             if location != "header":
                 continue

@@ -246,3 +246,137 @@ def test_import_post_writes_audit_record():
         action_prefix="POST /api/openapi/imports"
     )
     assert any(record["statusCode"] == 201 for record in records)
+
+
+# --- static security schemes / credential envelopes（docs/44） -------------
+
+SECRET_DOC = {
+    "openapi": "3.0.3",
+    "info": {"title": "Secured", "version": "1.0.0"},
+    "servers": [{"url": "https://secured.example.com"}],
+    "paths": {"/things": {"get": {"operationId": "getThings"}}},
+    "components": {
+        "securitySchemes": {
+            "KeyHeader": {"type": "apiKey", "in": "header", "name": "X-API-Key"},
+            "BearerAuth": {"type": "http", "scheme": "bearer"},
+        }
+    },
+    "security": [{"KeyHeader": []}, {"BearerAuth": []}],
+}
+
+
+def _secret_content(credentials=None) -> dict:
+    body = {"content": json.dumps(SECRET_DOC)}
+    if credentials is not None:
+        body["credentials"] = credentials
+    return body
+
+
+def test_preview_projects_schemes_without_secret_values():
+    response = client.post(
+        "/api/openapi/preview",
+        json={"content": json.dumps(SECRET_DOC)},
+        headers=OPERATOR_A,
+    )
+    assert response.status_code == 200
+    schemes = {s["name"]: s for s in response.json()["security_schemes"]}
+    assert set(schemes) == {"KeyHeader", "BearerAuth"}
+    assert schemes["KeyHeader"]["kind"] == "api_key"
+    assert schemes["KeyHeader"]["param"] == "X-API-Key"
+    assert schemes["BearerAuth"]["kind"] == "bearer"
+    raw = response.text
+    assert "secret" not in raw.lower()
+
+
+def test_import_with_credentials_encrypts_values():
+    response = client.post(
+        "/api/openapi/imports",
+        json=_secret_content({"KeyHeader": "top-secret-key"}),
+        headers=OPERATOR_A,
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert set(data["security_schemes"]) == {"KeyHeader", "BearerAuth"}
+    envelopes = data["credential_envelopes"]
+    assert set(envelopes) == {"KeyHeader"}
+    assert "top-secret-key" not in response.text
+
+
+def test_import_without_credentials_succeeds():
+    response = client.post(
+        "/api/openapi/imports",
+        json=_secret_content(),
+        headers=OPERATOR_A,
+    )
+    assert response.status_code == 201
+    assert response.json()["credential_envelopes"] == {}
+
+
+def test_import_unknown_scheme_rejected():
+    response = client.post(
+        "/api/openapi/imports",
+        json=_secret_content({"Nope": "v"}),
+        headers=OPERATOR_A,
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "OPENAPI_INVALID_CREDENTIAL"
+    assert client.get("/api/openapi/imports", headers=VIEWER_A).json()["items"] == []
+
+
+def test_put_credentials_upsert_delete_and_404():
+    created = client.post(
+        "/api/openapi/imports",
+        json=_secret_content(),
+        headers=OPERATOR_A,
+    ).json()
+    spec_id = created["spec_id"]
+
+    upsert = client.put(
+        f"/api/openapi/imports/{spec_id}/credentials",
+        json={"credentials": {"KeyHeader": "k1", "BearerAuth": "b1"}},
+        headers=OPERATOR_A,
+    )
+    assert upsert.status_code == 200
+    assert upsert.json()["configured"] == ["KeyHeader", "BearerAuth"]
+    assert "k1" not in upsert.text and "b1" not in upsert.text
+
+    one = client.get(f"/api/openapi/imports/{spec_id}", headers=VIEWER_A).json()
+    assert set(one["credential_envelopes"]) == {"KeyHeader", "BearerAuth"}
+
+    delete = client.put(
+        f"/api/openapi/imports/{spec_id}/credentials",
+        json={"credentials": {"KeyHeader": ""}},
+        headers=OPERATOR_A,
+    )
+    assert delete.status_code == 200
+    assert delete.json()["configured"] == ["BearerAuth"]
+
+    missing = client.put(
+        "/api/openapi/imports/openapi-9/credentials",
+        json={"credentials": {}},
+        headers=OPERATOR_A,
+    )
+    assert missing.status_code == 404
+
+    bad_scheme = client.put(
+        f"/api/openapi/imports/{spec_id}/credentials",
+        json={"credentials": {"Nope": "v"}},
+        headers=OPERATOR_A,
+    )
+    assert bad_scheme.status_code == 422
+    assert bad_scheme.json()["detail"]["code"] == "OPENAPI_INVALID_CREDENTIAL"
+
+
+def test_no_response_ever_contains_plaintext_secret():
+    secret = "PLAINTEXT-PROBE-8675309"
+    client.post(
+        "/api/openapi/imports",
+        json=_secret_content({"KeyHeader": secret, "BearerAuth": secret}),
+        headers=OPERATOR_A,
+    )
+    for response_text in (
+        client.get("/api/openapi/imports", headers=VIEWER_A).text,
+        client.get("/api/openapi/imports/openapi-1", headers=VIEWER_A).text,
+        client.get("/api/adapters", headers=VIEWER_A).text,
+    ):
+        assert secret not in response_text

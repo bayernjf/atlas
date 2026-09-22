@@ -14,7 +14,10 @@ from .store import (
     ImportStoreError,
 )
 
-_COLS = "id, tenant_id, seq, title, base_url, created_at, operations"
+_COLS = (
+    "id, tenant_id, seq, title, base_url, created_at, operations, "
+    "security_schemes, credential_envelopes"
+)
 
 
 class PgImportStore:
@@ -30,9 +33,16 @@ class PgImportStore:
 
     @staticmethod
     def _row_to_spec(row: Any) -> ImportedSpec:
-        # 列序：0 id,1 tenant_id,2 seq,3 title,4 base_url,5 created_at,6 operations
-        raw = row[6]
-        operations = json.loads(raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False))
+        # 列序：0 id,1 tenant_id,2 seq,3 title,4 base_url,5 created_at,
+        # 6 operations,7 security_schemes,8 credential_envelopes
+        def _jsonb(value: Any) -> Any:
+            return json.loads(value) if isinstance(value, str) else value
+
+        operations = _jsonb(row[6])
+        if operations is None:
+            operations = []
+        schemes = _jsonb(row[7]) or {}
+        envelopes = _jsonb(row[8]) or {}
         created = row[5]
         if isinstance(created, datetime):
             created = created.isoformat()
@@ -42,9 +52,17 @@ class PgImportStore:
             base_url=row[4],
             created_at=created,
             operations=operations,
+            security_schemes=schemes,
+            credential_envelopes=envelopes,
         )
 
-    def add(self, spec: ParsedSpec, *, now: datetime | None = None) -> ImportedSpec:
+    def add(
+        self,
+        spec: ParsedSpec,
+        *,
+        now: datetime | None = None,
+        envelopes: dict[str, str] | None = None,
+    ) -> ImportedSpec:
         if len(spec.operations) > MAX_OPERATIONS_PER_SPEC:
             raise ImportStoreError(
                 "OPENAPI_LIMIT_EXCEEDED",
@@ -52,6 +70,7 @@ class PgImportStore:
             )
         operations = [op for op in spec.operations if not op.skipped]
         moment = now or datetime.now(timezone.utc)
+        envelope_map = envelopes or {}
         with self._engine.begin() as db:
             count = int(
                 db.execute(
@@ -72,12 +91,15 @@ class PgImportStore:
                 base_url=spec.base_url,
                 created_at=moment.isoformat(),
                 operations=operations,
+                security_schemes=spec.security_schemes,
+                credential_envelopes=envelope_map,
             )
             db.execute(
                 text(
                     "INSERT INTO openapi_imports (id, tenant_id, seq, title, base_url, "
-                    "created_at, operations) VALUES (:id, :tenant_id, :seq, :title, "
-                    ":base_url, :created_at, :operations)"
+                    "created_at, operations, security_schemes, credential_envelopes) "
+                    "VALUES (:id, :tenant_id, :seq, :title, :base_url, :created_at, "
+                    ":operations, :security_schemes, :credential_envelopes)"
                 ),
                 {
                     "id": spec_id,
@@ -89,6 +111,14 @@ class PgImportStore:
                     "operations": json.dumps(
                         [op.model_dump() for op in operations], ensure_ascii=False
                     ),
+                    "security_schemes": json.dumps(
+                        {
+                            name: scheme.model_dump()
+                            for name, scheme in spec.security_schemes.items()
+                        },
+                        ensure_ascii=False,
+                    ),
+                    "credential_envelopes": json.dumps(envelope_map, ensure_ascii=False),
                 },
             )
         return imported
@@ -112,3 +142,22 @@ class PgImportStore:
                 {"t": self._tenant_id, "id": spec_id},
             )
             return bool(result.rowcount)
+
+    def put_credentials(
+        self, spec_id: str, envelopes: dict[str, str]
+    ) -> ImportedSpec | None:
+        with self._engine.begin() as db:
+            result = db.execute(
+                text(
+                    "UPDATE openapi_imports SET credential_envelopes = :envelopes "
+                    "WHERE tenant_id = :t AND id = :id"
+                ),
+                {
+                    "envelopes": json.dumps(envelopes, ensure_ascii=False),
+                    "t": self._tenant_id,
+                    "id": spec_id,
+                },
+            )
+            if not result.rowcount:
+                return None
+        return self.get(spec_id)

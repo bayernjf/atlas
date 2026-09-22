@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from pydantic import BaseModel
 
-from .models import OperationDescriptor, ParsedSpec
+from .models import OperationDescriptor, ParsedSpec, SecurityScheme
 
 MAX_SPECS_PER_TENANT = 5
 MAX_OPERATIONS_PER_SPEC = 200
@@ -26,6 +26,8 @@ class ImportedSpec(BaseModel):
     base_url: str
     created_at: str
     operations: list[OperationDescriptor]
+    security_schemes: dict[str, SecurityScheme] = {}
+    credential_envelopes: dict[str, str] = {}
 
 
 class ImportStore:
@@ -39,7 +41,13 @@ class ImportStore:
         self._counter = 0
         self._lock = threading.Lock()
 
-    def add(self, spec: ParsedSpec, *, now: datetime | None = None) -> ImportedSpec:
+    def add(
+        self,
+        spec: ParsedSpec,
+        *,
+        now: datetime | None = None,
+        envelopes: dict[str, str] | None = None,
+    ) -> ImportedSpec:
         with self._lock:
             if len(self._specs) >= MAX_SPECS_PER_TENANT:
                 raise ImportStoreError(
@@ -59,6 +67,8 @@ class ImportStore:
                 base_url=spec.base_url,
                 created_at=(now or datetime.now(timezone.utc)).isoformat(),
                 operations=[op for op in spec.operations if not op.skipped],
+                security_schemes=spec.security_schemes,
+                credential_envelopes=envelopes or {},
             )
             self._specs[spec_id] = imported
             return imported
@@ -77,3 +87,13 @@ class ImportStore:
                 return False
             del self._specs[spec_id]
             return True
+
+    def put_credentials(
+        self, spec_id: str, envelopes: dict[str, str]
+    ) -> ImportedSpec | None:
+        with self._lock:
+            imported = self._specs.get(spec_id)
+            if imported is None:
+                return None
+            imported.credential_envelopes = envelopes
+            return imported

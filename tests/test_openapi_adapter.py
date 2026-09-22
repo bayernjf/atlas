@@ -317,3 +317,192 @@ def test_observe_reports_spec_metadata():
 
     assert observation.url == "https://petstore.example.com/v1"
     assert observation.data["spec_id"] == "openapi-1"
+
+
+# --- security scheme credential injection（docs/44） -----------------------
+
+from atlas.security.secrets import PlaintextSecretProvider
+
+SECURE_SPEC_DOC = {
+    "openapi": "3.0.3",
+    "info": {"title": "Secured", "version": "1.0.0"},
+    "servers": [{"url": "https://secured.example.com"}],
+    "paths": {
+        "/header": {
+            "get": {
+                "operationId": "headerOp",
+                "parameters": [
+                    {
+                        "name": "X-API-Key",
+                        "in": "header",
+                        "schema": {"type": "string"},
+                    }
+                ],
+            }
+        },
+        "/query": {"get": {"operationId": "queryOp"}},
+        "/bearer": {"get": {"operationId": "bearerOp"}},
+        "/open": {"get": {"operationId": "openOp"}},
+    },
+    "components": {
+        "securitySchemes": {
+            "KeyHeader": {"type": "apiKey", "in": "header", "name": "X-API-Key"},
+            "KeyQuery": {"type": "apiKey", "in": "query", "name": "key"},
+            "BearerAuth": {"type": "http", "scheme": "bearer"},
+        }
+    },
+    "security": [{"KeyHeader": []}],
+}
+
+
+class CountingProvider:
+    def __init__(self):
+        self.decrypt_calls = 0
+
+    def encrypt(self, plaintext: str) -> str:
+        return f"env:{plaintext}"
+
+    def decrypt(self, envelope: str) -> str:
+        self.decrypt_calls += 1
+        assert envelope.startswith("env:")
+        return envelope[4:]
+
+    def get_secret(self, name: str) -> str:
+        raise KeyError(name)
+
+
+def _secure_imported(envelopes=None):
+    parsed = parse_document(json.dumps(SECURE_SPEC_DOC))
+    provider = PlaintextSecretProvider()
+    sealed = {name: provider.encrypt(value) for name, value in (envelopes or {}).items()}
+    store = ImportStore()
+    return store.add(parsed, envelopes=sealed)
+
+
+def _secure_adapter(handler, imported=None, provider=None):
+    imported = imported or _secure_imported()
+    client = HttpApiClient(
+        base_url="https://secured.example.com",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        resolver=PUBLIC_RESOLVER,
+        retry=RetryPolicy(sleep=lambda _: None),
+    )
+    return ImportedApiHarnessAdapter(
+        imported,
+        client=client,
+        secret_provider=provider or PlaintextSecretProvider(),
+        granted_permissions={Permission.READ, Permission.WRITE},
+    )
+
+
+def test_api_key_header_injected():
+    seen = {}
+
+    def handler(request):
+        seen["key"] = request.headers.get("X-API-Key")
+        return httpx.Response(200, json={}, request=request)
+
+    adapter = _secure_adapter(handler, _secure_imported({"KeyHeader": "secret-key"}))
+    result = adapter.execute(ActionRequest(capability_name="header_op", parameters={}))
+    assert result.status is ActionStatus.SUCCESS
+    assert seen["key"] == "secret-key"
+
+
+def test_api_key_query_injected():
+    seen = {}
+
+    def handler(request):
+        seen["url"] = str(request.url)
+        return httpx.Response(200, json={}, request=request)
+
+    doc = json.loads(json.dumps(SECURE_SPEC_DOC))
+    doc["security"] = [{"KeyQuery": []}]
+    parsed = parse_document(json.dumps(doc))
+    provider = PlaintextSecretProvider()
+    imported = ImportStore().add(
+        parsed, envelopes={"KeyQuery": provider.encrypt("query-secret")}
+    )
+    adapter = _secure_adapter(handler, imported, provider)
+    result = adapter.execute(ActionRequest(capability_name="query_op", parameters={}))
+    assert result.status is ActionStatus.SUCCESS
+    assert seen["url"] == "https://secured.example.com/query?key=query-secret"
+
+
+def test_bearer_header_injected():
+    seen = {}
+
+    def handler(request):
+        seen["auth"] = request.headers.get("Authorization")
+        return httpx.Response(200, json={}, request=request)
+
+    doc = json.loads(json.dumps(SECURE_SPEC_DOC))
+    doc["security"] = [{"BearerAuth": []}]
+    parsed = parse_document(json.dumps(doc))
+    provider = PlaintextSecretProvider()
+    imported = ImportStore().add(
+        parsed, envelopes={"BearerAuth": provider.encrypt("tok-123")}
+    )
+    adapter = _secure_adapter(handler, imported, provider)
+    result = adapter.execute(ActionRequest(capability_name="bearer_op", parameters={}))
+    assert result.status is ActionStatus.SUCCESS
+    assert seen["auth"] == "Bearer tok-123"
+
+
+def test_missing_credential_fails_without_request():
+    called = []
+
+    def handler(request):
+        called.append(request)
+        return httpx.Response(200)
+
+    adapter = _secure_adapter(handler)
+    result = adapter.execute(ActionRequest(capability_name="header_op", parameters={}))
+    assert result.status is ActionStatus.FAILED
+    assert result.error.code == "OPENAPI_CREDENTIAL_MISSING"
+    assert "KeyHeader" in result.error.message
+    assert called == []
+
+
+def test_empty_group_allows_anonymous():
+    seen = {}
+
+    def handler(request):
+        seen["url"] = str(request.url)
+        return httpx.Response(200, json={}, request=request)
+
+    doc = json.loads(json.dumps(SECURE_SPEC_DOC))
+    doc["security"] = [{"KeyHeader": []}, {}]
+    imported = ImportStore().add(parse_document(json.dumps(doc)))
+    adapter = _secure_adapter(handler, imported, PlaintextSecretProvider())
+    result = adapter.execute(ActionRequest(capability_name="header_op", parameters={}))
+    assert result.status is ActionStatus.SUCCESS
+    assert seen["url"] == "https://secured.example.com/header"
+
+
+def test_explicit_user_header_wins_over_credential():
+    seen = {}
+
+    def handler(request):
+        seen["key"] = request.headers.get("X-API-Key")
+        return httpx.Response(200, json={}, request=request)
+
+    adapter = _secure_adapter(handler, _secure_imported({"KeyHeader": "stored"}))
+    result = adapter.execute(
+        ActionRequest(
+            capability_name="header_op", parameters={"X-API-Key": "user-value"}
+        )
+    )
+    assert result.status is ActionStatus.SUCCESS
+    assert seen["key"] == "user-value"
+
+
+def test_envelopes_decrypted_per_call():
+    counting = CountingProvider()
+    imported = _secure_imported({"KeyHeader": "abc"})
+    # replace envelopes with counting-provider envelopes
+    imported.credential_envelopes = {"KeyHeader": counting.encrypt("abc")}
+    adapter = _secure_adapter(lambda r: httpx.Response(200, json={}, request=r), imported, counting)
+    for _ in range(3):
+        result = adapter.execute(ActionRequest(capability_name="header_op", parameters={}))
+        assert result.status is ActionStatus.SUCCESS
+    assert counting.decrypt_calls == 3
