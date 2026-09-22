@@ -1672,3 +1672,38 @@ export async function deleteWebhookDeadLetter(webhookId: string): Promise<{ dele
 export async function getWebhookMetrics(): Promise<WebhookDeliveryMetrics> {
   return request('/api/channels/webhooks/metrics')
 }
+
+export type RemoteWebhook = {
+  remoteId: string
+  topic: string
+  address: string
+}
+
+export async function listRemoteWebhooks(
+  id: string,
+): Promise<{ items: RemoteWebhook[]; error?: string }> {
+  return request(`/api/channels/${id}/remote-webhooks`)
+}
+
+export async function registerRemoteWebhook(
+  id: string,
+  topic: string,
+): Promise<RemoteWebhook> {
+  return request(`/api/channels/${id}/remote-webhooks`, {
+    method: 'POST',
+    body: JSON.stringify({ topic }),
+  })
+}
+
+export async function unregisterRemoteWebhook(
+  id: string,
+  topic: string,
+): Promise<{ deleted: boolean }> {
+  return request(
+    `/api/channels/${id}/remote-webhooks/${topic
+      .split('/')
+      .map((part) => encodeURIComponent(part))
+      .join('/')}`,
+    { method: 'DELETE' },
+  )
+}

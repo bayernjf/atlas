@@ -7,12 +7,15 @@ import {
   deleteChannelBinding,
   getWebhookSubscriptions,
   listChannelBindings,
+  listRemoteWebhooks,
   listWebhookDeadLetters,
   putWebhookSubscriptions,
+  registerRemoteWebhook,
   replayWebhookDeadLetter,
   resumeDebug,
   streamRun,
   testChannelBinding,
+  unregisterRemoteWebhook,
   type ChannelBindingView,
   type RunEvent,
 } from '../apiClient'
@@ -274,6 +277,39 @@ describe('真实渠道绑定 /api/channels（docs/38 §1C/§1E）', () => {
     expect(url).toBe('/api/channels/ch-1/webhooks')
     expect(init?.method).toBe('PUT')
     expect(JSON.parse(init?.body as string)).toEqual({ subscriptions: items })
+  })
+
+  it('listRemoteWebhooks GETs remote-webhooks keeping items and error', async () => {
+    const payload = { items: [], error: 'CHANNEL_UNAUTHORIZED' }
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => jsonResponse(payload))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await listRemoteWebhooks('ch-1')
+    expect(result).toEqual(payload)
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/channels/ch-1/remote-webhooks')
+  })
+
+  it('registerRemoteWebhook POSTs topic and returns the remote webhook', async () => {
+    const payload = { remoteId: '9', topic: 'orders/create', address: 'https://x/h' }
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => jsonResponse(payload))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await registerRemoteWebhook('ch-1', 'orders/create')
+    expect(result).toEqual(payload)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/channels/ch-1/remote-webhooks')
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(init?.body as string)).toEqual({ topic: 'orders/create' })
+  })
+
+  it('unregisterRemoteWebhook DELETEs topic path and returns deleted flag', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+      jsonResponse({ deleted: true }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await unregisterRemoteWebhook('ch-1', 'refunds/create')
+    expect(result).toEqual({ deleted: true })
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/channels/ch-1/remote-webhooks/refunds/create')
+    expect(init?.method).toBe('DELETE')
   })
 
   it('listWebhookDeadLetters GETs with filters and unwraps items', async () => {

@@ -297,6 +297,7 @@ export function ChannelBindingsCard({ principal, connections }: ChannelBindingsC
           open
           binding={webhookBinding}
           graphs={graphs}
+          readonly={!canOperate}
           onClose={() => setWebhookBinding(null)}
         />
       )}

@@ -3,8 +3,12 @@ import { Alert, Button, Input, Modal, Select, Space, Switch, message } from 'ant
 import { useTranslation } from '../locales'
 import {
   getWebhookSubscriptions,
+  listRemoteWebhooks,
   putWebhookSubscriptions,
+  registerRemoteWebhook,
+  unregisterRemoteWebhook,
   type ChannelBindingView,
+  type RemoteWebhook,
   type SavedGraphSummary,
   type WebhookSubscription,
 } from '../lib/apiClient'
@@ -15,25 +19,31 @@ type WebhookSubscriptionsModalProps = {
   open: boolean
   binding: ChannelBindingView
   graphs: SavedGraphSummary[]
+  readonly: boolean
   onClose: () => void
 }
 
 export function WebhookSubscriptionsModal({
-  open, binding, graphs, onClose,
+  open, binding, graphs, readonly, onClose,
 }: WebhookSubscriptionsModalProps) {
   const { t } = useTranslation('channels')
   const [subs, setSubs] = useState<WebhookSubscription[]>([])
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [remoteItems, setRemoteItems] = useState<RemoteWebhook[]>([])
+  const [remoteError, setRemoteError] = useState('')
+  const [busyTopic, setBusyTopic] = useState('')
 
   const publicUrl = `${window.location.origin}/api/channels/hooks/shopify/${binding.id}`
+  const pinnedSuffix = `/api/channels/hooks/shopify/${binding.id}`
 
   useEffect(() => {
     if (!open) return
     let active = true
     setLoading(true)
     setError('')
+    setRemoteError('')
     getWebhookSubscriptions(binding.id)
       .then((items) => {
         if (active) setSubs(items)
@@ -44,10 +54,43 @@ export function WebhookSubscriptionsModal({
       .finally(() => {
         if (active) setLoading(false)
       })
+    listRemoteWebhooks(binding.id)
+      .then((body) => {
+        if (!active) return
+        setRemoteItems(body.items)
+        if (body.error) setRemoteError(t(`remoteWebhooks.error.${body.error}`, { defaultValue: body.error }))
+      })
+      .catch(() => {
+        if (active) setRemoteError(t('remoteWebhooks.loadError'))
+      })
     return () => {
       active = false
     }
   }, [open, binding.id, t])
+
+  const registeredFor = (topic: string) =>
+    remoteItems.find((item) => item.topic === topic && item.address.endsWith(pinnedSuffix))
+
+  const toggleRemote = async (topic: string) => {
+    setBusyTopic(topic)
+    setRemoteError('')
+    try {
+      const registered = registeredFor(topic)
+      if (registered) {
+        const { deleted } = await unregisterRemoteWebhook(binding.id, topic)
+        if (deleted) {
+          setRemoteItems((prev) => prev.filter((item) => item.remoteId !== registered.remoteId))
+        }
+      } else {
+        const created = await registerRemoteWebhook(binding.id, topic)
+        setRemoteItems((prev) => [...prev, created])
+      }
+    } catch (err) {
+      setRemoteError(err instanceof Error ? err.message : t('remoteWebhooks.loadError'))
+    } finally {
+      setBusyTopic('')
+    }
+  }
 
   const patch = (index: number, values: Partial<WebhookSubscription>) =>
     setSubs((prev) =>
@@ -153,6 +196,57 @@ export function WebhookSubscriptionsModal({
           <Button size="small" style={{ marginTop: 10 }} onClick={add} disabled={loading}>
             {t('webhook.add')}
           </Button>
+        </div>
+        <div>
+          <div style={{ marginBottom: 8 }}>{t('remoteWebhooks.title')}</div>
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 8 }}
+            message={t('remoteWebhooks.hint')}
+          />
+          {remoteError && (
+            <Alert type="error" showIcon style={{ marginBottom: 8 }} message={remoteError} />
+          )}
+          <Space direction="vertical" size={8} style={{ display: 'flex' }}>
+            {WEBHOOK_TOPICS.map((topic) => {
+              const registered = registeredFor(topic)
+              return (
+                <Space key={topic} align="center">
+                  <span style={{ minWidth: 160 }}>
+                    {t(`webhook.topic.${topic.replace('/', '_')}`)}
+                  </span>
+                  {registered ? (
+                    <>
+                      <span style={{ color: 'var(--ant-color-success)' }}>
+                        {t('remoteWebhooks.registered')}
+                      </span>
+                      <Button
+                        size="small"
+                        danger
+                        disabled={readonly || busyTopic === topic}
+                        loading={busyTopic === topic}
+                        onClick={() => void toggleRemote(topic)}
+                      >
+                        {t('remoteWebhooks.unregister')}
+                      </Button>
+                    </>
+                  ) : (
+                    <Button
+                      size="small"
+                      type="primary"
+                      ghost
+                      disabled={readonly || busyTopic === topic}
+                      loading={busyTopic === topic}
+                      onClick={() => void toggleRemote(topic)}
+                    >
+                      {t('remoteWebhooks.register')}
+                    </Button>
+                  )}
+                </Space>
+              )
+            })}
+          </Space>
         </div>
       </Space>
     </Modal>

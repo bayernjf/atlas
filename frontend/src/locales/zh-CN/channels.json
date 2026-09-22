@@ -71,5 +71,16 @@
       "copy": "复制失败，请手动选择复制",
       "save": "订阅保存失败"
     }
+  },
+  "remoteWebhooks": {
+    "title": "Shopify 店铺侧注册（经 Admin API 一键注册回调）",
+    "hint": "先在上方本地订阅 topic → 图，再把对应 topic 注册到 Shopify；本地订阅与店铺注册两个动作分别触发，不会自动同步。注册地址必须为 HTTPS，请配置 ATLAS_PUBLIC_URL。",
+    "registered": "已注册",
+    "register": "注册到 Shopify",
+    "unregister": "取消注册",
+    "loadError": "店铺侧注册状态加载失败",
+    "error": {
+      "CHANNEL_UNAUTHORIZED": "店铺访问令牌已失效，请在连接管理中重新授权"
+    }
   }
 }
