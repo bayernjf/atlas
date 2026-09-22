@@ -25,6 +25,7 @@
 | `deployment_config` | 05 / 四、部署方式 4.3 部署配置 Schema | ## 4.3 部署配置 Schema（示例） |
 | `interaction_template` | 05 / 五、自定义前端模板 5.3 交互模板 Schema（**愿景大 Schema**；M8 工程化最小子集＝下行 `card_template`） | ## 5.3 交互模板 Schema（示例） |
 | `card_template` | **M8 已落码收口 2026-09-18（2b35fc9 起，08 M8 落码条）**；`src/atlas/cards/{catalog,render}.py`（审批卡片双向 Schema + web/im/email 三渠道渲染）+ 04 §5.6 追加段（human_approval.cardTemplateId）；权威＝08 M8 立项/落码条 | —（工程契约） |
+| `email_decision_token` | **审批闭环批已落码收口 2026-09-22（bd6ec7a/8923473，docs/36）**；`src/atlas/collaboration/email_token.py`（HMAC 能力 token）＋`EmailApprovalNotifier` 链接＋公开 email-view/email-decision；权威＝04 §5.6 邮件决策补注 | —（工程契约） |
 | `evaluation_task` | 06 / 9.2 评估 Harness 设计 | ### 9.2 评估 Harness 设计（借鉴 lm-evaluation-harness）代码示例 |
 | `refund_decision` | `src/atlas/llm/decision.py`（W9-W10 权威实现；规则对齐 06 §9.2 黄金用例） | —（工程推导契约） |
 | `refund_order` | `src/atlas/shop/service.py`（W9-W10 Demo 电商数据结构） | —（工程推导契约） |
@@ -389,6 +390,47 @@ fallback:
 # action 回调：POST /api/approvals/{token}/decision，体 {decision,comment?} 或 {actionId,form?}（服务端 map_action_output 映射）
 ```
 > 卡片是图的附属实体（第六类实体，复验 D29 多来源）：bindings 的 `{{}}` 走 M0/L2 同一 ScopeIndex，坏引用编辑期被同一诊断流拦截；actions 只回写审批 decision/comment，不回写任意节点。进程内三渠道渲染 + message/send 落记录为沙盘语义，**不解除 D33**（真实 IM/邮件渠道随 D24/D20）。REST：`GET /api/cards`、`GET /api/approvals/{token}/card?channel=`，见 12 §5。
+
+### `email_decision_token` — 字段概览（审批闭环批，docs/36；2026-09-22 落码收口）
+
+```yaml
+# 能力 token（无登录 bearer 凭证）：base64url(payload_json).base64url(HMAC_SHA256)
+# 形状与 connections/oauth state 同构；紧凑 JSON、无空白
+payload:
+  v: 1
+  tenant: string              # 租户 id
+  at: string                  # 审批 token（approval broker 的 pending token，非租户 id）
+  iat: int                    # 签发 epoch 秒
+  exp: int                    # 过期＝iat + min(timeoutSeconds,3600)+300（300 秒宽限）
+# 密钥解析：ATLAS_APPROVAL_HMAC_SECRET → ATLAS_MASTER_KEY → 固定 dev 密钥（WARNING）
+
+# GET /api/approvals/email-view?token=<signed>（公开、只读、幂等、防预取安全）
+status: enum[pending, resolved]
+summary: string
+nodeId: string
+graphId: string
+approver: string
+timeoutSeconds: int
+createdAt: float              # pending.created_at epoch 秒（broker request 时刻）
+remainingSeconds: int         # max(0, createdAt+timeoutSeconds-now)
+# resolved 追加：
+decision: enum[approved, rejected]
+resolvedBy: string            # human | timeout
+# 有 cardTemplateId 时追加：
+card: object                  # render_card(channel="email") 投影 {channel,subject,html,links}
+
+# POST /api/approvals/email-decision（公开，首决生效）
+request:
+  token: string               # 必填
+  decision: "approved|rejected"  # 无卡片路径必填
+  comment: string             # ≤500，选填
+  actionId: string            # 卡片路径（form 随附，服务端 map_action_output → decision）
+  form: object
+response: {token, decision, resolvedBy, actionId?}
+# 409 已有决策；422 卡片错误/缺 decision；坏/过期 token、未装配租户、未知审批、
+# 租户与审批不符 → 统一 404「审批链接无效或已过期」（peek 不惰性创建租户）
+```
+> 邮件决策审计：`actor="email-link"`、`action="approval.email_decision:{decision}"`（audit schema 无 metadata 列、本批不扩列，决策编进 action）；不落 graph/node、不记签名 token、审批 token 与 comment。
 
 ### `evaluation_task` — 字段概览（完整定义见 06-运行时与质量保障.md #125，上下文章节：### 9.2 评估 Harness 设计（借鉴 lm-evaluation-harness）代码示例）
 
