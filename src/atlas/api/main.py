@@ -66,6 +66,8 @@ from atlas.memory.models import MemoryValidationError
 from atlas.message.adapter import MessageHarnessAdapter
 from atlas.monitoring import RUN_RING_SIZE, extract_business, extract_node_results
 from atlas.observability.audit import AUDITED_METHODS, LOGIN_PATH
+from atlas.channels.adapter import ShopifyHarnessAdapter
+from atlas.channels.base import ChannelError
 from atlas.connections.service import ConnectionServiceError
 from atlas.observability.health import check_ready
 from atlas.observability.metrics_export import render_prometheus
@@ -318,6 +320,13 @@ def _runtime_registry(services: TenantServices) -> AdapterRegistry:
                 repo=services.memory_store, granted_permissions=_FULL_PERMISSIONS
             )
         registry.register(adapter)
+    for view in services.channel_registry.list():
+        registry.register(
+            ShopifyHarnessAdapter(
+                view["id"], services.channel_registry,
+                granted_permissions=_FULL_PERMISSIONS,
+            )
+        )
     return registry
 
 
@@ -543,6 +552,87 @@ def test_connection(conn_id: str, principal: Principal = Depends(require("operat
         return services_for(principal).connection_service.test(conn_id)
     except ConnectionServiceError as exc:
         raise _conn_http_error(exc)
+
+
+class ChannelBindRequest(BaseModel):
+    provider: str
+    connectionId: str
+    config: dict[str, Any] | None = None
+
+
+def _channel_http_error(exc: ChannelError) -> "HTTPException":
+    return HTTPException(status_code=exc.status_code, detail=str(exc))
+
+
+def _record_channel_audit(
+    services: TenantServices, principal: Principal,
+    http_request: Request, action: str, status_code: int,
+) -> None:
+    try:
+        services.audit_store.record(
+            tenant_id=principal.tenant_id,
+            actor=principal.username,
+            action=action,
+            status_code=status_code,
+            path=http_request.url.path,
+            ip=http_request.client.host if http_request.client else "",
+        )
+    except Exception as exc:
+        logger.warning("channel audit record failed: %s", exc)
+
+
+@app.get("/api/channels")
+def list_channels(principal: Principal = Depends(require("read"))) -> dict[str, Any]:
+    return {"items": services_for(principal).channel_registry.list()}
+
+
+@app.post("/api/channels", status_code=201)
+def bind_channel(
+    body: ChannelBindRequest,
+    http_request: Request,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    services = services_for(principal)
+    try:
+        view = services.channel_registry.bind(
+            body.provider, body.connectionId, body.config,
+            created_by=principal.username,
+        )
+    except ChannelError as exc:
+        _record_channel_audit(services, principal, http_request, "channel.bind", exc.status_code)
+        raise _channel_http_error(exc)
+    _record_channel_audit(services, principal, http_request, "channel.bind", 201)
+    return view
+
+
+@app.get("/api/channels/{binding_id}")
+def get_channel(binding_id: str, principal: Principal = Depends(require("read"))) -> dict[str, Any]:
+    try:
+        return services_for(principal).channel_registry.get(binding_id)
+    except ChannelError as exc:
+        raise _channel_http_error(exc)
+
+
+@app.post("/api/channels/{binding_id}/test")
+def test_channel(binding_id: str, principal: Principal = Depends(require("read"))) -> dict[str, Any]:
+    # 上游错误不 5xx：200 体 ok=false（docs/38 §1C）
+    return services_for(principal).channel_registry.test(binding_id)
+
+
+@app.delete("/api/channels/{binding_id}")
+def delete_channel(
+    binding_id: str,
+    http_request: Request,
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, Any]:
+    services = services_for(principal)
+    try:
+        deleted = services.channel_registry.delete(binding_id)
+    except ChannelError as exc:
+        _record_channel_audit(services, principal, http_request, "channel.unbind", exc.status_code)
+        raise _channel_http_error(exc)
+    _record_channel_audit(services, principal, http_request, "channel.unbind", 200)
+    return {"deleted": deleted}
 
 
 @app.get("/connections/callback", response_class=HTMLResponse, include_in_schema=False)
@@ -826,7 +916,8 @@ def reset_password(
 
 @app.get("/api/adapters")
 def list_adapters(principal: Principal = Depends(require("read"))) -> list[dict[str, Any]]:
-    return _demo_registry.list_adapters()
+    # 执行期注册表在全局基础设施之上合并本租户渠道适配器（docs/38 §1E）
+    return _runtime_registry(services_for(principal)).list_adapters()
 
 
 @app.post("/api/graphs", response_model=SaveGraphResponse)

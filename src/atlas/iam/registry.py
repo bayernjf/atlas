@@ -10,6 +10,7 @@ import os
 import threading
 from dataclasses import dataclass
 
+from atlas.channels.registry import build_channel_registry
 from atlas.connections.service import build_connection_service
 from atlas.connections.store import ConnectionStore
 from atlas.collaboration.cancellations import RunCancellationBroker
@@ -66,6 +67,7 @@ class TenantServices:
     memory_store: MemoryRepository  # M11 长期记忆 fact/preference（批 3 PG 档换 PgMemoryStore）
     audit_store: AuditRepository  # T6 写操作审计（docs/35 §6；ring/PG 两档，reset 不清）
     connection_service: object  # T4 OAuth2 连接（docs/35 §4；业务服务，内存/PG 两档 store，reset 不清）
+    channel_registry: object  # 真实渠道绑定（docs/38；ADR T28，reset 不清）
 
 
 class TenantRegistry:
@@ -101,6 +103,9 @@ class TenantRegistry:
             from atlas.storage.pg import get_pg_backend
 
             backend = get_pg_backend()
+            connection_service = build_connection_service(
+                backend.connection_store(tenant_id), tenant_id=tenant_id
+            )
             # approval 的帧持久化在 loader frame_sink（批 2 写 interruptions 表），
             # broker 只承担进程内 pending + Event（重启后由恢复扫描器 restore 重建）。
             return TenantServices(
@@ -119,10 +124,13 @@ class TenantRegistry:
                 shadow_store=ShadowStore(),
                 memory_store=backend.memory_store(tenant_id),
                 audit_store=backend.audit_store(tenant_id),
-                connection_service=build_connection_service(
-                    backend.connection_store(tenant_id), tenant_id=tenant_id
+                connection_service=connection_service,
+                channel_registry=build_channel_registry(
+                    connection_service, tenant_id=tenant_id,
+                    store=backend.channel_store(tenant_id),
                 ),
             )
+        connection_service = build_connection_service(ConnectionStore(), tenant_id=tenant_id)
         return TenantServices(
             graph_store=GraphStore(),
             recording_store=RecordingStore(),
@@ -139,7 +147,10 @@ class TenantRegistry:
             shadow_store=ShadowStore(),
             memory_store=MemoryStore(),
             audit_store=AuditStore(),
-            connection_service=build_connection_service(ConnectionStore(), tenant_id=tenant_id),
+            connection_service=connection_service,
+            channel_registry=build_channel_registry(
+                connection_service, tenant_id=tenant_id
+            ),
         )
 
     def reset_tenant(self, tenant_id: str) -> None:
