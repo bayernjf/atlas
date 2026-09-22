@@ -67,6 +67,19 @@ class FakeNotifier:
             raise self.exc
 
 
+class FakeIssuer:
+    def __init__(self, signed: str = "SIGNED-TOKEN", exc: Exception | None = None):
+        self.signed = signed
+        self.exc = exc
+        self.calls = []
+
+    def issue(self, tenant_id, approval_token, timeout_seconds):
+        self.calls.append((tenant_id, approval_token, timeout_seconds))
+        if self.exc is not None:
+            raise self.exc
+        return self.signed
+
+
 def _run_and_capture_approval(graph_dict, notifier, payload=None):
     graph = parse_graph(graph_dict)
     payload = payload or {"order_id": "O-1", "owner_email": "owner@example.com"}
@@ -93,7 +106,10 @@ def _run_and_capture_approval(graph_dict, notifier, payload=None):
 
 def test_email_notifier_renders_plaintext_email():
     msgs = FakeMessages()
-    notifier = EmailApprovalNotifier(msgs, "http://app.example.com/")
+    issuer = FakeIssuer()
+    notifier = EmailApprovalNotifier(
+        msgs, "http://app.example.com/", tenant_id="t1", issuer=issuer
+    )
     notifier.notify_pending(
         graph_id="g1",
         node_id="human-1",
@@ -103,6 +119,8 @@ def test_email_notifier_renders_plaintext_email():
         timeout_seconds=120,
         recipients=["a@example.com", "b@example.com"],
     )
+    # 签发入参：租户 + 原始审批 token + 超时秒
+    assert issuer.calls == [("t1", "tok-secret", 120)]
     assert len(msgs.sent) == 1
     mail = msgs.sent[0]
     assert mail["channel"] == "email"
@@ -113,20 +131,37 @@ def test_email_notifier_renders_plaintext_email():
     assert "客服主管" in body
     assert "120" in body
     assert "human-1" in body and "g1" in body
-    # 入口 URL 去掉尾部斜杠；邮件只给入口、不含一键决策链接/token
-    assert "http://app.example.com" in body
-    assert "http://app.example.com/" not in body
+    # 入口 URL 去掉尾部斜杠；邮件附签名深链，原始审批 token 不直接出现
+    assert "一键处理：http://app.example.com/approvals/SIGNED-TOKEN" in body
+    assert "或前往应用：http://app.example.com" in body
     assert "tok-secret" not in body
 
 
 def test_email_notifier_without_approver_omits_line():
     msgs = FakeMessages()
-    notifier = EmailApprovalNotifier(msgs, "http://app.example.com")
+    notifier = EmailApprovalNotifier(
+        msgs, "http://app.example.com", tenant_id="t", issuer=FakeIssuer()
+    )
     notifier.notify_pending(
         graph_id="g", node_id="n", token="t", summary="s", approver="",
         timeout_seconds=10, recipients=["a@example.com"],
     )
     assert "指定审批人" not in msgs.sent[0]["body"]
+
+
+def test_email_notifier_signing_failure_propagates():
+    # 签名失败不上邮件、异常向上抛，由 graph 调用方 fail-safe 吞掉
+    msgs = FakeMessages()
+    notifier = EmailApprovalNotifier(
+        msgs, "http://app.example.com", tenant_id="t",
+        issuer=FakeIssuer(exc=RuntimeError("signer down")),
+    )
+    with pytest.raises(RuntimeError):
+        notifier.notify_pending(
+            graph_id="g", node_id="n", token="t", summary="s", approver="",
+            timeout_seconds=10, recipients=["a@example.com"],
+        )
+    assert msgs.sent == []
 
 
 # ============================ DSL 编译期校验 ============================

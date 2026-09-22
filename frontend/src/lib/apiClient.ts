@@ -395,6 +395,76 @@ export async function decideApproval(
   })
 }
 
+// --- 邮件深链审批（docs/36 §3；无登录，签名 token 即凭证） -------------------
+
+export type EmailApprovalView = {
+  status: 'pending' | 'resolved'
+  summary: string
+  nodeId: string
+  graphId: string
+  approver: string
+  timeoutSeconds: number
+  createdAt: number
+  remainingSeconds: number
+  decision?: string
+  resolvedBy?: string | null
+  card?: EmailCardView
+}
+
+export type EmailDecisionPayload = {
+  token: string
+  decision?: 'approved' | 'rejected'
+  comment?: string
+  actionId?: string
+  form?: Record<string, string>
+}
+
+async function publicPost<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const json = await response.json().catch(() => null)
+  if (!response.ok) {
+    throw new Error(json?.detail || `请求失败：${response.status}`)
+  }
+  return json as T
+}
+
+export async function getEmailApprovalView(token: string): Promise<EmailApprovalView> {
+  const query = new URLSearchParams({ token })
+  // 公开端点：不带 Bearer，失败不触发登录跳转
+  const response = await fetch(`/api/approvals/email-view?${query.toString()}`)
+  const body = await response.json().catch(() => null)
+  if (!response.ok) {
+    throw new Error(body?.detail || `请求失败：${response.status}`)
+  }
+  return body as EmailApprovalView
+}
+
+export function decideByEmail(
+  payload: EmailDecisionPayload,
+): Promise<{ token: string; decision: string; resolvedBy: string; actionId?: string }> {
+  return publicPost('/api/approvals/email-decision', payload)
+}
+
+export type QueueApprovalItem = {
+  token: string
+  node_id: string
+  graph_id: string
+  summary: string
+  approver: string
+  timeoutSeconds: number
+  createdAt: number
+  cardTemplateId?: string
+}
+
+export async function listApprovalsQueue(): Promise<QueueApprovalItem[]> {
+  const body = await request<{ items: QueueApprovalItem[] }>('/api/approvals')
+  return body.items
+}
+
 // --- M8 交互卡片（04 §5.6 追加段 / 12 §3.11） ------------------------------
 
 /** 内置卡片目录项（GET /api/cards，只读代码常量）。 */

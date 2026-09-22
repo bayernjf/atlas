@@ -81,6 +81,11 @@ class TenantRegistry:
                 self._tenants[tenant_id] = services
             return services
 
+    def peek(self, tenant_id: str) -> TenantServices | None:
+        """取已装配租户；不存在返回 None，绝不惰性创建（邮件公开路径用）。"""
+        with self._lock:
+            return self._tenants.get(tenant_id)
+
     def all_tenant_ids(self) -> list[str]:
         """已装配（曾被访问过）的租户 id 快照；不触发惰性创建（/metrics 用）。"""
         with self._lock:

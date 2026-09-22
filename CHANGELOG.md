@@ -4,7 +4,15 @@
 
 ## [Unreleased]
 
-### feat：真实接入交付批 T2–T6 全部落码收口（docs/35，2026-09-22；已 push origin/dev、待开 PR 合 main）
+### feat：审批闭环批全部落码收口（docs/36，2026-09-22；dev 四 commit、未 push）
+
+承接 docs/34 复审「通知→决策」断裂与 docs/35 T2 余部，D20 再次部分取回、**不解除**缓做（KMS/邮箱绑定/真实投递联调/多实例/IM/钉钉/动态审批人/节点级角色仍缓做）：
+
+- **A 邮件一键决策（bd6ec7a/8923473）**：`collaboration/email_token.py` TokenIssuer HMAC 签名 capability token（`base64url(json).base64url(HMAC-SHA256)`，payload `{v,tenant,at,iat,exp}`、TTL `min(timeout,3600)+300s` 宽限，密钥 ATLAS_APPROVAL_HMAC_SECRET→ATLAS_MASTER_KEY→开发默认 WARNING；verify 序：段数→compare_digest→JSON→exp）；ApprovalBroker pending 增 `created_at`；EmailApprovalNotifier 正文带一键 URL `{PUBLIC_URL}/approvals/{signed}`（签名失败向上抛、不发无链接邮件）；公开免登录 `GET /api/approvals/email-view`（GET 严格只读防邮件预取，失败不写审计）＋`POST /api/approvals/email-decision`，与登录路径共用 `_apply_approval_decision` 防双路漂移；统一 404（坏/过期 token、未装配租户、审批不存在/租户不匹配），`TenantRegistry.peek` 绝不惰性创建防租户枚举；409 已决策/422 卡片错误；审计 action `approval.email_decision:{decision}`、actor `email-link`，不记 token/comment。
+- **B 审批队列页（e2771ba）**：`pages/Approvals.tsx` 本租户 pending 队列（复用 list/decision/card 端点，10s 轮询且仅页面可见时，viewer 只读＋API 403）；`pages/EmailApproval.tsx` 免登录深链页（pending/resolved/invalid 三态＋email 渠道卡片表单，App.tsx 路由钩子前置修 rules-of-hooks）；新增 approvals i18n namespace；`lib/approvals.ts` token 提取/剩余时间纯逻辑 14 测试。
+- **验证**：后端 1174 passed/36 skipped（test_approval_email_token 16、test_api_approval_email 16）、前端 571 passed/2 skipped/45 files、lint/build 过；浏览器六场景冒烟过（pending 页、同意续跑、拒绝分支＋重复 409、篡改链接 invalid、租户隔离＋10s 刷新、viewer 只读），控制台零错误，4 截图存 docs/assets/。ADR T27（选签名 capability URL、弃登录+邮箱绑定），三处同步 10→02→09 已完成。
+
+### feat：真实接入交付批 T2–T6 全部落码收口（docs/35，2026-09-22；已随 PR #54 合 main，文档收口 PR #55，origin/main=7e8cae6）
 
 承接 docs/34 §五 P0/P1，五包均为缓做项部分取回、**不解除** D11/D20/D22/D24：
 
