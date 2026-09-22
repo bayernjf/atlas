@@ -3,7 +3,9 @@ import { defaultConfig, type NodeConfig, type NodeKind } from '../../nodeCatalog
 import type { MetaSchema } from '../../schemas/metaSchema'
 import { schemaRegistry } from '../../schemas'
 import {
+  eventKeyStaticValid,
   FIELD_CODES,
+  validEventKey,
   validateNodeFields,
   validateParamFields,
   validateSchemaFields,
@@ -111,7 +113,7 @@ describe('schema keyword to FIELD_* code mapping (U37②)', () => {
     expect(single).toContain(FIELD_CODES.ITEMS_MIN)
 
     expect(
-      codesOf(schemaRegistry.get('wait'), { waitType: 'event', durationSeconds: 5 }),
+      codesOf(schemaRegistry.get('wait'), { waitType: 'until', durationSeconds: 5 }),
     ).toContain(FIELD_CODES.CONST)
   })
 
@@ -122,6 +124,47 @@ describe('schema keyword to FIELD_* code mapping (U37②)', () => {
     const missingCron = validateSchemaFields(schemaRegistry.get('trigger'), { triggerType: 'schedule' })
     expect(missingCron.map((f) => f.pointer)).toEqual(['/cron'])
     expect(missingCron[0].code).toBe(FIELD_CODES.REQUIRED)
+  })
+})
+
+describe('event wait v1 (docs/47)', () => {
+  it('validEventKey accepts rendered keys with [A-Za-z0-9:_-] and rejects others', () => {
+    expect(validEventKey('order_paid')).toBe(true)
+    expect(validEventKey('evt:paid-x_1')).toBe(true)
+    for (const bad of ['', 'has space', 'a/b', 'a.b', '中文', 'a'.repeat(129)]) {
+      expect(validEventKey(bad)).toBe(false)
+    }
+  })
+
+  it('eventKeyStaticValid ignores placeholder contents but checks static parts', () => {
+    expect(eventKeyStaticValid('order_paid_{{trigger-1.context.payload.order_id}}')).toBe(true)
+    expect(eventKeyStaticValid('{{x}}')).toBe(true)
+    expect(eventKeyStaticValid('bad key {{x}}')).toBe(false)
+    expect(eventKeyStaticValid('k/{{x}}')).toBe(false)
+  })
+
+  it('accepts a complete event wait config', () => {
+    expect(
+      fields('wait', {
+        waitType: 'event',
+        eventKey: 'order_paid_{{trigger-1.context.payload.id}}',
+        timeoutSeconds: 300,
+        onTimeout: 'continue',
+      }),
+    ).toEqual([])
+  })
+
+  it('flags event branch field errors on the right pointers', () => {
+    const diagnostics = fields('wait', {
+      waitType: 'event',
+      eventKey: 'bad key',
+      timeoutSeconds: 3601,
+      onTimeout: 'abort' as 'continue',
+    })
+    const byPointer = new Map(diagnostics.map((d) => [d.loc.pointer, d]))
+    expect(byPointer.get('/eventKey')?.code).toBe(FIELD_CODES.PATTERN)
+    expect(byPointer.get('/timeoutSeconds')?.message).toContain('1-3600')
+    expect(byPointer.get('/onTimeout')?.message).toContain('继续或失败')
   })
 })
 

@@ -211,10 +211,16 @@ describe('validateNode', () => {
       expect(errors.some((message) => message.includes('1-600'))).toBe(true)
     }
 
-    const wrongType = validateNode(
-      node('wait', { config: { waitType: 'event' as 'duration', durationSeconds: 5 } }),
+    const eventMissing = validateNode(
+      node('wait', { config: { waitType: 'event' } }),
     )
-    expect(wrongType).toContain('等待类型必须为定时等待')
+    expect(eventMissing.some((message) => message.includes('事件标识必填'))).toBe(true)
+    expect(eventMissing.some((message) => message.includes('1-3600'))).toBe(true)
+
+    const wrongType = validateNode(
+      node('wait', { config: { waitType: 'until' as 'duration' } }),
+    )
+    expect(wrongType).toContain('等待类型必须为定时等待或事件等待')
   })
 
   it('defaults human_approval to 300s reject timeout with empty targets', () => {

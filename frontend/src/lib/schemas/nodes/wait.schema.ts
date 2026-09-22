@@ -1,22 +1,41 @@
 import type { NodeConfigSchema } from '../metaSchema'
 
 /**
- * wait 节点 config schema（04 §5.5 / §4.9；投影自 nodeCatalog.ts 手写规则）。
- * v1 仅定时等待：waitType const=duration，durationSeconds 为 1-600 整数。
+ * wait 节点 config schema（04 §5.5；event 分支 docs/47；投影自 nodeCatalog.ts 手写规则）。
+ * duration：1-600 整数秒；event：eventKey 静态模板、timeoutSeconds 1-3600、onTimeout。
  */
 export const waitSchema: NodeConfigSchema = {
   type: 'object',
-  properties: {
-    waitType: { type: 'string', const: 'duration', default: 'duration' },
-    durationSeconds: { type: 'integer', minimum: 1, maximum: 600, default: 5 },
-  },
-  required: ['waitType', 'durationSeconds'],
+  oneOf: [
+    {
+      properties: {
+        waitType: { type: 'string', const: 'duration', default: 'duration' },
+        durationSeconds: { type: 'integer', minimum: 1, maximum: 600, default: 5 },
+      },
+      required: ['waitType', 'durationSeconds'],
+    },
+    {
+      properties: {
+        waitType: { type: 'string', const: 'event' },
+        eventKey: { type: 'string', minLength: 1, maxLength: 128 },
+        timeoutSeconds: { type: 'integer', minimum: 1, maximum: 3600 },
+        onTimeout: { type: 'string', enum: ['continue', 'fail'], default: 'continue' },
+      },
+      required: ['waitType', 'eventKey', 'timeoutSeconds'],
+    },
+  ],
   'x-outputSchema': {
     type: 'object',
     properties: {
       mode: {},
       waitType: { type: 'string' },
       durationSeconds: { type: 'integer' },
+      eventKey: { type: 'string' },
+      signaled: { type: 'boolean' },
+      payload: { type: 'object' },
+      waitedSeconds: { type: 'integer' },
+      resolvedBy: { type: 'string' },
+      token: { type: 'string' },
     },
   },
 }
