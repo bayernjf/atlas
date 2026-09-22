@@ -16,6 +16,7 @@ from atlas.graph.loader import (
     resolve_path,
     run_graph,
 )
+from atlas.harness.base import ActionResult, Capability, HarnessAdapter
 from atlas.harness.registry import AdapterRegistry
 from atlas.httpapi.adapter import HttpApiHarnessAdapter
 from atlas.httpapi.service import HttpApiClient
@@ -1426,3 +1427,44 @@ def test_parallel_any_success_succeeds_despite_one_failed_branch_d18_a1():
     by_target = {b["target"]: b["status"] for b in po["branches"]}
     assert by_target["tool-a"] == "success"
     assert by_target["tool-b"] == "failed"
+
+
+class _EchoAdapter(HarnessAdapter):
+    adapter_type = "api"
+
+    def __init__(self):
+        super().__init__()
+        self.adapter_id = "openapi:openapi-1"
+
+    def list_capabilities(self):
+        return [
+            Capability(
+                name="check_basic",
+                description="echo",
+                action="openapi:openapi-1/check_basic",
+            )
+        ]
+
+    def _execute(self, request):
+        return ActionResult.success({"received": request.parameters})
+
+    def observe(self):
+        from atlas.harness.base import Observation
+
+        return Observation(url="https://example.com", title="echo")
+
+
+def test_openapi_tool_receives_params_from_json():
+    registry = AdapterRegistry()
+    registry.register(_EchoAdapter())
+    node = NodeDSL(
+        id="tool-1",
+        type="tool_call",
+        name="Basic 调用",
+        config={
+            "tool": "openapi:openapi-1/check_basic",
+            "params": '{"user": "alice", "password": "secret"}',
+        },
+    )
+    output = _execute_tool(node, {}, registry)
+    assert output["result"]["received"] == {"user": "alice", "password": "secret"}

@@ -1155,7 +1155,7 @@ def _execute_tool(
     permission = (tool_permissions or {}).get(tool_name)
     shadow_blocked = shadow and permission != "read"
 
-    if adapter_id in GENERIC_JSON_ADAPTERS:
+    if adapter_id in GENERIC_JSON_ADAPTERS or adapter_id.startswith("openapi:"):
         # 通用 JSON 通道（04 §4.6-4.8）：params 插值后必须是 JSON 对象并整体透传
         try:
             parameters = json.loads(params_text) if params_text.strip() else {}
