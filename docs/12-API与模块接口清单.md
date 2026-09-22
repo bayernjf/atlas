@@ -695,7 +695,7 @@ class ChannelRegistry:
 
 无迁移；demo mock 缝见 docs/41 §1D。
 
-### 3.17 事件等待内部接口（waitType=event 进程内 v1；docs/47，2026-09-23 docs-only 立项）
+### 3.17 事件等待内部接口（waitType=event 进程内 v1；docs/47，2026-09-23 落码收口）
 
 ```python
 # src/atlas/collaboration/event_waits.py
@@ -836,7 +836,7 @@ class MemoryRepository(Protocol):
 >
 > parallel 节点（Phase 2 第三项，v1 静态扇出/扇入）运行结果写入 `outputs[parallel_id] = {mode:"parallel", joinStrategy:"all_success"|"all_completed", status:"success"|"failed", branches:[{label,target,status,error}], result:{<分支入口节点id>: <末端节点产出>}, joinTarget}`；入口先写 running 占位，合成网关 `__join__<id>` 汇聚时（joinTarget 执行前）覆盖为终态并以 parallel 节点自身补发第二次 node_end。分支路径上任一节点 `result.status=="FAILED"` 即该分支失败；all_success 下有失败时整体 `status="failed"` 但 joinTarget 照常执行、run 仍 completed（fail-safe）。trace 增 `parallel-x: fork N branches → a, b` 与 `parallel-x: joined (all_success) success` / `parallel-x: joined (all_success) failed: <label>（<error>）` 行。下游引用形如 `{{parallel-x.status}}`、`{{parallel-x.result.tool-a.result.status}}`（result 以入口节点 id 为键）。扇出/barrier/fail-safe 与 outputs 按键合并 reducer 见 04 §5.4、06 §6.1。
 
-> wait 节点（Phase 2 第四项，v1 仅定时等待）运行结果写入 `outputs[wait_id] = {mode:"wait", waitType:"duration", durationSeconds: <int>}`；执行器 node_start 后同步 `time.sleep(durationSeconds)`（1-600 秒整数常量，线程池工作线程内阻塞），到时沿唯一普通边继续。trace 增 `wait-x: waited 5s` 行。下游引用形如 `{{wait-x.durationSeconds}}`。事件等待缓做 14 D19，语义见 04 §5.5、06 §6.1。
+> wait 节点（Phase 2 第四项，v1 仅定时等待）运行结果写入 `outputs[wait_id] = {mode:"wait", waitType:"duration", durationSeconds: <int>}`；执行器 node_start 后同步 `time.sleep(durationSeconds)`（1-600 秒整数常量，线程池工作线程内阻塞），到时沿唯一普通边继续。trace 增 `wait-x: waited 5s` 行。下游引用形如 `{{wait-x.durationSeconds}}`。事件等待的进程内 v1 子集已落码（2026-09-23，见 04 §5.5 追加段、06 §6.22、docs/47）；持久化中断帧/多实例仍缓做 14 D19。
 >
 > human_approval 节点（Phase 2 第五项，v1 进程内审批信号）运行结果写入 `outputs[human_id] = {mode:"human_approval", decision:"approved"|"rejected", target, token, summary, approver, resolvedBy:"human"|"input"|"timeout"}`；执行器在 `ApprovalBroker`（模块级单例，可注入）登记 pending 后阻塞，node_start 携带 `approval` 载荷。决策三来源：REST 人工放行、run inputs 预置 `{"approvals":{"<node-id>":"approved"|"rejected"}}`（非交互/测试）、超时按 onTimeout（10-3600 秒，默认 reject）自动决策；两条出边全 conditional，按 decision 路由 approvedTarget/rejectedTarget。trace 增 `human-x: approved (human) → tool-y` / `… rejected (timeout) → tool-z` 行。下游引用形如 `{{human-x.decision}}`。持久化中断-恢复缓做 14 D20，语义见 04 §5.6、06 §6.1。**M8（已落码 2026-09-18）纯超集**：config 可选 `cardTemplateId`（不填＝上述 summary 旧路径完全不回归；非空未命中内置目录→编译 422）；命中时 node_start 的 `approval` 载荷在 `{token,summary,approver,timeoutSeconds}` 上加 `cardTemplateId`，节点产出在现有字段上加 `comment`（审批意见，三来源缺省空串）与 `card:{templateId,actionId}`；ApprovalBroker pending 携带 card_template_id 与渲染上下文快照，M5b 中断帧带 cardTemplateId、恢复时上下文从帧 `resume_state.outputs`+trigger 重建；卡片渲染与决策端点见 §3.11 与 `/api/cards`、`/api/approvals/{token}/card`、`/api/approvals/{token}/decision`（actionId/form）。
 >
@@ -860,7 +860,7 @@ class MemoryRepository(Protocol):
 | GET | /api/approvals/email-view | **公开（无登录）**审批只读视图：query `?token=<签名 capability token>`；返回 `{status, summary, nodeId, graphId, approver, timeoutSeconds, createdAt, remainingSeconds, decision?, resolvedBy?, card?}`（card＝email 渠道渲染投影，仅 cardTemplateId 审批）；只读幂等、GET 无副作用不写审计；坏/过期 token、未装配租户（peek 不创建）、未知审批、租户与审批不符 → 统一 404「审批链接无效或已过期」（审批闭环批 2026-09-22） | email_decision_token |
 | POST | /api/approvals/email-decision | **公开（无登录）**邮件一键决策：体 `{token（必填）, decision?:"approved"|"rejected", comment?≤500, actionId?, form?}`；与登录态 decision 共用 `_apply_approval_decision`（卡片走 map_action_output）；200 返 `{token, decision, resolvedBy, actionId?}`，成功后 fail-safe 写审计 actor `email-link`、action `approval.email_decision:{decision}`（不记 token/comment）；重复 409、卡片错误/缺 decision 422、坏 token 等统一 404（同上，审批闭环批 2026-09-22） | email_decision_token |
 | POST | /api/approvals/{token}/decision | 人工审批决策，请求体 `{decision: "approved"|"rejected", comment?}`（comment v1 仅接收不展示）；**M8 起纯超集加可选 `{actionId?, form?}`**——命中卡片时前端可提交 `{actionId, form:{<name>:<value>}}`（decision/comment 可省，服务端经 `map_action_output` 按卡片 action.output 映射，`{{form.*}}` 回填 comment），也仍接受旧 `{decision,comment?}`；首决生效，200 返回决策结果；未知 token 404、已决重复提交 409、坏 actionId 或 action.output 缺必填 form 字段 422（中文 detail）；Phase 2 第五项 | human_approval / card_template |
-| POST | /api/waits/events | 事件等待按 key 广播信号（D19 进程内 v1，2026-09-23 docs-only 立项 docs/47；operate）：体 `{eventKey（必填 1-128、白名单 [A-Za-z0-9:_-]）, payload?: object}`（payload 序列化 ≤4096、顶层键 ≤50）；返 `{released: n}`，同 key 多个 pending 全释放，无 pending 返 0（信号不留存）；eventKey 非法 422 WAIT_EVENT_KEY_INVALID、payload 超限 422 WAIT_EVENT_PAYLOAD_INVALID | wait_event |
+| POST | /api/waits/events | 事件等待按 key 广播信号（D19 进程内 v1，2026-09-23 落码收口 docs/47；operate）：体 `{eventKey（必填 1-128、白名单 [A-Za-z0-9:_-]）, payload?: object}`（payload 序列化 ≤4096、顶层键 ≤50）；返 `{released: n}`，同 key 多个 pending 全释放，无 pending 返 0（信号不留存）；eventKey 非法 422 WAIT_EVENT_KEY_INVALID、payload 超限 422 WAIT_EVENT_PAYLOAD_INVALID | wait_event |
 | POST | /api/waits/{token}/signal | 事件等待直投信号（operate）：体 `{payload?: object}`（限制同上）；200 返 `{token, released: true}`；未知/已取走 token 404 WAIT_TOKEN_NOT_FOUND；条目已 signaled 409 WAIT_ALREADY_SIGNALED | wait_event |
 | GET | /api/waits | 列出本租户 pending 事件等待（viewer+）：`{items:[{token, eventKey, nodeId, graphId, timeoutSeconds, deadlineAt}]}`；进程内、重启即失 | wait_event |
 | POST | /api/feedback | 提交种子试用反馈（type=bug/suggestion、content、contact 选填，201；进程内存储，reset 不清除；Phase 1） | feedback_item |

@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### feat：wait 事件等待进程内 v1 批落码收口（docs/47，2026-09-23；dev、未 push；无 ADR）
+
+- wait 节点 `waitType=event` 五步原子序全部落码（f647c96→aa82eed→1608002→ce8c4f0；D19 部分取回、不解除）：per-tenant EventWaitBroker 挂起（event_key 索引、token/广播/直投、monotonic 超时、0.2s 取消切片），DSL event 四字段（eventKey 支持 {{}} 插值、timeoutSeconds 1-3600、onTimeout continue/fail），run inputs waitEvents 预置（resolvedBy:"input"）；超时 fail → WAIT_TIMEOUT_FAILED，渲染后坏 key → WAIT_EVENT_KEY_INVALID。
+- 三 REST 端点：POST /api/waits/events（广播）、POST /api/waits/{token}/signal（直投，404 WAIT_TOKEN_NOT_FOUND / 409 WAIT_ALREADY_SIGNALED）、GET /api/waits（pending）；payload 限 JSON 对象、≤4096 字节、顶层键 ≤50。
+- 前端 WaitConfig 定时/事件双模式，wait schema oneOf 两分支，L1 eventKey/timeout/onTimeout 字段诊断；事件产出 signaled/payload/resolvedBy/token。
+- 收口门：后端 1435/59（净增 37）、前端 606/2、lint/build 干净；HTTP 冒烟 19 检查全过（`.smoke/event_wait_smoke.py`），浏览器冒烟 2 截图 docs/smoke-shots/event-wait-*。零新依赖、零迁移；中断帧/恢复扫描器/多实例、动态时长仍缓做 D19。
+
 ### docs：wait 事件等待进程内 v1 批 docs-only 立项（docs/47，2026-09-23；dev、未 push；无 ADR）
 
 - wait 节点新增 `waitType=event`（D19 部分取回、不解除）：per-tenant EventWaitBroker 进程内挂起，REST 广播/直投信号或 run inputs waitEvents 预置恢复，timeoutSeconds 1-3600、onTimeout continue/fail（fail → WAIT_TIMEOUT_FAILED），输出携带 payload。
