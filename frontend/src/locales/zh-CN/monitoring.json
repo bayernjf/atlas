@@ -294,5 +294,36 @@
     "expired": "已过期",
     "delete": "解除",
     "deleteConfirm": "确定提前解除该静默规则？解除后匹配的告警将恢复产生。"
+  },
+  "webhookReliability": {
+    "card": {
+      "title": "入站 Webhook 可靠性"
+    },
+    "stat": {
+      "received": "成功投递",
+      "dead": "死信",
+      "duplicates": "重复投递"
+    },
+    "col": {
+      "topic": "Topic",
+      "shop": "店铺",
+      "reasons": "失败原因",
+      "createdAt": "接收时间",
+      "actions": "操作"
+    },
+    "reason": {
+      "NO_PUBLISHED_VERSION": "图无已发布版本",
+      "RESOLVE_FAILED": "路由解析失败",
+      "TRIGGER_FAILED": "触发失败",
+      "MISSING_GRAPH_ID": "缺少图 ID"
+    },
+    "action": {
+      "replay": "重放"
+    },
+    "deleteConfirm": "确认删除该死信记录？删除后不可恢复。",
+    "empty": {
+      "topic": "暂无投递记录",
+      "dead": "暂无死信，入站投递均正常"
+    }
   }
 }

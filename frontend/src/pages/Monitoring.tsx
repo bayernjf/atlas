@@ -44,6 +44,7 @@ import { UserBadge } from '../components/UserBadge'
 import { ShadowRunsCard } from '../components/shadow/ShadowRunsCard'
 import { TraceWaterfall } from '../components/monitoring/TraceWaterfall'
 import { OnCallBar } from '../components/monitoring/OnCallBar'
+import { WebhookReliabilityCard } from '../components/monitoring/WebhookReliabilityCard'
 import { SilenceManager, SilencePopButton } from '../components/monitoring/SilenceManager'
 import {
   ALERT_STATUS_COLORS,
@@ -877,6 +878,7 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
             />
           </Card>
           <ShadowRunsCard canOperate={canOperate} />
+          <WebhookReliabilityCard canOperate={canOperate} canAdmin={canAdmin} />
         </Space>
       </Content>
     </Layout>

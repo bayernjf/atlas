@@ -1622,3 +1622,53 @@ export async function putWebhookSubscriptions(
   )
   return body.items
 }
+
+export type WebhookDeadLetter = {
+  webhookId: string
+  bindingId: string
+  topic: string
+  shop: string
+  reasons: { graphId: string; code: string }[]
+  createdAt: string
+  replayedAt: string | null
+}
+
+export type WebhookDeliveryMetrics = {
+  byTopic: Record<string, { received: number; dead: number; duplicates: number }>
+  totals: { received: number; dead: number; duplicates: number }
+}
+
+export async function listWebhookDeadLetters(params?: {
+  topic?: string
+  bindingId?: string
+  limit?: number
+}): Promise<WebhookDeadLetter[]> {
+  const query = new URLSearchParams()
+  if (params?.topic) query.set('topic', params.topic)
+  if (params?.bindingId) query.set('bindingId', params.bindingId)
+  if (params?.limit) query.set('limit', String(params.limit))
+  const suffix = query.size > 0 ? `?${query.toString()}` : ''
+  const body = await request<{ items: WebhookDeadLetter[] }>(
+    `/api/channels/webhooks/dead-letters${suffix}`,
+  )
+  return body.items
+}
+
+export async function replayWebhookDeadLetter(
+  webhookId: string,
+): Promise<{ webhookId: string; status: string; reasons: { graphId: string; code: string }[] }> {
+  return request(
+    `/api/channels/webhooks/dead-letters/${encodeURIComponent(webhookId)}/replay`,
+    { method: 'POST' },
+  )
+}
+
+export async function deleteWebhookDeadLetter(webhookId: string): Promise<{ deleted: boolean }> {
+  return request(`/api/channels/webhooks/dead-letters/${encodeURIComponent(webhookId)}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function getWebhookMetrics(): Promise<WebhookDeliveryMetrics> {
+  return request('/api/channels/webhooks/metrics')
+}
