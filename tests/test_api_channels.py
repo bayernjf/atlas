@@ -40,6 +40,8 @@ def _setup():
         services.connection_service.delete(item["id"])
     for item in services.channel_registry.list():
         services.channel_registry.delete(item["id"])
+    # 内存 ChannelStore 的 ch-N 序列不随删除归零；本模块用例假定从 ch-1 开始
+    services.channel_registry._store._seq = 0
     yield
     client.headers.pop("authorization", None)
 

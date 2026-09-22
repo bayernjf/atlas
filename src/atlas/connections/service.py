@@ -211,6 +211,13 @@ class ConnectionService:
             return None
         return self._decrypt(conn.access_token_envelope)
 
+    def client_secret_for(self, conn_id: str) -> str | None:
+        """现解密 OAuth app client secret（入站 webhook 验签）；缺信封 → None。"""
+        conn = self._require(conn_id)
+        if not conn.client_secret_envelope:
+            return None
+        return self._decrypt(conn.client_secret_envelope)
+
     # ---------------- OAuth 流程 ----------------
 
     def authorize(self, conn_id: str) -> dict:

@@ -137,6 +137,15 @@ class ChannelRegistry:
         binding = self._require(binding_id)
         return self._store.delete(binding.id)
 
+    def subscriptions(self, binding_id: str) -> list[dict[str, Any]]:
+        return self._require(binding_id).view()["webhookSubscriptions"]
+
+    def set_subscriptions(self, binding_id: str, subs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        binding = self._require(binding_id)
+        binding.webhook_subscriptions = subs
+        self._store.save(binding)
+        return binding.view()["webhookSubscriptions"]
+
 
 def build_channel_registry(
     connection_service: ConnectionService,

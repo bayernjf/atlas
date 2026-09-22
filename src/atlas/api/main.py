@@ -67,7 +67,14 @@ from atlas.message.adapter import MessageHarnessAdapter
 from atlas.monitoring import RUN_RING_SIZE, extract_business, extract_node_results
 from atlas.observability.audit import AUDITED_METHODS, LOGIN_PATH
 from atlas.channels.adapter import ShopifyHarnessAdapter
-from atlas.channels.base import ChannelError
+from atlas.channels.base import ChannelBinding, ChannelError
+from atlas.channels.webhooks import (
+    HMAC_HEADER,
+    SUPPORTED_TOPICS,
+    WebhookDeliverer,
+    build_envelope,
+    verify_shopify_hmac,
+)
 from atlas.connections.service import ConnectionServiceError
 from atlas.observability.health import check_ready
 from atlas.observability.metrics_export import render_prometheus
@@ -633,6 +640,213 @@ def delete_channel(
         raise _channel_http_error(exc)
     _record_channel_audit(services, principal, http_request, "channel.unbind", 200)
     return {"deleted": deleted}
+
+
+# --- 入站 Webhook（docs/39，ADR T29）--------------------------------------
+
+MAX_WEBHOOK_SUBSCRIPTIONS = 10
+
+
+class WebhookSubscriptionsRequest(BaseModel):
+    subscriptions: list[dict[str, Any]]
+
+
+def _locate_binding(binding_id: str) -> tuple[str, ChannelBinding, TenantServices] | None:
+    """公开路径的跨租户绑定定位：绝不因探测而惰性创建租户。"""
+    if STORAGE_BACKEND == "pg":
+        engine = get_pg_backend().engine
+        with engine.connect() as db:
+            row = db.execute(
+                text("SELECT tenant_id FROM channel_bindings WHERE id = :id"),
+                {"id": binding_id},
+            ).first()
+        if row is None:
+            return None
+        tenant_id = row[0]
+        services = tenant_registry.get(tenant_id)
+        binding = services.channel_registry._store.get(binding_id)
+        if binding is None:
+            return None
+        return tenant_id, binding, services
+    for tenant_id in tenant_registry.all_tenant_ids():
+        services = tenant_registry.peek(tenant_id)
+        if services is None:
+            continue
+        binding = services.channel_registry._store.get(binding_id)
+        if binding is not None:
+            return tenant_id, binding, services
+    return None
+
+
+def _webhook_resolve(graph_id: str, tenant: str, event: TriggerEvent) -> int | None:
+    services = tenant_registry.get(tenant)
+    version, _segment = services.routing_store.resolve(graph_id, tenant=tenant, event=event)
+    return version
+
+
+def _webhook_trigger(graph_id: str, version: int, event: TriggerEvent, tenant: str) -> None:
+    services = tenant_registry.get(tenant)
+    threading.Thread(
+        target=_webhook_run_worker,
+        args=(services, tenant, graph_id, version, event),
+        daemon=True,
+    ).start()
+
+
+def _webhook_audit(action: str, tenant: str, metadata: dict) -> None:
+    services = tenant_registry.get(tenant)
+    # AuditStore 无 metadata 列：关键事实编码进 path（不含 body/密钥）。
+    path = (
+        f"webhook binding={metadata.get('bindingId')} "
+        f"id={metadata.get('webhookId')} shop={metadata.get('shop')}"
+    )
+    services.audit_store.record(
+        tenant_id=tenant, actor="shopify-webhook", action=action,
+        status_code=200, path=path, ip="",
+    )
+
+
+_webhook_deliverer = WebhookDeliverer(
+    resolver=_webhook_resolve,
+    trigger=_webhook_trigger,
+    auditor=_webhook_audit,
+)
+
+
+def _webhook_run_worker(
+    services: TenantServices, tenant_id: str,
+    graph_id: str, version: int, event: TriggerEvent,
+) -> None:
+    """后台运行钉版图：run 记录独立于 HTTP 请求；失败落 failed，不回传 Shopify。"""
+    run_id = uuid.uuid4().hex
+    run_store = services.run_store
+    run_store.begin(run_id=run_id, graph_id=graph_id, mode="webhook")
+    try:
+        raw = services.graph_store.get(graph_id, version)
+        if raw is None:
+            run_store.finish(
+                run_id=run_id, status="failed",
+                error=f"已发布版本不存在：{graph_id}@{version}",
+            )
+            return
+        graph = parse_graph(raw)
+        result = run_graph(
+            graph,
+            inputs={"event": event.model_dump()},
+            registry=_runtime_registry(services),
+            approval_broker=services.approval_broker,
+            graph_id=graph_id,
+            graph_resolver=_tenant_graph_resolver(services),
+            frame_sink=_frame_sink_for(tenant_id, run_store, run_id),
+            graph_version=version,
+        )
+        run_store.finish(
+            run_id=run_id, status="completed",
+            outputs=result["outputs"], trace=result["trace"],
+        )
+    except Exception as exc:
+        logger.error("webhook 触发图运行失败 graph=%s@%s", graph_id, version, exc_info=True)
+        run_store.finish(
+            run_id=run_id, status="failed",
+            error=f"{type(exc).__name__}: {exc}",
+        )
+
+
+@app.post("/api/channels/hooks/shopify/{binding_id}")
+async def shopify_webhook_ingress(binding_id: str, http_request: Request) -> dict[str, Any]:
+    """Shopify 公开入站：先跨租户定位绑定，再在原始 body 上 HMAC 验签，最后才解析 JSON。
+
+    验签通过后一律 200（received/duplicate/ignored）；绑定不存在统一 404、
+    签名失败统一 401（不泄漏原因差异）；密钥不可用 503；body/头非法 400。
+    """
+    located = _locate_binding(binding_id)
+    if located is None:
+        raise HTTPException(status_code=404, detail="渠道绑定不存在")
+    tenant_id, binding, services = located
+    secret = services.connection_service.client_secret_for(binding.connection_id)
+    if not secret:
+        raise HTTPException(status_code=503, detail="Webhook 验签密钥暂不可用")
+    raw = await http_request.body()
+    signature = http_request.headers.get(HMAC_HEADER)
+    if not verify_shopify_hmac(raw, signature, secret):
+        raise HTTPException(status_code=401, detail="Webhook 签名校验失败")
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise HTTPException(status_code=400, detail="Webhook 请求体不是合法 JSON 对象")
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="Webhook 请求体必须是 JSON 对象")
+    try:
+        envelope = build_envelope(http_request.headers, data)
+    except ChannelError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    return _webhook_deliverer.deliver(
+        tenant_id,
+        {"id": binding.id, "webhook_subscriptions": binding.webhook_subscriptions},
+        envelope,
+    )
+
+
+@app.get("/api/channels/{binding_id}/webhooks")
+def get_webhook_subscriptions(
+    binding_id: str, principal: Principal = Depends(require("read"))
+) -> dict[str, Any]:
+    try:
+        items = services_for(principal).channel_registry.subscriptions(binding_id)
+    except ChannelError as exc:
+        raise _channel_http_error(exc)
+    return {"items": items}
+
+
+@app.put("/api/channels/{binding_id}/webhooks")
+def put_webhook_subscriptions(
+    binding_id: str,
+    body: WebhookSubscriptionsRequest,
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, Any]:
+    services = services_for(principal)
+    try:
+        services.channel_registry._require(binding_id)
+    except ChannelError as exc:
+        raise _channel_http_error(exc)
+
+    subs = body.subscriptions
+    errors: list[str] = []
+    if not isinstance(subs, list):
+        errors.append("订阅必须是数组")
+    elif len(subs) > MAX_WEBHOOK_SUBSCRIPTIONS:
+        errors.append(f"订阅数量不能超过 {MAX_WEBHOOK_SUBSCRIPTIONS} 条")
+    normalized: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for index, item in enumerate(subs if isinstance(subs, list) else []):
+        if not isinstance(item, dict):
+            errors.append(f"第 {index + 1} 条订阅格式非法")
+            continue
+        topic = item.get("topic")
+        graph_id = item.get("graphId")
+        enabled = item.get("enabled", True)
+        prefix = f"第 {index + 1} 条订阅"
+        if topic not in SUPPORTED_TOPICS:
+            errors.append(f"{prefix}：不支持的 Webhook topic：{topic}")
+        if not isinstance(graph_id, str) or not graph_id.strip():
+            errors.append(f"{prefix}：缺少 graphId")
+        elif services.graph_store.get(graph_id.strip()) is None:
+            errors.append(f"{prefix}：订阅的图不存在：{graph_id}")
+        if not isinstance(enabled, bool):
+            errors.append(f"{prefix}：enabled 必须是布尔值")
+        if isinstance(topic, str) and isinstance(graph_id, str):
+            key = (topic, graph_id.strip())
+            if key in seen:
+                errors.append(f"{prefix}：同一 topic 与图的订阅重复：{topic} → {graph_id}")
+            seen.add(key)
+        if isinstance(graph_id, str):
+            graph_id = graph_id.strip()
+        normalized.append({"topic": topic, "graph_id": graph_id, "enabled": enabled})
+    if errors:
+        raise HTTPException(status_code=422, detail=errors)
+
+    items = services.channel_registry.set_subscriptions(binding_id, normalized)
+    return {"items": items}
 
 
 @app.get("/connections/callback", response_class=HTMLResponse, include_in_schema=False)
