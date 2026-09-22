@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### chore：删除 LICENSE，项目保持不开放（2026-09-22，f721c18）
+
+- 用户拍板回到早期「不要 LICENSE」指示：移除根目录 `LICENSE`（MIT 曾随 PR #53 短暂在 main），同步删除 pyproject.toml 与 frontend/package.json 的 license 字段；docs/34 待拍板项标记已决。
+
 ### feat：审计可见与审批结果补强批全部落码收口（docs/37，2026-09-22；dev 三 commit、未 push）
 
 承接 docs/34 P1 #8 余部与 docs/36 非目标，三处工程内可见性缺口一次补齐，**零新依赖、不新增 ADR、不解除 D11/D20/D24**：
