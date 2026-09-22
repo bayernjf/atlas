@@ -40,6 +40,7 @@ from atlas.graph.dsl import GraphDSL, GraphValidationError, parse_graph
 from atlas.graph.loader import _tool_permissions, compile_graph, run_graph, tool_input_schemas
 from atlas.collaboration.cancellations import RunCancelled
 from atlas.collaboration.notifications import EmailApprovalNotifier
+from atlas.collaboration.email_token import EmailTokenError, TokenIssuer
 from atlas.tracing import Tracer
 from atlas.harness.base import Permission
 from atlas.harness.registry import AdapterRegistry
@@ -112,6 +113,8 @@ logger = logging.getLogger(__name__)
 
 # docs/35 §2（T2）：审批挂起邮件中的应用入口（前端地址）。
 _PUBLIC_URL = os.getenv("ATLAS_PUBLIC_URL", "http://localhost:5174")
+# docs/36 §3：邮件深链验签单例（密钥取 ATLAS_APPROVAL_HMAC_SECRET）。
+_email_token_issuer = TokenIssuer()
 
 
 def recover_pending() -> None:
@@ -2055,37 +2058,156 @@ def decide_approval(
     if pending is None:
         # 跨租户 token 同样 404，不泄漏存在性（04 §5.14）
         raise HTTPException(status_code=404, detail=f"审批请求不存在或已清理：{token}")
+    return _apply_approval_decision(
+        broker,
+        pending,
+        token,
+        decision=request.decision,
+        comment=request.comment,
+        action_id=request.action_id,
+        form=request.form,
+    )
+
+
+def _apply_approval_decision(
+    broker: Any,
+    pending: dict[str, Any],
+    token: str,
+    *,
+    decision: Literal["approved", "rejected"] | None,
+    comment: str,
+    action_id: str | None,
+    form: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """登录态决策与邮件深链决策共用的唯一应用函数（docs/36 §3，防双路漂移）。"""
     if pending.get("decision") is not None:
         raise HTTPException(status_code=409, detail="该审批请求已有决策，重复提交不生效")
 
-    action_id: str | None = None
-    if request.action_id:
+    resolved_action: str | None = None
+    if action_id:
         # M8：卡片动作提交，服务端按 action.output 映射 decision/comment（map_action_output 唯一权威）。
         card_template_id = pending.get("cardTemplateId")
         card = get_card(card_template_id) if card_template_id else None
         if card is None:
             raise HTTPException(status_code=422, detail="该审批请求未配置交互卡片或卡片不存在")
         try:
-            mapped = map_action_output(card, request.action_id, request.form)
+            mapped = map_action_output(card, action_id, form)
         except CardRenderError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         decision = mapped["decision"]
         comment = mapped.get("comment", "")
-        action_id = request.action_id
-    else:
-        if request.decision is None:
-            raise HTTPException(
-                status_code=422,
-                detail="请提供 decision（approved/rejected）或卡片 actionId",
-            )
-        decision = request.decision
-        comment = request.comment
+        resolved_action = action_id
+    elif decision is None:
+        raise HTTPException(
+            status_code=422,
+            detail="请提供 decision（approved/rejected）或卡片 actionId",
+        )
 
-    if not broker.resolve(token, decision, comment=comment, action_id=action_id):
+    if not broker.resolve(token, decision, comment=comment, action_id=resolved_action):
         raise HTTPException(status_code=409, detail="该审批请求已有决策，重复提交不生效")
     result: dict[str, Any] = {"token": token, "decision": decision, "resolvedBy": "human"}
-    if action_id:
-        result["actionId"] = action_id
+    if resolved_action:
+        result["actionId"] = resolved_action
+    return result
+
+
+_EMAIL_LINK_INVALID = "审批链接无效或已过期"
+
+
+def _resolve_email_signed(signed: str) -> tuple[Any, str, str]:
+    """验签 → peek 已装配租户；任何失败统一 404，不区分原因。"""
+    try:
+        body = _email_token_issuer.verify(signed)
+    except EmailTokenError as exc:
+        raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID) from exc
+    tenant_id = str(body.get("tenant", ""))
+    services = tenant_registry.peek(tenant_id)
+    if services is None:
+        raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID)
+    return services, str(body.get("at", "")), tenant_id
+
+
+@app.get("/api/approvals/email-view")
+def email_approval_view(token: str) -> dict[str, Any]:
+    """邮件深链只读视图（docs/36 §3）：无需登录、无副作用（防邮件预取）。"""
+    services, approval_token, _ = _resolve_email_signed(token)
+    broker = services.approval_broker
+    pending = broker.get(approval_token)
+    if pending is None:
+        raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID)
+    now = time.time()
+    remaining = max(
+        0.0, float(pending.get("createdAt", 0.0)) + float(pending["timeoutSeconds"]) - now
+    )
+    view: dict[str, Any] = {
+        "status": "resolved" if pending.get("decision") else "pending",
+        "summary": pending.get("summary", ""),
+        "nodeId": pending.get("node_id", ""),
+        "graphId": pending.get("graph_id", ""),
+        "approver": pending.get("approver", ""),
+        "timeoutSeconds": pending["timeoutSeconds"],
+        "createdAt": pending.get("createdAt", 0),
+        "remainingSeconds": int(remaining),
+    }
+    if pending.get("decision"):
+        view["decision"] = pending["decision"]
+        view["resolvedBy"] = pending.get("resolvedBy")
+    card_template_id = pending.get("cardTemplateId")
+    if card_template_id:
+        card = get_card(card_template_id)
+        if card is not None:
+            view["card"] = render_card(
+                card,
+                broker.get_card_context(approval_token),
+                token=approval_token,
+                channel="email",
+                approver=pending.get("approver", ""),
+                timeout_seconds=pending.get("timeoutSeconds"),
+            )
+    return view
+
+
+class EmailDecisionRequest(BaseModel):
+    token: str = Field(min_length=1)
+    decision: Literal["approved", "rejected"] | None = None
+    comment: str = Field(default="", max_length=500)
+    action_id: str | None = Field(default=None, alias="actionId")
+    form: dict[str, Any] | None = None
+
+    model_config = {"populate_by_name": True}
+
+
+@app.post("/api/approvals/email-decision")
+def email_approval_decision(
+    request: EmailDecisionRequest, http_request: Request
+) -> dict[str, Any]:
+    """邮件深链提交决策（docs/36 §3）：无需登录，与登录态端点共用决策应用函数。"""
+    services, approval_token, tenant_id = _resolve_email_signed(request.token)
+    broker = services.approval_broker
+    pending = broker.get(approval_token)
+    if pending is None:
+        raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID)
+    result = _apply_approval_decision(
+        broker,
+        pending,
+        approval_token,
+        decision=request.decision,
+        comment=request.comment,
+        action_id=request.action_id,
+        form=request.form,
+    )
+    client_ip = http_request.client.host if http_request.client else ""
+    try:
+        services.audit_store.record(
+            tenant_id=tenant_id,
+            actor="email-link",
+            action=f"approval.email_decision:{result['decision']}",
+            status_code=200,
+            path="/api/approvals/email-decision",
+            ip=client_ip,
+        )
+    except Exception as exc:  # 审计绝不阻断决策
+        logger.warning("email decision audit record failed: %s", exc)
     return result
 
 
