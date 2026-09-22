@@ -22,6 +22,7 @@ import {
   listOpenApiImports,
   previewOpenApi,
   putOpenApiCredentials,
+  type CredentialValue,
   type ImportedSpec,
   type OpenApiPreview,
   type OperationDescriptor,
@@ -29,6 +30,12 @@ import {
 } from '../lib/apiClient'
 import { roleCan, type Principal } from '../lib/auth'
 import { formatDateTime } from '../lib/connections'
+import {
+  compactCredentialDrafts,
+  credentialUpsertPayload,
+  emptyBasic,
+  isBasicCredential,
+} from '../lib/openApiCredentials'
 import { useTranslation } from '../locales'
 
 const { Content, Header } = Layout
@@ -74,6 +81,9 @@ function schemeLabel(
   if (scheme.kind === 'bearer') {
     return t('credentials.label.bearer', { name: scheme.name })
   }
+  if (scheme.kind === 'basic') {
+    return t('credentials.label.basic', { name: scheme.name })
+  }
   const kind = scheme.location === 'query' ? 'query' : 'header'
   return t(`credentials.label.${kind}`, { name: scheme.param })
 }
@@ -85,9 +95,9 @@ function CredentialFields({
   onChange,
 }: {
   schemes: SecurityScheme[]
-  values: Record<string, string>
+  values: Record<string, CredentialValue>
   t: (key: string, params?: Record<string, unknown>) => string
-  onChange: (name: string, value: string) => void
+  onChange: (name: string, value: CredentialValue) => void
 }) {
   if (schemes.length === 0) return null
   return (
@@ -98,17 +108,44 @@ function CredentialFields({
           <Typography.Text type="secondary">{t('credentials.sectionHint')}</Typography.Text>
         </div>
       </div>
-      {schemes.map((scheme) => (
-        <div key={scheme.name}>
-          <Typography.Text>{schemeLabel(scheme, t)}</Typography.Text>
-          <Input.Password
-            value={values[scheme.name] ?? ''}
-            placeholder={t('credentials.placeholder')}
-            autoComplete="new-password"
-            onChange={(event) => onChange(scheme.name, event.target.value)}
-          />
-        </div>
-      ))}
+      {schemes.map((scheme) => {
+        const draft = values[scheme.name]
+        if (scheme.kind === 'basic') {
+          const fields = isBasicCredential(draft) ? draft : emptyBasic()
+          const patch = (next: Partial<typeof fields>) =>
+            onChange(scheme.name, { ...fields, ...next })
+          return (
+            <div key={scheme.name}>
+              <Typography.Text>{schemeLabel(scheme, t)}</Typography.Text>
+              <Space orientation="vertical" size="small" style={{ width: '100%' }}>
+                <Input
+                  value={fields.username}
+                  placeholder={t('credentials.username')}
+                  autoComplete="username"
+                  onChange={(event) => patch({ username: event.target.value })}
+                />
+                <Input.Password
+                  value={fields.password}
+                  placeholder={t('credentials.password')}
+                  autoComplete="current-password"
+                  onChange={(event) => patch({ password: event.target.value })}
+                />
+              </Space>
+            </div>
+          )
+        }
+        return (
+          <div key={scheme.name}>
+            <Typography.Text>{schemeLabel(scheme, t)}</Typography.Text>
+            <Input.Password
+              value={typeof draft === 'string' ? draft : ''}
+              placeholder={t('credentials.placeholder')}
+              autoComplete="new-password"
+              onChange={(event) => onChange(scheme.name, event.target.value)}
+            />
+          </div>
+        )
+      })}
     </Space>
   )
 }
@@ -125,10 +162,10 @@ export function OpenApiImports({ principal, onLogout, onBack }: OpenApiImportsPr
   const [previewError, setPreviewError] = useState('')
   const [previewing, setPreviewing] = useState(false)
   const [importing, setImporting] = useState(false)
-  const [credentialDraft, setCredentialDraft] = useState<Record<string, string>>({})
+  const [credentialDraft, setCredentialDraft] = useState<Record<string, CredentialValue>>({})
 
   const [credentialSpec, setCredentialSpec] = useState<ImportedSpec | null>(null)
-  const [credentialValues, setCredentialValues] = useState<Record<string, string>>({})
+  const [credentialValues, setCredentialValues] = useState<Record<string, CredentialValue>>({})
   const [savingCredentials, setSavingCredentials] = useState(false)
 
   const [items, setItems] = useState<ImportedSpec[]>([])
@@ -179,9 +216,7 @@ export function OpenApiImports({ principal, onLogout, onBack }: OpenApiImportsPr
     setImporting(true)
     try {
       const source = sourceTab === 'paste' ? { content } : { url: url.trim() }
-      const credentials = Object.fromEntries(
-        Object.entries(credentialDraft).filter(([, value]) => value.trim()),
-      )
+      const credentials = compactCredentialDrafts(credentialDraft)
       const imported = await importOpenApi(
         source,
         Object.keys(credentials).length > 0 ? credentials : undefined,
@@ -218,9 +253,7 @@ export function OpenApiImports({ principal, onLogout, onBack }: OpenApiImportsPr
     if (!credentialSpec) return
     setSavingCredentials(true)
     try {
-      const credentials = Object.fromEntries(
-        Object.entries(credentialValues).map(([name, value]) => [name, value.trim()]),
-      )
+      const credentials = credentialUpsertPayload(credentialValues)
       await putOpenApiCredentials(credentialSpec.spec_id, credentials)
       antdMessage.success(t('message.credentialsSaved'))
       setCredentialSpec(null)

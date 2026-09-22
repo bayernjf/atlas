@@ -1722,10 +1722,19 @@ export type OpenApiSource = {
 
 export type SecurityScheme = {
   name: string
-  kind: 'api_key' | 'bearer'
+  kind: 'api_key' | 'bearer' | 'basic'
   location: 'header' | 'query' | null
   param: string
 }
+
+export type BasicCredential = {
+  username: string
+  password: string
+}
+
+export type CredentialValue = string | BasicCredential
+
+export type CredentialInput = CredentialValue | null
 
 export type OperationDescriptor = {
   name: string
@@ -1767,7 +1776,7 @@ export async function previewOpenApi(source: OpenApiSource): Promise<OpenApiPrev
 
 export async function importOpenApi(
   source: OpenApiSource,
-  credentials?: Record<string, string>,
+  credentials?: Record<string, CredentialValue>,
 ): Promise<ImportedSpec> {
   return request('/api/openapi/imports', {
     method: 'POST',
@@ -1777,7 +1786,7 @@ export async function importOpenApi(
 
 export async function putOpenApiCredentials(
   specId: string,
-  credentials: Record<string, string>,
+  credentials: Record<string, CredentialInput>,
 ): Promise<{ configured: string[] }> {
   return request(`/api/openapi/imports/${encodeURIComponent(specId)}/credentials`, {
     method: 'PUT',

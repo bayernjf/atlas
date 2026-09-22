@@ -35,9 +35,12 @@
     "label": {
       "header": "{{name}}（请求头）",
       "query": "{{name}}（查询参数）",
-      "bearer": "{{name}}：Bearer 令牌"
+      "bearer": "{{name}}：Bearer 令牌",
+      "basic": "{{name}}：Basic 用户名与密码"
     },
     "placeholder": "请输入密钥",
+    "username": "用户名",
+    "password": "密码",
     "save": "保存",
     "sectionTitle": "鉴权密钥（可选）",
     "sectionHint": "该文档声明了鉴权要求；可现在填写，也可导入后通过「配置密钥」补填。",
