@@ -46,8 +46,10 @@ def setup():
     engine = create_database_engine(DATABASE_URL, pool_size=2)
     _run_migration(engine, "015_channel_bindings.sql")
     _run_migration(engine, "016_channel_webhook_subscriptions.sql")
+    _run_migration(engine, "017_webhook_deliveries.sql")
     yield engine, PgChannelStore
     with engine.begin() as conn:
+        conn.execute(text("DELETE FROM webhook_deliveries WHERE tenant_id LIKE 'chpit%'"))
         conn.execute(text("DELETE FROM channel_bindings WHERE tenant_id LIKE 'chpit%'"))
     engine.dispose()
 
@@ -204,3 +206,87 @@ def test_webhook_subscriptions_survive_reset(setup):
     assert reloaded.webhook_subscriptions == [
         {"topic": "orders/create", "graph_id": "graph-r", "enabled": True}
     ]
+
+
+def _dead_payload():
+    return {"id": 7001, "items": [{"sku": "A1"}]}
+
+
+def _seed_dead(engine, tenant="chpit-a", wh_id="wh-pit-1"):
+    from atlas.channels.pg_deliveries import PgDeliveryStore
+
+    store = PgDeliveryStore(engine, tenant)
+    store.record_dead(
+        tenant,
+        webhook_id=wh_id, binding_id="ch-pit-1", topic="orders/create",
+        shop="acme.myshopify.com",
+        reasons=[{"graphId": "graph-pit-1", "code": "NO_PUBLISHED_VERSION"}],
+        payload=_dead_payload(),
+    )
+    return store
+
+
+def test_webhook_deliveries_dedup_and_duplicate_counter(setup):
+    engine, _ = setup
+    from atlas.channels.pg_deliveries import PgDeliveryStore
+
+    store = PgDeliveryStore(engine, "chpit-a")
+    assert store.note_duplicate_if_seen("chpit-a", "wh-new") is False
+    store.record_received(
+        "chpit-a", webhook_id="wh-new", binding_id="ch-pit-1",
+        topic="orders/create", shop="acme.myshopify.com",
+    )
+    assert store.note_duplicate_if_seen("chpit-a", "wh-new") is True
+    metrics = store.metrics("chpit-a")
+    assert metrics["byTopic"]["orders/create"]["received"] == 1
+    assert metrics["byTopic"]["orders/create"]["duplicates"] == 1
+
+
+def test_webhook_dead_roundtrip_and_replay_clears_payload(setup):
+    engine, _ = setup
+    store = _seed_dead(engine)
+    dead = store.get_dead("chpit-a", "wh-pit-1")
+    assert dead["data"] == _dead_payload()
+    store.resolve_replay("chpit-a", "wh-pit-1", received=True)
+    assert store.get_dead("chpit-a", "wh-pit-1") is None
+    listed = [v for v in store.list_dead("chpit-a") if v["webhookId"] == "wh-pit-1"]
+    assert listed == []
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT status, payload FROM webhook_deliveries "
+                 "WHERE tenant_id='chpit-a' AND webhook_id='wh-pit-1'")
+        ).first()
+    assert row[0] == "received" and row[1] is None
+
+
+def test_webhook_deliveries_tenant_scoped(setup):
+    engine, _ = setup
+    _seed_dead(engine, tenant="chpit-a", wh_id="wh-a")
+    _seed_dead(engine, tenant="chpit-b", wh_id="wh-b")
+    from atlas.channels.pg_deliveries import PgDeliveryStore
+
+    store_a = PgDeliveryStore(engine, "chpit-a")
+    assert store_a.note_duplicate_if_seen("chpit-a", "wh-a") is True
+    assert store_a.note_duplicate_if_seen("chpit-b", "wh-a") is False
+    dead_a = store_a.list_dead("chpit-a")
+    assert {v["webhookId"] for v in dead_a} >= {"wh-a"}
+    assert "wh-b" not in {v["webhookId"] for v in dead_a}
+    assert {v["webhookId"] for v in store_a.list_dead("chpit-b")} == {"wh-b"}
+    metrics_b = store_a.metrics("chpit-b")
+    assert metrics_b["totals"]["dead"] == 1
+    assert store_a.metrics("chpit-a")["totals"]["dead"] >= 1
+    assert "wh-b" not in {v["webhookId"] for v in store_a.list_dead("chpit-a")}
+
+
+def test_webhook_deliveries_survive_reset(setup):
+    engine, _ = setup
+    from atlas.iam.registry import TenantRegistry
+
+    from atlas.channels.pg_deliveries import PgDeliveryStore
+
+    PgDeliveryStore(engine, "chpit-a").delete("chpit-a", "wh-pit-reset")
+    _seed_dead(engine, wh_id="wh-pit-reset")
+    TenantRegistry().reset_tenant("chpit-a")
+
+    store = PgDeliveryStore(engine, "chpit-a")
+    assert store.get_dead("chpit-a", "wh-pit-reset") is not None

@@ -11,6 +11,8 @@ import threading
 from dataclasses import dataclass
 
 from atlas.channels.registry import build_channel_registry
+from atlas.channels.deliveries import InMemoryDeliveryStore
+from atlas.channels.pg_deliveries import PgDeliveryStore
 from atlas.connections.service import build_connection_service
 from atlas.connections.store import ConnectionStore
 from atlas.collaboration.cancellations import RunCancellationBroker
@@ -68,6 +70,7 @@ class TenantServices:
     audit_store: AuditRepository  # T6 写操作审计（docs/35 §6；ring/PG 两档，reset 不清）
     connection_service: object  # T4 OAuth2 连接（docs/35 §4；业务服务，内存/PG 两档 store，reset 不清）
     channel_registry: object  # 真实渠道绑定（docs/38；ADR T28，reset 不清）
+    webhook_deliveries: object  # 入站投递去重/死信（docs/40；内存/PG 两档，reset 不清）
 
 
 class TenantRegistry:
@@ -129,6 +132,7 @@ class TenantRegistry:
                     connection_service, tenant_id=tenant_id,
                     store=backend.channel_store(tenant_id),
                 ),
+                webhook_deliveries=PgDeliveryStore(backend.engine, tenant_id),
             )
         connection_service = build_connection_service(ConnectionStore(), tenant_id=tenant_id)
         return TenantServices(
@@ -151,6 +155,7 @@ class TenantRegistry:
             channel_registry=build_channel_registry(
                 connection_service, tenant_id=tenant_id
             ),
+            webhook_deliveries=InMemoryDeliveryStore(),
         )
 
     def reset_tenant(self, tenant_id: str) -> None:
