@@ -18,6 +18,7 @@ from atlas.channels.base import (
     ChannelTransport,
     HttpChannelTransport,
 )
+from atlas.channels.webhooks import SUPPORTED_TOPICS
 
 DEFAULT_API_VERSION = "2025-01"
 API_VERSION_RE = re.compile(r"^\d{4}-\d{2}$")
@@ -67,6 +68,7 @@ class ShopifyChannelClient:
         api_version: str = DEFAULT_API_VERSION,
         transport: ChannelTransport | None = None,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        base_url: str | None = None,
     ) -> None:
         self.shop = normalize_shop(shop)
         if not isinstance(access_token, str) or not access_token:
@@ -79,7 +81,9 @@ class ShopifyChannelClient:
         self.api_version = api_version
         self._transport = transport or HttpChannelTransport()
         self._timeout = timeout
-        self.base_url = f"https://{self.shop}.myshopify.com/admin/api/{api_version}"
+        self.base_url = base_url or (
+            f"https://{self.shop}.myshopify.com/admin/api/{api_version}"
+        )
 
     def _request(
         self,
@@ -100,6 +104,10 @@ class ShopifyChannelClient:
         resp = self._transport.request(
             method, url, headers=headers, json_body=json_body, timeout=self._timeout
         )
+        if resp.status == 422:
+            raise ChannelError(
+                "CHANNEL_ALREADY_REGISTERED", "店铺侧已存在该回调注册（HTTP 422）"
+            )
         if resp.status in (401, 403):
             raise ChannelError(
                 "CHANNEL_UNAUTHORIZED", f"渠道鉴权失败（HTTP {resp.status}）"
@@ -198,3 +206,41 @@ class ShopifyChannelClient:
         if not isinstance(refund, dict):
             raise ChannelError("CHANNEL_INVALID_RESPONSE", "refund 响应结构缺失")
         return {"refundId": refund.get("id"), "status": refund.get("status"), "amount": value}
+
+    def list_registered_webhooks(self, limit: int = 250) -> list[dict[str, Any]]:
+        bounded = max(1, min(int(limit), 250))
+        body = self._request("GET", "/webhooks.json", params={"limit": bounded})
+        webhooks = body.get("webhooks")
+        if not isinstance(webhooks, list):
+            raise ChannelError("CHANNEL_INVALID_RESPONSE", "webhooks 响应结构缺失")
+        return [
+            {"remoteId": str(w.get("id")), "topic": w.get("topic"), "address": w.get("address")}
+            for w in webhooks
+            if isinstance(w, dict)
+        ]
+
+    def register_webhook(self, *, topic: str, address: str) -> dict[str, Any]:
+        if topic not in SUPPORTED_TOPICS:
+            raise ChannelError(
+                "CHANNEL_INVALID_PARAMETER", f"不支持的 topic：{topic}"
+            )
+        if not isinstance(address, str) or not address.startswith("https://"):
+            raise ChannelError(
+                "CHANNEL_INVALID_PARAMETER", "回调地址必须为 HTTPS 绝对 URL"
+            )
+        payload = {"webhook": {"topic": topic, "address": address, "format": "json"}}
+        body = self._request("POST", "/webhooks.json", json_body=payload)
+        webhook = body.get("webhook")
+        if not isinstance(webhook, dict):
+            raise ChannelError("CHANNEL_INVALID_RESPONSE", "webhook 响应结构缺失")
+        return {
+            "remoteId": str(webhook.get("id")),
+            "topic": webhook.get("topic"),
+            "address": webhook.get("address"),
+        }
+
+    def delete_registered_webhook(self, remote_id: str) -> bool:
+        if not isinstance(remote_id, str) or not remote_id.strip():
+            raise ChannelError("CHANNEL_INVALID_PARAMETER", "缺少 remote_id")
+        self._request("DELETE", f"/webhooks/{remote_id.strip()}.json")
+        return True

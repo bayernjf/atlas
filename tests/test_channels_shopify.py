@@ -209,3 +209,63 @@ def test_get_shop():
     )
     assert client.get_shop() == {"id": 7, "name": "Acme", "domain": "acme.myshopify.com"}
     assert transport.last["url"].endswith("/shop.json")
+
+
+def test_list_registered_webhooks_projection():
+    rows = [
+        {"id": 51, "topic": "orders/create", "address": "https://x.io/hook"},
+        {"id": 52, "topic": "refunds/create", "address": "https://x.io/hook2"},
+    ]
+    client, transport = make_client(lambda *a: resp({"webhooks": rows}))
+    assert client.list_registered_webhooks() == [
+        {"remoteId": "51", "topic": "orders/create", "address": "https://x.io/hook"},
+        {"remoteId": "52", "topic": "refunds/create", "address": "https://x.io/hook2"},
+    ]
+    assert transport.last["url"].endswith("/webhooks.json?limit=250")
+
+
+def test_list_registered_webhooks_missing_structure():
+    client, _ = make_client(lambda *a: resp({}))
+    with pytest.raises(ChannelError) as info:
+        client.list_registered_webhooks()
+    assert info.value.code == "CHANNEL_INVALID_RESPONSE"
+
+
+def test_register_webhook_body_and_projection():
+    def handler(method, url, headers, json_body):
+        return resp({"webhook": {"id": 77, "topic": "orders/create",
+                                 "address": "https://x.io/hook"}})
+
+    client, transport = make_client(handler)
+    out = client.register_webhook(topic="orders/create", address="https://x.io/hook")
+    assert out == {"remoteId": "77", "topic": "orders/create", "address": "https://x.io/hook"}
+    call = transport.last
+    assert call["method"] == "POST"
+    assert call["url"].endswith("/webhooks.json")
+    assert call["json_body"] == {
+        "webhook": {"topic": "orders/create", "address": "https://x.io/hook", "format": "json"}
+    }
+
+
+def test_register_webhook_validation():
+    client, _ = make_client(lambda *a: resp({"webhook": {}}))
+    with pytest.raises(ChannelError) as info:
+        client.register_webhook(topic="products/create", address="https://x.io/hook")
+    assert info.value.code == "CHANNEL_INVALID_PARAMETER"
+    with pytest.raises(ChannelError) as info:
+        client.register_webhook(topic="orders/create", address="http://x.io/hook")
+    assert info.value.code == "CHANNEL_INVALID_PARAMETER"
+
+
+def test_register_webhook_422_maps_to_already_registered():
+    client, _ = make_client(lambda *a: resp({}, status=422))
+    with pytest.raises(ChannelError) as info:
+        client.register_webhook(topic="orders/create", address="https://x.io/hook")
+    assert info.value.code == "CHANNEL_ALREADY_REGISTERED"
+
+
+def test_delete_registered_webhook():
+    client, transport = make_client(lambda *a: TransportResponse(200, {}, text=""))
+    assert client.delete_registered_webhook("77") is True
+    assert transport.last["method"] == "DELETE"
+    assert transport.last["url"].endswith("/webhooks/77.json")
