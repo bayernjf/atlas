@@ -72,6 +72,8 @@ def get_principal(request: Request) -> Principal:
     principal = session_store.principal_for_token(token)
     if principal is None:
         raise HTTPException(status_code=401, detail=_UNAUTHENTICATED)
+    # T6 审计中间件在响应后读取 request.state.principal 记录写操作（docs/35 §6）。
+    request.state.principal = principal
     return principal
 
 

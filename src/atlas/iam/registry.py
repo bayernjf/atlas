@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from atlas.collaboration.cancellations import RunCancellationBroker
 from atlas.coordination import TaskStore
+from atlas.observability.audit import AuditRepository, AuditStore
 from atlas.message.service import MessageService
 from atlas.message.smtp import get_smtp_sender
 from atlas.recording import ReportStore, ShadowStore
@@ -60,6 +61,7 @@ class TenantServices:
     report_store: ReportStore  # D26 报告 v1：批量回放报告 ring（进程内，memory/PG 档均挂内存实例）
     shadow_store: ShadowStore  # D26 影子模式：旁路运行记录 ring（进程内，两档均挂内存实例，docs/33 §3）
     memory_store: MemoryRepository  # M11 长期记忆 fact/preference（批 3 PG 档换 PgMemoryStore）
+    audit_store: AuditRepository  # T6 写操作审计（docs/35 §6；ring/PG 两档，reset 不清）
 
 
 class TenantRegistry:
@@ -107,6 +109,7 @@ class TenantRegistry:
                 report_store=ReportStore(),
                 shadow_store=ShadowStore(),
                 memory_store=backend.memory_store(tenant_id),
+                audit_store=backend.audit_store(tenant_id),
             )
         return TenantServices(
             graph_store=GraphStore(),
@@ -123,6 +126,7 @@ class TenantRegistry:
             report_store=ReportStore(),
             shadow_store=ShadowStore(),
             memory_store=MemoryStore(),
+            audit_store=AuditStore(),
         )
 
     def reset_tenant(self, tenant_id: str) -> None:

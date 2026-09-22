@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -63,6 +63,7 @@ from atlas.memory.adapter import MemoryHarnessAdapter
 from atlas.memory.models import MemoryValidationError
 from atlas.message.adapter import MessageHarnessAdapter
 from atlas.monitoring import RUN_RING_SIZE, extract_business, extract_node_results
+from atlas.observability.audit import AUDITED_METHODS, LOGIN_PATH
 from atlas.observability.health import check_ready
 from atlas.observability.metrics_export import render_prometheus
 from atlas.monitoring.silences import OnCallEmpty, current_assignee, is_silence_active
@@ -249,6 +250,36 @@ def graph_validation_handler(_request: Request, exc: GraphValidationError) -> JS
     return JSONResponse(status_code=422, content=content)
 
 
+@app.middleware("http")
+async def audit_write_actions(request: Request, call_next):
+    """T6 审计中间件（docs/35 §6）：仅 /api/ 写方法在响应后记录元数据（actor/路由模板/
+    status/实际 path/IP）；登录路径跳过（端点内仅成功才记）；审计异常只告警、绝不阻断主请求。
+    绝不读取请求体或 Authorization 头。"""
+    response = await call_next(request)
+    try:
+        path = request.url.path
+        if (
+            path.startswith("/api/")
+            and request.method in AUDITED_METHODS
+            and path != LOGIN_PATH
+        ):
+            principal = getattr(request.state, "principal", None)
+            if principal is not None:
+                route = request.scope.get("route")
+                template = getattr(route, "path_format", None) or path
+                services_for(principal).audit_store.record(
+                    tenant_id=principal.tenant_id,
+                    actor=principal.username,
+                    action=f"{request.method} {template}",
+                    status_code=response.status_code,
+                    path=path,
+                    ip=request.client.host if request.client else "",
+                )
+    except Exception as exc:  # 审计绝不阻断业务
+        logger.warning("audit record failed: %s", exc)
+    return response
+
+
 def _tenant_graph_resolver(services: TenantServices):
     """subgraph 节点 graph_resolver（04 §5.7）：在当前租户 GraphStore 内按 id 解析，缺失抛 KeyError。"""
 
@@ -351,6 +382,40 @@ def prometheus_metrics() -> Response:
     return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")
 
 
+@app.get("/api/audit/events")
+def list_audit_events(
+    principal: Principal = Depends(require("administer")),
+    limit: int = 100,
+    action: str | None = None,
+) -> dict[str, Any]:
+    """写操作审计事件（docs/35 §6，T6）：倒序（最新在前），admin only，只读本租户；
+    limit clamp 到 1–500；action 为路由动作前缀过滤（如 ``POST /api/graphs``）。"""
+    bounded = max(1, min(int(limit), 500))
+    action_prefix = action.strip() if action and action.strip() else None
+    items = services_for(principal).audit_store.list(
+        limit=bounded, action_prefix=action_prefix
+    )
+    return {"items": items, "limit": bounded}
+
+
+@app.get("/api/audit/export")
+def export_audit_events(
+    principal: Principal = Depends(require("administer")),
+    action: str | None = None,
+    fmt: str | None = Query(default="jsonl", alias="format"),
+) -> StreamingResponse:
+    """导出审计为 JSONL 附件（admin only，正序旧→新）；v1 仅支持 format=jsonl。"""
+    if fmt != "jsonl":
+        raise HTTPException(status_code=422, detail="仅支持 format=jsonl")
+    action_prefix = action.strip() if action and action.strip() else None
+    body = services_for(principal).audit_store.export_jsonl(action_prefix=action_prefix)
+    headers = {"Content-Disposition": 'attachment; filename="atlas-audit.jsonl"'}
+    return StreamingResponse(
+        iter([body.encode("utf-8")]),
+        media_type="application/x-ndjson; charset=utf-8",
+        headers=headers,
+    )
+
 class LoginRequest(BaseModel):
     username: str
     password: str
@@ -385,7 +450,20 @@ def login(request: LoginRequest, http_request: Request) -> LoginResponse:
     login_throttle.reset(throttle_key)
     token = session_store.issue(principal)
     # 触发租户装配，登录后该租户即有独立服务实例
-    tenant_registry.get(principal.tenant_id)
+    login_services = tenant_registry.get(principal.tenant_id)
+    # T6 审计：登录成功显式记一条（失败在上方抛 401/403 不记；中间件跳过 login 路径）。
+    # 审计失败不影响登录本身（fail-safe）。
+    try:
+        login_services.audit_store.record(
+            tenant_id=principal.tenant_id,
+            actor=principal.username,
+            action="POST /api/auth/login",
+            status_code=200,
+            path=LOGIN_PATH,
+            ip=client_ip,
+        )
+    except Exception as exc:  # 审计绝不阻断登录
+        logger.warning("login audit record failed: %s", exc)
     return LoginResponse(token=token, principal=principal)
 
 

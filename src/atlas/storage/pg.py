@@ -79,6 +79,9 @@ class PgBackend:
     def memory_store(self, tenant_id: str) -> "PgMemoryStore":
         return PgMemoryStore(self._engine, tenant_id)
 
+    def audit_store(self, tenant_id: str) -> "PgAuditStore":
+        return PgAuditStore(self._engine, tenant_id)
+
 
 _pg_backend: PgBackend | None = None
 _pg_backend_lock = threading.Lock()
@@ -1389,5 +1392,112 @@ class PgMemoryStore:
         with self._engine.begin() as conn:
             conn.execute(
                 text("DELETE FROM memory_items WHERE tenant_id = :tenant_id"),
+                {"tenant_id": self._tenant_id},
+            )
+
+class PgAuditStore:
+    """审计事件 PG 实现（docs/35 §6，T6）。
+
+    仅写操作元数据；id 用全局 storage_id_seq（aud-N），seq 存数字部分供同租户排序。
+    行内 tenant_id 过滤（不用 RLS）；demo reset 不清理本表。
+    """
+
+    def __init__(self, engine: Engine, tenant_id: str):
+        self._engine = engine
+        self._tenant_id = tenant_id
+
+    @staticmethod
+    def _row_to_dict(row: Any) -> dict[str, Any]:
+        return {
+            "id": row[0],
+            "tenantId": row[1],
+            "actor": row[2],
+            "action": row[3],
+            "statusCode": int(row[4]),
+            "path": row[5],
+            "ip": row[6] or "",
+            "at": row[7],
+        }
+
+    _COLS = "id, tenant_id, actor, action, status_code, path, ip, at"
+
+    def record(
+        self,
+        *,
+        tenant_id: str,
+        actor: str,
+        action: str,
+        status_code: int,
+        path: str,
+        ip: str,
+    ) -> dict[str, Any]:
+        from atlas.observability.audit import now_iso
+
+        with self._engine.begin() as conn:
+            seq = int(conn.execute(text("SELECT nextval('storage_id_seq')")).scalar_one())
+            audit_id = f"aud-{seq}"
+            at = now_iso()
+            conn.execute(
+                text(
+                    "INSERT INTO audit_events (id, tenant_id, seq, actor, action, status_code, path, ip, at) "
+                    "VALUES (:id, :tenant_id, :seq, :actor, :action, :status_code, :path, :ip, :at)"
+                ),
+                {
+                    "id": audit_id,
+                    "tenant_id": tenant_id,
+                    "seq": seq,
+                    "actor": actor or "anonymous",
+                    "action": action,
+                    "status_code": int(status_code),
+                    "path": path,
+                    "ip": ip or "",
+                    "at": at,
+                },
+            )
+        return {
+            "id": audit_id,
+            "tenantId": tenant_id,
+            "actor": actor or "anonymous",
+            "action": action,
+            "statusCode": int(status_code),
+            "path": path,
+            "ip": ip or "",
+            "at": at,
+        }
+
+    @staticmethod
+    def _escape_prefix(prefix: str) -> str:
+        return prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+    def _where(self, args: dict[str, Any], action_prefix: str | None) -> str:
+        clauses = ["tenant_id = :tenant_id"]
+        if action_prefix:
+            clauses.append("action LIKE :prefix ESCAPE '\\'")
+            args["prefix"] = self._escape_prefix(action_prefix) + "%"
+        return " AND ".join(clauses)
+
+    def list(self, *, limit: int = 100, action_prefix: str | None = None) -> list[dict[str, Any]]:
+        bounded = max(1, min(int(limit), 500))
+        args: dict[str, Any] = {"tenant_id": self._tenant_id, "limit": bounded}
+        where = self._where(args, action_prefix)
+        sql = f"SELECT {self._COLS} FROM audit_events WHERE {where} ORDER BY seq DESC LIMIT :limit"
+        with self._engine.connect() as conn:
+            rows = conn.execute(text(sql), args).all()
+        return [self._row_to_dict(row) for row in rows]
+
+    def export_jsonl(self, *, action_prefix: str | None = None) -> str:
+        args: dict[str, Any] = {"tenant_id": self._tenant_id}
+        where = self._where(args, action_prefix)
+        sql = f"SELECT {self._COLS} FROM audit_events WHERE {where} ORDER BY seq ASC"
+        with self._engine.connect() as conn:
+            rows = conn.execute(text(sql), args).all()
+        return "\n".join(
+            json.dumps(self._row_to_dict(row), ensure_ascii=False) for row in rows
+        )
+
+    def clear(self) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                text("DELETE FROM audit_events WHERE tenant_id = :tenant_id"),
                 {"tenant_id": self._tenant_id},
             )
