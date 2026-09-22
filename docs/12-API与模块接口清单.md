@@ -701,7 +701,7 @@ class ChannelRegistry:
 # src/atlas/collaboration/event_waits.py
 class EventWaitBroker:
     def request(self, *, event_key, node_id, graph_id, timeout_seconds) -> str: ...  # token="wait-"+uuid4
-    def wait(self, token, *, is_cancelled=None) -> bool: ...  # 0.2s 切片查取消；返 signaled；超时 False
+    def wait(self, token, *, is_cancelled=None) -> dict | None: ...  # 0.2s 切片查取消；返信号 payload，超时 None
     def signal_key(self, event_key, payload) -> int: ...      # 广播释放同 key 全部，返释放数
     def signal_token(self, token, payload) -> None: ...       # 未知 KeyError；已 signaled → AlreadySignaled
     def list_pending(self) -> list[dict]: ...

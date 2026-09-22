@@ -55,7 +55,7 @@ config:
 ```python
 class EventWaitBroker:
     def request(self, *, event_key, node_id, graph_id, timeout_seconds) -> str
-    def wait(self, token, *, is_cancelled=None) -> bool      # 首末 0.2s 切片轮询取消；返 signaled
+    def wait(self, token, *, is_cancelled=None) -> dict | None  # 首末 0.2s 切片轮询取消；返信号 payload，超时 None
     def signal_key(self, event_key, payload) -> int          # 广播：释放全部同 key pending，返释放数
     def signal_token(self, token, payload) -> None           # 直投；未知 token KeyError
     def list_pending(self) -> list[dict]                     # 见 §4 GET
@@ -68,11 +68,11 @@ class EventWaitBroker:
 
 1. 渲染 `eventKey = interpolate(模板, context)`，strip；做白名单/长度校验（§2）。
 2. `token = broker.request(...)`；node_start 事件携带 `wait:{token, eventKey, timeoutSeconds, onTimeout}`（前端可展示等待态；不新增前端阻塞交互）。
-3. `signaled = broker.wait(token, is_cancelled=is_cancelled)`：
+3. `payload = broker.wait(token, is_cancelled=is_cancelled)`：
    - 等待期取消（协作式，节点边界语义同 B 包）→ 移除条目并抛 `RunCancelled`。
-   - broker 内部按 monotonic deadline 判定超时；返回 False。
+   - broker 内部按 monotonic deadline 判定超时；返回 None。
 4. 输出与后续：
-   - **signaled=True**（resolvedBy `signal`）：取信号 payload 沿出边继续。
+   - **payload 非 None**（resolvedBy `signal`）：取信号 payload 沿出边继续。
    - **超时 + onTimeout=continue**（resolvedBy `timeout`）：沿出边继续，`signaled=false`，payload=`{}`。
    - **超时 + onTimeout=fail**（resolvedBy `timeout`）：节点失败——节点产出 `status:"failed"` 与错误 `WAIT_TIMEOUT_FAILED`（中文「等待事件 {eventKey} 超时」），run 标记 failed（与普通工具节点失败同构，不沿出边继续）。
 
