@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -24,6 +25,7 @@ class _Pending:
     timeout_seconds: float
     node_id: str
     graph_id: str
+    created_at: float = 0.0
     decision: Decision | None = None
     resolved_by: str | None = None
     comment: str = ""
@@ -61,6 +63,7 @@ class ApprovalBroker:
                 timeout_seconds=timeout_seconds,
                 node_id=node_id,
                 graph_id=graph_id,
+                created_at=time.time(),
                 card_template_id=card_template_id,
                 card_context=copy.deepcopy(card_context) if card_context is not None else None,
             )
@@ -87,6 +90,7 @@ class ApprovalBroker:
                 timeout_seconds=remaining_seconds,
                 node_id=node_id,
                 graph_id=graph_id,
+                created_at=time.time(),
                 card_template_id=card_template_id,
                 card_context=copy.deepcopy(card_context) if card_context is not None else None,
             )
@@ -150,6 +154,7 @@ class ApprovalBroker:
                 "summary": pending.summary,
                 "approver": pending.approver,
                 "timeoutSeconds": pending.timeout_seconds,
+                "createdAt": pending.created_at,
                 "decision": pending.decision,
                 "resolvedBy": pending.resolved_by,
                 "comment": pending.comment,
@@ -181,6 +186,7 @@ class ApprovalBroker:
             "summary": pending.summary,
             "approver": pending.approver,
             "timeoutSeconds": pending.timeout_seconds,
+            "createdAt": pending.created_at,
         }
         if pending.card_template_id:
             result["cardTemplateId"] = pending.card_template_id

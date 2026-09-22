@@ -1683,7 +1683,9 @@ def run_saved_graph(
             inputs=body.get("inputs"),
             registry=_runtime_registry(services),
             approval_broker=services.approval_broker,
-            approval_notifier=EmailApprovalNotifier(services.message_service, _PUBLIC_URL),
+            approval_notifier=EmailApprovalNotifier(
+                services.message_service, _PUBLIC_URL, principal.tenant_id
+            ),
             graph_id=graph_id,
             graph_resolver=_tenant_graph_resolver(services),
             emit=_metric_collect,
@@ -1760,7 +1762,9 @@ def run_saved_graph_stream(
     # worker 启动前固定当前租户的分区对象，避免跨租户串用
     registry = _runtime_registry(services)
     approval_broker = services.approval_broker
-    approval_notifier = EmailApprovalNotifier(services.message_service, _PUBLIC_URL)
+    approval_notifier = EmailApprovalNotifier(
+        services.message_service, _PUBLIC_URL, principal.tenant_id
+    )
     graph_resolver = _tenant_graph_resolver(services)
     monitoring = services.monitoring
     run_store = services.run_store

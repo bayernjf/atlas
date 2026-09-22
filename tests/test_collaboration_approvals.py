@@ -41,6 +41,7 @@ def test_resolve_unblocks_waiter_with_decision():
     assert info["resolvedBy"] == "human"
     assert info["summary"] == "退款审批"
     assert info["timeoutSeconds"] == 5
+    assert info["createdAt"] > 0
 
 
 def test_first_decision_wins_repeated_resolve_conflicts():
@@ -81,6 +82,7 @@ def test_list_pending_excludes_decided():
     pending = broker.list_pending()
     assert {item["token"] for item in pending} == {token_a, token_b}
     assert all(item["node_id"] in {"human-1", "human-2"} for item in pending)
+    assert all(item["createdAt"] > 0 for item in pending)
     broker.resolve(token_a, "approved")
     remaining = broker.list_pending()
     assert [item["token"] for item in remaining] == [token_b]
