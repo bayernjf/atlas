@@ -13,6 +13,8 @@ docs/14 D10b 的进程内子集。**不是**完整的多实例/CD 方案（NATS�
 | `/api/health` | 存活探针：进程在跑即 200（不检查依赖） |
 | `/api/ready` | 就绪探针：PG 档执行 `SELECT 1`，失败 503，供编排摘流 |
 | `/metrics` | Prometheus 文本指标（0.0.4），无鉴权，靠网络层/反代白名单隔离 |
+| `prometheus/prometheus.yml` | observability profile：Prometheus 抓 `atlas:8000/metrics`（15s） |
+| `grafana/` | observability profile：数据源 + Atlas Overview 看板自动装配 |
 
 ## 快速启动（本地 HTTP 联调）
 
@@ -66,8 +68,27 @@ scrape_configs:
 ```
 
 指标端点不含密钥/PII，但会暴露租户 id 与工具调用量，务必通过 Caddy 的
-`/metrics` 网段白名单或安全组限制访问。正式 OTel/Grafana 长期存储栈缓做
-docs/14 D11。
+`/metrics` 网段白名单或安全组限制访问。Grafana/Prometheus provisioning 样例
+见上节（docs/35 T5，D11 子集，部分取回不解除缓做）；OTel SDK/Collector、
+长期/多实例时序存储仍缓做 docs/14 D11。
+
+## 一键可观测栈（observability profile，docs/35 T5 / D11 Grafana 子集）
+
+除手写 scrape 外，仓库内置 Prometheus + Grafana 的 provisioning 样例，
+默认**不启动**、与 edge profile 正交（可叠加）：
+
+```bash
+docker compose --profile observability up -d --build
+# Prometheus  http://localhost:9090  （抓 atlas:8000/metrics，15s，保留 15d）
+# Grafana      http://localhost:3000  （admin / GRAFANA_ADMIN_PASSWORD）
+```
+
+- Grafana 首次启动自动装配数据源（uid `atlas-prometheus`）与 **Atlas / Atlas Overview**
+  看板（`deploy/grafana/dashboards/atlas-overview.json`）：进程存活、活跃租户、
+  存储后端、运行成功率、运行计数（健康状态）、p50/p95 耗时、工具调用计数。
+- 看板面板指标严格对齐 `/metrics` 的 7 个 gauge 序列（均为进程内窗口快照，不使用 `rate()`）。
+- Grafana 管理员密码由 `GRAFANA_ADMIN_PASSWORD` 注入，默认 `atlasadmin` **仅供本地演示，
+  生产必须在 `.env` 覆盖**；Prometheus 9090 / Grafana 3000 端口生产环境不要直接对公网开放。
 
 ## 仍未覆盖（生产化缺口）
 

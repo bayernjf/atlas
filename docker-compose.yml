@@ -12,6 +12,12 @@
 # 起 Caddy（deploy/Caddyfile，填域名后自动 HTTPS）；生产请把下方 atlas 的
 # "8000:8000" 改为 "127.0.0.1:8000:8000"，只让 Caddy 暴露 80/443。
 
+# 可观测栈（可选，docs/35 §5 / D11 Grafana 子集）：
+#   docker compose --profile observability up -d --build
+# Prometheus http://localhost:9090（抓 atlas:8000/metrics，15s）；
+# Grafana    http://localhost:3000（admin / GRAFANA_ADMIN_PASSWORD，默认 atlasadmin，生产必改）；
+# 数据源与 Atlas Overview 看板自动装配（deploy/grafana/）。可与 edge profile 叠加。
+
 services:
   db:
     image: pgvector/pgvector:pg16
@@ -66,7 +72,43 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  # 可选可观测栈（--profile observability 才启动）；配置见 deploy/prometheus、deploy/grafana
+  prometheus:
+    image: prom/prometheus:latest
+    profiles: ["observability"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      atlas:
+        condition: service_started
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    profiles: ["observability"]
+    environment:
+      # 生产部署必须通过 .env 覆盖 GRAFANA_ADMIN_PASSWORD（默认值仅供本地演示）
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-atlasadmin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
 volumes:
   atlas-pgdata:
   caddy-data:
   caddy-config:
+  prometheus-data:
+  grafana-data:
