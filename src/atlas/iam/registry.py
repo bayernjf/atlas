@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from atlas.collaboration.cancellations import RunCancellationBroker
 from atlas.coordination import TaskStore
 from atlas.message.service import MessageService
+from atlas.message.smtp import get_smtp_sender
 from atlas.recording import ReportStore, ShadowStore
 from atlas.routing import RoutingStore
 from atlas.storage.base import (
@@ -90,7 +91,7 @@ class TenantRegistry:
                 graph_store=backend.graph_store(tenant_id),
                 recording_store=backend.recording_store(tenant_id),
                 feedback_store=backend.feedback_store(tenant_id),
-                message_service=MessageService(),
+                message_service=MessageService(email_sender=get_smtp_sender()),
                 approval_broker=ApprovalBroker(),
                 debug_broker=DebuggerBroker(),
                 cancellation_broker=RunCancellationBroker(),
@@ -106,7 +107,7 @@ class TenantRegistry:
             graph_store=GraphStore(),
             recording_store=RecordingStore(),
             feedback_store=FeedbackStore(),
-            message_service=MessageService(),
+            message_service=MessageService(email_sender=get_smtp_sender()),
             approval_broker=ApprovalBroker(),
             debug_broker=DebuggerBroker(),
             cancellation_broker=RunCancellationBroker(),
