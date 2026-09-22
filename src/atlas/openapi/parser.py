@@ -6,7 +6,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from .errors import OpenApiError, UnsupportedSchema
-from .models import HTTP_METHODS, OperationDescriptor, ParsedSpec
+from .models import HTTP_METHODS, OperationDescriptor, ParsedSpec, SecurityScheme
 from .schema import _resolve_ref, convert_schema
 
 _INVALID_MESSAGE = "仅支持 OpenAPI 3.x JSON 文档，请先将 YAML 转为 JSON"
@@ -45,6 +45,8 @@ def parse_document(raw_text: str) -> ParsedSpec:
     components = document.get("components")
     if not isinstance(components, dict):
         components = {}
+    schemes = _security_schemes(components)
+    global_security = document.get("security")
 
     operations: list[OperationDescriptor] = []
     paths = document.get("paths")
@@ -61,10 +63,80 @@ def parse_document(raw_text: str) -> ParsedSpec:
                     continue
                 if not isinstance(item, dict):
                     continue
-            operations.extend(_operations_for_path(raw_path, item, components))
+            operations.extend(
+                _operations_for_path(
+                    raw_path, item, components, schemes, global_security
+                )
+            )
 
     _dedupe_names(operations)
-    return ParsedSpec(title=title, version=spec_version, base_url=base_url, operations=operations)
+    return ParsedSpec(
+        title=title,
+        version=spec_version,
+        base_url=base_url,
+        operations=operations,
+        security_schemes=schemes,
+    )
+
+
+def _security_schemes(components: dict[str, Any]) -> dict[str, SecurityScheme]:
+    raw_schemes = components.get("securitySchemes")
+    if not isinstance(raw_schemes, dict):
+        return {}
+    result: dict[str, SecurityScheme] = {}
+    for name, raw in raw_schemes.items():
+        if not isinstance(name, str):
+            continue
+        if not isinstance(raw, dict):
+            continue
+        if "$ref" in raw:
+            try:
+                raw = _resolve_ref(raw["$ref"], components)
+            except UnsupportedSchema:
+                continue
+            if not isinstance(raw, dict):
+                continue
+        scheme_type = raw.get("type")
+        if scheme_type == "apiKey":
+            location = raw.get("in")
+            param = raw.get("name")
+            if location not in ("header", "query") or not isinstance(param, str) or not param:
+                continue
+            result[name] = SecurityScheme(
+                name=name, kind="api_key", location=location, param=param
+            )
+        elif scheme_type == "http":
+            if str(raw.get("scheme", "")).lower() != "bearer":
+                continue
+            result[name] = SecurityScheme(
+                name=name,
+                kind="bearer",
+                location=None,
+                param="Authorization",
+                prefix="Bearer ",
+            )
+    return result
+
+
+def _effective_security(
+    operation: dict[str, Any],
+    global_security: Any,
+    schemes: dict[str, SecurityScheme],
+) -> list[list[str]]:
+    raw = operation.get("security") if isinstance(operation.get("security"), list) else global_security
+    if not isinstance(raw, list):
+        return []
+    groups: list[list[str]] = []
+    for requirement in raw:
+        if not isinstance(requirement, dict):
+            continue
+        if not requirement:
+            groups.append([])
+            continue
+        names = [name for name in requirement if name in schemes]
+        if names:
+            groups.append(names)
+    return groups
 
 
 def _base_url(document: dict[str, Any]) -> str:
@@ -95,7 +167,11 @@ def _resolve_parameter(raw: Any, components: dict[str, Any]) -> dict[str, Any]:
 
 
 def _operations_for_path(
-    path: str, item: dict[str, Any], components: dict[str, Any]
+    path: str,
+    item: dict[str, Any],
+    components: dict[str, Any],
+    schemes: dict[str, SecurityScheme],
+    global_security: Any,
 ) -> list[OperationDescriptor]:
     path_parameters = item.get("parameters")
     if not isinstance(path_parameters, list):
@@ -106,7 +182,16 @@ def _operations_for_path(
         operation = item.get(method)
         if not isinstance(operation, dict):
             continue
-        result.append(_build_operation(method, path, operation, path_parameters, components))
+        result.append(
+            _build_operation(
+                method,
+                path,
+                operation,
+                path_parameters,
+                components,
+                _effective_security(operation, global_security, schemes),
+            )
+        )
     return result
 
 
@@ -116,6 +201,7 @@ def _build_operation(
     operation: dict[str, Any],
     path_parameters: list[Any],
     components: dict[str, Any],
+    security: list[list[str]],
 ) -> OperationDescriptor:
     op_parameters = operation.get("parameters")
     if not isinstance(op_parameters, list):
@@ -177,6 +263,7 @@ def _build_operation(
             summary=_summary(operation),
             description=_description(operation),
             input_schema={"type": "object", "properties": {}},
+            security=security,
             skipped=True,
             skip_reason=exc.reason,
         )
@@ -191,6 +278,7 @@ def _build_operation(
         idempotent=method in _SAFE_METHODS,
         input_schema=input_schema,
         locations=locations,
+        security=security,
     )
 
 

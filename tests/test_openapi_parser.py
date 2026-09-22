@@ -376,3 +376,116 @@ def test_description_falls_back_to_summary():
     spec = _parse(PETSTORE)
     delete_op = next(op for op in spec.operations if op.method == "delete")
     assert delete_op.description == "Delete a pet"
+
+
+# --- securitySchemes / security（docs/44） ---------------------------------
+
+def _security_doc(**extra):
+    document = {
+        "openapi": "3.0.3",
+        "info": {"title": "Secured", "version": "1.0.0"},
+        "servers": [{"url": "https://api.example.com"}],
+        "paths": {
+            "/things": {
+                "get": {"operationId": "getThings"},
+                "post": {"operationId": "postThings"},
+            },
+        },
+        "components": {
+            "securitySchemes": {
+                "ApiKeyHeader": {"type": "apiKey", "in": "header", "name": "X-API-Key"},
+                "ApiKeyQuery": {"type": "apiKey", "in": "query", "name": "api_key"},
+                "BearerAuth": {"type": "http", "scheme": "bearer"},
+                "BasicAuth": {"type": "http", "scheme": "basic"},
+                "CookieKey": {"type": "apiKey", "in": "cookie", "name": "session"},
+                "OAuth": {
+                    "type": "oauth2",
+                    "flows": {"implicit": {"authorizationUrl": "https://x", "scopes": {}}},
+                },
+            },
+        },
+    }
+    document.update(extra)
+    return document
+
+
+def test_supported_security_schemes_are_collected():
+    spec = _parse(_security_doc())
+    assert set(spec.security_schemes) == {"ApiKeyHeader", "ApiKeyQuery", "BearerAuth"}
+    header = spec.security_schemes["ApiKeyHeader"]
+    assert header.kind == "api_key" and header.location == "header" and header.param == "X-API-Key"
+    query = spec.security_schemes["ApiKeyQuery"]
+    assert query.location == "query" and query.param == "api_key"
+    bearer = spec.security_schemes["BearerAuth"]
+    assert bearer.kind == "bearer" and bearer.param == "Authorization" and bearer.prefix == "Bearer "
+
+
+def test_unsupported_schemes_are_ignored():
+    spec = _parse(_security_doc())
+    assert "BasicAuth" not in spec.security_schemes
+    assert "CookieKey" not in spec.security_schemes
+    assert "OAuth" not in spec.security_schemes
+
+
+def test_global_security_applies_to_operations():
+    doc = _security_doc(security=[{"ApiKeyHeader": []}, {"BearerAuth": []}])
+    spec = _parse(doc)
+    for op in spec.operations:
+        assert op.security == [["ApiKeyHeader"], ["BearerAuth"]]
+
+
+def test_operation_security_overrides_global():
+    doc = _security_doc(security=[{"ApiKeyHeader": []}])
+    doc["paths"]["/things"]["get"]["security"] = [{"BearerAuth": []}]
+    spec = _parse(doc)
+    get_op = next(op for op in spec.operations if op.method == "get")
+    post_op = next(op for op in spec.operations if op.method == "post")
+    assert get_op.security == [["BearerAuth"]]
+    assert post_op.security == [["ApiKeyHeader"]]
+
+
+def test_empty_security_means_anonymous():
+    doc = _security_doc(security=[{"ApiKeyHeader": []}])
+    doc["paths"]["/things"]["get"]["security"] = []
+    spec = _parse(doc)
+    get_op = next(op for op in spec.operations if op.method == "get")
+    assert get_op.security == []
+
+
+def test_empty_group_is_preserved():
+    doc = _security_doc(security=[{"ApiKeyHeader": []}, {}])
+    spec = _parse(doc)
+    assert spec.operations[0].security == [["ApiKeyHeader"], []]
+
+
+def test_unsupported_requirement_groups_are_dropped():
+    doc = _security_doc(security=[{"OAuth": ["read"]}, {"ApiKeyQuery": []}])
+    spec = _parse(doc)
+    assert spec.operations[0].security == [["ApiKeyQuery"]]
+
+
+def test_security_scheme_ref_is_resolved():
+    doc = _security_doc()
+    schemes = doc["components"]["securitySchemes"]
+    schemes["AliasKey"] = {"$ref": "#/components/securitySchemes/ApiKeyHeader"}
+    doc["security"] = [{"AliasKey": []}]
+    spec = _parse(doc)
+    assert "AliasKey" in spec.security_schemes
+    assert spec.operations[0].security == [["AliasKey"]]
+
+
+def test_and_group_requires_all_schemes():
+    doc = _security_doc(security=[{"ApiKeyHeader": [], "BearerAuth": []}])
+    spec = _parse(doc)
+    assert spec.operations[0].security == [["ApiKeyHeader", "BearerAuth"]]
+
+
+def test_security_applies_to_skipped_operations_too():
+    doc = _security_doc(security=[{"ApiKeyHeader": []}])
+    doc["paths"]["/things"]["get"]["parameters"] = [
+        {"name": "bad", "in": "path"}
+    ]
+    spec = _parse(doc)
+    get_op = next(op for op in spec.operations if op.method == "get")
+    assert get_op.skipped is True
+    assert get_op.security == [["ApiKeyHeader"]]

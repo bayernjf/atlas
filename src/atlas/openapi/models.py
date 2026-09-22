@@ -9,6 +9,14 @@ Permission = Literal["read", "write"]
 HTTP_METHODS = ("get", "post", "put", "patch", "delete", "head", "options")
 
 
+class SecurityScheme(BaseModel):
+    name: str
+    kind: Literal["api_key", "bearer"]
+    location: Literal["header", "query"] | None
+    param: str
+    prefix: str = ""
+
+
 class OperationDescriptor(BaseModel):
     name: str
     method: str
@@ -19,6 +27,7 @@ class OperationDescriptor(BaseModel):
     idempotent: bool = False
     input_schema: dict = Field(default_factory=dict)
     locations: dict[str, str] = Field(default_factory=dict)
+    security: list[list[str]] = Field(default_factory=list)
     skipped: bool = False
     skip_reason: str | None = None
 
@@ -28,3 +37,4 @@ class ParsedSpec(BaseModel):
     version: str = ""
     base_url: str
     operations: list[OperationDescriptor]
+    security_schemes: dict[str, SecurityScheme] = Field(default_factory=dict)
