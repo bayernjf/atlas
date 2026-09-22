@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+### docs：MVP 上线就绪 2026-09-22 复审（docs/34）+ LICENSE/pre-commit 交付层小批
+
+- 新增 [docs/34-MVP上线就绪评审-2026-09-22复审.md](docs/34-MVP上线就绪评审-2026-09-22复审.md)：docs/29 初评后 P0 三批（持久化 PR #46 / 生产认证 PR #47 / 安全准入 PR #48）+ docs/33 影子·Trace·静默值班·i18n + 整栈 PG 装配修复（PR #52）全部落码后的第二次项目级判定。双口径结论：陪同演示/内测试用的技术验证 MVP **达到**且更扎实；客户自助接真实店铺的生产 MVP **未达到**——阻断 #1/#2/#3 纯逻辑子集已解除（compose 已 PG、scrypt+会话 TTL、SSRF/AES-256-GCM/SQL guard/重试熔断），阻断 #4（TLS/反代/CD/LICENSE）、#5（零真实客户数据）、#3 真实渠道投递（OAuth2/SMTP/IM/webhook）仍缺。含实测证据表、测试基线（后端 collect 1084 / 前端 555）、分场景建议、P0/P1 最小必做清单。
+- 交付层小批（工程内可闭环，零新依赖，D10b/D11/D24 部分取回、均不解除缓做）：
+  - 根目录落 `LICENSE`（MIT，Copyright 2026 Atlas contributors；pyproject.toml 与 frontend/package.json 同步 license 字段，解除 docs/29 阻断 #4 的 LICENSE 子项；类型可一句话换 Apache-2.0/闭源）。
+  - 落 `.pre-commit-config.yaml`：pre-commit-hooks v5（trailing-whitespace/end-of-file/check-yaml/check-json/check-merge-conflict/large-files 2048KB/case-conflict/line-ending LF）+ gitleaks v8.21.2 + local hook 调前端 `pnpm lint`（仅 ts/tsx 变更时）；刻意不引 ruff/black（项目零 Python lint 工具）。
+  - 新增 `GET /api/ready` 就绪探针（新包 `observability/health.py`：内存档恒就绪、PG 档 `SELECT 1`，异常 fail-closed 返 503 不抛栈；无鉴权；原 `/api/health` 保留为存活探针；compose atlas healthcheck 对齐打 /api/ready）。
+  - 新增 `GET /metrics` Prometheus 端点（`observability/metrics_export.py` 纯函数零新依赖手写 text exposition 0.0.4：atlas_up、atlas_storage_backend_info、atlas_tenants_active、atlas_runs_total{status}、atlas_runs_success_rate、atlas_run_duration_ms{quantile="0.5|0.95"}、atlas_tool_calls_total{tool,status}；label 转义、None/非有限数跳过；无鉴权，靠反代网段白名单/安全组隔离，仅聚合计数不含图名/错误文本/PII；`TenantRegistry.all_tenant_ids()` 加锁只读快照不触发惰性创建，单租户快照失败只 warning 不 500）。
+  - 新增 SMTP 邮件真实投递（`message/smtp.py`：`SmtpConfig.from_env` 读 ATLAS_SMTP_HOST/PORT(587)/USERNAME/PASSWORD/FROM/USE_TLS(true)，HOST 缺省返 None 回退进程内 sink、FROM 缺失 fail-closed；`SmtpSender` STARTTLS+login+send_message、smtp_factory 可注入、`get_smtp_sender` 进程级惰性单例；MessageService(email_sender=) 在 channel=email 且注入 sender 时真实发信、记录标 delivered="smtp"、失败折算新错误码 **SMTP_SEND_FAILED** 且不落记录；registry 内存/PG 两档注入、demo 兜底保持进程内；`.env.example` 增 SMTP 段）。
+  - TLS 反代样例：`deploy/Caddyfile`（Caddy 2 自动 Let's Encrypt、gzip、/metrics 按 remote_ip 网段白名单拦截）+ compose `caddy` 服务（`profiles: ["edge"]`，caddy-data/config 两卷，默认不起）+ `deploy/README.md`（启动/探针/Prometheus scrape/生产去 8000 直连）；`docker compose config` 默认与 edge 两档合法。
+  - 清掉 ReleaseModal/RolloutModal 两处历史 oxlint `set-state-in-effect` warning（React 官方渲染期 prev-open 追踪重置 state；fetch-on-mount effect 加 scoped `// oxlint-disable-next-line react/set-state-in-effect`，规则名必须斜杠写法），**oxlint 首次 0 error/0 warning（137 files）**。
+  - 测试：新增 `tests/test_observability.py` 8 例、`tests/test_message_smtp.py` 14 例（全 fake smtp_factory 不触网）；收口门后端 **1073 passed/34 skipped**（1051 基线＋22，零回归）、前端 **555 passed/2 skipped/43 文件**、tsc+vite build 过、gitleaks 本地无泄漏。
+
+
+
 ### fix：整栈 PG 装配缺口——补 PgUserStore.bind_session_store、U269 转正（2026-09-22，`b2ac85d`；dev 未 push）
 
 - 解除 docs/29 登记的具体装配缺口：`src/atlas/iam/deps.py`:39 模块级无条件调用 `user_store.bind_session_store(session_store)`，内存版 `UserStore` 有此方法、PG 版 `PgUserStore` 缺，导致 `ATLAS_STORAGE_BACKEND=pg` 时 import `atlas.api.main` 装配期抛 `AttributeError: 'PgUserStore' object has no attribute 'bind_session_store'`、整栈 PG uvicorn 不可启动、U269 同因阻断（PG 直连 integration 绕过 deps 整栈装配，故此前未暴露）。
