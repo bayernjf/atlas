@@ -1,0 +1,64 @@
+{
+  "title": "OpenAPI 导入",
+  "subtitle": "粘贴 OpenAPI 3.x JSON 文档或提供规格 URL，系统为每个 operation 自动生成一个可编排的 API 工具。",
+  "button": {
+    "back": "返回工作台",
+    "preview": "预览",
+    "import": "导入为工具",
+    "delete": "删除"
+  },
+  "source": {
+    "pasteTab": "粘贴 JSON",
+    "urlTab": "从 URL 获取",
+    "pastePlaceholder": "在此粘贴 OpenAPI 3.x JSON 文档…",
+    "pasteRequired": "请先粘贴 JSON 文档",
+    "urlLabel": "规格 URL",
+    "urlPlaceholder": "https://example.com/openapi.json",
+    "urlRequired": "请输入规格 URL"
+  },
+  "preview": {
+    "title": "预览结果",
+    "summary": "{{title}}（{{baseUrl}}）：共 {{total}} 个操作，{{imported}} 个可导入，{{skipped}} 个已跳过",
+    "column": {
+      "method": "方法",
+      "name": "名称",
+      "path": "路径",
+      "summary": "说明",
+      "permission": "权限",
+      "skipReason": "跳过原因"
+    }
+  },
+  "imports": {
+    "title": "已导入的 API",
+    "empty": "尚未导入任何 API 规格",
+    "column": {
+      "title": "名称",
+      "baseUrl": "Base URL",
+      "operations": "工具数",
+      "createdAt": "导入时间",
+      "actions": "操作"
+    },
+    "expand": {
+      "method": "方法",
+      "path": "路径",
+      "permission": "权限"
+    }
+  },
+  "permission": {
+    "read": "只读",
+    "write": "写入",
+    "delete": "删除",
+    "financial": "资金"
+  },
+  "delete": {
+    "confirmTitle": "删除导入规格",
+    "confirm": "删除后工具立即从发现列表移除；已保存的图不会被改写，后续运行将报 UNKNOWN_CAPABILITY。确认删除「{{title}}」？"
+  },
+  "readonly": {
+    "note": "当前角色为访客，仅可查看已导入的规格。"
+  },
+  "message": {
+    "importSuccess": "导入成功：{{title}}，已生成 {{count}} 个工具",
+    "deleted": "导入规格已删除"
+  }
+}

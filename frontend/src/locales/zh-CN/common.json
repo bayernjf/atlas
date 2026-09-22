@@ -14,7 +14,8 @@
     "users": "用户管理",
     "connections": "连接管理",
     "approvals": "审批队列",
-    "audit": "审计日志"
+    "audit": "审计日志",
+    "openapi": "API 导入"
   },
   "button": {
     "confirm": "确定",

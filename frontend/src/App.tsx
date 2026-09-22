@@ -9,13 +9,14 @@ import { Connections } from './pages/Connections'
 import { Users } from './pages/Users'
 import { Approvals } from './pages/Approvals'
 import { AuditLog } from './pages/AuditLog'
+import { OpenApiImports } from './pages/OpenApiImports'
 import { EmailApproval } from './pages/EmailApproval'
 import { logout as logoutApi } from './lib/apiClient'
 import { getStoredPrincipal, roleCan, UNAUTHORIZED_EVENT, type Principal } from './lib/auth'
 import { extractEmailToken } from './lib/approvals'
 import { antdTheme } from './theme/tokens'
 
-type Page = 'dashboard' | 'editor' | 'monitoring' | 'memory' | 'connections' | 'users' | 'approvals' | 'audit'
+type Page = 'dashboard' | 'editor' | 'monitoring' | 'memory' | 'connections' | 'users' | 'approvals' | 'audit' | 'openapi'
 
 function App() {
   const emailToken = extractEmailToken(window.location.pathname)
@@ -74,6 +75,7 @@ function App() {
           onOpenUsers={() => setPage('users')}
           onOpenApprovals={() => setPage('approvals')}
           onOpenAudit={() => setPage('audit')}
+          onOpenOpenApi={() => setPage('openapi')}
         />
       ) : page === 'approvals' ? (
         <Approvals
@@ -99,6 +101,8 @@ function App() {
         <Memory principal={principal} onLogout={handleLogout} onBack={() => setPage('dashboard')} />
       ) : page === 'connections' && roleCan(principal.role, 'operate') ? (
         <Connections principal={principal} onLogout={handleLogout} onBack={() => setPage('dashboard')} />
+      ) : page === 'openapi' ? (
+        <OpenApiImports principal={principal} onLogout={handleLogout} onBack={() => setPage('dashboard')} />
       ) : (
         <Editor principal={principal} onLogout={handleLogout} />
       )}

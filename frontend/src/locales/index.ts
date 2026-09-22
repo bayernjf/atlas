@@ -24,6 +24,7 @@ import enDemo from './en-US/demo.json'
 import enEditor from './en-US/editor.json'
 import enMemory from './en-US/memory.json'
 import enMonitoring from './en-US/monitoring.json'
+import enOpenApi from './en-US/openapi.json'
 import zhCommon from './zh-CN/common.json'
 import zhApprovals from './zh-CN/approvals.json'
 import zhAudit from './zh-CN/audit.json'
@@ -34,9 +35,10 @@ import zhDemo from './zh-CN/demo.json'
 import zhEditor from './zh-CN/editor.json'
 import zhMemory from './zh-CN/memory.json'
 import zhMonitoring from './zh-CN/monitoring.json'
+import zhOpenApi from './zh-CN/openapi.json'
 
 export type Locale = 'zh-CN' | 'en-US'
-export type Namespace = 'common' | 'approvals' | 'audit' | 'editor' | 'dashboard' | 'demo' | 'monitoring' | 'memory' | 'connections' | 'channels'
+export type Namespace = 'common' | 'approvals' | 'audit' | 'editor' | 'dashboard' | 'demo' | 'monitoring' | 'memory' | 'connections' | 'channels' | 'openapi'
 
 type Dict = Record<string, unknown>
 export type TranslateOptions = {
@@ -44,7 +46,7 @@ export type TranslateOptions = {
   ns?: Namespace
 } & Record<string, unknown>
 
-const NAMESPACES: Namespace[] = ['common', 'approvals', 'audit', 'editor', 'dashboard', 'demo', 'monitoring', 'memory', 'connections', 'channels']
+const NAMESPACES: Namespace[] = ['common', 'approvals', 'audit', 'editor', 'dashboard', 'demo', 'monitoring', 'memory', 'connections', 'channels', 'openapi']
 
 const resources: Record<Locale, Record<Namespace, Dict>> = {
   'zh-CN': {
@@ -58,6 +60,7 @@ const resources: Record<Locale, Record<Namespace, Dict>> = {
     demo: zhDemo as Dict,
     monitoring: zhMonitoring as Dict,
     memory: zhMemory as Dict,
+    openapi: zhOpenApi as Dict,
   },
   'en-US': {
     common: enCommon as Dict,
@@ -70,6 +73,7 @@ const resources: Record<Locale, Record<Namespace, Dict>> = {
     demo: enDemo as Dict,
     monitoring: enMonitoring as Dict,
     memory: enMemory as Dict,
+    openapi: enOpenApi as Dict,
   },
 }
 

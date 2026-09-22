@@ -178,8 +178,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       if (path !== '/api/auth/login') handleUnauthorized()
     }
     const detail = body?.detail
+    const fallback = `请求失败：${response.status}`
     throw new Error(
-      Array.isArray(detail) ? detail.join('；') : detail || `请求失败：${response.status}`,
+      Array.isArray(detail)
+        ? detail.join('；')
+        : typeof detail === 'object'
+          ? (detail?.message ?? fallback)
+          : detail || fallback,
     )
   }
   return body as T
@@ -1706,4 +1711,62 @@ export async function unregisterRemoteWebhook(
       .join('/')}`,
     { method: 'DELETE' },
   )
+}
+
+// --- OpenAPI 导入（docs/42 §5；零新依赖，进程内 store） --------------------
+
+export type OpenApiSource = {
+  content?: string
+  url?: string
+}
+
+export type OperationDescriptor = {
+  name: string
+  method: string
+  path: string
+  summary: string | null
+  description: string | null
+  permission: string
+  idempotent: boolean
+  locations: Record<string, string>
+  input_schema: JsonSchema
+  skipped: boolean
+  skip_reason?: string | null
+}
+
+export type OpenApiPreview = {
+  title: string
+  base_url: string
+  operations: OperationDescriptor[]
+  imported_count: number
+  skipped_count: number
+}
+
+export type ImportedSpec = {
+  spec_id: string
+  title: string
+  base_url: string
+  created_at: string
+  operations: OperationDescriptor[]
+}
+
+export async function previewOpenApi(source: OpenApiSource): Promise<OpenApiPreview> {
+  return request('/api/openapi/preview', { method: 'POST', body: JSON.stringify(source) })
+}
+
+export async function importOpenApi(source: OpenApiSource): Promise<ImportedSpec> {
+  return request('/api/openapi/imports', { method: 'POST', body: JSON.stringify(source) })
+}
+
+export async function listOpenApiImports(): Promise<ImportedSpec[]> {
+  const body = await request<{ items: ImportedSpec[] }>('/api/openapi/imports')
+  return body.items
+}
+
+export async function getOpenApiImport(specId: string): Promise<ImportedSpec> {
+  return request(`/api/openapi/imports/${encodeURIComponent(specId)}`)
+}
+
+export async function deleteOpenApiImport(specId: string): Promise<{ deleted: boolean }> {
+  return request(`/api/openapi/imports/${encodeURIComponent(specId)}`, { method: 'DELETE' })
 }
