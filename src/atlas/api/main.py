@@ -2047,6 +2047,17 @@ def list_approvals(
     return {"items": services_for(principal).approval_broker.list_pending()}
 
 
+@app.get("/api/approvals/decided")
+def list_decided_approvals(
+    limit: int = 50,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """列出当前租户已决策的人工审批（最近处理在前，进程内、reset/重启即失）。"""
+    bounded = max(1, min(int(limit), 200))
+    items = services_for(principal).approval_broker.list_decided(bounded)
+    return {"items": items, "limit": bounded}
+
+
 @app.post("/api/approvals/{token}/decision")
 def decide_approval(
     token: str,
@@ -2058,6 +2069,9 @@ def decide_approval(
     if pending is None:
         # 跨租户 token 同样 404，不泄漏存在性（04 §5.14）
         raise HTTPException(status_code=404, detail=f"审批请求不存在或已清理：{token}")
+    notifier = EmailApprovalNotifier(
+        services_for(principal).message_service, _PUBLIC_URL, principal.tenant_id
+    )
     return _apply_approval_decision(
         broker,
         pending,
@@ -2066,6 +2080,8 @@ def decide_approval(
         comment=request.comment,
         action_id=request.action_id,
         form=request.form,
+        notifier=notifier,
+        resolved_by="human",
     )
 
 
@@ -2078,6 +2094,8 @@ def _apply_approval_decision(
     comment: str,
     action_id: str | None,
     form: dict[str, Any] | None,
+    notifier: Any = None,
+    resolved_by: str = "human",
 ) -> dict[str, Any]:
     """登录态决策与邮件深链决策共用的唯一应用函数（docs/36 §3，防双路漂移）。"""
     if pending.get("decision") is not None:
@@ -2105,6 +2123,22 @@ def _apply_approval_decision(
 
     if not broker.resolve(token, decision, comment=comment, action_id=resolved_action):
         raise HTTPException(status_code=409, detail="该审批请求已有决策，重复提交不生效")
+    # docs/37 §4：决策结果邮件（旁路 fail-safe，不影响响应与决策事实）。
+    if notifier is not None:
+        recipients = broker.get_notify_recipients(token)
+        if recipients:
+            try:
+                notifier.notify_decided(
+                    graph_id=pending.get("graph_id", ""),
+                    node_id=pending.get("node_id", ""),
+                    summary=pending.get("summary", ""),
+                    decision=decision,
+                    resolved_by=resolved_by,
+                    comment=comment,
+                    recipients=recipients,
+                )
+            except Exception as exc:  # noqa: BLE001 结果通知任何异常都不改变响应
+                logger.warning("审批结果通知失败 token=%s: %s", token, exc)
     result: dict[str, Any] = {"token": token, "decision": decision, "resolvedBy": "human"}
     if resolved_action:
         result["actionId"] = resolved_action
@@ -2187,6 +2221,9 @@ def email_approval_decision(
     pending = broker.get(approval_token)
     if pending is None:
         raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID)
+    notifier = EmailApprovalNotifier(
+        services.message_service, _PUBLIC_URL, tenant_id
+    )
     result = _apply_approval_decision(
         broker,
         pending,
@@ -2195,6 +2232,8 @@ def email_approval_decision(
         comment=request.comment,
         action_id=request.action_id,
         form=request.form,
+        notifier=notifier,
+        resolved_by="email-link",
     )
     client_ip = http_request.client.host if http_request.client else ""
     try:
