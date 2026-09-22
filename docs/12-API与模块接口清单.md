@@ -711,6 +711,29 @@ class EventWaitBroker:
 
 错误码：WAIT_EVENT_KEY_INVALID / WAIT_EVENT_PAYLOAD_INVALID / WAIT_TOKEN_NOT_FOUND / WAIT_ALREADY_SIGNALED / WAIT_TIMEOUT_FAILED。
 
+### 3.18 LLM 语义分支内部接口（conditionMode=llm 进程内 v1；docs/48，2026-09-23 docs-only 立项）
+
+```python
+# src/atlas/llm/condition_classifier.py
+class ConditionClassifyError(Exception): ...
+
+class ConditionClassifier(Protocol):
+    def classify(self, *, branches: list[dict], context_text: str, instruction: str) -> str: ...
+    # 返唯一分支 label；无法判定抛 ConditionClassifyError
+
+class OfflineConditionClassifier:
+    def classify(...): raise ConditionClassifyError  # LITELLM_MODEL 未配置
+
+class LiteLLMConditionClassifier:
+    def __init__(self, model: str): ...
+    # litellm 懒加载；temperature=0；只输出 {"branch": "<label>"}；标签须在分支集内
+
+def get_condition_classifier() -> ConditionClassifier: ...
+# run_graph(..., condition_classifier=None) 注入；缺省工厂；沿执行链/子图透传
+```
+
+无新增 REST、无新增错误码：分类失败全部 fail-safe 路由 defaultTarget，原因进节点产出 `llm_errors` 与 trace。
+
 ## 4. 记忆检索接口（依据 06 6.2 / 05 2.3）
 
 > **M11 实现边界（2026-09-19 已落码收口；权威＝docs/26、ADR T23）**：下列 `memory_retriever.query` 五层分层检索为**愿景**（working Redis / summary / fact pgvector / case / preference + 决策节点隐式注入），v1 不实现，缓做 14 D35。M11 取回的是下方「4.1 M11 长期记忆最小接口」——统一 memory_item（fact/preference）+ 显式 remember/recall 两工具，**不做决策隐式注入**。

@@ -110,8 +110,9 @@ description: string
 position: {x, y}
 config:
 type: object               # 节点类型专属配置；condition 节点 config 形状：
-                           #   {branches:[{label,expression,target}], defaultTarget}
-                           #   唯一权威见 04 §5.2「condition 节点 config 契约」，表达式白名单见 04 §5.1
+                           #   rule（缺省）：{conditionMode?:"rule", branches:[{label,expression,target}], defaultTarget}
+                           #   llm（D14，2026-09-23 立项 docs/48）：{conditionMode:"llm", classifierPrompt?:≤500, branches:[{label,description:≤300,target}], defaultTarget}
+                           #   唯一权威见 04 §5.2「condition 节点 config 契约」，表达式白名单见 04 §5.1，语义分支见 §5.2 追加段
                            # loop 节点 config 形状：
                            #   while:   {mode:"while", continueExpression, maxIterations, bodyTarget, exitTarget}
                            #   foreach: {mode:"foreach", itemsExpression, itemName?, collectTarget?, bodyTarget, exitTarget}  # D16，2026-09-23 立项 docs/45
