@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+### feat：OpenAPI securitySchemes 静态密钥批落码收口（docs/44，2026-09-23；dev、未 push；无 ADR）
+
+导入 API 接通静态鉴权，四代码原子（`5a7e580` docs→`ab08c12` parser→`2d534a2` 信封接线→`43d8001` 前端→docs 本步）：
+
+- 解析：apiKey（header/query）与 HTTP Bearer 收录为 SecurityScheme；有效要求＝operation 覆盖全局的 OR-of-AND 组（unsupported 方案名剔除、空组＝匿名、`security: []` 显式匿名），OperationDescriptor 增 `security`。
+- 存储：ImportedSpec 增 `security_schemes`＋`credential_envelopes`；密钥经既有 SecretProvider 信封（T26，AES-GCM/plain 两档）加密，迁移 019 给 openapi_imports 加两 JSONB 列；内存/PG 两端 store 同形并加 put_credentials。
+- 执行：适配器每次调用现解密注入 header/query（Bearer 拼前缀；用户参数优先），缺密钥 fail-closed `OPENAPI_CREDENTIAL_MISSING` 且不发请求，解密失败 SECRET_DECRYPT_ERROR；明文不入任何响应（明文探针测试）。
+- REST/前端：新 `PUT /api/openapi/imports/{id}/credentials`（operate；未知 scheme 422 OPENAPI_INVALID_CREDENTIAL，清空即删除），前端 Password 输入＋「已配置 n/m」状态进 openapi namespace。
+- 门：后端内存档 1375 passed/59 skipped（净增 23 常跑，零回归）、PG 直连 atlas-pg 11 passed（往返/跨重启信封仍在/旧行默认 `{}`），前端 593/2/45、build 过。
+- 浏览器冒烟 3 截图 docs/smoke-shots/openapi44-*：无密钥运行得明确中文失败 → PUT 配密钥 → SUCCESS HTTP 200（body Rex）；PG 档重启后信封仍在、重跑仍 200；收口后恢复普通内存档后端。
+- D22 部分取回、不解除：basic/cookie/mutualTLS/oauth2/openIdConnect、密钥取回/轮换、按 operation 差异化、YAML/Swagger2、真实 API 联调仍缓做。
+
 ### docs：OpenAPI securitySchemes 静态密钥批立项（docs/44，2026-09-23；无 ADR）
 
 docs-only 契约：接通导入 API 的静态鉴权——apiKey（header/query）与 HTTP Bearer 方案解析、密钥经 SecretProvider 信封（T26）加密随规格落内存/PG（迁移 019 拟加 security_schemes/credential_envelopes 两列）、适配器执行逐次解密注入，缺密钥 OPENAPI_CREDENTIAL_MISSING fail-closed；新 PUT credentials 端点与前端密钥录入。oauth2/openIdConnect/basic/cookie、真实 API 联调仍缓做 D22（部分取回、不解除）。立项基线后端 1352/56、前端 591/2/46。

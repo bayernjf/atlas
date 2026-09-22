@@ -119,3 +119,16 @@
 3. `feat(openapi): wire credential envelopes into import stores and execution` ＋迁移 019＋两端 store/适配器/PUT 端点＋测试；`.venv/bin/pytest`＋PG 集成；
 4. `feat(frontend): collect and configure imported api credentials` ＋i18n；`cd frontend && pnpm lint && pnpm test && pnpm build`；
 5. docs 收口：浏览器冒烟（截图）＋CHANGELOG＋handoff/08/本文落码注记。
+
+## 7. 落码注记（2026-09-23 收口）
+
+- 五原子序全部完成：①docs 立项 `5a7e580` → ②解析 `ab08c12` → ③信封接线/迁移 019/PUT `2d534a2` → ④前端 `43d8001` → ⑤docs 收口（本步）。均在 dev、未 push。
+- 收口门：后端内存档 **1375 passed / 59 skipped**（立项基线 1352/56，净增 23 常跑＋3 skip：parser 10、adapter 7、API 6；新增 3 PG 集成在无 DATABASE_URL 时 skip，既有面零回归）；PG 直连（atlas-pg，ATLAS_RUN_INTEGRATION=1 DATABASE_URL='postgresql+psycopg://atlas:atlas@localhost:5432/atlas' pytest tests/test_openapi_imports_pg_integration.py）**11 passed**：迁移 019 后 security_schemes/credential_envelopes 往返（解密恢复明文）、信封跨重启（新 store 实例）仍在且 put_credentials 覆盖、旧行默认 `{}` 不破坏读取。前端 **593 passed / 2 skipped / 45 files**（基线 591 净增 2 apiClient 测＋既有 fixture 补字段），pnpm build 过、oxlint 0 error。
+- 浏览器冒烟（内存档＋PG 档，3 截图 docs/smoke-shots/openapi44-{1-preview-credentials,2-missing-credential,3-success}.png；缝＝/tmp/atlas_smoke44_launcher.py 与 atlas_smoke44_pg_launcher.py，假 DNS＋httpx MockTransport，仓库外未提交）：
+  - 预览 Secured Petstore（全局 security＝KeyHeader，apiKey header X-API-Key）展示鉴权密钥输入区，**不带密钥导入**；列表显示 KeyHeader Tag＋「未配置密钥」；
+  - 编辑器绑定 `openapi:openapi-1/list_pets` 编译运行：fail-closed，**无请求发出**，结果 FAILED「OPENAPI_CREDENTIAL_MISSING 该接口需要鉴权但未配置密钥（缺少：KeyHeader）」；
+  - 「配置密钥」填 `correct-key` 经 PUT 保存（响应 configured 仅名称、列表翻「已配置 1/1」），再次编译运行：`tool_call-1` **action_status SUCCESS，HTTP 200**，body `{"pets":[{"id":1,"name":"Rex"}]}`；
+  - PG 档（:8002）API 级：导入 openapi-793 带信封 → graph-797 编译运行 200 → **重启后端** → 信封仍在（`credential_envelopes` 读回）、重跑 graph-797 仍 **200 SUCCESS**。
+- 收口后已恢复普通内存档 uvicorn（:8000）。
+- 迁移 019 已对本地 atlas-pg 实跑（apply_migrations.py）；无新依赖、无 ADR（复用 T26 SecretProvider）、新错误码 `OPENAPI_INVALID_CREDENTIAL`（422）与执行结果码 `OPENAPI_CREDENTIAL_MISSING`；所有响应不回显明文（API 测试含明文探针扫文本）。
+- **D22 部分取回、不解除**：HTTP Basic、apiKey cookie、mutualTLS、OAuth2/openIdConnect 流程化托管、密钥取回/查看、按 operation 差异化、轮换工具、YAML/Swagger2、真实外部 API 联调仍缓做。
