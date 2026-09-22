@@ -26,6 +26,7 @@
 | `interaction_template` | 05 / 五、自定义前端模板 5.3 交互模板 Schema（**愿景大 Schema**；M8 工程化最小子集＝下行 `card_template`） | ## 5.3 交互模板 Schema（示例） |
 | `card_template` | **M8 已落码收口 2026-09-18（2b35fc9 起，08 M8 落码条）**；`src/atlas/cards/{catalog,render}.py`（审批卡片双向 Schema + web/im/email 三渠道渲染）+ 04 §5.6 追加段（human_approval.cardTemplateId）；权威＝08 M8 立项/落码条 | —（工程契约） |
 | `email_decision_token` | **审批闭环批已落码收口 2026-09-22（bd6ec7a/8923473，docs/36）**；`src/atlas/collaboration/email_token.py`（HMAC 能力 token）＋`EmailApprovalNotifier` 链接＋公开 email-view/email-decision；权威＝04 §5.6 邮件决策补注 | —（工程契约） |
+| `decided_approval` | **审计可见与审批结果补强批已落码收口 2026-09-22（ecfa325/bc3f116/033619a，docs/37）**；`ApprovalBroker.list_decided` 只读投影＋`GET /api/approvals/decided`；`_Pending.notify_recipients`＋决策结果邮件；权威＝04 §5.6 补强批追加段 | —（工程契约） |
 | `evaluation_task` | 06 / 9.2 评估 Harness 设计 | ### 9.2 评估 Harness 设计（借鉴 lm-evaluation-harness）代码示例 |
 | `refund_decision` | `src/atlas/llm/decision.py`（W9-W10 权威实现；规则对齐 06 §9.2 黄金用例） | —（工程推导契约） |
 | `refund_order` | `src/atlas/shop/service.py`（W9-W10 Demo 电商数据结构） | —（工程推导契约） |
@@ -52,7 +53,7 @@
 | `release_report` | **D26 报告 v1 已落码收口（2026-09-18，U60 转正式）；2026-09-19 收尾批补 CSV/JSON 导出（`8a37b4e`，`.../export?format=csv|json`）**；04 §5.11 末用例集报告段 + `src/atlas/recording/reports.py`（ReleaseReport 沉淀/按图历史/通过率趋势/导出，ring 100/租户、reset 清空、不 PG 化；docs/28 批 1④（2026-09-20，89e21fc）增跨图聚合 GET /api/release-reports?limit= 看板） | ### 5.11 操作录制与回放 |
 | `business_metrics` | **M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；04 §5.13 末业务指标段 + `src/atlas/monitoring/business.py`（extract_business 业务结果三率，金融灰度门控信号源） | ### 5.13 基础监控告警 |
 | `connection` | **docs/35 T4 已落码收口 2026-09-22（`a57164d`，generic OAuth2 连接管理 v1，D22 子集不解除缓做）**；权威 docs/35 §4 + `src/atlas/connections/{models,oauth,store,service}.py`＋`storage/pg.py` PgConnectionStore（表 `oauth_connections`，迁移 014，20 列，reset 不清）。字段：id `conn-N`(per-tenant 序号)/tenant_id/provider(自由字符串非空)/display_name/auth_url/token_url(https 创建过 EgressGuard 真实 DNS)/client_id(明文公开)/client_secret_envelope/scopes:list/redirect_uri(空→ATLAS_OAUTH_REDIRECT_URI→默认 /connections/callback)/status(draft·connected·error)/access_token_envelope/refresh_token_envelope/token_type/expires_at(UTC iso 可空)/last_error/created_by/created_at/updated_at。**所有 secret 经 SecretProvider AES-GCM 信封，`public_view()` 驼峰投影仅出 hasClientSecret、绝无信封/明文**；9 端点+无鉴权回调页见 12 文档 | docs/35 §4（工程契约） |
-| `audit_event` | **docs/35 T6 已落码收口 2026-09-22（`f243e04`，审计日志，docs/34 P1 #8）**；权威 docs/35 §6 + `src/atlas/observability/audit.py`（AuditEvent/AuditStore ring 2000/租户/AuditRepository）＋`storage/pg.py` PgAuditStore（表 `audit_events`，迁移 013，reset 不清）。仅 8 个元数据字段：id `aud-N`/tenant_id/actor(用户或 anonymous)/action(如 graph.run/create)/method/path_format(路由模板，解析失败降级实际 path)/status_code/client_ip/request_id/occurred_at；**绝不记请求体、响应体、Authorization/Cookie 或任何凭据**；仅 /api 写方法（POST/PUT/PATCH/DELETE）经 HTTP 中间件记录，login 成功显式记一条，GET 不记；GET /api/audit/events 与 /api/audit/export?format=jsonl 均 administer | docs/35 §6（工程契约） |
+| `audit_event` | **docs/35 T6 已落码收口 2026-09-22（`f243e04`，审计日志，docs/34 P1 #8）**；权威 docs/35 §6 + `src/atlas/observability/audit.py`（AuditEvent/AuditStore ring 2000/租户/AuditRepository）＋`storage/pg.py` PgAuditStore（表 `audit_events`，迁移 013，reset 不清）。仅 8 个元数据字段：id `aud-N`/tenant_id/actor(用户或 anonymous)/action(如 graph.run/create)/method/path_format(路由模板，解析失败降级实际 path)/status_code/client_ip/request_id/occurred_at；**绝不记请求体、响应体、Authorization/Cookie 或任何凭据**；仅 /api 写方法（POST/PUT/PATCH/DELETE）经 HTTP 中间件记录，login 成功显式记一条，GET 不记；GET /api/audit/events 与 /api/audit/export?format=jsonl 均 administer；**2026-09-22 起两端点有应用内 admin 页面 `pages/AuditLog.tsx`（action 前缀过滤＋limit 50/100/200＋Bearer blob 导出，docs/37 包 A），端点本身不变** | docs/35 §6（工程契约） |
 
 ---
 
@@ -431,6 +432,26 @@ response: {token, decision, resolvedBy, actionId?}
 # 租户与审批不符 → 统一 404「审批链接无效或已过期」（peek 不惰性创建租户）
 ```
 > 邮件决策审计：`actor="email-link"`、`action="approval.email_decision:{decision}"`（audit schema 无 metadata 列、本批不扩列，决策编进 action）；不落 graph/node、不记签名 token、审批 token 与 comment。
+
+### `decided_approval` — 字段概览（审计可见与审批结果补强批，docs/37；2026-09-22 落码收口）
+
+```yaml
+# GET /api/approvals/decided?limit=50（read，全部登录角色；本租户分区）
+items:
+  token: string
+  node_id: string               # snake_case，与 GET /api/approvals 同形
+  graph_id: string
+  summary: string
+  approver: string
+  createdAt: float              # pending 创建 epoch 秒
+  decision: "approved|rejected"
+  resolvedBy: string            # human | email-link | timeout | input
+  comment: string
+  cardTemplateId: string        # 有则附带
+limit: int                      # 回显；端点 clamp 1–200（broker 默认 50）
+# 不返回 card_context 快照、Event 等内部对象；按 resolved_at 倒序（最近处理在前）
+```
+> 只读投影、不改挂起/决策语义；数据进程内、reset 清空、重启即失（D20 不变）。`_Pending` 保留 `notify_recipients: list[str]`（request 原样留存、不去重，去重在 loader 收件人解析阶段；restore 默认空），决策后旁路发结果邮件：subject `[Atlas] 审批已处理：{summary}`；正文含审批节点/图、结果、处理来源行，comment 非空时附「处理备注」行并截断 ≤200 字符，**不含 token 或任何决策链接**。
 
 ### `evaluation_task` — 字段概览（完整定义见 06-运行时与质量保障.md #125，上下文章节：### 9.2 评估 Harness 设计（借鉴 lm-evaluation-harness）代码示例）
 

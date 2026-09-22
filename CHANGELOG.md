@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### feat：审计可见与审批结果补强批全部落码收口（docs/37，2026-09-22；dev 三 commit、未 push）
+
+承接 docs/34 P1 #8 余部与 docs/36 非目标，三处工程内可见性缺口一次补齐，**零新依赖、不新增 ADR、不解除 D11/D20/D24**：
+
+- **A 审计日志页（033619a）**：`pages/AuditLog.tsx` admin 应用内页面（入口 admin 门控，viewer/operator API 仍 403），复用既有 `GET /api/audit/events`、`GET /api/audit/export`（后端零改动）；action 前缀过滤、limit 50/100/200、jsonl 经 Bearer blob 下载；新 `audit` i18n namespace（en-US 空占位）。
+- **B 已决审批历史（ecfa325/bc3f116）**：`ApprovalBroker.list_decided(limit=50)` 只读投影（resolved_at 倒序、clamp 1–200、不泄露 card_context/Event），`GET /api/approvals/decided`（read、全角色、租户分区，snake_case 同 /api/approvals）；Approvals 页改 Tabs，「已处理」切 Tab 加载＋手动刷新不轮询，10s 轮询仅待处理 Tab 激活且可见时。
+- **C 决策结果邮件（ecfa325/bc3f116）**：`_Pending` 留存 `notify_recipients`；`ApprovalNotifier.notify_decided` 发纯文本结果邮件（subject `[Atlas] 审批已处理：…`，结果/来源行，comment ≤200 字符，无 token/决策链接）；人工/邮件链接路径在 `_apply_approval_decision`、超时/输入预置路径在 loader 决策后旁路 fail-safe 触发，通知异常仅 warning，不改决策响应、不阻断图，重复决策不重发。
+- **验证**：后端 1190 passed/36 skipped（净增 16 零回归）、前端 571 passed/2 skipped/45 files（计数不变）、lint/build 过；浏览器冒烟过（审计页过滤/导出/空态、已处理 Tab），控制台零错误，2 截图存 docs/assets/。
+
 ### feat：审批闭环批全部落码收口（docs/36，2026-09-22；dev 四 commit、未 push）
 
 承接 docs/34 复审「通知→决策」断裂与 docs/35 T2 余部，D20 再次部分取回、**不解除**缓做（KMS/邮箱绑定/真实投递联调/多实例/IM/钉钉/动态审批人/节点级角色仍缓做）：
