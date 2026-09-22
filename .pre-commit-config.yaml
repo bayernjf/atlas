@@ -1,0 +1,43 @@
+# Pre-commit hooks for Atlas.
+# 安装（一次性）：
+#   pip install pre-commit && pre-commit install
+# 手动跑全仓：pre-commit run --all-files
+# CI 三道门（gitleaks / 后端 pytest / 前端 vitest+build）见
+# .github/workflows/ci.yml，本文件只做提交前的快速本地闸，不替代 CI。
+# 设计原则：零新增 Python 依赖（项目未引 ruff/black，见 docs/10），
+# 钩子要么来自 pre-commit-hooks 官方镜像，要么直接调用仓内已有的工具。
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^docs/assets/
+      - id: end-of-file-fixer
+        exclude: ^docs/assets/
+      - id: check-yaml
+      - id: check-json
+        exclude: ^frontend/
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=2048"]
+      - id: check-case-conflict
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+        # 仓内 .gitleaks.toml 自动被读取（allowlist 测试夹具/示例密钥）
+
+  # 前端静态检查：仅当暂存了 frontend 下的 ts/tsx/js/jsx 文件时才运行，
+  # 调用仓内 pnpm 的 oxlint（与 CI 同一把尺子，零额外安装）。
+  - repo: local
+    hooks:
+      - id: oxlint
+        name: oxlint (frontend)
+        entry: bash -c 'cd frontend && pnpm lint'
+        language: system
+        files: ^frontend/.*\.(ts|tsx|js|jsx)$
+        pass_filenames: false
