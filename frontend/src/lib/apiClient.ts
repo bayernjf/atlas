@@ -1598,3 +1598,27 @@ export async function testChannelBinding(id: string): Promise<ChannelTestResult>
 export async function deleteChannelBinding(id: string): Promise<{ deleted: boolean }> {
   return request(`/api/channels/${id}`, { method: 'DELETE' })
 }
+
+export type WebhookSubscription = {
+  topic: string
+  graphId: string
+  enabled: boolean
+}
+
+export async function getWebhookSubscriptions(id: string): Promise<WebhookSubscription[]> {
+  const body = await request<{ items: WebhookSubscription[] }>(
+    `/api/channels/${id}/webhooks`,
+  )
+  return body.items
+}
+
+export async function putWebhookSubscriptions(
+  id: string,
+  subscriptions: WebhookSubscription[],
+): Promise<WebhookSubscription[]> {
+  const body = await request<{ items: WebhookSubscription[] }>(
+    `/api/channels/${id}/webhooks`,
+    { method: 'PUT', body: JSON.stringify({ subscriptions }) },
+  )
+  return body.items
+}

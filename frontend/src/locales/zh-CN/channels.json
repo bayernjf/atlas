@@ -44,5 +44,32 @@
     "test": "探活请求失败",
     "delete": "删除失败",
     "formInvalid": "请完整填写表单"
+  },
+  "webhook": {
+    "button": "Webhook",
+    "modal": { "title": "入站 Webhook 订阅" },
+    "urlLabel": "Webhook 回调地址（填入 Shopify 后台「通知 → Webhook」，事件版本选 2025-01）",
+    "copy": "复制",
+    "hint": "在 Shopify 后台手动添加 Webhook 时粘贴上述地址；平台按 X-Shopify-Hmac-SHA256 用本绑定连接的 client secret 验签，验签失败一律拒绝。",
+    "subsTitle": "topic → 图订阅（每个 topic 可触发多个图，至多 10 条）",
+    "topic": {
+      "orders_create": "orders/create（订单创建）",
+      "orders_updated": "orders/updated（订单更新）",
+      "refunds_create": "refunds/create（退款创建）"
+    },
+    "graphPlaceholder": "选择要触发的图",
+    "nodesUnit": "节点",
+    "enabled": "启用",
+    "disabled": "停用",
+    "add": "新增订阅",
+    "message": {
+      "urlCopied": "回调地址已复制",
+      "saved": "Webhook 订阅已保存"
+    },
+    "error": {
+      "load": "订阅加载失败",
+      "copy": "复制失败，请手动选择复制",
+      "save": "订阅保存失败"
+    }
   }
 }

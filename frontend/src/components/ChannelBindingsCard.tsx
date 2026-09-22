@@ -18,12 +18,15 @@ import {
   createChannelBinding,
   deleteChannelBinding,
   listChannelBindings,
+  listGraphs,
   testChannelBinding,
   type ChannelBindingView,
   type ConnectionView,
+  type SavedGraphSummary,
 } from '../lib/apiClient'
 import { roleCan, type Principal } from '../lib/auth'
 import { useTranslation } from '../locales'
+import { WebhookSubscriptionsModal } from './WebhookSubscriptionsModal'
 
 type ChannelBindingsCardProps = {
   principal: Principal
@@ -58,6 +61,9 @@ export function ChannelBindingsCard({ principal, connections }: ChannelBindingsC
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
 
+  const [graphs, setGraphs] = useState<SavedGraphSummary[]>([])
+  const [webhookBinding, setWebhookBinding] = useState<ChannelBindingView | null>(null)
+
   const refresh = useCallback(async () => {
     try {
       const data = await listChannelBindings()
@@ -74,6 +80,14 @@ export function ChannelBindingsCard({ principal, connections }: ChannelBindingsC
     // eslint-disable-next-line react/set-state-in-effect -- 首帧拉取外部 API，setState 均在 await 之后
     void refresh()
   }, [refresh])
+
+  useEffect(() => {
+    if (!canAdmin) return
+    // eslint-disable-next-line react/set-state-in-effect -- 管理员打开 webhook 弹窗需要图列表
+    listGraphs()
+      .then(setGraphs)
+      .catch(() => undefined)
+  }, [canAdmin])
 
   const patchForm = (patch: Partial<BindingForm>) =>
     setForm((prev) => ({ ...prev, ...patch }))
@@ -167,12 +181,17 @@ export function ChannelBindingsCard({ principal, connections }: ChannelBindingsC
     {
       title: t('col.actions'),
       key: 'actions',
-      width: 180,
+      width: 250,
       render: (_, record) => (
         <Space size={4} wrap>
           <Button size="small" onClick={() => handleTest(record)}>
             {t('button.test')}
           </Button>
+          {canAdmin && (
+            <Button size="small" onClick={() => setWebhookBinding(record)}>
+              {t('webhook.button')}
+            </Button>
+          )}
           {canAdmin && (
             <Popconfirm
               title={t('deleteConfirm.title')}
@@ -272,6 +291,15 @@ export function ChannelBindingsCard({ principal, connections }: ChannelBindingsC
           </Form.Item>
         </Form>
       </Modal>
+
+      {webhookBinding && (
+        <WebhookSubscriptionsModal
+          open
+          binding={webhookBinding}
+          graphs={graphs}
+          onClose={() => setWebhookBinding(null)}
+        />
+      )}
     </>
   )
 }

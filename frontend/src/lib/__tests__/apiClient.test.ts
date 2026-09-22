@@ -5,7 +5,9 @@ import {
   cancelActiveRun,
   createChannelBinding,
   deleteChannelBinding,
+  getWebhookSubscriptions,
   listChannelBindings,
+  putWebhookSubscriptions,
   resumeDebug,
   streamRun,
   testChannelBinding,
@@ -248,5 +250,27 @@ describe('真实渠道绑定 /api/channels（docs/38 §1C/§1E）', () => {
     const [url, init] = fetchMock.mock.calls[0]
     expect(url).toBe('/api/channels/ch-1')
     expect(init?.method).toBe('DELETE')
+  })
+
+  it('getWebhookSubscriptions GETs webhooks and unwraps items', async () => {
+    const items = [{ topic: 'orders/create', graphId: 'graph-1', enabled: true }]
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => jsonResponse({ items }))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await getWebhookSubscriptions('ch-1')
+    expect(result).toEqual(items)
+    const [url] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/channels/ch-1/webhooks')
+  })
+
+  it('putWebhookSubscriptions PUTs payload and unwraps items', async () => {
+    const items = [{ topic: 'refunds/create', graphId: 'graph-2', enabled: false }]
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => jsonResponse({ items }))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await putWebhookSubscriptions('ch-1', items)
+    expect(result).toEqual(items)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/channels/ch-1/webhooks')
+    expect(init?.method).toBe('PUT')
+    expect(JSON.parse(init?.body as string)).toEqual({ subscriptions: items })
   })
 })
