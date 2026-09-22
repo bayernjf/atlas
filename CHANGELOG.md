@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+### feat：真实接入交付批 T2–T6 全部落码收口（docs/35，2026-09-22，dev 未 push）
+
+承接 docs/34 §五 P0/P1，五包均为缓做项部分取回、**不解除** D11/D20/D22/D24：
+
+- **T4 generic OAuth2 连接管理 v1（D22 子集，P0 #1 最大缺口；`a57164d` 前后端一体）**：新包 `connections/`（models 投影不泄密、oauth HMAC-SHA256 state CSRF＋授权码交换/刷新可注入不触网、内存 store、service 状态机）＋迁移 `014_oauth_connections.sql`＋`storage` ConnectionRepository/PgConnectionStore（reset 不清）＋registry 两档装配＋9 个 `/api/connections` 端点（POST/GET list/GET one/PUT/DELETE administer·read，authorize/exchange/refresh/test operate）＋无鉴权静态回调页 `GET /connections/callback`（include_in_schema=False，注册于 StaticFiles 挂载前）；client_secret/access/refresh 一律经 SecretProvider AES-GCM 信封、`public_view` 投影永不回传；前端 `pages/Connections.tsx` 整页（Table＋新建/编辑 Modal〔编辑 secret 留空保留〕＋授权新窗口/完成授权粘贴 code·state/刷新/测试/删除，admin 建删改、operator 授权四作、viewer 只读）＋Dashboard operator+ 入口＋connections namespace i18n（zh 填实/en-US 空）。平台无关：provider 自由字符串，不写死 Shopify/Amazon、不做真实业务 API 联调；test 仅验证令牌状态。test_connections 20 常跑+1 PG。
+- **T2 审批挂起邮件通知（D20 邮件子集；`5b17784` 前后端一体）**：human_approval.config 可选 `notifyEmails`（string[]≤5、支持插值、编译期校验含 @、pointer /notifyEmails）；`collaboration/notifications.py` EmailApprovalNotifier 复用 MessageService/SMTP 发纯文本邮件（无一键决策链接），构造期持 `ATLAS_PUBLIC_URL`；loader 全链透传、运行时插值去重剔空、fail-safe 吞异常绝不阻断图，仅同步/流式两真实路径装配，回放/影子/续跑不发；前端复用 ArrayView 控件无新 JSX 文案。test_approval_notifications 11 例。
+- **T3 webhook 消息渠道（D24 子集；`54bf38d`）**：`message/webhook.py` DefaultWebhookSender 先 EgressGuard.check 再 httpx POST、follow_redirects=False、10s 超时；channel=webhook 仅收单个 URL 字符串（数组即使单元素也 INVALID_PARAMETER），EGRESS_* 透传、其余 WEBHOOK_SEND_FAILED，失败不落记录、成功 delivered=webhook，未装配回退 in_process。test_message_webhook 22 例。
+- **T5 Grafana/Prometheus provisioning 样例（D11 子集；`0842243`）**：deploy/prometheus、deploy/grafana provisioning、dashboards/atlas-overview.json（7 面板对齐 /metrics 的 7 gauge，不用 rate()）、compose observability profile（默认不起，GF 密码生产必改）；纯配置零新 Python 依赖。
+- **T6 审计日志导出（docs/34 P1 #8；`f243e04`）**：`observability/audit.py` AuditEvent（仅 8 元数据字段）/ring 2000/租户＋迁移 `013_audit_events.sql`＋PgAuditStore（reset 不清）＋写操作 HTTP 中间件（仅 /api 写方法、按路由模板、异常只 warning、跳过 login、绝不记请求体/凭据）＋登录成功显式审计＋`GET /api/audit/events`、`GET /api/audit/export?format=jsonl`（administer，jsonl 为 StreamingResponse 附件）。test_audit_log 16 常跑+1 PG。
+- **验证**：后端 1141 passed/36 skipped、PG 直连集成（013+014）38 passed、前端 vitest 557 passed/2 skipped/44 文件、oxlint 0/0、pnpm build 过；d26/m11/d28 三内存档 smoke 全过；T4 HTTP 端到端冒烟过（建连投影无秘密/授权 state 不触网/回调页 200/viewer 403/删除）。`.env.example` 加 ATLAS_PUBLIC_URL/ATLAS_OAUTH_REDIRECT_URI/GRAFANA_ADMIN_PASSWORD。
+- **仍缓做/待外部条件**：真实平台业务 API 联调与平台适配、IM/短信/邮件模板/入站/webhook 签名重试限流、审批持久化中断余部与邮件一键决策落地页、OTel SDK/Collector、前端审计页/SIEM、CD/真实域名 TLS（D10b）、真实种子客户（阻断 #5，唯一无法靠代码解除）、ATLAS_MASTER_KEY 与 Grafana 密码生产必配。
+
 ### docs：真实接入交付批立项（docs/35，T2–T6）+ T1 治理（PR #53 合 main）
 
 - **T1 治理完成**：docs/34 对外交付层小批（LICENSE/pre-commit/SMTP//ready//metrics/Caddy/oxlint 清零，7 commits）经 **PR #53 合 main**（merge `c1fe886`，CI gitleaks/Backend pytest/Frontend vitest+build 三道门全绿）。
