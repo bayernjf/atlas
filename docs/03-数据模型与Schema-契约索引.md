@@ -113,8 +113,9 @@ type: object               # 节点类型专属配置；condition 节点 config 
                            #   {branches:[{label,expression,target}], defaultTarget}
                            #   唯一权威见 04 §5.2「condition 节点 config 契约」，表达式白名单见 04 §5.1
                            # loop 节点 config 形状：
-                           #   {mode:"while", continueExpression, maxIterations, bodyTarget, exitTarget}
-                           #   唯一权威见 04 §5.3「loop 节点 config 契约」
+                           #   while:   {mode:"while", continueExpression, maxIterations, bodyTarget, exitTarget}
+                           #   foreach: {mode:"foreach", itemsExpression, itemName?, collectTarget?, bodyTarget, exitTarget}  # D16，2026-09-23 立项 docs/45
+                           #   foreach 产出增 items/item/results，exitReason 增 completed|empty|items_too_large；唯一权威见 04 §5.3「loop 节点 config 契约」
                            # parallel 节点 config 形状：
                            #   {joinStrategy: all_success|all_completed|any_success, branches:[{label,target}], joinTarget}  # any_success(D18) 语义见 04 §5.4
                            #   唯一权威见 04 §5.4「parallel 节点 config 契约」
