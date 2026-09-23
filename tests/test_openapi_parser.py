@@ -412,7 +412,9 @@ def _security_doc(**extra):
 
 def test_supported_security_schemes_are_collected():
     spec = _parse(_security_doc())
-    assert set(spec.security_schemes) == {"ApiKeyHeader", "ApiKeyQuery", "BearerAuth", "BasicAuth"}
+    assert set(spec.security_schemes) == {
+        "ApiKeyHeader", "ApiKeyQuery", "BearerAuth", "BasicAuth", "DigestAuth"
+    }
     header = spec.security_schemes["ApiKeyHeader"]
     assert header.kind == "api_key" and header.location == "header" and header.param == "X-API-Key"
     query = spec.security_schemes["ApiKeyQuery"]
@@ -421,11 +423,13 @@ def test_supported_security_schemes_are_collected():
     assert bearer.kind == "bearer" and bearer.param == "Authorization" and bearer.prefix == "Bearer "
     basic = spec.security_schemes["BasicAuth"]
     assert basic.kind == "basic" and basic.param == "Authorization" and basic.prefix == "Basic "
+    digest = spec.security_schemes["DigestAuth"]
+    assert digest.kind == "digest" and digest.param == "Authorization" and digest.prefix == ""
 
 
 def test_unsupported_schemes_are_ignored():
     spec = _parse(_security_doc())
-    assert "DigestAuth" not in spec.security_schemes
+    # cookie（apiKey in cookie，OpenAPI 不支持）与 oauth2 仍忽略；digest 已支持
     assert "CookieKey" not in spec.security_schemes
     assert "OAuth" not in spec.security_schemes
 

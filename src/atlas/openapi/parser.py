@@ -123,6 +123,14 @@ def _security_schemes(components: dict[str, Any]) -> dict[str, SecurityScheme]:
                     param="Authorization",
                     prefix="Basic ",
                 )
+            elif http_scheme == "digest":
+                result[name] = SecurityScheme(
+                    name=name,
+                    kind="digest",
+                    location=None,
+                    param="Authorization",
+                    prefix="",
+                )
     return result
 
 
