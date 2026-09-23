@@ -105,6 +105,32 @@ def build_alert_body(alert: object) -> str:
     return "\n".join(lines)
 
 
+LIFECYCLE_TITLES = {
+    "merged": "再次发生已归并",
+    "escalated": "未确认已升级",
+    "resolved": "告警已解决",
+}
+
+
+def build_lifecycle_subject(alert: object, transition: str) -> str:
+    title = LIFECYCLE_TITLES.get(transition, transition)
+    return f"[Atlas告警][{title}] {alert_rule_label(alert)}"
+
+
+def build_lifecycle_body(alert: object, transition: str) -> str:
+    title = LIFECYCLE_TITLES.get(transition, transition)
+    lines = [
+        f"{title}：{alert_rule_label(alert)}",
+        f"告警：{getattr(alert, 'id')}",
+        f"图：{getattr(alert, 'graph_id')}",
+        f"状态：{getattr(alert, 'status')}",
+        f"级别：{getattr(alert, 'severity')}",
+        f"累计：{getattr(alert, 'count', 1)} 次",
+        f"最近：{getattr(alert, 'last_seen')}",
+    ]
+    return "\n".join(lines)
+
+
 class AlertNotifier:
     def __init__(
         self,
@@ -133,6 +159,29 @@ class AlertNotifier:
                 cfg.to,
                 build_alert_subject(alert),
                 build_alert_body(alert),
+                secret=cfg.secret or None,
+            )
+        except Exception as exc:
+            code = getattr(exc, "code", None)
+            return AlertChannelDelivery(
+                lastNotifiedAt=self._clock(),
+                errorCode=code if isinstance(code, str) else "ALERT_NOTIFY_FAILED",
+                errorMessage=str(exc)[:300],
+            )
+        return AlertChannelDelivery(lastNotifiedAt=self._clock())
+
+    def notify_lifecycle(
+        self, alert: object, cfg: AlertChannel, *, transition: str
+    ) -> AlertChannelDelivery:
+        """合并归并 / 未确认升级 / 解决三类状态变化通知；同样受 enabled·to·severity 过滤。"""
+        if not self.should_notify(cfg, alert):
+            return AlertChannelDelivery()
+        try:
+            self._messages.send(
+                cfg.channel,
+                cfg.to,
+                build_lifecycle_subject(alert, transition),
+                build_lifecycle_body(alert, transition),
                 secret=cfg.secret or None,
             )
         except Exception as exc:
