@@ -80,7 +80,7 @@ CREATE INDEX IF NOT EXISTS idx_openapi_imports_hash
 
 - delete(spec_id)：未删除 → 置 deleted_at=当前 UTC ISO，返回 True；不存在或已删 → False（API 404）。不再物理删除。
 - list/get/put_credentials：默认排除 deleted_at 非空（get 已删返 None→404，凭据不可改）。
-- 新增 restore(spec_id) -> tuple[bool, str | None]：已删 → 清 deleted_at；若恢复后与另一**未删除**规格指纹冲突，返回 `(False, "OPENAPI_DUPLICATE")`（API 409 带冲突 existingSpecId）；不存在返 `(False, None)`（404）。
+- 新增 restore(spec_id) -> tuple[bool, str | None, str | None]：已删 → 清 deleted_at 返 `(True, None, None)`；若恢复后与另一**未删除**规格指纹冲突，返 `(False, "OPENAPI_DUPLICATE", 冲突 spec_id)`（API 409 带冲突 existingSpecId）；不存在或本就未删（无可恢复项）返 `(False, None, None)`（404）。**落码细化（2026-09-24）**：相对 §3 设计的二元组，实现追加第三位以直接回传冲突 spec_id（API 409 体需要 existingSpecId），前两位语义不变；该方法为新增、无既有调用，三元组不破坏旧契约。内存档与 PG 档同形。
 - REST 新增 `POST /api/openapi/imports/{spec_id}/restore`（权限 administer；404/409/200）。v1 不提供 include_deleted 列表与硬删除（保留数据，避免误删）。
 - 内存档以字段模拟、PG 档以 deleted_at 列过滤；demo reset 不清本表（照现状先例）。
 
@@ -105,7 +105,18 @@ CREATE INDEX IF NOT EXISTS idx_openapi_imports_hash
 
 - 新增 `GET /api/demo/deliveries?limit=`（read 权限，照 `/api/demo/messages` 同段），返回 `{"items": [...]}`，limit clamp 1-200；审计/租户隔离沿用现状。不新增写端点。
 
-## 5. 测试（候选 U580 起，落码后转正式并回填 docs/13）
+## 5. 测试（已落码，U580–U603 转正式，登记 docs/13）
+
+- **U580** PgReportStore 直连往返/跨图跨租户隔离/reset（`tests/test_storage_pg_integration.py::test_U580_pg_report_store_roundtrip_and_isolation`，迁移 022）。
+- OpenAPI 去重/软删（内存 `tests/test_openapi_dedupe_softdelete.py`）：**U581** 指纹稳定+dict 键序无关、**U582** 改 base_url/path/title 变指纹、**U583** 同指纹 409 带 existingSpecId、**U584** 软删隐藏+释放名额+可重导+软删行禁写凭证、**U585** 名额只数未删、**U586** restore 成功/冲突/缺失。
+- OpenAPI REST（`tests/test_api_openapi.py`）：**U587** 重复导入 409 体、**U588** 软删→重导→restore 冲突→删冲突后 restore 成功全链、**U589** restore 缺失/未删 404、**U590** restore 需 administer（403）。
+- OpenAPI PG（`tests/test_openapi_imports_pg_integration.py`，迁移 023）：**U591** 去重 409+改 base_url 放行、**U592** 软删隐藏/释放/重导/禁写凭证、**U593** restore 成功与 409 冲突回传。
+- 消息投递（`tests/test_message_delivery.py`）：**U594** demo 无 sender 记 in_process、**U595** webhook 两次失败后成功 attempts=3 且退避两次、**U596** 持续失败 attempts=3 落 failed 不写 _messages、**U597** EgressDenied 立即失败不重试、**U598** SMTP 失败不重试、**U599** IM 网络失败重试至尽、**U600** 日志倒序/limit clamp/reset、**U601** subject 截断 100、**U602** errorMessage 截断 300。
+- **U603** REST `GET /api/demo/deliveries`（`tests/test_api_demo.py::test_delivery_log_visible_and_reset_clears`，read 权限、limit clamp、reset 清空）。
+- 适配修正：既有 `tests/test_openapi_adapter.py` 两处旧用例（顺序 id、名额）改用不同 base_url 变体以适配去重语义（`4049ef7`）。
+- 回归：release-gate/publish-gate、openapi 导入/凭据、IM/webhook/email、监控通知全绿；三道门只增测。
+
+> 收口实测（2026-09-24）：后端全量 **1674 passed / 69 skipped / 0 failed**；PG 直连集成 **33 passed**（storage 19 + openapi 14）；前端 vitest **645 passed / 2 skipped**、`pnpm build` 通过、`oxlint` 0 error（6 个既有 react-hooks warning，非本批引入）。本批 docs/56 无前端改动。
 
 - PgReportStore（PG 直连集成，ATLAS_RUN_INTEGRATION=1 + DATABASE_URL）：record 落库、list_summary 不含 cases 且倒序、list_all_summary limit/clamp、get 含 cases 与 404/跨图跨租户隔离、reset 删本租户、id 同形 rr-N、total=0 时 pass_rate=None。
 - ImportStore 双档：同指纹二次 add 抛 OPENAPI_DUPLICATE(409) 且 existingSpecId 正确、不同文档正常、软删后 list/get 不可见且名额释放、软删后可重新导入同指纹、restore 成功、restore 与未删同指纹冲突 409、删不存在 404；PG 直连验证 content_hash/deleted_at 列与部分唯一索引语义。
