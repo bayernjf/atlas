@@ -140,6 +140,22 @@ class MonitoringStore:
                     pending.append(
                         (alert, self._channel.model_copy(deep=True), transition)
                     )
+            # docs/54 §6：本次运行健康即自动恢复该图仍 open 的内置告警（一次健康即恢复，
+            # 不做连续 N 次/flapping 抑制）；acknowledged 与 rollout_gate 不自动恢复，
+            # 复用 last_seen/last_run_id、不新增字段（PG 兼容），锁外发 recovery 通知。
+            if healthy:
+                for alert in self._alerts:
+                    if (
+                        alert.graph_id == record.graph_id
+                        and alert.status == "open"
+                        and alert.rule_id != "rollout_gate"
+                    ):
+                        alert.status = "resolved"
+                        alert.last_seen = record.finished_at
+                        alert.last_run_id = record.id
+                        pending.append(
+                            (alert, self._channel.model_copy(deep=True), "recovery")
+                        )
         for alert, cfg, transition in pending:
             self._notify_outside_lock(alert, cfg, transition=transition)
         return record

@@ -1,3 +1,4 @@
+import time
 from datetime import datetime, timezone
 from typing import Callable, Literal
 
@@ -109,6 +110,7 @@ LIFECYCLE_TITLES = {
     "merged": "再次发生已归并",
     "escalated": "未确认已升级",
     "resolved": "告警已解决",
+    "recovery": "告警已自动恢复",
 }
 
 
@@ -137,11 +139,18 @@ class AlertNotifier:
         message_service: object,
         *,
         clock: Callable[[], str] | None = None,
+        lifecycle_min_interval_seconds: float = 60.0,
+        time_func: Callable[[], float] | None = None,
     ) -> None:
         self._messages = message_service
         self._clock = clock or (
             lambda: datetime.now(timezone.utc).isoformat()
         )
+        # docs/54 §7：lifecycle（merged/escalated/resolved/recovery）同 (alert,transition)
+        # 默认 60s 限流退避，进程内不持久化；new 首条（notify）不限流。
+        self._lifecycle_interval = max(0.0, float(lifecycle_min_interval_seconds))
+        self._time_func = time_func or time.monotonic
+        self._last_lifecycle: dict[tuple[str, str], float] = {}
 
     def should_notify(self, cfg: AlertChannel, alert: object) -> bool:
         if not cfg.enabled or not cfg.to.strip():
@@ -173,8 +182,15 @@ class AlertNotifier:
     def notify_lifecycle(
         self, alert: object, cfg: AlertChannel, *, transition: str
     ) -> AlertChannelDelivery:
-        """合并归并 / 未确认升级 / 解决三类状态变化通知；同样受 enabled·to·severity 过滤。"""
+        """归并 / 升级 / 解决 / 自动恢复四类状态变化通知；受 enabled·to·severity 过滤，
+        并对同一 (alert, transition) 在 lifecycle_min_interval_seconds 内限流退避
+        （docs/54 §7：限流跳过不投递、不记 lastNotifiedAt；投递成败都计时）。"""
         if not self.should_notify(cfg, alert):
+            return AlertChannelDelivery()
+        key = (str(getattr(alert, "id", "")), transition)
+        now_mono = self._time_func()
+        last = self._last_lifecycle.get(key)
+        if last is not None and (now_mono - last) < self._lifecycle_interval:
             return AlertChannelDelivery()
         try:
             self._messages.send(
@@ -185,11 +201,14 @@ class AlertNotifier:
                 secret=cfg.secret or None,
             )
         except Exception as exc:
+            # 投递失败也计时，避免失败 lifecycle 在短时间内打爆渠道。
+            self._last_lifecycle[key] = self._time_func()
             code = getattr(exc, "code", None)
             return AlertChannelDelivery(
                 lastNotifiedAt=self._clock(),
                 errorCode=code if isinstance(code, str) else "ALERT_NOTIFY_FAILED",
                 errorMessage=str(exc)[:300],
             )
+        self._last_lifecycle[key] = self._time_func()
         return AlertChannelDelivery(lastNotifiedAt=self._clock())
 
