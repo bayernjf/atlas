@@ -339,3 +339,89 @@ def test_resume_event_wait_deadline_passed_fail_raises():
         run_graph(graph, event_wait_broker=broker, resume=frame)
     assert excinfo.value.code == "WAIT_TIMEOUT_FAILED"
 
+def test_event_wait_timeout_expression_used_for_broker():
+    broker = EventWaitBroker()
+    requested: list[int] = []
+    orig_request = broker.request
+
+    def spy_request(*, event_key, node_id, graph_id, timeout_seconds):
+        requested.append(timeout_seconds)
+        return orig_request(
+            event_key=event_key,
+            node_id=node_id,
+            graph_id=graph_id,
+            timeout_seconds=timeout_seconds,
+        )
+
+    broker.request = spy_request
+
+    def signal_on_register(event: dict) -> None:
+        if event.get("type") == "node_start" and event.get("wait"):
+            token = event["wait"]["token"]
+            threading.Timer(
+                0.03, lambda: broker.signal_token(token, {"ok": True})
+            ).start()
+
+    graph = _event_wait_graph(
+        timeoutMode="expression",
+        timeoutSeconds=3600,
+        timeoutExpression="{{global.waitSecs}} * 2 + 1",
+    )
+    result = run_graph(
+        graph,
+        event_wait_broker=broker,
+        inputs={"waitSecs": 2},
+        emit=signal_on_register,
+    )
+    assert result["status"] == "completed"
+    assert requested == [5]
+    output = result["outputs"]["wait-1"]
+    assert output["signaled"] is True
+    assert output["payload"] == {"ok": True}
+    assert broker.list_pending() == []
+
+
+def test_event_wait_timeout_expression_out_of_range_fails():
+    broker = EventWaitBroker()
+    graph = _event_wait_graph(
+        timeoutMode="expression",
+        timeoutSeconds=3600,
+        timeoutExpression="{{global.waitSecs}}",
+    )
+    with pytest.raises(WaitNodeFailure) as exc:
+        run_graph(
+            graph, event_wait_broker=broker, inputs={"waitSecs": 9999}
+        )
+    assert exc.value.code == "WAIT_DURATION_INVALID"
+    assert broker.list_pending() == []
+
+
+def test_event_wait_static_default_uses_timeout_seconds():
+    broker = EventWaitBroker()
+    requested: list[int] = []
+    orig_request = broker.request
+
+    def spy_request(*, event_key, node_id, graph_id, timeout_seconds):
+        requested.append(timeout_seconds)
+        return orig_request(
+            event_key=event_key,
+            node_id=node_id,
+            graph_id=graph_id,
+            timeout_seconds=timeout_seconds,
+        )
+
+    broker.request = spy_request
+
+    def signal_on_register(event: dict) -> None:
+        if event.get("type") == "node_start" and event.get("wait"):
+            token = event["wait"]["token"]
+            threading.Timer(
+                0.03, lambda: broker.signal_token(token, {})
+            ).start()
+
+    result = run_graph(
+        _event_wait_graph(), event_wait_broker=broker, emit=signal_on_register
+    )
+    assert result["status"] == "completed"
+    assert requested == [30]
+

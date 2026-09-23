@@ -65,6 +65,10 @@ from .dsl import (
     _loc,
     _loop_body_set,
     valid_event_key,
+    MIN_WAIT_SECONDS,
+    MAX_WAIT_SECONDS,
+    MIN_EVENT_WAIT_SECONDS,
+    MAX_EVENT_WAIT_SECONDS,
     validate_graph_report,
 )
 from .interpolation import interpolate, resolve_path
@@ -132,6 +136,44 @@ def _resolve_absolute_wait(
             f"（需为未来 1-600 秒内，当前差值 {delta:.0f}s）",
         )
     return int(round(delta)), target.isoformat()
+
+
+def _resolve_wait_expression(
+    node_id: str, raw_expression: Any, context: dict[str, Any], lo: int, hi: int
+) -> int:
+    """等待时长表达式 → 秒数（docs/49 duration dynamic；B5 event timeout expression）。
+
+    经条件引擎求值，结果须为非 bool 有限数值且落在 [lo,hi]；任何坏值抛
+    WaitNodeFailure(WAIT_DURATION_INVALID)，不睡眠。duration/event 共用，零新错误码。
+    """
+    try:
+        raw = evaluate_expression(str(raw_expression), context)
+    except ConditionEvalError as exc:
+        raise WaitNodeFailure(
+            node_id,
+            "WAIT_DURATION_INVALID",
+            f"等待节点 {node_id} 等待时长表达式无法求值：{exc}",
+        )
+    if (
+        isinstance(raw, bool)
+        or not isinstance(raw, (int, float))
+        or not math.isfinite(float(raw))
+    ):
+        raise WaitNodeFailure(
+            node_id,
+            "WAIT_DURATION_INVALID",
+            f"等待节点 {node_id} 等待时长表达式结果非法"
+            f"（需为 {lo}-{hi} 秒，当前 {raw!r}）",
+        )
+    seconds = int(round(raw))
+    if not lo <= seconds <= hi:
+        raise WaitNodeFailure(
+            node_id,
+            "WAIT_DURATION_INVALID",
+            f"等待节点 {node_id} 等待时长表达式结果非法"
+            f"（需为 {lo}-{hi} 秒，当前 {raw!r}）",
+        )
+    return seconds
 
 
 
@@ -426,7 +468,33 @@ def _make_executor(
                                         "WAIT_EVENT_KEY_INVALID",
                                         f"等待节点 {node.id} 渲染后的事件标识非法：{event_key}",
                                     )
-                                timeout_seconds = int(node.config["timeoutSeconds"])
+                                timeout_mode = node.config.get("timeoutMode", "static")
+                                if timeout_mode == "expression":
+                                    timeout_seconds = _resolve_wait_expression(
+                                        node.id,
+                                        node.config.get("timeoutExpression"),
+                                        context,
+                                        MIN_EVENT_WAIT_SECONDS,
+                                        MAX_EVENT_WAIT_SECONDS,
+                                    )
+                                else:
+                                    static_timeout = node.config.get("timeoutSeconds")
+                                    if (
+                                        isinstance(static_timeout, bool)
+                                        or not isinstance(static_timeout, int)
+                                        or not MIN_EVENT_WAIT_SECONDS
+                                        <= static_timeout
+                                        <= MAX_EVENT_WAIT_SECONDS
+                                    ):
+                                        raise WaitNodeFailure(
+                                            node.id,
+                                            "WAIT_DURATION_INVALID",
+                                            f"等待节点 {node.id} 超时时间非法"
+                                            f"（需为 {MIN_EVENT_WAIT_SECONDS}-"
+                                            f"{MAX_EVENT_WAIT_SECONDS} 秒，"
+                                            f"当前 {static_timeout!r}）",
+                                        )
+                                    timeout_seconds = int(static_timeout)
                                 on_timeout = node.config.get("onTimeout", "continue")
                                 token = event_wait_broker.request(
                                     event_key=event_key,
@@ -509,33 +577,13 @@ def _make_executor(
                                 node.id, node.config.get("absoluteTime"), context, now
                             )
                         elif duration_mode == "dynamic" and not resume_here:
-                            try:
-                                raw = evaluate_expression(str(expression), context)
-                            except ConditionEvalError as exc:
-                                raise WaitNodeFailure(
-                                    node.id,
-                                    "WAIT_DURATION_INVALID",
-                                    f"等待节点 {node.id} 等待时长表达式无法求值：{exc}",
-                                )
-                            if (
-                                isinstance(raw, bool)
-                                or not isinstance(raw, (int, float))
-                                or not math.isfinite(float(raw))
-                            ):
-                                raise WaitNodeFailure(
-                                    node.id,
-                                    "WAIT_DURATION_INVALID",
-                                    f"等待节点 {node.id} 等待时长表达式结果非法"
-                                    f"（需为 1-600 秒，当前 {raw!r}）",
-                                )
-                            seconds = int(round(raw))
-                            if not 1 <= seconds <= 600:
-                                raise WaitNodeFailure(
-                                    node.id,
-                                    "WAIT_DURATION_INVALID",
-                                    f"等待节点 {node.id} 等待时长表达式结果非法"
-                                    f"（需为 1-600 秒，当前 {raw!r}）",
-                                )
+                            seconds = _resolve_wait_expression(
+                                node.id,
+                                expression,
+                                context,
+                                MIN_WAIT_SECONDS,
+                                MAX_WAIT_SECONDS,
+                            )
                         elif resume_here:
                             # 续跑：按剩余时长等待（绝对 deadline 照扣，docs/24 §3.1）。
                             seconds = int(remaining_seconds(resume.get("deadline_at")))

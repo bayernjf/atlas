@@ -703,12 +703,40 @@ def test_reject_wait_bad_type_and_duration(config, expected):
          "timeoutSeconds": 3600, "onTimeout": "fail"},
         {"waitType": "event", "eventKey": "evt:paid-x_1", "timeoutSeconds": 300,
          "onTimeout": "continue"},
+        {"waitType": "event", "eventKey": "order_paid", "timeoutMode": "static",
+         "timeoutSeconds": 120},
+        {"waitType": "event", "eventKey": "order_paid", "timeoutMode": "expression",
+         "timeoutExpression": "{{global.slaSecs}}", "timeoutSeconds": 30},
     ],
 )
 def test_parse_valid_event_wait(config):
     raw = make_wait_graph()
     raw["nodes"][1] = _wait_node(**config)
     parse_graph(raw)
+
+
+@pytest.mark.parametrize(
+    "config, expected",
+    [
+        ({"waitType": "event", "eventKey": "order_paid", "timeoutMode": "soon",
+          "timeoutSeconds": 30},
+         "超时模式（timeoutMode）必须是 static 或 expression"),
+        ({"waitType": "event", "eventKey": "order_paid", "timeoutMode": "expression"},
+         "超时表达式（timeoutExpression）为必填"),
+        ({"waitType": "event", "eventKey": "order_paid", "timeoutMode": "expression",
+          "timeoutExpression": "   "},
+         "超时表达式（timeoutExpression）为必填"),
+        ({"waitType": "event", "eventKey": "order_paid", "timeoutMode": "expression",
+          "timeoutExpression": "x" * 201},
+         "超时表达式长度不能超过 200 字符"),
+    ],
+)
+def test_reject_event_wait_timeout_mode_bad_config(config, expected):
+    raw = make_wait_graph()
+    raw["nodes"][1] = _wait_node(**config)
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any(expected in error for error in exc.value.errors)
 
 
 @pytest.mark.parametrize(
