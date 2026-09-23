@@ -5,6 +5,7 @@ import {
   applyUiSchema,
   decorateNodeForRender,
   hiddenFields,
+  nestedHiddenFields,
   pointerMatches,
   type UiSchema,
 } from '../uiSchema'
@@ -76,6 +77,27 @@ describe('hiddenFields', () => {
 })
 
 // ---- applyGroups（ui:group）-----------------------------------------------------
+
+describe('nestedHiddenFields（D14 rootScoped）', () => {
+  it('rule 模式行内显 expression 隐 description，llm 模式反之', () => {
+    const ruleHidden = nestedHiddenFields(conditionUiSchema, { conditionMode: 'rule' })
+    expect(ruleHidden.has('expression')).toBe(false)
+    expect(ruleHidden.has('description')).toBe(true)
+    const llmHidden = nestedHiddenFields(conditionUiSchema, { conditionMode: 'llm' })
+    expect(llmHidden.has('expression')).toBe(true)
+    expect(llmHidden.has('description')).toBe(false)
+  })
+
+  it('判别字段缺失时受控行内字段全隐（fail-safe）', () => {
+    const hidden = nestedHiddenFields(conditionUiSchema, {})
+    expect([...hidden].sort()).toEqual(['description', 'expression'])
+  })
+
+  it('rootScoped 规则不影响根层 hiddenFields', () => {
+    const hidden = hiddenFields(conditionUiSchema, { conditionMode: 'llm' })
+    expect(hidden.size).toBe(0)
+  })
+})
 
 const approvalSchema: MetaSchema = {
   type: 'object',
@@ -308,7 +330,10 @@ describe('嵌套路径通配装饰（M4 批 2 ⑨：parallel branches / subgraph
 
     const item0 = branches.items[0]
     if (item0.kind !== 'group') throw new Error('item 非 group')
-    const [label, expression, target] = item0.children
+    const byPointer = (pointer: string) => item0.children.find((child) => child.pointer === pointer)!
+    const label = byPointer('/branches/0/label')
+    const expression = byPointer('/branches/0/expression')
+    const target = byPointer('/branches/0/target')
     const dLabel = decorateNodeForRender(label, conditionUiSchema)
     const dExpression = decorateNodeForRender(expression, conditionUiSchema)
     const dTarget = decorateNodeForRender(target, conditionUiSchema)

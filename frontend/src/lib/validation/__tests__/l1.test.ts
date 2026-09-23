@@ -387,3 +387,56 @@ describe('validateParamFields（M3 工具 params 表单化）', () => {
     expect(first.loc.nodeId).toBeUndefined()
   })
 })
+
+describe('condition LLM 语义模式（D14，docs/48）', () => {
+  const semanticConfig = (overrides: Partial<NodeConfig> = {}): NodeConfig => ({
+    conditionMode: 'llm',
+    branches: [
+      { label: '投诉', description: '客户强烈不满', target: 'tool-a' },
+      { label: '咨询', description: '客户平和询问', target: 'tool-b' },
+    ],
+    defaultTarget: 'tool-default',
+    ...overrides,
+  })
+
+  it('合法语义配置无诊断', () => {
+    expect(fields('condition', semanticConfig())).toEqual([])
+  })
+
+  it('description 缺失/超长报错，不再校验 expression', () => {
+    const config = semanticConfig({
+      branches: [
+        { label: '投诉', description: '', target: 'tool-a' },
+        { label: '咨询', description: '描'.repeat(301), target: 'tool-b' },
+      ],
+    })
+    const pointerList = pointers('condition', config)
+    expect(pointerList).toContain('/branches/0/description')
+    expect(pointerList).toContain('/branches/1/description')
+    expect(pointerList).not.toContain('/branches/0/expression')
+  })
+
+  it('LLM 分支填写 expression 报错', () => {
+    const config = semanticConfig({
+      branches: [
+        { label: '投诉', description: '客户强烈不满', expression: '{{x}} > 1', target: 'tool-a' },
+      ],
+    })
+    const diagnostics = fields('condition', config)
+    expect(diagnostics.map((d) => d.loc.pointer)).toContain('/branches/0/expression')
+  })
+
+  it('classifierPrompt 超长报错', () => {
+    const diagnostics = fields('condition', semanticConfig({ classifierPrompt: '要'.repeat(501) }))
+    expect(diagnostics.map((d) => d.loc.pointer)).toEqual(['/classifierPrompt'])
+  })
+
+  it('缺省 rule 模式继续按 expression 校验（零回归）', () => {
+    const config: NodeConfig = {
+      branches: [{ label: '大额', expression: '', target: 'tool-a' }],
+      defaultTarget: 'tool-default',
+    }
+    const pointerList = pointers('condition', config)
+    expect(pointerList).toContain('/branches/0/expression')
+  })
+})

@@ -79,7 +79,7 @@ export function extractTemplateRefs(text: string): TemplateRef[] {
 
 const STATIC_OUTPUT_KEYS: Record<string, string[]> = {
   ai_decision: ['decision', 'prompt_rendered'],
-  condition: ['branch', 'target'],
+  condition: ['branch', 'mode', 'target'],
   loop: ['index', 'iterations'],
   parallel: ['status', 'branches', 'joinStrategy', 'joinTarget'],
   wait: ['mode', 'waitType', 'durationSeconds'],

@@ -43,7 +43,8 @@ export type RetryConfig = {
 
 export type ConditionBranch = {
   label: string
-  expression: string
+  expression?: string
+  description?: string
   target: string
 }
 
@@ -67,6 +68,8 @@ export type NodeConfig = {
   // condition（04 §5.2；target 存在性/出边覆盖等图级校验由后端 422 兜底）
   branches?: ConditionBranch[] | ParallelBranch[]
   defaultTarget?: string
+  conditionMode?: 'rule' | 'llm'
+  classifierPrompt?: string
   // loop（04 §5.3；while 条件循环 / foreach 遍历循环；回边/出边等图级校验由后端 422 兜底）
   mode?: 'while' | 'foreach'
   continueExpression?: string

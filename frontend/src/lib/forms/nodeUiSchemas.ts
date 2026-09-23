@@ -113,22 +113,37 @@ export const loopUiSchema: UiSchema = {
  */
 export const conditionUiSchema: UiSchema = {
   labels: {
+    conditionMode: '判断模式（规则表达式 / LLM 语义判断，04 §5.2）',
+    classifierPrompt: '附加判定要求（可选，≤500 字符）',
     // 旧手写表单数组与行内字段无标题（顶部标题在瘦包装组件），显式置空盖掉字段名直出。
     branches: '',
     'branches[].label': '',
     'branches[].expression': '',
+    'branches[].description': '',
     'branches[].target': '',
-    defaultTarget: '默认分支（所有条件均不满足时，必填）',
+    defaultTarget: '默认分支（所有条件均不满足时，必填；LLM 调用任何异常也走此分支）',
   },
   placeholders: {
     'branches[].label': '分支名，如：大额',
     'branches[].expression': '{{trigger-1.context.payload.amount}} > 1000',
+    'branches[].description': '用自然语言描述该分支，如：客户语气强烈、明确要求投诉升级（≤300 字符）',
     'branches[].target': '目标节点（需先在画布连线）',
     defaultTarget: '选择默认目标节点',
   },
   rows: {
     'branches[].expression': 2,
+    'branches[].description': 2,
   },
+  optionLabels: {
+    conditionMode: {
+      rule: '规则表达式：分支按顺序短路求值（v1 既有模式）',
+      llm: 'LLM 语义判断：由大模型根据分支描述选择（任何异常都走默认分支）',
+    },
+  },
+  hiddenWhen: [
+    { field: 'conditionMode', equals: 'rule', show: ['expression'], rootScoped: true },
+    { field: 'conditionMode', equals: 'llm', show: ['description'], rootScoped: true },
+  ],
 }
 
 /**

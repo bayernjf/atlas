@@ -273,10 +273,13 @@ function schemaFieldMessage(kind: string, finding: SchemaFinding, config: NodeCo
       break
     case 'condition':
       if (head === 'branches' && indexToken === undefined) return '条件节点至少需要一个分支'
+      if (finding.pointer === '/conditionMode') return '判断模式必须为规则表达式或 LLM 语义判断'
+      if (finding.pointer === '/classifierPrompt') return '附加判定要求长度不能超过 500 字符'
       if (head === 'branches') {
         const index = Number(indexToken)
         if (leaf === 'label') return `第 ${index + 1} 个分支名称不能为空`
         if (leaf === 'expression') return `分支 ${branchTag(config, index)} 的表达式不能为空`
+        if (leaf === 'description') return `分支 ${branchTag(config, index)} 的语义描述不能为空`
         if (leaf === 'target') return `分支 ${branchTag(config, index)} 必须选择目标节点`
       }
       if (finding.pointer === '/defaultTarget') return '必须配置默认分支'
@@ -341,19 +344,42 @@ function handFieldDiagnostics(kind: string, config: NodeConfig): Diagnostic[] {
   switch (kind) {
     case 'condition': {
       const branches = (config.branches ?? []) as ConditionBranch[]
+      const semantic = config.conditionMode === 'llm'
       const labels = new Set<string>()
       const targets = new Set<string>()
+      if (semantic && (config.classifierPrompt?.trim().length ?? 0) > 500) {
+        diagnostics.push(
+          fieldDiag(FIELD_CODES.LENGTH, '附加判定要求长度不能超过 500 字符', '/classifierPrompt'),
+        )
+      }
       branches.forEach((branch, index) => {
         const tag = branch.label?.trim() || `第 ${index + 1} 个分支`
         const labelPointer = `/branches/${index}/label`
         const expressionPointer = `/branches/${index}/expression`
+        const descriptionPointer = `/branches/${index}/description`
         const targetPointer = `/branches/${index}/target`
         if (branch.label?.trim() && labels.has(branch.label)) {
           diagnostics.push(fieldDiag(FIELD_CODES.BRANCH_LABEL_DUPLICATE, `分支名称重复：${branch.label}`, labelPointer))
         } else if (branch.label?.trim()) {
           labels.add(branch.label)
         }
-        if (branch.expression?.trim()) {
+        if (semantic) {
+          if (branch.expression?.trim()) {
+            diagnostics.push(
+              fieldDiag(FIELD_CODES.EXPRESSION_SYNTAX, `LLM 分支 ${tag} 不允许使用 expression`, expressionPointer),
+            )
+          }
+          const description = branch.description?.trim()
+          if (!description) {
+            diagnostics.push(
+              fieldDiag(FIELD_CODES.REQUIRED, `分支 ${tag} 的语义描述不能为空`, descriptionPointer),
+            )
+          } else if (description.length > 300) {
+            diagnostics.push(
+              fieldDiag(FIELD_CODES.LENGTH, `分支 ${tag} 的语义描述长度不能超过 300 字符`, descriptionPointer),
+            )
+          }
+        } else if (branch.expression?.trim()) {
           for (const exprError of validateExpression(branch.expression)) {
             diagnostics.push(fieldDiag(FIELD_CODES.EXPRESSION_SYNTAX, `分支 ${tag} ${exprError}`, expressionPointer))
           }
