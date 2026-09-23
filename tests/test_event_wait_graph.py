@@ -186,3 +186,156 @@ def test_cancel_while_waiting_raises_runcancelled():
             is_cancelled=cancel.is_set,
         )
     assert broker.list_pending() == []
+
+# --- U401: event wait 中断帧与跨重启续跑（docs/53 §5）---
+
+import time as _time
+
+from atlas.storage.frame import build_frame, deadline_iso, remaining_seconds
+
+
+def _wait_for_event_frame(holder: list, timeout: float = 2.0) -> dict:
+    deadline = _time.monotonic() + timeout
+    while not holder and _time.monotonic() < deadline:
+        _time.sleep(0.005)
+    assert holder, "应在超时前产生 event wait 中断帧"
+    return holder[0]
+
+
+def _event_frame(graph, token, *, on_timeout="continue", event_key="order_paid"):
+    return build_frame(
+        token=token,
+        run_id="",
+        node_id="wait-1",
+        kind="wait",
+        deadline_at=deadline_iso(0),
+        graph_snapshot=graph.model_dump(),
+        resume_state={"graph_id": "adhoc", "inputs": {}, "outputs": {}},
+        wait={
+            "waitType": "event",
+            "eventKey": event_key,
+            "onTimeout": on_timeout,
+            "timeoutSeconds": 30,
+        },
+    )
+
+
+def test_event_wait_frame_sink_captures_wait_frame():
+    broker = EventWaitBroker()
+    frames: list[dict] = []
+
+    def run_original() -> None:
+        run_graph(_event_wait_graph(), event_wait_broker=broker, frame_sink=frames.append)
+
+    worker = threading.Thread(target=run_original)
+    worker.start()
+    frame = _wait_for_event_frame(frames)
+    try:
+        assert frame["kind"] == "wait"
+        assert frame["resume_token"].startswith("wait-")
+        assert frame["deadline_at"]
+        assert frame["graph_snapshot"]["nodes"]
+        wait = frame["wait"]
+        assert wait["waitType"] == "event"
+        assert wait["eventKey"] == "order_paid"
+        assert wait["onTimeout"] == "continue"
+        assert wait["timeoutSeconds"] == 30
+        pending_tokens = [item["token"] for item in broker.list_pending()]
+        assert frame["resume_token"] in pending_tokens
+    finally:
+        broker.signal_token(frame["resume_token"], {"paidAt": "2026-09-23"})
+        worker.join(timeout=2)
+
+
+def test_resume_event_wait_uses_same_token_and_signal_releases():
+    broker_a = EventWaitBroker()
+    frames: list[dict] = []
+
+    def run_original() -> None:
+        run_graph(_event_wait_graph(), event_wait_broker=broker_a, frame_sink=frames.append)
+
+    first = threading.Thread(target=run_original)
+    first.start()
+    frame = _wait_for_event_frame(frames)
+    token = frame["resume_token"]
+
+    # 重启：新空 broker，restore 同 token/event_key/剩余超时。
+    broker_b = EventWaitBroker()
+    broker_b.restore(
+        token=token,
+        event_key=frame["wait"]["eventKey"],
+        node_id=frame["node_id"],
+        graph_id="adhoc",
+        timeout_seconds=remaining_seconds(frame["deadline_at"]),
+    )
+    resumed: dict = {}
+
+    def run_resume() -> None:
+        resumed["result"] = run_graph(
+            _event_wait_graph(), event_wait_broker=broker_b, resume=frame
+        )
+
+    second = threading.Thread(target=run_resume)
+    second.start()
+    _time.sleep(0.05)
+    broker_b.signal_token(token, {"paidAt": "2026-09-23"})
+    second.join(timeout=2)
+
+    result = resumed["result"]
+    assert result["status"] == "completed"
+    output = result["outputs"]["wait-1"]
+    assert output["signaled"] is True
+    assert output["resolvedBy"] == "signal"
+    assert output["payload"] == {"paidAt": "2026-09-23"}
+    assert "tool-after" in result["outputs"]
+    assert broker_b.list_pending() == []
+
+    # 清理第一进程挂起线程。
+    broker_a.signal_token(token, {"paidAt": "2026-09-23"})
+    first.join(timeout=2)
+
+
+def test_resume_event_wait_missing_wait_field_raises_frame_invalid():
+    graph = _event_wait_graph()
+    frame = build_frame(
+        token="wait-missing",
+        run_id="",
+        node_id="wait-1",
+        kind="wait",
+        deadline_at=deadline_iso(30),
+        graph_snapshot=graph.model_dump(),
+        resume_state={"graph_id": "adhoc", "inputs": {}, "outputs": {}},
+    )
+    with pytest.raises(WaitNodeFailure) as excinfo:
+        run_graph(graph, event_wait_broker=EventWaitBroker(), resume=frame)
+    assert excinfo.value.code == "WAIT_EVENT_FRAME_INVALID"
+
+
+def test_resume_event_wait_deadline_passed_continue_resolves_timeout():
+    graph = _event_wait_graph(onTimeout="continue")
+    frame = _event_frame(graph, "wait-timeout", on_timeout="continue")
+    broker = EventWaitBroker()
+    broker.restore(
+        token="wait-timeout", event_key="order_paid", node_id="wait-1",
+        graph_id="adhoc", timeout_seconds=0,
+    )
+    result = run_graph(graph, event_wait_broker=broker, resume=frame)
+    output = result["outputs"]["wait-1"]
+    assert result["status"] == "completed"
+    assert output["resolvedBy"] == "timeout"
+    assert output["signaled"] is False
+    assert "tool-after" in result["outputs"]
+
+
+def test_resume_event_wait_deadline_passed_fail_raises():
+    graph = _event_wait_graph(onTimeout="fail")
+    frame = _event_frame(graph, "wait-fail", on_timeout="fail")
+    broker = EventWaitBroker()
+    broker.restore(
+        token="wait-fail", event_key="order_paid", node_id="wait-1",
+        graph_id="adhoc", timeout_seconds=0,
+    )
+    with pytest.raises(WaitNodeFailure) as excinfo:
+        run_graph(graph, event_wait_broker=broker, resume=frame)
+    assert excinfo.value.code == "WAIT_TIMEOUT_FAILED"
+

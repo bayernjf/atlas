@@ -24,6 +24,7 @@ def build_frame(
     summary: str = "",
     approver: str = "",
     card_template_id: str = "",
+    wait: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """构造一帧；`resume_state` 含 `inputs` 与截至挂起点的已完成节点 `outputs`。
 
@@ -42,6 +43,7 @@ def build_frame(
         "summary": summary,
         "approver": approver,
         "card_template_id": card_template_id,
+        "wait": wait,
     }
 
 

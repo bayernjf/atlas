@@ -405,29 +405,61 @@ def _make_executor(
                             }
                             message = f"{node.id}: event preset from inputs"
                         else:
-                            template = str(node.config["eventKey"])
-                            event_key = interpolate(template, context).strip()
-                            if not valid_event_key(event_key):
-                                raise WaitNodeFailure(
-                                    node.id,
-                                    "WAIT_EVENT_KEY_INVALID",
-                                    f"等待节点 {node.id} 渲染后的事件标识非法：{event_key}",
+                            if resume_here:
+                                wait_frame = resume.get("wait") or {}
+                                if wait_frame.get("waitType") != "event":
+                                    raise WaitNodeFailure(
+                                        node.id,
+                                        "WAIT_EVENT_FRAME_INVALID",
+                                        f"等待节点 {node.id} 续跑帧缺少事件等待信息",
+                                    )
+                                event_key = str(wait_frame.get("eventKey", ""))
+                                on_timeout = wait_frame.get("onTimeout", "continue")
+                                timeout_seconds = int(wait_frame.get("timeoutSeconds", 0))
+                                token = resume["resume_token"]
+                            else:
+                                template = str(node.config["eventKey"])
+                                event_key = interpolate(template, context).strip()
+                                if not valid_event_key(event_key):
+                                    raise WaitNodeFailure(
+                                        node.id,
+                                        "WAIT_EVENT_KEY_INVALID",
+                                        f"等待节点 {node.id} 渲染后的事件标识非法：{event_key}",
+                                    )
+                                timeout_seconds = int(node.config["timeoutSeconds"])
+                                on_timeout = node.config.get("onTimeout", "continue")
+                                token = event_wait_broker.request(
+                                    event_key=event_key,
+                                    node_id=node.id,
+                                    graph_id=graph_id,
+                                    timeout_seconds=timeout_seconds,
                                 )
-                            timeout_seconds = int(node.config["timeoutSeconds"])
-                            token = event_wait_broker.request(
-                                event_key=event_key,
-                                node_id=node.id,
-                                graph_id=graph_id,
-                                timeout_seconds=timeout_seconds,
-                            )
                             wait_info = {
                                 "token": token,
                                 "eventKey": event_key,
                                 "timeoutSeconds": timeout_seconds,
-                                "onTimeout": node.config.get("onTimeout", "continue"),
+                                "onTimeout": on_timeout,
                             }
                             # 第二个 node_start 携带 wait 载荷，前端据此展示等待态。
                             emit({**start_event, "wait": wait_info})
+                            if not resume_here:
+                                _emit_frame(
+                                    frame_sink,
+                                    node,
+                                    state,
+                                    token=token,
+                                    kind="wait",
+                                    graph_id=graph_id,
+                                    graph_snapshot=graph_snapshot,
+                                    trigger_payload=trigger_payload,
+                                    timeout_seconds=timeout_seconds,
+                                    wait={
+                                        "waitType": "event",
+                                        "eventKey": event_key,
+                                        "onTimeout": on_timeout,
+                                        "timeoutSeconds": timeout_seconds,
+                                    },
+                                )
                             started = time.monotonic()
                             event_payload = event_wait_broker.wait(
                                 token, is_cancelled=is_cancelled
@@ -447,7 +479,7 @@ def _make_executor(
                                 message = (
                                     f"{node.id}: event {event_key} signaled after {waited}s"
                                 )
-                            elif node.config.get("onTimeout", "continue") == "fail":
+                            elif on_timeout == "fail":
                                 raise WaitNodeFailure(
                                     node.id,
                                     "WAIT_TIMEOUT_FAILED",
@@ -652,6 +684,7 @@ def _emit_frame(
     summary: str = "",
     approver: str = "",
     card_template_id: str = "",
+    wait: dict[str, Any] | None = None,
 ) -> None:
     """挂起前经 frame_sink 序列化中断帧（含 graph_snapshot 与截至挂起点的 outputs）。
 
@@ -675,6 +708,7 @@ def _emit_frame(
             summary=summary,
             approver=approver,
             card_template_id=card_template_id,
+            wait=wait,
         )
     )
 
