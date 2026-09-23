@@ -1,6 +1,8 @@
 # i18n en-US 全量翻译 / 语言切换 UI / 发布协作组件补抽 v1 批契约设计
 
-> 状态：**立项（docs-only，2026-09-24）**。AI 承接「一口气搞了」总授权，部分取回 docs/14 D12（i18n 库落码与 en-US 翻译）、D13（组件描述多语言，本批不含模板元数据翻译）。**零新依赖**：继续沿用 M12 自写零依赖 t()/useTranslation（接口对齐 i18next），**本批不换 i18next**（决策见 §3）。承接 docs/17（前端国际化与设计 Token 方案，唯一方案权威）、docs/33（i18n 续批四页抽取）。**不新增 ADR、不解除 D12/D13 缓做条目**（i18next 引入、模板/适配器元数据多语言、自然语言多语言仍缓做）。
+> 状态：**已完成（2026-09-24，五步原子序全部落码收口）**。提交链：立项 `44b6c89` → D-1 全量翻译 `39328f0` → D-2 切换运行时 `aca379c` → D-3 四组件补抽 `2a5fb9f` → **D-4 冒烟扩范围补抽 `d05e265`** → 收口 docs（本提交）。AI 承接「一口气搞了」总授权，部分取回 docs/14 D12（i18n 库落码与 en-US 翻译）、D13（组件描述多语言，本批不含模板元数据翻译）。**零新依赖**：继续沿用 M12 自写零依赖 t()/useTranslation（接口对齐 i18next），**本批不换 i18next**（决策见 §3）。承接 docs/17（前端国际化与设计 Token 方案，唯一方案权威）、docs/33（i18n 续批四页抽取）。**不新增 ADR、不解除 D12/D13 缓做条目**（i18next 引入、模板/适配器元数据多语言、自然语言多语言仍缓做）。
+>
+> **D-4 浏览器冒烟两次扩范围（立项勘察遗漏，已全部补齐）**：①英文态巡检发现 `pages/Approvals.tsx`（41 处）、`pages/EmailApproval.tsx`（19 处）两整页从未接 useTranslation——approvals namespace 早有一批零引用孤儿键，本批接线复用并补缺键；②全局中文扫描再发现属性面板/表单引擎/画布约 84 处漏网中文（docs/33、docs/54/55 遗留：7 个 Config 组件、WaitConfig 全文、ToolCallConfig、FormRenderer、nodeWidgets、widgets、AtlasNode、ProblemsPanel），editor namespace 新增 7 个顶层块（problems/nodeTitles/tool/wait/form/nodePicker/widget）与 canvas 扩展约 120 个叶子键。详见 §6 U624 与 §7。
 
 ## 0. 已核实的现状缺口（2026-09-24 对活代码）
 
@@ -77,11 +79,13 @@ zh-CN 有两处文案故意携带不被插值解析的教学花括号（变量�
 
 三处 `<ConfigProvider theme={antdTheme}>` 全部加 `locale={antdLocale}`（邮件深链外壳、Login 外壳、主外壳）；antdLocale 来自 `useAntdLocale()`（App 组件内调用一次）。
 
-### 4.3 UserBadge / Login
+### 4.3 UserBadge / Login（**收口更正：图标方案被实现证伪，落地为纯文本菜单**）
 
-- UserBadge Dropdown items：账户组两项之后加分隔线 `{ type: 'divider' }`，再两项 `{ key: 'lang-zh-CN', label: '中文' }`、`{ key: 'lang-en-US', label: 'English' }`，当前语言项加勾选（菜单 item 支持 icon 或 label 内 CheckIcon；用 label 文本前缀 `✓ ` 最轻量，或 antd menu 的 `icon`——本批用 label 内联，当前语言项 label 为 `✓ 中文`/`✓ English`，键 common `language.switchToZh/switchToEn` 与 `language.currentMark` 不设，直接用固定语言原名展示：语言名本身不翻译，中文永远显示「中文」、English 永远显示「English」）。onClick 调 changeLanguage。
-- Login 页脚右上加同款 Dropdown（幽灵小按钮，文案为当前语言原名：中文 / English，用 common `language.label` 不需要——按钮直接显示 `🌐 中文`/`🌐 English`，不加 emoji（项目无 emoji 惯例），改用 antd Globe 图标 `GlobalOutlined`，@ant-design/icons 已是依赖；按钮文字为语言原名）。
-- 菜单/按钮可访问性：与现有 Dropdown 同款 ghost Button size small。
+> **立项原文设想的 `GlobalOutlined`/🌐 方案未采用**：落码时核实 `@ant-design/icons` 与 dayjs 均**不在 `frontend/package.json`**（项目零图标依赖），不为本批引入新依赖（§3 决策 1 零依赖原则），也不使用 emoji（项目无 emoji 惯例）。实际落地如下，行为契约不变。
+
+- UserBadge Dropdown items：账户组两项之后加分隔线 `{ type: 'divider' }`，再加一个 `{ type: 'group', label: t('common:language.label'), children: [...] }` 语言组，组内两项 `{ key: 'lang-zh-CN', label: '中文' }`、`{ key: 'lang-en-US', label: 'English' }`；Dropdown 设 `selectable` + `selectedKeys={[`lang-${i18n.language}`]}` 呈现 antd 原生勾选态（不手写 `✓ ` 前缀）。语言名是语言原名，永远不翻译（中文永远显示「中文」、English 永远显示「English」）。onClick 调 changeLanguage。
+- Login 页脚：未采用 Dropdown/图标，落地为两个 `type="link" size="small"` 的 Button（「中文」/「English」），当前语言对应按钮 `disabled`，另一个点击即切换；同样零图标零 emoji。
+- common namespace 新增 `language.label`/`language.zhCN`/`language.enUS` 三键（`language.zhCN` 英文态值仍为「中文」，是静态守护「en 零汉字」的唯一豁免键）。
 
 ## 5. 测试契约
 
@@ -97,12 +101,12 @@ zh-CN 有两处文案故意携带不被插值解析的教学花括号（变量�
   - **插值占位对齐**：zh 值中出现的 `{{x}}` 标识符集合（按现有正则匹配的合法插值）必须 === en 值中的集合（防漏译/错改变量名）；教学 token（含点号/中文，不被正则匹配）不参与此校验。
 - localStorage 读回用例：`changeLanguage('en-US')` 后重新调用读回函数（或模拟模块存储键）断言持久化；读回函数导出为纯函数 `readStoredLocale(storage)` 便于单测（非法值/缺省/合法三例）。
 
-### 5.2 组件测试
+### 5.2 组件测试（**收口更正：无 DOM 测试环境，落地为纯 t() 层断言 + 浏览器冒烟**）
 
-- UserBadge 测试（若现有 userBadge 测试则增补，否则新建 `__tests__/userBadge.test.tsx`）：渲染 → 打开账户菜单 → 点 English → `getLanguage()` 为 en-US、localStorage 持久化；点中文切回。
-- Login 测试：页脚语言按钮存在，点击切换生效（与上同断言）。
-- ReleaseModal/RolloutModal 现有测试（release 相关 test 文件）：默认 zh-CN 渲染不断言具体中文文案的用例保持；若有硬编码中文断言改为键解析后的稳定断言（优先断言不随语言变的技术值：v 版本号、Tag color、列 dataIndex）；新增 en-US 渲染快照级断言（代表标题/按钮文本为英文）。
-- FeedbackButton/CardRenderer 同例：zh 默认中文、en 下英文的关键文案断言。
+> **立项设想的组件渲染测试未采用**：前端测试环境是纯 node（无 jsdom/happy-dom、无 @testing-library、vitest 无 config），不为本批引入新依赖。组件文案正确性改由两层保证：①i18n.test.ts 对组件实际接线的键做双语 `t()` 断言（D-3 的 feedback/card/release/rollout 4 用例 + D-4 的审批两页/画布/属性面板 5 用例，共 9 个组件层用例）；②U624 真实浏览器双语冒烟逐屏截图（docs/49-51 同先例）。UserBadge/Login 的切换运行时由 describe「language persistence and switcher runtime」5 个纯函数/模块用例 + 内存 Storage 桩覆盖（readStoredLocale 合法/非法/缺省/抛错、持久化、首次导入读回）。
+
+- ReleaseModal/RolloutModal 现有测试（`lib/__tests__/release.test.ts`）：硬编码中文断言已改为 i18n 键解析断言；版本号/Tag color/列 dataIndex 等技术值断言保持。
+- FeedbackButton/CardRenderer/审批两页/属性面板：关键文案在 i18n.test.ts 做 zh/en 双语定值/插值断言；视觉层以 U624 截图为准。
 
 ### 5.3 门与冒烟
 
@@ -110,33 +114,43 @@ zh-CN 有两处文案故意携带不被插值解析的教学花括号（变量�
 - 后端零改动：不跑全量后端门（无后端改动）；收口时若动过任何后端文件则全量复跑。
 - 浏览器冒烟（bu plane）：登录页切 English → 登录 → Dashboard/Editor/Monitoring/Memory 全英外壳巡检（截图 en-login/en-dashboard/en-editor/en-monitoring）；切回中文巡检无回归（截图 zh-after）；重点看 ReleaseModal（发布门禁弹窗）、RolloutModal（灰度弹窗）、FeedbackButton、审批 CardRenderer 英文态；AntD 内置文案（如 Modal 按钮、Table 空态）随 en_US。
 
-## 6. 验收用例（docs/13 回填 U610–U625）
+## 6. 验收用例（docs/13 回填 U610–U625，2026-09-24 实测）
 
-| 编号 | 验收点 |
-|---|---|
-| U610 | en-US/common（含 brand/nav/auth/users/button/status/error/feedback）翻译，结构对齐 |
-| U611 | en-US/dashboard + editor（含 release/rollout 子树）翻译，结构对齐 |
-| U612 | en-US/monitoring（247 键，保留已有 18 键成品）翻译，结构对齐 |
-| U613 | en-US/memory/connections/channels/approvals（含 card）/audit/openapi 翻译，结构对齐 |
-| U614 | 静态守护：zh/en 叶子键集合一致、en 无汉字、插值变量集合一致 |
-| U615 | localStorage 语言读回（合法/非法/缺省三例）+ changeLanguage 持久化 |
-| U616 | UserBadge 账户菜单语言切换（勾选态、即时生效、持久化） |
-| U617 | Login 页脚语言切换入口（未登录可切） |
-| U618 | App.tsx 三处 ConfigProvider 注入 antd locale 并随语言联动 |
-| U619 | ReleaseModal 文案抽 editor.release.*（zh/en 双语） |
-| U620 | RolloutModal 文案抽 editor.rollout.*（含 STRATEGY_LABELS，zh/en 双语） |
-| U621 | FeedbackButton 文案抽 common.feedback.*（zh/en 双语） |
-| U622 | CardRenderer 文案抽 approvals.card.*（zh/en 双语） |
-| U623 | i18n.test.ts 空骨架回退用例演进 + 回退机制不回归（假键守护） |
-| U624 | 浏览器 en/zh 双语冒烟截图（5+1 张） |
-| U625 | docs 收口：17/14/08/00/13 + CHANGELOG + handoff 回填 |
+| 编号 | 验收点 | 实测结果 |
+|---|---|---|
+| U610 | en-US/common（含 brand/nav/auth/users/button/status/error/feedback）翻译，结构对齐 | ✅ 静态守护全过；brand 译为 Atlas Operations Orchestration Platform |
+| U611 | en-US/dashboard + editor（含 release/rollout 子树）翻译，结构对齐 | ✅ 浏览器截图 02/04-08；D-4 再补 canvas/problems/nodeTitles/tool/wait/form/nodePicker/widget 七块 |
+| U612 | en-US/monitoring（247 键，保留已有 18 键成品）翻译，结构对齐 | ✅ 截图 10；antd 英文空态随 locale 联动 |
+| U613 | en-US/memory/connections/channels/approvals（含 card）/audit/openapi 翻译，结构对齐 | ✅ 静态守护全过；D-4 补齐审批两页接线（截图 12） |
+| U614 | 静态守护：zh/en 叶子键集合一致、en 无汉字、插值变量集合一致 | ✅ i18n.test describe「catalog parity」3 用例；唯一汉字豁免 common:language.zhCN；插值豁免两个教学 token |
+| U615 | localStorage 语言读回（合法/非法/缺省三例）+ changeLanguage 持久化 | ✅ 5 用例（含 storage 抛错、首次导入读回），内存 Storage 桩 |
+| U616 | UserBadge 账户菜单语言切换（勾选态、即时生效、持久化） | ✅ 纯文本语言组菜单（§4.3 更正），selectable+selectedKeys；浏览器逐屏验证即时切换 |
+| U617 | Login 页脚语言切换入口（未登录可切） | ✅ 截图 01：两个 link Button，当前语言 disabled |
+| U618 | App.tsx 三处 ConfigProvider 注入 antd locale 并随语言联动 | ✅ useAntdLocale（useSyncExternalStore，静态 import zh_CN/en_US），三处全注；Table/Modal/Empty 内置文案随动 |
+| U619 | ReleaseModal 文案抽 editor.release.*（zh/en 双语） | ✅ 截图 04-06；release.test 中文断言改键断言 |
+| U620 | RolloutModal 文案抽 editor.rollout.*（含 STRATEGY_LABELS，zh/en 双语） | ✅ 截图 07-08（三指标 0.02/0.10/0.005、Send one event） |
+| U621 | FeedbackButton 文案抽 common.feedback.*（zh/en 双语） | ✅ 截图 09 |
+| U622 | CardRenderer 文案抽 approvals.card.*（zh/en 双语） | ✅ t() 层双语断言过；**浏览器态限制**：种子环境审批队列无待审批数据，CardRenderer 无法实拍，英文态以单测+静态守护为准 |
+| U623 | i18n.test.ts 空骨架回退用例演进 + 回退机制不回归（假键守护） | ✅ describe 1 共 38 用例，假键 `__nonexistent__.x`、unknown ns、跨 ns 回退全保留 |
+| U624 | 浏览器 en/zh 双语冒烟截图（5+1 张） | ✅ 实拍 18 张（/tmp/d57_shots/00–17）：zh 切换前 1、en 登录/各页/弹窗 11、补抽后审批页/编辑器/工具属性面板/模板 4、zh 回归 2。**两次扩范围见文首注记**；WaitConfig 实拍受限（节点面板是 HTML5 原生拖放，CDP 合成拖拽不触发，与 docs/49-51 同先例），由 t() 断言+静态守护+零中文扫描三重保证 |
+| U625 | docs 收口：17/14/08/00/13 + CHANGELOG + handoff 回填 | ✅ 本收口提交 |
 
-## 7. 原子提交规划（不 push）
+**门数字（D-4 终态，实跑）**：前端 vitest **662 passed / 2 skipped**（49 文件，i18n.test 55 tests）；oxlint **0 error / 6 warnings**（6 个均为既有 react-hooks/set-state-in-effect，本批未新增）；`pnpm build`（tsc+vite）**通过**。后端零改动，不跑全量后端门（§5.3）。
 
-1. `docs(i18n): contract en-US translation and language switcher batch (docs/57)` — 立项（本文件 + 08/14/00/handoff/CHANGELOG）。
-2. `feat(i18n): translate all namespaces to en-US with parity guard tests (docs/57)` — 全量 en-US + 静态守护 + i18n.test 回退用例演进。
-3. `feat(i18n): persisted language switcher and AntD locale linkage (docs/57)` — localStorage 读回 + UserBadge/Login 入口 + antdLocale + App.tsx。
-4. `feat(i18n): extract release, rollout, feedback and approval card copy (docs/57)` — 四组件补抽（zh/en 同批）。
-5. `docs(i18n): close out en-US first batch and language switcher (docs/57)` — 收口回填（17/14/08/00/13 + CHANGELOG + handoff）。
+**D-4 后仍存在的中文层（显式记录，均不在 docs/57 范围）**：
+1. 校验引擎 L1 诊断消息（如「该字段必填」）为前端校验层中文常量，英文态下仍显中文——属独立的「校验消息国际化」层，本批不抽；
+2. UserBadge 改密码失败处 `detail === '原密码错误'` 是对后端中文错误串的匹配逻辑（非 UI 文案），随后端错误码国际化批次处理（docs/17 §2.4 第一批债，本批非目标已声明）；
+3. 业务数据豁免（docs/33 契约）：节点目录 label/description、模板 name/description/标签、演示订单 reason、租户/用户名、JSON 示例值。
 
-> 门数字以落码后实跑为准，回填 handoff/docs/13，禁止预估。
+## 7. 原子提交规划与实际提交链（不 push）
+
+| # | 规划 | 实际 hash |
+|---|---|---|
+| 1 | `docs(i18n): contract en-US translation and language switcher batch (docs/57)` — 立项 | `44b6c89` |
+| 2 | `feat(i18n): translate all namespaces to en-US with parity guard tests (docs/57)` — 全量 en-US + 静态守护 + 回退用例演进（handoff 登记 `d4d46d2`） | `39328f0` |
+| 3 | `feat(i18n): persisted language switcher and AntD locale linkage (docs/57)` — localStorage 读回 + UserBadge/Login 入口 + antdLocale + App.tsx（handoff `f50aea4`） | `aca379c` |
+| 4 | `feat(i18n): extract release, rollout, feedback and approval card copy (docs/57)` — 四组件补抽（handoff `fccbe62`） | `2a5fb9f` |
+| 4b（计划外） | `feat(i18n): extract approval pages and node property panel copy (docs/57)` — **D-4 冒烟两次扩范围**：审批两页接线孤儿键/补缺键 + 画布/Problems/7 个 Config/WaitConfig/ToolCallConfig/FormRenderer/nodeWidgets/widgets 约 84 处、editor 新增约 120 键 + i18n.test +5 用例 | `d05e265` |
+| 5 | `docs(i18n): close out en-US first batch and language switcher (docs/57)` — 收口回填（17/14/08/00/03/13 + CHANGELOG + handoff） | 本提交 |
+
+> 门数字以落码后实跑为准（§6 已回填），禁止预估。
