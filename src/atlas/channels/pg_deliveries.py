@@ -12,7 +12,12 @@ from typing import Any
 
 from sqlalchemy import Engine, text
 
-from atlas.storage.pg import _now_iso
+
+def _now() -> str:
+    # 延迟导入避循环：storage.pg 顶层 import iam（同 channels/pg.py 的处理）。
+    from atlas.storage.pg import _now_iso
+
+    return _now_iso()
 
 
 class PgDeliveryStore:
@@ -32,7 +37,7 @@ class PgDeliveryStore:
                     "UPDATE webhook_deliveries SET duplicates = duplicates + 1, "
                     "updated_at = :now WHERE tenant_id = :t AND webhook_id = :id"
                 ),
-                {"now": _now_iso(), "t": tenant_id, "id": webhook_id},
+                {"now": _now(), "t": tenant_id, "id": webhook_id},
             )
         return result.rowcount > 0
 
@@ -45,7 +50,7 @@ class PgDeliveryStore:
         topic: str,
         shop: str,
     ) -> None:
-        now = _now_iso()
+        now = _now()
         with self._engine.begin() as db:
             db.execute(
                 text(
@@ -73,7 +78,7 @@ class PgDeliveryStore:
         reasons: list[dict[str, str]],
         payload: dict[str, Any],
     ) -> None:
-        now = _now_iso()
+        now = _now()
         with self._engine.begin() as db:
             db.execute(
                 text(
@@ -145,7 +150,7 @@ class PgDeliveryStore:
         received: bool,
         reasons: list[dict[str, str]] | None = None,
     ) -> None:
-        now = _now_iso()
+        now = _now()
         if received:
             sql = (
                 "UPDATE webhook_deliveries SET status = 'received', reasons = '[]'::jsonb, "
