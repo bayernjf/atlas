@@ -75,6 +75,9 @@ class MonitoringStore:
         self._runs: deque[RunRecord] = deque(maxlen=RUN_RING_SIZE)
         self._alerts: list[Alert] = []
         self._streaks: dict[str, int] = {}
+        # docs/55 flapping：每图连续健康次数；自动 recovery 冷却 (rule_id, graph_id)→时刻
+        self._healthy_streaks: dict[str, int] = {}
+        self._recovery_cooldown: dict[tuple[str, str], datetime] = {}
         self._rules = RuleConfig()
         self._ops = OpsStore()
         self._channel = AlertChannel()
@@ -122,6 +125,11 @@ class MonitoringStore:
             healthy = is_healthy(record)
             streak = 0 if healthy else self._streaks.get(graph_id, 0) + 1
             self._streaks[graph_id] = streak
+            # docs/55：连续健康计数（不健康归 0），供 recovery_healthy_streak 判定
+            healthy_streak = (
+                self._healthy_streaks.get(graph_id, 0) + 1 if healthy else 0
+            )
+            self._healthy_streaks[graph_id] = healthy_streak
             recent_by_graph = [run for run in self._runs if run.graph_id == graph_id]
             events = evaluate_rules(
                 record=record,
@@ -137,13 +145,21 @@ class MonitoringStore:
                 raised = self._raise_or_merge(event=event, record=record)
                 if raised is not None:
                     alert, transition = raised
-                    pending.append(
-                        (alert, self._channel.model_copy(deep=True), transition)
-                    )
-            # docs/54 §6：本次运行健康即自动恢复该图仍 open 的内置告警（一次健康即恢复，
-            # 不做连续 N 次/flapping 抑制）；acknowledged 与 rollout_gate 不自动恢复，
-            # 复用 last_seen/last_run_id、不新增字段（PG 兼容），锁外发 recovery 通知。
-            if healthy:
+                    # docs/55：自动 recovery 冷却窗内，同 rule+graph 的新告警站内照建，
+                    # 但抑制 new 外部通知（merged/escalated/resolved/recovery 不抑制）。
+                    if transition == "new" and self._in_recovery_cooldown_locked(
+                        alert.rule_id, record.graph_id
+                    ):
+                        pass
+                    else:
+                        pending.append(
+                            (alert, self._channel.model_copy(deep=True), transition)
+                        )
+            # docs/54 §6 + docs/55 flapping：连续健康达 recovery_healthy_streak（默认 1＝
+            # 旧行为）才自动恢复该图仍 open 的内置告警；acknowledged 与 rollout_gate 不自动
+            # 恢复。每次自动 recovery 记冷却起点，窗内同 rule+graph 新告警抑制外部通知。
+            if healthy and healthy_streak >= self._rules.recovery_healthy_streak:
+                recovered_at = datetime.now(timezone.utc)
                 for alert in self._alerts:
                     if (
                         alert.graph_id == record.graph_id
@@ -153,12 +169,27 @@ class MonitoringStore:
                         alert.status = "resolved"
                         alert.last_seen = record.finished_at
                         alert.last_run_id = record.id
+                        self._recovery_cooldown[
+                            (alert.rule_id, record.graph_id)
+                        ] = recovered_at
                         pending.append(
                             (alert, self._channel.model_copy(deep=True), "recovery")
                         )
         for alert, cfg, transition in pending:
             self._notify_outside_lock(alert, cfg, transition=transition)
         return record
+
+    def _in_recovery_cooldown_locked(self, rule_id: str, graph_id: str) -> bool:
+        """docs/55：自动 recovery 冷却窗内同 rule+graph 的新告警抑制外部通知。"""
+        minutes = self._rules.recovery_cooldown_minutes
+        if not minutes:
+            return False
+        last = self._recovery_cooldown.get((rule_id, graph_id))
+        if last is None:
+            return False
+        return (
+            datetime.now(timezone.utc) - last
+        ).total_seconds() < minutes * 60
 
     def _notify_outside_lock(
         self, alert: Alert, cfg: AlertChannel, *, transition: str = "new"
@@ -391,6 +422,8 @@ class MonitoringStore:
             self._runs.clear()
             self._alerts.clear()
             self._streaks.clear()
+            self._healthy_streaks.clear()
+            self._recovery_cooldown.clear()
             self._rules = RuleConfig()
             self._ops.reset()
             self._channel = AlertChannel()

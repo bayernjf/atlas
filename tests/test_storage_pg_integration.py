@@ -570,3 +570,128 @@ def test_event_wait_multi_key_recovery_releases_on_nonprimary(backend):
     assert "tool-after" in run["outputs"]
     assert broker.list_pending() == []
 
+
+
+# --- docs/55：PG 档告警 lifecycle 三列 / recovery streak / merge·resolve 通知 / flapping 冷却 ---
+class _SpyLifecycleNotifier:
+    def __init__(self):
+        self.calls: list[tuple[str, str]] = []
+
+    @staticmethod
+    def _delivery():
+        from atlas.monitoring.notify import AlertChannelDelivery
+
+        return AlertChannelDelivery(lastNotifiedAt="2026-09-24T00:00:00+00:00")
+
+    def notify(self, alert, cfg):
+        self.calls.append(("new", alert.rule_id))
+        return self._delivery()
+
+    def notify_lifecycle(self, alert, cfg, *, transition):
+        self.calls.append((transition, alert.rule_id))
+        return self._delivery()
+
+
+def _rules(streak=1, cooldown=None, escalation=None, custom=None):
+    raw = {
+        "run_error": {"enabled": True},
+        "node_failed": {"enabled": False},
+        "consecutive_failures": {"enabled": True, "threshold": 3},
+        "failure_rate": {"enabled": True, "window": 20, "min_samples": 5, "rate": 0.5},
+        "recovery_healthy_streak": streak,
+        "recovery_cooldown_minutes": cooldown,
+    }
+    if escalation is not None:
+        raw["escalation_ack_minutes"] = escalation
+    if custom is not None:
+        raw["custom"] = custom
+    return raw
+
+
+def test_U570_pg_alert_rule_name_and_escalated_at_persisted(backend):
+    from sqlalchemy import text
+
+    store = backend.monitoring_store(TENANT)
+    store.update_rules(_rules(
+        escalation=1,
+        custom=[{"cid": "c1", "name": "错误即告警",
+                 "expression": "{{status}} == 'error'", "severity": "warning"}],
+    ))
+    store.record_run(graph_id="g-esc", mode="sync", status="error",
+                     started_at="2026-09-24T00:00:00+00:00", duration_ms=5.0,
+                     nodes=[], error="boom")
+    alert = next(a for a in store.list_alerts() if a.rule_id == "custom:c1")
+    assert alert.rule_name == "错误即告警"  # rule_name 列往返
+    # 把 first_seen 拨到超过升级窗口，再次读列表应惰性升级并回写 escalated_at/severity
+    with backend.engine.begin() as conn:
+        conn.execute(
+            text("UPDATE monitoring_alerts SET first_seen = :old "
+                 "WHERE tenant_id = :t AND id = :id"),
+            {"old": "2026-09-20T00:00:00+00:00", "t": TENANT, "id": alert.id},
+        )
+    upgraded = next(a for a in store.list_alerts() if a.id == alert.id)
+    assert upgraded.severity == "critical" and upgraded.escalated_at is not None
+    with backend.engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT severity, escalated_at FROM monitoring_alerts WHERE id = :id"),
+            {"id": alert.id},
+        ).first()
+    assert row[0] == "critical" and row[1] is not None  # 已回写 PG
+    store.reset()
+
+
+def test_U571_pg_recovery_requires_consecutive_healthy_streak(backend):
+    store = backend.monitoring_store(TENANT)
+    store.update_rules(_rules(streak=2))
+    store.record_run(graph_id="g-rec", mode="sync", status="error",
+                     started_at="2026-09-24T00:00:00+00:00", duration_ms=5.0,
+                     nodes=[], error="boom")
+    def _open():
+        return [a for a in store.list_alerts(status="open") if a.rule_id == "run_error"]
+    store.record_run(graph_id="g-rec", mode="sync", status="completed",
+                     started_at="2026-09-24T00:01:00+00:00", duration_ms=5.0, nodes=[])
+    assert _open()  # 连续健康仅 1，不恢复
+    store.record_run(graph_id="g-rec", mode="sync", status="completed",
+                     started_at="2026-09-24T00:02:00+00:00", duration_ms=5.0, nodes=[])
+    assert not _open()  # 连续健康达 2，自动恢复
+    resolved = [a for a in store.list_alerts(status="resolved") if a.rule_id == "run_error"]
+    assert resolved
+    store.reset()
+
+
+def test_U572_pg_merge_and_manual_resolve_emit_lifecycle(backend):
+    store = backend.monitoring_store(TENANT)
+    spy = _SpyLifecycleNotifier()
+    store.set_notifier(spy)
+    store.update_rules(_rules())
+    common = dict(graph_id="g-life", mode="sync", status="error",
+                  started_at="2026-09-24T00:00:00+00:00", duration_ms=5.0,
+                  nodes=[], error="boom")
+    store.record_run(**common)
+    store.record_run(**dict(common, started_at="2026-09-24T00:01:00+00:00"))  # merge
+    transitions = [c[0] for c in spy.calls if c[1] == "run_error"]
+    assert "new" in transitions and "merged" in transitions
+    alert = next(a for a in store.list_alerts() if a.rule_id == "run_error")
+    assert alert.count == 2
+    store.resolve_alert(alert.id)
+    assert ("resolved", "run_error") in spy.calls  # 手动 resolve 发 lifecycle
+    store.reset()
+
+
+def test_U573_pg_cooldown_suppresses_new_notify_but_keeps_alert(backend):
+    store = backend.monitoring_store(TENANT)
+    spy = _SpyLifecycleNotifier()
+    store.set_notifier(spy)
+    store.update_rules(_rules(cooldown=60))
+    err = dict(graph_id="g-cool", mode="sync", status="error",
+               started_at="2026-09-24T00:00:00+00:00", duration_ms=5.0,
+               nodes=[], error="boom")
+    ok = dict(graph_id="g-cool", mode="sync", status="completed",
+              started_at="2026-09-24T00:01:00+00:00", duration_ms=5.0, nodes=[])
+    store.record_run(**err)   # new 外发
+    store.record_run(**ok)    # 自动 recovery，写冷却
+    store.record_run(**dict(err, started_at="2026-09-24T00:02:00+00:00"))  # 冷却内 new 抑制
+    new_calls = [c for c in spy.calls if c == ("new", "run_error")]
+    assert len(new_calls) == 1  # 仅首次 new 外发
+    assert [a for a in store.list_alerts(status="open") if a.rule_id == "run_error"]  # 站内照建
+    store.reset()
