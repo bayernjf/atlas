@@ -458,19 +458,40 @@ def _make_executor(
                                         "WAIT_EVENT_FRAME_INVALID",
                                         f"等待节点 {node.id} 续跑帧缺少事件等待信息",
                                     )
-                                event_key = str(wait_frame.get("eventKey", ""))
+                                frame_keys = wait_frame.get("eventKeys")
+                                if isinstance(frame_keys, list) and frame_keys:
+                                    event_keys = [str(k) for k in frame_keys]
+                                else:
+                                    event_keys = [str(wait_frame.get("eventKey", ""))]
+                                event_key = event_keys[0]
                                 on_timeout = wait_frame.get("onTimeout", "continue")
                                 timeout_seconds = int(wait_frame.get("timeoutSeconds", 0))
                                 token = resume["resume_token"]
                             else:
-                                template = str(node.config["eventKey"])
-                                event_key = interpolate(template, context).strip()
-                                if not valid_event_key(event_key):
-                                    raise WaitNodeFailure(
-                                        node.id,
-                                        "WAIT_EVENT_KEY_INVALID",
-                                        f"等待节点 {node.id} 渲染后的事件标识非法：{event_key}",
-                                    )
+                                raw_keys = node.config.get("eventKeys")
+                                if isinstance(raw_keys, list) and raw_keys:
+                                    # docs/54 多事件 OR 竞速：逐键插值并运行时校验，任一非法即失败
+                                    event_keys = []
+                                    for raw in raw_keys:
+                                        rendered = interpolate(str(raw), context).strip()
+                                        if not valid_event_key(rendered):
+                                            raise WaitNodeFailure(
+                                                node.id,
+                                                "WAIT_EVENT_KEY_INVALID",
+                                                f"等待节点 {node.id} 渲染后的事件标识非法：{rendered}",
+                                            )
+                                        event_keys.append(rendered)
+                                else:
+                                    template = str(node.config["eventKey"])
+                                    rendered = interpolate(template, context).strip()
+                                    if not valid_event_key(rendered):
+                                        raise WaitNodeFailure(
+                                            node.id,
+                                            "WAIT_EVENT_KEY_INVALID",
+                                            f"等待节点 {node.id} 渲染后的事件标识非法：{rendered}",
+                                        )
+                                    event_keys = [rendered]
+                                event_key = event_keys[0]
                                 timeout_mode = node.config.get("timeoutMode", "static")
                                 if timeout_mode == "expression":
                                     timeout_seconds = _resolve_wait_expression(
@@ -499,8 +520,8 @@ def _make_executor(
                                         )
                                     timeout_seconds = int(static_timeout)
                                 on_timeout = node.config.get("onTimeout", "continue")
-                                token = event_wait_broker.request(
-                                    event_key=event_key,
+                                token = event_wait_broker.request_any(
+                                    event_keys=event_keys,
                                     node_id=node.id,
                                     graph_id=graph_id,
                                     timeout_seconds=timeout_seconds,
@@ -511,6 +532,8 @@ def _make_executor(
                                 "timeoutSeconds": timeout_seconds,
                                 "onTimeout": on_timeout,
                             }
+                            if len(event_keys) > 1:
+                                wait_info["eventKeys"] = list(event_keys)
                             # 第二个 node_start 携带 wait 载荷，前端据此展示等待态。
                             emit({**start_event, "wait": wait_info})
                             if not resume_here:
@@ -529,6 +552,11 @@ def _make_executor(
                                         "eventKey": event_key,
                                         "onTimeout": on_timeout,
                                         "timeoutSeconds": timeout_seconds,
+                                        **(
+                                            {"eventKeys": list(event_keys)}
+                                            if len(event_keys) > 1
+                                            else {}
+                                        ),
                                     },
                                 )
                             started = time.monotonic()
@@ -537,18 +565,22 @@ def _make_executor(
                             )
                             waited = int(time.monotonic() - started)
                             if event_payload is not None:
+                                matched = event_payload.get("matchedEventKey", event_key)
                                 output = {
                                     "mode": "wait",
                                     "waitType": "event",
                                     "eventKey": event_key,
+                                    "matchedEventKey": matched,
                                     "signaled": True,
                                     "payload": event_payload,
                                     "waitedSeconds": waited,
                                     "resolvedBy": "signal",
                                     "token": token,
                                 }
+                                if len(event_keys) > 1:
+                                    output["eventKeys"] = list(event_keys)
                                 message = (
-                                    f"{node.id}: event {event_key} signaled after {waited}s"
+                                    f"{node.id}: event {matched} signaled after {waited}s"
                                 )
                             elif on_timeout == "fail":
                                 raise WaitNodeFailure(
@@ -567,6 +599,8 @@ def _make_executor(
                                     "resolvedBy": "timeout",
                                     "token": token,
                                 }
+                                if len(event_keys) > 1:
+                                    output["eventKeys"] = list(event_keys)
                                 message = (
                                     f"{node.id}: event {event_key} timeout after "
                                     f"{timeout_seconds}s (continue)"

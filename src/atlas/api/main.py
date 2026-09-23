@@ -181,9 +181,14 @@ def _resume_from_frame(engine, frame: dict) -> None:
         )
     elif frame["kind"] == "wait" and (frame.get("wait") or {}).get("waitType") == "event":
         wait_payload = frame["wait"]
+        # docs/54：多键竞速帧存 eventKeys；单键帧只有 eventKey（首键）。
+        _frame_keys = wait_payload.get("eventKeys")
         services.event_wait_broker.restore(
             token=token,
-            event_key=wait_payload["eventKey"],
+            event_key=wait_payload.get("eventKey"),
+            event_keys=_frame_keys
+            if isinstance(_frame_keys, list) and _frame_keys
+            else None,
             node_id=frame["node_id"],
             graph_id=frame["resume_state"].get("graph_id", ""),
             timeout_seconds=remaining_seconds(frame.get("deadline_at")),

@@ -709,6 +709,14 @@ def test_reject_wait_bad_type_and_duration(config, expected):
          "timeoutSeconds": 86400},  # U512 上限 24h
         {"waitType": "event", "eventKey": "order_paid", "timeoutMode": "expression",
          "timeoutExpression": "{{global.slaSecs}}", "timeoutSeconds": 30},
+        # U527 docs/54：多事件 eventKeys（OR 竞速）
+        {"waitType": "event", "eventKeys": ["order_paid", "order_cancelled"],
+         "timeoutSeconds": 30},
+        {"waitType": "event", "eventKeys": ["a", "b", "c", "d", "e", "f", "g", "h"],
+         "timeoutSeconds": 30},  # 8 个为上限
+        {"waitType": "event",
+         "eventKeys": ["order_paid_{{trigger-1.context.payload.id}}", "evt:ok-x_1"],
+         "timeoutSeconds": 30},  # 占位/冒号下划线合法
     ],
 )
 def test_parse_valid_event_wait(config):
@@ -734,6 +742,38 @@ def test_parse_valid_event_wait(config):
     ],
 )
 def test_reject_event_wait_timeout_mode_bad_config(config, expected):
+    raw = make_wait_graph()
+    raw["nodes"][1] = _wait_node(**config)
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any(expected in error for error in exc.value.errors)
+
+
+# --- U528-U530: eventKeys 多事件竞速校验（docs/54 §4）---
+@pytest.mark.parametrize(
+    "config, expected",
+    [
+        # U528 数量边界
+        ({"waitType": "event", "eventKeys": ["a", "b", "c", "d", "e", "f", "g", "h", "i"],
+          "timeoutSeconds": 30}, "多事件需 1-8 个事件标识"),
+        ({"waitType": "event", "eventKeys": [], "timeoutSeconds": 30},
+         "多事件需 1-8 个事件标识"),
+        # U529 元素/类型
+        ({"waitType": "event", "eventKeys": "order_paid", "timeoutSeconds": 30},
+         "多事件（eventKeys）必须是字符串数组"),
+        ({"waitType": "event", "eventKeys": ["bad key"], "timeoutSeconds": 30},
+         "只允许字母、数字及 :_-"),
+        ({"waitType": "event", "eventKeys": ["a", ""], "timeoutSeconds": 30},
+         "必须是非空字符串"),
+        ({"waitType": "event", "eventKeys": ["a", "a"], "timeoutSeconds": 30},
+         "多事件标识重复"),
+        # U530 互斥
+        ({"waitType": "event", "eventKey": "order_paid",
+          "eventKeys": ["order_paid", "other"], "timeoutSeconds": 30},
+         "eventKey 与 eventKeys 互斥"),
+    ],
+)
+def test_reject_event_keys_bad_config(config, expected):
     raw = make_wait_graph()
     raw["nodes"][1] = _wait_node(**config)
     with pytest.raises(GraphValidationError) as exc:

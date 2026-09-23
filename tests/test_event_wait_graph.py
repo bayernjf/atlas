@@ -71,7 +71,7 @@ def test_signal_releases_wait_with_payload():
     assert output["waitType"] == "event"
     assert output["signaled"] is True
     assert output["resolvedBy"] == "signal"
-    assert output["payload"] == {"paidAt": "2026-09-23"}
+    assert output["payload"] == {"paidAt": "2026-09-23", "matchedEventKey": "order_paid"}  # docs/54
     assert output["token"].startswith("wait-")
     assert "tool-after" in result["outputs"]
     assert broker.list_pending() == []
@@ -87,7 +87,7 @@ def test_signal_key_broadcast_releases_wait():
             ).start()
 
     result = run_graph(_event_wait_graph(), event_wait_broker=broker, emit=signal_on_register)
-    assert result["outputs"]["wait-1"]["payload"] == {"x": 1}
+    assert result["outputs"]["wait-1"]["payload"] == {"x": 1, "matchedEventKey": "order_paid"}  # docs/54
 
 
 def test_waitevents_preset_resolves_immediately():
@@ -286,7 +286,7 @@ def test_resume_event_wait_uses_same_token_and_signal_releases():
     output = result["outputs"]["wait-1"]
     assert output["signaled"] is True
     assert output["resolvedBy"] == "signal"
-    assert output["payload"] == {"paidAt": "2026-09-23"}
+    assert output["payload"] == {"paidAt": "2026-09-23", "matchedEventKey": "order_paid"}  # docs/54
     assert "tool-after" in result["outputs"]
     assert broker_b.list_pending() == []
 
@@ -342,18 +342,18 @@ def test_resume_event_wait_deadline_passed_fail_raises():
 def test_event_wait_timeout_expression_used_for_broker():
     broker = EventWaitBroker()
     requested: list[int] = []
-    orig_request = broker.request
+    orig_request = broker.request_any  # docs/54：单/多键统一走 request_any
 
-    def spy_request(*, event_key, node_id, graph_id, timeout_seconds):
+    def spy_request(*, event_keys, node_id, graph_id, timeout_seconds):
         requested.append(timeout_seconds)
         return orig_request(
-            event_key=event_key,
+            event_keys=event_keys,
             node_id=node_id,
             graph_id=graph_id,
             timeout_seconds=timeout_seconds,
         )
 
-    broker.request = spy_request
+    broker.request_any = spy_request
 
     def signal_on_register(event: dict) -> None:
         if event.get("type") == "node_start" and event.get("wait"):
@@ -377,7 +377,7 @@ def test_event_wait_timeout_expression_used_for_broker():
     assert requested == [5]
     output = result["outputs"]["wait-1"]
     assert output["signaled"] is True
-    assert output["payload"] == {"ok": True}
+    assert output["payload"] == {"ok": True, "matchedEventKey": "order_paid"}  # docs/54
     assert broker.list_pending() == []
 
 
@@ -390,7 +390,7 @@ def test_event_wait_timeout_expression_out_of_range_fails():
     )
     with pytest.raises(WaitNodeFailure) as exc:
         run_graph(
-            graph, event_wait_broker=broker, inputs={"waitSecs": 9999}
+            graph, event_wait_broker=broker, inputs={"waitSecs": 86401}  # docs/54: >86400
         )
     assert exc.value.code == "WAIT_DURATION_INVALID"
     assert broker.list_pending() == []
@@ -399,18 +399,18 @@ def test_event_wait_timeout_expression_out_of_range_fails():
 def test_event_wait_static_default_uses_timeout_seconds():
     broker = EventWaitBroker()
     requested: list[int] = []
-    orig_request = broker.request
+    orig_request = broker.request_any  # docs/54：单/多键统一走 request_any
 
-    def spy_request(*, event_key, node_id, graph_id, timeout_seconds):
+    def spy_request(*, event_keys, node_id, graph_id, timeout_seconds):
         requested.append(timeout_seconds)
         return orig_request(
-            event_key=event_key,
+            event_keys=event_keys,
             node_id=node_id,
             graph_id=graph_id,
             timeout_seconds=timeout_seconds,
         )
 
-    broker.request = spy_request
+    broker.request_any = spy_request
 
     def signal_on_register(event: dict) -> None:
         if event.get("type") == "node_start" and event.get("wait"):
@@ -425,3 +425,87 @@ def test_event_wait_static_default_uses_timeout_seconds():
     assert result["status"] == "completed"
     assert requested == [30]
 
+
+
+# --- docs/54 多事件 OR 竞速（eventKeys）图级语义 ---
+_FANIN_KEYS = ["order_paid", "order_cancelled", "review_needed"]
+
+
+def _fanin_wait_graph(keys):
+    return parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "wait-1", "type": "wait", "name": "竞速",
+                 "config": {"waitType": "event", "eventKeys": list(keys),
+                            "timeoutSeconds": 30, "onTimeout": "continue"}},
+                {"id": "tool-after", "type": "tool_call", "name": "后继",
+                 "config": {"tool": "op-after"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "wait-1"},
+                {"id": "e2", "source": "wait-1", "target": "tool-after"},
+            ],
+        }
+    )
+
+
+def test_U524_fanin_signals_non_primary_key():
+    broker = EventWaitBroker()
+
+    def on_register(event):
+        if event.get("type") == "node_start" and event.get("wait"):
+            threading.Timer(
+                0.05, lambda: broker.signal_key("order_cancelled", {"reason": "u"})
+            ).start()
+
+    result = run_graph(_fanin_wait_graph(_FANIN_KEYS), event_wait_broker=broker, emit=on_register)
+    out = result["outputs"]["wait-1"]
+    assert out["signaled"] is True
+    assert out["eventKey"] == "order_paid"  # 首键
+    assert out["eventKeys"] == _FANIN_KEYS
+    assert out["matchedEventKey"] == "order_cancelled"  # 实际命中键
+    assert out["payload"]["reason"] == "u"
+    assert "tool-after" in result["outputs"]
+    assert broker.list_pending() == []  # 唤醒后余键订阅全部清理
+
+
+def test_U525_fanin_signals_primary_key():
+    broker = EventWaitBroker()
+
+    def on_register(event):
+        if event.get("type") == "node_start" and event.get("wait"):
+            threading.Timer(
+                0.05, lambda: broker.signal_key("order_paid", {"ok": 1})
+            ).start()
+
+    result = run_graph(_fanin_wait_graph(_FANIN_KEYS), event_wait_broker=broker, emit=on_register)
+    out = result["outputs"]["wait-1"]
+    assert out["matchedEventKey"] == "order_paid"
+    assert out["payload"]["ok"] == 1
+    assert broker.list_pending() == []
+
+
+def test_U526_fanin_frame_and_pending_carry_event_keys():
+    broker = EventWaitBroker()
+    frames: list[dict] = []
+
+    def run_orig():
+        run_graph(_fanin_wait_graph(_FANIN_KEYS), event_wait_broker=broker, frame_sink=frames.append)
+
+    worker = threading.Thread(target=run_orig)
+    worker.start()
+    frame = _wait_for_event_frame(frames)
+    try:
+        wait = frame["wait"]
+        assert wait["waitType"] == "event"
+        assert wait["eventKey"] == "order_paid"  # 首键
+        assert wait["eventKeys"] == _FANIN_KEYS
+        pending = broker.list_pending()[0]
+        assert pending["eventKeys"] == _FANIN_KEYS
+    finally:
+        broker.signal_token(frame["resume_token"], {})
+        worker.join(timeout=2)

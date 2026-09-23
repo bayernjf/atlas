@@ -797,21 +797,61 @@ def _validate_wait_config(
             )
     elif wait_type == "event":
         event_key = config.get("eventKey")
-        if not isinstance(event_key, str) or not event_key.strip():
-            add(f"{prefix} 事件标识（eventKey）为必填字符串", "/eventKey")
+        event_keys = config.get("eventKeys")
+        if event_key is not None and event_keys is not None:
+            # docs/54：单键 eventKey 与多键 eventKeys 互斥，只能二选一
+            add(f"{prefix} eventKey 与 eventKeys 互斥，请只保留一种", "/eventKeys")
+        if event_keys is not None:
+            # docs/54 多事件 OR 竞速：数组 1-8、每项非空字符串、≤长度、静态白名单、不可重复
+            if isinstance(event_keys, bool) or not isinstance(event_keys, list):
+                add(f"{prefix} 多事件（eventKeys）必须是字符串数组", "/eventKeys")
+            else:
+                if not 1 <= len(event_keys) <= MAX_EVENT_KEYS:
+                    add(
+                        f"{prefix} 多事件需 1-{MAX_EVENT_KEYS} 个事件标识"
+                        f"（当前 {len(event_keys)}）",
+                        "/eventKeys",
+                    )
+                seen: set[str] = set()
+                for idx, key in enumerate(event_keys[: MAX_EVENT_KEYS + 2]):
+                    loc = f"/eventKeys/{idx}"
+                    if not isinstance(key, str) or not key.strip():
+                        add(f"{prefix} 第 {idx + 1} 个事件标识必须是非空字符串", loc)
+                        continue
+                    if len(key) > MAX_EVENT_KEY_LENGTH:
+                        add(
+                            f"{prefix} 第 {idx + 1} 个事件标识长度不能超过 "
+                            f"{MAX_EVENT_KEY_LENGTH} 字符",
+                            loc,
+                        )
+                    if not EVENT_KEY_STATIC_RE.fullmatch(_event_key_static_parts(key)):
+                        add(
+                            f"{prefix} 第 {idx + 1} 个事件标识静态部分只允许字母、数字及 :_-，"
+                            "占位内内容不检查",
+                            loc,
+                        )
+                    if key in seen:
+                        add(f"{prefix} 多事件标识重复：{key}", loc)
+                    seen.add(key)
         else:
-            if len(event_key) > MAX_EVENT_KEY_LENGTH:
+            if not isinstance(event_key, str) or not event_key.strip():
                 add(
-                    f"{prefix} 事件标识长度不能超过 {MAX_EVENT_KEY_LENGTH} 字符"
-                    f"（当前 {len(event_key)}）",
+                    f"{prefix} 事件标识（eventKey）为必填字符串，或改用 eventKeys 数组",
                     "/eventKey",
                 )
-            if not EVENT_KEY_STATIC_RE.fullmatch(_event_key_static_parts(event_key)):
-                add(
-                    f"{prefix} 事件标识静态部分只允许字母、数字及 :_-，"
-                    "占位内内容不检查",
-                    "/eventKey",
-                )
+            else:
+                if len(event_key) > MAX_EVENT_KEY_LENGTH:
+                    add(
+                        f"{prefix} 事件标识长度不能超过 {MAX_EVENT_KEY_LENGTH} 字符"
+                        f"（当前 {len(event_key)}）",
+                        "/eventKey",
+                    )
+                if not EVENT_KEY_STATIC_RE.fullmatch(_event_key_static_parts(event_key)):
+                    add(
+                        f"{prefix} 事件标识静态部分只允许字母、数字及 :_-，"
+                        "占位内内容不检查",
+                        "/eventKey",
+                    )
         timeout_mode = config.get("timeoutMode", "static")
         if timeout_mode not in ("static", "expression"):
             add(
