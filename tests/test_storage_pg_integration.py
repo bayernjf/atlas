@@ -695,3 +695,59 @@ def test_U573_pg_cooldown_suppresses_new_notify_but_keeps_alert(backend):
     assert len(new_calls) == 1  # 仅首次 new 外发
     assert [a for a in store.list_alerts(status="open") if a.rule_id == "run_error"]  # 站内照建
     store.reset()
+
+
+# --- docs/56 §2：发布报告 PG 沉淀（迁移 022，PgReportStore 同形）---
+def test_U580_pg_report_store_roundtrip_and_isolation(backend):
+    from atlas.recording.pg_reports import PgReportStore
+
+    store = PgReportStore(backend.engine, TENANT)
+    other = PgReportStore(backend.engine, "tenant-other")
+
+    gate_a = {
+        "target": "draft", "total": 2, "passed": 1, "failed": 1,
+        "skipped": False, "blocked": True,
+        "cases": [
+            {"case_id": "c1", "name": "退款成功", "matches": True,
+             "replay_status": "matched", "note": None},
+            {"case_id": "c2", "name": "退款失败", "matches": False,
+             "replay_status": "mismatch", "note": "金额不符"},
+        ],
+    }
+    r1 = store.record(graph_id="g-rr", trigger="manual", report=gate_a)
+    assert r1["id"].startswith("rr-")
+    assert r1["pass_rate"] == 0.5 and r1["blocked"] is True
+    # total=0（未覆盖）→ pass_rate None、skipped True
+    r2 = store.record(graph_id="g-rr", trigger="publish-gate",
+                      report={"total": 0, "passed": 0, "failed": 0})
+    assert r2["pass_rate"] is None and r2["skipped"] is True
+    store.record(graph_id="g-other-graph", trigger="manual", report=gate_a)
+
+    # 摘要倒序、不含 cases 键
+    summary = store.list_summary("g-rr")
+    assert [r["id"] for r in summary] == [r2["id"], r1["id"]]
+    assert all("cases" not in r for r in summary)
+
+    # 跨图摘要 clamp 1-200
+    all_summary = store.list_all_summary(limit=1)
+    assert len(all_summary) == 1 and "cases" not in all_summary[0]
+    assert store.list_all_summary(limit=99999) and len(store.list_all_summary(limit=2)) <= 2
+
+    # 详情含 cases；跨图/不存在 get 返 None
+    detail = store.get("g-rr", r1["id"])
+    assert detail is not None and len(detail["cases"]) == 2
+    assert detail["cases"][1]["note"] == "金额不符"
+    assert store.get("g-other-graph", r1["id"]) is None
+    assert store.get("g-rr", "rr-does-not-exist") is None
+
+    # 租户隔离：另一租户看不到
+    assert other.list_summary("g-rr") == []
+
+    # reset 只删本租户
+    store.reset()
+    assert store.list_summary("g-rr") == []
+    assert other.list_summary("g-rr") == []  # other 本就空
+    other.record(graph_id="g-rr", trigger="manual", report=gate_a)
+    store.reset()
+    assert len(other.list_summary("g-rr")) == 1  # 本租户 reset 不影响他租户
+    other.reset()
