@@ -117,7 +117,7 @@ class TenantRegistry:
             )
             # approval 的帧持久化在 loader frame_sink（批 2 写 interruptions 表），
             # broker 只承担进程内 pending + Event（重启后由恢复扫描器 restore 重建）。
-            return TenantServices(
+            services = TenantServices(
                 graph_store=backend.graph_store(tenant_id),
                 recording_store=backend.recording_store(tenant_id),
                 feedback_store=backend.feedback_store(tenant_id),
@@ -142,8 +142,10 @@ class TenantRegistry:
                 webhook_deliveries=PgDeliveryStore(backend.engine, tenant_id),
                 openapi_imports=PgImportStore(backend.engine, tenant_id),
             )
+            TenantRegistry._wire_alert_notifier(services)
+            return services
         connection_service = build_connection_service(ConnectionStore(), tenant_id=tenant_id)
-        return TenantServices(
+        services = TenantServices(
             graph_store=GraphStore(),
             recording_store=RecordingStore(),
             feedback_store=FeedbackStore(),
@@ -166,6 +168,16 @@ class TenantRegistry:
             ),
             webhook_deliveries=InMemoryDeliveryStore(),
             openapi_imports=ImportStore(),
+        )
+        TenantRegistry._wire_alert_notifier(services)
+        return services
+
+    @staticmethod
+    def _wire_alert_notifier(services: TenantServices) -> None:
+        from atlas.monitoring.notify import AlertNotifier
+
+        services.monitoring.set_notifier(
+            AlertNotifier(services.message_service)
         )
 
     def reset_tenant(self, tenant_id: str) -> None:

@@ -1,4 +1,5 @@
-from typing import Literal
+from datetime import datetime, timezone
+from typing import Callable, Literal
 
 from pydantic import BaseModel
 
@@ -76,3 +77,70 @@ def alert_channel_from_raw(raw: dict) -> AlertChannel:
         minSeverity=raw.get("minSeverity", "critical"),
         updatedAt=str(raw.get("updatedAt", "")),
     )
+
+
+def alert_rule_label(alert: object) -> str:
+    rule_name = getattr(alert, "rule_name", None)
+    if isinstance(rule_name, str) and rule_name.strip():
+        return rule_name.strip()
+    return str(getattr(alert, "rule_id"))
+
+
+def build_alert_subject(alert: object) -> str:
+    severity = str(getattr(alert, "severity"))
+    return f"[Atlas告警][{severity}] {alert_rule_label(alert)}"
+
+
+def build_alert_body(alert: object) -> str:
+    assignee = getattr(alert, "assignee", None)
+    assignee_text = assignee if isinstance(assignee, str) and assignee.strip() else "未指派"
+    lines = [
+        str(getattr(alert, "message")),
+        f"图：{getattr(alert, 'graph_id')}",
+        f"运行：{getattr(alert, 'last_run_id') or ''}",
+        f"级别：{getattr(alert, 'severity')}",
+        f"值班：{assignee_text}",
+        f"首次：{getattr(alert, 'first_seen')}",
+    ]
+    return "\n".join(lines)
+
+
+class AlertNotifier:
+    def __init__(
+        self,
+        message_service: object,
+        *,
+        clock: Callable[[], str] | None = None,
+    ) -> None:
+        self._messages = message_service
+        self._clock = clock or (
+            lambda: datetime.now(timezone.utc).isoformat()
+        )
+
+    def should_notify(self, cfg: AlertChannel, alert: object) -> bool:
+        if not cfg.enabled or not cfg.to.strip():
+            return False
+        if cfg.minSeverity == "critical":
+            return str(getattr(alert, "severity")) == "critical"
+        return True
+
+    def notify(self, alert: object, cfg: AlertChannel) -> AlertChannelDelivery:
+        if not self.should_notify(cfg, alert):
+            return AlertChannelDelivery()
+        try:
+            self._messages.send(
+                cfg.channel,
+                cfg.to,
+                build_alert_subject(alert),
+                build_alert_body(alert),
+                secret=cfg.secret or None,
+            )
+        except Exception as exc:
+            code = getattr(exc, "code", None)
+            return AlertChannelDelivery(
+                lastNotifiedAt=self._clock(),
+                errorCode=code if isinstance(code, str) else "ALERT_NOTIFY_FAILED",
+                errorMessage=str(exc)[:300],
+            )
+        return AlertChannelDelivery(lastNotifiedAt=self._clock())
+

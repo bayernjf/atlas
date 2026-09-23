@@ -692,6 +692,7 @@ class PgMonitoringStore:
         self._tenant_id = tenant_id
         # docs/33 §5：静默/值班/assignee 进程内（v1 不落库，重启清空；TenantServices 常驻保活）
         self._ops = OpsStore()
+        self._notifier = None
 
     def record_run(
         self,
@@ -715,6 +716,7 @@ class PgMonitoringStore:
         serialized_nodes = [
             node.model_dump() if hasattr(node, "model_dump") else node for node in nodes
         ]
+        pending: list[tuple[Alert, AlertChannel]] = []
         with self._engine.begin() as conn:
             run_id = _next_id(conn, "run")
             record = RunRecord(
@@ -766,8 +768,37 @@ class PgMonitoringStore:
                 # docs/33 §5.1：命中活跃静默则压下（不 INSERT/不合并/不升级）
                 if self._ops.suppress_if_matched(event.rule_id, record.graph_id):
                     continue
-                self._raise_or_merge_locked(conn, event, record)
+                new_alert = self._raise_or_merge_locked(conn, event, record)
+                if new_alert is not None:
+                    pending.append((new_alert, self._channel_locked(conn)))
+        for alert, cfg in pending:
+            self._notify_outside_lock(alert, cfg)
         return record
+
+    def _channel_locked(self, conn: Any) -> AlertChannel:
+        row = conn.execute(
+            text(
+                "SELECT enabled, channel, to_addr, secret, min_severity, updated_at "
+                "FROM alert_notify_settings WHERE tenant_id = :tenant_id"
+            ),
+            {"tenant_id": self._tenant_id},
+        ).first()
+        if not row:
+            return AlertChannel()
+        return AlertChannel(
+            enabled=row[0], channel=row[1], to=row[2], secret=row[3],
+            minSeverity=row[4], updatedAt=row[5],
+        )
+
+    def _notify_outside_lock(self, alert: Alert, cfg: AlertChannel) -> None:
+        if self._notifier is None:
+            return
+        delivery = self._notifier.notify(alert, cfg)
+        if delivery.lastNotifiedAt is not None:
+            self.record_alert_channel_delivery(delivery)
+
+    def set_notifier(self, notifier: object | None) -> None:
+        self._notifier = notifier
 
     def _rules_locked(self, conn: Any) -> RuleConfig:
         row = conn.execute(
@@ -821,7 +852,7 @@ class PgMonitoringStore:
                 ),
                 {"last_seen": record.finished_at, "last_run_id": record.id, "id": row[0]},
             )
-            return
+            return None
         alert_id = _next_id(conn, "alt")
         conn.execute(
             text(
@@ -844,6 +875,18 @@ class PgMonitoringStore:
             },
         )
         self._ops.remember_assignee(alert_id)
+        return Alert(
+            id=alert_id,
+            rule_id=event.rule_id,
+            graph_id=record.graph_id,
+            severity=event.severity,
+            message=event.message,
+            first_seen=record.finished_at,
+            last_seen=record.finished_at,
+            last_run_id=record.id,
+            rule_name=event.rule_name,
+            assignee=self._ops.current_assignee(),
+        )
 
     def list_runs(self, graph_id: str | None = None, limit: int = 50) -> list[RunRecord]:
         with self._engine.connect() as conn:
@@ -1127,6 +1170,7 @@ class PgMonitoringStore:
         self, *, graph_id: str, message: str, action: dict, last_run_id: str = "",
     ) -> Alert:
         now = _now_iso()
+        created = False
         with self._engine.begin() as conn:
             row = conn.execute(
                 text(
@@ -1163,6 +1207,13 @@ class PgMonitoringStore:
                     },
                 )
                 self._ops.remember_assignee(alert_id)
+                created = True
+            if created:
+                cfg = self._channel_locked(conn)
+        if created:
+            alerted = self.get_alert(alert_id)
+            if alerted is not None:
+                self._notify_outside_lock(alerted, cfg)
         alert = self.get_alert(alert_id)
         return alert if alert is not None else Alert(
             id=alert_id, rule_id="rollout_gate", graph_id=graph_id, severity="critical",
