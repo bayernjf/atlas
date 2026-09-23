@@ -37,8 +37,8 @@ def select_user_store():
 session_store = select_session_store()
 user_store = select_user_store()
 user_store.bind_session_store(session_store)
-if os.environ.get("ATLAS_STORAGE_BACKEND", "memory") != "pg":
-    user_store.seed()
+# 两档均幂等播种初始账号（PG ON CONFLICT DO NOTHING）；否则 PG 首启无管理员、无法登录。
+user_store.seed()
 tenant_registry = TenantRegistry()
 login_throttle = LoginThrottle()
 

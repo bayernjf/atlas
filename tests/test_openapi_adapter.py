@@ -564,3 +564,93 @@ def test_envelopes_decrypted_per_call():
         result = adapter.execute(ActionRequest(capability_name="header_op", parameters={}))
         assert result.status is ActionStatus.SUCCESS
     assert counting.decrypt_calls == 3
+
+def _md5(value: str) -> str:
+    import hashlib
+
+    return hashlib.md5(value.encode()).hexdigest()
+
+
+def _digest_doc():
+    return {
+        "openapi": "3.0.3",
+        "info": {"title": "Digest", "version": "1.0"},
+        "servers": [{"url": "https://secured.example.com"}],
+        "paths": {"/digest": {"get": {"operationId": "digest_op"}}},
+        "components": {
+            "securitySchemes": {"DigestAuth": {"type": "http", "scheme": "digest"}}
+        },
+        "security": [{"DigestAuth": []}],
+    }
+
+
+def test_digest_challenge_response_completes():
+    import hashlib
+
+    seen = {}
+    realm, nonce, username, password = "atlas", "0a4f113b", "alice", "wonderland"
+
+    def handler(request):
+        auth = request.headers.get("Authorization", "")
+        if not auth.startswith("Digest "):
+            challenge = (
+                f'Digest realm="{realm}", nonce="{nonce}", '
+                'qop="auth", algorithm=MD5'
+            )
+            return httpx.Response(
+                401,
+                headers={"WWW-Authenticate": challenge},
+                request=request,
+            )
+        fields = {}
+        for item in auth[len("Digest "):].split(","):
+            if "=" in item:
+                key, val = item.split("=", 1)
+                fields[key.strip()] = val.strip().strip('"')
+        uri = request.url.raw_path.decode()
+        ha1 = _md5(f"{username}:{realm}:{password}")
+        ha2 = _md5(f"{request.method}:{uri}")
+        expected = _md5(
+            f"{ha1}:{nonce}:{fields['nc']}:{fields['cnonce']}:auth:{ha2}"
+        )
+        seen["valid"] = fields["response"] == expected
+        seen["username"] = fields.get("username")
+        seen["uri"] = fields.get("uri")
+        return httpx.Response(200, json={"ok": True}, request=request)
+
+    parsed = parse_document(json.dumps(_digest_doc()))
+    provider = PlaintextSecretProvider()
+    plaintext = json.dumps({"username": username, "password": password})
+    imported = ImportStore().add(
+        parsed, envelopes={"DigestAuth": provider.encrypt(plaintext)}
+    )
+    adapter = _secure_adapter(handler, imported, provider)
+    result = adapter.execute(
+        ActionRequest(capability_name="digest_op", parameters={})
+    )
+    assert result.status is ActionStatus.SUCCESS
+    assert seen["valid"] is True
+    assert seen["username"] == username
+    assert seen["uri"] == "/digest"
+    assert result.output["status"] == 200
+
+
+def test_digest_corrupt_envelope_fails_without_request():
+    called = []
+
+    def handler(request):
+        called.append(request)
+        return httpx.Response(200)
+
+    parsed = parse_document(json.dumps(_digest_doc()))
+    provider = PlaintextSecretProvider()
+    imported = ImportStore().add(
+        parsed, envelopes={"DigestAuth": provider.encrypt(json.dumps({"username": "alice"}))}
+    )
+    adapter = _secure_adapter(handler, imported, provider)
+    result = adapter.execute(
+        ActionRequest(capability_name="digest_op", parameters={})
+    )
+    assert result.status is ActionStatus.FAILED
+    assert result.error.code == "SECRET_DECRYPT_ERROR"
+    assert called == []

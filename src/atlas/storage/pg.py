@@ -22,7 +22,6 @@ from typing import Any, Literal
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import IntegrityError
 
-from atlas.iam.principals import Principal, Role
 from atlas.monitoring.alerts import (
     Alert,
     RuleConfig,
@@ -294,7 +293,7 @@ class PgSessionStore:
             if expires_at is not None and expires_at <= datetime.now(timezone.utc):
                 self.revoke(token)
                 return None
-        from atlas.iam.principals import SEED_TENANTS, SEED_USERS
+        from atlas.iam.principals import SEED_TENANTS, SEED_USERS, Principal, Role
 
         role = Role(row[2])
         user = next((u for u in SEED_USERS if u.username == username), None)
@@ -345,6 +344,7 @@ class PgUserStore:
 
     def _row_to_account(self, row: Any) -> "UserAccount":
         from atlas.iam.accounts import UserAccount
+        from atlas.iam.principals import Role
 
         return UserAccount(
             tenant_id=row[0],

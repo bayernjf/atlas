@@ -4,9 +4,32 @@
 
 ## [Unreleased]
 
-### docs：wait 事件跨重启持久化 v1 批立项（docs/53，2026-09-23；dev、未落码）
+### feat：event wait timeoutSeconds 表达式化 B5 落码收口（D19 子集，2026-09-23；dev、未 push；无 ADR）
 
-- docs-only 立项：event 等待（docs/47 进程内 v1）补齐 T18-B 跨重启机制——event 挂起帧（kind=wait，新增帧字段 `wait:{waitType,eventKey,onTimeout,timeoutSeconds}`，零 DDL）、runs 同步 suspended、`EventWaitBroker.restore` 同 token/event_key 剩余超时幂等重建、启动恢复分支；`/api/waits` 三端点跨重启可用。零新依赖/零迁移/无 ADR/无新 REST/前端零改动；D19 部分取回不解除（多实例跨进程路由、停摆期信号排队、debug 跨重启仍缓做）。候选 U400-U402；立项基线后端 1548/59、前端 636/2。
+- event wait config 增 `timeoutMode`（static 默认 / expression）与可选 `timeoutExpression`（≤200）；loader 抽出共用 `_resolve_wait_expression(node_id,expr,context,lo,hi)`——duration（1-600）/event（1-3600）统一经条件引擎 evaluate_expression 求值，非 bool/非有限/越界 run failed WAIT_DURATION_INVALID；旧图缺省 static 零回归，跨重启帧存已求值秒数、resume 不重求值。
+- 前端 wait.schema event oneOf 加 timeoutMode radio/timeoutExpression、L1 按 mode 校验（static 缺 timeoutSeconds 报 1-3600、expression 缺表达式报必填）。`tests/test_event_wait_graph.py` 净增 3、`tests/test_graph_dsl.py` 净增 6。收口全量内存门 **1591 passed / 60 skipped**（净增 9、零失败，以收口实跑为准）、前端 **636/2**（零新增前端测）。>3600 长时刻、jitter、多事件竞速取消、多实例跨进程路由仍缓做。**B4（通知 {{}} 模板插值）勘察判空集、不落码**：插值接缝已由 `graph/interpolation.interpolate` 全覆盖（tool params 统一插值、approval summary/recipients、cards、eventKey、prompt 均接线，告警正文为系统字段无用户模板）。
+
+### feat：跨版本配置结构 diff B3 落码收口（D26 子集，2026-09-23；dev、未 push；无 ADR）
+
+- 新纯函数 `graph/diff.py`：`diff_graph(base,candidate)` 输出 nodes/edges/variables 的 added/removed/changed——节点 changed 细分 type/name（{field,from,to}）与 config 键级（新增/删除/值变，{field:"config",configKeys}），position 等画布布局不参与；附 `diff_summary`/`has_changes`，零依赖。
+- `GET /api/graphs/{id}/diff`（read、纯只读不产版本）：toVersion 缺省＝latest 草稿、fromVersion 缺省＝最近发布版，该图从未发布则基线取空图（首次发布前全为新增），目标/基线快照缺失 404、跨租户不泄漏。前端 ReleaseModal「与 vN/空图 的配置差异」折叠区（与门禁并行、失败 fail-safe）。
+- `tests/test_graph_diff.py` 净增 6、`tests/test_api_graph_diff.py` 净增 4。收口全量内存门 **1582 passed / 60 skipped**（净增 10、零失败，以收口实跑为准）、前端 **636/2**；零新依赖/零迁移（新增 1 read 端点）。D26 部分取回不解除（影子模式线上旁路、Mock 工具响应、用例编辑参数化、PG 持久化与多租户共享仍缓做）。
+
+### feat：OpenAPI HTTP Digest 认证 B2 落码收口（docs/46 §8，2026-09-23；dev、未 push；无 ADR）
+
+- parser 收录 `type:http,scheme:digest`（kind=digest/param=Authorization/无 prefix），凭证值与 basic 同形（{username,password} JSON 信封、SecretProvider 加密）；适配器不静态拼 header，构造 `httpx.DigestAuth` 经 `HttpApiClient.request(auth=)` 透传——httpx 单次调用内完成 RFC2617 挑战-响应（先无 Authorization 探测、收 401 WWW-Authenticate、按 realm/nonce/qop 算 HA1/HA2/response 重发），零新依赖（httpx 已有）。
+- `models.py` kind 加 digest、`adapter.py` `_resolve_credentials` 返三元组 (headers,query,auth)、basic/digest 合并解析、`httpapi/service.py` request 加 auth 参数。`tests/test_openapi_adapter.py` 净增 2（MockTransport 挑战流重算 MD5 response 验证、坏信封 SECRET_DECRYPT_ERROR 零外呼）、`tests/test_openapi_parser.py` digest 移入支持集。收口全量内存门 **1572 passed / 60 skipped**（净增 2、零失败）；零迁移/无新 REST/前端零改动。**cookie 判为缓做**（OpenAPI 3.x 无标准 cookie scheme、apiKey in 不支持 cookie，本质登录端点+有状态会话，随连接/会话管理批次，参 docs/34 T4）；oauth2/openIdConnect、连接测试、凭证轮换、真实 API 联调仍缓做。D22 部分取回不解除。
+
+### feat：告警 lifecycle 通知 B1 落码收口（docs/52 §7，2026-09-23；dev、未 push；无 ADR）
+
+- AlertNotifier 除新建外，对三类告警状态变化经既有 MessageService 旁路投递，过滤/失败口径同新建（enabled/to/minSeverity、fail-safe）：**merged** 合并归并（subject「再次发生已归并」，_raise_or_merge 与 raise_rollout_gate_alert 合并分支，body 含累计 N 次）；**escalated** 读时惰性 warning→critical（「未确认已升级」，升级幂等只触发一次）；**resolved** resolve_alert（「告警已解决」）。acknowledge 不通知。
+- `notify.py` 增 `LIFECYCLE_TITLES`/`build_lifecycle_subject`/`build_lifecycle_body`/`AlertNotifier.notify_lifecycle`；`records.py` 六处接线（pending 带 transition、_notify_outside_lock 分流、合并/升级/解决点；内存档）。`tests/test_monitoring_notify.py` 净增 4（merged/escalated/resolved + severity 过滤 + fail-safe，旧 3 测改写为新行为）。收口全量内存门 **1570 passed / 60 skipped**（净增 4、零失败）；零新依赖/零迁移/无新 REST·ADR/前端零改动。D28 部分取回不解除（PG 档 lifecycle、恢复通知、lifecycle 限流退避仍缓做）。
+
+### feat：wait 事件跨重启持久化 v1 批落码收口（docs/53，2026-09-23；dev、未 push；无 ADR）
+
+- event 等待（docs/47 进程内 v1）补齐 T18-B 跨重启机制：event 挂起即落 kind=wait 中断帧（帧内新增 `wait:{waitType:event,eventKey,onTimeout,timeoutSeconds}`，零 DDL）、runs 同步 suspended；`EventWaitBroker.restore` 同 token/event_key、按绝对 deadline 扣剩余超时幂等重建，启动恢复先 restore 后续跑；`/api/waits` 三端点（list/广播/直投）跨重启可用；缺 wait 帧 → WAIT_EVENT_FRAME_INVALID。
+- 落码顺带修复两个 PG 整栈阻断：storage.pg↔iam 循环导入（`719b3c9`，pg_deliveries 改模块级 `_now()`、storage.pg 删顶层 iam import 延迟到方法内）；PG 档首启不播种初始管理员、无法登录（`6ad1a9f`，两档都幂等 seed）。
+- U400–U402 转正式；HTTP 重启冒烟 `scripts/dev/d53_event_wait_restart_smoke.py` **ALL SCENARIOS PASSED**（直投信号 completed/payload 透传、广播 released=1、onTimeout=fail 重启后 WAIT_TIMEOUT_FAILED）。收口全量内存门 **1566 passed / 60 skipped**；零新依赖/零迁移/无 ADR/无新 REST/前端零改动；D19 部分取回不解除（多实例跨进程路由、停摆期信号排队、debug 跨重启仍缓做）。
 
 ### feat：监控告警外部通知 v1 批落码收口（docs/52，2026-09-23；dev、未 push；无 ADR）
 

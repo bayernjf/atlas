@@ -39,7 +39,7 @@
 
 ## 2. 非目标（显式不做）
 
-- Digest 等其他 HTTP authentication scheme；cookie 认证（Cookie header / JWT in cookie）；OAuth2 / openIdConnect（token 获取刷新仍随 D22 后续批）。
+- **【2026-09-23 B2 更新】Digest 已落码（见 §8）**；cookie 认证（Cookie header / JWT in cookie；OpenAPI 无标准 scheme、属会话管理）仍缓做；OAuth2 / openIdConnect（token 获取刷新随 D22 后续批）。
 - 连接测试（test credential）、凭证取回/轮换/过期、SSRF 策略调整、按字段的 secret 引用（`secret://` 进 basic 字段）。
 - Basic 用户名/密码的强度策略与审计记录；多实例会话。
 - 任何新依赖、新迁移、新 REST 端点或错误码、新 ADR。
@@ -79,3 +79,12 @@
 - 门禁：后端全量 `.venv/bin/pytest` 1398 passed / 59 skipped（基线 1391/59，净 +7）；前端 `pnpm test` 602 passed / 2 skipped（基线 597/2，净 +5），`pnpm lint` 零新增告警，`pnpm build` 通过。
 - 浏览器冒烟（4 截图 docs/smoke-shots/basic46-*；真实 https://httpbin.org）：①预览 basic 双输入；②无凭证运行 fail-closed FAILED「OPENAPI_CREDENTIAL_MISSING…缺少：BasicAuth」；③UI 配置后鉴权列「已配置 1/1」；④配凭证运行 SUCCESS、HTTP 200，body `{"authenticated":true,"user":"alice"}`（错误凭证 httpbin 将返 401，等价证明 `Authorization: Basic base64(alice:secret)` 被接受）；控制台零产品错误（仅有重启后旧 token 的一次预期 401）。
 - 仍缓做（docs/14 D22 不解除）：digest/cookie、oauth2/openId、连接测试、凭证轮换、真实账号体系（11 S1）。
+
+## 8. 增补：HTTP Digest 认证（B2，2026-09-23 落码）
+
+§2 非目标中的 Digest **已落码（随规格内存/PG 两档存储）**：parser 收录 `type:http,scheme:digest` 为 `kind=digest`（param=Authorization、无 prefix）；凭证值与 basic 同形（`{username,password}` JSON 信封、SecretProvider 加密）。适配器解密后**不静态拼 header**，而是构造 `httpx.DigestAuth(username,password)` 经 `HttpApiClient.request(auth=...)` 透传——httpx 在单次调用内完成 RFC2617 挑战流（先无 Authorization 探测，收 401 `WWW-Authenticate: Digest ...`，按 realm/nonce/qop 算 HA1/HA2/response 后带 `Authorization: Digest` 重发），零新依赖（httpx 已是依赖）。
+
+- 接缝：`models.py` kind 加 `digest`；`parser.py` 加 digest 分支；`adapter.py` `_resolve_credentials` 返三元组 (headers, query, auth)、basic/digest 合并解析 {username,password}，digest 赋 `httpx.DigestAuth`；`httpapi/service.py` `request` 加 `auth` 参数传给 httpx。
+- 测试：`tests/test_openapi_adapter.py` 加 challenge-response 端到端（MockTransport 返 401 challenge、重算 MD5 response 验证通过）与坏信封 SECRET_DECRYPT_ERROR 不发请求；`tests/test_openapi_parser.py` digest 移入支持集。收口全量内存门 **1572 passed / 60 skipped（净增 2，零失败）**。
+- **仍缓做**：cookie 认证（OpenAPI 3.x 无标准 cookie scheme、apiKey in 不支持 cookie，本质是登录端点+有状态会话，随连接/会话管理批次，参 docs/34 T4 OAuth2 连接管理）；oauth2/openIdConnect；连接测试、凭证轮换、真实外部 API 联调。
+

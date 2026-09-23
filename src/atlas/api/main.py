@@ -40,6 +40,7 @@ from atlas.database.service import DatabaseClient, demo_engine
 from atlas.debug import DebugController, DebugStopped
 from atlas.graph.conditions import validate_expression
 from atlas.graph.dsl import GraphDSL, GraphValidationError, parse_graph, valid_event_key
+from atlas.graph.diff import diff_graph, diff_summary
 from atlas.graph.loader import _tool_permissions, compile_graph, run_graph, tool_input_schemas
 from atlas.collaboration.cancellations import RunCancelled
 from atlas.collaboration.event_waits import (
@@ -177,6 +178,15 @@ def _resume_from_frame(engine, frame: dict) -> None:
             remaining_seconds=remaining_seconds(frame.get("deadline_at")),
             card_template_id=card_template_id,
             card_context=card_context_from_frame(frame) if card_template_id else None,
+        )
+    elif frame["kind"] == "wait" and (frame.get("wait") or {}).get("waitType") == "event":
+        wait_payload = frame["wait"]
+        services.event_wait_broker.restore(
+            token=token,
+            event_key=wait_payload["eventKey"],
+            node_id=frame["node_id"],
+            graph_id=frame["resume_state"].get("graph_id", ""),
+            timeout_seconds=remaining_seconds(frame.get("deadline_at")),
         )
     threading.Thread(
         target=_resume_run, args=(engine, services, frame), daemon=True
@@ -1833,6 +1843,44 @@ def list_graph_versions(
 ) -> dict[str, list[int]]:
     """已发布版本号列表（升序；未发布过 → 空列表）（M6）。"""
     return {"items": services_for(principal).graph_store.list_versions(graph_id)}
+
+
+@app.get("/api/graphs/{graph_id}/diff")
+def graph_diff(
+    graph_id: str,
+    from_version: int | None = Query(default=None, alias="fromVersion"),
+    to_version: int | None = Query(default=None, alias="toVersion"),
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """两版 graph 配置结构差异（B3，D26 子集，read）：纯只读、不产版本、不阻断。
+
+    - toVersion 缺省＝latest 草稿；给定＝该发布版本快照。
+    - fromVersion 缺省＝最近发布版本；该图从未发布时基线取空图（首次发布前全为新增）。
+    目标快照缺失（图/版本不存在）→ 404，跨租户不泄漏存在性。
+    """
+    store = services_for(principal).graph_store
+    to_raw = (
+        store.get(graph_id) if to_version is None else store.get(graph_id, to_version)
+    )
+    if to_raw is None:
+        raise HTTPException(status_code=404, detail=f"Graph 或目标版本不存在：{graph_id}")
+    if from_version is None:
+        versions = store.list_versions(graph_id)
+        from_raw = store.get(graph_id, versions[-1]) if versions else {}
+        from_label: int | None = versions[-1] if versions else None
+    else:
+        from_raw = store.get(graph_id, from_version)
+        from_label = from_version
+        if from_raw is None:
+            raise HTTPException(status_code=404, detail=f"基线版本不存在：{from_version}")
+    diff = diff_graph(from_raw, to_raw)
+    return {
+        "graphId": graph_id,
+        "fromVersion": from_label,
+        "toVersion": to_version,  # None 表示 latest 草稿
+        "summary": diff_summary(diff),
+        "diff": diff,
+    }
 
 
 @app.get("/api/graphs/{graph_id}/rollout")

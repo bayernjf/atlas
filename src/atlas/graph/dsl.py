@@ -798,15 +798,36 @@ def _validate_wait_config(
                     "占位内内容不检查",
                     "/eventKey",
                 )
-        timeout = config.get("timeoutSeconds")
-        if isinstance(timeout, bool) or not isinstance(timeout, int):
-            add(f"{prefix} 超时时间（timeoutSeconds）必须是整数秒", "/timeoutSeconds")
-        elif not MIN_EVENT_WAIT_SECONDS <= timeout <= MAX_EVENT_WAIT_SECONDS:
+        timeout_mode = config.get("timeoutMode", "static")
+        if timeout_mode not in ("static", "expression"):
             add(
-                f"{prefix} 超时时间需在 {MIN_EVENT_WAIT_SECONDS}-"
-                f"{MAX_EVENT_WAIT_SECONDS} 秒之间（当前 {timeout}）",
-                "/timeoutSeconds",
+                f"{prefix} 超时模式（timeoutMode）必须是 static 或 expression",
+                "/timeoutMode",
             )
+        elif timeout_mode == "expression":
+            timeout_expression = config.get("timeoutExpression")
+            if not isinstance(timeout_expression, str) or not timeout_expression.strip():
+                add(
+                    f"{prefix} 超时表达式（timeoutExpression）为必填",
+                    "/timeoutExpression",
+                )
+            elif len(timeout_expression) > MAX_DURATION_EXPRESSION_LENGTH:
+                add(
+                    f"{prefix} 超时表达式长度不能超过 "
+                    f"{MAX_DURATION_EXPRESSION_LENGTH} 字符"
+                    f"（当前 {len(timeout_expression)}）",
+                    "/timeoutExpression",
+                )
+        else:
+            timeout = config.get("timeoutSeconds")
+            if isinstance(timeout, bool) or not isinstance(timeout, int):
+                add(f"{prefix} 超时时间（timeoutSeconds）必须是整数秒", "/timeoutSeconds")
+            elif not MIN_EVENT_WAIT_SECONDS <= timeout <= MAX_EVENT_WAIT_SECONDS:
+                add(
+                    f"{prefix} 超时时间需在 {MIN_EVENT_WAIT_SECONDS}-"
+                    f"{MAX_EVENT_WAIT_SECONDS} 秒之间（当前 {timeout}）",
+                    "/timeoutSeconds",
+                )
         on_timeout = config.get("onTimeout", "continue")
         if on_timeout not in WAIT_TIMEOUT_POLICIES:
             add(

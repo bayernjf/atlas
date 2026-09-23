@@ -6,11 +6,13 @@ import {
   exportReleaseReport,
   getReleaseReport,
   listReleaseReports,
+  getGraphDiff,
   getSubgraphUpgrades,
   publishGraph,
   runReleaseGate,
   type GateCaseRow,
   type GateReport,
+  type GraphDiffResponse,
   type ReleaseReport,
   type ReleaseReportSummary,
   type SubgraphUpgrade,
@@ -49,6 +51,8 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
   const [detailById, setDetailById] = useState<Record<string, ReleaseReport>>({})
   // ⑪ 子图版本升级体检（只读，与门禁并行加载；失败 fail-safe 不阻断）
   const [upgrades, setUpgrades] = useState<SubgraphUpgrade[] | null>(null)
+  // B3 与上一版本的配置结构差异（只读，与门禁并行加载；失败 fail-safe 不阻断）
+  const [graphDiff, setGraphDiff] = useState<GraphDiffResponse | null>(null)
 
   // 打开弹窗时重置上一轮状态（渲染期按 prop 变化重置，避免 effect 内同步 setState）
   const [prevOpen, setPrevOpen] = useState(open)
@@ -60,6 +64,7 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
       setReport(null)
       setPublishedVersion(null)
       setUpgrades(null)
+      setGraphDiff(null)
     }
   }
 
@@ -70,6 +75,15 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
       setUpgrades(await getSubgraphUpgrades(graphId))
     } catch {
       setUpgrades([])
+    }
+  }, [graphId])
+
+  const loadDiff = useCallback(async () => {
+    if (!graphId) return
+    try {
+      setGraphDiff(await getGraphDiff(graphId))
+    } catch {
+      setGraphDiff(null)
     }
   }, [graphId])
 
@@ -103,8 +117,10 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
       void loadGate()
       // oxlint-disable-next-line react/set-state-in-effect
       void loadUpgrades()
+      // oxlint-disable-next-line react/set-state-in-effect
+      void loadDiff()
     }
-  }, [open, loadGate, loadUpgrades])
+  }, [open, loadGate, loadUpgrades, loadDiff])
 
   const doPublish = async () => {
     if (!graphId) return
@@ -338,6 +354,18 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
           pagination={false}
           locale={{ emptyText: loading ? '回放中…' : '暂无匹配用例' }}
         />
+        {graphDiff && (
+          <Collapse
+            ghost
+            items={[
+              {
+                key: 'configDiff',
+                label: `与 ${graphDiff.fromVersion === null ? '空图' : `v${graphDiff.fromVersion}`} 的配置差异（${diffLabelParts(graphDiff.summary).join(' · ') || '无变化'}）`,
+                children: <DiffView data={graphDiff.diff} />,
+              },
+            ]}
+          />
+        )}
         <Collapse
           ghost
           items={[
@@ -379,3 +407,70 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
     </Modal>
   )
 }
+
+/** B3：把 diff summary 折叠为「节点 +N」等中文片段（无变化返回空数组）。 */
+function diffLabelParts(summary: Record<string, number>): string[] {
+  return [
+    summary.nodesAdded && `节点 +${summary.nodesAdded}`,
+    summary.nodesRemoved && `节点 -${summary.nodesRemoved}`,
+    summary.nodesChanged && `节点改 ${summary.nodesChanged}`,
+    summary.edgesAdded && `边 +${summary.edgesAdded}`,
+    summary.edgesRemoved && `边 -${summary.edgesRemoved}`,
+    summary.variablesAdded && `变量 +${summary.variablesAdded}`,
+    summary.variablesRemoved && `变量 -${summary.variablesRemoved}`,
+    summary.variablesChanged && `变量改 ${summary.variablesChanged}`,
+  ].filter((x): x is string => Boolean(x))
+}
+
+/** B3：渲染两版 graph 的配置结构差异。 */
+function DiffView({ data }: { data: GraphDiffResponse['diff'] }) {
+  const { nodes, edges, variables } = data
+  const empty =
+    nodes.added.length === 0 && nodes.removed.length === 0 && nodes.changed.length === 0 &&
+    edges.added.length === 0 && edges.removed.length === 0 &&
+    variables.added.length === 0 && variables.removed.length === 0 && variables.changed.length === 0
+  if (empty) return <Text type="secondary">两版结构一致，无配置差异。</Text>
+  return (
+    <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+      {nodes.added.length > 0 && (
+        <div><Text type="success">新增节点：</Text>{nodes.added.map((id) => <Tag key={id} color="success">{id}</Tag>)}</div>
+      )}
+      {nodes.removed.length > 0 && (
+        <div><Text type="danger">删除节点：</Text>{nodes.removed.map((id) => <Tag key={id} color="error">{id}</Tag>)}</div>
+      )}
+      {nodes.changed.length > 0 && (
+        <div>
+          <Text strong>修改节点：</Text>
+          {nodes.changed.map((c) => (
+            <div key={c.id} style={{ marginLeft: 8, marginTop: 4 }}>
+              <Tag>{c.id}</Tag>
+              {c.changes.map((ch, i) =>
+                ch.field === 'config' ? (
+                  <Tag key={i} color="blue">配置：{ch.configKeys.join('、')}</Tag>
+                ) : (
+                  <Tag key={i} color="orange">{ch.field}：{String(ch.from)} → {String(ch.to)}</Tag>
+                ),
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {edges.added.length > 0 && (
+        <div><Text type="success">新增连线：</Text>{edges.added.map((id) => <Tag key={id} color="success">{id}</Tag>)}</div>
+      )}
+      {edges.removed.length > 0 && (
+        <div><Text type="danger">删除连线：</Text>{edges.removed.map((id) => <Tag key={id} color="error">{id}</Tag>)}</div>
+      )}
+      {variables.added.length > 0 && (
+        <div><Text type="success">新增变量：</Text>{variables.added.map((n) => <Tag key={n} color="success">{n}</Tag>)}</div>
+      )}
+      {variables.removed.length > 0 && (
+        <div><Text type="danger">删除变量：</Text>{variables.removed.map((n) => <Tag key={n} color="error">{n}</Tag>)}</div>
+      )}
+      {variables.changed.length > 0 && (
+        <div><Text strong>修改变量：</Text>{variables.changed.map((n) => <Tag key={n} color="blue">{n}</Tag>)}</div>
+      )}
+    </Space>
+  )
+}
+

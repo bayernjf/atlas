@@ -10,6 +10,8 @@ from __future__ import annotations
 import base64
 import json
 import re
+
+import httpx
 from urllib.parse import quote, urlencode
 
 from atlas.harness.base import (
@@ -87,7 +89,7 @@ class ImportedApiHarnessAdapter(HarnessAdapter):
             resolved = self._resolve_credentials(descriptor)
             if isinstance(resolved, StructuredError):
                 return ActionResult.failed(resolved)
-            extra_headers, extra_query = resolved
+            extra_headers, extra_query, auth = resolved
             url = self._build_url(descriptor, params, extra_query)
             headers = self._headers(descriptor, params, extra_headers)
             output = self.client.request(
@@ -97,6 +99,7 @@ class ImportedApiHarnessAdapter(HarnessAdapter):
                 body=params.get("body"),
                 timeout=request.timeout or DEFAULT_TIMEOUT,
                 idempotent=descriptor.idempotent,
+                auth=auth,
             )
         except HttpApiCallError as exc:
             return ActionResult.failed(StructuredError(exc.code, str(exc)))
@@ -104,21 +107,22 @@ class ImportedApiHarnessAdapter(HarnessAdapter):
 
     def _resolve_credentials(
         self, descriptor: OperationDescriptor
-    ) -> tuple[dict[str, str], dict[str, str]] | StructuredError:
+    ) -> tuple[dict[str, str], dict[str, str], object] | StructuredError:
         if not descriptor.security:
-            return {}, {}
+            return {}, {}, None
         envelopes = self.spec.credential_envelopes
         schemes = self.spec.security_schemes
         missing: list[str] = []
         for group in descriptor.security:
             if not group:
-                return {}, {}
+                return {}, {}, None
             absent = [name for name in group if name not in envelopes]
             if absent:
                 missing.extend(absent)
                 continue
             headers: dict[str, str] = {}
             query: dict[str, str] = {}
+            auth: object = None
             for name in group:
                 if self._secret_provider is None:
                     return StructuredError(
@@ -131,26 +135,29 @@ class ImportedApiHarnessAdapter(HarnessAdapter):
                         "SECRET_DECRYPT_ERROR", f"密钥解密失败：{name}"
                     )
                 scheme = schemes[name]
-                if scheme.kind == "basic":
+                if scheme.kind in ("basic", "digest"):
                     try:
                         fields = json.loads(value)
                         username = fields["username"]
                         password = fields["password"]
-                    except (json.JSONDecodeError, TypeError, KeyError) as exc:
+                    except (json.JSONDecodeError, TypeError, KeyError):
                         return StructuredError(
                             "SECRET_DECRYPT_ERROR", f"密钥解密失败：{name}"
                         )
-                    token = base64.b64encode(
-                        f"{username}:{password}".encode()
-                    ).decode("ascii")
-                    headers[scheme.param] = f"{scheme.prefix}{token}"
+                    if scheme.kind == "basic":
+                        token = base64.b64encode(
+                            f"{username}:{password}".encode()
+                        ).decode("ascii")
+                        headers[scheme.param] = f"{scheme.prefix}{token}"
+                    else:
+                        auth = httpx.DigestAuth(username, password)
                     continue
                 rendered = f"{scheme.prefix}{value}"
                 if scheme.kind == "api_key" and scheme.location == "query":
                     query[scheme.param] = rendered
                 else:
                     headers[scheme.param] = rendered
-            return headers, query
+            return headers, query, auth
         names = "、".join(dict.fromkeys(missing))
         return StructuredError(
             "OPENAPI_CREDENTIAL_MISSING",

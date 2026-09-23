@@ -134,17 +134,27 @@ class MonitoringStore:
                 # docs/33 §5.1：命中活跃静默则不新建/不合并/不升级，仅累加压下计数
                 if self._ops.suppress_if_matched(event.rule_id, record.graph_id):
                     continue
-                new_alert = self._raise_or_merge(event=event, record=record)
-                if new_alert is not None:
-                    pending.append((new_alert, self._channel.model_copy(deep=True)))
-        for alert, cfg in pending:
-            self._notify_outside_lock(alert, cfg)
+                raised = self._raise_or_merge(event=event, record=record)
+                if raised is not None:
+                    alert, transition = raised
+                    pending.append(
+                        (alert, self._channel.model_copy(deep=True), transition)
+                    )
+        for alert, cfg, transition in pending:
+            self._notify_outside_lock(alert, cfg, transition=transition)
         return record
 
-    def _notify_outside_lock(self, alert: Alert, cfg: AlertChannel) -> None:
+    def _notify_outside_lock(
+        self, alert: Alert, cfg: AlertChannel, *, transition: str = "new"
+    ) -> None:
         if self._notifier is None:
             return
-        delivery = self._notifier.notify(alert, cfg)
+        if transition == "new":
+            delivery = self._notifier.notify(alert, cfg)
+        else:
+            delivery = self._notifier.notify_lifecycle(
+                alert, cfg, transition=transition
+            )
         if delivery.lastNotifiedAt is not None:
             self.record_alert_channel_delivery(delivery)
 
@@ -158,7 +168,7 @@ class MonitoringStore:
                 alert.count += 1
                 alert.last_seen = record.finished_at
                 alert.last_run_id = record.id
-                return None
+                return alert, "merged"
         self._alert_counter += 1
         alert = Alert(
             id=f"alt-{self._alert_counter}",
@@ -173,7 +183,7 @@ class MonitoringStore:
             assignee=self._ops.current_assignee(),
         )
         self._alerts.append(alert)
-        return alert
+        return alert, "new"
 
     def raise_rollout_gate_alert(
         self,
@@ -189,6 +199,7 @@ class MonitoringStore:
         故不经 evaluate_rules；同 (rule_id, graph_id) 未 resolved 告警合并计数、保留首次 action。
         """
         with self._lock:
+            merged_alert: Alert | None = None
             for alert in reversed(self._alerts):
                 if (
                     alert.rule_id == "rollout_gate"
@@ -198,22 +209,27 @@ class MonitoringStore:
                     alert.count += 1
                     alert.last_seen = _now_iso()
                     alert.last_run_id = last_run_id or alert.last_run_id
-                    return alert
-            self._alert_counter += 1
-            now = _now_iso()
-            alert = Alert(
-                id=f"alt-{self._alert_counter}",
-                rule_id="rollout_gate",
-                graph_id=graph_id,
-                severity="critical",
-                message=message,
-                first_seen=now,
-                last_seen=now,
-                last_run_id=last_run_id,
-                action=action,
-            )
-            self._alerts.append(alert)
+                    merged_alert = alert
+                    break
             cfg = self._channel.model_copy(deep=True)
+            if merged_alert is None:
+                self._alert_counter += 1
+                now = _now_iso()
+                alert = Alert(
+                    id=f"alt-{self._alert_counter}",
+                    rule_id="rollout_gate",
+                    graph_id=graph_id,
+                    severity="critical",
+                    message=message,
+                    first_seen=now,
+                    last_seen=now,
+                    last_run_id=last_run_id,
+                    action=action,
+                )
+                self._alerts.append(alert)
+        if merged_alert is not None:
+            self._notify_outside_lock(merged_alert, cfg, transition="merged")
+            return merged_alert
         self._notify_outside_lock(alert, cfg)
         return alert
 
@@ -229,27 +245,38 @@ class MonitoringStore:
         with self._lock:
             return next((run for run in self._runs if run.id == run_id), None)
 
-    def _apply_escalations_locked(self) -> None:
-        """docs/33 §5.2：读时惰性把超时 open warning 升级为 critical（回写进程内告警）。"""
+    def _apply_escalations_locked(self) -> list[Alert]:
+        """docs/33 §5.2：读时惰性把超时 open warning 升级为 critical（回写进程内告警）；
+        返回本次真正升级的告警，供锁外发 escalated 通知（升级幂等、只触发一次）。"""
         now = _now_iso()
+        escalated: list[Alert] = []
         for alert in self._alerts:
             upgraded = apply_escalation(alert, self._rules, now)
             if upgraded is not alert:
                 alert.severity = upgraded.severity
                 alert.escalated_at = upgraded.escalated_at
+                escalated.append(alert)
+        return escalated
 
     def list_alerts(self, status: str | None = None) -> list[Alert]:
         with self._lock:
-            self._apply_escalations_locked()
+            escalated = self._apply_escalations_locked()
             alerts = list(self._alerts)
+            cfg = self._channel.model_copy(deep=True)
+        for alert in escalated:
+            self._notify_outside_lock(alert, cfg, transition="escalated")
         if status:
             alerts = [alert for alert in alerts if alert.status == status]
         return list(reversed(alerts))
 
     def get_alert(self, alert_id: str) -> Alert | None:
         with self._lock:
-            self._apply_escalations_locked()
-            return next((alert for alert in self._alerts if alert.id == alert_id), None)
+            escalated = self._apply_escalations_locked()
+            alert = next((item for item in self._alerts if item.id == alert_id), None)
+            cfg = self._channel.model_copy(deep=True)
+        for item in escalated:
+            self._notify_outside_lock(item, cfg, transition="escalated")
+        return alert
 
     def acknowledge_alert(self, alert_id: str) -> Alert | Literal[False] | None:
         with self._lock:
@@ -269,7 +296,9 @@ class MonitoringStore:
             if alert.status == "resolved":
                 return False
             alert.status = "resolved"
-            return alert
+            cfg = self._channel.model_copy(deep=True)
+        self._notify_outside_lock(alert, cfg, transition="resolved")
+        return alert
 
     def get_rules(self) -> RuleConfig:
         with self._lock:

@@ -135,6 +135,7 @@ class HttpApiClient:
         body: object = None,
         timeout: float = DEFAULT_TIMEOUT,
         idempotent: bool = False,
+        auth: object = None,
     ) -> dict[str, object]:
         method = (method or "GET").upper()
         if method not in ALLOWED_METHODS:
@@ -188,6 +189,7 @@ class HttpApiClient:
                 json=body if isinstance(body, (dict, list)) else None,
                 headers=resolved_headers,
                 timeout=timeout_value,
+                auth=auth,
             )
 
         try:
