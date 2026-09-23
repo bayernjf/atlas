@@ -114,3 +114,73 @@ def test_reset_clears_all(broker):
     broker.request(event_key="k", node_id="w", graph_id="g", timeout_seconds=5)
     broker.reset()
     assert broker.list_pending() == []
+
+def test_restore_reregisters_pending_with_remaining_timeout(broker):
+    broker.restore(
+        token="wait-deadbeef",
+        event_key="order_paid",
+        node_id="wait-1",
+        graph_id="g1",
+        timeout_seconds=2,
+    )
+    items = broker.list_pending()
+    assert len(items) == 1
+    assert items[0]["token"] == "wait-deadbeef"
+    assert items[0]["eventKey"] == "order_paid"
+    assert items[0]["timeoutSeconds"] == 2
+
+
+def test_restore_signal_key_releases_wait(broker):
+    broker.restore(
+        token="wait-deadbeef",
+        event_key="order_paid",
+        node_id="wait-1",
+        graph_id="g1",
+        timeout_seconds=30,
+    )
+
+    released = broker.signal_key("order_paid", {"paid": True})
+    assert released == 1
+    assert broker.wait("wait-deadbeef") == {"paid": True}
+
+
+def test_restore_signal_token_releases_wait(broker):
+    broker.restore(
+        token="wait-deadbeef",
+        event_key="order_paid",
+        node_id="wait-1",
+        graph_id="g1",
+        timeout_seconds=30,
+    )
+    broker.signal_token("wait-deadbeef", {"n": 1})
+    assert broker.wait("wait-deadbeef") == {"n": 1}
+
+
+def test_restore_expired_deadline_times_out_immediately(broker):
+    broker.restore(
+        token="wait-deadbeef",
+        event_key="order_paid",
+        node_id="wait-1",
+        graph_id="g1",
+        timeout_seconds=0,
+    )
+    assert broker.wait("wait-deadbeef") is None
+
+
+def test_restore_is_idempotent_and_keeps_signaled_state(broker):
+    broker.restore(
+        token="wait-deadbeef",
+        event_key="order_paid",
+        node_id="wait-1",
+        graph_id="g1",
+        timeout_seconds=30,
+    )
+    broker.signal_token("wait-deadbeef", {"paid": True})
+    broker.restore(
+        token="wait-deadbeef",
+        event_key="order_paid",
+        node_id="wait-1",
+        graph_id="g1",
+        timeout_seconds=30,
+    )
+    assert broker.wait("wait-deadbeef") == {"paid": True}

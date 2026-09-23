@@ -6,7 +6,7 @@ broker 以 monotonic deadline 判定超时。等待以 0.2s 切片轮询 ``is_ca
 支持协作式取消（RunCancelled，节点边界语义）。
 
 每租户一个、挂 TenantServices（内存/PG 两档均为内存实例，同 cancellation_broker）；
-进程内、重启即失，不写中断帧、不支持多实例——持久化中断恢复随 docs/14 D19。
+进程内、重启即失、不支持多实例；PG 后端的跨重启恢复经 `restore()`（docs/53）。
 """
 
 from __future__ import annotations
@@ -67,6 +67,33 @@ class EventWaitBroker:
             self._pending[token] = pending
             self._by_key.setdefault(event_key, set()).add(token)
         return token
+
+    def restore(
+        self,
+        *,
+        token: str,
+        event_key: str,
+        node_id: str,
+        graph_id: str,
+        timeout_seconds: float,
+    ) -> None:
+        """启动恢复（docs/53）：以中断帧重建 pending，deadline 只计剩余。
+
+        幂等：token 已存在（含已 signaled）时 no-op，不覆盖在途状态。
+        """
+        with self._lock:
+            if token in self._pending:
+                return
+            pending = _Pending(
+                token=token,
+                event_key=event_key,
+                node_id=node_id,
+                graph_id=graph_id,
+                deadline=time.monotonic() + max(0.0, timeout_seconds),
+                timeout_seconds=int(max(0.0, timeout_seconds)),
+            )
+            self._pending[token] = pending
+            self._by_key.setdefault(event_key, set()).add(token)
 
     def wait(self, token: str, *, is_cancelled=None) -> dict | None:
         """阻塞至信号到达或超时；返回信号 payload（dict）=signaled，None=超时。
