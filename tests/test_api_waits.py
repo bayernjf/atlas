@@ -56,7 +56,7 @@ def test_signal_event_releases_pending():
             json={"eventKey": "order_paid_a", "payload": {"paid": True}},
         )
         assert response.status_code == 200
-        assert response.json() == {"released": 1}
+        assert response.json() == {"released": 1, "queued": False}  # docs/55
         broker = tenant_registry.get("t1").event_wait_broker
         assert broker.wait(token) == {
             "paid": True,
@@ -70,7 +70,7 @@ def test_signal_event_without_pending_returns_zero():
     response = anon.post(
         "/api/waits/events", headers=OPERATOR_A, json={"eventKey": "nobody_home"}
     )
-    assert response.json() == {"released": 0}
+    assert response.json() == {"released": 0, "queued": True}  # docs/55：无等待者则入 per-key 排队
 
 
 def test_signal_token_success_conflict_and_not_found():
