@@ -1,6 +1,8 @@
 # 49. wait 节点定时等待动态时长 v1 批契约设计
 
 > 立项：2026-09-23（AI 判断承接「不用管git，你推任务」总授权；docs-only 本原子，落码前不开工）
+> 落码收口：2026-09-23（docs 立项 257ba38 → graph 8580fcb → frontend 4eaaddd → docs 收口本提交）
+> 冒烟证据：HTTP `.smoke/dynamic_wait_smoke.py` **21/21 PASS**；浏览器 docs/smoke-shots/dynamic-wait-*.png（模式切换/错误同步/静态还原；控制台仅过期会话 401）
 > 缓做来源：docs/14 **D19** 余部（动态/表达式时长；event 等待已随 docs/47 落码）
 > 性质：**D19 部分取回、不解除**；零新依赖、零数据库迁移、无 ADR、不新增节点类型、Graph version 不变、不新增 REST 端点或错误码以外的运行控制。
 
@@ -119,6 +121,6 @@ static 产出形状不变（不新增 durationMode 键，旧断言零回归）�
 
 ## 8. 验收门
 
-- 后端：`.venv/bin/pytest`（立项基线 1457 passed / 59 skipped，只许增测）。
-- 前端：`cd frontend && pnpm lint && pnpm test && pnpm build`（基线 616 passed / 2 skipped）。
-- 冒烟（真实 HTTP，:8000，不依赖真实供应商）：① dynamic 图 `durationExpression="{{global.waitSecs}}"`，run inputs waitSecs=2 → completed、实际等待约 2 秒、产出 durationSeconds=2；② 算术表达式 `"{{global.waitSecs}} * 2 + 1"` 求值正确；③ 表达式引用缺失变量/语法坏 → run failed WAIT_DURATION_INVALID；④ 结果 0 / 601 / 非数值字符串 → WAIT_DURATION_INVALID；⑤ 旧 static 图与旧默认图零回归；⑥ DSL：dynamic + durationExpression 空/超长 422、durationMode 非法 422；⑦ 浏览器：static/dynamic 切换字段与错误同步、动态图运行成功、控制台零错误。
+- 后端：`.venv/bin/pytest`（立项基线 1457 passed / 59 skipped；收口实测 **1472 passed / 59 skipped**，+15）。
+- 前端：`cd frontend && pnpm lint && pnpm test && pnpm build`（基线 616 passed / 2 skipped；收口实测 **621 passed / 2 skipped / 46 files**，+5；lint/build 干净）。
+- 冒烟（真实 HTTP，:8000，不依赖真实供应商）：① dynamic 图 `durationExpression="{{global.waitSecs}}"`，run inputs waitSecs=2 → completed、实际等待约 2 秒、产出 durationSeconds=2（实测 elapsed=2.09s）；② 算术表达式 `"{{global.waitSecs}} * 2 + 1"` 求值正确（实测 elapsed=5.05s）；③ 表达式引用缺失变量/语法坏 → run failed WAIT_DURATION_INVALID（6 个坏用例 elapsed 均 <0.1s，未 sleep）；④ 结果 0 / 601 / 非数值字符串 → WAIT_DURATION_INVALID；⑤ 旧 static 图产出逐字段深等、零回归；⑥ DSL：dynamic + durationExpression 空/超长 422、durationMode 非法 422；⑦ 浏览器：static/dynamic 切换字段与错误同步（含问题面板 /durationExpression 指针）、静态还原秒数保留、控制台零 JS 错误（仅过期会话 401）。注：浏览器内「编译并运行」动态图本批未执行——MCP 合成事件无法触发 React Flow 连线/删边（d3-drag 内部状态不接受非可信拖拽），画布接线不可达；运行时执行路径以 HTTP 冒烟 21/21 + loader 单测为准。

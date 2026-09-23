@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### feat：wait 定时等待动态时长 v1 批落码收口（docs/49，2026-09-23；dev、未 push；无 ADR）
+
+- wait duration config 增 `durationMode: static|dynamic`（缺省 static，旧图零回归）与 `durationExpression`（≤200，dynamic 必填）；loader dynamic 时经 D15 条件引擎求值（`{{路径}}`＋算术/白名单函数），结果须为非 bool 有限数值、1-600（取 int(round)），秒数同时作为暂停帧 timeout_seconds。
+- 表达式无法求值或结果非法（非数值/bool/非有限/0/601/除零）→ run failed **WAIT_DURATION_INVALID**，不 sleep 错误时长；无新增 REST/SSE 帧。static 产出形状不变，dynamic 产出另含 durationMode/durationExpression。
+- 收口门：后端 1472/59（净增 15，8580fcb）、前端 621/2（净增 5，4eaaddd）、lint/build 干净；`.smoke/dynamic_wait_smoke.py` HTTP **21/21**（实等 2.09s/5.05s、六坏用例 <0.1s、static 深等、三 422），浏览器冒烟 2 截图 docs/smoke-shots/dynamic-wait-*、零 JS 错误（浏览器内运行未做，React Flow 连线无法合成）。D19 部分取回不解除，到点时刻/event timeout 表达式化/jitter/跨重启中断仍缓做。
+
 ### docs：wait 定时等待动态时长 v1 批 docs-only 立项（docs/49，2026-09-23；dev、未 push；无 ADR）
 
 - wait duration config 增 `durationMode: static|dynamic`（缺省 static，旧图零回归）与 `durationExpression`（≤200，dynamic 必填）；loader dynamic 时经 D15 条件引擎求值（变量＋算术/白名单函数），结果须为非 bool 有限数值、1-600（取 int(round)），秒数同时作为暂停帧 timeout_seconds。
