@@ -124,6 +124,8 @@ type: object               # 节点类型专属配置；condition 节点 config 
                            #   duration static: {waitType:"duration", durationMode?:"static", durationSeconds: 1-600 整数}
                            #   duration dynamic:{waitType:"duration", durationMode:"dynamic", durationExpression: ≤200 表达式,
                            #                    durationSeconds?: 保留不用}  # D19 进程内 v1，2026-09-23 立项并落码收口 docs/49（8580fcb/4eaaddd）；运行时求值 1-600，坏表达式 WAIT_DURATION_INVALID
+                           #   duration absolute:{waitType:"duration", durationMode:"absolute", absoluteTime: ≤64 ISO8601/epoch 秒(支持{{}}),
+                           #                    durationSeconds?/durationExpression?: 保留不用}  # D19 进程内 v1，2026-09-23 docs-only 立项 docs/50；解析目标时刻差值 1-600，坏时刻/过点 WAIT_ABSOLUTE_TIME_INVALID
                            #   event:    {waitType:"event", eventKey(≤128,静态白名单[A-Za-z0-9:_-],支持{{}}插值),
                            #              timeoutSeconds: 1-3600 整数, onTimeout: continue|fail}  # D19 进程内 v1，2026-09-23 立项 docs/47
                            #   event 产出 {eventKey,signaled,payload,waitedSeconds,resolvedBy:signal|timeout|input,token}

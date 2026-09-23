@@ -748,6 +748,21 @@ def get_condition_classifier() -> ConditionClassifier: ...
 
 动态秒数同时作为暂停帧 `timeout_seconds`；resume 路径与模式无关。新增失败码 **WAIT_DURATION_INVALID**（既有 WAIT_EVENT_KEY_INVALID / WAIT_TIMEOUT_FAILED 不变）；无新增 REST、无新增 SSE 帧。
 
+### 3.20 到点时刻等待内部接口（durationMode=absolute v1；docs/50，2026-09-23 docs-only 立项）
+
+```python
+# src/atlas/graph/loader.py（wait duration 分支，无新包）
+# absolute：text = interpolate(config["absoluteTime"], context)   # {{路径}} 插值，同 eventKey
+#   纯数字字符串 -> datetime.fromtimestamp(float(text), tz=UTC)
+#   否则       -> datetime.fromisoformat(text.replace("Z", "+00:00"))；naive 按 UTC
+# delta = (target - now).total_seconds()    # now：注入时钟，缺省 datetime.now(UTC)
+#   须有限且 1 <= round(delta) <= 600，取 seconds = int(round(delta))
+#   插值/解析异常、delta < 1（过点）或 > 600
+#     -> WaitNodeFailure(code="WAIT_ABSOLUTE_TIME_INVALID")，run failed，不 sleep
+```
+
+差值秒数同时作为暂停帧 `timeout_seconds`；resume 走既有 remaining_seconds。新增失败码 **WAIT_ABSOLUTE_TIME_INVALID**（其余 wait 失败码不变）；无新增 REST。SSE wait node_end data 在 absolute 模式另含 `durationMode:"absolute"` 与 `absoluteTime`（渲染后目标时刻 ISO；epoch 输入回写统一 ISO）。
+
 ## 4. 记忆检索接口（依据 06 6.2 / 05 2.3）
 
 > **M11 实现边界（2026-09-19 已落码收口；权威＝docs/26、ADR T23）**：下列 `memory_retriever.query` 五层分层检索为**愿景**（working Redis / summary / fact pgvector / case / preference + 决策节点隐式注入），v1 不实现，缓做 14 D35。M11 取回的是下方「4.1 M11 长期记忆最小接口」——统一 memory_item（fact/preference）+ 显式 remember/recall 两工具，**不做决策隐式注入**。
@@ -873,7 +888,7 @@ class MemoryRepository(Protocol):
 >
 > parallel 节点（Phase 2 第三项，v1 静态扇出/扇入）运行结果写入 `outputs[parallel_id] = {mode:"parallel", joinStrategy:"all_success"|"all_completed", status:"success"|"failed", branches:[{label,target,status,error}], result:{<分支入口节点id>: <末端节点产出>}, joinTarget}`；入口先写 running 占位，合成网关 `__join__<id>` 汇聚时（joinTarget 执行前）覆盖为终态并以 parallel 节点自身补发第二次 node_end。分支路径上任一节点 `result.status=="FAILED"` 即该分支失败；all_success 下有失败时整体 `status="failed"` 但 joinTarget 照常执行、run 仍 completed（fail-safe）。trace 增 `parallel-x: fork N branches → a, b` 与 `parallel-x: joined (all_success) success` / `parallel-x: joined (all_success) failed: <label>（<error>）` 行。下游引用形如 `{{parallel-x.status}}`、`{{parallel-x.result.tool-a.result.status}}`（result 以入口节点 id 为键）。扇出/barrier/fail-safe 与 outputs 按键合并 reducer 见 04 §5.4、06 §6.1。
 
-> wait 节点（Phase 2 第四项，v1 仅定时等待）运行结果写入 `outputs[wait_id] = {mode:"wait", waitType:"duration", durationSeconds: <int>}`；执行器 node_start 后同步 `time.sleep(durationSeconds)`（1-600 秒整数常量，线程池工作线程内阻塞），到时沿唯一普通边继续。trace 增 `wait-x: waited 5s` 行。下游引用形如 `{{wait-x.durationSeconds}}`。事件等待的进程内 v1 子集已落码（2026-09-23，见 04 §5.5 追加段、06 §6.22、docs/47）；**定时等待动态时长 v1 已落码收口（2026-09-23，docs/49，8580fcb/4eaaddd；HTTP 冒烟 21/21）**：durationMode=dynamic 时 durationExpression 经条件引擎求值 1-600 秒（int(round)，bool/非有限拒绝），产出另含 `durationMode/durationExpression`，坏表达式/非法结果 run failed WAIT_DURATION_INVALID 不 sleep；static（含旧图缺省）零回归；持久化中断帧/多实例、到点时刻、event timeout 表达式化仍缓做 14 D19。
+> wait 节点（Phase 2 第四项，v1 仅定时等待）运行结果写入 `outputs[wait_id] = {mode:"wait", waitType:"duration", durationSeconds: <int>}`；执行器 node_start 后同步 `time.sleep(durationSeconds)`（1-600 秒整数常量，线程池工作线程内阻塞），到时沿唯一普通边继续。trace 增 `wait-x: waited 5s` 行。下游引用形如 `{{wait-x.durationSeconds}}`。事件等待的进程内 v1 子集已落码（2026-09-23，见 04 §5.5 追加段、06 §6.22、docs/47）；**定时等待动态时长 v1 已落码收口（2026-09-23，docs/49，8580fcb/4eaaddd；HTTP 冒烟 21/21）**：durationMode=dynamic 时 durationExpression 经条件引擎求值 1-600 秒（int(round)，bool/非有限拒绝），产出另含 `durationMode/durationExpression`，坏表达式/非法结果 run failed WAIT_DURATION_INVALID 不 sleep；static（含旧图缺省）零回归；持久化中断帧/多实例、到点时刻、event timeout 表达式化仍缓做 14 D19。**到点时刻等待 v1 已 docs-only 立项（2026-09-23，docs/50）**：durationMode=absolute——absoluteTime（ISO/epoch，支持 {{}}，naive 按 UTC）解析目标时刻差值 1-600 秒，产出另含 `durationMode/absoluteTime`，坏时刻/过点/越界 run failed WAIT_ABSOLUTE_TIME_INVALID 不 sleep（见 §3.20）。
 >
 > human_approval 节点（Phase 2 第五项，v1 进程内审批信号）运行结果写入 `outputs[human_id] = {mode:"human_approval", decision:"approved"|"rejected", target, token, summary, approver, resolvedBy:"human"|"input"|"timeout"}`；执行器在 `ApprovalBroker`（模块级单例，可注入）登记 pending 后阻塞，node_start 携带 `approval` 载荷。决策三来源：REST 人工放行、run inputs 预置 `{"approvals":{"<node-id>":"approved"|"rejected"}}`（非交互/测试）、超时按 onTimeout（10-3600 秒，默认 reject）自动决策；两条出边全 conditional，按 decision 路由 approvedTarget/rejectedTarget。trace 增 `human-x: approved (human) → tool-y` / `… rejected (timeout) → tool-z` 行。下游引用形如 `{{human-x.decision}}`。持久化中断-恢复缓做 14 D20，语义见 04 §5.6、06 §6.1。**M8（已落码 2026-09-18）纯超集**：config 可选 `cardTemplateId`（不填＝上述 summary 旧路径完全不回归；非空未命中内置目录→编译 422）；命中时 node_start 的 `approval` 载荷在 `{token,summary,approver,timeoutSeconds}` 上加 `cardTemplateId`，节点产出在现有字段上加 `comment`（审批意见，三来源缺省空串）与 `card:{templateId,actionId}`；ApprovalBroker pending 携带 card_template_id 与渲染上下文快照，M5b 中断帧带 cardTemplateId、恢复时上下文从帧 `resume_state.outputs`+trigger 重建；卡片渲染与决策端点见 §3.11 与 `/api/cards`、`/api/approvals/{token}/card`、`/api/approvals/{token}/decision`（actionId/form）。
 >

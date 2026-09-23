@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### docs：wait 到点时刻等待 v1 批 docs-only 立项（docs/50，2026-09-23；dev、未 push；无 ADR）
+
+- wait duration 的 `durationMode` 增枚举 `absolute`，config 增 `absoluteTime`（≤64；ISO 8601 或 epoch 秒，支持 `{{路径}}` 插值，naive datetime 按 UTC）；loader absolute 时插值并解析目标时刻，按注入时钟计算差值 delta，须有限且 1-600（取 int(round)），秒数同时作为暂停帧 timeout_seconds。
+- 插值/解析异常（未知变量/坏 ISO/epoch 越界）、目标已过点或差值 >600 → run failed **WAIT_ABSOLUTE_TIME_INVALID**，不 sleep；无新增 REST。absolute 产出另含 durationMode/absoluteTime（渲染后 ISO，epoch 回写统一 ISO），static/dynamic 旧图零回归。立项基线后端 1472/59、前端 621/2；D19 部分取回不解除，>600 秒长时刻/时区日历控件/周期时刻/event timeout 时刻化仍缓做。
+
 ### feat：wait 定时等待动态时长 v1 批落码收口（docs/49，2026-09-23；dev、未 push；无 ADR）
 
 - wait duration config 增 `durationMode: static|dynamic`（缺省 static，旧图零回归）与 `durationExpression`（≤200，dynamic 必填）；loader dynamic 时经 D15 条件引擎求值（`{{路径}}`＋算术/白名单函数），结果须为非 bool 有限数值、1-600（取 int(round)），秒数同时作为暂停帧 timeout_seconds。
