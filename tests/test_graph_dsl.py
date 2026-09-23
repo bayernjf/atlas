@@ -674,14 +674,14 @@ def test_parse_valid_wait_inside_loop_body():
         ({"waitType": "duration", "durationSeconds": "2"}, "必须是整数秒"),
         ({"waitType": "duration", "durationSeconds": True}, "必须是整数秒"),
         ({"waitType": "duration", "durationSeconds": None}, "必须是整数秒"),
-        ({"waitType": "duration", "durationSeconds": 0}, "需在 1-600 秒之间"),
-        ({"waitType": "duration", "durationSeconds": -1}, "需在 1-600 秒之间"),
-        ({"waitType": "duration", "durationSeconds": 601}, "需在 1-600 秒之间"),
+        ({"waitType": "duration", "durationSeconds": 0}, "需在 1-3600 秒之间"),
+        ({"waitType": "duration", "durationSeconds": -1}, "需在 1-3600 秒之间"),
+        ({"waitType": "duration", "durationSeconds": 3601}, "需在 1-3600 秒之间"),  # U511
         ({"waitType": "event", "eventKey": None, "timeoutSeconds": 300}, "事件标识（eventKey）为必填"),
         ({"waitType": "event", "eventKey": "bad key", "timeoutSeconds": 300}, "只允许字母、数字及 :_-"),
         ({"waitType": "event", "eventKey": "x" * 129, "timeoutSeconds": 300}, "长度不能超过 128"),
-        ({"waitType": "event", "eventKey": "order_paid", "timeoutSeconds": 0}, "需在 1-3600 秒之间"),
-        ({"waitType": "event", "eventKey": "order_paid", "timeoutSeconds": 3601}, "需在 1-3600 秒之间"),
+        ({"waitType": "event", "eventKey": "order_paid", "timeoutSeconds": 0}, "需在 1-86400 秒之间"),
+        ({"waitType": "event", "eventKey": "order_paid", "timeoutSeconds": 86401}, "需在 1-86400 秒之间"),  # U513
         ({"waitType": "event", "eventKey": "order_paid", "timeoutSeconds": "300"}, "必须是整数秒"),
         ({"waitType": "event", "eventKey": "order_paid", "timeoutSeconds": 300,
           "onTimeout": "abort"}, "超时策略（onTimeout）必须是 continue 或 fail"),
@@ -705,8 +705,18 @@ def test_reject_wait_bad_type_and_duration(config, expected):
          "onTimeout": "continue"},
         {"waitType": "event", "eventKey": "order_paid", "timeoutMode": "static",
          "timeoutSeconds": 120},
+        {"waitType": "event", "eventKey": "order_paid", "timeoutMode": "static",
+         "timeoutSeconds": 86400},  # U512 上限 24h
         {"waitType": "event", "eventKey": "order_paid", "timeoutMode": "expression",
          "timeoutExpression": "{{global.slaSecs}}", "timeoutSeconds": 30},
+        # U527 docs/54：多事件 eventKeys（OR 竞速）
+        {"waitType": "event", "eventKeys": ["order_paid", "order_cancelled"],
+         "timeoutSeconds": 30},
+        {"waitType": "event", "eventKeys": ["a", "b", "c", "d", "e", "f", "g", "h"],
+         "timeoutSeconds": 30},  # 8 个为上限
+        {"waitType": "event",
+         "eventKeys": ["order_paid_{{trigger-1.context.payload.id}}", "evt:ok-x_1"],
+         "timeoutSeconds": 30},  # 占位/冒号下划线合法
     ],
 )
 def test_parse_valid_event_wait(config):
@@ -739,10 +749,52 @@ def test_reject_event_wait_timeout_mode_bad_config(config, expected):
     assert any(expected in error for error in exc.value.errors)
 
 
+# --- U528-U530: eventKeys 多事件竞速校验（docs/54 §4）---
+@pytest.mark.parametrize(
+    "config, expected",
+    [
+        # U528 数量边界
+        ({"waitType": "event", "eventKeys": ["a", "b", "c", "d", "e", "f", "g", "h", "i"],
+          "timeoutSeconds": 30}, "多事件需 1-8 个事件标识"),
+        ({"waitType": "event", "eventKeys": [], "timeoutSeconds": 30},
+         "多事件需 1-8 个事件标识"),
+        # U529 元素/类型
+        ({"waitType": "event", "eventKeys": "order_paid", "timeoutSeconds": 30},
+         "多事件（eventKeys）必须是字符串数组"),
+        ({"waitType": "event", "eventKeys": ["bad key"], "timeoutSeconds": 30},
+         "只允许字母、数字及 :_-"),
+        ({"waitType": "event", "eventKeys": ["a", ""], "timeoutSeconds": 30},
+         "必须是非空字符串"),
+        ({"waitType": "event", "eventKeys": ["a", "a"], "timeoutSeconds": 30},
+         "多事件标识重复"),
+        # U530 互斥
+        ({"waitType": "event", "eventKey": "order_paid",
+          "eventKeys": ["order_paid", "other"], "timeoutSeconds": 30},
+         "eventKey 与 eventKeys 互斥"),
+    ],
+)
+def test_reject_event_keys_bad_config(config, expected):
+    raw = make_wait_graph()
+    raw["nodes"][1] = _wait_node(**config)
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any(expected in error for error in exc.value.errors)
+
+
 @pytest.mark.parametrize(
     "config",
     [
         {"waitType": "duration", "durationMode": "static", "durationSeconds": 2},
+        {"waitType": "duration", "durationMode": "static",
+         "durationSeconds": 3600},  # U510 duration 上限放宽
+        {"waitType": "duration", "durationMode": "static", "durationSeconds": 2,
+         "jitterSeconds": 0},  # U514
+        {"waitType": "duration", "durationMode": "static", "durationSeconds": 2,
+         "jitterSeconds": 300},  # U514 抖动上限
+        {"waitType": "duration", "durationMode": "dynamic",
+         "durationExpression": "{{global.waitSecs}}", "jitterSeconds": 10},  # U514 dynamic 通用
+        {"waitType": "duration", "durationMode": "absolute",
+         "absoluteTime": "2026-09-23T18:00:00+08:00", "jitterSeconds": 10},  # U514 absolute 通用
         {"waitType": "duration", "durationMode": "dynamic",
          "durationExpression": "{{global.waitSecs}}"},
         {"waitType": "duration", "durationMode": "dynamic",
@@ -758,6 +810,30 @@ def test_parse_valid_dynamic_wait(config):
     raw = make_wait_graph()
     raw["nodes"][1] = _wait_node(**config)
     parse_graph(raw)
+
+
+# --- U515: duration jitterSeconds 校验（docs/54 §3，仅 duration；event 超时不抖动）---
+@pytest.mark.parametrize(
+    "config, expected",
+    [
+        ({"waitType": "duration", "durationSeconds": 2, "jitterSeconds": 301}, "抖动上限需在 0-300 秒之间"),
+        ({"waitType": "duration", "durationSeconds": 2, "jitterSeconds": -1}, "抖动上限需在 0-300 秒之间"),
+        ({"waitType": "duration", "durationSeconds": 2, "jitterSeconds": "5"}, "抖动上限（jitterSeconds）必须是整数秒"),
+        ({"waitType": "duration", "durationSeconds": 2, "jitterSeconds": True}, "抖动上限（jitterSeconds）必须是整数秒"),
+        ({"waitType": "event", "eventKey": "order_paid", "timeoutSeconds": 300,
+          "jitterSeconds": 10}, "抖动"),  # event 不允许 jitter 字段？见下：event 分支不校验也不使用
+    ],
+)
+def test_reject_wait_jitter_bad_config(config, expected):
+    raw = make_wait_graph()
+    raw["nodes"][1] = _wait_node(**config)
+    if config.get("waitType") == "event":
+        # event 分支当前不消费 jitterSeconds：不报错也不生效（DSL 仅 duration 校验）
+        parse_graph(raw)
+        return
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any(expected in error for error in exc.value.errors)
 
 
 @pytest.mark.parametrize(

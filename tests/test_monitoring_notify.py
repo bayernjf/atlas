@@ -315,3 +315,127 @@ def test_lifecycle_send_failure_is_fail_safe():
     )
     assert delivery.errorCode == "ALERT_NOTIFY_FAILED"
 
+
+
+# --- docs/54 §6/§7：健康自动恢复（recovery）与 lifecycle 限流退避 ---
+def _record_healthy_run(store: MonitoringStore, graph_id: str = "g1"):
+    return store.record_run(
+        graph_id=graph_id,
+        mode="sync",
+        status="completed",
+        started_at="2026-09-23T02:00:00+00:00",
+        duration_ms=10,
+        nodes=[NodeResult(node_id="n1", node_type="tool_call", status="success")],
+    )
+
+
+class _StubAlert:
+    id = "alt-1"
+    rule_id = "run_error"
+    rule_name = "run_error"
+    graph_id = "g1"
+    status = "open"
+    severity = "critical"
+    count = 1
+    first_seen = "2026-09-23T00:00:00+00:00"
+    last_seen = "2026-09-23T00:00:00+00:00"
+    last_run_id = "run-1"
+    assignee = None
+    message = "boom"
+
+
+def test_U531_healthy_run_auto_resolves_open_alert_and_notifies_recovery():
+    store, messages = _configured_store()
+    _record_error_run(store)
+    _record_healthy_run(store)
+    resolved = store.list_alerts(status="resolved")
+    run_error = next(a for a in resolved if a.rule_id == "run_error")
+    assert run_error.status == "resolved"
+    subjects = [m["subject"] for m in messages.sent]
+    assert "[Atlas告警][告警已自动恢复] run_error" in subjects
+
+
+def test_U532_acknowledged_alert_is_not_auto_recovered():
+    store, messages = _configured_store()
+    _record_error_run(store)
+    alert = next(a for a in store.list_alerts() if a.rule_id == "run_error")
+    assert store.acknowledge_alert(alert.id).status == "acknowledged"
+    _record_healthy_run(store)
+    again = next(a for a in store.list_alerts() if a.rule_id == "run_error")
+    assert again.status == "acknowledged"  # 确认过的不自动恢复
+    assert not any("自动恢复" in m["subject"] for m in messages.sent)
+
+
+def test_U533_rollout_gate_alert_is_not_auto_recovered():
+    store, messages = _configured_store()
+    store.raise_rollout_gate_alert(
+        graph_id="g1", message="gate breached", action={"kind": "auto_rollback"}
+    )
+    _record_healthy_run(store)
+    gate = next(a for a in store.list_alerts() if a.rule_id == "rollout_gate")
+    assert gate.status == "open"  # 灰度门控告警不自动恢复
+    assert not any("自动恢复" in m["subject"] for m in messages.sent)
+
+
+def _throttled_notifier(messages, t):
+    return AlertNotifier(
+        messages,
+        clock=lambda: "2026-09-23T01:00:00+00:00",
+        lifecycle_min_interval_seconds=60,
+        time_func=lambda: t["v"],
+    )
+
+
+def test_U534_lifecycle_throttled_within_interval_then_allowed():
+    messages = FakeMessages()
+    t = {"v": 0.0}
+    notifier = _throttled_notifier(messages, t)
+    cfg = AlertChannel(enabled=True, to="https://robot.example.com")
+    alert = _StubAlert()
+
+    first = notifier.notify_lifecycle(alert, cfg, transition="resolved")
+    second = notifier.notify_lifecycle(alert, cfg, transition="resolved")
+    assert first.lastNotifiedAt is not None
+    assert second.lastNotifiedAt is None  # 60s 内限流跳过、不记投递
+    assert len(messages.sent) == 1
+
+    t["v"] = 61.0  # 超过间隔
+    third = notifier.notify_lifecycle(alert, cfg, transition="resolved")
+    assert third.lastNotifiedAt is not None
+    assert len(messages.sent) == 2
+
+
+def test_U535_throttle_is_per_transition_and_new_alert_unlimited():
+    messages = FakeMessages()
+    t = {"v": 0.0}
+    notifier = _throttled_notifier(messages, t)
+    cfg = AlertChannel(enabled=True, to="https://robot.example.com")
+    alert = _StubAlert()
+
+    notifier.notify_lifecycle(alert, cfg, transition="resolved")
+    notifier.notify_lifecycle(alert, cfg, transition="recovery")  # 不同 transition 不限
+    notifier.notify(alert, cfg)  # new 首条始终不限流
+    notifier.notify_lifecycle(alert, cfg, transition="resolved")  # 仍在窗口内限流
+    assert len(messages.sent) == 3
+
+
+def test_U536_failed_lifecycle_send_is_also_throttled():
+    class _Raising:
+        @staticmethod
+        def send(*a, **k):
+            raise RuntimeError("network down")
+
+    t = {"v": 0.0}
+    notifier = AlertNotifier(
+        _Raising(),
+        lifecycle_min_interval_seconds=60,
+        time_func=lambda: t["v"],
+    )
+    cfg = AlertChannel(enabled=True, to="https://robot.example.com")
+    alert = _StubAlert()
+    first = notifier.notify_lifecycle(alert, cfg, transition="resolved")
+    assert first.errorCode == "ALERT_NOTIFY_FAILED"
+    t["v"] = 10.0  # 仍在窗口内：失败也计时，不重试打爆渠道
+    second = notifier.notify_lifecycle(alert, cfg, transition="resolved")
+    assert second.lastNotifiedAt is None
+    assert second.errorCode is None

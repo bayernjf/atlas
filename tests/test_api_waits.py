@@ -58,7 +58,10 @@ def test_signal_event_releases_pending():
         assert response.status_code == 200
         assert response.json() == {"released": 1}
         broker = tenant_registry.get("t1").event_wait_broker
-        assert broker.wait(token) == {"paid": True}
+        assert broker.wait(token) == {
+            "paid": True,
+            "matchedEventKey": "order_paid_a",
+        }  # docs/54
     finally:
         tenant_registry.get("t1").event_wait_broker.reset()
 
@@ -141,7 +144,7 @@ def test_empty_payload_defaults_to_object():
         )
         assert response.status_code == 200
         broker = tenant_registry.get("t1").event_wait_broker
-        assert broker.wait(token) == {}
+        assert broker.wait(token) == {"matchedEventKey": "empty_payload"}  # docs/54
     finally:
         tenant_registry.get("t1").event_wait_broker.reset()
 

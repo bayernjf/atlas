@@ -158,12 +158,12 @@ describe('event wait v1 (docs/47)', () => {
     const diagnostics = fields('wait', {
       waitType: 'event',
       eventKey: 'bad key',
-      timeoutSeconds: 3601,
+      timeoutSeconds: 86401,
       onTimeout: 'abort' as 'continue',
     })
     const byPointer = new Map(diagnostics.map((d) => [d.loc.pointer, d]))
     expect(byPointer.get('/eventKey')?.code).toBe(FIELD_CODES.PATTERN)
-    expect(byPointer.get('/timeoutSeconds')?.message).toContain('1-3600')
+    expect(byPointer.get('/timeoutSeconds')?.message).toContain('1-86400')
     expect(byPointer.get('/onTimeout')?.message).toContain('继续或失败')
   })
 })
@@ -331,7 +331,7 @@ describe('message parity with M1 hand-written copy (U37②)', () => {
 
   it('wait / subgraph / human_approval', () => {
     expect(messages('wait', { waitType: 'duration', durationSeconds: 0 })).toContain(
-      '等待时长需为 1-600 秒的整数',
+      '等待时长需为 1-3600 秒的整数',
     )
     expect(messages('subgraph', defaultConfig('subgraph'))).toContain('必须选择引用的已保存子图')
     expect(
@@ -547,5 +547,69 @@ describe('condition LLM 语义模式（D14，docs/48）', () => {
     }
     const pointerList = pointers('condition', config)
     expect(pointerList).toContain('/branches/0/expression')
+  })
+})
+
+
+describe('wait jitter and multi-event fan-in L1 (docs/54)', () => {
+  it('accepts duration jitterSeconds within 0-300 (static only)', () => {
+    expect(fields('wait', { waitType: 'duration', durationSeconds: 10, jitterSeconds: 0 })).toEqual([])
+    expect(fields('wait', { waitType: 'duration', durationSeconds: 10, jitterSeconds: 300 })).toEqual([])
+  })
+
+  it('flags out-of-range or non-integer jitterSeconds', () => {
+    for (const jitterSeconds of [301, -1, 1.5]) {
+      const diagnostics = fields('wait', { waitType: 'duration', durationSeconds: 10, jitterSeconds })
+      expect(diagnostics.map((d) => d.loc.pointer)).toContain('/jitterSeconds')
+      expect(pointers('wait', { waitType: 'duration', durationSeconds: 10, jitterSeconds })).toContain('/jitterSeconds')
+    }
+  })
+
+  it('accepts a complete multi-event fan-in config (1-8 keys)', () => {
+    expect(
+      fields('wait', { waitType: 'event', eventKeys: ['order_paid', 'order_cancelled'], timeoutSeconds: 30 }),
+    ).toEqual([])
+    expect(
+      fields('wait', {
+        waitType: 'event',
+        eventKeys: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'],
+        timeoutSeconds: 30,
+      }),
+    ).toEqual([])
+  })
+
+  it('requires eventKey or eventKeys (one of the two)', () => {
+    const diagnostics = fields('wait', { waitType: 'event', timeoutSeconds: 30 })
+    expect(diagnostics.map((d) => d.loc.pointer)).toContain('/eventKey')
+  })
+
+  it('flags too many / empty eventKeys', () => {
+    const tooMany = fields('wait', {
+      waitType: 'event',
+      eventKeys: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'],
+      timeoutSeconds: 30,
+    })
+    expect(tooMany.some((d) => d.loc.pointer === '/eventKeys' && d.code === FIELD_CODES.LENGTH)).toBe(true)
+    const empty = fields('wait', { waitType: 'event', eventKeys: [], timeoutSeconds: 30 })
+    expect(empty.some((d) => d.loc.pointer === '/eventKeys')).toBe(true)
+  })
+
+  it('flags invalid, blank and duplicate eventKeys entries by index', () => {
+    const bad = fields('wait', { waitType: 'event', eventKeys: ['ok', 'bad key'], timeoutSeconds: 30 })
+    expect(bad.map((d) => d.loc.pointer)).toContain('/eventKeys/1')
+    const blank = fields('wait', { waitType: 'event', eventKeys: ['ok', ''], timeoutSeconds: 30 })
+    expect(blank.map((d) => d.loc.pointer)).toContain('/eventKeys/1')
+    const dup = fields('wait', { waitType: 'event', eventKeys: ['a', 'a'], timeoutSeconds: 30 })
+    expect(dup.some((d) => d.code === FIELD_CODES.INPUT_KEY_DUPLICATE)).toBe(true)
+  })
+
+  it('flags eventKey + eventKeys used together (mutually exclusive)', () => {
+    const diagnostics = fields('wait', {
+      waitType: 'event',
+      eventKey: 'order_paid',
+      eventKeys: ['order_paid', 'other'],
+      timeoutSeconds: 30,
+    })
+    expect(diagnostics.some((d) => d.loc.pointer === '/eventKeys')).toBe(true)
   })
 })

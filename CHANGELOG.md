@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### feat：wait 时长放开/jitter/多事件竞速＋告警 recovery/lifecycle 限流（docs/54，打包 A，2026-09-23 立项中）
+
+- 【立项 docs-only，落码中】D19/D28 部分取回、不解除；进程内零新依赖/零迁移/无 ADR/零新 REST。五小项：duration 上限 600→3600、event 超时 3600→86400；duration 可选 jitterSeconds（0-300，均匀抖动、rng 可注入）；event 可选 eventKeys（1-8，OR 竞速、matchedEventKey、余键清理、跨重启恢复）；健康运行自动 recovery 通知（open 非 rollout_gate）；lifecycle 同(alert,transition) 60s 限流退避。测试候选 U510 起。
+
 ### feat：event wait timeoutSeconds 表达式化 B5 落码收口（D19 子集，2026-09-23；dev、未 push；无 ADR）
 
 - event wait config 增 `timeoutMode`（static 默认 / expression）与可选 `timeoutExpression`（≤200）；loader 抽出共用 `_resolve_wait_expression(node_id,expr,context,lo,hi)`——duration（1-600）/event（1-3600）统一经条件引擎 evaluate_expression 求值，非 bool/非有限/越界 run failed WAIT_DURATION_INVALID；旧图缺省 static 零回归，跨重启帧存已求值秒数、resume 不重求值。
