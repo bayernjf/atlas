@@ -763,7 +763,7 @@ def get_condition_classifier() -> ConditionClassifier: ...
 
 差值秒数同时作为暂停帧 `timeout_seconds`；resume 走既有 remaining_seconds。新增失败码 **WAIT_ABSOLUTE_TIME_INVALID**（其余 wait 失败码不变）；无新增 REST。SSE wait node_end data 在 absolute 模式另含 `durationMode:"absolute"` 与 `absoluteTime`（渲染后目标时刻 ISO；epoch 输入回写统一 ISO）。
 
-### 3.21 IM 群机器人投递内部接口（dingtalk/wecom/feishu v1；docs/51，2026-09-23 docs-only 立项）
+### 3.21 IM 群机器人投递内部接口（dingtalk/wecom/feishu v1；docs/51，2026-09-23 落码收口 d4823d5）
 
 ```python
 # src/atlas/message/im.py（新模块；无新依赖，注入 guard/post/clock，测试不触网）

@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### feat：IM 群机器人消息投递 v1 批落码收口（docs/51，2026-09-23；dev、未 push；无 ADR）
+
+- 后端 `d4823d5`：新模块 `message/im.py`（三家协议包体/钉钉 URL 加签/飞书 body 加签/平台码判定/10s/不重定向），MessageService 渠道接入与 secret 校验（仅 dingtalk/feishu、≤200），registry 内存/PG 双档注入 im_sender；失败 IM_SEND_FAILED/EGRESS_DENIED 不写记录，成功 delivered 标渠道名，未注入投递器回退 in_process。
+- 前端 `80b2436`：toolParamsPlaceholder 纯函数抽出（message/send 钉钉示例含 secret）；secret 字段本身经 schema 驱动 FormRenderer 自动渲染。收口门后端 **1526/59**（净增 36）、前端 **627/2/48 文件**（净增 3）、lint/build 干净；`.smoke/im_robot_smoke.py` **20/20**（假机器人逐字节签名向量＋真实护栏/参数校验/零回归），浏览器截图 docs/smoke-shots/im-robot-1、零 JS 错误（浏览器内运行未做，React Flow 连线无法合成）。D24 部分取回不解除，短信/富文本/多 URL/OAuth 入站/模板/限流退避仍缓做。
+
 ### docs：IM 群机器人消息投递 v1 批 docs-only 立项（docs/51，2026-09-23；dev、未 push；无 ADR）
 
 - message/send channel 增 `dingtalk`/`wecom`/`feishu`：to 为群机器人 Webhook 单 URL（过 EgressGuard、10s、不重定向），新增可选 `secret`（≤200，仅钉钉/飞书——钉钉 URL HMAC 加签、飞书请求体加签）；三家各自 msgtype text 包体，响应须 2xx 且平台码（errcode/code）为 0。
