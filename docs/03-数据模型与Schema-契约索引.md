@@ -925,6 +925,7 @@ node_id: string
 kind: "approval" | "debug" | "wait"
 created_at: string              # UTC ISO-8601
 deadline_at: string | null      # UTC 绝对时刻（审批超时/wait 到点）；恢复后按剩余时长等待，不重计
+wait: object | null             # 仅 wait-event 帧（docs/53，2026-09-23 立项）：{waitType:"event", eventKey, onTimeout:"continue"|"fail", timeoutSeconds}；duration 帧不带此键
 graph_snapshot: object          # 保存时图定义副本（M6 版本化未落地前随帧内嵌，防恢复错位）
 resume_state:                   # 续跑载荷（挂起点续跑，不重跑上游）
   inputs: object                # run inputs（同名覆盖全局变量口径不变）

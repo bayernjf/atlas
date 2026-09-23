@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### docs：wait 事件跨重启持久化 v1 批立项（docs/53，2026-09-23；dev、未落码）
+
+- docs-only 立项：event 等待（docs/47 进程内 v1）补齐 T18-B 跨重启机制——event 挂起帧（kind=wait，新增帧字段 `wait:{waitType,eventKey,onTimeout,timeoutSeconds}`，零 DDL）、runs 同步 suspended、`EventWaitBroker.restore` 同 token/event_key 剩余超时幂等重建、启动恢复分支；`/api/waits` 三端点跨重启可用。零新依赖/零迁移/无 ADR/无新 REST/前端零改动；D19 部分取回不解除（多实例跨进程路由、停摆期信号排队、debug 跨重启仍缓做）。候选 U400-U402；立项基线后端 1548/59、前端 636/2。
+
 ### feat：监控告警外部通知 v1 批落码收口（docs/52，2026-09-23；dev、未 push；无 ADR）
 
 - `monitoring/notify.py` AlertChannel 租户单例＋AlertNotifier：仅**新建告警**三处（内存/PG record_run、rollout_gate）经既有 MessageService 旁路投递固定纯文本，severity 过滤，任何异常 fail-safe（运行与告警不受影响），最近投递状态 GET 可查；notifier 经 setter 回注，registry 两档装配。迁移 **020** `alert_notify_settings`，内存·PG 双档，reset 清空。
