@@ -1225,6 +1225,38 @@ export async function listVersions(graphId: string): Promise<number[]> {
   return body.items
 }
 
+/** B3（D26 子集）：两版 graph 配置结构差异。 */
+export type GraphNodeChange =
+  | { field: 'type' | 'name'; from: unknown; to: unknown }
+  | { field: 'config'; configKeys: string[] }
+
+export type GraphDiff = {
+  nodes: { added: string[]; removed: string[]; changed: { id: string; changes: GraphNodeChange[] }[] }
+  edges: { added: string[]; removed: string[] }
+  variables: { added: string[]; removed: string[]; changed: string[] }
+}
+
+export type GraphDiffResponse = {
+  graphId: string
+  fromVersion: number | null
+  toVersion: number | null
+  summary: Record<string, number>
+  diff: GraphDiff
+}
+
+/** 两版 graph 配置结构 diff（只读）。版本号省略时：to＝latest 草稿、from＝最近发布版。 */
+export async function getGraphDiff(
+  graphId: string,
+  fromVersion?: number,
+  toVersion?: number,
+): Promise<GraphDiffResponse> {
+  const params = new URLSearchParams()
+  if (fromVersion !== undefined) params.set('fromVersion', String(fromVersion))
+  if (toVersion !== undefined) params.set('toVersion', String(toVersion))
+  const qs = params.toString()
+  return request(`/api/graphs/${graphId}/diff${qs ? `?${qs}` : ''}`)
+}
+
 export async function runReleaseGate(graphId: string): Promise<GateReport> {
   return request(`/api/graphs/${graphId}/release-gate`, { method: 'POST' })
 }
