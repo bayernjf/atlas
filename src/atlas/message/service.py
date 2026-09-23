@@ -10,14 +10,44 @@ ImSender 时投递群机器人（docs/51，标渠道名）；短信渠道仍缓�
 
 from __future__ import annotations
 
+import time
 import uuid
+from collections import deque
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+from typing import Callable
 
 from atlas.security.egress import EgressDenied
 from .im import IM_CHANNELS
 
 MAX_RECIPIENTS = 20
 MAX_SECRET_LENGTH = 200
+
+# docs/56 §4：投递日志 ring 与退避重试参数
+DELIVERY_RING_SIZE = 200
+DELIVERY_LIST_LIMIT = 100
+SUBJECT_LOG_LIMIT = 100
+ERROR_LOG_LIMIT = 300
+# 仅 webhook / IM 的网络类错误重试（共 3 次尝试：初次 + 2 次退避）；
+# EGRESS_*（SSRF/非法 URL）、参数类、SMTP 不重试。
+DEFAULT_RETRY_DELAYS = (0.5, 1.5)
+_RETRYABLE_CODES = {"WEBHOOK_SEND_FAILED", "IM_SEND_FAILED"}
+
+
+@dataclass
+class DeliveryRecord:
+    """一次消息投递尝试的结果（docs/56 §4.2），无论成败都落 ring。"""
+
+    id: str
+    channel: str
+    to: list[str]
+    subject: str
+    sentAt: str
+    status: str  # in_process | delivered:{smtp|webhook|dingtalk|wecom|feishu} | failed
+    attempts: int
+    elapsedMs: int
+    errorCode: str | None = None
+    errorMessage: str | None = None
 
 
 class MessageSendError(Exception):
@@ -55,6 +85,8 @@ class MessageService:
         email_sender: object | None = None,
         webhook_sender: object | None = None,
         im_sender: object | None = None,
+        retry_delays: tuple[float, ...] = DEFAULT_RETRY_DELAYS,
+        sleep_func: Callable[[float], None] = time.sleep,
     ) -> None:
         # email_sender 需实现 send(to: list[str], subject: str, body: str)，
         # 生产为 message.smtp.SmtpSender；None 时 email 也只记录不投递（demo）。
@@ -67,6 +99,10 @@ class MessageService:
         self._im_sender = im_sender
         self._messages: list[dict[str, object]] = []
         self.last_send: dict[str, object] | None = None
+        # docs/56 §4：投递日志 ring（重启/reset 清空）与可注入退避（测试零等待）
+        self._deliveries: deque[DeliveryRecord] = deque(maxlen=DELIVERY_RING_SIZE)
+        self._retry_delays = tuple(retry_delays)
+        self._sleep: Callable[[float], None] = sleep_func
 
     def send(
         self,
@@ -89,49 +125,119 @@ class MessageService:
         if channel_value == "email" and any("@" not in address for address in recipients):
             raise MessageSendError("INVALID_PARAMETER", "email 渠道的收件地址必须包含 @")
 
+        message_id = str(uuid.uuid4())
+        sent_at = datetime.now(timezone.utc).isoformat()
         record: dict[str, object] = {
-            "id": str(uuid.uuid4()),
+            "id": message_id,
             "channel": channel_value,
             "to": recipients,
             "subject": subject_value,
             "body": body_value,
-            "sent_at": datetime.now(timezone.utc).isoformat(),
+            "sent_at": sent_at,
             "delivered": "in_process",
         }
+        started = time.monotonic()
+
+        def _log(
+            status: str,
+            attempts: int,
+            code: str | None = None,
+            message: str | None = None,
+        ) -> None:
+            self._deliveries.append(
+                DeliveryRecord(
+                    id=message_id,
+                    channel=channel_value,
+                    to=list(recipients),
+                    subject=subject_value[:SUBJECT_LOG_LIMIT],
+                    sentAt=sent_at,
+                    status=status,
+                    attempts=attempts,
+                    elapsedMs=int((time.monotonic() - started) * 1000),
+                    errorCode=code,
+                    errorMessage=(message[:ERROR_LOG_LIMIT] if message else None),
+                )
+            )
+
+        def _transmit(transmit: Callable[[], None]) -> tuple[int, MessageSendError | None]:
+            """运行一次真实投递并按可重试错误码退避；返回 (尝试次数, 最终错误|None)。"""
+            attempts = 0
+            last_error: MessageSendError | None = None
+            total = len(self._retry_delays) + 1
+            for index in range(total):
+                attempts += 1
+                try:
+                    transmit()
+                    return attempts, None
+                except MessageSendError as exc:
+                    last_error = exc
+                    if exc.code in _RETRYABLE_CODES and index < len(self._retry_delays):
+                        self._sleep(self._retry_delays[index])
+                        continue
+                    return attempts, exc
+            return attempts, last_error
+
         if channel_value == "email" and self._email_sender is not None:
-            try:
-                self._email_sender.send(recipients, subject_value, body_value)
-            except Exception as exc:
-                # 投递失败不写记录（非幂等写能力，失败须显式），折算统一错误码
-                raise MessageSendError("SMTP_SEND_FAILED", f"邮件投递失败：{exc}") from exc
+            def _email() -> None:
+                try:
+                    self._email_sender.send(recipients, subject_value, body_value)
+                except Exception as exc:
+                    # SMTP 不重试：失败折算统一错误码
+                    raise MessageSendError("SMTP_SEND_FAILED", f"邮件投递失败：{exc}") from exc
+
+            attempts, error = _transmit(_email)
+            if error is not None:
+                _log("failed", attempts, error.code, str(error))
+                raise error
             record["delivered"] = "smtp"
+            _log("delivered:smtp", attempts)
         elif channel_value == "webhook" and self._webhook_sender is not None:
             url = recipients[0]
             payload = {
-                "id": record["id"],
+                "id": message_id,
                 "channel": "webhook",
                 "subject": subject_value,
                 "body": body_value,
-                "sent_at": record["sent_at"],
+                "sent_at": sent_at,
             }
-            try:
-                self._webhook_sender.send(url, payload)
-            except EgressDenied as exc:
-                # SSRF/非法 URL：透传安全错误码（EGRESS_DENIED/EGRESS_INVALID_URL），不写记录
-                raise MessageSendError(exc.code, f"webhook 出向被拦截：{exc}") from exc
-            except Exception as exc:
-                # 网络/超时/非 2xx：统一 WEBHOOK_SEND_FAILED，不写记录
-                raise MessageSendError("WEBHOOK_SEND_FAILED", f"webhook 投递失败：{exc}") from exc
+
+            def _webhook() -> None:
+                try:
+                    self._webhook_sender.send(url, payload)
+                except EgressDenied as exc:
+                    # SSRF/非法 URL：透传安全码（EGRESS_DENIED/EGRESS_INVALID_URL），不重试
+                    raise MessageSendError(exc.code, f"webhook 出向被拦截：{exc}") from exc
+                except Exception as exc:
+                    # 网络/超时/非 2xx：WEBHOOK_SEND_FAILED，可退避重试
+                    raise MessageSendError("WEBHOOK_SEND_FAILED", f"webhook 投递失败：{exc}") from exc
+
+            attempts, error = _transmit(_webhook)
+            if error is not None:
+                # 失败不写 _messages（非幂等写能力，失败须显式），但必写投递日志
+                _log("failed", attempts, error.code, str(error))
+                raise error
             record["delivered"] = "webhook"
+            _log("delivered:webhook", attempts)
         elif channel_value in IM_CHANNELS and self._im_sender is not None:
             text = f"{subject_value}\n{body_value}"
-            try:
-                self._im_sender.send(channel_value, recipients[0], text, secret_value)
-            except EgressDenied as exc:
-                raise MessageSendError(exc.code, f"{channel_value} 出向被拦截：{exc}") from exc
-            except Exception as exc:
-                raise MessageSendError("IM_SEND_FAILED", f"IM 投递失败：{exc}") from exc
+
+            def _im() -> None:
+                try:
+                    self._im_sender.send(channel_value, recipients[0], text, secret_value)
+                except EgressDenied as exc:
+                    raise MessageSendError(exc.code, f"{channel_value} 出向被拦截：{exc}") from exc
+                except Exception as exc:
+                    raise MessageSendError("IM_SEND_FAILED", f"IM 投递失败：{exc}") from exc
+
+            attempts, error = _transmit(_im)
+            if error is not None:
+                _log("failed", attempts, error.code, str(error))
+                raise error
             record["delivered"] = channel_value
+            _log(f"delivered:{channel_value}", attempts)
+        else:
+            # demo：未注入真实 sender，仅进程内记录、不真实投递
+            _log("in_process", 1)
         self._messages.append(record)
         self.last_send = {k: record[k] for k in ("id", "channel", "to", "sent_at")}
         return record
@@ -157,8 +263,15 @@ class MessageService:
     def list(self) -> list[dict[str, object]]:
         return list(self._messages)
 
+    def list_deliveries(self, limit: int = DELIVERY_LIST_LIMIT) -> list[dict[str, object]]:
+        """投递日志倒序（最新在前），limit clamp 1-200（docs/56 §4.3）。"""
+        bounded = max(1, min(int(limit), DELIVERY_RING_SIZE))
+        recent = list(self._deliveries)[-bounded:]
+        return [asdict(item) for item in reversed(recent)]
+
     def reset(self) -> None:
         self._messages = []
+        self._deliveries.clear()
         self.last_send = None
 
     @property

@@ -3490,6 +3490,16 @@ def demo_messages(
     return {"items": services_for(principal).message_service.list()}
 
 
+@app.get("/api/demo/deliveries")
+def demo_deliveries(
+    limit: int = 100,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """docs/56 §4.3：消息投递日志（每次 send 一条，含尝试次数/耗时/错误），倒序。"""
+    bounded = max(1, min(limit, 200))
+    return {"items": services_for(principal).message_service.list_deliveries(bounded)}
+
+
 # ---- M11 长期记忆（docs/26 §6 / docs/28 §5.1）：读 viewer+、手动新建/编辑 operate（source=manual）、删 admin；图内 remember 工具仍是运行时写入主路径 ----
 
 
