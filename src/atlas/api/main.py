@@ -3113,6 +3113,34 @@ def monitoring_update_rules(
     return rules.model_dump()
 
 
+def _alert_channel_payload(monitoring: Any) -> dict[str, Any]:
+    channel = monitoring.get_alert_channel().model_dump()
+    delivery = monitoring.get_alert_channel_delivery().model_dump()
+    channel["lastDelivery"] = delivery if delivery["lastNotifiedAt"] else None
+    return channel
+
+
+@app.get("/api/monitoring/alert-channel")
+def monitoring_get_alert_channel(
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """告警外部通知配置 + 最近投递状态；从未投递 lastDelivery 为 null（docs/52）。"""
+    return _alert_channel_payload(services_for(principal).monitoring)
+
+
+@app.put("/api/monitoring/alert-channel")
+def monitoring_update_alert_channel(
+    raw: dict[str, Any], principal: Principal = Depends(require("administer"))
+) -> dict[str, Any]:
+    """整体替换本租户告警通知配置；校验失败聚合为中文 422（admin only，docs/52）。"""
+    monitoring = services_for(principal).monitoring
+    try:
+        monitoring.update_alert_channel(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _alert_channel_payload(monitoring)
+
+
 @app.get("/api/alerts")
 def list_alerts(
     status: str | None = None, principal: Principal = Depends(require("read"))
