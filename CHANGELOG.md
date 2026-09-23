@@ -4,11 +4,11 @@
 
 ## [Unreleased]
 
-### docs：condition LLM 语义判断分支 v1 批 docs-only 立项（docs/48，2026-09-23；dev、未 push；无 ADR）
+### feat：condition LLM 语义判断分支 v1 批落码收口（docs/48，2026-09-23；dev、未 push；无 ADR）
 
-- condition 节点新增 `conditionMode=llm`（D14 部分取回、不解除）：分支用自然语言 `description`（≤300）替代 expression、可选 `classifierPrompt`（≤500）；新 `atlas.llm.condition_classifier` 镜像 decision.py 三层（LiteLLM 单次调用 temperature=0 返唯一标签 JSON、Offline 未配模型必抛、工厂按 LITELLM_MODEL 切换），上下文 JSON 序列化截断 12000 字符。
-- 合法标签按标签路由；`__default__`/坏 JSON/未知标签/调用异常全部 fail-safe 走 defaultTarget，无新错误码、无新 REST、不使 run 失败；分类器经 run_graph(condition_classifier=) 注入、子图透传。
-- 零新依赖（litellm 已在）、零迁移；置信度/多候选/澄清重问、每分支独立 prompt、按租户模型、字段级脱敏、structured outputs、LLM 路由回放断言仍缓做。立项基线后端 1435/59、前端 606/2。
+- condition 节点新增 `conditionMode=llm`（D14 部分取回、不解除）：分支用自然语言 `description`（≤300）替代 expression（禁带）、可选 `classifierPrompt`（≤500）；`atlas.llm.condition_classifier` 镜像 decision.py 三层（LiteLLM 单次调用 temperature=0 返唯一标签 JSON、Offline 未配模型必抛、工厂按 LITELLM_MODEL 切换），上下文 JSON 序列化截断 12000 字符。
+- 合法标签按标签路由；`__default__`/坏 JSON/未知标签/调用异常全部 fail-safe 走 defaultTarget，无新错误码、无新 REST、不使 run 失败；分类器经 run_graph(condition_classifier=) 注入、子图透传。前端 mode 切换行内 expression↔description；5a955d2 修 rootScoped 隐藏字段残留表达式诊断。
+- 收口门：后端 1457/59（净增 22）、前端 616/2、lint/build 干净；`.smoke/llm_condition_smoke.py` HTTP 11/11，浏览器冒烟 3 截图 docs/smoke-shots/llm-condition-*、零控制台错误。零新依赖、零迁移；Demo 阶段不视为可上线，置信度/多候选/澄清重问、每分支独立 prompt、按租户模型、字段级脱敏、structured outputs、LLM 路由回放断言仍缓做。
 
 ### feat：wait 事件等待进程内 v1 批落码收口（docs/47，2026-09-23；dev、未 push；无 ADR）
 

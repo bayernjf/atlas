@@ -1,6 +1,9 @@
 # 48. condition 节点 LLM 语义判断分支 v1 批契约设计
 
 > 立项：2026-09-23（AI 判断承接「不用管git，你推任务」总授权；docs-only 本原子，落码前不开工）
+> **落码收口：2026-09-23（39f7029 docs 立项 → 7f8392d feat(llm) → de3bc83 feat(graph) → 285cfc0 feat(frontend) → 5a955d2 fix(frontend) 隐藏字段诊断 → docs 本步；dev 未 push）**
+> 验收门实测：后端 **1457 passed / 59 skipped**（立项基线 1435，净增 22）、前端 **616 passed / 2 skipped / 46 文件**（基线 606，净增 10）、lint（仅既有 warning）/build 干净。
+> 冒烟证据：`.smoke/llm_condition_smoke.py` HTTP **11/11 通过**（离线 fail-safe 走 defaultTarget 且 llm_errors 说明未配置、evaluation 带 label/description、rule 回归 amount=200 路由大额、五个 422 用例）；浏览器冒烟 mode 双向切换、行内 expression↔description 字段与 L1 错误同步切换、零控制台错误，3 截图 `docs/smoke-shots/llm-condition-{1-mode-rule,2-mode-llm,3-filled}.png`。
 > 缓做来源：docs/14 **D14**（condition 节点的 LLM 判断分支：自然语言/语义条件，而非规则表达式）
 > 性质：**D14 部分取回、不解除**；零新依赖（litellm 已在依赖内）、零数据库迁移、无 ADR、不新增节点类型、EdgeDSL/Graph version 不变、不新增 REST 端点。
 

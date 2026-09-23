@@ -711,7 +711,7 @@ class EventWaitBroker:
 
 错误码：WAIT_EVENT_KEY_INVALID / WAIT_EVENT_PAYLOAD_INVALID / WAIT_TOKEN_NOT_FOUND / WAIT_ALREADY_SIGNALED / WAIT_TIMEOUT_FAILED。
 
-### 3.18 LLM 语义分支内部接口（conditionMode=llm 进程内 v1；docs/48，2026-09-23 docs-only 立项）
+### 3.18 LLM 语义分支内部接口（conditionMode=llm 进程内 v1；docs/48，2026-09-23 落码收口）
 
 ```python
 # src/atlas/llm/condition_classifier.py
