@@ -7,6 +7,11 @@
     "operator": "运营",
     "admin": "管理员"
   },
+  "language": {
+    "label": "语言",
+    "zhCN": "中文",
+    "enUS": "English"
+  },
   "nav": {
     "openEditor": "打开流程编辑器",
     "monitoring": "监控告警",

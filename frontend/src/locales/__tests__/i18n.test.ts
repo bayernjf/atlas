@@ -1,5 +1,12 @@
-import { afterEach, describe, expect, it } from 'vitest'
-import { changeLanguage, getLanguage, t, DEFAULT_LOCALE } from '../index'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import {
+  changeLanguage,
+  getLanguage,
+  t,
+  DEFAULT_LOCALE,
+  LOCALE_STORAGE_KEY,
+  readStoredLocale,
+} from '../index'
 import zhApprovals from '../zh-CN/approvals.json'
 import zhAudit from '../zh-CN/audit.json'
 import zhChannels from '../zh-CN/channels.json'
@@ -1069,9 +1076,13 @@ describe('zh-CN / en-US catalog parity (docs/57 §5)', () => {
     }
   })
 
-  it('contains no Han characters in any English leaf value', () => {
+  it('contains no Han characters in any English leaf value (language autonym exempt)', () => {
+    // common.language.zhCN deliberately stays "中文" — language names are shown as autonyms
+    // in the switcher menu and never translated (docs/57 §4).
+    const CJK_EXEMPT = new Set(['common:language.zhCN'])
     for (const { ns, en } of PARITY_PAIRS) {
       for (const [key, value] of Object.entries(flatten(en))) {
+        if (CJK_EXEMPT.has(`${ns}:${key}`)) continue
         expect(/[一-鿿]/.test(value), `${ns}:${key} still contains Chinese: ${value}`).toBe(false)
       }
     }
@@ -1090,5 +1101,76 @@ describe('zh-CN / en-US catalog parity (docs/57 §5)', () => {
         )
       }
     }
+  })
+})
+
+// ── Language switcher persistence runtime (docs/57 §4) ─────────────────────────
+// Vitest runs under node (no jsdom); install an in-memory localStorage for this
+// describe so the persistence path is exercised deterministically without a DOM dep.
+function memoryStorage(): Storage {
+  const m = new Map<string, string>()
+  return {
+    getItem: (k: string) => (m.has(k) ? (m.get(k) as string) : null),
+    setItem: (k: string, v: string) => {
+      m.set(k, String(v))
+    },
+    removeItem: (k: string) => {
+      m.delete(k)
+    },
+    clear: () => m.clear(),
+    key: (i: number) => [...m.keys()][i] ?? null,
+    get length() {
+      return m.size
+    },
+  } as Storage
+}
+
+describe('language persistence and switcher runtime (docs/57 §4)', () => {
+  const g = globalThis as { localStorage?: Storage }
+  const originalStorage = g.localStorage
+
+  beforeAll(() => {
+    g.localStorage = memoryStorage()
+  })
+
+  afterAll(() => {
+    if (originalStorage === undefined) delete g.localStorage
+    else g.localStorage = originalStorage
+    vi.resetModules()
+  })
+
+  it('readStoredLocale accepts a supported stored value', () => {
+    expect(readStoredLocale({ getItem: () => 'en-US' })).toBe('en-US')
+    expect(readStoredLocale({ getItem: () => 'zh-CN' })).toBe('zh-CN')
+  })
+
+  it('readStoredLocale falls back to the default for missing/unsupported values', () => {
+    expect(readStoredLocale({ getItem: () => null })).toBe(DEFAULT_LOCALE)
+    expect(readStoredLocale({ getItem: () => 'fr-FR' })).toBe(DEFAULT_LOCALE)
+    expect(readStoredLocale({ getItem: () => '' })).toBe(DEFAULT_LOCALE)
+    expect(readStoredLocale(null)).toBe(DEFAULT_LOCALE)
+  })
+
+  it('readStoredLocale falls back when the storage throws', () => {
+    expect(readStoredLocale({ getItem: () => { throw new Error('blocked') } })).toBe(DEFAULT_LOCALE)
+  })
+
+  it('persists the chosen language and reads it back', () => {
+    changeLanguage('en-US')
+    expect(g.localStorage?.getItem(LOCALE_STORAGE_KEY)).toBe('en-US')
+    expect(readStoredLocale()).toBe('en-US')
+    changeLanguage('zh-CN')
+    expect(g.localStorage?.getItem(LOCALE_STORAGE_KEY)).toBe('zh-CN')
+    expect(readStoredLocale()).toBe('zh-CN')
+  })
+
+  it('initializes the module language from localStorage on first import', async () => {
+    g.localStorage?.setItem(LOCALE_STORAGE_KEY, 'en-US')
+    vi.resetModules()
+    const fresh = await import('../index')
+    expect(fresh.getLanguage()).toBe('en-US')
+    expect(fresh.t('auth.login.submit')).toBe('Sign in')
+    vi.resetModules()
+    g.localStorage?.removeItem(LOCALE_STORAGE_KEY)
   })
 })

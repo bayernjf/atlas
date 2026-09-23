@@ -15,10 +15,12 @@ import { logout as logoutApi } from './lib/apiClient'
 import { getStoredPrincipal, roleCan, UNAUTHORIZED_EVENT, type Principal } from './lib/auth'
 import { extractEmailToken } from './lib/approvals'
 import { antdTheme } from './theme/tokens'
+import { useAntdLocale } from './locales/antdLocale'
 
 type Page = 'dashboard' | 'editor' | 'monitoring' | 'memory' | 'connections' | 'users' | 'approvals' | 'audit' | 'openapi'
 
 function App() {
+  const antdLocale = useAntdLocale()
   const emailToken = extractEmailToken(window.location.pathname)
   const [principal, setPrincipal] = useState<Principal | null>(() =>
     emailToken ? null : getStoredPrincipal(),
@@ -37,7 +39,7 @@ function App() {
   // 邮件深链：登录恢复逻辑之后渲染无登录独立外壳（docs/36 §6）。
   if (emailToken) {
     return (
-      <ConfigProvider theme={antdTheme}>
+      <ConfigProvider theme={antdTheme} locale={antdLocale}>
         <EmailApproval token={emailToken} />
       </ConfigProvider>
     )
@@ -51,7 +53,7 @@ function App() {
 
   if (!principal) {
     return (
-      <ConfigProvider theme={antdTheme}>
+      <ConfigProvider theme={antdTheme} locale={antdLocale}>
         <Login
           onLoggedIn={(loggedIn) => {
             setPrincipal(loggedIn)
@@ -63,7 +65,7 @@ function App() {
   }
 
   return (
-    <ConfigProvider theme={antdTheme}>
+    <ConfigProvider theme={antdTheme} locale={antdLocale}>
       {page === 'dashboard' ? (
         <Dashboard
           principal={principal}

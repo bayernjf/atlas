@@ -2,7 +2,13 @@ import { useState } from 'react'
 import { Alert, Button, Card, Form, Input, Space, Typography } from 'antd'
 import { login } from '../lib/apiClient'
 import type { Principal } from '../lib/auth'
-import { useTranslation } from '../locales'
+import { SUPPORTED_LOCALES, useTranslation, type Locale } from '../locales'
+
+/** 语言在登录页显示各自原名，不随当前语言翻译（docs/57 §4）。 */
+const LOGIN_LOCALE_LABELS: Record<Locale, string> = {
+  'zh-CN': '中文',
+  'en-US': 'English',
+}
 
 type LoginProps = {
   onLoggedIn: (principal: Principal) => void
@@ -26,7 +32,7 @@ const SEED_HINTS: Array<{ tenantKey: string; accounts: Array<{ user: string; pas
 ]
 
 export function Login({ onLoggedIn }: LoginProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
@@ -107,6 +113,19 @@ export function Login({ onLoggedIn }: LoginProps) {
           ))}
         </Space>
       </Card>
+      <Space style={{ marginTop: 12 }}>
+        {SUPPORTED_LOCALES.map((loc) => (
+          <Button
+            key={loc}
+            type="link"
+            size="small"
+            disabled={i18n.language === loc}
+            onClick={() => i18n.changeLanguage(loc)}
+          >
+            {LOGIN_LOCALE_LABELS[loc]}
+          </Button>
+        ))}
+      </Space>
     </div>
   )
 }
