@@ -42,7 +42,16 @@
     "loopBody": "Loop body",
     "loopExit": "Exit",
     "approvalApproved": "Approved",
-    "approvalRejected": "Rejected"
+    "approvalRejected": "Rejected",
+    "branchFallback": "Branch {{n}}",
+    "bp": {
+      "conditional": "Conditional breakpoint: {{expression}}",
+      "node": "Node breakpoint (click to remove)",
+      "set": "Set a breakpoint before this node (debug run)"
+    },
+    "statusRunning": "Running...",
+    "statusPaused": "Paused",
+    "diagSep": "; "
   },
   "export": {
     "title": "Graph definition JSON (W7-W8 DSL compilation input)"
@@ -362,5 +371,93 @@
     "sim": {
       "sendEvent": "Send one event"
     }
+  },
+  "problems": {
+    "title": "Problems",
+    "errors": "{{count}} errors",
+    "warnings": "{{count}} warnings",
+    "allClear": "No problems",
+    "wholeGraph": "Whole graph",
+    "clickLocate": "Click to locate"
+  },
+  "nodeTitles": {
+    "condition": "Conditional branches (rules short-circuit top to bottom; in LLM mode the model picks by description, 04 §5.2)",
+    "human": "Human-in-the-loop (pauses to wait for human approval, 04 §5.6)",
+    "loopForeach": "For-each loop (runs the body once per item, 04 §5.3 / docs/45)",
+    "loopWhile": "While loop (enters the body while the expression is truthy, 04 §5.3)",
+    "parallel": "Parallel fan-out (runs all branches concurrently, then joins, 04 §5.4)",
+    "subgraph": "Subgraph settings (references a saved graph and continues along the single outgoing edge, 04 §5.7)",
+    "wait": "Wait settings (suspends, then continues along the single outgoing edge, 04 §5.5)"
+  },
+  "tool": {
+    "currentValue": "Current value (not in the registered list)",
+    "field": "Tool (adapter/capability)",
+    "discoveryFailed": "Adapter discovery failed; you can type manually, e.g. http/request",
+    "pickRegistered": "Select a registered tool",
+    "loading": "Loading available tools...",
+    "paramMapping": "Parameter mapping (supports {{...}} references)",
+    "insertVar": "Insert variable reference",
+    "appendHint": "Append to parameters after selecting"
+  },
+  "wait": {
+    "title": "Wait settings (suspends, then continues along the single outgoing edge, 04 §5.5)",
+    "typeLabel": "Wait type",
+    "typeDuration": "Timed wait",
+    "typeEvent": "Event wait",
+    "durationModeLabel": "Duration mode",
+    "modeStatic": "Fixed duration",
+    "modeDynamic": "Dynamic expression",
+    "modeAbsolute": "Absolute time",
+    "durationLabel": "Wait duration",
+    "unitSecond": "s",
+    "durationInvalid": "Wait duration must be an integer between {{min}} and {{max}} seconds",
+    "jitterLabel": "Jitter cap (optional)",
+    "jitterInvalid": "Jitter cap must be an integer between 0 and {{max}} seconds",
+    "jitterHint": "Actual wait = duration + a random number of seconds from 0 to the jitter cap (docs/54, thundering-herd prevention)",
+    "absoluteLabel": "Absolute time",
+    "absolutePlaceholder": "2026-09-23T18:00:00+08:00 or epoch seconds; {{}} supported",
+    "absoluteInvalid": "Required, 1-{{max}} characters",
+    "absoluteHint": "Resolved at runtime; must be a moment within the next 1-{{max}} seconds",
+    "expressionLabel": "Duration expression",
+    "expressionInvalid": "Required, 1-{{max}} characters",
+    "expressionHint": "Evaluated at runtime; must be {{min}}-{{max}} seconds",
+    "eventCountLabel": "Number of events",
+    "singleEvent": "Single event",
+    "multiEvent": "Multi-event race (continues when any one fires)",
+    "eventKeysLabel": "Event keys ({{count}}/{{max}}, OR race; the first to fire wins)",
+    "addEvent": "+ Add event (up to {{max}})",
+    "eventKeyRule": "Each key is 1-{{max}} characters; the static part allows only letters, digits and :_-",
+    "matchModeLabel": "Match mode (docs/55)",
+    "matchAny": "Continue when any fires (OR; the first wins)",
+    "matchAll": "Continue when all fire (AND; requires at least 2 events)",
+    "matchAllTooFew": "All-match (AND) requires at least 2 events",
+    "eventKeyLabel": "Event key",
+    "eventKeyInvalid": "Required, 1-{{max}} characters; the static part allows only letters, digits and",
+    "eventKeyInvalidSuffix": ":_-; the {{...}} placeholder is not checked",
+    "eventKeyHint": "Supports {{...}} interpolation; validated after runtime rendering",
+    "timeoutLabel": "Timeout",
+    "timeoutInvalid": "Timeout must be an integer between {{min}} and {{max}} seconds",
+    "timeoutPolicyLabel": "Timeout policy",
+    "onTimeoutContinue": "Continue (proceeds along the outgoing edge on timeout)",
+    "onTimeoutFail": "Fail (the flow fails on timeout)"
+  },
+  "form": {
+    "add": "Add",
+    "addCount": "Add ({{count}}/{{max}})",
+    "empty": "No items",
+    "keyPlaceholder": "Key"
+  },
+  "nodePicker": {
+    "targetNode": "Select target node",
+    "savedGraphEmpty": "No saved graphs yet: build a subflow in the editor and run it once to save it",
+    "pickSavedGraph": "Select a saved graph",
+    "nodeCount": "{{id}} ({{count}} nodes)",
+    "builtinCardEmpty": "No built-in cards: leave empty to use the default approval text",
+    "pickCard": "Select an interactive card (leave empty for the default approval text)"
+  },
+  "widget": {
+    "pathExpr": "{{...}} expression",
+    "insertableVar": "Variables such as {{node output.field}} can be inserted",
+    "insertVar": "Insert variable reference"
   }
 }

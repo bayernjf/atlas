@@ -10,6 +10,7 @@ import { useAdapters } from '../../lib/useScope'
 import { validateParamFields } from '../../lib/validation/l1'
 import { useEditorStore } from '../../store/editorStore'
 import type { NodeConfig } from '../../lib/nodeCatalog'
+import { useTranslation } from '../../locales'
 
 type Props = {
   config: NodeConfig
@@ -30,6 +31,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 export function ToolCallConfig({ config, update, variablePaths, onInsert, nodeId }: Props) {
+  const { t } = useTranslation('editor')
   const { adapters, fetchFailed } = useAdapters()
   const nlWarnings = useEditorStore((state) => state.nlWarnings)
 
@@ -76,14 +78,14 @@ export function ToolCallConfig({ config, update, variablePaths, onInsert, nodeId
   // 已保存图里的工具（如未注册适配器）不在发现列表时补一条，保证 Select 能显示当前值
   const selectGroups = useMemo(() => {
     if (config.tool && !knownValues.has(config.tool)) {
-      return [{ label: '当前值（未在已注册列表）', options: [{ value: config.tool, label: config.tool }] }, ...groups]
+      return [{ label: t('tool.currentValue'), options: [{ value: config.tool, label: config.tool }] }, ...groups]
     }
     return groups
-  }, [config.tool, knownValues, groups])
+  }, [config.tool, knownValues, groups, t])
 
   return (
     <>
-      <Field label="工具（适配器/能力）">
+      <Field label={t('tool.field')}>
         {fetchFailed ? (
           <AutoComplete
             style={{ width: '100%' }}
@@ -91,7 +93,7 @@ export function ToolCallConfig({ config, update, variablePaths, onInsert, nodeId
             status={toolMissing ? 'error' : undefined}
             onChange={(tool) => update({ tool })}
             options={selectGroups.flatMap((group) => group.options)}
-            placeholder="适配器发现失败，可手动输入，如 http/request"
+            placeholder={t('tool.discoveryFailed')}
           />
         ) : (
           <Select
@@ -99,7 +101,7 @@ export function ToolCallConfig({ config, update, variablePaths, onInsert, nodeId
             style={{ width: '100%' }}
             value={config.tool || undefined}
             status={toolMissing ? 'error' : undefined}
-            placeholder={adapters ? '选择已注册工具' : '加载可用工具…'}
+            placeholder={adapters ? t('tool.pickRegistered') : t('tool.loading')}
             loading={adapters === null}
             onChange={(tool) => update({ tool })}
             options={selectGroups}
@@ -107,7 +109,7 @@ export function ToolCallConfig({ config, update, variablePaths, onInsert, nodeId
           />
         )}
       </Field>
-      <Field label="参数映射（支持 {{路径}} 引用）">
+      <Field label={t('tool.paramMapping')}>
         {formSource ? (
           <FormRenderer
             key={config.tool}
@@ -139,11 +141,11 @@ export function ToolCallConfig({ config, update, variablePaths, onInsert, nodeId
         )}
       </Field>
       {!formSource && (
-        <Field label="插入变量引用">
+        <Field label={t('tool.insertVar')}>
           <Select
             style={{ width: '100%' }}
             value={undefined}
-            placeholder="选择后追加到参数"
+            placeholder={t('tool.appendHint')}
             onChange={onInsert}
             options={variablePaths.map((path) => ({ value: path, label: `{{${path}}}` }))}
           />

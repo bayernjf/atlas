@@ -18,10 +18,12 @@ import {
   type EmailApprovalView,
 } from '../lib/apiClient'
 import { formatRemaining, remainingSeconds } from '../lib/approvals'
+import { useTranslation } from '../locales'
 
 const { Content, Header } = Layout
 
 export function EmailApproval({ token }: { token: string }): ReactElement {
+  const { t } = useTranslation('approvals')
   const [view, setView] = useState<EmailApprovalView | null>(null)
   const [invalid, setInvalid] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -59,19 +61,19 @@ export function EmailApproval({ token }: { token: string }): ReactElement {
         )
         await refresh()
       } catch (exc) {
-        message.error(exc instanceof Error ? exc.message : '提交失败')
+        message.error(exc instanceof Error ? exc.message : t('error.submitFailed'))
       } finally {
         setBusy(false)
       }
     },
-    [token, comment, refresh],
+    [token, comment, refresh, t],
   )
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
       <Header style={{ display: 'flex', alignItems: 'center' }}>
         <Typography.Text strong style={{ color: '#fff', fontSize: 16 }}>
-          Atlas 审批处理
+          {t('email.header')}
         </Typography.Text>
       </Header>
       <Content style={{ display: 'flex', justifyContent: 'center', padding: 24 }}>
@@ -81,28 +83,28 @@ export function EmailApproval({ token }: { token: string }): ReactElement {
               <Alert
                 type="error"
                 showIcon
-                message="审批链接无效或已过期"
-                description="链接可能已被处理、超过有效期，或地址被修改。请重新进入应用查看最新审批。"
+                message={t('email.invalid')}
+                description={t('email.invalidHint')}
               />
               <Button type="primary" href="/">
-                前往 Atlas 应用
+                {t('email.goToApp')}
               </Button>
             </Space>
           )}
 
-          {!invalid && !view && <Typography.Text type="secondary">加载中…</Typography.Text>}
+          {!invalid && !view && <Typography.Text type="secondary">{t('email.loading')}</Typography.Text>}
 
           {view && (
             <Space direction="vertical" size="large" style={{ width: '100%' }}>
               <Descriptions column={1} bordered size="small">
-                <Descriptions.Item label="审批说明">{view.summary}</Descriptions.Item>
+                <Descriptions.Item label={t('email.labelSummary')}>{view.summary}</Descriptions.Item>
                 {view.approver && (
-                  <Descriptions.Item label="指定审批人">{view.approver}</Descriptions.Item>
+                  <Descriptions.Item label={t('email.labelApprover')}>{view.approver}</Descriptions.Item>
                 )}
-                <Descriptions.Item label="图 / 节点">
+                <Descriptions.Item label={t('email.labelGraphNode')}>
                   {view.graphId} / {view.nodeId}
                 </Descriptions.Item>
-                <Descriptions.Item label="剩余时间">
+                <Descriptions.Item label={t('email.labelRemaining')}>
                   {view.status === 'pending' ? (
                     <Tag
                       color={
@@ -125,9 +127,13 @@ export function EmailApproval({ token }: { token: string }): ReactElement {
                 <Alert
                   type="info"
                   showIcon
-                  message={`该审批已处理：${
-                    view.decision === 'approved' ? '同意' : '拒绝'
-                  }（来源：${view.resolvedBy === 'timeout' ? '超时自动处理' : '人工处理'}）`}
+                  message={t('email.resolvedLine', {
+                    decision:
+                      view.decision === 'approved' ? t('actions.approve') : t('actions.reject'),
+                    source: t(
+                      view.resolvedBy === 'timeout' ? 'source.timeout' : 'source.human',
+                    ),
+                  })}
                 />
               )}
 
@@ -137,7 +143,7 @@ export function EmailApproval({ token }: { token: string }): ReactElement {
                     rows={2}
                     maxLength={500}
                     showCount
-                    placeholder="审批意见（选填）"
+                    placeholder={t('email.commentPlaceholder')}
                     value={comment}
                     onChange={(event) => setComment(event.target.value)}
                   />
@@ -152,7 +158,7 @@ export function EmailApproval({ token }: { token: string }): ReactElement {
                         return (
                           <Popconfirm
                             key={link.id}
-                            title={danger ? '确认拒绝该审批？' : '确认同意该审批？'}
+                            title={danger ? t('email.confirmReject') : t('email.confirmApprove')}
                             onConfirm={() => void submit(undefined, actionId)}
                           >
                             <Button danger={danger} type={danger ? 'default' : 'primary'} loading={busy}>
@@ -164,19 +170,19 @@ export function EmailApproval({ token }: { token: string }): ReactElement {
                     ) : (
                       <>
                         <Popconfirm
-                          title="确认拒绝该审批？"
+                          title={t('email.confirmReject')}
                           onConfirm={() => void submit('rejected')}
                         >
                           <Button danger loading={busy}>
-                            拒绝
+                            {t('actions.reject')}
                           </Button>
                         </Popconfirm>
                         <Popconfirm
-                          title="确认同意该审批？"
+                          title={t('email.confirmApprove')}
                           onConfirm={() => void submit('approved')}
                         >
                           <Button type="primary" loading={busy}>
-                            同意
+                            {t('actions.approve')}
                           </Button>
                         </Popconfirm>
                       </>

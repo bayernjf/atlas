@@ -3,6 +3,7 @@ import { NodeConfigForm } from '../../lib/forms/NodeConfigForm'
 import type { WidgetTargetOption } from '../../lib/forms/types'
 import type { NodeConfig } from '../../lib/nodeCatalog'
 import type { Diagnostic } from '../../lib/validation/diagnostics'
+import { useTranslation } from '../../locales'
 
 type Props = {
   config: NodeConfig
@@ -20,9 +21,10 @@ type Props = {
  * 分支名/目标唯一、默认分支互异等跨字段规则仍由 L1 手写产出。
  */
 export function ConditionConfig({ config, update, variablePaths, targetOptions, diagnostics }: Props) {
+  const { t } = useTranslation('editor')
   return (
     <>
-      <Typography.Text strong>条件分支（规则自上而下短路；LLM 模式由模型按描述选择，04 §5.2）</Typography.Text>
+      <Typography.Text strong>{t('nodeTitles.condition')}</Typography.Text>
       <NodeConfigForm
         kind="condition"
         config={config}

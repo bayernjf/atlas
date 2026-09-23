@@ -11,6 +11,7 @@ import { Empty, Select, Typography } from 'antd'
 import { listCards, listGraphs, type CardSummary, type SavedGraphSummary } from '../apiClient'
 import type { WidgetComponent } from './types'
 import { DiagnosticText } from './widgets'
+import { useTranslation } from '../../locales'
 
 /**
  * 连线目标选择：值为目标节点 id；必填/悬空引用的错误由 L1/L2 诊断经
@@ -24,6 +25,7 @@ export const TargetSelectWidget: WidgetComponent = ({
   diagnostics,
   placeholder,
 }) => {
+  const { t } = useTranslation('editor')
   const options = scope?.listNodeTargets?.() ?? []
   return (
     <>
@@ -32,7 +34,7 @@ export const TargetSelectWidget: WidgetComponent = ({
         allowClear={false}
         style={{ width: '100%' }}
         value={value ? String(value) : undefined}
-        placeholder={placeholder ?? '选择目标节点'}
+        placeholder={placeholder ?? t('nodePicker.targetNode')}
         status={diagnostics?.some((d) => d.severity === 'error') ? 'error' : undefined}
         onChange={(next: string) => onChange(next)}
         options={options}
@@ -54,6 +56,7 @@ export const SavedGraphSelectWidget: WidgetComponent = ({
   diagnostics,
   placeholder,
 }) => {
+  const { t } = useTranslation('editor')
   const [graphs, setGraphs] = useState<SavedGraphSummary[]>([])
   const [loadError, setLoadError] = useState('')
 
@@ -76,7 +79,7 @@ export const SavedGraphSelectWidget: WidgetComponent = ({
       <>
         <Empty
           image={Empty.PRESENTED_IMAGE_SIMPLE}
-          description="还没有已保存的图：先在编辑器搭好子流程并运行一次保存"
+          description={t('nodePicker.savedGraphEmpty')}
         />
         <DiagnosticText diagnostics={diagnostics} />
       </>
@@ -90,13 +93,13 @@ export const SavedGraphSelectWidget: WidgetComponent = ({
         allowClear={false}
         style={{ width: '100%' }}
         value={value ? String(value) : undefined}
-        placeholder={placeholder ?? '选择已保存的图'}
+        placeholder={placeholder ?? t('nodePicker.pickSavedGraph')}
         status={diagnostics?.some((d) => d.severity === 'error') ? 'error' : undefined}
         onChange={(next: string) => onChange(next)}
         optionFilterProp="label"
         options={graphs.map((item) => ({
           value: item.id,
-          label: `${item.id}（${item.node_count} 节点）`,
+          label: t('nodePicker.nodeCount', { id: item.id, count: item.node_count }),
         }))}
       />
       {loadError && <Typography.Text type="danger">{loadError}</Typography.Text>}
@@ -116,6 +119,7 @@ export const CardSelectWidget: WidgetComponent = ({
   diagnostics,
   placeholder,
 }) => {
+  const { t } = useTranslation('editor')
   const [cards, setCards] = useState<CardSummary[]>([])
   const [loadError, setLoadError] = useState('')
 
@@ -138,7 +142,7 @@ export const CardSelectWidget: WidgetComponent = ({
       <>
         <Empty
           image={Empty.PRESENTED_IMAGE_SIMPLE}
-          description="暂无内置卡片：留空即使用默认审批说明"
+          description={t('nodePicker.builtinCardEmpty')}
         />
         <DiagnosticText diagnostics={diagnostics} />
       </>
@@ -152,7 +156,7 @@ export const CardSelectWidget: WidgetComponent = ({
         allowClear
         style={{ width: '100%' }}
         value={value ? String(value) : undefined}
-        placeholder={placeholder ?? '选择交互卡片（留空＝默认审批说明）'}
+        placeholder={placeholder ?? t('nodePicker.pickCard')}
         status={diagnostics?.some((d) => d.severity === 'error') ? 'error' : undefined}
         onChange={(next: string | undefined) => onChange(next ?? '')}
         optionFilterProp="label"

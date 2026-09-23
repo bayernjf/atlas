@@ -3,6 +3,7 @@ import { NodeConfigForm } from '../../lib/forms/NodeConfigForm'
 import type { WidgetTargetOption } from '../../lib/forms/types'
 import type { NodeConfig } from '../../lib/nodeCatalog'
 import type { Diagnostic } from '../../lib/validation/diagnostics'
+import { useTranslation } from '../../locales'
 
 type Props = {
   config: NodeConfig
@@ -26,10 +27,11 @@ export function SubgraphConfig({
   targetOptions,
   diagnostics,
 }: Props) {
+  const { t } = useTranslation('editor')
   return (
     <>
       <Typography.Text strong>
-        子图设置（引用已保存图，沿唯一出边继续，04 §5.7）
+        {t('nodeTitles.subgraph')}
       </Typography.Text>
       <NodeConfigForm
         kind="subgraph"

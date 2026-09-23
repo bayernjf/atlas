@@ -3,6 +3,7 @@ import { NodeConfigForm } from '../../lib/forms/NodeConfigForm'
 import type { WidgetTargetOption } from '../../lib/forms/types'
 import type { NodeConfig } from '../../lib/nodeCatalog'
 import type { Diagnostic } from '../../lib/validation/diagnostics'
+import { useTranslation } from '../../locales'
 
 type Props = {
   config: NodeConfig
@@ -25,9 +26,10 @@ export function HumanApprovalConfig({
   targetOptions,
   diagnostics,
 }: Props) {
+  const { t } = useTranslation('editor')
   return (
     <>
-      <Typography.Text strong>人机协作（暂停等待人工审批，04 §5.6）</Typography.Text>
+      <Typography.Text strong>{t('nodeTitles.human')}</Typography.Text>
       <NodeConfigForm
         kind="human_approval"
         config={config}

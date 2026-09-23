@@ -42,7 +42,16 @@
     "loopBody": "循环体",
     "loopExit": "退出",
     "approvalApproved": "通过",
-    "approvalRejected": "拒绝"
+    "approvalRejected": "拒绝",
+    "branchFallback": "分支 {{n}}",
+    "bp": {
+      "conditional": "条件断点：{{expression}}",
+      "node": "节点断点（点击取消）",
+      "set": "在此节点前设断点（调试运行）"
+    },
+    "statusRunning": "运行中…",
+    "statusPaused": "已暂停",
+    "diagSep": "；"
   },
   "export": {
     "title": "Graph 定义 JSON（W7-W8 DSL 编译输入）"
@@ -362,5 +371,93 @@
     "sim": {
       "sendEvent": "发送一次事件"
     }
+  },
+  "problems": {
+    "title": "问题",
+    "errors": "错误 {{count}}",
+    "warnings": "警告 {{count}}",
+    "allClear": "无问题",
+    "wholeGraph": "全图",
+    "clickLocate": "点击定位"
+  },
+  "nodeTitles": {
+    "condition": "条件分支（规则自上而下短路；LLM 模式由模型按描述选择，04 §5.2）",
+    "human": "人机协作（暂停等待人工审批，04 §5.6）",
+    "loopForeach": "遍历循环（逐项执行循环体，04 §5.3 / docs/45）",
+    "loopWhile": "条件循环（表达式为真时进入循环体，04 §5.3）",
+    "parallel": "并行扇出（同时执行各分支后汇聚，04 §5.4）",
+    "subgraph": "子图设置（引用已保存图，沿唯一出边继续，04 §5.7）",
+    "wait": "等待设置（挂起后沿唯一出边继续，04 §5.5）"
+  },
+  "tool": {
+    "currentValue": "当前值（未在已注册列表）",
+    "field": "工具（适配器/能力）",
+    "discoveryFailed": "适配器发现失败，可手动输入，如 http/request",
+    "pickRegistered": "选择已注册工具",
+    "loading": "加载可用工具…",
+    "paramMapping": "参数映射（支持 {{...}} 引用）",
+    "insertVar": "插入变量引用",
+    "appendHint": "选择后追加到参数"
+  },
+  "wait": {
+    "title": "等待设置（挂起后沿唯一出边继续，04 §5.5）",
+    "typeLabel": "等待类型",
+    "typeDuration": "定时等待",
+    "typeEvent": "事件等待",
+    "durationModeLabel": "时长模式",
+    "modeStatic": "固定时长",
+    "modeDynamic": "动态表达式",
+    "modeAbsolute": "到点时刻",
+    "durationLabel": "等待时长",
+    "unitSecond": "秒",
+    "durationInvalid": "等待时长需为 {{min}}-{{max}} 秒的整数",
+    "jitterLabel": "抖动上限（可选）",
+    "jitterInvalid": "抖动上限需为 0-{{max}} 秒的整数",
+    "jitterHint": "实际等待 = 等待时长 + 0~抖动上限之间的随机秒（docs/54，防雪崩）",
+    "absoluteLabel": "到点时刻",
+    "absolutePlaceholder": "2026-09-23T18:00:00+08:00 或 epoch 秒，支持 {{}}",
+    "absoluteInvalid": "必填，1-{{max}} 字符",
+    "absoluteHint": "运行时解析，须为未来 1-{{max}} 秒内的时刻",
+    "expressionLabel": "时长表达式",
+    "expressionInvalid": "必填，1-{{max}} 字符",
+    "expressionHint": "运行时求值，须为 {{min}}-{{max}} 秒",
+    "eventCountLabel": "事件数量",
+    "singleEvent": "单事件",
+    "multiEvent": "多事件竞速（任一命中即继续）",
+    "eventKeysLabel": "事件标识（{{count}}/{{max}}，OR 竞速，首达者胜出）",
+    "addEvent": "＋添加事件（最多 {{max}} 个）",
+    "eventKeyRule": "每个标识 1-{{max}} 字符，静态部分仅允许字母、数字及 :_-",
+    "matchModeLabel": "命中方式（docs/55）",
+    "matchAny": "任一命中即继续（OR，首达者胜出）",
+    "matchAll": "全部命中才继续（AND，需至少 2 个事件）",
+    "matchAllTooFew": "全部命中（AND）需配置至少 2 个事件",
+    "eventKeyLabel": "事件标识",
+    "eventKeyInvalid": "必填，1-{{max}} 字符；静态部分仅允许字母、数字及",
+    "eventKeyInvalidSuffix": ":_-，占位 {{...}} 内不检查",
+    "eventKeyHint": "支持 {{...}} 插值；运行时渲染后再校验",
+    "timeoutLabel": "超时时间",
+    "timeoutInvalid": "超时时间需为 {{min}}-{{max}} 秒的整数",
+    "timeoutPolicyLabel": "超时策略",
+    "onTimeoutContinue": "继续（超时沿出边继续）",
+    "onTimeoutFail": "失败（超时使流程失败）"
+  },
+  "form": {
+    "add": "添加",
+    "addCount": "添加（{{count}}/{{max}}）",
+    "empty": "暂无条目",
+    "keyPlaceholder": "键名"
+  },
+  "nodePicker": {
+    "targetNode": "选择目标节点",
+    "savedGraphEmpty": "还没有已保存的图：先在编辑器搭好子流程并运行一次保存",
+    "pickSavedGraph": "选择已保存的图",
+    "nodeCount": "{{id}}（{{count}} 节点）",
+    "builtinCardEmpty": "暂无内置卡片：留空即使用默认审批说明",
+    "pickCard": "选择交互卡片（留空＝默认审批说明）"
+  },
+  "widget": {
+    "pathExpr": "{{...}} 表达式",
+    "insertableVar": "可插入 {{节点输出.字段}} 变量",
+    "insertVar": "插入变量引用"
   }
 }

@@ -3,6 +3,7 @@ import { NodeConfigForm } from '../../lib/forms/NodeConfigForm'
 import type { WidgetTargetOption } from '../../lib/forms/types'
 import type { NodeConfig } from '../../lib/nodeCatalog'
 import type { Diagnostic } from '../../lib/validation/diagnostics'
+import { useTranslation } from '../../locales'
 
 type Props = {
   config: NodeConfig
@@ -20,13 +21,12 @@ type Props = {
  * mode 在 while/foreach 间切换（docs/45），标题随模式变化。
  */
 export function LoopConfig({ config, update, variablePaths, targetOptions, diagnostics }: Props) {
+  const { t } = useTranslation('editor')
   const isForeach = config.mode === 'foreach'
   return (
     <>
       <Typography.Text strong>
-        {isForeach
-          ? '遍历循环（逐项执行循环体，04 §5.3 / docs/45）'
-          : '条件循环（表达式为真时进入循环体，04 §5.3）'}
+        {isForeach ? t('nodeTitles.loopForeach') : t('nodeTitles.loopWhile')}
       </Typography.Text>
       <NodeConfigForm
         kind="loop"

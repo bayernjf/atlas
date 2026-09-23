@@ -11,6 +11,7 @@ import { Typography } from 'antd'
 import { useEditorStore } from '../../store/editorStore'
 import { useProblems } from '../../store/validationStore'
 import type { Diagnostic } from '../../lib/validation/diagnostics'
+import { useTranslation } from '../../locales'
 
 const FLASH_CLASS = 'problems-field-flash'
 const FLASH_MS = 1600
@@ -32,6 +33,7 @@ function focusPropertyField(pointer: string): void {
 }
 
 export function ProblemsPanel() {
+  const { t } = useTranslation('editor')
   const problems = useProblems()
   const [collapsed, setCollapsed] = useState(false)
   const { setCenter } = useReactFlow()
@@ -72,11 +74,11 @@ export function ProblemsPanel() {
         onClick={() => setCollapsed((value) => !value)}
         aria-expanded={!collapsed}
       >
-        <span className="problems-title">问题</span>
+        <span className="problems-title">{t('problems.title')}</span>
         <span className="problems-counts">
-          {errorCount > 0 && <span className="problems-count problems-count-error">错误 {errorCount}</span>}
-          {warningCount > 0 && <span className="problems-count problems-count-warning">警告 {warningCount}</span>}
-          {problems.length === 0 && <span className="problems-count problems-count-ok">无问题</span>}
+          {errorCount > 0 && <span className="problems-count problems-count-error">{t('problems.errors', { count: errorCount })}</span>}
+          {warningCount > 0 && <span className="problems-count problems-count-warning">{t('problems.warnings', { count: warningCount })}</span>}
+          {problems.length === 0 && <span className="problems-count problems-count-ok">{t('problems.allClear')}</span>}
         </span>
         <span className="problems-chevron">{collapsed ? '▲' : '▼'}</span>
       </button>
@@ -91,7 +93,7 @@ export function ProblemsPanel() {
                 key={`${problem.code}-${nodeId ?? 'graph'}-${problem.loc.pointer ?? ''}-${index}`}
                 className={`problems-item problems-item-${problem.severity} ${clickable ? 'is-clickable' : ''}`}
                 onClick={() => onSelect(problem)}
-                title={clickable ? '点击定位' : problem.message}
+                title={clickable ? t('problems.clickLocate') : problem.message}
               >
                 <span className="problems-item-icon">{problem.severity === 'error' ? '✕' : '!'}</span>
                 <span className="problems-item-body">
@@ -101,7 +103,7 @@ export function ProblemsPanel() {
                   <span className="problems-item-meta">
                     {nodeId && <span className="problems-item-node">{labelById.get(nodeId) ?? nodeId}</span>}
                     {problem.loc.pointer && <span className="problems-item-pointer">{problem.loc.pointer}</span>}
-                    {!nodeId && <span className="problems-item-node">全图</span>}
+                    {!nodeId && <span className="problems-item-node">{t('problems.wholeGraph')}</span>}
                   </span>
                 </span>
                 {problem.quickFix && problem.quickFix.length > 0 && nodeId && problem.loc.pointer && (
