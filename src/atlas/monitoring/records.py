@@ -22,6 +22,12 @@ from .alerts import (
     validate_rules,
 )
 from .silences import OnCallSchedule, OpsStore, Silence
+from .notify import (
+    AlertChannel,
+    AlertChannelDelivery,
+    alert_channel_from_raw,
+    validate_alert_channel,
+)
 from .business import BusinessOutcome
 from .metrics import NodeResult, is_healthy
 
@@ -71,6 +77,8 @@ class MonitoringStore:
         self._streaks: dict[str, int] = {}
         self._rules = RuleConfig()
         self._ops = OpsStore()
+        self._channel = AlertChannel()
+        self._channel_delivery = AlertChannelDelivery()
         self._run_counter = 0
         self._alert_counter = 0
 
@@ -268,6 +276,28 @@ class MonitoringStore:
             runs = list(self._runs)
         return summarize(runs)
 
+    def get_alert_channel(self) -> AlertChannel:
+        with self._lock:
+            return self._channel.model_copy(deep=True)
+
+    def update_alert_channel(self, raw: dict) -> AlertChannel:
+        errors = validate_alert_channel(raw)
+        if errors:
+            raise ValueError("；".join(errors))
+        channel = alert_channel_from_raw(raw)
+        channel.updatedAt = _now_iso()
+        with self._lock:
+            self._channel = channel
+            return channel.model_copy(deep=True)
+
+    def get_alert_channel_delivery(self) -> AlertChannelDelivery:
+        with self._lock:
+            return self._channel_delivery.model_copy(deep=True)
+
+    def record_alert_channel_delivery(self, delivery: AlertChannelDelivery) -> None:
+        with self._lock:
+            self._channel_delivery = delivery.model_copy(deep=True)
+
     # docs/33 §5：静默 / 值班（进程内，委托 OpsStore）
     def create_silence(
         self, *, rule_id: str | None, graph_id: str | None, duration_minutes: int,
@@ -300,3 +330,5 @@ class MonitoringStore:
             self._streaks.clear()
             self._rules = RuleConfig()
             self._ops.reset()
+            self._channel = AlertChannel()
+            self._channel_delivery = AlertChannelDelivery()

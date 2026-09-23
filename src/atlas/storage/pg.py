@@ -31,6 +31,12 @@ from atlas.monitoring.alerts import (
     validate_rules,
 )
 from atlas.monitoring.silences import OnCallSchedule, OpsStore, Silence
+from atlas.monitoring.notify import (
+    AlertChannel,
+    AlertChannelDelivery,
+    alert_channel_from_raw,
+    validate_alert_channel,
+)
 from atlas.monitoring.records import RunRecord
 from atlas.recording.cases import RecordingCase, RecordStep
 
@@ -1035,6 +1041,135 @@ class PgMonitoringStore:
             ).all()
         return summarize([self._run_from_row(r) for r in rows])
 
+    def get_alert_channel(self) -> AlertChannel:
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT enabled, channel, to_addr, secret, min_severity, updated_at "
+                    "FROM alert_notify_settings WHERE tenant_id = :tenant_id"
+                ),
+                {"tenant_id": self._tenant_id},
+            ).first()
+        if not row:
+            return AlertChannel()
+        return AlertChannel(
+            enabled=row[0], channel=row[1], to=row[2], secret=row[3],
+            minSeverity=row[4], updatedAt=row[5],
+        )
+
+    def update_alert_channel(self, raw: dict) -> AlertChannel:
+        errors = validate_alert_channel(raw)
+        if errors:
+            raise ValueError("；".join(errors))
+        channel = alert_channel_from_raw(raw)
+        channel.updatedAt = _now_iso()
+        with self._engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO alert_notify_settings "
+                    "(tenant_id, enabled, channel, to_addr, secret, min_severity, updated_at) "
+                    "VALUES (:tenant_id, :enabled, :channel, :to_addr, :secret, "
+                    ":min_severity, :updated_at) "
+                    "ON CONFLICT (tenant_id) DO UPDATE SET enabled = EXCLUDED.enabled, "
+                    "channel = EXCLUDED.channel, to_addr = EXCLUDED.to_addr, "
+                    "secret = EXCLUDED.secret, min_severity = EXCLUDED.min_severity, "
+                    "updated_at = EXCLUDED.updated_at"
+                ),
+                {
+                    "tenant_id": self._tenant_id,
+                    "enabled": channel.enabled,
+                    "channel": channel.channel,
+                    "to_addr": channel.to,
+                    "secret": channel.secret,
+                    "min_severity": channel.minSeverity,
+                    "updated_at": channel.updatedAt,
+                },
+            )
+        return channel.model_copy(deep=True)
+
+    def get_alert_channel_delivery(self) -> AlertChannelDelivery:
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT last_notified_at, last_error_code, last_error_message "
+                    "FROM alert_notify_settings WHERE tenant_id = :tenant_id"
+                ),
+                {"tenant_id": self._tenant_id},
+            ).first()
+        if not row:
+            return AlertChannelDelivery()
+        return AlertChannelDelivery(
+            lastNotifiedAt=row[0], errorCode=row[1], errorMessage=row[2],
+        )
+
+    def record_alert_channel_delivery(self, delivery: AlertChannelDelivery) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO alert_notify_settings (tenant_id, last_notified_at, "
+                    "last_error_code, last_error_message) "
+                    "VALUES (:tenant_id, :last_notified_at, :last_error_code, "
+                    ":last_error_message) "
+                    "ON CONFLICT (tenant_id) DO UPDATE SET "
+                    "last_notified_at = EXCLUDED.last_notified_at, "
+                    "last_error_code = EXCLUDED.last_error_code, "
+                    "last_error_message = EXCLUDED.last_error_message"
+                ),
+                {
+                    "tenant_id": self._tenant_id,
+                    "last_notified_at": delivery.lastNotifiedAt,
+                    "last_error_code": delivery.errorCode,
+                    "last_error_message": delivery.errorMessage,
+                },
+            )
+
+    def raise_rollout_gate_alert(
+        self, *, graph_id: str, message: str, action: dict, last_run_id: str = "",
+    ) -> Alert:
+        now = _now_iso()
+        with self._engine.begin() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT id FROM monitoring_alerts WHERE tenant_id = :tenant_id "
+                    "AND rule_id = 'rollout_gate' AND graph_id = :graph_id "
+                    "AND status != 'resolved' ORDER BY first_seen DESC LIMIT 1"
+                ),
+                {"tenant_id": self._tenant_id, "graph_id": graph_id},
+            ).first()
+            if row is not None:
+                conn.execute(
+                    text(
+                        "UPDATE monitoring_alerts SET count = count + 1, last_seen = :now, "
+                        "last_run_id = :last_run_id WHERE id = :id"
+                    ),
+                    {"now": now, "last_run_id": last_run_id, "id": row[0]},
+                )
+                alert_id = row[0]
+            else:
+                alert_id = _next_id(conn, "alt")
+                conn.execute(
+                    text(
+                        "INSERT INTO monitoring_alerts "
+                        "(id, tenant_id, rule_id, graph_id, severity, message, status, "
+                        "first_seen, last_seen, last_run_id, count, action) "
+                        "VALUES (:id, :tenant_id, 'rollout_gate', :graph_id, 'critical', "
+                        ":message, 'open', :now, :now, :last_run_id, 1, :action)"
+                    ),
+                    {
+                        "id": alert_id, "tenant_id": self._tenant_id,
+                        "graph_id": graph_id, "message": message, "now": now,
+                        "last_run_id": last_run_id,
+                        "action": json.dumps(action, ensure_ascii=False),
+                    },
+                )
+                self._ops.remember_assignee(alert_id)
+        alert = self.get_alert(alert_id)
+        return alert if alert is not None else Alert(
+            id=alert_id, rule_id="rollout_gate", graph_id=graph_id, severity="critical",
+            message=message, first_seen=now, last_seen=now, last_run_id=last_run_id,
+            action=action,
+        )
+
     # docs/33 §5：静默 / 值班（进程内，委托 OpsStore）
     def create_silence(
         self, *, rule_id: str | None, graph_id: str | None, duration_minutes: int,
@@ -1072,6 +1207,10 @@ class PgMonitoringStore:
             )
             conn.execute(
                 text("DELETE FROM monitoring_rules WHERE tenant_id = :tenant_id"),
+                {"tenant_id": self._tenant_id},
+            )
+            conn.execute(
+                text("DELETE FROM alert_notify_settings WHERE tenant_id = :tenant_id"),
                 {"tenant_id": self._tenant_id},
             )
         self._ops.reset()
