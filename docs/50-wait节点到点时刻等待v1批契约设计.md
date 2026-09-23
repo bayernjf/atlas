@@ -1,6 +1,7 @@
 # 50. wait 节点到点时刻等待 v1 批契约设计
 
 > 立项：2026-09-23（AI 判断承接「不用管git，你推任务」总授权；docs-only 本原子，落码前不开工）
+> 落码收口：2026-09-23（后端 12de72d、前端 4f82a1c、收口原子见 §8）
 > 缓做来源：docs/14 **D19** 余部（到点时刻等待；动态时长已随 docs/49 落码、event 等待随 docs/47）
 > 性质：**D19 部分取回、不解除**；零新依赖、零数据库迁移、无 ADR、不新增节点类型、Graph version 不变、不新增 REST 端点。
 
@@ -123,3 +124,12 @@ absolute：
 - 后端：`.venv/bin/pytest`（立项基线 **1472 passed / 59 skipped**，只许增测）。
 - 前端：`cd frontend && pnpm lint && pnpm test && pnpm build`（基线 **621 passed / 2 skipped / 46 文件**）。
 - 冒烟（真实 HTTP，:8000，不依赖真实供应商）：① absolute 图 absoluteTime=now+2s（ISO，带时区）→ completed、实际等待约 2 秒；② epoch 秒数值形态 → 正确等待；③ `{{}}` 插值渲染目标时刻成功；④ 坏 ISO/未知变量/目标已过点/差值 >600 → run failed WAIT_ABSOLUTE_TIME_INVALID 且不 sleep；⑤ static/dynamic 两模式零回归（产出形状）；⑥ DSL：absolute + absoluteTime 空/超长 422、durationMode 非法 422；⑦ 浏览器：三模式切换字段与错误同步、控制台零错误。
+
+## 9. 收口证据（2026-09-23）
+
+- 原子序：docs 立项 **e6c9789** → graph **12de72d**（dsl + loader）→ frontend **4f82a1c**（WaitConfig 第三模式 + UISchema + L1，3 新测/1 新文件）→ docs 收口本提交。
+- 后端：全量 `.venv/bin/pytest` **1490 passed / 59 skipped**（旧门 1472，净增 18）。
+- 前端：**624 passed / 2 skipped / 47 文件**（净增 3）；oxlint exit 0、`pnpm build` 干净。
+- HTTP 冒烟 `.smoke/absolute_time_smoke.py` 两次运行均 **21/21**。第二次实测：① +08:00 ISO elapsed=2.09s、durationSeconds=2、absoluteTime 精确回写 UTC ISO；② naive elapsed=3.07s 回写带 +00:00；③ Z elapsed=2.16s；④ epoch elapsed=4.09s 回写统一 ISO；⑤ 插值 elapsed=1.07s（名义 2s，建图→运行约 1s 漂移致 round 少 1，断言按 (名义,名义−1) 宽松、ISO 精确比对保留）；⑥ 坏 ISO/未知变量/过点(-2s)/越界(601s，目标取 +602) 全部 HTTP 500、elapsed ≤0.09s、run failed WAIT_ABSOLUTE_TIME_INVALID；⑦ static 产出深等；⑧ 三 422 中文 detail＋pointer。
+- 浏览器（:5174，admin-a）：合成拖入 wait-1；固定时长(=5)→到点时刻空值（行内「必填，1-64 字符」＋问题面板 /absoluteTime）→合法值（配置校验通过）→动态表达式（字段渲染）→固定时长还原（spinbutton=5）；4 截图 `docs/smoke-shots/absolute-wait-{static-default,empty-error,valid,static-restored}.png`；控制台仅一条过期会话 401 历史记录，无应用错误。
+- 已知限制：合成事件无法触发 React Flow 连线/删边，画布残留「节点 wait-1 不可达」，浏览器内编译运行未做——运行路径以 HTTP 21/21＋loader 单测为准。D19 仍不解除。

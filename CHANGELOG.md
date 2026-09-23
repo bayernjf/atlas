@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### feat：wait 到点时刻等待 v1 批落码收口（docs/50，2026-09-23；dev、未 push；无 ADR）
+
+- wait duration config 的 `durationMode` 增枚举 `absolute`，config 增 `absoluteTime`（≤64；ISO 8601 或 epoch 秒，支持 `{{路径}}` 插值，naive datetime 按 UTC）；loader absolute 时先插值再解析目标时刻（纯数字→fromtimestamp，否则 fromisoformat 兼容 Z），按注入时钟计算差值 delta，须有限且 1-600（取 int(round)），秒数同时作为暂停帧 timeout_seconds。
+- 插值/解析异常（未知变量/坏 ISO/epoch 越界）、目标已过点或差值 >600 → run failed **WAIT_ABSOLUTE_TIME_INVALID**，不 sleep；无新增 REST。absolute 产出另含 durationMode/absoluteTime（渲染后 ISO，epoch 回写统一 ISO），static/dynamic 旧图零回归。
+- 收口门：后端 **1490/59**（净增 18，12de72d）、前端 **624/2/47 文件**（净增 3，4f82a1c）、lint/build 干净；`.smoke/absolute_time_smoke.py` HTTP **21/21**（带时区/naive/Z/epoch/插值实等、四坏用例 <0.2s 不 sleep、static 深等、三 422），浏览器冒烟 4 截图 docs/smoke-shots/absolute-wait-*、零 JS 错误（浏览器内运行未做，React Flow 连线无法合成）。D19 部分取回不解除，>600 秒长时刻/时区日历控件/周期时刻/event timeout 时刻化仍缓做。
+
 ### docs：wait 到点时刻等待 v1 批 docs-only 立项（docs/50，2026-09-23；dev、未 push；无 ADR）
 
 - wait duration 的 `durationMode` 增枚举 `absolute`，config 增 `absoluteTime`（≤64；ISO 8601 或 epoch 秒，支持 `{{路径}}` 插值，naive datetime 按 UTC）；loader absolute 时插值并解析目标时刻，按注入时钟计算差值 delta，须有限且 1-600（取 int(round)），秒数同时作为暂停帧 timeout_seconds。
