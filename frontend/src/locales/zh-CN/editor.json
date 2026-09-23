@@ -212,5 +212,155 @@
   "debugConsole": {
     "title": "调试控制台",
     "eventCount": "{{count}} 条事件"
+  },
+  "release": {
+    "title": "发布门禁",
+    "titleWithGraph": "发布门禁：{{graphId}}",
+    "confirmPublish": "确认发布为新版本",
+    "intro": "对当前草稿批量回放本图录制用例并逐节点比对；存在不匹配用例时拦截发布（不产新版本）。",
+    "published": "已发布为 v{{version}}（不可变版本）",
+    "blocked": "门禁未通过：{{failed}}/{{total}} 个用例不匹配，已禁止发布",
+    "skipped": "本图没有可回放的录制用例（未覆盖），门禁不阻塞发布；建议先录制黄金用例。",
+    "passed": "门禁通过：{{passed}}/{{total}} 个用例全部一致，可发布。",
+    "match": "✓ 一致",
+    "mismatch": "✗ 不匹配",
+    "uncovered": "未覆盖",
+    "replaying": "回放中…",
+    "emptyCases": "暂无匹配用例",
+    "col": {
+      "result": "结果",
+      "case": "用例",
+      "replayStatus": "回放终态",
+      "note": "说明",
+      "time": "时间",
+      "trigger": "触发方式",
+      "passTotal": "通过/总数",
+      "trend": "通过率趋势",
+      "conclusion": "结论",
+      "export": "导出"
+    },
+    "conclusion": {
+      "blocked": "未通过",
+      "skipped": "未覆盖",
+      "passed": "通过"
+    },
+    "trigger": {
+      "manual": "手动门禁",
+      "publishGate": "发布门禁"
+    },
+    "upgrade": {
+      "title": "子图版本升级体检",
+      "hint": "发布将把子图引用钉到对应版本；升级后建议先跑门禁回归再发布（只读，不检测子图草稿改动）",
+      "empty": "本次发布无子图版本变化",
+      "firstPin": "首次钉版 @{{version}}",
+      "col": {
+        "node": "节点",
+        "subgraph": "子图",
+        "change": "版本变化"
+      }
+    },
+    "diff": {
+      "label": "与 {{base}} 的配置差异（{{summary}}）",
+      "emptyGraph": "空图",
+      "noChange": "无变化",
+      "empty": "两版结构一致，无配置差异。",
+      "historyTitle": "历史报告（通过率趋势）",
+      "historyTitleWithCount": "历史报告（通过率趋势）· {{count}} 条",
+      "emptyHistory": "暂无历史报告（每次门禁/发布都会在此沉淀）",
+      "part": {
+        "nodesAdded": "节点 +{{count}}",
+        "nodesRemoved": "节点 -{{count}}",
+        "nodesChanged": "节点改 {{count}}",
+        "edgesAdded": "边 +{{count}}",
+        "edgesRemoved": "边 -{{count}}",
+        "variablesAdded": "变量 +{{count}}",
+        "variablesRemoved": "变量 -{{count}}",
+        "variablesChanged": "变量改 {{count}}"
+      },
+      "view": {
+        "nodesAdded": "新增节点：",
+        "nodesRemoved": "删除节点：",
+        "nodesChanged": "修改节点：",
+        "edgesAdded": "新增连线：",
+        "edgesRemoved": "删除连线：",
+        "variablesAdded": "新增变量：",
+        "variablesRemoved": "删除变量：",
+        "variablesChanged": "修改变量：",
+        "configKeys": "配置：{{keys}}",
+        "fieldChange": "{{field}}：{{from}} → {{to}}"
+      }
+    }
+  },
+  "rollout": {
+    "title": "灰度发布",
+    "titleWithGraph": "灰度发布：{{graphId}}",
+    "saved": "灰度配置已保存",
+    "noPublished": "尚无发布版",
+    "needTwoVersions": "（启动 canary 需至少 2 个发布版）",
+    "autoRollbackTag": "【自动回滚】",
+    "manualRollbackTag": "【手动回滚】",
+    "rulesLocked": "（canary 进行中/已结束，规则段锁定；如需调整请回滚后重新配置）",
+    "internalRule": "内部租户：命中租户事件全量走 candidate",
+    "tenantsPlaceholder": "租户 id，逗号分隔",
+    "bucketRule": "低金额桶：payload.amount ≤",
+    "bucketHash": "元，按稳定哈希放行",
+    "canaryRule": "百分比灰度（订单 id 稳定哈希，同对象不跳版本）",
+    "restHint": "其余流量落 stable；promote 到全量后所有流量走 candidate（full 段，无需配置）。",
+    "included": "已纳入门控",
+    "excluded": "未纳入",
+    "save": "保存灰度配置",
+    "payloadInvalid": "事件 payload 不是合法 JSON",
+    "eventLandedDraft": "本次事件落 stable/草稿",
+    "eventLandedVersion": "本次事件落 v{{version}}",
+    "trafficTitle": "流量计数（自本次 canary 起）",
+    "rulesTitle": "路由规则",
+    "gateTitle": "门控（越阈自动回滚，仅告警不自动放量）",
+    "simTitle": "模拟入站事件（沙盘验证三段分桶，无真实 webhook/IM ingress）",
+    "action": {
+      "start": "启动 canary",
+      "promote": "放量到全量（手动 promote）",
+      "rollback": "回滚到 stable"
+    },
+    "traffic": {
+      "stable": "stable（当前稳定版）",
+      "candidate": "candidate（灰度新版）"
+    },
+    "segment": {
+      "internal": "内部租户",
+      "lowValueBucket": "低金额桶",
+      "canary": "百分比灰度",
+      "full": "全量",
+      "fallback": "回退 stable"
+    },
+    "desc": {
+      "status": "状态",
+      "stableVersion": "stable 版本",
+      "candidateVersion": "candidate 版本",
+      "publishedVersions": "已发布版本",
+      "rollbackReason": "回滚原因"
+    },
+    "gate": {
+      "observeWindow": "观察窗",
+      "minutes": "分钟",
+      "minSamples": "最少样本",
+      "autoRollback": "越阈自动回滚",
+      "colMetric": "指标",
+      "colThreshold": "阈值（严格大于即越阈）",
+      "colEnabled": "启用"
+    },
+    "status": {
+      "idle": "未开始",
+      "canary": "金丝雀中",
+      "full": "全量放量",
+      "rolledBack": "已自动/手动回滚"
+    },
+    "metric": {
+      "runErrorRate": "运行错误率",
+      "manualEscalationRate": "人工升级率",
+      "refundAmountDiffRate": "退款金额差异率"
+    },
+    "sim": {
+      "sendEvent": "发送一次事件"
+    }
   }
 }

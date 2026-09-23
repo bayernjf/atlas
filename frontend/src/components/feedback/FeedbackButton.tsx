@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { Alert, Button, Input, Modal, Radio, Typography } from 'antd'
 import { submitFeedback, type FeedbackType } from '../../lib/apiClient'
+import { useTranslation } from '../../locales'
 
 const { TextArea } = Input
 
 export function FeedbackButton() {
+  const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [type, setType] = useState<FeedbackType>('bug')
   const [content, setContent] = useState('')
@@ -26,7 +28,7 @@ export function FeedbackButton() {
 
   async function submit() {
     if (!content.trim()) {
-      setError('请填写反馈内容')
+      setError(t('feedback.contentRequired'))
       return
     }
     setSubmitting(true)
@@ -43,35 +45,33 @@ export function FeedbackButton() {
 
   return (
     <>
-      <Button onClick={() => setOpen(true)}>反馈</Button>
+      <Button onClick={() => setOpen(true)}>{t('feedback.button')}</Button>
       <Modal
-        title="提交试用反馈"
+        title={t('feedback.modalTitle')}
         open={open}
         onCancel={close}
         onOk={done ? close : submit}
         confirmLoading={submitting}
-        okText={done ? '关闭' : '提交反馈'}
-        cancelText={done ? undefined : '取消'}
+        okText={done ? t('button.close') : t('feedback.submit')}
+        cancelText={done ? undefined : t('button.cancel')}
         cancelButtonProps={{ style: done ? { display: 'none' } : undefined }}
       >
         {done ? (
           <Alert
             type="success"
             showIcon
-            message="反馈已收到，谢谢！"
-            description="你的反馈会直接决定我们下一步做什么。可以继续试用，也欢迎再提一条。"
+            message={t('feedback.doneTitle')}
+            description={t('feedback.doneDescription')}
           />
         ) : (
           <>
-            <Typography.Paragraph>
-              遇到的问题或建议，一句话也行。告诉我们你当时想做什么、发生了什么。
-            </Typography.Paragraph>
+            <Typography.Paragraph>{t('feedback.intro')}</Typography.Paragraph>
             <Radio.Group
               value={type}
               onChange={(event) => setType(event.target.value as FeedbackType)}
               options={[
-                { value: 'bug', label: '问题 / Bug' },
-                { value: 'suggestion', label: '建议' },
+                { value: 'bug', label: t('feedback.typeBug') },
+                { value: 'suggestion', label: t('feedback.typeSuggestion') },
               ]}
               optionType="button"
               buttonStyle="solid"
@@ -79,7 +79,7 @@ export function FeedbackButton() {
             />
             <TextArea
               rows={4}
-              placeholder="例如：选了 12345 运行后，画布上的节点没有反应……"
+              placeholder={t('feedback.contentPlaceholder')}
               value={content}
               onChange={(event) => setContent(event.target.value)}
               maxLength={2000}
@@ -87,7 +87,7 @@ export function FeedbackButton() {
             />
             <Input
               style={{ marginTop: 12 }}
-              placeholder="联系方式（选填，方便我们追问细节）"
+              placeholder={t('feedback.contactPlaceholder')}
               value={contact}
               onChange={(event) => setContact(event.target.value)}
               maxLength={200}

@@ -19,6 +19,13 @@
     "confirmApprove": "确认同意？",
     "confirmReject": "确认拒绝？"
   },
+  "card": {
+    "requiredMissing": "请先填写必填项：{{fields}}",
+    "channelError": "卡片渠道返回异常",
+    "summaryLabel": "审批说明",
+    "degradedWarning": "交互卡片暂不可用（{{error}}），已降级为默认审批",
+    "loading": "交互卡片加载中…"
+  },
   "email": {
     "header": "Atlas 审批处理",
     "commentPlaceholder": "审批意见（选填）",

@@ -12,6 +12,19 @@
     "zhCN": "中文",
     "enUS": "English"
   },
+  "feedback": {
+    "button": "Feedback",
+    "modalTitle": "Submit trial feedback",
+    "submit": "Submit feedback",
+    "intro": "A problem or a suggestion, even one sentence is fine. Tell us what you were trying to do and what happened.",
+    "typeBug": "Issue / Bug",
+    "typeSuggestion": "Suggestion",
+    "contentPlaceholder": "e.g. after selecting 12345 and running it, the nodes on the canvas did not respond...",
+    "contactPlaceholder": "Contact (optional, so we can follow up for details)",
+    "contentRequired": "Please enter the feedback content",
+    "doneTitle": "Feedback received, thank you!",
+    "doneDescription": "Your feedback directly shapes what we build next. Keep trying it out, and feel free to send another note."
+  },
   "nav": {
     "openEditor": "Open flow editor",
     "monitoring": "Monitoring & alerts",

@@ -14,16 +14,19 @@ import type {
   RolloutStatus,
 } from './apiClient'
 
-/** 门控三指标的默认阈值与中文标签（19 §2.3.3 gate.metrics） */
+/**
+ * 门控三指标的默认阈值与 i18n 标签键（19 §2.3.3 gate.metrics）。
+ * label 存 editor namespace 下的 i18n 键，由组件 t() 解析（M12 惯例：lib 不持文案）。
+ */
 export const GATE_METRIC_SPECS: Array<{
   id: GateMetricId
   label: string
   defaultThreshold: number
   step: number
 }> = [
-  { id: 'run_error_rate', label: '运行错误率', defaultThreshold: 0.02, step: 0.01 },
-  { id: 'manual_escalation_rate', label: '人工升级率', defaultThreshold: 0.1, step: 0.05 },
-  { id: 'refund_amount_diff_rate', label: '退款金额差异率', defaultThreshold: 0.005, step: 0.005 },
+  { id: 'run_error_rate', label: 'rollout.metric.runErrorRate', defaultThreshold: 0.02, step: 0.01 },
+  { id: 'manual_escalation_rate', label: 'rollout.metric.manualEscalationRate', defaultThreshold: 0.1, step: 0.05 },
+  { id: 'refund_amount_diff_rate', label: 'rollout.metric.refundAmountDiffRate', defaultThreshold: 0.005, step: 0.005 },
 ]
 
 export const ROLLOUT_RULE_ORDER = ['internal', 'lowValueBucket', 'canary', 'full'] as const
@@ -36,20 +39,20 @@ export function gateConclusion(report: GateReport): GateConclusion {
   return report.blocked ? 'blocked' : 'passed'
 }
 
-/** 门禁/报告结论中文 meta（U60 ⑧，历史区结论 Tag） */
+/** 门禁/报告结论 meta（label 为 editor namespace i18n 键；U60 ⑧，历史区结论 Tag） */
 export const GATE_CONCLUSION_META: Record<GateConclusion, { label: string; color: string }> = {
-  blocked: { label: '未通过', color: 'error' },
-  skipped: { label: '未覆盖', color: 'warning' },
-  passed: { label: '通过', color: 'success' },
+  blocked: { label: 'release.conclusion.blocked', color: 'error' },
+  skipped: { label: 'release.conclusion.skipped', color: 'warning' },
+  passed: { label: 'release.conclusion.passed', color: 'success' },
 }
 
-/** 报告触发方式中文 meta（03 release_report.trigger；手动门禁 vs 发布时门禁） */
+/** 报告触发方式 meta（label 为 editor namespace i18n 键；03 release_report.trigger） */
 export const REPORT_TRIGGER_META: Record<
   ReleaseReportSummary['trigger'],
   { label: string; color: string }
 > = {
-  manual: { label: '手动门禁', color: 'blue' },
-  'publish-gate': { label: '发布门禁', color: 'purple' },
+  manual: { label: 'release.trigger.manual', color: 'blue' },
+  'publish-gate': { label: 'release.trigger.publishGate', color: 'purple' },
 }
 
 /** 历史报告结论（摘要行无 cases，按 total/skipped/blocked 判定，口径同 gateConclusion） */
@@ -138,11 +141,12 @@ export function rolloutActions(status: RolloutStatus, versionCount: number): Rol
   }
 }
 
+/** label 为 editor namespace i18n 键，由 RolloutModal t() 解析 */
 export const ROLLOUT_STATUS_META: Record<RolloutStatus, { label: string; color: string }> = {
-  idle: { label: '未开始', color: 'default' },
-  canary: { label: '金丝雀中', color: 'processing' },
-  full: { label: '全量放量', color: 'success' },
-  rolled_back: { label: '已自动/手动回滚', color: 'error' },
+  idle: { label: 'rollout.status.idle', color: 'default' },
+  canary: { label: 'rollout.status.canary', color: 'processing' },
+  full: { label: 'rollout.status.full', color: 'success' },
+  rolled_back: { label: 'rollout.status.rolledBack', color: 'error' },
 }
 
 export function asPercent(value: number | null | undefined): string {

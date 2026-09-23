@@ -19,6 +19,13 @@
     "confirmApprove": "Confirm approval?",
     "confirmReject": "Confirm rejection?"
   },
+  "card": {
+    "requiredMissing": "Please fill in the required fields first: {{fields}}",
+    "channelError": "The card channel returned an unexpected response",
+    "summaryLabel": "Approval summary",
+    "degradedWarning": "The interactive card is temporarily unavailable ({{error}}); fell back to the default approval view",
+    "loading": "Loading the interactive card..."
+  },
   "email": {
     "header": "Atlas approval handling",
     "commentPlaceholder": "Approval comment (optional)",

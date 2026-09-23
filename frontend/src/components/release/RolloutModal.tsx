@@ -37,6 +37,7 @@ import {
   setGateMetric,
   withRule,
 } from '../../lib/release'
+import { useTranslation } from '../../locales'
 
 const { Text } = Typography
 const { TextArea } = Input
@@ -48,12 +49,13 @@ type Props = {
   onClose: () => void
 }
 
-const SEGMENT_LABELS: Record<string, string> = {
-  internal: '内部租户',
-  lowValueBucket: '低金额桶',
-  canary: '百分比灰度',
-  full: '全量',
-  fallback: '回退 stable',
+/** 流量段 label 为 editor namespace i18n 键（docs/57）；未知段原样显示段 key */
+const SEGMENT_LABEL_KEYS: Record<string, string> = {
+  internal: 'rollout.segment.internal',
+  lowValueBucket: 'rollout.segment.lowValueBucket',
+  canary: 'rollout.segment.canary',
+  full: 'rollout.segment.full',
+  fallback: 'rollout.segment.fallback',
 }
 
 /**
@@ -62,6 +64,7 @@ const SEGMENT_LABELS: Record<string, string> = {
  * 状态机与流量计数；附「模拟入站事件」用于沙盘验证三段分桶（D32 沙盘，无真实 ingress）。
  */
 export function RolloutModal({ open, graphId, tenant, onClose }: Props) {
+  const { t, i18n } = useTranslation('editor')
   const [snapshot, setSnapshot] = useState<RolloutSnapshot | null>(null)
   const [versions, setVersions] = useState<number[]>([])
   const [draft, setDraft] = useState<RolloutConfig | null>(null)
@@ -112,8 +115,8 @@ export function RolloutModal({ open, graphId, tenant, onClose }: Props) {
 
   if (!draft) {
     return (
-      <Modal title="灰度发布" open={open} onCancel={onClose} footer={<Button onClick={onClose}>关闭</Button>}>
-        {error ? <Alert type="error" showIcon message={error} /> : <Text>加载中…</Text>}
+      <Modal title={t('rollout.title')} open={open} onCancel={onClose} footer={<Button onClick={onClose}>{t('common:button.close')}</Button>}>
+        {error ? <Alert type="error" showIcon message={error} /> : <Text>{t('common:status.loading')}</Text>}
       </Modal>
     )
   }
@@ -154,7 +157,7 @@ export function RolloutModal({ open, graphId, tenant, onClose }: Props) {
       try {
         payload = payloadText.trim() ? (JSON.parse(payloadText) as Record<string, unknown>) : {}
       } catch {
-        throw new Error('事件 payload 不是合法 JSON')
+        throw new Error(t('rollout.payloadInvalid'))
       }
       await runGraph(graphId, payload as RunInputs, { event: { channel, payload } })
       const latest = await getRuns(graphId, 1)
@@ -168,43 +171,44 @@ export function RolloutModal({ open, graphId, tenant, onClose }: Props) {
   }
 
   const trafficRows = [
-    { key: 'stable', label: 'stable（当前稳定版）', value: snapshot?.traffic.stable ?? 0 },
-    { key: 'candidate', label: 'candidate（灰度新版）', value: snapshot?.traffic.candidate ?? 0 },
+    { key: 'stable', label: t('rollout.traffic.stable'), value: snapshot?.traffic.stable ?? 0 },
+    { key: 'candidate', label: t('rollout.traffic.candidate'), value: snapshot?.traffic.candidate ?? 0 },
     ...Object.entries(snapshot?.traffic.segments ?? {}).map(([key, value]) => ({
       key,
-      label: SEGMENT_LABELS[key] ?? key,
+      label: SEGMENT_LABEL_KEYS[key] ? t(SEGMENT_LABEL_KEYS[key]) : key,
       value: value ?? 0,
     })),
   ]
+  const versionListSeparator = i18n.language === 'en-US' ? ', ' : '、'
 
   return (
     <Modal
-      title={`灰度发布${graphId ? `：${graphId}` : ''}`}
+      title={graphId ? t('rollout.titleWithGraph', { graphId }) : t('rollout.title')}
       open={open}
       width={820}
       onCancel={onClose}
-      footer={<Button onClick={onClose}>关闭</Button>}
+      footer={<Button onClick={onClose}>{t('common:button.close')}</Button>}
     >
       <Space orientation="vertical" size={12} style={{ width: '100%' }}>
         {error && <Alert type="error" showIcon message={error} />}
-        {saved && !error && <Alert type="success" showIcon message="灰度配置已保存" />}
+        {saved && !error && <Alert type="success" showIcon message={t('rollout.saved')} />}
 
         <Descriptions size="small" column={3} bordered>
-          <Descriptions.Item label="状态">
-            <Tag color={ROLLOUT_STATUS_META[status].color}>{ROLLOUT_STATUS_META[status].label}</Tag>
+          <Descriptions.Item label={t('rollout.desc.status')}>
+            <Tag color={ROLLOUT_STATUS_META[status].color}>{t(ROLLOUT_STATUS_META[status].label)}</Tag>
           </Descriptions.Item>
-          <Descriptions.Item label="stable 版本">{snapshot?.stable ?? '—'}</Descriptions.Item>
-          <Descriptions.Item label="candidate 版本">{snapshot?.candidate ?? '—'}</Descriptions.Item>
-          <Descriptions.Item label="已发布版本" span={3}>
-            {versions.length ? versions.map((v) => `v${v}`).join('、') : '尚无发布版'}
+          <Descriptions.Item label={t('rollout.desc.stableVersion')}>{snapshot?.stable ?? '—'}</Descriptions.Item>
+          <Descriptions.Item label={t('rollout.desc.candidateVersion')}>{snapshot?.candidate ?? '—'}</Descriptions.Item>
+          <Descriptions.Item label={t('rollout.desc.publishedVersions')} span={3}>
+            {versions.length ? versions.map((v) => `v${v}`).join(versionListSeparator) : t('rollout.noPublished')}
             {versions.length < 2 && (
-              <Text type="warning">（启动 canary 需至少 2 个发布版）</Text>
+              <Text type="warning">{t('rollout.needTwoVersions')}</Text>
             )}
           </Descriptions.Item>
           {snapshot?.rollbackReason && (
-            <Descriptions.Item label="回滚原因" span={3}>
+            <Descriptions.Item label={t('rollout.desc.rollbackReason')} span={3}>
               <Text type={snapshot.rollbackActor === 'auto' ? 'danger' : undefined}>
-                {snapshot.rollbackActor === 'auto' ? '【自动回滚】' : '【手动回滚】'}
+                {snapshot.rollbackActor === 'auto' ? t('rollout.autoRollbackTag') : t('rollout.manualRollbackTag')}
                 {snapshot.rollbackReason}
               </Text>
             </Descriptions.Item>
@@ -218,14 +222,14 @@ export function RolloutModal({ open, graphId, tenant, onClose }: Props) {
             loading={busy === 'start'}
             onClick={() => runAction('start', () => startRollout(graphId as string))}
           >
-            启动 canary
+            {t('rollout.action.start')}
           </Button>
           <Button
             disabled={!actions.canPromote}
             loading={busy === 'promote'}
             onClick={() => runAction('promote', () => promoteRollout(graphId as string))}
           >
-            放量到全量（手动 promote）
+            {t('rollout.action.promote')}
           </Button>
           <Button
             danger
@@ -233,13 +237,13 @@ export function RolloutModal({ open, graphId, tenant, onClose }: Props) {
             loading={busy === 'rollback'}
             onClick={() => runAction('rollback', () => rollbackRollout(graphId as string))}
           >
-            回滚到 stable
+            {t('rollout.action.rollback')}
           </Button>
-          <Button loading={loading} onClick={() => { setLoading(true); void refresh() }}>刷新</Button>
+          <Button loading={loading} onClick={() => { setLoading(true); void refresh() }}>{t('common:button.refresh')}</Button>
         </Space>
 
         <div>
-          <Text strong>流量计数（自本次 canary 起）</Text>
+          <Text strong>{t('rollout.trafficTitle')}</Text>
           <Space wrap size="large" style={{ marginTop: 8 }}>
             {trafficRows.map((row) => (
               <Statistic key={row.key} title={row.label} value={row.value} />
@@ -250,9 +254,9 @@ export function RolloutModal({ open, graphId, tenant, onClose }: Props) {
         <Divider style={{ margin: '8px 0' }} />
 
         <div>
-          <Text strong>路由规则</Text>
+          <Text strong>{t('rollout.rulesTitle')}</Text>
           {rulesLocked && (
-            <Text type="secondary">（canary 进行中/已结束，规则段锁定；如需调整请回滚后重新配置）</Text>
+            <Text type="secondary">{t('rollout.rulesLocked')}</Text>
           )}
           <Space orientation="vertical" size={8} style={{ width: '100%', marginTop: 8 }}>
             <Space wrap>
@@ -269,12 +273,12 @@ export function RolloutModal({ open, graphId, tenant, onClose }: Props) {
                   )
                 }
               />
-              <Text>内部租户：命中租户事件全量走 candidate</Text>
+              <Text>{t('rollout.internalRule')}</Text>
               <Input
                 style={{ width: 220 }}
                 disabled={rulesLocked || !internal}
                 value={(internal?.tenants ?? []).join(',')}
-                placeholder="租户 id，逗号分隔"
+                placeholder={t('rollout.tenantsPlaceholder')}
                 onChange={(event) =>
                   internal &&
                   setDraft(
@@ -307,7 +311,7 @@ export function RolloutModal({ open, graphId, tenant, onClose }: Props) {
                   )
                 }
               />
-              <Text>低金额桶：payload.amount ≤</Text>
+              <Text>{t('rollout.bucketRule')}</Text>
               <InputNumber
                 style={{ width: 110 }}
                 min={0}
@@ -318,7 +322,7 @@ export function RolloutModal({ open, graphId, tenant, onClose }: Props) {
                   setDraft(withRule(draft, 'lowValueBucket', { ...bucket, value }))
                 }
               />
-              <Text>元，按稳定哈希放行</Text>
+              <Text>{t('rollout.bucketHash')}</Text>
               <InputNumber
                 style={{ width: 90 }}
                 min={1}
@@ -343,7 +347,7 @@ export function RolloutModal({ open, graphId, tenant, onClose }: Props) {
                   )
                 }
               />
-              <Text>百分比灰度（订单 id 稳定哈希，同对象不跳版本）</Text>
+              <Text>{t('rollout.canaryRule')}</Text>
               <InputNumber
                 style={{ width: 90 }}
                 min={1}
@@ -357,21 +361,21 @@ export function RolloutModal({ open, graphId, tenant, onClose }: Props) {
                 }
               />
             </Space>
-            <Text type="secondary">其余流量落 stable；promote 到全量后所有流量走 candidate（full 段，无需配置）。</Text>
+            <Text type="secondary">{t('rollout.restHint')}</Text>
           </Space>
         </div>
 
         <Divider style={{ margin: '8px 0' }} />
 
         <div>
-          <Text strong>门控（越阈自动回滚，仅告警不自动放量）</Text>
+          <Text strong>{t('rollout.gateTitle')}</Text>
           <Space wrap size="large" style={{ marginTop: 8 }}>
             <Space>
-              <Text>观察窗</Text>
+              <Text>{t('rollout.gate.observeWindow')}</Text>
               <InputNumber
                 style={{ width: 90 }}
                 min={1}
-                suffix="分钟"
+                suffix={t('rollout.gate.minutes')}
                 value={draft.gate.observeMinutes}
                 onChange={(value) =>
                   value !== null && setDraft({ ...draft, gate: { ...draft.gate, observeMinutes: value } })
@@ -379,7 +383,7 @@ export function RolloutModal({ open, graphId, tenant, onClose }: Props) {
               />
             </Space>
             <Space>
-              <Text>最少样本</Text>
+              <Text>{t('rollout.gate.minSamples')}</Text>
               <InputNumber
                 style={{ width: 80 }}
                 min={1}
@@ -390,7 +394,7 @@ export function RolloutModal({ open, graphId, tenant, onClose }: Props) {
               />
             </Space>
             <Space>
-              <Text>越阈自动回滚</Text>
+              <Text>{t('rollout.gate.autoRollback')}</Text>
               <Switch
                 checked={draft.gate.autoRollback}
                 onChange={(checked) =>
@@ -409,9 +413,9 @@ export function RolloutModal({ open, graphId, tenant, onClose }: Props) {
               metric: draft.gate.metrics.find((item) => item.id === spec.id),
             }))}
             columns={[
-              { title: '指标', dataIndex: 'label' },
+              { title: t('rollout.gate.colMetric'), dataIndex: 'label', render: (label: string) => t(label) },
               {
-                title: '阈值（严格大于即越阈）',
+                title: t('rollout.gate.colThreshold'),
                 dataIndex: 'metric',
                 render: (metric, row) => (
                   <InputNumber
@@ -434,15 +438,15 @@ export function RolloutModal({ open, graphId, tenant, onClose }: Props) {
                 ),
               },
               {
-                title: '启用',
+                title: t('rollout.gate.colEnabled'),
                 dataIndex: 'metric',
-                render: (metric) => <Tag color={metric ? 'green' : 'default'}>{metric ? '已纳入门控' : '未纳入'}</Tag>,
+                render: (metric) => <Tag color={metric ? 'green' : 'default'}>{metric ? t('rollout.included') : t('rollout.excluded')}</Tag>,
               },
             ]}
           />
           <Space style={{ marginTop: 8 }}>
             <Button type="primary" ghost loading={busy === 'save'} onClick={saveConfig}>
-              保存灰度配置
+              {t('rollout.save')}
             </Button>
           </Space>
         </div>
@@ -450,7 +454,7 @@ export function RolloutModal({ open, graphId, tenant, onClose }: Props) {
         <Divider style={{ margin: '8px 0' }} />
 
         <div>
-          <Text strong>模拟入站事件（沙盘验证三段分桶，无真实 webhook/IM ingress）</Text>
+          <Text strong>{t('rollout.simTitle')}</Text>
           <Space wrap style={{ marginTop: 8 }}>
             <Select
               style={{ width: 130 }}
@@ -464,11 +468,13 @@ export function RolloutModal({ open, graphId, tenant, onClose }: Props) {
               ]}
             />
             <Button type="primary" loading={busy === 'event'} onClick={sendEvent}>
-              发送一次事件
+              {t('rollout.sim.sendEvent')}
             </Button>
             {lastResolved !== undefined && (
               <Tag color={lastResolved === snapshot?.candidate ? 'blue' : 'default'}>
-                本次事件落 {lastResolved === null ? 'stable/草稿' : `v${lastResolved}`}
+                {lastResolved === null
+                  ? t('rollout.eventLandedDraft')
+                  : t('rollout.eventLandedVersion', { version: lastResolved })}
               </Tag>
             )}
           </Space>

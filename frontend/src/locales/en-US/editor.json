@@ -212,5 +212,155 @@
   "debugConsole": {
     "title": "Debug console",
     "eventCount": "{{count}} events"
+  },
+  "release": {
+    "title": "Release gate",
+    "titleWithGraph": "Release gate: {{graphId}}",
+    "confirmPublish": "Publish as a new version",
+    "intro": "Batch-replays this graph's recorded cases against the current draft and compares node by node; any mismatched case blocks publishing (no new version is produced).",
+    "published": "Published as v{{version}} (immutable version)",
+    "blocked": "Gate failed: {{failed}}/{{total}} cases do not match; publishing is blocked",
+    "skipped": "This graph has no replayable recorded cases (uncovered). The gate does not block publishing; recording golden cases first is recommended.",
+    "passed": "Gate passed: {{passed}}/{{total}} cases all match; ready to publish.",
+    "match": "✓ Match",
+    "mismatch": "✗ Mismatch",
+    "uncovered": "Uncovered",
+    "replaying": "Replaying...",
+    "emptyCases": "No matching cases",
+    "col": {
+      "result": "Result",
+      "case": "Case",
+      "replayStatus": "Replay end state",
+      "note": "Note",
+      "time": "Time",
+      "trigger": "Trigger",
+      "passTotal": "Pass/Total",
+      "trend": "Pass-rate trend",
+      "conclusion": "Conclusion",
+      "export": "Export"
+    },
+    "conclusion": {
+      "blocked": "Failed",
+      "skipped": "Uncovered",
+      "passed": "Passed"
+    },
+    "trigger": {
+      "manual": "Manual gate",
+      "publishGate": "Publish gate"
+    },
+    "upgrade": {
+      "title": "Subgraph version upgrade check",
+      "hint": "Publishing pins subgraph references to their corresponding versions; after an upgrade, run the gate for regression before publishing (read-only; subgraph draft changes are not checked)",
+      "empty": "No subgraph version changes in this release",
+      "firstPin": "First pin @{{version}}",
+      "col": {
+        "node": "Node",
+        "subgraph": "Subgraph",
+        "change": "Version change"
+      }
+    },
+    "diff": {
+      "label": "Config diff against {{base}} ({{summary}})",
+      "emptyGraph": "empty graph",
+      "noChange": "no changes",
+      "empty": "The two versions are structurally identical; there is no config diff.",
+      "historyTitle": "History reports (pass-rate trend)",
+      "historyTitleWithCount": "History reports (pass-rate trend) · {{count}}",
+      "emptyHistory": "No history reports yet (every gate run/publish is recorded here)",
+      "part": {
+        "nodesAdded": "nodes +{{count}}",
+        "nodesRemoved": "nodes -{{count}}",
+        "nodesChanged": "nodes changed {{count}}",
+        "edgesAdded": "edges +{{count}}",
+        "edgesRemoved": "edges -{{count}}",
+        "variablesAdded": "variables +{{count}}",
+        "variablesRemoved": "variables -{{count}}",
+        "variablesChanged": "variables changed {{count}}"
+      },
+      "view": {
+        "nodesAdded": "Added nodes: ",
+        "nodesRemoved": "Removed nodes: ",
+        "nodesChanged": "Changed nodes: ",
+        "edgesAdded": "Added edges: ",
+        "edgesRemoved": "Removed edges: ",
+        "variablesAdded": "Added variables: ",
+        "variablesRemoved": "Removed variables: ",
+        "variablesChanged": "Changed variables: ",
+        "configKeys": "Config: {{keys}}",
+        "fieldChange": "{{field}}: {{from}} → {{to}}"
+      }
+    }
+  },
+  "rollout": {
+    "title": "Rollout",
+    "titleWithGraph": "Rollout: {{graphId}}",
+    "saved": "Rollout configuration saved",
+    "noPublished": "No published versions yet",
+    "needTwoVersions": " (starting a canary requires at least 2 published versions)",
+    "autoRollbackTag": "[Auto rollback] ",
+    "manualRollbackTag": "[Manual rollback] ",
+    "rulesLocked": " (canary in progress or finished; rule segments are locked. Roll back first to reconfigure)",
+    "internalRule": "Internal tenants: events from matching tenants all go to candidate",
+    "tenantsPlaceholder": "Tenant ids, comma-separated",
+    "bucketRule": "Low-value bucket: payload.amount ≤",
+    "bucketHash": " CNY, admitted by stable hash",
+    "canaryRule": "Percentage canary (stable hash on order id; the same object never switches versions)",
+    "restHint": "The remaining traffic goes to stable; after promote to full, all traffic goes to candidate (the full segment needs no configuration).",
+    "included": "Included in gate",
+    "excluded": "Not included",
+    "save": "Save rollout configuration",
+    "payloadInvalid": "The event payload is not valid JSON",
+    "eventLandedDraft": "This event landed on stable/draft",
+    "eventLandedVersion": "This event landed on v{{version}}",
+    "trafficTitle": "Traffic counts (since this canary started)",
+    "rulesTitle": "Routing rules",
+    "gateTitle": "Gate (threshold breach auto-rolls back; alerts only, never auto-promotes)",
+    "simTitle": "Simulate inbound events (sandbox verification of three-segment bucketing; no real webhook/IM ingress)",
+    "action": {
+      "start": "Start canary",
+      "promote": "Promote to full (manual)",
+      "rollback": "Roll back to stable"
+    },
+    "traffic": {
+      "stable": "stable (current stable version)",
+      "candidate": "candidate (new canary version)"
+    },
+    "segment": {
+      "internal": "Internal tenants",
+      "lowValueBucket": "Low-value bucket",
+      "canary": "Percentage canary",
+      "full": "Full",
+      "fallback": "Fallback to stable"
+    },
+    "desc": {
+      "status": "Status",
+      "stableVersion": "stable version",
+      "candidateVersion": "candidate version",
+      "publishedVersions": "Published versions",
+      "rollbackReason": "Rollback reason"
+    },
+    "gate": {
+      "observeWindow": "Observation window",
+      "minutes": "min",
+      "minSamples": "Min samples",
+      "autoRollback": "Auto-rollback on breach",
+      "colMetric": "Metric",
+      "colThreshold": "Threshold (strictly greater means breach)",
+      "colEnabled": "Enabled"
+    },
+    "status": {
+      "idle": "Not started",
+      "canary": "Canary in progress",
+      "full": "Full rollout",
+      "rolledBack": "Auto/manually rolled back"
+    },
+    "metric": {
+      "runErrorRate": "Run error rate",
+      "manualEscalationRate": "Manual escalation rate",
+      "refundAmountDiffRate": "Refund amount diff rate"
+    },
+    "sim": {
+      "sendEvent": "Send one event"
+    }
   }
 }
