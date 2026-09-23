@@ -955,6 +955,10 @@ export type RuleConfig = {
   custom?: CustomRuleConfig[]
   /** docs/33 §5.2：warning 未确认 N 分钟升 critical；null/缺省关闭。 */
   escalation_ack_minutes?: number | null
+  /** docs/55 flapping：自动 recovery 需连续健康次数（默认 1，1-20）。 */
+  recovery_healthy_streak?: number
+  /** docs/55 flapping：自动 recovery 后抑制同类新告警外发通知的冷却分钟；null 关闭。 */
+  recovery_cooldown_minutes?: number | null
 }
 
 export async function getMetrics(): Promise<MetricsSummary> {
