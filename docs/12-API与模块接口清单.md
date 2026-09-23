@@ -781,7 +781,7 @@ class ImSender(Protocol):
 
 `MessageService.send` 增可选 `secret` 透传：to 为单 URL（数组 INVALID_PARAMETER）；secret 仅 dingtalk/feishu 允许（非空 str ≤200，其他渠道 INVALID_PARAMETER）；成功 delivered 标渠道名；未注入 IM 投递器三渠道回退进程内记录。新增错误码 **IM_SEND_FAILED**（EGRESS_DENIED 照透传）；无新增 REST。
 
-### 3.22 告警外部通知内部接口（AlertChannel/AlertNotifier v1；docs/52，2026-09-23 docs-only 立项）
+### 3.22 告警外部通知内部接口（AlertChannel/AlertNotifier v1；docs/52，2026-09-23 落码收口 70b4889/07baa89/6a7d846/b352638）
 
 ```python
 # src/atlas/monitoring/notify.py（新模块；零新依赖，复用 MessageService 五渠道）
