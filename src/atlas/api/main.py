@@ -41,7 +41,13 @@ from atlas.debug import DebugController, DebugStopped
 from atlas.graph.conditions import validate_expression
 from atlas.graph.dsl import GraphDSL, GraphValidationError, parse_graph, valid_event_key
 from atlas.graph.diff import diff_graph, diff_summary
-from atlas.graph.loader import _tool_permissions, compile_graph, run_graph, tool_input_schemas
+from atlas.graph.loader import (
+    WaitNodeFailure,
+    _tool_permissions,
+    compile_graph,
+    run_graph,
+    tool_input_schemas,
+)
 from atlas.collaboration.cancellations import RunCancelled
 from atlas.collaboration.event_waits import (
     WaitAlreadySignaled,
@@ -299,6 +305,23 @@ def graph_validation_handler(_request: Request, exc: GraphValidationError) -> JS
     if exc.locations:
         content["locations"] = exc.locations
     return JSONResponse(status_code=422, content=content)
+
+
+@app.exception_handler(WaitNodeFailure)
+def wait_node_failure_handler(_request: Request, exc: WaitNodeFailure) -> JSONResponse:
+    # 运行期 wait 确定性失败（docs/47 §3.4）：返回结构化 500 而非让异常逃逸到 ASGI
+    # 顶层。docs/54 收口修复：原先异常 re-raise 会令 uvicorn 关闭该 keep-alive 连接，
+    # 失败运行后紧邻的列表/详情 GET 复用连接时被 RST（Connection reset by peer）。
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": {
+                "code": exc.code,
+                "message": str(exc),
+                "nodeId": exc.node_id,
+            }
+        },
+    )
 
 
 @app.middleware("http")

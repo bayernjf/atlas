@@ -26,7 +26,8 @@ from atlas.message.service import MessageService
 from atlas.message.webhook import DefaultWebhookSender
 from atlas.monitoring.metrics import NodeResult
 from atlas.monitoring.records import MonitoringStore
-from atlas.monitoring.notify import AlertNotifier
+from atlas.monitoring.alerts import Alert
+from atlas.monitoring.notify import AlertChannel, AlertNotifier
 from atlas.security.egress import EgressGuard
 
 BASE = "http://127.0.0.1:8000"
@@ -120,10 +121,85 @@ def layer_a(robot_url: str) -> None:
           and "值班：未指派" in content and "首次：" in content,
           content)
 
-    # ② critical-only suppresses warning; merged alert no repeat
+    # ② merged lifecycle notifies once (docs/52 §7 B1)；不重发 new 主通知
     Captured.requests.clear()
     _error_run(store)
-    check("② merged alert does not resend", Captured.requests == [], f"{len(Captured.requests)}")
+    check("② merged alert sends one lifecycle, not a new alert",
+          len(Captured.requests) == 1
+          and Captured.requests[0]["body"]["text"]["content"]
+          .startswith("[Atlas告警][再次发生已归并] run_error"),
+          str([r["body"]["text"]["content"].splitlines()[0] for r in Captured.requests]))
+
+    # ② 第 3 次失败触发 consecutive_failures 新规则（new 不限流）；同一 run_error 的重复
+    #    merged 在 60s 窗口内已被限流（不得再出现 run_error 的归并通知）。
+    Captured.requests.clear()
+    _error_run(store)
+    subs3 = [r["body"]["text"]["content"].splitlines()[0] for r in Captured.requests]
+    check("② third failure opens consecutive_failures, run_error re-merge throttled",
+          subs3 == ["[Atlas告警][critical] consecutive_failures"], str(subs3))
+
+    # ② 第 4 次失败：consecutive_failures 首次 merged 发一条 lifecycle
+    Captured.requests.clear()
+    _error_run(store)
+    subs4 = [r["body"]["text"]["content"].splitlines()[0] for r in Captured.requests]
+    check("② consecutive_failures first merge notifies once",
+          subs4 == ["[Atlas告警][再次发生已归并] consecutive_failures"], str(subs4))
+
+    # ② lifecycle 限流退避（docs/54 §6）：注入可控单调时钟，同一 (alert, merged)
+    #    首次投递、窗口内跳过、窗口外恢复；new 主通知不经此限流（notify 直发）。
+    throttle_msgs = MessageService(
+        im_sender=DefaultImSender(guard=EgressGuard(permit_cidrs=("127.0.0.0/8",))),
+        webhook_sender=DefaultWebhookSender(guard=EgressGuard(permit_cidrs=("127.0.0.0/8",))),
+    )
+    clock = [0.0]
+    throttle = AlertNotifier(
+        throttle_msgs, lifecycle_min_interval_seconds=60, time_func=lambda: clock[0]
+    )
+    t_alert = Alert(
+        id="alt-throttle", rule_id="run_error", graph_id="g1", severity="critical",
+        message="m", first_seen="2026-09-23T00:00:00+00:00",
+        last_seen="2026-09-23T00:00:00+00:00", last_run_id="r1",
+    )
+    t_cfg = AlertChannel(
+        enabled=True, channel="dingtalk", to=f"{robot_url}/dingtalk",
+        minSeverity="critical",
+    )
+    Captured.requests.clear()
+    d1 = throttle.notify_lifecycle(t_alert, t_cfg, transition="merged")
+    clock[0] = 30.0
+    d2 = throttle.notify_lifecycle(t_alert, t_cfg, transition="merged")
+    clock[0] = 61.0
+    d3 = throttle.notify_lifecycle(t_alert, t_cfg, transition="merged")
+    check("② lifecycle throttle: deliver, skip within 60s, deliver after window",
+          bool(d1.lastNotifiedAt) and d2.lastNotifiedAt is None
+          and bool(d3.lastNotifiedAt) and len(Captured.requests) == 2,
+          f"d1={bool(d1.lastNotifiedAt)} d2={d2.lastNotifiedAt} "
+          f"d3={bool(d3.lastNotifiedAt)} http={len(Captured.requests)}")
+
+    # ②b recovery 隔离验证：新 store 仅单次失败（不触达 consecutive_failures 阈值），
+    #    一次健康运行即自动恢复 open 的 run_error，旁路发一条 recovery（docs/54 §5）。
+    rec_store = _new_store()
+    rec_store.update_alert_channel(_channel_raw(f"{robot_url}/dingtalk"))
+    _error_run(rec_store)
+    Captured.requests.clear()
+    rec_store.record_run(
+        graph_id="g1", mode="sync", status="completed",
+        started_at="2026-09-23T00:00:01+00:00", duration_ms=11,
+        nodes=[NodeResult(node_id="n1", node_type="tool_call", status="success")],
+    )
+    rec_subs = [r["body"]["text"]["content"].splitlines()[0] for r in Captured.requests]
+    check("②b healthy run sends one recovery lifecycle",
+          rec_subs == ["[Atlas告警][告警已自动恢复] run_error"], str(rec_subs))
+
+    # ②b 已 resolved，再一次健康运行不重复 recovery
+    Captured.requests.clear()
+    rec_store.record_run(
+        graph_id="g1", mode="sync", status="completed",
+        started_at="2026-09-23T00:00:02+00:00", duration_ms=9,
+        nodes=[NodeResult(node_id="n1", node_type="tool_call", status="success")],
+    )
+    check("②b second healthy run does not repeat recovery",
+          Captured.requests == [], f"{len(Captured.requests)}")
 
     # ③ disabled / unconfigured zero delivery
     Captured.requests.clear()
@@ -155,10 +231,23 @@ def layer_a(robot_url: str) -> None:
     store.raise_rollout_gate_alert(
         graph_id="g9", message="gate breached", action={"kind": "auto_rollback"}
     )
-    check("⑤ rollout gate notifies only when new",
-          len(Captured.requests) == 1
-          and Captured.requests[0]["body"]["text"]["content"].startswith("[Atlas告警][critical] rollout_gate"),
-          str(len(Captured.requests)))
+    check("⑤ rollout gate new notifies once, merge sends merged lifecycle",
+          len(Captured.requests) == 2
+          and Captured.requests[0]["body"]["text"]["content"]
+          .startswith("[Atlas告警][critical] rollout_gate")
+          and Captured.requests[1]["body"]["text"]["content"]
+          .startswith("[Atlas告警][再次发生已归并]"),
+          str([r["body"]["text"]["content"].splitlines()[0] for r in Captured.requests]))
+
+    # ⑤ rollout_gate 不随健康运行自动恢复（docs/54 §5 边界）
+    Captured.requests.clear()
+    store.record_run(
+        graph_id="g9", mode="sync", status="completed",
+        started_at="2026-09-23T00:00:03+00:00", duration_ms=7,
+        nodes=[NodeResult(node_id="n1", node_type="tool_call", status="success")],
+    )
+    check("⑤ rollout_gate not auto-recovered by healthy run",
+          Captured.requests == [], f"{len(Captured.requests)}")
 
     # ⑥ webhook once with fixed text
     store = _new_store()

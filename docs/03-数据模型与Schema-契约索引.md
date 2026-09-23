@@ -124,13 +124,16 @@ type: object               # 节点类型专属配置；condition 节点 config 
                            # wait 节点 config 形状：
                            #   duration static: {waitType:"duration", durationMode?:"static", durationSeconds: 1-600 整数}
                            #   duration dynamic:{waitType:"duration", durationMode:"dynamic", durationExpression: ≤200 表达式,
-                           #                    durationSeconds?: 保留不用}  # D19 进程内 v1，2026-09-23 立项并落码收口 docs/49（8580fcb/4eaaddd）；运行时求值 1-600，坏表达式 WAIT_DURATION_INVALID
+                           #                    durationSeconds?: 保留不用}  # D19 进程内 v1，2026-09-23 立项并落码收口 docs/49（8580fcb/4eaaddd）；运行时求值 1-3600（docs/54 放开），坏表达式 WAIT_DURATION_INVALID
                            #   duration absolute:{waitType:"duration", durationMode:"absolute", absoluteTime: ≤64 ISO8601/epoch 秒(支持{{}}),
-                           #                    durationSeconds?/durationExpression?: 保留不用}  # D19 进程内 v1，2026-09-23 落码收口 docs/50（12de72d）；解析目标时刻差值 1-600，坏时刻/过点 WAIT_ABSOLUTE_TIME_INVALID
-                           #   event:    {waitType:"event", eventKey(≤128,静态白名单[A-Za-z0-9:_-],支持{{}}插值),
-                           #              timeoutSeconds: 1-3600 整数, onTimeout: continue|fail}  # D19 进程内 v1，2026-09-23 立项 docs/47
-                           #   event 产出 {eventKey,signaled,payload,waitedSeconds,resolvedBy:signal|timeout|input,token}
-                           #   唯一权威见 04 §5.5「wait 节点 config 契约」（含事件等待/动态时长 v1 追加段）
+                           #                    durationSeconds?/durationExpression?: 保留不用}  # D19 进程内 v1，2026-09-23 落码收口 docs/50（12de72d）；解析目标时刻差值 1-3600（docs/54 放开），坏时刻/过点 WAIT_ABSOLUTE_TIME_INVALID
+                           #   duration static 可选 jitterSeconds: 0-300 整数（docs/54；actual=planned+randint(0,j)，仅 static/resume 不二次抖动）
+                           #   event:    {waitType:"event", eventKey(≤128,静态白名单[A-Za-z0-9:_-],支持{{}}插值)
+                           #              | eventKeys: 1-8 字符串数组(逐元素同 eventKey 规则、保序去重), 二者互斥二选一,
+                           #              timeoutSeconds: 1-86400 整数(或 timeoutMode=expression+timeoutExpression), onTimeout: continue|fail}
+                           #   event 产出 {eventKey?,eventKeys?,matchedEventKey(命中键,单键也带),signaled,payload,waitedSeconds,resolvedBy:signal|timeout|input,token}
+                           #   duration static 首次进入且 jitter>0 产出另含 {plannedDurationSeconds,jitterSeconds}
+                           #   唯一权威见 04 §5.5「wait 节点 config 契约」（含事件等待/动态时长/到点时刻/docs/54 上限放开·jitter·多事件竞速 v1 追加段）
                            # human_approval 节点 config 形状：
                            #   {summary, approver?, timeoutSeconds: 10-3600 整数, onTimeout: approve|reject(默认reject),
                            #    approvedTarget, rejectedTarget, cardTemplateId?（M8 新增，可选内置卡片 id，不填走 summary 旧路径）,
@@ -925,7 +928,7 @@ node_id: string
 kind: "approval" | "debug" | "wait"
 created_at: string              # UTC ISO-8601
 deadline_at: string | null      # UTC 绝对时刻（审批超时/wait 到点）；恢复后按剩余时长等待，不重计
-wait: object | null             # 仅 wait-event 帧（docs/53，2026-09-23 立项）：{waitType:"event", eventKey, onTimeout:"continue"|"fail", timeoutSeconds}；duration 帧不带此键
+wait: object | null             # 仅 wait-event 帧（docs/53；docs/54 纯超集）：{waitType:"event", eventKey(首键), eventKeys?:[...](多事件竞速 1-8), onTimeout:"continue"|"fail", timeoutSeconds(已求值秒,1-86400)}；duration 帧不带此键
 graph_snapshot: object          # 保存时图定义副本（M6 版本化未落地前随帧内嵌，防恢复错位）
 resume_state:                   # 续跑载荷（挂起点续跑，不重跑上游）
   inputs: object                # run inputs（同名覆盖全局变量口径不变）
