@@ -64,3 +64,6 @@ Thumbs.db
 
 # Atlas pg backups (docs/30 §5.1)
 backups/
+
+# Local smoke artifacts
+.smoke/
