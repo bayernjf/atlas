@@ -4,9 +4,11 @@
 
 ## [Unreleased]
 
-### docs：wait 事件跨重启持久化 v1 批立项（docs/53，2026-09-23；dev、未落码）
+### feat：wait 事件跨重启持久化 v1 批落码收口（docs/53，2026-09-23；dev、未 push；无 ADR）
 
-- docs-only 立项：event 等待（docs/47 进程内 v1）补齐 T18-B 跨重启机制——event 挂起帧（kind=wait，新增帧字段 `wait:{waitType,eventKey,onTimeout,timeoutSeconds}`，零 DDL）、runs 同步 suspended、`EventWaitBroker.restore` 同 token/event_key 剩余超时幂等重建、启动恢复分支；`/api/waits` 三端点跨重启可用。零新依赖/零迁移/无 ADR/无新 REST/前端零改动；D19 部分取回不解除（多实例跨进程路由、停摆期信号排队、debug 跨重启仍缓做）。候选 U400-U402；立项基线后端 1548/59、前端 636/2。
+- event 等待（docs/47 进程内 v1）补齐 T18-B 跨重启机制：event 挂起即落 kind=wait 中断帧（帧内新增 `wait:{waitType:event,eventKey,onTimeout,timeoutSeconds}`，零 DDL）、runs 同步 suspended；`EventWaitBroker.restore` 同 token/event_key、按绝对 deadline 扣剩余超时幂等重建，启动恢复先 restore 后续跑；`/api/waits` 三端点（list/广播/直投）跨重启可用；缺 wait 帧 → WAIT_EVENT_FRAME_INVALID。
+- 落码顺带修复两个 PG 整栈阻断：storage.pg↔iam 循环导入（`719b3c9`，pg_deliveries 改模块级 `_now()`、storage.pg 删顶层 iam import 延迟到方法内）；PG 档首启不播种初始管理员、无法登录（`6ad1a9f`，两档都幂等 seed）。
+- U400–U402 转正式；HTTP 重启冒烟 `scripts/dev/d53_event_wait_restart_smoke.py` **ALL SCENARIOS PASSED**（直投信号 completed/payload 透传、广播 released=1、onTimeout=fail 重启后 WAIT_TIMEOUT_FAILED）。收口全量内存门 **1566 passed / 60 skipped**；零新依赖/零迁移/无 ADR/无新 REST/前端零改动；D19 部分取回不解除（多实例跨进程路由、停摆期信号排队、debug 跨重启仍缓做）。
 
 ### feat：监控告警外部通知 v1 批落码收口（docs/52，2026-09-23；dev、未 push；无 ADR）
 

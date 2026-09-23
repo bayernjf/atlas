@@ -1,6 +1,6 @@
 # wait 事件等待跨重启持久化 v1 批契约设计
 
-> **状态**：2026-09-23 docs-only 立项；D19 再次部分取回、**不解除**（多实例/进程停摆期信号仍缓做）。
+> **状态**：2026-09-23 **已落码收口**（原子 1–5 全完成，dev 未 push）；D19 再次部分取回、**不解除**（多实例/进程停摆期信号仍缓做）。落码证据见 §8。
 > **形状权威**：本文件。落码后在各引用文档回填 commit hash 与收口证据。
 > **依据**：docs/47（wait 事件等待进程内 v1，已落码）、docs/24（中断帧契约 + ADR T18-B：自研暂停帧 + 恢复扫描器）、docs/14 D19。
 > **零新依赖、零迁移（复用 `interruptions.payload` JSONB）、无新 ADR、无新 REST 端点、前端零改动。**
@@ -121,3 +121,21 @@ def restore(self, *, token: str, event_key: str, node_id: str,
 5. `chore(wait): add event wait restart smoke script` + `docs(wait): close out durable event wait v1`（门槛/冒烟/浏览器或 HTTP 证据回填）
 
 全程 `.venv/bin/pytest`、`cd frontend && pnpm build` 防回归；不 push。
+
+## 8. 落码收口（2026-09-23）
+
+原子序 1–5 全部完成（dev，未 push）：
+
+| 原子 | commit | 内容 |
+|---|---|---|
+| 1 docs 立项 | `53a5cb4` | 本文件 + §6 同步矩阵 |
+| 2 broker restore | `4450430` | `EventWaitBroker.restore`（U400） |
+| 3 loader 帧/resume | `a40873a` | event 帧发射 + resume_here 复用 token（U401） |
+| — 断环 fix | `719b3c9` | 解 storage.pg↔iam 循环导入（PG 整栈启动阻断） |
+| 4 api restore | `b88fc41` | `_resume_from_frame` event restore 分支（U402） |
+| — PG seed fix | `6ad1a9f` | PG 档首启幂等播种初始管理员（否则无法登录） |
+| 5 smoke | `ba2028e` | 重启冒烟脚本 `scripts/dev/d53_event_wait_restart_smoke.py` |
+
+- U400–U402 转正式；event wait graph 文件 13 passed（U401 五测）、PG 集成文件 13 passed（U402）。
+- HTTP 重启冒烟 `scripts/dev/d53_event_wait_restart_smoke.py` **ALL SCENARIOS PASSED**：① 直投——重启后同 token、直投信号 run completed、`resolvedBy=signal`、payload 透传、后继执行、pending 清；② 广播——`POST /api/waits/events` released=1、run completed；③ 超时 fail——`onTimeout=fail` 重启后剩余超时到点 run failed `WAIT_TIMEOUT_FAILED`。
+- 收口全量内存门：**1566 passed / 60 skipped**；零新依赖/零迁移/无 ADR/无新 REST/前端零改动。
