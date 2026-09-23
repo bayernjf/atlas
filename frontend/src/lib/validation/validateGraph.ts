@@ -7,7 +7,7 @@
  * pointer → token.start）排序。
  */
 
-import type { RefValidationContext, EditorNodeData } from '../nodeCatalog'
+import type { RefValidationContext, EditorNodeData, NodeKind } from '../nodeCatalog'
 import { validateNodeFields } from './l1'
 import {
   buildScopeIndex,
@@ -19,6 +19,8 @@ import {
 import type { GraphVariable } from '../variables'
 import { rank, type Diagnostic } from './diagnostics'
 import { validateL3 } from './l3'
+import { NODE_UI_SCHEMAS } from '../forms/nodeUiSchemas'
+import { nestedHiddenFields } from '../forms/uiSchema'
 
 /** 节点名称必填（data.label，非 config 字段；loc 仅带 nodeId）。 */
 export const NODE_LABEL_REQUIRED_CODE = 'NODE_LABEL_REQUIRED'
@@ -48,11 +50,37 @@ export function validateNodeL1(
     })
   }
 
-  for (const diagnostic of validateNodeFields(data.kind, data.config)) {
+  for (const diagnostic of filterNestedHidden(
+    data.kind,
+    data.config,
+    validateNodeFields(data.kind, data.config),
+  )) {
     diagnostics.push({ ...diagnostic, loc: { ...diagnostic.loc, nodeId: id } })
   }
 
   return rank(diagnostics)
+}
+
+/**
+ * 剔除 rootScoped 隐藏行内字段的诊断（D14：condition 分支行按 conditionMode
+ * 在 expression / description 间切换；渲染不显示的字段也不能产校验错误）。
+ */
+function filterNestedHidden(kind: NodeKind, config: EditorNodeData['config'], diagnostics: Diagnostic[]): Diagnostic[] {
+  const uiSchema = NODE_UI_SCHEMAS[kind]
+  if (!uiSchema?.hiddenWhen?.some((rule) => rule.rootScoped)) return diagnostics
+  // conditionMode 缺省按 rule 求值（与后端 DSL 默认语义一致），避免 fail-safe 全隐误伤
+  const effectiveConfig =
+    kind === 'condition' && config.conditionMode == null
+      ? { ...config, conditionMode: 'rule' }
+      : config
+  const hidden = nestedHiddenFields(uiSchema, effectiveConfig)
+  if (hidden.size === 0) return diagnostics
+  return diagnostics.filter((diagnostic) => {
+    const pointer = diagnostic.loc.pointer
+    if (!pointer) return true
+    const leaf = decodeURIComponent(pointer.slice(pointer.lastIndexOf('/') + 1))
+    return !hidden.has(leaf)
+  })
 }
 
 /**
