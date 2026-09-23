@@ -475,3 +475,96 @@ def test_u402_event_wait_recovery_releases_after_restart(backend):
     assert "tool-after" in run["outputs"]
     assert broker.list_pending() == []
 
+
+def test_event_wait_multi_key_recovery_releases_on_nonprimary(backend):
+    """docs/54（竞速 PG 超集，U530）：多键 eventKeys 帧 → restore 对每个键挂同一 token，
+    对**非首键**广播也放行续跑；产出 matchedEventKey=命中的非首键、eventKeys 全量、帧清。"""
+    import time
+
+    from atlas.api.main import _resume_from_frame
+    from atlas.graph.dsl import parse_graph
+    from atlas.iam.deps import tenant_registry
+    from atlas.storage.frame import build_frame, deadline_iso
+    from atlas.storage.recovery import load_pending_frames, make_frame_sink
+
+    keys = ["order_paid", "order_cancelled", "review_left"]
+    engine = backend.engine
+    _cleanup(engine)
+
+    # 多键 config（与 eventKey 互斥，只用 eventKeys）；编译期即合法。
+    graph = parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "wait-1", "type": "wait", "name": "等待",
+                 "position": {"x": 2, "y": 0},
+                 "config": {"waitType": "event", "eventKeys": list(keys),
+                            "timeoutSeconds": 30, "onTimeout": "continue"}},
+                {"id": "tool-after", "type": "tool_call", "name": "后继",
+                 "config": {"tool": "op-after"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "wait-1"},
+                {"id": "e2", "source": "wait-1", "target": "tool-after"},
+            ],
+        }
+    )
+
+    run_id, token = "run-u530mk", "wait-u530mk"
+    services = tenant_registry.get(TENANT)
+    services.event_wait_broker.reset()  # 模拟重启后的空 broker
+
+    services.run_store.begin(run_id=run_id, graph_id="adhoc", mode="run")
+    # 帧始终保留 eventKey=首键，多键另存 eventKeys（loader/frame 契约）。
+    frame = build_frame(
+        token=token,
+        run_id=run_id,
+        node_id="wait-1",
+        kind="wait",
+        deadline_at=deadline_iso(30),
+        graph_snapshot=graph.model_dump(),
+        resume_state={"graph_id": "adhoc", "inputs": {},
+                      "outputs": {"trigger-1": {"context": {"payload": {}}}}},
+        wait={"waitType": "event", "eventKey": keys[0], "eventKeys": list(keys),
+              "onTimeout": "continue", "timeoutSeconds": 30},
+    )
+    services.run_store.suspend(
+        run_id=run_id, node_id="wait-1", kind="wait",
+        resume_token=token, deadline_at=frame["deadline_at"],
+    )
+    make_frame_sink(engine, TENANT, run_id)(frame)
+    loaded = load_pending_frames(engine)
+    assert len(loaded) == 1
+
+    _resume_from_frame(engine, loaded[0])
+    broker = services.event_wait_broker
+    pending = {item["token"]: item for item in broker.list_pending()}
+    assert token in pending
+    # restore 多键：首键 + 全量 eventKeys。
+    assert pending[token]["eventKey"] == keys[0]
+    assert pending[token]["eventKeys"] == keys
+
+    # 对非首键广播：每个键都挂了同一 token，应恰好释放 1 条。
+    assert broker.signal_key("review_left", {"stars": 5}) == 1
+    # 余键订阅已清理（首决后不再残留）。
+    assert broker.signal_key("order_paid", {}) == 0
+
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and load_pending_frames(engine):
+        time.sleep(0.02)
+    assert load_pending_frames(engine) == []
+    run = services.run_store.get(run_id)
+    assert run["status"] == "completed"
+    out = run["outputs"]["wait-1"]
+    assert out["resolvedBy"] == "signal"
+    assert out["signaled"] is True
+    assert out["eventKey"] == keys[0]
+    assert out["eventKeys"] == keys
+    assert out["matchedEventKey"] == "review_left"
+    assert out["payload"]["matchedEventKey"] == "review_left"
+    assert "tool-after" in run["outputs"]
+    assert broker.list_pending() == []
+

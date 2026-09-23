@@ -109,7 +109,7 @@ def main() -> None:
         ("missing variable", "{{global.missing}}", {}),
         ("bad syntax", "1 + ", {}),
         ("zero", "0", {}),
-        ("over max", "601", {}),
+        ("over max", "3601", {}),  # docs/54: duration 上限 600->3600，越界用例同步
         ("non-numeric", "'soon'", {}),
         ("division by zero", "1/0", {}),
     ]

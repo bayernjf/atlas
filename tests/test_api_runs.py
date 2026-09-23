@@ -115,3 +115,37 @@ def test_suspended_run_queryable_then_resumed():
     # reset 清空运行状态
     client.post("/api/demo/reset")
     assert client.get("/api/runs").json()["items"] == []
+
+
+def test_wait_timeout_fail_returns_structured_500_and_runs_list_still_serves():
+    # docs/54 收口：运行期 WaitNodeFailure 经全局 handler 返回结构化 500（不逃逸 ASGI 顶层
+    # re-raise 关闭 keep-alive）；失败运行后紧邻的列表请求复用连接仍 200。
+    client.post("/api/demo/reset")
+    graph = {
+        "version": 1,
+        "variables": [],
+        "nodes": [
+            {"id": "trigger-1", "type": "trigger", "name": "t",
+             "config": {"triggerType": "manual"}},
+            {"id": "wait-1", "type": "wait", "name": "等待",
+             "config": {"waitType": "event", "eventKey": "u540_never_fires",
+                        "timeoutSeconds": 1, "onTimeout": "fail"}},
+            {"id": "tool-after", "type": "tool_call", "name": "后继",
+             "config": {"tool": "web-playwright/click"}},
+        ],
+        "edges": [
+            {"id": "e1", "source": "trigger-1", "target": "wait-1"},
+            {"id": "e2", "source": "wait-1", "target": "tool-after"},
+        ],
+    }
+    gid = client.post("/api/graphs", json=graph).json()["id"]
+    resp = client.post(f"/api/graphs/{gid}/run", json={})
+    assert resp.status_code == 500, resp.text
+    detail = resp.json()["detail"]
+    assert detail["code"] == "WAIT_TIMEOUT_FAILED"
+    assert detail["nodeId"] == "wait-1"
+    # 失败后紧邻请求复用同一连接仍可用（keep-alive 未被重置）
+    assert client.get("/api/runs").status_code == 200
+    items = client.get("/api/runs").json()["items"]
+    assert next(r for r in items if r["graphId"] == gid)["status"] == "failed"
+    client.post("/api/demo/reset")
