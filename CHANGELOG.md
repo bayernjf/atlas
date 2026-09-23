@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### feat：OpenAPI HTTP Digest 认证 B2 落码收口（docs/46 §8，2026-09-23；dev、未 push；无 ADR）
+
+- parser 收录 `type:http,scheme:digest`（kind=digest/param=Authorization/无 prefix），凭证值与 basic 同形（{username,password} JSON 信封、SecretProvider 加密）；适配器不静态拼 header，构造 `httpx.DigestAuth` 经 `HttpApiClient.request(auth=)` 透传——httpx 单次调用内完成 RFC2617 挑战-响应（先无 Authorization 探测、收 401 WWW-Authenticate、按 realm/nonce/qop 算 HA1/HA2/response 重发），零新依赖（httpx 已有）。
+- `models.py` kind 加 digest、`adapter.py` `_resolve_credentials` 返三元组 (headers,query,auth)、basic/digest 合并解析、`httpapi/service.py` request 加 auth 参数。`tests/test_openapi_adapter.py` 净增 2（MockTransport 挑战流重算 MD5 response 验证、坏信封 SECRET_DECRYPT_ERROR 零外呼）、`tests/test_openapi_parser.py` digest 移入支持集。收口全量内存门 **1572 passed / 60 skipped**（净增 2、零失败）；零迁移/无新 REST/前端零改动。**cookie 判为缓做**（OpenAPI 3.x 无标准 cookie scheme、apiKey in 不支持 cookie，本质登录端点+有状态会话，随连接/会话管理批次，参 docs/34 T4）；oauth2/openIdConnect、连接测试、凭证轮换、真实 API 联调仍缓做。D22 部分取回不解除。
+
 ### feat：告警 lifecycle 通知 B1 落码收口（docs/52 §7，2026-09-23；dev、未 push；无 ADR）
 
 - AlertNotifier 除新建外，对三类告警状态变化经既有 MessageService 旁路投递，过滤/失败口径同新建（enabled/to/minSeverity、fail-safe）：**merged** 合并归并（subject「再次发生已归并」，_raise_or_merge 与 raise_rollout_gate_alert 合并分支，body 含累计 N 次）；**escalated** 读时惰性 warning→critical（「未确认已升级」，升级幂等只触发一次）；**resolved** resolve_alert（「告警已解决」）。acknowledge 不通知。
