@@ -781,6 +781,8 @@ class ImSender(Protocol):
 
 `MessageService.send` 增可选 `secret` 透传：to 为单 URL（数组 INVALID_PARAMETER）；secret 仅 dingtalk/feishu 允许（非空 str ≤200，其他渠道 INVALID_PARAMETER）；成功 delivered 标渠道名；未注入 IM 投递器三渠道回退进程内记录。新增错误码 **IM_SEND_FAILED**（EGRESS_DENIED 照透传）；无新增 REST。
 
+> **docs/58 立项中（2026-09-24，未落码）**：`WebhookSender.send(url, payload, secret=None)`（增 clock 注入；显式 `json.dumps(ensure_ascii=False, separators=(',',':'))` 序列化后 `content=` 发送，附 `X-Atlas-Timestamp`/`X-Atlas-Signature: sha256=<hmac-sha256(secret, f"{ts}\n{raw}").hexdigest()>`，无 secret 不发）；`ImSender.send(channel, url, subject, body, secret=None, msg_format="text", mentions=None)`（替换原 text 形参，builder 内部构造三家 text/markdown/@人 消息体）；`MessageService.send` 增 `msg_format=None, mentions=None`（默认值保证旧调用零改动），webhook/IM 的 to 放开数组（1-20，逐目标投递、EGRESS fail-fast、投递错误 best-effort、per-URL DeliveryRecord、全成才写 _messages）；adapter input_schema 增 msgFormat（enum text/markdown）与 mentions（object，additionalProperties false，userIds/mobiles ≤20、atAll bool），secret 描述增 webhook HMAC、to 描述改多 URL；output_schema 与 REST 不变。权威契约 docs/58。
+
 ### 3.22 告警外部通知内部接口（AlertChannel/AlertNotifier v1；docs/52，2026-09-23 落码收口 70b4889/07baa89/6a7d846/b352638）
 
 ```python
