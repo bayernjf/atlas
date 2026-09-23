@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### feat：跨版本配置结构 diff B3 落码收口（D26 子集，2026-09-23；dev、未 push；无 ADR）
+
+- 新纯函数 `graph/diff.py`：`diff_graph(base,candidate)` 输出 nodes/edges/variables 的 added/removed/changed——节点 changed 细分 type/name（{field,from,to}）与 config 键级（新增/删除/值变，{field:"config",configKeys}），position 等画布布局不参与；附 `diff_summary`/`has_changes`，零依赖。
+- `GET /api/graphs/{id}/diff`（read、纯只读不产版本）：toVersion 缺省＝latest 草稿、fromVersion 缺省＝最近发布版，该图从未发布则基线取空图（首次发布前全为新增），目标/基线快照缺失 404、跨租户不泄漏。前端 ReleaseModal「与 vN/空图 的配置差异」折叠区（与门禁并行、失败 fail-safe）。
+- `tests/test_graph_diff.py` 净增 6、`tests/test_api_graph_diff.py` 净增 4。收口全量内存门 **1582 passed / 60 skipped**（净增 10、零失败，以收口实跑为准）、前端 **636/2**；零新依赖/零迁移（新增 1 read 端点）。D26 部分取回不解除（影子模式线上旁路、Mock 工具响应、用例编辑参数化、PG 持久化与多租户共享仍缓做）。
+
 ### feat：OpenAPI HTTP Digest 认证 B2 落码收口（docs/46 §8，2026-09-23；dev、未 push；无 ADR）
 
 - parser 收录 `type:http,scheme:digest`（kind=digest/param=Authorization/无 prefix），凭证值与 basic 同形（{username,password} JSON 信封、SecretProvider 加密）；适配器不静态拼 header，构造 `httpx.DigestAuth` 经 `HttpApiClient.request(auth=)` 透传——httpx 单次调用内完成 RFC2617 挑战-响应（先无 Authorization 探测、收 401 WWW-Authenticate、按 realm/nonce/qop 算 HA1/HA2/response 重发），零新依赖（httpx 已有）。
