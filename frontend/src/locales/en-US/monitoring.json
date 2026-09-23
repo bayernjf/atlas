@@ -1,5 +1,335 @@
 {
-  "webhookReliability": {},
+  "title": "Monitoring & alerts",
+  "header": {
+    "refresh": "Refresh",
+    "back": "Back to Dashboard",
+    "unresolvedBadge": "Open alerts"
+  },
+  "col": {
+    "rule": "Rule",
+    "graph": "Graph",
+    "message": "Message",
+    "count": "Count",
+    "lastRun": "Last run",
+    "status": "Status",
+    "lastSeen": "Last seen",
+    "actions": "Actions",
+    "run": "Run",
+    "version": "Version",
+    "mode": "Mode",
+    "nodes": "Nodes",
+    "duration": "Duration",
+    "started": "Started",
+    "time": "Time",
+    "graphId": "Graph ID",
+    "trigger": "Trigger",
+    "passRate": "Pass rate",
+    "passTotal": "Passed/Total",
+    "blocked": "Blocked",
+    "samples": "Samples",
+    "tool": "Tool (adapter/capability)",
+    "calls": "Calls",
+    "failed": "Failed",
+    "simulated": "Simulated",
+    "errorCodes": "Error code distribution",
+    "node": "Node",
+    "type": "Type",
+    "error": "Error",
+    "assignee": "On call"
+  },
+  "severity": {
+    "critical": "Critical",
+    "warning": "Warning"
+  },
+  "rollback": {
+    "auto": "Auto",
+    "manual": "Manual",
+    "tag": "{{actor}} rollback v{{from}} → v{{to}}"
+  },
+  "alertStatus": {
+    "open": "Open",
+    "acknowledged": "Acknowledged",
+    "resolved": "Resolved"
+  },
+  "alert": {
+    "acknowledge": "Acknowledge",
+    "resolve": "Resolve"
+  },
+  "version": {
+    "draft": "Draft"
+  },
+  "mode": {
+    "sync": "Sync",
+    "stream": "Stream"
+  },
+  "health": {
+    "error": "Error",
+    "unhealthy": "Node failed",
+    "healthy": "Healthy"
+  },
+  "run": {
+    "nodeSummary": "{{ok}} ok / {{failed}} failed",
+    "uncaughtError": "Uncaught error: {{error}}"
+  },
+  "trigger": {
+    "publishGate": "Publish gate",
+    "manualGate": "Manual gate"
+  },
+  "report": {
+    "uncovered": "Uncovered"
+  },
+  "blocked": {
+    "yes": "Blocked",
+    "no": "Allowed"
+  },
+  "nodeResult": {
+    "failed": "Failed",
+    "success": "Success"
+  },
+  "metric": {
+    "total": "Total runs",
+    "healthy": "Healthy",
+    "unhealthy": "Unhealthy",
+    "successRate": "Success rate",
+    "p50": "P50 duration",
+    "p95": "P95 duration"
+  },
+  "reportCard": {
+    "title": "Cross-graph case-set reports (latest 100, docs/28 §2.4)",
+    "subtitle": "Captured by manual/publish gates · reverse order · Demo in-process data"
+  },
+  "business": {
+    "autoRefundRate": "Auto-refund rate (business)",
+    "manualEscalationRate": "Manual escalation rate (business)",
+    "amountDiffRate": "Refund amount discrepancy rate (business)",
+    "cardTitle": "Business metrics · by published version (canary gate comparison, 04 §5.13)",
+    "colAutoRefundRate": "Auto-refund rate",
+    "colManualEscalationRate": "Manual escalation rate",
+    "colAmountDiffRate": "Refund amount discrepancy rate"
+  },
+  "tool": {
+    "cardTitle": "Adapter calls (docs/28 §4.1, real-run instrumentation; SIMULATED is local simulation and excluded from latency percentiles)"
+  },
+  "alertCard": {
+    "title": "Alerts"
+  },
+  "filter": {
+    "allStatus": "All statuses",
+    "allGraphs": "All graphs"
+  },
+  "rules": {
+    "cardTitle": "Alert rules (admin only; threshold changes take effect immediately and are kept in process)",
+    "saveFailed": "Failed to save rules",
+    "saved": "Rules saved",
+    "save": "Save rules",
+    "nameEmpty": "There is a custom rule with an empty name (cid {{cid}})",
+    "exprInvalid": "The expression of custom rule \"{{name}}\" is invalid: {{errors}}"
+  },
+  "builtinRule": {
+    "runError": "Run error",
+    "nodeFailed": "Node failed",
+    "consecutiveFailures": "Consecutive failures",
+    "failureRateName": "Failure rate over threshold",
+    "rolloutGate": "Canary gate rollback"
+  },
+  "ruleForm": {
+    "threshold": "Threshold",
+    "window": "Window",
+    "minSamples": "Min samples",
+    "failureRate": "Failure rate",
+    "rate": "Rate",
+    "unitTimes": "times",
+    "escalationLabel": "Unacknowledged escalation: a warning alert older than",
+    "escalationUnit": "minutes without acknowledgement is automatically escalated to critical",
+    "recoveryStreakLabel": "Auto recovery: after",
+    "recoveryStreakUnit": "consecutive healthy runs, automatically resolve still-open alerts (acknowledged ones are not auto-resolved)",
+    "cooldownLabel": "Recovery cooldown: after an automatic recovery, for",
+    "cooldownUnit": "minutes, new alerts of the same kind are recorded in-app only, with no external notification"
+  },
+  "custom": {
+    "title": "Custom rules (expressions, docs/28 §4.2)",
+    "hint": "Available variables (referenced with double braces): status (completed / error / cancelled), durationMs (integer milliseconds), failedCount (number of failed nodes), hasError (whether there is an error); example: {{status}} == 'error' || {{hasError}}. Expressions reuse the safe condition engine (no eval); the result must be boolean, otherwise it fails safe at runtime and raises no alert.",
+    "namePlaceholder": "Rule name",
+    "enabled": "Enabled",
+    "nameEmpty": "Name cannot be empty",
+    "add": "＋ Add custom rule"
+  },
+  "runsCard": {
+    "title": "Recent runs"
+  },
+  "empty": {
+    "reports": "No batch replay reports yet",
+    "business": "No runs with business results yet",
+    "tools": "No tool calls yet (appear after running a graph containing tool nodes)",
+    "alerts": "No alerts yet",
+    "runs": "No runs yet"
+  },
+  "shadow": {
+    "modal": {
+      "title": "Shadow run (side-channel drill)",
+      "hint": "Runs the latest draft of the current saved graph as a side pass: read operations execute as usual, while writes such as refunds, database writes and messages never reach their targets; it only records what the system would have done. No run record is produced and no alerts or canary gates are triggered.",
+      "submit": "Start shadow run",
+      "inputsLabel": "Run inputs (optional, JSON object)",
+      "inputsHelp": "Leave empty to use the trigger node's sample payload; for a refund webhook, for example, pass order_id.",
+      "humanLabel": "Actual human handling (optional)",
+      "humanPlaceholder": "Do not record; only inspect the system decision",
+      "noteLabel": "Human note",
+      "notePlaceholder": "Optional note, recorded with the human result"
+    },
+    "result": {
+      "error": "Shadow run execution error",
+      "verdict": "Comparison verdict",
+      "autoAction": "System automatic action",
+      "humanAction": "Actual human handling",
+      "noHuman": "Not recorded",
+      "empty": "No tool calls or routing decisions were captured in this run",
+      "intentsTitle": "Tool call intents",
+      "decisionsTitle": "Routing decisions"
+    },
+    "card": {
+      "title": "Shadow runs",
+      "autoAction": "System action",
+      "verdict": "Comparison",
+      "human": "Human handling",
+      "noHuman": "Not recorded",
+      "selectHuman": "Select the human action",
+      "attach": "Record",
+      "empty": "No shadow runs yet; start one from the editor for a saved graph"
+    },
+    "col": {
+      "id": "Shadow ID",
+      "graph": "Graph",
+      "node": "Node",
+      "nodeType": "Node type",
+      "target": "Target",
+      "tool": "Tool",
+      "permission": "Permission",
+      "intent": "Intent",
+      "parameters": "Parameters",
+      "createdAt": "Time"
+    },
+    "intent": {
+      "dryRun": "Write short-circuited",
+      "passThrough": "Read pass-through",
+      "simulated": "Simulated",
+      "failed": "Execution failed"
+    },
+    "verdict": {
+      "consistent": "Consistent",
+      "mismatch": "Mismatch",
+      "pending": "Pending"
+    },
+    "action": {
+      "refunded": "Auto refund",
+      "humanReview": "Escalate to human review"
+    },
+    "error": {
+      "inputsInvalidJson": "Run inputs are not valid JSON",
+      "inputsNotObject": "Run inputs must be a JSON object"
+    }
+  },
+  "trace": {
+    "tabNodes": "Node results",
+    "tabTimeline": "Trace timeline",
+    "error": "Failed to load Trace",
+    "retry": "Retry",
+    "empty": "This run has no Trace (historical data or debug/replay)",
+    "col": {
+      "name": "Name",
+      "timeline": "Timeline"
+    },
+    "kind": {
+      "run": "Run",
+      "node": "Node",
+      "tool": "Tool",
+      "parallel": "Parallel",
+      "subgraph": "Subgraph",
+      "taskDispatch": "Task dispatch",
+      "taskDone": "Task done",
+      "approval": "Approval"
+    }
+  },
+  "escalation": {
+    "tag": "Escalated"
+  },
+  "onCall": {
+    "label": "Current on call",
+    "loading": "Loading...",
+    "nobody": "No roster",
+    "rotationHint": "Rotation #{{index}}/{{total}}",
+    "rotate": "Rotate",
+    "configure": "Configure roster",
+    "modalTitle": "Configure the on-call roster",
+    "modalHint": "One member per line, or separate with commas/semicolons; after saving the first member is on call and rotation cycles in order.",
+    "placeholder": "e.g. Alice, Bob, Carol",
+    "save": "Save roster",
+    "error": {
+      "empty": "Please provide at least one on-call member",
+      "tooMany": "At most 20 on-call members"
+    }
+  },
+  "silence": {
+    "action": "Silence",
+    "popTitle": "Silence this alert",
+    "durationLabel": "Silence duration",
+    "durationMinutes": "{{minutes}} minutes",
+    "durationCustom": "Custom...",
+    "reasonLabel": "Reason",
+    "reasonPlaceholder": "e.g. maintenance during a release window",
+    "confirm": "Confirm silence",
+    "error": {
+      "reasonRequired": "Please provide a silence reason",
+      "durationRange": "Duration must be an integer between 1 and 10080 minutes"
+    },
+    "managerTitle": "Silence rules (active {{active}} / {{total}} total)",
+    "col": {
+      "rule": "Rule",
+      "graph": "Graph",
+      "reason": "Reason",
+      "createdBy": "Created by",
+      "expiresAt": "Expires at",
+      "suppressed": "Suppressed",
+      "status": "Status",
+      "actions": "Actions"
+    },
+    "allRules": "All rules",
+    "allGraphs": "All graphs",
+    "active": "Active",
+    "expired": "Expired",
+    "delete": "Lift",
+    "deleteConfirm": "Lift this silence rule early? Matching alerts will be raised again once it is lifted."
+  },
+  "webhookReliability": {
+    "card": {
+      "title": "Inbound webhook reliability"
+    },
+    "stat": {
+      "received": "Delivered",
+      "dead": "Dead letters",
+      "duplicates": "Duplicate deliveries"
+    },
+    "col": {
+      "topic": "Topic",
+      "shop": "Shop",
+      "reasons": "Failure reason",
+      "createdAt": "Received at",
+      "actions": "Actions"
+    },
+    "reason": {
+      "NO_PUBLISHED_VERSION": "Graph has no published version",
+      "RESOLVE_FAILED": "Route resolution failed",
+      "TRIGGER_FAILED": "Trigger failed",
+      "MISSING_GRAPH_ID": "Missing graph ID"
+    },
+    "action": {
+      "replay": "Replay"
+    },
+    "deleteConfirm": "Delete this dead-letter record? This cannot be undone.",
+    "empty": {
+      "topic": "No delivery records yet",
+      "dead": "No dead letters; all inbound deliveries are healthy"
+    }
+  },
   "alertChannel": {
     "cardTitle": "Alert external notifications",
     "subtitle": "Sent only when a new alert is created; merges, escalations and closures are not resent",

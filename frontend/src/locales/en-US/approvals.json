@@ -1,1 +1,32 @@
-{}
+{
+  "title": "Approval queue",
+  "empty": "There are currently no pending approval requests",
+  "autoRefresh": "Auto-refreshes every 10 seconds",
+  "columns": {
+    "summary": "Approval summary",
+    "approver": "Designated approver",
+    "graph": "Graph",
+    "node": "Node",
+    "createdAt": "Created at",
+    "remaining": "Time remaining",
+    "actions": "Actions"
+  },
+  "actions": {
+    "approve": "Approve",
+    "reject": "Reject",
+    "viewCard": "View card",
+    "readonly": "Read-only",
+    "confirmApprove": "Confirm approval?",
+    "confirmReject": "Confirm rejection?"
+  },
+  "email": {
+    "header": "Atlas approval handling",
+    "commentPlaceholder": "Approval comment (optional)",
+    "invalid": "The approval link is invalid or has expired",
+    "invalidHint": "The link may have already been handled, passed its validity period, or had its address modified. Please reopen the application to view the latest approvals.",
+    "goToApp": "Go to the Atlas application",
+    "loading": "Loading...",
+    "resolvedApproved": "This approval has been handled: approved",
+    "resolvedRejected": "This approval has been handled: rejected"
+  }
+}

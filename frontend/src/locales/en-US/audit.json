@@ -1,1 +1,30 @@
-{}
+{
+  "title": "Audit log",
+  "card": {
+    "title": "Write-operation audit events"
+  },
+  "filter": {
+    "action": "Action prefix",
+    "actionPlaceholder": "e.g. POST /api/graphs",
+    "limit": "Rows",
+    "search": "Filter",
+    "reset": "Reset"
+  },
+  "button": {
+    "refresh": "Refresh manually",
+    "export": "Export JSONL",
+    "back": "Back"
+  },
+  "column": {
+    "at": "Time",
+    "actor": "Actor",
+    "action": "Action",
+    "statusCode": "Status code",
+    "path": "Path",
+    "ip": "Source IP"
+  },
+  "empty": "There are currently no audit events matching the filters",
+  "loadError": "Failed to load audit events",
+  "exportError": "Failed to export the audit log",
+  "exported": "Audit log exported"
+}

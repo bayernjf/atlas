@@ -1,1 +1,216 @@
-{}
+{
+  "header": {
+    "title": "Atlas flow editor",
+    "nlGenerate": "Natural-language generate",
+    "newFromTemplate": "New from template",
+    "recordings": "Record & replay",
+    "exportJson": "Export Graph JSON",
+    "publish": "Publish",
+    "rollout": "Canary rollout",
+    "debug": "Debug",
+    "compileAndRun": "Compile & run",
+    "emergencyStop": "Emergency stop",
+    "draftRun": "Draft run",
+    "publishedRun": "Published v{{version}}",
+    "shadowRun": "Shadow run"
+  },
+  "tabs": {
+    "nodes": "Nodes",
+    "variables": "Variables"
+  },
+  "nodePanel": {
+    "title": "Node panel (drag onto the canvas)"
+  },
+  "variables": {
+    "title": "Global variables (04 §6)",
+    "hint": "Use {{variable.path}} references throughout, e.g. {{global.company_name}}",
+    "namePlaceholder": "Variable name (English identifier)",
+    "valuePlaceholder": "Initial value",
+    "add": "Add global variable",
+    "invalidName": "Variable name must start with a letter or underscore and contain only letters, digits and underscores",
+    "duplicateName": "Variable name already exists",
+    "column": {
+      "ref": "Reference",
+      "name": "Name",
+      "type": "Type",
+      "value": "Value",
+      "actions": "Actions"
+    }
+  },
+  "canvas": {
+    "branchDefault": "Default",
+    "loopBody": "Loop body",
+    "loopExit": "Exit",
+    "approvalApproved": "Approved",
+    "approvalRejected": "Rejected"
+  },
+  "export": {
+    "title": "Graph definition JSON (W7-W8 DSL compilation input)"
+  },
+  "runResult": {
+    "title": "Compile & run result",
+    "compiled": "Compiled successfully ({{entrypoints}} → {{terminals}})",
+    "status": "Run status: {{status}}"
+  },
+  "nl": {
+    "title": "Generate a flow draft from natural language",
+    "defaultPrompt": "Build an automated e-commerce refund approval flow for me",
+    "submit": "Generate and load onto canvas",
+    "paramWarning": "⚠ NL parameter notice: {{warning}}"
+  },
+  "template": {
+    "title": "New from template",
+    "replaceWarning": "Loading a template replaces the entire current canvas; unsaved changes will be lost.",
+    "loading": "Loading template...",
+    "nodeCount": "{{count}} nodes",
+    "use": "Use this template",
+    "loaded": "Template loaded: {{name}} ({{id}}); the canvas has been fully replaced"
+  },
+  "recording": {
+    "title": "Operation recording & replay",
+    "namePlaceholder": "Case name",
+    "recordButton": "Record one run of the current canvas",
+    "recordHint": "Runs once for real with the current order inputs (approval dialogs work as usual); the Graph snapshot is frozen into storage at the end",
+    "listTitle": "Recorded cases ({{count}})",
+    "empty": "No recorded cases yet.",
+    "replay": "Replay",
+    "collapse": "Collapse",
+    "edit": "Edit",
+    "deleteConfirm": "Delete this recorded case?",
+    "meta": "{{nodes}} nodes · {{steps}} steps · {{time}}",
+    "loadingCase": "Loading case...",
+    "inputsPlaceholder": "Replay inputs (JSON object; replaces the whole set on save)",
+    "editHint": "Only the name and inputs are editable; steps and the Graph snapshot cannot be changed (please re-record)",
+    "mockCheckbox": "Mock tool nodes (hit recorded outputs, never reach adapters; release gates do not accept mocks)",
+    "overridePlaceholder": "Input overrides (optional, JSON object such as {\"amount\": 100}; shallow-merged for this replay only, not persisted)",
+    "match": "Match",
+    "mismatch": "Mismatch",
+    "mockToolsTag": "Mock {{count}} tools",
+    "baselineReplay": "Baseline {{baseline}} → replay {{replay}}",
+    "defaultName": "Recording {{graphId}} {{time}}",
+    "defaultNameTime": "Recording {{time}}",
+    "saved": "Recorded case saved: {{id}} ({{steps}} steps)",
+    "stepDiffKeys": " (diff keys: {{keys}})",
+    "editRequired": "Please change at least the name or the inputs"
+  },
+  "approval": {
+    "title": "Human approval request",
+    "reject": "Reject",
+    "approve": "Approve",
+    "nodeLabel": "Node",
+    "subgraphLabel": "Approval inside subgraph (owning subgraph node: {{label}})",
+    "summaryLabel": "Approval summary",
+    "approverLabel": "Approver",
+    "approverUnspecified": "Unspecified",
+    "timeoutHint": "After waiting {{seconds}} seconds the decision is made automatically by the timeout policy; after closing the dialog it can still be approved via the API during the wait.",
+    "decisionApproved": "Approved",
+    "decisionRejected": "Rejected",
+    "sourceHuman": "Human",
+    "sourceTimeout": "Timeout",
+    "sourceInput": "Preset",
+    "waitingLog": "⏸ {{prefix}}{{node}} waiting for human approval: {{summary}}",
+    "resultLog": "✓ {{prefix}}{{node}} human approval: {{decision}} ({{source}}) → {{target}}"
+  },
+  "debug": {
+    "reason": {
+      "step": "Step",
+      "breakpoint": "Breakpoint",
+      "condition": "Condition",
+      "exception": "Exception"
+    },
+    "pausedTitle": "Debug paused at",
+    "step": "Step over",
+    "continue": "Continue",
+    "stop": "Stop",
+    "varFilterPlaceholder": "Filter variables by key",
+    "globalsHint": "Global variables globals (editable JSON; shallow-merged back on step/continue, ignored on stop)",
+    "outputsHint": "Node outputs (read-only snapshot)",
+    "exceptionTitle": "Exception breakpoint caught: {{type}}",
+    "exceptionHint": "The exception will be re-raised as-is after step/continue (v1 cannot ignore and continue); stop ends this debug session.",
+    "historyTitle": "Variable change history ({{count}})",
+    "historySince": "Passed nodes: {{path}}",
+    "historyEmpty": "No top-level global keys changed during this pause"
+  },
+  "log": {
+    "runPublished": "Running the published version: {{graphId}}@{{version}} (the current draft is not used)",
+    "draftUpdated": "Draft updated: {{graphId}}",
+    "compileSuccess": "Compiled successfully: entrypoints {{entrypoints}}",
+    "graphSaved": "Graph saved: {{graphId}}",
+    "paused": "⏸ Debug paused: {{prefix}}{{node}} ({{reason}})",
+    "logBreakpoint": "📝 {{prefix}}{{node}} log breakpoint (hit #{{hits}}): {{message}}",
+    "nodeStart": "▶ {{prefix}}Node started: {{node}}",
+    "nodeComplete": "✓ {{prefix}}Node completed: {{node}}",
+    "decision": "✓ {{node}} decision: {{action}}",
+    "branch": "✓ {{node}} branch: {{branch}} → {{target}}",
+    "branchDefault": "Default",
+    "parallelStarted": "✓ {{node}} started {{count}} branches in parallel",
+    "parallelFailed": "✓ {{node}} parallel join: {{count}} branches failed: {{detail}} (the join node still runs)",
+    "parallelAllOk": "✓ {{node}} parallel join: all succeeded",
+    "loopContinue": "✓ {{node}} continues loop: iteration {{iterations}} → {{target}}",
+    "loopExit": "✓ {{node}} exits loop: {{reason}}, {{iterations}} iterations total → {{target}}",
+    "loopReasonConditionFalse": "Condition not met",
+    "loopReasonMaxIterations": "Maximum iterations reached",
+    "loopReasonExpressionError": "Expression error",
+    "waitDone": "✓ {{node}} wait completed: {{seconds}} seconds",
+    "subgraphFailed": "✓ {{node}} subgraph completed: {{graphId}} (failure: {{error}})",
+    "subgraphOk": "✓ {{node}} subgraph completed: {{graphId}} (success)",
+    "toolSuccess": "✓ {{node}} tool call: SUCCESS{{http}}",
+    "toolHttpStatus": " (HTTP {{status}})",
+    "toolFailed": "✗ {{node}} tool call: FAILED ({{code}} {{message}})",
+    "rootComplete": "✓ Node completed: {{node}}",
+    "runComplete": "Run finished: {{status}}",
+    "stopped": "Debugging stopped: {{node}} (no run result)",
+    "cancelled": "⏹ Run emergency-stopped: {{node}} (cooperative cancellation, no run result)",
+    "runFailed": "✗ Run failed: {{message}}",
+    "resumeFailed": "✗ Debug resume failed: {{message}}",
+    "noActiveRun": "There is no in-flight run to cancel",
+    "noActiveRunMaybeEnded": "There is no in-flight run to cancel (it may have already ended)",
+    "stopRequested": "⏹ Emergency stop requested for {{runId}} (takes effect at the next node boundary)",
+    "stopFailed": "✗ Emergency stop failed: {{message}}",
+    "unknownError": "Unknown error"
+  },
+  "error": {
+    "compileRunFailed": "Compile/run failed",
+    "inputsInvalidJson": "The inputs are not valid JSON; please check the format",
+    "inputsNotObject": "The inputs must be a top-level JSON object ({})"
+  },
+  "property": {
+    "title": "Property panel",
+    "empty": "Select or drag in a node to configure its properties",
+    "nodeId": "Node ID",
+    "type": "Type",
+    "nodeName": "Node name",
+    "description": "Description",
+    "valid": "Configuration validation passed"
+  },
+  "breakpoint": {
+    "section": "Debugging (04 §5.12 session-level breakpoints)",
+    "pauseBefore": "Pause before executing this node",
+    "conditionLabel": "Condition expression (optional; pauses only when truthy)",
+    "conditionHint": "Breakpoints are valid for this session only and are not saved with the Graph; a broken expression fails safe and is treated as not matching.",
+    "hitCountLabel": "Hit count hitCount (pause once every N hits; leave empty to pause on every hit)",
+    "hitCountPlaceholder": "e.g. 3 (common for loops/re-entrant nodes)",
+    "logMessageLabel": "Log breakpoint logMessage (non-empty = only log on hit, do not pause)",
+    "logMessagePlaceholder": "e.g. reached the refund node (the message is output as-is, no interpolation)",
+    "logMessageHint": "When a message is provided this breakpoint becomes a log breakpoint: on hit it only prints to the debug console and does not pause the run; v1 does not combine it with hitCount and the message is emitted as-is without interpolation.",
+    "exceptionLabel": "Exception breakpoint (pauses when the node raises, docs/28 §3.2)",
+    "exceptionHint": "When enabled, an exception raised by the node logic pauses first and shows the exception type and message; it is re-raised as-is after step/continue (v1 cannot ignore and continue), and stop ends debugging; with no condition expression, continue mode pauses only when this node raises and does not pause on normal passage."
+  },
+  "retry": {
+    "section": "Retry and failure handling (04 §3.2 retry)",
+    "maxRetries": "Maximum retries",
+    "timeoutSeconds": "Timeout (seconds)",
+    "onError": "Failure handling"
+  },
+  "decision": {
+    "promptTemplateLabel": "Prompt template (supports {{path}} references)",
+    "insertVariable": "Insert variable reference",
+    "insertPlaceholder": "Appended to the template after selection",
+    "modelLabel": "Model (empty = system default)",
+    "confidenceLabel": "Confidence threshold (06 §6.2 default 0.6)"
+  },
+  "debugConsole": {
+    "title": "Debug console",
+    "eventCount": "{{count}} events"
+  }
+}

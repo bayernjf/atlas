@@ -1,5 +1,27 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { changeLanguage, getLanguage, t, DEFAULT_LOCALE } from '../index'
+import zhApprovals from '../zh-CN/approvals.json'
+import zhAudit from '../zh-CN/audit.json'
+import zhChannels from '../zh-CN/channels.json'
+import zhCommon from '../zh-CN/common.json'
+import zhConnections from '../zh-CN/connections.json'
+import zhDashboard from '../zh-CN/dashboard.json'
+import zhDemo from '../zh-CN/demo.json'
+import zhEditor from '../zh-CN/editor.json'
+import zhMemory from '../zh-CN/memory.json'
+import zhMonitoring from '../zh-CN/monitoring.json'
+import zhOpenapi from '../zh-CN/openapi.json'
+import enApprovals from '../en-US/approvals.json'
+import enAudit from '../en-US/audit.json'
+import enChannels from '../en-US/channels.json'
+import enCommon from '../en-US/common.json'
+import enConnections from '../en-US/connections.json'
+import enDashboard from '../en-US/dashboard.json'
+import enDemo from '../en-US/demo.json'
+import enEditor from '../en-US/editor.json'
+import enMemory from '../en-US/memory.json'
+import enMonitoring from '../en-US/monitoring.json'
+import enOpenapi from '../en-US/openapi.json'
 
 /** Login.tsx / UserBadge.tsx 实际接线的全部 key（M12 样板范围）。 */
 const WIRED_KEYS = [
@@ -596,8 +618,8 @@ describe('zero-dependency i18n skeleton (docs/17 §2.3, M12)', () => {
     expect(t('nope.x', { defaultValue: '兜底' })).toBe('兜底')
   })
 
-  it('falls back from an empty namespace to common for the same key', () => {
-    // editor.json is an empty {} placeholder; common holds auth.login.submit
+  it('falls back from a namespace missing a key to common for the same key', () => {
+    // editor namespace holds no auth.login.submit; common does (zh-CN side)
     expect(t('editor:auth.login.submit')).toBe('登录')
   })
 
@@ -605,11 +627,17 @@ describe('zero-dependency i18n skeleton (docs/17 §2.3, M12)', () => {
     expect(t('wat:role.viewer')).toBe('wat:role.viewer')
   })
 
-  it('falls back to zh-CN text when switched to an empty en-US skeleton', () => {
+  it('returns English copy under en-US and keeps cross-namespace fallback (docs/57)', () => {
     changeLanguage('en-US')
     expect(getLanguage()).toBe('en-US')
-    // en-US/common.json is {} — must surface Chinese, never the raw key
-    expect(t('auth.login.submit')).toBe('登录')
+    // en-US/common.json is fully translated (docs/57 D-1)
+    expect(t('auth.login.submit')).toBe('Sign in')
+    expect(t('role.admin')).toBe('Admin')
+    expect(t('auth.session.logout')).toBe('Sign out')
+    // Cross-namespace fallback on the English side: editor lacks auth.login.submit → en-US common
+    expect(t('editor:auth.login.submit')).toBe('Sign in')
+    // An entirely unknown key still returns the key (i18next behavior)
+    expect(t('__nonexistent__.x')).toBe('__nonexistent__.x')
     changeLanguage('zh-CN')
     expect(t('auth.login.submit')).toBe('登录')
   })
@@ -639,10 +667,14 @@ describe('zero-dependency i18n skeleton (docs/17 §2.3, M12)', () => {
     expect(hasChinese(rendered)).toBe(true)
   })
 
-  it('every wired key still resolves under the empty en-US skeleton (never raw key)', () => {
+  it('every wired key resolves to English under en-US (never raw key)', () => {
     changeLanguage('en-US')
     for (const key of [...WIRED_KEYS, ...TEMPLATE_KEYS]) {
       expect(t(key)).not.toBe(key)
+    }
+    // English copy must carry no Han characters
+    for (const key of WIRED_KEYS) {
+      expect(hasChinese(t(key)), `${key} English copy must not contain Chinese`).toBe(false)
     }
   })
 
@@ -667,15 +699,22 @@ describe('zero-dependency i18n skeleton (docs/17 §2.3, M12)', () => {
     }
   })
 
-  it('falls back to zh-CN for dashboard copy under the empty en-US skeleton', () => {
+  it('renders English dashboard copy under en-US (docs/57)', () => {
     changeLanguage('en-US')
-    // en-US/dashboard.json stays {} (no translation yet); Chinese must still render
     for (const key of DASHBOARD_KEYS) {
-      expect(t(key, { ns: 'dashboard' })).not.toBe(key)
+      const value = t(key, { ns: 'dashboard' })
+      expect(value).not.toBe(key)
+      expect(hasChinese(value), `${key} English copy must not contain Chinese`).toBe(false)
     }
+    expect(t('demo.title', { ns: 'dashboard' })).toContain('refund automation')
     for (const key of SHARED_NAV_KEYS) {
-      expect(t(key, { ns: 'dashboard' })).not.toBe(key)
+      const value = t(key, { ns: 'dashboard' })
+      expect(value).not.toBe(key)
+      expect(hasChinese(value), `${key} English copy must not contain Chinese`).toBe(false)
     }
+    expect(t('common:brand.appName', { ns: 'dashboard' })).toBe(
+      'Atlas Operations Orchestration Platform',
+    )
   })
 
   it('resolves editor namespace static copy for frame, canvas and left panels (editor-a)', () => {
@@ -756,19 +795,35 @@ describe('zero-dependency i18n skeleton (docs/17 §2.3, M12)', () => {
     expect(hasChinese(promptLabel)).toBe(true)
   })
 
-  it('falls back to zh-CN for editor copy under the empty en-US skeleton', () => {
+  it('renders English editor copy under en-US with English teaching tokens (docs/57)', () => {
     changeLanguage('en-US')
     for (const key of EDITOR_KEYS) {
-      expect(t(key, { ns: 'editor' })).not.toBe(key)
+      const value = t(key, { ns: 'editor' })
+      expect(value).not.toBe(key)
+      expect(hasChinese(value), `${key} English copy must not contain Chinese`).toBe(false)
     }
     for (const { key, vars } of EDITOR_TEMPLATE_KEYS) {
-      expect(t(key, { ns: 'editor', ...vars })).not.toBe(key)
+      const value = t(key, { ns: 'editor', ...vars })
+      expect(value).not.toBe(key)
+      expect(value).not.toContain('{{')
     }
     for (const key of EDITOR_B_KEYS) {
-      expect(t(key, { ns: 'editor' })).not.toBe(key)
+      const value = t(key, { ns: 'editor' })
+      expect(value).not.toBe(key)
+      expect(hasChinese(value), `${key} English copy must not contain Chinese`).toBe(false)
     }
-    expect(t('debugConsole.eventCount', { ns: 'editor', count: 3 })).not.toContain('{{')
-    expect(t('decision.promptTemplateLabel', { ns: 'editor' })).toContain('{{路径}}')
+    // Interpolated count renders in English without a leftover placeholder
+    expect(t('debugConsole.eventCount', { ns: 'editor', count: 3 })).toBe('3 events')
+    // Teaching tokens: English {{path}} / {{variable.path}} / {{global.company_name}} survive
+    // verbatim because the page passes no such variables ({{path}} matches the interpolate rule
+    // but is intentionally left unbound; dotted/CJK tokens never match it).
+    expect(t('decision.promptTemplateLabel', { ns: 'editor' })).toContain('{{path}}')
+    const hint = t('variables.hint', { ns: 'editor' })
+    expect(hint).toContain('{{variable.path}}')
+    expect(hint).toContain('{{global.company_name}}')
+    expect(hasChinese(hint)).toBe(false)
+    // HTTP proper-noun fragment interpolates cleanly in English too
+    expect(t('log.toolHttpStatus', { ns: 'editor', status: 200 })).toBe(' (HTTP 200)')
   })
 
   it('resolves monitoring namespace static copy for the monitoring page', () => {
@@ -815,16 +870,43 @@ describe('zero-dependency i18n skeleton (docs/17 §2.3, M12)', () => {
     expect(t('common:button.delete', { ns: 'monitoring' })).toBe('删除')
   })
 
-  it('falls back to zh-CN for monitoring copy under the empty en-US skeleton', () => {
+  it('renders English monitoring copy under en-US with teaching tokens kept (docs/57)', () => {
     changeLanguage('en-US')
-    // en-US/monitoring.json stays {} (no translation yet); Chinese must still render, never a raw key.
     for (const key of MONITORING_KEYS) {
-      expect(t(key, { ns: 'monitoring' })).not.toBe(key)
+      const value = t(key, { ns: 'monitoring' })
+      expect(value).not.toBe(key)
+      expect(hasChinese(value), `${key} English copy must not contain Chinese`).toBe(false)
     }
     for (const { key, vars } of MONITORING_TEMPLATE_KEYS) {
-      expect(t(key, { ns: 'monitoring', ...vars })).not.toBe(key)
+      const value = t(key, { ns: 'monitoring', ...vars })
+      expect(value).not.toBe(key)
+      expect(value).not.toContain('{{')
     }
-    expect(t('custom.hint', { ns: 'monitoring' })).toContain('{{status}}')
+    // Spot-check composed shapes in English
+    expect(t('rollback.tag', { ns: 'monitoring', actor: 'Auto', from: 3, to: 2 })).toBe(
+      'Auto rollback v3 → v2',
+    )
+    expect(t('run.nodeSummary', { ns: 'monitoring', ok: 3, failed: 1 })).toBe('3 ok / 1 failed')
+    // custom.hint teaches the DSL variables; only status/hasError appear braced in the sample
+    // expression (mirrors zh-CN), durationMs/failedCount are named bare in the variable list.
+    const hint = t('custom.hint', { ns: 'monitoring' })
+    expect(hint).toContain('{{status}}')
+    expect(hint).toContain('{{hasError}}')
+    expect(hint).toContain('durationMs')
+    expect(hint).toContain('failedCount')
+    expect(hasChinese(hint)).toBe(false)
+    // Lib label keys resolve to English
+    expect(t('builtinRule.runError', { ns: 'monitoring' })).toBe('Run error')
+    expect(t('builtinRule.consecutiveFailures', { ns: 'monitoring' })).toBe('Consecutive failures')
+    expect(t('alertStatus.open', { ns: 'monitoring' })).toBe('Open')
+    // Shadow copy and the editor entry translate too; technical enums stay verbatim
+    expect(t('shadow.modal.title', { ns: 'monitoring' })).toBe('Shadow run (side-channel drill)')
+    expect(t('shadow.intent.dryRun', { ns: 'monitoring' })).toBe('Write short-circuited')
+    expect(t('shadow.verdict.consistent', { ns: 'monitoring' })).toBe('Consistent')
+    expect(t('shadow.action.refunded', { ns: 'monitoring' })).toBe('Auto refund')
+    expect(t('shadow.action.humanReview', { ns: 'monitoring' })).toBe('Escalate to human review')
+    expect(t('header.shadowRun', { ns: 'editor' })).toBe('Shadow run')
+    expect(t('SHADOW_DRY_RUN', { ns: 'monitoring' })).toBe('SHADOW_DRY_RUN')
     changeLanguage('zh-CN')
   })
 
@@ -866,13 +948,15 @@ describe('zero-dependency i18n skeleton (docs/17 §2.3, M12)', () => {
     expect(t('common:button.delete', { ns: 'memory' })).toBe('删除')
   })
 
-  it('falls back to zh-CN for memory copy under the empty en-US skeleton', () => {
+  it('renders English memory copy under en-US (docs/57)', () => {
     changeLanguage('en-US')
-    // en-US/memory.json stays {} (no translation yet); Chinese must still render, never a raw key.
     for (const key of MEMORY_KEYS) {
-      expect(t(key, { ns: 'memory' })).not.toBe(key)
+      const value = t(key, { ns: 'memory' })
+      expect(value).not.toBe(key)
+      expect(hasChinese(value), `${key} English copy must not contain Chinese`).toBe(false)
     }
-    expect(t('kind.fact', { ns: 'memory' })).toBe('事实')
+    expect(t('kind.fact', { ns: 'memory' })).toBe('Fact')
+    expect(t('kind.preference', { ns: 'memory' })).toBe('Preference')
     changeLanguage('zh-CN')
   })
 
@@ -888,11 +972,15 @@ describe('zero-dependency i18n skeleton (docs/17 §2.3, M12)', () => {
     expect(t('common:nav.connections', { ns: 'connections' })).toBe('连接管理')
   })
 
-  it('falls back to zh-CN for connections copy under the empty en-US skeleton', () => {
+  it('renders English connections copy under en-US (docs/57)', () => {
     changeLanguage('en-US')
     for (const key of CONNECTIONS_KEYS) {
-      expect(t(key, { ns: 'connections' })).not.toBe(key)
+      const value = t(key, { ns: 'connections' })
+      expect(value).not.toBe(key)
+      expect(hasChinese(value), `${key} English copy must not contain Chinese`).toBe(false)
     }
+    expect(t('status.connected', { ns: 'connections' })).toBe('Connected')
+    expect(t('common:nav.connections', { ns: 'connections' })).toBe('Connections')
     changeLanguage('zh-CN')
   })
 
@@ -908,11 +996,99 @@ describe('zero-dependency i18n skeleton (docs/17 §2.3, M12)', () => {
     expect(t('provider.shopify', { ns: 'channels' })).toBe('Shopify')
   })
 
-  it('falls back to zh-CN for channels copy under the empty en-US skeleton', () => {
+  it('renders English channels copy under en-US (docs/57)', () => {
     changeLanguage('en-US')
     for (const key of CHANNELS_KEYS) {
-      expect(t(key, { ns: 'channels' })).not.toBe(key)
+      const value = t(key, { ns: 'channels' })
+      expect(value).not.toBe(key)
+      if (key !== 'provider.shopify') {
+        expect(hasChinese(value), `${key} English copy must not contain Chinese`).toBe(false)
+      }
     }
+    expect(t('provider.shopify', { ns: 'channels' })).toBe('Shopify')
+    expect(t('status.connected', { ns: 'channels' })).toBe('Connected')
     changeLanguage('zh-CN')
+  })
+})
+
+// ── Static parity guards over the JSON catalogs themselves (docs/57 §5) ─────────
+// These read the raw locale JSON rather than the runtime t(), so a missing/extra
+// key, a stray Han character in English copy, or a placeholder mismatch fails the
+// build even if no runtime test happens to resolve that key.
+const flatten = (obj: unknown, prefix = ''): Record<string, string> => {
+  const out: Record<string, string> = {}
+  if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+      const path = prefix ? `${prefix}.${k}` : k
+      if (v && typeof v === 'object') {
+        Object.assign(out, flatten(v, path))
+      } else {
+        out[path] = String(v)
+      }
+    }
+  }
+  return out
+}
+
+const INTERP_IDENT = /\{\{\s*([A-Za-z_$][\w$]*)\s*\}\}/g
+
+/**
+ * Teaching tokens deliberately diverge between zh and en (docs/57 §2.3): the zh
+ * copy uses CJK/dotted sample identifiers that never match the interpolate rule,
+ * while en uses English sample identifiers. They are rendered without variables
+ * and must survive verbatim, so they are excluded from the placeholder parity guard.
+ */
+const INTERPOLATION_PARITY_EXEMPT = new Set<string>([
+  'editor:variables.hint',
+  'editor:decision.promptTemplateLabel',
+])
+
+const PARITY_PAIRS: Array<{ ns: string; zh: unknown; en: unknown }> = [
+  { ns: 'approvals', zh: zhApprovals, en: enApprovals },
+  { ns: 'audit', zh: zhAudit, en: enAudit },
+  { ns: 'channels', zh: zhChannels, en: enChannels },
+  { ns: 'common', zh: zhCommon, en: enCommon },
+  { ns: 'connections', zh: zhConnections, en: enConnections },
+  { ns: 'dashboard', zh: zhDashboard, en: enDashboard },
+  { ns: 'demo', zh: zhDemo, en: enDemo },
+  { ns: 'editor', zh: zhEditor, en: enEditor },
+  { ns: 'memory', zh: zhMemory, en: enMemory },
+  { ns: 'monitoring', zh: zhMonitoring, en: enMonitoring },
+  { ns: 'openapi', zh: zhOpenapi, en: enOpenapi },
+]
+
+describe('zh-CN / en-US catalog parity (docs/57 §5)', () => {
+  it('has identical leaf-key sets in every namespace', () => {
+    for (const { ns, zh, en } of PARITY_PAIRS) {
+      const zhKeys = new Set(Object.keys(flatten(zh)))
+      const enKeys = new Set(Object.keys(flatten(en)))
+      const missing = [...zhKeys].filter((k) => !enKeys.has(k))
+      const extra = [...enKeys].filter((k) => !zhKeys.has(k))
+      expect(missing, `${ns}: keys missing in en-US`).toEqual([])
+      expect(extra, `${ns}: extra keys in en-US`).toEqual([])
+    }
+  })
+
+  it('contains no Han characters in any English leaf value', () => {
+    for (const { ns, en } of PARITY_PAIRS) {
+      for (const [key, value] of Object.entries(flatten(en))) {
+        expect(/[一-鿿]/.test(value), `${ns}:${key} still contains Chinese: ${value}`).toBe(false)
+      }
+    }
+  })
+
+  it('uses the same interpolation identifier set on both sides (teaching tokens exempt)', () => {
+    for (const { ns, zh, en } of PARITY_PAIRS) {
+      const zhFlat = flatten(zh)
+      const enFlat = flatten(en)
+      for (const key of Object.keys(zhFlat)) {
+        if (INTERPOLATION_PARITY_EXEMPT.has(`${ns}:${key}`)) continue
+        const zhVars = new Set(zhFlat[key].match(INTERP_IDENT) ?? [])
+        const enVars = new Set(enFlat[key].match(INTERP_IDENT) ?? [])
+        expect([...enVars].sort(), `${ns}:${key} placeholder mismatch`).toEqual(
+          [...zhVars].sort(),
+        )
+      }
+    }
   })
 })

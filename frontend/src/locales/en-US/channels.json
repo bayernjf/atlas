@@ -1,1 +1,88 @@
-{}
+{
+  "cardTitle": "Sales channel bindings",
+  "empty": "No channel bindings yet",
+  "col": {
+    "shop": "Shop",
+    "provider": "Platform",
+    "status": "Status",
+    "connection": "Source connection",
+    "actions": "Actions"
+  },
+  "provider": {
+    "shopify": "Shopify"
+  },
+  "status": {
+    "connected": "Connected",
+    "error": "Error"
+  },
+  "button": {
+    "bind": "Bind channel",
+    "test": "Test"
+  },
+  "deleteConfirm": {
+    "title": "Delete this channel binding?",
+    "description": "This only removes the channel binding within this system; it does not affect the underlying connection or revoke authorization on the platform side."
+  },
+  "modal": { "title": "Bind a sales channel" },
+  "form": {
+    "provider": "Platform",
+    "connection": "Select connection",
+    "connectionPlaceholder": "Select an authorized OAuth2 connection",
+    "connectionRequired": "Please select a connection",
+    "shop": "Shop name",
+    "shopPlaceholder": "e.g. acme (corresponds to acme.myshopify.com)",
+    "shopRequired": "Please enter the shop name",
+    "apiVersion": "API version"
+  },
+  "message": {
+    "bound": "Channel binding created",
+    "deleted": "Binding deleted",
+    "testOk": "Health check succeeded",
+    "testFail": "Health check failed"
+  },
+  "error": {
+    "loadList": "Failed to load channel bindings",
+    "bind": "Binding failed",
+    "test": "Health check request failed",
+    "delete": "Failed to delete",
+    "formInvalid": "Please complete the form"
+  },
+  "webhook": {
+    "button": "Webhook",
+    "modal": { "title": "Inbound webhook subscriptions" },
+    "urlLabel": "Webhook callback URL (enter it in the Shopify admin under \"Notifications → Webhooks\"; choose event version 2025-01)",
+    "copy": "Copy",
+    "hint": "Paste the URL above when manually adding a webhook in the Shopify admin; the platform verifies the X-Shopify-Hmac-SHA256 signature with this binding's connection client secret, and any failed verification is rejected.",
+    "subsTitle": "Topic → graph subscriptions (each topic can trigger multiple graphs, up to 10 entries)",
+    "topic": {
+      "orders_create": "orders/create (order created)",
+      "orders_updated": "orders/updated (order updated)",
+      "refunds_create": "refunds/create (refund created)"
+    },
+    "graphPlaceholder": "Select the graph to trigger",
+    "nodesUnit": "nodes",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "add": "Add subscription",
+    "message": {
+      "urlCopied": "Callback URL copied",
+      "saved": "Webhook subscriptions saved"
+    },
+    "error": {
+      "load": "Failed to load subscriptions",
+      "copy": "Copy failed; please select and copy manually",
+      "save": "Failed to save subscriptions"
+    }
+  },
+  "remoteWebhooks": {
+    "title": "Shopify shop-side registration (register callbacks in one click via the Admin API)",
+    "hint": "First subscribe topics → graphs locally above, then register the corresponding topics with Shopify; local subscriptions and shop-side registration are triggered separately and do not sync automatically. The registered URL must be HTTPS; please configure ATLAS_PUBLIC_URL.",
+    "registered": "Registered",
+    "register": "Register with Shopify",
+    "unregister": "Unregister",
+    "loadError": "Failed to load shop-side registration status",
+    "error": {
+      "CHANNEL_UNAUTHORIZED": "The shop access token has expired; please re-authorize in Connections"
+    }
+  }
+}
