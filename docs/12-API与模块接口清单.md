@@ -763,6 +763,24 @@ def get_condition_classifier() -> ConditionClassifier: ...
 
 差值秒数同时作为暂停帧 `timeout_seconds`；resume 走既有 remaining_seconds。新增失败码 **WAIT_ABSOLUTE_TIME_INVALID**（其余 wait 失败码不变）；无新增 REST。SSE wait node_end data 在 absolute 模式另含 `durationMode:"absolute"` 与 `absoluteTime`（渲染后目标时刻 ISO；epoch 输入回写统一 ISO）。
 
+### 3.21 IM 群机器人投递内部接口（dingtalk/wecom/feishu v1；docs/51，2026-09-23 docs-only 立项）
+
+```python
+# src/atlas/message/im.py（新模块；无新依赖，注入 guard/post/clock，测试不触网）
+class ImSender(Protocol):
+    def send(self, channel: str, url: str, text: str, secret: str | None) -> None
+# DefaultImSender：guard.check(url) -> EgressDenied 透传
+#   dingtalk：secret 时 URL 拼 timestamp=<ms>&sign=quote(b64(HMAC_SHA256(secret, f"<ms>\n<secret>")))
+#             payload {"msgtype":"text","text":{"content":text}}
+#   wecom：   payload {"msgtype":"text","text":{"content":text}}（不加签）
+#   feishu：  payload {"timestamp":"<sec>","sign":b64(HMAC_SHA256(b"", f"<sec>\n<secret>")),
+#                      "msg_type":"text","content":{"text":text}}；无 secret 省略前两键
+#   POST：10s、follow_redirects=False；须 2xx 且 dingtalk/wecom errcode==0、feishu code==0
+#   否则 ImDeliveryError -> MessageService 折算 IM_SEND_FAILED，不写记录
+```
+
+`MessageService.send` 增可选 `secret` 透传：to 为单 URL（数组 INVALID_PARAMETER）；secret 仅 dingtalk/feishu 允许（非空 str ≤200，其他渠道 INVALID_PARAMETER）；成功 delivered 标渠道名；未注入 IM 投递器三渠道回退进程内记录。新增错误码 **IM_SEND_FAILED**（EGRESS_DENIED 照透传）；无新增 REST。
+
 ## 4. 记忆检索接口（依据 06 6.2 / 05 2.3）
 
 > **M11 实现边界（2026-09-19 已落码收口；权威＝docs/26、ADR T23）**：下列 `memory_retriever.query` 五层分层检索为**愿景**（working Redis / summary / fact pgvector / case / preference + 决策节点隐式注入），v1 不实现，缓做 14 D35。M11 取回的是下方「4.1 M11 长期记忆最小接口」——统一 memory_item（fact/preference）+ 显式 remember/recall 两工具，**不做决策隐式注入**。

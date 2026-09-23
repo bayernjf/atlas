@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### docs：IM 群机器人消息投递 v1 批 docs-only 立项（docs/51，2026-09-23；dev、未 push；无 ADR）
+
+- message/send channel 增 `dingtalk`/`wecom`/`feishu`：to 为群机器人 Webhook 单 URL（过 EgressGuard、10s、不重定向），新增可选 `secret`（≤200，仅钉钉/飞书——钉钉 URL HMAC 加签、飞书请求体加签）；三家各自 msgtype text 包体，响应须 2xx 且平台码（errcode/code）为 0。
+- 平台码非 0/非 2xx/超时 → **IM_SEND_FAILED** 不写记录，EGRESS_DENIED 透传；成功 delivered 标渠道名，未注入投递器回退进程内。零新依赖/零迁移/无新 REST。D24 部分取回不解除：短信、富文本/@人、多 URL 群发、IM 应用 OAuth/入站、模板系统、限流退避/投递追踪仍缓做。立项基线后端 **1490/59**、前端 **624/2/47 文件**。
+
 ### feat：wait 到点时刻等待 v1 批落码收口（docs/50，2026-09-23；dev、未 push；无 ADR）
 
 - wait duration config 的 `durationMode` 增枚举 `absolute`，config 增 `absoluteTime`（≤64；ISO 8601 或 epoch 秒，支持 `{{路径}}` 插值，naive datetime 按 UTC）；loader absolute 时先插值再解析目标时刻（纯数字→fromtimestamp，否则 fromisoformat 兼容 Z），按注入时钟计算差值 delta，须有限且 1-600（取 int(round)），秒数同时作为暂停帧 timeout_seconds。
