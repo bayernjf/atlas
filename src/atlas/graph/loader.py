@@ -464,6 +464,11 @@ def _make_executor(
                                 else:
                                     event_keys = [str(wait_frame.get("eventKey", ""))]
                                 event_key = event_keys[0]
+                                wait_mode = (
+                                    wait_frame.get("eventWaitMode")
+                                    if wait_frame.get("eventWaitMode") in ("any", "all")
+                                    else "any"
+                                )
                                 on_timeout = wait_frame.get("onTimeout", "continue")
                                 timeout_seconds = int(wait_frame.get("timeoutSeconds", 0))
                                 token = resume["resume_token"]
@@ -492,6 +497,11 @@ def _make_executor(
                                         )
                                     event_keys = [rendered]
                                 event_key = event_keys[0]
+                                wait_mode = (
+                                    node.config.get("eventWaitMode")
+                                    if node.config.get("eventWaitMode") in ("any", "all")
+                                    else "any"
+                                )
                                 timeout_mode = node.config.get("timeoutMode", "static")
                                 if timeout_mode == "expression":
                                     timeout_seconds = _resolve_wait_expression(
@@ -525,6 +535,7 @@ def _make_executor(
                                     node_id=node.id,
                                     graph_id=graph_id,
                                     timeout_seconds=timeout_seconds,
+                                    mode=wait_mode,
                                 )
                             wait_info = {
                                 "token": token,
@@ -534,6 +545,8 @@ def _make_executor(
                             }
                             if len(event_keys) > 1:
                                 wait_info["eventKeys"] = list(event_keys)
+                            if wait_mode == "all":
+                                wait_info["eventWaitMode"] = "all"
                             # 第二个 node_start 携带 wait 载荷，前端据此展示等待态。
                             emit({**start_event, "wait": wait_info})
                             if not resume_here:
@@ -555,6 +568,11 @@ def _make_executor(
                                         **(
                                             {"eventKeys": list(event_keys)}
                                             if len(event_keys) > 1
+                                            else {}
+                                        ),
+                                        **(
+                                            {"eventWaitMode": "all"}
+                                            if wait_mode == "all"
                                             else {}
                                         ),
                                     },
@@ -579,6 +597,14 @@ def _make_executor(
                                 }
                                 if len(event_keys) > 1:
                                     output["eventKeys"] = list(event_keys)
+                                if wait_mode == "all":
+                                    output["eventWaitMode"] = "all"
+                                    output["matchedEventKeys"] = list(
+                                        event_payload.get("matchedEventKeys", event_keys)
+                                    )
+                                    output["matchedPayloads"] = dict(
+                                        event_payload.get("matchedPayloads", {})
+                                    )
                                 message = (
                                     f"{node.id}: event {matched} signaled after {waited}s"
                                 )
@@ -601,6 +627,11 @@ def _make_executor(
                                 }
                                 if len(event_keys) > 1:
                                     output["eventKeys"] = list(event_keys)
+                                if wait_mode == "all":
+                                    output["eventWaitMode"] = "all"
+                                    output["receivedKeys"] = (
+                                        event_wait_broker.take_last_received(token)
+                                    )
                                 message = (
                                     f"{node.id}: event {event_key} timeout after "
                                     f"{timeout_seconds}s (continue)"

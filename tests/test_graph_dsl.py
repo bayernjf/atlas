@@ -717,6 +717,11 @@ def test_reject_wait_bad_type_and_duration(config, expected):
         {"waitType": "event",
          "eventKeys": ["order_paid_{{trigger-1.context.payload.id}}", "evt:ok-x_1"],
          "timeoutSeconds": 30},  # 占位/冒号下划线合法
+        # docs/55：AND 竞速（eventWaitMode=all，≥2 键）
+        {"waitType": "event", "eventKeys": ["a", "b"], "eventWaitMode": "all",
+         "timeoutSeconds": 30},
+        {"waitType": "event", "eventKeys": ["a", "b"], "eventWaitMode": "any",
+         "timeoutSeconds": 30},
     ],
 )
 def test_parse_valid_event_wait(config):
@@ -771,6 +776,16 @@ def test_reject_event_wait_timeout_mode_bad_config(config, expected):
         ({"waitType": "event", "eventKey": "order_paid",
           "eventKeys": ["order_paid", "other"], "timeoutSeconds": 30},
          "eventKey 与 eventKeys 互斥"),
+        # docs/55 eventWaitMode
+        ({"waitType": "event", "eventKeys": ["a", "b"], "eventWaitMode": "all-of",
+          "timeoutSeconds": 30},
+         "eventWaitMode）必须是 any 或 all"),
+        ({"waitType": "event", "eventKey": "a", "eventWaitMode": "all",
+          "timeoutSeconds": 30},
+         "eventWaitMode=all）需配置至少 2 个事件"),
+        ({"waitType": "event", "eventKeys": ["only"], "eventWaitMode": "all",
+          "timeoutSeconds": 30},
+         "eventWaitMode=all）需配置至少 2 个事件"),
     ],
 )
 def test_reject_event_keys_bad_config(config, expected):

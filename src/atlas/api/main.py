@@ -188,6 +188,7 @@ def _resume_from_frame(engine, frame: dict) -> None:
     elif frame["kind"] == "wait" and (frame.get("wait") or {}).get("waitType") == "event":
         wait_payload = frame["wait"]
         # docs/54：多键竞速帧存 eventKeys；单键帧只有 eventKey（首键）。
+        # docs/55：帧存 eventWaitMode（all=AND 竞速；缺省 any 兼容旧帧）。
         _frame_keys = wait_payload.get("eventKeys")
         services.event_wait_broker.restore(
             token=token,
@@ -198,6 +199,9 @@ def _resume_from_frame(engine, frame: dict) -> None:
             node_id=frame["node_id"],
             graph_id=frame["resume_state"].get("graph_id", ""),
             timeout_seconds=remaining_seconds(frame.get("deadline_at")),
+            mode=wait_payload.get("eventWaitMode")
+            if wait_payload.get("eventWaitMode") in ("any", "all")
+            else "any",
         )
     threading.Thread(
         target=_resume_run, args=(engine, services, frame), daemon=True
@@ -2852,14 +2856,17 @@ def signal_wait_event(
     body: dict[str, Any] | None = None,
     principal: Principal = Depends(require("operate")),
 ) -> dict[str, Any]:
-    """按 eventKey 广播信号，释放同 key 全部等待；无 pending 返回 released=0。"""
+    """按 eventKey 广播信号，释放同 key 全部等待；无 pending 则入排队 ring（docs/55）。
+
+    返回 released=本次释放等待数、queued=是否因无消费者进入 per-key 排队。
+    """
     data = body or {}
     event_key = _parse_wait_event_key(data)
     payload = _parse_wait_payload(data)
     services = services_for(principal)
-    released = services.event_wait_broker.signal_key(event_key, payload)
+    result = services.event_wait_broker.signal_key(event_key, payload)
     _record_audit(services, principal, http_request, "wait.signal_event", 200)
-    return {"released": released}
+    return {"released": result["released"], "queued": result["queued"]}
 
 
 @app.post("/api/waits/{token}/signal")

@@ -852,6 +852,19 @@ def _validate_wait_config(
                         "占位内内容不检查",
                         "/eventKey",
                     )
+        # docs/55：eventWaitMode=all（AND 竞速）仅多键可用，且至少 2 个键；默认 any（OR）。
+        wait_mode = config.get("eventWaitMode", "any")
+        if wait_mode not in ("any", "all"):
+            add(
+                f"{prefix} 事件等待模式（eventWaitMode）必须是 any 或 all",
+                "/eventWaitMode",
+            )
+        elif wait_mode == "all":
+            if not isinstance(event_keys, list) or len(event_keys) < 2:
+                add(
+                    f"{prefix} 全部命中（eventWaitMode=all）需配置至少 2 个事件（eventKeys）",
+                    "/eventWaitMode",
+                )
         timeout_mode = config.get("timeoutMode", "static")
         if timeout_mode not in ("static", "expression"):
             add(

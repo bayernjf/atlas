@@ -462,7 +462,9 @@ def test_u402_event_wait_recovery_releases_after_restart(backend):
     assert token in [item["token"] for item in broker.list_pending()]
 
     # 信号广播放行续跑线程。
-    assert broker.signal_key("order_paid", {"paidAt": "2026-09-23"}) == 1
+    assert broker.signal_key("order_paid", {"paidAt": "2026-09-23"}) == {
+        "released": 1, "queued": False
+    }
 
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline and load_pending_frames(engine):
@@ -548,9 +550,9 @@ def test_event_wait_multi_key_recovery_releases_on_nonprimary(backend):
     assert pending[token]["eventKeys"] == keys
 
     # 对非首键广播：每个键都挂了同一 token，应恰好释放 1 条。
-    assert broker.signal_key("review_left", {"stars": 5}) == 1
-    # 余键订阅已清理（首决后不再残留）。
-    assert broker.signal_key("order_paid", {}) == 0
+    assert broker.signal_key("review_left", {"stars": 5}) == {"released": 1, "queued": False}
+    # 余键订阅已清理（首决后不再残留）；docs/55：无消费者信号改入排队 ring。
+    assert broker.signal_key("order_paid", {}) == {"released": 0, "queued": True}
 
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline and load_pending_frames(engine):
