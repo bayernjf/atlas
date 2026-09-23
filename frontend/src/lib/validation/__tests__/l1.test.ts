@@ -578,6 +578,34 @@ describe('wait jitter and multi-event fan-in L1 (docs/54)', () => {
     ).toEqual([])
   })
 
+  it('accepts eventWaitMode=all with at least two keys (docs/55)', () => {
+    expect(
+      fields('wait', {
+        waitType: 'event',
+        eventKeys: ['payment_ok', 'stock_ok'],
+        eventWaitMode: 'all',
+        timeoutSeconds: 30,
+      }),
+    ).toEqual([])
+  })
+
+  it('flags eventWaitMode=all with fewer than two keys (docs/55)', () => {
+    const oneKey = fields('wait', {
+      waitType: 'event',
+      eventKeys: ['only'],
+      eventWaitMode: 'all',
+      timeoutSeconds: 30,
+    })
+    expect(oneKey.some((d) => d.loc.pointer === '/eventWaitMode')).toBe(true)
+    const single = fields('wait', {
+      waitType: 'event',
+      eventKey: 'order_paid',
+      eventWaitMode: 'all',
+      timeoutSeconds: 30,
+    })
+    expect(single.some((d) => d.loc.pointer === '/eventWaitMode')).toBe(true)
+  })
+
   it('requires eventKey or eventKeys (one of the two)', () => {
     const diagnostics = fields('wait', { waitType: 'event', timeoutSeconds: 30 })
     expect(diagnostics.map((d) => d.loc.pointer)).toContain('/eventKey')

@@ -485,6 +485,17 @@ function handFieldDiagnostics(kind: string, config: NodeConfig): Diagnostic[] {
               seen.add(key.trim())
             }
           })
+          // docs/55：eventWaitMode=all（AND 竞速）需至少 2 个事件
+          if (config.eventWaitMode === 'all' && eventKeys.length < 2) {
+            diagnostics.push(
+              fieldDiag(FIELD_CODES.LENGTH, '全部命中（eventWaitMode=all）需配置至少 2 个事件', '/eventWaitMode'),
+            )
+          }
+        } else if (config.eventWaitMode === 'all') {
+          // 单键 eventKey 不支持 AND
+          diagnostics.push(
+            fieldDiag(FIELD_CODES.PATTERN, '全部命中（eventWaitMode=all）需改用多事件 eventKeys 且至少 2 个', '/eventWaitMode'),
+          )
         } else {
           const template = config.eventKey ?? ''
           if (!template.trim()) {
