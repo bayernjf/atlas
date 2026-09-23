@@ -126,28 +126,36 @@ def main() -> None:
 
     # ① dingtalk signed
     Captured.requests.clear()
-    sender.send("dingtalk", f"{url}/dingtalk-ok?access_token=xxx", "通知标题\n通知正文", SECRET)
+    sender.send("dingtalk", f"{url}/dingtalk-ok?access_token=xxx", "通知标题", "通知正文", SECRET)
     req = Captured.requests[-1]
     check("① dingtalk signed URL",
           f"timestamp={FIXED_TS * 1000}" in req["query"]
           and f"sign={quote(expected_dingtalk_sign(FIXED_TS * 1000, SECRET))}" in req["query"],
           req["query"])
     check("① dingtalk text envelope",
-          req["body"] == {"msgtype": "text", "text": {"content": "通知标题\n通知正文"}},
+          req["body"] == {
+              "msgtype": "text",
+              "text": {"content": "通知标题\n通知正文"},
+              "at": {"atMobiles": [], "atUserIds": [], "isAtAll": False},
+          },
           str(req["body"]))
 
     # ② wecom unsigned
     Captured.requests.clear()
-    sender.send("wecom", f"{url}/wecom-ok?key=xxx", "hi", None)
+    sender.send("wecom", f"{url}/wecom-ok?key=xxx", "hi", "body", None)
     req = Captured.requests[-1]
     check("② wecom unsigned URL + text envelope",
           req["query"] == "key=xxx"
-          and req["body"] == {"msgtype": "text", "text": {"content": "hi"}},
+          and req["body"] == {
+              "msgtype": "text",
+              "text": {"content": "hi\nbody", "mentioned_list": [],
+                       "mentioned_mobile_list": []},
+          },
           str(req))
 
     # ③ feishu signed body
     Captured.requests.clear()
-    sender.send("feishu", f"{url}/feishu-ok?hook=x", "hi", SECRET)
+    sender.send("feishu", f"{url}/feishu-ok?hook=x", "hi", "body", SECRET)
     req = Captured.requests[-1]
     body = req["body"]
     check("③ feishu signed body envelope",
@@ -155,29 +163,29 @@ def main() -> None:
           and body["timestamp"] == str(FIXED_TS)
           and body["sign"] == expected_feishu_sign(FIXED_TS, SECRET)
           and body["msg_type"] == "text"
-          and body["content"] == {"text": "hi"},
+          and body["content"] == {"text": "hi\nbody"},
           str(body))
 
     # ④ dingtalk unsigned when no secret
     Captured.requests.clear()
-    sender.send("dingtalk", f"{url}/dingtalk-ok?access_token=xxx", "hi", None)
+    sender.send("dingtalk", f"{url}/dingtalk-ok?access_token=xxx", "hi", "body", None)
     req = Captured.requests[-1]
     check("④ dingtalk unsigned without secret",
           req["query"] == "access_token=xxx", req["query"])
 
     # ⑤ platform error codes / non-2xx
     try:
-        sender.send("dingtalk", f"{url}/dingtalk-fail", "hi", None)
+        sender.send("dingtalk", f"{url}/dingtalk-fail", "hi", "body", None)
         raise AssertionError("expected ImDeliveryError dingtalk")
     except ImDeliveryError as exc:
         check("⑤ dingtalk errcode!=0 fails", "310000" in str(exc), str(exc))
     try:
-        sender.send("feishu", f"{url}/feishu-fail", "hi", None)
+        sender.send("feishu", f"{url}/feishu-fail", "hi", "body", None)
         raise AssertionError("expected ImDeliveryError feishu")
     except ImDeliveryError as exc:
         check("⑤ feishu code!=0 fails", "19021" in str(exc), str(exc))
     try:
-        sender.send("wecom", f"{url}/non2xx", "hi", None)
+        sender.send("wecom", f"{url}/non2xx", "hi", "body", None)
         raise AssertionError("expected ImDeliveryError non2xx")
     except ImDeliveryError as exc:
         check("⑤ non-2xx fails", "非 2xx" in str(exc), str(exc))

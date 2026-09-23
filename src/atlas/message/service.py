@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from typing import Callable
 
 from atlas.security.egress import EgressDenied
-from .im import IM_CHANNELS
+from .im import IM_CHANNELS, normalize_mentions
 
 MAX_RECIPIENTS = 20
 MAX_SECRET_LENGTH = 200
@@ -111,11 +111,27 @@ class MessageService:
         subject: object,
         body: object,
         secret: object = None,
+        msg_format: object = None,
+        mentions: object = None,
     ) -> dict[str, object]:
         channel_value = _require_non_empty(channel, "channel").strip()
         subject_value = _require_non_empty(subject, "subject")
         body_value = _require_non_empty(body, "body")
         secret_value = self._validate_secret(channel_value, secret)
+        # docs/58：msg_format/mentions 仅 IM 三渠道生效；webhook/email 忽略。
+        im_msg_format = "text"
+        im_mentions: dict[str, object] = {"userIds": [], "mobiles": [], "atAll": False}
+        if channel_value in IM_CHANNELS:
+            if msg_format is None:
+                im_msg_format = "text"
+            elif isinstance(msg_format, str) and msg_format in ("text", "markdown"):
+                im_msg_format = msg_format
+            else:
+                raise MessageSendError("INVALID_PARAMETER", "msgFormat 必须是 text 或 markdown")
+            try:
+                im_mentions = normalize_mentions(mentions)
+            except ValueError as exc:
+                raise MessageSendError("INVALID_PARAMETER", str(exc)) from exc
         # webhook 与 IM 渠道只接受单个 URL 字符串（数组即使单元素也 422，docs/35 §3、docs/51）。
         if channel_value in ("webhook", *IM_CHANNELS) and isinstance(to, list):
             raise MessageSendError(
@@ -219,11 +235,20 @@ class MessageService:
             record["delivered"] = "webhook"
             _log("delivered:webhook", attempts)
         elif channel_value in IM_CHANNELS and self._im_sender is not None:
-            text = f"{subject_value}\n{body_value}"
+            fmt = im_msg_format
+            mention_payload = im_mentions
 
             def _im() -> None:
                 try:
-                    self._im_sender.send(channel_value, recipients[0], text, secret_value)
+                    self._im_sender.send(
+                        channel_value,
+                        recipients[0],
+                        subject_value,
+                        body_value,
+                        secret=secret_value,
+                        msg_format=fmt,
+                        mentions=mention_payload,
+                    )
                 except EgressDenied as exc:
                     raise MessageSendError(exc.code, f"{channel_value} 出向被拦截：{exc}") from exc
                 except Exception as exc:
