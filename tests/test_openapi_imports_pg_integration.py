@@ -47,6 +47,7 @@ def setup():
     _run_migration(engine, "002_storage.sql")
     _run_migration(engine, "018_openapi_imports.sql")
     _run_migration(engine, "019_openapi_auth_columns.sql")
+    _run_migration(engine, "023_openapi_imports_dedupe_softdelete.sql")
     yield engine, PgImportStore
     with engine.begin() as conn:
         conn.execute(text("DELETE FROM openapi_imports WHERE tenant_id LIKE 'oipit%'"))
@@ -280,3 +281,59 @@ def test_legacy_rows_default_to_empty_auth_fields(setup):
     assert imported.security_schemes == {}
     assert imported.credential_envelopes == {}
     assert store.put_credentials(imported.spec_id, {}) is not None
+
+
+# --- docs/56 §3：内容指纹去重 + 软删除/恢复（迁移 023）---
+def test_duplicate_import_rejected_pg(setup):
+    engine, Store = setup
+    from atlas.openapi.store import ImportStoreError
+
+    store = Store(engine, "oipit-dedupe")
+    first = store.add(_spec(title="Dup", base_url="https://dup.example.com"))
+    with pytest.raises(ImportStoreError) as exc:
+        store.add(_spec(title="Dup", base_url="https://dup.example.com"))
+    assert exc.value.code == "OPENAPI_DUPLICATE"
+    assert exc.value.status_code == 409
+    assert exc.value.existing_spec_id == first.spec_id
+    # 改 base_url → 指纹变 → 允许导入
+    changed = store.add(_spec(title="Dup", base_url="https://dup-v2.example.com"))
+    assert changed.spec_id != first.spec_id
+    assert len(store.list()) == 2
+
+
+def test_soft_delete_hides_and_frees_quota_pg(setup):
+    engine, Store = setup
+    store = Store(engine, "oipit-soft")
+    first = store.add(_spec(title="Soft", base_url="https://soft.example.com"))
+    assert store.delete(first.spec_id) is True
+    assert store.get(first.spec_id) is None
+    assert all(s.spec_id != first.spec_id for s in store.list())
+    assert store.delete(first.spec_id) is False  # 已删再删
+    # 软删后同内容可重新导入（去重只看未删），名额也释放
+    reimported = store.add(_spec(title="Soft", base_url="https://soft.example.com"))
+    assert reimported.spec_id != first.spec_id
+    assert store.get(reimported.spec_id) is not None
+    # 软删行 put_credentials 不可达
+    assert store.put_credentials(first.spec_id, {}) is None
+
+
+def test_restore_and_conflict_pg(setup):
+    engine, Store = setup
+    store = Store(engine, "oipit-restore")
+    a = store.add(_spec(title="Rs", base_url="https://rs.example.com"))
+    assert store.delete(a.spec_id) is True
+    ok, code, existing = store.restore(a.spec_id)
+    assert (ok, code, existing) == (True, None, None)
+    assert store.get(a.spec_id) is not None
+
+    # 再删 A，导入同内容为 B（未删），恢复 A 应 409 冲突并回传 B
+    assert store.delete(a.spec_id) is True
+    b = store.add(_spec(title="Rs", base_url="https://rs.example.com"))
+    ok, code, existing = store.restore(a.spec_id)
+    assert ok is False and code == "OPENAPI_DUPLICATE" and existing == b.spec_id
+    # 冲突未恢复：A 仍隐藏
+    assert store.get(a.spec_id) is None
+    # 不存在 / 未删 → (False, None, None)
+    assert store.restore("openapi-nope") == (False, None, None)
+    ok2, _, _ = store.restore(b.spec_id)  # b 未删，无可恢复项
+    assert ok2 is False

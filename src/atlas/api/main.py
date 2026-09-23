@@ -1452,9 +1452,11 @@ def import_openapi(
             spec, envelopes=envelopes
         )
     except ImportStoreError as exc:
+        detail: dict[str, Any] = {"code": exc.code, "message": str(exc)}
+        if getattr(exc, "existing_spec_id", None):
+            detail["existingSpecId"] = exc.existing_spec_id
         raise HTTPException(
-            status_code=exc.status_code,
-            detail={"code": exc.code, "message": str(exc)},
+            status_code=exc.status_code, detail=detail
         ) from exc
     return imported.model_dump()
 
@@ -1486,6 +1488,27 @@ def delete_openapi_import(
     if not services_for(principal).openapi_imports.delete(spec_id):
         raise HTTPException(status_code=404, detail="导入规格不存在")
     return {"deleted": True}
+
+
+@app.post("/api/openapi/imports/{spec_id}/restore")
+def restore_openapi_import(
+    spec_id: str,
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, Any]:
+    """docs/56 §3.3：恢复软删规格；与另一未删同指纹规格冲突返 409。"""
+    ok, code, existing = services_for(principal).openapi_imports.restore(spec_id)
+    if ok:
+        return {"restored": True}
+    if code == "OPENAPI_DUPLICATE":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "OPENAPI_DUPLICATE",
+                "message": "恢复后与现有未删规格内容重复",
+                "existingSpecId": existing,
+            },
+        )
+    raise HTTPException(status_code=404, detail="导入规格不存在或未被删除")
 
 
 @app.put("/api/openapi/imports/{spec_id}/credentials")

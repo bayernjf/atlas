@@ -465,3 +465,49 @@ def test_no_response_ever_contains_plaintext_secret():
         client.get("/api/adapters", headers=VIEWER_A).text,
     ):
         assert secret not in response_text
+
+
+# --- docs/56 §3：去重 409、软删除与恢复端点 ---
+def test_duplicate_import_returns_409_with_existing_id():
+    first = client.post("/api/openapi/imports", json=_content(), headers=OPERATOR_A)
+    assert first.status_code == 201
+    again = client.post("/api/openapi/imports", json=_content(), headers=OPERATOR_A)
+    assert again.status_code == 409
+    detail = again.json()["detail"]
+    assert detail["code"] == "OPENAPI_DUPLICATE"
+    assert detail["existingSpecId"] == "openapi-1"
+
+
+def test_soft_delete_reimport_restore_conflict_then_restore():
+    assert client.post("/api/openapi/imports", json=_content(), headers=OPERATOR_A).status_code == 201
+    # 软删 openapi-1
+    assert client.delete("/api/openapi/imports/openapi-1", headers=ADMIN_A).status_code == 200
+    assert client.get("/api/openapi/imports/openapi-1", headers=VIEWER_A).status_code == 404
+    assert client.get("/api/openapi/imports", headers=VIEWER_A).json()["items"] == []
+    # 软删后同内容可重新导入为 openapi-2
+    second = client.post("/api/openapi/imports", json=_content(), headers=OPERATOR_A)
+    assert second.status_code == 201 and second.json()["spec_id"] == "openapi-2"
+    # openapi-2 未删时恢复 openapi-1 → 409 冲突，回传 openapi-2
+    conflict = client.post("/api/openapi/imports/openapi-1/restore", headers=ADMIN_A)
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["existingSpecId"] == "openapi-2"
+    assert client.get("/api/openapi/imports/openapi-1", headers=VIEWER_A).status_code == 404
+    # 删掉 openapi-2 后恢复 openapi-1 成功
+    assert client.delete("/api/openapi/imports/openapi-2", headers=ADMIN_A).status_code == 200
+    restored = client.post("/api/openapi/imports/openapi-1/restore", headers=ADMIN_A)
+    assert restored.status_code == 200 and restored.json() == {"restored": True}
+    assert client.get("/api/openapi/imports/openapi-1", headers=VIEWER_A).status_code == 200
+
+
+def test_restore_missing_or_active_returns_404():
+    assert client.post("/api/openapi/imports/openapi-nope/restore", headers=ADMIN_A).status_code == 404
+    client.post("/api/openapi/imports", json=_content(), headers=OPERATOR_A)
+    # 对未删规格 restore 也 404（无可恢复项）
+    assert client.post("/api/openapi/imports/openapi-1/restore", headers=ADMIN_A).status_code == 404
+
+
+def test_restore_requires_administer():
+    client.post("/api/openapi/imports", json=_content(), headers=OPERATOR_A)
+    client.delete("/api/openapi/imports/openapi-1", headers=ADMIN_A)
+    denied = client.post("/api/openapi/imports/openapi-1/restore", headers=OPERATOR_A)
+    assert denied.status_code == 403
