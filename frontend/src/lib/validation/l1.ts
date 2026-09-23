@@ -459,6 +459,25 @@ function handFieldDiagnostics(kind: string, config: NodeConfig): Diagnostic[] {
             fieldDiag(FIELD_CODES.PATTERN, '事件标识静态部分仅允许字母、数字及 :_-，占位内不检查', '/eventKey'),
           )
         }
+        if (config.timeoutMode === 'expression') {
+          const timeoutExpression = config.timeoutExpression ?? ''
+          if (!timeoutExpression.trim()) {
+            diagnostics.push(
+              fieldDiag(FIELD_CODES.REQUIRED, '超时表达式为必填', '/timeoutExpression'),
+            )
+          } else if (timeoutExpression.length > MAX_DURATION_EXPRESSION_LENGTH) {
+            diagnostics.push(
+              fieldDiag(FIELD_CODES.LENGTH, `超时表达式长度不能超过 ${MAX_DURATION_EXPRESSION_LENGTH} 字符`, '/timeoutExpression'),
+            )
+          }
+        } else {
+          const eventTimeout = config.timeoutSeconds
+          if (eventTimeout === undefined) {
+            diagnostics.push(
+              fieldDiag(FIELD_CODES.REQUIRED, '超时时间为必填（1-3600 秒整数）', '/timeoutSeconds'),
+            )
+          }
+        }
       } else if (config.durationMode === 'dynamic') {
         const expression = config.durationExpression ?? ''
         if (!expression.trim()) {

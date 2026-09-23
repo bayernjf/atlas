@@ -5,7 +5,8 @@ import type { NodeConfigSchema } from '../metaSchema'
  * duration absolute docs/50；投影自 nodeCatalog.ts 手写规则）。
  * duration static：1-600 整数秒；duration dynamic：durationExpression 运行时求值；
  * duration absolute：absoluteTime 运行时插值解析为目标时刻；
- * event：eventKey 静态模板、timeoutSeconds 1-3600、onTimeout。
+ * event：eventKey 静态模板、timeoutMode（static 用 timeoutSeconds 1-3600 /
+ * expression 用 timeoutExpression 运行时求值）、onTimeout。
  */
 export const waitSchema: NodeConfigSchema = {
   type: 'object',
@@ -29,10 +30,17 @@ export const waitSchema: NodeConfigSchema = {
       properties: {
         waitType: { type: 'string', const: 'event' },
         eventKey: { type: 'string', minLength: 1, maxLength: 128 },
+        timeoutMode: {
+          type: 'string',
+          enum: ['static', 'expression'],
+          default: 'static',
+          'x-widget': 'radio',
+        },
         timeoutSeconds: { type: 'integer', minimum: 1, maximum: 3600 },
+        timeoutExpression: { type: 'string', minLength: 1, maxLength: 200 },
         onTimeout: { type: 'string', enum: ['continue', 'fail'], default: 'continue' },
       },
-      required: ['waitType', 'eventKey', 'timeoutSeconds'],
+      required: ['waitType', 'eventKey'],
     },
   ],
   'x-outputSchema': {

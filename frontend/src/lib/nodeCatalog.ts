@@ -91,6 +91,8 @@ export type NodeConfig = {
   durationExpression?: string
   absoluteTime?: string
   eventKey?: string
+  timeoutMode?: 'static' | 'expression'
+  timeoutExpression?: string
   // subgraph（04 §5.7；v1 引用已保存图，版本钉版缓做 docs/14 D21；出边等图级校验由后端 422 兜底）
   graphId?: string
   inputs?: Record<string, string>
