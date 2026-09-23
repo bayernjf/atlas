@@ -1,5 +1,6 @@
 import { Button, Input, InputNumber, Radio, Space, Typography } from 'antd'
 import {
+  MAX_ABSOLUTE_TIME_LENGTH,
   MAX_DURATION_EXPRESSION_LENGTH,
   MAX_EVENT_KEY_LENGTH,
   MAX_EVENT_WAIT_SECONDS,
@@ -25,11 +26,20 @@ export function WaitConfig({ config, update }: Props) {
     seconds < MIN_WAIT_SECONDS ||
     seconds > MAX_WAIT_SECONDS
 
-  const durationMode = config.durationMode === 'dynamic' ? 'dynamic' : 'static'
+  const durationMode =
+    config.durationMode === 'dynamic'
+      ? 'dynamic'
+      : config.durationMode === 'absolute'
+        ? 'absolute'
+        : 'static'
   const durationExpression = config.durationExpression ?? ''
   const durationExpressionInvalid =
     !durationExpression.trim() ||
     durationExpression.length > MAX_DURATION_EXPRESSION_LENGTH
+
+  const absoluteTime = config.absoluteTime ?? ''
+  const absoluteTimeInvalid =
+    !absoluteTime.trim() || absoluteTime.trim().length > MAX_ABSOLUTE_TIME_LENGTH
 
   const eventKey = config.eventKey ?? ''
   const eventKeyInvalid =
@@ -67,6 +77,7 @@ export function WaitConfig({ config, update }: Props) {
             >
               <Radio value="static">固定时长</Radio>
               <Radio value="dynamic">动态表达式</Radio>
+              <Radio value="absolute">到点时刻</Radio>
             </Radio.Group>
           </label>
           {durationMode === 'static' ? (
@@ -87,6 +98,27 @@ export function WaitConfig({ config, update }: Props) {
               {durationInvalid && (
                 <Typography.Text type="danger">
                   等待时长需为 {MIN_WAIT_SECONDS}-{MAX_WAIT_SECONDS} 秒的整数
+                </Typography.Text>
+              )}
+            </label>
+              ) : durationMode === 'absolute' ? (
+            <label className="property-field">
+              <Typography.Text type="secondary">到点时刻</Typography.Text>
+              <Input
+                value={absoluteTime}
+                placeholder="2026-09-23T18:00:00+08:00 或 epoch 秒，支持 {{}}"
+                status={absoluteTimeInvalid ? 'error' : undefined}
+                onChange={(event) =>
+                  update({ absoluteTime: event.target.value })
+                }
+              />
+              {absoluteTimeInvalid ? (
+                <Typography.Text type="danger">
+                  必填，1-{MAX_ABSOLUTE_TIME_LENGTH} 字符
+                </Typography.Text>
+              ) : (
+                <Typography.Text type="secondary">
+                  运行时解析，须为未来 1-{MAX_WAIT_SECONDS} 秒内的时刻
                 </Typography.Text>
               )}
             </label>

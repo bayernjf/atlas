@@ -201,12 +201,13 @@ export const subgraphUiSchema: UiSchema = {
 /**
  * wait（04 §5.5）：custom WaitConfig 面板自控渲染；UISchema 只为
  * validateGraph 的隐藏字段诊断过滤服务——durationSeconds 仅 static、
- * durationExpression 仅 dynamic（docs/49）。
+ * durationExpression 仅 dynamic、absoluteTime 仅 absolute（docs/49、docs/50）。
  */
 export const waitUiSchema: UiSchema = {
   hiddenWhen: [
     { field: 'durationMode', equals: 'static', show: ['durationSeconds'], rootScoped: true },
     { field: 'durationMode', equals: 'dynamic', show: ['durationExpression'], rootScoped: true },
+    { field: 'durationMode', equals: 'absolute', show: ['absoluteTime'], rootScoped: true },
   ],
 }
 

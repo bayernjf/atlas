@@ -226,6 +226,57 @@ describe('dynamic wait duration v1 (docs/49)', () => {
   })
 })
 
+describe('absolute wait time v1 (docs/50)', () => {
+  it('accepts a complete absolute wait config with stale duration fields', () => {
+    expect(
+      fields('wait', {
+        waitType: 'duration',
+        durationMode: 'absolute',
+        absoluteTime: '2026-09-23T18:00:00+08:00',
+        durationSeconds: 5,
+        durationExpression: '{{global.x}}',
+      }),
+    ).toEqual([])
+  })
+
+  it('accepts whitespace-padded values', () => {
+    expect(
+      fields('wait', {
+        waitType: 'duration',
+        durationMode: 'absolute',
+        absoluteTime: ` ${'2026-09-23T10:00:00+00:00'.padEnd(60, '0')} `,
+      }),
+    ).toEqual([])
+  })
+
+  it('flags missing or overlong absoluteTime on /absoluteTime', () => {
+    const missing = fields('wait', {
+      waitType: 'duration',
+      durationMode: 'absolute',
+    })
+    expect(missing.map((d) => d.loc.pointer)).toEqual(['/absoluteTime'])
+    expect(missing[0].code).toBe(FIELD_CODES.REQUIRED)
+
+    const blank = fields('wait', {
+      waitType: 'duration',
+      durationMode: 'absolute',
+      absoluteTime: '   ',
+    })
+    expect(blank.map((d) => d.loc.pointer)).toEqual(['/absoluteTime'])
+
+    const overlong = fields('wait', {
+      waitType: 'duration',
+      durationMode: 'absolute',
+      absoluteTime: 'x'.repeat(65),
+    })
+    expect(overlong.map((d) => d.loc.pointer)).toEqual([
+      '/absoluteTime',
+      '/absoluteTime',
+    ])
+    expect(overlong.every((d) => d.code === FIELD_CODES.LENGTH)).toBe(true)
+  })
+})
+
 describe('message parity with M1 hand-written copy (U37②)', () => {
   function messages(kind: NodeKind, config: NodeConfig): string[] {
     return fields(kind, config).map((d) => d.message)

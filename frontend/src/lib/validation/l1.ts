@@ -24,6 +24,7 @@ export const MIN_EVENT_WAIT_SECONDS = 1
 export const MAX_EVENT_WAIT_SECONDS = 3600
 export const MAX_EVENT_KEY_LENGTH = 128
 export const MAX_DURATION_EXPRESSION_LENGTH = 200
+export const MAX_ABSOLUTE_TIME_LENGTH = 64
 export const WAIT_TIMEOUT_POLICIES = ['continue', 'fail'] as const
 export type WaitTimeoutPolicy = (typeof WAIT_TIMEOUT_POLICIES)[number]
 
@@ -467,6 +468,17 @@ function handFieldDiagnostics(kind: string, config: NodeConfig): Diagnostic[] {
         } else if (expression.length > MAX_DURATION_EXPRESSION_LENGTH) {
           diagnostics.push(
             fieldDiag(FIELD_CODES.LENGTH, `动态时长表达式长度不能超过 ${MAX_DURATION_EXPRESSION_LENGTH} 字符`, '/durationExpression'),
+          )
+        }
+      } else if (config.durationMode === 'absolute') {
+        const absoluteTime = config.absoluteTime ?? ''
+        if (!absoluteTime.trim()) {
+          diagnostics.push(
+            fieldDiag(FIELD_CODES.REQUIRED, '到点时刻为必填', '/absoluteTime'),
+          )
+        } else if (absoluteTime.trim().length > MAX_ABSOLUTE_TIME_LENGTH) {
+          diagnostics.push(
+            fieldDiag(FIELD_CODES.LENGTH, `到点时刻长度不能超过 ${MAX_ABSOLUTE_TIME_LENGTH} 字符`, '/absoluteTime'),
           )
         }
       } else {

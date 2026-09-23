@@ -2,8 +2,9 @@ import type { NodeConfigSchema } from '../metaSchema'
 
 /**
  * wait 节点 config schema（04 §5.5；event 分支 docs/47；duration dynamic docs/49；
- * 投影自 nodeCatalog.ts 手写规则）。
+ * duration absolute docs/50；投影自 nodeCatalog.ts 手写规则）。
  * duration static：1-600 整数秒；duration dynamic：durationExpression 运行时求值；
+ * duration absolute：absoluteTime 运行时插值解析为目标时刻；
  * event：eventKey 静态模板、timeoutSeconds 1-3600、onTimeout。
  */
 export const waitSchema: NodeConfigSchema = {
@@ -14,12 +15,13 @@ export const waitSchema: NodeConfigSchema = {
         waitType: { type: 'string', const: 'duration', default: 'duration' },
         durationMode: {
           type: 'string',
-          enum: ['static', 'dynamic'],
+          enum: ['static', 'dynamic', 'absolute'],
           default: 'static',
           'x-widget': 'radio',
         },
         durationSeconds: { type: 'integer', minimum: 1, maximum: 600, default: 5 },
         durationExpression: { type: 'string', minLength: 1, maxLength: 200 },
+        absoluteTime: { type: 'string', minLength: 1, maxLength: 64 },
       },
       required: ['waitType'],
     },
@@ -41,6 +43,7 @@ export const waitSchema: NodeConfigSchema = {
       durationMode: { type: 'string' },
       durationExpression: { type: 'string' },
       durationSeconds: { type: 'integer' },
+      absoluteTime: { type: 'string' },
       eventKey: { type: 'string' },
       signaled: { type: 'boolean' },
       payload: { type: 'object' },

@@ -11,7 +11,7 @@ const EXPECTED_OUTPUT_KEYS: Record<string, string[] | Record<string, string[]>> 
   condition: ['branch', 'mode', 'target'],
   loop: ['mode', 'index', 'iterations', 'items', 'item', 'results', 'target', 'exitReason', 'expression_errors'],
   parallel: ['status', 'branches', 'joinStrategy', 'joinTarget'],
-  wait: ['mode', 'waitType', 'durationMode', 'durationExpression', 'durationSeconds', 'eventKey', 'signaled', 'payload', 'waitedSeconds', 'resolvedBy', 'token'],
+  wait: ['mode', 'waitType', 'durationMode', 'durationExpression', 'durationSeconds', 'absoluteTime', 'eventKey', 'signaled', 'payload', 'waitedSeconds', 'resolvedBy', 'token'],
   subgraph: ['status', 'outputs'],
   human_approval: ['decision', 'target', 'summary', 'approver', 'resolvedBy', 'comment', 'card'],
 }
