@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### feat：event wait timeoutSeconds 表达式化 B5 落码收口（D19 子集，2026-09-23；dev、未 push；无 ADR）
+
+- event wait config 增 `timeoutMode`（static 默认 / expression）与可选 `timeoutExpression`（≤200）；loader 抽出共用 `_resolve_wait_expression(node_id,expr,context,lo,hi)`——duration（1-600）/event（1-3600）统一经条件引擎 evaluate_expression 求值，非 bool/非有限/越界 run failed WAIT_DURATION_INVALID；旧图缺省 static 零回归，跨重启帧存已求值秒数、resume 不重求值。
+- 前端 wait.schema event oneOf 加 timeoutMode radio/timeoutExpression、L1 按 mode 校验（static 缺 timeoutSeconds 报 1-3600、expression 缺表达式报必填）。`tests/test_event_wait_graph.py` 净增 3、`tests/test_graph_dsl.py` 净增 6。收口全量内存门 **1591 passed / 60 skipped**（净增 9、零失败，以收口实跑为准）、前端 **636/2**（零新增前端测）。>3600 长时刻、jitter、多事件竞速取消、多实例跨进程路由仍缓做。**B4（通知 {{}} 模板插值）勘察判空集、不落码**：插值接缝已由 `graph/interpolation.interpolate` 全覆盖（tool params 统一插值、approval summary/recipients、cards、eventKey、prompt 均接线，告警正文为系统字段无用户模板）。
+
 ### feat：跨版本配置结构 diff B3 落码收口（D26 子集，2026-09-23；dev、未 push；无 ADR）
 
 - 新纯函数 `graph/diff.py`：`diff_graph(base,candidate)` 输出 nodes/edges/variables 的 added/removed/changed——节点 changed 细分 type/name（{field,from,to}）与 config 键级（新增/删除/值变，{field:"config",configKeys}），position 等画布布局不参与；附 `diff_summary`/`has_changes`，零依赖。
