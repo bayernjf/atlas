@@ -178,6 +178,15 @@ def _resume_from_frame(engine, frame: dict) -> None:
             card_template_id=card_template_id,
             card_context=card_context_from_frame(frame) if card_template_id else None,
         )
+    elif frame["kind"] == "wait" and (frame.get("wait") or {}).get("waitType") == "event":
+        wait_payload = frame["wait"]
+        services.event_wait_broker.restore(
+            token=token,
+            event_key=wait_payload["eventKey"],
+            node_id=frame["node_id"],
+            graph_id=frame["resume_state"].get("graph_id", ""),
+            timeout_seconds=remaining_seconds(frame.get("deadline_at")),
+        )
     threading.Thread(
         target=_resume_run, args=(engine, services, frame), daemon=True
     ).start()

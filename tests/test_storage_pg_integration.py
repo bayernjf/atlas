@@ -393,3 +393,85 @@ def test_u211_subgraph_upgrade_plan_pg_roundtrip(backend):
     # 草稿不存在 → None
     assert subgraph_upgrade_plan(store, "graph-404") is None
     store.clear()
+
+
+def test_u402_event_wait_recovery_releases_after_restart(backend):
+    """docs/53 §5 U402：event 帧 → 恢复装配 restore + 续跑线程 → 信号放行 → run completed、帧清。"""
+    import time
+
+    from atlas.api.main import _resume_from_frame
+    from atlas.graph.dsl import parse_graph
+    from atlas.iam.deps import tenant_registry
+    from atlas.storage.frame import build_frame, deadline_iso
+    from atlas.storage.recovery import load_pending_frames, make_frame_sink
+
+    engine = backend.engine
+    _cleanup(engine)
+
+    # 后继 tool 名不含 "/"，执行走 SIMULATED 兜底（loader 不查 registry）。
+    graph = parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "wait-1", "type": "wait", "name": "等待",
+                 "position": {"x": 2, "y": 0},
+                 "config": {"waitType": "event", "eventKey": "order_paid",
+                            "timeoutSeconds": 30, "onTimeout": "continue"}},
+                {"id": "tool-after", "type": "tool_call", "name": "后继",
+                 "config": {"tool": "op-after"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "wait-1"},
+                {"id": "e2", "source": "wait-1", "target": "tool-after"},
+            ],
+        }
+    )
+
+    run_id, token = "run-u402", "wait-u402"
+    services = tenant_registry.get(TENANT)
+    services.event_wait_broker.reset()  # 模拟重启后的空 broker
+
+    # 首进程：run running→suspended，帧落 interruptions。
+    services.run_store.begin(run_id=run_id, graph_id="adhoc", mode="run")
+    frame = build_frame(
+        token=token,
+        run_id=run_id,
+        node_id="wait-1",
+        kind="wait",
+        deadline_at=deadline_iso(30),
+        graph_snapshot=graph.model_dump(),
+        resume_state={"graph_id": "adhoc", "inputs": {},
+                      "outputs": {"trigger-1": {"context": {"payload": {}}}}},
+        wait={"waitType": "event", "eventKey": "order_paid",
+              "onTimeout": "continue", "timeoutSeconds": 30},
+    )
+    services.run_store.suspend(
+        run_id=run_id, node_id="wait-1", kind="wait",
+        resume_token=token, deadline_at=frame["deadline_at"],
+    )
+    make_frame_sink(engine, TENANT, run_id)(frame)
+    loaded = load_pending_frames(engine)
+    assert len(loaded) == 1
+
+    # 重启恢复装配：restore 同 token/event_key/剩余超时 + 起续跑线程。
+    _resume_from_frame(engine, loaded[0])
+    broker = services.event_wait_broker
+    assert token in [item["token"] for item in broker.list_pending()]
+
+    # 信号广播放行续跑线程。
+    assert broker.signal_key("order_paid", {"paidAt": "2026-09-23"}) == 1
+
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and load_pending_frames(engine):
+        time.sleep(0.02)
+    assert load_pending_frames(engine) == []
+    run = services.run_store.get(run_id)
+    assert run["status"] == "completed"
+    assert run["outputs"]["wait-1"]["resolvedBy"] == "signal"
+    assert run["outputs"]["wait-1"]["signaled"] is True
+    assert "tool-after" in run["outputs"]
+    assert broker.list_pending() == []
+
