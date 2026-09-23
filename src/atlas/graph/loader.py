@@ -39,6 +39,7 @@ from atlas.harness.base import ActionRequest, ActionStatus
 from atlas.harness.registry import AdapterRegistry
 from atlas.httpapi.adapter import HttpApiHarnessAdapter
 from atlas.llm.decision import get_decision_client
+from atlas.llm.condition_classifier import get_condition_classifier
 from atlas.message.adapter import MessageHarnessAdapter
 from atlas.message.service import MessageService
 from atlas.shop.adapter import ShopHarnessAdapter
@@ -153,6 +154,7 @@ def _make_executor(
     *,
     trigger_payload: dict[str, Any],
     decision_client: Any,
+    condition_classifier: Any,
     registry: AdapterRegistry | None,
     approval_broker: ApprovalBroker,
     event_wait_broker: EventWaitBroker,
@@ -306,8 +308,19 @@ def _make_executor(
                     output = {"decision": result, "prompt_rendered": prompt}
                     message = f"{node.id}({node.type}): executed"
                 elif node.type == "condition":
-                    output = _execute_condition(node, state, context, now=now)
-                    message = f"{node.id}: branch={output['branch']} → {output['target']}"
+                    output = _execute_condition(
+                        node,
+                        state,
+                        context,
+                        now=now,
+                        classifier=condition_classifier,
+                    )
+                    if output.get("mode") == "llm":
+                        message = (
+                            f"{node.id}: llm branch={output['branch']} → {output['target']}"
+                        )
+                    else:
+                        message = f"{node.id}: branch={output['branch']} → {output['target']}"
                 elif node.type == "loop":
                     output = _execute_loop(node, state, context, now=now)
                     if output["exitReason"] is None:
@@ -446,6 +459,7 @@ def _make_executor(
                         context=context,
                         registry=registry,
                         decision_client=decision_client,
+                        condition_classifier=condition_classifier,
                         approval_broker=approval_broker,
                         event_wait_broker=event_wait_broker,
                         approval_notifier=approval_notifier,
@@ -753,6 +767,7 @@ def _execute_subgraph(
     context: dict[str, Any],
     registry: AdapterRegistry | None,
     decision_client: Any,
+    condition_classifier: Any,
     approval_broker: ApprovalBroker,
     event_wait_broker: EventWaitBroker,
     approval_notifier: ApprovalNotifier | None = None,
@@ -802,6 +817,7 @@ def _execute_subgraph(
                 child,
                 inputs=child_inputs,
                 decision_client=decision_client,
+                condition_classifier=condition_classifier,
                 registry=registry,
                 approval_broker=approval_broker,
                 event_wait_broker=event_wait_broker,
@@ -966,14 +982,23 @@ def _parallel_running_output(node: NodeDSL) -> dict[str, Any]:
 
 
 def _execute_condition(
-    node: NodeDSL, state: GraphState, context: dict[str, Any], *, now: datetime | None = None
+    node: NodeDSL,
+    state: GraphState,
+    context: dict[str, Any],
+    *,
+    now: datetime | None = None,
+    classifier: Any = None,
 ) -> dict[str, Any]:
-    """按 branches 顺序短路求值（04 §5.2）；异常 fail-safe 走 defaultTarget。"""
+    """condition 求值（04 §5.2）；rule 顺序短路，llm 单次分类；异常 fail-safe 走 defaultTarget。"""
+    config = node.config
+    if config.get("conditionMode", "rule") == "llm":
+        return _execute_llm_condition(node, state, context, classifier=classifier)
+
     evaluation: list[dict[str, Any]] = []
     errors: list[str] = []
     target: str | None = None
     branch = "__default__"
-    for item in node.config.get("branches", []):
+    for item in config.get("branches", []):
         label, expression = item["label"], item["expression"]
         try:
             result = evaluate_expression(expression, context, now=now)
@@ -990,13 +1015,79 @@ def _execute_condition(
             branch, target = label, item["target"]
             break
     if target is None:
-        target = node.config["defaultTarget"]
+        target = config["defaultTarget"]
     return {
         "branch": branch,
         "target": target,
         "evaluation": evaluation,
         "expression_errors": errors,
     }
+
+
+_CONTEXT_LIMIT = 12000
+
+
+def _execute_llm_condition(
+    node: NodeDSL, state: GraphState, context: dict[str, Any], *, classifier: Any
+) -> dict[str, Any]:
+    """LLM 单次分类选唯一分支（04 §5.2 追加段，docs/48）；任何失败 fail-safe 走 defaultTarget。"""
+    config = node.config
+    branches = config.get("branches", [])
+    errors: list[str] = []
+
+    try:
+        context_text = json.dumps(
+            {"global": context.get("global", {}), "nodes": _node_outputs_projection(context)},
+            ensure_ascii=False,
+            default=str,
+        )
+    except Exception as exc:  # noqa: BLE001 - 序列化兜底：default=str 仍失败即分类失败
+        context_text = "{}"
+        errors.append(f"上下文序列化失败：{exc}")
+    if len(context_text) > _CONTEXT_LIMIT:
+        context_text = context_text[:_CONTEXT_LIMIT] + "\n…<截断>"
+
+    instruction = str(config.get("classifierPrompt") or "").strip()
+    label: str
+    try:
+        label = classifier.classify(
+            branches=branches, context_text=context_text, instruction=instruction
+        )
+    except Exception as exc:  # noqa: BLE001 - 供应商错误/解析错误统一 fail-safe
+        label = "__default__"
+        errors.append(str(exc))
+
+    target: str | None = None
+    if label != "__default__":
+        for item in branches:
+            if item["label"] == label:
+                target = item["target"]
+                break
+        if target is None:
+            errors.append(f"LLM 返回了未知分支标签：{label}")
+            label = "__default__"
+    if target is None:
+        target = config["defaultTarget"]
+
+    evaluation = [
+        {
+            "label": item["label"],
+            "description": item["description"],
+            "result": item["label"] == label if label != "__default__" else None,
+        }
+        for item in branches
+    ]
+    return {
+        "mode": "llm",
+        "branch": label,
+        "target": target,
+        "evaluation": evaluation,
+        "llm_errors": errors,
+    }
+
+
+def _node_outputs_projection(context: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in context.items() if key != "global"}
 
 
 def _execute_loop(
@@ -1659,6 +1750,7 @@ def compile_graph(
     graph: GraphDSL,
     *,
     decision_client: Any | None = None,
+    condition_classifier: Any | None = None,
     registry: AdapterRegistry | None = None,
     approval_broker: ApprovalBroker | None = None,
     event_wait_broker: EventWaitBroker | None = None,
@@ -1682,6 +1774,7 @@ def compile_graph(
     shadow: bool = False,
 ):
     decision_client = decision_client or get_decision_client()
+    condition_classifier = condition_classifier or get_condition_classifier()
     registry = registry if registry is not None else build_demo_registry()
     approval_broker = approval_broker or _default_approval_broker
     event_wait_broker = event_wait_broker or _default_event_wait_broker
@@ -1767,6 +1860,7 @@ def compile_graph(
             node,
             trigger_payload=payload,
             decision_client=decision_client,
+            condition_classifier=condition_classifier,
             registry=registry,
             approval_broker=approval_broker,
             event_wait_broker=event_wait_broker,
@@ -2018,6 +2112,7 @@ def run_graph(
     *,
     inputs: dict[str, Any] | None = None,
     decision_client: Any | None = None,
+    condition_classifier: Any | None = None,
     registry: AdapterRegistry | None = None,
     approval_broker: ApprovalBroker | None = None,
     event_wait_broker: EventWaitBroker | None = None,
@@ -2097,6 +2192,7 @@ def run_graph(
         compiled = compile_graph(
             tail,
             decision_client=decision_client,
+            condition_classifier=condition_classifier,
             registry=registry,
             approval_broker=approval_broker,
             event_wait_broker=event_wait_broker,
@@ -2134,6 +2230,7 @@ def run_graph(
     compiled = compile_graph(
         graph,
         decision_client=decision_client,
+        condition_classifier=condition_classifier,
         registry=registry,
         approval_broker=approval_broker,
         event_wait_broker=event_wait_broker,

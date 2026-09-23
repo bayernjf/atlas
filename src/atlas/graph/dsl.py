@@ -310,6 +310,21 @@ def _validate_condition_config(
         add(f"{prefix} 至少需要一个分支（branches）", "/branches")
         branches = []
 
+    mode = config.get("conditionMode", "rule")
+    if not isinstance(mode, str) or mode not in ("rule", "llm"):
+        add(f"{prefix} 的 conditionMode 必须是 rule 或 llm", "/conditionMode")
+        mode = "rule"
+
+    classifier_prompt = config.get("classifierPrompt")
+    if mode == "llm":
+        if classifier_prompt is not None and (
+            not isinstance(classifier_prompt, str)
+            or len(classifier_prompt.strip()) > 500
+        ):
+            add(f"{prefix} 的 classifierPrompt 长度不能超过 500 字符", "/classifierPrompt")
+    elif classifier_prompt is not None and not isinstance(classifier_prompt, str):
+        add(f"{prefix} 的 classifierPrompt 必须是字符串", "/classifierPrompt")
+
     default_target = config.get("defaultTarget")
     if not isinstance(default_target, str) or not default_target.strip():
         add(f"{prefix} 必须配置默认分支（defaultTarget）", "/defaultTarget")
@@ -323,9 +338,11 @@ def _validate_condition_config(
             continue
         label = branch.get("label")
         expression = branch.get("expression")
+        description = branch.get("description")
         target = branch.get("target")
         label_pointer = f"/branches/{index}/label"
         expression_pointer = f"/branches/{index}/expression"
+        description_pointer = f"/branches/{index}/description"
         target_pointer = f"/branches/{index}/target"
         if not isinstance(label, str) or not label.strip():
             add(f"{prefix} 第 {index + 1} 个分支名称（label）不能为空", label_pointer)
@@ -333,11 +350,28 @@ def _validate_condition_config(
             add(f"{prefix} 分支名称重复：{label}", label_pointer)
         else:
             labels.add(label)
-        if not isinstance(expression, str) or not expression.strip():
-            add(f"{prefix} 分支 {label or index + 1} 的表达式不能为空", expression_pointer)
+        if mode == "llm":
+            if expression is not None:
+                add(
+                    f"{prefix} LLM 分支 {label or index + 1} 不允许使用 expression",
+                    expression_pointer,
+                )
+            if not isinstance(description, str) or not description.strip():
+                add(
+                    f"{prefix} 分支 {label or index + 1} 的语义描述（description）不能为空",
+                    description_pointer,
+                )
+            elif len(description.strip()) > 300:
+                add(
+                    f"{prefix} 分支 {label or index + 1} 的 description 长度不能超过 300 字符",
+                    description_pointer,
+                )
         else:
-            for expr_error in validate_expression(expression):
-                add(f"{prefix} 分支 {label or index + 1} 表达式{expr_error}", expression_pointer)
+            if not isinstance(expression, str) or not expression.strip():
+                add(f"{prefix} 分支 {label or index + 1} 的表达式不能为空", expression_pointer)
+            else:
+                for expr_error in validate_expression(expression):
+                    add(f"{prefix} 分支 {label or index + 1} 表达式{expr_error}", expression_pointer)
         if not isinstance(target, str) or not target.strip():
             add(f"{prefix} 分支 {label or index + 1} 必须选择目标节点", target_pointer)
         else:
