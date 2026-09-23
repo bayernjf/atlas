@@ -27,7 +27,7 @@ _SEND_INPUT_SCHEMA = {
         },
         "subject": {"type": "string"},
         "body": {"type": "string"},
-        "secret": {"type": "string", "description": "仅 dingtalk/feishu：群机器人加签密钥；留空不加签；运行时参数（生产应由 secret provider 注入）", "maxLength": MAX_SECRET_LENGTH},
+        "secret": {"type": "string", "description": "dingtalk/feishu 为群机器人加签密钥、webhook 为出站 HMAC-SHA256 签名密钥（X-Atlas-Signature，docs/58）；wecom 不支持；留空不加签；运行时参数（生产应由 secret provider 注入）", "maxLength": MAX_SECRET_LENGTH},
     },
     "required": ["channel", "to", "subject", "body"],
 }

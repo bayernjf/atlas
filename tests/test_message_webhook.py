@@ -8,6 +8,7 @@ MessageService：webhook 单个 URL、数组 422、payload 形状、EGRESS_* 透
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import httpx
@@ -15,9 +16,13 @@ import pytest
 
 from atlas.message.service import MessageSendError, MessageService
 from atlas.message.webhook import (
+    SIGNATURE_HEADER,
+    TIMESTAMP_HEADER,
     WEBHOOK_TIMEOUT_SECONDS,
     DefaultWebhookSender,
     WebhookDeliveryError,
+    serialize_payload,
+    sign_body,
 )
 from atlas.security.egress import EgressDenied
 
@@ -50,17 +55,63 @@ class FakePost:
 # ============================ DefaultWebhookSender ============================
 
 
-def test_webhook_sender_success_posts_json():
+def test_webhook_sender_success_posts_deterministic_json_bytes():
     post = FakePost(status=200)
     sender = DefaultWebhookSender(guard=FakeGuard(), post=post)
-    payload = {"id": "x", "channel": "webhook", "subject": "s", "body": "b", "sent_at": "t"}
+    payload = {"id": "x", "channel": "webhook", "subject": "告警", "body": "b", "sent_at": "t"}
     sender.send("https://hooks.example.com/in", payload)
     assert len(post.calls) == 1
     url, kwargs = post.calls[0]
     assert url == "https://hooks.example.com/in"
-    assert kwargs["json"] == payload
-    assert kwargs["headers"]["Content-Type"] == "application/json"
+    # docs/58：确定性紧凑 UTF-8 字节（content=），不再用 httpx json= 隐式序列化
+    assert kwargs["content"] == serialize_payload(payload)
+    assert json.loads(kwargs["content"].decode("utf-8")) == payload
+    assert "json" not in kwargs
+    assert kwargs["headers"]["Content-Type"] == "application/json; charset=utf-8"
     assert kwargs["timeout"] == WEBHOOK_TIMEOUT_SECONDS == 10.0
+    # 无 secret：不发签名头
+    assert TIMESTAMP_HEADER not in kwargs["headers"]
+    assert SIGNATURE_HEADER not in kwargs["headers"]
+
+
+def test_webhook_sender_hmac_signature_fixed_vector():
+    """docs/58 §2：固定时钟/密钥/载荷的逐字节签名向量（离线算准后固化）。"""
+    post = FakePost(status=200)
+    clock = iter([1700000000.0])
+    sender = DefaultWebhookSender(guard=FakeGuard(), post=post, clock=lambda: next(clock))
+    payload = {
+        "id": "m1",
+        "channel": "webhook",
+        "subject": "告警",
+        "body": "**失败率** 0.2",
+        "sent_at": "2026-09-24T00:00:00+00:00",
+    }
+    sender.send("https://hooks.example.com/in", payload, secret="atlas-test-secret")
+    _, kwargs = post.calls[0]
+    raw = kwargs["content"]
+    headers = kwargs["headers"]
+    assert headers[TIMESTAMP_HEADER] == "1700000000"
+    expected_hex = "49b92da7b712ff7570b9613bee200c7cbfbe1009856eb5fe790e5b16d4041f83"
+    assert headers[SIGNATURE_HEADER] == f"sha256={expected_hex}"
+    # 签名覆盖字节 == 实际发送字节（接收方可对 raw 重算）
+    assert sign_body("atlas-test-secret", "1700000000", raw) == expected_hex
+    # 紧凑序列化：无多余空格、中文不转义
+    assert raw == serialize_payload(payload)
+    assert "失败率" in raw.decode("utf-8")
+
+
+def test_webhook_sender_signature_covers_exact_sent_bytes():
+    """篡改发送字节后签名不匹配（签名与 content 绑定）。"""
+    post = FakePost(status=200)
+    sender = DefaultWebhookSender(
+        guard=FakeGuard(), post=post, clock=lambda: 1700000000.0
+    )
+    sender.send("https://hooks.example.com/in", {"a": 1}, secret="k")
+    _, kwargs = post.calls[0]
+    raw = kwargs["content"]
+    sig = kwargs["headers"][SIGNATURE_HEADER]
+    tampered = raw + b" "
+    assert sign_body("k", "1700000000", tampered) != sig.removeprefix("sha256=")
 
 
 @pytest.mark.parametrize("status", [201, 204, 301, 400, 404, 500, 503])
@@ -112,10 +163,10 @@ def test_webhook_sender_checks_before_post():
 class RecordingWebhookSender:
     def __init__(self, exc: Exception | None = None) -> None:
         self.exc = exc
-        self.calls: list[tuple[str, dict]] = []
+        self.calls: list[tuple[str, dict, str | None]] = []
 
-    def send(self, url: str, payload: dict) -> None:
-        self.calls.append((url, payload))
+    def send(self, url: str, payload: dict, secret: str | None = None) -> None:
+        self.calls.append((url, payload, secret))
         if self.exc is not None:
             raise self.exc
 
@@ -128,14 +179,41 @@ def test_service_webhook_success_record_and_payload():
     assert rec["to"] == ["https://hooks.example.com/in"]
     assert svc.count == 1
     assert len(hook.calls) == 1
-    url, payload = hook.calls[0]
+    url, payload, secret = hook.calls[0]
     assert url == "https://hooks.example.com/in"
+    assert secret is None
     assert payload["channel"] == "webhook"
     assert payload["id"] == rec["id"]
     assert payload["subject"] == "审批挂起"
     assert payload["body"] == "有一笔退款待审批"
     assert payload["sent_at"] == rec["sent_at"]
     assert set(payload.keys()) == {"id", "channel", "subject", "body", "sent_at"}
+
+
+def test_service_webhook_secret_accepted_and_passed_through():
+    """docs/58：webhook 渠道开放 secret（HMAC 签名密钥），原样透传给 sender。"""
+    hook = RecordingWebhookSender()
+    svc = MessageService(webhook_sender=hook)
+    rec = svc.send(
+        "webhook", "https://hooks.example.com/in", "告警", "正文", secret="  hmac-key  "
+    )
+    assert rec["delivered"] == "webhook"
+    assert hook.calls[0][2] == "hmac-key"  # strip 后透传
+
+
+def test_service_webhook_blank_secret_passes_none():
+    hook = RecordingWebhookSender()
+    svc = MessageService(webhook_sender=hook)
+    svc.send("webhook", "https://hooks.example.com/in", "s", "b", secret="   ")
+    assert hook.calls[0][2] is None
+
+
+def test_service_wecom_secret_still_rejected():
+    """wecom 机器人 webhook URL 自带 key，传 secret 仍 INVALID_PARAMETER。"""
+    svc = MessageService()
+    with pytest.raises(MessageSendError) as ei:
+        svc.send("wecom", "https://qyapi.weixin.qq.com/x", "s", "b", secret="k")
+    assert ei.value.code == "INVALID_PARAMETER"
 
 
 def test_service_webhook_list_to_rejected():

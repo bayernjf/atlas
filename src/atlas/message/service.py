@@ -203,7 +203,7 @@ class MessageService:
 
             def _webhook() -> None:
                 try:
-                    self._webhook_sender.send(url, payload)
+                    self._webhook_sender.send(url, payload, secret=secret_value)
                 except EgressDenied as exc:
                     # SSRF/非法 URL：透传安全码（EGRESS_DENIED/EGRESS_INVALID_URL），不重试
                     raise MessageSendError(exc.code, f"webhook 出向被拦截：{exc}") from exc
@@ -244,15 +244,17 @@ class MessageService:
 
     @staticmethod
     def _validate_secret(channel: str, secret: object) -> str | None:
-        # secret 仅 dingtalk/feishu 允许：防止在不支持的渠道误以为消息已加签。
+        # secret：dingtalk/feishu 为机器人加签密钥、webhook 为出站 HMAC 签名密钥（docs/58）；
+        # 防止在不支持的渠道（如 wecom，其 webhook URL 自带 key）误以为消息已加签。
         if secret is None or (isinstance(secret, str) and not secret.strip()):
             return None
         if not isinstance(secret, str):
             raise MessageSendError("INVALID_PARAMETER", "secret 必须是字符串")
         value = secret.strip()
-        if channel not in ("dingtalk", "feishu"):
+        if channel not in ("dingtalk", "feishu", "webhook"):
             raise MessageSendError(
-                "INVALID_PARAMETER", f"{channel} 渠道不支持 secret（仅 dingtalk/feishu）"
+                "INVALID_PARAMETER",
+                f"{channel} 渠道不支持 secret（仅 dingtalk/feishu/webhook）",
             )
         if len(value) > MAX_SECRET_LENGTH:
             raise MessageSendError(

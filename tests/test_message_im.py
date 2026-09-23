@@ -250,8 +250,9 @@ def test_service_im_array_to_invalid(channel):
     assert exc.value.code == "INVALID_PARAMETER"
 
 
-@pytest.mark.parametrize("channel", ["wecom", "email", "webhook", "sms"])
+@pytest.mark.parametrize("channel", ["wecom", "email", "sms"])
 def test_service_secret_unsupported_channel_invalid(channel):
+    # docs/58 起 webhook 支持 secret（出站 HMAC 签名），不在不支持列表
     service = MessageService(im_sender=FakeImSender())
     to = "https://example.com/hook" if channel != "email" else "ops@example.com"
     with pytest.raises(MessageSendError) as exc:

@@ -17,7 +17,7 @@ class _FlakyWebhook:
         self.exc = exc or RuntimeError("connection reset")
         self.calls = 0
 
-    def send(self, url: str, payload: dict) -> None:
+    def send(self, url: str, payload: dict, secret: str | None = None) -> None:
         self.calls += 1
         if self.calls <= self.fail_times:
             raise self.exc
@@ -28,7 +28,7 @@ class _AlwaysFailWebhook:
         self.exc = exc
         self.calls = 0
 
-    def send(self, url: str, payload: dict) -> None:
+    def send(self, url: str, payload: dict, secret: str | None = None) -> None:
         self.calls += 1
         raise self.exc
 
