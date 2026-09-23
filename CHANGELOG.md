@@ -4,9 +4,11 @@
 
 ## [Unreleased]
 
-### feat：wait 时长放开/jitter/多事件竞速＋告警 recovery/lifecycle 限流（docs/54，打包 A，2026-09-23 立项中）
+### feat：wait 时长放开/jitter/多事件竞速＋告警 recovery/lifecycle 限流落码收口（docs/54，打包 A，2026-09-23；dev、未 push；无 ADR）
 
-- 【立项 docs-only，落码中】D19/D28 部分取回、不解除；进程内零新依赖/零迁移/无 ADR/零新 REST。五小项：duration 上限 600→3600、event 超时 3600→86400；duration 可选 jitterSeconds（0-300，均匀抖动、rng 可注入）；event 可选 eventKeys（1-8，OR 竞速、matchedEventKey、余键清理、跨重启恢复）；健康运行自动 recovery 通知（open 非 rollout_gate）；lifecycle 同(alert,transition) 60s 限流退避。测试候选 U510 起。
+- D19/D28 部分取回、不解除；进程内零新依赖/零迁移/无 ADR/零新 REST。五小项全部落码：① duration 上限 600→3600、event 超时 3600→86400（dsl 常量 MAX_WAIT_SECONDS/MAX_EVENT_WAIT_SECONDS，前后端同值）；② duration static 可选 jitterSeconds（0-300，actual=planned+randint(0,j)、jitter_rng 经 run_graph/compile 全链可注入、仅首次进入计算/resume 不二次抖动、jitter>0 才附 plannedDurationSeconds/jitterSeconds；event 超时不抖动、dynamic/absolute 不应用）；③ event 可选 eventKeys（1-8 与 eventKey 互斥、逐元素静态白名单、保序去重，broker `request_any` OR 竞速首决、信号/超时/取消三路径清理余键、命中键写 payload 内与产出顶层 matchedEventKey〔单键也带，契约增强〕、中断帧存 eventKeys、PG restore 多键幂等、GET /api/waits 纯超集增 eventKeys）；④ 健康运行（completed 无失败节点）自动把该图 open 且 rule_id≠rollout_gate 内置告警 resolve 并旁路 recovery 通知（复用 last_seen 不加列、acknowledged/门禁不自动恢复、一次健康即恢复）；⑤ lifecycle 同 (alert,transition) 默认 60s 限流退避（窗口内跳过返空 delivery、不更新 lastNotifiedAt、成败都计时、new 首条不限、进程内不持久化）。
+- 提交链：立项 `67650ed`、上限+jitter `76fa61c`、多事件竞速 `dcf4626`（docs `b44b906`）、recovery+限流 `2d53654`（docs `fb9eac3`）、前端 `2e86862`（docs `5d089a3`）、docs 收口（本步）。后端 **U510–U536**；前端新增 7 个 docs/54 L1 用例（WaitConfig static 抖动 InputNumber、event 单/多竞速 Radio、eventKeys 动态列表 n/8）。收口全量内存门 **1630 passed / 61 skipped / 0 failed**、PG 直连集成（含 U402 多键 restore）**14 passed**、前端 **643 passed/2 skipped**（净增 7）、oxlint 0 error、tsc+vite build 过。前端 WaitConfig 沿用 M4 起手写硬编码中文面板、新文案未抽 editor i18n namespace（全量 vitest i18n 守护通过）。多实例跨进程路由、停摆期信号排队、公开免登录信号口、AND 竞速、jitter 分布选择/作用 event 超时、PG 档 lifecycle、连续 N 次/flapping、OTel 仍缓做。
+- 收口 HTTP smoke（对 live :8000）另修复一处 docs/47 起既有健壮性缺陷并同步 docs/53/B1 语义：**fix(api)** 为运行期 WaitNodeFailure 注册全局 handler 返回结构化 500 JSON（detail.code/message/nodeId），原先异常逃逸 ASGI 顶层被 re-raise、uvicorn 关闭 keep-alive，失败运行后紧邻的列表/详情 GET 复用连接被 RST；event_wait ⑥ 候选 run 状态 running→(running,suspended)（docs/53 起挂起即 suspended）、① payload 补 matchedEventKey，alert_notify ②/⑤ 同步 B1 merged lifecycle 并新增 merged 60s 限流（注入时钟）/recovery/rollout_gate 不自动恢复断言，dynamic_wait over-max 用例 601→3601（duration 上限放开）；`.smoke/event_wait_smoke.py` 自 docs/47 漏入库本次补 `git add -f`、新增 `scripts/dev/d54_smoke_run.sh` 一键复跑。HTTP smoke 终值 event_wait **19** / alert_notify **21** / dynamic_wait **21** 全绿、受影响后端针对性 85 passed（详见 docs/54 收口零回归注记）。
 
 ### feat：event wait timeoutSeconds 表达式化 B5 落码收口（D19 子集，2026-09-23；dev、未 push；无 ADR）
 

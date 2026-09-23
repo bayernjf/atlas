@@ -803,6 +803,8 @@ class AlertNotifier:
 # 迁移 020 alert_notify_settings；GET read / PUT administer
 ```
 
+> **告警 lifecycle 通知 + 自动恢复 + 限流（docs/52 §7 B1 与 docs/54，2026-09-23 落码收口；零新 REST/迁移）**：`AlertNotifier.notify_lifecycle(alert, transition, ...)` 除新建外对状态变化旁路投递，`LIFECYCLE_TITLES` 覆盖 merged（再次发生已归并）/escalated（未确认已升级）/resolved（手动解决）/**recovery（告警已自动恢复，docs/54 新增）**；acknowledge 不通知。**自动恢复（docs/54）**：`record_run` 在一次健康运行（completed 且无失败节点）后、锁内把该图 `status=="open" 且 rule_id!="rollout_gate"` 的内置告警置 resolved（复用 last_seen/last_run_id，**不加列、PG 兼容**），锁外发 transition=recovery；acknowledged 与 rollout_gate 不自动恢复；v1 一次健康即恢复（不做连续 N 次/flapping 抑制）。**限流退避（docs/54）**：`AlertNotifier(lifecycle_min_interval_seconds=60, time_func=time.monotonic)`，同一 `(alert.id, transition)` 在窗口内的重复 lifecycle 投递直接跳过并返空 `AlertChannelDelivery`（不更新 lastNotifiedAt），投递成败都计时以防紧密循环；new 首条 `notify()` 不限流；限流状态进程内不持久化。fail-safe/severity 过滤口径同新建。
+
 ## 4. 记忆检索接口（依据 06 6.2 / 05 2.3）
 
 > **M11 实现边界（2026-09-19 已落码收口；权威＝docs/26、ADR T23）**：下列 `memory_retriever.query` 五层分层检索为**愿景**（working Redis / summary / fact pgvector / case / preference + 决策节点隐式注入），v1 不实现，缓做 14 D35。M11 取回的是下方「4.1 M11 长期记忆最小接口」——统一 memory_item（fact/preference）+ 显式 remember/recall 两工具，**不做决策隐式注入**。
@@ -956,7 +958,7 @@ class MemoryRepository(Protocol):
 | POST | /api/approvals/{token}/decision | 人工审批决策，请求体 `{decision: "approved"|"rejected", comment?}`（comment v1 仅接收不展示）；**M8 起纯超集加可选 `{actionId?, form?}`**——命中卡片时前端可提交 `{actionId, form:{<name>:<value>}}`（decision/comment 可省，服务端经 `map_action_output` 按卡片 action.output 映射，`{{form.*}}` 回填 comment），也仍接受旧 `{decision,comment?}`；首决生效，200 返回决策结果；未知 token 404、已决重复提交 409、坏 actionId 或 action.output 缺必填 form 字段 422（中文 detail）；Phase 2 第五项 | human_approval / card_template |
 | POST | /api/waits/events | 事件等待按 key 广播信号（D19 进程内 v1，2026-09-23 落码收口 docs/47；operate）：体 `{eventKey（必填 1-128、白名单 [A-Za-z0-9:_-]）, payload?: object}`（payload 序列化 ≤4096、顶层键 ≤50）；返 `{released: n}`，同 key 多个 pending 全释放，无 pending 返 0（信号不留存；PG 单实例重启恢复后的 pending 同样可释放，docs/53）；eventKey 非法 422 WAIT_EVENT_KEY_INVALID、payload 超限 422 WAIT_EVENT_PAYLOAD_INVALID | wait_event |
 | POST | /api/waits/{token}/signal | 事件等待直投信号（operate）：体 `{payload?: object}`（限制同上）；200 返 `{token, released: true}`；未知/已取走 token 404 WAIT_TOKEN_NOT_FOUND；条目已 signaled 409 WAIT_ALREADY_SIGNALED | wait_event |
-| GET | /api/waits | 列出本租户 pending 事件等待（viewer+）：`{items:[{token, eventKey, nodeId, graphId, timeoutSeconds, deadlineAt}]}`；PG 后端跨重启可见（docs/53，2026-09-23 立项：启动 restore 同 token/event_key 剩余超时；重启窗口内无进程接收的信号不排队，调用方需重试），进程内后端重启即失 | wait_event |
+| GET | /api/waits | 列出本租户 pending 事件等待（viewer+）：`{items:[{token, eventKey, eventKeys?(多事件竞速时,docs/54), nodeId, graphId, timeoutSeconds, deadlineAt}]}`；多键时 eventKey 为首键、eventKeys 为全量（纯超集）；PG 后端跨重启可见（docs/53，2026-09-23 立项：启动 restore 同 token/event_key 剩余超时；重启窗口内无进程接收的信号不排队，调用方需重试），进程内后端重启即失 | wait_event |
 | POST | /api/feedback | 提交种子试用反馈（type=bug/suggestion、content、contact 选填，201；进程内存储，reset 不清除；Phase 1） | feedback_item |
 | GET | /api/feedback | 导出反馈（陪同试用收集用，`{items: [...]}`，Phase 1；2026-09-16 起 **admin only** 且只列本租户，04 §5.14） | feedback_item |
 | GET | /demo/shop | 模拟商家售后控制台 HTML 页面（W9-W10，自动登录/抓取演示目标系统） | — |
