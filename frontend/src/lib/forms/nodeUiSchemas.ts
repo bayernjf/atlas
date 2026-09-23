@@ -198,6 +198,18 @@ export const subgraphUiSchema: UiSchema = {
   },
 }
 
+/**
+ * wait（04 §5.5）：custom WaitConfig 面板自控渲染；UISchema 只为
+ * validateGraph 的隐藏字段诊断过滤服务——durationSeconds 仅 static、
+ * durationExpression 仅 dynamic（docs/49）。
+ */
+export const waitUiSchema: UiSchema = {
+  hiddenWhen: [
+    { field: 'durationMode', equals: 'static', show: ['durationSeconds'], rootScoped: true },
+    { field: 'durationMode', equals: 'dynamic', show: ['durationExpression'], rootScoped: true },
+  ],
+}
+
 /** 节点 kind → UISchema；未迁移节点缺省（FormRenderer 无 uiSchema 时退化为字段名直出）。 */
 export const NODE_UI_SCHEMAS: Partial<Record<NodeKind, UiSchema>> = {
   trigger: triggerUiSchema,
@@ -206,4 +218,5 @@ export const NODE_UI_SCHEMAS: Partial<Record<NodeKind, UiSchema>> = {
   human_approval: humanApprovalUiSchema,
   parallel: parallelUiSchema,
   subgraph: subgraphUiSchema,
+  wait: waitUiSchema,
 }

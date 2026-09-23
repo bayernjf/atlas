@@ -23,6 +23,7 @@ export const MAX_WAIT_SECONDS = 600
 export const MIN_EVENT_WAIT_SECONDS = 1
 export const MAX_EVENT_WAIT_SECONDS = 3600
 export const MAX_EVENT_KEY_LENGTH = 128
+export const MAX_DURATION_EXPRESSION_LENGTH = 200
 export const WAIT_TIMEOUT_POLICIES = ['continue', 'fail'] as const
 export type WaitTimeoutPolicy = (typeof WAIT_TIMEOUT_POLICIES)[number]
 
@@ -455,6 +456,24 @@ function handFieldDiagnostics(kind: string, config: NodeConfig): Diagnostic[] {
         if (template.trim() && !eventKeyStaticValid(template)) {
           diagnostics.push(
             fieldDiag(FIELD_CODES.PATTERN, '事件标识静态部分仅允许字母、数字及 :_-，占位内不检查', '/eventKey'),
+          )
+        }
+      } else if (config.durationMode === 'dynamic') {
+        const expression = config.durationExpression ?? ''
+        if (!expression.trim()) {
+          diagnostics.push(
+            fieldDiag(FIELD_CODES.REQUIRED, '动态时长表达式为必填', '/durationExpression'),
+          )
+        } else if (expression.length > MAX_DURATION_EXPRESSION_LENGTH) {
+          diagnostics.push(
+            fieldDiag(FIELD_CODES.LENGTH, `动态时长表达式长度不能超过 ${MAX_DURATION_EXPRESSION_LENGTH} 字符`, '/durationExpression'),
+          )
+        }
+      } else {
+        const seconds = config.durationSeconds
+        if (seconds === undefined) {
+          diagnostics.push(
+            fieldDiag(FIELD_CODES.REQUIRED, '等待时长为必填（1-600 秒整数）', '/durationSeconds'),
           )
         }
       }

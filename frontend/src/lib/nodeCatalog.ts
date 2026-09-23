@@ -18,6 +18,7 @@ export {
   MIN_EVENT_WAIT_SECONDS,
   MAX_EVENT_WAIT_SECONDS,
   MAX_EVENT_KEY_LENGTH,
+  MAX_DURATION_EXPRESSION_LENGTH,
   WAIT_TIMEOUT_POLICIES,
   MIN_APPROVAL_TIMEOUT,
   MAX_APPROVAL_TIMEOUT,
@@ -84,7 +85,9 @@ export type NodeConfig = {
   joinTarget?: string
   // wait（04 §5.5；event 进程内 v1 见 docs/47；出边等图级校验由后端 422 兜底）
   waitType?: 'duration' | 'event'
+  durationMode?: 'static' | 'dynamic'
   durationSeconds?: number
+  durationExpression?: string
   eventKey?: string
   // subgraph（04 §5.7；v1 引用已保存图，版本钉版缓做 docs/14 D21；出边等图级校验由后端 422 兜底）
   graphId?: string

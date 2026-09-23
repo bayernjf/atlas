@@ -68,11 +68,14 @@ export function validateNodeL1(
 function filterNestedHidden(kind: NodeKind, config: EditorNodeData['config'], diagnostics: Diagnostic[]): Diagnostic[] {
   const uiSchema = NODE_UI_SCHEMAS[kind]
   if (!uiSchema?.hiddenWhen?.some((rule) => rule.rootScoped)) return diagnostics
-  // conditionMode 缺省按 rule 求值（与后端 DSL 默认语义一致），避免 fail-safe 全隐误伤
+  // conditionMode 缺省按 rule、wait durationMode 缺省按 static 求值
+  // （与后端 DSL 默认语义一致），避免 fail-safe 全隐误伤
   const effectiveConfig =
     kind === 'condition' && config.conditionMode == null
       ? { ...config, conditionMode: 'rule' }
-      : config
+      : kind === 'wait' && config.durationMode == null
+        ? { ...config, durationMode: 'static' }
+        : config
   const hidden = nestedHiddenFields(uiSchema, effectiveConfig)
   if (hidden.size === 0) return diagnostics
   return diagnostics.filter((diagnostic) => {

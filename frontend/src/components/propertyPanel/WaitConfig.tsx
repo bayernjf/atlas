@@ -1,5 +1,6 @@
 import { Button, Input, InputNumber, Radio, Space, Typography } from 'antd'
 import {
+  MAX_DURATION_EXPRESSION_LENGTH,
   MAX_EVENT_KEY_LENGTH,
   MAX_EVENT_WAIT_SECONDS,
   MAX_WAIT_SECONDS,
@@ -23,6 +24,12 @@ export function WaitConfig({ config, update }: Props) {
     !Number.isInteger(seconds) ||
     seconds < MIN_WAIT_SECONDS ||
     seconds > MAX_WAIT_SECONDS
+
+  const durationMode = config.durationMode === 'dynamic' ? 'dynamic' : 'static'
+  const durationExpression = config.durationExpression ?? ''
+  const durationExpressionInvalid =
+    !durationExpression.trim() ||
+    durationExpression.length > MAX_DURATION_EXPRESSION_LENGTH
 
   const eventKey = config.eventKey ?? ''
   const eventKeyInvalid =
@@ -51,26 +58,61 @@ export function WaitConfig({ config, update }: Props) {
         </Radio.Group>
       </label>
       {waitType === 'duration' ? (
-        <label className="property-field">
-          <Typography.Text type="secondary">等待时长</Typography.Text>
-          <Space.Compact>
-            <InputNumber
-              min={MIN_WAIT_SECONDS}
-              max={MAX_WAIT_SECONDS}
-              step={1}
-              precision={0}
-              value={seconds}
-              status={durationInvalid ? 'error' : undefined}
-              onChange={(value) => update({ durationSeconds: value ?? undefined })}
-            />
-            <Button disabled>秒</Button>
-          </Space.Compact>
-          {durationInvalid && (
-            <Typography.Text type="danger">
-              等待时长需为 {MIN_WAIT_SECONDS}-{MAX_WAIT_SECONDS} 秒的整数
-            </Typography.Text>
+        <>
+          <label className="property-field">
+            <Typography.Text type="secondary">时长模式</Typography.Text>
+            <Radio.Group
+              value={durationMode}
+              onChange={(event) => update({ durationMode: event.target.value })}
+            >
+              <Radio value="static">固定时长</Radio>
+              <Radio value="dynamic">动态表达式</Radio>
+            </Radio.Group>
+          </label>
+          {durationMode === 'static' ? (
+            <label className="property-field">
+              <Typography.Text type="secondary">等待时长</Typography.Text>
+              <Space.Compact>
+                <InputNumber
+                  min={MIN_WAIT_SECONDS}
+                  max={MAX_WAIT_SECONDS}
+                  step={1}
+                  precision={0}
+                  value={seconds}
+                  status={durationInvalid ? 'error' : undefined}
+                  onChange={(value) => update({ durationSeconds: value ?? undefined })}
+                />
+                <Button disabled>秒</Button>
+              </Space.Compact>
+              {durationInvalid && (
+                <Typography.Text type="danger">
+                  等待时长需为 {MIN_WAIT_SECONDS}-{MAX_WAIT_SECONDS} 秒的整数
+                </Typography.Text>
+              )}
+            </label>
+          ) : (
+            <label className="property-field">
+              <Typography.Text type="secondary">时长表达式</Typography.Text>
+              <Input
+                value={durationExpression}
+                placeholder="{{global.slaHours}} * 3600"
+                status={durationExpressionInvalid ? 'error' : undefined}
+                onChange={(event) =>
+                  update({ durationExpression: event.target.value })
+                }
+              />
+              {durationExpressionInvalid ? (
+                <Typography.Text type="danger">
+                  必填，1-{MAX_DURATION_EXPRESSION_LENGTH} 字符
+                </Typography.Text>
+              ) : (
+                <Typography.Text type="secondary">
+                  运行时求值，须为 {MIN_WAIT_SECONDS}-{MAX_WAIT_SECONDS} 秒
+                </Typography.Text>
+              )}
+            </label>
           )}
-        </label>
+        </>
       ) : (
         <>
           <label className="property-field">

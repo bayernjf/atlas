@@ -168,6 +168,64 @@ describe('event wait v1 (docs/47)', () => {
   })
 })
 
+describe('dynamic wait duration v1 (docs/49)', () => {
+  it('accepts a complete dynamic wait config', () => {
+    expect(
+      fields('wait', {
+        waitType: 'duration',
+        durationMode: 'dynamic',
+        durationExpression: '{{global.slaHours}} * 3600',
+      }),
+    ).toEqual([])
+  })
+
+  it('accepts a dynamic config retaining a stale durationSeconds', () => {
+    expect(
+      fields('wait', {
+        waitType: 'duration',
+        durationMode: 'dynamic',
+        durationExpression: '{{global.waitSecs}}',
+        durationSeconds: 5,
+      }),
+    ).toEqual([])
+  })
+
+  it('flags missing or overlong expression on /durationExpression', () => {
+    const missing = fields('wait', {
+      waitType: 'duration',
+      durationMode: 'dynamic',
+    })
+    expect(missing.map((d) => d.loc.pointer)).toEqual(['/durationExpression'])
+    expect(missing[0].code).toBe(FIELD_CODES.REQUIRED)
+
+    const overlong = fields('wait', {
+      waitType: 'duration',
+      durationMode: 'dynamic',
+      durationExpression: 'x'.repeat(201),
+    })
+    expect(overlong.map((d) => d.loc.pointer)).toEqual([
+      '/durationExpression',
+      '/durationExpression',
+    ])
+    expect(overlong.every((d) => d.code === FIELD_CODES.LENGTH)).toBe(true)
+  })
+
+  it('flags missing durationSeconds only in static mode', () => {
+    const diagnostics = fields('wait', { waitType: 'duration', durationMode: 'static' })
+    expect(diagnostics.map((d) => d.loc.pointer)).toEqual(['/durationSeconds'])
+  })
+
+  it('accepts a complete static config', () => {
+    expect(
+      fields('wait', {
+        waitType: 'duration',
+        durationMode: 'static',
+        durationSeconds: 10,
+      }),
+    ).toEqual([])
+  })
+})
+
 describe('message parity with M1 hand-written copy (U37②)', () => {
   function messages(kind: NodeKind, config: NodeConfig): string[] {
     return fields(kind, config).map((d) => d.message)
