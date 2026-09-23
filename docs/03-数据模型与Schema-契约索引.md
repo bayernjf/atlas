@@ -36,6 +36,7 @@
 | `http_request_params` | 04 / 四、工具/适配器组件 4.6 API 适配器（通用 HTTP）v1 契约（权威 blockquote）+ `src/atlas/httpapi/{service,adapter}.py` | ### 4.6 API 适配器（通用 HTTP）v1 契约 |
 | `db_sql_params` | 04 / 四、工具/适配器组件 4.7 数据适配器（通用 SQL）v1 契约（权威 blockquote）+ `src/atlas/database/{service,adapter}.py`（query/execute 两能力） | ### 4.7 数据适配器（通用 SQL）v1 契约 |
 | `message_send_params` | 04 / 四、工具/适配器组件 4.8 消息适配器（进程内消息服务）v1 契约（权威 blockquote；IM 群机器人 dingtalk/wecom/feishu + secret 追加段 docs/51，2026-09-23 落码收口 d4823d5）+ `src/atlas/message/{service,adapter}.py`（单能力 message/send） | ### 4.8 消息适配器（进程内消息服务）v1 契约 |
+| `alert_notify_channel` | 04 §5.20 监控告警外部通知 v1 契约（权威 blockquote；2026-09-23 docs-only 立项 docs/52）+ `src/atlas/monitoring/notify.py` | ### 5.20 监控告警外部通知 |
 | `secret_envelope` | 安全准入（docs/32，**2026-09-21 已落码**）：`src/atlas/security/secrets.py` | 凭证信封 `enc$v1`/SecretProvider 协议/`secret://` 运行时注入/全链路脱敏；错误码 SECRET_UNAVAILABLE/SECRET_DECRYPT_ERROR（ADR T26=(a)，cryptography AES-256-GCM） |
 | `egress_guard` | 安全准入（docs/32，**2026-09-21 已落码**）：`src/atlas/security/egress.py`，接 04 §4.6 HTTP 适配器 | SSRF 防护：scheme http/https、私网/环回/链路本地/云元数据/CGNAT/保留地址恒拦、整数/进制 IP 绕过、可注入 resolver、白名单 fail-closed、不读 X-Forwarded-For；错误码 EGRESS_DENIED/EGRESS_INVALID_URL |
 | `sql_read_only_guard` | 安全准入（docs/32，**2026-09-21 已落码**）：`src/atlas/database/guard.py`，接 04 §4.7 数据适配器 | 只读 SQL 静态审查（去注释/拒多语句/只放单条 SELECT/WITH…SELECT）、外部连接 execute 禁用；错误码 DB_SQL_NOT_READ_ONLY/DB_WRITE_FORBIDDEN |

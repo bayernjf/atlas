@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### docs：监控告警外部通知 v1 批 docs-only 立项（docs/52，2026-09-23；dev、未 push；无 ADR）
+
+- 新增 `monitoring/notify.py` 设计：租户单例 `AlertChannel {enabled, channel(dingtalk/wecom/feishu/webhook/email), to, secret, minSeverity, updatedAt}`；`AlertNotifier` 仅在**新建告警**三处（内存/PG record_run、rollout_gate）经既有 MessageService 旁路投递固定纯文本——severity 过滤，任何异常 fail-safe（运行与告警不受影响），最近投递状态（时间/错误码）可查；notifier 经 setter 回注。
+- 迁移 **020** `alert_notify_settings`；MonitoringRepository 增 get/update_alert_channel，reset 清空。REST `GET/PUT /api/monitoring/alert-channel`（read/administer；enabled=true 按渠道校验 to、secret 仅钉钉/飞书 ≤200，422 中文聚合）。前端监控页告警通知配置卡＋纯逻辑校验测试。零新依赖；D28/D24 部分取回不解除（多渠道路由、合并/升级/解决通知、模板富文本、限流退避/投递历史仍缓做）。候选 U307；立项基线后端 **1526/59**、前端 **627/2/48 文件**。
+
 ### feat：IM 群机器人消息投递 v1 批落码收口（docs/51，2026-09-23；dev、未 push；无 ADR）
 
 - 后端 `d4823d5`：新模块 `message/im.py`（三家协议包体/钉钉 URL 加签/飞书 body 加签/平台码判定/10s/不重定向），MessageService 渠道接入与 secret 校验（仅 dingtalk/feishu、≤200），registry 内存/PG 双档注入 im_sender；失败 IM_SEND_FAILED/EGRESS_DENIED 不写记录，成功 delivered 标渠道名，未注入投递器回退 in_process。

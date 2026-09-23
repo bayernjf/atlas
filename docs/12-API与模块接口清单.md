@@ -781,6 +781,28 @@ class ImSender(Protocol):
 
 `MessageService.send` 增可选 `secret` 透传：to 为单 URL（数组 INVALID_PARAMETER）；secret 仅 dingtalk/feishu 允许（非空 str ≤200，其他渠道 INVALID_PARAMETER）；成功 delivered 标渠道名；未注入 IM 投递器三渠道回退进程内记录。新增错误码 **IM_SEND_FAILED**（EGRESS_DENIED 照透传）；无新增 REST。
 
+### 3.22 告警外部通知内部接口（AlertChannel/AlertNotifier v1；docs/52，2026-09-23 docs-only 立项）
+
+```python
+# src/atlas/monitoring/notify.py（新模块；零新依赖，复用 MessageService 五渠道）
+class AlertChannel(BaseModel):
+    enabled: bool = False
+    channel: Literal["dingtalk", "wecom", "feishu", "webhook", "email"] = "dingtalk"
+    to: str = ""
+    secret: str = ""
+    minSeverity: Literal["critical", "warning"] = "critical"
+    updatedAt: str = ""
+class AlertNotifier:
+    def __init__(self, message_service: MessageService): ...
+    def notify(self, alert: Alert, cfg: AlertChannel) -> None: ...
+    # 未启用/severity 过滤跳过；异常全捕获记最近投递状态；不抛
+# MonitoringRepository 增：get_alert_channel() -> AlertChannel
+#                         update_alert_channel(raw: dict) -> AlertChannel
+# 两档 store 经 set_notifier(notifier) 回注；reset 清空回默认
+# 触发：仅新建告警三处（内存/PG record_run、rollout_gate）
+# 迁移 020 alert_notify_settings；GET read / PUT administer
+```
+
 ## 4. 记忆检索接口（依据 06 6.2 / 05 2.3）
 
 > **M11 实现边界（2026-09-19 已落码收口；权威＝docs/26、ADR T23）**：下列 `memory_retriever.query` 五层分层检索为**愿景**（working Redis / summary / fact pgvector / case / preference + 决策节点隐式注入），v1 不实现，缓做 14 D35。M11 取回的是下方「4.1 M11 长期记忆最小接口」——统一 memory_item（fact/preference）+ 显式 remember/recall 两工具，**不做决策隐式注入**。
@@ -831,7 +853,7 @@ class MemoryRepository(Protocol):
 
 > 以下路径为按 Demo 需求推导的 REST 端点清单，字段以 03/04/05 Schema 为准；正式定义待落码时随 OpenAPI 生成。
 >
-> **鉴权四档（2026-09-16，04 §5.14）**：除标注「公开」者外，端点必须携带 `Authorization: Bearer <sess-token>`，缺失/无效 → 401「缺少或无效的登录凭证」；角色不足 → 403「当前角色无权执行此操作」；访问不存在于本租户的对象（含他租户审批/调试 token）→ 404。**公开**：`POST /api/auth/login`、`GET /api/health`、静态托管、`GET /demo/shop`、`/api/demo/**`（模拟外部系统，沿用 X-Demo-Token/demo 登录自带认证，不经平台鉴权）。**viewer+**（全部登录角色可读）：所有 GET 业务端点（graphs/templates/adapters/recordings/monitoring/alerts/approvals/debug/messages）+ `POST /api/feedback`（人人可提交）。**operator+**：POST/PUT/DELETE/POST 运行类——graphs 保存、compile、run、run/stream、nl/generate、recordings 写/删/replay、approvals 决策、debug resume、runs/{id}/cancel 急停、alerts acknowledge/resolve、publish 与 release-gate、rollout 配置/start/promote/rollback（M9，对齐发布权限）。**admin only**：`PUT /api/monitoring/rules`、`POST /api/demo/reset`、`GET /api/feedback`。所有业务数据按 token 推断的租户分区（03 各结构租户注记）。
+> **鉴权四档（2026-09-16，04 §5.14）**：除标注「公开」者外，端点必须携带 `Authorization: Bearer <sess-token>`，缺失/无效 → 401「缺少或无效的登录凭证」；角色不足 → 403「当前角色无权执行此操作」；访问不存在于本租户的对象（含他租户审批/调试 token）→ 404。**公开**：`POST /api/auth/login`、`GET /api/health`、静态托管、`GET /demo/shop`、`/api/demo/**`（模拟外部系统，沿用 X-Demo-Token/demo 登录自带认证，不经平台鉴权）。**viewer+**（全部登录角色可读）：所有 GET 业务端点（graphs/templates/adapters/recordings/monitoring/alerts/approvals/debug/messages）+ `POST /api/feedback`（人人可提交）。**operator+**：POST/PUT/DELETE/POST 运行类——graphs 保存、compile、run、run/stream、nl/generate、recordings 写/删/replay、approvals 决策、debug resume、runs/{id}/cancel 急停、alerts acknowledge/resolve、publish 与 release-gate、rollout 配置/start/promote/rollback（M9，对齐发布权限）。**admin only**：`PUT /api/monitoring/rules`、`PUT /api/monitoring/alert-channel`、`POST /api/demo/reset`、`GET /api/feedback`。所有业务数据按 token 推断的租户分区（03 各结构租户注记）。
 
 | 方法 | 路径 | 功能 | 关联 |
 |---|---|---|---|
@@ -876,6 +898,8 @@ class MemoryRepository(Protocol):
 | GET | /api/monitoring/runs | 运行记录列表：`?graph_id=&limit=`（默认 50、1-200 截断，新→旧），返回 `{items:[RunRecord]}`，每条纯超集含 `tool_calls:[ToolCallMetric]`（⑧，缺省 []）；仅真实运行（debug/回放/子图重入不计） | monitoring |
 | GET | /api/monitoring/rules | 读取规则配置 RuleConfig：四内置规则（默认全开，连续阈值 3、窗口 20/最小样本 5/失败率 0.5）＋纯超集 `custom:[CustomRule]`（⑨，缺省 []） | monitoring |
 | PUT | /api/monitoring/rules | 全量替换规则配置；非法值（enabled 非 bool、阈值/窗口/样本非 1-200 整数、rate 非 0-1）422 中文聚合错误；**⑨ 起 `custom` 段同校验（cid 非空/同配置唯一/≤64、name 非空/≤50、severity 枚举、expression 经安全条件引擎静态校验且顶层须布尔，错误中文聚合 `custom[i].xxx：…`），旧配置无 custom 不 422**；`/api/demo/reset` 恢复默认 | monitoring |
+| GET | /api/monitoring/alert-channel | 读取租户告警通知单例 AlertChannel＋最近投递状态（lastNotifiedAt/lastError code+message；无则 null） | monitoring |
+| PUT | /api/monitoring/alert-channel | 整体替换；enabled=true 时 to 按渠道校验（IM/webhook http(s) URL、email 含 @）、secret 仅 dingtalk/feishu 非空 ≤200，违例 422 中文聚合；enabled=false 不校验草稿；回显服务端 updatedAt；reset 恢复默认 | monitoring |
 | GET | /api/alerts | 告警列表：`?status=open\|acknowledged\|resolved`（缺省全部），`{items:[Alert]}` 新→旧；**⑨ 起 `rule_id` 为 string（内置五条或 `custom:{cid}`）、纯超集 `rule_name`（自定义规则名；进程内档有值，PG 档 v1 读回 null，前端回退 rule_id）** | monitoring |
 | POST | /api/alerts/{id}/acknowledge | 确认告警（open→acknowledged）；未知 id 404、非 open 状态 409，中文 detail | monitoring |
 | POST | /api/alerts/{id}/resolve | 关闭告警（open/acknowledged→resolved）；未知 id 404、已 resolved 409，中文 detail | monitoring |
