@@ -43,6 +43,7 @@ MAX_WAIT_SECONDS = 600
 MIN_EVENT_WAIT_SECONDS = 1
 MAX_EVENT_WAIT_SECONDS = 3600
 MAX_EVENT_KEY_LENGTH = 128
+MAX_DURATION_EXPRESSION_LENGTH = 200
 WAIT_TIMEOUT_POLICIES = ("continue", "fail")
 MAX_SUBGRAPH_DEPTH = 3
 MIN_APPROVAL_TIMEOUT = 10
@@ -737,15 +738,35 @@ def _validate_wait_config(
 
     wait_type = config.get("waitType")
     if wait_type == "duration":
-        seconds = config.get("durationSeconds")
-        if isinstance(seconds, bool) or not isinstance(seconds, int):
-            add(f"{prefix} 等待时长（durationSeconds）必须是整数秒", "/durationSeconds")
-        elif not MIN_WAIT_SECONDS <= seconds <= MAX_WAIT_SECONDS:
+        duration_mode = config.get("durationMode", "static")
+        if duration_mode not in ("static", "dynamic"):
             add(
-                f"{prefix} 等待时长需在 {MIN_WAIT_SECONDS}-{MAX_WAIT_SECONDS} 秒之间"
-                f"（当前 {seconds}）",
-                "/durationSeconds",
+                f"{prefix} 时长模式（durationMode）必须是 static 或 dynamic",
+                "/durationMode",
             )
+        elif duration_mode == "dynamic":
+            expression = config.get("durationExpression")
+            if not isinstance(expression, str) or not expression.strip():
+                add(
+                    f"{prefix} 动态时长表达式（durationExpression）为必填",
+                    "/durationExpression",
+                )
+            elif len(expression) > MAX_DURATION_EXPRESSION_LENGTH:
+                add(
+                    f"{prefix} 动态时长表达式长度不能超过 "
+                    f"{MAX_DURATION_EXPRESSION_LENGTH} 字符（当前 {len(expression)}）",
+                    "/durationExpression",
+                )
+        else:
+            seconds = config.get("durationSeconds")
+            if isinstance(seconds, bool) or not isinstance(seconds, int):
+                add(f"{prefix} 等待时长（durationSeconds）必须是整数秒", "/durationSeconds")
+            elif not MIN_WAIT_SECONDS <= seconds <= MAX_WAIT_SECONDS:
+                add(
+                    f"{prefix} 等待时长需在 {MIN_WAIT_SECONDS}-{MAX_WAIT_SECONDS} 秒之间"
+                    f"（当前 {seconds}）",
+                    "/durationSeconds",
+                )
     elif wait_type == "event":
         event_key = config.get("eventKey")
         if not isinstance(event_key, str) or not event_key.strip():

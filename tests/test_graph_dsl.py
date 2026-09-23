@@ -711,6 +711,44 @@ def test_parse_valid_event_wait(config):
     parse_graph(raw)
 
 
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"waitType": "duration", "durationMode": "static", "durationSeconds": 2},
+        {"waitType": "duration", "durationMode": "dynamic",
+         "durationExpression": "{{global.waitSecs}}"},
+        {"waitType": "duration", "durationMode": "dynamic",
+         "durationExpression": "{{global.slaHours}} * 3600", "durationSeconds": 5},
+    ],
+)
+def test_parse_valid_dynamic_wait(config):
+    raw = make_wait_graph()
+    raw["nodes"][1] = _wait_node(**config)
+    parse_graph(raw)
+
+
+@pytest.mark.parametrize(
+    "config, expected",
+    [
+        ({"waitType": "duration", "durationMode": "soon", "durationSeconds": 2},
+         "时长模式（durationMode）必须是 static 或 dynamic"),
+        ({"waitType": "duration", "durationMode": "dynamic", "durationExpression": ""},
+         "动态时长表达式（durationExpression）为必填"),
+        ({"waitType": "duration", "durationMode": "dynamic"},
+         "动态时长表达式（durationExpression）为必填"),
+        ({"waitType": "duration", "durationMode": "dynamic",
+          "durationExpression": "x" * 201},
+         "动态时长表达式长度不能超过 200 字符"),
+    ],
+)
+def test_reject_dynamic_wait_bad_config(config, expected):
+    raw = make_wait_graph()
+    raw["nodes"][1] = _wait_node(**config)
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any(expected in error for error in exc.value.errors)
+
+
 
 def test_reject_wait_without_outgoing_edge():
     raw = make_wait_graph()

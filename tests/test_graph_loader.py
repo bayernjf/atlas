@@ -15,6 +15,7 @@ from atlas.graph.loader import (
     interpolate,
     resolve_path,
     run_graph,
+    WaitNodeFailure,
 )
 from atlas.harness.base import ActionResult, Capability, HarnessAdapter
 from atlas.harness.registry import AdapterRegistry
@@ -524,6 +525,111 @@ def test_wait_sleeps_then_continues_to_single_successor(monkeypatch):
     assert wait_output == {"mode": "wait", "waitType": "duration", "durationSeconds": 2}
     assert "tool-after" in result["outputs"]
     assert any("waited 2s" in line for line in result["trace"])
+
+
+def test_wait_dynamic_expression_sleeps_evaluated_seconds(monkeypatch):
+    slept: list[int] = []
+    monkeypatch.setattr("atlas.graph.loader.time.sleep", lambda seconds: slept.append(seconds))
+    graph = parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "wait-1", "type": "wait", "name": "动态等待",
+                 "config": {"waitType": "duration", "durationMode": "dynamic",
+                            "durationExpression": "{{global.waitSecs}} * 2 + 1"}},
+                {"id": "tool-after", "type": "tool_call", "name": "后继",
+                 "config": {"tool": "op-after"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "wait-1"},
+                {"id": "e2", "source": "wait-1", "target": "tool-after"},
+            ],
+        }
+    )
+
+    result = run_graph(graph, inputs={"waitSecs": 2})
+    assert result["status"] == "completed"
+    assert slept == [5]
+    wait_output = result["outputs"]["wait-1"]
+    assert wait_output == {
+        "mode": "wait",
+        "waitType": "duration",
+        "durationSeconds": 5,
+        "durationMode": "dynamic",
+        "durationExpression": "{{global.waitSecs}} * 2 + 1",
+    }
+
+
+def test_wait_dynamic_expression_integer_valued_float(monkeypatch):
+    monkeypatch.setattr("atlas.graph.loader.time.sleep", lambda seconds: None)
+    graph = parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "wait-1", "type": "wait", "name": "动态等待",
+                 "config": {"waitType": "duration", "durationMode": "dynamic",
+                            "durationExpression": "11 / 4"}},
+                {"id": "tool-after", "type": "tool_call", "name": "后继",
+                 "config": {"tool": "op-after"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "wait-1"},
+                {"id": "e2", "source": "wait-1", "target": "tool-after"},
+            ],
+        }
+    )
+
+    result = run_graph(graph)
+    assert result["status"] == "completed"
+    assert result["outputs"]["wait-1"]["durationSeconds"] == 3
+
+
+@pytest.mark.parametrize(
+    "expression, inputs",
+    [
+        ("{{global.missing}}", {}),
+        ("1 + ", {}),
+        ("0", {}),
+        ("601", {}),
+        ("'soon'", {}),
+        ("1/0", {}),
+    ],
+)
+def test_wait_dynamic_expression_invalid_fails_without_sleep(
+    monkeypatch, expression, inputs
+):
+    slept: list[int] = []
+    monkeypatch.setattr("atlas.graph.loader.time.sleep", lambda seconds: slept.append(seconds))
+    graph = parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "wait-1", "type": "wait", "name": "动态等待",
+                 "config": {"waitType": "duration", "durationMode": "dynamic",
+                            "durationExpression": expression}},
+                {"id": "tool-after", "type": "tool_call", "name": "后继",
+                 "config": {"tool": "op-after"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "wait-1"},
+                {"id": "e2", "source": "wait-1", "target": "tool-after"},
+            ],
+        }
+    )
+
+    with pytest.raises(WaitNodeFailure) as excinfo:
+        run_graph(graph, inputs=inputs)
+    assert excinfo.value.code == "WAIT_DURATION_INVALID"
+    assert slept == []
 
 
 def test_wait_after_condition_default_branch_passes_through(monkeypatch):

@@ -18,6 +18,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import math
 import operator
 import time
 import uuid
@@ -426,11 +427,42 @@ def _make_executor(
                                     f"{timeout_seconds}s (continue)"
                                 )
                     else:
-                        seconds = int(node.config["durationSeconds"])
-                        if resume_here:
+                        duration_mode = node.config.get("durationMode", "static")
+                        expression = node.config.get("durationExpression")
+                        if duration_mode == "dynamic" and not resume_here:
+                            try:
+                                raw = evaluate_expression(str(expression), context)
+                            except ConditionEvalError as exc:
+                                raise WaitNodeFailure(
+                                    node.id,
+                                    "WAIT_DURATION_INVALID",
+                                    f"等待节点 {node.id} 等待时长表达式无法求值：{exc}",
+                                )
+                            if (
+                                isinstance(raw, bool)
+                                or not isinstance(raw, (int, float))
+                                or not math.isfinite(float(raw))
+                            ):
+                                raise WaitNodeFailure(
+                                    node.id,
+                                    "WAIT_DURATION_INVALID",
+                                    f"等待节点 {node.id} 等待时长表达式结果非法"
+                                    f"（需为 1-600 秒，当前 {raw!r}）",
+                                )
+                            seconds = int(round(raw))
+                            if not 1 <= seconds <= 600:
+                                raise WaitNodeFailure(
+                                    node.id,
+                                    "WAIT_DURATION_INVALID",
+                                    f"等待节点 {node.id} 等待时长表达式结果非法"
+                                    f"（需为 1-600 秒，当前 {raw!r}）",
+                                )
+                        elif resume_here:
                             # 续跑：按剩余时长等待（绝对 deadline 照扣，docs/24 §3.1）。
                             seconds = int(remaining_seconds(resume.get("deadline_at")))
                         else:
+                            seconds = int(node.config["durationSeconds"])
+                        if not resume_here:
                             _emit_frame(
                                 frame_sink,
                                 node,
@@ -443,7 +475,14 @@ def _make_executor(
                                 timeout_seconds=seconds,
                             )
                         time.sleep(max(seconds, 0))
-                        output = {"mode": "wait", "waitType": "duration", "durationSeconds": seconds}
+                        output = {
+                            "mode": "wait",
+                            "waitType": "duration",
+                            "durationSeconds": seconds,
+                        }
+                        if duration_mode == "dynamic":
+                            output["durationMode"] = "dynamic"
+                            output["durationExpression"] = expression
                         message = f"{node.id}: waited {seconds}s"
                 elif node.type == "human_approval":
                     output, message = _await_human_approval(
