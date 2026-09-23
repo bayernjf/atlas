@@ -50,6 +50,11 @@ class RuleConfig(BaseModel):
     custom: list[CustomRule] = Field(default_factory=list)
     # docs/33 §5.2：warning 未确认 N 分钟后惰性升级 critical；None/缺省关闭（1-10080）
     escalation_ack_minutes: int | None = None
+    # docs/55 flapping：自动 recovery 需连续健康次数（默认 1＝旧行为，1-20）
+    recovery_healthy_streak: int = 1
+    # docs/55 flapping：自动 recovery 后抑制同 rule+graph 新告警外部通知的冷却分钟
+    # （None/缺省关闭，1-10080；站内告警照建，仅抑制 new 外部通知）
+    recovery_cooldown_minutes: int | None = None
 
 
 class Alert(BaseModel):
@@ -130,6 +135,17 @@ def validate_rules(raw: object) -> list[str]:
             not isinstance(value, int) or _is_bool(value) or not 1 <= value <= 10080
         ):
             errors.append("escalation_ack_minutes 必须是 1-10080 的整数或 null")
+    # docs/55 flapping 两字段
+    if "recovery_healthy_streak" in raw:
+        value = raw["recovery_healthy_streak"]
+        if not _bounded_int(value) or not 1 <= int(value) <= 20:
+            errors.append("recovery_healthy_streak 必须是 1-20 的整数")
+    if "recovery_cooldown_minutes" in raw:
+        value = raw["recovery_cooldown_minutes"]
+        if value is not None and (
+            not isinstance(value, int) or _is_bool(value) or not 1 <= value <= 10080
+        ):
+            errors.append("recovery_cooldown_minutes 必须是 1-10080 的整数或 null")
     # docs/28 §4.2 ⑨：自定义规则段可选（缺省/空合法，旧配置与 PG JSONB 反序列化不 422）
     if "custom" in raw:
         custom_raw = raw["custom"]
@@ -195,6 +211,13 @@ def rules_from_raw(raw: dict) -> RuleConfig:
             if isinstance(rule, dict)
         ],
         escalation_ack_minutes=raw.get("escalation_ack_minutes"),
+        recovery_healthy_streak=(
+            raw["recovery_healthy_streak"]
+            if _bounded_int(raw.get("recovery_healthy_streak"))
+            and 1 <= int(raw.get("recovery_healthy_streak")) <= 20
+            else 1
+        ),
+        recovery_cooldown_minutes=raw.get("recovery_cooldown_minutes"),
     )
 
 

@@ -693,6 +693,8 @@ class PgMonitoringStore:
         # docs/33 §5：静默/值班/assignee 进程内（v1 不落库，重启清空；TenantServices 常驻保活）
         self._ops = OpsStore()
         self._notifier = None
+        # docs/55 flapping：自动 recovery 冷却 (rule_id, graph_id)→UTC 时刻（进程内，不持久化）
+        self._recovery_cooldown: dict[tuple[str, str], datetime] = {}
 
     def record_run(
         self,
@@ -716,7 +718,7 @@ class PgMonitoringStore:
         serialized_nodes = [
             node.model_dump() if hasattr(node, "model_dump") else node for node in nodes
         ]
-        pending: list[tuple[Alert, AlertChannel]] = []
+        pending: list[tuple[Alert, AlertChannel, str]] = []
         with self._engine.begin() as conn:
             run_id = _next_id(conn, "run")
             record = RunRecord(
@@ -760,6 +762,8 @@ class PgMonitoringStore:
             healthy = is_healthy(record)
             streak = self._streak_locked(conn, graph_id, healthy)
             recent = self._recent_locked(conn, graph_id)
+            # docs/55：recent 新→旧，连续健康达阈值才允许自动 recovery（flapping）
+            healthy_streak = self._healthy_streak_locked(recent) if healthy else 0
             events = evaluate_rules(
                 record=record, healthy=healthy, recent_by_graph=recent,
                 streak=streak, rules=rules,
@@ -768,11 +772,56 @@ class PgMonitoringStore:
                 # docs/33 §5.1：命中活跃静默则压下（不 INSERT/不合并/不升级）
                 if self._ops.suppress_if_matched(event.rule_id, record.graph_id):
                     continue
-                new_alert = self._raise_or_merge_locked(conn, event, record)
-                if new_alert is not None:
-                    pending.append((new_alert, self._channel_locked(conn)))
-        for alert, cfg in pending:
-            self._notify_outside_lock(alert, cfg)
+                raised = self._raise_or_merge_locked(conn, event, record)
+                if raised is not None:
+                    new_alert, transition = raised
+                    # docs/55：自动 recovery 冷却窗内，新告警站内照建、抑制 new 外部通知
+                    if transition == "new" and self._in_recovery_cooldown(
+                        event.rule_id, record.graph_id, rules
+                    ):
+                        pass
+                    else:
+                        pending.append(
+                            (new_alert, self._channel_locked(conn), transition)
+                        )
+            # docs/54 §6 + docs/55：连续健康达标，自动恢复该图仍 open 的内置告警
+            # （acknowledged 与 rollout_gate 不自动恢复），并写冷却起点；锁外发 recovery。
+            if healthy and healthy_streak >= rules.recovery_healthy_streak:
+                open_rows = conn.execute(
+                    text(
+                        f"SELECT {self._ALERT_COLS} FROM monitoring_alerts "
+                        "WHERE tenant_id = :tenant_id AND graph_id = :graph_id "
+                        "AND status = 'open' AND rule_id != 'rollout_gate'"
+                    ),
+                    {"tenant_id": self._tenant_id, "graph_id": graph_id},
+                ).all()
+                if open_rows:
+                    recovered_at = datetime.now(timezone.utc)
+                    cfg = self._channel_locked(conn)
+                    for row in open_rows:
+                        rec_alert = self._alert_from_row(row)
+                        conn.execute(
+                            text(
+                                "UPDATE monitoring_alerts SET status = 'resolved', "
+                                "last_seen = :last_seen, last_run_id = :last_run_id "
+                                "WHERE id = :id AND tenant_id = :tenant_id"
+                            ),
+                            {
+                                "last_seen": record.finished_at,
+                                "last_run_id": record.id,
+                                "id": rec_alert.id,
+                                "tenant_id": self._tenant_id,
+                            },
+                        )
+                        rec_alert.status = "resolved"
+                        rec_alert.last_seen = record.finished_at
+                        rec_alert.last_run_id = record.id
+                        self._recovery_cooldown[
+                            (rec_alert.rule_id, graph_id)
+                        ] = recovered_at
+                        pending.append((rec_alert, cfg, "recovery"))
+        for alert, cfg, transition in pending:
+            self._notify_outside_lock(alert, cfg, transition=transition)
         return record
 
     def _channel_locked(self, conn: Any) -> AlertChannel:
@@ -790,10 +839,17 @@ class PgMonitoringStore:
             minSeverity=row[4], updatedAt=row[5],
         )
 
-    def _notify_outside_lock(self, alert: Alert, cfg: AlertChannel) -> None:
+    def _notify_outside_lock(
+        self, alert: Alert, cfg: AlertChannel, *, transition: str = "new"
+    ) -> None:
         if self._notifier is None:
             return
-        delivery = self._notifier.notify(alert, cfg)
+        if transition == "new":
+            delivery = self._notifier.notify(alert, cfg)
+        else:
+            delivery = self._notifier.notify_lifecycle(
+                alert, cfg, transition=transition
+            )
         if delivery.lastNotifiedAt is not None:
             self.record_alert_channel_delivery(delivery)
 
@@ -831,7 +887,7 @@ class PgMonitoringStore:
         ).all()
         return [self._run_list_from_row(r) for r in rows]
 
-    def _raise_or_merge_locked(self, conn: Any, event: Any, record: RunRecord) -> None:
+    def _raise_or_merge_locked(self, conn: Any, event: Any, record: RunRecord):
         row = conn.execute(
             text(
                 "SELECT id FROM monitoring_alerts "
@@ -852,15 +908,26 @@ class PgMonitoringStore:
                 ),
                 {"last_seen": record.finished_at, "last_run_id": record.id, "id": row[0]},
             )
-            return None
+            # docs/55：merge 也走 lifecycle 通知（对齐内存档）；读回最新投影。
+            merged_row = conn.execute(
+                text(
+                    f"SELECT {self._ALERT_COLS} FROM monitoring_alerts "
+                    "WHERE id = :id AND tenant_id = :tenant_id"
+                ),
+                {"id": row[0], "tenant_id": self._tenant_id},
+            ).first()
+            merged_alert = self._alert_from_row(merged_row)
+            merged_alert.assignee = merged_alert.assignee or self._ops.assignee_of(row[0])
+            return merged_alert, "merged"
         alert_id = _next_id(conn, "alt")
+        assignee = self._ops.current_assignee()
         conn.execute(
             text(
                 "INSERT INTO monitoring_alerts "
                 "(id, tenant_id, rule_id, graph_id, severity, message, status, first_seen, "
-                "last_seen, last_run_id, count) "
+                "last_seen, last_run_id, count, rule_name, assignee) "
                 "VALUES (:id, :tenant_id, :rule_id, :graph_id, :severity, :message, 'open', "
-                ":first_seen, :last_seen, :last_run_id, 1)"
+                ":first_seen, :last_seen, :last_run_id, 1, :rule_name, :assignee)"
             ),
             {
                 "id": alert_id,
@@ -872,6 +939,8 @@ class PgMonitoringStore:
                 "first_seen": record.finished_at,
                 "last_seen": record.finished_at,
                 "last_run_id": record.id,
+                "rule_name": event.rule_name,
+                "assignee": assignee,
             },
         )
         self._ops.remember_assignee(alert_id)
@@ -885,8 +954,8 @@ class PgMonitoringStore:
             last_seen=record.finished_at,
             last_run_id=record.id,
             rule_name=event.rule_name,
-            assignee=self._ops.current_assignee(),
-        )
+            assignee=assignee,
+        ), "new"
 
     def list_runs(self, graph_id: str | None = None, limit: int = 50) -> list[RunRecord]:
         with self._engine.connect() as conn:
@@ -955,20 +1024,69 @@ class PgMonitoringStore:
         return Alert(
             id=r[0], rule_id=r[1], graph_id=r[2], severity=r[3], message=r[4],
             status=r[5], first_seen=r[6], last_seen=r[7], last_run_id=r[8], count=r[9],
+            action=r[10], rule_name=r[11], escalated_at=r[12], assignee=r[13],
         )
 
     _ALERT_COLS = (
         "id, rule_id, graph_id, severity, message, status, first_seen, "
-        "last_seen, last_run_id, count"
+        "last_seen, last_run_id, count, action, rule_name, escalated_at, assignee"
     )
 
-    def _decorate_alert(self, alert: Alert, rules: RuleConfig, now: str) -> Alert:
-        """docs/33 §5.2/§5.3：进程内补 assignee 并惰性升级（不写 PG，重启重评幂等）。"""
-        alert.assignee = self._ops.assignee_of(alert.id)
-        return apply_escalation(alert, rules, now)
+    def _in_recovery_cooldown(self, rule_id: str, graph_id: str, rules: RuleConfig) -> bool:
+        """docs/55：自动 recovery 冷却窗内同 rule+graph 新告警抑制外部通知（进程内）。"""
+        minutes = rules.recovery_cooldown_minutes
+        if not minutes:
+            return False
+        last = self._recovery_cooldown.get((rule_id, graph_id))
+        if last is None:
+            return False
+        return (datetime.now(timezone.utc) - last).total_seconds() < minutes * 60
+
+    def _healthy_streak_locked(self, recent_desc: list[RunRecord]) -> int:
+        """docs/55：recent 为新→旧，从头数连续健康运行条数（含本次）。"""
+        from atlas.monitoring.metrics import is_healthy
+
+        streak = 0
+        for run in recent_desc:
+            if is_healthy(run):
+                streak += 1
+            else:
+                break
+        return streak
+
+    def _decorate_alerts_locked(
+        self, conn: Any, rows: list[Any], rules: RuleConfig, now: str
+    ) -> tuple[list[Alert], list[Alert]]:
+        """docs/33 §5.2/§5.3 + docs/55：assignee PG 列优先（兜底进程内值班），
+        惰性升级 warning→critical 并回写 severity/escalated_at；返回 (alerts, escalated)。"""
+        alerts: list[Alert] = []
+        escalated: list[Alert] = []
+        for r in rows:
+            alert = self._alert_from_row(r)
+            if not alert.assignee:
+                alert.assignee = self._ops.assignee_of(alert.id)
+            upgraded = apply_escalation(alert, rules, now)
+            if upgraded is not alert:
+                alert.severity = upgraded.severity
+                alert.escalated_at = upgraded.escalated_at
+                conn.execute(
+                    text(
+                        "UPDATE monitoring_alerts SET severity = :severity, "
+                        "escalated_at = :escalated_at WHERE id = :id AND tenant_id = :tenant_id"
+                    ),
+                    {
+                        "severity": alert.severity,
+                        "escalated_at": alert.escalated_at,
+                        "id": alert.id,
+                        "tenant_id": self._tenant_id,
+                    },
+                )
+                escalated.append(alert)
+            alerts.append(alert)
+        return alerts, escalated
 
     def list_alerts(self, status: str | None = None) -> list[Alert]:
-        with self._engine.connect() as conn:
+        with self._engine.begin() as conn:
             if status:
                 rows = conn.execute(
                     text(
@@ -986,11 +1104,15 @@ class PgMonitoringStore:
                     {"tenant_id": self._tenant_id},
                 ).all()
             rules = self._rules_locked(conn)
-        now = datetime.now(timezone.utc).isoformat()
-        return [self._decorate_alert(self._alert_from_row(r), rules, now) for r in rows]
+            now = datetime.now(timezone.utc).isoformat()
+            alerts, escalated = self._decorate_alerts_locked(conn, rows, rules, now)
+            cfg = self._channel_locked(conn) if escalated else AlertChannel()
+        for alert in escalated:
+            self._notify_outside_lock(alert, cfg, transition="escalated")
+        return alerts
 
     def get_alert(self, alert_id: str) -> Alert | None:
-        with self._engine.connect() as conn:
+        with self._engine.begin() as conn:
             row = conn.execute(
                 text(
                     f"SELECT {self._ALERT_COLS} FROM monitoring_alerts "
@@ -1001,8 +1123,12 @@ class PgMonitoringStore:
             if not row:
                 return None
             rules = self._rules_locked(conn)
-        now = datetime.now(timezone.utc).isoformat()
-        return self._decorate_alert(self._alert_from_row(row), rules, now)
+            now = datetime.now(timezone.utc).isoformat()
+            alerts, escalated = self._decorate_alerts_locked(conn, [row], rules, now)
+            cfg = self._channel_locked(conn) if escalated else AlertChannel()
+        for alert in escalated:
+            self._notify_outside_lock(alert, cfg, transition="escalated")
+        return alerts[0]
 
     def acknowledge_alert(self, alert_id: str) -> Alert | Literal[False] | None:
         with self._engine.begin() as conn:
@@ -1029,13 +1155,14 @@ class PgMonitoringStore:
         with self._engine.begin() as conn:
             row = conn.execute(
                 text(
-                    "SELECT status FROM monitoring_alerts WHERE id = :id AND tenant_id = :tenant_id"
+                    f"SELECT {self._ALERT_COLS} FROM monitoring_alerts "
+                    "WHERE id = :id AND tenant_id = :tenant_id"
                 ),
                 {"id": alert_id, "tenant_id": self._tenant_id},
             ).first()
             if row is None:
                 return None
-            if row[0] == "resolved":
+            if row[5] == "resolved":
                 return False
             conn.execute(
                 text(
@@ -1044,6 +1171,13 @@ class PgMonitoringStore:
                 ),
                 {"id": alert_id, "tenant_id": self._tenant_id},
             )
+            resolved_alert = self._alert_from_row(row)
+            resolved_alert.status = "resolved"
+            if not resolved_alert.assignee:
+                resolved_alert.assignee = self._ops.assignee_of(alert_id)
+            cfg = self._channel_locked(conn)
+        # docs/55：手动 resolve 发 resolved lifecycle 通知（不写 recovery 冷却）
+        self._notify_outside_lock(resolved_alert, cfg, transition="resolved")
         return self.get_alert(alert_id)
 
     def get_rules(self) -> RuleConfig:
@@ -1264,6 +1398,7 @@ class PgMonitoringStore:
                 text("DELETE FROM alert_notify_settings WHERE tenant_id = :tenant_id"),
                 {"tenant_id": self._tenant_id},
             )
+        self._recovery_cooldown.clear()
         self._ops.reset()
 
 

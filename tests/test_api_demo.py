@@ -610,6 +610,26 @@ def test_message_send_visible_and_reset_clears():
     assert client.get("/api/demo/messages").json()["items"] == []
 
 
+def test_delivery_log_visible_and_reset_clears():
+    # docs/56 §4.3：每次 send 落一条投递日志，demo 无真实 sender 标 in_process
+    client.post("/api/demo/reset")
+    assert client.get("/api/demo/deliveries").json()["items"] == []
+    params = json.dumps(
+        {"channel": "email", "to": ["ops@example.com"], "subject": "投递追踪", "body": "b"}
+    )
+    graph_id = client.post("/api/graphs", json=_single_tool_graph("message/send", params)).json()["id"]
+    client.post(f"/api/graphs/{graph_id}/run", json={"inputs": {}})
+    items = client.get("/api/demo/deliveries").json()["items"]
+    assert len(items) == 1
+    assert items[0]["channel"] == "email"
+    assert items[0]["status"] == "in_process"
+    assert items[0]["attempts"] == 1 and items[0]["sentAt"]
+    # limit 被 clamp，非法/超大值不报错
+    assert len(client.get("/api/demo/deliveries?limit=1").json()["items"]) == 1
+    client.post("/api/demo/reset")
+    assert client.get("/api/demo/deliveries").json()["items"] == []
+
+
 def test_template_list_returns_projection_without_graph():
     client.post("/api/demo/reset")
     items = client.get("/api/templates").json()["items"]

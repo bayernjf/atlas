@@ -120,7 +120,11 @@ CREATE TABLE IF NOT EXISTS monitoring_alerts (
     first_seen TEXT NOT NULL,
     last_seen TEXT NOT NULL,
     last_run_id TEXT,
-    count INTEGER NOT NULL DEFAULT 1
+    count INTEGER NOT NULL DEFAULT 1,
+    action JSONB,
+    rule_name TEXT,
+    escalated_at TEXT,
+    assignee TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_monitoring_alerts_tenant ON monitoring_alerts (tenant_id);
 

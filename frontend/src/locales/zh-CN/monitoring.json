@@ -140,7 +140,11 @@
     "rate": "比率",
     "unitTimes": "次",
     "escalationLabel": "未确认升级：warning 告警超过",
-    "escalationUnit": "分钟未确认，自动升为 critical"
+    "escalationUnit": "分钟未确认，自动升为 critical",
+    "recoveryStreakLabel": "自动恢复：连续健康",
+    "recoveryStreakUnit": "次运行后，自动恢复仍 open 的告警（acknowledged 不自动恢复）",
+    "cooldownLabel": "恢复冷却：自动恢复后",
+    "cooldownUnit": "分钟内同类新告警仅站内记录、不外发通知"
   },
   "custom": {
     "title": "自定义规则（表达式，docs/28 §4.2）",

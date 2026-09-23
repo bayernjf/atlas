@@ -439,3 +439,99 @@ def test_U536_failed_lifecycle_send_is_also_throttled():
     second = notifier.notify_lifecycle(alert, cfg, transition="resolved")
     assert second.lastNotifiedAt is None
     assert second.errorCode is None
+
+
+# --- docs/55 flapping：连续健康恢复阈值 + 自动 recovery 冷却抑制 ---
+def _rules_raw(**overrides):
+    raw = {
+        "run_error": {"enabled": True},
+        "node_failed": {"enabled": True},
+        "consecutive_failures": {"enabled": True, "threshold": 3},
+        "failure_rate": {"enabled": True, "window": 10, "min_samples": 5, "rate": 0.5},
+    }
+    raw.update(overrides)
+    return raw
+
+
+def test_U560_recovery_requires_consecutive_healthy_streak():
+    store, messages = _configured_store()
+    store.update_rules(_rules_raw(recovery_healthy_streak=2))
+    _record_error_run(store)
+    # 第一次健康：连续健康仅 1，未达阈值，不恢复
+    _record_healthy_run(store)
+    still_open = next(a for a in store.list_alerts() if a.rule_id == "run_error")
+    assert still_open.status == "open"
+    assert not any("自动恢复" in m["subject"] for m in messages.sent)
+    # 第二次连续健康：达阈值，自动恢复
+    _record_healthy_run(store)
+    resolved = next(
+        a for a in store.list_alerts(status="resolved") if a.rule_id == "run_error"
+    )
+    assert resolved.status == "resolved"
+    assert any("自动恢复" in m["subject"] for m in messages.sent)
+
+
+def test_U561_unhealthy_run_resets_healthy_streak():
+    store, _ = _configured_store()
+    store.update_rules(_rules_raw(recovery_healthy_streak=2))
+    _record_error_run(store)
+    _record_healthy_run(store)  # streak 1
+    _record_error_run(store)    # 健康连续归 0（且合并到未决告警）
+    _record_healthy_run(store)  # streak 重新计 1，不恢复
+    open_alerts = [a for a in store.list_alerts() if a.rule_id == "run_error"]
+    assert open_alerts and all(a.status == "open" for a in open_alerts)
+
+
+def test_U562_cooldown_suppresses_new_alert_outside_notify_but_keeps_inapp():
+    store, messages = _configured_store()
+    store.update_rules(_rules_raw(recovery_cooldown_minutes=60))
+    _record_error_run(store)   # 首条 new 外发
+    new_subjects = [m for m in messages.sent if m["subject"] == "[Atlas告警][critical] run_error"]
+    assert len(new_subjects) == 1
+    _record_healthy_run(store)  # 自动 recovery，写冷却起点
+    assert any("自动恢复" in m["subject"] for m in messages.sent)
+    # 冷却窗内再次异常：新告警站内照建（open），但 new 外部通知被抑制
+    _record_error_run(store)
+    reopened = [a for a in store.list_alerts(status="open") if a.rule_id == "run_error"]
+    assert reopened  # 站内仍有 open 告警
+    new_subjects_after = [
+        m for m in messages.sent if m["subject"] == "[Atlas告警][critical] run_error"
+    ]
+    assert len(new_subjects_after) == 1  # 没有第二次 new 外发
+
+
+def test_U563_manual_resolve_does_not_arm_cooldown():
+    store, messages = _configured_store()
+    store.update_rules(_rules_raw(recovery_cooldown_minutes=60))
+    _record_error_run(store)
+    alert = next(a for a in store.list_alerts() if a.rule_id == "run_error")
+    store.resolve_alert(alert.id)  # 手动恢复，不写冷却
+    messages.sent.clear()
+    _record_error_run(store)      # 新告警应正常外发 new
+    assert any(m["subject"] == "[Atlas告警][critical] run_error" for m in messages.sent)
+
+
+def test_U564_flapping_rule_fields_validated():
+    store = MonitoringStore()
+    with pytest.raises(ValueError):
+        store.update_rules(_rules_raw(recovery_healthy_streak=0))
+    with pytest.raises(ValueError):
+        store.update_rules(_rules_raw(recovery_healthy_streak=21))
+    with pytest.raises(ValueError):
+        store.update_rules(_rules_raw(recovery_cooldown_minutes=0))
+    with pytest.raises(ValueError):
+        store.update_rules(_rules_raw(recovery_cooldown_minutes="60"))
+    # 合法：streak 边界 1/20、cooldown null
+    store.update_rules(_rules_raw(recovery_healthy_streak=20, recovery_cooldown_minutes=None))
+    assert store.get_rules().recovery_healthy_streak == 20
+    assert store.get_rules().recovery_cooldown_minutes is None
+
+
+def test_U565_reset_clears_healthy_streak_and_cooldown():
+    store, _ = _configured_store()
+    store.update_rules(_rules_raw(recovery_healthy_streak=2, recovery_cooldown_minutes=60))
+    _record_error_run(store)
+    _record_healthy_run(store)
+    store.reset()
+    assert store._healthy_streaks == {}
+    assert store._recovery_cooldown == {}

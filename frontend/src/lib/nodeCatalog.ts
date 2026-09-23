@@ -95,6 +95,7 @@ export type NodeConfig = {
   jitterSeconds?: number // docs/54：duration static 抖动上限 0-300
   eventKey?: string
   eventKeys?: string[] // docs/54：多事件 OR 竞速 1-8 个标识（与 eventKey 互斥）
+  eventWaitMode?: 'any' | 'all' // docs/55：any=OR 首决（默认），all=AND 全命中（≥2 键）
   timeoutMode?: 'static' | 'expression'
   timeoutExpression?: string
   // subgraph（04 §5.7；v1 引用已保存图，版本钉版缓做 docs/14 D21；出边等图级校验由后端 422 兜底）

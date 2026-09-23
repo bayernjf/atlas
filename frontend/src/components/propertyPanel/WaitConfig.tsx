@@ -72,9 +72,13 @@ export function WaitConfig({ config, update }: Props) {
     if (multi) {
       update({ eventKey: undefined, eventKeys: eventKeys.length ? eventKeys : [''] })
     } else {
-      update({ eventKeys: undefined, eventKey: eventKey || '' })
+      // docs/55：单键无 AND 语义，切回单事件时清掉 eventWaitMode（默认 any）。
+      update({ eventKeys: undefined, eventKey: eventKey || '', eventWaitMode: undefined })
     }
   }
+  // docs/55：多事件命中方式，any=OR 首决（默认），all=AND 全命中（需 ≥2 键，L1 兜底）。
+  const eventWaitMode = config.eventWaitMode === 'all' ? 'all' : 'any'
+  const allModeTooFewKeys = eventWaitMode === 'all' && eventKeys.length < 2
 
   const timeout = config.timeoutSeconds
   const timeoutInvalid =
@@ -250,7 +254,31 @@ export function WaitConfig({ config, update }: Props) {
                 每个标识 1-{MAX_EVENT_KEY_LENGTH} 字符，静态部分仅允许字母、数字及 :_-
               </Typography.Text>
             </label>
-          ) : (
+          ) : null}
+          {multiEvent && (
+            <label className="property-field">
+              <Typography.Text type="secondary">命中方式（docs/55）</Typography.Text>
+              <Radio.Group
+                value={eventWaitMode}
+                onChange={(event) =>
+                  update({
+                    eventWaitMode: event.target.value === 'all' ? 'all' : undefined,
+                  })
+                }
+              >
+                <Radio value="any">任一命中即继续（OR，首达者胜出）</Radio>
+                <Radio value="all" disabled={eventKeys.length < 2}>
+                  全部命中才继续（AND，需至少 2 个事件）
+                </Radio>
+              </Radio.Group>
+              {allModeTooFewKeys && (
+                <Typography.Text type="danger">
+                  全部命中（AND）需配置至少 2 个事件
+                </Typography.Text>
+              )}
+            </label>
+          )}
+          {multiEvent ? null : (
             <label className="property-field">
               <Typography.Text type="secondary">事件标识</Typography.Text>
               <Input

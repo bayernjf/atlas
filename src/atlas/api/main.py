@@ -188,6 +188,7 @@ def _resume_from_frame(engine, frame: dict) -> None:
     elif frame["kind"] == "wait" and (frame.get("wait") or {}).get("waitType") == "event":
         wait_payload = frame["wait"]
         # docs/54：多键竞速帧存 eventKeys；单键帧只有 eventKey（首键）。
+        # docs/55：帧存 eventWaitMode（all=AND 竞速；缺省 any 兼容旧帧）。
         _frame_keys = wait_payload.get("eventKeys")
         services.event_wait_broker.restore(
             token=token,
@@ -198,6 +199,9 @@ def _resume_from_frame(engine, frame: dict) -> None:
             node_id=frame["node_id"],
             graph_id=frame["resume_state"].get("graph_id", ""),
             timeout_seconds=remaining_seconds(frame.get("deadline_at")),
+            mode=wait_payload.get("eventWaitMode")
+            if wait_payload.get("eventWaitMode") in ("any", "all")
+            else "any",
         )
     threading.Thread(
         target=_resume_run, args=(engine, services, frame), daemon=True
@@ -1448,9 +1452,11 @@ def import_openapi(
             spec, envelopes=envelopes
         )
     except ImportStoreError as exc:
+        detail: dict[str, Any] = {"code": exc.code, "message": str(exc)}
+        if getattr(exc, "existing_spec_id", None):
+            detail["existingSpecId"] = exc.existing_spec_id
         raise HTTPException(
-            status_code=exc.status_code,
-            detail={"code": exc.code, "message": str(exc)},
+            status_code=exc.status_code, detail=detail
         ) from exc
     return imported.model_dump()
 
@@ -1482,6 +1488,27 @@ def delete_openapi_import(
     if not services_for(principal).openapi_imports.delete(spec_id):
         raise HTTPException(status_code=404, detail="导入规格不存在")
     return {"deleted": True}
+
+
+@app.post("/api/openapi/imports/{spec_id}/restore")
+def restore_openapi_import(
+    spec_id: str,
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, Any]:
+    """docs/56 §3.3：恢复软删规格；与另一未删同指纹规格冲突返 409。"""
+    ok, code, existing = services_for(principal).openapi_imports.restore(spec_id)
+    if ok:
+        return {"restored": True}
+    if code == "OPENAPI_DUPLICATE":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "OPENAPI_DUPLICATE",
+                "message": "恢复后与现有未删规格内容重复",
+                "existingSpecId": existing,
+            },
+        )
+    raise HTTPException(status_code=404, detail="导入规格不存在或未被删除")
 
 
 @app.put("/api/openapi/imports/{spec_id}/credentials")
@@ -2852,14 +2879,17 @@ def signal_wait_event(
     body: dict[str, Any] | None = None,
     principal: Principal = Depends(require("operate")),
 ) -> dict[str, Any]:
-    """按 eventKey 广播信号，释放同 key 全部等待；无 pending 返回 released=0。"""
+    """按 eventKey 广播信号，释放同 key 全部等待；无 pending 则入排队 ring（docs/55）。
+
+    返回 released=本次释放等待数、queued=是否因无消费者进入 per-key 排队。
+    """
     data = body or {}
     event_key = _parse_wait_event_key(data)
     payload = _parse_wait_payload(data)
     services = services_for(principal)
-    released = services.event_wait_broker.signal_key(event_key, payload)
+    result = services.event_wait_broker.signal_key(event_key, payload)
     _record_audit(services, principal, http_request, "wait.signal_event", 200)
-    return {"released": released}
+    return {"released": result["released"], "queued": result["queued"]}
 
 
 @app.post("/api/waits/{token}/signal")
@@ -3458,6 +3488,16 @@ def demo_messages(
 ) -> dict[str, Any]:
     """消息适配器演示查看（04 §4.8）：本租户进程内已记录消息，重启/reset 清空，无真实投递。"""
     return {"items": services_for(principal).message_service.list()}
+
+
+@app.get("/api/demo/deliveries")
+def demo_deliveries(
+    limit: int = 100,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """docs/56 §4.3：消息投递日志（每次 send 一条，含尝试次数/耗时/错误），倒序。"""
+    bounded = max(1, min(limit, 200))
+    return {"items": services_for(principal).message_service.list_deliveries(bounded)}
 
 
 # ---- M11 长期记忆（docs/26 §6 / docs/28 §5.1）：读 viewer+、手动新建/编辑 operate（source=manual）、删 admin；图内 remember 工具仍是运行时写入主路径 ----

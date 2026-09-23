@@ -740,6 +740,41 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
                     </>
                   )}
                 </Space>
+                <Space wrap style={{ marginTop: 12 }}>
+                  <span>{t('ruleForm.recoveryStreakLabel')}</span>
+                  <InputNumber
+                    min={1}
+                    max={20}
+                    value={rules.recovery_healthy_streak ?? 1}
+                    onChange={(value) =>
+                      value !== null && setRules({ ...rules, recovery_healthy_streak: value })
+                    }
+                  />
+                  <span>{t('ruleForm.recoveryStreakUnit')}</span>
+                </Space>
+                <Space wrap style={{ marginTop: 12 }}>
+                  <span>{t('ruleForm.cooldownLabel')}</span>
+                  <Switch
+                    checked={rules.recovery_cooldown_minutes != null}
+                    onChange={(enabled) =>
+                      setRules({ ...rules, recovery_cooldown_minutes: enabled ? 30 : null })
+                    }
+                  />
+                  {rules.recovery_cooldown_minutes != null && (
+                    <>
+                      <InputNumber
+                        min={1}
+                        max={10080}
+                        value={rules.recovery_cooldown_minutes}
+                        onChange={(value) =>
+                          value !== null &&
+                          setRules({ ...rules, recovery_cooldown_minutes: value })
+                        }
+                      />
+                      <span>{t('ruleForm.cooldownUnit')}</span>
+                    </>
+                  )}
+                </Space>
                 <Button type="primary" onClick={saveRules}>
                   {t('rules.save')}
                 </Button>

@@ -38,6 +38,13 @@ export const waitSchema: NodeConfigSchema = {
           maxItems: 8,
           items: { type: 'string', minLength: 1, maxLength: 128 },
         },
+        // docs/55：any=OR 首决（默认），all=AND 全命中（仅多键，L1 校验 ≥2）
+        eventWaitMode: {
+          type: 'string',
+          enum: ['any', 'all'],
+          default: 'any',
+          'x-widget': 'radio',
+        },
         timeoutMode: {
           type: 'string',
           enum: ['static', 'expression'],
@@ -64,7 +71,11 @@ export const waitSchema: NodeConfigSchema = {
       absoluteTime: { type: 'string' },
       eventKey: { type: 'string' },
       eventKeys: { type: 'array', items: { type: 'string' } },
+      eventWaitMode: { type: 'string' },
       matchedEventKey: { type: 'string' },
+      matchedEventKeys: { type: 'array', items: { type: 'string' } },
+      matchedPayloads: { type: 'object' },
+      receivedKeys: { type: 'array', items: { type: 'string' } },
       signaled: { type: 'boolean' },
       payload: { type: 'object' },
       waitedSeconds: { type: 'integer' },

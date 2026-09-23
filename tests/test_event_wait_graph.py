@@ -344,13 +344,14 @@ def test_event_wait_timeout_expression_used_for_broker():
     requested: list[int] = []
     orig_request = broker.request_any  # docs/54：单/多键统一走 request_any
 
-    def spy_request(*, event_keys, node_id, graph_id, timeout_seconds):
+    def spy_request(*, event_keys, node_id, graph_id, timeout_seconds, mode="any"):
         requested.append(timeout_seconds)
         return orig_request(
             event_keys=event_keys,
             node_id=node_id,
             graph_id=graph_id,
             timeout_seconds=timeout_seconds,
+            mode=mode,
         )
 
     broker.request_any = spy_request
@@ -401,13 +402,14 @@ def test_event_wait_static_default_uses_timeout_seconds():
     requested: list[int] = []
     orig_request = broker.request_any  # docs/54：单/多键统一走 request_any
 
-    def spy_request(*, event_keys, node_id, graph_id, timeout_seconds):
+    def spy_request(*, event_keys, node_id, graph_id, timeout_seconds, mode="any"):
         requested.append(timeout_seconds)
         return orig_request(
             event_keys=event_keys,
             node_id=node_id,
             graph_id=graph_id,
             timeout_seconds=timeout_seconds,
+            mode=mode,
         )
 
     broker.request_any = spy_request
@@ -506,6 +508,132 @@ def test_U526_fanin_frame_and_pending_carry_event_keys():
         assert wait["eventKeys"] == _FANIN_KEYS
         pending = broker.list_pending()[0]
         assert pending["eventKeys"] == _FANIN_KEYS
+    finally:
+        broker.signal_token(frame["resume_token"], {})
+        worker.join(timeout=2)
+
+
+# --- docs/55 AND 竞速（eventWaitMode=all）与停摆期信号排队（图级语义）---
+_ALL_KEYS = ["payment_ok", "stock_ok"]
+
+
+def _all_wait_graph(keys, mode="all", timeout_seconds=30, on_timeout="continue"):
+    return parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "wait-1", "type": "wait", "name": "AND",
+                 "config": {"waitType": "event", "eventKeys": list(keys),
+                            "eventWaitMode": mode, "timeoutSeconds": timeout_seconds,
+                            "onTimeout": on_timeout}},
+                {"id": "tool-after", "type": "tool_call", "name": "后继",
+                 "config": {"tool": "op-after"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "wait-1"},
+                {"id": "e2", "source": "wait-1", "target": "tool-after"},
+            ],
+        }
+    )
+
+
+def test_U550_all_mode_waits_for_every_key_then_releases():
+    broker = EventWaitBroker()
+
+    def on_register(event):
+        if event.get("type") == "node_start" and event.get("wait"):
+            threading.Timer(0.05, lambda: broker.signal_key("payment_ok", {"pay": 1})).start()
+            threading.Timer(0.12, lambda: broker.signal_key("stock_ok", {"stock": 1})).start()
+
+    result = run_graph(
+        _all_wait_graph(_ALL_KEYS), event_wait_broker=broker, emit=on_register
+    )
+    out = result["outputs"]["wait-1"]
+    assert out["signaled"] is True
+    assert out["eventWaitMode"] == "all"
+    assert out["matchedEventKey"] == "stock_ok"  # 末集齐键
+    assert out["matchedEventKeys"] == ["payment_ok", "stock_ok"]
+    assert out["matchedPayloads"]["payment_ok"]["pay"] == 1
+    assert out["matchedPayloads"]["stock_ok"]["stock"] == 1
+    assert "tool-after" in result["outputs"]
+    assert broker.list_pending() == []
+
+
+def test_U551_all_mode_partial_hit_times_out_with_received_keys():
+    broker = EventWaitBroker()
+
+    def on_register(event):
+        if event.get("type") == "node_start" and event.get("wait"):
+            threading.Timer(0.05, lambda: broker.signal_key("payment_ok", {})).start()
+            # stock_ok 永不到 → 1s 超时 continue
+
+    result = run_graph(
+        _all_wait_graph(_ALL_KEYS, timeout_seconds=1),
+        event_wait_broker=broker, emit=on_register,
+    )
+    out = result["outputs"]["wait-1"]
+    assert out["signaled"] is False
+    assert out["resolvedBy"] == "timeout"
+    assert out["eventWaitMode"] == "all"
+    assert out["receivedKeys"] == ["payment_ok"]
+    assert "tool-after" in result["outputs"]  # continue 仍到后继
+
+
+def test_U552_queued_early_signal_consumed_on_registration():
+    broker = EventWaitBroker()
+    # 图尚未登记等待时信号先到 → 入排队 ring
+    assert broker.signal_key("order_paid", {"early": True}) == {
+        "released": 0, "queued": True
+    }
+    graph = parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "wait-1", "type": "wait", "name": "等",
+                 "config": {"waitType": "event", "eventKey": "order_paid",
+                            "timeoutSeconds": 2, "onTimeout": "continue"}},
+                {"id": "tool-after", "type": "tool_call", "name": "后继",
+                 "config": {"tool": "op-after"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "wait-1"},
+                {"id": "e2", "source": "wait-1", "target": "tool-after"},
+            ],
+        }
+    )
+    result = run_graph(graph, event_wait_broker=broker)
+    out = result["outputs"]["wait-1"]
+    assert out["signaled"] is True  # 登记即消费排队信号，无需等到超时
+    assert out["matchedEventKey"] == "order_paid"
+    assert out["payload"]["early"] is True
+
+
+def test_U553_all_mode_frame_carries_wait_mode():
+    broker = EventWaitBroker()
+    frames: list[dict] = []
+
+    def run_orig():
+        run_graph(
+            _all_wait_graph(_ALL_KEYS), event_wait_broker=broker,
+            frame_sink=frames.append,
+        )
+
+    worker = threading.Thread(target=run_orig)
+    worker.start()
+    frame = _wait_for_event_frame(frames)
+    try:
+        wait = frame["wait"]
+        assert wait["eventWaitMode"] == "all"
+        assert wait["eventKeys"] == _ALL_KEYS
+        pending = broker.list_pending()[0]
+        assert pending["eventWaitMode"] == "all"
+        assert pending["receivedKeys"] == []
     finally:
         broker.signal_token(frame["resume_token"], {})
         worker.join(timeout=2)

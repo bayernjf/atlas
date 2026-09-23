@@ -26,6 +26,7 @@ from atlas.message.webhook import get_webhook_sender
 from atlas.openapi.pg_store import PgImportStore
 from atlas.openapi.store import ImportStore
 from atlas.recording import ReportStore, ShadowStore
+from atlas.recording.pg_reports import PgReportStore
 from atlas.routing import RoutingStore
 from atlas.storage.base import (
     ApprovalRepository,
@@ -69,7 +70,7 @@ class TenantServices:
     run_store: RunRepository
     task_store: TaskStore
     routing_store: RoutingStore
-    report_store: ReportStore  # D26 报告 v1：批量回放报告 ring（进程内，memory/PG 档均挂内存实例）
+    report_store: ReportStore | PgReportStore  # docs/56：批量回放报告（内存 ring / PG release_reports）
     shadow_store: ShadowStore  # D26 影子模式：旁路运行记录 ring（进程内，两档均挂内存实例，docs/33 §3）
     memory_store: MemoryRepository  # M11 长期记忆 fact/preference（批 3 PG 档换 PgMemoryStore）
     audit_store: AuditRepository  # T6 写操作审计（docs/35 §6；ring/PG 两档，reset 不清）
@@ -130,7 +131,7 @@ class TenantRegistry:
                 run_store=backend.run_store(tenant_id),
                 task_store=TaskStore(),
                 routing_store=RoutingStore(),
-                report_store=ReportStore(),
+                report_store=PgReportStore(backend.engine, tenant_id),
                 shadow_store=ShadowStore(),
                 memory_store=backend.memory_store(tenant_id),
                 audit_store=backend.audit_store(tenant_id),

@@ -35,7 +35,7 @@
 | `feedback_item` | `src/atlas/api/main.py` FeedbackRequest（Phase 1；进程内反馈，响应含 id/created_at） | —（工程推导契约） |
 | `http_request_params` | 04 / 四、工具/适配器组件 4.6 API 适配器（通用 HTTP）v1 契约（权威 blockquote）+ `src/atlas/httpapi/{service,adapter}.py` | ### 4.6 API 适配器（通用 HTTP）v1 契约 |
 | `db_sql_params` | 04 / 四、工具/适配器组件 4.7 数据适配器（通用 SQL）v1 契约（权威 blockquote）+ `src/atlas/database/{service,adapter}.py`（query/execute 两能力） | ### 4.7 数据适配器（通用 SQL）v1 契约 |
-| `message_send_params` | 04 / 四、工具/适配器组件 4.8 消息适配器（进程内消息服务）v1 契约（权威 blockquote；IM 群机器人 dingtalk/wecom/feishu + secret 追加段 docs/51，2026-09-23 落码收口 d4823d5）+ `src/atlas/message/{service,adapter}.py`（单能力 message/send） | ### 4.8 消息适配器（进程内消息服务）v1 契约 |
+| `message_send_params` | 04 / 四、工具/适配器组件 4.8 消息适配器（进程内消息服务）v1 契约（权威 blockquote；IM 群机器人 docs/51；**投递日志/退避 docs/56，2026-09-24 落码 1237a2e**）+ `src/atlas/message/{service,adapter}.py`（单能力 message/send；service 另持 DeliveryRecord ring 与 `_transmit` 重试） | ### 4.8 消息适配器（进程内消息服务）v1 契约 |
 | `alert_notify_channel` | 04 §5.20 监控告警外部通知 v1 契约（权威 blockquote；2026-09-23 落码收口 70b4889/07baa89/6a7d846/b352638，docs/52）+ `src/atlas/monitoring/notify.py` | ### 5.20 监控告警外部通知 |
 | `secret_envelope` | 安全准入（docs/32，**2026-09-21 已落码**）：`src/atlas/security/secrets.py` | 凭证信封 `enc$v1`/SecretProvider 协议/`secret://` 运行时注入/全链路脱敏；错误码 SECRET_UNAVAILABLE/SECRET_DECRYPT_ERROR（ADR T26=(a)，cryptography AES-256-GCM） |
 | `egress_guard` | 安全准入（docs/32，**2026-09-21 已落码**）：`src/atlas/security/egress.py`，接 04 §4.6 HTTP 适配器 | SSRF 防护：scheme http/https、私网/环回/链路本地/云元数据/CGNAT/保留地址恒拦、整数/进制 IP 绕过、可注入 resolver、白名单 fail-closed、不读 X-Forwarded-For；错误码 EGRESS_DENIED/EGRESS_INVALID_URL |
@@ -51,7 +51,7 @@
 | `rollout_config` | **M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；04 / 五、逻辑组件 5.16 灰度发布与门控回滚 v1 契约（权威 blockquote）+ `src/atlas/routing/{models,router,store,gate}.py`（rollout 配置/三段分桶/状态机/门控；ADR T22）；形状来源 docs/19 §2.3.3 提案转权威 | ### 5.16 灰度发布与门控回滚 |
 | `route_decision` | **M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；同上 04 §5.16 + `routing/router.py` resolve_version 纯函数（入站 event→发布版本/分桶段，pin-to-version） | ### 5.16 灰度发布与门控回滚 |
 | `release_gate` | **M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；04 §5.11 末发布前批量门禁段 + `src/atlas/recording/gate.py`（GateReport，D26 部分取回；D26 报告 v1 起响应纯超集加 `id` 并沉淀，见下行） | ### 5.11 操作录制与回放 |
-| `release_report` | **D26 报告 v1 已落码收口（2026-09-18，U60 转正式）；2026-09-19 收尾批补 CSV/JSON 导出（`8a37b4e`，`.../export?format=csv|json`）**；04 §5.11 末用例集报告段 + `src/atlas/recording/reports.py`（ReleaseReport 沉淀/按图历史/通过率趋势/导出，ring 100/租户、reset 清空、不 PG 化；docs/28 批 1④（2026-09-20，89e21fc）增跨图聚合 GET /api/release-reports?limit= 看板） | ### 5.11 操作录制与回放 |
+| `release_report` | **D26 报告 v1 已落码收口（2026-09-18，U60 转正式）；2026-09-19 收尾批补 CSV/JSON 导出（`8a37b4e`）；docs/56（2026-09-24，39c58bb，迁移 022）报告 PG 化——表 `release_reports` + `recording/pg_reports.py` PgReportStore（内存档仍 reports.py ReportStore ring 100，PG 档不淘汰、reset 删本租户报告留用例），U580**；04 §5.11 末用例集报告段 + `src/atlas/recording/{reports,pg_reports}.py`（沉淀/按图历史/跨图看板/导出；docs/28 批 1④ 增 GET /api/release-reports） | ### 5.11 操作录制与回放 |
 | `business_metrics` | **M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；04 §5.13 末业务指标段 + `src/atlas/monitoring/business.py`（extract_business 业务结果三率，金融灰度门控信号源） | ### 5.13 基础监控告警 |
 | `connection` | **docs/35 T4 已落码收口 2026-09-22（`a57164d`，generic OAuth2 连接管理 v1，D22 子集不解除缓做）**；权威 docs/35 §4 + `src/atlas/connections/{models,oauth,store,service}.py`＋`storage/pg.py` PgConnectionStore（表 `oauth_connections`，迁移 014，20 列，reset 不清）。字段：id `conn-N`(per-tenant 序号)/tenant_id/provider(自由字符串非空)/display_name/auth_url/token_url(https 创建过 EgressGuard 真实 DNS)/client_id(明文公开)/client_secret_envelope/scopes:list/redirect_uri(空→ATLAS_OAUTH_REDIRECT_URI→默认 /connections/callback)/status(draft·connected·error)/access_token_envelope/refresh_token_envelope/token_type/expires_at(UTC iso 可空)/last_error/created_by/created_at/updated_at。**所有 secret 经 SecretProvider AES-GCM 信封，`public_view()` 驼峰投影仅出 hasClientSecret、绝无信封/明文**；9 端点+无鉴权回调页见 12 文档。**2026-09-22 起被渠道绑定引用（docs/38）：channel_binding 按租户以 `connection_id` 唯一指向本 connection，绑定属客户配置、reset 不清除；connection 删除后绑定不级联删除、置 status=error** | docs/35 §4（工程契约） |
 | `channel_binding` | **docs/38 立项 2026-09-22（真实渠道适配批，ADR T28，docs-only 契约先行）**；权威 docs/38 §3 + `src/atlas/channels/{base,shopify,registry,memory,pg,adapter}.py`＋`storage/pg.py` PgChannelStore（表 `channel_bindings`，迁移 015，reset 不清）。绑定按租户引用 T4 connection（`connection_id` 同租户唯一），连接被删不级联（置 status=error）；字段概览见本文末 `channel_binding` 段；5 端点见 12 文档。**2026-09-23 docs/39（ADR T29）起新增列 `webhook_subscriptions`（迁移 016，**JSONB** NOT NULL DEFAULT `'[]'::jsonb`，JSON：`WebhookSubscription[]`＝`{topic, graph_id, enabled}`，topic ∈ orders/create·orders/updated·refunds/create，topic+graph_id 同绑定唯一、≤10）；reset 不清** | docs/38 §3（形状权威）；工具输入/输出见 docs/38 §1B，订单投影见 §1A；**webhook 订阅见 docs/39 §1B**
@@ -130,8 +130,11 @@ type: object               # 节点类型专属配置；condition 节点 config 
                            #   duration static 可选 jitterSeconds: 0-300 整数（docs/54；actual=planned+randint(0,j)，仅 static/resume 不二次抖动）
                            #   event:    {waitType:"event", eventKey(≤128,静态白名单[A-Za-z0-9:_-],支持{{}}插值)
                            #              | eventKeys: 1-8 字符串数组(逐元素同 eventKey 规则、保序去重), 二者互斥二选一,
-                           #              timeoutSeconds: 1-86400 整数(或 timeoutMode=expression+timeoutExpression), onTimeout: continue|fail}
+                           #              timeoutSeconds: 1-86400 整数(或 timeoutMode=expression+timeoutExpression), onTimeout: continue|fail,
+                           #              eventWaitMode?: "any"|"all"（docs/55，默认 any=OR 竞速首决；all=AND 竞速，eventKeys 需 ≥2、全部命中才放行，loader/dsl/SSE/中断帧透传，已命中集合不跨重启）}
                            #   event 产出 {eventKey?,eventKeys?,matchedEventKey(命中键,单键也带),signaled,payload,waitedSeconds,resolvedBy:signal|timeout|input,token}
+                           #              any 命中 payload 同 docs/54；all 放行另含 matchedEventKeys:[...](保序)、matchedPayloads:{键:payload}；all 超时另含 receivedKeys:[已命中子集]（docs/55）
+                           #   信号直投/广播响应由 int 改 {released:int, queued:bool}（docs/55：无有效 pending 的信号进 per-key 排队 ring，cap 4/键、TTL 3600s、monotonic 惰性过期，登记时消费；仅同进程生命周期）
                            #   duration static 首次进入且 jitter>0 产出另含 {plannedDurationSeconds,jitterSeconds}
                            #   唯一权威见 04 §5.5「wait 节点 config 契约」（含事件等待/动态时长/到点时刻/docs/54 上限放开·jitter·多事件竞速 v1 追加段）
                            # human_approval 节点 config 形状：
@@ -348,6 +351,8 @@ idempotency_key: string     # 幂等键
 ```
 
 > **租户注记（2026-09-16，§5.14）**：v1 的进程内消息（`message/send` 与 `/api/messages`）按租户分区（每租户独立 MessageService）；vision 协议的 agent_id/广播字段为愿景，v1 未实现 agent 身份。
+>
+> **投递记录与退避（docs/56，2026-09-24，1237a2e，U594–U603，部分取回 D24）**：MessageService 每次 send 另落一条 `DeliveryRecord`（独立 deque maxlen 200/租户，与演示用 `_messages` 分离）：`{id, channel, to, subject, sentAt, status, attempts, elapsedMs, errorCode?, errorMessage?}`，status∈`in_process`（demo 无 sender）/`delivered:smtp|delivered:webhook|delivered:im`/`failed`，subject 截断 100、errorMessage 截断 300；失败也记 failed 但仍抛原 MessageSendError 且**不写** `_messages`。内部 `_transmit(transmit_fn)` 仅对 `WEBHOOK_SEND_FAILED`/`IM_SEND_FAILED` 网络类按 `retry_delays=(0.5,1.5)` 退避重试（共 3 次尝试，sleep 可注入）；`EGRESS_DENIED`/`EGRESS_INVALID_URL`、参数类 MISSING/INVALID、`SMTP_SEND_FAILED` 立即失败不重试（避免重复邮件）。只读 `GET /api/demo/deliveries?limit=`（read，clamp 1-200，倒序，reset 清空）；AlertNotifier 经同一 MessageService 透明获得重试。投递日志 PG 化/跨实例聚合、短信、入站通用消费、模板系统仍缓做（14 D24，不解除）。
 
 ### `deployment_config` — 字段概览（完整定义见 05-组件设计-运营体五项核心.md #440，上下文章节：## 4.3 部署配置 Schema（示例））
 
@@ -785,6 +790,8 @@ node_failed:          {enabled: boolean}
 consecutive_failures: {enabled: boolean, threshold: 1..200 整数}
 failure_rate:         {enabled: boolean, window: 1..200, min_samples: 1..200, rate: 0..1}
 escalation_ack_minutes: integer?  # docs/33 §5 ⑩（2026-09-21，00bba8c）：open warning 超此分钟未确认惰性升 critical；缺省/null=不升级，显式 0 或非 1..10080 整数/非 bool → PUT 422；进程内 v1 不 PG 化（PG 读回默认不升级）
+recovery_healthy_streak: integer = 1   # docs/55（2026-09-24，174c362，U560–U573）flapping 抑制：连续 N 次健康运行才自动 resolve 该图 open 告警（非 rollout_gate）；1..20，缺省 1＝旧行为（一次健康即恢复），非法回落/422
+recovery_cooldown_minutes: integer?    # docs/55 同上：自动恢复后冷却窗（1..10080 分钟），窗内同 (rule_id,graph_id) 再触发只建/并站内告警、抑制 new 外部通知（merged/escalated/resolved/recovery 通知不抑制）；缺省 null=不抑制
 custom:                      # docs/28 §4.2 ⑨（D28 批3，2026-09-20，11b1ba7）：自定义规则，纯超集缺省 []，旧配置/PG JSONB 不 422
   - cid: string             # 客户端 crypto.randomUUID()，strip 非空、同配置唯一、≤64
     name: string            # strip 非空、≤50
@@ -799,7 +806,7 @@ id: string                 # alt-{自增}
 rule_id: string             # 内置五条字面量 或 自定义 "custom:{cid}"（docs/28 §4.2 起放宽为 str；PG monitoring_alerts.rule_id 本为 TEXT，无 DDL）
 graph_id: string
 severity: "critical" | "warning"
-rule_name: string?          # docs/28 §4.2：自定义规则名（内置规则缺省；进程内档落库，PG 档 v1 表无此列读回 null，前端回退显示 rule_id）
+rule_name: string?          # docs/28 §4.2：自定义规则名（内置规则缺省）；docs/55（迁移 021）起 PG monitoring_alerts 已补此列，两档均落库读回
 message: string
 first_seen: string
 last_seen: string
@@ -812,8 +819,8 @@ action:                    # M9 纯超集，仅 rollout_gate 告警携带；其�
   to_version: int          # 接全量的 stable
   reason: string           # 越阈指标/阈值/观察窗
   actor: "auto" | "manual"
-escalated_at: string?      # docs/33 §5 ⑩（00bba8c）：open warning 超 escalation_ack_minutes 未确认的惰性升级时刻（list/get 读时按 first_seen 评估、幂等，升级后按 critical 视口；critical/ack/resolved/关配置/已升级不重复升）；进程内、PG 读回 null 后重评
-assignee: string?         # docs/33 §5 ⑩：告警「新建」时指派的当前值班人（合并/静默不指派）；进程内 OpsStore map，PG 读回 null
+escalated_at: string?      # docs/33 §5 ⑩（00bba8c）：open warning 超 escalation_ack_minutes 未确认的惰性升级时刻（list/get 读时按 first_seen 评估、幂等，升级后按 critical 视口；critical/ack/resolved/关配置/已升级不重复升）；docs/55（迁移 021）起 PG 落库并回写，内存档仍读时评估
+assignee: string?         # docs/33 §5 ⑩：告警「新建」时指派的当前值班人（合并/静默不指派）；docs/55（迁移 021）起 PG monitoring_alerts 已补此列落库（此前仅进程内 OpsStore map、PG 读回 null）
 ```
 > 进程内 ring buffer（200 条，满则丢最旧）+ 单锁同步评估（写运行→按图 streak→四规则），重启即失；`/api/demo/reset` 清空运行/告警并恢复默认规则（持久化随 11 S1/D11/D28）。未知告警 404、重复状态迁移 409。权威契约见 04 §5.13，内部接口见 12 §3.9，REST 见 12 §5。
 >
@@ -876,7 +883,7 @@ updated_at: string?
 updated_by: string?
 ```
 
-> 静默/值班/assignee/escalated_at 全部进程内（内存与 PG 两档共用 OpsStore，挂 per-tenant 常驻 store、单锁），不落库、重启清空；PG 档告警在库、assignee 在 OpsStore `_assignees` map、escalated_at 读回由 `apply_escalation` 按 first_seen 重新幂等评估。权限：GET 为 read，POST/PUT/DELETE 为 administer（viewer 写 403）；删不存在静默 404。权威见 docs/33 §5、04 §5.13 落码块、06 §6.11、REST 见 12。
+> 静默/值班排班仍进程内（OpsStore，不落库、重启清空）。**docs/55（2026-09-24，迁移 021）起 assignee/escalated_at/rule_name 已在 PG monitoring_alerts 落库并读回/回写**（PG lifecycle 与内存档对齐：record_run recovery gating、merge/escalate/resolve/recovery 通知、惰性升级回写）；迁移 021 前这三列 PG 读回 null。权限：GET 为 read，POST/PUT/DELETE 为 administer（viewer 写 403）；删不存在静默 404。权威见 docs/33 §5、04 §5.13 落码块、06 §6.11、REST 见 12。
 
 ### `identity_session` — 字段概览（Phase 2 能力项，2026-09-16；`/api/auth/*` 与 `Authorization: Bearer`）
 
@@ -1084,7 +1091,7 @@ created_at: string              # ISO UTC
 # docs/28 §2.4（2026-09-20，89e21fc）跨图看板：GET /api/release-reports?limit=（read）→ {items:[摘要…]}
 #   跨全部图倒序（默认 100、clamp 1-200、非整数 422），摘要去 cases、含 graph_id；ReportStore.list_all_summary（跨租户 ring 倒序切片），仍进程内、不进 Repository/不 PG 化
 ```
-> 2026-09-19 D26 收尾批已落：报告导出 CSV/JSON（8a37b4e）、subgraph 快照内联（29bb3d9，见 `recording_case`）、定时 CI 回放（cea70f4，`.github/workflows/release-gate-cron.yml`，cron 仅 main 生效）。**docs/28 批 1（2026-09-20）进一步部分取回**：Mock 工具响应（仅单用例 replay、门禁不接，`c7bf138`）、用例编辑/参数化（PUT name/inputs＋replay inputs_override，`89e21fc`）、跨图聚合看板（GET /api/release-reports，`89e21fc`）、recordings 富字段 PG 持久化（`d1f455b`，迁移 008）。**仍缓做（不解除 D26）**：影子模式/线上旁路录制、子图快照多租户共享、报告 PG 化（ReportStore 仍 ring 100/租户进程内）、报告删除端点（ring 自然淘汰）、跨版本配置 diff。
+> 2026-09-19 D26 收尾批已落：报告导出 CSV/JSON（8a37b4e）、subgraph 快照内联（29bb3d9，见 `recording_case`）、定时 CI 回放（cea70f4，`.github/workflows/release-gate-cron.yml`，cron 仅 main 生效）。**docs/28 批 1（2026-09-20）进一步部分取回**：Mock 工具响应（仅单用例 replay、门禁不接，`c7bf138`）、用例编辑/参数化（PUT name/inputs＋replay inputs_override，`89e21fc`）、跨图聚合看板（GET /api/release-reports，`89e21fc`）、recordings 富字段 PG 持久化（`d1f455b`，迁移 008）。**docs/56（2026-09-24，39c58bb，迁移 022，U580）部分取回**：报告 PG 化已落——PG 档新表 `release_reports`（id/tenant_id/seq/graph_id/target/trigger/total/passed/failed/skipped/blocked/pass_rate/cases JSONB/created_at＋(tenant,graph,seq) 索引）＋`recording/pg_reports.py` PgReportStore（方法形状同内存 ReportStore、id rr-N 走 storage_id_seq、摘要不取 cases、get 租户+图隔离、PG 不淘汰、reset 删本租户报告而录制用例保留），registry PG 档装配、API 零改动；内存档仍 ring 100/租户。**仍缓做（不解除 D26）**：影子模式/线上旁路录制、子图快照多租户共享、报告长保留/趋势报表、报告删除端点、多租户共享。（跨版本配置 diff 已于 2026-09-23 B3 落码 graph/diff.py。）
 
 ### `business_metrics` — 字段概览（**M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；`src/atlas/monitoring/business.py` extract_business 纯函数；金融灰度门控信号源）
 
@@ -1155,7 +1162,7 @@ ChannelBinding = {
 
 ### `openapi_import` — 字段概览（OpenAPI 导入与工具自动生成批，docs/42；2026-09-23 落码收口；承载 `src/atlas/openapi/`）
 
-> **存储两档（docs/43，2026-09-23 落码收口）**：内存档 ImportStore 进程内 per-tenant；PG 档表 `openapi_imports`（迁移 018，(tenant_id,spec_id) PK、seq 走 storage_id_seq 排序、operations JSONB）＋PgImportStore（同形、双上限/错误码不变、reset 不清），形状不变，跨重启/多实例，发现按请求动态重建适配器、重启无需预热。
+> **存储两档（docs/43，2026-09-23 落码收口）**：内存档 ImportStore 进程内 per-tenant；PG 档表 `openapi_imports`（迁移 018，(tenant_id,spec_id) PK、seq 走 storage_id_seq 排序、operations JSONB）＋PgImportStore（同形、双上限/错误码不变、reset 不清），形状不变，跨重启/多实例，发现按请求动态重建适配器、重启无需预热。**docs/56（2026-09-24，6cb1803/4049ef7，迁移 023，U581–U593）部分取回 D22**：两档 ImportedSpec 纯超集增 `content_hash:str=""`、`deleted_at:str|None=None`（PG 迁移 023 ALTER 加列＋部分索引 `idx_openapi_imports_hash ON (tenant_id,content_hash) WHERE deleted_at IS NULL`；018 建表不回填，新装按序跑迁移）；`ParsedSpec.content_fingerprint()`＝sha256 over JSON sort_keys 的 `{title,base_url,security:{键:{kind,location,param,prefix}},operations:[{method,path,name,skipped}]}`（operations 保文档序不排序）；add 命中未删同指纹 409 OPENAPI_DUPLICATE（带 existingSpecId）、名额只数未删；DELETE 改软删（置 deleted_at、list/get/credentials 排除已删、软删行禁写凭证）；新增 restore(spec_id)->(ok,code,existing_id)，内存/PG 同形。
 
 ```text
 ImportedSpec = {
@@ -1187,4 +1194,4 @@ OperationDescriptor = {
   skip_reason: str | null
 }
 ```
-> preview/import 请求体：`{content?: str, url?: str, credentials?: {scheme: str}}`（content/url 恰好其一，同时给/都不给 422；credentials key 须为 preview 方案名，否则 422 OPENAPI_INVALID_CREDENTIAL）。preview 响应：`{title, base_url, operations:[OperationDescriptor], imported_count, skipped_count, security_schemes:[SecurityScheme]}`（不落库，含 skipped 行，永不接收密钥）；import 201 响应＝ImportedSpec（仅成功 operations）；全 skipped → 422。`GET /api/openapi/imports` 返 `{items:[ImportedSpec]}`，单项返 ImportedSpec；`PUT /api/openapi/imports/{spec_id}/credentials`（operate）body `{credentials:{name:value}}`：apiKey/bearer 的 value 为 string、basic（docs/46）为 `{username,password}`（信封明文存 JSON）；空串/空对象/null 删除信封；basic 缺字段或类型不符 422 OPENAPI_INVALID_CREDENTIAL；返 `{configured:[name]}`；DELETE 200 `{deleted:true}`。进程内 per-tenant、**reset 不清**；上限 5 specs/租户、200 operations/spec。适配器 id `openapi:{spec_id}`、type `api`，合并进 `/api/adapters`；执行时逐次解密注入，缺密钥不发请求→失败结果 OPENAPI_CREDENTIAL_MISSING。错误码（422 除注明）：OPENAPI_INVALID_DOCUMENT / OPENAPI_UNSUPPORTED_VERSION / OPENAPI_FETCH_FAILED / OPENAPI_NO_IMPORTABLE_OPERATION / OPENAPI_LIMIT_EXCEEDED / OPENAPI_INVALID_CREDENTIAL；运行期 OPENAPI_INVALID_PARAMETER、OPENAPI_CREDENTIAL_MISSING（失败 Observation）。形状权威 docs/42 §1–§3、docs/44、docs/46。
+> preview/import 请求体：`{content?: str, url?: str, credentials?: {scheme: str}}`（content/url 恰好其一，同时给/都不给 422；credentials key 须为 preview 方案名，否则 422 OPENAPI_INVALID_CREDENTIAL）。preview 响应：`{title, base_url, operations:[OperationDescriptor], imported_count, skipped_count, security_schemes:[SecurityScheme]}`（不落库，含 skipped 行，永不接收密钥）；import 201 响应＝ImportedSpec（仅成功 operations）；全 skipped → 422。`GET /api/openapi/imports` 返 `{items:[ImportedSpec]}`，单项返 ImportedSpec；`PUT /api/openapi/imports/{spec_id}/credentials`（operate）body `{credentials:{name:value}}`：apiKey/bearer 的 value 为 string、basic（docs/46）为 `{username,password}`（信封明文存 JSON）；空串/空对象/null 删除信封；basic 缺字段或类型不符 422 OPENAPI_INVALID_CREDENTIAL；返 `{configured:[name]}`；DELETE 200 `{deleted:true}`。进程内 per-tenant、**reset 不清**；上限 5 specs/租户、200 operations/spec。适配器 id `openapi:{spec_id}`、type `api`，合并进 `/api/adapters`；执行时逐次解密注入，缺密钥不发请求→失败结果 OPENAPI_CREDENTIAL_MISSING。错误码（422 除注明）：OPENAPI_INVALID_DOCUMENT / OPENAPI_UNSUPPORTED_VERSION / OPENAPI_FETCH_FAILED / OPENAPI_NO_IMPORTABLE_OPERATION / OPENAPI_LIMIT_EXCEEDED / OPENAPI_INVALID_CREDENTIAL；运行期 OPENAPI_INVALID_PARAMETER、OPENAPI_CREDENTIAL_MISSING（失败 Observation）。**docs/56（2026-09-24）增**：导入期 409 **OPENAPI_DUPLICATE**（同租户未删同内容指纹，响应体带 `existingSpecId`）；`DELETE .../imports/{spec_id}` 改软删除 200 `{deleted:true}`（释放名额、可重新导入同指纹）；新增 `POST /api/openapi/imports/{spec_id}/restore`（administer）恢复软删项，成功 `{restored:true}`、与未删同指纹冲突 409 OPENAPI_DUPLICATE 带 existingSpecId、不存在或本就未删 404。形状权威 docs/42 §1–§3、docs/44、docs/46、docs/56 §3。
