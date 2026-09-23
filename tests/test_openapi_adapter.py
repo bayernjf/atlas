@@ -73,6 +73,15 @@ def _parsed():
     return parse_document(json.dumps(SPEC))
 
 
+def _parsed_variant(index: int):
+    """同结构、不同 base_url → 指纹不同，可重复导入（docs/56 去重后旧用例适配）。"""
+    import copy
+
+    doc = copy.deepcopy(SPEC)
+    doc["servers"][0]["url"] = f"https://petstore{index}.example.com/v1"
+    return parse_document(json.dumps(doc))
+
+
 def make_client(handler, *, egress=None):
     return HttpApiClient(
         base_url="https://petstore.example.com/v1",
@@ -105,7 +114,7 @@ def test_add_assigns_sequential_ids_and_persists_fields():
         "list_pets", "create_pet", "get_pet_by_id"
     ]
     assert imported.created_at
-    assert store.add(_parsed()).spec_id == "openapi-2"
+    assert store.add(_parsed_variant(2)).spec_id == "openapi-2"
 
 
 def test_add_filters_out_skipped_operations():
@@ -134,10 +143,10 @@ def test_list_get_delete():
 
 def test_spec_limit_enforced():
     store = ImportStore()
-    for _ in range(MAX_SPECS_PER_TENANT):
-        store.add(_parsed())
+    for i in range(MAX_SPECS_PER_TENANT):
+        store.add(_parsed_variant(i))
     with pytest.raises(ImportStoreError) as exc:
-        store.add(_parsed())
+        store.add(_parsed_variant(99))
     assert exc.value.code == "OPENAPI_LIMIT_EXCEEDED"
     assert exc.value.status_code == 422
 
