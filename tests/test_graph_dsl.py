@@ -719,6 +719,11 @@ def test_parse_valid_event_wait(config):
          "durationExpression": "{{global.waitSecs}}"},
         {"waitType": "duration", "durationMode": "dynamic",
          "durationExpression": "{{global.slaHours}} * 3600", "durationSeconds": 5},
+        {"waitType": "duration", "durationMode": "absolute",
+         "absoluteTime": "2026-09-23T18:00:00+08:00"},
+        {"waitType": "duration", "durationMode": "absolute",
+         "absoluteTime": "  2026-09-23T10:00:00Z  ",
+         "durationSeconds": 5, "durationExpression": "{{global.x}}"},
     ],
 )
 def test_parse_valid_dynamic_wait(config):
@@ -731,7 +736,7 @@ def test_parse_valid_dynamic_wait(config):
     "config, expected",
     [
         ({"waitType": "duration", "durationMode": "soon", "durationSeconds": 2},
-         "时长模式（durationMode）必须是 static 或 dynamic"),
+         "时长模式（durationMode）必须是 static、dynamic 或 absolute"),
         ({"waitType": "duration", "durationMode": "dynamic", "durationExpression": ""},
          "动态时长表达式（durationExpression）为必填"),
         ({"waitType": "duration", "durationMode": "dynamic"},
@@ -739,6 +744,13 @@ def test_parse_valid_dynamic_wait(config):
         ({"waitType": "duration", "durationMode": "dynamic",
           "durationExpression": "x" * 201},
          "动态时长表达式长度不能超过 200 字符"),
+        ({"waitType": "duration", "durationMode": "absolute"},
+         "到点时刻（absoluteTime）为必填"),
+        ({"waitType": "duration", "durationMode": "absolute", "absoluteTime": "   "},
+         "到点时刻（absoluteTime）为必填"),
+        ({"waitType": "duration", "durationMode": "absolute",
+          "absoluteTime": "x" * 65},
+         "到点时刻长度不能超过 64 字符"),
     ],
 )
 def test_reject_dynamic_wait_bad_config(config, expected):

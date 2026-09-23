@@ -7,6 +7,8 @@ import json
 import httpx
 import pytest
 
+from datetime import datetime, timezone
+
 from atlas.graph.dsl import GraphDSL, GraphValidationError, NodeDSL, parse_graph
 from atlas.graph.loader import (
     _execute_tool,
@@ -629,6 +631,104 @@ def test_wait_dynamic_expression_invalid_fails_without_sleep(
     with pytest.raises(WaitNodeFailure) as excinfo:
         run_graph(graph, inputs=inputs)
     assert excinfo.value.code == "WAIT_DURATION_INVALID"
+    assert slept == []
+
+
+FROZEN_NOW = datetime(2026, 9, 23, 10, 0, 0, tzinfo=timezone.utc)
+
+
+def _absolute_wait_graph(absolute_time: str):
+    return parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "wait-1", "type": "wait", "name": "到点等待",
+                 "config": {"waitType": "duration", "durationMode": "absolute",
+                            "absoluteTime": absolute_time,
+                            "durationSeconds": 5, "durationExpression": "1 + 1"}},
+                {"id": "tool-after", "type": "tool_call", "name": "后继",
+                 "config": {"tool": "op-after"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "wait-1"},
+                {"id": "e2", "source": "wait-1", "target": "tool-after"},
+            ],
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "absolute_time, expected_seconds, expected_iso",
+    [
+        ("2026-09-23T18:00:02+08:00", 2, "2026-09-23T10:00:02+00:00"),
+        ("2026-09-23T10:00:03", 3, "2026-09-23T10:00:03+00:00"),
+        ("2026-09-23T10:00:04Z", 4, "2026-09-23T10:00:04+00:00"),
+        (str(int(FROZEN_NOW.timestamp()) + 5), 5, "2026-09-23T10:00:05+00:00"),
+    ],
+)
+def test_wait_absolute_time_sleeps_until_target(
+    monkeypatch, absolute_time, expected_seconds, expected_iso
+):
+    slept: list = []
+    monkeypatch.setattr("atlas.graph.loader.time.sleep", lambda seconds: slept.append(seconds))
+
+    result = run_graph(
+        _absolute_wait_graph(absolute_time), now_override=FROZEN_NOW
+    )
+    assert result["status"] == "completed"
+    assert slept == [expected_seconds]
+    assert result["outputs"]["wait-1"] == {
+        "mode": "wait",
+        "waitType": "duration",
+        "durationSeconds": expected_seconds,
+        "durationMode": "absolute",
+        "absoluteTime": expected_iso,
+    }
+
+
+def test_wait_absolute_time_interpolates_variable(monkeypatch):
+    slept: list = []
+    monkeypatch.setattr("atlas.graph.loader.time.sleep", lambda seconds: slept.append(seconds))
+
+    result = run_graph(
+        _absolute_wait_graph("{{global.targetAt}}"),
+        inputs={"targetAt": "2026-09-23T10:00:06+00:00"},
+        now_override=FROZEN_NOW,
+    )
+    assert result["status"] == "completed"
+    assert slept == [6]
+    assert result["outputs"]["wait-1"]["absoluteTime"] == "2026-09-23T10:00:06+00:00"
+
+
+@pytest.mark.parametrize(
+    "absolute_time, inputs",
+    [
+        ("{{global.missing}}", {}),
+        ("not-a-time", {}),
+        ("2026-13-99T99:99:99", {}),
+        ("99999999999999999999", {}),
+        ("2026-09-23T10:00:00+00:00", {}),
+        ("2026-09-23T10:10:01+00:00", {}),
+        (str(int(FROZEN_NOW.timestamp()) - 1), {}),
+        (str(int(FROZEN_NOW.timestamp()) + 601), {}),
+    ],
+)
+def test_wait_absolute_time_invalid_fails_without_sleep(
+    monkeypatch, absolute_time, inputs
+):
+    slept: list = []
+    monkeypatch.setattr("atlas.graph.loader.time.sleep", lambda seconds: slept.append(seconds))
+
+    with pytest.raises(WaitNodeFailure) as excinfo:
+        run_graph(
+            _absolute_wait_graph(absolute_time),
+            inputs=inputs,
+            now_override=FROZEN_NOW,
+        )
+    assert excinfo.value.code == "WAIT_ABSOLUTE_TIME_INVALID"
     assert slept == []
 
 

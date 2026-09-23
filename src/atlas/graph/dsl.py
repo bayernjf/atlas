@@ -44,6 +44,7 @@ MIN_EVENT_WAIT_SECONDS = 1
 MAX_EVENT_WAIT_SECONDS = 3600
 MAX_EVENT_KEY_LENGTH = 128
 MAX_DURATION_EXPRESSION_LENGTH = 200
+MAX_ABSOLUTE_TIME_LENGTH = 64
 WAIT_TIMEOUT_POLICIES = ("continue", "fail")
 MAX_SUBGRAPH_DEPTH = 3
 MIN_APPROVAL_TIMEOUT = 10
@@ -739,9 +740,9 @@ def _validate_wait_config(
     wait_type = config.get("waitType")
     if wait_type == "duration":
         duration_mode = config.get("durationMode", "static")
-        if duration_mode not in ("static", "dynamic"):
+        if duration_mode not in ("static", "dynamic", "absolute"):
             add(
-                f"{prefix} 时长模式（durationMode）必须是 static 或 dynamic",
+                f"{prefix} 时长模式（durationMode）必须是 static、dynamic 或 absolute",
                 "/durationMode",
             )
         elif duration_mode == "dynamic":
@@ -756,6 +757,19 @@ def _validate_wait_config(
                     f"{prefix} 动态时长表达式长度不能超过 "
                     f"{MAX_DURATION_EXPRESSION_LENGTH} 字符（当前 {len(expression)}）",
                     "/durationExpression",
+                )
+        elif duration_mode == "absolute":
+            absolute_time = config.get("absoluteTime")
+            if not isinstance(absolute_time, str) or not absolute_time.strip():
+                add(
+                    f"{prefix} 到点时刻（absoluteTime）为必填",
+                    "/absoluteTime",
+                )
+            elif len(absolute_time.strip()) > MAX_ABSOLUTE_TIME_LENGTH:
+                add(
+                    f"{prefix} 到点时刻长度不能超过 "
+                    f"{MAX_ABSOLUTE_TIME_LENGTH} 字符（当前 {len(absolute_time.strip())}）",
+                    "/absoluteTime",
                 )
         else:
             seconds = config.get("durationSeconds")

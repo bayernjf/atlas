@@ -20,6 +20,7 @@ import json
 import logging
 import math
 import operator
+import re
 import time
 import uuid
 from contextlib import nullcontext
@@ -92,6 +93,47 @@ class WaitNodeFailure(Exception):
         super().__init__(f"{code}: {message}")
         self.node_id = node_id
         self.code = code
+
+
+_ABSOLUTE_EPOCH_RE = re.compile(r"^-?\d+(\.\d+)?$")
+
+
+def _resolve_absolute_wait(
+    node_id: str, raw_text: Any, context: dict[str, Any], now: datetime
+) -> tuple[int, str]:
+    """absoluteTime → (秒数, 渲染后 ISO 时刻)（docs/50 §2）。
+
+    插值后按 epoch 纯数字 / ISO8601（Z 兼容、朴素时刻按 UTC）解析；
+    目标须为未来 1-600 秒；任何坏值抛 WaitNodeFailure，不睡眠。
+    """
+    text = raw_text if isinstance(raw_text, str) else ""
+    try:
+        rendered = interpolate(text, context).strip() if "{{" in text else text.strip()
+        if _ABSOLUTE_EPOCH_RE.match(rendered):
+            target = datetime.fromtimestamp(float(rendered), tz=timezone.utc)
+        else:
+            target = datetime.fromisoformat(rendered.replace("Z", "+00:00"))
+            if target.tzinfo is None:
+                target = target.replace(tzinfo=timezone.utc)
+            else:
+                target = target.astimezone(timezone.utc)
+    except (ValueError, OverflowError, OSError) as exc:
+        raise WaitNodeFailure(
+            node_id,
+            "WAIT_ABSOLUTE_TIME_INVALID",
+            f"等待节点 {node_id} 目标时刻无法求值/解析：{exc}",
+        )
+    delta = (target - now).total_seconds()
+    if not math.isfinite(delta) or not 1 <= round(delta) <= 600:
+        raise WaitNodeFailure(
+            node_id,
+            "WAIT_ABSOLUTE_TIME_INVALID",
+            f"等待节点 {node_id} 目标时刻非法"
+            f"（需为未来 1-600 秒内，当前差值 {delta:.0f}s）",
+        )
+    return int(round(delta)), target.isoformat()
+
+
 
 
 def _merge_outputs(left: dict, right: dict) -> dict:
@@ -429,7 +471,12 @@ def _make_executor(
                     else:
                         duration_mode = node.config.get("durationMode", "static")
                         expression = node.config.get("durationExpression")
-                        if duration_mode == "dynamic" and not resume_here:
+                        rendered_absolute_time = None
+                        if duration_mode == "absolute" and not resume_here:
+                            seconds, rendered_absolute_time = _resolve_absolute_wait(
+                                node.id, node.config.get("absoluteTime"), context, now
+                            )
+                        elif duration_mode == "dynamic" and not resume_here:
                             try:
                                 raw = evaluate_expression(str(expression), context)
                             except ConditionEvalError as exc:
@@ -460,6 +507,8 @@ def _make_executor(
                         elif resume_here:
                             # 续跑：按剩余时长等待（绝对 deadline 照扣，docs/24 §3.1）。
                             seconds = int(remaining_seconds(resume.get("deadline_at")))
+                            if duration_mode == "absolute":
+                                rendered_absolute_time = resume.get("deadline_at")
                         else:
                             seconds = int(node.config["durationSeconds"])
                         if not resume_here:
@@ -483,6 +532,9 @@ def _make_executor(
                         if duration_mode == "dynamic":
                             output["durationMode"] = "dynamic"
                             output["durationExpression"] = expression
+                        elif duration_mode == "absolute":
+                            output["durationMode"] = "absolute"
+                            output["absoluteTime"] = rendered_absolute_time
                         message = f"{node.id}: waited {seconds}s"
                 elif node.type == "human_approval":
                     output, message = _await_human_approval(
