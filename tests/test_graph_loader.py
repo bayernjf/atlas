@@ -529,6 +529,82 @@ def test_wait_sleeps_then_continues_to_single_successor(monkeypatch):
     assert any("waited 2s" in line for line in result["trace"])
 
 
+# --- U516-U518: duration 上限放开（600→3600）与 jitter（docs/54 §2/§3）---
+def _duration_jitter_graph(jitter=None, seconds=2, mode="static", expression=None):
+    config: dict = {"waitType": "duration"}
+    if mode == "static":
+        config["durationSeconds"] = seconds
+    else:
+        config["durationMode"] = "dynamic"
+        config["durationExpression"] = expression
+    if jitter is not None:
+        config["jitterSeconds"] = jitter
+    return parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "wait-1", "type": "wait", "name": "等待", "config": config},
+                {"id": "tool-after", "type": "tool_call", "name": "后继",
+                 "config": {"tool": "op-after"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "wait-1"},
+                {"id": "e2", "source": "wait-1", "target": "tool-after"},
+            ],
+        }
+    )
+
+
+def test_wait_jitter_is_deterministic_with_seeded_rng(monkeypatch):
+    # U516：注入种子 RNG，actual=planned+randint(0,jitter)；同种子两次一致且落在 planned..planned+jitter
+    import random as _random
+
+    slept: list[int] = []
+    monkeypatch.setattr("atlas.graph.loader.time.sleep", lambda seconds: slept.append(seconds))
+
+    def run(seed):
+        slept.clear()
+        result = run_graph(
+            _duration_jitter_graph(jitter=10, seconds=2),
+            jitter_rng=_random.Random(seed),
+        )
+        return result, slept[0]
+
+    r1, s1 = run(123)
+    r2, s2 = run(123)
+    assert s1 == s2 and 2 <= s1 <= 12
+    out = r1["outputs"]["wait-1"]
+    assert out["durationSeconds"] == s1
+    assert out["plannedDurationSeconds"] == 2
+    assert out["jitterSeconds"] == s1 - 2
+    assert "tool-after" in r1["outputs"]
+
+
+def test_wait_jitter_zero_keeps_legacy_output_shape(monkeypatch):
+    # U517：显式 jitterSeconds=0 时 output 形状与旧图完全一致（零回归），不附加新字段
+    slept: list[int] = []
+    monkeypatch.setattr("atlas.graph.loader.time.sleep", lambda seconds: slept.append(seconds))
+    result = run_graph(_duration_jitter_graph(jitter=0, seconds=2))
+    assert slept == [2]
+    assert result["outputs"]["wait-1"] == {
+        "mode": "wait",
+        "waitType": "duration",
+        "durationSeconds": 2,
+    }
+
+
+def test_wait_duration_raised_limit_sleeps_3600(monkeypatch):
+    # U518：duration 静态上限放开到 3600（旧上限 600），不真睡（mock sleep）
+    slept: list[int] = []
+    monkeypatch.setattr("atlas.graph.loader.time.sleep", lambda seconds: slept.append(seconds))
+    result = run_graph(_duration_jitter_graph(jitter=None, seconds=3600))
+    assert result["status"] == "completed"
+    assert slept == [3600]
+
+
 def test_wait_dynamic_expression_sleeps_evaluated_seconds(monkeypatch):
     slept: list[int] = []
     monkeypatch.setattr("atlas.graph.loader.time.sleep", lambda seconds: slept.append(seconds))
@@ -598,7 +674,7 @@ def test_wait_dynamic_expression_integer_valued_float(monkeypatch):
         ("{{global.missing}}", {}),
         ("1 + ", {}),
         ("0", {}),
-        ("601", {}),
+        ("3601", {}),  # docs/54：duration 上限放宽到 3600，越界值同步上移
         ("'soon'", {}),
         ("1/0", {}),
     ],
@@ -711,9 +787,9 @@ def test_wait_absolute_time_interpolates_variable(monkeypatch):
         ("2026-13-99T99:99:99", {}),
         ("99999999999999999999", {}),
         ("2026-09-23T10:00:00+00:00", {}),
-        ("2026-09-23T10:10:01+00:00", {}),
+        ("2026-09-23T11:00:01+00:00", {}),  # docs/54：差值 3601 > 3600 上限
         (str(int(FROZEN_NOW.timestamp()) - 1), {}),
-        (str(int(FROZEN_NOW.timestamp()) + 601), {}),
+        (str(int(FROZEN_NOW.timestamp()) + 3601), {}),  # docs/54：差值 3601 越界
     ],
 )
 def test_wait_absolute_time_invalid_fails_without_sleep(

@@ -20,6 +20,7 @@ import json
 import logging
 import math
 import operator
+import random
 import re
 import time
 import uuid
@@ -69,6 +70,7 @@ from .dsl import (
     MAX_WAIT_SECONDS,
     MIN_EVENT_WAIT_SECONDS,
     MAX_EVENT_WAIT_SECONDS,
+    MAX_JITTER_SECONDS,
     validate_graph_report,
 )
 from .interpolation import interpolate, resolve_path
@@ -108,7 +110,7 @@ def _resolve_absolute_wait(
     """absoluteTime → (秒数, 渲染后 ISO 时刻)（docs/50 §2）。
 
     插值后按 epoch 纯数字 / ISO8601（Z 兼容、朴素时刻按 UTC）解析；
-    目标须为未来 1-600 秒；任何坏值抛 WaitNodeFailure，不睡眠。
+    目标须为未来 1-3600 秒（docs/54 随 MAX_WAIT_SECONDS 放宽）；坏值抛 WaitNodeFailure，不睡眠。
     """
     text = raw_text if isinstance(raw_text, str) else ""
     try:
@@ -128,12 +130,12 @@ def _resolve_absolute_wait(
             f"等待节点 {node_id} 目标时刻无法求值/解析：{exc}",
         )
     delta = (target - now).total_seconds()
-    if not math.isfinite(delta) or not 1 <= round(delta) <= 600:
+    if not math.isfinite(delta) or not 1 <= round(delta) <= MAX_WAIT_SECONDS:
         raise WaitNodeFailure(
             node_id,
             "WAIT_ABSOLUTE_TIME_INVALID",
             f"等待节点 {node_id} 目标时刻非法"
-            f"（需为未来 1-600 秒内，当前差值 {delta:.0f}s）",
+            f"（需为未来 1-{MAX_WAIT_SECONDS} 秒内，当前差值 {delta:.0f}s）",
         )
     return int(round(delta)), target.isoformat()
 
@@ -261,6 +263,7 @@ def _make_executor(
     tool_mocks: dict[str, Any] | None = None,
     shadow: bool = False,
     tool_permissions: dict[str, str] | None = None,
+    jitter_rng: random.Random | None = None,
 ):
     def execute(state: GraphState) -> dict:
         context = {"global": state["variables"].get("global", {}), **state["outputs"]}
@@ -591,6 +594,21 @@ def _make_executor(
                                 rendered_absolute_time = resume.get("deadline_at")
                         else:
                             seconds = int(node.config["durationSeconds"])
+                        jitter_cfg = node.config.get("jitterSeconds", 0)
+                        if (
+                            isinstance(jitter_cfg, bool)
+                            or not isinstance(jitter_cfg, int)
+                            or jitter_cfg < 0
+                        ):
+                            jitter_cfg = 0
+                        jitter_cfg = min(jitter_cfg, MAX_JITTER_SECONDS)
+                        # docs/54 §3：仅首次进入叠加均匀抖动并入帧 deadline；续跑按剩余、不二次抖动。
+                        if not resume_here and jitter_cfg > 0:
+                            active_rng = jitter_rng if jitter_rng is not None else random
+                            jitter_applied = int(active_rng.randint(0, jitter_cfg))
+                        else:
+                            jitter_applied = 0
+                        actual_seconds = seconds + jitter_applied
                         if not resume_here:
                             _emit_frame(
                                 frame_sink,
@@ -601,21 +619,25 @@ def _make_executor(
                                 graph_id=graph_id,
                                 graph_snapshot=graph_snapshot,
                                 trigger_payload=trigger_payload,
-                                timeout_seconds=seconds,
+                                timeout_seconds=actual_seconds,
                             )
-                        time.sleep(max(seconds, 0))
+                        time.sleep(max(actual_seconds, 0))
                         output = {
                             "mode": "wait",
                             "waitType": "duration",
-                            "durationSeconds": seconds,
+                            "durationSeconds": actual_seconds,
                         }
+                        # 仅首次进入且显式启用抖动时附加新字段；续跑按帧内剩余、不二次抖动，output 回归旧形状。
+                        if not resume_here and jitter_cfg > 0:
+                            output["plannedDurationSeconds"] = seconds
+                            output["jitterSeconds"] = jitter_applied
                         if duration_mode == "dynamic":
                             output["durationMode"] = "dynamic"
                             output["durationExpression"] = expression
                         elif duration_mode == "absolute":
                             output["durationMode"] = "absolute"
                             output["absoluteTime"] = rendered_absolute_time
-                        message = f"{node.id}: waited {seconds}s"
+                        message = f"{node.id}: waited {actual_seconds}s"
                 elif node.type == "human_approval":
                     output, message = _await_human_approval(
                         node,
@@ -643,6 +665,7 @@ def _make_executor(
                         is_cancelled=is_cancelled,
                         debug_controller=debug_controller,
                         shadow=shadow,
+                        jitter_rng=jitter_rng,
                     )
                 elif tool_mocks is not None and node.id in tool_mocks:
                     # Mock 回放（docs/28 §2.2）：以录制桩 output 替代真实适配器调用，
@@ -953,6 +976,7 @@ def _execute_subgraph(
     is_cancelled: Callable[[], bool] | None = None,
     debug_controller: Any = None,
     shadow: bool = False,
+    jitter_rng: random.Random | None = None,
 ) -> tuple[dict[str, Any], str]:
     """进程内重入执行被引用子图（04 §5.7）；任何异常 fail-safe 为 failed，父 run 仍 completed。
 
@@ -1006,6 +1030,7 @@ def _execute_subgraph(
                 debug_controller=debug_controller,
                 _parent_span=sub_span if isinstance(sub_span, Span) else None,
                 shadow=shadow,
+                jitter_rng=jitter_rng,
             )
     except (RunCancelled, DebugStopped):
         # 取消与调试急停/异常断点 stop 均须穿透子图 fail-safe 兜底，冒泡终止整图
@@ -1945,6 +1970,7 @@ def compile_graph(
     is_cancelled: Callable[[], bool] | None = None,
     tool_mocks: dict[str, Any] | None = None,
     shadow: bool = False,
+    jitter_rng: random.Random | None = None,
 ):
     decision_client = decision_client or get_decision_client()
     condition_classifier = condition_classifier or get_condition_classifier()
@@ -2055,6 +2081,7 @@ def compile_graph(
             tool_mocks=tool_mocks,
             shadow=shadow,
             tool_permissions=tool_permissions,
+            jitter_rng=jitter_rng,
         )
         if node.id in skip_guards:
             parallel_id, safe_target = skip_guards[node.id]
@@ -2305,6 +2332,7 @@ def run_graph(
     is_cancelled: Callable[[], bool] | None = None,
     tool_mocks: dict[str, Any] | None = None,
     shadow: bool = False,
+    jitter_rng: random.Random | None = None,
 ) -> dict[str, Any]:
     """编译并执行，返回状态/节点产出/轨迹。
 
@@ -2387,6 +2415,7 @@ def run_graph(
             _parent_span=_parent_span,
             tool_mocks=tool_mocks,
             shadow=shadow,
+            jitter_rng=jitter_rng,
         )
         state = initial_state(tail, inputs=resume_inputs)
         state["outputs"] = resume_state.get("outputs", {})
@@ -2423,6 +2452,7 @@ def run_graph(
         _parent_span=_parent_span,
         tool_mocks=tool_mocks,
         shadow=shadow,
+        jitter_rng=jitter_rng,
     )
     final_state = compiled.invoke(
         initial_state(graph, inputs=inputs),

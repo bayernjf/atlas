@@ -180,3 +180,48 @@ def test_resume_wait_uses_remaining_duration(monkeypatch):
     assert slept and slept[-1] <= 5  # 剩余时长照扣，不满额重计（docs/24 §3.1）
     assert result["outputs"]["wait-1"]["mode"] == "wait"
     assert "tool-after" in result["outputs"]
+
+
+# --- U519: 带 jitter 的 duration wait 续跑按帧内剩余、不二次抖动（docs/54 §3）---
+def test_resume_jittered_wait_uses_remaining_no_second_jitter(monkeypatch):
+    import random as _random
+
+    slept: list[float] = []
+    monkeypatch.setattr("atlas.graph.loader.time.sleep", lambda seconds: slept.append(seconds))
+
+    graph = parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "wait-1", "type": "wait", "name": "抖动等待",
+                 "config": {"waitType": "duration", "durationSeconds": 10,
+                            "jitterSeconds": 300}},
+                {"id": "tool-after", "type": "tool_call", "name": "后继",
+                 "config": {"tool": "op-after"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "wait-1"},
+                {"id": "e2", "source": "wait-1", "target": "tool-after"},
+            ],
+        }
+    )
+    # 首次 actual 已写入帧 deadline（10+jitter）；重启后 deadline 距今 5s。
+    frame = build_frame(
+        token="t",
+        run_id="",
+        node_id="wait-1",
+        kind="wait",
+        deadline_at=deadline_iso(5),
+        graph_snapshot=graph.model_dump(),
+        resume_state={"graph_id": "adhoc", "inputs": {}, "outputs": {}},
+    )
+    result = run_graph(graph, resume=frame, jitter_rng=_random.Random(7))
+    assert result["status"] == "completed"
+    assert slept and slept[-1] <= 5  # 仅睡剩余，不再叠加 0-300 的二次抖动
+    out = result["outputs"]["wait-1"]
+    assert "jitterSeconds" not in out
+    assert "plannedDurationSeconds" not in out
+    assert "tool-after" in result["outputs"]

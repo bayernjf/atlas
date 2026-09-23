@@ -39,9 +39,11 @@ MIN_PARALLEL_BRANCHES = 2
 MAX_PARALLEL_BRANCHES = 10
 PARALLEL_JOIN_STRATEGIES = ("all_success", "all_completed", "any_success")
 MIN_WAIT_SECONDS = 1
-MAX_WAIT_SECONDS = 600
+MAX_WAIT_SECONDS = 3600  # docs/54：duration 同步 sleep 上限 600→3600（更长改用可中断 event）
 MIN_EVENT_WAIT_SECONDS = 1
-MAX_EVENT_WAIT_SECONDS = 3600
+MAX_EVENT_WAIT_SECONDS = 86400  # docs/54：event 可中断/可跨重启，超时上限 3600→86400（24h）
+MAX_JITTER_SECONDS = 300  # docs/54：duration 抖动上限（actual=planned+randint(0,jitter)）
+MAX_EVENT_KEYS = 8  # docs/54：event 多事件竞速（eventKeys）上限
 MAX_EVENT_KEY_LENGTH = 128
 MAX_DURATION_EXPRESSION_LENGTH = 200
 MAX_ABSOLUTE_TIME_LENGTH = 64
@@ -781,6 +783,18 @@ def _validate_wait_config(
                     f"（当前 {seconds}）",
                     "/durationSeconds",
                 )
+        jitter = config.get("jitterSeconds", 0)
+        if isinstance(jitter, bool) or not isinstance(jitter, int):
+            add(
+                f"{prefix} 抖动上限（jitterSeconds）必须是整数秒",
+                "/jitterSeconds",
+            )
+        elif not 0 <= jitter <= MAX_JITTER_SECONDS:
+            add(
+                f"{prefix} 抖动上限需在 0-{MAX_JITTER_SECONDS} 秒之间"
+                f"（当前 {jitter}）",
+                "/jitterSeconds",
+            )
     elif wait_type == "event":
         event_key = config.get("eventKey")
         if not isinstance(event_key, str) or not event_key.strip():
