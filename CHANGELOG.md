@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### feat：告警 lifecycle 通知 B1 落码收口（docs/52 §7，2026-09-23；dev、未 push；无 ADR）
+
+- AlertNotifier 除新建外，对三类告警状态变化经既有 MessageService 旁路投递，过滤/失败口径同新建（enabled/to/minSeverity、fail-safe）：**merged** 合并归并（subject「再次发生已归并」，_raise_or_merge 与 raise_rollout_gate_alert 合并分支，body 含累计 N 次）；**escalated** 读时惰性 warning→critical（「未确认已升级」，升级幂等只触发一次）；**resolved** resolve_alert（「告警已解决」）。acknowledge 不通知。
+- `notify.py` 增 `LIFECYCLE_TITLES`/`build_lifecycle_subject`/`build_lifecycle_body`/`AlertNotifier.notify_lifecycle`；`records.py` 六处接线（pending 带 transition、_notify_outside_lock 分流、合并/升级/解决点；内存档）。`tests/test_monitoring_notify.py` 净增 4（merged/escalated/resolved + severity 过滤 + fail-safe，旧 3 测改写为新行为）。收口全量内存门 **1570 passed / 60 skipped**（净增 4、零失败）；零新依赖/零迁移/无新 REST·ADR/前端零改动。D28 部分取回不解除（PG 档 lifecycle、恢复通知、lifecycle 限流退避仍缓做）。
+
 ### feat：wait 事件跨重启持久化 v1 批落码收口（docs/53，2026-09-23；dev、未 push；无 ADR）
 
 - event 等待（docs/47 进程内 v1）补齐 T18-B 跨重启机制：event 挂起即落 kind=wait 中断帧（帧内新增 `wait:{waitType:event,eventKey,onTimeout,timeoutSeconds}`，零 DDL）、runs 同步 suspended；`EventWaitBroker.restore` 同 token/event_key、按绝对 deadline 扣剩余超时幂等重建，启动恢复先 restore 后续跑；`/api/waits` 三端点（list/广播/直投）跨重启可用；缺 wait 帧 → WAIT_EVENT_FRAME_INVALID。
