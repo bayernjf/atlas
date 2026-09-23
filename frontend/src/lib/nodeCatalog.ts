@@ -18,6 +18,8 @@ export {
   MIN_EVENT_WAIT_SECONDS,
   MAX_EVENT_WAIT_SECONDS,
   MAX_EVENT_KEY_LENGTH,
+  MAX_JITTER_SECONDS,
+  MAX_EVENT_KEYS,
   MAX_DURATION_EXPRESSION_LENGTH,
   MAX_ABSOLUTE_TIME_LENGTH,
   WAIT_TIMEOUT_POLICIES,
@@ -90,7 +92,9 @@ export type NodeConfig = {
   durationSeconds?: number
   durationExpression?: string
   absoluteTime?: string
+  jitterSeconds?: number // docs/54：duration static 抖动上限 0-300
   eventKey?: string
+  eventKeys?: string[] // docs/54：多事件 OR 竞速 1-8 个标识（与 eventKey 互斥）
   timeoutMode?: 'static' | 'expression'
   timeoutExpression?: string
   // subgraph（04 §5.7；v1 引用已保存图，版本钉版缓做 docs/14 D21；出边等图级校验由后端 422 兜底）
@@ -124,7 +128,7 @@ export const NODE_CATALOG: Record<NodeKind, { label: string; description: string
   condition: { label: '条件分支', description: '按规则表达式选择执行路径，默认分支必填', color: token('color-node-condition') },
   loop: { label: '循环', description: '条件为真时重复执行循环体，达最大次数自动退出', color: token('color-node-loop') },
   parallel: { label: '并行', description: '同时执行多个分支，汇聚后继续（全部成功/全部完成）', color: token('color-node-parallel') },
-  wait: { label: '等待', description: '定时等待（1-600 秒）或等待外部事件信号（1-3600 秒）', color: token('color-node-wait') },
+  wait: { label: '等待', description: '定时等待（1-3600 秒，可加抖动）或等待一个/多个外部事件信号（最长 24 小时）', color: token('color-node-wait') },
   subgraph: {
     label: '子图',
     description: '引用一张已保存的图作为子流程执行，可映射入参并引用其产出',

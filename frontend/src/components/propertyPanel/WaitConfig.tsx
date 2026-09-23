@@ -3,7 +3,9 @@ import {
   MAX_ABSOLUTE_TIME_LENGTH,
   MAX_DURATION_EXPRESSION_LENGTH,
   MAX_EVENT_KEY_LENGTH,
+  MAX_EVENT_KEYS,
   MAX_EVENT_WAIT_SECONDS,
+  MAX_JITTER_SECONDS,
   MAX_WAIT_SECONDS,
   MIN_EVENT_WAIT_SECONDS,
   MIN_WAIT_SECONDS,
@@ -26,6 +28,11 @@ export function WaitConfig({ config, update }: Props) {
     seconds < MIN_WAIT_SECONDS ||
     seconds > MAX_WAIT_SECONDS
 
+  const jitter = config.jitterSeconds
+  const jitterInvalid =
+    jitter !== undefined &&
+    (!Number.isInteger(jitter) || jitter < 0 || jitter > MAX_JITTER_SECONDS)
+
   const durationMode =
     config.durationMode === 'dynamic'
       ? 'dynamic'
@@ -46,6 +53,28 @@ export function WaitConfig({ config, update }: Props) {
     !eventKey.trim() ||
     eventKey.length > MAX_EVENT_KEY_LENGTH ||
     !eventKeyStaticValid(eventKey)
+
+  // docs/54：eventKeys 为数组即多事件竞速模式，与单键 eventKey 互斥。
+  const multiEvent = Array.isArray(config.eventKeys)
+  const eventKeys = Array.isArray(config.eventKeys) ? config.eventKeys : []
+  const setEventKeyAt = (idx: number, value: string) => {
+    const next = [...eventKeys]
+    next[idx] = value
+    update({ eventKeys: next })
+  }
+  const addEventKey = () => {
+    if (eventKeys.length < MAX_EVENT_KEYS) update({ eventKeys: [...eventKeys, ''] })
+  }
+  const removeEventKey = (idx: number) => {
+    update({ eventKeys: eventKeys.filter((_, i) => i !== idx) })
+  }
+  const switchEventMode = (multi: boolean) => {
+    if (multi) {
+      update({ eventKey: undefined, eventKeys: eventKeys.length ? eventKeys : [''] })
+    } else {
+      update({ eventKeys: undefined, eventKey: eventKey || '' })
+    }
+  }
 
   const timeout = config.timeoutSeconds
   const timeoutInvalid =
@@ -81,26 +110,52 @@ export function WaitConfig({ config, update }: Props) {
             </Radio.Group>
           </label>
           {durationMode === 'static' ? (
-            <label className="property-field">
-              <Typography.Text type="secondary">等待时长</Typography.Text>
-              <Space.Compact>
-                <InputNumber
-                  min={MIN_WAIT_SECONDS}
-                  max={MAX_WAIT_SECONDS}
-                  step={1}
-                  precision={0}
-                  value={seconds}
-                  status={durationInvalid ? 'error' : undefined}
-                  onChange={(value) => update({ durationSeconds: value ?? undefined })}
-                />
-                <Button disabled>秒</Button>
-              </Space.Compact>
-              {durationInvalid && (
-                <Typography.Text type="danger">
-                  等待时长需为 {MIN_WAIT_SECONDS}-{MAX_WAIT_SECONDS} 秒的整数
-                </Typography.Text>
-              )}
-            </label>
+            <>
+              <label className="property-field">
+                <Typography.Text type="secondary">等待时长</Typography.Text>
+                <Space.Compact>
+                  <InputNumber
+                    min={MIN_WAIT_SECONDS}
+                    max={MAX_WAIT_SECONDS}
+                    step={1}
+                    precision={0}
+                    value={seconds}
+                    status={durationInvalid ? 'error' : undefined}
+                    onChange={(value) => update({ durationSeconds: value ?? undefined })}
+                  />
+                  <Button disabled>秒</Button>
+                </Space.Compact>
+                {durationInvalid && (
+                  <Typography.Text type="danger">
+                    等待时长需为 {MIN_WAIT_SECONDS}-{MAX_WAIT_SECONDS} 秒的整数
+                  </Typography.Text>
+                )}
+              </label>
+              <label className="property-field">
+                <Typography.Text type="secondary">抖动上限（可选）</Typography.Text>
+                <Space.Compact>
+                  <InputNumber
+                    min={0}
+                    max={MAX_JITTER_SECONDS}
+                    step={1}
+                    precision={0}
+                    value={jitter}
+                    status={jitterInvalid ? 'error' : undefined}
+                    onChange={(value) => update({ jitterSeconds: value ?? undefined })}
+                  />
+                  <Button disabled>秒</Button>
+                </Space.Compact>
+                {jitterInvalid ? (
+                  <Typography.Text type="danger">
+                    抖动上限需为 0-{MAX_JITTER_SECONDS} 秒的整数
+                  </Typography.Text>
+                ) : (
+                  <Typography.Text type="secondary">
+                    实际等待 = 等待时长 + 0~抖动上限之间的随机秒（docs/54，防雪崩）
+                  </Typography.Text>
+                )}
+              </label>
+            </>
               ) : durationMode === 'absolute' ? (
             <label className="property-field">
               <Typography.Text type="secondary">到点时刻</Typography.Text>
@@ -148,24 +203,74 @@ export function WaitConfig({ config, update }: Props) {
       ) : (
         <>
           <label className="property-field">
-            <Typography.Text type="secondary">事件标识</Typography.Text>
-            <Input
-              value={eventKey}
-              placeholder="order_paid_{{trigger-1.context.payload.order_id}}"
-              status={eventKeyInvalid ? 'error' : undefined}
-              onChange={(event) => update({ eventKey: event.target.value })}
-            />
-            {eventKeyInvalid ? (
-              <Typography.Text type="danger">
-                必填，1-{MAX_EVENT_KEY_LENGTH} 字符；静态部分仅允许字母、数字及
-                :_-，占位 {'{{路径}}'} 内不检查
-              </Typography.Text>
-            ) : (
-              <Typography.Text type="secondary">
-                支持 {'{{路径}}'} 插值；运行时渲染后再校验
-              </Typography.Text>
-            )}
+            <Typography.Text type="secondary">事件数量</Typography.Text>
+            <Radio.Group
+              value={multiEvent ? 'multi' : 'single'}
+              onChange={(event) => switchEventMode(event.target.value === 'multi')}
+            >
+              <Radio value="single">单事件</Radio>
+              <Radio value="multi">多事件竞速（任一命中即继续）</Radio>
+            </Radio.Group>
           </label>
+          {multiEvent ? (
+            <label className="property-field">
+              <Typography.Text type="secondary">
+                事件标识（{eventKeys.length}/{MAX_EVENT_KEYS}，OR 竞速，首达者胜出）
+              </Typography.Text>
+              {eventKeys.map((key, idx) => (
+                <Space key={idx} style={{ display: 'flex', marginBottom: 4 }}>
+                  <Input
+                    value={key}
+                    placeholder={`order_event_${idx + 1}_{{trigger-1.context.payload.id}}`}
+                    status={
+                      key.trim() &&
+                      (key.length > MAX_EVENT_KEY_LENGTH || !eventKeyStaticValid(key))
+                        ? 'error'
+                        : undefined
+                    }
+                    onChange={(event) => setEventKeyAt(idx, event.target.value)}
+                  />
+                  <Button
+                    disabled={eventKeys.length <= 1}
+                    onClick={() => removeEventKey(idx)}
+                  >
+                    删除
+                  </Button>
+                </Space>
+              ))}
+              <Button
+                type="dashed"
+                size="small"
+                disabled={eventKeys.length >= MAX_EVENT_KEYS}
+                onClick={addEventKey}
+              >
+                ＋添加事件（最多 {MAX_EVENT_KEYS} 个）
+              </Button>
+              <Typography.Text type="secondary">
+                每个标识 1-{MAX_EVENT_KEY_LENGTH} 字符，静态部分仅允许字母、数字及 :_-
+              </Typography.Text>
+            </label>
+          ) : (
+            <label className="property-field">
+              <Typography.Text type="secondary">事件标识</Typography.Text>
+              <Input
+                value={eventKey}
+                placeholder="order_paid_{{trigger-1.context.payload.order_id}}"
+                status={eventKeyInvalid ? 'error' : undefined}
+                onChange={(event) => update({ eventKey: event.target.value })}
+              />
+              {eventKeyInvalid ? (
+                <Typography.Text type="danger">
+                  必填，1-{MAX_EVENT_KEY_LENGTH} 字符；静态部分仅允许字母、数字及
+                  :_-，占位 {'{{路径}}'} 内不检查
+                </Typography.Text>
+              ) : (
+                <Typography.Text type="secondary">
+                  支持 {'{{路径}}'} 插值；运行时渲染后再校验
+                </Typography.Text>
+              )}
+            </label>
+          )}
           <label className="property-field">
             <Typography.Text type="secondary">超时时间</Typography.Text>
             <Space.Compact>

@@ -19,10 +19,12 @@ export const MAX_LOOP_ITERATIONS = 100
 export const MIN_PARALLEL_BRANCHES = 2
 export const MAX_PARALLEL_BRANCHES = 10
 export const MIN_WAIT_SECONDS = 1
-export const MAX_WAIT_SECONDS = 600
+export const MAX_WAIT_SECONDS = 3600 // docs/54：duration 上限 600→3600
 export const MIN_EVENT_WAIT_SECONDS = 1
-export const MAX_EVENT_WAIT_SECONDS = 3600
+export const MAX_EVENT_WAIT_SECONDS = 86400 // docs/54：event 超时上限 3600→86400（24h）
 export const MAX_EVENT_KEY_LENGTH = 128
+export const MAX_JITTER_SECONDS = 300 // docs/54：duration 抖动上限 0-300 秒
+export const MAX_EVENT_KEYS = 8 // docs/54：多事件竞速 1-8 个标识
 export const MAX_DURATION_EXPRESSION_LENGTH = 200
 export const MAX_ABSOLUTE_TIME_LENGTH = 64
 export const WAIT_TIMEOUT_POLICIES = ['continue', 'fail'] as const
@@ -309,7 +311,7 @@ function schemaFieldMessage(kind: string, finding: SchemaFinding, config: NodeCo
       if (finding.pointer === '/durationSeconds') {
         return `等待时长需为 ${MIN_WAIT_SECONDS}-${MAX_WAIT_SECONDS} 秒的整数`
       }
-      if (finding.pointer === '/eventKey') return '事件标识必填，静态部分仅允许字母、数字及 :_-'
+      if (finding.pointer === '/eventKey') return '事件标识必填（单键 eventKey 或多键 eventKeys 二选一），静态部分仅允许字母、数字及 :_-'
       if (finding.pointer === '/timeoutSeconds') {
         return `超时时间需为 ${MIN_EVENT_WAIT_SECONDS}-${MAX_EVENT_WAIT_SECONDS} 秒的整数`
       }
@@ -453,11 +455,47 @@ function handFieldDiagnostics(kind: string, config: NodeConfig): Diagnostic[] {
     }
     case 'wait': {
       if (config.waitType === 'event') {
-        const template = config.eventKey ?? ''
-        if (template.trim() && !eventKeyStaticValid(template)) {
-          diagnostics.push(
-            fieldDiag(FIELD_CODES.PATTERN, '事件标识静态部分仅允许字母、数字及 :_-，占位内不检查', '/eventKey'),
-          )
+        const eventKeys = Array.isArray(config.eventKeys) ? config.eventKeys : undefined
+        if (eventKeys) {
+          // docs/54：eventKey 与 eventKeys 互斥
+          const single = config.eventKey ?? ''
+          if (single.trim()) {
+            diagnostics.push(
+              fieldDiag(FIELD_CODES.PATTERN, 'eventKey 与 eventKeys 互斥，请只保留一种', '/eventKeys'),
+            )
+          }
+          if (eventKeys.length < 1 || eventKeys.length > MAX_EVENT_KEYS) {
+            diagnostics.push(
+              fieldDiag(FIELD_CODES.LENGTH, `多事件需 1-${MAX_EVENT_KEYS} 个事件标识`, '/eventKeys'),
+            )
+          }
+          const seen = new Set<string>()
+          eventKeys.forEach((raw, idx) => {
+            const key = String(raw ?? '')
+            const pointer = `/eventKeys/${idx}`
+            if (!key.trim()) {
+              diagnostics.push(fieldDiag(FIELD_CODES.REQUIRED, `第 ${idx + 1} 个事件标识必填`, pointer))
+            } else if (key.length > MAX_EVENT_KEY_LENGTH || !eventKeyStaticValid(key)) {
+              diagnostics.push(
+                fieldDiag(FIELD_CODES.PATTERN, `第 ${idx + 1} 个事件标识静态部分仅允许字母、数字及 :_-`, pointer),
+              )
+            } else if (seen.has(key.trim())) {
+              diagnostics.push(fieldDiag(FIELD_CODES.INPUT_KEY_DUPLICATE, `多事件标识重复：${key.trim()}`, pointer))
+            } else {
+              seen.add(key.trim())
+            }
+          })
+        } else {
+          const template = config.eventKey ?? ''
+          if (!template.trim()) {
+            diagnostics.push(
+              fieldDiag(FIELD_CODES.REQUIRED, '事件标识必填（单键 eventKey 或多键 eventKeys 二选一）', '/eventKey'),
+            )
+          } else if (!eventKeyStaticValid(template)) {
+            diagnostics.push(
+              fieldDiag(FIELD_CODES.PATTERN, '事件标识静态部分仅允许字母、数字及 :_-，占位内不检查', '/eventKey'),
+            )
+          }
         }
         if (config.timeoutMode === 'expression') {
           const timeoutExpression = config.timeoutExpression ?? ''
@@ -474,7 +512,7 @@ function handFieldDiagnostics(kind: string, config: NodeConfig): Diagnostic[] {
           const eventTimeout = config.timeoutSeconds
           if (eventTimeout === undefined) {
             diagnostics.push(
-              fieldDiag(FIELD_CODES.REQUIRED, '超时时间为必填（1-3600 秒整数）', '/timeoutSeconds'),
+              fieldDiag(FIELD_CODES.REQUIRED, `超时时间为必填（1-${MAX_EVENT_WAIT_SECONDS} 秒整数）`, '/timeoutSeconds'),
             )
           }
         }
@@ -504,7 +542,18 @@ function handFieldDiagnostics(kind: string, config: NodeConfig): Diagnostic[] {
         const seconds = config.durationSeconds
         if (seconds === undefined) {
           diagnostics.push(
-            fieldDiag(FIELD_CODES.REQUIRED, '等待时长为必填（1-600 秒整数）', '/durationSeconds'),
+            fieldDiag(FIELD_CODES.REQUIRED, `等待时长为必填（1-${MAX_WAIT_SECONDS} 秒整数）`, '/durationSeconds'),
+          )
+        }
+        // docs/54：仅 static 固定时长支持 jitterSeconds（0-300 整数，缺省 0）
+        if (
+          config.jitterSeconds !== undefined &&
+          (!Number.isInteger(config.jitterSeconds) ||
+            config.jitterSeconds < 0 ||
+            config.jitterSeconds > MAX_JITTER_SECONDS)
+        ) {
+          diagnostics.push(
+            fieldDiag(FIELD_CODES.RANGE, `抖动上限需为 0-${MAX_JITTER_SECONDS} 秒的整数`, '/jitterSeconds'),
           )
         }
       }

@@ -203,19 +203,19 @@ describe('validateNode', () => {
     expect(config.durationSeconds).toBe(5)
   })
 
-  it('validates wait duration seconds as integer 1-600', () => {
+  it('validates wait duration seconds as integer 1-3600', () => {
     expect(validateNode(node('wait'))).toEqual([])
 
-    for (const durationSeconds of [0, -1, 601, 1.5, undefined]) {
+    for (const durationSeconds of [0, -1, 3601, 1.5, undefined]) {
       const errors = validateNode(node('wait', { config: { waitType: 'duration', durationSeconds } }))
-      expect(errors.some((message) => message.includes('1-600'))).toBe(true)
+      expect(errors.some((message) => message.includes('1-3600'))).toBe(true)
     }
 
     const eventMissing = validateNode(
       node('wait', { config: { waitType: 'event' } }),
     )
     expect(eventMissing.some((message) => message.includes('事件标识必填'))).toBe(true)
-    expect(eventMissing.some((message) => message.includes('1-3600'))).toBe(true)
+    expect(eventMissing.some((message) => message.includes('1-86400'))).toBe(true)
 
     const wrongType = validateNode(
       node('wait', { config: { waitType: 'until' as 'duration' } }),
