@@ -21,6 +21,7 @@ from atlas.coordination import TaskStore
 from atlas.observability.audit import AuditRepository, AuditStore
 from atlas.message.service import MessageService
 from atlas.message.smtp import get_smtp_sender
+from atlas.message.im import get_im_sender
 from atlas.message.webhook import get_webhook_sender
 from atlas.openapi.pg_store import PgImportStore
 from atlas.openapi.store import ImportStore
@@ -120,7 +121,7 @@ class TenantRegistry:
                 graph_store=backend.graph_store(tenant_id),
                 recording_store=backend.recording_store(tenant_id),
                 feedback_store=backend.feedback_store(tenant_id),
-                message_service=MessageService(email_sender=get_smtp_sender(), webhook_sender=get_webhook_sender()),
+                message_service=MessageService(email_sender=get_smtp_sender(), webhook_sender=get_webhook_sender(), im_sender=get_im_sender()),
                 approval_broker=ApprovalBroker(),
                 debug_broker=DebuggerBroker(),
                 cancellation_broker=RunCancellationBroker(),
@@ -146,7 +147,7 @@ class TenantRegistry:
             graph_store=GraphStore(),
             recording_store=RecordingStore(),
             feedback_store=FeedbackStore(),
-            message_service=MessageService(email_sender=get_smtp_sender(), webhook_sender=get_webhook_sender()),
+            message_service=MessageService(email_sender=get_smtp_sender(), webhook_sender=get_webhook_sender(), im_sender=get_im_sender()),
             approval_broker=ApprovalBroker(),
             debug_broker=DebuggerBroker(),
             cancellation_broker=RunCancellationBroker(),
