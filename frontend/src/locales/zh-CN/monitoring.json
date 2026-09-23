@@ -325,5 +325,25 @@
       "topic": "暂无投递记录",
       "dead": "暂无死信，入站投递均正常"
     }
+  },
+  "alertChannel": {
+    "cardTitle": "告警外部通知",
+    "subtitle": "仅新建告警自动发送；合并、升级、关闭不重复发送",
+    "enable": "启用通知",
+    "channel": "通知渠道",
+    "targetUrl": "通知目标（机器人 / Webhook 的完整 URL）",
+    "targetEmail": "通知目标（邮箱地址）",
+    "secret": "加签密钥",
+    "minSeverity": "最低通知级别",
+    "severityCritical": "仅 critical",
+    "severityWarning": "warning 及以上",
+    "save": "保存配置",
+    "saved": "配置已保存",
+    "saveFailed": "保存失败",
+    "lastDelivery": "最近投递",
+    "deliverySuccess": "成功",
+    "deliveryFailed": "失败",
+    "never": "尚未投递",
+    "readOnlyHint": "当前角色仅可查看，管理员可编辑"
   }
 }

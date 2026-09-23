@@ -45,6 +45,7 @@ import { ShadowRunsCard } from '../components/shadow/ShadowRunsCard'
 import { TraceWaterfall } from '../components/monitoring/TraceWaterfall'
 import { OnCallBar } from '../components/monitoring/OnCallBar'
 import { WebhookReliabilityCard } from '../components/monitoring/WebhookReliabilityCard'
+import { AlertChannelCard } from '../components/monitoring/AlertChannelCard'
 import { SilenceManager, SilencePopButton } from '../components/monitoring/SilenceManager'
 import {
   ALERT_STATUS_COLORS,
@@ -607,6 +608,8 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
             />
             <SilenceManager canAdmin={canAdmin} reloadKey={silenceVersion} />
           </Card>
+
+          <AlertChannelCard canAdmin={canAdmin} />
 
           {rules && canAdmin && (
             <Card title={t('rules.cardTitle')}>

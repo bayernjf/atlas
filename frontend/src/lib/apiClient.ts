@@ -1002,6 +1002,38 @@ export async function updateRules(rules: RuleConfig): Promise<RuleConfig> {
   return request('/api/monitoring/rules', { method: 'PUT', body: JSON.stringify(rules) })
 }
 
+export type AlertChannelKind = 'dingtalk' | 'wecom' | 'feishu' | 'webhook' | 'email'
+export type AlertMinSeverity = 'critical' | 'warning'
+
+export type AlertChannelConfig = {
+  enabled: boolean
+  channel: AlertChannelKind
+  to: string
+  secret: string
+  minSeverity: AlertMinSeverity
+  updatedAt: string
+  lastDelivery: AlertChannelDelivery | null
+}
+
+export type AlertChannelDelivery = {
+  lastNotifiedAt: string
+  errorCode: string | null
+  errorMessage: string | null
+}
+
+export async function getAlertChannel(): Promise<AlertChannelConfig> {
+  return request('/api/monitoring/alert-channel')
+}
+
+export async function updateAlertChannel(
+  config: Omit<AlertChannelConfig, 'updatedAt' | 'lastDelivery'>,
+): Promise<AlertChannelConfig> {
+  return request('/api/monitoring/alert-channel', {
+    method: 'PUT',
+    body: JSON.stringify(config),
+  })
+}
+
 export async function listAlerts(status?: AlertStatus): Promise<AlertItem[]> {
   const body = await request<{ items: AlertItem[] }>(
     `/api/alerts${status ? `?status=${status}` : ''}`,
