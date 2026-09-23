@@ -178,8 +178,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       if (path !== '/api/auth/login') handleUnauthorized()
     }
     const detail = body?.detail
+    const fallback = `请求失败：${response.status}`
     throw new Error(
-      Array.isArray(detail) ? detail.join('；') : detail || `请求失败：${response.status}`,
+      Array.isArray(detail)
+        ? detail.join('；')
+        : typeof detail === 'object'
+          ? (detail?.message ?? fallback)
+          : detail || fallback,
     )
   }
   return body as T
@@ -463,6 +468,56 @@ export type QueueApprovalItem = {
 export async function listApprovalsQueue(): Promise<QueueApprovalItem[]> {
   const body = await request<{ items: QueueApprovalItem[] }>('/api/approvals')
   return body.items
+}
+
+export type DecidedApprovalItem = {
+  token: string
+  node_id: string
+  graph_id: string
+  summary: string
+  approver: string
+  decision: 'approved' | 'rejected'
+  resolvedBy: 'human' | 'email-link' | 'timeout' | 'input'
+  comment: string
+  createdAt: number
+  cardTemplateId?: string
+}
+
+export async function listDecidedApprovals(
+  limit = 50,
+): Promise<{ items: DecidedApprovalItem[]; limit: number }> {
+  return request(`/api/approvals/decided?limit=${limit}`)
+}
+
+export type AuditEventItem = {
+  id: string
+  tenantId: string
+  actor: string
+  action: string
+  statusCode: number
+  path: string
+  ip: string
+  at: string
+}
+
+export async function listAuditEvents(
+  limit: number,
+  action?: string,
+): Promise<{ items: AuditEventItem[]; limit: number }> {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (action) params.set('action', action)
+  return request(`/api/audit/events?${params.toString()}`)
+}
+
+export async function exportAuditJsonl(action?: string): Promise<Blob> {
+  const params = new URLSearchParams({ format: 'jsonl' })
+  if (action) params.set('action', action)
+  const headers = new Headers()
+  const token = getToken()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  const response = await fetch(`/api/audit/export?${params.toString()}`, { headers })
+  if (!response.ok) throw new Error(`导出失败：${response.status}`)
+  return response.blob()
 }
 
 // --- M8 交互卡片（04 §5.6 追加段 / 12 §3.11） ------------------------------
@@ -945,6 +1000,38 @@ export async function getRules(): Promise<RuleConfig> {
 
 export async function updateRules(rules: RuleConfig): Promise<RuleConfig> {
   return request('/api/monitoring/rules', { method: 'PUT', body: JSON.stringify(rules) })
+}
+
+export type AlertChannelKind = 'dingtalk' | 'wecom' | 'feishu' | 'webhook' | 'email'
+export type AlertMinSeverity = 'critical' | 'warning'
+
+export type AlertChannelConfig = {
+  enabled: boolean
+  channel: AlertChannelKind
+  to: string
+  secret: string
+  minSeverity: AlertMinSeverity
+  updatedAt: string
+  lastDelivery: AlertChannelDelivery | null
+}
+
+export type AlertChannelDelivery = {
+  lastNotifiedAt: string
+  errorCode: string | null
+  errorMessage: string | null
+}
+
+export async function getAlertChannel(): Promise<AlertChannelConfig> {
+  return request('/api/monitoring/alert-channel')
+}
+
+export async function updateAlertChannel(
+  config: Omit<AlertChannelConfig, 'updatedAt' | 'lastDelivery'>,
+): Promise<AlertChannelConfig> {
+  return request('/api/monitoring/alert-channel', {
+    method: 'PUT',
+    body: JSON.stringify(config),
+  })
 }
 
 export async function listAlerts(status?: AlertStatus): Promise<AlertItem[]> {
@@ -1505,4 +1592,249 @@ export async function refreshConnection(id: string): Promise<ConnectionView> {
 
 export async function testConnection(id: string): Promise<ConnectionTestResult> {
   return request(`/api/connections/${id}/test`, { method: 'POST' })
+}
+
+export type ChannelBindingView = {
+  id: string
+  provider: string
+  connectionId: string
+  config: { shop: string; apiVersion: string }
+  status: 'connected' | 'error'
+  lastError: string | null
+  createdBy: string | null
+  createdAt: string | null
+}
+
+export type ChannelBindingInput = {
+  provider: string
+  connectionId: string
+  config: { shop: string; apiVersion?: string }
+}
+
+export type ChannelTestResult = {
+  ok: boolean
+  status: string
+  reason?: string
+}
+
+export async function listChannelBindings(): Promise<ChannelBindingView[]> {
+  const body = await request<{ items: ChannelBindingView[] }>('/api/channels')
+  return body.items
+}
+
+export async function createChannelBinding(
+  input: ChannelBindingInput,
+): Promise<ChannelBindingView> {
+  return request('/api/channels', { method: 'POST', body: JSON.stringify(input) })
+}
+
+export async function testChannelBinding(id: string): Promise<ChannelTestResult> {
+  return request(`/api/channels/${id}/test`, { method: 'POST' })
+}
+
+export async function deleteChannelBinding(id: string): Promise<{ deleted: boolean }> {
+  return request(`/api/channels/${id}`, { method: 'DELETE' })
+}
+
+export type WebhookSubscription = {
+  topic: string
+  graphId: string
+  enabled: boolean
+}
+
+export async function getWebhookSubscriptions(id: string): Promise<WebhookSubscription[]> {
+  const body = await request<{ items: WebhookSubscription[] }>(
+    `/api/channels/${id}/webhooks`,
+  )
+  return body.items
+}
+
+export async function putWebhookSubscriptions(
+  id: string,
+  subscriptions: WebhookSubscription[],
+): Promise<WebhookSubscription[]> {
+  const body = await request<{ items: WebhookSubscription[] }>(
+    `/api/channels/${id}/webhooks`,
+    { method: 'PUT', body: JSON.stringify({ subscriptions }) },
+  )
+  return body.items
+}
+
+export type WebhookDeadLetter = {
+  webhookId: string
+  bindingId: string
+  topic: string
+  shop: string
+  reasons: { graphId: string; code: string }[]
+  createdAt: string
+  replayedAt: string | null
+}
+
+export type WebhookDeliveryMetrics = {
+  byTopic: Record<string, { received: number; dead: number; duplicates: number }>
+  totals: { received: number; dead: number; duplicates: number }
+}
+
+export async function listWebhookDeadLetters(params?: {
+  topic?: string
+  bindingId?: string
+  limit?: number
+}): Promise<WebhookDeadLetter[]> {
+  const query = new URLSearchParams()
+  if (params?.topic) query.set('topic', params.topic)
+  if (params?.bindingId) query.set('bindingId', params.bindingId)
+  if (params?.limit) query.set('limit', String(params.limit))
+  const suffix = query.size > 0 ? `?${query.toString()}` : ''
+  const body = await request<{ items: WebhookDeadLetter[] }>(
+    `/api/channels/webhooks/dead-letters${suffix}`,
+  )
+  return body.items
+}
+
+export async function replayWebhookDeadLetter(
+  webhookId: string,
+): Promise<{ webhookId: string; status: string; reasons: { graphId: string; code: string }[] }> {
+  return request(
+    `/api/channels/webhooks/dead-letters/${encodeURIComponent(webhookId)}/replay`,
+    { method: 'POST' },
+  )
+}
+
+export async function deleteWebhookDeadLetter(webhookId: string): Promise<{ deleted: boolean }> {
+  return request(`/api/channels/webhooks/dead-letters/${encodeURIComponent(webhookId)}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function getWebhookMetrics(): Promise<WebhookDeliveryMetrics> {
+  return request('/api/channels/webhooks/metrics')
+}
+
+export type RemoteWebhook = {
+  remoteId: string
+  topic: string
+  address: string
+}
+
+export async function listRemoteWebhooks(
+  id: string,
+): Promise<{ items: RemoteWebhook[]; error?: string }> {
+  return request(`/api/channels/${id}/remote-webhooks`)
+}
+
+export async function registerRemoteWebhook(
+  id: string,
+  topic: string,
+): Promise<RemoteWebhook> {
+  return request(`/api/channels/${id}/remote-webhooks`, {
+    method: 'POST',
+    body: JSON.stringify({ topic }),
+  })
+}
+
+export async function unregisterRemoteWebhook(
+  id: string,
+  topic: string,
+): Promise<{ deleted: boolean }> {
+  return request(
+    `/api/channels/${id}/remote-webhooks/${topic
+      .split('/')
+      .map((part) => encodeURIComponent(part))
+      .join('/')}`,
+    { method: 'DELETE' },
+  )
+}
+
+// --- OpenAPI 导入（docs/42 §5；零新依赖，进程内 store） --------------------
+
+export type OpenApiSource = {
+  content?: string
+  url?: string
+}
+
+export type SecurityScheme = {
+  name: string
+  kind: 'api_key' | 'bearer' | 'basic'
+  location: 'header' | 'query' | null
+  param: string
+}
+
+export type BasicCredential = {
+  username: string
+  password: string
+}
+
+export type CredentialValue = string | BasicCredential
+
+export type CredentialInput = CredentialValue | null
+
+export type OperationDescriptor = {
+  name: string
+  method: string
+  path: string
+  summary: string | null
+  description: string | null
+  permission: string
+  idempotent: boolean
+  locations: Record<string, string>
+  input_schema: JsonSchema
+  security: string[][]
+  skipped: boolean
+  skip_reason?: string | null
+}
+
+export type OpenApiPreview = {
+  title: string
+  base_url: string
+  operations: OperationDescriptor[]
+  security_schemes: SecurityScheme[]
+  imported_count: number
+  skipped_count: number
+}
+
+export type ImportedSpec = {
+  spec_id: string
+  title: string
+  base_url: string
+  created_at: string
+  operations: OperationDescriptor[]
+  security_schemes: Record<string, SecurityScheme>
+  credential_envelopes: Record<string, string>
+}
+
+export async function previewOpenApi(source: OpenApiSource): Promise<OpenApiPreview> {
+  return request('/api/openapi/preview', { method: 'POST', body: JSON.stringify(source) })
+}
+
+export async function importOpenApi(
+  source: OpenApiSource,
+  credentials?: Record<string, CredentialValue>,
+): Promise<ImportedSpec> {
+  return request('/api/openapi/imports', {
+    method: 'POST',
+    body: JSON.stringify(credentials ? { ...source, credentials } : source),
+  })
+}
+
+export async function putOpenApiCredentials(
+  specId: string,
+  credentials: Record<string, CredentialInput>,
+): Promise<{ configured: string[] }> {
+  return request(`/api/openapi/imports/${encodeURIComponent(specId)}/credentials`, {
+    method: 'PUT',
+    body: JSON.stringify({ credentials }),
+  })
+}
+
+export async function listOpenApiImports(): Promise<ImportedSpec[]> {
+  const body = await request<{ items: ImportedSpec[] }>('/api/openapi/imports')
+  return body.items
+}
+
+export async function getOpenApiImport(specId: string): Promise<ImportedSpec> {
+  return request(`/api/openapi/imports/${encodeURIComponent(specId)}`)
+}
+
+export async function deleteOpenApiImport(specId: string): Promise<{ deleted: boolean }> {
+  return request(`/api/openapi/imports/${encodeURIComponent(specId)}`, { method: 'DELETE' })
 }

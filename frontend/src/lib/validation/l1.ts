@@ -8,7 +8,7 @@
  * 不引 AJV（ADR T16 收口）；L3 权威仍在后端 dsl.py，本文件不产 graph 诊断。
  */
 
-import { validateExpression } from '../conditions'
+import { parseExpression, validateExpression } from '../conditions'
 import type { ConditionBranch, NodeConfig, ParallelBranch } from '../nodeCatalog'
 import { schemaRegistry } from '../schemas'
 import type { MetaSchema, NodeConfigSchema } from '../schemas/metaSchema'
@@ -20,6 +20,27 @@ export const MIN_PARALLEL_BRANCHES = 2
 export const MAX_PARALLEL_BRANCHES = 10
 export const MIN_WAIT_SECONDS = 1
 export const MAX_WAIT_SECONDS = 600
+export const MIN_EVENT_WAIT_SECONDS = 1
+export const MAX_EVENT_WAIT_SECONDS = 3600
+export const MAX_EVENT_KEY_LENGTH = 128
+export const MAX_DURATION_EXPRESSION_LENGTH = 200
+export const MAX_ABSOLUTE_TIME_LENGTH = 64
+export const WAIT_TIMEOUT_POLICIES = ['continue', 'fail'] as const
+export type WaitTimeoutPolicy = (typeof WAIT_TIMEOUT_POLICIES)[number]
+
+const EVENT_KEY_PLACEHOLDER_RE = /\{\{.*?\}\}/g
+const EVENT_KEY_RE = /^[A-Za-z0-9:_-]{1,128}$/
+const EVENT_KEY_STATIC_RE = /^[A-Za-z0-9:_-]*$/
+
+/** 运行时渲染后的 eventKey：1-128 且仅含 [A-Za-z0-9:_-]（docs/47 §2）。 */
+export function validEventKey(key: string): boolean {
+  return EVENT_KEY_RE.test(key)
+}
+
+/** 静态模板校验：剔除 {{...}} 占位后拼接的静态部分只含白名单字符（占位内不检查）。 */
+export function eventKeyStaticValid(template: string): boolean {
+  return EVENT_KEY_STATIC_RE.test(template.replace(EVENT_KEY_PLACEHOLDER_RE, ''))
+}
 export const MIN_APPROVAL_TIMEOUT = 10
 export const MAX_APPROVAL_TIMEOUT = 3600
 export const APPROVAL_TIMEOUT_ACTIONS = ['approve', 'reject'] as const
@@ -254,10 +275,13 @@ function schemaFieldMessage(kind: string, finding: SchemaFinding, config: NodeCo
       break
     case 'condition':
       if (head === 'branches' && indexToken === undefined) return '条件节点至少需要一个分支'
+      if (finding.pointer === '/conditionMode') return '判断模式必须为规则表达式或 LLM 语义判断'
+      if (finding.pointer === '/classifierPrompt') return '附加判定要求长度不能超过 500 字符'
       if (head === 'branches') {
         const index = Number(indexToken)
         if (leaf === 'label') return `第 ${index + 1} 个分支名称不能为空`
         if (leaf === 'expression') return `分支 ${branchTag(config, index)} 的表达式不能为空`
+        if (leaf === 'description') return `分支 ${branchTag(config, index)} 的语义描述不能为空`
         if (leaf === 'target') return `分支 ${branchTag(config, index)} 必须选择目标节点`
       }
       if (finding.pointer === '/defaultTarget') return '必须配置默认分支'
@@ -265,6 +289,7 @@ function schemaFieldMessage(kind: string, finding: SchemaFinding, config: NodeCo
     case 'loop':
       if (finding.pointer === '/continueExpression') return '必须填写继续条件表达式'
       if (finding.pointer === '/maxIterations') return `最大次数需为 1-${MAX_LOOP_ITERATIONS} 的整数`
+      if (finding.pointer === '/itemsExpression') return '必须填写遍历数组表达式'
       if (finding.pointer === '/bodyTarget') return '必须选择循环体入口'
       if (finding.pointer === '/exitTarget') return '必须选择退出目标'
       break
@@ -280,10 +305,15 @@ function schemaFieldMessage(kind: string, finding: SchemaFinding, config: NodeCo
       if (finding.pointer === '/joinTarget') return '必须选择汇聚目标'
       break
     case 'wait':
-      if (finding.pointer === '/waitType') return '等待类型必须为定时等待'
+      if (finding.pointer === '/waitType') return '等待类型必须为定时等待或事件等待'
       if (finding.pointer === '/durationSeconds') {
         return `等待时长需为 ${MIN_WAIT_SECONDS}-${MAX_WAIT_SECONDS} 秒的整数`
       }
+      if (finding.pointer === '/eventKey') return '事件标识必填，静态部分仅允许字母、数字及 :_-'
+      if (finding.pointer === '/timeoutSeconds') {
+        return `超时时间需为 ${MIN_EVENT_WAIT_SECONDS}-${MAX_EVENT_WAIT_SECONDS} 秒的整数`
+      }
+      if (finding.pointer === '/onTimeout') return '超时策略必须为继续或失败'
       break
     case 'subgraph':
       if (finding.pointer === '/graphId') return '必须选择引用的已保存子图'
@@ -316,19 +346,42 @@ function handFieldDiagnostics(kind: string, config: NodeConfig): Diagnostic[] {
   switch (kind) {
     case 'condition': {
       const branches = (config.branches ?? []) as ConditionBranch[]
+      const semantic = config.conditionMode === 'llm'
       const labels = new Set<string>()
       const targets = new Set<string>()
+      if (semantic && (config.classifierPrompt?.trim().length ?? 0) > 500) {
+        diagnostics.push(
+          fieldDiag(FIELD_CODES.LENGTH, '附加判定要求长度不能超过 500 字符', '/classifierPrompt'),
+        )
+      }
       branches.forEach((branch, index) => {
         const tag = branch.label?.trim() || `第 ${index + 1} 个分支`
         const labelPointer = `/branches/${index}/label`
         const expressionPointer = `/branches/${index}/expression`
+        const descriptionPointer = `/branches/${index}/description`
         const targetPointer = `/branches/${index}/target`
         if (branch.label?.trim() && labels.has(branch.label)) {
           diagnostics.push(fieldDiag(FIELD_CODES.BRANCH_LABEL_DUPLICATE, `分支名称重复：${branch.label}`, labelPointer))
         } else if (branch.label?.trim()) {
           labels.add(branch.label)
         }
-        if (branch.expression?.trim()) {
+        if (semantic) {
+          if (branch.expression?.trim()) {
+            diagnostics.push(
+              fieldDiag(FIELD_CODES.EXPRESSION_SYNTAX, `LLM 分支 ${tag} 不允许使用 expression`, expressionPointer),
+            )
+          }
+          const description = branch.description?.trim()
+          if (!description) {
+            diagnostics.push(
+              fieldDiag(FIELD_CODES.REQUIRED, `分支 ${tag} 的语义描述不能为空`, descriptionPointer),
+            )
+          } else if (description.length > 300) {
+            diagnostics.push(
+              fieldDiag(FIELD_CODES.LENGTH, `分支 ${tag} 的语义描述长度不能超过 300 字符`, descriptionPointer),
+            )
+          }
+        } else if (branch.expression?.trim()) {
           for (const exprError of validateExpression(branch.expression)) {
             diagnostics.push(fieldDiag(FIELD_CODES.EXPRESSION_SYNTAX, `分支 ${tag} ${exprError}`, expressionPointer))
           }
@@ -347,7 +400,21 @@ function handFieldDiagnostics(kind: string, config: NodeConfig): Diagnostic[] {
       break
     }
     case 'loop': {
-      if (config.continueExpression?.trim()) {
+      if (config.mode === 'foreach') {
+        if (config.itemsExpression?.trim()) {
+          const syntaxError = parseExpression(config.itemsExpression)
+          if (syntaxError) {
+            diagnostics.push(
+              fieldDiag(FIELD_CODES.EXPRESSION_SYNTAX, `遍历数组表达式${syntaxError}`, '/itemsExpression'),
+            )
+          }
+        }
+        if (config.itemName && !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(config.itemName)) {
+          diagnostics.push(
+            fieldDiag(FIELD_CODES.EXPRESSION_SYNTAX, '元素别名须为标识符（字母/下划线开头）', '/itemName'),
+          )
+        }
+      } else if (config.continueExpression?.trim()) {
         for (const exprError of validateExpression(config.continueExpression)) {
           diagnostics.push(
             fieldDiag(FIELD_CODES.EXPRESSION_SYNTAX, `继续条件表达式${exprError}`, '/continueExpression'),
@@ -381,6 +448,46 @@ function handFieldDiagnostics(kind: string, config: NodeConfig): Diagnostic[] {
         diagnostics.push(
           fieldDiag(FIELD_CODES.JOIN_TARGET_COLLISION, '汇聚目标不能与任一分支目标相同', '/joinTarget'),
         )
+      }
+      break
+    }
+    case 'wait': {
+      if (config.waitType === 'event') {
+        const template = config.eventKey ?? ''
+        if (template.trim() && !eventKeyStaticValid(template)) {
+          diagnostics.push(
+            fieldDiag(FIELD_CODES.PATTERN, '事件标识静态部分仅允许字母、数字及 :_-，占位内不检查', '/eventKey'),
+          )
+        }
+      } else if (config.durationMode === 'dynamic') {
+        const expression = config.durationExpression ?? ''
+        if (!expression.trim()) {
+          diagnostics.push(
+            fieldDiag(FIELD_CODES.REQUIRED, '动态时长表达式为必填', '/durationExpression'),
+          )
+        } else if (expression.length > MAX_DURATION_EXPRESSION_LENGTH) {
+          diagnostics.push(
+            fieldDiag(FIELD_CODES.LENGTH, `动态时长表达式长度不能超过 ${MAX_DURATION_EXPRESSION_LENGTH} 字符`, '/durationExpression'),
+          )
+        }
+      } else if (config.durationMode === 'absolute') {
+        const absoluteTime = config.absoluteTime ?? ''
+        if (!absoluteTime.trim()) {
+          diagnostics.push(
+            fieldDiag(FIELD_CODES.REQUIRED, '到点时刻为必填', '/absoluteTime'),
+          )
+        } else if (absoluteTime.trim().length > MAX_ABSOLUTE_TIME_LENGTH) {
+          diagnostics.push(
+            fieldDiag(FIELD_CODES.LENGTH, `到点时刻长度不能超过 ${MAX_ABSOLUTE_TIME_LENGTH} 字符`, '/absoluteTime'),
+          )
+        }
+      } else {
+        const seconds = config.durationSeconds
+        if (seconds === undefined) {
+          diagnostics.push(
+            fieldDiag(FIELD_CODES.REQUIRED, '等待时长为必填（1-600 秒整数）', '/durationSeconds'),
+          )
+        }
       }
       break
     }

@@ -38,6 +38,12 @@ export type UiHiddenWhen = {
   equals: unknown
   /** 本条命中时显示的受控字段；同一受控字段在未命中的分支下隐藏。 */
   show: string[]
+  /**
+   * true＝判别字段与取值位于根 config（如 condition 的 branches[] 行内
+   * 字段随根 conditionMode 显隐）；规则作用于每个嵌套 object 组，show
+   * 按嵌套组内的局部字段名匹配。
+   */
+  rootScoped?: boolean
 }
 
 export type UiSchema = {
@@ -78,8 +84,27 @@ type GroupEnvelope = {
  * 「manual 分支无 show → cron/webhookUrl 全隐」这类没有规则命中的情形。
  */
 export function hiddenFields(uiSchema: UiSchema | undefined, record: unknown): Set<string> {
-  const rules = uiSchema?.hiddenWhen
-  if (!rules || rules.length === 0) return new Set()
+  const rules = (uiSchema?.hiddenWhen ?? []).filter((rule) => !rule.rootScoped)
+  return computeHiddenFields(rules, record)
+}
+
+/**
+ * 嵌套 object 组的隐藏字段集合：只取 rootScoped 规则，以根 config 为判别
+ * record，show 按当前嵌套组内的局部字段名过滤（condition branches[] 行用）。
+ */
+export function nestedHiddenFields(
+  uiSchema: UiSchema | undefined,
+  rootRecord: unknown,
+): Set<string> {
+  const rules = (uiSchema?.hiddenWhen ?? []).filter((rule) => rule.rootScoped)
+  return computeHiddenFields(rules, rootRecord)
+}
+
+function computeHiddenFields(
+  rules: UiHiddenWhen[],
+  record: unknown,
+): Set<string> {
+  if (rules.length === 0) return new Set()
   const current = isPlainObject(record) ? record : {}
 
   const controlled = new Set<string>()

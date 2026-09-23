@@ -22,6 +22,12 @@ from .alerts import (
     validate_rules,
 )
 from .silences import OnCallSchedule, OpsStore, Silence
+from .notify import (
+    AlertChannel,
+    AlertChannelDelivery,
+    alert_channel_from_raw,
+    validate_alert_channel,
+)
 from .business import BusinessOutcome
 from .metrics import NodeResult, is_healthy
 
@@ -71,6 +77,9 @@ class MonitoringStore:
         self._streaks: dict[str, int] = {}
         self._rules = RuleConfig()
         self._ops = OpsStore()
+        self._channel = AlertChannel()
+        self._channel_delivery = AlertChannelDelivery()
+        self._notifier = None
         self._run_counter = 0
         self._alert_counter = 0
 
@@ -90,6 +99,7 @@ class MonitoringStore:
         tool_calls: list | None = None,
         spans: dict | None = None,
     ) -> RunRecord:
+        pending: list[tuple[Alert, AlertChannel]] = []
         with self._lock:
             self._run_counter += 1
             record = RunRecord(
@@ -124,10 +134,21 @@ class MonitoringStore:
                 # docs/33 §5.1：命中活跃静默则不新建/不合并/不升级，仅累加压下计数
                 if self._ops.suppress_if_matched(event.rule_id, record.graph_id):
                     continue
-                self._raise_or_merge(event=event, record=record)
-            return record
+                new_alert = self._raise_or_merge(event=event, record=record)
+                if new_alert is not None:
+                    pending.append((new_alert, self._channel.model_copy(deep=True)))
+        for alert, cfg in pending:
+            self._notify_outside_lock(alert, cfg)
+        return record
 
-    def _raise_or_merge(self, *, event: AlertEvent, record: RunRecord) -> None:
+    def _notify_outside_lock(self, alert: Alert, cfg: AlertChannel) -> None:
+        if self._notifier is None:
+            return
+        delivery = self._notifier.notify(alert, cfg)
+        if delivery.lastNotifiedAt is not None:
+            self.record_alert_channel_delivery(delivery)
+
+    def _raise_or_merge(self, *, event: AlertEvent, record: RunRecord) -> Alert | None:
         for alert in reversed(self._alerts):
             if (
                 alert.rule_id == event.rule_id
@@ -137,22 +158,22 @@ class MonitoringStore:
                 alert.count += 1
                 alert.last_seen = record.finished_at
                 alert.last_run_id = record.id
-                return
+                return None
         self._alert_counter += 1
-        self._alerts.append(
-            Alert(
-                id=f"alt-{self._alert_counter}",
-                rule_id=event.rule_id,
-                graph_id=record.graph_id,
-                severity=event.severity,
-                message=event.message,
-                first_seen=record.finished_at,
-                last_seen=record.finished_at,
-                last_run_id=record.id,
-                rule_name=event.rule_name,
-                assignee=self._ops.current_assignee(),
-            )
+        alert = Alert(
+            id=f"alt-{self._alert_counter}",
+            rule_id=event.rule_id,
+            graph_id=record.graph_id,
+            severity=event.severity,
+            message=event.message,
+            first_seen=record.finished_at,
+            last_seen=record.finished_at,
+            last_run_id=record.id,
+            rule_name=event.rule_name,
+            assignee=self._ops.current_assignee(),
         )
+        self._alerts.append(alert)
+        return alert
 
     def raise_rollout_gate_alert(
         self,
@@ -192,7 +213,9 @@ class MonitoringStore:
                 action=action,
             )
             self._alerts.append(alert)
-            return alert
+            cfg = self._channel.model_copy(deep=True)
+        self._notify_outside_lock(alert, cfg)
+        return alert
 
     def list_runs(self, graph_id: str | None = None, limit: int = 50) -> list[RunRecord]:
         with self._lock:
@@ -268,6 +291,31 @@ class MonitoringStore:
             runs = list(self._runs)
         return summarize(runs)
 
+    def get_alert_channel(self) -> AlertChannel:
+        with self._lock:
+            return self._channel.model_copy(deep=True)
+
+    def update_alert_channel(self, raw: dict) -> AlertChannel:
+        errors = validate_alert_channel(raw)
+        if errors:
+            raise ValueError("；".join(errors))
+        channel = alert_channel_from_raw(raw)
+        channel.updatedAt = _now_iso()
+        with self._lock:
+            self._channel = channel
+            return channel.model_copy(deep=True)
+
+    def get_alert_channel_delivery(self) -> AlertChannelDelivery:
+        with self._lock:
+            return self._channel_delivery.model_copy(deep=True)
+
+    def record_alert_channel_delivery(self, delivery: AlertChannelDelivery) -> None:
+        with self._lock:
+            self._channel_delivery = delivery.model_copy(deep=True)
+
+    def set_notifier(self, notifier: object | None) -> None:
+        self._notifier = notifier
+
     # docs/33 §5：静默 / 值班（进程内，委托 OpsStore）
     def create_silence(
         self, *, rule_id: str | None, graph_id: str | None, duration_minutes: int,
@@ -300,3 +348,5 @@ class MonitoringStore:
             self._streaks.clear()
             self._rules = RuleConfig()
             self._ops.reset()
+            self._channel = AlertChannel()
+            self._channel_delivery = AlertChannelDelivery()

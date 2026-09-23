@@ -18,7 +18,9 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import math
 import operator
+import re
 import time
 import uuid
 from contextlib import nullcontext
@@ -30,6 +32,7 @@ from langgraph.graph import END, START, StateGraph
 from atlas.cards.catalog import get_card
 from atlas.collaboration.approvals import ApprovalBroker
 from atlas.collaboration.cancellations import RunCancelled
+from atlas.collaboration.event_waits import EventWaitBroker
 from atlas.collaboration.notifications import ApprovalNotifier
 from atlas.debug.sessions import DebugStopped
 from atlas.database.adapter import DatabaseHarnessAdapter
@@ -38,6 +41,7 @@ from atlas.harness.base import ActionRequest, ActionStatus
 from atlas.harness.registry import AdapterRegistry
 from atlas.httpapi.adapter import HttpApiHarnessAdapter
 from atlas.llm.decision import get_decision_client
+from atlas.llm.condition_classifier import get_condition_classifier
 from atlas.message.adapter import MessageHarnessAdapter
 from atlas.message.service import MessageService
 from atlas.shop.adapter import ShopHarnessAdapter
@@ -52,6 +56,7 @@ from atlas.tracing import (
 )
 from .conditions import ConditionEvalError, evaluate_expression
 from .dsl import (
+    MAX_LOOP_ITERATIONS,
     MAX_SUBGRAPH_DEPTH,
     GraphDSL,
     GraphValidationError,
@@ -59,6 +64,7 @@ from .dsl import (
     Issue,
     _loc,
     _loop_body_set,
+    valid_event_key,
     validate_graph_report,
 )
 from .interpolation import interpolate, resolve_path
@@ -77,6 +83,57 @@ _AUTO_TRACER = object()
 logger = logging.getLogger(__name__)
 
 _default_approval_broker = ApprovalBroker()
+_default_event_wait_broker = EventWaitBroker()
+
+
+class WaitNodeFailure(Exception):
+    """wait 节点确定性失败（docs/47 §3.4）；run 标记 failed，不沿出边继续。"""
+
+    def __init__(self, node_id: str, code: str, message: str) -> None:
+        super().__init__(f"{code}: {message}")
+        self.node_id = node_id
+        self.code = code
+
+
+_ABSOLUTE_EPOCH_RE = re.compile(r"^-?\d+(\.\d+)?$")
+
+
+def _resolve_absolute_wait(
+    node_id: str, raw_text: Any, context: dict[str, Any], now: datetime
+) -> tuple[int, str]:
+    """absoluteTime → (秒数, 渲染后 ISO 时刻)（docs/50 §2）。
+
+    插值后按 epoch 纯数字 / ISO8601（Z 兼容、朴素时刻按 UTC）解析；
+    目标须为未来 1-600 秒；任何坏值抛 WaitNodeFailure，不睡眠。
+    """
+    text = raw_text if isinstance(raw_text, str) else ""
+    try:
+        rendered = interpolate(text, context).strip() if "{{" in text else text.strip()
+        if _ABSOLUTE_EPOCH_RE.match(rendered):
+            target = datetime.fromtimestamp(float(rendered), tz=timezone.utc)
+        else:
+            target = datetime.fromisoformat(rendered.replace("Z", "+00:00"))
+            if target.tzinfo is None:
+                target = target.replace(tzinfo=timezone.utc)
+            else:
+                target = target.astimezone(timezone.utc)
+    except (ValueError, OverflowError, OSError) as exc:
+        raise WaitNodeFailure(
+            node_id,
+            "WAIT_ABSOLUTE_TIME_INVALID",
+            f"等待节点 {node_id} 目标时刻无法求值/解析：{exc}",
+        )
+    delta = (target - now).total_seconds()
+    if not math.isfinite(delta) or not 1 <= round(delta) <= 600:
+        raise WaitNodeFailure(
+            node_id,
+            "WAIT_ABSOLUTE_TIME_INVALID",
+            f"等待节点 {node_id} 目标时刻非法"
+            f"（需为未来 1-600 秒内，当前差值 {delta:.0f}s）",
+        )
+    return int(round(delta)), target.isoformat()
+
+
 
 
 def _merge_outputs(left: dict, right: dict) -> dict:
@@ -140,8 +197,10 @@ def _make_executor(
     *,
     trigger_payload: dict[str, Any],
     decision_client: Any,
+    condition_classifier: Any,
     registry: AdapterRegistry | None,
     approval_broker: ApprovalBroker,
+    event_wait_broker: EventWaitBroker,
     graph_id: str,
     emit: EventCallback,
     approval_notifier: ApprovalNotifier | None = None,
@@ -292,15 +351,32 @@ def _make_executor(
                     output = {"decision": result, "prompt_rendered": prompt}
                     message = f"{node.id}({node.type}): executed"
                 elif node.type == "condition":
-                    output = _execute_condition(node, state, context, now=now)
-                    message = f"{node.id}: branch={output['branch']} → {output['target']}"
+                    output = _execute_condition(
+                        node,
+                        state,
+                        context,
+                        now=now,
+                        classifier=condition_classifier,
+                    )
+                    if output.get("mode") == "llm":
+                        message = (
+                            f"{node.id}: llm branch={output['branch']} → {output['target']}"
+                        )
+                    else:
+                        message = f"{node.id}: branch={output['branch']} → {output['target']}"
                 elif node.type == "loop":
                     output = _execute_loop(node, state, context, now=now)
                     if output["exitReason"] is None:
-                        message = (
-                            f"{node.id}: continue ({output['iterations']}/"
-                            f"{node.config.get('maxIterations')}) → {output['target']}"
-                        )
+                        if output["mode"] == "foreach":
+                            message = (
+                                f"{node.id}: foreach item {output['index']}/"
+                                f"{len(output['items'])} → {output['target']}"
+                            )
+                        else:
+                            message = (
+                                f"{node.id}: continue ({output['iterations']}/"
+                                f"{node.config.get('maxIterations')}) → {output['target']}"
+                            )
                     else:
                         message = (
                             f"{node.id}: exit ({output['exitReason']}) after "
@@ -311,31 +387,162 @@ def _make_executor(
                     targets = [branch["target"] for branch in node.config.get("branches", [])]
                     message = f"{node.id}: fork {len(targets)} branches → {', '.join(targets)}"
                 elif node.type == "wait":
-                    seconds = int(node.config["durationSeconds"])
-                    if resume_here:
-                        # 续跑：按剩余时长等待（绝对 deadline 照扣，docs/24 §3.1）。
-                        seconds = int(remaining_seconds(resume.get("deadline_at")))
+                    if node.config["waitType"] == "event":
+                        preset_events = trigger_payload.get("waitEvents") or {}
+                        preset = preset_events.get(node.id)
+                        if preset is not None:
+                            # run inputs 预置：不登记 broker、不阻塞（docs/47 §3.3）。
+                            event_payload = preset if isinstance(preset, dict) else {}
+                            output = {
+                                "mode": "wait",
+                                "waitType": "event",
+                                "eventKey": "",
+                                "signaled": True,
+                                "payload": event_payload,
+                                "waitedSeconds": 0,
+                                "resolvedBy": "input",
+                                "token": "",
+                            }
+                            message = f"{node.id}: event preset from inputs"
+                        else:
+                            template = str(node.config["eventKey"])
+                            event_key = interpolate(template, context).strip()
+                            if not valid_event_key(event_key):
+                                raise WaitNodeFailure(
+                                    node.id,
+                                    "WAIT_EVENT_KEY_INVALID",
+                                    f"等待节点 {node.id} 渲染后的事件标识非法：{event_key}",
+                                )
+                            timeout_seconds = int(node.config["timeoutSeconds"])
+                            token = event_wait_broker.request(
+                                event_key=event_key,
+                                node_id=node.id,
+                                graph_id=graph_id,
+                                timeout_seconds=timeout_seconds,
+                            )
+                            wait_info = {
+                                "token": token,
+                                "eventKey": event_key,
+                                "timeoutSeconds": timeout_seconds,
+                                "onTimeout": node.config.get("onTimeout", "continue"),
+                            }
+                            # 第二个 node_start 携带 wait 载荷，前端据此展示等待态。
+                            emit({**start_event, "wait": wait_info})
+                            started = time.monotonic()
+                            event_payload = event_wait_broker.wait(
+                                token, is_cancelled=is_cancelled
+                            )
+                            waited = int(time.monotonic() - started)
+                            if event_payload is not None:
+                                output = {
+                                    "mode": "wait",
+                                    "waitType": "event",
+                                    "eventKey": event_key,
+                                    "signaled": True,
+                                    "payload": event_payload,
+                                    "waitedSeconds": waited,
+                                    "resolvedBy": "signal",
+                                    "token": token,
+                                }
+                                message = (
+                                    f"{node.id}: event {event_key} signaled after {waited}s"
+                                )
+                            elif node.config.get("onTimeout", "continue") == "fail":
+                                raise WaitNodeFailure(
+                                    node.id,
+                                    "WAIT_TIMEOUT_FAILED",
+                                    f"等待事件 {event_key} 超时",
+                                )
+                            else:
+                                output = {
+                                    "mode": "wait",
+                                    "waitType": "event",
+                                    "eventKey": event_key,
+                                    "signaled": False,
+                                    "payload": {},
+                                    "waitedSeconds": timeout_seconds,
+                                    "resolvedBy": "timeout",
+                                    "token": token,
+                                }
+                                message = (
+                                    f"{node.id}: event {event_key} timeout after "
+                                    f"{timeout_seconds}s (continue)"
+                                )
                     else:
-                        _emit_frame(
-                            frame_sink,
-                            node,
-                            state,
-                            token=uuid.uuid4().hex,
-                            kind="wait",
-                            graph_id=graph_id,
-                            graph_snapshot=graph_snapshot,
-                            trigger_payload=trigger_payload,
-                            timeout_seconds=seconds,
-                        )
-                    time.sleep(max(seconds, 0))
-                    output = {"mode": "wait", "waitType": "duration", "durationSeconds": seconds}
-                    message = f"{node.id}: waited {seconds}s"
+                        duration_mode = node.config.get("durationMode", "static")
+                        expression = node.config.get("durationExpression")
+                        rendered_absolute_time = None
+                        if duration_mode == "absolute" and not resume_here:
+                            seconds, rendered_absolute_time = _resolve_absolute_wait(
+                                node.id, node.config.get("absoluteTime"), context, now
+                            )
+                        elif duration_mode == "dynamic" and not resume_here:
+                            try:
+                                raw = evaluate_expression(str(expression), context)
+                            except ConditionEvalError as exc:
+                                raise WaitNodeFailure(
+                                    node.id,
+                                    "WAIT_DURATION_INVALID",
+                                    f"等待节点 {node.id} 等待时长表达式无法求值：{exc}",
+                                )
+                            if (
+                                isinstance(raw, bool)
+                                or not isinstance(raw, (int, float))
+                                or not math.isfinite(float(raw))
+                            ):
+                                raise WaitNodeFailure(
+                                    node.id,
+                                    "WAIT_DURATION_INVALID",
+                                    f"等待节点 {node.id} 等待时长表达式结果非法"
+                                    f"（需为 1-600 秒，当前 {raw!r}）",
+                                )
+                            seconds = int(round(raw))
+                            if not 1 <= seconds <= 600:
+                                raise WaitNodeFailure(
+                                    node.id,
+                                    "WAIT_DURATION_INVALID",
+                                    f"等待节点 {node.id} 等待时长表达式结果非法"
+                                    f"（需为 1-600 秒，当前 {raw!r}）",
+                                )
+                        elif resume_here:
+                            # 续跑：按剩余时长等待（绝对 deadline 照扣，docs/24 §3.1）。
+                            seconds = int(remaining_seconds(resume.get("deadline_at")))
+                            if duration_mode == "absolute":
+                                rendered_absolute_time = resume.get("deadline_at")
+                        else:
+                            seconds = int(node.config["durationSeconds"])
+                        if not resume_here:
+                            _emit_frame(
+                                frame_sink,
+                                node,
+                                state,
+                                token=uuid.uuid4().hex,
+                                kind="wait",
+                                graph_id=graph_id,
+                                graph_snapshot=graph_snapshot,
+                                trigger_payload=trigger_payload,
+                                timeout_seconds=seconds,
+                            )
+                        time.sleep(max(seconds, 0))
+                        output = {
+                            "mode": "wait",
+                            "waitType": "duration",
+                            "durationSeconds": seconds,
+                        }
+                        if duration_mode == "dynamic":
+                            output["durationMode"] = "dynamic"
+                            output["durationExpression"] = expression
+                        elif duration_mode == "absolute":
+                            output["durationMode"] = "absolute"
+                            output["absoluteTime"] = rendered_absolute_time
+                        message = f"{node.id}: waited {seconds}s"
                 elif node.type == "human_approval":
                     output, message = _await_human_approval(
                         node,
                         token=approval_payload["token"],
                         trigger_payload=trigger_payload,
                         broker=approval_broker,
+                        notifier=approval_notifier,
                     )
                 elif node.type == "subgraph":
                     output, message = _execute_subgraph(
@@ -343,7 +550,9 @@ def _make_executor(
                         context=context,
                         registry=registry,
                         decision_client=decision_client,
+                        condition_classifier=condition_classifier,
                         approval_broker=approval_broker,
+                        event_wait_broker=event_wait_broker,
                         approval_notifier=approval_notifier,
                         resolver=graph_resolver,
                         depth=subgraph_depth,
@@ -489,6 +698,7 @@ def _register_approval(
     if card_template_id is not None and get_card(card_template_id) is None:
         card_template_id = None
     card_context = copy.deepcopy(context) if card_template_id else None
+    recipients = _resolve_notify_recipients(config.get("notifyEmails"), context)
     token = broker.request(
         node_id=node.id,
         graph_id=graph_id,
@@ -497,27 +707,26 @@ def _register_approval(
         timeout_seconds=timeout_seconds,
         card_template_id=card_template_id,
         card_context=card_context,
+        notify_recipients=recipients,
     )
-    # docs/35 §2：挂起通知（旁路，fail-safe）；收件人运行时插值、过滤空值/无 @。
+    # docs/35 §2：挂起通知（旁路，fail-safe）。
     notified = False
     notify_error: str | None = None
-    if notifier is not None:
-        recipients = _resolve_notify_recipients(config.get("notifyEmails"), context)
-        if recipients:
-            try:
-                notifier.notify_pending(
-                    graph_id=graph_id,
-                    node_id=node.id,
-                    token=token,
-                    summary=summary,
-                    approver=approver,
-                    timeout_seconds=timeout_seconds,
-                    recipients=recipients,
-                )
-                notified = True
-            except Exception as exc:  # noqa: BLE001 旁路通知任何异常都不得阻断图
-                notify_error = str(exc)
-                logger.warning("审批挂起通知失败 node=%s: %s", node.id, exc)
+    if notifier is not None and recipients:
+        try:
+            notifier.notify_pending(
+                graph_id=graph_id,
+                node_id=node.id,
+                token=token,
+                summary=summary,
+                approver=approver,
+                timeout_seconds=timeout_seconds,
+                recipients=recipients,
+            )
+            notified = True
+        except Exception as exc:  # noqa: BLE001 旁路通知任何异常都不得阻断图
+            notify_error = str(exc)
+            logger.warning("审批挂起通知失败 node=%s: %s", node.id, exc)
     payload: dict[str, Any] = {
         "token": token,
         "summary": summary,
@@ -555,6 +764,7 @@ def _await_human_approval(
     token: str,
     trigger_payload: dict[str, Any],
     broker: ApprovalBroker,
+    notifier: ApprovalNotifier | None = None,
 ) -> tuple[dict[str, Any], str]:
     """阻塞等待审批结果（预置 inputs/人工放行/超时），返回节点产出与 trace 行。"""
     config = node.config
@@ -571,6 +781,23 @@ def _await_human_approval(
 
     target = config["approvedTarget"] if decision == "approved" else config["rejectedTarget"]
     info = broker.get(token)
+    # docs/37 §4：超时/预置来源由 loader 发结果邮件（人工/邮件链接来源在 API helper 发，
+    # 避免双发）；旁路 fail-safe。
+    if notifier is not None and resolved_by in ("timeout", "input"):
+        recipients = broker.get_notify_recipients(token)
+        if recipients:
+            try:
+                notifier.notify_decided(
+                    graph_id=info["graph_id"],
+                    node_id=node.id,
+                    summary=info["summary"],
+                    decision=decision,
+                    resolved_by=resolved_by,
+                    comment=info.get("comment", ""),
+                    recipients=recipients,
+                )
+            except Exception as exc:  # noqa: BLE001 结果通知任何异常都不得阻断图
+                logger.warning("审批结果通知失败 node=%s: %s", node.id, exc)
     output: dict[str, Any] = {
         "mode": "human_approval",
         "decision": decision,
@@ -631,7 +858,9 @@ def _execute_subgraph(
     context: dict[str, Any],
     registry: AdapterRegistry | None,
     decision_client: Any,
+    condition_classifier: Any,
     approval_broker: ApprovalBroker,
+    event_wait_broker: EventWaitBroker,
     approval_notifier: ApprovalNotifier | None = None,
     resolver: Callable[[str], GraphDSL] | None,
     depth: int,
@@ -679,8 +908,10 @@ def _execute_subgraph(
                 child,
                 inputs=child_inputs,
                 decision_client=decision_client,
+                condition_classifier=condition_classifier,
                 registry=registry,
                 approval_broker=approval_broker,
+                event_wait_broker=event_wait_broker,
                 approval_notifier=approval_notifier,
                 graph_id=graph_ref,
                 emit=child_emit,
@@ -842,14 +1073,23 @@ def _parallel_running_output(node: NodeDSL) -> dict[str, Any]:
 
 
 def _execute_condition(
-    node: NodeDSL, state: GraphState, context: dict[str, Any], *, now: datetime | None = None
+    node: NodeDSL,
+    state: GraphState,
+    context: dict[str, Any],
+    *,
+    now: datetime | None = None,
+    classifier: Any = None,
 ) -> dict[str, Any]:
-    """按 branches 顺序短路求值（04 §5.2）；异常 fail-safe 走 defaultTarget。"""
+    """condition 求值（04 §5.2）；rule 顺序短路，llm 单次分类；异常 fail-safe 走 defaultTarget。"""
+    config = node.config
+    if config.get("conditionMode", "rule") == "llm":
+        return _execute_llm_condition(node, state, context, classifier=classifier)
+
     evaluation: list[dict[str, Any]] = []
     errors: list[str] = []
     target: str | None = None
     branch = "__default__"
-    for item in node.config.get("branches", []):
+    for item in config.get("branches", []):
         label, expression = item["label"], item["expression"]
         try:
             result = evaluate_expression(expression, context, now=now)
@@ -866,7 +1106,7 @@ def _execute_condition(
             branch, target = label, item["target"]
             break
     if target is None:
-        target = node.config["defaultTarget"]
+        target = config["defaultTarget"]
     return {
         "branch": branch,
         "target": target,
@@ -875,11 +1115,79 @@ def _execute_condition(
     }
 
 
+_CONTEXT_LIMIT = 12000
+
+
+def _execute_llm_condition(
+    node: NodeDSL, state: GraphState, context: dict[str, Any], *, classifier: Any
+) -> dict[str, Any]:
+    """LLM 单次分类选唯一分支（04 §5.2 追加段，docs/48）；任何失败 fail-safe 走 defaultTarget。"""
+    config = node.config
+    branches = config.get("branches", [])
+    errors: list[str] = []
+
+    try:
+        context_text = json.dumps(
+            {"global": context.get("global", {}), "nodes": _node_outputs_projection(context)},
+            ensure_ascii=False,
+            default=str,
+        )
+    except Exception as exc:  # noqa: BLE001 - 序列化兜底：default=str 仍失败即分类失败
+        context_text = "{}"
+        errors.append(f"上下文序列化失败：{exc}")
+    if len(context_text) > _CONTEXT_LIMIT:
+        context_text = context_text[:_CONTEXT_LIMIT] + "\n…<截断>"
+
+    instruction = str(config.get("classifierPrompt") or "").strip()
+    label: str
+    try:
+        label = classifier.classify(
+            branches=branches, context_text=context_text, instruction=instruction
+        )
+    except Exception as exc:  # noqa: BLE001 - 供应商错误/解析错误统一 fail-safe
+        label = "__default__"
+        errors.append(str(exc))
+
+    target: str | None = None
+    if label != "__default__":
+        for item in branches:
+            if item["label"] == label:
+                target = item["target"]
+                break
+        if target is None:
+            errors.append(f"LLM 返回了未知分支标签：{label}")
+            label = "__default__"
+    if target is None:
+        target = config["defaultTarget"]
+
+    evaluation = [
+        {
+            "label": item["label"],
+            "description": item["description"],
+            "result": item["label"] == label if label != "__default__" else None,
+        }
+        for item in branches
+    ]
+    return {
+        "mode": "llm",
+        "branch": label,
+        "target": target,
+        "evaluation": evaluation,
+        "llm_errors": errors,
+    }
+
+
+def _node_outputs_projection(context: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in context.items() if key != "global"}
+
+
 def _execute_loop(
     node: NodeDSL, state: GraphState, context: dict[str, Any], *, now: datetime | None = None
 ) -> dict[str, Any]:
     """条件循环重入求值（04 §5.3）；达上限/求值异常 fail-safe 走 exitTarget。"""
     config = node.config
+    if config.get("mode") == "foreach":
+        return _execute_foreach(node, state, context, now=now)
     body_target = config["bodyTarget"]
     exit_target = config["exitTarget"]
     max_iterations = int(config.get("maxIterations", 10))
@@ -927,6 +1235,124 @@ def _execute_loop(
     }
 
 
+def _foreach_output(
+    *,
+    items: list[Any],
+    index: int,
+    item: Any,
+    results: list[Any],
+    target: str,
+    exit_reason: str | None,
+    expression_errors: list[str],
+) -> dict[str, Any]:
+    return {
+        "mode": "foreach",
+        "items": items,
+        "index": index,
+        "iterations": index,
+        "item": item,
+        "results": results,
+        "target": target,
+        "exitReason": exit_reason,
+        "expression_errors": expression_errors,
+    }
+
+
+def _execute_foreach(
+    node: NodeDSL, state: GraphState, context: dict[str, Any], *, now: datetime | None = None
+) -> dict[str, Any]:
+    """遍历循环（04 §5.3 foreach 段，docs/45）：数组首轮求值冻结、串行逐项、回边聚合。"""
+    config = node.config
+    body_target = config["bodyTarget"]
+    exit_target = config["exitTarget"]
+
+    previous = state["outputs"].get(node.id, {})
+    if not isinstance(previous, dict):
+        previous = {}
+
+    def fail_exit(message: str, exit_reason: str) -> dict[str, Any]:
+        return _foreach_output(
+            items=[],
+            index=0,
+            item=None,
+            results=[],
+            target=exit_target,
+            exit_reason=exit_reason,
+            expression_errors=[message],
+        )
+
+    if "items" not in previous:
+        seed_context = {**context, node.id: {"index": 0, "iterations": 0}}
+        try:
+            items = evaluate_expression(config["itemsExpression"], seed_context, now=now)
+        except ConditionEvalError as exc:
+            return fail_exit(str(exc), "expression_error")
+        if not isinstance(items, list):
+            return fail_exit(
+                f"遍历对象必须是数组，实际为 {type(items).__name__}", "expression_error"
+            )
+        if len(items) > MAX_LOOP_ITERATIONS:
+            return fail_exit(
+                f"遍历数组长度 {len(items)} 超过上限 {MAX_LOOP_ITERATIONS}",
+                "items_too_large",
+            )
+        if not items:
+            return _foreach_output(
+                items=[],
+                index=0,
+                item=None,
+                results=[],
+                target=exit_target,
+                exit_reason="empty",
+                expression_errors=[],
+            )
+        return _foreach_output(
+            items=items,
+            index=0,
+            item=items[0],
+            results=[],
+            target=body_target,
+            exit_reason=None,
+            expression_errors=[],
+        )
+
+    items = previous["items"]
+    index = int(previous.get("index", 0))
+    results = list(previous.get("results", []))
+
+    collect_target = config.get("collectTarget") or ""
+    expression_errors: list[str] = []
+    if collect_target:
+        collected = state["outputs"].get(collect_target)
+        if collected is None:
+            expression_errors.append(
+                f"聚合节点 {collect_target} 无产出，跳过本轮收集"
+            )
+        else:
+            results.append(collected)
+
+    next_index = index + 1
+    if next_index >= len(items):
+        return _foreach_output(
+            items=items,
+            index=next_index,
+            item=items[index],
+            results=results,
+            target=exit_target,
+            exit_reason="completed",
+            expression_errors=expression_errors,
+        )
+    return _foreach_output(
+        items=items,
+        index=next_index,
+        item=items[next_index],
+        results=results,
+        target=body_target,
+        exit_reason=None,
+        expression_errors=expression_errors,
+    )
+
+
 def _make_break_gate(
     loop_node: NodeDSL,
     emit: EventCallback,
@@ -941,21 +1367,43 @@ def _make_break_gate(
     outputs 为浅合并，故须先读 loop 节点既有产出（iterations/index）再整体回写。
     """
     exit_target = loop_node.config["exitTarget"]
+    is_foreach = loop_node.config.get("mode") == "foreach"
 
     def gate(state: GraphState) -> dict[str, Any]:
         previous = state["outputs"].get(loop_node.id, {})
         if not isinstance(previous, dict):
             previous = {}
         iterations = int(previous.get("iterations", 0))
-        output = {
-            "mode": "while",
-            "iterations": iterations,
-            "index": iterations,
-            "target": exit_target,
-            "exitReason": "break",
-            "expression_errors": [],
-        }
-        message = f"{loop_node.id}: exit (break) after {iterations} → {exit_target}"
+        if is_foreach:
+            # break 发生在当前元素的体执行之后、下一次回边之前；collectTarget 本轮产出
+            # 尚未经回边追加，在此补收，保证已执行体的结果不丢。
+            results = list(previous.get("results", []))
+            collect_target = loop_node.config.get("collectTarget") or ""
+            if collect_target:
+                collected = state["outputs"].get(collect_target)
+                if collected is not None:
+                    results.append(collected)
+            final_index = iterations + 1
+            output = _foreach_output(
+                items=previous.get("items", []),
+                index=final_index,
+                item=previous.get("item"),
+                results=results,
+                target=exit_target,
+                exit_reason="break",
+                expression_errors=[],
+            )
+        else:
+            output = {
+                "mode": "while",
+                "iterations": iterations,
+                "index": iterations,
+                "target": exit_target,
+                "exitReason": "break",
+                "expression_errors": [],
+            }
+        count = final_index if is_foreach else iterations
+        message = f"{loop_node.id}: exit (break) after {count} → {exit_target}"
         # 以 loop 节点自身补发 node_end（同 __join__ 汇聚补发模式），供画布展示 break 终态。
         emit({"type": "node_end", "node_id": loop_node.id, "node_type": "loop", "output": output})
         return {"outputs": {loop_node.id: output}, "messages": [message]}
@@ -987,7 +1435,7 @@ def _execute_tool(
     permission = (tool_permissions or {}).get(tool_name)
     shadow_blocked = shadow and permission != "read"
 
-    if adapter_id in GENERIC_JSON_ADAPTERS:
+    if adapter_id in GENERIC_JSON_ADAPTERS or adapter_id.startswith("openapi:"):
         # 通用 JSON 通道（04 §4.6-4.8）：params 插值后必须是 JSON 对象并整体透传
         try:
             parameters = json.loads(params_text) if params_text.strip() else {}
@@ -1393,8 +1841,10 @@ def compile_graph(
     graph: GraphDSL,
     *,
     decision_client: Any | None = None,
+    condition_classifier: Any | None = None,
     registry: AdapterRegistry | None = None,
     approval_broker: ApprovalBroker | None = None,
+    event_wait_broker: EventWaitBroker | None = None,
     approval_notifier: ApprovalNotifier | None = None,
     graph_id: str = "adhoc",
     emit: EventCallback | None = None,
@@ -1415,8 +1865,10 @@ def compile_graph(
     shadow: bool = False,
 ):
     decision_client = decision_client or get_decision_client()
+    condition_classifier = condition_classifier or get_condition_classifier()
     registry = registry if registry is not None else build_demo_registry()
     approval_broker = approval_broker or _default_approval_broker
+    event_wait_broker = event_wait_broker or _default_event_wait_broker
     # C（docs/27 §2.1）：单次编译/运行固定一个 UTC 时钟，供 today()/now() 与条件断点求值；
     # 录制/回放由 run_graph(now_override=) 注入冻结时刻，未注入则入口取一次当前 UTC。
     if now is None:
@@ -1499,8 +1951,10 @@ def compile_graph(
             node,
             trigger_payload=payload,
             decision_client=decision_client,
+            condition_classifier=condition_classifier,
             registry=registry,
             approval_broker=approval_broker,
+            event_wait_broker=event_wait_broker,
             approval_notifier=approval_notifier,
             graph_id=graph_id,
             emit=emit,
@@ -1686,7 +2140,13 @@ def _recursion_limit(graph: GraphDSL) -> int:
             body = _loop_body_set(
                 node.config["bodyTarget"], node.id, node.config["exitTarget"], outgoing
             )
-            loop_steps += int(node.config.get("maxIterations", 10)) * (len(body) + 1)
+            # foreach 长度运行期才可知，按上限 100 预留（实际 ≤100）。
+            iterations_cap = (
+                MAX_LOOP_ITERATIONS
+                if node.config.get("mode") == "foreach"
+                else int(node.config.get("maxIterations", 10))
+            )
+            loop_steps += iterations_cap * (len(body) + 1)
     # parallel 汇聚网关在不等长分支下按超步空转等待，每个区域节点至多贡献两轮。
     parallel_wait = 0
     for node in graph.nodes:
@@ -1743,8 +2203,10 @@ def run_graph(
     *,
     inputs: dict[str, Any] | None = None,
     decision_client: Any | None = None,
+    condition_classifier: Any | None = None,
     registry: AdapterRegistry | None = None,
     approval_broker: ApprovalBroker | None = None,
+    event_wait_broker: EventWaitBroker | None = None,
     approval_notifier: ApprovalNotifier | None = None,
     graph_id: str = "adhoc",
     emit: EventCallback | None = None,
@@ -1821,8 +2283,10 @@ def run_graph(
         compiled = compile_graph(
             tail,
             decision_client=decision_client,
+            condition_classifier=condition_classifier,
             registry=registry,
             approval_broker=approval_broker,
+            event_wait_broker=event_wait_broker,
             approval_notifier=approval_notifier,
             graph_id=resume_graph_id,
             emit=emit,
@@ -1857,8 +2321,10 @@ def run_graph(
     compiled = compile_graph(
         graph,
         decision_client=decision_client,
+        condition_classifier=condition_classifier,
         registry=registry,
         approval_broker=approval_broker,
+        event_wait_broker=event_wait_broker,
         approval_notifier=approval_notifier,
         graph_id=graph_id,
         emit=emit,

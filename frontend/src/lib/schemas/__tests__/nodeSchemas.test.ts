@@ -8,10 +8,10 @@ const EXPECTED_OUTPUT_KEYS: Record<string, string[] | Record<string, string[]>> 
   trigger: { context: ['triggerType', 'cron', 'webhookUrl', 'payload'] },
   tool_call: ['result'],
   ai_decision: ['decision', 'prompt_rendered'],
-  condition: ['branch', 'target'],
-  loop: ['index', 'iterations'],
+  condition: ['branch', 'mode', 'target'],
+  loop: ['mode', 'index', 'iterations', 'items', 'item', 'results', 'target', 'exitReason', 'expression_errors'],
   parallel: ['status', 'branches', 'joinStrategy', 'joinTarget'],
-  wait: ['mode', 'waitType', 'durationSeconds'],
+  wait: ['mode', 'waitType', 'durationMode', 'durationExpression', 'durationSeconds', 'absoluteTime', 'eventKey', 'signaled', 'payload', 'waitedSeconds', 'resolvedBy', 'token'],
   subgraph: ['status', 'outputs'],
   human_approval: ['decision', 'target', 'summary', 'approver', 'resolvedBy', 'comment', 'card'],
 }

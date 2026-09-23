@@ -1,0 +1,30 @@
+{
+  "title": "审计日志",
+  "card": {
+    "title": "写操作审计事件"
+  },
+  "filter": {
+    "action": "动作前缀",
+    "actionPlaceholder": "如 POST /api/graphs",
+    "limit": "条数",
+    "search": "筛选",
+    "reset": "重置"
+  },
+  "button": {
+    "refresh": "手动刷新",
+    "export": "导出 JSONL",
+    "back": "返回"
+  },
+  "column": {
+    "at": "时间",
+    "actor": "操作人",
+    "action": "动作",
+    "statusCode": "状态码",
+    "path": "路径",
+    "ip": "来源 IP"
+  },
+  "empty": "当前没有符合条件的审计事件",
+  "loadError": "加载审计事件失败",
+  "exportError": "导出审计日志失败",
+  "exported": "审计日志已导出"
+}

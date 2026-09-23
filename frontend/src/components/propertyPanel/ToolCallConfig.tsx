@@ -5,6 +5,7 @@ import { FormRenderer } from '../../lib/forms/FormRenderer'
 import { nlWarningDiagnostics } from '../../lib/forms/nlWarnings'
 import { paramsToText, parseParamsObject } from '../../lib/forms/params'
 import { buildToolSchemaTable, isFormRenderable } from '../../lib/forms/toolSchemas'
+import { toolParamsPlaceholder } from '../../lib/forms/toolPlaceholder'
 import { useAdapters } from '../../lib/useScope'
 import { validateParamFields } from '../../lib/validation/l1'
 import { useEditorStore } from '../../store/editorStore'
@@ -68,22 +69,10 @@ export function ToolCallConfig({ config, update, variablePaths, onInsert, nodeId
     return [...validateParamFields(toolSchema, parsedParams), ...nlDiagnostics]
   }, [parsedParams, toolSchema, nlDiagnostics])
 
-  const paramsPlaceholder = useMemo(() => {
-    const tool = config.tool
-    if (tool?.startsWith('http/')) {
-      return '{"method":"GET","url":"/orders","headers":{"X-Demo-Token":"demo-token"}}'
-    }
-    if (tool === 'database/query') {
-      return '{"sql":"SELECT order_id, amount FROM orders WHERE amount > :min","params":{"min":1000},"limit":500}'
-    }
-    if (tool === 'database/execute') {
-      return '{"sql":"UPDATE orders SET status = :status WHERE order_id = :id","params":{"status":"refunded","id":"12345"}}'
-    }
-    if (tool === 'message/send') {
-      return '{"channel":"email","to":["ops@example.com"],"subject":"订单 {{trigger-1.context.payload.order_id}} 待审批","body":"请处理"}'
-    }
-    return '{"element_desc": "提交按钮"}'
-  }, [config.tool])
+  const paramsPlaceholder = useMemo(
+    () => toolParamsPlaceholder(config.tool),
+    [config.tool],
+  )
   // 已保存图里的工具（如未注册适配器）不在发现列表时补一条，保证 Select 能显示当前值
   const selectGroups = useMemo(() => {
     if (config.tool && !knownValues.has(config.tool)) {

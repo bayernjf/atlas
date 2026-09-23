@@ -578,6 +578,231 @@ def evaluate_after_run(services: TenantServices, record: RunRecord) -> None: ...
     # 无任何自动 promote 代码；回滚只切新流量，不改外部已发生事实。
 ```
 
+### 3.13 平台渠道适配内部接口（真实渠道适配批 docs/38，2026-09-22 docs-only 立项，ADR T28）
+
+```python
+# src/atlas/channels/base.py
+class ChannelError(Exception):
+    code: str  # CHANNEL_NOT_BOUND | CHANNEL_UNAUTHORIZED | CHANNEL_UPSTREAM_FAILED
+               # | CHANNEL_INVALID_RESPONSE | CHANNEL_INVALID_PARAMETER
+
+class ChannelTransport(Protocol):
+    def request(self, method: str, url: str, headers: dict,
+                json_body: object, timeout: float) -> dict: ...   # {status, headers, body}
+# HttpChannelTransport：stdlib urllib；每次先 EgressGuard.check；10s 超时、follow_redirects=False
+
+# src/atlas/channels/registry.py
+class ChannelStore(Protocol):
+    def list(self) -> list[dict]: ...
+    def get(self, binding_id: str) -> dict | None: ...
+    def save(self, binding: dict) -> dict: ...          # ch-N
+    def delete(self, binding_id: str) -> bool: ...
+
+class ChannelRegistry:
+    def bind(self, provider: str, connection_id: str, config: dict,
+             created_by: str) -> dict: ...
+        # provider 仅 "shopify"；connection 须同租户存在（不存在/跨租户 → 404 不泄漏）；
+        # 同 connection_id 唯一绑定（重复 → 409）
+    def client_for(self, binding: dict): ...
+        # 每次从 connection service 现解密 access_token（未完成授权 → CHANNEL_UNAUTHORIZED），
+        # 构造 ShopifyChannelClient；token 不缓存明文、不记日志
+    def test(self, binding_id: str) -> dict: ...        # {ok, status, reason}；GET /shop.json 探活
+    def adapters_for_tenant(self) -> list: ...
+        # 按绑定动态产出 ShopifyHarnessAdapter（adapter_id="channel:shopify:{binding_id}"）
+# 内存实现 channels/memory.py；PG 实现 channels/pg.py PgChannelStore（迁移 015，reset 不清）
+```
+
+### 3.14 入站 Webhook 内部接口（入站 Webhook 批 docs/39，2026-09-23 docs-only 立项，ADR T29）
+
+```python
+# src/atlas/channels/webhooks.py
+def verify_shopify_hmac(raw_body: bytes, provided: str | None,
+                        client_secret: str) -> bool:
+    # base64(hmac_sha256(client_secret.encode(), raw_body))，hmac.compare_digest；
+    # provided 缺失/坏 base64 → False；不抛、不记 body/secret
+
+SUPPORTED_TOPICS = {"orders/create", "orders/updated", "refunds/create"}
+
+class WebhookEnvelope:
+    shop_domain: str; topic: str; webhook_id: str
+    triggered_at: str | None; data: dict
+    # 必需头 X-Shopify-Shop-Domain/X-Shopify-Topic/X-Shopify-Webhook-Id（缺任一 → 400）
+
+def build_trigger_event(envelope: WebhookEnvelope) -> TriggerEvent:
+    # channel="webhook"；payload={"topic", "shop", "data"}（data 原始 body 不投影）
+
+class WebhookDeliverer:
+    def deliver(self, tenant_id: str, binding: dict,
+                envelope: WebhookEnvelope) -> dict:
+        # 幂等环 per-tenant 进程内 ring 200、惰性剔 1h → {duplicate: True}
+        # topic 无启用订阅 → {ignored: True}
+        # 逐订阅 routing_store.resolve(graph_id, tenant, event)：
+        #   版本 None → warning 跳过；有版本 → 后台线程异步触发图运行
+        # 投递异常仅 warning，调用方响应已先行返回
+```
+
+### 3.15 投递可靠性内部接口（入站可靠性补强批 docs/40，2026-09-23 docs-only 立项，无 ADR）
+
+```python
+# src/atlas/channels/deliveries.py
+class DeliveryStore:                      # 内存 InMemoryDeliveryStore / PG PgDeliveryStore
+    def check_and_record(self, tenant_id, *, webhook_id, binding_id, topic,
+                         shop) -> bool:   # 已存在 → duplicates+=1 返 True；ignored 投递不落表
+    def mark_dead(self, tenant_id, webhook_id, *, reasons, payload) -> None
+    def mark_received(self, tenant_id, webhook_id) -> None
+    def list_dead(self, tenant_id, *, topic=None, binding_id=None,
+                  limit=100) -> list[dict]   # 投影不含 payload
+    def get(self, tenant_id, webhook_id) -> DeliveryRecord | None
+    def mark_replayed(self, tenant_id, webhook_id, *, received: bool,
+                      reasons=None) -> None  # received → 清 payload、写 replayed_at
+    def delete(self, tenant_id, webhook_id) -> bool
+    def metrics(self, tenant_id) -> dict      # {byTopic, totals} 实时聚合
+
+# src/atlas/channels/webhooks.py（docs/40 扩展）
+class WebhookDeliverer:
+    # 构造新增可选 delivery_store；注入后去重以 store 为准（环仅无 store 时兜底）
+    # deliver：全部订阅未触发 → mark_dead(payload=envelope.data)，仍回 {received:true}
+    def replay(self, tenant_id, binding, webhook_id) -> dict | None:
+        # dead 记录取 payload 重建信封、绕过去重按当前订阅重投；
+        # binding 已删/无订阅 → {status:"ignored"} 不改状态
+```
+
+TenantServices 两档新增 `webhook_deliveries`（reset 不清）；迁移 017 见 03 文档 `webhook_delivery`。
+
+### 3.16 Shopify 侧注册内部接口（Shopify 侧 Webhook 注册批 docs/41，2026-09-23 docs-only 立项，无 ADR）
+
+```python
+# src/atlas/channels/shopify.py（docs/41 扩展）
+class ShopifyChannelClient:
+    def list_registered_webhooks(self, limit: int = 250) -> list[dict]:
+        # GET /webhooks.json → [{remoteId, topic, address}]
+    def register_webhook(self, *, topic: str, address: str) -> dict:
+        # POST /webhooks.json {"webhook": {"topic", "address", "format": "json"}}
+        # 422 → ChannelError("CHANNEL_ALREADY_REGISTERED")
+    def delete_registered_webhook(self, remote_id: str) -> bool:
+        # DELETE /webhooks/{id}.json
+    # 构造新增可选 base_url：覆盖 Admin base，仅 demo/测试缝
+
+# src/atlas/channels/registry.py（docs/41 扩展）
+class ChannelRegistry:
+    def remote_webhooks(self, binding_id) -> list[dict]: ...
+    def register_remote(self, binding_id, topic) -> dict:
+        # 地址服务端拼装 {ATLAS_PUBLIC_URL}/api/channels/hooks/shopify/{binding_id}；
+        # public_url 非 https → CHANNEL_INVALID_PARAMETER
+    def unregister_remote(self, binding_id, topic) -> bool:
+        # 列远端按 topic+address 双键匹配后删；找不到 False
+```
+
+无迁移；demo mock 缝见 docs/41 §1D。
+
+### 3.17 事件等待内部接口（waitType=event 进程内 v1；docs/47，2026-09-23 落码收口）
+
+```python
+# src/atlas/collaboration/event_waits.py
+class EventWaitBroker:
+    def request(self, *, event_key, node_id, graph_id, timeout_seconds) -> str: ...  # token="wait-"+uuid4
+    def wait(self, token, *, is_cancelled=None) -> dict | None: ...  # 0.2s 切片查取消；返信号 payload，超时 None
+    def signal_key(self, event_key, payload) -> int: ...      # 广播释放同 key 全部，返释放数
+    def signal_token(self, token, payload) -> None: ...       # 未知 KeyError；已 signaled → AlreadySignaled
+    def list_pending(self) -> list[dict]: ...
+    def reset(self) -> None: ...
+# per-tenant 挂 TenantServices.event_wait_broker；内存/PG 两档均内存实例
+```
+
+错误码：WAIT_EVENT_KEY_INVALID / WAIT_EVENT_PAYLOAD_INVALID / WAIT_TOKEN_NOT_FOUND / WAIT_ALREADY_SIGNALED / WAIT_TIMEOUT_FAILED。
+
+### 3.18 LLM 语义分支内部接口（conditionMode=llm 进程内 v1；docs/48，2026-09-23 落码收口）
+
+```python
+# src/atlas/llm/condition_classifier.py
+class ConditionClassifyError(Exception): ...
+
+class ConditionClassifier(Protocol):
+    def classify(self, *, branches: list[dict], context_text: str, instruction: str) -> str: ...
+    # 返唯一分支 label；无法判定抛 ConditionClassifyError
+
+class OfflineConditionClassifier:
+    def classify(...): raise ConditionClassifyError  # LITELLM_MODEL 未配置
+
+class LiteLLMConditionClassifier:
+    def __init__(self, model: str): ...
+    # litellm 懒加载；temperature=0；只输出 {"branch": "<label>"}；标签须在分支集内
+
+def get_condition_classifier() -> ConditionClassifier: ...
+# run_graph(..., condition_classifier=None) 注入；缺省工厂；沿执行链/子图透传
+```
+
+无新增 REST、无新增错误码：分类失败全部 fail-safe 路由 defaultTarget，原因进节点产出 `llm_errors` 与 trace。
+
+### 3.19 定时等待动态时长内部接口（durationMode=dynamic v1；docs/49，2026-09-23 立项并落码收口 8580fcb/4eaaddd）
+
+```python
+# src/atlas/graph/loader.py（wait duration 分支，无新包）
+# static（缺省）：seconds = int(config["durationSeconds"])             # 现状零改动
+# dynamic：seconds = evaluate_expression(config["durationExpression"], context)
+#   复用 atlas.graph.conditions 表达式引擎（{{路径}} 变量＋算术/白名单函数）
+#   结果须为非 bool 数值、有限、1 <= round(seconds) <= 600，取 int(round(seconds))
+#   求值异常（ConditionEvalError 等）或结果非数值/越界
+#     -> WaitNodeFailure(code="WAIT_DURATION_INVALID")，run failed，不 sleep
+```
+
+动态秒数同时作为暂停帧 `timeout_seconds`；resume 路径与模式无关。新增失败码 **WAIT_DURATION_INVALID**（既有 WAIT_EVENT_KEY_INVALID / WAIT_TIMEOUT_FAILED 不变）；无新增 REST、无新增 SSE 帧。
+
+### 3.20 到点时刻等待内部接口（durationMode=absolute v1；docs/50，2026-09-23 落码收口 12de72d）
+
+```python
+# src/atlas/graph/loader.py（wait duration 分支，无新包）
+# absolute：text = interpolate(config["absoluteTime"], context)   # {{路径}} 插值，同 eventKey
+#   纯数字字符串 -> datetime.fromtimestamp(float(text), tz=UTC)
+#   否则       -> datetime.fromisoformat(text.replace("Z", "+00:00"))；naive 按 UTC
+# delta = (target - now).total_seconds()    # now：注入时钟，缺省 datetime.now(UTC)
+#   须有限且 1 <= round(delta) <= 600，取 seconds = int(round(delta))
+#   插值/解析异常、delta < 1（过点）或 > 600
+#     -> WaitNodeFailure(code="WAIT_ABSOLUTE_TIME_INVALID")，run failed，不 sleep
+```
+
+差值秒数同时作为暂停帧 `timeout_seconds`；resume 走既有 remaining_seconds。新增失败码 **WAIT_ABSOLUTE_TIME_INVALID**（其余 wait 失败码不变）；无新增 REST。SSE wait node_end data 在 absolute 模式另含 `durationMode:"absolute"` 与 `absoluteTime`（渲染后目标时刻 ISO；epoch 输入回写统一 ISO）。
+
+### 3.21 IM 群机器人投递内部接口（dingtalk/wecom/feishu v1；docs/51，2026-09-23 落码收口 d4823d5）
+
+```python
+# src/atlas/message/im.py（新模块；无新依赖，注入 guard/post/clock，测试不触网）
+class ImSender(Protocol):
+    def send(self, channel: str, url: str, text: str, secret: str | None) -> None
+# DefaultImSender：guard.check(url) -> EgressDenied 透传
+#   dingtalk：secret 时 URL 拼 timestamp=<ms>&sign=quote(b64(HMAC_SHA256(secret, f"<ms>\n<secret>")))
+#             payload {"msgtype":"text","text":{"content":text}}
+#   wecom：   payload {"msgtype":"text","text":{"content":text}}（不加签）
+#   feishu：  payload {"timestamp":"<sec>","sign":b64(HMAC_SHA256(b"", f"<sec>\n<secret>")),
+#                      "msg_type":"text","content":{"text":text}}；无 secret 省略前两键
+#   POST：10s、follow_redirects=False；须 2xx 且 dingtalk/wecom errcode==0、feishu code==0
+#   否则 ImDeliveryError -> MessageService 折算 IM_SEND_FAILED，不写记录
+```
+
+`MessageService.send` 增可选 `secret` 透传：to 为单 URL（数组 INVALID_PARAMETER）；secret 仅 dingtalk/feishu 允许（非空 str ≤200，其他渠道 INVALID_PARAMETER）；成功 delivered 标渠道名；未注入 IM 投递器三渠道回退进程内记录。新增错误码 **IM_SEND_FAILED**（EGRESS_DENIED 照透传）；无新增 REST。
+
+### 3.22 告警外部通知内部接口（AlertChannel/AlertNotifier v1；docs/52，2026-09-23 落码收口 70b4889/07baa89/6a7d846/b352638）
+
+```python
+# src/atlas/monitoring/notify.py（新模块；零新依赖，复用 MessageService 五渠道）
+class AlertChannel(BaseModel):
+    enabled: bool = False
+    channel: Literal["dingtalk", "wecom", "feishu", "webhook", "email"] = "dingtalk"
+    to: str = ""
+    secret: str = ""
+    minSeverity: Literal["critical", "warning"] = "critical"
+    updatedAt: str = ""
+class AlertNotifier:
+    def __init__(self, message_service: MessageService): ...
+    def notify(self, alert: Alert, cfg: AlertChannel) -> None: ...
+    # 未启用/severity 过滤跳过；异常全捕获记最近投递状态；不抛
+# MonitoringRepository 增：get_alert_channel() -> AlertChannel
+#                         update_alert_channel(raw: dict) -> AlertChannel
+# 两档 store 经 set_notifier(notifier) 回注；reset 清空回默认
+# 触发：仅新建告警三处（内存/PG record_run、rollout_gate）
+# 迁移 020 alert_notify_settings；GET read / PUT administer
+```
+
 ## 4. 记忆检索接口（依据 06 6.2 / 05 2.3）
 
 > **M11 实现边界（2026-09-19 已落码收口；权威＝docs/26、ADR T23）**：下列 `memory_retriever.query` 五层分层检索为**愿景**（working Redis / summary / fact pgvector / case / preference + 决策节点隐式注入），v1 不实现，缓做 14 D35。M11 取回的是下方「4.1 M11 长期记忆最小接口」——统一 memory_item（fact/preference）+ 显式 remember/recall 两工具，**不做决策隐式注入**。
@@ -628,7 +853,7 @@ class MemoryRepository(Protocol):
 
 > 以下路径为按 Demo 需求推导的 REST 端点清单，字段以 03/04/05 Schema 为准；正式定义待落码时随 OpenAPI 生成。
 >
-> **鉴权四档（2026-09-16，04 §5.14）**：除标注「公开」者外，端点必须携带 `Authorization: Bearer <sess-token>`，缺失/无效 → 401「缺少或无效的登录凭证」；角色不足 → 403「当前角色无权执行此操作」；访问不存在于本租户的对象（含他租户审批/调试 token）→ 404。**公开**：`POST /api/auth/login`、`GET /api/health`、静态托管、`GET /demo/shop`、`/api/demo/**`（模拟外部系统，沿用 X-Demo-Token/demo 登录自带认证，不经平台鉴权）。**viewer+**（全部登录角色可读）：所有 GET 业务端点（graphs/templates/adapters/recordings/monitoring/alerts/approvals/debug/messages）+ `POST /api/feedback`（人人可提交）。**operator+**：POST/PUT/DELETE/POST 运行类——graphs 保存、compile、run、run/stream、nl/generate、recordings 写/删/replay、approvals 决策、debug resume、runs/{id}/cancel 急停、alerts acknowledge/resolve、publish 与 release-gate、rollout 配置/start/promote/rollback（M9，对齐发布权限）。**admin only**：`PUT /api/monitoring/rules`、`POST /api/demo/reset`、`GET /api/feedback`。所有业务数据按 token 推断的租户分区（03 各结构租户注记）。
+> **鉴权四档（2026-09-16，04 §5.14）**：除标注「公开」者外，端点必须携带 `Authorization: Bearer <sess-token>`，缺失/无效 → 401「缺少或无效的登录凭证」；角色不足 → 403「当前角色无权执行此操作」；访问不存在于本租户的对象（含他租户审批/调试 token）→ 404。**公开**：`POST /api/auth/login`、`GET /api/health`、静态托管、`GET /demo/shop`、`/api/demo/**`（模拟外部系统，沿用 X-Demo-Token/demo 登录自带认证，不经平台鉴权）。**viewer+**（全部登录角色可读）：所有 GET 业务端点（graphs/templates/adapters/recordings/monitoring/alerts/approvals/debug/messages）+ `POST /api/feedback`（人人可提交）。**operator+**：POST/PUT/DELETE/POST 运行类——graphs 保存、compile、run、run/stream、nl/generate、recordings 写/删/replay、approvals 决策、debug resume、runs/{id}/cancel 急停、alerts acknowledge/resolve、publish 与 release-gate、rollout 配置/start/promote/rollback（M9，对齐发布权限）。**admin only**：`PUT /api/monitoring/rules`、`PUT /api/monitoring/alert-channel`、`POST /api/demo/reset`、`GET /api/feedback`。所有业务数据按 token 推断的租户分区（03 各结构租户注记）。
 
 | 方法 | 路径 | 功能 | 关联 |
 |---|---|---|---|
@@ -673,6 +898,8 @@ class MemoryRepository(Protocol):
 | GET | /api/monitoring/runs | 运行记录列表：`?graph_id=&limit=`（默认 50、1-200 截断，新→旧），返回 `{items:[RunRecord]}`，每条纯超集含 `tool_calls:[ToolCallMetric]`（⑧，缺省 []）；仅真实运行（debug/回放/子图重入不计） | monitoring |
 | GET | /api/monitoring/rules | 读取规则配置 RuleConfig：四内置规则（默认全开，连续阈值 3、窗口 20/最小样本 5/失败率 0.5）＋纯超集 `custom:[CustomRule]`（⑨，缺省 []） | monitoring |
 | PUT | /api/monitoring/rules | 全量替换规则配置；非法值（enabled 非 bool、阈值/窗口/样本非 1-200 整数、rate 非 0-1）422 中文聚合错误；**⑨ 起 `custom` 段同校验（cid 非空/同配置唯一/≤64、name 非空/≤50、severity 枚举、expression 经安全条件引擎静态校验且顶层须布尔，错误中文聚合 `custom[i].xxx：…`），旧配置无 custom 不 422**；`/api/demo/reset` 恢复默认 | monitoring |
+| GET | /api/monitoring/alert-channel | 读取租户告警通知单例 AlertChannel＋最近投递状态（lastNotifiedAt/lastError code+message；无则 null） | monitoring |
+| PUT | /api/monitoring/alert-channel | 整体替换；enabled=true 时 to 按渠道校验（IM/webhook http(s) URL、email 含 @）、secret 仅 dingtalk/feishu 非空 ≤200，违例 422 中文聚合；enabled=false 不校验草稿；回显服务端 updatedAt；reset 恢复默认 | monitoring |
 | GET | /api/alerts | 告警列表：`?status=open\|acknowledged\|resolved`（缺省全部），`{items:[Alert]}` 新→旧；**⑨ 起 `rule_id` 为 string（内置五条或 `custom:{cid}`）、纯超集 `rule_name`（自定义规则名；进程内档有值，PG 档 v1 读回 null，前端回退 rule_id）** | monitoring |
 | POST | /api/alerts/{id}/acknowledge | 确认告警（open→acknowledged）；未知 id 404、非 open 状态 409，中文 detail | monitoring |
 | POST | /api/alerts/{id}/resolve | 关闭告警（open/acknowledged→resolved）；未知 id 404、已 resolved 409，中文 detail | monitoring |
@@ -689,7 +916,7 @@ class MemoryRepository(Protocol):
 | POST | /api/monitoring/on-call/rotate | **docs/33 §5 ⑩（administer）**：手动轮换推进 index，返 schedule + current；值班表为空 409（OnCallEmpty 中文 detail）；viewer 403 | monitoring/silences |
 | POST | /api/graphs/{id}/compile | DSL → LangGraph 编译（08 7.1 W7-W8）；**M6 起请求体可选 `releaseVersion`（缺省 latest）**。静态校验失败 422 体 `{"detail":[中文消息,...]}` 不变；**M2 起（2026-09-16 落码，fbd9f77）并列增机器可读定位侧车** `"locations":[{"index":number,"nodeId"?:"…","pointer"?:"/branches/0/expression"}]`——index 对齐 detail 下标、稀疏，pointer 为 RFC6901 相对该节点 config 根；图级错误无条目；契约见 03 `diagnostic`、06 §6.13，用例 U38。run/run/stream 经同一 compile_graph 路径，形状相同 | 02 Graph DSL |
 | POST | /api/graphs/{id}/run | 编译并运行，返回状态/节点产出/执行轨迹；请求体 `{"inputs": {...}}`（M6 起可选 `releaseVersion`，缺省 latest；**M9 起可选 `event:{channel?,payload?}`——带 event 为入站触发，经 Router 三段分桶解析发布版本并按不可变快照运行（pin-to-version），无任何发布版 → 409；不带 event＝编辑器手动运行 latest 草稿，旧行为零回归；RunRecord 记 resolved_version**），inputs 同名键覆盖全局变量且整体作为 trigger 节点 webhook 载荷 `context.payload`（W9-W10 接入真实决策/适配器）；**不支持调试**——请求体含 `debug` 返回 422「单步调试仅支持流式运行 /run/stream」（Phase 2 能力项） | 02 Graph DSL / LoopState / route_decision |
-| POST | /api/graphs/{id}/run/stream | SSE 流式运行（W9-W10；M6 起 body 可选 `releaseVersion`，缺省 latest；**M9 起同 sync 行可选 `event:{channel?,payload?}`，Router 分桶 + pin-to-version，无发布版 409，不带 event 走草稿零回归**）：事件 `node_start`/`node_end`/最终 `result`，供画布实时进度（验收标准 5）；**M10 起三帧为 19 §2.3.4 超集——node_start/node_end 另带 `traceId/spanId/parentSpanId`、run_end(result) 另带 `traceId/spanId/graphVersion`（只增字段、不改帧型，前端忽略未知字段零改动，完整 span 树不进 SSE）**；condition 节点的 node_end 事件 data 含 `{branch, target, evaluation, expression_errors}`（契约 04 §5.2），loop 节点含 `{mode, iterations, index, target, exitReason, expression_errors}`（契约 04 §5.3），parallel 节点扇出时 data 为 running 占位、joinTarget 的 node_end 前该产出被覆盖为终态 `{mode, joinStrategy, status, branches, result, joinTarget}`（契约 04 §5.4），wait 节点的 node_end 事件 data 含 `{mode:"wait", waitType:"duration", durationSeconds}`（契约 04 §5.5；node_start 后同步阻塞等待），human_approval 节点的 node_start 事件 data 含 `approval:{token, summary, approver, timeoutSeconds}`、node_end 含 `{mode:"human_approval", decision, target, token, summary, approver, resolvedBy}`（契约 04 §5.6），subgraph 节点自身 node_end 含 `{mode:"subgraph", graphId, status, error?, outputs, trace}`（无 subgraphPath）；**A 包（2026-09-19 `e594a4b`，docs/27 §3）起子图内部 `node_start`/`node_end` 以可选 `subgraphPath:string[]`（每层父图 subgraph 节点 id，顶层缺省）上 SSE**——只转发节点级事件、吞掉子层 run_end/result（整图仅一个 run_end），子图内 human_approval 的 approval 载荷随内部 node_start 上屏、可经共享 broker 与既有决策端点交互（无新端点，契约 04 §5.7）；**Phase 2 第五项起本端点为真流式**——run_graph 在后台线程执行、事件经 queue 实时下发（旧实现先跑完再回放，human_approval 会因收不到 node_start 而死锁）；**Phase 2 能力项（单步调试）**请求体可选 `debug:{breakpoints:[{node_id, expression?, hitCount?, logMessage?, onException?}]}`（**B 包 f9a1301：hitCount 正整数 N＝每第 N 次命中暂停 hits%N==0、logMessage 非空＝日志断点命中只发 debug_log 不暂停、消息原样不插值，非正整数/布尔/非串 422 中文聚合**）——存在时启动即 step 模式（首个节点 node_start 后、逻辑前发 `paused` 帧），断点会话级、不落 Graph JSON，未知 node_id/表达式校验失败 422（中文聚合）；新增帧 `paused`（`{token, node_id, node_type, reason:"step"|"breakpoint"|"condition"|"exception", globals, outputs, history?, error?, subgraphPath?}` 深拷贝只读快照；**docs/28 批2（038dcaa/9b378c2/f6f7d30）** reason 增 `exception`，帧纯超集增 `history`（变量变化历史，易失上限 50）、`error`（`{type,message}`，仅 exception）、`subgraphPath`（子图层路径，仅子层帧）；断点入参 `onException:true`＝异常断点，命中异常先暂停、resume 原样重抛不忽略）与 `stopped`（resume action=stop 后 `{node_id, reason:"user_stop"}`，流结束且无 result 帧；**调试流中点急停也折叠为 stopped，不另发 cancelled**）、`debug_log`（**B 包 f9a1301** logpoint 帧 `{node_id,hits,message}`，命中不暂停）；**普通（非调试）流急停另发 `cancelled`（`{node_id,reason:"user_cancel"}`，协作式取消、wait/approval/tool 阻塞中点不强杀、下一节点边界生效）**，恢复走 POST /api/debug/{token}/resume（B 包起 step/continue 可带 globals 浅合并改写），急停走 POST /api/runs/{id}/cancel；**docs/28 批2（f6f7d30）起子图内部可产生 paused/debug_log（子层帧带 subgraphPath、整图终帧仍唯一，契约 04 §5.12）**；**docs/28 §4.1 ⑧（a318d97）起真实工具节点结束另发内部事件 `tool_metric`（`{node_id,tool,duration_ms,action_status:"SUCCESS"|"FAILED"|"SIMULATED",error_code}`，顶层无 subgraphPath；mock 命中不发、子图内被吞、仅监控采集不驱动画布，前端 RunEvent 联合含该型并忽略展示）** | 08 7.1 |
+| POST | /api/graphs/{id}/run/stream | SSE 流式运行（W9-W10；M6 起 body 可选 `releaseVersion`，缺省 latest；**M9 起同 sync 行可选 `event:{channel?,payload?}`，Router 分桶 + pin-to-version，无发布版 409，不带 event 走草稿零回归**）：事件 `node_start`/`node_end`/最终 `result`，供画布实时进度（验收标准 5）；**M10 起三帧为 19 §2.3.4 超集——node_start/node_end 另带 `traceId/spanId/parentSpanId`、run_end(result) 另带 `traceId/spanId/graphVersion`（只增字段、不改帧型，前端忽略未知字段零改动，完整 span 树不进 SSE）**；condition 节点的 node_end 事件 data 含 `{branch, target, evaluation, expression_errors}`（契约 04 §5.2），loop 节点含 `{mode, iterations, index, target, exitReason, expression_errors}`（契约 04 §5.3），parallel 节点扇出时 data 为 running 占位、joinTarget 的 node_end 前该产出被覆盖为终态 `{mode, joinStrategy, status, branches, result, joinTarget}`（契约 04 §5.4），wait 节点的 node_end 事件 data 含 `{mode:"wait", waitType:"duration", durationSeconds}`（契约 04 §5.5；node_start 后同步阻塞等待；durationMode=dynamic 另含 `durationMode/durationExpression`，docs/49 当日落码收口 8580fcb/4eaaddd），human_approval 节点的 node_start 事件 data 含 `approval:{token, summary, approver, timeoutSeconds}`、node_end 含 `{mode:"human_approval", decision, target, token, summary, approver, resolvedBy}`（契约 04 §5.6），subgraph 节点自身 node_end 含 `{mode:"subgraph", graphId, status, error?, outputs, trace}`（无 subgraphPath）；**A 包（2026-09-19 `e594a4b`，docs/27 §3）起子图内部 `node_start`/`node_end` 以可选 `subgraphPath:string[]`（每层父图 subgraph 节点 id，顶层缺省）上 SSE**——只转发节点级事件、吞掉子层 run_end/result（整图仅一个 run_end），子图内 human_approval 的 approval 载荷随内部 node_start 上屏、可经共享 broker 与既有决策端点交互（无新端点，契约 04 §5.7）；**Phase 2 第五项起本端点为真流式**——run_graph 在后台线程执行、事件经 queue 实时下发（旧实现先跑完再回放，human_approval 会因收不到 node_start 而死锁）；**Phase 2 能力项（单步调试）**请求体可选 `debug:{breakpoints:[{node_id, expression?, hitCount?, logMessage?, onException?}]}`（**B 包 f9a1301：hitCount 正整数 N＝每第 N 次命中暂停 hits%N==0、logMessage 非空＝日志断点命中只发 debug_log 不暂停、消息原样不插值，非正整数/布尔/非串 422 中文聚合**）——存在时启动即 step 模式（首个节点 node_start 后、逻辑前发 `paused` 帧），断点会话级、不落 Graph JSON，未知 node_id/表达式校验失败 422（中文聚合）；新增帧 `paused`（`{token, node_id, node_type, reason:"step"|"breakpoint"|"condition"|"exception", globals, outputs, history?, error?, subgraphPath?}` 深拷贝只读快照；**docs/28 批2（038dcaa/9b378c2/f6f7d30）** reason 增 `exception`，帧纯超集增 `history`（变量变化历史，易失上限 50）、`error`（`{type,message}`，仅 exception）、`subgraphPath`（子图层路径，仅子层帧）；断点入参 `onException:true`＝异常断点，命中异常先暂停、resume 原样重抛不忽略）与 `stopped`（resume action=stop 后 `{node_id, reason:"user_stop"}`，流结束且无 result 帧；**调试流中点急停也折叠为 stopped，不另发 cancelled**）、`debug_log`（**B 包 f9a1301** logpoint 帧 `{node_id,hits,message}`，命中不暂停）；**普通（非调试）流急停另发 `cancelled`（`{node_id,reason:"user_cancel"}`，协作式取消、wait/approval/tool 阻塞中点不强杀、下一节点边界生效）**，恢复走 POST /api/debug/{token}/resume（B 包起 step/continue 可带 globals 浅合并改写），急停走 POST /api/runs/{id}/cancel；**docs/28 批2（f6f7d30）起子图内部可产生 paused/debug_log（子层帧带 subgraphPath、整图终帧仍唯一，契约 04 §5.12）**；**docs/28 §4.1 ⑧（a318d97）起真实工具节点结束另发内部事件 `tool_metric`（`{node_id,tool,duration_ms,action_status:"SUCCESS"|"FAILED"|"SIMULATED",error_code}`，顶层无 subgraphPath；mock 命中不发、子图内被吞、仅监控采集不驱动画布，前端 RunEvent 联合含该型并忽略展示）** | 08 7.1 |
 
 | GET | /api/runs | 挂起/运行查询（**M5 契约设计轮 2026-09-17 登记，docs/24 §4，2026-09-17 已随 M5b 落码生效**）：`?status=suspended&graph_id=&limit=`（新→旧，status 缺省=全部），返回 `{items:[{runId, graphId, status, startedAt, suspendedAt, kind?, nodeId?, deadlineAt?}]}`，`kind=approval` 附 `resumeToken`（审批决策本就凭 token 无身份绑定，沿用现状口径）；仅本租户 | runs |
 | GET | /api/runs/{run_id} | 单运行详情（同上 M5b 已落码生效）：状态（running/suspended/completed/failed/cancelled/interrupted，**B 包 f9a1301 增 cancelled**）、节点产出摘要、trace、挂起信息 `{runId, graphId, status, outputs, trace, suspension?}`；跨租户/不存在 404（04 §5.14 全分区口径，不泄漏存在性）；**不新增写端点**——审批决策仍 `POST /api/approvals/{token}/decision`、调试恢复仍 `POST /api/debug/{token}/resume`，本端点只承担查询与 SSE 断线重连后的状态确认（执行线程与 SSE 连接解耦，断开不取消执行） | runs |
@@ -703,7 +930,7 @@ class MemoryRepository(Protocol):
 >
 > parallel 节点（Phase 2 第三项，v1 静态扇出/扇入）运行结果写入 `outputs[parallel_id] = {mode:"parallel", joinStrategy:"all_success"|"all_completed", status:"success"|"failed", branches:[{label,target,status,error}], result:{<分支入口节点id>: <末端节点产出>}, joinTarget}`；入口先写 running 占位，合成网关 `__join__<id>` 汇聚时（joinTarget 执行前）覆盖为终态并以 parallel 节点自身补发第二次 node_end。分支路径上任一节点 `result.status=="FAILED"` 即该分支失败；all_success 下有失败时整体 `status="failed"` 但 joinTarget 照常执行、run 仍 completed（fail-safe）。trace 增 `parallel-x: fork N branches → a, b` 与 `parallel-x: joined (all_success) success` / `parallel-x: joined (all_success) failed: <label>（<error>）` 行。下游引用形如 `{{parallel-x.status}}`、`{{parallel-x.result.tool-a.result.status}}`（result 以入口节点 id 为键）。扇出/barrier/fail-safe 与 outputs 按键合并 reducer 见 04 §5.4、06 §6.1。
 
-> wait 节点（Phase 2 第四项，v1 仅定时等待）运行结果写入 `outputs[wait_id] = {mode:"wait", waitType:"duration", durationSeconds: <int>}`；执行器 node_start 后同步 `time.sleep(durationSeconds)`（1-600 秒整数常量，线程池工作线程内阻塞），到时沿唯一普通边继续。trace 增 `wait-x: waited 5s` 行。下游引用形如 `{{wait-x.durationSeconds}}`。事件等待缓做 14 D19，语义见 04 §5.5、06 §6.1。
+> wait 节点（Phase 2 第四项，v1 仅定时等待）运行结果写入 `outputs[wait_id] = {mode:"wait", waitType:"duration", durationSeconds: <int>}`；执行器 node_start 后同步 `time.sleep(durationSeconds)`（1-600 秒整数常量，线程池工作线程内阻塞），到时沿唯一普通边继续。trace 增 `wait-x: waited 5s` 行。下游引用形如 `{{wait-x.durationSeconds}}`。事件等待的进程内 v1 子集已落码（2026-09-23，见 04 §5.5 追加段、06 §6.22、docs/47）；**定时等待动态时长 v1 已落码收口（2026-09-23，docs/49，8580fcb/4eaaddd；HTTP 冒烟 21/21）**：durationMode=dynamic 时 durationExpression 经条件引擎求值 1-600 秒（int(round)，bool/非有限拒绝），产出另含 `durationMode/durationExpression`，坏表达式/非法结果 run failed WAIT_DURATION_INVALID 不 sleep；static（含旧图缺省）零回归；持久化中断帧/多实例、到点时刻、event timeout 表达式化仍缓做 14 D19。**到点时刻等待 v1 已落码收口（2026-09-23，docs/50，12de72d/4f82a1c；HTTP 冒烟 21/21）**：durationMode=absolute——absoluteTime（ISO/epoch，支持 {{}}，naive 按 UTC）解析目标时刻差值 1-600 秒，产出另含 `durationMode/absoluteTime`，坏时刻/过点/越界 run failed WAIT_ABSOLUTE_TIME_INVALID 不 sleep（见 §3.20）。
 >
 > human_approval 节点（Phase 2 第五项，v1 进程内审批信号）运行结果写入 `outputs[human_id] = {mode:"human_approval", decision:"approved"|"rejected", target, token, summary, approver, resolvedBy:"human"|"input"|"timeout"}`；执行器在 `ApprovalBroker`（模块级单例，可注入）登记 pending 后阻塞，node_start 携带 `approval` 载荷。决策三来源：REST 人工放行、run inputs 预置 `{"approvals":{"<node-id>":"approved"|"rejected"}}`（非交互/测试）、超时按 onTimeout（10-3600 秒，默认 reject）自动决策；两条出边全 conditional，按 decision 路由 approvedTarget/rejectedTarget。trace 增 `human-x: approved (human) → tool-y` / `… rejected (timeout) → tool-z` 行。下游引用形如 `{{human-x.decision}}`。持久化中断-恢复缓做 14 D20，语义见 04 §5.6、06 §6.1。**M8（已落码 2026-09-18）纯超集**：config 可选 `cardTemplateId`（不填＝上述 summary 旧路径完全不回归；非空未命中内置目录→编译 422）；命中时 node_start 的 `approval` 载荷在 `{token,summary,approver,timeoutSeconds}` 上加 `cardTemplateId`，节点产出在现有字段上加 `comment`（审批意见，三来源缺省空串）与 `card:{templateId,actionId}`；ApprovalBroker pending 携带 card_template_id 与渲染上下文快照，M5b 中断帧带 cardTemplateId、恢复时上下文从帧 `resume_state.outputs`+trigger 重建；卡片渲染与决策端点见 §3.11 与 `/api/cards`、`/api/approvals/{token}/card`、`/api/approvals/{token}/decision`（actionId/form）。
 >
@@ -723,9 +950,13 @@ class MemoryRepository(Protocol):
 | GET | /api/demo/shop/orders | Demo 待处理退款单（需登录，W9-W10） | — |
 | POST | /api/demo/reset | 【admin only】重置**调用方租户**的 Demo 数据（2026-09-16，04 §5.14：角色不足 403；作用域为本租户 graph/approval/debug/monitoring/message，录制与反馈按租户保留不清；跨租户数据不动）：本租户店铺——全局 demo 店铺恢复 5 笔种子退款单、清空已保存图与登录态、清空 pending 审批请求，Phase 1 种子客户体验，W10 后；Phase 2 第三项起清空进程内消息记录并重建内置 SQLite demo 订单库（全局共享模拟基础设施，仍随 reset 重建）——显式 `ATLAS_DATABASE_URL` 配置的外部库不被触碰；内置流程模板目录为代码常量，不受 reset 影响；录制用例为测试资产同样**不被 reset 清除**——其图已快照进用例，GraphStore 清空不影响回放；Phase 2 能力项起 reset 同时把全部**活动调试暂停按 stop 放行**（会话 cancelled + Event set），阻塞在 paused 的运行线程经 DebugStopped 收敛结束，不留悬挂线程；调试会话本身为进程内临时态，不构成需保留的数据；Phase 2 能力项（基础监控告警）起 reset 同时清空**本租户**监控运行记录与告警（ring、streak、Alert 列表）并把规则阈值恢复默认（运行计数不重置；运行时数据，同消息记录；重启本就清空，持久化随 11 S1/14 D28）。**M5 契约设计轮分层语义（2026-09-17，docs/24 §3.4）**：进程内后端行为不变；PG 档（M5b）＝truncate 本租户运行时表（graphs/runs/interruptions/iam_sessions/monitoring_*）并重建种子，`recordings`/`feedback`（persistent 档）保留不清。**M9 起 reset 同时清空本租户 RoutingStore（rollout 配置/状态/流量计数，进程内运行时态，memory/PG 两档同口径）**。 | — |
 | GET | /api/approvals | 列出当前 pending 审批请求（`{items:[{token, summary, approver, timeoutSeconds, node_id, graph_id, createdAt, cardTemplateId?}]}`，M8 起命中卡片附 cardTemplateId；**审批闭环批（2026-09-22）起附 createdAt**（pending 创建 epoch 秒，队列剩余时间计算用）；进程内单例，重启即失；Phase 2 第五项） | human_approval |
+| GET | /api/approvals/decided | 已决审批只读历史（审计可见与审批结果补强批 2026-09-22，ecfa325/bc3f116，docs/37）：query `?limit=50`（clamp 1–200）；read 能力、**全部登录角色可用**、本租户分区；返 `{items:[{token, node_id, graph_id, summary, approver, createdAt, decision, resolvedBy, comment, cardTemplateId?}], limit}`，按 resolved_at 倒序；不返回 card_context/Event；进程内、reset/重启即失（D20）。决策成功后各决策路径旁路 fail-safe 发决策结果邮件（`ApprovalNotifier.notify_decided`，异常仅 warning，不改 200/409 响应、重复决策不重发） | decided_approval |
 | GET | /api/approvals/email-view | **公开（无登录）**审批只读视图：query `?token=<签名 capability token>`；返回 `{status, summary, nodeId, graphId, approver, timeoutSeconds, createdAt, remainingSeconds, decision?, resolvedBy?, card?}`（card＝email 渠道渲染投影，仅 cardTemplateId 审批）；只读幂等、GET 无副作用不写审计；坏/过期 token、未装配租户（peek 不创建）、未知审批、租户与审批不符 → 统一 404「审批链接无效或已过期」（审批闭环批 2026-09-22） | email_decision_token |
 | POST | /api/approvals/email-decision | **公开（无登录）**邮件一键决策：体 `{token（必填）, decision?:"approved"|"rejected", comment?≤500, actionId?, form?}`；与登录态 decision 共用 `_apply_approval_decision`（卡片走 map_action_output）；200 返 `{token, decision, resolvedBy, actionId?}`，成功后 fail-safe 写审计 actor `email-link`、action `approval.email_decision:{decision}`（不记 token/comment）；重复 409、卡片错误/缺 decision 422、坏 token 等统一 404（同上，审批闭环批 2026-09-22） | email_decision_token |
 | POST | /api/approvals/{token}/decision | 人工审批决策，请求体 `{decision: "approved"|"rejected", comment?}`（comment v1 仅接收不展示）；**M8 起纯超集加可选 `{actionId?, form?}`**——命中卡片时前端可提交 `{actionId, form:{<name>:<value>}}`（decision/comment 可省，服务端经 `map_action_output` 按卡片 action.output 映射，`{{form.*}}` 回填 comment），也仍接受旧 `{decision,comment?}`；首决生效，200 返回决策结果；未知 token 404、已决重复提交 409、坏 actionId 或 action.output 缺必填 form 字段 422（中文 detail）；Phase 2 第五项 | human_approval / card_template |
+| POST | /api/waits/events | 事件等待按 key 广播信号（D19 进程内 v1，2026-09-23 落码收口 docs/47；operate）：体 `{eventKey（必填 1-128、白名单 [A-Za-z0-9:_-]）, payload?: object}`（payload 序列化 ≤4096、顶层键 ≤50）；返 `{released: n}`，同 key 多个 pending 全释放，无 pending 返 0（信号不留存；PG 单实例重启恢复后的 pending 同样可释放，docs/53）；eventKey 非法 422 WAIT_EVENT_KEY_INVALID、payload 超限 422 WAIT_EVENT_PAYLOAD_INVALID | wait_event |
+| POST | /api/waits/{token}/signal | 事件等待直投信号（operate）：体 `{payload?: object}`（限制同上）；200 返 `{token, released: true}`；未知/已取走 token 404 WAIT_TOKEN_NOT_FOUND；条目已 signaled 409 WAIT_ALREADY_SIGNALED | wait_event |
+| GET | /api/waits | 列出本租户 pending 事件等待（viewer+）：`{items:[{token, eventKey, nodeId, graphId, timeoutSeconds, deadlineAt}]}`；PG 后端跨重启可见（docs/53，2026-09-23 立项：启动 restore 同 token/event_key 剩余超时；重启窗口内无进程接收的信号不排队，调用方需重试），进程内后端重启即失 | wait_event |
 | POST | /api/feedback | 提交种子试用反馈（type=bug/suggestion、content、contact 选填，201；进程内存储，reset 不清除；Phase 1） | feedback_item |
 | GET | /api/feedback | 导出反馈（陪同试用收集用，`{items: [...]}`，Phase 1；2026-09-16 起 **admin only** 且只列本租户，04 §5.14） | feedback_item |
 | GET | /demo/shop | 模拟商家售后控制台 HTML 页面（W9-W10，自动登录/抓取演示目标系统） | — |
@@ -747,6 +978,27 @@ class MemoryRepository(Protocol):
 | GET | /connections/callback | 【**无鉴权**，T4】OAuth 提供方回调落地静态 HTML 页（include_in_schema=False，注册于 StaticFiles 挂载前优先匹配；纯静态引导用户回填 code/state，无副作用、不读 query 外秘密） | — |
 | GET | /api/audit/events | 【**administer**，docs/35 T6 `f243e04`】分页查本租户审计事件（query limit/offset/actor/action），仅 8 元数据字段、绝无请求体/凭据 | audit_event |
 | GET | /api/audit/export | 【**administer**，T6】`?format=jsonl` 导出审计（StreamingResponse 附件，逐行 JSON）；reset 不清审计 | audit_event |
+| GET | /api/channels | 【**read**，真实渠道适配批 docs/38，ADR T28】列出本租户渠道绑定（投影不含 token/secret） | channel_binding |
+| POST | /api/channels | 【**operate**，201】body `{provider, connectionId, config:{shop, apiVersion?}}` 建立绑定；provider 仅 shopify；connection 不存在/跨租户 → 404「渠道绑定不存在」，同 connection 重复绑定 → 409；写审计 `channel.bind`（不含 token，config.shop 在 path/query 外不记录） | channel_binding |
+| GET | /api/channels/{id} | 【**read**】单个绑定；未知绑定/不属于本租户 → 404 | channel_binding |
+| POST | /api/channels/{id}/test | 【**read**】真实上游探活（GET /shop.json，不触发业务写）；连接错误 200 体 `{ok:false}` 不 5xx；未知绑定 404 | channel_binding |
+| DELETE | /api/channels/{id} | 【**administer**】删除绑定（不影响底层 connection），写审计 `channel.unbind`；**reset 不清绑定**；未知绑定 404 | channel_binding |
+| POST | /api/channels/hooks/shopify/{binding_id} | 【**公开免登录**，入站 Webhook 批 docs/39，ADR T29】原始 body 经 Shopify HMAC-SHA256 验签（X-Shopify-Hmac-SHA256，先于 JSON 解析）；必需头 shop-domain/topic/webhook-id。200 三态 `{received|duplicate|ignored}:true`（unsupported topic/无订阅均 ignored）；400 缺头/非 JSON 对象；401 签名缺失或不匹配（不区分）；404 未知绑定（统一文案）；503 client_secret 信封缺失/解密失败；**验签通过后绝不非 2xx**；审计 `channel.webhook_received:{topic}`（无 body） | channel_webhook |
+| GET | /api/channels/{binding_id}/webhooks | 【**read**】订阅列表投影 `{items:[{topic, graphId, enabled}]}`；未知绑定 404 | channel_webhook |
+| PUT | /api/channels/{binding_id}/webhooks | 【**administer**】全量替换订阅，body `{items:[{topic, graphId, enabled}]}`：topic 白名单、graph 属本租户且存在（否则 404）、topic+graphId 唯一、≤10、enabled bool；坏形状聚合中文 422；写审计 | channel_webhook |
+| GET | /api/channels/webhooks/dead-letters | 【**read**】死信列表 `{items:[{webhookId,bindingId,topic,shop,reasons,createdAt,replayedAt}]}`；query `topic, bindingId, limit(≤100)`；不含 payload | webhook_delivery |
+| POST | /api/channels/webhooks/dead-letters/{webhook_id}/replay | 【**operate**】以存储 payload 绕过去重按当前订阅重投；200 `{webhookId,status,reasons}`（status：received/dead/ignored）；非 dead/不存在 → 404；写审计 | webhook_delivery |
+| DELETE | /api/channels/webhooks/dead-letters/{webhook_id} | 【**administer**】删除投递行；200 `{deleted:true}`；不存在 404；写审计 | webhook_delivery |
+| GET | /api/channels/webhooks/metrics | 【**read**】`{byTopic:{topic:{received,dead,duplicates}}, totals}` 全量实时聚合 | webhook_delivery |
+| GET | /api/channels/{binding_id}/remote-webhooks | 【**read**】`{items:[{remoteId,topic,address}],error?:string}`；渠道令牌失效 200 空 items＋error；未知绑定 404 | shopify_remote_webhook |
+| POST | /api/channels/{binding_id}/remote-webhooks | 【**operate**】body `{topic}`；201 `{remoteId,topic,address}`；409 已注册、422 topic 非法/非 https、404 绑定；写审计 | shopify_remote_webhook |
+| DELETE | /api/channels/{binding_id}/remote-webhooks/{topic} | 【**operate**】200 `{deleted:bool}` 幂等（未注册 false）；404 绑定；写审计 | shopify_remote_webhook |
+| POST | /api/openapi/preview | 【**operate**】body `{content?:str, url?:str}`（恰好其一）；`{title, base_url, operations:[...], imported_count, skipped_count}`；url 经 egress 抓取，EGRESS_DENIED/取数失败 422 OPENAPI_FETCH_FAILED；不落库 | openapi_import |
+| POST | /api/openapi/imports | 【**operate**】同上入参；201 ImportedSpec（仅成功 ops）；全 skipped 422 OPENAPI_NO_IMPORTABLE_OPERATION；超 5 specs/200 ops 422 OPENAPI_LIMIT_EXCEEDED；写审计（不记文档内容） | openapi_import |
+| GET | /api/openapi/imports | 【**read**】`{items:[ImportedSpec]}`（本租户） | openapi_import |
+| GET | /api/openapi/imports/{spec_id} | 【**read**】ImportedSpec；不存在/他租户 404 | openapi_import |
+| DELETE | /api/openapi/imports/{spec_id} | 【**administer**】200 `{deleted:true}`，运行时注册表同步摘除；404；写审计 | openapi_import |
+| PUT | /api/openapi/imports/{spec_id}/credentials | 【**operate**】body `{credentials:{name:value}}`（docs/44/46；name 须为该 spec 的 security scheme，未知 422 OPENAPI_INVALID_CREDENTIAL）；apiKey/bearer value＝string、basic（docs/46）＝`{username,password}`（信封明文 JSON）；非空值加密 upsert、空串/空对象/null 删除，basic 缺字段 422；200 `{configured:[name]}`（不回密钥）；404 | openapi_import |
 
 > **M11 记忆端点口径订正（2026-09-19，docs/26；批 4⑩ 2026-09-20 修订）**：上表取代原愿景 `GET/PUT /api/memories/{operator_id}`（memory_config 配置读写，05 §2.4）——五层策略配置随 D35 缓做，operator 维度降为记忆条目 `scope.user_id`，租户由会话 Principal 定。**初版 M11 写入只走图工具 `memory/remember`（手动造数走 `scripts/dev/m11_seed.py`）；docs/28 批 4⑩（`ec0fd81`）起补开 `POST/PUT /api/memories`（operate，source 固定 manual）承担运营手动新建/编辑**——图工具仍是运行时自动写入主路径，REST 为手动补录/纠错通道，删除仍仅 admin。
 

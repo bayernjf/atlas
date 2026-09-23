@@ -266,6 +266,87 @@ def test_reject_nested_loop_in_body():
     assert any("不支持嵌套循环" in error and "loop-2" in error for error in exc.value.errors)
 
 
+def make_foreach_graph(**config_overrides):
+    config = {
+        "mode": "foreach",
+        "itemsExpression": "{{global.order_ids}}",
+        "itemName": "order",
+        "collectTarget": "tool-body",
+        "bodyTarget": "tool-body",
+        "exitTarget": "tool-exit",
+    }
+    config.update(config_overrides)
+    return {
+        "version": 1,
+        "variables": [],
+        "nodes": [
+            _trigger(),
+            {"id": "loop-1", "type": "loop", "name": "遍历循环", "position": {"x": 1, "y": 0},
+             "config": config,
+             "retry": {"max_retries": 0, "backoff": "1s", "timeout": 30, "on_error": "stop"}},
+            _tool("tool-body", "循环体操作"),
+            _tool("tool-exit", "退出后操作"),
+        ],
+        "edges": [
+            {"id": "e1", "source": "trigger-1", "target": "loop-1"},
+            {"id": "e2", "source": "loop-1", "target": "tool-body"},
+            {"id": "e3", "source": "tool-body", "target": "loop-1"},
+            {"id": "e4", "source": "loop-1", "target": "tool-exit"},
+        ],
+    }
+
+
+def test_parse_valid_foreach_graph():
+    graph = parse_graph(make_foreach_graph())
+    loop = next(node for node in graph.nodes if node.type == "loop")
+    assert loop.config["mode"] == "foreach"
+    assert loop.config["itemsExpression"] == "{{global.order_ids}}"
+    assert loop.config["collectTarget"] == "tool-body"
+
+
+def test_reject_foreach_without_items_expression():
+    raw = make_foreach_graph()
+    del raw["nodes"][1]["config"]["itemsExpression"]
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("itemsExpression" in error for error in exc.value.errors)
+
+
+def test_reject_foreach_with_syntax_error_items_expression():
+    raw = make_foreach_graph(itemsExpression="{{global.order_ids}")
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("遍历数组表达式" in error for error in exc.value.errors)
+
+
+def test_reject_foreach_with_invalid_item_name():
+    raw = make_foreach_graph(itemName="123-bad")
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("itemName" in error for error in exc.value.errors)
+
+
+def test_reject_foreach_collect_target_outside_body():
+    raw = make_foreach_graph(collectTarget="tool-exit")
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("聚合节点" in error and "不在循环体内" in error for error in exc.value.errors)
+
+
+def test_reject_foreach_collect_target_self():
+    raw = make_foreach_graph(collectTarget="loop-1")
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("聚合节点" in error for error in exc.value.errors)
+
+
+def test_reject_unsupported_loop_mode():
+    raw = make_foreach_graph(mode="until")
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any("mode" in error for error in exc.value.errors)
+
+
 def test_reject_trigger_inside_loop_body():
     raw = make_loop_graph()
     raw["nodes"][2]["id"] = "tool-body"
@@ -283,7 +364,7 @@ def test_reject_trigger_inside_loop_body():
 def test_reject_loop_bad_config_and_missing_edges():
     raw = make_loop_graph()
     raw["nodes"][1]["config"] = {
-        "mode": "foreach",
+        "mode": "until",
         "continueExpression": "index >",
         "maxIterations": 0,
         "bodyTarget": "tool-exit",
@@ -589,14 +670,21 @@ def test_parse_valid_wait_inside_loop_body():
 @pytest.mark.parametrize(
     "config, expected",
     [
-        ({"waitType": "event", "durationSeconds": 2}, "事件等待（event）暂不支持"),
-        ({"waitType": "until", "durationSeconds": 2}, "等待类型（waitType）必须是 duration"),
+        ({"waitType": "until", "durationSeconds": 2}, "等待类型（waitType）必须是 duration 或 event"),
         ({"waitType": "duration", "durationSeconds": "2"}, "必须是整数秒"),
         ({"waitType": "duration", "durationSeconds": True}, "必须是整数秒"),
         ({"waitType": "duration", "durationSeconds": None}, "必须是整数秒"),
         ({"waitType": "duration", "durationSeconds": 0}, "需在 1-600 秒之间"),
         ({"waitType": "duration", "durationSeconds": -1}, "需在 1-600 秒之间"),
         ({"waitType": "duration", "durationSeconds": 601}, "需在 1-600 秒之间"),
+        ({"waitType": "event", "eventKey": None, "timeoutSeconds": 300}, "事件标识（eventKey）为必填"),
+        ({"waitType": "event", "eventKey": "bad key", "timeoutSeconds": 300}, "只允许字母、数字及 :_-"),
+        ({"waitType": "event", "eventKey": "x" * 129, "timeoutSeconds": 300}, "长度不能超过 128"),
+        ({"waitType": "event", "eventKey": "order_paid", "timeoutSeconds": 0}, "需在 1-3600 秒之间"),
+        ({"waitType": "event", "eventKey": "order_paid", "timeoutSeconds": 3601}, "需在 1-3600 秒之间"),
+        ({"waitType": "event", "eventKey": "order_paid", "timeoutSeconds": "300"}, "必须是整数秒"),
+        ({"waitType": "event", "eventKey": "order_paid", "timeoutSeconds": 300,
+          "onTimeout": "abort"}, "超时策略（onTimeout）必须是 continue 或 fail"),
     ],
 )
 def test_reject_wait_bad_type_and_duration(config, expected):
@@ -605,6 +693,73 @@ def test_reject_wait_bad_type_and_duration(config, expected):
     with pytest.raises(GraphValidationError) as exc:
         parse_graph(raw)
     assert any(expected in error for error in exc.value.errors)
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"waitType": "event", "eventKey": "order_paid", "timeoutSeconds": 1},
+        {"waitType": "event", "eventKey": "order_paid_{{trigger-1.context.payload.id}}",
+         "timeoutSeconds": 3600, "onTimeout": "fail"},
+        {"waitType": "event", "eventKey": "evt:paid-x_1", "timeoutSeconds": 300,
+         "onTimeout": "continue"},
+    ],
+)
+def test_parse_valid_event_wait(config):
+    raw = make_wait_graph()
+    raw["nodes"][1] = _wait_node(**config)
+    parse_graph(raw)
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"waitType": "duration", "durationMode": "static", "durationSeconds": 2},
+        {"waitType": "duration", "durationMode": "dynamic",
+         "durationExpression": "{{global.waitSecs}}"},
+        {"waitType": "duration", "durationMode": "dynamic",
+         "durationExpression": "{{global.slaHours}} * 3600", "durationSeconds": 5},
+        {"waitType": "duration", "durationMode": "absolute",
+         "absoluteTime": "2026-09-23T18:00:00+08:00"},
+        {"waitType": "duration", "durationMode": "absolute",
+         "absoluteTime": "  2026-09-23T10:00:00Z  ",
+         "durationSeconds": 5, "durationExpression": "{{global.x}}"},
+    ],
+)
+def test_parse_valid_dynamic_wait(config):
+    raw = make_wait_graph()
+    raw["nodes"][1] = _wait_node(**config)
+    parse_graph(raw)
+
+
+@pytest.mark.parametrize(
+    "config, expected",
+    [
+        ({"waitType": "duration", "durationMode": "soon", "durationSeconds": 2},
+         "时长模式（durationMode）必须是 static、dynamic 或 absolute"),
+        ({"waitType": "duration", "durationMode": "dynamic", "durationExpression": ""},
+         "动态时长表达式（durationExpression）为必填"),
+        ({"waitType": "duration", "durationMode": "dynamic"},
+         "动态时长表达式（durationExpression）为必填"),
+        ({"waitType": "duration", "durationMode": "dynamic",
+          "durationExpression": "x" * 201},
+         "动态时长表达式长度不能超过 200 字符"),
+        ({"waitType": "duration", "durationMode": "absolute"},
+         "到点时刻（absoluteTime）为必填"),
+        ({"waitType": "duration", "durationMode": "absolute", "absoluteTime": "   "},
+         "到点时刻（absoluteTime）为必填"),
+        ({"waitType": "duration", "durationMode": "absolute",
+          "absoluteTime": "x" * 65},
+         "到点时刻长度不能超过 64 字符"),
+    ],
+)
+def test_reject_dynamic_wait_bad_config(config, expected):
+    raw = make_wait_graph()
+    raw["nodes"][1] = _wait_node(**config)
+    with pytest.raises(GraphValidationError) as exc:
+        parse_graph(raw)
+    assert any(expected in error for error in exc.value.errors)
+
 
 
 def test_reject_wait_without_outgoing_edge():

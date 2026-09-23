@@ -101,3 +101,22 @@ describe('validateGraph 全图聚合 (U37⑤)', () => {
     expect(validateGraph(nodes, [edge('trigger-1', 'wait-1')])).toEqual([])
   })
 })
+
+describe('condition rootScoped 隐藏字段不产诊断（D14，docs/48）', () => {
+  it('llm 模式下默认分支的空 expression 不再报表达式错误', () => {
+    const config = { ...defaultConfig('condition'), conditionMode: 'llm' as const }
+    const node = gnode('cond-1', 'condition', config, '分流')
+    const diagnostics = validateNodeDiagnostics(node.id, node.data)
+    const pointers = diagnostics.map((d) => d.loc.pointer)
+    expect(pointers).not.toContain('/branches/0/expression')
+    expect(pointers).toContain('/branches/0/description')
+  })
+
+  it('rule 模式保留 expression 必填诊断，且不产 description 诊断', () => {
+    const node = gnode('cond-1', 'condition', defaultConfig('condition'), '分流')
+    const diagnostics = validateNodeDiagnostics(node.id, node.data)
+    const pointers = diagnostics.map((d) => d.loc.pointer)
+    expect(pointers).toContain('/branches/0/expression')
+    expect(pointers).not.toContain('/branches/0/description')
+  })
+})

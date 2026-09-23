@@ -68,25 +68,41 @@ export const triggerUiSchema: UiSchema = {
 }
 
 /**
- * loop（04 §5.3）：continueExpression 走 variable-input（schema x-variable，语法/
- * 非空/L2 引用由 L1 承接），maxIterations 走 number，body/exit 走 target-select。
- * mode 是 v1 内部字段（仅 while），静态隐藏；表达式语法红字经 diagnostics 落字段。
+ * loop（04 §5.3）：mode 选择 while / foreach（docs/45）。while 显
+ * continueExpression（variable-input）+ maxIterations；foreach 显 itemsExpression
+ * （首轮冻结的数组表达式）+ itemName + collectTarget；body/exit 两模式恒显。
+ * 表达式语法、body/exit 互异等跨字段规则由 L1 手写承接，红字经 diagnostics 落字段。
  */
 export const loopUiSchema: UiSchema = {
   labels: {
+    mode: '循环模式',
     continueExpression:
       '继续条件（每轮重入时求值；体内可用 {{loop-x.index}} 引用当前轮次，从 1 开始）',
     maxIterations: `最大次数（达到后强制退出，1-${MAX_LOOP_ITERATIONS}）`,
-    bodyTarget: '循环体入口（条件为真时进入；体内节点连线回本节点即 continue，重新求值继续条件）',
+    itemsExpression:
+      '遍历数组表达式（首轮进入时求值一次并冻结；结果必须是数组，长度 1-100；体内用 {{loop-x.item}} 引用当前元素）',
+    itemName: '元素别名（可选，仅展示用；运行时引用路径仍为 {{loop-x.item}}）',
+    collectTarget:
+      '聚合节点（可选；须为体内节点，每轮回边时把其整体产出按序追加到 results）',
+    bodyTarget: '循环体入口（进入循环/开始遍历时执行；体内节点连线回本节点即进入下一轮/下一项）',
     exitTarget:
-      '退出目标（条件为假 / 达上限 / 表达式异常时进入；体内 condition 的分支连此目标即 break，立即中断退出）',
+      '退出目标（条件为假 / 达上限 / 表达式异常 / 遍历完成时进入；体内 condition 的分支连此目标即 break，立即中断退出）',
   },
   placeholders: {
     continueExpression: '{{loop-1.index}} < 3',
+    itemsExpression: '{{global.order_ids}}',
+    itemName: 'item',
+    collectTarget: '选择体内节点作为聚合来源',
     bodyTarget: '选择循环体入口节点',
     exitTarget: '选择退出目标节点',
   },
-  hideFields: ['mode'],
+  optionLabels: {
+    mode: { while: '条件循环（while）', foreach: '遍历循环（foreach）' },
+  },
+  hiddenWhen: [
+    { field: 'mode', equals: 'while', show: ['continueExpression', 'maxIterations'] },
+    { field: 'mode', equals: 'foreach', show: ['itemsExpression', 'itemName', 'collectTarget'] },
+  ],
 }
 
 /**
@@ -97,22 +113,37 @@ export const loopUiSchema: UiSchema = {
  */
 export const conditionUiSchema: UiSchema = {
   labels: {
+    conditionMode: '判断模式（规则表达式 / LLM 语义判断，04 §5.2）',
+    classifierPrompt: '附加判定要求（可选，≤500 字符）',
     // 旧手写表单数组与行内字段无标题（顶部标题在瘦包装组件），显式置空盖掉字段名直出。
     branches: '',
     'branches[].label': '',
     'branches[].expression': '',
+    'branches[].description': '',
     'branches[].target': '',
-    defaultTarget: '默认分支（所有条件均不满足时，必填）',
+    defaultTarget: '默认分支（所有条件均不满足时，必填；LLM 调用任何异常也走此分支）',
   },
   placeholders: {
     'branches[].label': '分支名，如：大额',
     'branches[].expression': '{{trigger-1.context.payload.amount}} > 1000',
+    'branches[].description': '用自然语言描述该分支，如：客户语气强烈、明确要求投诉升级（≤300 字符）',
     'branches[].target': '目标节点（需先在画布连线）',
     defaultTarget: '选择默认目标节点',
   },
   rows: {
     'branches[].expression': 2,
+    'branches[].description': 2,
   },
+  optionLabels: {
+    conditionMode: {
+      rule: '规则表达式：分支按顺序短路求值（v1 既有模式）',
+      llm: 'LLM 语义判断：由大模型根据分支描述选择（任何异常都走默认分支）',
+    },
+  },
+  hiddenWhen: [
+    { field: 'conditionMode', equals: 'rule', show: ['expression'], rootScoped: true },
+    { field: 'conditionMode', equals: 'llm', show: ['description'], rootScoped: true },
+  ],
 }
 
 /**
@@ -167,6 +198,19 @@ export const subgraphUiSchema: UiSchema = {
   },
 }
 
+/**
+ * wait（04 §5.5）：custom WaitConfig 面板自控渲染；UISchema 只为
+ * validateGraph 的隐藏字段诊断过滤服务——durationSeconds 仅 static、
+ * durationExpression 仅 dynamic、absoluteTime 仅 absolute（docs/49、docs/50）。
+ */
+export const waitUiSchema: UiSchema = {
+  hiddenWhen: [
+    { field: 'durationMode', equals: 'static', show: ['durationSeconds'], rootScoped: true },
+    { field: 'durationMode', equals: 'dynamic', show: ['durationExpression'], rootScoped: true },
+    { field: 'durationMode', equals: 'absolute', show: ['absoluteTime'], rootScoped: true },
+  ],
+}
+
 /** 节点 kind → UISchema；未迁移节点缺省（FormRenderer 无 uiSchema 时退化为字段名直出）。 */
 export const NODE_UI_SCHEMAS: Partial<Record<NodeKind, UiSchema>> = {
   trigger: triggerUiSchema,
@@ -175,4 +219,5 @@ export const NODE_UI_SCHEMAS: Partial<Record<NodeKind, UiSchema>> = {
   human_approval: humanApprovalUiSchema,
   parallel: parallelUiSchema,
   subgraph: subgraphUiSchema,
+  wait: waitUiSchema,
 }

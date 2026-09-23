@@ -7,6 +7,8 @@ import json
 import httpx
 import pytest
 
+from datetime import datetime, timezone
+
 from atlas.graph.dsl import GraphDSL, GraphValidationError, NodeDSL, parse_graph
 from atlas.graph.loader import (
     _execute_tool,
@@ -15,7 +17,9 @@ from atlas.graph.loader import (
     interpolate,
     resolve_path,
     run_graph,
+    WaitNodeFailure,
 )
+from atlas.harness.base import ActionResult, Capability, HarnessAdapter
 from atlas.harness.registry import AdapterRegistry
 from atlas.httpapi.adapter import HttpApiHarnessAdapter
 from atlas.httpapi.service import HttpApiClient
@@ -260,6 +264,132 @@ def test_loop_expression_error_exits_immediately():
     assert loop_output["expression_errors"]
 
 
+def _foreach_graph(
+    items_expression: str = "{{global.order_ids}}",
+    *,
+    collect: bool = True,
+    item_name: str | None = None,
+):
+    config = {
+        "mode": "foreach",
+        "itemsExpression": items_expression,
+        "bodyTarget": "tool-body",
+        "exitTarget": "tool-exit",
+    }
+    if collect:
+        config["collectTarget"] = "tool-body"
+    if item_name is not None:
+        config["itemName"] = item_name
+    return parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "loop-1", "type": "loop", "name": "遍历循环", "config": config},
+                {"id": "tool-body", "type": "tool_call", "name": "循环体",
+                 "config": {"tool": "body-op",
+                            "params": "item={{loop-1.item}}&index={{loop-1.index}}"}},
+                {"id": "tool-exit", "type": "tool_call", "name": "退出",
+                 "config": {"tool": "exit-op"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "loop-1"},
+                {"id": "e2", "source": "loop-1", "target": "tool-body"},
+                {"id": "e3", "source": "tool-body", "target": "loop-1"},
+                {"id": "e4", "source": "loop-1", "target": "tool-exit"},
+            ],
+        }
+    )
+
+
+def test_foreach_serial_items_with_exposure_and_completed():
+    result = run_graph(_foreach_graph(), inputs={"order_ids": ["a", "b", "c"]})
+    assert result["status"] == "completed"
+    body_runs = sum(1 for line in result["trace"] if line.startswith("tool-body"))
+    assert body_runs == 3
+    loop_output = result["outputs"]["loop-1"]
+    assert loop_output["mode"] == "foreach"
+    assert loop_output["items"] == ["a", "b", "c"]
+    assert loop_output["index"] == 3
+    assert loop_output["iterations"] == 3
+    assert loop_output["exitReason"] == "completed"
+    assert loop_output["target"] == "tool-exit"
+    body_output = result["outputs"]["tool-body"]
+    assert body_output["params_rendered"] == "item=c&index=2"
+    assert any("foreach item 1/3 → tool-body" in line for line in result["trace"])
+    assert any("foreach item 2/3 → tool-body" in line for line in result["trace"])
+    assert any("exit (completed) after 3 → tool-exit" in line for line in result["trace"])
+
+
+def test_foreach_collect_target_aggregates_body_outputs_in_order():
+    result = run_graph(_foreach_graph(), inputs={"order_ids": [10, 20, 30]})
+    loop_output = result["outputs"]["loop-1"]
+    results = loop_output["results"]
+    assert [r["result"]["tool"] for r in results] == ["body-op"] * 3
+    assert [r["params_rendered"] for r in results] == [
+        "item=10&index=0",
+        "item=20&index=1",
+        "item=30&index=2",
+    ]
+
+
+def test_foreach_empty_array_exits_with_empty_reason():
+    result = run_graph(_foreach_graph(), inputs={"order_ids": []})
+    assert "tool-body" not in result["outputs"]
+    loop_output = result["outputs"]["loop-1"]
+    assert loop_output["items"] == []
+    assert loop_output["index"] == 0
+    assert loop_output["exitReason"] == "empty"
+    assert loop_output["target"] == "tool-exit"
+    assert "tool-exit" in result["outputs"]
+
+
+def test_foreach_expression_error_exits_fail_safe():
+    result = run_graph(_foreach_graph("{{global.missing.deep}}"))
+    assert result["status"] == "completed"
+    assert "tool-body" not in result["outputs"]
+    loop_output = result["outputs"]["loop-1"]
+    assert loop_output["exitReason"] == "expression_error"
+    assert loop_output["expression_errors"]
+
+
+def test_foreach_non_array_result_exits_with_expression_error():
+    result = run_graph(_foreach_graph(), inputs={"order_ids": "not-a-list"})
+    assert "tool-body" not in result["outputs"]
+    loop_output = result["outputs"]["loop-1"]
+    assert loop_output["exitReason"] == "expression_error"
+    assert any("数组" in msg for msg in loop_output["expression_errors"])
+
+
+def test_foreach_items_over_cap_exit_with_items_too_large():
+    result = run_graph(_foreach_graph(), inputs={"order_ids": list(range(101))})
+    assert "tool-body" not in result["outputs"]
+    loop_output = result["outputs"]["loop-1"]
+    assert loop_output["exitReason"] == "items_too_large"
+    assert any("101" in msg for msg in loop_output["expression_errors"])
+
+
+def test_foreach_without_collect_target_keeps_empty_results():
+    result = run_graph(_foreach_graph(collect=False), inputs={"order_ids": [1, 2]})
+    assert result["status"] == "completed"
+    loop_output = result["outputs"]["loop-1"]
+    assert loop_output["results"] == []
+    assert loop_output["exitReason"] == "completed"
+
+
+def test_foreach_items_expression_evaluated_once_and_frozen():
+    # 表达式引用 trigger payload；即使后续状态变化，items 在首轮冻结不再重算。
+    graph = _foreach_graph("{{trigger-1.context.payload.order_ids}}")
+    result = run_graph(graph, inputs={"order_ids": ["x", "y"]})
+    loop_output = result["outputs"]["loop-1"]
+    assert loop_output["items"] == ["x", "y"]
+    assert loop_output["exitReason"] == "completed"
+    # 每次回边进入循环节点都不应产生表达式错误（证明未重新求值缺失路径）。
+    assert loop_output["expression_errors"] == []
+
+
 def _parallel_graph(strategy: str = "all_success", b_tool: str = "op-b"):
     return parse_graph(
         {
@@ -397,6 +527,209 @@ def test_wait_sleeps_then_continues_to_single_successor(monkeypatch):
     assert wait_output == {"mode": "wait", "waitType": "duration", "durationSeconds": 2}
     assert "tool-after" in result["outputs"]
     assert any("waited 2s" in line for line in result["trace"])
+
+
+def test_wait_dynamic_expression_sleeps_evaluated_seconds(monkeypatch):
+    slept: list[int] = []
+    monkeypatch.setattr("atlas.graph.loader.time.sleep", lambda seconds: slept.append(seconds))
+    graph = parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "wait-1", "type": "wait", "name": "动态等待",
+                 "config": {"waitType": "duration", "durationMode": "dynamic",
+                            "durationExpression": "{{global.waitSecs}} * 2 + 1"}},
+                {"id": "tool-after", "type": "tool_call", "name": "后继",
+                 "config": {"tool": "op-after"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "wait-1"},
+                {"id": "e2", "source": "wait-1", "target": "tool-after"},
+            ],
+        }
+    )
+
+    result = run_graph(graph, inputs={"waitSecs": 2})
+    assert result["status"] == "completed"
+    assert slept == [5]
+    wait_output = result["outputs"]["wait-1"]
+    assert wait_output == {
+        "mode": "wait",
+        "waitType": "duration",
+        "durationSeconds": 5,
+        "durationMode": "dynamic",
+        "durationExpression": "{{global.waitSecs}} * 2 + 1",
+    }
+
+
+def test_wait_dynamic_expression_integer_valued_float(monkeypatch):
+    monkeypatch.setattr("atlas.graph.loader.time.sleep", lambda seconds: None)
+    graph = parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "wait-1", "type": "wait", "name": "动态等待",
+                 "config": {"waitType": "duration", "durationMode": "dynamic",
+                            "durationExpression": "11 / 4"}},
+                {"id": "tool-after", "type": "tool_call", "name": "后继",
+                 "config": {"tool": "op-after"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "wait-1"},
+                {"id": "e2", "source": "wait-1", "target": "tool-after"},
+            ],
+        }
+    )
+
+    result = run_graph(graph)
+    assert result["status"] == "completed"
+    assert result["outputs"]["wait-1"]["durationSeconds"] == 3
+
+
+@pytest.mark.parametrize(
+    "expression, inputs",
+    [
+        ("{{global.missing}}", {}),
+        ("1 + ", {}),
+        ("0", {}),
+        ("601", {}),
+        ("'soon'", {}),
+        ("1/0", {}),
+    ],
+)
+def test_wait_dynamic_expression_invalid_fails_without_sleep(
+    monkeypatch, expression, inputs
+):
+    slept: list[int] = []
+    monkeypatch.setattr("atlas.graph.loader.time.sleep", lambda seconds: slept.append(seconds))
+    graph = parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "wait-1", "type": "wait", "name": "动态等待",
+                 "config": {"waitType": "duration", "durationMode": "dynamic",
+                            "durationExpression": expression}},
+                {"id": "tool-after", "type": "tool_call", "name": "后继",
+                 "config": {"tool": "op-after"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "wait-1"},
+                {"id": "e2", "source": "wait-1", "target": "tool-after"},
+            ],
+        }
+    )
+
+    with pytest.raises(WaitNodeFailure) as excinfo:
+        run_graph(graph, inputs=inputs)
+    assert excinfo.value.code == "WAIT_DURATION_INVALID"
+    assert slept == []
+
+
+FROZEN_NOW = datetime(2026, 9, 23, 10, 0, 0, tzinfo=timezone.utc)
+
+
+def _absolute_wait_graph(absolute_time: str):
+    return parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "wait-1", "type": "wait", "name": "到点等待",
+                 "config": {"waitType": "duration", "durationMode": "absolute",
+                            "absoluteTime": absolute_time,
+                            "durationSeconds": 5, "durationExpression": "1 + 1"}},
+                {"id": "tool-after", "type": "tool_call", "name": "后继",
+                 "config": {"tool": "op-after"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "wait-1"},
+                {"id": "e2", "source": "wait-1", "target": "tool-after"},
+            ],
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "absolute_time, expected_seconds, expected_iso",
+    [
+        ("2026-09-23T18:00:02+08:00", 2, "2026-09-23T10:00:02+00:00"),
+        ("2026-09-23T10:00:03", 3, "2026-09-23T10:00:03+00:00"),
+        ("2026-09-23T10:00:04Z", 4, "2026-09-23T10:00:04+00:00"),
+        (str(int(FROZEN_NOW.timestamp()) + 5), 5, "2026-09-23T10:00:05+00:00"),
+    ],
+)
+def test_wait_absolute_time_sleeps_until_target(
+    monkeypatch, absolute_time, expected_seconds, expected_iso
+):
+    slept: list = []
+    monkeypatch.setattr("atlas.graph.loader.time.sleep", lambda seconds: slept.append(seconds))
+
+    result = run_graph(
+        _absolute_wait_graph(absolute_time), now_override=FROZEN_NOW
+    )
+    assert result["status"] == "completed"
+    assert slept == [expected_seconds]
+    assert result["outputs"]["wait-1"] == {
+        "mode": "wait",
+        "waitType": "duration",
+        "durationSeconds": expected_seconds,
+        "durationMode": "absolute",
+        "absoluteTime": expected_iso,
+    }
+
+
+def test_wait_absolute_time_interpolates_variable(monkeypatch):
+    slept: list = []
+    monkeypatch.setattr("atlas.graph.loader.time.sleep", lambda seconds: slept.append(seconds))
+
+    result = run_graph(
+        _absolute_wait_graph("{{global.targetAt}}"),
+        inputs={"targetAt": "2026-09-23T10:00:06+00:00"},
+        now_override=FROZEN_NOW,
+    )
+    assert result["status"] == "completed"
+    assert slept == [6]
+    assert result["outputs"]["wait-1"]["absoluteTime"] == "2026-09-23T10:00:06+00:00"
+
+
+@pytest.mark.parametrize(
+    "absolute_time, inputs",
+    [
+        ("{{global.missing}}", {}),
+        ("not-a-time", {}),
+        ("2026-13-99T99:99:99", {}),
+        ("99999999999999999999", {}),
+        ("2026-09-23T10:00:00+00:00", {}),
+        ("2026-09-23T10:10:01+00:00", {}),
+        (str(int(FROZEN_NOW.timestamp()) - 1), {}),
+        (str(int(FROZEN_NOW.timestamp()) + 601), {}),
+    ],
+)
+def test_wait_absolute_time_invalid_fails_without_sleep(
+    monkeypatch, absolute_time, inputs
+):
+    slept: list = []
+    monkeypatch.setattr("atlas.graph.loader.time.sleep", lambda seconds: slept.append(seconds))
+
+    with pytest.raises(WaitNodeFailure) as excinfo:
+        run_graph(
+            _absolute_wait_graph(absolute_time),
+            inputs=inputs,
+            now_override=FROZEN_NOW,
+        )
+    assert excinfo.value.code == "WAIT_ABSOLUTE_TIME_INVALID"
+    assert slept == []
 
 
 def test_wait_after_condition_default_branch_passes_through(monkeypatch):
@@ -1132,6 +1465,62 @@ def test_loop_break_graph_validates_d17_a2():
     assert _loop_break_graph() is not None
 
 
+def _foreach_break_graph():
+    """foreach + 体内 condition break：第 2 个元素后中断，已收集结果保留。"""
+    return parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "loop-1", "type": "loop", "name": "遍历循环",
+                 "config": {
+                     "mode": "foreach",
+                     "itemsExpression": "{{global.order_ids}}",
+                     "collectTarget": "tool-body",
+                     "bodyTarget": "tool-body",
+                     "exitTarget": "tool-exit",
+                 }},
+                {"id": "tool-body", "type": "tool_call", "name": "循环体",
+                 "config": {"tool": "body-op", "params": "item={{loop-1.item}}"}},
+                {"id": "condition-break", "type": "condition", "name": "中断判断",
+                 "config": {
+                     "branches": [
+                         {"label": "stop", "expression": "{{loop-1.index}} >= 1",
+                          "target": "tool-exit"}
+                     ],
+                     "defaultTarget": "loop-1",
+                 }},
+                {"id": "tool-exit", "type": "tool_call", "name": "退出",
+                 "config": {"tool": "exit-op"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "loop-1"},
+                {"id": "e2", "source": "loop-1", "target": "tool-body"},
+                {"id": "e3", "source": "loop-1", "target": "tool-exit"},
+                {"id": "e4", "source": "tool-body", "target": "condition-break"},
+                {"id": "e5", "source": "condition-break", "target": "loop-1"},
+                {"id": "e6", "source": "condition-break", "target": "tool-exit"},
+            ],
+        }
+    )
+
+
+def test_foreach_break_retains_collected_results():
+    result = run_graph(_foreach_break_graph(), inputs={"order_ids": ["a", "b", "c"]})
+    assert result["status"] == "completed"
+    body_runs = sum(1 for line in result["trace"] if line.startswith("tool-body"))
+    assert body_runs == 2
+    loop_output = result["outputs"]["loop-1"]
+    assert loop_output["exitReason"] == "break"
+    assert loop_output["index"] == 2
+    assert loop_output["item"] == "b"
+    results = loop_output["results"]
+    assert [r["params_rendered"] for r in results] == ["item=a", "item=b"]
+    assert not any(key.startswith("__break__") for key in result["outputs"])
+
+
 def test_loop_non_condition_body_node_cannot_reach_exit_target_d17_a2():
     raw = {
         "version": 1,
@@ -1244,3 +1633,44 @@ def test_parallel_any_success_succeeds_despite_one_failed_branch_d18_a1():
     by_target = {b["target"]: b["status"] for b in po["branches"]}
     assert by_target["tool-a"] == "success"
     assert by_target["tool-b"] == "failed"
+
+
+class _EchoAdapter(HarnessAdapter):
+    adapter_type = "api"
+
+    def __init__(self):
+        super().__init__()
+        self.adapter_id = "openapi:openapi-1"
+
+    def list_capabilities(self):
+        return [
+            Capability(
+                name="check_basic",
+                description="echo",
+                action="openapi:openapi-1/check_basic",
+            )
+        ]
+
+    def _execute(self, request):
+        return ActionResult.success({"received": request.parameters})
+
+    def observe(self):
+        from atlas.harness.base import Observation
+
+        return Observation(url="https://example.com", title="echo")
+
+
+def test_openapi_tool_receives_params_from_json():
+    registry = AdapterRegistry()
+    registry.register(_EchoAdapter())
+    node = NodeDSL(
+        id="tool-1",
+        type="tool_call",
+        name="Basic 调用",
+        config={
+            "tool": "openapi:openapi-1/check_basic",
+            "params": '{"user": "alice", "password": "secret"}',
+        },
+    )
+    output = _execute_tool(node, {}, registry)
+    assert output["result"]["received"] == {"user": "alice", "password": "secret"}

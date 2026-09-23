@@ -7,7 +7,7 @@
 
 import { token } from '../theme/tokens'
 import type { CardBindings, JsonSchema, ScopeIndex } from './scope'
-import type { ApprovalTimeoutAction } from './validation/l1'
+import type { ApprovalTimeoutAction, WaitTimeoutPolicy } from './validation/l1'
 
 export {
   MAX_LOOP_ITERATIONS,
@@ -15,11 +15,17 @@ export {
   MAX_PARALLEL_BRANCHES,
   MIN_WAIT_SECONDS,
   MAX_WAIT_SECONDS,
+  MIN_EVENT_WAIT_SECONDS,
+  MAX_EVENT_WAIT_SECONDS,
+  MAX_EVENT_KEY_LENGTH,
+  MAX_DURATION_EXPRESSION_LENGTH,
+  MAX_ABSOLUTE_TIME_LENGTH,
+  WAIT_TIMEOUT_POLICIES,
   MIN_APPROVAL_TIMEOUT,
   MAX_APPROVAL_TIMEOUT,
   APPROVAL_TIMEOUT_ACTIONS,
 } from './validation/l1'
-export type { ApprovalTimeoutAction } from './validation/l1'
+export type { ApprovalTimeoutAction, WaitTimeoutPolicy } from './validation/l1'
 
 export const NODE_KINDS = ['trigger', 'ai_decision', 'tool_call', 'condition', 'loop', 'parallel', 'wait', 'subgraph', 'human_approval'] as const
 export type NodeKind = (typeof NODE_KINDS)[number]
@@ -39,7 +45,8 @@ export type RetryConfig = {
 
 export type ConditionBranch = {
   label: string
-  expression: string
+  expression?: string
+  description?: string
   target: string
 }
 
@@ -63,18 +70,27 @@ export type NodeConfig = {
   // condition（04 §5.2；target 存在性/出边覆盖等图级校验由后端 422 兜底）
   branches?: ConditionBranch[] | ParallelBranch[]
   defaultTarget?: string
-  // loop（04 §5.3；v1 仅 while 条件循环；回边/出边等图级校验由后端 422 兜底）
-  mode?: 'while'
+  conditionMode?: 'rule' | 'llm'
+  classifierPrompt?: string
+  // loop（04 §5.3；while 条件循环 / foreach 遍历循环；回边/出边等图级校验由后端 422 兜底）
+  mode?: 'while' | 'foreach'
   continueExpression?: string
   maxIterations?: number
+  itemsExpression?: string
+  itemName?: string
+  collectTarget?: string
   bodyTarget?: string
   exitTarget?: string
   // parallel（04 §5.4；v1 静态扇出/汇聚；区域拓扑等图级校验由后端 422 兜底）
   joinStrategy?: ParallelJoinStrategy
   joinTarget?: string
-  // wait（04 §5.5；v1 仅定时等待，事件等待缓做 docs/14 D19；出边等图级校验由后端 422 兜底）
-  waitType?: 'duration'
+  // wait（04 §5.5；event 进程内 v1 见 docs/47；出边等图级校验由后端 422 兜底）
+  waitType?: 'duration' | 'event'
+  durationMode?: 'static' | 'dynamic' | 'absolute'
   durationSeconds?: number
+  durationExpression?: string
+  absoluteTime?: string
+  eventKey?: string
   // subgraph（04 §5.7；v1 引用已保存图，版本钉版缓做 docs/14 D21；出边等图级校验由后端 422 兜底）
   graphId?: string
   inputs?: Record<string, string>
@@ -82,7 +98,8 @@ export type NodeConfig = {
   summary?: string
   approver?: string
   timeoutSeconds?: number
-  onTimeout?: ApprovalTimeoutAction
+  /** wait event 用 continue/fail；human_approval 用 approve/reject。 */
+  onTimeout?: ApprovalTimeoutAction | WaitTimeoutPolicy
   approvedTarget?: string
   rejectedTarget?: string
   /** M8：可选内置交互卡片 id；留空走 summary 旧路径。 */
@@ -105,7 +122,7 @@ export const NODE_CATALOG: Record<NodeKind, { label: string; description: string
   condition: { label: '条件分支', description: '按规则表达式选择执行路径，默认分支必填', color: token('color-node-condition') },
   loop: { label: '循环', description: '条件为真时重复执行循环体，达最大次数自动退出', color: token('color-node-loop') },
   parallel: { label: '并行', description: '同时执行多个分支，汇聚后继续（全部成功/全部完成）', color: token('color-node-parallel') },
-  wait: { label: '等待', description: '挂起指定时长后继续（1-600 秒）；事件等待暂不支持', color: token('color-node-wait') },
+  wait: { label: '等待', description: '定时等待（1-600 秒）或等待外部事件信号（1-3600 秒）', color: token('color-node-wait') },
   subgraph: {
     label: '子图',
     description: '引用一张已保存的图作为子流程执行，可映射入参并引用其产出',

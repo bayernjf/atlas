@@ -16,23 +16,29 @@ import { useCallback, useSyncExternalStore } from 'react'
 
 import enCommon from './en-US/common.json'
 import enApprovals from './en-US/approvals.json'
+import enAudit from './en-US/audit.json'
+import enChannels from './en-US/channels.json'
 import enConnections from './en-US/connections.json'
 import enDashboard from './en-US/dashboard.json'
 import enDemo from './en-US/demo.json'
 import enEditor from './en-US/editor.json'
 import enMemory from './en-US/memory.json'
 import enMonitoring from './en-US/monitoring.json'
+import enOpenApi from './en-US/openapi.json'
 import zhCommon from './zh-CN/common.json'
 import zhApprovals from './zh-CN/approvals.json'
+import zhAudit from './zh-CN/audit.json'
+import zhChannels from './zh-CN/channels.json'
 import zhConnections from './zh-CN/connections.json'
 import zhDashboard from './zh-CN/dashboard.json'
 import zhDemo from './zh-CN/demo.json'
 import zhEditor from './zh-CN/editor.json'
 import zhMemory from './zh-CN/memory.json'
 import zhMonitoring from './zh-CN/monitoring.json'
+import zhOpenApi from './zh-CN/openapi.json'
 
 export type Locale = 'zh-CN' | 'en-US'
-export type Namespace = 'common' | 'approvals' | 'editor' | 'dashboard' | 'demo' | 'monitoring' | 'memory' | 'connections'
+export type Namespace = 'common' | 'approvals' | 'audit' | 'editor' | 'dashboard' | 'demo' | 'monitoring' | 'memory' | 'connections' | 'channels' | 'openapi'
 
 type Dict = Record<string, unknown>
 export type TranslateOptions = {
@@ -40,28 +46,34 @@ export type TranslateOptions = {
   ns?: Namespace
 } & Record<string, unknown>
 
-const NAMESPACES: Namespace[] = ['common', 'approvals', 'editor', 'dashboard', 'demo', 'monitoring', 'memory', 'connections']
+const NAMESPACES: Namespace[] = ['common', 'approvals', 'audit', 'editor', 'dashboard', 'demo', 'monitoring', 'memory', 'connections', 'channels', 'openapi']
 
 const resources: Record<Locale, Record<Namespace, Dict>> = {
   'zh-CN': {
     common: zhCommon as Dict,
     approvals: zhApprovals as Dict,
+    audit: zhAudit as Dict,
+    channels: zhChannels as Dict,
     connections: zhConnections as Dict,
     editor: zhEditor as Dict,
     dashboard: zhDashboard as Dict,
     demo: zhDemo as Dict,
     monitoring: zhMonitoring as Dict,
     memory: zhMemory as Dict,
+    openapi: zhOpenApi as Dict,
   },
   'en-US': {
     common: enCommon as Dict,
     approvals: enApprovals as Dict,
+    audit: enAudit as Dict,
+    channels: enChannels as Dict,
     connections: enConnections as Dict,
     editor: enEditor as Dict,
     dashboard: enDashboard as Dict,
     demo: enDemo as Dict,
     monitoring: enMonitoring as Dict,
     memory: enMemory as Dict,
+    openapi: enOpenApi as Dict,
   },
 }
 

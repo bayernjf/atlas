@@ -26,6 +26,7 @@
 | `interaction_template` | 05 / 五、自定义前端模板 5.3 交互模板 Schema（**愿景大 Schema**；M8 工程化最小子集＝下行 `card_template`） | ## 5.3 交互模板 Schema（示例） |
 | `card_template` | **M8 已落码收口 2026-09-18（2b35fc9 起，08 M8 落码条）**；`src/atlas/cards/{catalog,render}.py`（审批卡片双向 Schema + web/im/email 三渠道渲染）+ 04 §5.6 追加段（human_approval.cardTemplateId）；权威＝08 M8 立项/落码条 | —（工程契约） |
 | `email_decision_token` | **审批闭环批已落码收口 2026-09-22（bd6ec7a/8923473，docs/36）**；`src/atlas/collaboration/email_token.py`（HMAC 能力 token）＋`EmailApprovalNotifier` 链接＋公开 email-view/email-decision；权威＝04 §5.6 邮件决策补注 | —（工程契约） |
+| `decided_approval` | **审计可见与审批结果补强批已落码收口 2026-09-22（ecfa325/bc3f116/033619a，docs/37）**；`ApprovalBroker.list_decided` 只读投影＋`GET /api/approvals/decided`；`_Pending.notify_recipients`＋决策结果邮件；权威＝04 §5.6 补强批追加段 | —（工程契约） |
 | `evaluation_task` | 06 / 9.2 评估 Harness 设计 | ### 9.2 评估 Harness 设计（借鉴 lm-evaluation-harness）代码示例 |
 | `refund_decision` | `src/atlas/llm/decision.py`（W9-W10 权威实现；规则对齐 06 §9.2 黄金用例） | —（工程推导契约） |
 | `refund_order` | `src/atlas/shop/service.py`（W9-W10 Demo 电商数据结构） | —（工程推导契约） |
@@ -34,7 +35,8 @@
 | `feedback_item` | `src/atlas/api/main.py` FeedbackRequest（Phase 1；进程内反馈，响应含 id/created_at） | —（工程推导契约） |
 | `http_request_params` | 04 / 四、工具/适配器组件 4.6 API 适配器（通用 HTTP）v1 契约（权威 blockquote）+ `src/atlas/httpapi/{service,adapter}.py` | ### 4.6 API 适配器（通用 HTTP）v1 契约 |
 | `db_sql_params` | 04 / 四、工具/适配器组件 4.7 数据适配器（通用 SQL）v1 契约（权威 blockquote）+ `src/atlas/database/{service,adapter}.py`（query/execute 两能力） | ### 4.7 数据适配器（通用 SQL）v1 契约 |
-| `message_send_params` | 04 / 四、工具/适配器组件 4.8 消息适配器（进程内消息服务）v1 契约（权威 blockquote）+ `src/atlas/message/{service,adapter}.py`（单能力 message/send） | ### 4.8 消息适配器（进程内消息服务）v1 契约 |
+| `message_send_params` | 04 / 四、工具/适配器组件 4.8 消息适配器（进程内消息服务）v1 契约（权威 blockquote；IM 群机器人 dingtalk/wecom/feishu + secret 追加段 docs/51，2026-09-23 落码收口 d4823d5）+ `src/atlas/message/{service,adapter}.py`（单能力 message/send） | ### 4.8 消息适配器（进程内消息服务）v1 契约 |
+| `alert_notify_channel` | 04 §5.20 监控告警外部通知 v1 契约（权威 blockquote；2026-09-23 落码收口 70b4889/07baa89/6a7d846/b352638，docs/52）+ `src/atlas/monitoring/notify.py` | ### 5.20 监控告警外部通知 |
 | `secret_envelope` | 安全准入（docs/32，**2026-09-21 已落码**）：`src/atlas/security/secrets.py` | 凭证信封 `enc$v1`/SecretProvider 协议/`secret://` 运行时注入/全链路脱敏；错误码 SECRET_UNAVAILABLE/SECRET_DECRYPT_ERROR（ADR T26=(a)，cryptography AES-256-GCM） |
 | `egress_guard` | 安全准入（docs/32，**2026-09-21 已落码**）：`src/atlas/security/egress.py`，接 04 §4.6 HTTP 适配器 | SSRF 防护：scheme http/https、私网/环回/链路本地/云元数据/CGNAT/保留地址恒拦、整数/进制 IP 绕过、可注入 resolver、白名单 fail-closed、不读 X-Forwarded-For；错误码 EGRESS_DENIED/EGRESS_INVALID_URL |
 | `sql_read_only_guard` | 安全准入（docs/32，**2026-09-21 已落码**）：`src/atlas/database/guard.py`，接 04 §4.7 数据适配器 | 只读 SQL 静态审查（去注释/拒多语句/只放单条 SELECT/WITH…SELECT）、外部连接 execute 禁用；错误码 DB_SQL_NOT_READ_ONLY/DB_WRITE_FORBIDDEN |
@@ -51,8 +53,12 @@
 | `release_gate` | **M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；04 §5.11 末发布前批量门禁段 + `src/atlas/recording/gate.py`（GateReport，D26 部分取回；D26 报告 v1 起响应纯超集加 `id` 并沉淀，见下行） | ### 5.11 操作录制与回放 |
 | `release_report` | **D26 报告 v1 已落码收口（2026-09-18，U60 转正式）；2026-09-19 收尾批补 CSV/JSON 导出（`8a37b4e`，`.../export?format=csv|json`）**；04 §5.11 末用例集报告段 + `src/atlas/recording/reports.py`（ReleaseReport 沉淀/按图历史/通过率趋势/导出，ring 100/租户、reset 清空、不 PG 化；docs/28 批 1④（2026-09-20，89e21fc）增跨图聚合 GET /api/release-reports?limit= 看板） | ### 5.11 操作录制与回放 |
 | `business_metrics` | **M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；04 §5.13 末业务指标段 + `src/atlas/monitoring/business.py`（extract_business 业务结果三率，金融灰度门控信号源） | ### 5.13 基础监控告警 |
-| `connection` | **docs/35 T4 已落码收口 2026-09-22（`a57164d`，generic OAuth2 连接管理 v1，D22 子集不解除缓做）**；权威 docs/35 §4 + `src/atlas/connections/{models,oauth,store,service}.py`＋`storage/pg.py` PgConnectionStore（表 `oauth_connections`，迁移 014，20 列，reset 不清）。字段：id `conn-N`(per-tenant 序号)/tenant_id/provider(自由字符串非空)/display_name/auth_url/token_url(https 创建过 EgressGuard 真实 DNS)/client_id(明文公开)/client_secret_envelope/scopes:list/redirect_uri(空→ATLAS_OAUTH_REDIRECT_URI→默认 /connections/callback)/status(draft·connected·error)/access_token_envelope/refresh_token_envelope/token_type/expires_at(UTC iso 可空)/last_error/created_by/created_at/updated_at。**所有 secret 经 SecretProvider AES-GCM 信封，`public_view()` 驼峰投影仅出 hasClientSecret、绝无信封/明文**；9 端点+无鉴权回调页见 12 文档 | docs/35 §4（工程契约） |
-| `audit_event` | **docs/35 T6 已落码收口 2026-09-22（`f243e04`，审计日志，docs/34 P1 #8）**；权威 docs/35 §6 + `src/atlas/observability/audit.py`（AuditEvent/AuditStore ring 2000/租户/AuditRepository）＋`storage/pg.py` PgAuditStore（表 `audit_events`，迁移 013，reset 不清）。仅 8 个元数据字段：id `aud-N`/tenant_id/actor(用户或 anonymous)/action(如 graph.run/create)/method/path_format(路由模板，解析失败降级实际 path)/status_code/client_ip/request_id/occurred_at；**绝不记请求体、响应体、Authorization/Cookie 或任何凭据**；仅 /api 写方法（POST/PUT/PATCH/DELETE）经 HTTP 中间件记录，login 成功显式记一条，GET 不记；GET /api/audit/events 与 /api/audit/export?format=jsonl 均 administer | docs/35 §6（工程契约） |
+| `connection` | **docs/35 T4 已落码收口 2026-09-22（`a57164d`，generic OAuth2 连接管理 v1，D22 子集不解除缓做）**；权威 docs/35 §4 + `src/atlas/connections/{models,oauth,store,service}.py`＋`storage/pg.py` PgConnectionStore（表 `oauth_connections`，迁移 014，20 列，reset 不清）。字段：id `conn-N`(per-tenant 序号)/tenant_id/provider(自由字符串非空)/display_name/auth_url/token_url(https 创建过 EgressGuard 真实 DNS)/client_id(明文公开)/client_secret_envelope/scopes:list/redirect_uri(空→ATLAS_OAUTH_REDIRECT_URI→默认 /connections/callback)/status(draft·connected·error)/access_token_envelope/refresh_token_envelope/token_type/expires_at(UTC iso 可空)/last_error/created_by/created_at/updated_at。**所有 secret 经 SecretProvider AES-GCM 信封，`public_view()` 驼峰投影仅出 hasClientSecret、绝无信封/明文**；9 端点+无鉴权回调页见 12 文档。**2026-09-22 起被渠道绑定引用（docs/38）：channel_binding 按租户以 `connection_id` 唯一指向本 connection，绑定属客户配置、reset 不清除；connection 删除后绑定不级联删除、置 status=error** | docs/35 §4（工程契约） |
+| `channel_binding` | **docs/38 立项 2026-09-22（真实渠道适配批，ADR T28，docs-only 契约先行）**；权威 docs/38 §3 + `src/atlas/channels/{base,shopify,registry,memory,pg,adapter}.py`＋`storage/pg.py` PgChannelStore（表 `channel_bindings`，迁移 015，reset 不清）。绑定按租户引用 T4 connection（`connection_id` 同租户唯一），连接被删不级联（置 status=error）；字段概览见本文末 `channel_binding` 段；5 端点见 12 文档。**2026-09-23 docs/39（ADR T29）起新增列 `webhook_subscriptions`（迁移 016，**JSONB** NOT NULL DEFAULT `'[]'::jsonb`，JSON：`WebhookSubscription[]`＝`{topic, graph_id, enabled}`，topic ∈ orders/create·orders/updated·refunds/create，topic+graph_id 同绑定唯一、≤10）；reset 不清** | docs/38 §3（形状权威）；工具输入/输出见 docs/38 §1B，订单投影见 §1A；**webhook 订阅见 docs/39 §1B**
+| `channel_webhook` | **docs/39 立项 2026-09-23（入站 Webhook 批，ADR T29，docs-only 契约先行）**；权威 docs/39＋`src/atlas/channels/webhooks.py`。公开免登录 `POST /api/channels/hooks/shopify/{binding_id}`：Shopify HMAC-SHA256（base64，X-Shopify-Hmac-SHA256，原始 body 先于 JSON 解析、compare_digest），必需头 X-Shopify-Shop-Domain/X-Shopify-Topic/X-Shopify-Webhook-Id；响应三态 200 `{received|duplicate|ignored}:true`，400 WEBHOOK_MALFORMED（缺头/非 JSON 对象）、401 WEBHOOK_BAD_SIGNATURE（不区分缺失/不匹配）、404 未知绑定（统一文案不泄漏）、503 WEBHOOK_SECRET_UNAVAILABLE（client_secret 信封缺失/解密失败）；验签通过后绝不非 2xx。订阅端点 GET(read)/PUT(**administer**，全量替换，聚合中文 422，graph 不存在 404)；幂等环 per-tenant 进程内 ring 200/1h；审计 `channel.webhook_received:{topic}`（无 body） | docs/39（形状权威）；REST 见 12 文档；运行时见 06 §6.21 |
+| `webhook_delivery` | **docs/40 立项 2026-09-23（入站可靠性补强批，零新依赖/无 ADR，docs-only 契约先行）**；权威 docs/40＋`src/atlas/channels/deliveries.py`。表 `webhook_deliveries`（迁移 017，PK(tenant_id, webhook_id)，reset 不清）：字段 `binding_id, topic, shop, status(received|dead), reasons[{graphId,code}], payload(JSONB，仅 dead 行), duplicates, created_at, updated_at, replayed_at`。去重：ignored 投递不落表；首次非 ignored 投递建行，重复命中 `duplicates+=1` 返 duplicate；topic 有启用订阅但**全部**订阅未触发（code：NO_PUBLISHED_VERSION/RESOLVE_FAILED/TRIGGER_FAILED/MISSING_GRAPH_ID）→ mark_dead 存 envelope.data；≥1 触发 → received、payload 恒 NULL。死信投影（列表）不含 payload；重放按存储 payload 重建信封、绕过去重按当前订阅重投，成功清 payload 写 replayed_at。metrics：`{byTopic:{topic:{received,dead,duplicates}}, totals}` 实时聚合 | docs/40（形状权威）；REST 见 12 文档 |
+| `shopify_remote_webhook` | **docs/41 立项 2026-09-23（Shopify 侧 Webhook 注册批，零新依赖/零迁移/无 ADR，docs-only 契约先行）**；权威 docs/41＋`src/atlas/channels/shopify.py`（client 方法）/`registry.py`。形状：远端注册项 `{remoteId, topic, address}`（remoteId 为 Shopify webhook id 字符串；address 恒为本平台 `{public_url}/api/channels/hooks/shopify/{binding_id}`，服务端拼装钉版）。POST 请求体仅 `{topic}`（topic ∈ SUPPORTED_TOPICS）；Shopify 422（同 topic+address 已存在）折 `CHANNEL_ALREADY_REGISTERED`→端点 409；public_url 非 https → 422。GET 响应 `{items:[...], error?:string}`（渠道令牌失效时 200、items 空、error 给码）；DELETE 200 `{deleted:bool}` 幂等。无本地表、无迁移；注册状态实时查 Shopify | docs/41（形状权威）；REST 见 12 文档 |
+| `audit_event` | **docs/35 T6 已落码收口 2026-09-22（`f243e04`，审计日志，docs/34 P1 #8）**；权威 docs/35 §6 + `src/atlas/observability/audit.py`（AuditEvent/AuditStore ring 2000/租户/AuditRepository）＋`storage/pg.py` PgAuditStore（表 `audit_events`，迁移 013，reset 不清）。仅 8 个元数据字段：id `aud-N`/tenant_id/actor(用户或 anonymous)/action(如 graph.run/create)/method/path_format(路由模板，解析失败降级实际 path)/status_code/client_ip/request_id/occurred_at；**绝不记请求体、响应体、Authorization/Cookie 或任何凭据**；仅 /api 写方法（POST/PUT/PATCH/DELETE）经 HTTP 中间件记录，login 成功显式记一条，GET 不记；GET /api/audit/events 与 /api/audit/export?format=jsonl 均 administer；**2026-09-22 起两端点有应用内 admin 页面 `pages/AuditLog.tsx`（action 前缀过滤＋limit 50/100/200＋Bearer blob 导出，docs/37 包 A），端点本身不变** | docs/35 §6（工程契约） |
 
 ---
 
@@ -105,17 +111,26 @@ description: string
 position: {x, y}
 config:
 type: object               # 节点类型专属配置；condition 节点 config 形状：
-                           #   {branches:[{label,expression,target}], defaultTarget}
-                           #   唯一权威见 04 §5.2「condition 节点 config 契约」，表达式白名单见 04 §5.1
+                           #   rule（缺省）：{conditionMode?:"rule", branches:[{label,expression,target}], defaultTarget}
+                           #   llm（D14，2026-09-23 立项 docs/48）：{conditionMode:"llm", classifierPrompt?:≤500, branches:[{label,description:≤300,target}], defaultTarget}
+                           #   唯一权威见 04 §5.2「condition 节点 config 契约」，表达式白名单见 04 §5.1，语义分支见 §5.2 追加段
                            # loop 节点 config 形状：
-                           #   {mode:"while", continueExpression, maxIterations, bodyTarget, exitTarget}
-                           #   唯一权威见 04 §5.3「loop 节点 config 契约」
+                           #   while:   {mode:"while", continueExpression, maxIterations, bodyTarget, exitTarget}
+                           #   foreach: {mode:"foreach", itemsExpression, itemName?, collectTarget?, bodyTarget, exitTarget}  # D16，2026-09-23 立项 docs/45
+                           #   foreach 产出增 items/item/results，exitReason 增 completed|empty|items_too_large；唯一权威见 04 §5.3「loop 节点 config 契约」
                            # parallel 节点 config 形状：
                            #   {joinStrategy: all_success|all_completed|any_success, branches:[{label,target}], joinTarget}  # any_success(D18) 语义见 04 §5.4
                            #   唯一权威见 04 §5.4「parallel 节点 config 契约」
                            # wait 节点 config 形状：
-                           #   {waitType:"duration", durationSeconds: 1-600 整数}
-                           #   唯一权威见 04 §5.5「wait 节点 config 契约」
+                           #   duration static: {waitType:"duration", durationMode?:"static", durationSeconds: 1-600 整数}
+                           #   duration dynamic:{waitType:"duration", durationMode:"dynamic", durationExpression: ≤200 表达式,
+                           #                    durationSeconds?: 保留不用}  # D19 进程内 v1，2026-09-23 立项并落码收口 docs/49（8580fcb/4eaaddd）；运行时求值 1-600，坏表达式 WAIT_DURATION_INVALID
+                           #   duration absolute:{waitType:"duration", durationMode:"absolute", absoluteTime: ≤64 ISO8601/epoch 秒(支持{{}}),
+                           #                    durationSeconds?/durationExpression?: 保留不用}  # D19 进程内 v1，2026-09-23 落码收口 docs/50（12de72d）；解析目标时刻差值 1-600，坏时刻/过点 WAIT_ABSOLUTE_TIME_INVALID
+                           #   event:    {waitType:"event", eventKey(≤128,静态白名单[A-Za-z0-9:_-],支持{{}}插值),
+                           #              timeoutSeconds: 1-3600 整数, onTimeout: continue|fail}  # D19 进程内 v1，2026-09-23 立项 docs/47
+                           #   event 产出 {eventKey,signaled,payload,waitedSeconds,resolvedBy:signal|timeout|input,token}
+                           #   唯一权威见 04 §5.5「wait 节点 config 契约」（含事件等待/动态时长 v1 追加段）
                            # human_approval 节点 config 形状：
                            #   {summary, approver?, timeoutSeconds: 10-3600 整数, onTimeout: approve|reject(默认reject),
                            #    approvedTarget, rejectedTarget, cardTemplateId?（M8 新增，可选内置卡片 id，不填走 summary 旧路径）,
@@ -431,6 +446,26 @@ response: {token, decision, resolvedBy, actionId?}
 # 租户与审批不符 → 统一 404「审批链接无效或已过期」（peek 不惰性创建租户）
 ```
 > 邮件决策审计：`actor="email-link"`、`action="approval.email_decision:{decision}"`（audit schema 无 metadata 列、本批不扩列，决策编进 action）；不落 graph/node、不记签名 token、审批 token 与 comment。
+
+### `decided_approval` — 字段概览（审计可见与审批结果补强批，docs/37；2026-09-22 落码收口）
+
+```yaml
+# GET /api/approvals/decided?limit=50（read，全部登录角色；本租户分区）
+items:
+  token: string
+  node_id: string               # snake_case，与 GET /api/approvals 同形
+  graph_id: string
+  summary: string
+  approver: string
+  createdAt: float              # pending 创建 epoch 秒
+  decision: "approved|rejected"
+  resolvedBy: string            # human | email-link | timeout | input
+  comment: string
+  cardTemplateId: string        # 有则附带
+limit: int                      # 回显；端点 clamp 1–200（broker 默认 50）
+# 不返回 card_context 快照、Event 等内部对象；按 resolved_at 倒序（最近处理在前）
+```
+> 只读投影、不改挂起/决策语义；数据进程内、reset 清空、重启即失（D20 不变）。`_Pending` 保留 `notify_recipients: list[str]`（request 原样留存、不去重，去重在 loader 收件人解析阶段；restore 默认空），决策后旁路发结果邮件：subject `[Atlas] 审批已处理：{summary}`；正文含审批节点/图、结果、处理来源行，comment 非空时附「处理备注」行并截断 ≤200 字符，**不含 token 或任何决策链接**。
 
 ### `evaluation_task` — 字段概览（完整定义见 06-运行时与质量保障.md #125，上下文章节：### 9.2 评估 Harness 设计（借鉴 lm-evaluation-harness）代码示例）
 
@@ -890,6 +925,7 @@ node_id: string
 kind: "approval" | "debug" | "wait"
 created_at: string              # UTC ISO-8601
 deadline_at: string | null      # UTC 绝对时刻（审批超时/wait 到点）；恢复后按剩余时长等待，不重计
+wait: object | null             # 仅 wait-event 帧（docs/53，2026-09-23 立项）：{waitType:"event", eventKey, onTimeout:"continue"|"fail", timeoutSeconds}；duration 帧不带此键
 graph_snapshot: object          # 保存时图定义副本（M6 版本化未落地前随帧内嵌，防恢复错位）
 resume_state:                   # 续跑载荷（挂起点续跑，不重跑上游）
   inputs: object                # run inputs（同名覆盖全局变量口径不变）
@@ -1097,3 +1133,55 @@ input:  {query: string（必填，支持 {{变量}}）, kind?: enum[fact,prefere
 output: {results: [{id, kind, content, score: number, confidence, scope, created_at}]}  # 无命中 results=[]
 ```
 > 走现有 tool_call/harness 链路（params 由 M3 FormRenderer 按 input_schema 自动生成、M2 变量补全零额外）；schema 守 Capability keyword 白名单（无 x- 扩展）。装配照 message 两段式：全局注册仅供发现，`_runtime_registry` 按租户克隆注入 `services.memory_store`。REST：`GET /api/memories`（viewer+，kind 过滤）、`GET /api/memories/search?q=`（viewer+，q 空 422）、`DELETE /api/memories/{id}`（**admin**，跨租户 404）；docs/28 批 4⑩（2026-09-20 `ec0fd81`）起**开 `POST /api/memories` 与 `PUT /api/memories/{id}`（均 operate，source 固定 manual，白名单字段、extra forbid、空体 PUT 422、不存在/他租户 404）**——图工具仍是运行时自动写入主路径，REST 仅手动新建/编辑，删除仍仅 admin。docs/12 原 `GET/PUT /api/memories/{operator_id}` 据此订正为按租户、operator 降为 `scope.user_id`。错误码：repo 缺省的发现实例执行期返 `MEMORY_NOT_CONFIGURED`、入参校验失败折 `MEMORY_INVALID_INPUT`；tool_call 成功后节点输出包一层 `{"result": <工具 output>, "action_status": "SUCCESS"}`。working/summary/case 层、自动提取、决策隐式注入、PII/更新策略均缓做（D35）。
+
+### `channel_binding` — 字段概览（真实渠道适配批，docs/38；2026-09-22 docs-only 立项、ADR T28；落码承载 `src/atlas/channels/`；docs/39/ADR T29 增 webhook_subscriptions、迁移 016）
+
+```text
+ChannelBinding = {
+  id:            str   # ch-N
+  provider:      str   # "shopify"
+  connectionId:  str   # 绑定的 T4 connection id（同租户、唯一）
+  config: { shop: str, apiVersion: str }
+  status:        str   # connected | error
+  lastError:     str | null
+  createdBy:     str
+  createdAt:     str   # epoch 秒文本（对齐 connections 口径）
+}
+```
+> REST 请求体：`{provider, connectionId, config:{shop, apiVersion?}}`；REST 投影：`{id, provider, connectionId, config:{shop,apiVersion}, status, lastError, createdBy, createdAt}`（不含 token/secret）。PG 迁移 `015_channel_bindings.sql`：`id TEXT PK, tenant_id TEXT, provider TEXT, connection_id TEXT UNIQUE, config JSONB, status TEXT, last_error TEXT, created_by TEXT, created_at TEXT, updated_at TEXT`，不 FK 强约束（跨表均 TEXT）；绑定按租户引用 T4 connection、属客户配置 **reset 不清除**（同 connections/audit），引用的 connection 被删 → status=error 不级联。**迁移 `016_channel_webhook_subscriptions.sql`（docs/39，ADR T29）：`ALTER TABLE channel_bindings ADD COLUMN webhook_subscriptions JSONB NOT NULL DEFAULT '[]'::jsonb;`——JSON `WebhookSubscription[]`＝`{topic, graph_id, enabled}`（topic 三选一、topic+graph_id 同绑定唯一、≤10；REST 投影驼峰 `{topic, graphId, enabled}`）；订阅 GET/PUT 见 12 文档，形状权威 docs/39 §1B**。工具输入/输出形状以 docs/38 §1B 为权威（shop/list_orders、shop/get_order 为 read，shop/create_refund 为 financial），订单投影字段 `{id,name,email,financialStatus,fulfillStatus,totalPrice,currency,createdAt}` 以 docs/38 §1A 为权威。错误码：CHANNEL_NOT_BOUND / CHANNEL_UNAUTHORIZED / CHANNEL_UPSTREAM_FAILED / CHANNEL_INVALID_RESPONSE / CHANNEL_INVALID_PARAMETER / CHANNEL_ALREADY_BOUND；**webhook：WEBHOOK_BAD_SIGNATURE(401) / WEBHOOK_MALFORMED(400) / WEBHOOK_SECRET_UNAVAILABLE(503)**。
+
+### `openapi_import` — 字段概览（OpenAPI 导入与工具自动生成批，docs/42；2026-09-23 落码收口；承载 `src/atlas/openapi/`）
+
+> **存储两档（docs/43，2026-09-23 落码收口）**：内存档 ImportStore 进程内 per-tenant；PG 档表 `openapi_imports`（迁移 018，(tenant_id,spec_id) PK、seq 走 storage_id_seq 排序、operations JSONB）＋PgImportStore（同形、双上限/错误码不变、reset 不清），形状不变，跨重启/多实例，发现按请求动态重建适配器、重启无需预热。
+
+```text
+ImportedSpec = {
+  spec_id:    str                   # openapi-N
+  title:      str
+  base_url:   str                   # servers[0].url，必须绝对 URL
+  created_at: str                   # epoch 秒文本
+  operations: [OperationDescriptor]
+  security_schemes:      {name: SecurityScheme}   # docs/44/46；支持项 apiKey header/query、http bearer、http basic
+  credential_envelopes:  {name: str}              # docs/44/46；scheme 名→SecretProvider 信封（basic 明文为 JSON；投影不含明文）
+}
+SecurityScheme = {
+  name:     str                     # components.securitySchemes 的 key
+  kind:     "api_key" | "bearer" | "basic"   # basic 随 docs/46
+  location: "header" | "query" | null
+  param:    str                     # apiKey 取声明 name；bearer/basic 固定 Authorization
+  prefix:   str                     # bearer "Bearer "；basic "Basic "；apiKey ""
+}
+OperationDescriptor = {
+  name:        str                  # operationId 清洗或 method+path 合成，spec 内唯一
+  method:      str                  # get|post|put|patch|delete|head|options
+  path:        str
+  summary:     str
+  permission:  str                  # read (GET/HEAD) | write（其余；永不 financial）
+  idempotent:  bool                 # 仅 GET/HEAD
+  input_schema: object              # Capability JSON Schema 子集：path/query/header 参数 + body
+  security:    [[str]]              # docs/44 立项；有效要求 OR-of-AND（operation 覆盖全局），[] 无需密钥
+  skipped:     bool
+  skip_reason: str | null
+}
+```
+> preview/import 请求体：`{content?: str, url?: str, credentials?: {scheme: str}}`（content/url 恰好其一，同时给/都不给 422；credentials key 须为 preview 方案名，否则 422 OPENAPI_INVALID_CREDENTIAL）。preview 响应：`{title, base_url, operations:[OperationDescriptor], imported_count, skipped_count, security_schemes:[SecurityScheme]}`（不落库，含 skipped 行，永不接收密钥）；import 201 响应＝ImportedSpec（仅成功 operations）；全 skipped → 422。`GET /api/openapi/imports` 返 `{items:[ImportedSpec]}`，单项返 ImportedSpec；`PUT /api/openapi/imports/{spec_id}/credentials`（operate）body `{credentials:{name:value}}`：apiKey/bearer 的 value 为 string、basic（docs/46）为 `{username,password}`（信封明文存 JSON）；空串/空对象/null 删除信封；basic 缺字段或类型不符 422 OPENAPI_INVALID_CREDENTIAL；返 `{configured:[name]}`；DELETE 200 `{deleted:true}`。进程内 per-tenant、**reset 不清**；上限 5 specs/租户、200 operations/spec。适配器 id `openapi:{spec_id}`、type `api`，合并进 `/api/adapters`；执行时逐次解密注入，缺密钥不发请求→失败结果 OPENAPI_CREDENTIAL_MISSING。错误码（422 除注明）：OPENAPI_INVALID_DOCUMENT / OPENAPI_UNSUPPORTED_VERSION / OPENAPI_FETCH_FAILED / OPENAPI_NO_IMPORTABLE_OPERATION / OPENAPI_LIMIT_EXCEEDED / OPENAPI_INVALID_CREDENTIAL；运行期 OPENAPI_INVALID_PARAMETER、OPENAPI_CREDENTIAL_MISSING（失败 Observation）。形状权威 docs/42 §1–§3、docs/44、docs/46。

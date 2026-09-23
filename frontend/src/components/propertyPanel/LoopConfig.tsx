@@ -14,14 +14,20 @@ type Props = {
 }
 
 /**
- * loop（while）属性表单（M4 起由 FormRenderer schema 驱动）：
+ * loop 属性表单（M4 起由 FormRenderer schema 驱动）：
  * 字段/文案/隐藏见 loop.schema.ts 与 nodeUiSchemas.loopUiSchema；
- * 表达式语法、body/exit 互异等跨字段规则仍由 L1 手写产出。mode 为内部字段，静态隐藏。
+ * 表达式语法、body/exit 互异等跨字段规则仍由 L1 手写产出。
+ * mode 在 while/foreach 间切换（docs/45），标题随模式变化。
  */
 export function LoopConfig({ config, update, variablePaths, targetOptions, diagnostics }: Props) {
+  const isForeach = config.mode === 'foreach'
   return (
     <>
-      <Typography.Text strong>条件循环（表达式为真时进入循环体，04 §5.3）</Typography.Text>
+      <Typography.Text strong>
+        {isForeach
+          ? '遍历循环（逐项执行循环体，04 §5.3 / docs/45）'
+          : '条件循环（表达式为真时进入循环体，04 §5.3）'}
+      </Typography.Text>
       <NodeConfigForm
         kind="loop"
         config={config}

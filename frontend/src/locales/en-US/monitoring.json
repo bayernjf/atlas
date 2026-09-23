@@ -1,1 +1,23 @@
-{}
+{
+  "webhookReliability": {},
+  "alertChannel": {
+    "cardTitle": "Alert external notifications",
+    "subtitle": "Sent only when a new alert is created; merges, escalations and closures are not resent",
+    "enable": "Enable notifications",
+    "channel": "Channel",
+    "targetUrl": "Target (full robot / webhook URL)",
+    "targetEmail": "Target (email address)",
+    "secret": "Signing secret",
+    "minSeverity": "Minimum severity",
+    "severityCritical": "Critical only",
+    "severityWarning": "Warning and above",
+    "save": "Save settings",
+    "saved": "Settings saved",
+    "saveFailed": "Save failed",
+    "lastDelivery": "Last delivery",
+    "deliverySuccess": "Success",
+    "deliveryFailed": "Failed",
+    "never": "No delivery yet",
+    "readOnlyHint": "Read-only for your role; administrators can edit"
+  }
+}

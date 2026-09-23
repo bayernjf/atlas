@@ -15,10 +15,13 @@ import queue
 import threading
 import time
 import uuid
+from itertools import count
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
+
+import httpx
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
@@ -36,9 +39,13 @@ from atlas.database.adapter import DatabaseHarnessAdapter
 from atlas.database.service import DatabaseClient, demo_engine
 from atlas.debug import DebugController, DebugStopped
 from atlas.graph.conditions import validate_expression
-from atlas.graph.dsl import GraphDSL, GraphValidationError, parse_graph
+from atlas.graph.dsl import GraphDSL, GraphValidationError, parse_graph, valid_event_key
 from atlas.graph.loader import _tool_permissions, compile_graph, run_graph, tool_input_schemas
 from atlas.collaboration.cancellations import RunCancelled
+from atlas.collaboration.event_waits import (
+    WaitAlreadySignaled,
+    WaitTokenNotFound,
+)
 from atlas.collaboration.notifications import EmailApprovalNotifier
 from atlas.collaboration.email_token import EmailTokenError, TokenIssuer
 from atlas.tracing import Tracer
@@ -66,9 +73,24 @@ from atlas.memory.models import MemoryValidationError
 from atlas.message.adapter import MessageHarnessAdapter
 from atlas.monitoring import RUN_RING_SIZE, extract_business, extract_node_results
 from atlas.observability.audit import AUDITED_METHODS, LOGIN_PATH
+from atlas.channels.adapter import ShopifyHarnessAdapter
+from atlas.channels.base import ChannelBinding, ChannelError
+from atlas.channels.webhooks import (
+    HMAC_HEADER,
+    SUPPORTED_TOPICS,
+    WebhookDeliverer,
+    build_envelope,
+    verify_shopify_hmac,
+)
 from atlas.connections.service import ConnectionServiceError
 from atlas.observability.health import check_ready
 from atlas.observability.metrics_export import render_prometheus
+from atlas.openapi.adapter import ImportedApiHarnessAdapter
+from atlas.openapi.errors import OpenApiError
+from atlas.openapi.parser import parse_document
+from atlas.openapi.store import ImportStoreError
+from atlas.security.egress import EgressDenied, EgressGuard
+from atlas.security.secrets import build_secret_provider_from_env
 from atlas.monitoring.silences import OnCallEmpty, current_assignee, is_silence_active
 from atlas.recording import (
     RecordingCreateRequest,
@@ -113,6 +135,9 @@ logger = logging.getLogger(__name__)
 
 # docs/35 §2（T2）：审批挂起邮件中的应用入口（前端地址）。
 _PUBLIC_URL = os.getenv("ATLAS_PUBLIC_URL", "http://localhost:5174")
+
+MAX_WAIT_PAYLOAD_BYTES = 4096
+MAX_WAIT_PAYLOAD_KEYS = 50
 # docs/36 §3：邮件深链验签单例（密钥取 ATLAS_APPROVAL_HMAC_SECRET）。
 _email_token_issuer = TokenIssuer()
 
@@ -168,6 +193,7 @@ def _resume_run(engine, services: TenantServices, frame: dict) -> None:
             inputs=frame["resume_state"].get("inputs", {}),
             registry=_runtime_registry(services),
             approval_broker=services.approval_broker,
+            event_wait_broker=services.event_wait_broker,
             graph_id=frame["resume_state"].get("graph_id", ""),
             graph_resolver=_tenant_graph_resolver(services),
             frame_sink=make_frame_sink(engine, frame["tenant_id"], run_id),
@@ -248,6 +274,8 @@ _demo_registry.register(MessageHarnessAdapter(granted_permissions=_FULL_PERMISSI
 # 全局注册表里的 memory 实例仅供适配器发现；执行期注册表替换为租户记忆存储（docs/26 §5.1）
 _demo_registry.register(MemoryHarnessAdapter(granted_permissions=_FULL_PERMISSIONS))
 
+_secret_provider = build_secret_provider_from_env()
+
 
 @app.exception_handler(GraphValidationError)
 def graph_validation_handler(_request: Request, exc: GraphValidationError) -> JSONResponse:
@@ -318,6 +346,21 @@ def _runtime_registry(services: TenantServices) -> AdapterRegistry:
                 repo=services.memory_store, granted_permissions=_FULL_PERMISSIONS
             )
         registry.register(adapter)
+    for view in services.channel_registry.list():
+        registry.register(
+            ShopifyHarnessAdapter(
+                view["id"], services.channel_registry,
+                granted_permissions=_FULL_PERMISSIONS,
+            )
+        )
+    for imported in services.openapi_imports.list():
+        registry.register(
+            ImportedApiHarnessAdapter(
+                imported,
+                secret_provider=_secret_provider,
+                granted_permissions=_FULL_PERMISSIONS,
+            )
+        )
     return registry
 
 
@@ -543,6 +586,417 @@ def test_connection(conn_id: str, principal: Principal = Depends(require("operat
         return services_for(principal).connection_service.test(conn_id)
     except ConnectionServiceError as exc:
         raise _conn_http_error(exc)
+
+
+class ChannelBindRequest(BaseModel):
+    provider: str
+    connectionId: str
+    config: dict[str, Any] | None = None
+
+
+def _channel_http_error(exc: ChannelError) -> "HTTPException":
+    return HTTPException(status_code=exc.status_code, detail=str(exc))
+
+
+def _record_audit(
+    services: TenantServices, principal: Principal,
+    http_request: Request, action: str, status_code: int,
+) -> None:
+    try:
+        services.audit_store.record(
+            tenant_id=principal.tenant_id,
+            actor=principal.username,
+            action=action,
+            status_code=status_code,
+            path=http_request.url.path,
+            ip=http_request.client.host if http_request.client else "",
+        )
+    except Exception as exc:
+        logger.warning("audit record failed: %s", exc)
+
+
+_record_channel_audit = _record_audit
+
+
+@app.get("/api/channels")
+def list_channels(principal: Principal = Depends(require("read"))) -> dict[str, Any]:
+    return {"items": services_for(principal).channel_registry.list()}
+
+
+@app.post("/api/channels", status_code=201)
+def bind_channel(
+    body: ChannelBindRequest,
+    http_request: Request,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    services = services_for(principal)
+    try:
+        view = services.channel_registry.bind(
+            body.provider, body.connectionId, body.config,
+            created_by=principal.username,
+        )
+    except ChannelError as exc:
+        _record_channel_audit(services, principal, http_request, "channel.bind", exc.status_code)
+        raise _channel_http_error(exc)
+    _record_channel_audit(services, principal, http_request, "channel.bind", 201)
+    return view
+
+
+@app.get("/api/channels/{binding_id}")
+def get_channel(binding_id: str, principal: Principal = Depends(require("read"))) -> dict[str, Any]:
+    try:
+        return services_for(principal).channel_registry.get(binding_id)
+    except ChannelError as exc:
+        raise _channel_http_error(exc)
+
+
+@app.post("/api/channels/{binding_id}/test")
+def test_channel(binding_id: str, principal: Principal = Depends(require("read"))) -> dict[str, Any]:
+    # 上游错误不 5xx：200 体 ok=false（docs/38 §1C）
+    return services_for(principal).channel_registry.test(binding_id)
+
+
+@app.delete("/api/channels/{binding_id}")
+def delete_channel(
+    binding_id: str,
+    http_request: Request,
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, Any]:
+    services = services_for(principal)
+    try:
+        deleted = services.channel_registry.delete(binding_id)
+    except ChannelError as exc:
+        _record_channel_audit(services, principal, http_request, "channel.unbind", exc.status_code)
+        raise _channel_http_error(exc)
+    _record_channel_audit(services, principal, http_request, "channel.unbind", 200)
+    return {"deleted": deleted}
+
+
+# --- 入站 Webhook（docs/39，ADR T29）--------------------------------------
+
+MAX_WEBHOOK_SUBSCRIPTIONS = 10
+
+
+class WebhookSubscriptionsRequest(BaseModel):
+    subscriptions: list[dict[str, Any]]
+
+
+def _locate_binding(binding_id: str) -> tuple[str, ChannelBinding, TenantServices] | None:
+    """公开路径的跨租户绑定定位：绝不因探测而惰性创建租户。"""
+    if STORAGE_BACKEND == "pg":
+        engine = get_pg_backend().engine
+        with engine.connect() as db:
+            row = db.execute(
+                text("SELECT tenant_id FROM channel_bindings WHERE id = :id"),
+                {"id": binding_id},
+            ).first()
+        if row is None:
+            return None
+        tenant_id = row[0]
+        services = tenant_registry.get(tenant_id)
+        binding = services.channel_registry._store.get(binding_id)
+        if binding is None:
+            return None
+        return tenant_id, binding, services
+    for tenant_id in tenant_registry.all_tenant_ids():
+        services = tenant_registry.peek(tenant_id)
+        if services is None:
+            continue
+        binding = services.channel_registry._store.get(binding_id)
+        if binding is not None:
+            return tenant_id, binding, services
+    return None
+
+
+def _webhook_resolve(graph_id: str, tenant: str, event: TriggerEvent) -> int | None:
+    services = tenant_registry.get(tenant)
+    version, _segment = services.routing_store.resolve(graph_id, tenant=tenant, event=event)
+    return version
+
+
+def _webhook_trigger(graph_id: str, version: int, event: TriggerEvent, tenant: str) -> None:
+    services = tenant_registry.get(tenant)
+    threading.Thread(
+        target=_webhook_run_worker,
+        args=(services, tenant, graph_id, version, event),
+        daemon=True,
+    ).start()
+
+
+def _webhook_audit(action: str, tenant: str, metadata: dict) -> None:
+    services = tenant_registry.get(tenant)
+    # AuditStore 无 metadata 列：关键事实编码进 path（不含 body/密钥）。
+    path = (
+        f"webhook binding={metadata.get('bindingId')} "
+        f"id={metadata.get('webhookId')} shop={metadata.get('shop')}"
+    )
+    services.audit_store.record(
+        tenant_id=tenant, actor="shopify-webhook", action=action,
+        status_code=200, path=path, ip="",
+    )
+
+
+_webhook_deliverer = WebhookDeliverer(
+    resolver=_webhook_resolve,
+    trigger=_webhook_trigger,
+    auditor=_webhook_audit,
+    store_provider=lambda tenant: tenant_registry.get(tenant).webhook_deliveries,
+)
+
+
+def _webhook_run_worker(
+    services: TenantServices, tenant_id: str,
+    graph_id: str, version: int, event: TriggerEvent,
+) -> None:
+    """后台运行钉版图：run 记录独立于 HTTP 请求；失败落 failed，不回传 Shopify。"""
+    run_id = uuid.uuid4().hex
+    run_store = services.run_store
+    run_store.begin(run_id=run_id, graph_id=graph_id, mode="webhook")
+    try:
+        raw = services.graph_store.get(graph_id, version)
+        if raw is None:
+            run_store.finish(
+                run_id=run_id, status="failed",
+                error=f"已发布版本不存在：{graph_id}@{version}",
+            )
+            return
+        graph = parse_graph(raw)
+        result = run_graph(
+            graph,
+            inputs={"event": event.model_dump()},
+            registry=_runtime_registry(services),
+            approval_broker=services.approval_broker,
+            event_wait_broker=services.event_wait_broker,
+            graph_id=graph_id,
+            graph_resolver=_tenant_graph_resolver(services),
+            frame_sink=_frame_sink_for(tenant_id, run_store, run_id),
+            graph_version=version,
+        )
+        run_store.finish(
+            run_id=run_id, status="completed",
+            outputs=result["outputs"], trace=result["trace"],
+        )
+    except Exception as exc:
+        logger.error("webhook 触发图运行失败 graph=%s@%s", graph_id, version, exc_info=True)
+        run_store.finish(
+            run_id=run_id, status="failed",
+            error=f"{type(exc).__name__}: {exc}",
+        )
+
+
+@app.post("/api/channels/hooks/shopify/{binding_id}")
+async def shopify_webhook_ingress(binding_id: str, http_request: Request) -> dict[str, Any]:
+    """Shopify 公开入站：先跨租户定位绑定，再在原始 body 上 HMAC 验签，最后才解析 JSON。
+
+    验签通过后一律 200（received/duplicate/ignored）；绑定不存在统一 404、
+    签名失败统一 401（不泄漏原因差异）；密钥不可用 503；body/头非法 400。
+    """
+    located = _locate_binding(binding_id)
+    if located is None:
+        raise HTTPException(status_code=404, detail="渠道绑定不存在")
+    tenant_id, binding, services = located
+    secret = services.connection_service.client_secret_for(binding.connection_id)
+    if not secret:
+        raise HTTPException(status_code=503, detail="Webhook 验签密钥暂不可用")
+    raw = await http_request.body()
+    signature = http_request.headers.get(HMAC_HEADER)
+    if not verify_shopify_hmac(raw, signature, secret):
+        raise HTTPException(status_code=401, detail="Webhook 签名校验失败")
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise HTTPException(status_code=400, detail="Webhook 请求体不是合法 JSON 对象")
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="Webhook 请求体必须是 JSON 对象")
+    try:
+        envelope = build_envelope(http_request.headers, data)
+    except ChannelError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    return _webhook_deliverer.deliver(
+        tenant_id,
+        {"id": binding.id, "webhook_subscriptions": binding.webhook_subscriptions},
+        envelope,
+    )
+
+
+@app.get("/api/channels/{binding_id}/webhooks")
+def get_webhook_subscriptions(
+    binding_id: str, principal: Principal = Depends(require("read"))
+) -> dict[str, Any]:
+    try:
+        items = services_for(principal).channel_registry.subscriptions(binding_id)
+    except ChannelError as exc:
+        raise _channel_http_error(exc)
+    return {"items": items}
+
+
+@app.put("/api/channels/{binding_id}/webhooks")
+def put_webhook_subscriptions(
+    binding_id: str,
+    body: WebhookSubscriptionsRequest,
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, Any]:
+    services = services_for(principal)
+    try:
+        services.channel_registry._require(binding_id)
+    except ChannelError as exc:
+        raise _channel_http_error(exc)
+
+    subs = body.subscriptions
+    errors: list[str] = []
+    if not isinstance(subs, list):
+        errors.append("订阅必须是数组")
+    elif len(subs) > MAX_WEBHOOK_SUBSCRIPTIONS:
+        errors.append(f"订阅数量不能超过 {MAX_WEBHOOK_SUBSCRIPTIONS} 条")
+    normalized: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for index, item in enumerate(subs if isinstance(subs, list) else []):
+        if not isinstance(item, dict):
+            errors.append(f"第 {index + 1} 条订阅格式非法")
+            continue
+        topic = item.get("topic")
+        graph_id = item.get("graphId")
+        enabled = item.get("enabled", True)
+        prefix = f"第 {index + 1} 条订阅"
+        if topic not in SUPPORTED_TOPICS:
+            errors.append(f"{prefix}：不支持的 Webhook topic：{topic}")
+        if not isinstance(graph_id, str) or not graph_id.strip():
+            errors.append(f"{prefix}：缺少 graphId")
+        elif services.graph_store.get(graph_id.strip()) is None:
+            errors.append(f"{prefix}：订阅的图不存在：{graph_id}")
+        if not isinstance(enabled, bool):
+            errors.append(f"{prefix}：enabled 必须是布尔值")
+        if isinstance(topic, str) and isinstance(graph_id, str):
+            key = (topic, graph_id.strip())
+            if key in seen:
+                errors.append(f"{prefix}：同一 topic 与图的订阅重复：{topic} → {graph_id}")
+            seen.add(key)
+        if isinstance(graph_id, str):
+            graph_id = graph_id.strip()
+        normalized.append({"topic": topic, "graph_id": graph_id, "enabled": enabled})
+    if errors:
+        raise HTTPException(status_code=422, detail=errors)
+
+    items = services.channel_registry.set_subscriptions(binding_id, normalized)
+    return {"items": items}
+
+
+@app.get("/api/channels/webhooks/dead-letters")
+def list_webhook_dead_letters(
+    topic: str | None = None,
+    bindingId: str | None = None,
+    limit: int = 100,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    store = services_for(principal).webhook_deliveries
+    items = store.list_dead(
+        principal.tenant_id, topic=topic, binding_id=bindingId, limit=limit
+    )
+    return {"items": items}
+
+
+@app.post("/api/channels/webhooks/dead-letters/{webhook_id}/replay")
+def replay_webhook_dead_letter(
+    webhook_id: str, principal: Principal = Depends(require("operate"))
+) -> dict[str, Any]:
+    services = services_for(principal)
+    store = services.webhook_deliveries
+    dead = store.get_dead(principal.tenant_id, webhook_id)
+    if dead is None:
+        raise HTTPException(status_code=404, detail="死信投递不存在或已处理")
+    binding = services.channel_registry._store.get(dead["bindingId"])
+    if binding is None:
+        raise HTTPException(status_code=404, detail="死信所属的渠道绑定不存在")
+    result = _webhook_deliverer.replay(
+        principal.tenant_id,
+        {"id": binding.id, "webhook_subscriptions": binding.webhook_subscriptions},
+        webhook_id,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="死信投递不存在或已处理")
+    return result
+
+
+@app.delete("/api/channels/webhooks/dead-letters/{webhook_id}")
+def delete_webhook_dead_letter(
+    webhook_id: str, principal: Principal = Depends(require("administer"))
+) -> dict[str, Any]:
+    store = services_for(principal).webhook_deliveries
+    deleted = store.delete(principal.tenant_id, webhook_id)
+    return {"deleted": deleted}
+
+
+@app.get("/api/channels/webhooks/metrics")
+def webhook_delivery_metrics(
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    store = services_for(principal).webhook_deliveries
+    return store.metrics(principal.tenant_id)
+
+
+# --- Shopify 店铺侧 webhook 注册（docs/41） --------------------------------
+
+
+class RemoteWebhookRequest(BaseModel):
+    topic: str
+
+
+@app.get("/api/channels/{binding_id}/remote-webhooks")
+def list_remote_webhooks(
+    binding_id: str, principal: Principal = Depends(require("read"))
+) -> dict[str, Any]:
+    """渠道令牌失效不污染端点契约：200 空 items + error（binding error 态已由 registry 落库）。"""
+    registry = services_for(principal).channel_registry
+    try:
+        items = registry.remote_webhooks(binding_id)
+    except ChannelError as exc:
+        if exc.code == "CHANNEL_UNAUTHORIZED":
+            return {"items": [], "error": "CHANNEL_UNAUTHORIZED"}
+        raise _channel_http_error(exc)
+    return {"items": items}
+
+
+@app.post("/api/channels/{binding_id}/remote-webhooks", status_code=201)
+def register_remote_webhook(
+    binding_id: str,
+    body: RemoteWebhookRequest,
+    http_request: Request,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    services = services_for(principal)
+    try:
+        item = services.channel_registry.register_remote(binding_id, body.topic)
+    except ChannelError as exc:
+        _record_channel_audit(
+            services, principal, http_request, "channel.webhook.register",
+            exc.status_code,
+        )
+        raise _channel_http_error(exc)
+    _record_channel_audit(services, principal, http_request, "channel.webhook.register", 201)
+    return item
+
+
+@app.delete("/api/channels/{binding_id}/remote-webhooks/{topic:path}")
+def unregister_remote_webhook(
+    binding_id: str,
+    topic: str,
+    http_request: Request,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """幂等：未注册返回 {deleted:false}。"""
+    services = services_for(principal)
+    try:
+        deleted = services.channel_registry.unregister_remote(binding_id, topic)
+    except ChannelError as exc:
+        _record_channel_audit(
+            services, principal, http_request, "channel.webhook.unregister",
+            exc.status_code,
+        )
+        raise _channel_http_error(exc)
+    _record_channel_audit(
+        services, principal, http_request, "channel.webhook.unregister", 200
+    )
+    return {"deleted": deleted}
 
 
 @app.get("/connections/callback", response_class=HTMLResponse, include_in_schema=False)
@@ -826,7 +1280,214 @@ def reset_password(
 
 @app.get("/api/adapters")
 def list_adapters(principal: Principal = Depends(require("read"))) -> list[dict[str, Any]]:
-    return _demo_registry.list_adapters()
+    # 执行期注册表在全局基础设施之上合并本租户渠道适配器（docs/38 §1E）
+    return _runtime_registry(services_for(principal)).list_adapters()
+
+
+_OPENAPI_FETCH_TIMEOUT = 10.0
+_openapi_egress = EgressGuard.from_env()
+
+
+def _fetch_openapi_spec(url: str) -> str:
+    """API 层 URL 抓取（docs/42 §4）：出向过 EgressGuard，10s、不跟重定向；
+    任何取数失败统一折 OPENAPI_FETCH_FAILED。"""
+    try:
+        _openapi_egress.check(url)
+        with httpx.Client(follow_redirects=False) as client:
+            response = client.get(url, timeout=_OPENAPI_FETCH_TIMEOUT)
+    except (EgressDenied, httpx.HTTPError, ValueError) as exc:
+        raise OpenApiError("OPENAPI_FETCH_FAILED", f"规格抓取失败：{exc}") from exc
+    if response.status_code >= 400:
+        raise OpenApiError(
+            "OPENAPI_FETCH_FAILED", f"规格抓取失败：HTTP {response.status_code}"
+        )
+    return response.text
+
+
+class OpenApiSourceRequest(BaseModel):
+    content: str | None = None
+    url: str | None = None
+    credentials: dict[str, str] | None = None
+
+
+class OpenApiCredentialsRequest(BaseModel):
+    credentials: dict[str, str | dict[str, str] | None]
+
+
+def _credential_error(name: str, message: str = "未知鉴权方案") -> HTTPException:
+    return HTTPException(
+        status_code=422,
+        detail={"code": "OPENAPI_INVALID_CREDENTIAL", "message": f"{message}：{name}"},
+    )
+
+
+def _encrypt_credentials(
+    raw: dict[str, str] | None, scheme_names: set[str]
+) -> dict[str, str]:
+    envelopes: dict[str, str] = {}
+    if not raw:
+        return envelopes
+    for name, value in raw.items():
+        if name not in scheme_names:
+            raise _credential_error(name)
+        if isinstance(value, str) and value.strip():
+            envelopes[name] = _secret_provider.encrypt(value.strip())
+    return envelopes
+
+
+def _openapi_http_error(exc: OpenApiError) -> HTTPException:
+    return HTTPException(
+        status_code=422,
+        detail={"code": exc.code, "message": exc.message},
+    )
+
+
+def _parse_openapi_source(raw: OpenApiSourceRequest):
+    if (raw.content is None) == (raw.url is None):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "OPENAPI_INVALID_DOCUMENT",
+                "message": "content 与 url 必须二选一",
+            },
+        )
+    if raw.content is not None:
+        text = raw.content
+    else:
+        try:
+            text = _fetch_openapi_spec(raw.url)
+        except OpenApiError as exc:
+            raise _openapi_http_error(exc) from exc
+    try:
+        return parse_document(text)
+    except OpenApiError as exc:
+        raise _openapi_http_error(exc) from exc
+
+
+@app.post("/api/openapi/preview")
+def preview_openapi(
+    raw: OpenApiSourceRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    spec = _parse_openapi_source(raw)
+    return {
+        "title": spec.title,
+        "base_url": spec.base_url,
+        "operations": [op.model_dump() for op in spec.operations],
+        "security_schemes": [
+            {
+                "name": scheme.name,
+                "kind": scheme.kind,
+                "location": scheme.location,
+                "param": scheme.param,
+            }
+            for scheme in spec.security_schemes.values()
+        ],
+        "imported_count": sum(not op.skipped for op in spec.operations),
+        "skipped_count": sum(op.skipped for op in spec.operations),
+    }
+
+
+@app.post("/api/openapi/imports", status_code=201)
+def import_openapi(
+    raw: OpenApiSourceRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    spec = _parse_openapi_source(raw)
+    if not any(not op.skipped for op in spec.operations):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "OPENAPI_NO_IMPORTABLE_OPERATION",
+                "message": "没有可导入的 operation（文档内操作全部被跳过）",
+            },
+        )
+    try:
+        envelopes = _encrypt_credentials(
+            raw.credentials, set(spec.security_schemes)
+        )
+        imported = services_for(principal).openapi_imports.add(
+            spec, envelopes=envelopes
+        )
+    except ImportStoreError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    return imported.model_dump()
+
+
+@app.get("/api/openapi/imports")
+def list_openapi_imports(
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    items = services_for(principal).openapi_imports.list()
+    return {"items": [spec.model_dump() for spec in items]}
+
+
+@app.get("/api/openapi/imports/{spec_id}")
+def get_openapi_import(
+    spec_id: str,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    imported = services_for(principal).openapi_imports.get(spec_id)
+    if imported is None:
+        raise HTTPException(status_code=404, detail="导入规格不存在")
+    return imported.model_dump()
+
+
+@app.delete("/api/openapi/imports/{spec_id}")
+def delete_openapi_import(
+    spec_id: str,
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, bool]:
+    if not services_for(principal).openapi_imports.delete(spec_id):
+        raise HTTPException(status_code=404, detail="导入规格不存在")
+    return {"deleted": True}
+
+
+@app.put("/api/openapi/imports/{spec_id}/credentials")
+def put_openapi_credentials(
+    spec_id: str,
+    raw: OpenApiCredentialsRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, list[str]]:
+    store = services_for(principal).openapi_imports
+    imported = store.get(spec_id)
+    if imported is None:
+        raise HTTPException(status_code=404, detail="导入规格不存在")
+    envelopes = dict(imported.credential_envelopes)
+    for name, value in raw.credentials.items():
+        if name not in imported.security_schemes:
+            raise _credential_error(name)
+        scheme = imported.security_schemes[name]
+        if scheme.kind == "basic":
+            if not isinstance(value, dict):
+                envelopes.pop(name, None)
+                continue
+            username = value.get("username")
+            password = value.get("password")
+            if (
+                not isinstance(username, str)
+                or not username.strip()
+                or not isinstance(password, str)
+                or not password.strip()
+            ):
+                raise _credential_error(name, "Basic 鉴权需同时提供非空用户名与密码")
+            plaintext = json.dumps(
+                {"username": username.strip(), "password": password.strip()},
+                ensure_ascii=False,
+            )
+            envelopes[name] = _secret_provider.encrypt(plaintext)
+        elif not isinstance(value, str) or not value.strip():
+            envelopes.pop(name, None)
+        else:
+            envelopes[name] = _secret_provider.encrypt(value.strip())
+    updated = store.put_credentials(spec_id, envelopes)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="导入规格不存在")
+    configured = [name for name in updated.security_schemes if name in envelopes]
+    return {"configured": configured}
 
 
 @app.post("/api/graphs", response_model=SaveGraphResponse)
@@ -1024,6 +1685,14 @@ def create_shadow_run(
     presets = preset_all_approvals(graph)
     if presets:
         inputs["approvals"] = {**presets, **(inputs.get("approvals") or {})}
+    # 事件等待无法在影子中被信号放行：预置空 payload 秒过（docs/47 非目标）。
+    event_presets = {
+        node.id: {}
+        for node in graph.nodes
+        if node.type == "wait" and node.config.get("waitType") == "event"
+    }
+    if event_presets:
+        inputs["waitEvents"] = {**event_presets, **(inputs.get("waitEvents") or {})}
     outcome = _parse_human_outcome(body.get("human_outcome"))
 
     registry = _runtime_registry(services)
@@ -1439,6 +2108,7 @@ def replay_recording(
             inputs=inputs,
             registry=_runtime_registry(services),
             approval_broker=services.approval_broker,
+            event_wait_broker=services.event_wait_broker,
             graph_id=f"replay-{case.id}",
             emit=emit,
             graph_resolver=inline_first_resolver(
@@ -1686,6 +2356,7 @@ def run_saved_graph(
             inputs=body.get("inputs"),
             registry=_runtime_registry(services),
             approval_broker=services.approval_broker,
+            event_wait_broker=services.event_wait_broker,
             approval_notifier=EmailApprovalNotifier(
                 services.message_service, _PUBLIC_URL, principal.tenant_id
             ),
@@ -1761,6 +2432,11 @@ def run_saved_graph_stream(
     if debug is not None:
         breakpoints = _validate_debug(graph, debug)
         debug_session = services.debug_broker.create(graph_id=graph_id, breakpoints=breakpoints)
+        if any(
+            node.type == "wait" and node.config.get("waitType") == "event"
+            for node in graph.nodes
+        ):
+            raise HTTPException(status_code=422, detail="事件等待不支持单步调试")
 
     # worker 启动前固定当前租户的分区对象，避免跨租户串用
     registry = _runtime_registry(services)
@@ -1821,6 +2497,7 @@ def run_saved_graph_stream(
                     inputs=inputs,
                     registry=registry,
                     approval_broker=approval_broker,
+                    event_wait_broker=services.event_wait_broker,
                     approval_notifier=approval_notifier,
                     graph_id=graph_id,
                     emit=recording_emit if monitored else emit,
@@ -2047,6 +2724,110 @@ def list_approvals(
     return {"items": services_for(principal).approval_broker.list_pending()}
 
 
+def _parse_wait_event_key(body: dict[str, Any]) -> str:
+    raw = body.get("eventKey")
+    event_key = raw.strip() if isinstance(raw, str) else ""
+    if not valid_event_key(event_key):
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "WAIT_EVENT_KEY_INVALID",
+                    "message": "eventKey 必须是 1-128 位字母、数字及 :_- 组合"},
+        )
+    return event_key
+
+
+def _parse_wait_payload(body: dict[str, Any]) -> dict[str, Any]:
+    raw = body.get("payload", {})
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "WAIT_EVENT_PAYLOAD_INVALID",
+                    "message": "payload 必须是 JSON 对象"},
+        )
+    if len(raw) > MAX_WAIT_PAYLOAD_KEYS:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "WAIT_EVENT_PAYLOAD_INVALID",
+                    "message": f"payload 顶层键不能超过 {MAX_WAIT_PAYLOAD_KEYS} 个"},
+        )
+    serialized = json.dumps(raw, ensure_ascii=False)
+    if len(serialized.encode("utf-8")) > MAX_WAIT_PAYLOAD_BYTES:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "WAIT_EVENT_PAYLOAD_INVALID",
+                    "message": f"payload 序列化后不能超过 {MAX_WAIT_PAYLOAD_BYTES} 字节"},
+        )
+    return raw
+
+
+@app.get("/api/waits")
+def list_waits(
+    principal: Principal = Depends(require("read")),
+) -> dict[str, list[dict[str, Any]]]:
+    """列出当前租户 pending 的事件等待（进程内 broker，重启即失，docs/47 §4）。"""
+    return {"items": services_for(principal).event_wait_broker.list_pending()}
+
+
+@app.post("/api/waits/events")
+def signal_wait_event(
+    http_request: Request,
+    body: dict[str, Any] | None = None,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """按 eventKey 广播信号，释放同 key 全部等待；无 pending 返回 released=0。"""
+    data = body or {}
+    event_key = _parse_wait_event_key(data)
+    payload = _parse_wait_payload(data)
+    services = services_for(principal)
+    released = services.event_wait_broker.signal_key(event_key, payload)
+    _record_audit(services, principal, http_request, "wait.signal_event", 200)
+    return {"released": released}
+
+
+@app.post("/api/waits/{token}/signal")
+def signal_wait_token(
+    token: str,
+    http_request: Request,
+    body: dict[str, Any] | None = None,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """按 token 直投信号：未知/已取走 404，重复信号 409。"""
+    data = body or {}
+    payload = _parse_wait_payload(data)
+    services = services_for(principal)
+    try:
+        services.event_wait_broker.signal_token(token, payload)
+    except WaitTokenNotFound:
+        _record_audit(services, principal, http_request, "wait.signal_token", 404)
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "WAIT_TOKEN_NOT_FOUND",
+                    "message": f"等待不存在或已清理：{token}"},
+        )
+    except WaitAlreadySignaled:
+        _record_audit(services, principal, http_request, "wait.signal_token", 409)
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "WAIT_ALREADY_SIGNALED",
+                    "message": "该等待已有信号，重复提交不生效"},
+        )
+    _record_audit(services, principal, http_request, "wait.signal_token", 200)
+    return {"token": token, "released": True}
+
+
+@app.get("/api/approvals/decided")
+def list_decided_approvals(
+    limit: int = 50,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """列出当前租户已决策的人工审批（最近处理在前，进程内、reset/重启即失）。"""
+    bounded = max(1, min(int(limit), 200))
+    items = services_for(principal).approval_broker.list_decided(bounded)
+    return {"items": items, "limit": bounded}
+
+
 @app.post("/api/approvals/{token}/decision")
 def decide_approval(
     token: str,
@@ -2058,6 +2839,9 @@ def decide_approval(
     if pending is None:
         # 跨租户 token 同样 404，不泄漏存在性（04 §5.14）
         raise HTTPException(status_code=404, detail=f"审批请求不存在或已清理：{token}")
+    notifier = EmailApprovalNotifier(
+        services_for(principal).message_service, _PUBLIC_URL, principal.tenant_id
+    )
     return _apply_approval_decision(
         broker,
         pending,
@@ -2066,6 +2850,8 @@ def decide_approval(
         comment=request.comment,
         action_id=request.action_id,
         form=request.form,
+        notifier=notifier,
+        resolved_by="human",
     )
 
 
@@ -2078,6 +2864,8 @@ def _apply_approval_decision(
     comment: str,
     action_id: str | None,
     form: dict[str, Any] | None,
+    notifier: Any = None,
+    resolved_by: str = "human",
 ) -> dict[str, Any]:
     """登录态决策与邮件深链决策共用的唯一应用函数（docs/36 §3，防双路漂移）。"""
     if pending.get("decision") is not None:
@@ -2105,6 +2893,22 @@ def _apply_approval_decision(
 
     if not broker.resolve(token, decision, comment=comment, action_id=resolved_action):
         raise HTTPException(status_code=409, detail="该审批请求已有决策，重复提交不生效")
+    # docs/37 §4：决策结果邮件（旁路 fail-safe，不影响响应与决策事实）。
+    if notifier is not None:
+        recipients = broker.get_notify_recipients(token)
+        if recipients:
+            try:
+                notifier.notify_decided(
+                    graph_id=pending.get("graph_id", ""),
+                    node_id=pending.get("node_id", ""),
+                    summary=pending.get("summary", ""),
+                    decision=decision,
+                    resolved_by=resolved_by,
+                    comment=comment,
+                    recipients=recipients,
+                )
+            except Exception as exc:  # noqa: BLE001 结果通知任何异常都不改变响应
+                logger.warning("审批结果通知失败 token=%s: %s", token, exc)
     result: dict[str, Any] = {"token": token, "decision": decision, "resolvedBy": "human"}
     if resolved_action:
         result["actionId"] = resolved_action
@@ -2187,6 +2991,9 @@ def email_approval_decision(
     pending = broker.get(approval_token)
     if pending is None:
         raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID)
+    notifier = EmailApprovalNotifier(
+        services.message_service, _PUBLIC_URL, tenant_id
+    )
     result = _apply_approval_decision(
         broker,
         pending,
@@ -2195,6 +3002,8 @@ def email_approval_decision(
         comment=request.comment,
         action_id=request.action_id,
         form=request.form,
+        notifier=notifier,
+        resolved_by="email-link",
     )
     client_ip = http_request.client.host if http_request.client else ""
     try:
@@ -2302,6 +3111,34 @@ def monitoring_update_rules(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return rules.model_dump()
+
+
+def _alert_channel_payload(monitoring: Any) -> dict[str, Any]:
+    channel = monitoring.get_alert_channel().model_dump()
+    delivery = monitoring.get_alert_channel_delivery().model_dump()
+    channel["lastDelivery"] = delivery if delivery["lastNotifiedAt"] else None
+    return channel
+
+
+@app.get("/api/monitoring/alert-channel")
+def monitoring_get_alert_channel(
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """告警外部通知配置 + 最近投递状态；从未投递 lastDelivery 为 null（docs/52）。"""
+    return _alert_channel_payload(services_for(principal).monitoring)
+
+
+@app.put("/api/monitoring/alert-channel")
+def monitoring_update_alert_channel(
+    raw: dict[str, Any], principal: Principal = Depends(require("administer"))
+) -> dict[str, Any]:
+    """整体替换本租户告警通知配置；校验失败聚合为中文 422（admin only，docs/52）。"""
+    monitoring = services_for(principal).monitoring
+    try:
+        monitoring.update_alert_channel(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _alert_channel_payload(monitoring)
 
 
 @app.get("/api/alerts")
@@ -2488,6 +3325,57 @@ def demo_mock_receipt(order_id: str, body: dict[str, Any] | None = None) -> dict
     return {"order_id": order_id, "body": body or {}, "received": True}
 
 
+# Shopify Admin webhooks 资源的同进程模拟（docs/41 §D；随 demo reset 清空）。
+_MOCK_SHOPIFY_WEBHOOKS: dict[int, dict[str, Any]] = {}
+_mock_shopify_webhook_seq = count(1)
+
+
+@app.get("/api/demo/mock/shopify-admin/webhooks.json")
+def mock_shopify_admin_webhooks_list() -> dict[str, Any]:
+    return {
+        "webhooks": [
+            {"id": remote_id, **record}
+            for remote_id, record in _MOCK_SHOPIFY_WEBHOOKS.items()
+        ]
+    }
+
+
+@app.post("/api/demo/mock/shopify-admin/webhooks.json")
+def mock_shopify_admin_webhooks_create(
+    body: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    webhook = (body or {}).get("webhook")
+    if (
+        not isinstance(webhook, dict)
+        or not isinstance(webhook.get("topic"), str)
+        or not isinstance(webhook.get("address"), str)
+        or webhook.get("format") != "json"
+    ):
+        raise HTTPException(status_code=422, detail="webhook 必填 topic、address 且 format=json")
+    for existing in _MOCK_SHOPIFY_WEBHOOKS.values():
+        if existing["topic"] == webhook["topic"] and existing["address"] == webhook["address"]:
+            raise HTTPException(
+                status_code=422,
+                detail="Topic and address combination has already been taken",
+            )
+    remote_id = next(_mock_shopify_webhook_seq)
+    record = {"topic": webhook["topic"], "address": webhook["address"], "format": "json"}
+    _MOCK_SHOPIFY_WEBHOOKS[remote_id] = record
+    return {"webhook": {"id": remote_id, **record}}
+
+
+@app.delete("/api/demo/mock/shopify-admin/webhooks/{webhook_id}.json")
+def mock_shopify_admin_webhooks_delete(webhook_id: str) -> dict[str, Any]:
+    try:
+        remote_id = int(webhook_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=404, detail="Not Found")
+    if remote_id not in _MOCK_SHOPIFY_WEBHOOKS:
+        raise HTTPException(status_code=404, detail="Not Found")
+    del _MOCK_SHOPIFY_WEBHOOKS[remote_id]
+    return {}
+
+
 @app.get("/api/demo/messages")
 def demo_messages(
     principal: Principal = Depends(require("read")),
@@ -2625,6 +3513,7 @@ def demo_reset(
         clear_tenant_frames(get_pg_backend().engine, principal.tenant_id)
     _demo_shop.reset()
     _db_client.reseed_demo()
+    _MOCK_SHOPIFY_WEBHOOKS.clear()
     return {"reset": True}
 
 

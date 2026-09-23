@@ -22,7 +22,7 @@ type Props = {
 export function ConditionConfig({ config, update, variablePaths, targetOptions, diagnostics }: Props) {
   return (
     <>
-      <Typography.Text strong>条件分支（自上而下短路求值，04 §5.2）</Typography.Text>
+      <Typography.Text strong>条件分支（规则自上而下短路；LLM 模式由模型按描述选择，04 §5.2）</Typography.Text>
       <NodeConfigForm
         kind="condition"
         config={config}

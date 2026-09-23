@@ -13,7 +13,14 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from atlas.cards.catalog import get_card
+from atlas.graph.conditions import ConditionEvalError
+from atlas.graph.conditions import parse as parse_condition
 from atlas.graph.conditions import validate_expression
+
+IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+EVENT_KEY_PLACEHOLDER_RE = re.compile(r"\{\{.*?\}\}")
+EVENT_KEY_RE = re.compile(r"[A-Za-z0-9:_-]{1,128}")
+EVENT_KEY_STATIC_RE = re.compile(r"[A-Za-z0-9:_-]*")
 
 SUPPORTED_NODE_TYPES = (
     "trigger",
@@ -33,6 +40,12 @@ MAX_PARALLEL_BRANCHES = 10
 PARALLEL_JOIN_STRATEGIES = ("all_success", "all_completed", "any_success")
 MIN_WAIT_SECONDS = 1
 MAX_WAIT_SECONDS = 600
+MIN_EVENT_WAIT_SECONDS = 1
+MAX_EVENT_WAIT_SECONDS = 3600
+MAX_EVENT_KEY_LENGTH = 128
+MAX_DURATION_EXPRESSION_LENGTH = 200
+MAX_ABSOLUTE_TIME_LENGTH = 64
+WAIT_TIMEOUT_POLICIES = ("continue", "fail")
 MAX_SUBGRAPH_DEPTH = 3
 MIN_APPROVAL_TIMEOUT = 10
 MAX_APPROVAL_TIMEOUT = 3600
@@ -299,6 +312,21 @@ def _validate_condition_config(
         add(f"{prefix} 至少需要一个分支（branches）", "/branches")
         branches = []
 
+    mode = config.get("conditionMode", "rule")
+    if not isinstance(mode, str) or mode not in ("rule", "llm"):
+        add(f"{prefix} 的 conditionMode 必须是 rule 或 llm", "/conditionMode")
+        mode = "rule"
+
+    classifier_prompt = config.get("classifierPrompt")
+    if mode == "llm":
+        if classifier_prompt is not None and (
+            not isinstance(classifier_prompt, str)
+            or len(classifier_prompt.strip()) > 500
+        ):
+            add(f"{prefix} 的 classifierPrompt 长度不能超过 500 字符", "/classifierPrompt")
+    elif classifier_prompt is not None and not isinstance(classifier_prompt, str):
+        add(f"{prefix} 的 classifierPrompt 必须是字符串", "/classifierPrompt")
+
     default_target = config.get("defaultTarget")
     if not isinstance(default_target, str) or not default_target.strip():
         add(f"{prefix} 必须配置默认分支（defaultTarget）", "/defaultTarget")
@@ -312,9 +340,11 @@ def _validate_condition_config(
             continue
         label = branch.get("label")
         expression = branch.get("expression")
+        description = branch.get("description")
         target = branch.get("target")
         label_pointer = f"/branches/{index}/label"
         expression_pointer = f"/branches/{index}/expression"
+        description_pointer = f"/branches/{index}/description"
         target_pointer = f"/branches/{index}/target"
         if not isinstance(label, str) or not label.strip():
             add(f"{prefix} 第 {index + 1} 个分支名称（label）不能为空", label_pointer)
@@ -322,11 +352,28 @@ def _validate_condition_config(
             add(f"{prefix} 分支名称重复：{label}", label_pointer)
         else:
             labels.add(label)
-        if not isinstance(expression, str) or not expression.strip():
-            add(f"{prefix} 分支 {label or index + 1} 的表达式不能为空", expression_pointer)
+        if mode == "llm":
+            if expression is not None:
+                add(
+                    f"{prefix} LLM 分支 {label or index + 1} 不允许使用 expression",
+                    expression_pointer,
+                )
+            if not isinstance(description, str) or not description.strip():
+                add(
+                    f"{prefix} 分支 {label or index + 1} 的语义描述（description）不能为空",
+                    description_pointer,
+                )
+            elif len(description.strip()) > 300:
+                add(
+                    f"{prefix} 分支 {label or index + 1} 的 description 长度不能超过 300 字符",
+                    description_pointer,
+                )
         else:
-            for expr_error in validate_expression(expression):
-                add(f"{prefix} 分支 {label or index + 1} 表达式{expr_error}", expression_pointer)
+            if not isinstance(expression, str) or not expression.strip():
+                add(f"{prefix} 分支 {label or index + 1} 的表达式不能为空", expression_pointer)
+            else:
+                for expr_error in validate_expression(expression):
+                    add(f"{prefix} 分支 {label or index + 1} 表达式{expr_error}", expression_pointer)
         if not isinstance(target, str) or not target.strip():
             add(f"{prefix} 分支 {label or index + 1} 必须选择目标节点", target_pointer)
         else:
@@ -384,25 +431,44 @@ def _validate_loop_config(
         # 节点级拓扑错误（出边/回路/区域）：挂 nodeId、无字段 pointer（06 §6.13）。
         issues.append((message, _loc(node.id)))
 
-    if config.get("mode", "while") != "while":
-        add(f"{prefix} v1 仅支持条件循环（mode=while）", "/mode")
+    mode = config.get("mode", "while")
+    if mode not in ("while", "foreach"):
+        add(f"{prefix} 模式（mode）仅支持 while 或 foreach，已按 mode=while 继续校验", "/mode")
+        mode = "while"
 
-    expression = config.get("continueExpression")
-    if not isinstance(expression, str) or not expression.strip():
-        add(f"{prefix} 必须填写继续条件表达式（continueExpression）", "/continueExpression")
+    if mode == "foreach":
+        items_expression = config.get("itemsExpression")
+        if not isinstance(items_expression, str) or not items_expression.strip():
+            add(f"{prefix} 必须填写遍历数组表达式（itemsExpression）", "/itemsExpression")
+        else:
+            try:
+                parse_condition(items_expression)
+            except ConditionEvalError as exc:
+                add(f"{prefix} 遍历数组表达式{exc}", "/itemsExpression")
+
+        item_name = config.get("itemName", "item")
+        if not isinstance(item_name, str) or not IDENTIFIER_RE.fullmatch(item_name):
+            add(
+                f"{prefix} 元素别名（itemName）须为标识符（字母/下划线开头）",
+                "/itemName",
+            )
     else:
-        for expr_error in validate_expression(expression):
-            add(f"{prefix} 继续条件表达式{expr_error}", "/continueExpression")
+        expression = config.get("continueExpression")
+        if not isinstance(expression, str) or not expression.strip():
+            add(f"{prefix} 必须填写继续条件表达式（continueExpression）", "/continueExpression")
+        else:
+            for expr_error in validate_expression(expression):
+                add(f"{prefix} 继续条件表达式{expr_error}", "/continueExpression")
 
-    max_iterations = config.get("maxIterations")
-    if isinstance(max_iterations, bool) or not isinstance(max_iterations, int):
-        add(f"{prefix} 最大次数（maxIterations）必须是整数", "/maxIterations")
-        max_iterations = None
-    elif not 1 <= max_iterations <= MAX_LOOP_ITERATIONS:
-        add(
-            f"{prefix} 最大次数需在 1-{MAX_LOOP_ITERATIONS} 之间",
-            "/maxIterations",
-        )
+        max_iterations = config.get("maxIterations")
+        if isinstance(max_iterations, bool) or not isinstance(max_iterations, int):
+            add(f"{prefix} 最大次数（maxIterations）必须是整数", "/maxIterations")
+            max_iterations = None
+        elif not 1 <= max_iterations <= MAX_LOOP_ITERATIONS:
+            add(
+                f"{prefix} 最大次数需在 1-{MAX_LOOP_ITERATIONS} 之间",
+                "/maxIterations",
+            )
 
     body_target = config.get("bodyTarget")
     exit_target = config.get("exitTarget")
@@ -446,6 +512,20 @@ def _validate_loop_config(
     if body_target in node_ids and body_target != node.id and exit_target not in (None, node.id):
         body = _loop_body_set(body_target, node.id, exit_target, outgoing)
 
+        if mode == "foreach":
+            collect_target = config.get("collectTarget", "")
+            if collect_target:
+                if not isinstance(collect_target, str):
+                    add(f"{prefix} 聚合节点（collectTarget）必须是节点 id", "/collectTarget")
+                elif collect_target == node.id:
+                    add(f"{prefix} 聚合节点不能指向循环节点自身", "/collectTarget")
+                elif collect_target not in node_ids:
+                    add(f"{prefix} 聚合节点不存在：{collect_target}", "/collectTarget")
+                elif collect_target not in body:
+                    add(
+                        f"{prefix} 聚合节点 {collect_target} 不在循环体内",
+                        "/collectTarget",
+                    )
         nested_loops = sorted(member for member in body if node_types.get(member) == "loop")
         for member in nested_loops:
             add_graph(f"{prefix} v1 不支持嵌套循环，循环体内不能包含循环节点：{member}")
@@ -632,10 +712,20 @@ def _validate_parallel_config(
     return issues
 
 
+def _event_key_static_parts(template: str) -> str:
+    """剔除 {{...}} 占位后拼接的静态部分（docs/47 §2；占位内不检查）。"""
+    return EVENT_KEY_PLACEHOLDER_RE.sub("", template)
+
+
+def valid_event_key(key: str) -> bool:
+    """运行时渲染后 eventKey：1-128 且字符集 [A-Za-z0-9:_-]（docs/47 §2）。"""
+    return bool(EVENT_KEY_RE.fullmatch(key))
+
+
 def _validate_wait_config(
     node: NodeDSL, node_ids: set[str], outgoing: dict[str, set[str]]
 ) -> list[Issue]:
-    """wait config 与单出边拓扑校验（契约 04 §5.5）。"""
+    """wait config 与单出边拓扑校验（契约 04 §5.5；event 分支 docs/47）。"""
     issues: list[Issue] = []
     prefix = f"等待节点 {node.id}"
     config = node.config
@@ -648,21 +738,83 @@ def _validate_wait_config(
         issues.append((message, _loc(node.id)))
 
     wait_type = config.get("waitType")
-    if wait_type != "duration":
-        if wait_type == "event":
-            add(f"{prefix} 事件等待（event）暂不支持，v1 仅支持定时等待（duration）", "/waitType")
+    if wait_type == "duration":
+        duration_mode = config.get("durationMode", "static")
+        if duration_mode not in ("static", "dynamic", "absolute"):
+            add(
+                f"{prefix} 时长模式（durationMode）必须是 static、dynamic 或 absolute",
+                "/durationMode",
+            )
+        elif duration_mode == "dynamic":
+            expression = config.get("durationExpression")
+            if not isinstance(expression, str) or not expression.strip():
+                add(
+                    f"{prefix} 动态时长表达式（durationExpression）为必填",
+                    "/durationExpression",
+                )
+            elif len(expression) > MAX_DURATION_EXPRESSION_LENGTH:
+                add(
+                    f"{prefix} 动态时长表达式长度不能超过 "
+                    f"{MAX_DURATION_EXPRESSION_LENGTH} 字符（当前 {len(expression)}）",
+                    "/durationExpression",
+                )
+        elif duration_mode == "absolute":
+            absolute_time = config.get("absoluteTime")
+            if not isinstance(absolute_time, str) or not absolute_time.strip():
+                add(
+                    f"{prefix} 到点时刻（absoluteTime）为必填",
+                    "/absoluteTime",
+                )
+            elif len(absolute_time.strip()) > MAX_ABSOLUTE_TIME_LENGTH:
+                add(
+                    f"{prefix} 到点时刻长度不能超过 "
+                    f"{MAX_ABSOLUTE_TIME_LENGTH} 字符（当前 {len(absolute_time.strip())}）",
+                    "/absoluteTime",
+                )
         else:
-            add(f"{prefix} 等待类型（waitType）必须是 duration", "/waitType")
-
-    seconds = config.get("durationSeconds")
-    if isinstance(seconds, bool) or not isinstance(seconds, int):
-        add(f"{prefix} 等待时长（durationSeconds）必须是整数秒", "/durationSeconds")
-    elif not MIN_WAIT_SECONDS <= seconds <= MAX_WAIT_SECONDS:
-        add(
-            f"{prefix} 等待时长需在 {MIN_WAIT_SECONDS}-{MAX_WAIT_SECONDS} 秒之间"
-            f"（当前 {seconds}）",
-            "/durationSeconds",
-        )
+            seconds = config.get("durationSeconds")
+            if isinstance(seconds, bool) or not isinstance(seconds, int):
+                add(f"{prefix} 等待时长（durationSeconds）必须是整数秒", "/durationSeconds")
+            elif not MIN_WAIT_SECONDS <= seconds <= MAX_WAIT_SECONDS:
+                add(
+                    f"{prefix} 等待时长需在 {MIN_WAIT_SECONDS}-{MAX_WAIT_SECONDS} 秒之间"
+                    f"（当前 {seconds}）",
+                    "/durationSeconds",
+                )
+    elif wait_type == "event":
+        event_key = config.get("eventKey")
+        if not isinstance(event_key, str) or not event_key.strip():
+            add(f"{prefix} 事件标识（eventKey）为必填字符串", "/eventKey")
+        else:
+            if len(event_key) > MAX_EVENT_KEY_LENGTH:
+                add(
+                    f"{prefix} 事件标识长度不能超过 {MAX_EVENT_KEY_LENGTH} 字符"
+                    f"（当前 {len(event_key)}）",
+                    "/eventKey",
+                )
+            if not EVENT_KEY_STATIC_RE.fullmatch(_event_key_static_parts(event_key)):
+                add(
+                    f"{prefix} 事件标识静态部分只允许字母、数字及 :_-，"
+                    "占位内内容不检查",
+                    "/eventKey",
+                )
+        timeout = config.get("timeoutSeconds")
+        if isinstance(timeout, bool) or not isinstance(timeout, int):
+            add(f"{prefix} 超时时间（timeoutSeconds）必须是整数秒", "/timeoutSeconds")
+        elif not MIN_EVENT_WAIT_SECONDS <= timeout <= MAX_EVENT_WAIT_SECONDS:
+            add(
+                f"{prefix} 超时时间需在 {MIN_EVENT_WAIT_SECONDS}-"
+                f"{MAX_EVENT_WAIT_SECONDS} 秒之间（当前 {timeout}）",
+                "/timeoutSeconds",
+            )
+        on_timeout = config.get("onTimeout", "continue")
+        if on_timeout not in WAIT_TIMEOUT_POLICIES:
+            add(
+                f"{prefix} 超时策略（onTimeout）必须是 continue 或 fail",
+                "/onTimeout",
+            )
+    else:
+        add(f"{prefix} 等待类型（waitType）必须是 duration 或 event", "/waitType")
 
     targets = outgoing.get(node.id, set())
     if len(targets) != 1:
@@ -980,7 +1132,7 @@ _STATIC_OUTPUT_KEYS: dict[str, tuple[str, ...]] = {
     "condition": ("branch", "target"),
     "loop": ("index", "iterations"),
     "parallel": ("status", "branches", "joinStrategy", "joinTarget"),
-    "wait": ("mode", "waitType", "durationSeconds"),
+    "wait": ("mode", "waitType", "durationSeconds", "eventKey", "timeoutSeconds", "onTimeout"),
     "subgraph": ("status", "outputs"),
     "human_approval": ("decision", "target", "summary", "approver", "resolvedBy", "comment", "card"),
 }
@@ -1309,6 +1461,13 @@ def _validate_template_refs(
 
                 static_keys = _STATIC_OUTPUT_KEYS.get(ref_type)
                 if static_keys is not None:
+                    if ref_type == "loop":
+                        ref_loop = next((candidate for candidate in graph.nodes if candidate.id == head), None)
+                        if ref_loop is not None and ref_loop.config.get("mode") == "foreach":
+                            static_keys = (
+                                "mode", "items", "index", "iterations", "item",
+                                "results", "target", "exitReason", "expression_errors",
+                            )
                     root, *rest = tail
                     if root not in static_keys or rest:
                         add(

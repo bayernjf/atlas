@@ -3,8 +3,20 @@ import {
   DebugRunStoppedError,
   RunCancelledError,
   cancelActiveRun,
+  createChannelBinding,
+  deleteChannelBinding,
+  getWebhookSubscriptions,
+  listChannelBindings,
+  listRemoteWebhooks,
+  listWebhookDeadLetters,
+  putWebhookSubscriptions,
+  registerRemoteWebhook,
+  replayWebhookDeadLetter,
   resumeDebug,
   streamRun,
+  testChannelBinding,
+  unregisterRemoteWebhook,
+  type ChannelBindingView,
   type RunEvent,
 } from '../apiClient'
 
@@ -177,5 +189,154 @@ describe('B 包 cancelActiveRun 协作式急停（docs/27 §4.1，U134）', () =
     vi.stubGlobal('fetch', fetchMock)
     expect(await cancelActiveRun('graph-1')).toBeNull()
     expect(fetchMock.mock.calls).toHaveLength(1)
+  })
+})
+
+describe('真实渠道绑定 /api/channels（docs/38 §1C/§1E）', () => {
+  const binding: ChannelBindingView = {
+    id: 'ch-1',
+    provider: 'shopify',
+    connectionId: 'conn-1',
+    config: { shop: 'acme', apiVersion: '2025-01' },
+    status: 'connected',
+    lastError: null,
+    createdBy: 'admin-a',
+    createdAt: '1780000000',
+  }
+
+  it('listChannelBindings GETs /api/channels and unwraps items', async () => {
+    const fetchMock = vi.fn(async (_url: string) => jsonResponse({ items: [binding] }))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await listChannelBindings()
+    expect(result).toEqual([binding])
+    const [url] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/channels')
+  })
+
+  it('createChannelBinding POSTs provider/connectionId/config and returns the view', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => ({
+      ok: true,
+      status: 201,
+      json: async () => binding,
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await createChannelBinding({
+      provider: 'shopify',
+      connectionId: 'conn-1',
+      config: { shop: 'acme' },
+    })
+    expect(result.id).toBe('ch-1')
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/channels')
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(init?.body as string)).toEqual({
+      provider: 'shopify',
+      connectionId: 'conn-1',
+      config: { shop: 'acme' },
+    })
+  })
+
+  it('testChannelBinding POSTs to the test subpath', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => jsonResponse({ ok: false, status: 'error', reason: 'CHANNEL_UNAUTHORIZED' }))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await testChannelBinding('ch-1')
+    expect(result.ok).toBe(false)
+    expect(result.reason).toBe('CHANNEL_UNAUTHORIZED')
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/channels/ch-1/test')
+    expect(init?.method).toBe('POST')
+  })
+
+  it('deleteChannelBinding DELETEs and returns {deleted}', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => jsonResponse({ deleted: true }))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await deleteChannelBinding('ch-1')
+    expect(result).toEqual({ deleted: true })
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/channels/ch-1')
+    expect(init?.method).toBe('DELETE')
+  })
+
+  it('getWebhookSubscriptions GETs webhooks and unwraps items', async () => {
+    const items = [{ topic: 'orders/create', graphId: 'graph-1', enabled: true }]
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => jsonResponse({ items }))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await getWebhookSubscriptions('ch-1')
+    expect(result).toEqual(items)
+    const [url] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/channels/ch-1/webhooks')
+  })
+
+  it('putWebhookSubscriptions PUTs payload and unwraps items', async () => {
+    const items = [{ topic: 'refunds/create', graphId: 'graph-2', enabled: false }]
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => jsonResponse({ items }))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await putWebhookSubscriptions('ch-1', items)
+    expect(result).toEqual(items)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/channels/ch-1/webhooks')
+    expect(init?.method).toBe('PUT')
+    expect(JSON.parse(init?.body as string)).toEqual({ subscriptions: items })
+  })
+
+  it('listRemoteWebhooks GETs remote-webhooks keeping items and error', async () => {
+    const payload = { items: [], error: 'CHANNEL_UNAUTHORIZED' }
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => jsonResponse(payload))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await listRemoteWebhooks('ch-1')
+    expect(result).toEqual(payload)
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/channels/ch-1/remote-webhooks')
+  })
+
+  it('registerRemoteWebhook POSTs topic and returns the remote webhook', async () => {
+    const payload = { remoteId: '9', topic: 'orders/create', address: 'https://x/h' }
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => jsonResponse(payload))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await registerRemoteWebhook('ch-1', 'orders/create')
+    expect(result).toEqual(payload)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/channels/ch-1/remote-webhooks')
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(init?.body as string)).toEqual({ topic: 'orders/create' })
+  })
+
+  it('unregisterRemoteWebhook DELETEs topic path and returns deleted flag', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+      jsonResponse({ deleted: true }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await unregisterRemoteWebhook('ch-1', 'refunds/create')
+    expect(result).toEqual({ deleted: true })
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/channels/ch-1/remote-webhooks/refunds/create')
+    expect(init?.method).toBe('DELETE')
+  })
+
+  it('listWebhookDeadLetters GETs with filters and unwraps items', async () => {
+    const items = [{
+      webhookId: 'wh-1', bindingId: 'ch-1', topic: 'orders/create', shop: 'acme',
+      reasons: [{ graphId: 'graph-1', code: 'NO_PUBLISHED_VERSION' }],
+      createdAt: '2026-09-23T00:00:00+00:00', replayedAt: null,
+    }]
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => jsonResponse({ items }))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await listWebhookDeadLetters({ topic: 'orders/create', limit: 50 })
+    expect(result).toEqual(items)
+    const [url] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/channels/webhooks/dead-letters?topic=orders%2Fcreate&limit=50')
+  })
+
+  it('replayWebhookDeadLetter POSTs replay and returns status', async () => {
+    const payload = {
+      webhookId: 'wh/1', status: 'received',
+      reasons: [],
+    }
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => jsonResponse(payload))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await replayWebhookDeadLetter('wh/1')
+    expect(result).toEqual(payload)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/channels/webhooks/dead-letters/wh%2F1/replay')
+    expect(init?.method).toBe('POST')
   })
 })

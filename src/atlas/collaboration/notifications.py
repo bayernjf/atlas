@@ -5,8 +5,9 @@ human_approval 节点登记 pending 后，由 graph 运行时旁路调用 notifi
 通知是**旁路能力**：调用方（graph/loader._register_approval）必须 fail-safe 吞掉一切
 异常，绝不阻断图执行、不改变审批语义。
 
-v1 仅做挂起通知邮件：邮件内附**一键决策深链**（签名 capability token，docs/36 §3）；
-决策结果通知申请人本批不做（无申请人邮箱字段）。
+v1：挂起通知邮件内附**一键决策深链**（签名 capability token，docs/36 §3）；
+决策完成后向同一组收件人发**结果邮件**（docs/37 §4，不含任何 token/链接）。
+无「申请人邮箱」结构，结果邮件发给节点 notifyEmails 解析出的收件人。
 """
 
 from __future__ import annotations
@@ -30,6 +31,18 @@ class ApprovalNotifier(Protocol):
         summary: str,
         approver: str,
         timeout_seconds: int,
+        recipients: list[str],
+    ) -> None: ...
+
+    def notify_decided(
+        self,
+        *,
+        graph_id: str,
+        node_id: str,
+        summary: str,
+        decision: str,
+        resolved_by: str,
+        comment: str,
         recipients: list[str],
     ) -> None: ...
 
@@ -83,4 +96,39 @@ class EmailApprovalNotifier:
         body = "\n".join(lines)
         # MessageService 负责真实 SMTP 投递或进程内记录（demo 回退）；
         # 投递失败会抛 MessageSendError，由 graph 调用方 fail-safe 捕获。
+        self._messages.send("email", list(recipients), subject, body)
+
+    def notify_decided(
+        self,
+        *,
+        graph_id: str,
+        node_id: str,
+        summary: str,
+        decision: str,
+        resolved_by: str,
+        comment: str,
+        recipients: list[str],
+    ) -> None:
+        title = summary or node_id
+        subject = f"[Atlas] 审批已处理：{title}"
+        result_text = "同意" if decision == "approved" else "拒绝"
+        source_text = {
+            "human": "人工处理",
+            "email-link": "邮件链接处理",
+            "timeout": "超时自动处理",
+            "input": "输入预置",
+        }.get(resolved_by, resolved_by)
+        lines = [
+            "有一笔人机审批已完成处理。",
+            "",
+            f"审批节点：{node_id}（图 {graph_id}）",
+            f"审批说明：{summary or '（无）'}",
+            f"处理结果：{result_text}",
+            f"处理来源：{source_text}",
+        ]
+        if comment:
+            lines.append(f"处理备注：{comment[:200]}")
+        lines.append("")
+        lines.append(f"前往应用查看：{self._public_url}")
+        body = "\n".join(lines)
         self._messages.send("email", list(recipients), subject, body)

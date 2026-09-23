@@ -3,7 +3,9 @@ import { defaultConfig, type NodeConfig, type NodeKind } from '../../nodeCatalog
 import type { MetaSchema } from '../../schemas/metaSchema'
 import { schemaRegistry } from '../../schemas'
 import {
+  eventKeyStaticValid,
   FIELD_CODES,
+  validEventKey,
   validateNodeFields,
   validateParamFields,
   validateSchemaFields,
@@ -111,7 +113,7 @@ describe('schema keyword to FIELD_* code mapping (U37②)', () => {
     expect(single).toContain(FIELD_CODES.ITEMS_MIN)
 
     expect(
-      codesOf(schemaRegistry.get('wait'), { waitType: 'event', durationSeconds: 5 }),
+      codesOf(schemaRegistry.get('wait'), { waitType: 'until', durationSeconds: 5 }),
     ).toContain(FIELD_CODES.CONST)
   })
 
@@ -122,6 +124,156 @@ describe('schema keyword to FIELD_* code mapping (U37②)', () => {
     const missingCron = validateSchemaFields(schemaRegistry.get('trigger'), { triggerType: 'schedule' })
     expect(missingCron.map((f) => f.pointer)).toEqual(['/cron'])
     expect(missingCron[0].code).toBe(FIELD_CODES.REQUIRED)
+  })
+})
+
+describe('event wait v1 (docs/47)', () => {
+  it('validEventKey accepts rendered keys with [A-Za-z0-9:_-] and rejects others', () => {
+    expect(validEventKey('order_paid')).toBe(true)
+    expect(validEventKey('evt:paid-x_1')).toBe(true)
+    for (const bad of ['', 'has space', 'a/b', 'a.b', '中文', 'a'.repeat(129)]) {
+      expect(validEventKey(bad)).toBe(false)
+    }
+  })
+
+  it('eventKeyStaticValid ignores placeholder contents but checks static parts', () => {
+    expect(eventKeyStaticValid('order_paid_{{trigger-1.context.payload.order_id}}')).toBe(true)
+    expect(eventKeyStaticValid('{{x}}')).toBe(true)
+    expect(eventKeyStaticValid('bad key {{x}}')).toBe(false)
+    expect(eventKeyStaticValid('k/{{x}}')).toBe(false)
+  })
+
+  it('accepts a complete event wait config', () => {
+    expect(
+      fields('wait', {
+        waitType: 'event',
+        eventKey: 'order_paid_{{trigger-1.context.payload.id}}',
+        timeoutSeconds: 300,
+        onTimeout: 'continue',
+      }),
+    ).toEqual([])
+  })
+
+  it('flags event branch field errors on the right pointers', () => {
+    const diagnostics = fields('wait', {
+      waitType: 'event',
+      eventKey: 'bad key',
+      timeoutSeconds: 3601,
+      onTimeout: 'abort' as 'continue',
+    })
+    const byPointer = new Map(diagnostics.map((d) => [d.loc.pointer, d]))
+    expect(byPointer.get('/eventKey')?.code).toBe(FIELD_CODES.PATTERN)
+    expect(byPointer.get('/timeoutSeconds')?.message).toContain('1-3600')
+    expect(byPointer.get('/onTimeout')?.message).toContain('继续或失败')
+  })
+})
+
+describe('dynamic wait duration v1 (docs/49)', () => {
+  it('accepts a complete dynamic wait config', () => {
+    expect(
+      fields('wait', {
+        waitType: 'duration',
+        durationMode: 'dynamic',
+        durationExpression: '{{global.slaHours}} * 3600',
+      }),
+    ).toEqual([])
+  })
+
+  it('accepts a dynamic config retaining a stale durationSeconds', () => {
+    expect(
+      fields('wait', {
+        waitType: 'duration',
+        durationMode: 'dynamic',
+        durationExpression: '{{global.waitSecs}}',
+        durationSeconds: 5,
+      }),
+    ).toEqual([])
+  })
+
+  it('flags missing or overlong expression on /durationExpression', () => {
+    const missing = fields('wait', {
+      waitType: 'duration',
+      durationMode: 'dynamic',
+    })
+    expect(missing.map((d) => d.loc.pointer)).toEqual(['/durationExpression'])
+    expect(missing[0].code).toBe(FIELD_CODES.REQUIRED)
+
+    const overlong = fields('wait', {
+      waitType: 'duration',
+      durationMode: 'dynamic',
+      durationExpression: 'x'.repeat(201),
+    })
+    expect(overlong.map((d) => d.loc.pointer)).toEqual([
+      '/durationExpression',
+      '/durationExpression',
+    ])
+    expect(overlong.every((d) => d.code === FIELD_CODES.LENGTH)).toBe(true)
+  })
+
+  it('flags missing durationSeconds only in static mode', () => {
+    const diagnostics = fields('wait', { waitType: 'duration', durationMode: 'static' })
+    expect(diagnostics.map((d) => d.loc.pointer)).toEqual(['/durationSeconds'])
+  })
+
+  it('accepts a complete static config', () => {
+    expect(
+      fields('wait', {
+        waitType: 'duration',
+        durationMode: 'static',
+        durationSeconds: 10,
+      }),
+    ).toEqual([])
+  })
+})
+
+describe('absolute wait time v1 (docs/50)', () => {
+  it('accepts a complete absolute wait config with stale duration fields', () => {
+    expect(
+      fields('wait', {
+        waitType: 'duration',
+        durationMode: 'absolute',
+        absoluteTime: '2026-09-23T18:00:00+08:00',
+        durationSeconds: 5,
+        durationExpression: '{{global.x}}',
+      }),
+    ).toEqual([])
+  })
+
+  it('accepts whitespace-padded values', () => {
+    expect(
+      fields('wait', {
+        waitType: 'duration',
+        durationMode: 'absolute',
+        absoluteTime: ` ${'2026-09-23T10:00:00+00:00'.padEnd(60, '0')} `,
+      }),
+    ).toEqual([])
+  })
+
+  it('flags missing or overlong absoluteTime on /absoluteTime', () => {
+    const missing = fields('wait', {
+      waitType: 'duration',
+      durationMode: 'absolute',
+    })
+    expect(missing.map((d) => d.loc.pointer)).toEqual(['/absoluteTime'])
+    expect(missing[0].code).toBe(FIELD_CODES.REQUIRED)
+
+    const blank = fields('wait', {
+      waitType: 'duration',
+      durationMode: 'absolute',
+      absoluteTime: '   ',
+    })
+    expect(blank.map((d) => d.loc.pointer)).toEqual(['/absoluteTime'])
+
+    const overlong = fields('wait', {
+      waitType: 'duration',
+      durationMode: 'absolute',
+      absoluteTime: 'x'.repeat(65),
+    })
+    expect(overlong.map((d) => d.loc.pointer)).toEqual([
+      '/absoluteTime',
+      '/absoluteTime',
+    ])
+    expect(overlong.every((d) => d.code === FIELD_CODES.LENGTH)).toBe(true)
   })
 })
 
@@ -234,6 +386,31 @@ describe('covered:false hand cross-field rules (U37③)', () => {
     expect(codes.has(FIELD_CODES.LOOP_TARGET_COLLISION)).toBe(true)
   })
 
+  it('foreach items expression syntax and itemName identifier (docs/45)', () => {
+    const diagnostics = fields('loop', {
+      mode: 'foreach',
+      itemsExpression: '{{global.ids} + 1',
+      itemName: '1bad',
+      bodyTarget: 'tool-body',
+      exitTarget: 'tool-exit',
+    })
+    const byPointer = new Map(diagnostics.map((d) => [d.loc.pointer, d]))
+    expect(byPointer.get('/itemsExpression')?.code).toBe(FIELD_CODES.EXPRESSION_SYNTAX)
+    expect(byPointer.get('/itemName')?.code).toBe(FIELD_CODES.EXPRESSION_SYNTAX)
+  })
+
+  it('foreach valid expression and identifier yields no field diagnostics (docs/45)', () => {
+    const diagnostics = fields('loop', {
+      mode: 'foreach',
+      itemsExpression: '{{global.ids}}',
+      itemName: 'order_id',
+      collectTarget: 'tool-body',
+      bodyTarget: 'tool-body',
+      exitTarget: 'tool-exit',
+    })
+    expect(diagnostics).toEqual([])
+  })
+
   it('parallel duplicates and join collision', () => {
     const diagnostics = fields('parallel', {
       joinStrategy: 'all_success',
@@ -317,5 +494,58 @@ describe('validateParamFields（M3 工具 params 表单化）', () => {
     expect(first.layer).toBe('field')
     expect(first.severity).toBe('error')
     expect(first.loc.nodeId).toBeUndefined()
+  })
+})
+
+describe('condition LLM 语义模式（D14，docs/48）', () => {
+  const semanticConfig = (overrides: Partial<NodeConfig> = {}): NodeConfig => ({
+    conditionMode: 'llm',
+    branches: [
+      { label: '投诉', description: '客户强烈不满', target: 'tool-a' },
+      { label: '咨询', description: '客户平和询问', target: 'tool-b' },
+    ],
+    defaultTarget: 'tool-default',
+    ...overrides,
+  })
+
+  it('合法语义配置无诊断', () => {
+    expect(fields('condition', semanticConfig())).toEqual([])
+  })
+
+  it('description 缺失/超长报错，不再校验 expression', () => {
+    const config = semanticConfig({
+      branches: [
+        { label: '投诉', description: '', target: 'tool-a' },
+        { label: '咨询', description: '描'.repeat(301), target: 'tool-b' },
+      ],
+    })
+    const pointerList = pointers('condition', config)
+    expect(pointerList).toContain('/branches/0/description')
+    expect(pointerList).toContain('/branches/1/description')
+    expect(pointerList).not.toContain('/branches/0/expression')
+  })
+
+  it('LLM 分支填写 expression 报错', () => {
+    const config = semanticConfig({
+      branches: [
+        { label: '投诉', description: '客户强烈不满', expression: '{{x}} > 1', target: 'tool-a' },
+      ],
+    })
+    const diagnostics = fields('condition', config)
+    expect(diagnostics.map((d) => d.loc.pointer)).toContain('/branches/0/expression')
+  })
+
+  it('classifierPrompt 超长报错', () => {
+    const diagnostics = fields('condition', semanticConfig({ classifierPrompt: '要'.repeat(501) }))
+    expect(diagnostics.map((d) => d.loc.pointer)).toEqual(['/classifierPrompt'])
+  })
+
+  it('缺省 rule 模式继续按 expression 校验（零回归）', () => {
+    const config: NodeConfig = {
+      branches: [{ label: '大额', expression: '', target: 'tool-a' }],
+      defaultTarget: 'tool-default',
+    }
+    const pointerList = pointers('condition', config)
+    expect(pointerList).toContain('/branches/0/expression')
   })
 })

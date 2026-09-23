@@ -4,6 +4,214 @@
 
 ## [Unreleased]
 
+### docs：wait 事件跨重启持久化 v1 批立项（docs/53，2026-09-23；dev、未落码）
+
+- docs-only 立项：event 等待（docs/47 进程内 v1）补齐 T18-B 跨重启机制——event 挂起帧（kind=wait，新增帧字段 `wait:{waitType,eventKey,onTimeout,timeoutSeconds}`，零 DDL）、runs 同步 suspended、`EventWaitBroker.restore` 同 token/event_key 剩余超时幂等重建、启动恢复分支；`/api/waits` 三端点跨重启可用。零新依赖/零迁移/无 ADR/无新 REST/前端零改动；D19 部分取回不解除（多实例跨进程路由、停摆期信号排队、debug 跨重启仍缓做）。候选 U400-U402；立项基线后端 1548/59、前端 636/2。
+
+### feat：监控告警外部通知 v1 批落码收口（docs/52，2026-09-23；dev、未 push；无 ADR）
+
+- `monitoring/notify.py` AlertChannel 租户单例＋AlertNotifier：仅**新建告警**三处（内存/PG record_run、rollout_gate）经既有 MessageService 旁路投递固定纯文本，severity 过滤，任何异常 fail-safe（运行与告警不受影响），最近投递状态 GET 可查；notifier 经 setter 回注，registry 两档装配。迁移 **020** `alert_notify_settings`，内存·PG 双档，reset 清空。
+- REST `GET/PUT /api/monitoring/alert-channel`（read/administer，422 中文聚合）；前端监控页「告警外部通知」配置卡＋alertChannel 纯逻辑校验。收口门后端 **1548 passed/59 skipped**（净增 22）、前端 **636 passed/2 skipped**（净增 9）；两层 HTTP 冒烟 `.smoke/alert_notify_smoke.py` **ALL PASS: 15 checks**，浏览器截图 `.smoke/alert-channel-admin.png`。D28/D24 部分取回不解除（多渠道路由、合并/升级/解决通知、模板富文本、限流退避/投递历史仍缓做）。
+
+### docs：监控告警外部通知 v1 批 docs-only 立项（docs/52，2026-09-23；dev、未 push；无 ADR）
+
+- 新增 `monitoring/notify.py` 设计：租户单例 `AlertChannel {enabled, channel(dingtalk/wecom/feishu/webhook/email), to, secret, minSeverity, updatedAt}`；`AlertNotifier` 仅在**新建告警**三处（内存/PG record_run、rollout_gate）经既有 MessageService 旁路投递固定纯文本——severity 过滤，任何异常 fail-safe（运行与告警不受影响），最近投递状态（时间/错误码）可查；notifier 经 setter 回注。
+- 迁移 **020** `alert_notify_settings`；MonitoringRepository 增 get/update_alert_channel，reset 清空。REST `GET/PUT /api/monitoring/alert-channel`（read/administer；enabled=true 按渠道校验 to、secret 仅钉钉/飞书 ≤200，422 中文聚合）。前端监控页告警通知配置卡＋纯逻辑校验测试。零新依赖；D28/D24 部分取回不解除（多渠道路由、合并/升级/解决通知、模板富文本、限流退避/投递历史仍缓做）。候选 U307；立项基线后端 **1526/59**、前端 **627/2/48 文件**。
+
+### feat：IM 群机器人消息投递 v1 批落码收口（docs/51，2026-09-23；dev、未 push；无 ADR）
+
+- 后端 `d4823d5`：新模块 `message/im.py`（三家协议包体/钉钉 URL 加签/飞书 body 加签/平台码判定/10s/不重定向），MessageService 渠道接入与 secret 校验（仅 dingtalk/feishu、≤200），registry 内存/PG 双档注入 im_sender；失败 IM_SEND_FAILED/EGRESS_DENIED 不写记录，成功 delivered 标渠道名，未注入投递器回退 in_process。
+- 前端 `80b2436`：toolParamsPlaceholder 纯函数抽出（message/send 钉钉示例含 secret）；secret 字段本身经 schema 驱动 FormRenderer 自动渲染。收口门后端 **1526/59**（净增 36）、前端 **627/2/48 文件**（净增 3）、lint/build 干净；`.smoke/im_robot_smoke.py` **20/20**（假机器人逐字节签名向量＋真实护栏/参数校验/零回归），浏览器截图 docs/smoke-shots/im-robot-1、零 JS 错误（浏览器内运行未做，React Flow 连线无法合成）。D24 部分取回不解除，短信/富文本/多 URL/OAuth 入站/模板/限流退避仍缓做。
+
+### docs：IM 群机器人消息投递 v1 批 docs-only 立项（docs/51，2026-09-23；dev、未 push；无 ADR）
+
+- message/send channel 增 `dingtalk`/`wecom`/`feishu`：to 为群机器人 Webhook 单 URL（过 EgressGuard、10s、不重定向），新增可选 `secret`（≤200，仅钉钉/飞书——钉钉 URL HMAC 加签、飞书请求体加签）；三家各自 msgtype text 包体，响应须 2xx 且平台码（errcode/code）为 0。
+- 平台码非 0/非 2xx/超时 → **IM_SEND_FAILED** 不写记录，EGRESS_DENIED 透传；成功 delivered 标渠道名，未注入投递器回退进程内。零新依赖/零迁移/无新 REST。D24 部分取回不解除：短信、富文本/@人、多 URL 群发、IM 应用 OAuth/入站、模板系统、限流退避/投递追踪仍缓做。立项基线后端 **1490/59**、前端 **624/2/47 文件**。
+
+### feat：wait 到点时刻等待 v1 批落码收口（docs/50，2026-09-23；dev、未 push；无 ADR）
+
+- wait duration config 的 `durationMode` 增枚举 `absolute`，config 增 `absoluteTime`（≤64；ISO 8601 或 epoch 秒，支持 `{{路径}}` 插值，naive datetime 按 UTC）；loader absolute 时先插值再解析目标时刻（纯数字→fromtimestamp，否则 fromisoformat 兼容 Z），按注入时钟计算差值 delta，须有限且 1-600（取 int(round)），秒数同时作为暂停帧 timeout_seconds。
+- 插值/解析异常（未知变量/坏 ISO/epoch 越界）、目标已过点或差值 >600 → run failed **WAIT_ABSOLUTE_TIME_INVALID**，不 sleep；无新增 REST。absolute 产出另含 durationMode/absoluteTime（渲染后 ISO，epoch 回写统一 ISO），static/dynamic 旧图零回归。
+- 收口门：后端 **1490/59**（净增 18，12de72d）、前端 **624/2/47 文件**（净增 3，4f82a1c）、lint/build 干净；`.smoke/absolute_time_smoke.py` HTTP **21/21**（带时区/naive/Z/epoch/插值实等、四坏用例 <0.2s 不 sleep、static 深等、三 422），浏览器冒烟 4 截图 docs/smoke-shots/absolute-wait-*、零 JS 错误（浏览器内运行未做，React Flow 连线无法合成）。D19 部分取回不解除，>600 秒长时刻/时区日历控件/周期时刻/event timeout 时刻化仍缓做。
+
+### docs：wait 到点时刻等待 v1 批 docs-only 立项（docs/50，2026-09-23；dev、未 push；无 ADR）
+
+- wait duration 的 `durationMode` 增枚举 `absolute`，config 增 `absoluteTime`（≤64；ISO 8601 或 epoch 秒，支持 `{{路径}}` 插值，naive datetime 按 UTC）；loader absolute 时插值并解析目标时刻，按注入时钟计算差值 delta，须有限且 1-600（取 int(round)），秒数同时作为暂停帧 timeout_seconds。
+- 插值/解析异常（未知变量/坏 ISO/epoch 越界）、目标已过点或差值 >600 → run failed **WAIT_ABSOLUTE_TIME_INVALID**，不 sleep；无新增 REST。absolute 产出另含 durationMode/absoluteTime（渲染后 ISO，epoch 回写统一 ISO），static/dynamic 旧图零回归。立项基线后端 1472/59、前端 621/2；D19 部分取回不解除，>600 秒长时刻/时区日历控件/周期时刻/event timeout 时刻化仍缓做。
+
+### feat：wait 定时等待动态时长 v1 批落码收口（docs/49，2026-09-23；dev、未 push；无 ADR）
+
+- wait duration config 增 `durationMode: static|dynamic`（缺省 static，旧图零回归）与 `durationExpression`（≤200，dynamic 必填）；loader dynamic 时经 D15 条件引擎求值（`{{路径}}`＋算术/白名单函数），结果须为非 bool 有限数值、1-600（取 int(round)），秒数同时作为暂停帧 timeout_seconds。
+- 表达式无法求值或结果非法（非数值/bool/非有限/0/601/除零）→ run failed **WAIT_DURATION_INVALID**，不 sleep 错误时长；无新增 REST/SSE 帧。static 产出形状不变，dynamic 产出另含 durationMode/durationExpression。
+- 收口门：后端 1472/59（净增 15，8580fcb）、前端 621/2（净增 5，4eaaddd）、lint/build 干净；`.smoke/dynamic_wait_smoke.py` HTTP **21/21**（实等 2.09s/5.05s、六坏用例 <0.1s、static 深等、三 422），浏览器冒烟 2 截图 docs/smoke-shots/dynamic-wait-*、零 JS 错误（浏览器内运行未做，React Flow 连线无法合成）。D19 部分取回不解除，到点时刻/event timeout 表达式化/jitter/跨重启中断仍缓做。
+
+### docs：wait 定时等待动态时长 v1 批 docs-only 立项（docs/49，2026-09-23；dev、未 push；无 ADR）
+
+- wait duration config 增 `durationMode: static|dynamic`（缺省 static，旧图零回归）与 `durationExpression`（≤200，dynamic 必填）；loader dynamic 时经 D15 条件引擎求值（变量＋算术/白名单函数），结果须为非 bool 有限数值、1-600（取 int(round)），秒数同时作为暂停帧 timeout_seconds。
+- 表达式无法求值或结果非法（非数值/0/601/非有限）→ run failed **WAIT_DURATION_INVALID**，不 sleep 错误时长；无新增 REST/SSE 帧。static 产出形状不变，dynamic 产出另含 durationMode/durationExpression。立项基线后端 1457/59、前端 616/2；D19 部分取回不解除，到点时刻/event timeout 表达式化/jitter/跨重启中断仍缓做。
+
+### feat：condition LLM 语义判断分支 v1 批落码收口（docs/48，2026-09-23；dev、未 push；无 ADR）
+
+- condition 节点新增 `conditionMode=llm`（D14 部分取回、不解除）：分支用自然语言 `description`（≤300）替代 expression（禁带）、可选 `classifierPrompt`（≤500）；`atlas.llm.condition_classifier` 镜像 decision.py 三层（LiteLLM 单次调用 temperature=0 返唯一标签 JSON、Offline 未配模型必抛、工厂按 LITELLM_MODEL 切换），上下文 JSON 序列化截断 12000 字符。
+- 合法标签按标签路由；`__default__`/坏 JSON/未知标签/调用异常全部 fail-safe 走 defaultTarget，无新错误码、无新 REST、不使 run 失败；分类器经 run_graph(condition_classifier=) 注入、子图透传。前端 mode 切换行内 expression↔description；5a955d2 修 rootScoped 隐藏字段残留表达式诊断。
+- 收口门：后端 1457/59（净增 22）、前端 616/2、lint/build 干净；`.smoke/llm_condition_smoke.py` HTTP 11/11，浏览器冒烟 3 截图 docs/smoke-shots/llm-condition-*、零控制台错误。零新依赖、零迁移；Demo 阶段不视为可上线，置信度/多候选/澄清重问、每分支独立 prompt、按租户模型、字段级脱敏、structured outputs、LLM 路由回放断言仍缓做。
+
+### feat：wait 事件等待进程内 v1 批落码收口（docs/47，2026-09-23；dev、未 push；无 ADR）
+
+- wait 节点 `waitType=event` 五步原子序全部落码（f647c96→aa82eed→1608002→ce8c4f0；D19 部分取回、不解除）：per-tenant EventWaitBroker 挂起（event_key 索引、token/广播/直投、monotonic 超时、0.2s 取消切片），DSL event 四字段（eventKey 支持 {{}} 插值、timeoutSeconds 1-3600、onTimeout continue/fail），run inputs waitEvents 预置（resolvedBy:"input"）；超时 fail → WAIT_TIMEOUT_FAILED，渲染后坏 key → WAIT_EVENT_KEY_INVALID。
+- 三 REST 端点：POST /api/waits/events（广播）、POST /api/waits/{token}/signal（直投，404 WAIT_TOKEN_NOT_FOUND / 409 WAIT_ALREADY_SIGNALED）、GET /api/waits（pending）；payload 限 JSON 对象、≤4096 字节、顶层键 ≤50。
+- 前端 WaitConfig 定时/事件双模式，wait schema oneOf 两分支，L1 eventKey/timeout/onTimeout 字段诊断；事件产出 signaled/payload/resolvedBy/token。
+- 收口门：后端 1435/59（净增 37）、前端 606/2、lint/build 干净；HTTP 冒烟 19 检查全过（`.smoke/event_wait_smoke.py`），浏览器冒烟 2 截图 docs/smoke-shots/event-wait-*。零新依赖、零迁移；中断帧/恢复扫描器/多实例、动态时长仍缓做 D19。
+
+### docs：wait 事件等待进程内 v1 批 docs-only 立项（docs/47，2026-09-23；dev、未 push；无 ADR）
+
+- wait 节点新增 `waitType=event`（D19 部分取回、不解除）：per-tenant EventWaitBroker 进程内挂起，REST 广播/直投信号或 run inputs waitEvents 预置恢复，timeoutSeconds 1-3600、onTimeout continue/fail（fail → WAIT_TIMEOUT_FAILED），输出携带 payload。
+- 新增三端点：POST /api/waits/events、POST /api/waits/{token}/signal（operate）、GET /api/waits（read）。
+- 零新依赖、零迁移；中断帧/恢复扫描器/多实例、动态/表达式时长、多事件竞速取消、公开免登录信号口仍缓做。立项基线后端 1398/59、前端 602/2。
+
+### feat：OpenAPI HTTP Basic 凭证子集批落码收口（docs/46，2026-09-23；dev、未 push；无 ADR）
+
+- parser 收录 `type:http,scheme:basic`（kind=basic）；PUT credentials basic 值为 `{username,password}`（信封明文 JSON），适配器渲染 `Authorization: Basic base64(u:p)`；前端用户名/密码双输入。
+- 冒烟修复 f24ee8a：tool_call 对 `openapi:*` 适配器接通 params JSON 解析。
+- 收口门：后端 1398/59、前端 602/2；真实 httpbin.org 冒烟 4 截图（fail-closed → 已配置 1/1 → SUCCESS 200 authenticated:true）。
+- digest/cookie/oauth2/连接测试/凭证轮换仍缓做，D22 部分取回不解除。
+
+### feat：循环 foreach 批落码收口（docs/45，2026-09-23；dev、未 push；无 ADR）
+
+- loop 节点 `mode=foreach` 落码（D16 主体取回；efe5de4→1e79121→01296d5）：itemsExpression 首轮求值一次冻结（≤100），串行逐项暴露 `{{loop-x.item}}/index/results`，collectTarget 回边按序聚合 results（break 网关补在途结果）；exitReason 增 `completed/empty/expression_error/items_too_large`；DSL 静态输出键按 mode 放宽。
+- 前端 mode Select 切换 schema oneOf/字段显隐，L1 foreach 手写规则（parseExpression 纯语法）；后端 1391/59（净增 16）、前端 597/2、oxlint 45/1（46 files）、build 干净。
+- 浏览器冒烟（3 截图 docs/smoke-shots/foreach45-*）：3 元素 completed/results 长度 3（params item/index 按序渲染），空数组 empty/循环体不执行，HTTP 与画布一致。零新依赖、零迁移、零新 REST/错误码；嵌套循环、并行 map-reduce、裸 item 短名、skip-current、>100 分批仍缓做（D16 不解除）。
+
+### feat：循环 foreach 批 docs-only 立项（docs/45，2026-09-23；dev、未 push；无 ADR）
+
+- loop 节点新增 `mode=foreach`（D16 主体取回）：itemsExpression 首轮求值一次冻结（≤100），按 0-based 游标串行逐项暴露 `{{loop-x.item}}`；collectTarget 回边时聚合节点产出进 results；exitReason 增 `completed/empty/expression_error/items_too_large`，break 网关沿用 D17。
+- 前端 mode Select 切换 foreach 字段（itemsExpression/itemName/collectTarget），零新依赖、零迁移、零新 REST/错误码；嵌套循环、并行 map-reduce、裸 item 短名、skip-current 仍缓做。
+
+### feat：OpenAPI securitySchemes 静态密钥批落码收口（docs/44，2026-09-23；dev、未 push；无 ADR）
+
+导入 API 接通静态鉴权，四代码原子（`5a7e580` docs→`ab08c12` parser→`2d534a2` 信封接线→`43d8001` 前端→docs 本步）：
+
+- 解析：apiKey（header/query）与 HTTP Bearer 收录为 SecurityScheme；有效要求＝operation 覆盖全局的 OR-of-AND 组（unsupported 方案名剔除、空组＝匿名、`security: []` 显式匿名），OperationDescriptor 增 `security`。
+- 存储：ImportedSpec 增 `security_schemes`＋`credential_envelopes`；密钥经既有 SecretProvider 信封（T26，AES-GCM/plain 两档）加密，迁移 019 给 openapi_imports 加两 JSONB 列；内存/PG 两端 store 同形并加 put_credentials。
+- 执行：适配器每次调用现解密注入 header/query（Bearer 拼前缀；用户参数优先），缺密钥 fail-closed `OPENAPI_CREDENTIAL_MISSING` 且不发请求，解密失败 SECRET_DECRYPT_ERROR；明文不入任何响应（明文探针测试）。
+- REST/前端：新 `PUT /api/openapi/imports/{id}/credentials`（operate；未知 scheme 422 OPENAPI_INVALID_CREDENTIAL，清空即删除），前端 Password 输入＋「已配置 n/m」状态进 openapi namespace。
+- 门：后端内存档 1375 passed/59 skipped（净增 23 常跑，零回归）、PG 直连 atlas-pg 11 passed（往返/跨重启信封仍在/旧行默认 `{}`），前端 593/2/45、build 过。
+- 浏览器冒烟 3 截图 docs/smoke-shots/openapi44-*：无密钥运行得明确中文失败 → PUT 配密钥 → SUCCESS HTTP 200（body Rex）；PG 档重启后信封仍在、重跑仍 200；收口后恢复普通内存档后端。
+- D22 部分取回、不解除：basic/cookie/mutualTLS/oauth2/openIdConnect、密钥取回/轮换、按 operation 差异化、YAML/Swagger2、真实 API 联调仍缓做。
+
+### docs：OpenAPI securitySchemes 静态密钥批立项（docs/44，2026-09-23；无 ADR）
+
+docs-only 契约：接通导入 API 的静态鉴权——apiKey（header/query）与 HTTP Bearer 方案解析、密钥经 SecretProvider 信封（T26）加密随规格落内存/PG（迁移 019 拟加 security_schemes/credential_envelopes 两列）、适配器执行逐次解密注入，缺密钥 OPENAPI_CREDENTIAL_MISSING fail-closed；新 PUT credentials 端点与前端密钥录入。oauth2/openIdConnect/basic/cookie、真实 API 联调仍缓做 D22（部分取回、不解除）。立项基线后端 1352/56、前端 591/2/46。
+
+### feat：OpenAPI 导入规格 PG 持久化批落码收口（docs/43，2026-09-23；dev、未 push；无 ADR）
+
+导入规格两档存储落地，一代码原子（`f39d86b` docs→`7bf13f5` feat→docs 本步）：
+
+- 迁移 018 `openapi_imports`：(tenant_id,id) PK、seq 走 storage_id_seq、operations JSONB，手写幂等 SQL 不引 Alembic。
+- 后端：`PgImportStore` 与 ImportStore 同形（add/list/get/delete；5 specs/200 ops、OPENAPI_LIMIT_EXCEEDED 422 不变；行级 tenant 过滤、reset 不清），iam/registry 仅 PG 档换装配、字段类型放宽；发现按请求读 store 动态重建适配器，重启无需预热。
+- 门：后端内存档 1352 passed/56 skipped（内存零回归；新增 8 PG 测默认 skip）、PG 直连 atlas-pg 8 passed（往返/排序/模拟重启/跨租户/删除幂等/双上限/reset 不清），前端 591/2/46 零改动。
+- PG 档浏览器冒烟 2 截图 docs/smoke-shots/openapi-pg-smoke-*：重启后 openapi-768 列表与适配器仍在，编辑器 list_pets limit=10 运行 SUCCESS（HTTP 200、body Rex），控制台仅一次预期旧 token 401；收口后恢复普通内存档后端。
+- D22 不解除：YAML/securitySchemes/原始文档留存/导入去重/软删除/共享/真实 API 联调仍缓做。
+
+### docs：OpenAPI 导入规格 PG 持久化批 docs-only 立项（docs/43，2026-09-23；无 ADR）
+
+docs/42 导入规格仅进程内 per-tenant 存储、重启即失（本会话冒烟两度踩中）。docs-only 契约先行（00/03/42 §2/08/14/handoff 同步），**零新依赖、无选型变更、D22 部分取回不解除**：
+
+- 迁移 018 `openapi_imports`：(tenant_id,id) PK、seq 走全局 storage_id_seq、operations JSONB，手写幂等 SQL 不引 Alembic。
+- `PgImportStore` 与 ImportStore 同形（add/list/get/delete、5 specs/200 ops、OPENAPI_LIMIT_EXCEEDED 422、reset 不清），仅在 `ATLAS_STORAGE_BACKEND=pg` 装配；发现按请求读 store 动态构建适配器，重启无需预热。
+- REST 五端点、前端页面、编辑器、执行链路零改动、无新错误码；立项基线：后端 1352 passed/48 skipped、前端 591 passed/2 skipped/46 files。
+
+### feat：OpenAPI 导入与工具自动生成批落码收口（docs/42，2026-09-23；dev、未 push；无 ADR）
+
+OpenAPI 3.x JSON 文档驱动的 API 适配器自动形态落地，四代码原子（`139848a`→`90b8179`→`712f28a`→`3f40b10`）：
+
+- 后端：新包 `src/atlas/openapi/`——parser 纯函数（YAML/Swagger2 拒绝）、Schema 子集转换（$ref 内联深度 8/环守卫、allOf 合并，oneOf/form-data 等 operation 级 skipped 带 reason）、进程内 per-tenant ImportStore（reset 不清，5 specs/200 ops）、ImportedApiHarnessAdapter `openapi:{spec_id}`（出向过 EgressGuard、任何 HTTP 响应均 SUCCESS），REST preview/imports 五端点，`/api/adapters` 合并。
+- 前端：新页「API 导入」（粘贴/URL Tab→预览 skipped 灰行→导入、列表展开、admin 删除 Popconfirm、viewer 只读），Dashboard operator+ 入口，openapi i18n namespace；**编辑器零改动**，工具选择器与参数表单由 M3 Schema 内核自动承接。
+- 门：后端 1352 passed/48 skipped（净增 59）、前端 591 passed/2 skipped/46 files（净增 7）；mock 缝浏览器冒烟：导入→选择器 openapi:*→limit=10 真实运行 SUCCESS（HTTP 200）→operator 删除 403/admin 删除后适配器消失，4 截图 docs/smoke-shots/openapi-smoke-*。
+- D22 不解除：YAML/securitySchemes 接线/multipart/PG 持久化/真实外部 API 联调仍缓做。
+
+### docs：OpenAPI 导入与工具自动生成批 docs-only 立项（docs/42，2026-09-23；无 ADR）
+
+- 契约：OpenAPI 3.x JSON 粘贴/URL（egress 抓取）→ 逐 operation 自动生成适配器与 Capability（input_schema 派生、$ref 内联、operation 级 skipped 带 reason、权限最高 write），进程内 per-tenant ImportStore（reset 不清），REST preview/imports 五端点，`/api/adapters` 合并，前端「API 导入」新页、编辑器零改动。
+- 治理同步：docs/00 地图、03 `openapi_import`、04 §4.6 注记、08 立项、12 五端点、13 U390 候选、14 D22 部分取回不解除、handoff Active 38。
+
+### feat：Shopify 侧 Webhook 注册批落码收口（docs/41，2026-09-23；dev、未 push；无 ADR）
+
+Shopify 店铺侧 webhook 注册由「人工复制 URL 到后台」变为订阅弹窗内一键注册，五原子＋一 fix（`93cd1a0`→`6b86a1d`→`cefc4fe`→`3eccc6d`）：
+
+- 后端：client 三方法、registry 地址钉版（ATLAS_PUBLIC_URL 非 https 明确 422、UNAUTHORIZED 落 binding error 态）、REST 三端点、demo mock 缝。
+- 前端：订阅弹窗「Shopify 店铺侧注册」区（viewer readonly）。
+- 门：后端 1293 passed/48 skipped（净增 17）、前端 584 passed/2 skipped/45 files（净增 3）；mock 缝浏览器冒烟注册→409→取消全绿（3 截图 docs/screenshots/41-shot-*）。
+- D22 不解除：真实店铺+公网 HTTPS 联调、Amazon/通用渠道、双向自动同步仍缓做。
+
+### docs：Shopify 侧 Webhook 注册批立项（docs/41，2026-09-23；dev、未 push；无 ADR）
+
+docs/39/40 已收口入站口与可靠性，但 Shopify 店铺侧注册仍靠人工复制 URL。docs-only 契约先行（00/03/12/13/14/08/handoff 同步），**零新依赖、零迁移、D22 部分取回不解除**：
+
+- `ShopifyChannelClient` 增 list/register/delete webhooks（Admin REST `/webhooks.json`；422 同 topic+address 已存在 → CHANNEL_ALREADY_REGISTERED；可选 base_url 测试缝）。
+- registry 三方法：地址服务端按 `{ATLAS_PUBLIC_URL}/api/channels/hooks/shopify/{binding_id}` 拼装钉版、非 https 拒绝；取消注册按 topic+address 双键匹配。
+- REST 三端点：GET remote-webhooks（read，令牌失效 200 空 items+error）、POST（operate，201/409/422）、DELETE（operate，幂等 {deleted:bool}）。
+- 前端订阅弹窗加店铺侧注册区（viewer 只读）；demo mock 缝（`/api/demo/mock/shopify-admin/webhooks.json`＋ATLAS_SHOPIFY_ADMIN_BASE_URL）仅供离线/浏览器冒烟。
+- 立项基线：后端 1276 passed/48 skipped、前端 581 passed/2 skipped/45 files（候选 U380 起）。
+
+### feat：入站可靠性补强批全部落码收口（docs/40，2026-09-23；dev、未 push；无 ADR）
+
+承接 docs/39 公开入站口的三个可靠性口子，六原子全部落完，**零新依赖、D24 部分取回不解除**：
+
+- **② channels 内核（8cfcf6f）**：`channels/deliveries.py` InMemoryDeliveryStore（DeliveryRecord＋note_duplicate_if_seen/record_received/record_dead/get_dead/list_dead/resolve_replay/delete/metrics）；WebhookDeliverer 接 store_provider，ignored 不留行，全订阅未触发（NO_PUBLISHED_VERSION/RESOLVE_FAILED/TRIGGER_FAILED/MISSING_GRAPH_ID）才 dead 存验签后 payload，replay 绕过去重按当前订阅；16 内核测试。
+- **③ storage（3bc00a5）**：迁移 017 `webhook_deliveries`（PK(tenant,webhook_id)、reasons/payload JSONB、duplicates 计数、tenant_status 索引）；PgDeliveryStore（ON CONFLICT 计数、CAST jsonb）；TenantServices 两档接线、reset 不清；+4 PG 集成。
+- **④ API（778acc7）**：dead-letters 列表(read，topic/bindingId/limit 过滤)、重放(operate)、删除(administer)、metrics(read)；8 API 测试。
+- **⑤ frontend（3036acc）**：`components/monitoring/WebhookReliabilityCard.tsx`（指标＋按 topic 表＋死信表，viewer 无操作列）挂 Monitoring；apiClient 四函数＋类型（+2 测）；webhookReliability i18n（zh 填实、en-US `{}`）。
+- **验证**：后端 1276 passed/48 skipped（1252 立项基线净增 24＋4 PG 集成，零回归）；前端 581 passed/2 skipped、lint/build 过；真实 HMAC HTTP 冒烟——未发布订阅投递产生死信、发布放量后一键重放恢复（received、死信清空、成功投递 1），3 截图 docs/smoke-shots/docs40-*。
+
+### docs：入站可靠性补强批立项（docs/40，2026-09-23；dev、未 push；无 ADR）
+
+承接 docs/39 公开入站口的三个可靠性口子，docs-only 契约先行（00/03/12/13/14/08/handoff 同步），**零新依赖、D24 部分取回不解除**：
+
+- 投递去重 PG 化：`channels/deliveries.py` DeliveryStore 两档＋迁移 017 `webhook_deliveries`（PK(tenant,webhook_id)、duplicates 计数、跨重启/多实例；ignored 不落表、reset 不清）。
+- 死信：全部订阅未触发（NO_PUBLISHED_VERSION/RESOLVE_FAILED/TRIGGER_FAILED/MISSING_GRAPH_ID）才 mark_dead、payload 仅 dead 行存；一键重放（operate）按当前订阅重投。
+- 投递指标 GET metrics（byTopic/totals 实时聚合）；前端 Monitoring 加 WebhookReliabilityCard。
+- 顺手订正 016 列类型的文档漂移：实际为 JSONB（docs/03、docs/39 原文误写 TEXT）。
+
+### feat：入站 Webhook 批全部落码收口（docs/39，2026-09-23；dev、未 push；ADR T29）
+
+在 docs/38 Shopify 出向渠道之上补首个公开免登录入站触发口，**零新依赖、零外部资源、不解除 D22/D24**：
+
+- **② channels 内核（24076c9）**：`channels/webhooks.py`——`verify_shopify_hmac`（原始 body HMAC-SHA256、compare_digest）、WebhookEnvelope/build_envelope（必需头缺失 WEBHOOK_MALFORMED）、build_trigger_event（channel=webhook）、WebhookDeliverer（per-tenant 幂等环 ring 200/1h；逐订阅 routing_store.resolve 钉版本、无版本 warning 跳过；后台触发异常吞掉）。
+- **④ storage（8313e7b）**：迁移 `016_channel_webhook_subscriptions`（channel_bindings 增 JSONB webhook_subscriptions 默认 '[]'）；ChannelBinding 增字段与 camelCase 投影，PgChannelStore create/get/save 读写，+4 PG 集成（往返/默认/隔离/reset 不清）。
+- **③ API（3b19ac9）**：公开 `POST /api/channels/hooks/shopify/{binding_id}`——跨租户定位不惰性建租户（PG 直查/内存扫已装配租户），client_secret 每次现解密（503），先验签后解析 JSON，200 received/duplicate/ignored、400/401/404/503；订阅 GET(read)/PUT(administer，topic 白名单/graph 同租户存在/pair 唯一/≤10，聚合中文 422)；触发 worker 以 mode="webhook" 独立记 run。
+- **⑤ frontend（695e5f2）**：绑定卡操作列「Webhook」按钮（admin）→ WebhookSubscriptionsModal（回调地址只读＋复制、Shopify 手动配置提示、topic/graph/启用行增删）；apiClient get/putWebhookSubscriptions（+2 测）；channels.webhook zh 键填实、en-US 维持空骨架回退。
+- **验证**：后端 1252 passed/44 skipped（1220 基线净增 32＋4 PG skip，零回归）；前端 579 passed/2 skipped/45 files、lint/build 过；真实 HMAC HTTP 冒烟三态（received/duplicate/ignored）＋坏签名 401/未知绑定 404，触发图后台 completed，3 截图 docs/smoke-shots/webhooks-smoke-*。
+
+### docs：入站 Webhook 批 docs-only 立项（docs/39，2026-09-23；ADR T29，未落码）
+
+- 在 docs/38 Shopify 出向渠道之上补首个公开免登录入站触发口契约：channels/webhooks.py Shopify HMAC-SHA256 验签（原始 body、compare_digest、先于 JSON 解析）＋WebhookDeliverer 异步投递（经 M9 Router resolve 钉版本，幂等环进程内 ring 200/1h）。
+- 订阅 WebhookSubscription（topic×graph、≤10），迁移 016 webhook_subscriptions（reset 不清）；公开 hook 端 received/duplicate/ignored（401/400/404/503）＋订阅 GET(read)/PUT(administer)；前端绑定卡 Webhook 订阅 Modal。
+- 零新依赖/零外部资源；D22/D24 不解除；立项基线后端 1220/40、前端 577/2/45，测试候选 U370 起。
+
+### feat：真实渠道适配批全部落码收口（docs/38，2026-09-23；dev 六 commit、未 push）
+
+承接 docs/34 P0 #1「打通一个真实电商渠道」，在 T4 平台无关 OAuth2 连接之上落首个真实平台业务 API 适配层，**零新依赖、零外部资源、不解除 D22**（真实店铺 OAuth 联调/入站 webhook/Amazon/订单同步仍缓做）：
+
+- **内核（34472ce）**：新包 `src/atlas/channels/`——ShopifyChannelClient 对 Shopify Admin API（`https://{shop}.myshopify.com/admin/api/{api_version}`，默认版本 2025-01，`X-Shopify-Access-Token` 头）封装 list_orders/get_order（读）与 create_refund（**财务**写）；ChannelBinding/ChannelConfig pydantic 模型；ChannelRegistry＋内存 ChannelStore；结构化错误码 CHANNEL_NOT_BOUND/UNAUTHORIZED/UPSTREAM_FAILED/INVALID_RESPONSE/INVALID_PARAMETER/ALREADY_BOUND；ShopifyHarnessAdapter 按绑定产出 `channel:shopify:{binding_id}`，三工具 shop/list_orders·shop/get_order〔read〕·shop/create_refund〔financial〕；access token 每次调用现解密、不缓存明文、不记日志。
+- **API 与动态接线（6dcc20b）**：`/api/channels` 五端点（POST 绑定 operate＋channel.bind 审计、GET 列表/单条 read、POST /test operate、DELETE administer＋channel.unbind 审计）；绑定按租户分区、reset 不清；绑定建立/删除时向当前租户动态注册/注销适配器，重复绑定 409。
+- **存储（aa044ab）**：迁移 `015_channel_bindings`（binding 七字段＋updated_at）与 PgChannelStore（4 集成测试 skipif 门控）；TenantServices 两档装配。
+- **前端（242ef5e）**：Connections 页底部「销售渠道绑定」卡（`components/ChannelBindingsCard.tsx`：Table 空态、绑定弹窗 provider 固定 Shopify＋连接下拉＋shop 名＋apiVersion，operate 可绑、admin 可删，探活失败以 warning＋error 状态呈现），新增 channels i18n namespace（zh 填实/en-US 空 `{}`）。
+- **验证**：后端 1220 passed/40 skipped（1190 基线净增 30＝内核 14/registry 10/API 6，零回归；4 PG 集成 skip）；前端 577 passed/2 skipped/45 files（净增 6＝apiClient 4＋i18n 2）、build 过；浏览器冒烟三场景（空态/绑定弹窗/未授权 draft 连接探活→绑定 error 态「绑定连接未完成授权或令牌不可用」，test 端点不返 5xx），控制台仅 antd 既有 deprecation 与一次预期 401，3 截图 docs/smoke-shots/。ADR T28，三处同步 10→02→09 已完成。
+
+### chore：删除 LICENSE，项目保持不开放（2026-09-22，f721c18）
+
+- 用户拍板回到早期「不要 LICENSE」指示：移除根目录 `LICENSE`（MIT 曾随 PR #53 短暂在 main），同步删除 pyproject.toml 与 frontend/package.json 的 license 字段；docs/34 待拍板项标记已决。
+
+### feat：审计可见与审批结果补强批全部落码收口（docs/37，2026-09-22；dev 三 commit、未 push）
+
+承接 docs/34 P1 #8 余部与 docs/36 非目标，三处工程内可见性缺口一次补齐，**零新依赖、不新增 ADR、不解除 D11/D20/D24**：
+
+- **A 审计日志页（033619a）**：`pages/AuditLog.tsx` admin 应用内页面（入口 admin 门控，viewer/operator API 仍 403），复用既有 `GET /api/audit/events`、`GET /api/audit/export`（后端零改动）；action 前缀过滤、limit 50/100/200、jsonl 经 Bearer blob 下载；新 `audit` i18n namespace（en-US 空占位）。
+- **B 已决审批历史（ecfa325/bc3f116）**：`ApprovalBroker.list_decided(limit=50)` 只读投影（resolved_at 倒序、clamp 1–200、不泄露 card_context/Event），`GET /api/approvals/decided`（read、全角色、租户分区，snake_case 同 /api/approvals）；Approvals 页改 Tabs，「已处理」切 Tab 加载＋手动刷新不轮询，10s 轮询仅待处理 Tab 激活且可见时。
+- **C 决策结果邮件（ecfa325/bc3f116）**：`_Pending` 留存 `notify_recipients`；`ApprovalNotifier.notify_decided` 发纯文本结果邮件（subject `[Atlas] 审批已处理：…`，结果/来源行，comment ≤200 字符，无 token/决策链接）；人工/邮件链接路径在 `_apply_approval_decision`、超时/输入预置路径在 loader 决策后旁路 fail-safe 触发，通知异常仅 warning，不改决策响应、不阻断图，重复决策不重发。
+- **验证**：后端 1190 passed/36 skipped（净增 16 零回归）、前端 571 passed/2 skipped/45 files（计数不变）、lint/build 过；浏览器冒烟过（审计页过滤/导出/空态、已处理 Tab），控制台零错误，2 截图存 docs/assets/。
+
 ### feat：审批闭环批全部落码收口（docs/36，2026-09-22；dev 四 commit、未 push）
 
 承接 docs/34 复审「通知→决策」断裂与 docs/35 T2 余部，D20 再次部分取回、**不解除**缓做（KMS/邮箱绑定/真实投递联调/多实例/IM/钉钉/动态审批人/节点级角色仍缓做）：

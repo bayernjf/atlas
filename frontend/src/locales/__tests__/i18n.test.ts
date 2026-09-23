@@ -526,6 +526,41 @@ const CONNECTIONS_KEYS = [
   'error.formInvalid',
 ]
 
+const CHANNELS_KEYS = [
+  'cardTitle',
+  'empty',
+  'col.shop',
+  'col.provider',
+  'col.status',
+  'col.connection',
+  'col.actions',
+  'provider.shopify',
+  'status.connected',
+  'status.error',
+  'button.bind',
+  'button.test',
+  'deleteConfirm.title',
+  'deleteConfirm.description',
+  'modal.title',
+  'form.provider',
+  'form.connection',
+  'form.connectionPlaceholder',
+  'form.connectionRequired',
+  'form.shop',
+  'form.shopPlaceholder',
+  'form.shopRequired',
+  'form.apiVersion',
+  'message.bound',
+  'message.deleted',
+  'message.testOk',
+  'message.testFail',
+  'error.loadList',
+  'error.bind',
+  'error.test',
+  'error.delete',
+  'error.formInvalid',
+]
+
 const hasChinese = (s: string): boolean => /[\u4e00-\u9fff]/.test(s)
 
 afterEach(() => {
@@ -857,6 +892,26 @@ describe('zero-dependency i18n skeleton (docs/17 §2.3, M12)', () => {
     changeLanguage('en-US')
     for (const key of CONNECTIONS_KEYS) {
       expect(t(key, { ns: 'connections' })).not.toBe(key)
+    }
+    changeLanguage('zh-CN')
+  })
+
+  it('resolves channels namespace static copy for the channel bindings card (docs/38 §1E)', () => {
+    for (const key of CHANNELS_KEYS) {
+      const value = t(key, { ns: 'channels' })
+      expect(value, `${key} must resolve`).not.toBe(key)
+      expect(value.length, `${key} must be non-empty`).toBeGreaterThan(0)
+      if (key !== 'provider.shopify') {
+        expect(hasChinese(value), `${key} should carry Chinese copy`).toBe(true)
+      }
+    }
+    expect(t('provider.shopify', { ns: 'channels' })).toBe('Shopify')
+  })
+
+  it('falls back to zh-CN for channels copy under the empty en-US skeleton', () => {
+    changeLanguage('en-US')
+    for (const key of CHANNELS_KEYS) {
+      expect(t(key, { ns: 'channels' })).not.toBe(key)
     }
     changeLanguage('zh-CN')
   })

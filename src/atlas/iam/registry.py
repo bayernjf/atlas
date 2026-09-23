@@ -10,14 +10,21 @@ import os
 import threading
 from dataclasses import dataclass
 
+from atlas.channels.registry import build_channel_registry
+from atlas.channels.deliveries import InMemoryDeliveryStore
+from atlas.channels.pg_deliveries import PgDeliveryStore
 from atlas.connections.service import build_connection_service
 from atlas.connections.store import ConnectionStore
 from atlas.collaboration.cancellations import RunCancellationBroker
+from atlas.collaboration.event_waits import EventWaitBroker
 from atlas.coordination import TaskStore
 from atlas.observability.audit import AuditRepository, AuditStore
 from atlas.message.service import MessageService
 from atlas.message.smtp import get_smtp_sender
+from atlas.message.im import get_im_sender
 from atlas.message.webhook import get_webhook_sender
+from atlas.openapi.pg_store import PgImportStore
+from atlas.openapi.store import ImportStore
 from atlas.recording import ReportStore, ShadowStore
 from atlas.routing import RoutingStore
 from atlas.storage.base import (
@@ -57,6 +64,7 @@ class TenantServices:
     approval_broker: ApprovalRepository
     debug_broker: DebugRepository
     cancellation_broker: RunCancellationBroker  # B 包协作式急停（进程内，memory/PG 档均内存实例）
+    event_wait_broker: EventWaitBroker  # wait 节点事件等待（进程内 v1，docs/47；两档均内存实例）
     monitoring: MonitoringRepository
     run_store: RunRepository
     task_store: TaskStore
@@ -66,6 +74,9 @@ class TenantServices:
     memory_store: MemoryRepository  # M11 长期记忆 fact/preference（批 3 PG 档换 PgMemoryStore）
     audit_store: AuditRepository  # T6 写操作审计（docs/35 §6；ring/PG 两档，reset 不清）
     connection_service: object  # T4 OAuth2 连接（docs/35 §4；业务服务，内存/PG 两档 store，reset 不清）
+    channel_registry: object  # 真实渠道绑定（docs/38；ADR T28，reset 不清）
+    webhook_deliveries: object  # 入站投递去重/死信（docs/40；内存/PG 两档，reset 不清）
+    openapi_imports: ImportStore | PgImportStore  # OpenAPI 导入规格（docs/42/43；内存/PG 两档，reset 不清）
 
 
 class TenantRegistry:
@@ -101,16 +112,20 @@ class TenantRegistry:
             from atlas.storage.pg import get_pg_backend
 
             backend = get_pg_backend()
+            connection_service = build_connection_service(
+                backend.connection_store(tenant_id), tenant_id=tenant_id
+            )
             # approval 的帧持久化在 loader frame_sink（批 2 写 interruptions 表），
             # broker 只承担进程内 pending + Event（重启后由恢复扫描器 restore 重建）。
-            return TenantServices(
+            services = TenantServices(
                 graph_store=backend.graph_store(tenant_id),
                 recording_store=backend.recording_store(tenant_id),
                 feedback_store=backend.feedback_store(tenant_id),
-                message_service=MessageService(email_sender=get_smtp_sender(), webhook_sender=get_webhook_sender()),
+                message_service=MessageService(email_sender=get_smtp_sender(), webhook_sender=get_webhook_sender(), im_sender=get_im_sender()),
                 approval_broker=ApprovalBroker(),
                 debug_broker=DebuggerBroker(),
                 cancellation_broker=RunCancellationBroker(),
+                event_wait_broker=EventWaitBroker(),
                 monitoring=backend.monitoring_store(tenant_id),
                 run_store=backend.run_store(tenant_id),
                 task_store=TaskStore(),
@@ -119,18 +134,26 @@ class TenantRegistry:
                 shadow_store=ShadowStore(),
                 memory_store=backend.memory_store(tenant_id),
                 audit_store=backend.audit_store(tenant_id),
-                connection_service=build_connection_service(
-                    backend.connection_store(tenant_id), tenant_id=tenant_id
+                connection_service=connection_service,
+                channel_registry=build_channel_registry(
+                    connection_service, tenant_id=tenant_id,
+                    store=backend.channel_store(tenant_id),
                 ),
+                webhook_deliveries=PgDeliveryStore(backend.engine, tenant_id),
+                openapi_imports=PgImportStore(backend.engine, tenant_id),
             )
-        return TenantServices(
+            TenantRegistry._wire_alert_notifier(services)
+            return services
+        connection_service = build_connection_service(ConnectionStore(), tenant_id=tenant_id)
+        services = TenantServices(
             graph_store=GraphStore(),
             recording_store=RecordingStore(),
             feedback_store=FeedbackStore(),
-            message_service=MessageService(email_sender=get_smtp_sender(), webhook_sender=get_webhook_sender()),
+            message_service=MessageService(email_sender=get_smtp_sender(), webhook_sender=get_webhook_sender(), im_sender=get_im_sender()),
             approval_broker=ApprovalBroker(),
             debug_broker=DebuggerBroker(),
             cancellation_broker=RunCancellationBroker(),
+            event_wait_broker=EventWaitBroker(),
             monitoring=MonitoringStore(),
             run_store=RunStore(),
             task_store=TaskStore(),
@@ -139,7 +162,22 @@ class TenantRegistry:
             shadow_store=ShadowStore(),
             memory_store=MemoryStore(),
             audit_store=AuditStore(),
-            connection_service=build_connection_service(ConnectionStore(), tenant_id=tenant_id),
+            connection_service=connection_service,
+            channel_registry=build_channel_registry(
+                connection_service, tenant_id=tenant_id
+            ),
+            webhook_deliveries=InMemoryDeliveryStore(),
+            openapi_imports=ImportStore(),
+        )
+        TenantRegistry._wire_alert_notifier(services)
+        return services
+
+    @staticmethod
+    def _wire_alert_notifier(services: TenantServices) -> None:
+        from atlas.monitoring.notify import AlertNotifier
+
+        services.monitoring.set_notifier(
+            AlertNotifier(services.message_service)
         )
 
     def reset_tenant(self, tenant_id: str) -> None:
@@ -151,6 +189,7 @@ class TenantRegistry:
         services.approval_broker.reset()
         services.debug_broker.reset()
         services.cancellation_broker.reset()
+        services.event_wait_broker.reset()
         services.monitoring.reset()
         services.run_store.reset()
         services.routing_store.reset()

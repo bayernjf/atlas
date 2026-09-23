@@ -14,7 +14,7 @@ import {
   subgraphUiSchema,
 } from '../nodeUiSchemas'
 import { BUILTIN_WIDGETS } from '../types'
-import { pointerMatches } from '../uiSchema'
+import { hiddenFields, pointerMatches } from '../uiSchema'
 
 describe('节点控件表 buildNodeRegistry（M4）', () => {
   it('含全部内置控件（九件）+ target-select 业务控件', () => {
@@ -78,26 +78,38 @@ describe('human_approval UISchema 与数据 schema 对齐（迁移等价基线�
   })
 })
 
-describe('loop UISchema 与数据 schema 对齐（迁移等价基线）', () => {
+describe('loop UISchema 与数据 schema 对齐（迁移等价基线 + docs/45 foreach）', () => {
   const properties = loopSchema.properties ?? {}
   const propKeys = Object.keys(properties)
-  const visibleKeys = propKeys.filter((key) => !(loopUiSchema.hideFields ?? []).includes(key))
 
-  it('每个可见 config 字段都有中文 label，mode 静态隐藏', () => {
-    for (const key of visibleKeys) {
+  it('每个 config 字段都有中文 label，mode 可见且有双模式文案', () => {
+    for (const key of propKeys) {
       expect(loopUiSchema.labels?.[key], `字段 ${key} 缺中文 label`).toBeTruthy()
     }
-    expect(loopUiSchema.hideFields).toEqual(['mode'])
-    expect(properties.mode).toBeTruthy()
+    expect(loopUiSchema.optionLabels?.mode).toEqual({
+      while: expect.any(String),
+      foreach: expect.any(String),
+    })
   })
 
-  it('continueExpression 标 x-variable，双 target 标 x-widget target-select', () => {
+  it('hiddenWhen 按 mode 切换 while/foreach 字段', () => {
+    const whileHidden = hiddenFields(loopUiSchema, { mode: 'while' })
+    expect(whileHidden.has('itemsExpression')).toBe(true)
+    expect(whileHidden.has('continueExpression')).toBe(false)
+    const foreachHidden = hiddenFields(loopUiSchema, { mode: 'foreach' })
+    expect(foreachHidden.has('continueExpression')).toBe(true)
+    expect(foreachHidden.has('itemsExpression')).toBe(false)
+  })
+
+  it('continueExpression/itemsExpression 标 x-variable，三个 target 标 target-select', () => {
     expect(properties.continueExpression['x-variable']).toBe(true)
+    expect(properties.itemsExpression['x-variable']).toBe(true)
+    expect(properties.collectTarget['x-widget']).toBe(TARGET_SELECT_WIDGET)
     expect(properties.bodyTarget['x-widget']).toBe(TARGET_SELECT_WIDGET)
     expect(properties.exitTarget['x-widget']).toBe(TARGET_SELECT_WIDGET)
   })
 
-  it('labels/placeholders/hideFields 引用的字段都在 schema properties 内（无悬空键）', () => {
+  it('labels/placeholders/hiddenWhen 引用的字段都在 schema properties 内（无悬空键）', () => {
     const declared = new Set(propKeys)
     for (const key of Object.keys(loopUiSchema.labels ?? {})) {
       expect(declared.has(key), `label 字段 ${key} 未声明`).toBe(true)
@@ -105,8 +117,11 @@ describe('loop UISchema 与数据 schema 对齐（迁移等价基线）', () => 
     for (const key of Object.keys(loopUiSchema.placeholders ?? {})) {
       expect(declared.has(key), `placeholder 字段 ${key} 未声明`).toBe(true)
     }
-    for (const key of loopUiSchema.hideFields ?? []) {
-      expect(declared.has(key), `hideField ${key} 未声明`).toBe(true)
+    for (const rule of loopUiSchema.hiddenWhen ?? []) {
+      expect(declared.has(rule.field), `hiddenWhen field ${rule.field} 未声明`).toBe(true)
+      for (const key of rule.show) {
+        expect(declared.has(key), `hiddenWhen show ${key} 未声明`).toBe(true)
+      }
     }
   })
 

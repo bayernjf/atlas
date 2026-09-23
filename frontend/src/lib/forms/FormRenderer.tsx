@@ -30,7 +30,7 @@ import {
 import type { WidgetRegistry } from './registry'
 import type { SchemaSource } from './resolveWidget'
 import type { WidgetScope } from './types'
-import { applyUiSchema, decorateNodeForRender, type UiSchema } from './uiSchema'
+import { applyUiSchema, decorateNodeForRender, nestedHiddenFields, type UiSchema } from './uiSchema'
 
 export type FormRendererProps = {
   /** 根 schema（工具 input_schema，或节点字段 schema 片段）。 */
@@ -139,6 +139,17 @@ function Field({
 }
 
 function GroupView({ node, ctx }: { node: FormGroupNode; ctx: ViewContext }): ReactElement {
+  // rootScoped hiddenWhen：嵌套 object 组的局部字段随根判别值显隐（condition branches[] 行）。
+  const nestedHidden =
+    node.path.length > 0 ? nestedHiddenFields(ctx.uiSchema, ctx.root) : new Set<string>()
+  const visibleChildren =
+    nestedHidden.size === 0
+      ? node.children
+      : node.children.filter((child) => {
+          const last = child.path[child.path.length - 1]
+          const key = typeof last === 'string' ? last : undefined
+          return !key || !nestedHidden.has(key)
+        })
   // M4 ui:group：layout 'row' 让组内字段并排（视觉组专用）；缺省垂直堆叠。
   const row = node.layout === 'row'
   return (
@@ -152,7 +163,7 @@ function GroupView({ node, ctx }: { node: FormGroupNode; ctx: ViewContext }): Re
           {node.required && <Typography.Text type="danger"> *</Typography.Text>}
         </Typography.Text>
       )}
-      {node.children.map((child) =>
+      {visibleChildren.map((child) =>
         row ? (
           <div key={child.pointer} style={{ flex: 1, minWidth: 0 }}>
             <FormNodeView node={child} ctx={ctx} />

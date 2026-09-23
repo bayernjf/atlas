@@ -469,3 +469,8 @@ body,
   animation: problems-field-flash 1.6s ease-in-out 1;
   border-radius: 4px;
 }
+
+/* OpenAPI 预览：被跳过的 operation 行灰显 */
+.openapi-row-skipped > td {
+  color: rgba(0, 0, 0, 0.35);
+}

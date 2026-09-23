@@ -7,7 +7,9 @@ import {
   Popconfirm,
   Space,
   Table,
+  Tabs,
   Tag,
+  Tooltip,
   Typography,
   message,
 } from 'antd'
@@ -19,6 +21,8 @@ import {
   decideCardAction,
   getApprovalCard,
   listApprovalsQueue,
+  listDecidedApprovals,
+  type DecidedApprovalItem,
   type QueueApprovalItem,
   type WebCardView,
 } from '../lib/apiClient'
@@ -32,6 +36,13 @@ import { roleCan } from '../lib/auth'
 
 const { Content, Header } = Layout
 
+const RESOLVED_SOURCE_TEXT: Record<string, string> = {
+  human: '人工处理',
+  'email-link': '邮件链接处理',
+  timeout: '超时自动处理',
+  input: '输入预置',
+}
+
 type ApprovalsProps = {
   principal: Principal
   onLogout: () => void
@@ -39,8 +50,12 @@ type ApprovalsProps = {
 }
 
 export function Approvals({ principal, onLogout, onBack }: ApprovalsProps): ReactElement {
+  const [activeTab, setActiveTab] = useState<'pending' | 'decided'>('pending')
   const [items, setItems] = useState<QueueApprovalItem[]>([])
   const [loading, setLoading] = useState(false)
+  const [decidedItems, setDecidedItems] = useState<DecidedApprovalItem[]>([])
+  const [decidedLoading, setDecidedLoading] = useState(false)
+  const [decidedLoaded, setDecidedLoaded] = useState(false)
   const [cardToken, setCardToken] = useState<string | null>(null)
   const [cardView, setCardView] = useState<WebCardView | null>(null)
   const [cardError, setCardError] = useState('')
@@ -58,19 +73,37 @@ export function Approvals({ principal, onLogout, onBack }: ApprovalsProps): Reac
     }
   }, [])
 
+  const refreshDecided = useCallback(async () => {
+    setDecidedLoading(true)
+    try {
+      const body = await listDecidedApprovals(50)
+      setDecidedItems(body.items)
+      setDecidedLoaded(true)
+    } catch (exc) {
+      message.error(exc instanceof Error ? exc.message : '加载已处理审批失败')
+    } finally {
+      setDecidedLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     void refresh()
   }, [refresh])
 
+  // 已处理 Tab：切到时加载一次，之后仅手动刷新；不轮询。
+  useEffect(() => {
+    if (activeTab === 'decided' && !decidedLoaded) void refreshDecided()
+  }, [activeTab, decidedLoaded, refreshDecided])
+
   useEffect(() => {
     const timer = setInterval(() => {
-      if (document.visibilityState === 'visible') {
+      if (activeTab === 'pending' && document.visibilityState === 'visible') {
         void refresh()
         forceTick((n) => n + 1)
       }
     }, 10_000)
     return () => clearInterval(timer)
-  }, [refresh])
+  }, [refresh, activeTab])
 
   useEffect(() => {
     if (cardToken === null) return
@@ -164,6 +197,49 @@ export function Approvals({ principal, onLogout, onBack }: ApprovalsProps): Reac
     },
   ]
 
+  const decidedColumns: ColumnsType<DecidedApprovalItem> = [
+    { title: '审批说明', dataIndex: 'summary' },
+    { title: '图', dataIndex: 'graph_id', width: 90 },
+    { title: '节点', dataIndex: 'node_id', width: 100 },
+    {
+      title: '处理结果',
+      dataIndex: 'decision',
+      width: 100,
+      render: (value: string) => (
+        <Tag color={value === 'approved' ? 'green' : 'red'}>
+          {value === 'approved' ? '同意' : '拒绝'}
+        </Tag>
+      ),
+    },
+    {
+      title: '处理来源',
+      dataIndex: 'resolvedBy',
+      width: 130,
+      render: (value: string) => RESOLVED_SOURCE_TEXT[value] ?? value,
+    },
+    {
+      title: '处理备注',
+      dataIndex: 'comment',
+      width: 140,
+      render: (value: string) =>
+        value ? (
+          <Tooltip title={value}>
+            <Typography.Text style={{ maxWidth: 120 }} ellipsis>
+              {value}
+            </Typography.Text>
+          </Tooltip>
+        ) : (
+          <Typography.Text type="secondary">-</Typography.Text>
+        ),
+    },
+    {
+      title: '创建时间',
+      dataIndex: 'createdAt',
+      width: 170,
+      render: (value: number) => formatCreatedAt(value),
+    },
+  ]
+
   return (
     <Layout style={{ minHeight: '100vh' }}>
       <Header style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
@@ -175,24 +251,65 @@ export function Approvals({ principal, onLogout, onBack }: ApprovalsProps): Reac
       </Header>
       <Content style={{ padding: 24 }}>
         <Card
-          title="待处理审批"
           extra={
             <Space>
-              <Typography.Text type="secondary">每 10 秒自动刷新</Typography.Text>
-              <Button onClick={() => void refresh()} loading={loading}>
-                手动刷新
-              </Button>
               <Button onClick={onBack}>返回</Button>
             </Space>
           }
         >
-          <Table
-            rowKey="token"
-            columns={columns}
-            dataSource={items}
-            loading={loading}
-            pagination={false}
-            locale={{ emptyText: '当前没有待处理的审批请求' }}
+          <Tabs
+            activeKey={activeTab}
+            onChange={(key) => setActiveTab(key as 'pending' | 'decided')}
+            items={[
+              {
+                key: 'pending',
+                label: '待处理',
+                children: (
+                  <>
+                    <Space style={{ marginBottom: 12 }}>
+                      <Typography.Text type="secondary">
+                        每 10 秒自动刷新
+                      </Typography.Text>
+                      <Button onClick={() => void refresh()} loading={loading}>
+                        手动刷新
+                      </Button>
+                    </Space>
+                    <Table
+                      rowKey="token"
+                      columns={columns}
+                      dataSource={items}
+                      loading={loading}
+                      pagination={false}
+                      locale={{ emptyText: '当前没有待处理的审批请求' }}
+                    />
+                  </>
+                ),
+              },
+              {
+                key: 'decided',
+                label: '已处理',
+                children: (
+                  <>
+                    <Space style={{ marginBottom: 12 }}>
+                      <Button
+                        onClick={() => void refreshDecided()}
+                        loading={decidedLoading}
+                      >
+                        手动刷新
+                      </Button>
+                    </Space>
+                    <Table
+                      rowKey="token"
+                      columns={decidedColumns}
+                      dataSource={decidedItems}
+                      loading={decidedLoading}
+                      pagination={false}
+                      locale={{ emptyText: '当前没有已处理的审批记录' }}
+                    />
+                  </>
+                ),
+              },
+            ]}
           />
         </Card>
       </Content>

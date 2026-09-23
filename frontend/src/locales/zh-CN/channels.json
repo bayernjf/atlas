@@ -1,0 +1,86 @@
+{
+  "cardTitle": "销售渠道绑定",
+  "empty": "暂无渠道绑定",
+  "col": {
+    "shop": "店铺",
+    "provider": "平台",
+    "status": "状态",
+    "connection": "来源连接",
+    "actions": "操作"
+  },
+  "provider": { "shopify": "Shopify" },
+  "status": {
+    "connected": "已连接",
+    "error": "异常"
+  },
+  "button": {
+    "bind": "绑定渠道",
+    "test": "测试"
+  },
+  "deleteConfirm": {
+    "title": "删除渠道绑定？",
+    "description": "仅移除本系统内的渠道绑定，不影响底层连接，也不会撤销平台侧授权。"
+  },
+  "modal": { "title": "绑定销售渠道" },
+  "form": {
+    "provider": "平台",
+    "connection": "选择连接",
+    "connectionPlaceholder": "选择已完成授权的 OAuth2 连接",
+    "connectionRequired": "请选择一个连接",
+    "shop": "店铺名",
+    "shopPlaceholder": "例如 acme（对应 acme.myshopify.com）",
+    "shopRequired": "请填写店铺名",
+    "apiVersion": "API 版本"
+  },
+  "message": {
+    "bound": "渠道绑定已建立",
+    "deleted": "绑定已删除",
+    "testOk": "探活成功",
+    "testFail": "探活失败"
+  },
+  "error": {
+    "loadList": "渠道绑定加载失败",
+    "bind": "绑定失败",
+    "test": "探活请求失败",
+    "delete": "删除失败",
+    "formInvalid": "请完整填写表单"
+  },
+  "webhook": {
+    "button": "Webhook",
+    "modal": { "title": "入站 Webhook 订阅" },
+    "urlLabel": "Webhook 回调地址（填入 Shopify 后台「通知 → Webhook」，事件版本选 2025-01）",
+    "copy": "复制",
+    "hint": "在 Shopify 后台手动添加 Webhook 时粘贴上述地址；平台按 X-Shopify-Hmac-SHA256 用本绑定连接的 client secret 验签，验签失败一律拒绝。",
+    "subsTitle": "topic → 图订阅（每个 topic 可触发多个图，至多 10 条）",
+    "topic": {
+      "orders_create": "orders/create（订单创建）",
+      "orders_updated": "orders/updated（订单更新）",
+      "refunds_create": "refunds/create（退款创建）"
+    },
+    "graphPlaceholder": "选择要触发的图",
+    "nodesUnit": "节点",
+    "enabled": "启用",
+    "disabled": "停用",
+    "add": "新增订阅",
+    "message": {
+      "urlCopied": "回调地址已复制",
+      "saved": "Webhook 订阅已保存"
+    },
+    "error": {
+      "load": "订阅加载失败",
+      "copy": "复制失败，请手动选择复制",
+      "save": "订阅保存失败"
+    }
+  },
+  "remoteWebhooks": {
+    "title": "Shopify 店铺侧注册（经 Admin API 一键注册回调）",
+    "hint": "先在上方本地订阅 topic → 图，再把对应 topic 注册到 Shopify；本地订阅与店铺注册两个动作分别触发，不会自动同步。注册地址必须为 HTTPS，请配置 ATLAS_PUBLIC_URL。",
+    "registered": "已注册",
+    "register": "注册到 Shopify",
+    "unregister": "取消注册",
+    "loadError": "店铺侧注册状态加载失败",
+    "error": {
+      "CHANNEL_UNAUTHORIZED": "店铺访问令牌已失效，请在连接管理中重新授权"
+    }
+  }
+}

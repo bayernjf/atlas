@@ -15,18 +15,19 @@ from atlas.harness.base import (
     Permission,
     StructuredError,
 )
-from .service import MAX_RECIPIENTS, MessageSendError, MessageService
+from .service import MAX_RECIPIENTS, MAX_SECRET_LENGTH, MessageSendError, MessageService
 
 _SEND_INPUT_SCHEMA = {
     "type": "object",
     "properties": {
-        "channel": {"type": "string", "description": "email（SMTP 真实发信）/webhook（向单个 URL POST JSON，过 SSRF 校验）真实投递；sms/im 或其他标识仅进程内记录（v1 不路由）"},
+        "channel": {"type": "string", "description": "真实投递：email（SMTP）/webhook（单 URL POST JSON）/dingtalk/wecom/feishu（群机器人，均过 SSRF 校验）；sms 或其他标识仅进程内记录（v1 不路由）"},
         "to": {
-            "description": "收件人字符串或字符串数组（群发上限 20；email 渠道须含 @）",
+            "description": "收件人字符串或字符串数组（群发上限 20；email 渠道须含 @）；webhook 与 IM 渠道为单个 URL",
             "oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}, "maxItems": MAX_RECIPIENTS}],
         },
         "subject": {"type": "string"},
         "body": {"type": "string"},
+        "secret": {"type": "string", "description": "仅 dingtalk/feishu：群机器人加签密钥；留空不加签；运行时参数（生产应由 secret provider 注入）", "maxLength": MAX_SECRET_LENGTH},
     },
     "required": ["channel", "to", "subject", "body"],
 }
@@ -57,7 +58,7 @@ class MessageHarnessAdapter(HarnessAdapter):
         return [
             Capability(
                 name="send",
-                description="发送进程内演示消息（仅记录不投递，群发上限 20）",
+                description="发送消息：email/webhook/dingtalk/wecom/feishu 真实投递（IM 与 webhook 单 URL、过 SSRF 校验），其余渠道仅进程内记录；群发上限 20",
                 action="message_send",
                 input_schema=_SEND_INPUT_SCHEMA,
                 output_schema=_SEND_OUTPUT_SCHEMA,
@@ -79,6 +80,7 @@ class MessageHarnessAdapter(HarnessAdapter):
                 to=params.get("to"),
                 subject=params.get("subject"),
                 body=params.get("body"),
+                secret=params.get("secret"),
             )
         except MessageSendError as exc:
             return ActionResult.failed(StructuredError(exc.code, str(exc)))

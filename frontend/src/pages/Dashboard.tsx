@@ -14,9 +14,11 @@ type DashboardProps = {
   onOpenConnections: () => void
   onOpenUsers: () => void
   onOpenApprovals: () => void
+  onOpenAudit: () => void
+  onOpenOpenApi: () => void
 }
 
-export function Dashboard({ principal, onLogout, onOpenEditor, onOpenMonitoring, onOpenMemory, onOpenConnections, onOpenUsers, onOpenApprovals }: DashboardProps) {
+export function Dashboard({ principal, onLogout, onOpenEditor, onOpenMonitoring, onOpenMemory, onOpenConnections, onOpenUsers, onOpenApprovals, onOpenAudit, onOpenOpenApi }: DashboardProps) {
   // 页面专属文案走 dashboard namespace；品牌名/主导航是跨页通用文案，显式取 common: 前缀。
   const { t } = useTranslation('dashboard')
   return (
@@ -40,8 +42,14 @@ export function Dashboard({ principal, onLogout, onOpenEditor, onOpenMonitoring,
               {roleCan(principal.role, 'operate') && (
                 <Button onClick={onOpenConnections}>{t('common:nav.connections')}</Button>
               )}
+              {roleCan(principal.role, 'operate') && (
+                <Button onClick={onOpenOpenApi}>{t('common:nav.openapi')}</Button>
+              )}
               {roleCan(principal.role, 'administer') && (
                 <Button onClick={onOpenUsers}>{t('common:nav.users')}</Button>
+              )}
+              {roleCan(principal.role, 'administer') && (
+                <Button onClick={onOpenAudit}>{t('common:nav.audit')}</Button>
               )}
             </Space>
           </Card>

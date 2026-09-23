@@ -7,7 +7,6 @@ name = "atlas"
 version = "0.0.1"
 description = "Atlas — Agent orchestration platform (Harness / Graph / Loop)"
 requires-python = ">=3.11"
-license = "MIT"
 dependencies = [
     # AI engine (10 doc §2; ADR: LangChain + LangGraph core)
     "langgraph>=1.2,<2",
