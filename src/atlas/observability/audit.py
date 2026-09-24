@@ -48,6 +48,25 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def parse_bound(value: str) -> datetime:
+    """把 since/until 解析成 aware datetime（接受尾部 Z；naive 按 UTC 处理）。
+
+    存储侧是 `now_iso()` 的 UTC ISO-8601，秒以下是否带小数位取决于时刻，靠 TEXT
+    字典序比较是侥幸正确；这里统一按时刻比较，PG 侧再交给 `::timestamptz` 语义。
+    """
+    raw = value.strip()
+    text_value = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
+    parsed = datetime.fromisoformat(text_value)
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+
+
+def _at(event_at: str, bound: datetime | None, *, upper: bool) -> bool:
+    if bound is None:
+        return True
+    moment = parse_bound(event_at)
+    return moment <= bound if upper else moment >= bound
+
+
 class AuditEvent(BaseModel):
     """单条审计事件（仅元数据，无任何请求载荷/凭据）。"""
 
@@ -59,6 +78,9 @@ class AuditEvent(BaseModel):
     path: str  # 实际路径（不含 query）
     ip: str
     at: str  # UTC ISO-8601
+    # docs/61 §4.1：两档共用的游标（内存档=本 store 单调计数，PG 档=storage_id_seq）。
+    # 带默认值以兼容既有夹具；分页一律走 seq，不解析 id 字符串。
+    seq: int = 0
 
 
 @runtime_checkable
@@ -74,9 +96,25 @@ class AuditRepository(Protocol):
         ip: str,
     ) -> dict[str, Any]: ...
 
-    def list(self, *, limit: int = 100, action_prefix: str | None = None) -> list[dict[str, Any]]: ...
+    def list(
+        self,
+        *,
+        limit: int = 100,
+        action_prefix: str | None = None,
+        actor: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        cursor: int | None = None,
+    ) -> list[dict[str, Any]]: ...
 
-    def export_jsonl(self, *, action_prefix: str | None = None) -> str: ...
+    def export_jsonl(
+        self,
+        *,
+        action_prefix: str | None = None,
+        actor: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> str: ...
 
     def clear(self) -> None: ...
 
@@ -110,27 +148,86 @@ class AuditStore:
                 path=path,
                 ip=ip or "",
                 at=now_iso(),
+                seq=self._counter,
             )
             self._items.append(event)
         return event.model_dump()
 
     @staticmethod
-    def _matches(event: AuditEvent, action_prefix: str | None) -> bool:
-        return action_prefix is None or event.action.startswith(action_prefix)
+    def _matches(
+        event: AuditEvent,
+        *,
+        action_prefix: str | None = None,
+        actor: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        cursor: int | None = None,
+    ) -> bool:
+        if action_prefix is not None and not event.action.startswith(action_prefix):
+            return False
+        if actor is not None and event.actor != actor:
+            return False
+        if cursor is not None and event.seq >= cursor:
+            return False
+        if not _at(event.at, parse_bound(since) if since else None, upper=False):
+            return False
+        if not _at(event.at, parse_bound(until) if until else None, upper=True):
+            return False
+        return True
 
-    def list(self, *, limit: int = 100, action_prefix: str | None = None) -> list[dict[str, Any]]:
-        """倒序（最新在前），可按 action 前缀过滤；端点层负责把 limit clamp 到 1–500。"""
+    def list(  # noqa: C901 - 五个可选过滤都是同一 _matches 调用
+        self,
+        *,
+        limit: int = 100,
+        action_prefix: str | None = None,
+        actor: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        cursor: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """倒序（最新在前）；端点层负责把 limit clamp 到 1–500。
+
+        `cursor` 取严格更早的一页（`seq < cursor`），`since`/`until` 为闭区间。
+        """
         bounded = max(1, min(int(limit), 500))
         with self._lock:
-            matched = [e for e in reversed(self._items) if self._matches(e, action_prefix)]
-            return [e.model_dump() for e in matched[:bounded]]
+            matched = [
+                event
+                for event in reversed(self._items)
+                if self._matches(
+                    event,
+                    action_prefix=action_prefix,
+                    actor=actor,
+                    since=since,
+                    until=until,
+                    cursor=cursor,
+                )
+            ]
+            return [event.model_dump() for event in matched[:bounded]]
 
-    def export_jsonl(self, *, action_prefix: str | None = None) -> str:
-        """正序（旧→新，符合日志归档习惯）的 JSONL；每行一个事件。"""
+    def export_jsonl(
+        self,
+        *,
+        action_prefix: str | None = None,
+        actor: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> str:
+        """正序（旧→新，符合日志归档习惯）的 JSONL；每行一个事件，不受分页影响。"""
         with self._lock:
-            matched = [e for e in self._items if self._matches(e, action_prefix)]
+            matched = [
+                event
+                for event in self._items
+                if self._matches(
+                    event,
+                    action_prefix=action_prefix,
+                    actor=actor,
+                    since=since,
+                    until=until,
+                )
+            ]
             return "\n".join(
-                json.dumps(e.model_dump(), ensure_ascii=False) for e in matched
+                json.dumps(event.model_dump(), ensure_ascii=False) for event in matched
             )
 
     def clear(self) -> None:

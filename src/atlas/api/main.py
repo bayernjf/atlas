@@ -502,33 +502,94 @@ def prometheus_metrics() -> Response:
     return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")
 
 
+def _audit_bounds(since: str | None, until: str | None) -> tuple[str | None, str | None]:
+    """校验 since/until（docs/61 §4.2）：非法 ISO 或 since>until → 422 中文聚合。
+
+    项目没有全局 RequestValidationError 中文处理器，故在端点内手工校验（照静默 PUT 先例）。
+    """
+    from datetime import timezone
+
+    from atlas.observability.audit import parse_bound
+
+    def _clean(value: str | None) -> str | None:
+        return value.strip() if value and value.strip() else None
+
+    lo, hi = _clean(since), _clean(until)
+    errors: list[str] = []
+    parsed: dict[str, Any] = {}
+    for name, label, raw in (("since", "since（起始时间）", lo), ("until", "until（截止时间）", hi)):
+        if raw is None:
+            continue
+        try:
+            parsed[name] = parse_bound(raw).astimezone(timezone.utc)
+        except ValueError:
+            errors.append(f"{label}不是合法的 ISO-8601 时间：{raw}")
+    if not errors and lo and hi and parsed["since"] > parsed["until"]:
+        errors.append(f"since 不能晚于 until（{lo} > {hi}）")
+    if errors:
+        raise HTTPException(status_code=422, detail=errors)
+    return lo, hi
+
+
+def _audit_cursor(cursor: int | None) -> int | None:
+    if cursor is None:
+        return None
+    if int(cursor) < 1:
+        raise HTTPException(status_code=422, detail=[f"cursor 必须为正整数游标，收到：{cursor}"])
+    return int(cursor)
+
+
 @app.get("/api/audit/events")
 def list_audit_events(
     principal: Principal = Depends(require("administer")),
     limit: int = 100,
     action: str | None = None,
+    actor: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    cursor: int | None = None,
 ) -> dict[str, Any]:
-    """写操作审计事件（docs/35 §6，T6）：倒序（最新在前），admin only，只读本租户；
-    limit clamp 到 1–500；action 为路由动作前缀过滤（如 ``POST /api/graphs``）。"""
+    """写操作审计事件（docs/35 §6 T6；docs/61 §4.2 补过滤与游标分页）：
+    倒序（最新在前），admin only，只读本租户；limit 为页大小 clamp 1–500；
+    action 路由动作前缀、actor 精确等值、since/until UTC ISO-8601 闭区间、
+    cursor 取严格更早的一页（上一页最后一条的 seq）；响应补 nextCursor（无更多则 null）。"""
     bounded = max(1, min(int(limit), 500))
     action_prefix = action.strip() if action and action.strip() else None
+    actor_exact = actor.strip() if actor and actor.strip() else None
+    lo, hi = _audit_bounds(since, until)
+    page = _audit_cursor(cursor)
     items = services_for(principal).audit_store.list(
-        limit=bounded, action_prefix=action_prefix
+        limit=bounded,
+        action_prefix=action_prefix,
+        actor=actor_exact,
+        since=lo,
+        until=hi,
+        cursor=page,
     )
-    return {"items": items, "limit": bounded}
+    # 取满一页才可能有下一页；游标即本页最后一条的 seq（不足一页说明到底了）。
+    next_cursor = items[-1]["seq"] if len(items) == bounded and items else None
+    return {"items": items, "limit": bounded, "nextCursor": next_cursor}
 
 
 @app.get("/api/audit/export")
 def export_audit_events(
     principal: Principal = Depends(require("administer")),
     action: str | None = None,
+    actor: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
     fmt: str | None = Query(default="jsonl", alias="format"),
 ) -> StreamingResponse:
-    """导出审计为 JSONL 附件（admin only，正序旧→新）；v1 仅支持 format=jsonl。"""
+    """导出审计为 JSONL 附件（admin only，正序旧→新）；受同一套过滤，**不受分页影响**
+    （无 cursor，导出的是全部匹配行）；v1 仅支持 format=jsonl。"""
     if fmt != "jsonl":
         raise HTTPException(status_code=422, detail="仅支持 format=jsonl")
     action_prefix = action.strip() if action and action.strip() else None
-    body = services_for(principal).audit_store.export_jsonl(action_prefix=action_prefix)
+    actor_exact = actor.strip() if actor and actor.strip() else None
+    lo, hi = _audit_bounds(since, until)
+    body = services_for(principal).audit_store.export_jsonl(
+        action_prefix=action_prefix, actor=actor_exact, since=lo, until=hi
+    )
     headers = {"Content-Disposition": 'attachment; filename="atlas-audit.jsonl"'}
     return StreamingResponse(
         iter([body.encode("utf-8")]),

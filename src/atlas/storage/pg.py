@@ -2021,9 +2021,11 @@ class PgAuditStore:
             "path": row[5],
             "ip": row[6] or "",
             "at": row[7],
+            # docs/61 §4.1：游标分页用 seq（本表早有该列），与内存档新字段同形。
+            "seq": int(row[8]),
         }
 
-    _COLS = "id, tenant_id, actor, action, status_code, path, ip, at"
+    _COLS = "id, tenant_id, actor, action, status_code, path, ip, at, seq"
 
     def record(
         self,
@@ -2073,25 +2075,68 @@ class PgAuditStore:
     def _escape_prefix(prefix: str) -> str:
         return prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
-    def _where(self, args: dict[str, Any], action_prefix: str | None) -> str:
+    def _where(
+        self,
+        args: dict[str, Any],
+        action_prefix: str | None,
+        *,
+        actor: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        cursor: int | None = None,
+    ) -> str:
+        from atlas.observability.audit import parse_bound
+
         clauses = ["tenant_id = :tenant_id"]
         if action_prefix:
             clauses.append("action LIKE :prefix ESCAPE '\\'")
             args["prefix"] = self._escape_prefix(action_prefix) + "%"
+        if actor:
+            clauses.append("actor = :actor")
+            args["actor"] = actor
+        if cursor is not None:
+            clauses.append("seq < :cursor")
+            args["cursor"] = int(cursor)
+        # 时刻比较走 timestamptz 语义（列是 TEXT，但值一律由 now_iso() 写入）；
+        # 绑参必须写 CAST(:x AS timestamptz)，:x::timestamptz 会被 SQLAlchemy 当参数名吃掉。
+        if since:
+            clauses.append("at::timestamptz >= CAST(:since AS timestamptz)")
+            args["since"] = parse_bound(since).isoformat()
+        if until:
+            clauses.append("at::timestamptz <= CAST(:until AS timestamptz)")
+            args["until"] = parse_bound(until).isoformat()
         return " AND ".join(clauses)
 
-    def list(self, *, limit: int = 100, action_prefix: str | None = None) -> list[dict[str, Any]]:
+    def list(  # noqa: C901 - 五个可选过滤拼进同一 _where
+        self,
+        *,
+        limit: int = 100,
+        action_prefix: str | None = None,
+        actor: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        cursor: int | None = None,
+    ) -> list[dict[str, Any]]:
         bounded = max(1, min(int(limit), 500))
         args: dict[str, Any] = {"tenant_id": self._tenant_id, "limit": bounded}
-        where = self._where(args, action_prefix)
+        where = self._where(
+            args, action_prefix, actor=actor, since=since, until=until, cursor=cursor
+        )
         sql = f"SELECT {self._COLS} FROM audit_events WHERE {where} ORDER BY seq DESC LIMIT :limit"
         with self._engine.connect() as conn:
             rows = conn.execute(text(sql), args).all()
         return [self._row_to_dict(row) for row in rows]
 
-    def export_jsonl(self, *, action_prefix: str | None = None) -> str:
+    def export_jsonl(
+        self,
+        *,
+        action_prefix: str | None = None,
+        actor: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> str:
         args: dict[str, Any] = {"tenant_id": self._tenant_id}
-        where = self._where(args, action_prefix)
+        where = self._where(args, action_prefix, actor=actor, since=since, until=until)
         sql = f"SELECT {self._COLS} FROM audit_events WHERE {where} ORDER BY seq ASC"
         with self._engine.connect() as conn:
             rows = conn.execute(text(sql), args).all()
