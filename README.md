@@ -88,5 +88,5 @@ Demo 里程碑 W1-W10 与验收标准见 [08 任务迭代计划](docs/08-任务�
 
 ## License
 
-暂无（许可证未定，LICENSE 文件已移除）。
+**不开放（proprietary）**——无 LICENSE 文件，`pyproject.toml` 与 `frontend/package.json` 亦无 license 字段。MIT 曾于 2026-09-22 短暂落地（`c40b46c`），同日由用户拍板删除并保持不开放（`f721c18`）；决策记录见 [docs/08](docs/08-任务迭代计划.md) 与 [docs/34](docs/34-MVP上线就绪评审-2026-09-22复审.md) 的 2026-09-22 更新注记。
 
