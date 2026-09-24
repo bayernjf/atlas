@@ -58,7 +58,7 @@
 | `channel_webhook` | **docs/39 立项 2026-09-23（入站 Webhook 批，ADR T29，docs-only 契约先行）**；权威 docs/39＋`src/atlas/channels/webhooks.py`。公开免登录 `POST /api/channels/hooks/shopify/{binding_id}`：Shopify HMAC-SHA256（base64，X-Shopify-Hmac-SHA256，原始 body 先于 JSON 解析、compare_digest），必需头 X-Shopify-Shop-Domain/X-Shopify-Topic/X-Shopify-Webhook-Id；响应三态 200 `{received|duplicate|ignored}:true`，400 WEBHOOK_MALFORMED（缺头/非 JSON 对象）、401 WEBHOOK_BAD_SIGNATURE（不区分缺失/不匹配）、404 未知绑定（统一文案不泄漏）、503 WEBHOOK_SECRET_UNAVAILABLE（client_secret 信封缺失/解密失败）；验签通过后绝不非 2xx。订阅端点 GET(read)/PUT(**administer**，全量替换，聚合中文 422，graph 不存在 404)；幂等环 per-tenant 进程内 ring 200/1h；审计 `channel.webhook_received:{topic}`（无 body） | docs/39（形状权威）；REST 见 12 文档；运行时见 06 §6.21 |
 | `webhook_delivery` | **docs/40 立项 2026-09-23（入站可靠性补强批，零新依赖/无 ADR，docs-only 契约先行）**；权威 docs/40＋`src/atlas/channels/deliveries.py`。表 `webhook_deliveries`（迁移 017，PK(tenant_id, webhook_id)，reset 不清）：字段 `binding_id, topic, shop, status(received|dead), reasons[{graphId,code}], payload(JSONB，仅 dead 行), duplicates, created_at, updated_at, replayed_at`。去重：ignored 投递不落表；首次非 ignored 投递建行，重复命中 `duplicates+=1` 返 duplicate；topic 有启用订阅但**全部**订阅未触发（code：NO_PUBLISHED_VERSION/RESOLVE_FAILED/TRIGGER_FAILED/MISSING_GRAPH_ID）→ mark_dead 存 envelope.data；≥1 触发 → received、payload 恒 NULL。死信投影（列表）不含 payload；重放按存储 payload 重建信封、绕过去重按当前订阅重投，成功清 payload 写 replayed_at。metrics：`{byTopic:{topic:{received,dead,duplicates}}, totals}` 实时聚合 | docs/40（形状权威）；REST 见 12 文档 |
 | `shopify_remote_webhook` | **docs/41 立项 2026-09-23（Shopify 侧 Webhook 注册批，零新依赖/零迁移/无 ADR，docs-only 契约先行）**；权威 docs/41＋`src/atlas/channels/shopify.py`（client 方法）/`registry.py`。形状：远端注册项 `{remoteId, topic, address}`（remoteId 为 Shopify webhook id 字符串；address 恒为本平台 `{public_url}/api/channels/hooks/shopify/{binding_id}`，服务端拼装钉版）。POST 请求体仅 `{topic}`（topic ∈ SUPPORTED_TOPICS）；Shopify 422（同 topic+address 已存在）折 `CHANNEL_ALREADY_REGISTERED`→端点 409；public_url 非 https → 422。GET 响应 `{items:[...], error?:string}`（渠道令牌失效时 200、items 空、error 给码）；DELETE 200 `{deleted:bool}` 幂等。无本地表、无迁移；注册状态实时查 Shopify | docs/41（形状权威）；REST 见 12 文档 |
-| `audit_event` | **docs/35 T6 已落码收口 2026-09-22（`f243e04`，审计日志，docs/34 P1 #8）**；权威 docs/35 §6 + `src/atlas/observability/audit.py`（AuditEvent/AuditStore ring 2000/租户/AuditRepository）＋`storage/pg.py` PgAuditStore（表 `audit_events`，迁移 013，reset 不清）。仅 8 个元数据字段：id `aud-N`/tenant_id/actor(用户或 anonymous)/action(如 graph.run/create)/method/path_format(路由模板，解析失败降级实际 path)/status_code/client_ip/request_id/occurred_at；**绝不记请求体、响应体、Authorization/Cookie 或任何凭据**；仅 /api 写方法（POST/PUT/PATCH/DELETE）经 HTTP 中间件记录，login 成功显式记一条，GET 不记；GET /api/audit/events 与 /api/audit/export?format=jsonl 均 administer；**2026-09-22 起两端点有应用内 admin 页面 `pages/AuditLog.tsx`（action 前缀过滤＋limit 50/100/200＋Bearer blob 导出，docs/37 包 A），端点本身不变**；**打包 H H3 已落码定稿（2026-09-25，`8a9f7df`/`36a3cbb`/`a07794c`；形状权威＝docs/61 §4，偏差见其顶部注记 ⑤⑥）**：`AuditEvent` 增第 9 字段 `seq: int = 0`（带默认值免既有夹具全改；内存档由 store 侧持锁单调计数赋真值、PG 档读回迁移 013 既有 `seq` 列，两档对齐故可共用游标），投影回传 `seq` 供前端翻页；两档 `list` 统一签名 `list(limit=100, *, action, actor, since, until, cursor) -> (items, nextCursor)`——`actor` 精确等值、`since`/`until` 为 UTC ISO-8601 字符串按 **TEXT 字典序闭区间**比较（前提＝全部 `at` 同格式同 `+00:00` 时区，以不变量测试锁死）、`cursor` 取 `seq < cursor` 倒序更早一页、`limit` 为页大小 clamp 1-500 默认 100；`export_jsonl` 受同套过滤但**不接受 cursor**（导出全量匹配、正序 `seq ASC` 不变）；两端点权限仍 administer、**零迁移/零新端点**，响应超集增 `nextCursor: int\|null`，非法 ISO/`since>until`/`cursor` 非正整数由端点内手工抛中文聚合 422（项目无全局 RequestValidationError 中文处理器）。**仍不记请求体/响应体/凭据、GET 读操作仍不记** | docs/35 §6（工程契约） |
+| `audit_event` | **docs/35 T6 已落码收口 2026-09-22（`f243e04`，审计日志，docs/34 P1 #8）**；权威 docs/35 §6 + `src/atlas/observability/audit.py`（AuditEvent/AuditStore ring 2000/租户/AuditRepository）＋`storage/pg.py` PgAuditStore（表 `audit_events`，迁移 013，reset 不清）。仅 8 个元数据字段：id `aud-N`/tenant_id/actor(用户或 anonymous)/action(如 graph.run/create)/method/path_format(路由模板，解析失败降级实际 path)/status_code/client_ip/request_id/occurred_at；**绝不记请求体、响应体、Authorization/Cookie 或任何凭据**；仅 /api 写方法（POST/PUT/PATCH/DELETE）经 HTTP 中间件记录，login 成功显式记一条，GET 不记；GET /api/audit/events 与 /api/audit/export?format=jsonl 均 administer；**2026-09-22 起两端点有应用内 admin 页面 `pages/AuditLog.tsx`（action 前缀过滤＋limit 50/100/200＋Bearer blob 导出，docs/37 包 A），端点本身不变**；**打包 H H3 已落码定稿（2026-09-25，`8a9f7df`/`36a3cbb`/`a07794c`；形状权威＝docs/61 §4，偏差见其顶部注记 ⑤⑥）**：`AuditEvent` 增第 9 字段 `seq: int = 0`（带默认值免既有夹具全改；内存档由 store 侧持锁单调计数赋真值、PG 档读回迁移 013 既有 `seq` 列，两档对齐故可共用游标），投影回传 `seq` 供前端翻页；两档 `list` 统一签名 `list(limit=100, *, action, actor, since, until, cursor) -> (items, nextCursor)`——`actor` 精确等值、`since`/`until` 为 UTC ISO-8601 字符串，两档统一经 `audit.py:51 parse_bound` 解析成 **aware datetime 按时刻比**、闭区间含两端（**落码偏差 docs/61 注记 ⑥**：原契约「TEXT 字典序即时间序」只是侥幸成立——`now_iso()` 微秒为 0 时省略小数位，且前端 `toISOString()` 带 `Z` 与存储侧 `+00:00` 不可直比；PG 侧走 `at::timestamptz >= CAST(:since AS timestamptz)`，`storage/pg.py:2103/2106`；绑参必须 CAST 形式，`:x::type` 会被 SQLAlchemy 当参数名吃掉）、`cursor` 取 `seq < cursor` 倒序更早一页、`limit` 为页大小 clamp 1-500 默认 100；`export_jsonl` 受同套过滤但**不接受 cursor**（导出全量匹配、正序 `seq ASC` 不变）；两端点权限仍 administer、**零迁移/零新端点**，响应超集增 `nextCursor: int\|null`，非法 ISO/`since>until`/`cursor` 非正整数由端点内手工抛中文聚合 422（项目无全局 RequestValidationError 中文处理器）。**仍不记请求体/响应体/凭据、GET 读操作仍不记** | docs/35 §6（工程契约） |
 
 ---
 
@@ -467,21 +467,23 @@ response: {token, decision, resolvedBy, actionId?}
 
 ```yaml
 # GET /api/approvals/decided?limit=50（read，全部登录角色；本租户分区）
+#   响应 {items:[…], limit:int}；投影由 ApprovalHistoryStore 出，内存/PG 两档同形
 items:
   token: string
   node_id: string               # snake_case，与 GET /api/approvals 同形
   graph_id: string
   summary: string
   approver: string
-  createdAt: float              # pending 创建 epoch 秒
+  createdAt: string             # UTC ISO-8601（打包 H H2 起由 float epoch 改为 ISO 串；单一转换点 history.epoch_to_iso）
+  resolvedAt: string            # H2 新增：决策落地时刻，UTC ISO-8601
   decision: "approved|rejected"
   resolvedBy: string            # human | email-link | timeout | input
   comment: string
-  cardTemplateId: string        # 有则附带
-limit: int                      # 回显；端点 clamp 1–200（broker 默认 50）
-# 不返回 card_context 快照、Event 等内部对象；按 resolved_at 倒序（最近处理在前）
+  cardTemplateId: string        # 有则附带（空则整键省略）
+limit: int                      # 回显；端点 clamp 1–200（store 默认 50）
+# 不返回 card_context/notify_recipients/action_id 等内部对象；按 resolved_at 倒序（最近处理在前）
 ```
-> 只读投影、不改挂起/决策语义；数据进程内、reset 清空、重启即失（D20 不变）。`_Pending` 保留 `notify_recipients: list[str]`（request 原样留存、不去重，去重在 loader 收件人解析阶段；restore 默认空），决策后旁路发结果邮件：subject `[Atlas] 审批已处理：{summary}`；正文含审批节点/图、结果、处理来源行，comment 非空时附「处理备注」行并截断 ≤200 字符，**不含 token 或任何决策链接**。
+> 只读投影、不改挂起/决策语义。**打包 H H2（2026-09-25，`33a5998`/`528f6b1`/`e380f0b`，迁移 027）起历史不再「重启即失」**：四决策来源经 `resolve`/`complete_timeout` 在锁外共享 `_record_history`（存储异常只 `logger.warning`、绝不阻断放行），内存档 `InMemoryApprovalHistoryStore` deque ring 200、PG 档 `PgApprovalHistoryStore`（PK `(tenant_id, token)`、同 token upsert、`seq` 取 `storage_id_seq`、惰性 OFFSET 裁剪）跨重启与跨实例可见；`reset` 随 broker 清本租户。D20 挂起审批的进程内口径不变。`_Pending` 保留 `notify_recipients: list[str]`（request 原样留存、不去重，去重在 loader 收件人解析阶段；restore 默认空），决策后旁路发结果邮件：subject `[Atlas] 审批已处理：{summary}`；正文含审批节点/图、结果、处理来源行，comment 非空时附「处理备注」行并截断 ≤200 字符，**不含 token 或任何决策链接**。
 
 ### `evaluation_task` — 字段概览（完整定义见 06-运行时与质量保障.md #125，上下文章节：### 9.2 评估 Harness 设计（借鉴 lm-evaluation-harness）代码示例）
 
@@ -834,13 +836,13 @@ assignee: string?         # docs/33 §5 ⑩：告警「新建」时指派的当�
 >
 > **租户注记（2026-09-16，§5.14）**：运行记录、指标、告警、规则均按租户分区（每租户独立 MonitoringStore 实例，run-/alt- 计数各租户从 1 起）；reset 仅清调用方租户的运行/告警并恢复该租户默认规则（计数器不重置）。
 
-### `monitoring_shadow_run` — 影子运行族（docs/33 §3，批 2 ④，2026-09-21，cea7111/c29ce15；进程内 ring 100/租户，不 PG 化、reset 清空）
+### `monitoring_shadow_run` — 影子运行族（docs/33 §3，批 2 ④，2026-09-21，cea7111/c29ce15；内存档进程内 ring 100/租户、reset 清空；**打包 H H4〔2026-09-25 落码 `2bb6d3c`/`3eac4af`，迁移 028〕PG 档已改 PG 持久化，见下**）
 
-> **打包 H H4 已落码定稿（2026-09-25，`2bb6d3c`/`3eac4af`；形状权威＝[docs/61](61-编译诊断定位-审批历史PG-审计过滤分页-影子PG化-口径勘误v1批契约设计.md) §5，偏差见其顶部注记 ⑦——`inputs` 实为可空 JSONB 而非 `NOT NULL DEFAULT '{}'`，因内存档「无入参」存 `None`）**：本族**「不 PG 化」口径将在 H4 落码后失效**——新增迁移 `028_shadow_runs`（表 `shadow_runs`：PK `(tenant_id,id)`、`seq BIGINT` 取 `storage_id_seq`、`graph_id`、`inputs` JSONB、`status`、`error` TEXT NULL、`decisions` JSONB、`tool_intents` JSONB、`trace_id` TEXT NULL、`auto_action` TEXT NULL、`human_outcome` JSONB NULL、`comparison` JSONB NULL、`created_at` TEXT UTC ISO；索引 `(tenant_id, seq DESC)`），新模块 `recording/pg_shadow.py PgShadowStore` 照 `pg_reports.py:35` 全套抄形（方法签名与内存 `ShadowStore` 一比一），四子模型走 JSONB（model_dump/model_validate），ring 100 惰性裁剪照 `message/deliveries.py:110-117`，`TenantServices.shadow_store` 改联合类型、`registry.py:141` PG 档换装配（内存档 `:169` 不变）、reset 清本租户。**ShadowRun 字段形状与 REST 四端点、前端均零改动**；跨重启与跨实例可见。
+> **打包 H H4 已落码定稿（2026-09-25，`2bb6d3c`/`3eac4af`；形状权威＝[docs/61](61-编译诊断定位-审批历史PG-审计过滤分页-影子PG化-口径勘误v1批契约设计.md) §5，偏差见其顶部注记 ⑦——`inputs` 实为可空 JSONB 而非 `NOT NULL DEFAULT '{}'`，因内存档「无入参」存 `None`）**：本族原「进程内、不 PG 化」口径**自 H4 起失效**——新增迁移 `028_shadow_runs`（表 `shadow_runs`：PK `(tenant_id,id)`、`seq BIGINT` 取 `storage_id_seq`、`graph_id`、`inputs` JSONB、`status`、`error` TEXT NULL、`decisions` JSONB、`tool_intents` JSONB、`trace_id` TEXT NULL、`auto_action` TEXT NULL、`human_outcome` JSONB NULL、`comparison` JSONB NULL、`created_at` TEXT UTC ISO；索引 `(tenant_id, seq DESC)`），新模块 `recording/pg_shadow.py PgShadowStore` 照 `pg_reports.py:35` 全套抄形（方法签名与内存 `ShadowStore` 一比一），四子模型走 JSONB（model_dump/model_validate），ring 100 惰性裁剪照 `message/deliveries.py:110-117`，`TenantServices.shadow_store` 改联合类型、`registry.py:141` PG 档换装配（内存档 `:169` 不变）、reset 清本租户。**ShadowRun 字段形状与 REST 四端点、前端均零改动**；跨重启与跨实例可见。
 
 ```yaml
 # ShadowRun：POST /api/graphs/{graph_id}/shadow-runs 发起（sync）、GET /api/shadow-runs 列表、GET /api/shadow-runs/{sid} 详情、POST /api/shadow-runs/{sid}/compare 补录人工结果并回对比
-id: string                 # sr-N（租户级单调计数，ShadowStore ring 100/租户，进程内不 PG 化）
+id: string                 # sr-N（内存档租户级单调计数 ring 100/租户；PG 档 id 取 storage_id_seq，两档均 ring 100、reset 清空本租户）
 graph_id: string
 inputs: object?            # 影子入站 payload（同正常 run 渲染）
 status: "completed" | "error"
@@ -871,7 +873,7 @@ created_at: string
 # human_approval 预置 approved 秒过并记意图；permission != READ 的能力不调 adapter.execute（http/request 声明 WRITE，v1 GET 也保守短路）。
 ```
 
-> ShadowStore ring 100/租户（照 ReportStore 先例进程内、不 PG 化、reset 清空）；dry-run 判定依据**编译期 adapter/capability → permission 表**（照 `_tool_output_schemas` 模式），不做能力名启发式，READ 透传、WRITE/DELETE/FINANCIAL 短路为 SHADOW_DRY_RUN 意图回执，全链透传含子图。权威见 docs/33 §3、04 影子落码块、06 §6.9、REST 见 12。
+> ShadowStore ring 100/租户（内存档进程内、reset 清空）；**PG 档自打包 H H4 起走 `recording/pg_shadow.py PgShadowStore`（迁移 028 `shadow_runs`，方法与内存档一比一、四子模型 JSONB、ring 100 惰性 OFFSET 裁剪、跨重启与跨实例可见），两档由 `iam/registry.py` 按 `ATLAS_STORAGE_BACKEND` 选装**；dry-run 判定依据**编译期 adapter/capability → permission 表**（照 `_tool_output_schemas` 模式），不做能力名启发式，READ 透传、WRITE/DELETE/FINANCIAL 短路为 SHADOW_DRY_RUN 意图回执，全链透传含子图。权威见 docs/33 §3、04 影子落码块、06 §6.9、REST 见 12。
 
 ### `monitoring_silence_oncall` — 静默与值班（docs/33 §5，批 4 ⑩，2026-09-21，00bba8c/1804255；内存档进程内 OpsStore、reset 清空；**docs/59 F-2〔2026-09-24 落码 `88e4be9`〕PG 档已改 PG 持久化，见下**）
 
@@ -1098,7 +1100,7 @@ cases:
 
 ```yaml
 # ReportCaseRow：与 GateReport.cases 行同形 {case_id,name,matches,replay_status,note?}
-# ReleaseReport（id rr-{n}，进程内 per-tenant，ring 100，reset 清空；不进 Repository 抽象/不 PG 化，照 RoutingStore 先例）:
+# ReleaseReport（id rr-{n}，per-tenant，ring 100，reset 清空；不进 Repository 抽象。内存档进程内 ring 100；**PG 档自 docs/56（2026-09-24，39c58bb，迁移 022）起走 recording/pg_reports.py PgReportStore，见下**）:
 id: string                      # rr-N
 graph_id: string
 target: "draft"
@@ -1116,7 +1118,7 @@ created_at: string              # ISO UTC
 # D26-a（2026-09-19，8a37b4e）导出：GET /api/graphs/{id}/release-reports/{rid}/export?format=csv|json（read）
 #   → attachment 下载（rr-N.json / rr-N.csv）；非法 format 422，404 照详情；CSV 为元信息行 + 空行 + 逐 case 行，带 UTF-8 BOM 供 Excel；reports.report_to_csv（stdlib csv/io）
 # docs/28 §2.4（2026-09-20，89e21fc）跨图看板：GET /api/release-reports?limit=（read）→ {items:[摘要…]}
-#   跨全部图倒序（默认 100、clamp 1-200、非整数 422），摘要去 cases、含 graph_id；ReportStore.list_all_summary（跨租户 ring 倒序切片），仍进程内、不进 Repository/不 PG 化
+#   跨全部图倒序（默认 100、clamp 1-200、非整数 422），摘要去 cases、含 graph_id；ReportStore.list_all_summary（跨租户 ring 倒序切片），内存档进程内（PG 档见下方 docs/56 注记）
 ```
 > 2026-09-19 D26 收尾批已落：报告导出 CSV/JSON（8a37b4e）、subgraph 快照内联（29bb3d9，见 `recording_case`）、定时 CI 回放（cea70f4，`.github/workflows/release-gate-cron.yml`，cron 仅 main 生效）。**docs/28 批 1（2026-09-20）进一步部分取回**：Mock 工具响应（仅单用例 replay、门禁不接，`c7bf138`）、用例编辑/参数化（PUT name/inputs＋replay inputs_override，`89e21fc`）、跨图聚合看板（GET /api/release-reports，`89e21fc`）、recordings 富字段 PG 持久化（`d1f455b`，迁移 008）。**docs/56（2026-09-24，39c58bb，迁移 022，U580）部分取回**：报告 PG 化已落——PG 档新表 `release_reports`（id/tenant_id/seq/graph_id/target/trigger/total/passed/failed/skipped/blocked/pass_rate/cases JSONB/created_at＋(tenant,graph,seq) 索引）＋`recording/pg_reports.py` PgReportStore（方法形状同内存 ReportStore、id rr-N 走 storage_id_seq、摘要不取 cases、get 租户+图隔离、PG 不淘汰、reset 删本租户报告而录制用例保留），registry PG 档装配、API 零改动；内存档仍 ring 100/租户。**仍缓做（不解除 D26）**：影子模式/线上旁路录制、子图快照多租户共享、报告长保留/趋势报表、报告删除端点、多租户共享。（跨版本配置 diff 已于 2026-09-23 B3 落码 graph/diff.py。）
 
