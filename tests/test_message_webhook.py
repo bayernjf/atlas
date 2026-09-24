@@ -216,15 +216,74 @@ def test_service_wecom_secret_still_rejected():
     assert ei.value.code == "INVALID_PARAMETER"
 
 
-def test_service_webhook_list_to_rejected():
+def test_service_webhook_multiple_urls_all_succeed_same_idempotency_id():
+    """docs/58 §4：多 URL 全成——同一 payload（含同 id）逐目标投递、per-URL 日志、一条消息记录。"""
     hook = RecordingWebhookSender()
     svc = MessageService(webhook_sender=hook)
-    # 数组即使单元素也 422
+    urls = ["https://hooks.example.com/a", "https://hooks.example.com/b"]
+    rec = svc.send("webhook", urls, "s", "b")
+    assert rec["delivered"] == "webhook"
+    assert rec["to"] == urls
+    assert svc.count == 1  # 全成才写一条 _messages
+    assert [c[0] for c in hook.calls] == urls
+    assert hook.calls[0][1]["id"] == hook.calls[1][1]["id"] == rec["id"]  # 同一幂等键
+    deliveries = svc.list_deliveries()
+    assert [d["to"] for d in deliveries] == [["https://hooks.example.com/b"],
+                                             ["https://hooks.example.com/a"]]  # 倒序
+    assert all(d["status"] == "delivered:webhook" for d in deliveries)
+
+
+def test_service_webhook_single_element_array_accepted():
+    hook = RecordingWebhookSender()
+    svc = MessageService(webhook_sender=hook)
+    rec = svc.send("webhook", ["https://hooks.example.com/in"], "s", "b")
+    assert rec["delivered"] == "webhook"
+    assert len(hook.calls) == 1
+
+
+class RoutingWebhookSender:
+    """按 URL 选择性抛错（用于群发半败/fail-fast 用例）。"""
+
+    def __init__(self, fail_map: dict[str, Exception] | None = None) -> None:
+        self.fail_map = fail_map or {}
+        self.calls: list[str] = []
+
+    def send(self, url, payload, secret=None):
+        self.calls.append(url)
+        if url in self.fail_map:
+            raise self.fail_map[url]
+
+
+def test_service_webhook_partial_failure_is_best_effort_and_raises():
+    """半败：成功目标照常投递，失败目标记 failed，发完后聚合抛错且不写 _messages。"""
+    ok = "https://hooks.example.com/ok"
+    bad = "https://hooks.example.com/bad"
+    hook = RoutingWebhookSender({bad: WebhookDeliveryError("500")})
+    svc = MessageService(webhook_sender=hook, retry_delays=(0, 0), sleep_func=lambda _s: None)
     with pytest.raises(MessageSendError) as ei:
-        svc.send("webhook", ["https://hooks.example.com/in"], "s", "b")
-    assert ei.value.code == "INVALID_PARAMETER"
-    assert hook.calls == []
-    assert svc.count == 0  # 失败不写记录
+        svc.send("webhook", [ok, bad], "s", "b")
+    assert ei.value.code == "WEBHOOK_SEND_FAILED"
+    assert "1/2" in str(ei.value)
+    # best-effort：ok 投递一次，bad 在单目标内按退避重试 3 次（delays 0,0），无第三个 URL
+    assert hook.calls == [ok, bad, bad, bad]
+    assert svc.count == 0  # 任一败不写 _messages
+    deliveries = svc.list_deliveries()
+    assert {d["status"] for d in deliveries} == {"delivered:webhook", "failed"}
+    failed = [d for d in deliveries if d["status"] == "failed"][0]
+    assert failed["to"] == [bad] and failed["errorCode"] == "WEBHOOK_SEND_FAILED"
+
+
+def test_service_webhook_egress_denied_fails_fast():
+    """EGRESS_* fail-fast：拦截后不继续其余 URL。"""
+    denied = "http://169.254.169.254/latest"
+    ok = "https://hooks.example.com/ok"
+    hook = RoutingWebhookSender({denied: EgressDenied("EGRESS_DENIED", "blocked")})
+    svc = MessageService(webhook_sender=hook)
+    with pytest.raises(MessageSendError) as ei:
+        svc.send("webhook", [denied, ok], "s", "b")
+    assert ei.value.code == "EGRESS_DENIED"
+    assert hook.calls == [denied]  # 立即终止，ok 未投递
+    assert svc.count == 0
 
 
 def test_service_webhook_egress_denied_passthrough_no_record():

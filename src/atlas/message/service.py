@@ -3,9 +3,10 @@
 默认只记录、不真实投递：send 返回消息记录并保存在进程内列表，重启清空、
 reset 清空，GET /api/demo/messages 陪同查看。channel=email 且注入了
 SmtpSender（ATLAS_SMTP_HOST 已配置）时真实发信，记录标 delivered="smtp"；
-channel=webhook 且注入 WebhookSender 时向单个 URL POST JSON、标 delivered="webhook"
-（docs/35 §3 T3，先过 SSRF 出向校验）；channel=dingtalk/wecom/feishu 且注入
-ImSender 时投递群机器人（docs/51，标渠道名）；短信渠道仍缓做 docs/14 D24。
+channel=webhook 且注入 WebhookSender 时向 1-20 个 URL POST JSON（docs/58 群发、
+HMAC 签名）、标 delivered="webhook"（docs/35 §3 T3，先过 SSRF 出向校验）；
+channel=dingtalk/wecom/feishu 且注入 ImSender 时投递群机器人（docs/51，docs/58
+markdown 富文本/@人/多 URL，标渠道名）；短信渠道仍缓做 docs/14 D24。
 """
 
 from __future__ import annotations
@@ -91,10 +92,10 @@ class MessageService:
         # email_sender 需实现 send(to: list[str], subject: str, body: str)，
         # 生产为 message.smtp.SmtpSender；None 时 email 也只记录不投递（demo）。
         self._email_sender = email_sender
-        # webhook_sender 需实现 send(url: str, payload: dict)，生产为 message.webhook.DefaultWebhookSender；
+        # webhook_sender 需实现 send(url, payload, secret=None)，生产为 message.webhook.DefaultWebhookSender；
         # None 时 webhook 仅进程内记录（demo/测试）。
         self._webhook_sender = webhook_sender
-        # im_sender 需实现 send(channel: str, url: str, text: str, secret: str | None)，
+        # im_sender 需实现 send(channel, url, subject, body, secret=None, msg_format=, mentions=)，
         # 生产为 message.im.DefaultImSender；None 时 IM 三渠道仅进程内记录（demo/测试）。
         self._im_sender = im_sender
         self._messages: list[dict[str, object]] = []
@@ -132,11 +133,7 @@ class MessageService:
                 im_mentions = normalize_mentions(mentions)
             except ValueError as exc:
                 raise MessageSendError("INVALID_PARAMETER", str(exc)) from exc
-        # webhook 与 IM 渠道只接受单个 URL 字符串（数组即使单元素也 422，docs/35 §3、docs/51）。
-        if channel_value in ("webhook", *IM_CHANNELS) and isinstance(to, list):
-            raise MessageSendError(
-                "INVALID_PARAMETER", f"{channel_value} 渠道的 to 必须是单个 URL 字符串"
-            )
+        # docs/58：webhook 与 IM 渠道支持 1-20 个 URL 的数组（群发，逐目标投递）。
         recipients = _normalize_recipients(to)
         if channel_value == "email" and any("@" not in address for address in recipients):
             raise MessageSendError("INVALID_PARAMETER", "email 渠道的收件地址必须包含 @")
@@ -159,12 +156,13 @@ class MessageService:
             attempts: int,
             code: str | None = None,
             message: str | None = None,
+            to: list[str] | None = None,
         ) -> None:
             self._deliveries.append(
                 DeliveryRecord(
                     id=message_id,
                     channel=channel_value,
-                    to=list(recipients),
+                    to=list(recipients if to is None else to),
                     subject=subject_value[:SUBJECT_LOG_LIMIT],
                     sentAt=sent_at,
                     status=status,
@@ -174,6 +172,30 @@ class MessageService:
                     errorMessage=(message[:ERROR_LOG_LIMIT] if message else None),
                 )
             )
+
+        def _fan_out(transmit_one: Callable[[str], None], delivered_label: str) -> None:
+            """逐 URL 投递（docs/58 §4）：单目标内退避、per-URL 投递日志。
+
+            - EGRESS_* fail-fast：出向拦截立即抛、不继续其余 URL；
+            - 投递类错误 best-effort：继续其余 URL，发完后聚合抛渠道错误码；
+            - 群发层不整体重试（防重复通知）；全成才置 delivered（由调用方写 _messages）。
+            """
+            failures: list[tuple[str, MessageSendError]] = []
+            for target in recipients:
+                attempts, error = _transmit(lambda t=target: transmit_one(t))
+                if error is not None:
+                    _log("failed", attempts, error.code, str(error), to=[target])
+                    if error.code.startswith("EGRESS_"):
+                        raise error
+                    failures.append((target, error))
+                else:
+                    _log(f"delivered:{delivered_label}", attempts, to=[target])
+            if failures:
+                raise MessageSendError(
+                    failures[0][1].code,
+                    f"{channel_value} 群发部分失败：{len(failures)}/{len(recipients)} 个目标投递失败",
+                )
+            record["delivered"] = delivered_label
 
         def _transmit(transmit: Callable[[], None]) -> tuple[int, MessageSendError | None]:
             """运行一次真实投递并按可重试错误码退避；返回 (尝试次数, 最终错误|None)。"""
@@ -208,7 +230,7 @@ class MessageService:
             record["delivered"] = "smtp"
             _log("delivered:smtp", attempts)
         elif channel_value == "webhook" and self._webhook_sender is not None:
-            url = recipients[0]
+            # 同一 payload（含同一 id 幂等键）发往全部 URL（docs/58 §4.1）。
             payload = {
                 "id": message_id,
                 "channel": "webhook",
@@ -217,9 +239,9 @@ class MessageService:
                 "sent_at": sent_at,
             }
 
-            def _webhook() -> None:
+            def _webhook_one(target: str) -> None:
                 try:
-                    self._webhook_sender.send(url, payload, secret=secret_value)
+                    self._webhook_sender.send(target, payload, secret=secret_value)
                 except EgressDenied as exc:
                     # SSRF/非法 URL：透传安全码（EGRESS_DENIED/EGRESS_INVALID_URL），不重试
                     raise MessageSendError(exc.code, f"webhook 出向被拦截：{exc}") from exc
@@ -227,22 +249,16 @@ class MessageService:
                     # 网络/超时/非 2xx：WEBHOOK_SEND_FAILED，可退避重试
                     raise MessageSendError("WEBHOOK_SEND_FAILED", f"webhook 投递失败：{exc}") from exc
 
-            attempts, error = _transmit(_webhook)
-            if error is not None:
-                # 失败不写 _messages（非幂等写能力，失败须显式），但必写投递日志
-                _log("failed", attempts, error.code, str(error))
-                raise error
-            record["delivered"] = "webhook"
-            _log("delivered:webhook", attempts)
+            _fan_out(_webhook_one, "webhook")
         elif channel_value in IM_CHANNELS and self._im_sender is not None:
             fmt = im_msg_format
             mention_payload = im_mentions
 
-            def _im() -> None:
+            def _im_one(target: str) -> None:
                 try:
                     self._im_sender.send(
                         channel_value,
-                        recipients[0],
+                        target,
                         subject_value,
                         body_value,
                         secret=secret_value,
@@ -254,12 +270,7 @@ class MessageService:
                 except Exception as exc:
                     raise MessageSendError("IM_SEND_FAILED", f"IM 投递失败：{exc}") from exc
 
-            attempts, error = _transmit(_im)
-            if error is not None:
-                _log("failed", attempts, error.code, str(error))
-                raise error
-            record["delivered"] = channel_value
-            _log(f"delivered:{channel_value}", attempts)
+            _fan_out(_im_one, channel_value)
         else:
             # demo：未注入真实 sender，仅进程内记录、不真实投递
             _log("in_process", 1)

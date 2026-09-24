@@ -468,11 +468,53 @@ def test_service_feishu_secret_passed_through():
 
 
 @pytest.mark.parametrize("channel", ["dingtalk", "wecom", "feishu"])
-def test_service_im_array_to_invalid(channel):
-    service = MessageService(im_sender=FakeImSender())
-    with pytest.raises(MessageSendError) as exc:
-        service.send(channel, ["https://example.com/hook"], "s", "b")
-    assert exc.value.code == "INVALID_PARAMETER"
+def test_service_im_multiple_urls_all_succeed(channel):
+    """docs/58 §4：IM 多 URL 群发，逐目标投递、一条消息记录。"""
+    fake = FakeImSender()
+    service = MessageService(im_sender=fake)
+    urls = ["https://example.com/a", "https://example.com/b"]
+    rec = service.send(channel, urls, "标题", "**正文**", msg_format="markdown")
+    assert rec["delivered"] == channel and rec["to"] == urls
+    assert service.count == 1
+    assert [c[1] for c in fake.calls] == urls
+    assert all(c[5] == "markdown" for c in fake.calls)
+    deliveries = service.list_deliveries()
+    assert {tuple(d["to"]) for d in deliveries} == {
+        ("https://example.com/a",), ("https://example.com/b",)
+    }
+    assert all(d["status"] == f"delivered:{channel}" for d in deliveries)
+
+
+class RoutingImSender:
+    def __init__(self, fail_map: dict[str, Exception]) -> None:
+        self.fail_map = fail_map
+        self.calls: list[str] = []
+
+    def send(self, channel, url, subject, body, secret=None, msg_format="text", mentions=None):
+        self.calls.append(url)
+        if url in self.fail_map:
+            raise self.fail_map[url]
+
+
+def test_service_im_partial_failure_best_effort_and_egress_fail_fast():
+    ok = "https://example.com/ok"
+    bad = "https://example.com/bad"
+    denied = "http://127.0.0.1/hook"
+    # 半败：投递错误 best-effort 发完其余
+    fake = RoutingImSender({bad: ImDeliveryError("平台错误码 5")})
+    svc = MessageService(im_sender=fake, retry_delays=(0, 0), sleep_func=lambda _s: None)
+    with pytest.raises(MessageSendError) as ei:
+        svc.send("dingtalk", [ok, bad], "s", "b")
+    assert ei.value.code == "IM_SEND_FAILED" and "1/2" in str(ei.value)
+    # best-effort：ok 一次，bad 单目标内重试 3 次
+    assert fake.calls == [ok, bad, bad, bad] and svc.count == 0
+    # EGRESS fail-fast：拦截即停
+    fake2 = RoutingImSender({denied: EgressDenied("EGRESS_DENIED", "blocked")})
+    svc2 = MessageService(im_sender=fake2)
+    with pytest.raises(MessageSendError) as ei:
+        svc2.send("wecom", [denied, ok], "s", "b")
+    assert ei.value.code == "EGRESS_DENIED"
+    assert fake2.calls == [denied]
 
 
 @pytest.mark.parametrize("channel", ["wecom", "email", "sms"])

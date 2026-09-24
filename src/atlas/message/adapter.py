@@ -22,7 +22,7 @@ _SEND_INPUT_SCHEMA = {
     "properties": {
         "channel": {"type": "string", "description": "真实投递：email（SMTP）/webhook（单 URL POST JSON）/dingtalk/wecom/feishu（群机器人，均过 SSRF 校验）；sms 或其他标识仅进程内记录（v1 不路由）"},
         "to": {
-            "description": "收件人字符串或字符串数组（群发上限 20；email 渠道须含 @）；webhook 与 IM 渠道为单个 URL",
+            "description": "收件人字符串或字符串数组（群发上限 20；email 渠道须含 @）；webhook 与 IM 渠道为 1-20 个目标 URL（docs/58 群发：SSRF 拦截即停、投递错误发完其余后聚合报错）",
             "oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}, "maxItems": MAX_RECIPIENTS}],
         },
         "subject": {"type": "string"},
