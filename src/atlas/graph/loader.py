@@ -1180,46 +1180,67 @@ def _validate_subgraph_refs(
         prefix = f"子图节点 {node.id}"
         owner = top_node_id or node.id
 
-        def add_own(message: str, pointer: str | None = None) -> None:
+        def add_own(
+            message: str,
+            pointer: str | None = None,
+            *,
+            code: str,
+            params: dict[str, Any] | None = None,
+        ) -> None:
             # 深层节点错误只挂最外层子图节点 id，pointer 缓做。
             location = _loc(node.id, pointer) if top_node_id is None else _loc(top_node_id)
-            issues.append((message, location))
+            issues.append((message, location, code, {'owner': top_node_id or node.id, **(params or {})}))
 
         if not isinstance(ref, str) or not ref.strip():
-            add_own(f"{prefix} 必须选择引用的已保存子图（graphId）", "/graphId")
+            add_own(f"{prefix} 必须选择引用的已保存子图（graphId）", "/graphId",
+                    code="SUBREF_GRAPH_ID_REQUIRED")
             continue
         if resolver is None:
-            add_own(f"{prefix} 子图解析器未注入（graphId={ref}）")
+            add_own(f"{prefix} 子图解析器未注入（graphId={ref}）",
+                    code="SUBREF_RESOLVER_MISSING", params={"ref": ref})
             continue
         if ref == graph_id:
-            add_own(f"{prefix} 子图不能直接引用自身：{ref}")
+            add_own(f"{prefix} 子图不能直接引用自身：{ref}",
+                    code="SUBREF_SELF_REF", params={"ref": ref})
             continue
         if ref in chain:
             add_own(
-                f"{prefix} 检测到跨图引用环：{' → '.join((*chain, ref))}"
+                f"{prefix} 检测到跨图引用环：{' → '.join((*chain, ref))}",
+                code="SUBREF_CYCLE", params={"chain": " → ".join((*chain, ref))},
             )
             continue
         if depth + 1 > MAX_SUBGRAPH_DEPTH:
             add_own(
-                f"{prefix} 子图嵌套深度超过上限 {MAX_SUBGRAPH_DEPTH}（引用链：{' → '.join((*chain, ref))}）"
+                f"{prefix} 子图嵌套深度超过上限 {MAX_SUBGRAPH_DEPTH}（引用链：{' → '.join((*chain, ref))}）",
+                code="SUBREF_DEPTH_EXCEEDED",
+                params={"max": MAX_SUBGRAPH_DEPTH, "chain": " → ".join((*chain, ref))},
             )
             continue
         try:
             child = resolver(ref)
         except KeyError:
-            add_own(f"{prefix} 引用的子图不存在：{ref}")
+            add_own(f"{prefix} 引用的子图不存在：{ref}",
+                    code="SUBREF_NOT_FOUND", params={"ref": ref})
             continue
         if child is None:
-            add_own(f"{prefix} 引用的子图不存在：{ref}")
+            add_own(f"{prefix} 引用的子图不存在：{ref}",
+                    code="SUBREF_NOT_FOUND", params={"ref": ref})
             continue
-        child_messages, _child_locations = validate_graph_report(
+        child_messages, _child_locations, child_codes, child_params = validate_graph_report(
             child,
             tool_output_schemas,
             check_refs=True,
             subgraph_index=_subgraph_output_index(child, resolver),
         )
-        for child_error in child_messages:
-            issues.append((f"子图 {ref}：{child_error}", _loc(owner)))
+        for child_error, child_code, child_prm in zip(
+            child_messages, child_codes, child_params
+        ):
+            issues.append((
+                f"子图 {ref}：{child_error}",
+                _loc(owner),
+                child_code,
+                {**child_prm, "subgraph": ref, "owner": owner},
+            ))
         issues.extend(
             _validate_subgraph_refs(
                 child, resolver, ref, chain=(*chain, ref), depth=depth + 1,
@@ -2071,7 +2092,7 @@ def compile_graph(
     # D30/B2：用 resolver 预算子图内部节点索引（解析不到则降级），供 outputs.<内部id> 存在性校验。
     subgraph_index = _subgraph_output_index(validation_graph, graph_resolver)
     # 编译期 L2 复查（04 §6.5 防绕过）：parse_graph 时无注册表，引用与工具深层路径在此补判。
-    ref_errors, ref_locations = validate_graph_report(
+    ref_errors, ref_locations, ref_codes, ref_params = validate_graph_report(
         validation_graph, tool_schemas, check_refs=True, subgraph_index=subgraph_index
     )
     subgraph_issues = _validate_subgraph_refs(
@@ -2085,13 +2106,15 @@ def compile_graph(
     offset = len(ref_errors)
     subgraph_locations = [
         {"index": offset + index, **location}
-        for index, (_message, location) in enumerate(subgraph_issues)
+        for index, (_message, location, _code, _params) in enumerate(subgraph_issues)
         if location is not None
     ]
-    ref_errors = ref_errors + [message for message, _location in subgraph_issues]
+    ref_errors = ref_errors + [message for message, _location, _code, _params in subgraph_issues]
     ref_locations = ref_locations + subgraph_locations
+    ref_codes = ref_codes + [code for _message, _location, code, _params in subgraph_issues]
+    ref_params = ref_params + [prm for _message, _location, _code, prm in subgraph_issues]
     if ref_errors:
-        raise GraphValidationError(ref_errors, ref_locations)
+        raise GraphValidationError(ref_errors, ref_locations, ref_codes, ref_params)
 
     builder = StateGraph(GraphState)
 

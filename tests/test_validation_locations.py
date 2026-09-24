@@ -34,7 +34,7 @@ def _raw(nodes, edges=None, variables=None, version=1):
 
 def _locations_for(raw, **kwargs):
     graph = GraphDSL.model_validate(raw)
-    messages, locations = validate_graph_report(graph, **kwargs)
+    messages, locations, _codes, _params = validate_graph_report(graph, **kwargs)
     return messages, locations
 
 
@@ -68,7 +68,7 @@ def test_graph_level_errors_have_no_locations():
         ],
     )
     graph = GraphDSL.model_validate(raw)
-    messages, locations = validate_graph_report(graph)
+    messages, locations, _codes, _params = validate_graph_report(graph)
     joined = "\n".join(messages)
     assert "节点 id 重复" in joined
     assert "target 节点不存在" in joined
@@ -92,7 +92,7 @@ def test_node_field_errors_carry_node_id_and_pointer():
         ],
     )
     graph = GraphDSL.model_validate(raw)
-    messages, locations = validate_graph_report(graph)
+    messages, locations, _codes, _params = validate_graph_report(graph)
     _assert_index_aligned(messages, locations)
 
     def find(node_id, pointer):
@@ -160,7 +160,7 @@ def test_branch_and_loop_pointers_with_escaped_tokens():
         ],
     )
     graph = GraphDSL.model_validate(raw)
-    messages, locations = validate_graph_report(graph)
+    messages, locations, _codes, _params = validate_graph_report(graph)
     _assert_index_aligned(messages, locations)
     pointers = {(loc.get("nodeId"), loc.get("pointer")) for loc in locations}
     assert ("cond-1", "/branches") in pointers
@@ -192,7 +192,7 @@ def test_topology_errors_are_node_id_only():
         edges=[],
     )
     graph = GraphDSL.model_validate(raw)
-    messages, locations = validate_graph_report(graph)
+    messages, locations, _codes, _params = validate_graph_report(graph)
     condition_topo = [
         location
         for location in locations

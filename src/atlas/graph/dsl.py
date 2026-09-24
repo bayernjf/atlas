@@ -56,8 +56,12 @@ MAX_NOTIFY_EMAILS = 5  # docs/35 §2.1：单个审批节点通知邮箱上限
 
 NodeType = str
 
-# (中文文案, 定位)；定位 None 表示图级/拓扑级错误，不出 locations 条目。
-Issue = tuple[str, dict[str, Any] | None]
+# 未精确码化的编译错误兜底码（前端回退通用文案；新增校验必须给精确码，不应落到此码）。
+GRAPH_VALIDATION_FAILED = "GRAPH_VALIDATION_FAILED"
+
+# (中文文案〔日志/默认，不直接面向最终用户〕, 定位, 稳定错误码〔前端 i18n 契约〕, 插值参数)；
+# 定位 None 表示图级/拓扑级错误，不出 locations 条目。docs/17 §2.4：前端按 code 映射本地文案。
+Issue = tuple[str, dict[str, Any] | None, str, dict[str, Any]]
 
 
 def _escape_pointer(token: str) -> str:
@@ -79,11 +83,21 @@ class GraphValidationError(ValueError):
 
     locations 为 422 稀疏侧车（04 §6.5/06 §6.13）：每项 ``{"index", nodeId?, pointer?}``，
     index 对齐 errors 下标；图级错误无条目。
+    codes/params 与 errors 等长、下标对齐（docs/17 §2.4）：code 为前端 i18n 契约，
+    params 为插值参数；中文 errors 仅作日志/默认兜底，不直接面向最终用户。
     """
 
-    def __init__(self, errors: list[str], locations: list[dict[str, Any]] | None = None):
+    def __init__(
+        self,
+        errors: list[str],
+        locations: list[dict[str, Any]] | None = None,
+        codes: list[str] | None = None,
+        params: list[dict[str, Any]] | None = None,
+    ):
         self.errors = errors
         self.locations = locations or []
+        self.codes = codes or [GRAPH_VALIDATION_FAILED] * len(errors)
+        self.params = params or [{} for _ in errors]
         super().__init__("; ".join(errors))
 
 
@@ -130,16 +144,20 @@ class GraphDSL(BaseModel):
 
 
 class _Issues:
-    """收集 (文案, 定位) 并在追加时把定位换算成 index 对齐的稀疏侧车。"""
+    """收集 (文案, 定位, code, params)；定位换算成 index 对齐的稀疏侧车，codes/params 全量等长。"""
 
     def __init__(self) -> None:
         self.messages: list[str] = []
         self.locations: list[dict[str, Any]] = []
+        self.codes: list[str] = []
+        self.params: list[dict[str, Any]] = []
 
     def add(
         self,
         message: str,
         *,
+        code: str,
+        params: dict[str, Any] | None = None,
         node_id: str | None = None,
         pointer: str | None = None,
     ) -> None:
@@ -147,12 +165,16 @@ class _Issues:
         if location is not None:
             self.locations.append({"index": len(self.messages), **location})
         self.messages.append(message)
+        self.codes.append(code)
+        self.params.append(params or {})
 
     def extend(self, issues: list[Issue]) -> None:
-        for message, location in issues:
+        for message, location, code, prm in issues:
             if location is not None:
                 self.locations.append({"index": len(self.messages), **location})
             self.messages.append(message)
+            self.codes.append(code)
+            self.params.append(prm or {})
 
 
 def parse_graph(raw: dict[str, Any]) -> GraphDSL:
@@ -160,10 +182,14 @@ def parse_graph(raw: dict[str, Any]) -> GraphDSL:
     try:
         graph = GraphDSL.model_validate(raw)
     except Exception as exc:
-        raise GraphValidationError([f"DSL 解析失败：{exc}"]) from exc
-    errors, locations = validate_graph_report(graph)
+        raise GraphValidationError(
+            [f"DSL 解析失败：{exc}"],
+            codes=["DSL_PARSE_FAILED"],
+            params=[{"detail": str(exc)}],
+        ) from exc
+    errors, locations, codes, params = validate_graph_report(graph)
     if errors:
-        raise GraphValidationError(errors, locations)
+        raise GraphValidationError(errors, locations, codes, params)
     return graph
 
 
@@ -180,7 +206,9 @@ def validate_graph(
     L2 模板引用规则（04 §6.5，与前端 lib/scope.ts 同构）仅在编译期
     check_refs=True 时启用；解析/保存期不复查，运行期缺失保留原样。
     """
-    messages, _ = validate_graph_report(graph, tool_output_schemas, check_refs=check_refs)
+    messages, _locations, _codes, _params = validate_graph_report(
+        graph, tool_output_schemas, check_refs=check_refs
+    )
     return messages
 
 
@@ -190,27 +218,46 @@ def validate_graph_report(
     *,
     check_refs: bool = False,
     subgraph_index: dict[str, set[str]] | None = None,
-) -> tuple[list[str], list[dict[str, Any]]]:
-    """同 validate_graph，另返回 index 对齐的稀疏 locations 侧车（06 §6.13）。"""
+) -> tuple[list[str], list[dict[str, Any]], list[str], list[dict[str, Any]]]:
+    """同 validate_graph；返回 (messages, locations 稀疏侧车, codes, params)，后两者与 messages 等长。"""
     issues = _Issues()
 
     if graph.version != 1:
-        issues.add(f"不支持的 Graph 版本：{graph.version}（当前支持 1）")
+        issues.add(
+            f"不支持的 Graph 版本：{graph.version}（当前支持 1）",
+            code="GRAPH_VERSION_UNSUPPORTED",
+            params={"version": graph.version},
+        )
 
     if not graph.nodes:
-        issues.add("Graph 至少需要一个节点")
+        issues.add("Graph 至少需要一个节点", code="GRAPH_NODE_REQUIRED")
 
     node_ids: set[str] = set()
     for node in graph.nodes:
         if node.id in node_ids:
-            issues.add(f"节点 id 重复：{node.id}")
+            issues.add(
+                f"节点 id 重复：{node.id}",
+                code="NODE_ID_DUPLICATE",
+                params={"nodeId": node.id},
+            )
         node_ids.add(node.id)
         if not node.name:
-            issues.add(f"节点 {node.id} 名称必填", node_id=node.id)
+            issues.add(
+                f"节点 {node.id} 名称必填",
+                code="NODE_NAME_REQUIRED",
+                params={"nodeId": node.id},
+                node_id=node.id,
+            )
         if node.type not in SUPPORTED_NODE_TYPES:
             issues.add(
                 f"节点 {node.id} 类型暂不支持：{node.type}"
                 f"（当前支持 {', '.join(SUPPORTED_NODE_TYPES)}）",
+                code="NODE_TYPE_UNSUPPORTED",
+                params={
+                    "nodeId": node.id,
+                    "type": node.type,
+                    "supported": list(SUPPORTED_NODE_TYPES),
+                },
                 node_id=node.id,
             )
             continue
@@ -219,19 +266,39 @@ def validate_graph_report(
     edge_ids: set[str] = set()
     for edge in graph.edges:
         if edge.id in edge_ids:
-            issues.add(f"连线 id 重复：{edge.id}")
+            issues.add(
+                f"连线 id 重复：{edge.id}",
+                code="EDGE_ID_DUPLICATE",
+                params={"edgeId": edge.id},
+            )
         edge_ids.add(edge.id)
         if edge.source not in node_ids:
-            issues.add(f"连线 {edge.id} 的 source 节点不存在：{edge.source}")
+            issues.add(
+                f"连线 {edge.id} 的 source 节点不存在：{edge.source}",
+                code="EDGE_SOURCE_MISSING",
+                params={"edgeId": edge.id, "source": edge.source},
+            )
         if edge.target not in node_ids:
-            issues.add(f"连线 {edge.id} 的 target 节点不存在：{edge.target}")
+            issues.add(
+                f"连线 {edge.id} 的 target 节点不存在：{edge.target}",
+                code="EDGE_TARGET_MISSING",
+                params={"edgeId": edge.id, "target": edge.target},
+            )
         if edge.source == edge.target:
-            issues.add(f"连线 {edge.id} 不允许节点自环：{edge.source}")
+            issues.add(
+                f"连线 {edge.id} 不允许节点自环：{edge.source}",
+                code="EDGE_SELF_LOOP",
+                params={"edgeId": edge.id, "nodeId": edge.source},
+            )
 
     var_names: set[str] = set()
     for variable in graph.variables:
         if variable.name in var_names:
-            issues.add(f"全局变量名重复：{variable.name}")
+            issues.add(
+                f"全局变量名重复：{variable.name}",
+                code="VARIABLE_NAME_DUPLICATE",
+                params={"name": variable.name},
+            )
         var_names.add(variable.name)
 
     outgoing: dict[str, set[str]] = {}
@@ -273,10 +340,10 @@ def validate_graph_report(
         if node.type == "subgraph":
             issues.extend(_validate_subgraph_config(node, node_ids, outgoing))
 
-    for message in _validate_illegal_cycles(graph, loop_backedges):
-        issues.add(message)
-    for message in _validate_reachability(graph, node_ids, outgoing):
-        issues.add(message)
+    for message, code, prm in _validate_illegal_cycles(graph, loop_backedges):
+        issues.add(message, code=code, params=prm)
+    for message, code, prm in _validate_reachability(graph, node_ids, outgoing):
+        issues.add(message, code=code, params=prm)
     if check_refs:
         ref_issues, data_edges = _validate_template_refs(
             graph,
@@ -291,7 +358,7 @@ def validate_graph_report(
         issues.extend(ref_issues)
         issues.extend(_validate_data_dependency_cycles(data_edges))
 
-    return issues.messages, issues.locations
+    return issues.messages, issues.locations, issues.codes, issues.params
 
 
 def _validate_condition_config(
@@ -302,21 +369,23 @@ def _validate_condition_config(
     prefix = f"条件节点 {node.id}"
     config = node.config
 
-    def add(message: str, pointer: str | None = None) -> None:
-        issues.append((message, _loc(node.id, pointer)))
+    def add(message: str, pointer: str | None = None, *, code: str, params: dict[str, Any] | None = None) -> None:
+        issues.append((message, _loc(node.id, pointer), code, {'owner': node.id, **(params or {})}))
 
-    def add_graph(message: str) -> None:
+    def add_graph(message: str, *, code: str, params: dict[str, Any] | None = None) -> None:
         # 节点级拓扑错误（出边/回路/区域）：挂 nodeId、无字段 pointer（06 §6.13）。
-        issues.append((message, _loc(node.id)))
+        issues.append((message, _loc(node.id), code, {'owner': node.id, **(params or {})}))
 
     branches = config.get("branches")
     if not isinstance(branches, list) or not branches:
-        add(f"{prefix} 至少需要一个分支（branches）", "/branches")
+        add(f"{prefix} 至少需要一个分支（branches）", "/branches",
+            code="COND_BRANCHES_REQUIRED")
         branches = []
 
     mode = config.get("conditionMode", "rule")
     if not isinstance(mode, str) or mode not in ("rule", "llm"):
-        add(f"{prefix} 的 conditionMode 必须是 rule 或 llm", "/conditionMode")
+        add(f"{prefix} 的 conditionMode 必须是 rule 或 llm", "/conditionMode",
+            code="COND_MODE_INVALID")
         mode = "rule"
 
     classifier_prompt = config.get("classifierPrompt")
@@ -325,20 +394,24 @@ def _validate_condition_config(
             not isinstance(classifier_prompt, str)
             or len(classifier_prompt.strip()) > 500
         ):
-            add(f"{prefix} 的 classifierPrompt 长度不能超过 500 字符", "/classifierPrompt")
+            add(f"{prefix} 的 classifierPrompt 长度不能超过 500 字符", "/classifierPrompt",
+                code="COND_LLM_PROMPT_TOO_LONG", params={"max": 500})
     elif classifier_prompt is not None and not isinstance(classifier_prompt, str):
-        add(f"{prefix} 的 classifierPrompt 必须是字符串", "/classifierPrompt")
+        add(f"{prefix} 的 classifierPrompt 必须是字符串", "/classifierPrompt",
+            code="COND_LLM_PROMPT_NOT_STRING")
 
     default_target = config.get("defaultTarget")
     if not isinstance(default_target, str) or not default_target.strip():
-        add(f"{prefix} 必须配置默认分支（defaultTarget）", "/defaultTarget")
+        add(f"{prefix} 必须配置默认分支（defaultTarget）", "/defaultTarget",
+            code="COND_DEFAULT_TARGET_REQUIRED")
         default_target = None
 
     labels: set[str] = set()
     targets: set[str] = set()
     for index, branch in enumerate(branches):
         if not isinstance(branch, dict):
-            add(f"{prefix} 第 {index + 1} 个分支格式不合法", f"/branches/{index}")
+            add(f"{prefix} 第 {index + 1} 个分支格式不合法", f"/branches/{index}",
+                code="COND_BRANCH_ITEM_INVALID", params={"index": index + 1})
             continue
         label = branch.get("label")
         expression = branch.get("expression")
@@ -348,10 +421,13 @@ def _validate_condition_config(
         expression_pointer = f"/branches/{index}/expression"
         description_pointer = f"/branches/{index}/description"
         target_pointer = f"/branches/{index}/target"
+        branch_label: Any = label if (isinstance(label, str) and label.strip()) else index + 1
         if not isinstance(label, str) or not label.strip():
-            add(f"{prefix} 第 {index + 1} 个分支名称（label）不能为空", label_pointer)
+            add(f"{prefix} 第 {index + 1} 个分支名称（label）不能为空", label_pointer,
+                code="COND_BRANCH_LABEL_EMPTY", params={"index": index + 1})
         elif label in labels:
-            add(f"{prefix} 分支名称重复：{label}", label_pointer)
+            add(f"{prefix} 分支名称重复：{label}", label_pointer,
+                code="COND_BRANCH_LABEL_DUPLICATE", params={"label": label})
         else:
             labels.add(label)
         if mode == "llm":
@@ -359,57 +435,75 @@ def _validate_condition_config(
                 add(
                     f"{prefix} LLM 分支 {label or index + 1} 不允许使用 expression",
                     expression_pointer,
+                    code="COND_LLM_EXPRESSION_FORBIDDEN", params={"branch": branch_label},
                 )
             if not isinstance(description, str) or not description.strip():
                 add(
                     f"{prefix} 分支 {label or index + 1} 的语义描述（description）不能为空",
                     description_pointer,
+                    code="COND_LLM_DESCRIPTION_EMPTY", params={"branch": branch_label},
                 )
             elif len(description.strip()) > 300:
                 add(
                     f"{prefix} 分支 {label or index + 1} 的 description 长度不能超过 300 字符",
                     description_pointer,
+                    code="COND_LLM_DESCRIPTION_TOO_LONG",
+                    params={"branch": branch_label, "max": 300},
                 )
         else:
             if not isinstance(expression, str) or not expression.strip():
-                add(f"{prefix} 分支 {label or index + 1} 的表达式不能为空", expression_pointer)
+                add(f"{prefix} 分支 {label or index + 1} 的表达式不能为空", expression_pointer,
+                    code="COND_EXPRESSION_EMPTY", params={"branch": branch_label})
             else:
                 for expr_error in validate_expression(expression):
-                    add(f"{prefix} 分支 {label or index + 1} 表达式{expr_error}", expression_pointer)
+                    add(f"{prefix} 分支 {label or index + 1} 表达式{expr_error}", expression_pointer,
+                        code="COND_EXPRESSION_INVALID",
+                        params={"branch": branch_label, "detail": str(expr_error).strip()})
         if not isinstance(target, str) or not target.strip():
-            add(f"{prefix} 分支 {label or index + 1} 必须选择目标节点", target_pointer)
+            add(f"{prefix} 分支 {label or index + 1} 必须选择目标节点", target_pointer,
+                code="COND_BRANCH_TARGET_REQUIRED", params={"branch": branch_label})
         else:
             if target == node.id:
-                add(f"{prefix} 分支 {label or index + 1} 不能指向自身", target_pointer)
+                add(f"{prefix} 分支 {label or index + 1} 不能指向自身", target_pointer,
+                    code="COND_BRANCH_TARGET_SELF", params={"branch": branch_label})
             elif target not in node_ids:
                 add(
                     f"{prefix} 分支 {label or index + 1} 的目标节点不存在：{target}",
                     target_pointer,
+                    code="COND_BRANCH_TARGET_MISSING",
+                    params={"branch": branch_label, "target": target},
                 )
             if target in targets:
-                add(f"{prefix} 分支目标重复：{target}", target_pointer)
+                add(f"{prefix} 分支目标重复：{target}", target_pointer,
+                    code="COND_BRANCH_TARGET_DUPLICATE", params={"target": target})
             else:
                 targets.add(target)
             if default_target is not None and target == default_target:
                 add(
                     f"{prefix} 分支 {label or index + 1} 的目标不能与默认分支相同",
                     target_pointer,
+                    code="COND_BRANCH_TARGET_EQUALS_DEFAULT", params={"branch": branch_label},
                 )
 
     if default_target is not None:
         if default_target == node.id:
-            add(f"{prefix} 默认分支不能指向自身", "/defaultTarget")
+            add(f"{prefix} 默认分支不能指向自身", "/defaultTarget",
+                code="COND_DEFAULT_TARGET_SELF")
         elif default_target not in node_ids:
-            add(f"{prefix} 默认分支目标节点不存在：{default_target}", "/defaultTarget")
+            add(f"{prefix} 默认分支目标节点不存在：{default_target}", "/defaultTarget",
+                code="COND_DEFAULT_TARGET_MISSING", params={"target": default_target})
 
     edge_targets = outgoing.get(node.id, set())
     if not edge_targets and (branches or default_target):
-        add_graph(f"{prefix} 不允许直连结束节点，每个分支都必须有出边")
+        add_graph(f"{prefix} 不允许直连结束节点，每个分支都必须有出边",
+                  code="COND_NO_DIRECT_END")
     for target in targets | ({default_target} if default_target else set()):
         if target in node_ids and target != node.id and target not in edge_targets:
-            add_graph(f"{prefix} 缺少到目标节点 {target} 的连线")
+            add_graph(f"{prefix} 缺少到目标节点 {target} 的连线",
+                      code="COND_MISSING_EDGE", params={"target": target})
     for extra in edge_targets - targets - ({default_target} if default_target else set()):
-        add_graph(f"{prefix} 到节点 {extra} 的连线未配置分支（每条出边必须被分支或默认分支覆盖）")
+        add_graph(f"{prefix} 到节点 {extra} 的连线未配置分支（每条出边必须被分支或默认分支覆盖）",
+                  code="COND_EDGE_UNCONFIGURED", params={"nodeId": extra})
 
     return issues
 
@@ -426,71 +520,86 @@ def _validate_loop_config(
     prefix = f"循环节点 {node.id}"
     config = node.config
 
-    def add(message: str, pointer: str | None = None) -> None:
-        issues.append((message, _loc(node.id, pointer)))
+    def add(message: str, pointer: str | None = None, *, code: str, params: dict[str, Any] | None = None) -> None:
+        issues.append((message, _loc(node.id, pointer), code, {'owner': node.id, **(params or {})}))
 
-    def add_graph(message: str) -> None:
+    def add_graph(message: str, *, code: str, params: dict[str, Any] | None = None) -> None:
         # 节点级拓扑错误（出边/回路/区域）：挂 nodeId、无字段 pointer（06 §6.13）。
-        issues.append((message, _loc(node.id)))
+        issues.append((message, _loc(node.id), code, {'owner': node.id, **(params or {})}))
 
     mode = config.get("mode", "while")
     if mode not in ("while", "foreach"):
-        add(f"{prefix} 模式（mode）仅支持 while 或 foreach，已按 mode=while 继续校验", "/mode")
+        add(f"{prefix} 模式（mode）仅支持 while 或 foreach，已按 mode=while 继续校验", "/mode",
+            code="LOOP_MODE_INVALID")
         mode = "while"
 
     if mode == "foreach":
         items_expression = config.get("itemsExpression")
         if not isinstance(items_expression, str) or not items_expression.strip():
-            add(f"{prefix} 必须填写遍历数组表达式（itemsExpression）", "/itemsExpression")
+            add(f"{prefix} 必须填写遍历数组表达式（itemsExpression）", "/itemsExpression",
+                code="LOOP_ITEMS_EXPRESSION_REQUIRED")
         else:
             try:
                 parse_condition(items_expression)
             except ConditionEvalError as exc:
-                add(f"{prefix} 遍历数组表达式{exc}", "/itemsExpression")
+                add(f"{prefix} 遍历数组表达式{exc}", "/itemsExpression",
+                    code="LOOP_ITEMS_EXPRESSION_INVALID", params={"detail": str(exc).strip()})
 
         item_name = config.get("itemName", "item")
         if not isinstance(item_name, str) or not IDENTIFIER_RE.fullmatch(item_name):
             add(
                 f"{prefix} 元素别名（itemName）须为标识符（字母/下划线开头）",
                 "/itemName",
+                code="LOOP_ITEM_NAME_INVALID",
             )
     else:
         expression = config.get("continueExpression")
         if not isinstance(expression, str) or not expression.strip():
-            add(f"{prefix} 必须填写继续条件表达式（continueExpression）", "/continueExpression")
+            add(f"{prefix} 必须填写继续条件表达式（continueExpression）", "/continueExpression",
+                code="LOOP_CONTINUE_EXPRESSION_REQUIRED")
         else:
             for expr_error in validate_expression(expression):
-                add(f"{prefix} 继续条件表达式{expr_error}", "/continueExpression")
+                add(f"{prefix} 继续条件表达式{expr_error}", "/continueExpression",
+                    code="LOOP_CONTINUE_EXPRESSION_INVALID",
+                    params={"detail": str(expr_error).strip()})
 
         max_iterations = config.get("maxIterations")
         if isinstance(max_iterations, bool) or not isinstance(max_iterations, int):
-            add(f"{prefix} 最大次数（maxIterations）必须是整数", "/maxIterations")
+            add(f"{prefix} 最大次数（maxIterations）必须是整数", "/maxIterations",
+                code="LOOP_MAX_ITERATIONS_NOT_INT")
             max_iterations = None
         elif not 1 <= max_iterations <= MAX_LOOP_ITERATIONS:
             add(
                 f"{prefix} 最大次数需在 1-{MAX_LOOP_ITERATIONS} 之间",
                 "/maxIterations",
+                code="LOOP_MAX_ITERATIONS_RANGE", params={"max": MAX_LOOP_ITERATIONS},
             )
 
     body_target = config.get("bodyTarget")
     exit_target = config.get("exitTarget")
     if not isinstance(body_target, str) or not body_target.strip():
-        add(f"{prefix} 必须选择循环体入口（bodyTarget）", "/bodyTarget")
+        add(f"{prefix} 必须选择循环体入口（bodyTarget）", "/bodyTarget",
+            code="LOOP_BODY_TARGET_REQUIRED")
         body_target = None
     if not isinstance(exit_target, str) or not exit_target.strip():
-        add(f"{prefix} 必须选择退出目标（exitTarget）", "/exitTarget")
+        add(f"{prefix} 必须选择退出目标（exitTarget）", "/exitTarget",
+            code="LOOP_EXIT_TARGET_REQUIRED")
         exit_target = None
 
     if body_target is not None:
         if body_target == node.id:
-            add(f"{prefix} 循环体入口不能指向自身", "/bodyTarget")
+            add(f"{prefix} 循环体入口不能指向自身", "/bodyTarget",
+                code="LOOP_BODY_TARGET_SELF")
         elif body_target not in node_ids:
-            add(f"{prefix} 循环体入口节点不存在：{body_target}", "/bodyTarget")
+            add(f"{prefix} 循环体入口节点不存在：{body_target}", "/bodyTarget",
+                code="LOOP_BODY_TARGET_MISSING", params={"target": body_target})
     if exit_target is not None:
         if exit_target == node.id:
-            add(f"{prefix} 退出目标不能指向自身", "/exitTarget")
+            add(f"{prefix} 退出目标不能指向自身", "/exitTarget",
+                code="LOOP_EXIT_TARGET_SELF")
         elif exit_target not in node_ids:
-            add(f"{prefix} 退出目标节点不存在：{exit_target}", "/exitTarget")
+            add(f"{prefix} 退出目标节点不存在：{exit_target}", "/exitTarget",
+                code="LOOP_EXIT_TARGET_MISSING", params={"target": exit_target})
     if (
         body_target is not None
         and exit_target is not None
@@ -498,17 +607,21 @@ def _validate_loop_config(
         and exit_target in node_ids
         and body_target == exit_target
     ):
-        add(f"{prefix} 循环体入口与退出目标不能相同", "/bodyTarget")
+        add(f"{prefix} 循环体入口与退出目标不能相同", "/bodyTarget",
+            code="LOOP_BODY_EXIT_SAME")
 
     edge_targets = outgoing.get(node.id, set())
     configured = {target for target in (body_target, exit_target) if target in node_ids and target != node.id}
     if not edge_targets and configured:
-        add_graph(f"{prefix} 不允许直连结束节点，循环体与退出目标都必须有出边")
+        add_graph(f"{prefix} 不允许直连结束节点，循环体与退出目标都必须有出边",
+                  code="LOOP_NO_DIRECT_END")
     for target in configured:
         if target not in edge_targets:
-            add_graph(f"{prefix} 缺少到目标节点 {target} 的连线")
+            add_graph(f"{prefix} 缺少到目标节点 {target} 的连线",
+                      code="LOOP_MISSING_EDGE", params={"target": target})
     for extra in edge_targets - configured:
-        add_graph(f"{prefix} 到节点 {extra} 的连线未配置（只允许循环体/退出两条出边）")
+        add_graph(f"{prefix} 到节点 {extra} 的连线未配置（只允许循环体/退出两条出边）",
+                  code="LOOP_EDGE_UNCONFIGURED", params={"nodeId": extra})
 
     backedges: set[tuple[str, str]] = set()
     if body_target in node_ids and body_target != node.id and exit_target not in (None, node.id):
@@ -518,22 +631,28 @@ def _validate_loop_config(
             collect_target = config.get("collectTarget", "")
             if collect_target:
                 if not isinstance(collect_target, str):
-                    add(f"{prefix} 聚合节点（collectTarget）必须是节点 id", "/collectTarget")
+                    add(f"{prefix} 聚合节点（collectTarget）必须是节点 id", "/collectTarget",
+                        code="LOOP_COLLECT_TARGET_NOT_ID")
                 elif collect_target == node.id:
-                    add(f"{prefix} 聚合节点不能指向循环节点自身", "/collectTarget")
+                    add(f"{prefix} 聚合节点不能指向循环节点自身", "/collectTarget",
+                        code="LOOP_COLLECT_TARGET_SELF")
                 elif collect_target not in node_ids:
-                    add(f"{prefix} 聚合节点不存在：{collect_target}", "/collectTarget")
+                    add(f"{prefix} 聚合节点不存在：{collect_target}", "/collectTarget",
+                        code="LOOP_COLLECT_TARGET_MISSING", params={"target": collect_target})
                 elif collect_target not in body:
                     add(
                         f"{prefix} 聚合节点 {collect_target} 不在循环体内",
                         "/collectTarget",
+                        code="LOOP_COLLECT_NOT_IN_BODY", params={"target": collect_target},
                     )
         nested_loops = sorted(member for member in body if node_types.get(member) == "loop")
         for member in nested_loops:
-            add_graph(f"{prefix} v1 不支持嵌套循环，循环体内不能包含循环节点：{member}")
+            add_graph(f"{prefix} v1 不支持嵌套循环，循环体内不能包含循环节点：{member}",
+                      code="LOOP_NESTED_FORBIDDEN", params={"member": member})
         body_triggers = sorted(member for member in body if node_types.get(member) == "trigger")
         for member in body_triggers:
-            add_graph(f"{prefix} 循环体内不能包含触发器节点：{member}")
+            add_graph(f"{prefix} 循环体内不能包含触发器节点：{member}",
+                      code="LOOP_TRIGGER_IN_BODY", params={"member": member})
 
         # D17/A2 break：允许循环体内 condition 节点经其分支直连 exit_target（break 出口）。
         break_sources = {
@@ -547,7 +666,9 @@ def _validate_loop_config(
             if exit_target in outgoing.get(member, set()) and member not in break_sources:
                 add_graph(
                     f"{prefix} 退出路径只能由循环节点或体内 condition 的 break 分支出发，"
-                    f"循环体节点 {member} 不能直接连到退出目标 {exit_target}"
+                    f"循环体节点 {member} 不能直接连到退出目标 {exit_target}",
+                    code="LOOP_EXIT_ESCAPE_INVALID",
+                    params={"member": member, "exitTarget": exit_target},
                 )
 
         returners = _reverse_reachable(node.id, exit_target, incoming)
@@ -570,7 +691,8 @@ def _validate_loop_config(
         )
         for member in stranded:
             add_graph(
-                f"{prefix} 循环体节点 {member} 没有回到循环节点或 break 出口的路径"
+                f"{prefix} 循环体节点 {member} 没有回到循环节点或 break 出口的路径",
+                code="LOOP_STRANDED_NODE", params={"member": member},
             )
 
         for member in body:
@@ -580,7 +702,8 @@ def _validate_loop_config(
             not any(source in body for source in incoming.get(node.id, set()))
             and not break_sources
         ):
-            add_graph(f"{prefix} 循环体必须有一条连回循环节点的回边（或一个 break 出口）")
+            add_graph(f"{prefix} 循环体必须有一条连回循环节点的回边（或一个 break 出口）",
+                      code="LOOP_BACKEDGE_REQUIRED")
 
     return issues, backedges
 
@@ -597,12 +720,12 @@ def _validate_parallel_config(
     prefix = f"并行节点 {node.id}"
     config = node.config
 
-    def add(message: str, pointer: str | None = None) -> None:
-        issues.append((message, _loc(node.id, pointer)))
+    def add(message: str, pointer: str | None = None, *, code: str, params: dict[str, Any] | None = None) -> None:
+        issues.append((message, _loc(node.id, pointer), code, {'owner': node.id, **(params or {})}))
 
-    def add_graph(message: str) -> None:
+    def add_graph(message: str, *, code: str, params: dict[str, Any] | None = None) -> None:
         # 节点级拓扑错误（出边/回路/区域）：挂 nodeId、无字段 pointer（06 §6.13）。
-        issues.append((message, _loc(node.id)))
+        issues.append((message, _loc(node.id), code, {'owner': node.id, **(params or {})}))
 
     strategy = config.get("joinStrategy")
     if strategy not in PARALLEL_JOIN_STRATEGIES:
@@ -610,26 +733,34 @@ def _validate_parallel_config(
             f"{prefix} 合并策略（joinStrategy）必须是 "
             f"{' 或 '.join(PARALLEL_JOIN_STRATEGIES)}",
             "/joinStrategy",
+            code="PAR_STRATEGY_INVALID", params={"strategies": list(PARALLEL_JOIN_STRATEGIES)},
         )
 
     join_target = config.get("joinTarget")
     if not isinstance(join_target, str) or not join_target.strip():
-        add(f"{prefix} 必须选择汇聚目标（joinTarget）", "/joinTarget")
+        add(f"{prefix} 必须选择汇聚目标（joinTarget）", "/joinTarget",
+            code="PAR_JOIN_TARGET_REQUIRED")
         join_target = None
     elif join_target == node.id:
-        add(f"{prefix} 汇聚目标不能指向自身", "/joinTarget")
+        add(f"{prefix} 汇聚目标不能指向自身", "/joinTarget",
+            code="PAR_JOIN_TARGET_SELF")
     elif join_target not in node_ids:
-        add(f"{prefix} 汇聚目标节点不存在：{join_target}", "/joinTarget")
+        add(f"{prefix} 汇聚目标节点不存在：{join_target}", "/joinTarget",
+            code="PAR_JOIN_TARGET_MISSING", params={"target": join_target})
 
     branches = config.get("branches")
     if not isinstance(branches, list):
-        add(f"{prefix} 分支列表（branches）格式不合法", "/branches")
+        add(f"{prefix} 分支列表（branches）格式不合法", "/branches",
+            code="PAR_BRANCHES_INVALID")
         branches = []
     elif not MIN_PARALLEL_BRANCHES <= len(branches) <= MAX_PARALLEL_BRANCHES:
         add(
             f"{prefix} 分支数需在 {MIN_PARALLEL_BRANCHES}-{MAX_PARALLEL_BRANCHES} 个之间"
             f"（当前 {len(branches)} 个）",
             "/branches",
+            code="PAR_BRANCHES_RANGE",
+            params={"min": MIN_PARALLEL_BRANCHES, "max": MAX_PARALLEL_BRANCHES,
+                    "count": len(branches)},
         )
 
     labels: set[str] = set()
@@ -637,43 +768,56 @@ def _validate_parallel_config(
     valid_entries: set[str] = set()
     for index, branch in enumerate(branches):
         if not isinstance(branch, dict):
-            add(f"{prefix} 第 {index + 1} 个分支格式不合法", f"/branches/{index}")
+            add(f"{prefix} 第 {index + 1} 个分支格式不合法", f"/branches/{index}",
+                code="PAR_BRANCH_ITEM_INVALID", params={"index": index + 1})
             continue
         label = branch.get("label")
         target = branch.get("target")
         label_pointer = f"/branches/{index}/label"
         target_pointer = f"/branches/{index}/target"
+        branch_label: Any = label if (isinstance(label, str) and label.strip()) else index + 1
         if not isinstance(label, str) or not label.strip():
-            add(f"{prefix} 第 {index + 1} 个分支名称（label）不能为空", label_pointer)
+            add(f"{prefix} 第 {index + 1} 个分支名称（label）不能为空", label_pointer,
+                code="PAR_BRANCH_LABEL_EMPTY", params={"index": index + 1})
         elif label in labels:
-            add(f"{prefix} 分支名称重复：{label}", label_pointer)
+            add(f"{prefix} 分支名称重复：{label}", label_pointer,
+                code="PAR_BRANCH_LABEL_DUPLICATE", params={"label": label})
         else:
             labels.add(label)
         if not isinstance(target, str) or not target.strip():
-            add(f"{prefix} 分支 {label or index + 1} 必须选择目标节点", target_pointer)
+            add(f"{prefix} 分支 {label or index + 1} 必须选择目标节点", target_pointer,
+                code="PAR_BRANCH_TARGET_REQUIRED", params={"branch": branch_label})
             continue
         if target == node.id:
-            add(f"{prefix} 分支 {label or index + 1} 不能指向自身", target_pointer)
+            add(f"{prefix} 分支 {label or index + 1} 不能指向自身", target_pointer,
+                code="PAR_BRANCH_TARGET_SELF", params={"branch": branch_label})
         elif target not in node_ids:
-            add(f"{prefix} 分支 {label or index + 1} 的目标节点不存在：{target}", target_pointer)
+            add(f"{prefix} 分支 {label or index + 1} 的目标节点不存在：{target}", target_pointer,
+                code="PAR_BRANCH_TARGET_MISSING",
+                params={"branch": branch_label, "target": target})
         if target in targets:
-            add(f"{prefix} 分支目标重复：{target}", target_pointer)
+            add(f"{prefix} 分支目标重复：{target}", target_pointer,
+                code="PAR_BRANCH_TARGET_DUPLICATE", params={"target": target})
         else:
             targets.add(target)
         if join_target is not None and target == join_target:
-            add(f"{prefix} 分支 {label or index + 1} 的目标不能与汇聚目标相同", target_pointer)
+            add(f"{prefix} 分支 {label or index + 1} 的目标不能与汇聚目标相同", target_pointer,
+                code="PAR_BRANCH_TARGET_EQUALS_JOIN", params={"branch": branch_label})
         if target in node_ids and target != node.id:
             valid_entries.add(target)
 
     edge_targets = outgoing.get(node.id, set())
     configured = {target for target in targets if target in node_ids and target != node.id}
     if not edge_targets and configured:
-        add_graph(f"{prefix} 不允许直连结束节点，每个分支都必须有出边")
+        add_graph(f"{prefix} 不允许直连结束节点，每个分支都必须有出边",
+                  code="PAR_NO_DIRECT_END")
     for target in configured:
         if target not in edge_targets:
-            add_graph(f"{prefix} 缺少到分支节点 {target} 的连线")
+            add_graph(f"{prefix} 缺少到分支节点 {target} 的连线",
+                      code="PAR_MISSING_EDGE", params={"target": target})
     for extra in edge_targets - configured:
-        add_graph(f"{prefix} 到节点 {extra} 的连线未配置分支（出边数必须等于分支数）")
+        add_graph(f"{prefix} 到节点 {extra} 的连线未配置分支（出边数必须等于分支数）",
+                  code="PAR_EDGE_UNCONFIGURED", params={"nodeId": extra})
 
     if (
         valid_entries
@@ -685,21 +829,26 @@ def _validate_parallel_config(
 
         nested = sorted(member for member in region if node_types.get(member) == "parallel")
         for member in nested:
-            add_graph(f"{prefix} v1 不支持嵌套并行，分支区域内不能包含并行节点：{member}")
+            add_graph(f"{prefix} v1 不支持嵌套并行，分支区域内不能包含并行节点：{member}",
+                      code="PAR_NESTED_FORBIDDEN", params={"member": member})
         region_triggers = sorted(member for member in region if node_types.get(member) == "trigger")
         for member in region_triggers:
-            add_graph(f"{prefix} 分支区域内不能包含触发器节点：{member}")
+            add_graph(f"{prefix} 分支区域内不能包含触发器节点：{member}",
+                      code="PAR_TRIGGER_IN_REGION", params={"member": member})
 
         for member in sorted(region):
             for leak in outgoing.get(member, set()) - region - {join_target}:
                 add_graph(
-                    f"{prefix} 分支不得交叉或外泄：区域内节点 {member} 连到了区域外节点 {leak}"
+                    f"{prefix} 分支不得交叉或外泄：区域内节点 {member} 连到了区域外节点 {leak}",
+                    code="PAR_REGION_LEAK", params={"member": member, "leak": leak},
                 )
 
         for entry in sorted(valid_entries):
             reachable = _bfs({entry}, outgoing, stop={node.id})
             if join_target not in reachable:
-                add_graph(f"{prefix} 分支 {entry} 不存在到达汇聚目标 {join_target} 的路径")
+                add_graph(f"{prefix} 分支 {entry} 不存在到达汇聚目标 {join_target} 的路径",
+                          code="PAR_BRANCH_NO_JOIN_PATH",
+                          params={"entry": entry, "join": join_target})
 
         outside = sorted(
             source
@@ -708,7 +857,9 @@ def _validate_parallel_config(
         )
         for source in outside:
             add_graph(
-                f"{prefix} 汇聚目标 {join_target} 只能接收分支区域内的连线：{source} 不在区域内"
+                f"{prefix} 汇聚目标 {join_target} 只能接收分支区域内的连线：{source} 不在区域内",
+                code="PAR_JOIN_EXTERNAL_EDGE",
+                params={"join": join_target, "source": source},
             )
 
     return issues
@@ -732,12 +883,12 @@ def _validate_wait_config(
     prefix = f"等待节点 {node.id}"
     config = node.config
 
-    def add(message: str, pointer: str | None = None) -> None:
-        issues.append((message, _loc(node.id, pointer)))
+    def add(message: str, pointer: str | None = None, *, code: str, params: dict[str, Any] | None = None) -> None:
+        issues.append((message, _loc(node.id, pointer), code, {'owner': node.id, **(params or {})}))
 
-    def add_graph(message: str) -> None:
+    def add_graph(message: str, *, code: str, params: dict[str, Any] | None = None) -> None:
         # 节点级拓扑错误（出边/回路/区域）：挂 nodeId、无字段 pointer（06 §6.13）。
-        issues.append((message, _loc(node.id)))
+        issues.append((message, _loc(node.id), code, {'owner': node.id, **(params or {})}))
 
     wait_type = config.get("waitType")
     if wait_type == "duration":
@@ -746,6 +897,7 @@ def _validate_wait_config(
             add(
                 f"{prefix} 时长模式（durationMode）必须是 static、dynamic 或 absolute",
                 "/durationMode",
+                code="WAIT_DURATION_MODE_INVALID",
             )
         elif duration_mode == "dynamic":
             expression = config.get("durationExpression")
@@ -753,12 +905,15 @@ def _validate_wait_config(
                 add(
                     f"{prefix} 动态时长表达式（durationExpression）为必填",
                     "/durationExpression",
+                    code="WAIT_DYNAMIC_EXPRESSION_REQUIRED",
                 )
             elif len(expression) > MAX_DURATION_EXPRESSION_LENGTH:
                 add(
                     f"{prefix} 动态时长表达式长度不能超过 "
                     f"{MAX_DURATION_EXPRESSION_LENGTH} 字符（当前 {len(expression)}）",
                     "/durationExpression",
+                    code="WAIT_DYNAMIC_EXPRESSION_TOO_LONG",
+                    params={"max": MAX_DURATION_EXPRESSION_LENGTH, "length": len(expression)},
                 )
         elif duration_mode == "absolute":
             absolute_time = config.get("absoluteTime")
@@ -766,78 +921,96 @@ def _validate_wait_config(
                 add(
                     f"{prefix} 到点时刻（absoluteTime）为必填",
                     "/absoluteTime",
+                    code="WAIT_ABSOLUTE_TIME_REQUIRED",
                 )
             elif len(absolute_time.strip()) > MAX_ABSOLUTE_TIME_LENGTH:
                 add(
                     f"{prefix} 到点时刻长度不能超过 "
                     f"{MAX_ABSOLUTE_TIME_LENGTH} 字符（当前 {len(absolute_time.strip())}）",
                     "/absoluteTime",
+                    code="WAIT_ABSOLUTE_TIME_TOO_LONG",
+                    params={"max": MAX_ABSOLUTE_TIME_LENGTH, "length": len(absolute_time.strip())},
                 )
         else:
             seconds = config.get("durationSeconds")
             if isinstance(seconds, bool) or not isinstance(seconds, int):
-                add(f"{prefix} 等待时长（durationSeconds）必须是整数秒", "/durationSeconds")
+                add(f"{prefix} 等待时长（durationSeconds）必须是整数秒", "/durationSeconds",
+                    code="WAIT_DURATION_SECONDS_NOT_INT")
             elif not MIN_WAIT_SECONDS <= seconds <= MAX_WAIT_SECONDS:
                 add(
                     f"{prefix} 等待时长需在 {MIN_WAIT_SECONDS}-{MAX_WAIT_SECONDS} 秒之间"
                     f"（当前 {seconds}）",
                     "/durationSeconds",
+                    code="WAIT_DURATION_SECONDS_RANGE",
+                    params={"min": MIN_WAIT_SECONDS, "max": MAX_WAIT_SECONDS, "value": seconds},
                 )
         jitter = config.get("jitterSeconds", 0)
         if isinstance(jitter, bool) or not isinstance(jitter, int):
             add(
                 f"{prefix} 抖动上限（jitterSeconds）必须是整数秒",
                 "/jitterSeconds",
+                code="WAIT_JITTER_NOT_INT",
             )
         elif not 0 <= jitter <= MAX_JITTER_SECONDS:
             add(
                 f"{prefix} 抖动上限需在 0-{MAX_JITTER_SECONDS} 秒之间"
                 f"（当前 {jitter}）",
                 "/jitterSeconds",
+                code="WAIT_JITTER_RANGE", params={"max": MAX_JITTER_SECONDS, "value": jitter},
             )
     elif wait_type == "event":
         event_key = config.get("eventKey")
         event_keys = config.get("eventKeys")
         if event_key is not None and event_keys is not None:
             # docs/54：单键 eventKey 与多键 eventKeys 互斥，只能二选一
-            add(f"{prefix} eventKey 与 eventKeys 互斥，请只保留一种", "/eventKeys")
+            add(f"{prefix} eventKey 与 eventKeys 互斥，请只保留一种", "/eventKeys",
+                code="WAIT_EVENT_KEYS_MUTEX")
         if event_keys is not None:
             # docs/54 多事件 OR 竞速：数组 1-8、每项非空字符串、≤长度、静态白名单、不可重复
             if isinstance(event_keys, bool) or not isinstance(event_keys, list):
-                add(f"{prefix} 多事件（eventKeys）必须是字符串数组", "/eventKeys")
+                add(f"{prefix} 多事件（eventKeys）必须是字符串数组", "/eventKeys",
+                    code="WAIT_EVENT_KEYS_NOT_ARRAY")
             else:
                 if not 1 <= len(event_keys) <= MAX_EVENT_KEYS:
                     add(
                         f"{prefix} 多事件需 1-{MAX_EVENT_KEYS} 个事件标识"
                         f"（当前 {len(event_keys)}）",
                         "/eventKeys",
+                        code="WAIT_EVENT_KEYS_RANGE",
+                        params={"max": MAX_EVENT_KEYS, "count": len(event_keys)},
                     )
                 seen: set[str] = set()
                 for idx, key in enumerate(event_keys[: MAX_EVENT_KEYS + 2]):
                     loc = f"/eventKeys/{idx}"
                     if not isinstance(key, str) or not key.strip():
-                        add(f"{prefix} 第 {idx + 1} 个事件标识必须是非空字符串", loc)
+                        add(f"{prefix} 第 {idx + 1} 个事件标识必须是非空字符串", loc,
+                            code="WAIT_EVENT_KEY_NOT_STRING", params={"index": idx + 1})
                         continue
                     if len(key) > MAX_EVENT_KEY_LENGTH:
                         add(
                             f"{prefix} 第 {idx + 1} 个事件标识长度不能超过 "
                             f"{MAX_EVENT_KEY_LENGTH} 字符",
                             loc,
+                            code="WAIT_EVENT_KEY_TOO_LONG",
+                            params={"index": idx + 1, "max": MAX_EVENT_KEY_LENGTH},
                         )
                     if not EVENT_KEY_STATIC_RE.fullmatch(_event_key_static_parts(key)):
                         add(
                             f"{prefix} 第 {idx + 1} 个事件标识静态部分只允许字母、数字及 :_-，"
                             "占位内内容不检查",
                             loc,
+                            code="WAIT_EVENT_KEY_STATIC_INVALID", params={"index": idx + 1},
                         )
                     if key in seen:
-                        add(f"{prefix} 多事件标识重复：{key}", loc)
+                        add(f"{prefix} 多事件标识重复：{key}", loc,
+                            code="WAIT_EVENT_KEY_DUPLICATE", params={"index": idx + 1, "key": key})
                     seen.add(key)
         else:
             if not isinstance(event_key, str) or not event_key.strip():
                 add(
                     f"{prefix} 事件标识（eventKey）为必填字符串，或改用 eventKeys 数组",
                     "/eventKey",
+                    code="WAIT_EVENT_KEY_REQUIRED",
                 )
             else:
                 if len(event_key) > MAX_EVENT_KEY_LENGTH:
@@ -845,12 +1018,15 @@ def _validate_wait_config(
                         f"{prefix} 事件标识长度不能超过 {MAX_EVENT_KEY_LENGTH} 字符"
                         f"（当前 {len(event_key)}）",
                         "/eventKey",
+                        code="WAIT_EVENT_KEY_TOO_LONG_SINGLE",
+                        params={"max": MAX_EVENT_KEY_LENGTH, "length": len(event_key)},
                     )
                 if not EVENT_KEY_STATIC_RE.fullmatch(_event_key_static_parts(event_key)):
                     add(
                         f"{prefix} 事件标识静态部分只允许字母、数字及 :_-，"
                         "占位内内容不检查",
                         "/eventKey",
+                        code="WAIT_EVENT_KEY_STATIC_INVALID_SINGLE",
                     )
         # docs/55：eventWaitMode=all（AND 竞速）仅多键可用，且至少 2 个键；默认 any（OR）。
         wait_mode = config.get("eventWaitMode", "any")
@@ -858,18 +1034,21 @@ def _validate_wait_config(
             add(
                 f"{prefix} 事件等待模式（eventWaitMode）必须是 any 或 all",
                 "/eventWaitMode",
+                code="WAIT_EVENT_WAIT_MODE_INVALID",
             )
         elif wait_mode == "all":
             if not isinstance(event_keys, list) or len(event_keys) < 2:
                 add(
                     f"{prefix} 全部命中（eventWaitMode=all）需配置至少 2 个事件（eventKeys）",
                     "/eventWaitMode",
+                    code="WAIT_ALL_NEEDS_TWO_KEYS",
                 )
         timeout_mode = config.get("timeoutMode", "static")
         if timeout_mode not in ("static", "expression"):
             add(
                 f"{prefix} 超时模式（timeoutMode）必须是 static 或 expression",
                 "/timeoutMode",
+                code="WAIT_TIMEOUT_MODE_INVALID",
             )
         elif timeout_mode == "expression":
             timeout_expression = config.get("timeoutExpression")
@@ -877,6 +1056,7 @@ def _validate_wait_config(
                 add(
                     f"{prefix} 超时表达式（timeoutExpression）为必填",
                     "/timeoutExpression",
+                    code="WAIT_TIMEOUT_EXPRESSION_REQUIRED",
                 )
             elif len(timeout_expression) > MAX_DURATION_EXPRESSION_LENGTH:
                 add(
@@ -884,35 +1064,46 @@ def _validate_wait_config(
                     f"{MAX_DURATION_EXPRESSION_LENGTH} 字符"
                     f"（当前 {len(timeout_expression)}）",
                     "/timeoutExpression",
+                    code="WAIT_TIMEOUT_EXPRESSION_TOO_LONG",
+                    params={"max": MAX_DURATION_EXPRESSION_LENGTH,
+                            "length": len(timeout_expression)},
                 )
         else:
             timeout = config.get("timeoutSeconds")
             if isinstance(timeout, bool) or not isinstance(timeout, int):
-                add(f"{prefix} 超时时间（timeoutSeconds）必须是整数秒", "/timeoutSeconds")
+                add(f"{prefix} 超时时间（timeoutSeconds）必须是整数秒", "/timeoutSeconds",
+                    code="WAIT_TIMEOUT_SECONDS_NOT_INT")
             elif not MIN_EVENT_WAIT_SECONDS <= timeout <= MAX_EVENT_WAIT_SECONDS:
                 add(
                     f"{prefix} 超时时间需在 {MIN_EVENT_WAIT_SECONDS}-"
                     f"{MAX_EVENT_WAIT_SECONDS} 秒之间（当前 {timeout}）",
                     "/timeoutSeconds",
+                    code="WAIT_TIMEOUT_SECONDS_RANGE",
+                    params={"min": MIN_EVENT_WAIT_SECONDS, "max": MAX_EVENT_WAIT_SECONDS,
+                            "value": timeout},
                 )
         on_timeout = config.get("onTimeout", "continue")
         if on_timeout not in WAIT_TIMEOUT_POLICIES:
             add(
                 f"{prefix} 超时策略（onTimeout）必须是 continue 或 fail",
                 "/onTimeout",
+                code="WAIT_ON_TIMEOUT_INVALID",
             )
     else:
-        add(f"{prefix} 等待类型（waitType）必须是 duration 或 event", "/waitType")
+        add(f"{prefix} 等待类型（waitType）必须是 duration 或 event", "/waitType",
+            code="WAIT_TYPE_INVALID")
 
     targets = outgoing.get(node.id, set())
     if len(targets) != 1:
-        add_graph(f"{prefix} 必须恰好配置 1 条出边（当前 {len(targets)} 条），且不能直连结束")
+        add_graph(f"{prefix} 必须恰好配置 1 条出边（当前 {len(targets)} 条），且不能直连结束",
+                  code="WAIT_EXACTLY_ONE_EDGE", params={"count": len(targets)})
     else:
         target = next(iter(targets))
         if target == node.id:
-            add_graph(f"{prefix} 出边不能指向自身")
+            add_graph(f"{prefix} 出边不能指向自身", code="WAIT_EDGE_SELF")
         elif target not in node_ids:
-            add_graph(f"{prefix} 后继节点不存在：{target}")
+            add_graph(f"{prefix} 后继节点不存在：{target}",
+                      code="WAIT_SUCCESSOR_MISSING", params={"target": target})
 
     return issues
 
@@ -925,44 +1116,52 @@ def _validate_subgraph_config(
     prefix = f"子图节点 {node.id}"
     config = node.config
 
-    def add(message: str, pointer: str | None = None) -> None:
-        issues.append((message, _loc(node.id, pointer)))
+    def add(message: str, pointer: str | None = None, *, code: str, params: dict[str, Any] | None = None) -> None:
+        issues.append((message, _loc(node.id, pointer), code, {'owner': node.id, **(params or {})}))
 
-    def add_graph(message: str) -> None:
+    def add_graph(message: str, *, code: str, params: dict[str, Any] | None = None) -> None:
         # 节点级拓扑错误（出边/回路/区域）：挂 nodeId、无字段 pointer（06 §6.13）。
-        issues.append((message, _loc(node.id)))
+        issues.append((message, _loc(node.id), code, {'owner': node.id, **(params or {})}))
 
     graph_id = config.get("graphId")
     if not isinstance(graph_id, str) or not graph_id.strip():
-        add(f"{prefix} 必须选择引用的已保存子图（graphId）", "/graphId")
+        add(f"{prefix} 必须选择引用的已保存子图（graphId）", "/graphId",
+            code="SUB_GRAPH_ID_REQUIRED")
 
     inputs = config.get("inputs", {})
     if not isinstance(inputs, dict):
-        add(f"{prefix} 子图入参映射（inputs）必须是对象", "/inputs")
+        add(f"{prefix} 子图入参映射（inputs）必须是对象", "/inputs",
+            code="SUB_INPUTS_NOT_OBJECT")
     else:
         input_keys: set[str] = set()
         for key, value in inputs.items():
             if not isinstance(key, str) or not key.strip():
-                add(f"{prefix} 入参键名不能为空", "/inputs")
+                add(f"{prefix} 入参键名不能为空", "/inputs",
+                    code="SUB_INPUT_KEY_EMPTY")
             elif key in input_keys:
-                add(f"{prefix} 入参键名重复：{key}", f"/inputs/{_escape_pointer(key)}")
+                add(f"{prefix} 入参键名重复：{key}", f"/inputs/{_escape_pointer(key)}",
+                    code="SUB_INPUT_KEY_DUPLICATE", params={"key": key})
             else:
                 input_keys.add(key)
             if not isinstance(value, str) or not value.strip():
                 add(
                     f"{prefix} 入参 {key} 的映射值必须是非空文本（父图 {{路径}} 或字面量）",
                     f"/inputs/{_escape_pointer(key)}" if isinstance(key, str) and key else "/inputs",
+                    code="SUB_INPUT_VALUE_REQUIRED",
+                    params={"key": key if isinstance(key, str) else ""},
                 )
 
     targets = outgoing.get(node.id, set())
     if len(targets) != 1:
-        add_graph(f"{prefix} 必须恰好配置 1 条出边（当前 {len(targets)} 条），且不能直连结束")
+        add_graph(f"{prefix} 必须恰好配置 1 条出边（当前 {len(targets)} 条），且不能直连结束",
+                  code="SUB_EXACTLY_ONE_EDGE", params={"count": len(targets)})
     else:
         target = next(iter(targets))
         if target == node.id:
-            add_graph(f"{prefix} 出边不能指向自身")
+            add_graph(f"{prefix} 出边不能指向自身", code="SUB_EDGE_SELF")
         elif target not in node_ids:
-            add_graph(f"{prefix} 后继节点不存在：{target}")
+            add_graph(f"{prefix} 后继节点不存在：{target}",
+                      code="SUB_SUCCESSOR_MISSING", params={"target": target})
 
     return issues
 
@@ -975,69 +1174,82 @@ def _validate_human_approval_config(
     prefix = f"人机协作节点 {node.id}"
     config = node.config
 
-    def add(message: str, pointer: str | None = None) -> None:
-        issues.append((message, _loc(node.id, pointer)))
+    def add(message: str, pointer: str | None = None, *, code: str, params: dict[str, Any] | None = None) -> None:
+        issues.append((message, _loc(node.id, pointer), code, {'owner': node.id, **(params or {})}))
 
-    def add_graph(message: str) -> None:
+    def add_graph(message: str, *, code: str, params: dict[str, Any] | None = None) -> None:
         # 节点级拓扑错误（出边/回路/区域）：挂 nodeId、无字段 pointer（06 §6.13）。
-        issues.append((message, _loc(node.id)))
+        issues.append((message, _loc(node.id), code, {'owner': node.id, **(params or {})}))
 
     summary = config.get("summary")
     if not isinstance(summary, str) or not summary.strip():
-        add(f"{prefix} 必须填写审批说明（summary）", "/summary")
+        add(f"{prefix} 必须填写审批说明（summary）", "/summary",
+            code="APR_SUMMARY_REQUIRED")
 
     approver = config.get("approver", "")
     if approver != "" and not isinstance(approver, str):
-        add(f"{prefix} 审批人（approver）必须是文本", "/approver")
+        add(f"{prefix} 审批人（approver）必须是文本", "/approver",
+            code="APR_APPROVER_NOT_STRING")
 
     # docs/35 §2.1：可选通知邮箱 notifyEmails（string[]，≤5；支持 {{路径}} 插值）。
     notify_emails = config.get("notifyEmails", [])
     if notify_emails is None:
         notify_emails = []
     if not isinstance(notify_emails, list):
-        add(f"{prefix} 通知邮箱（notifyEmails）必须是数组", "/notifyEmails")
+        add(f"{prefix} 通知邮箱（notifyEmails）必须是数组", "/notifyEmails",
+            code="APR_NOTIFY_EMAILS_NOT_ARRAY")
     else:
         if len(notify_emails) > MAX_NOTIFY_EMAILS:
             add(
                 f"{prefix} 通知邮箱（notifyEmails）最多 {MAX_NOTIFY_EMAILS} 个（当前 {len(notify_emails)}）",
                 "/notifyEmails",
+                code="APR_NOTIFY_EMAILS_TOO_MANY",
+                params={"max": MAX_NOTIFY_EMAILS, "count": len(notify_emails)},
             )
         for item in notify_emails:
             if not isinstance(item, str):
-                add(f"{prefix} 通知邮箱（notifyEmails）每一项必须是文本", "/notifyEmails")
+                add(f"{prefix} 通知邮箱（notifyEmails）每一项必须是文本", "/notifyEmails",
+                    code="APR_NOTIFY_EMAIL_ITEM_NOT_STRING")
                 break
             stripped = item.strip()
             has_placeholder = "{{" in item and "}}" in item
             if not has_placeholder:
                 # 静态字面值：空或不含 @ 编译期即非法；含插值的项运行时再过滤。
                 if not stripped:
-                    add(f"{prefix} 通知邮箱（notifyEmails）不能包含空地址", "/notifyEmails")
+                    add(f"{prefix} 通知邮箱（notifyEmails）不能包含空地址", "/notifyEmails",
+                        code="APR_NOTIFY_EMAIL_EMPTY")
                     break
                 if "@" not in stripped:
                     add(
                         f"{prefix} 通知邮箱（notifyEmails）不是合法邮箱地址（缺少 @）：{stripped}",
                         "/notifyEmails",
+                        code="APR_NOTIFY_EMAIL_INVALID", params={"email": stripped},
                     )
 
     card_template_id = config.get("cardTemplateId")
     if card_template_id is not None and card_template_id != "":
         # M8：可选内置卡片 id；不填走 summary 旧路径，非空但目录未命中→编译 422。
         if not isinstance(card_template_id, str):
-            add(f"{prefix} 交互卡片（cardTemplateId）必须是卡片 id 文本", "/cardTemplateId")
+            add(f"{prefix} 交互卡片（cardTemplateId）必须是卡片 id 文本", "/cardTemplateId",
+                code="APR_CARD_ID_NOT_STRING")
         elif get_card(card_template_id) is None:
             add(
                 f"{prefix} 配置的交互卡片不存在：{card_template_id}",
                 "/cardTemplateId",
+                code="APR_CARD_NOT_FOUND", params={"cardId": card_template_id},
             )
 
     seconds = config.get("timeoutSeconds")
     if isinstance(seconds, bool) or not isinstance(seconds, int):
-        add(f"{prefix} 超时时长（timeoutSeconds）必须是整数秒", "/timeoutSeconds")
+        add(f"{prefix} 超时时长（timeoutSeconds）必须是整数秒", "/timeoutSeconds",
+            code="APR_TIMEOUT_SECONDS_NOT_INT")
     elif not MIN_APPROVAL_TIMEOUT <= seconds <= MAX_APPROVAL_TIMEOUT:
         add(
             f"{prefix} 超时时长需在 {MIN_APPROVAL_TIMEOUT}-{MAX_APPROVAL_TIMEOUT} 秒之间"
             f"（当前 {seconds}）",
             "/timeoutSeconds",
+            code="APR_TIMEOUT_SECONDS_RANGE",
+            params={"min": MIN_APPROVAL_TIMEOUT, "max": MAX_APPROVAL_TIMEOUT, "value": seconds},
         )
 
     on_timeout = config.get("onTimeout", "reject")
@@ -1046,26 +1258,32 @@ def _validate_human_approval_config(
             f"{prefix} 超时策略（onTimeout）必须是 "
             f"{' 或 '.join(APPROVAL_TIMEOUT_ACTIONS)}",
             "/onTimeout",
+            code="APR_ON_TIMEOUT_INVALID", params={"actions": list(APPROVAL_TIMEOUT_ACTIONS)},
         )
 
     approved_target = config.get("approvedTarget")
     rejected_target = config.get("rejectedTarget")
     if not isinstance(approved_target, str) or not approved_target.strip():
-        add(f"{prefix} 必须选择通过目标（approvedTarget）", "/approvedTarget")
+        add(f"{prefix} 必须选择通过目标（approvedTarget）", "/approvedTarget",
+            code="APR_APPROVED_TARGET_REQUIRED")
         approved_target = None
     if not isinstance(rejected_target, str) or not rejected_target.strip():
-        add(f"{prefix} 必须选择拒绝目标（rejectedTarget）", "/rejectedTarget")
+        add(f"{prefix} 必须选择拒绝目标（rejectedTarget）", "/rejectedTarget",
+            code="APR_REJECTED_TARGET_REQUIRED")
         rejected_target = None
 
-    for label, target, pointer in (
-        ("通过", approved_target, "/approvedTarget"),
-        ("拒绝", rejected_target, "/rejectedTarget"),
+    for label, branch_key, target, pointer in (
+        ("通过", "approved", approved_target, "/approvedTarget"),
+        ("拒绝", "rejected", rejected_target, "/rejectedTarget"),
     ):
         if target is not None:
             if target == node.id:
-                add(f"{prefix} {label}目标不能指向自身", pointer)
+                add(f"{prefix} {label}目标不能指向自身", pointer,
+                    code="APR_TARGET_SELF", params={"branch": branch_key})
             elif target not in node_ids:
-                add(f"{prefix} {label}目标节点不存在：{target}", pointer)
+                add(f"{prefix} {label}目标节点不存在：{target}", pointer,
+                    code="APR_TARGET_MISSING",
+                    params={"branch": branch_key, "target": target})
     if (
         approved_target is not None
         and rejected_target is not None
@@ -1073,7 +1291,8 @@ def _validate_human_approval_config(
         and rejected_target in node_ids
         and approved_target == rejected_target
     ):
-        add(f"{prefix} 通过目标与拒绝目标不能相同", "/approvedTarget")
+        add(f"{prefix} 通过目标与拒绝目标不能相同", "/approvedTarget",
+            code="APR_TARGETS_SAME")
 
     edge_targets = outgoing.get(node.id, set())
     configured = {
@@ -1083,14 +1302,17 @@ def _validate_human_approval_config(
     }
     if len(edge_targets) != 2:
         add_graph(
-            f"{prefix} 必须恰好配置 2 条出边（当前 {len(edge_targets)} 条），且不能直连结束"
+            f"{prefix} 必须恰好配置 2 条出边（当前 {len(edge_targets)} 条），且不能直连结束",
+            code="APR_EXACTLY_TWO_EDGES", params={"count": len(edge_targets)},
         )
     elif configured:
         for target in configured:
             if target not in edge_targets:
-                add_graph(f"{prefix} 缺少到目标节点 {target} 的连线")
+                add_graph(f"{prefix} 缺少到目标节点 {target} 的连线",
+                          code="APR_MISSING_EDGE", params={"target": target})
         for extra in edge_targets - configured:
-            add_graph(f"{prefix} 到节点 {extra} 的连线未配置（只允许通过/拒绝两条出边）")
+            add_graph(f"{prefix} 到节点 {extra} 的连线未配置（只允许通过/拒绝两条出边）",
+                      code="APR_EDGE_UNCONFIGURED", params={"nodeId": extra})
 
     return issues
 
@@ -1131,7 +1353,7 @@ def _reverse_reachable(loop_id: str, exit_target: str, incoming: dict[str, set[s
 
 def _validate_illegal_cycles(
     graph: GraphDSL, whitelist: set[tuple[str, str]]
-) -> list[str]:
+) -> list[tuple[str, str, dict[str, Any]]]:
     """U7：移除 loop 白名单回边后，剩余图不允许成环。"""
     adjacency: dict[str, list[str]] = {}
     for edge in graph.edges:
@@ -1165,16 +1387,18 @@ def _validate_illegal_cycles(
             if visit(node.id, []):
                 break
     if cycle_nodes:
-        return [
-            "检测到非法循环依赖（循环只允许经循环节点的循环体回到自身）："
-            + " → ".join(cycle_nodes)
-        ]
+        chain = " → ".join(cycle_nodes)
+        return [(
+            "检测到非法循环依赖（循环只允许经循环节点的循环体回到自身）：" + chain,
+            "GRAPH_ILLEGAL_CYCLE",
+            {"chain": chain},
+        )]
     return []
 
 
 def _validate_reachability(
     graph: GraphDSL, node_ids: set[str], outgoing: dict[str, set[str]]
-) -> list[str]:
+) -> list[tuple[str, str, dict[str, Any]]]:
     """从 trigger 节点 BFS（04 补充项 1：不可达节点检测）；无 trigger 时跳过。"""
     roots = [node.id for node in graph.nodes if node.type == "trigger" and node.id in node_ids]
     if not roots:
@@ -1187,27 +1411,35 @@ def _validate_reachability(
             continue
         reachable.add(current)
         queue.extend(outgoing.get(current, set()) - reachable)
-    return [f"节点 {node.id} 不可达（没有任何入边路径能到达它）" for node in graph.nodes if node.id not in reachable]
+    return [
+        (
+            f"节点 {node.id} 不可达（没有任何入边路径能到达它）",
+            "NODE_UNREACHABLE",
+            {"nodeId": node.id},
+        )
+        for node in graph.nodes
+        if node.id not in reachable
+    ]
 
 
 def _validate_node_config(node: NodeDSL) -> list[Issue]:
     config = node.config
 
-    def add(message: str, pointer: str) -> Issue:
-        return message, _loc(node.id, pointer)
+    def add(message: str, pointer: str, code: str, params: dict[str, Any] | None = None) -> Issue:
+        return message, _loc(node.id, pointer), code, {'owner': node.id, **(params or {})}
 
     if node.type == "trigger":
         trigger_type = config.get("triggerType")
         if trigger_type in ("schedule", "cron") and not config.get("cron"):
-            return [add("定时触发必须填写 Cron 表达式", "/cron")]
+            return [add("定时触发必须填写 Cron 表达式", "/cron", "NODE_TRIGGER_CRON_REQUIRED")]
         if trigger_type == "webhook" and not config.get("webhookUrl"):
-            return [add("Webhook 触发必须填写 URL", "/webhookUrl")]
+            return [add("Webhook 触发必须填写 URL", "/webhookUrl", "NODE_TRIGGER_WEBHOOK_URL_REQUIRED")]
     elif node.type == "ai_decision":
         if not (config.get("promptTemplate") or "").strip():
-            return [add("AI 决策必须填写提示词模板", "/promptTemplate")]
+            return [add("AI 决策必须填写提示词模板", "/promptTemplate", "NODE_AI_PROMPT_REQUIRED")]
     elif node.type == "tool_call":
         if not (config.get("tool") or "").strip():
-            return [add("工具调用必须选择工具", "/tool")]
+            return [add("工具调用必须选择工具", "/tool", "NODE_TOOL_REQUIRED")]
     return []
 
 
@@ -1380,8 +1612,8 @@ def _validate_template_refs(
         prefix = f"节点 {node.id}"
         visible = visible_at(node.id)
 
-        def add(message: str, pointer: str) -> None:
-            issues.append((message, _loc(node.id, pointer)))
+        def add(message: str, pointer: str, *, code: str, params: dict[str, Any] | None = None) -> None:
+            issues.append((message, _loc(node.id, pointer), code, {'owner': node.id, **(params or {})}))
 
         for pointer, text in fields:
             for match in _REF_RE.finditer(text):
@@ -1398,6 +1630,7 @@ def _validate_template_refs(
                         add(
                             f"{prefix} 模板引用未声明的全局变量（REF_NODE_NOT_FOUND）：{display}",
                             pointer,
+                            code="REF_GLOBAL_NOT_FOUND", params={"display": display},
                         )
                     continue
 
@@ -1405,6 +1638,7 @@ def _validate_template_refs(
                     add(
                         f"{prefix} 模板引用的节点不存在（REF_NODE_NOT_FOUND）：{display}",
                         pointer,
+                        code="REF_NODE_NOT_FOUND", params={"display": display},
                     )
                     continue
 
@@ -1429,6 +1663,7 @@ def _validate_template_refs(
                         f"{prefix} 模板引用不可见（REF_NOT_IN_SCOPE：非上游或循环变量越出循环体）："
                         f"{display}",
                         pointer,
+                        code="REF_NOT_IN_SCOPE", params={"display": display},
                     )
                     continue
 
@@ -1442,6 +1677,8 @@ def _validate_template_refs(
                         f"{prefix} 模板引用缺少输出字段（REF_PATH_NOT_FOUND，"
                         f"应写 {{{head}.<字段>}}）：{display}",
                         pointer,
+                        code="REF_PATH_MISSING_FIELD",
+                        params={"head": head, "display": display},
                     )
                     continue
 
@@ -1453,6 +1690,8 @@ def _validate_template_refs(
                             f"{prefix} 触发器输出路径不存在（REF_PATH_NOT_FOUND，"
                             f"context 下仅 {'/'.join(_TRIGGER_CONTEXT_KEYS)}）：{display}",
                             pointer,
+                            code="REF_TRIGGER_PATH_NOT_FOUND",
+                            params={"keys": list(_TRIGGER_CONTEXT_KEYS), "display": display},
                         )
                     continue
 
@@ -1462,6 +1701,7 @@ def _validate_template_refs(
                         add(
                             f"{prefix} 工具节点仅暴露 result 输出（REF_PATH_NOT_FOUND）：{display}",
                             pointer,
+                            code="REF_TOOL_ONLY_RESULT", params={"display": display},
                         )
                         continue
                     tool = ""
@@ -1474,6 +1714,8 @@ def _validate_template_refs(
                             f"{prefix} 工具 {tool or '未选择'} 的输出中不存在该路径"
                             f"（REF_PATH_NOT_FOUND）：{display}",
                             pointer,
+                            code="REF_TOOL_PATH_NOT_FOUND",
+                            params={"tool": tool, "display": display},
                         )
                     continue
 
@@ -1487,6 +1729,7 @@ def _validate_template_refs(
                                 f"{prefix} 并行结果在汇聚后才可用（REF_NOT_IN_SCOPE："
                                 f"分支区域内尚未汇聚）：{display}",
                                 pointer,
+                                code="REF_PARALLEL_NOT_IN_SCOPE", params={"display": display},
                             )
                             continue
                         # result.<入口id>：入口须为 branches 目标；其下深层为分支产出，动态放行。
@@ -1496,6 +1739,8 @@ def _validate_template_refs(
                                 f"{prefix} 并行结果入口不存在（REF_PATH_NOT_FOUND，"
                                 f"result 下须为 branches 目标节点 id，合法入口：{sorted(entries)}）：{display}",
                                 pointer,
+                                code="REF_PARALLEL_ENTRY_NOT_FOUND",
+                                params={"entries": sorted(entries), "display": display},
                             )
                         continue
                     if root not in _STATIC_OUTPUT_KEYS["parallel"] or rest:
@@ -1503,6 +1748,7 @@ def _validate_template_refs(
                             f"{prefix} 并行节点输出路径不存在（REF_PATH_NOT_FOUND，"
                             f"仅 status/branches/joinStrategy/joinTarget，result 为动态入口）：{display}",
                             pointer,
+                            code="REF_PARALLEL_PATH_NOT_FOUND", params={"display": display},
                         )
                     continue
 
@@ -1518,6 +1764,8 @@ def _validate_template_refs(
                                 f"{prefix} 子图输出中不存在该内部节点（REF_PATH_NOT_FOUND，"
                                 f"outputs 下须为子图内节点 id，合法：{sorted(inner)}）：{display}",
                                 pointer,
+                                code="REF_SUBGRAPH_OUTPUT_NODE_NOT_FOUND",
+                                params={"inner": sorted(inner), "display": display},
                             )
                         continue
                     if root not in _STATIC_OUTPUT_KEYS["subgraph"] or rest:
@@ -1525,6 +1773,7 @@ def _validate_template_refs(
                             f"{prefix} 子图节点输出路径不存在（REF_PATH_NOT_FOUND，仅 status/outputs 根）："
                             f"{display}",
                             pointer,
+                            code="REF_SUBGRAPH_PATH_NOT_FOUND", params={"display": display},
                         )
                     continue
 
@@ -1544,6 +1793,8 @@ def _validate_template_refs(
                         add(
                             f"{prefix} 节点 {head} 的输出中不存在该路径（REF_PATH_NOT_FOUND）：{display}",
                             pointer,
+                            code="REF_AI_PATH_NOT_FOUND",
+                            params={"nodeId": head, "display": display},
                         )
                     continue
 
@@ -1561,6 +1812,8 @@ def _validate_template_refs(
                         add(
                             f"{prefix} 节点 {head} 的输出中不存在该路径（REF_PATH_NOT_FOUND）：{display}",
                             pointer,
+                            code="REF_STATIC_PATH_NOT_FOUND",
+                            params={"nodeId": head, "display": display},
                         )
 
     return issues, edges
@@ -1615,6 +1868,8 @@ def _validate_data_dependency_cycles(
         "常见于循环节点的 continueExpression 引用了循环体内节点、而体内节点又引用"
         "循环变量，首轮条件求值时体内尚无输出）：" + chain,
         _loc(back_node, back_pointer),
+        "GRAPH_DATA_CYCLE",
+        {"chain": chain},
     )]
 
 

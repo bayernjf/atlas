@@ -217,25 +217,25 @@ def _subgraph_parent(template: str) -> dict:
 def test_subgraph_outputs_inner_node_expansion_d30_b2():
     index = {"sub-1": {"child-a", "child-b"}}
     # 解析到子图结构：合法内部节点 id 的深层路径放行
-    msgs, _ = validate_graph_report(
+    msgs, _, _codes, _params = validate_graph_report(
         parse_graph(_subgraph_parent("{{sub-1.outputs.child-a.x}}")),
         {}, check_refs=True, subgraph_index=index,
     )
     assert not any("子图输出中不存在" in m for m in msgs)
     # outputs.<不存在的内部节点 id>：REF_PATH_NOT_FOUND
-    msgs2, _ = validate_graph_report(
+    msgs2, _, _codes, _params = validate_graph_report(
         parse_graph(_subgraph_parent("{{sub-1.outputs.ghost.x}}")),
         {}, check_refs=True, subgraph_index=index,
     )
     assert any("REF_PATH_NOT_FOUND" in m and "子图输出中不存在" in m for m in msgs2)
     # 解析不到子图（无 index）：降级仅放行 outputs 根，不报路径错
-    msgs3, _ = validate_graph_report(
+    msgs3, _, _codes, _params = validate_graph_report(
         parse_graph(_subgraph_parent("{{sub-1.outputs.ghost.x}}")),
         {}, check_refs=True,
     )
     assert not any("子图输出中不存在" in m for m in msgs3)
     # outputs 根本身始终放行
-    msgs4, _ = validate_graph_report(
+    msgs4, _, _codes, _params = validate_graph_report(
         parse_graph(_subgraph_parent("{{sub-1.outputs}}")),
         {}, check_refs=True, subgraph_index=index,
     )

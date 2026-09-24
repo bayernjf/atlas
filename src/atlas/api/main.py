@@ -305,7 +305,13 @@ _secret_provider = build_secret_provider_from_env()
 @app.exception_handler(GraphValidationError)
 def graph_validation_handler(_request: Request, exc: GraphValidationError) -> JSONResponse:
     # locations 为稀疏侧车（04 §6.5/06 §6.13）：有可定位条目时才下发，index 对齐 detail。
-    content: dict[str, Any] = {"detail": exc.errors}
+    # codes/params 与 detail 等长、下标对齐（docs/17 §2.4）：前端按 code 映射本地文案，
+    # detail 为中文 message，仅作调试日志/默认兜底，不直接面向最终用户。
+    content: dict[str, Any] = {
+        "detail": exc.errors,
+        "codes": exc.codes,
+        "params": exc.params,
+    }
     if exc.locations:
         content["locations"] = exc.locations
     return JSONResponse(status_code=422, content=content)
