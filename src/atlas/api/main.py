@@ -73,7 +73,7 @@ from atlas.iam.deps import (
 )
 from atlas.iam.accounts import UserExists
 from atlas.iam.passwords import validate_password, validate_username, verify_password
-from atlas.iam.principals import Principal, Role
+from atlas.iam.principals import Principal, Role, can
 from atlas.iam.registry import STORAGE_BACKEND, TenantServices
 from atlas.llm.nl_generate import generate_graph, validate_param_fills
 from atlas.memory.adapter import MemoryHarnessAdapter
@@ -1490,9 +1490,15 @@ def import_openapi(
 
 @app.get("/api/openapi/imports")
 def list_openapi_imports(
+    include_deleted: bool = False,
     principal: Principal = Depends(require("read")),
 ) -> dict[str, Any]:
-    items = services_for(principal).openapi_imports.list()
+    # docs/60 G2：查看含已软删条目需 administer；缺省/false 维持 read 且不返已删。
+    if include_deleted and not can(principal.role, "administer"):
+        raise HTTPException(status_code=403, detail="无权查看已删除的 API 规格")
+    items = services_for(principal).openapi_imports.list(
+        include_deleted=include_deleted
+    )
     return {"items": [spec.model_dump() for spec in items]}
 
 
@@ -1510,9 +1516,23 @@ def get_openapi_import(
 @app.delete("/api/openapi/imports/{spec_id}")
 def delete_openapi_import(
     spec_id: str,
+    hard: bool = False,
     principal: Principal = Depends(require("administer")),
-) -> dict[str, bool]:
-    if not services_for(principal).openapi_imports.delete(spec_id):
+) -> Response:
+    store = services_for(principal).openapi_imports
+    if hard:
+        # docs/60 G2：仅已软删记录可物理删除；未软删 → 409，不存在 → 404，成功 204。
+        try:
+            purged = store.purge(spec_id)
+        except ImportStoreError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"code": exc.code, "message": str(exc)},
+            ) from exc
+        if not purged:
+            raise HTTPException(status_code=404, detail="导入规格不存在")
+        return Response(status_code=204)
+    if not store.delete(spec_id):
         raise HTTPException(status_code=404, detail="导入规格不存在")
     return {"deleted": True}
 
