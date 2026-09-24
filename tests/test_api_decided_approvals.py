@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi.testclient import TestClient
 
 from atlas.api.main import _email_token_issuer
@@ -94,7 +96,11 @@ def test_decided_shape_fields():
     assert item["decision"] == "rejected"
     assert item["resolvedBy"] == "human"
     assert item["comment"] == "证据不足"
-    assert item["createdAt"] > 0
+    # docs/61 §3.3：已决投影的 createdAt 由 float epoch 改为 UTC ISO-8601，并新增 resolvedAt。
+    created = datetime.fromisoformat(item["createdAt"])
+    resolved = datetime.fromisoformat(item["resolvedAt"])
+    assert created.tzinfo is not None and resolved.tzinfo is not None
+    assert resolved >= created
     assert "card_context" not in item
 
 

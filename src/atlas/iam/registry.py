@@ -21,6 +21,7 @@ from atlas.coordination import TaskStore
 from atlas.observability.audit import AuditRepository, AuditStore
 from atlas.message.service import MessageService
 from atlas.message.deliveries import PgDeliveryStore as PgMessageDeliveryStore
+from atlas.collaboration.history import PgApprovalHistoryStore
 from atlas.message.smtp import get_smtp_sender
 from atlas.message.im import get_im_sender
 from atlas.message.webhook import get_webhook_sender
@@ -118,7 +119,8 @@ class TenantRegistry:
                 backend.connection_store(tenant_id), tenant_id=tenant_id
             )
             # approval 的帧持久化在 loader frame_sink（批 2 写 interruptions 表），
-            # broker 只承担进程内 pending + Event（重启后由恢复扫描器 restore 重建）。
+            # broker 只承担进程内 pending + Event（重启后由恢复扫描器 restore 重建）；
+            # 已决历史另落 approval_history 表（docs/61 §3 H2），跨重启/跨实例可见。
             services = TenantServices(
                 graph_store=backend.graph_store(tenant_id),
                 recording_store=backend.recording_store(tenant_id),
@@ -129,7 +131,9 @@ class TenantRegistry:
                     im_sender=get_im_sender(),
                     delivery_store=PgMessageDeliveryStore(backend.engine, tenant_id),
                 ),
-                approval_broker=ApprovalBroker(),
+                approval_broker=ApprovalBroker(
+                    history_store=PgApprovalHistoryStore(backend.engine, tenant_id)
+                ),
                 debug_broker=DebuggerBroker(),
                 cancellation_broker=RunCancellationBroker(),
                 event_wait_broker=EventWaitBroker(),

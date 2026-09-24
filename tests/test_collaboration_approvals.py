@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
+from datetime import datetime
 
 from atlas.collaboration.approvals import ApprovalBroker
 
@@ -114,7 +115,10 @@ def test_list_decided_empty_and_excludes_pending():
     assert items[0]["decision"] == "approved"
     assert items[0]["resolvedBy"] == "human"
     assert items[0]["comment"] == "ok"
-    assert items[0]["createdAt"] > 0
+    # docs/61 §3.3：投影时刻为 UTC ISO-8601（不再是 float epoch），且补 resolvedAt。
+    created = datetime.fromisoformat(items[0]["createdAt"])
+    resolved = datetime.fromisoformat(items[0]["resolvedAt"])
+    assert created.tzinfo is not None and resolved >= created
 
 
 def test_list_decided_newest_first_with_limit_clamp():

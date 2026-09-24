@@ -177,3 +177,24 @@ CREATE TABLE IF NOT EXISTS message_deliveries (
 );
 CREATE INDEX IF NOT EXISTS idx_message_deliveries_seq
     ON message_deliveries (tenant_id, seq DESC);
+
+-- 已决审批历史（docs/61 §3 H2；增量迁移见 027_approval_history.sql）
+-- token 为审批 uuid4，一条审批最多一行；时间列 TEXT 存 UTC ISO-8601；排序走 seq。
+CREATE TABLE IF NOT EXISTS approval_history (
+    tenant_id        TEXT NOT NULL,
+    token            TEXT NOT NULL,
+    seq              BIGINT NOT NULL,
+    node_id          TEXT NOT NULL,
+    graph_id         TEXT NOT NULL DEFAULT '',
+    summary          TEXT NOT NULL DEFAULT '',
+    approver         TEXT NOT NULL DEFAULT '',
+    decision         TEXT NOT NULL,
+    resolved_by      TEXT NOT NULL DEFAULT '',
+    comment          TEXT,
+    card_template_id TEXT,
+    created_at       TEXT NOT NULL,
+    resolved_at      TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, token)
+);
+CREATE INDEX IF NOT EXISTS idx_approval_history_tenant_seq
+    ON approval_history (tenant_id, seq DESC);
