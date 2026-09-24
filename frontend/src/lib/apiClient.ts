@@ -12,6 +12,7 @@ import {
 import type { SerializedGraph } from './graphSerializer'
 import type { JsonSchema } from './scope'
 import { getLanguage, t } from '../locales'
+import { isRuntimeErrorCode, resolveRuntimeDetail, resolveRuntimeError } from './runtimeError'
 
 // docs/17 §2.4：后端认证错误返回 {code,message}；code 是契约，前端按 code 走 i18n。
 const AUTH_ERROR_KEYS: Record<string, string> = {
@@ -68,9 +69,17 @@ function resolveErrorMessage(
 ): string {
   if (Array.isArray(detail)) return resolveValidationList(detail, codes, params)
   if (detail !== null && typeof detail === 'object') {
-    const rec = detail as { code?: string; message?: string }
+    const rec = detail as {
+      code?: string
+      message?: string
+      params?: Record<string, unknown>
+    }
     const key = rec.code ? AUTH_ERROR_KEYS[rec.code] : undefined
     if (key) return t(key)
+    // docs/60 G1：运行期 wait/condition/loop 结构化错误码（COND_*/WAIT_*/LOOP_*）。
+    if (isRuntimeErrorCode(rec.code)) {
+      return resolveRuntimeError(rec.code, rec.params, rec.message ?? '')
+    }
     return rec.message ?? t('error.requestFailed', { status })
   }
   return (typeof detail === 'string' && detail) || t('error.requestFailed', { status })
@@ -830,7 +839,13 @@ export async function streamRun(
   if (!response.ok || !response.body) {
     const body = await response.json().catch(() => null)
     if (response.status === 401) handleUnauthorized()
-    throw new Error(body?.detail || `流式运行失败：${response.status}`)
+    const rawDetail = body?.detail
+    const streamError =
+      rawDetail && typeof rawDetail === 'object'
+        ? resolveRuntimeDetail(rawDetail)
+        : (typeof rawDetail === 'string' && rawDetail) ||
+          `流式运行失败：${response.status}`
+    throw new Error(streamError)
   }
 
   const reader = response.body.getReader()
@@ -847,9 +862,17 @@ export async function streamRun(
     const chunks = buffer.split('\n\n')
     buffer = chunks.pop() ?? ''
     for (const chunk of chunks) {
-      const dataLine = chunk.split('\n').find((line) => line.startsWith('data: '))
+      const lines = chunk.split('\n')
+      const eventLine = lines.find((line) => line.startsWith('event: '))
+      const dataLine = lines.find((line) => line.startsWith('data: '))
       if (!dataLine) continue
+      const eventName = eventLine?.slice(7)
       const payload = JSON.parse(dataLine.slice(6))
+      // docs/60 G1：run failed 经 event:error 帧下发 {detail:{code,message,params}}，
+      // 解析为当前语言文案后抛出（否则只会落到“SSE 流缺少最终运行结果”）。
+      if (eventName === 'error') {
+        throw new Error(resolveRuntimeDetail(payload.detail))
+      }
       if (payload.id && payload.outputs) {
         result = payload as RunResult
       } else if (payload.type === 'stopped') {

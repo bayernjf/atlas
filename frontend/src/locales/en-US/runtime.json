@@ -1,0 +1,23 @@
+{
+  "COND_SYNTAX_UNEXPECTED_CHAR": "Syntax error: unexpected character \"{{token}}\" (position {{pos}})",
+  "COND_SYNTAX_INCOMPLETE": "Syntax error: incomplete expression",
+  "COND_SYNTAX_UNEXPECTED_TOKEN": "Syntax error: unexpected token \"{{token}}\" (position {{pos}})",
+  "COND_SYNTAX_MISSING_PAREN": "Syntax error: missing closing parenthesis",
+  "COND_UNKNOWN_IDENTIFIER": "Syntax error: unknown identifier \"{{token}}\" (position {{pos}}; variables must be wrapped in double braces)",
+  "COND_UNKNOWN_FUNC": "Syntax error: unknown function \"{{func}}\"",
+  "COND_FUNC_ARITY": "Function \"{{func}}\" called with the wrong number of arguments (got {{actual}})",
+  "COND_TYPE_MISMATCH": "Type mismatch: {{detail}}",
+  "COND_DIVIDE_BY_ZERO": "Arithmetic \"{{op}}\": the divisor must not be 0",
+  "COND_INVALID_DATE": "Function \"{{func}}\" constructed an invalid date",
+  "COND_NULL_COMPARISON": "Null (null/missing variable) can only use equality comparisons, not ordering comparisons",
+  "COND_EVAL_FAILED": "Failed to evaluate the expression",
+  "WAIT_ABSOLUTE_TIME_INVALID": "Wait node: invalid absolute time",
+  "WAIT_DURATION_INVALID": "Wait node: invalid duration (must be 1-3600 seconds in the future)",
+  "WAIT_EVENT_FRAME_INVALID": "Wait node: invalid event frame",
+  "WAIT_EVENT_KEY_INVALID": "Wait node: invalid event key",
+  "WAIT_TIMEOUT_FAILED": "Timed out waiting for the event",
+  "LOOP_MAX_ITERATIONS": "Reached the maximum number of iterations; exiting the loop",
+  "LOOP_ITEMS_TOO_LARGE": "The iterated array exceeds the maximum length",
+  "FOREACH_COLLECT_MISSING": "The collect node produced no output; skipping collection for this iteration",
+  "RUNTIME_UNEXPECTED": "An unexpected runtime error occurred"
+}
