@@ -11,7 +11,7 @@ import {
 } from './auth'
 import type { SerializedGraph } from './graphSerializer'
 import type { JsonSchema } from './scope'
-import { t } from '../locales'
+import { getLanguage, t } from '../locales'
 
 // docs/17 §2.4：后端认证错误返回 {code,message}；code 是契约，前端按 code 走 i18n。
 const AUTH_ERROR_KEYS: Record<string, string> = {
@@ -22,9 +22,51 @@ const AUTH_ERROR_KEYS: Record<string, string> = {
   AUTH_NOT_FOUND: 'error.auth.notFound',
 }
 
+/**
+ * 把后端 422 的错误列表（detail 中文数组 + 并行等长的 codes/params，docs/17 §2.4）
+ * 逐条按错误码映射到当前语言文案；缺翻译键或无 code 时回退该条中文 detail（兜底，
+ * 保证英文态最坏只混中文、不泄漏 i18n key）。params 中数组先 join 以便模板插值。
+ */
+function resolveValidationList(
+  detail: unknown[],
+  codes: unknown,
+  params: unknown,
+): string {
+  const sep = getLanguage().startsWith('en') ? '; ' : '；'
+  const hasCodes = Array.isArray(codes) && codes.length === detail.length
+  const ps = Array.isArray(params) ? params : []
+  return detail
+    .map((item, index) => {
+      const fallback = typeof item === 'string' ? item : String(item)
+      const code = hasCodes ? codes[index] : undefined
+      if (typeof code === 'string' && code) {
+        const raw = (ps[index] ?? {}) as Record<string, unknown>
+        const vars: Record<string, unknown> = {}
+        for (const [key, value] of Object.entries(raw)) {
+          vars[key] = Array.isArray(value) ? value.join(', ') : value
+        }
+        // 审批分支键是英文枚举（approved/rejected），插值前按当前语言本地化。
+        if (vars.branch === 'approved' || vars.branch === 'rejected') {
+          vars.branch = t(`dsl._branch_${vars.branch}`, {
+            ns: 'validation',
+            defaultValue: vars.branch as string,
+          })
+        }
+        return t(`dsl.${code}`, { ns: 'validation', defaultValue: fallback, ...vars })
+      }
+      return fallback
+    })
+    .join(sep)
+}
+
 /** 把 FastAPI 的 detail（字符串 / 422 数组 / {code,message} 对象）解析为当前语言的错误文案。 */
-function resolveErrorMessage(detail: unknown, status: number): string {
-  if (Array.isArray(detail)) return detail.join('；')
+function resolveErrorMessage(
+  detail: unknown,
+  status: number,
+  codes?: unknown,
+  params?: unknown,
+): string {
+  if (Array.isArray(detail)) return resolveValidationList(detail, codes, params)
   if (detail !== null && typeof detail === 'object') {
     const rec = detail as { code?: string; message?: string }
     const key = rec.code ? AUTH_ERROR_KEYS[rec.code] : undefined
@@ -199,7 +241,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       // 登录端点的 401 是「用户名或密码错误」，不触发会话失效跳转
       if (path !== '/api/auth/login') handleUnauthorized()
     }
-    throw new Error(resolveErrorMessage(body?.detail, response.status))
+    throw new Error(resolveErrorMessage(body?.detail, response.status, body?.codes, body?.params))
   }
   return body as T
 }
@@ -214,7 +256,7 @@ export async function login(username: string, password: string): Promise<LoginRe
   })
   const body = await response.json().catch(() => null)
   if (!response.ok) {
-    throw new Error(resolveErrorMessage(body?.detail, response.status))
+    throw new Error(resolveErrorMessage(body?.detail, response.status, body?.codes, body?.params))
   }
   const session = body as LoginResponse
   saveSession(session.token, session.principal)
