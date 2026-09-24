@@ -656,20 +656,46 @@ export type AuditEventItem = {
   path: string
   ip: string
   at: string
+  /** 两档共用的游标（docs/61 §4.1）。 */
+  seq: number
+}
+
+/** 审计过滤条件（docs/61 §4.2）；export 用同一套，但不带 cursor。 */
+export type AuditFilters = {
+  actor?: string
+  since?: string
+  until?: string
+}
+
+function auditQuery(params: URLSearchParams, limit: number, action?: string, filters?: AuditFilters) {
+  params.set('limit', String(limit))
+  if (action) params.set('action', action)
+  if (filters?.actor) params.set('actor', filters.actor)
+  if (filters?.since) params.set('since', filters.since)
+  if (filters?.until) params.set('until', filters.until)
 }
 
 export async function listAuditEvents(
   limit: number,
   action?: string,
-): Promise<{ items: AuditEventItem[]; limit: number }> {
-  const params = new URLSearchParams({ limit: String(limit) })
-  if (action) params.set('action', action)
+  filters?: AuditFilters,
+  cursor?: number | null,
+): Promise<{ items: AuditEventItem[]; limit: number; nextCursor: number | null }> {
+  const params = new URLSearchParams()
+  auditQuery(params, limit, action, filters)
+  if (cursor !== undefined && cursor !== null) params.set('cursor', String(cursor))
   return request(`/api/audit/events?${params.toString()}`)
 }
 
-export async function exportAuditJsonl(action?: string): Promise<Blob> {
+export async function exportAuditJsonl(
+  action?: string,
+  filters?: AuditFilters,
+): Promise<Blob> {
   const params = new URLSearchParams({ format: 'jsonl' })
   if (action) params.set('action', action)
+  if (filters?.actor) params.set('actor', filters.actor)
+  if (filters?.since) params.set('since', filters.since)
+  if (filters?.until) params.set('until', filters.until)
   const headers = new Headers()
   const token = getToken()
   if (token) headers.set('Authorization', `Bearer ${token}`)

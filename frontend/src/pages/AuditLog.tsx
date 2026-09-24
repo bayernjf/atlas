@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import {
   Button,
   Card,
+  DatePicker,
   Input,
   Layout,
   Select,
@@ -18,6 +19,7 @@ import {
   listAuditEvents,
   type AuditEventItem,
 } from '../lib/apiClient'
+import { auditRangeBounds, cleanText, mergeAuditPages, type AuditRange } from '../lib/auditFilters'
 import type { Principal } from '../lib/auth'
 import { useTranslation } from '../locales'
 
@@ -33,22 +35,42 @@ export function AuditLog({ principal, onLogout, onBack }: AuditLogProps): ReactE
   const { t } = useTranslation('audit')
   const [items, setItems] = useState<AuditEventItem[]>([])
   const [loading, setLoading] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [limit, setLimit] = useState(100)
   const [actionInput, setActionInput] = useState('')
   const [actionFilter, setActionFilter] = useState('')
+  const [actorInput, setActorInput] = useState('')
+  const [actorFilter, setActorFilter] = useState('')
+  const [range, setRange] = useState<AuditRange>(null)
+  const [nextCursor, setNextCursor] = useState<number | null>(null)
 
-  const refresh = useCallback(async () => {
-    setLoading(true)
-    try {
-      const body = await listAuditEvents(limit, actionFilter)
-      setItems(body.items)
-    } catch (exc) {
-      message.error(exc instanceof Error ? exc.message : t('loadError'))
-    } finally {
-      setLoading(false)
-    }
-  }, [limit, actionFilter, t])
+  // docs/61 §4.3：过滤条件变了就整页替换（游标从头开始），加载更多才追加。
+  const load = useCallback(
+    async (cursor: number | null, append: boolean) => {
+      if (append) setLoadingMore(true)
+      else setLoading(true)
+      try {
+        const bounds = auditRangeBounds(range)
+        const body = await listAuditEvents(
+          limit,
+          actionFilter,
+          { actor: actorFilter || undefined, ...bounds },
+          cursor,
+        )
+        setItems((current) => (append ? mergeAuditPages(current, body.items) : body.items))
+        setNextCursor(body.nextCursor)
+      } catch (exc) {
+        message.error(exc instanceof Error ? exc.message : t('loadError'))
+      } finally {
+        setLoading(false)
+        setLoadingMore(false)
+      }
+    },
+    [limit, actionFilter, actorFilter, range, t],
+  )
+
+  const refresh = useCallback(() => load(null, false), [load])
 
   useEffect(() => {
     void refresh()
@@ -57,7 +79,10 @@ export function AuditLog({ principal, onLogout, onBack }: AuditLogProps): ReactE
   async function handleExport(): Promise<void> {
     setExporting(true)
     try {
-      const blob = await exportAuditJsonl(actionFilter)
+      const blob = await exportAuditJsonl(actionFilter, {
+        actor: actorFilter || undefined,
+        ...auditRangeBounds(range),
+      })
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
       anchor.href = url
@@ -72,6 +97,11 @@ export function AuditLog({ principal, onLogout, onBack }: AuditLogProps): ReactE
     } finally {
       setExporting(false)
     }
+  }
+
+  function applyFilters(): void {
+    setActionFilter(cleanText(actionInput) ?? '')
+    setActorFilter(cleanText(actorInput) ?? '')
   }
 
   const columns: ColumnsType<AuditEventItem> = [
@@ -103,19 +133,36 @@ export function AuditLog({ principal, onLogout, onBack }: AuditLogProps): ReactE
         <Card
           title={t('card.title')}
           extra={
-            <Space>
+            <Space wrap>
               <Input
                 allowClear
                 placeholder={t('filter.actionPlaceholder')}
                 value={actionInput}
                 style={{ width: 220 }}
                 onChange={(event) => setActionInput(event.target.value)}
-                onPressEnter={() => setActionFilter(actionInput.trim())}
+                onPressEnter={applyFilters}
               />
-              <Button
-                type="primary"
-                onClick={() => setActionFilter(actionInput.trim())}
-              >
+              <Input
+                allowClear
+                placeholder={t('filter.actorPlaceholder')}
+                value={actorInput}
+                style={{ width: 150 }}
+                onChange={(event) => setActorInput(event.target.value)}
+                onPressEnter={applyFilters}
+              />
+              <DatePicker.RangePicker
+                showTime
+                allowEmpty={[true, true]}
+                placeholder={[t('filter.since'), t('filter.until')]}
+                onChange={(values) =>
+                  setRange(
+                    values
+                      ? [values[0]?.toDate() ?? null, values[1]?.toDate() ?? null]
+                      : null,
+                  )
+                }
+              />
+              <Button type="primary" onClick={applyFilters}>
                 {t('filter.search')}
               </Button>
               <Select
@@ -146,6 +193,14 @@ export function AuditLog({ principal, onLogout, onBack }: AuditLogProps): ReactE
             scroll={{ x: 1100 }}
             locale={{ emptyText: t('empty') }}
           />
+          {/* docs/61 §4.3：游标翻页（nextCursor 为 null 即到底），不做客户端假分页。 */}
+          {nextCursor !== null && (
+            <div style={{ marginTop: 12, textAlign: 'center' }}>
+              <Button loading={loadingMore} onClick={() => void load(nextCursor, true)}>
+                {t('button.loadMore')}
+              </Button>
+            </div>
+          )}
         </Card>
       </Content>
     </Layout>

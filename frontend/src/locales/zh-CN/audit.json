@@ -6,6 +6,9 @@
   "filter": {
     "action": "动作前缀",
     "actionPlaceholder": "如 POST /api/graphs",
+    "actorPlaceholder": "操作人精确匹配",
+    "since": "起始时间",
+    "until": "截止时间",
     "limit": "条数",
     "search": "筛选",
     "reset": "重置"
@@ -13,6 +16,7 @@
   "button": {
     "refresh": "手动刷新",
     "export": "导出 JSONL",
+    "loadMore": "加载更多",
     "back": "返回"
   },
   "column": {

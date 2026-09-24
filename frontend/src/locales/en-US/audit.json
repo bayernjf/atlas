@@ -6,6 +6,9 @@
   "filter": {
     "action": "Action prefix",
     "actionPlaceholder": "e.g. POST /api/graphs",
+    "actorPlaceholder": "Exact actor name",
+    "since": "Since",
+    "until": "Until",
     "limit": "Rows",
     "search": "Filter",
     "reset": "Reset"
@@ -13,6 +16,7 @@
   "button": {
     "refresh": "Refresh manually",
     "export": "Export JSONL",
+    "loadMore": "Load more",
     "back": "Back"
   },
   "column": {
