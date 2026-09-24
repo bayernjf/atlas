@@ -986,8 +986,8 @@ class MemoryRepository(Protocol):
 | POST | /api/connections/{id}/refresh | 【**operate**，T4】用 refresh_token 刷新访问令牌（过期前 60s 视为过期）；异常置 error 抛 502 | connection |
 | POST | /api/connections/{id}/test | 【**operate**，T4】仅验证令牌状态（过期先刷新；draft/error 返 `{ok:false,reason}`，**不调真实业务 API**） | connection |
 | GET | /connections/callback | 【**无鉴权**，T4】OAuth 提供方回调落地静态 HTML 页（include_in_schema=False，注册于 StaticFiles 挂载前优先匹配；纯静态引导用户回填 code/state，无副作用、不读 query 外秘密） | — |
-| GET | /api/audit/events | 【**administer**，docs/35 T6 `f243e04`】分页查本租户审计事件（query limit/offset/actor/action），仅 8 元数据字段、绝无请求体/凭据 | audit_event |
-| GET | /api/audit/export | 【**administer**，T6】`?format=jsonl` 导出审计（StreamingResponse 附件，逐行 JSON）；reset 不清审计 | audit_event |
+| GET | /api/audit/events | 【**administer**，docs/35 T6 `f243e04`；**docs/61 H3 落码 `8a9f7df`/`36a3cbb`**】查本租户审计事件（query `limit`〔页大小，静默 clamp 1-500，非整数走 FastAPI 默认英文 422〕/`action`〔路由动作前缀〕/`actor`〔**精确等值**〕/`since`·`until`〔UTC ISO-8601 **闭区间**，接受 `Z` 后缀，非法或 `since>until` → 端点内中文 422〕/`cursor`〔`seq < cursor` 向更早翻页〕；响应 `{items, limit, nextCursor}`，`nextCursor` 仅满一页时非 null；items 每条含 **`seq`** 共 9 字段〕。**注**：原行所写 `offset` 从未存在，实为游标 `cursor`；绝无请求体/凭据、GET 读操作不记审计 | audit_event |
+| GET | /api/audit/export | 【**administer**，T6；**docs/61 H3 落码**】`?format=jsonl` 导出审计（StreamingResponse 附件，逐行 JSON、正序旧→新）；受同一套 `action`/`actor`/`since`/`until` 过滤但**不接受 `cursor`**（导出全部匹配行、不受分页影响）；`format` 非 jsonl → 422 中文；reset 不清审计 | audit_event |
 | GET | /api/channels | 【**read**，真实渠道适配批 docs/38，ADR T28】列出本租户渠道绑定（投影不含 token/secret） | channel_binding |
 | POST | /api/channels | 【**operate**，201】body `{provider, connectionId, config:{shop, apiVersion?}}` 建立绑定；provider 仅 shopify；connection 不存在/跨租户 → 404「渠道绑定不存在」，同 connection 重复绑定 → 409；写审计 `channel.bind`（不含 token，config.shop 在 path/query 外不记录） | channel_binding |
 | GET | /api/channels/{id} | 【**read**】单个绑定；未知绑定/不属于本租户 → 404 | channel_binding |

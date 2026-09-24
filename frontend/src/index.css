@@ -436,6 +436,28 @@ body,
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+/* docs/61 §4.3：审计页时间边界用原生 datetime-local（刻意不引 AntD RangePicker） */
+.audit-time-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.audit-time-input {
+  padding: 4px 8px;
+  border: 1px solid var(--atlas-color-border, #d9d9d9);
+  border-radius: 6px;
+  background: var(--atlas-color-bg-container, #fff);
+  font-size: 14px;
+  font-family: inherit;
+}
+
+.audit-time-input:focus {
+  border-color: var(--atlas-color-primary-border-hover, #4096ff);
+  outline: none;
+}
+
 /* docs/61 §2.3：标记条目来自后端编译 422，而非本地实时校验 */
 .problems-item-server {
   padding: 0 5px;

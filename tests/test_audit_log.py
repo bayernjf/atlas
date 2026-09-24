@@ -28,7 +28,7 @@ from atlas.observability.audit import (
 
 client = TestClient(app)
 
-_EVENT_KEYS = {"id", "tenantId", "actor", "action", "statusCode", "path", "ip", "at"}
+_EVENT_KEYS = {"id", "tenantId", "actor", "action", "statusCode", "path", "ip", "at", "seq"}
 
 RUN_INTEGRATION = os.environ.get("ATLAS_RUN_INTEGRATION") == "1"
 DATABASE_URL = os.environ.get("DATABASE_URL", "")

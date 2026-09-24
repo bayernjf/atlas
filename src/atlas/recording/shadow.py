@@ -8,7 +8,9 @@
 - 不进生产观测面：不写 run_store/RunRecord、不触发告警与灰度门控、不产 tool_metric。
 
 本模块只承载**模型 + 纯函数 + 进程内 ring 存储**（照 ``reports.ReportStore`` 先例，
-挂 TenantServices、memory/PG 两档均为进程内实例、不进 Repository、不 PG 化、reset 清空）：
+挂 TenantServices、不进 Repository）：内存档为进程内实例，PG 档另见
+``recording/pg_shadow.py``（docs/61 §5 H4，表 ``shadow_runs``、跨重启/跨实例可见），
+两档 reset 均清空本租户：
 
 - ``ToolIntent/ShadowDecision/HumanOutcome/ShadowRun/ShadowComparison`` 记录模型；
 - ``preset_all_approvals`` 预置审批、``extract_shadow_events`` 从顶层 node_end 提取决策/意图；
@@ -262,7 +264,7 @@ def compare_shadow(auto_action: str | None, outcome: HumanOutcome | None) -> Sha
 
 
 class ShadowStore:
-    """进程内影子运行 ring（每租户一个；单锁；reset 清空；不 PG 化）。"""
+    """进程内影子运行 ring（每租户一个；单锁；reset 清空）。PG 档见 ``pg_shadow.PgShadowStore``。"""
 
     def __init__(self, maxlen: int = SHADOW_RING_SIZE) -> None:
         self._items: deque[ShadowRun] = deque(maxlen=maxlen)

@@ -3,7 +3,13 @@
  *
  * 独立成文件、静态 import antd locale 包，使 locales/index.ts 保持零 UI 库依赖；
  * App 外壳调用一次 useAntdLocale() 并注入所有 ConfigProvider，切换语言时
- * useSyncExternalStore 驱动同步重渲染。项目未使用日期类组件，无需 dayjs locale。
+ * useSyncExternalStore 驱动同步重渲染。
+ *
+ * **日期类组件的坑（docs/61 打包 H）**：AntD DatePicker/RangePicker 的面板月名与星期名
+ * 取自 **dayjs 全局 locale**，不受此处 ConfigProvider 的 antd locale 控制。dayjs 目前只是
+ * antd 的传递依赖，在 pnpm 隔离布局下**无法从本项目解析**（只存在于 `.pnpm/dayjs@*`），
+ * 因此引日期组件前必须先把 dayjs 提为**声明的直接依赖**并配 locale（属选型决策，需走 docs/10），
+ * 否则中文界面会渲染出 `2026年Sep` / `Su Mo Tu`。审计页即因此改用原生 `datetime-local`。
  */
 import { useSyncExternalStore } from 'react'
 

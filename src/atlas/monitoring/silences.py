@@ -1,9 +1,11 @@
 """告警静默与值班轮换：模型、纯函数与进程内状态（docs/33 §5）。
 
-v1 全部进程内（内存与 PG 两档共用 OpsStore，挂在 per-tenant 常驻 store 实例上）：
-- 静默 Silence / 值班 OnCallSchedule 不落库，重启清空；
-- Alert.assignee / escalated_at 不写 PG，PG 读回后由 OpsStore 关联 assignee、
-  由 apply_escalation 重新惰性评估升级（语义幂等，docs/33 §5.2/§5.3 已注明）。
+内存档全部进程内（OpsStore，挂在 per-tenant 常驻 store 实例上），重启清空；
+**PG 档已落库**（docs/61 §6 H5 勘误，原「v1 全部进程内/不落库」口径过时）：
+- 静默与值班由迁移 024 建表 `monitoring_silences`/`monitoring_oncall` 持久化，
+  跨重启与跨实例可见，reset 清两表；
+- Alert.assignee / escalated_at 由迁移 021 建列落库；读路径仍会重新惰性评估升级
+  （语义幂等，docs/33 §5.2/§5.3）。
 
 本模块自带锁，与 MonitoringStore / PgMonitoringStore 的告警写路径串行使用。
 """
