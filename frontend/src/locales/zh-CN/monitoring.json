@@ -252,6 +252,19 @@
   "escalation": {
     "tag": "已升级"
   },
+  "templates": {
+    "button": "规则模板",
+    "modalTitle": "告警规则模板",
+    "hint": "模板为内置只读，点击「应用」将整体替换当前规则配置，替换后仍可在下方编辑再保存。",
+    "apply": "应用",
+    "confirmTitle": "应用后将整体替换当前规则配置，确定？",
+    "confirmOk": "替换",
+    "confirmCancel": "取消",
+    "applied": "已应用模板：{{name}}",
+    "applyFailed": "应用模板失败",
+    "loadFailed": "加载模板失败",
+    "empty": "暂无内置模板"
+  },
   "onCall": {
     "label": "当前值班",
     "loading": "加载中…",

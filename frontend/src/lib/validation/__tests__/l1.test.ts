@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
 import { defaultConfig, type NodeConfig, type NodeKind } from '../../nodeCatalog'
 import type { MetaSchema } from '../../schemas/metaSchema'
 import { schemaRegistry } from '../../schemas'
@@ -10,6 +10,7 @@ import {
   validateParamFields,
   validateSchemaFields,
 } from '../l1'
+import { changeLanguage } from '../../../locales'
 
 function fields(kind: NodeKind, config?: NodeConfig) {
   return validateNodeFields(kind, config ?? defaultConfig(kind))
@@ -639,5 +640,20 @@ describe('wait jitter and multi-event fan-in L1 (docs/54)', () => {
       timeoutSeconds: 30,
     })
     expect(diagnostics.some((d) => d.loc.pointer === '/eventKeys')).toBe(true)
+  })
+})
+
+describe('validateNodeFields i18n (docs/17, L1 locale debt)', () => {
+  afterAll(() => changeLanguage('zh-CN'))
+
+  it('renders L1 messages in English after switching locale', () => {
+    changeLanguage('en-US')
+    const conditionDiags = fields('condition')
+    expect(conditionDiags.length).toBeGreaterThan(0)
+    for (const d of conditionDiags) expect(d.message).not.toMatch(/[一-鿿]/)
+
+    const waitConfig = { ...defaultConfig('wait'), durationSeconds: undefined } as unknown as NodeConfig
+    const waitDiags = fields('wait', waitConfig)
+    expect(waitDiags.map((d) => d.message).join(' ')).toMatch(/Wait duration is required/)
   })
 })

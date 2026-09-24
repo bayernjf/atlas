@@ -4,6 +4,28 @@
 
 ## [Unreleased]
 
+### feat：告警规则模板市场＋静默/值班/assignee PG 化落码收口（docs/59，打包 F，2026-09-24；dev、未 push；零新依赖/迁移 024/无 ADR/无新写端点）
+
+- D28 部分取回、不解除。两项：①**F-1 告警规则模板市场 v1（内置只读＋一键启用）**：新模块 `monitoring/rule_templates.py`（照 template/catalog，只读 Python 常量、无 DB/CRUD、不 reset、全局共享）4 内置模板 default-balanced/strict-sre/demo-lenient/custom-quickstart（config 为过 validate_rules 的完整 RuleConfig）；两只读端点 `GET /api/alert-rule-templates`（列表投影不含 config）与 `/{id}`（含 config、未知 404、read）；一键应用＝前端取 config 复用 `PUT /api/monitoring/rules`（administer 全量替换、Popconfirm 二次确认），**后端不新增写端点**；前端 AlertRuleTemplateMarket Modal＋规则卡 extra 入口＋monitoring.templates zh/en 各 11 键（`39e6daa`/`ac35b07`）。②**F-2 静默/值班/新建告警 assignee PG 化（仅 PG 档）**：迁移 024（002 新装库同步）新增 `monitoring_silences`/`monitoring_oncall` 两表；PgMonitoringStore 静默 3 方法＋值班 3 方法＋record_run 命中压下（SQL 粗筛租户/未过期、Python 端 `silence_matches` 单一事实源判首条命中并 suppressed_count+1）＋新建告警 assignee 全走 PG（cap100/惰性过期/取模轮换/空表 OnCallEmpty/reset 清两表），移除全部进程内 OpsStore 兜底（含勘察漏网的 resolve_alert 第 4 处）；**内存档 OpsStore/MonitoringStore 一行未动**（`88e4be9`）。
+- 测试（落码定稿 U646–U662，候选归并差异见 docs/59 §5）：F-1 后端 U646–U651 共 6（目录/每 config 合法/列表投影/详情/未知 404/鉴权与应用链路）；F-2 PG 集成 U652–U659 共 8（静默落库 active 计数跨实例、命中压下计数、delete、值班去重取模空表、assignee 落列 merge 不重指、reset 清三表、cap100＋惰性清过期、图级/规则级作用域），U299 由进程内关联转正为落 PG 并补结尾清专用 tenant（`ece2645`）；前端 U660–U662 共 6（i18n 11 键/en 零汉字/插值集合、两端点 URL·解包·encodeURIComponent、一键应用复用 PUT rules 无写端点）。
+- 收口门（实跑）：后端全量 **1734 passed / 77 skipped / 0 failed**（基线 1728/69，净增 F-1 内存 6；8 PG 例无 INTEGRATION env 计入 skipped，77＝69+8）；PG 集成 monitoring＋storage＋migrations **44 passed**；前端 vitest **675 passed / 2 skipped / 50 文件**、oxlint **0 error / 6 既有 warning（新组件零新增）**、`pnpm build` 过（1697.30 kB/gzip 526.35 kB）；PG 档 live HTTP smoke **20/20**（模板两端点/401/404/viewer 403/应用往返、静默与值班 SQL 落库、轮换取模、demo reset）；双语浏览器冒烟过（Modal→Popconfirm→成功 Alert→规则表单刷新，strict-sre 2/10/0.30/15/2/30、默认均衡复位 3/20/5/0.50）。
+- **契约偏差澄清**：英文态仅 UI chrome（标题/hint/按钮/Popconfirm/Alert）无汉字，模板 name/description/tags 为内置中文数据，属 D13 模板元数据多语言豁免（docs/57、i18n 第二批债遗留③），非本批 i18n 范围。另补登打包 E（docs/58）落码时漏填的 docs/13 测试行（文件级登记，数字据 CHANGELOG/docs/58 收口注记）。模板 CRUD/市场上传/分享/按图绑定、模板元数据多语言、静默编辑、定时轮换/排班日历/多值班组、多实例分布式锁、OTel 正式栈、长保留时序仍缓做（docs/14 D28）。
+
+### feat：Graph DSL 编译 422 错误列表码化＋前端按 code i18n（docs/17 §2.4，i18n 第二批债，2026-09-24；dev、未 push；前后端、零新依赖/零迁移、无 ADR）
+
+- D12 部分取回、不解除。**契约演进**：编译错误 `Issue` 由 `(message,location)` 二元组升级为 `(message,location,code,params)` 四元组，`_Issues` 增全量等长 codes/params（locations 仍稀疏），`GraphValidationError`/`validate_graph_report()` 同步（缺省兜底码 `GRAPH_VALIDATION_FAILED`）；中文 message 全量保留作日志/兜底，既有中文断言零改动。
+- **后端（`94a7cb6`）**：dsl.py 图级/condition/loop/parallel/wait/subgraph/human-approval/template-ref/data-cycle 与 loader.py 跨图 SUBREF 共 **170 个编译码**全量码化（前缀 GRAPH_/DSL_/NODE_/EDGE_/VARIABLE_/COND_/LOOP_/PAR_/WAIT_/SUB_/SUBREF_/APR_/REF_）；节点级 params 统一注入 `owner`=出错节点（区别业务键 nodeId=被引/未配置节点），loader 深层子图错误 owner=最外层子图节点；API 编译/保存 422 在 detail/稀疏 locations 外并行下发与 detail 等长的 `codes`/`params`（向后兼容）。
+- **前端（`cd3225c`）**：`apiClient.resolveValidationList` 逐下标按 `validation.dsl.<code>` 映射并插值（数组 join(', ')、审批分支 approved/rejected 插值前本地化、缺键/无 code 回退该条中文 detail、绝不泄漏 i18n key），`resolveErrorMessage` 贯通 request/login 两路径；zh/en validation.json 各增 `dsl` 块 172 键（170 码+`_branch_approved/_branch_rejected`），en dsl 零汉字、zh/en 键集合对齐。
+- 测试：后端新增 15 例（test_graph_dsl_codes 13：兜底码/坏 JSON/四元组等长/六类节点代表码/params/REF 走 check_refs/COND 透传/数据环白盒＋不变量；test_api_graph_error_codes 2：422 codes/params 等长与字段），旧 test_validation_locations/test_graph_ref_validation 适配四元组解包；前端新增 dslErrorI18n 6 例（中文映射、英文无汉字、数组 join、多错误分隔、审批分支中文、无 code/未知 code 回退）。
+- 收口门（实跑）：后端全量 **1728 passed / 69 skipped / 0 failed**（基线 1713＋15）、前端 vitest **669 passed / 2 skipped**（基线 663＋6）、oxlint **0 error / 6 既有 warning**、`pnpm build` 过、graph/api PG 集成 **29 passed**、live HTTP smoke（10 错误 codes/params/detail 等长、owner/数组/稀疏 locations 正确）、英文态浏览器冒烟（清空 AI prompt 触发编译失败，toast/调试台/属性面板全英文无汉字）。
+- 显式遗留（后续小批，不解除缓做）：condition/loop 表达式**求值**错误（`graph/conditions.py` ConditionEvalError）经 `params.detail` 透传、英文态混中文；运行时 wait 失败 5 码（`loader.WaitNodeFailure`，走运行失败通道非编译 422）未入 dsl locale；节点目录 label/description、模板元数据多语言（D13）。
+
+
+### feat：后端认证错误码化＋前端 L1 校验诊断 i18n 收口（docs/17 §2.4，i18n 第一批债，2026-09-24；dev、未 push；前后端、零新依赖/零迁移、无 ADR）
+
+- D12 部分取回、不解除。①**后端认证错误码化**：`iam/deps.py` 新增 code 常量与 `auth_error()`，detail 形状 `{code,message}`——login 用户/口令错 401 `AUTH_INVALID_CREDENTIALS`、账号停用 403 `AUTH_ACCOUNT_DISABLED`、缺凭证 401 `AUTH_UNAUTHENTICATED`、角色不足 403 `AUTH_FORBIDDEN`；中文 message 保留作日志/默认。跨租户 404 故意不区分「不存在/越权」（防资源泄漏），不补 code，故 `AUTH_NOT_FOUND` 未落码。②**前端认证错误 i18n**：common 补 `error.auth.accountDisabled`、`error.requestFailed`，`apiClient.resolveErrorMessage` 按 code 映射 `error.auth.*`（数组 join、对象按 code、无映射取 message、再退 requestFailed）。③**L1 校验诊断全量 i18n**：新建 `validation` namespace（zh/en 82 叶子键对齐、en 零汉字）并注册，`l1.ts` FALLBACK_MESSAGES 改 FIELD_MESSAGE_KEYS，约 80 条用户可见中文（fallback/schemaFieldMessage/约 40 处 fieldDiag）全 t() 化、用户可见中文清零；`engine.invalidateForLocale()` 清全部签名缓存，`useValidationEngine` 订阅语言并全量重算 L1/L2/L3，ToolCallConfig 参数诊断同步重算。
+- 测试：l1.test 加英文态 describe（切 en-US 后 condition 诊断无汉字、wait 缺 durationSeconds 匹配英文），l1.test 48 passed、validation 目录 126 passed。收口后端全量内存 **1713 passed / 69 skipped**（认证两文件 18 passed）、前端 vitest **663 passed / 2 skipped**（净增 1）、oxlint **0 error / 6 既有 warning**（语言依赖经显式 void 标记未新增）、`pnpm build` 过。仍显中文：Graph DSL 422 列表（`graph/dsl.py`，几十条，另起小批）、业务数据与节点目录/模板元数据（D13）。
+
 ### feat：webhook 出站 HMAC 签名 / IM markdown 富文本@人 / webhook·IM 多 URL 群发落码收口（docs/58，打包 E，2026-09-24；dev、未 push；后端、零新依赖/零迁移、无 ADR）
 
 - E-1 webhook 开放 secret、DefaultWebhookSender 紧凑 UTF-8 确定性序列化，附 `X-Atlas-Timestamp` / `X-Atlas-Signature: sha256=<hex>`（基串 `{ts}\n{raw}`），无 secret 不发头（`83d373a`）。

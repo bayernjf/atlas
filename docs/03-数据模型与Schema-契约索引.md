@@ -219,6 +219,8 @@ type Diagnostic = {
 ```
 > 后端 compile 422 形状微调（见 12 `/api/graphs/{id}/compile`、06 §6.13）：`detail: string[]`（中文文案/顺序/状态码不变）之外增稀疏侧车 `locations?: Array<{ index: number; nodeId?: string; pointer?: string }>`，index 对齐 detail 下标；图级错误（version/空图/连线/重复 id/全局变量）不出条目。不引入 Python 版 schema 解释器；运行期插值 fail-soft 不变。U37（前端）/U38（后端侧车）为候选用例。
 
+> **2026-09-24 错误码化（docs/17 §2.4）**：编译错误 `Issue` 升级为 `(message, location, code, params)` 四元组；compile/保存 422 响应在 `detail: string[]`（中文 message，保留作日志/兜底）与稀疏 `locations?` 之外，**新增与 detail 严格等长的 `codes: string[]` 与 `params: object[]`**（图级错误同样占下标；locations 仍只含有可定位错误、保持稀疏）。共 170 个编译码（前缀 GRAPH_/DSL_/NODE_/EDGE_/VARIABLE_/COND_/LOOP_/PAR_/WAIT_/SUB_/SUBREF_/APR_/REF_，兜底 GRAPH_VALIDATION_FAILED）；节点级 params 含 `owner`（出错节点 id），业务键 `nodeId` 表被引/未配置节点。前端按 `validation.dsl.<code>` 映射，缺键回退该条中文 detail。契约权威：错误码→params 键→zh/en 模板以 `frontend/src/locales/{zh-CN,en-US}/validation.json` 的 `dsl` 块与 `graph/dsl.py`、`graph/loader.py` 源码为准。
+
 
 ### `form_renderer` — 字段概览（M3 2026-09-16 立项、**2026-09-17 落码收口（2de5053→6d4a863）**；权威见 08 M3 立项条+落码条与 04 §4.10，落码承载 `frontend/src/lib/forms/`；ADR T17 见 10 §4）
 
@@ -865,7 +867,7 @@ created_at: string
 
 > ShadowStore ring 100/租户（照 ReportStore 先例进程内、不 PG 化、reset 清空）；dry-run 判定依据**编译期 adapter/capability → permission 表**（照 `_tool_output_schemas` 模式），不做能力名启发式，READ 透传、WRITE/DELETE/FINANCIAL 短路为 SHADOW_DRY_RUN 意图回执，全链透传含子图。权威见 docs/33 §3、04 影子落码块、06 §6.9、REST 见 12。
 
-### `monitoring_silence_oncall` — 静默与值班（docs/33 §5，批 4 ⑩，2026-09-21，00bba8c/1804255；进程内 OpsStore，不 PG 化、reset 清空）
+### `monitoring_silence_oncall` — 静默与值班（docs/33 §5，批 4 ⑩，2026-09-21，00bba8c/1804255；内存档进程内 OpsStore、reset 清空；**docs/59 F-2〔2026-09-24 落码 `88e4be9`〕PG 档已改 PG 持久化，见下**）
 
 ```yaml
 # Silence：POST/GET /api/monitoring/silences（GET 可选 ?active=true|false，非法值 422）、DELETE /api/monitoring/silences/{id}
@@ -885,7 +887,22 @@ updated_at: string?
 updated_by: string?
 ```
 
-> 静默/值班排班仍进程内（OpsStore，不落库、重启清空）。**docs/55（2026-09-24，迁移 021）起 assignee/escalated_at/rule_name 已在 PG monitoring_alerts 落库并读回/回写**（PG lifecycle 与内存档对齐：record_run recovery gating、merge/escalate/resolve/recovery 通知、惰性升级回写）；迁移 021 前这三列 PG 读回 null。权限：GET 为 read，POST/PUT/DELETE 为 administer（viewer 写 403）；删不存在静默 404。权威见 docs/33 §5、04 §5.13 落码块、06 §6.11、REST 见 12。
+> **内存档**静默/值班排班仍进程内（OpsStore，不落库、重启清空）；**PG 档自 docs/59 F-2（迁移 024）起落 monitoring_silences/monitoring_oncall 两表、跨重启保留**。**docs/55（2026-09-24，迁移 021）起 assignee/escalated_at/rule_name 已在 PG monitoring_alerts 落库并读回/回写**（PG lifecycle 与内存档对齐：record_run recovery gating、merge/escalate/resolve/recovery 通知、惰性升级回写）；迁移 021 前这三列 PG 读回 null。权限：GET 为 read，POST/PUT/DELETE 为 administer（viewer 写 403）；删不存在静默 404。权威见 docs/33 §5、04 §5.13 落码块、06 §6.11、REST 见 12。
+
+> **docs/59 F-2（2026-09-24 落码收口 `88e4be9`，迁移 024）**：PG 档静默/值班已 PG 持久化、内存档不变——新表 `monitoring_silences`（id PK, tenant_id, rule_id?, graph_id?, reason, created_by, created_at, expires_at, suppressed_count INT 默认 0；tenant 索引）与 `monitoring_oncall`（tenant_id PK, members JSONB, rot_index INT, updated_at?, updated_by?），002 新装库同步；REST 形状不变，跨重启/跨实例保留、`suppressed_count` 落库；新建告警 assignee 改读 PG 值班（assignee 列迁移 021 已备），PG 档移除进程内 OpsStore 状态依赖；reset 清两表。命中判定仍以 silences.py 纯函数 `silence_matches` 为单一事实源。
+
+### `alert_rule_template` — 内置只读告警规则模板（docs/59 F-1，2026-09-24 落码 `39e6daa`）
+
+```yaml
+# 随代码发布的只读目录 monitoring/rule_templates.py（无 DB/CRUD、不 reset、全局共享，照 template/catalog）
+id: string                 # default-balanced | strict-sre | demo-lenient | custom-quickstart
+name: string
+description: string
+tags: [string]
+config: RuleConfig         # 完整规则配置（四段齐备，必须过 validate_rules）；GET 列表投影不含此字段
+# GET /api/alert-rule-templates（read，投影不含 config）/ GET /api/alert-rule-templates/{id}（read，含 config，未知 404）
+# 一键应用＝前端取 config 后复用 PUT /api/monitoring/rules（administer，全量替换），无新写端点
+```
 
 ### `identity_session` — 字段概览（Phase 2 能力项，2026-09-16；`/api/auth/*` 与 `Authorization: Bearer`）
 

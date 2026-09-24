@@ -31,7 +31,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 export function ToolCallConfig({ config, update, variablePaths, onInsert, nodeId }: Props) {
-  const { t } = useTranslation('editor')
+  const { t, i18n } = useTranslation('editor')
   const { adapters, fetchFailed } = useAdapters()
   const nlWarnings = useEditorStore((state) => state.nlWarnings)
 
@@ -67,9 +67,10 @@ export function ToolCallConfig({ config, update, variablePaths, onInsert, nodeId
   )
   // 表单路径下的字段诊断：复用 M2 L1 对工具 schema 求值（pointer 相对 params 根）。
   const paramDiagnostics = useMemo(() => {
+    void i18n.language // 显式语言依赖：validateParamFields 内 t() 读当前语言，切换时需重算
     if (parsedParams === null || !isFormRenderable(toolSchema)) return []
     return [...validateParamFields(toolSchema, parsedParams), ...nlDiagnostics]
-  }, [parsedParams, toolSchema, nlDiagnostics])
+  }, [parsedParams, toolSchema, nlDiagnostics, i18n.language])
 
   const paramsPlaceholder = useMemo(
     () => toolParamsPlaceholder(config.tool),

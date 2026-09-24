@@ -206,6 +206,16 @@ export class ValidationEngine {
     return rank([...(this.l1Cache.get(id) ?? []), ...(this.l2Cache.get(id) ?? [])])
   }
 
+  /** 语言切换：清空全部签名与缓存，强制下轮按新语言重算 L1/L2/L3（docs/17）。 */
+  invalidateForLocale(): void {
+    this.l1Sigs.clear()
+    this.l1Cache.clear()
+    this.l2Sigs.clear()
+    this.l2Cache.clear()
+    this.graphSig = null
+    this.graphCache = []
+  }
+
   getGraphDiagnostics(): Diagnostic[] {
     return this.graphCache
   }

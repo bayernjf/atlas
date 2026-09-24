@@ -24,6 +24,7 @@ import enEditor from './en-US/editor.json'
 import enMemory from './en-US/memory.json'
 import enMonitoring from './en-US/monitoring.json'
 import enOpenApi from './en-US/openapi.json'
+import enValidation from './en-US/validation.json'
 import zhCommon from './zh-CN/common.json'
 import zhApprovals from './zh-CN/approvals.json'
 import zhAudit from './zh-CN/audit.json'
@@ -35,9 +36,10 @@ import zhEditor from './zh-CN/editor.json'
 import zhMemory from './zh-CN/memory.json'
 import zhMonitoring from './zh-CN/monitoring.json'
 import zhOpenApi from './zh-CN/openapi.json'
+import zhValidation from './zh-CN/validation.json'
 
 export type Locale = 'zh-CN' | 'en-US'
-export type Namespace = 'common' | 'approvals' | 'audit' | 'editor' | 'dashboard' | 'demo' | 'monitoring' | 'memory' | 'connections' | 'channels' | 'openapi'
+export type Namespace = 'common' | 'approvals' | 'audit' | 'editor' | 'dashboard' | 'demo' | 'monitoring' | 'memory' | 'connections' | 'channels' | 'openapi' | 'validation'
 
 type Dict = Record<string, unknown>
 export type TranslateOptions = {
@@ -45,7 +47,7 @@ export type TranslateOptions = {
   ns?: Namespace
 } & Record<string, unknown>
 
-const NAMESPACES: Namespace[] = ['common', 'approvals', 'audit', 'editor', 'dashboard', 'demo', 'monitoring', 'memory', 'connections', 'channels', 'openapi']
+const NAMESPACES: Namespace[] = ['common', 'approvals', 'audit', 'editor', 'dashboard', 'demo', 'monitoring', 'memory', 'connections', 'channels', 'openapi', 'validation']
 
 const resources: Record<Locale, Record<Namespace, Dict>> = {
   'zh-CN': {
@@ -60,6 +62,7 @@ const resources: Record<Locale, Record<Namespace, Dict>> = {
     monitoring: zhMonitoring as Dict,
     memory: zhMemory as Dict,
     openapi: zhOpenApi as Dict,
+    validation: zhValidation as Dict,
   },
   'en-US': {
     common: enCommon as Dict,
@@ -73,6 +76,7 @@ const resources: Record<Locale, Record<Namespace, Dict>> = {
     monitoring: enMonitoring as Dict,
     memory: enMemory as Dict,
     openapi: enOpenApi as Dict,
+    validation: enValidation as Dict,
   },
 }
 

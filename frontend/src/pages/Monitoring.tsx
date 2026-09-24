@@ -47,6 +47,7 @@ import { OnCallBar } from '../components/monitoring/OnCallBar'
 import { WebhookReliabilityCard } from '../components/monitoring/WebhookReliabilityCard'
 import { AlertChannelCard } from '../components/monitoring/AlertChannelCard'
 import { SilenceManager, SilencePopButton } from '../components/monitoring/SilenceManager'
+import { AlertRuleTemplateMarket } from '../components/monitoring/AlertRuleTemplateMarket'
 import {
   ALERT_STATUS_COLORS,
   ALERT_STATUS_LABELS,
@@ -612,7 +613,21 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
           <AlertChannelCard canAdmin={canAdmin} />
 
           {rules && canAdmin && (
-            <Card title={t('rules.cardTitle')}>
+            <Card
+            title={t('rules.cardTitle')}
+            extra={
+              <AlertRuleTemplateMarket
+                onApplied={async () => {
+                  try {
+                    setRules(await getRules())
+                  } catch {
+                    // 模板已整体替换；本地规则拉取失败时忽略，下次刷新自愈
+                  }
+                  await refresh()
+                }}
+              />
+            }
+          >
               {ruleError && (
                 <Alert type="error" showIcon message={t('rules.saveFailed')} description={ruleError} style={{ marginBottom: 12 }} />
               )}

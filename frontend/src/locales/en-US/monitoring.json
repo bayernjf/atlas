@@ -252,6 +252,19 @@
   "escalation": {
     "tag": "Escalated"
   },
+  "templates": {
+    "button": "Rule templates",
+    "modalTitle": "Alert rule templates",
+    "hint": "Templates are built-in and read-only. Clicking Apply replaces the whole current rule config; you can still edit and save it below afterwards.",
+    "apply": "Apply",
+    "confirmTitle": "Applying this template replaces the whole current rule config. Continue?",
+    "confirmOk": "Replace",
+    "confirmCancel": "Cancel",
+    "applied": "Applied template: {{name}}",
+    "applyFailed": "Failed to apply template",
+    "loadFailed": "Failed to load templates",
+    "empty": "No built-in templates"
+  },
   "onCall": {
     "label": "Current on call",
     "loading": "Loading...",

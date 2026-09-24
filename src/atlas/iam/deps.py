@@ -45,6 +45,17 @@ login_throttle = LoginThrottle()
 _UNAUTHENTICATED = "缺少或无效的登录凭证"
 _FORBIDDEN = "当前角色无权执行此操作"
 
+# docs/17 §2.4 第一批债：认证/鉴权错误补结构化 code（code 是契约、message 是日志/默认），
+# 前端按 code 走 i18n（error.auth.*）。跨租户 404 故意不区分「不存在/越权」，不补 code。
+CODE_INVALID_CREDENTIALS = "AUTH_INVALID_CREDENTIALS"
+CODE_ACCOUNT_DISABLED = "AUTH_ACCOUNT_DISABLED"
+CODE_UNAUTHENTICATED = "AUTH_UNAUTHENTICATED"
+CODE_FORBIDDEN = "AUTH_FORBIDDEN"
+
+
+def auth_error(status_code: int, code: str, message: str) -> HTTPException:
+    return HTTPException(status_code=status_code, detail={"code": code, "message": message})
+
 
 def authenticate_login(username: str, password: str) -> Principal:
     """登录认证（docs/31 §2.2）：user_store 全局按 username 查、验哈希。
@@ -53,9 +64,9 @@ def authenticate_login(username: str, password: str) -> Principal:
     """
     account = user_store.get_by_username(username)
     if account is None or not verify_password(password, account.password_hash):
-        raise HTTPException(status_code=401, detail="用户名或密码错误")
+        raise auth_error(401, CODE_INVALID_CREDENTIALS, "用户名或密码错误")
     if account.status == "disabled":
-        raise HTTPException(status_code=403, detail="账号已停用，请联系管理员")
+        raise auth_error(403, CODE_ACCOUNT_DISABLED, "账号已停用，请联系管理员")
     tenant = SEED_TENANTS.get(account.tenant_id)
     return Principal(
         tenant_id=account.tenant_id,
@@ -71,7 +82,7 @@ def get_principal(request: Request) -> Principal:
     token = header[7:].strip() if header[:7].lower() == "bearer " else None
     principal = session_store.principal_for_token(token)
     if principal is None:
-        raise HTTPException(status_code=401, detail=_UNAUTHENTICATED)
+        raise auth_error(401, CODE_UNAUTHENTICATED, _UNAUTHENTICATED)
     # T6 审计中间件在响应后读取 request.state.principal 记录写操作（docs/35 §6）。
     request.state.principal = principal
     return principal
@@ -80,7 +91,7 @@ def get_principal(request: Request) -> Principal:
 def require(*capabilities: Capability):
     def dependency(principal: Principal = Depends(get_principal)) -> Principal:
         if not all(can(principal.role, capability) for capability in capabilities):
-            raise HTTPException(status_code=403, detail=_FORBIDDEN)
+            raise auth_error(403, CODE_FORBIDDEN, _FORBIDDEN)
         return principal
 
     return dependency

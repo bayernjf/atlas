@@ -99,6 +99,7 @@ from atlas.openapi.store import ImportStoreError
 from atlas.security.egress import EgressDenied, EgressGuard
 from atlas.security.secrets import build_secret_provider_from_env
 from atlas.monitoring.silences import OnCallEmpty, current_assignee, is_silence_active
+from atlas.monitoring.rule_templates import get_rule_template, list_rule_templates
 from atlas.recording import (
     RecordingCreateRequest,
     RecordingUpdateRequest,
@@ -305,7 +306,13 @@ _secret_provider = build_secret_provider_from_env()
 @app.exception_handler(GraphValidationError)
 def graph_validation_handler(_request: Request, exc: GraphValidationError) -> JSONResponse:
     # locations 为稀疏侧车（04 §6.5/06 §6.13）：有可定位条目时才下发，index 对齐 detail。
-    content: dict[str, Any] = {"detail": exc.errors}
+    # codes/params 与 detail 等长、下标对齐（docs/17 §2.4）：前端按 code 映射本地文案，
+    # detail 为中文 message，仅作调试日志/默认兜底，不直接面向最终用户。
+    content: dict[str, Any] = {
+        "detail": exc.errors,
+        "codes": exc.codes,
+        "params": exc.params,
+    }
     if exc.locations:
         content["locations"] = exc.locations
     return JSONResponse(status_code=422, content=content)
@@ -2036,6 +2043,35 @@ def get_catalog_template(
     if template is None:
         raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
     return template.model_dump()
+
+
+@app.get("/api/alert-rule-templates")
+def list_alert_rule_templates(
+    principal: Principal = Depends(require("read")),
+) -> dict[str, list[dict[str, Any]]]:
+    """列出内置告警规则模板（docs/59 F-1；只读代码常量，列表投影不含 config，不受 reset 影响）。"""
+    return {
+        "items": [
+            {
+                "id": tpl.id,
+                "name": tpl.name,
+                "description": tpl.description,
+                "tags": tpl.tags,
+            }
+            for tpl in list_rule_templates()
+        ]
+    }
+
+
+@app.get("/api/alert-rule-templates/{template_id}")
+def get_alert_rule_template(
+    template_id: str, principal: Principal = Depends(require("read"))
+) -> dict[str, Any]:
+    """返回告警规则模板完整元数据（含可直接 PUT rules 的 config），未知 id 404（docs/59 F-1）。"""
+    tpl = get_rule_template(template_id)
+    if tpl is None:
+        raise HTTPException(status_code=404, detail=f"告警规则模板不存在：{template_id}")
+    return tpl.model_dump()
 
 
 @app.get("/api/cards")

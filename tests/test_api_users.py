@@ -216,7 +216,10 @@ def test_disabled_user_sessions_revoked_and_login_403() -> None:
         "/api/auth/login", json={"username": username, "password": "Strongpass-1"}
     )
     assert blocked.status_code == 403
-    assert blocked.json()["detail"] == "账号已停用，请联系管理员"
+    assert blocked.json()["detail"] == {
+        "code": "AUTH_ACCOUNT_DISABLED",
+        "message": "账号已停用，请联系管理员",
+    }
 
     anon.patch(f"/api/users/{username}", headers=admin, json={"status": "active"})
     relogin, _ = _login(username, "Strongpass-1")
