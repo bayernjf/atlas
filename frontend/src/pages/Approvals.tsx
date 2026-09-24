@@ -242,7 +242,13 @@ export function Approvals({ principal, onLogout, onBack }: ApprovalsProps): Reac
       title: t('columns.createdAt'),
       dataIndex: 'createdAt',
       width: 170,
-      render: (value: number) => formatCreatedAt(value),
+      render: (value: string) => formatCreatedAt(value),
+    },
+    {
+      title: t('columns.resolvedAt'),
+      dataIndex: 'resolvedAt',
+      width: 170,
+      render: (value: string) => formatCreatedAt(value),
     },
   ]
 

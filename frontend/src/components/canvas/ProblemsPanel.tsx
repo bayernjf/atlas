@@ -1,8 +1,9 @@
 /**
  * Problems 面板（M4 批 2 ⑧ / U41③，04 §6.5 末扩展条）。
  *
- * 全图 Diagnostic（节点 L1/L2 + 图级 L3）经 rank 排序后聚合展示；
- * 点击条目：nodeId → 选中并居中画布节点；pointer → 同步滚动定位到右侧属性面板对应字段并闪烁。
+ * 全图 Diagnostic（节点 L1/L2 + 图级 L3 + 后端编译 422 快照，docs/61 §2）经 rank
+ * 排序后聚合展示；点击条目：nodeId → 选中并居中画布节点；pointer → 同步滚动定位到
+ * 右侧属性面板对应字段并闪烁。
  * 必须渲染在 ReactFlowProvider 内（FlowCanvasInner）以使用 useReactFlow。
  */
 import { useMemo, useState } from 'react'
@@ -15,21 +16,44 @@ import { useTranslation } from '../../locales'
 
 const FLASH_CLASS = 'problems-field-flash'
 const FLASH_MS = 1600
+const FLASH_RETRY_MS = 1200
+const FLASH_STEP_MS = 80
 
-function focusPropertyField(pointer: string): void {
-  // 选中节点后属性面板切换需要一帧；延后到下一帧再查锚点。
-  window.setTimeout(() => {
-    const panel = document.querySelector('.side-card')
-    const exact = panel?.querySelector(`[data-pointer="${CSS.escape(pointer)}]`)
-    const target = exact ?? panel?.querySelector(`[data-pointer^="${CSS.escape(pointer)}/"]`)
-    if (!target) return
+/**
+ * `.side-card` 是节点面板/变量面板/属性面板共用的类名，取首个会命中节点面板，
+ * 而 `[data-pointer]` 锚点只出现在属性面板的表单里——故必须逐面板查找。
+ */
+function findFieldAnchor(pointer: string): Element | null {
+  const escaped = CSS.escape(pointer)
+  const exactSelector = `[data-pointer="${escaped}"]`
+  const prefixSelector = `[data-pointer^="${escaped}/"]`
+  for (const panel of document.querySelectorAll('.side-card')) {
+    const exact = panel.querySelector(exactSelector)
+    if (exact) return exact
+    const prefix = panel.querySelector(prefixSelector)
+    if (prefix) return prefix
+  }
+  return null
+}
+
+/**
+ * 定位并闪烁目标字段。属性面板要先响应 selectNode 才渲染出字段，一帧不够——
+ * 原来固定等 60ms 查一次、查不到就静默放弃（点相邻节点的条目时经常不亮）。
+ * 改为有界重试：最多 FLASH_RETRY_MS 内每 FLASH_STEP_MS 再查一次。
+ */
+function focusPropertyField(pointer: string, startedAt: number = Date.now()): void {
+  const target = findFieldAnchor(pointer)
+  if (target) {
     target.scrollIntoView({ behavior: 'smooth', block: 'center' })
     target.classList.remove(FLASH_CLASS)
     // 强制重排以重启动画
     void (target as HTMLElement).offsetWidth
     target.classList.add(FLASH_CLASS)
     window.setTimeout(() => target.classList.remove(FLASH_CLASS), FLASH_MS)
-  }, 60)
+    return
+  }
+  if (Date.now() - startedAt >= FLASH_RETRY_MS) return
+  window.setTimeout(() => focusPropertyField(pointer, startedAt), FLASH_STEP_MS)
 }
 
 export function ProblemsPanel() {
@@ -102,6 +126,9 @@ export function ProblemsPanel() {
                   </Typography.Text>
                   <span className="problems-item-meta">
                     {nodeId && <span className="problems-item-node">{labelById.get(nodeId) ?? nodeId}</span>}
+                    {problem.layer === 'server' && (
+                      <span className="problems-item-server">{t('problems.serverTag')}</span>
+                    )}
                     {problem.loc.pointer && <span className="problems-item-pointer">{problem.loc.pointer}</span>}
                     {!nodeId && <span className="problems-item-node">{t('problems.wholeGraph')}</span>}
                   </span>

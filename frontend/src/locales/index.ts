@@ -47,6 +47,8 @@ type Dict = Record<string, unknown>
 export type TranslateOptions = {
   defaultValue?: string
   ns?: Namespace
+  /** 显式指定取值语言；缺省用当前全局语言（docs/61 §2.4：memo 化渲染路径需避免隐式全局读）。 */
+  lng?: Locale
 } & Record<string, unknown>
 
 const NAMESPACES: Namespace[] = ['common', 'approvals', 'audit', 'editor', 'dashboard', 'demo', 'monitoring', 'memory', 'connections', 'channels', 'openapi', 'runtime', 'validation']
@@ -211,7 +213,7 @@ function resolve(lang: Locale, namespace: Namespace, key: string): string | unde
  */
 export function t(key: string, options?: TranslateOptions): string {
   const namespace: Namespace = options?.ns ?? 'common'
-  const value = resolve(language, namespace, key)
+  const value = resolve(options?.lng ?? language, namespace, key)
   if (value !== undefined) return interpolate(value, options)
   if (options?.defaultValue !== undefined) return interpolate(options.defaultValue, options)
   return key

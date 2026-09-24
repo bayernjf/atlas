@@ -21,7 +21,8 @@
     "actions": "操作",
     "decision": "处理结果",
     "source": "处理来源",
-    "comment": "处理备注"
+    "comment": "处理备注",
+    "resolvedAt": "处理时间"
   },
   "source": {
     "human": "人工处理",
