@@ -72,7 +72,10 @@ def test_missing_invalid_and_revoked_token_401():
 def test_login_me_logout_lifecycle():
     bad = anon.post("/api/auth/login", json={"username": "admin-a", "password": "wrong"})
     assert bad.status_code == 401
-    assert bad.json()["detail"] == "用户名或密码错误"
+    assert bad.json()["detail"] == {
+        "code": "AUTH_INVALID_CREDENTIALS",
+        "message": "用户名或密码错误",
+    }
 
     login = anon.post(
         "/api/auth/login", json={"username": "viewer-a", "password": "viewer123"}
