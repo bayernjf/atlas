@@ -18,6 +18,7 @@ import {
   createSilence,
   deleteSilence,
   listSilences,
+  updateSilence,
   type Silence,
 } from '../../lib/apiClient'
 import { formatTime } from '../../lib/monitoring'
@@ -145,6 +146,117 @@ export function SilencePopButton({
   )
 }
 
+/** docs/60 §4.1：静默列表行内「编辑」（改原因 + 自现在起延长到期，PUT）。 */
+export function SilenceEditButton({
+  silence,
+  onEdited,
+}: {
+  silence: Silence
+  onEdited?: () => void
+}) {
+  const { t } = useTranslation('monitoring')
+  const [open, setOpen] = useState(false)
+  const [duration, setDuration] = useState<number>(60)
+  const [customMinutes, setCustomMinutes] = useState<number>(60)
+  const [reason, setReason] = useState(silence.reason)
+  const [error, setError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  const handleOpenChange = (next: boolean) => {
+    setOpen(next)
+    if (next) {
+      setReason(silence.reason)
+      setDuration(60)
+      setCustomMinutes(60)
+      setError('')
+    }
+  }
+
+  const handleSubmit = async () => {
+    const minutes = duration === CUSTOM ? customMinutes : duration
+    const trimmed = reason.trim()
+    if (!trimmed) {
+      setError(t('silence.error.reasonRequired'))
+      return
+    }
+    if (!Number.isInteger(minutes) || minutes < MIN_MINUTES || minutes > MAX_MINUTES) {
+      setError(t('silence.error.durationRange'))
+      return
+    }
+    setSubmitting(true)
+    try {
+      const expiresAt = new Date(Date.now() + minutes * 60_000).toISOString()
+      await updateSilence(silence.id, { reason: trimmed, expires_at: expiresAt })
+      setOpen(false)
+      onEdited?.()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const content = (
+    <Space orientation="vertical" size={8} style={{ width: 260 }}>
+      <div>
+        <div style={{ marginBottom: 4 }}>{t('silence.extendLabel')}</div>
+        <Select
+          value={duration}
+          style={{ width: '100%' }}
+          onChange={setDuration}
+          options={[
+            ...DURATION_PRESETS.map((value) => ({
+              value,
+              label: t('silence.durationMinutes', { minutes: value }),
+            })),
+            { value: CUSTOM, label: t('silence.durationCustom') },
+          ]}
+        />
+      </div>
+      {duration === CUSTOM && (
+        <InputNumber
+          min={MIN_MINUTES}
+          max={MAX_MINUTES}
+          value={customMinutes}
+          style={{ width: '100%' }}
+          onChange={(value) => setCustomMinutes(typeof value === 'number' ? value : 60)}
+        />
+      )}
+      <div>
+        <div style={{ marginBottom: 4 }}>{t('silence.reasonLabel')}</div>
+        <Input.TextArea
+          rows={2}
+          maxLength={200}
+          value={reason}
+          onChange={(event) => setReason(event.target.value)}
+          placeholder={t('silence.reasonPlaceholder')}
+        />
+      </div>
+      {error && <Alert type="error" showIcon message={error} />}
+      <Space>
+        <Button type="primary" size="small" loading={submitting} onClick={handleSubmit}>
+          {t('silence.save')}
+        </Button>
+        <Button size="small" onClick={() => setOpen(false)}>
+          {t('common:button.cancel')}
+        </Button>
+      </Space>
+    </Space>
+  )
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={handleOpenChange}
+      trigger="click"
+      title={t('silence.editTitle')}
+      content={content}
+    >
+      <Button size="small">{t('silence.edit')}</Button>
+    </Popover>
+  )
+}
+
 /** docs/33 §5.4：折叠的静默规则列表（规则/图/原因/创建人/到期/压下次数/状态/删除）。 */
 export function SilenceManager({
   canAdmin,
@@ -220,18 +332,21 @@ export function SilenceManager({
           {
             title: t('silence.col.actions'),
             key: 'actions',
-            width: 80,
+            width: 150,
             render: (_: unknown, record: Silence) => (
-              <Popconfirm
-                title={t('silence.deleteConfirm')}
-                okText={t('common:button.confirm')}
-                cancelText={t('common:button.cancel')}
-                onConfirm={() => handleDelete(record.id)}
-              >
-                <Button size="small" danger>
-                  {t('silence.delete')}
-                </Button>
-              </Popconfirm>
+              <Space size={4}>
+                <SilenceEditButton silence={record} onEdited={() => reload()} />
+                <Popconfirm
+                  title={t('silence.deleteConfirm')}
+                  okText={t('common:button.confirm')}
+                  cancelText={t('common:button.cancel')}
+                  onConfirm={() => handleDelete(record.id)}
+                >
+                  <Button size="small" danger>
+                    {t('silence.delete')}
+                  </Button>
+                </Popconfirm>
+              </Space>
             ),
           } as ColumnsType<Silence>[number],
         ]

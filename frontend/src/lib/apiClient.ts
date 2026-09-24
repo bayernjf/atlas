@@ -1173,6 +1173,9 @@ export type OnCallSchedule = {
   current: string | null
   updated_at: string | null
   updated_by: string | null
+  // docs/60 §4.2：惰性按日自动轮换
+  rotation_interval_days?: number | null
+  last_rotated_at?: string | null
 }
 
 export async function createSilence(body: {
@@ -1194,12 +1197,35 @@ export async function deleteSilence(id: string): Promise<void> {
   await request(`/api/monitoring/silences/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
+// docs/60 §4.1：编辑静默可变字段（至少一项；expires_at 为未来 ISO 时刻）
+export async function updateSilence(
+  id: string,
+  body: {
+    reason?: string
+    rule_id?: string | null
+    graph_id?: string | null
+    expires_at?: string
+  },
+): Promise<Silence> {
+  return request(`/api/monitoring/silences/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
+}
+
 export async function getOnCall(): Promise<OnCallSchedule> {
   return request('/api/monitoring/on-call')
 }
 
-export async function updateOnCall(members: string[]): Promise<OnCallSchedule> {
-  return request('/api/monitoring/on-call', { method: 'PUT', body: JSON.stringify({ members }) })
+export async function updateOnCall(
+  members: string[],
+  rotationIntervalDays?: number | null,
+): Promise<OnCallSchedule> {
+  const payload: Record<string, unknown> = { members }
+  if (rotationIntervalDays !== undefined) {
+    payload.rotationIntervalDays = rotationIntervalDays
+  }
+  return request('/api/monitoring/on-call', { method: 'PUT', body: JSON.stringify(payload) })
 }
 
 export async function rotateOnCall(): Promise<OnCallSchedule> {
