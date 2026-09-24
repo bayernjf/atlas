@@ -293,3 +293,66 @@ def test_u659_silence_graph_and_rule_scoping(store_factory):
     assert len(rule_alerts) == 1 and rule_alerts[0].rule_id == "node_failed"
     by_rule = {s.rule_id: s for s in store.list_silences()}
     assert by_rule["run_error"].suppressed_count == 1
+
+
+# G3 docs/60 §4.1：PG 静默 PUT 编辑（跨实例落库 + 过期/不存在返 None） ----------
+def test_g3_pg_update_silence_docs60(store_factory):
+    from sqlalchemy import text
+
+    store, make, tenant, engine = store_factory
+    sil = store.create_silence(
+        rule_id=None, graph_id=None, duration_minutes=30, reason="原由", created_by="a"
+    )
+
+    # 跨实例编辑并落库
+    fresh = make()
+    updated = fresh.update_silence(sil.id, reason="新原因", rule_id=None)
+    assert updated is not None and updated.reason == "新原因"
+    again = make()
+    assert again.list_silences()[0].reason == "新原因"
+
+    # 拨过期后编辑视同不存在 -> None
+    past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    with engine.begin() as conn:
+        conn.execute(
+            text("UPDATE monitoring_silences SET expires_at = :p WHERE tenant_id = :t"),
+            {"p": past, "t": tenant},
+        )
+    assert make().update_silence(sil.id, reason="x") is None
+    assert make().update_silence("sil-nope", reason="x") is None
+
+
+# G3 docs/60 §4.2：PG 值班间隔持久化 + 读路径惰性按日轮换 ----------
+def test_g3_pg_oncall_interval_lazy_rotate_docs60(store_factory):
+    from sqlalchemy import text
+
+    store, make, tenant, engine = store_factory
+    scheduled = store.set_oncall(
+        members=["a", "b", "c"], updated_by="a", rotation_interval_days=2
+    )
+    assert scheduled.rotation_interval_days == 2
+    assert scheduled.last_rotated_at is not None and scheduled.index == 0
+
+    # 跨实例读回两新列
+    fresh = make()
+    got = fresh.get_oncall()
+    assert got.rotation_interval_days == 2 and len(got.members) == 3
+
+    # 把基准拨到 5 天前、index 归 0：下一次 get_oncall 惰性推进 steps=2 -> index 2
+    past_date = (datetime.now(timezone.utc).date() - timedelta(days=5)).isoformat()
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE monitoring_oncall SET last_rotated_at = :p, rot_index = 0 "
+                "WHERE tenant_id = :t"
+            ),
+            {"p": past_date, "t": tenant},
+        )
+    rotated = make().get_oncall()
+    assert rotated.index == 2
+    expected_boundary = (
+        datetime.now(timezone.utc).date() - timedelta(days=1)
+    ).isoformat()
+    assert rotated.last_rotated_at == expected_boundary
+    # 已落库：再开实例读不重复推进
+    assert make().get_oncall().index == 2

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -25,9 +25,11 @@ from atlas.monitoring.metrics import NodeResult
 from atlas.monitoring.records import MonitoringStore
 from atlas.monitoring.silences import (
     OnCallEmpty,
+    OnCallSchedule,
     Silence,
     current_assignee,
     is_silence_active,
+    maybe_auto_rotate,
     silence_matches,
 )
 
@@ -455,6 +457,151 @@ def test_u298_rules_escalation_roundtrip():
     # null 显式关闭合法
     closed = client.put("/api/monitoring/rules", json=_valid_rules(None))
     assert closed.status_code == 200 and closed.json()["escalation_ack_minutes"] is None
+
+
+# ---------- G3（docs/60 §4）：静默 PUT 编辑 + 值班惰性按日轮换 ----------
+
+
+def test_g3_maybe_auto_rotate_pure_function_docs60():
+    base = datetime(2026, 9, 24, 12, 0, tzinfo=timezone.utc)
+
+    # 不满足条件 -> None
+    assert maybe_auto_rotate(OnCallSchedule(members=["a", "b"]), base) is None
+    assert maybe_auto_rotate(
+        OnCallSchedule(members=["a"], rotation_interval_days=2,
+                       last_rotated_at="2026-09-24"), base
+    ) is None
+    assert maybe_auto_rotate(
+        OnCallSchedule(members=["a", "b"], rotation_interval_days=None,
+                       last_rotated_at="2026-09-24"), base
+    ) is None
+
+    # interval=2，last=5 天前：steps=5//2=2，index 0->2，基准推进到 09-23
+    sched = OnCallSchedule(
+        members=["a", "b", "c"], index=0, rotation_interval_days=2,
+        last_rotated_at=(base.date() - timedelta(days=5)).isoformat(),
+    )
+    rotated = maybe_auto_rotate(sched, base)
+    assert rotated is not None
+    assert rotated.index == 2 and current_assignee(rotated) == "c"
+    assert rotated.last_rotated_at == (date(2026, 9, 19) + timedelta(days=4)).isoformat()
+    # 推进后次日（仅隔 1 天 < interval）不再动
+    assert maybe_auto_rotate(rotated, base) is None
+
+    # 绕回：interval=7，elapsed=14 -> steps=2，index 0->2（3 成员取模）
+    wrap = OnCallSchedule(
+        members=["a", "b", "c"], index=0, rotation_interval_days=7,
+        last_rotated_at=(base.date() - timedelta(days=14)).isoformat(),
+    )
+    wrapped = maybe_auto_rotate(wrap, base)
+    assert wrapped is not None and wrapped.index == 2
+
+
+def test_g3_ops_update_silence_docs60():
+    store = MonitoringStore()
+    created = store.create_silence(
+        rule_id=None, graph_id=None, duration_minutes=60, reason="r1", created_by="admin"
+    )
+    updated = store.update_silence(created.id, reason="r2")
+    assert updated is not None
+    assert updated.reason == "r2"
+    # 不可变字段保持
+    assert updated.id == created.id and updated.created_by == "admin"
+    assert updated.created_at == created.created_at and updated.suppressed_count == 0
+
+    # 显式置空 rule_id（哨兵区分未提供）
+    cleared = store.update_silence(created.id, rule_id=None)
+    assert cleared is not None and cleared.rule_id is None
+
+    # 造过期后不可再改（视同不存在 -> None）
+    past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    assert store.update_silence(created.id, expires_at=past) is not None
+    assert store.update_silence(created.id, reason="x") is None
+    assert store.update_silence("sil-nope", reason="x") is None
+
+
+def test_g3_ops_lazy_auto_rotate_on_read_docs60(monkeypatch):
+    import atlas.monitoring.silences as sil
+
+    store = MonitoringStore()
+    today = datetime(2026, 9, 24, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(sil, "_now_dt", lambda: today)
+    scheduled = store.set_oncall(
+        members=["a", "b", "c"], updated_by="admin", rotation_interval_days=2
+    )
+    assert scheduled.rotation_interval_days == 2
+    assert scheduled.last_rotated_at == "2026-09-24" and store.get_oncall().index == 0
+
+    # 5 天后首次读 -> steps=2，index 0->2 并落库
+    monkeypatch.setattr(sil, "_now_dt", lambda: today + timedelta(days=5))
+    got = store.get_oncall()
+    assert got.index == 2 and current_assignee(got) == "c"
+    # 已落库：同一未来时刻再读不重复推进
+    assert store.get_oncall().index == 2
+
+
+def test_g3_silence_put_edit_http_docs60():
+    created = client.post(
+        "/api/monitoring/silences", json={"duration_minutes": 60, "reason": "发布窗口"}
+    )
+    sid = created.json()["id"]
+
+    ok = client.put(f"/api/monitoring/silences/{sid}", json={"reason": "改期维护"})
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["reason"] == "改期维护" and ok.json()["active"] is True
+
+    future = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+    assert client.put(
+        f"/api/monitoring/silences/{sid}", json={"expires_at": future}
+    ).status_code == 200
+
+    # 422：空 body / 空白 reason / 过去 expires / rule+graph 同时给
+    assert client.put(f"/api/monitoring/silences/{sid}", json={}).status_code == 422
+    assert client.put(f"/api/monitoring/silences/{sid}", json={"reason": "   "}).status_code == 422
+    past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    assert client.put(
+        f"/api/monitoring/silences/{sid}", json={"expires_at": past}
+    ).status_code == 422
+    assert client.put(
+        f"/api/monitoring/silences/{sid}", json={"rule_id": "x", "graph_id": "y"}
+    ).status_code == 422
+
+    # 404 不存在
+    assert client.put("/api/monitoring/silences/sil-9999", json={"reason": "x"}).status_code == 404
+    # viewer 403
+    assert client.put(
+        f"/api/monitoring/silences/{sid}", json={"reason": "x"}, headers=_viewer_headers()
+    ).status_code == 403
+    client.post("/api/demo/reset")
+
+
+def test_g3_oncall_interval_http_docs60():
+    put = client.put(
+        "/api/monitoring/on-call",
+        json={"members": ["a", "b", "c"], "rotationIntervalDays": 2},
+    )
+    assert put.status_code == 200, put.text
+    body = put.json()
+    assert body["rotation_interval_days"] == 2
+    assert body["last_rotated_at"] is not None and body["current"] == "a"
+    assert client.get("/api/monitoring/on-call").json()["rotation_interval_days"] == 2
+
+    # 非法间隔 422
+    for bad in (0, 366, True, "7"):
+        assert client.put(
+            "/api/monitoring/on-call",
+            json={"members": ["a", "b"], "rotationIntervalDays": bad},
+        ).status_code == 422
+
+    # null 显式关闭：间隔清空、基准清空
+    off = client.put(
+        "/api/monitoring/on-call",
+        json={"members": ["a", "b"], "rotationIntervalDays": None},
+    )
+    assert off.status_code == 200, off.text
+    assert off.json()["rotation_interval_days"] is None
+    assert off.json()["last_rotated_at"] is None
+    client.post("/api/demo/reset")
 
 
 # ---------- U299 PG integration：静默不 INSERT / assignee 关联 / 读时升级 ----------
