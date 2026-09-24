@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { auditRangeBounds, cleanText, mergeAuditPages, toUtcBound } from '../auditFilters'
+import { cleanText, mergeAuditPages, parseLocalInput, toUtcBound, utcBounds } from '../auditFilters'
 import type { AuditEventItem } from '../apiClient'
 
 /** docs/61 §4.3 打包 H H3：审计过滤边界换算与游标累积。 */
@@ -31,23 +31,34 @@ describe('toUtcBound', () => {
   })
 })
 
-describe('auditRangeBounds', () => {
-  it('未选区间 → 空对象，不发多余参数', () => {
-    expect(auditRangeBounds(null)).toEqual({})
+describe('parseLocalInput 与 utcBounds', () => {
+  it('空值与非法串解析为 null，不抛', () => {
+    expect(parseLocalInput('')).toBeNull()
+    expect(parseLocalInput(undefined)).toBeNull()
+    expect(parseLocalInput('not-a-date')).toBeNull()
   })
 
-  it('只填起始 → 只有 since', () => {
-    const from = new Date(Date.UTC(2026, 8, 1, 0, 0, 0))
-    expect(auditRangeBounds([from, null])).toEqual({ since: '2026-09-01T00:00:00.000+00:00' })
+  it('datetime-local 的本地无时区串按本地时区解析', () => {
+    const parsed = parseLocalInput('2026-09-25T10:30:00')
+    expect(parsed).not.toBeNull()
+    expect(parsed!.getHours()).toBe(10)
+    expect(parsed!.getMonth()).toBe(8)
   })
 
-  it('两端都填 → since/until 且不带 Z 后缀', () => {
-    const from = new Date(Date.UTC(2026, 8, 1, 0, 0, 0))
-    const to = new Date(Date.UTC(2026, 8, 2, 23, 59, 59))
-    const bounds = auditRangeBounds([from, to])
+  it('两端都空 → 空对象，不发多余参数', () => {
+    expect(utcBounds('', '')).toEqual({})
+    expect(utcBounds('garbage', '')).toEqual({})
+  })
+
+  it('只填起始 → 只有 since，且换算成 UTC 且以 +00:00 结尾', () => {
+    const bounds = utcBounds('2026-09-25T10:30:00', '')
+    expect(Object.keys(bounds)).toEqual(['since'])
     expect(bounds.since?.endsWith('+00:00')).toBe(true)
-    expect(bounds.until).toBe('2026-09-02T23:59:59.000+00:00')
-    expect(bounds.since! < bounds.until!).toBe(true)
+  })
+
+  it('两端都填 → since 早于 until', () => {
+    const bounds = utcBounds('2026-09-01T00:00:00', '2026-09-02T23:59:59')
+    expect(new Date(bounds.since!) < new Date(bounds.until!)).toBe(true)
   })
 })
 

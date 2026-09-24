@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import {
   Button,
   Card,
-  DatePicker,
   Input,
   Layout,
   Select,
@@ -19,7 +18,7 @@ import {
   listAuditEvents,
   type AuditEventItem,
 } from '../lib/apiClient'
-import { auditRangeBounds, cleanText, mergeAuditPages, type AuditRange } from '../lib/auditFilters'
+import { cleanText, mergeAuditPages, utcBounds } from '../lib/auditFilters'
 import type { Principal } from '../lib/auth'
 import { useTranslation } from '../locales'
 
@@ -42,7 +41,11 @@ export function AuditLog({ principal, onLogout, onBack }: AuditLogProps): ReactE
   const [actionFilter, setActionFilter] = useState('')
   const [actorInput, setActorInput] = useState('')
   const [actorFilter, setActorFilter] = useState('')
-  const [range, setRange] = useState<AuditRange>(null)
+  // 原生 datetime-local 的编辑值（本地无时区串）与已生效值分开存，按「筛选」才提交。
+  const [sinceInput, setSinceInput] = useState('')
+  const [untilInput, setUntilInput] = useState('')
+  const [sinceFilter, setSinceFilter] = useState('')
+  const [untilFilter, setUntilFilter] = useState('')
   const [nextCursor, setNextCursor] = useState<number | null>(null)
 
   // docs/61 §4.3：过滤条件变了就整页替换（游标从头开始），加载更多才追加。
@@ -50,8 +53,8 @@ export function AuditLog({ principal, onLogout, onBack }: AuditLogProps): ReactE
     async (cursor: number | null, append: boolean) => {
       if (append) setLoadingMore(true)
       else setLoading(true)
+      const bounds = utcBounds(sinceFilter, untilFilter)
       try {
-        const bounds = auditRangeBounds(range)
         const body = await listAuditEvents(
           limit,
           actionFilter,
@@ -67,7 +70,7 @@ export function AuditLog({ principal, onLogout, onBack }: AuditLogProps): ReactE
         setLoadingMore(false)
       }
     },
-    [limit, actionFilter, actorFilter, range, t],
+    [limit, actionFilter, actorFilter, sinceFilter, untilFilter, t],
   )
 
   const refresh = useCallback(() => load(null, false), [load])
@@ -81,7 +84,7 @@ export function AuditLog({ principal, onLogout, onBack }: AuditLogProps): ReactE
     try {
       const blob = await exportAuditJsonl(actionFilter, {
         actor: actorFilter || undefined,
-        ...auditRangeBounds(range),
+        ...utcBounds(sinceFilter, untilFilter),
       })
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
@@ -102,6 +105,8 @@ export function AuditLog({ principal, onLogout, onBack }: AuditLogProps): ReactE
   function applyFilters(): void {
     setActionFilter(cleanText(actionInput) ?? '')
     setActorFilter(cleanText(actorInput) ?? '')
+    setSinceFilter(sinceInput)
+    setUntilFilter(untilInput)
   }
 
   const columns: ColumnsType<AuditEventItem> = [
@@ -150,18 +155,27 @@ export function AuditLog({ principal, onLogout, onBack }: AuditLogProps): ReactE
                 onChange={(event) => setActorInput(event.target.value)}
                 onPressEnter={applyFilters}
               />
-              <DatePicker.RangePicker
-                showTime
-                allowEmpty={[true, true]}
-                placeholder={[t('filter.since'), t('filter.until')]}
-                onChange={(values) =>
-                  setRange(
-                    values
-                      ? [values[0]?.toDate() ?? null, values[1]?.toDate() ?? null]
-                      : null,
-                  )
-                }
-              />
+              {/* 原生 datetime-local：AntD RangePicker 会把 dayjs 拖成直接依赖且中文面板需另配 locale（docs/61 收口注记） */}
+              <label className="audit-time-label">
+                <span>{t('filter.since')}</span>
+                <input
+                  className="audit-time-input"
+                  type="datetime-local"
+                  step="1"
+                  value={sinceInput}
+                  onChange={(event) => setSinceInput(event.target.value)}
+                />
+              </label>
+              <label className="audit-time-label">
+                <span>{t('filter.until')}</span>
+                <input
+                  className="audit-time-input"
+                  type="datetime-local"
+                  step="1"
+                  value={untilInput}
+                  onChange={(event) => setUntilInput(event.target.value)}
+                />
+              </label>
               <Button type="primary" onClick={applyFilters}>
                 {t('filter.search')}
               </Button>
