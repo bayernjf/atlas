@@ -152,5 +152,8 @@ CREATE TABLE IF NOT EXISTS monitoring_oncall (
     members JSONB NOT NULL,
     rot_index INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT,
-    updated_by TEXT
+    updated_by TEXT,
+    -- docs/60 §4.2：惰性按日自动轮换（迁移 026）
+    rotation_interval_days INTEGER NULL,
+    last_rotated_at TEXT NULL
 );

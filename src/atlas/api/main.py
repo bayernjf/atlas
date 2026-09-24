@@ -3383,6 +3383,22 @@ def _normalize_optional_id(value: object, field: str, errors: list[str]) -> str 
     return text or None
 
 
+def _parse_future_expires_at(value: object, errors: list[str]) -> str | None:
+    """docs/60 §4.1：expires_at 必须是合法 ISO 8601 且严格晚于当前时刻。"""
+    if not isinstance(value, str) or not value.strip():
+        errors.append("expires_at 必须是 ISO 8601 时间字符串")
+        return None
+    text = value.strip()
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        errors.append("expires_at 必须是合法的 ISO 8601 时间")
+        return None
+    if parsed <= datetime.now(timezone.utc):
+        errors.append("expires_at 必须是未来时刻")
+    return text
+
+
 @app.post("/api/monitoring/silences", status_code=201)
 def create_silence(
     body: dict[str, Any], principal: Principal = Depends(require("administer"))
@@ -3436,6 +3452,41 @@ def delete_silence(
     return {"id": silence_id, "deleted": True}
 
 
+@app.put("/api/monitoring/silences/{silence_id}")
+def update_silence(
+    silence_id: str, body: dict[str, Any],
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, Any]:
+    """docs/60 §4.1：编辑静默可变字段（administer）；不存在/已过期 404，校验失败 422。"""
+    errors: list[str] = []
+    updates: dict[str, Any] = {}
+    if "reason" in body:
+        reason = body.get("reason")
+        if not isinstance(reason, str) or not reason.strip() or len(reason.strip()) > 200:
+            errors.append("reason 必须是非空且不超过 200 字的字符串")
+        else:
+            updates["reason"] = reason.strip()
+    if "rule_id" in body:
+        updates["rule_id"] = _normalize_optional_id(body.get("rule_id"), "rule_id", errors)
+    if "graph_id" in body:
+        updates["graph_id"] = _normalize_optional_id(body.get("graph_id"), "graph_id", errors)
+    if "expires_at" in body:
+        expires = _parse_future_expires_at(body.get("expires_at"), errors)
+        if expires is not None:
+            updates["expires_at"] = expires
+    if updates.get("rule_id") is not None and updates.get("graph_id") is not None:
+        errors.append("rule_id 与 graph_id 不得同时指定")
+    if not updates and not errors:
+        errors.append("至少提供一个可更新字段：reason / rule_id / graph_id / expires_at")
+    if errors:
+        raise HTTPException(status_code=422, detail="；".join(errors))
+    monitoring = services_for(principal).monitoring
+    updated = monitoring.update_silence(silence_id, **updates)
+    if updated is None:
+        raise HTTPException(status_code=404, detail=f"静默规则不存在或已过期：{silence_id}")
+    return {**updated.model_dump(), "active": is_silence_active(updated)}
+
+
 @app.get("/api/monitoring/on-call")
 def get_on_call(principal: Principal = Depends(require("read"))) -> dict[str, Any]:
     """docs/33 §5.3：值班表（read），current 为当前值班人（空表 null）。"""
@@ -3453,8 +3504,21 @@ def update_on_call(
         raise HTTPException(status_code=422, detail="members 必须是 1-20 个用户名字符串组成的数组")
     if any(not isinstance(m, str) or not m.strip() for m in members):
         raise HTTPException(status_code=422, detail="members 每项必须是非空字符串")
+    # docs/60 §4.2：可选 rotationIntervalDays（1-365 或 null）；未提供按整体替换置空（不自动）
+    rotation_interval_days: int | None = None
+    if "rotationIntervalDays" in body:
+        raw = body.get("rotationIntervalDays")
+        if raw is None:
+            rotation_interval_days = None
+        elif isinstance(raw, int) and not isinstance(raw, bool) and 1 <= raw <= 365:
+            rotation_interval_days = raw
+        else:
+            raise HTTPException(
+                status_code=422, detail="rotationIntervalDays 必须是 1-365 的整数或 null"
+            )
     schedule = services_for(principal).monitoring.set_oncall(
-        members=members, updated_by=principal.username
+        members=members, updated_by=principal.username,
+        rotation_interval_days=rotation_interval_days,
     )
     return {**schedule.model_dump(), "current": current_assignee(schedule)}
 
