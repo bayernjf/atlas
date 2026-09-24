@@ -7,13 +7,14 @@
  * - L3 全图层：requestIdleCallback（不支持时 setTimeout 回退），结构签名未变不重算。
  * 产出写入独立 validationStore；revision 快照保护防止消费期间的新变更被漏清。
  */
-import { useEffect, useLayoutEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, useSyncExternalStore } from 'react'
 import { useEditorStore } from '../../store/editorStore'
 import { useValidationStore } from '../../store/validationStore'
 import { useCardBindings, useToolInputSchemas, useToolOutputSchemas } from '../useScope'
 import type { ScopeEdgeLike, ScopeNodeLike } from '../scope'
 import { ValidationEngine, type EngineNode, type EngineNodeData } from './engine'
 import { topologicalOrder } from './validateGraph'
+import { getLanguage, subscribe } from '../../locales'
 
 /** L2 防抖窗口（04 §6.5：300ms）。 */
 export const L2_DEBOUNCE_MS = 300
@@ -59,6 +60,8 @@ export function useValidationEngine(): void {
   const toolOutputSchemas = useToolOutputSchemas()
   const toolInputSchemas = useToolInputSchemas()
   const cardBindings = useCardBindings()
+  // docs/17：订阅当前语言，切换时全量重算（L1 诊断已 i18n）。
+  const language = useSyncExternalStore(subscribe, getLanguage)
 
   const engineRef = useRef<ValidationEngine | null>(null)
   if (engineRef.current === null) engineRef.current = new ValidationEngine()
@@ -192,4 +195,44 @@ export function useValidationEngine(): void {
     }, L2_DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
   }, [toolOutputSchemas, toolInputSchemas, cardBindings])
+
+  // 语言切换：清缓存并对全部节点重算 L1/L2 与 L3（常规 L1/L2 effect 只处理 dirty 节点）。
+  useEffect(() => {
+    void language // 显式依赖：回调内 t() 经全局语言读取，切换语言时触发本 effect
+    const engine = engineRef.current!
+    engine.invalidateForLocale()
+    const store = useEditorStore.getState()
+    const results = useValidationStore.getState()
+    const engineNodes = toEngineNodes(store.nodes)
+    const scopeNodes = engineNodes.map(toScopeNode)
+    const dataById = new Map<string, EngineNodeData>(
+      engineNodes.map((node) => [node.id, node.data]),
+    )
+    const allIds = store.nodes.map((node) => node.id)
+    const l1Ids = engine.runL1(engineNodes, allIds)
+    const l2Ids = engine.runL2(
+      scopeNodes,
+      store.edges as ScopeEdgeLike[],
+      store.variables,
+      dataById,
+      allIds,
+      schemasRef.current,
+      inputSchemasRef.current,
+      cardBindingsRef.current,
+    )
+    const graphDiagnostics = engine.runGraph(
+      scopeNodes,
+      store.edges as ScopeEdgeLike[],
+      store.variables,
+    )
+    const changed = new Set<string>([...l1Ids, ...l2Ids])
+    if (changed.size > 0) {
+      results.patchNodes(
+        Object.fromEntries([...changed].map((id) => [id, engine.getNodeDiagnostics(id)])),
+        store.dirty.revision,
+      )
+    }
+    const nodeOrder = topologicalOrder(scopeNodes, store.edges as ScopeEdgeLike[])
+    results.setGraph(graphDiagnostics, nodeOrder, store.dirty.revision)
+  }, [language])
 }

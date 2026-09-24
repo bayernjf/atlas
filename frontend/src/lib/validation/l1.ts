@@ -14,6 +14,7 @@ import { schemaRegistry } from '../schemas'
 import type { MetaSchema, NodeConfigSchema } from '../schemas/metaSchema'
 import type { Diagnostic } from './diagnostics'
 import { escapePointerToken } from './diagnostics'
+import { t } from '../../locales'
 
 export const MAX_LOOP_ITERATIONS = 100
 export const MIN_PARALLEL_BRANCHES = 2
@@ -241,101 +242,123 @@ export function validateSchemaFields(schema: MetaSchema, config: unknown): Schem
   return result
 }
 
-const FALLBACK_MESSAGES: Record<string, string> = {
-  [FIELD_CODES.REQUIRED]: '该字段必填',
-  [FIELD_CODES.TYPE]: '字段类型不正确',
-  [FIELD_CODES.ENUM]: '取值不在允许范围内',
-  [FIELD_CODES.CONST]: '取值不被允许',
-  [FIELD_CODES.RANGE]: '数值超出允许范围',
-  [FIELD_CODES.LENGTH]: '内容长度不符合要求',
-  [FIELD_CODES.PATTERN]: '内容格式不符合要求',
-  [FIELD_CODES.ITEMS_MIN]: '条目数量不足',
-  [FIELD_CODES.ITEMS_MAX]: '条目数量超出上限',
-  [FIELD_CODES.ADDITIONAL_PROPERTIES]: '存在不允许的字段',
-  [FIELD_CODES.ONEOF]: '未满足任一合法配置组合',
+const FIELD_MESSAGE_KEYS: Record<string, string> = {
+  [FIELD_CODES.REQUIRED]: 'field.required',
+  [FIELD_CODES.TYPE]: 'field.type',
+  [FIELD_CODES.ENUM]: 'field.enum',
+  [FIELD_CODES.CONST]: 'field.const',
+  [FIELD_CODES.RANGE]: 'field.range',
+  [FIELD_CODES.LENGTH]: 'field.length',
+  [FIELD_CODES.PATTERN]: 'field.pattern',
+  [FIELD_CODES.ITEMS_MIN]: 'field.itemsMin',
+  [FIELD_CODES.ITEMS_MAX]: 'field.itemsMax',
+  [FIELD_CODES.ADDITIONAL_PROPERTIES]: 'field.additionalProperties',
+  [FIELD_CODES.ONEOF]: 'field.oneOf',
+}
+
+/** FIELD_* code → 当前语言文案；未映射 code 走通用兜底。 */
+function fieldCodeMessage(code: string): string {
+  const key = FIELD_MESSAGE_KEYS[code]
+  return key ? t(`validation:${key}`) : t('validation:field.generic')
 }
 
 function branchTag(config: NodeConfig, index: number): string {
   const branches = (config.branches ?? []) as ConditionBranch[]
-  return branches[index]?.label?.trim() || `第 ${index + 1} 个分支`
+  return branches[index]?.label?.trim() || t('validation:branch.tag', { n: index + 1 })
 }
 
-/** schema 派生字段诊断的中文文案（与 M1 手写文案逐条一致；未映射 code 走兜底文案）。 */
+/** schema 派生字段诊断的当前语言文案（docs/17：L1 诊断走 validation namespace；未映射 code 走通用兜底）。 */
 function schemaFieldMessage(kind: string, finding: SchemaFinding, config: NodeConfig): string {
   const [head, indexToken, leaf] = pointerSegments(finding.pointer)
   switch (kind) {
     case 'trigger':
-      if (finding.pointer === '/cron') return '定时触发必须填写 Cron 表达式'
-      if (finding.pointer === '/webhookUrl') return 'Webhook 触发必须填写 URL'
+      if (finding.pointer === '/cron') return t('validation:trigger.cronRequired')
+      if (finding.pointer === '/webhookUrl') return t('validation:trigger.urlRequired')
       break
     case 'ai_decision':
-      if (finding.pointer === '/promptTemplate') return 'AI 决策必须填写提示词模板'
-      if (finding.pointer === '/confidenceThreshold') return '置信度阈值需在 0-1 之间'
+      if (finding.pointer === '/promptTemplate') return t('validation:decision.promptRequired')
+      if (finding.pointer === '/confidenceThreshold') return t('validation:decision.confidenceRange')
       break
     case 'tool_call':
-      if (finding.pointer === '/tool') return '工具调用必须选择工具'
+      if (finding.pointer === '/tool') return t('validation:tool.required')
       break
     case 'condition':
-      if (head === 'branches' && indexToken === undefined) return '条件节点至少需要一个分支'
-      if (finding.pointer === '/conditionMode') return '判断模式必须为规则表达式或 LLM 语义判断'
-      if (finding.pointer === '/classifierPrompt') return '附加判定要求长度不能超过 500 字符'
+      if (head === 'branches' && indexToken === undefined) return t('validation:condition.branchRequired')
+      if (finding.pointer === '/conditionMode') return t('validation:condition.modeRequired')
+      if (finding.pointer === '/classifierPrompt') return t('validation:condition.classifierLength')
       if (head === 'branches') {
         const index = Number(indexToken)
-        if (leaf === 'label') return `第 ${index + 1} 个分支名称不能为空`
-        if (leaf === 'expression') return `分支 ${branchTag(config, index)} 的表达式不能为空`
-        if (leaf === 'description') return `分支 ${branchTag(config, index)} 的语义描述不能为空`
-        if (leaf === 'target') return `分支 ${branchTag(config, index)} 必须选择目标节点`
+        if (leaf === 'label') return t('validation:condition.branchLabelEmpty', { n: index + 1 })
+        if (leaf === 'expression')
+          return t('validation:condition.branchExpressionEmpty', { tag: branchTag(config, index) })
+        if (leaf === 'description')
+          return t('validation:condition.branchDescriptionEmpty', { tag: branchTag(config, index) })
+        if (leaf === 'target')
+          return t('validation:condition.branchTargetRequired', { tag: branchTag(config, index) })
       }
-      if (finding.pointer === '/defaultTarget') return '必须配置默认分支'
+      if (finding.pointer === '/defaultTarget') return t('validation:condition.defaultTargetRequired')
       break
     case 'loop':
-      if (finding.pointer === '/continueExpression') return '必须填写继续条件表达式'
-      if (finding.pointer === '/maxIterations') return `最大次数需为 1-${MAX_LOOP_ITERATIONS} 的整数`
-      if (finding.pointer === '/itemsExpression') return '必须填写遍历数组表达式'
-      if (finding.pointer === '/bodyTarget') return '必须选择循环体入口'
-      if (finding.pointer === '/exitTarget') return '必须选择退出目标'
+      if (finding.pointer === '/continueExpression') return t('validation:loop.continueRequired')
+      if (finding.pointer === '/maxIterations')
+        return t('validation:loop.maxIterationsRange', { max: MAX_LOOP_ITERATIONS })
+      if (finding.pointer === '/itemsExpression') return t('validation:loop.itemsRequired')
+      if (finding.pointer === '/bodyTarget') return t('validation:loop.bodyTargetRequired')
+      if (finding.pointer === '/exitTarget') return t('validation:loop.exitTargetRequired')
       break
     case 'parallel':
       if (head === 'branches' && indexToken === undefined) {
-        return `分支数需为 ${MIN_PARALLEL_BRANCHES}-${MAX_PARALLEL_BRANCHES} 个`
+        return t('validation:parallel.branchCount', {
+          min: MIN_PARALLEL_BRANCHES,
+          max: MAX_PARALLEL_BRANCHES,
+        })
       }
       if (head === 'branches') {
         const index = Number(indexToken)
-        if (leaf === 'label') return `第 ${index + 1} 个分支名称不能为空`
-        if (leaf === 'target') return `分支 ${branchTag(config, index)} 必须选择目标节点`
+        if (leaf === 'label') return t('validation:parallel.branchLabelEmpty', { n: index + 1 })
+        if (leaf === 'target')
+          return t('validation:parallel.branchTargetRequired', { tag: branchTag(config, index) })
       }
-      if (finding.pointer === '/joinTarget') return '必须选择汇聚目标'
+      if (finding.pointer === '/joinTarget') return t('validation:parallel.joinTargetRequired')
       break
     case 'wait':
-      if (finding.pointer === '/waitType') return '等待类型必须为定时等待或事件等待'
+      if (finding.pointer === '/waitType') return t('validation:wait.typeRequired')
       if (finding.pointer === '/durationSeconds') {
-        return `等待时长需为 ${MIN_WAIT_SECONDS}-${MAX_WAIT_SECONDS} 秒的整数`
+        return t('validation:wait.durationRange', { min: MIN_WAIT_SECONDS, max: MAX_WAIT_SECONDS })
       }
-      if (finding.pointer === '/eventKey') return '事件标识必填（单键 eventKey 或多键 eventKeys 二选一），静态部分仅允许字母、数字及 :_-'
+      if (finding.pointer === '/eventKey') return t('validation:wait.eventKeyRequired')
       if (finding.pointer === '/timeoutSeconds') {
-        return `超时时间需为 ${MIN_EVENT_WAIT_SECONDS}-${MAX_EVENT_WAIT_SECONDS} 秒的整数`
+        return t('validation:wait.timeoutRange', {
+          min: MIN_EVENT_WAIT_SECONDS,
+          max: MAX_EVENT_WAIT_SECONDS,
+        })
       }
-      if (finding.pointer === '/onTimeout') return '超时策略必须为继续或失败'
+      if (finding.pointer === '/onTimeout') return t('validation:wait.onTimeoutContinueFail')
       break
     case 'subgraph':
-      if (finding.pointer === '/graphId') return '必须选择引用的已保存子图'
+      if (finding.pointer === '/graphId') return t('validation:subgraph.graphRequired')
       if (head === 'inputs' && indexToken !== undefined) {
-        return `入参 ${indexToken || '(空键)'} 的映射值不能为空`
+        return t('validation:subgraph.inputMappingEmpty', {
+          key: indexToken || t('validation:subgraph.emptyKey'),
+        })
       }
       break
     case 'human_approval':
-      if (finding.pointer === '/summary') return '审批说明必填'
+      if (finding.pointer === '/summary') return t('validation:approval.summaryRequired')
       if (finding.pointer === '/timeoutSeconds') {
-        return `超时时长需为 ${MIN_APPROVAL_TIMEOUT}-${MAX_APPROVAL_TIMEOUT} 秒的整数`
+        return t('validation:approval.timeoutRange', {
+          min: MIN_APPROVAL_TIMEOUT,
+          max: MAX_APPROVAL_TIMEOUT,
+        })
       }
-      if (finding.pointer === '/onTimeout') return '超时策略必须为自动通过或自动拒绝'
-      if (finding.pointer === '/approvedTarget') return '必须选择通过目标'
-      if (finding.pointer === '/rejectedTarget') return '必须选择拒绝目标'
+      if (finding.pointer === '/onTimeout') return t('validation:approval.onTimeoutAuto')
+      if (finding.pointer === '/approvedTarget') return t('validation:approval.approvedTargetRequired')
+      if (finding.pointer === '/rejectedTarget') return t('validation:approval.rejectedTargetRequired')
       break
     default:
       break
   }
-  return FALLBACK_MESSAGES[finding.code] ?? '字段校验未通过'
+  return fieldCodeMessage(finding.code)
 }
 
 function fieldDiag(code: FieldCode, message: string, pointer?: string): Diagnostic {
@@ -353,50 +376,50 @@ function handFieldDiagnostics(kind: string, config: NodeConfig): Diagnostic[] {
       const targets = new Set<string>()
       if (semantic && (config.classifierPrompt?.trim().length ?? 0) > 500) {
         diagnostics.push(
-          fieldDiag(FIELD_CODES.LENGTH, '附加判定要求长度不能超过 500 字符', '/classifierPrompt'),
+          fieldDiag(FIELD_CODES.LENGTH, t('validation:condition.classifierLength'), '/classifierPrompt'),
         )
       }
       branches.forEach((branch, index) => {
-        const tag = branch.label?.trim() || `第 ${index + 1} 个分支`
+        const tag = branch.label?.trim() || t('validation:branch.tag', { n: index + 1 })
         const labelPointer = `/branches/${index}/label`
         const expressionPointer = `/branches/${index}/expression`
         const descriptionPointer = `/branches/${index}/description`
         const targetPointer = `/branches/${index}/target`
         if (branch.label?.trim() && labels.has(branch.label)) {
-          diagnostics.push(fieldDiag(FIELD_CODES.BRANCH_LABEL_DUPLICATE, `分支名称重复：${branch.label}`, labelPointer))
+          diagnostics.push(fieldDiag(FIELD_CODES.BRANCH_LABEL_DUPLICATE, t('validation:condition.labelDuplicate', { label: branch.label }), labelPointer))
         } else if (branch.label?.trim()) {
           labels.add(branch.label)
         }
         if (semantic) {
           if (branch.expression?.trim()) {
             diagnostics.push(
-              fieldDiag(FIELD_CODES.EXPRESSION_SYNTAX, `LLM 分支 ${tag} 不允许使用 expression`, expressionPointer),
+              fieldDiag(FIELD_CODES.EXPRESSION_SYNTAX, t('validation:condition.llmExpressionNotAllowed', { tag }), expressionPointer),
             )
           }
           const description = branch.description?.trim()
           if (!description) {
             diagnostics.push(
-              fieldDiag(FIELD_CODES.REQUIRED, `分支 ${tag} 的语义描述不能为空`, descriptionPointer),
+              fieldDiag(FIELD_CODES.REQUIRED, t('validation:condition.branchDescriptionEmpty', { tag }), descriptionPointer),
             )
           } else if (description.length > 300) {
             diagnostics.push(
-              fieldDiag(FIELD_CODES.LENGTH, `分支 ${tag} 的语义描述长度不能超过 300 字符`, descriptionPointer),
+              fieldDiag(FIELD_CODES.LENGTH, t('validation:condition.branchDescriptionLength', { tag }), descriptionPointer),
             )
           }
         } else if (branch.expression?.trim()) {
           for (const exprError of validateExpression(branch.expression)) {
-            diagnostics.push(fieldDiag(FIELD_CODES.EXPRESSION_SYNTAX, `分支 ${tag} ${exprError}`, expressionPointer))
+            diagnostics.push(fieldDiag(FIELD_CODES.EXPRESSION_SYNTAX, t('validation:condition.expressionSyntax', { tag, error: exprError }), expressionPointer))
           }
         }
         if (branch.target?.trim() && targets.has(branch.target)) {
-          diagnostics.push(fieldDiag(FIELD_CODES.BRANCH_TARGET_DUPLICATE, `分支目标重复：${branch.target}`, targetPointer))
+          diagnostics.push(fieldDiag(FIELD_CODES.BRANCH_TARGET_DUPLICATE, t('validation:condition.targetDuplicate', { target: branch.target }), targetPointer))
         } else if (branch.target?.trim()) {
           targets.add(branch.target)
         }
       })
       if (config.defaultTarget?.trim() && targets.has(config.defaultTarget)) {
         diagnostics.push(
-          fieldDiag(FIELD_CODES.DEFAULT_TARGET_COLLISION, '默认分支目标不能与其他分支相同', '/defaultTarget'),
+          fieldDiag(FIELD_CODES.DEFAULT_TARGET_COLLISION, t('validation:condition.defaultTargetCollision'), '/defaultTarget'),
         )
       }
       break
@@ -407,24 +430,24 @@ function handFieldDiagnostics(kind: string, config: NodeConfig): Diagnostic[] {
           const syntaxError = parseExpression(config.itemsExpression)
           if (syntaxError) {
             diagnostics.push(
-              fieldDiag(FIELD_CODES.EXPRESSION_SYNTAX, `遍历数组表达式${syntaxError}`, '/itemsExpression'),
+              fieldDiag(FIELD_CODES.EXPRESSION_SYNTAX, t('validation:loop.itemsExpressionSyntax', { error: syntaxError }), '/itemsExpression'),
             )
           }
         }
         if (config.itemName && !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(config.itemName)) {
           diagnostics.push(
-            fieldDiag(FIELD_CODES.EXPRESSION_SYNTAX, '元素别名须为标识符（字母/下划线开头）', '/itemName'),
+            fieldDiag(FIELD_CODES.EXPRESSION_SYNTAX, t('validation:loop.itemNameIdentifier'), '/itemName'),
           )
         }
       } else if (config.continueExpression?.trim()) {
         for (const exprError of validateExpression(config.continueExpression)) {
           diagnostics.push(
-            fieldDiag(FIELD_CODES.EXPRESSION_SYNTAX, `继续条件表达式${exprError}`, '/continueExpression'),
+            fieldDiag(FIELD_CODES.EXPRESSION_SYNTAX, t('validation:loop.continueExpressionSyntax', { error: exprError }), '/continueExpression'),
           )
         }
       }
       if (config.bodyTarget && config.bodyTarget === config.exitTarget) {
-        diagnostics.push(fieldDiag(FIELD_CODES.LOOP_TARGET_COLLISION, '循环体入口与退出目标不能相同', '/bodyTarget'))
+        diagnostics.push(fieldDiag(FIELD_CODES.LOOP_TARGET_COLLISION, t('validation:loop.targetCollision'), '/bodyTarget'))
       }
       break
     }
@@ -436,19 +459,19 @@ function handFieldDiagnostics(kind: string, config: NodeConfig): Diagnostic[] {
         const labelPointer = `/branches/${index}/label`
         const targetPointer = `/branches/${index}/target`
         if (branch.label?.trim() && labels.has(branch.label)) {
-          diagnostics.push(fieldDiag(FIELD_CODES.BRANCH_LABEL_DUPLICATE, `分支名称重复：${branch.label}`, labelPointer))
+          diagnostics.push(fieldDiag(FIELD_CODES.BRANCH_LABEL_DUPLICATE, t('validation:condition.labelDuplicate', { label: branch.label }), labelPointer))
         } else if (branch.label?.trim()) {
           labels.add(branch.label)
         }
         if (branch.target?.trim() && targets.has(branch.target)) {
-          diagnostics.push(fieldDiag(FIELD_CODES.BRANCH_TARGET_DUPLICATE, `分支目标重复：${branch.target}`, targetPointer))
+          diagnostics.push(fieldDiag(FIELD_CODES.BRANCH_TARGET_DUPLICATE, t('validation:condition.targetDuplicate', { target: branch.target }), targetPointer))
         } else if (branch.target?.trim()) {
           targets.add(branch.target)
         }
       })
       if (config.joinTarget?.trim() && targets.has(config.joinTarget)) {
         diagnostics.push(
-          fieldDiag(FIELD_CODES.JOIN_TARGET_COLLISION, '汇聚目标不能与任一分支目标相同', '/joinTarget'),
+          fieldDiag(FIELD_CODES.JOIN_TARGET_COLLISION, t('validation:parallel.joinCollision'), '/joinTarget'),
         )
       }
       break
@@ -461,12 +484,12 @@ function handFieldDiagnostics(kind: string, config: NodeConfig): Diagnostic[] {
           const single = config.eventKey ?? ''
           if (single.trim()) {
             diagnostics.push(
-              fieldDiag(FIELD_CODES.PATTERN, 'eventKey 与 eventKeys 互斥，请只保留一种', '/eventKeys'),
+              fieldDiag(FIELD_CODES.PATTERN, t('validation:wait.eventKeysMutex'), '/eventKeys'),
             )
           }
           if (eventKeys.length < 1 || eventKeys.length > MAX_EVENT_KEYS) {
             diagnostics.push(
-              fieldDiag(FIELD_CODES.LENGTH, `多事件需 1-${MAX_EVENT_KEYS} 个事件标识`, '/eventKeys'),
+              fieldDiag(FIELD_CODES.LENGTH, t('validation:wait.eventKeysCount', { max: MAX_EVENT_KEYS }), '/eventKeys'),
             )
           }
           const seen = new Set<string>()
@@ -474,13 +497,13 @@ function handFieldDiagnostics(kind: string, config: NodeConfig): Diagnostic[] {
             const key = String(raw ?? '')
             const pointer = `/eventKeys/${idx}`
             if (!key.trim()) {
-              diagnostics.push(fieldDiag(FIELD_CODES.REQUIRED, `第 ${idx + 1} 个事件标识必填`, pointer))
+              diagnostics.push(fieldDiag(FIELD_CODES.REQUIRED, t('validation:wait.eventKeyItemRequired', { n: idx + 1 }), pointer))
             } else if (key.length > MAX_EVENT_KEY_LENGTH || !eventKeyStaticValid(key)) {
               diagnostics.push(
-                fieldDiag(FIELD_CODES.PATTERN, `第 ${idx + 1} 个事件标识静态部分仅允许字母、数字及 :_-`, pointer),
+                fieldDiag(FIELD_CODES.PATTERN, t('validation:wait.eventKeyItemPattern', { n: idx + 1 }), pointer),
               )
             } else if (seen.has(key.trim())) {
-              diagnostics.push(fieldDiag(FIELD_CODES.INPUT_KEY_DUPLICATE, `多事件标识重复：${key.trim()}`, pointer))
+              diagnostics.push(fieldDiag(FIELD_CODES.INPUT_KEY_DUPLICATE, t('validation:wait.eventKeyDuplicate', { key: key.trim() }), pointer))
             } else {
               seen.add(key.trim())
             }
@@ -488,23 +511,23 @@ function handFieldDiagnostics(kind: string, config: NodeConfig): Diagnostic[] {
           // docs/55：eventWaitMode=all（AND 竞速）需至少 2 个事件
           if (config.eventWaitMode === 'all' && eventKeys.length < 2) {
             diagnostics.push(
-              fieldDiag(FIELD_CODES.LENGTH, '全部命中（eventWaitMode=all）需配置至少 2 个事件', '/eventWaitMode'),
+              fieldDiag(FIELD_CODES.LENGTH, t('validation:wait.allModeNeedsTwo'), '/eventWaitMode'),
             )
           }
         } else if (config.eventWaitMode === 'all') {
           // 单键 eventKey 不支持 AND
           diagnostics.push(
-            fieldDiag(FIELD_CODES.PATTERN, '全部命中（eventWaitMode=all）需改用多事件 eventKeys 且至少 2 个', '/eventWaitMode'),
+            fieldDiag(FIELD_CODES.PATTERN, t('validation:wait.allModeNeedsMultiKey'), '/eventWaitMode'),
           )
         } else {
           const template = config.eventKey ?? ''
           if (!template.trim()) {
             diagnostics.push(
-              fieldDiag(FIELD_CODES.REQUIRED, '事件标识必填（单键 eventKey 或多键 eventKeys 二选一）', '/eventKey'),
+              fieldDiag(FIELD_CODES.REQUIRED, t('validation:wait.eventKeyRequiredShort'), '/eventKey'),
             )
           } else if (!eventKeyStaticValid(template)) {
             diagnostics.push(
-              fieldDiag(FIELD_CODES.PATTERN, '事件标识静态部分仅允许字母、数字及 :_-，占位内不检查', '/eventKey'),
+              fieldDiag(FIELD_CODES.PATTERN, t('validation:wait.eventKeyPattern'), '/eventKey'),
             )
           }
         }
@@ -512,18 +535,18 @@ function handFieldDiagnostics(kind: string, config: NodeConfig): Diagnostic[] {
           const timeoutExpression = config.timeoutExpression ?? ''
           if (!timeoutExpression.trim()) {
             diagnostics.push(
-              fieldDiag(FIELD_CODES.REQUIRED, '超时表达式为必填', '/timeoutExpression'),
+              fieldDiag(FIELD_CODES.REQUIRED, t('validation:wait.timeoutExpressionRequired'), '/timeoutExpression'),
             )
           } else if (timeoutExpression.length > MAX_DURATION_EXPRESSION_LENGTH) {
             diagnostics.push(
-              fieldDiag(FIELD_CODES.LENGTH, `超时表达式长度不能超过 ${MAX_DURATION_EXPRESSION_LENGTH} 字符`, '/timeoutExpression'),
+              fieldDiag(FIELD_CODES.LENGTH, t('validation:wait.timeoutExpressionLength', { max: MAX_DURATION_EXPRESSION_LENGTH }), '/timeoutExpression'),
             )
           }
         } else {
           const eventTimeout = config.timeoutSeconds
           if (eventTimeout === undefined) {
             diagnostics.push(
-              fieldDiag(FIELD_CODES.REQUIRED, `超时时间为必填（1-${MAX_EVENT_WAIT_SECONDS} 秒整数）`, '/timeoutSeconds'),
+              fieldDiag(FIELD_CODES.REQUIRED, t('validation:wait.timeoutSecondsRequired', { max: MAX_EVENT_WAIT_SECONDS }), '/timeoutSeconds'),
             )
           }
         }
@@ -531,29 +554,29 @@ function handFieldDiagnostics(kind: string, config: NodeConfig): Diagnostic[] {
         const expression = config.durationExpression ?? ''
         if (!expression.trim()) {
           diagnostics.push(
-            fieldDiag(FIELD_CODES.REQUIRED, '动态时长表达式为必填', '/durationExpression'),
+            fieldDiag(FIELD_CODES.REQUIRED, t('validation:wait.dynamicExpressionRequired'), '/durationExpression'),
           )
         } else if (expression.length > MAX_DURATION_EXPRESSION_LENGTH) {
           diagnostics.push(
-            fieldDiag(FIELD_CODES.LENGTH, `动态时长表达式长度不能超过 ${MAX_DURATION_EXPRESSION_LENGTH} 字符`, '/durationExpression'),
+            fieldDiag(FIELD_CODES.LENGTH, t('validation:wait.dynamicExpressionLength', { max: MAX_DURATION_EXPRESSION_LENGTH }), '/durationExpression'),
           )
         }
       } else if (config.durationMode === 'absolute') {
         const absoluteTime = config.absoluteTime ?? ''
         if (!absoluteTime.trim()) {
           diagnostics.push(
-            fieldDiag(FIELD_CODES.REQUIRED, '到点时刻为必填', '/absoluteTime'),
+            fieldDiag(FIELD_CODES.REQUIRED, t('validation:wait.absoluteRequired'), '/absoluteTime'),
           )
         } else if (absoluteTime.trim().length > MAX_ABSOLUTE_TIME_LENGTH) {
           diagnostics.push(
-            fieldDiag(FIELD_CODES.LENGTH, `到点时刻长度不能超过 ${MAX_ABSOLUTE_TIME_LENGTH} 字符`, '/absoluteTime'),
+            fieldDiag(FIELD_CODES.LENGTH, t('validation:wait.absoluteLength', { max: MAX_ABSOLUTE_TIME_LENGTH }), '/absoluteTime'),
           )
         }
       } else {
         const seconds = config.durationSeconds
         if (seconds === undefined) {
           diagnostics.push(
-            fieldDiag(FIELD_CODES.REQUIRED, `等待时长为必填（1-${MAX_WAIT_SECONDS} 秒整数）`, '/durationSeconds'),
+            fieldDiag(FIELD_CODES.REQUIRED, t('validation:wait.durationSecondsRequired', { max: MAX_WAIT_SECONDS }), '/durationSeconds'),
           )
         }
         // docs/54：仅 static 固定时长支持 jitterSeconds（0-300 整数，缺省 0）
@@ -564,7 +587,7 @@ function handFieldDiagnostics(kind: string, config: NodeConfig): Diagnostic[] {
             config.jitterSeconds > MAX_JITTER_SECONDS)
         ) {
           diagnostics.push(
-            fieldDiag(FIELD_CODES.RANGE, `抖动上限需为 0-${MAX_JITTER_SECONDS} 秒的整数`, '/jitterSeconds'),
+            fieldDiag(FIELD_CODES.RANGE, t('validation:wait.jitterRange', { max: MAX_JITTER_SECONDS }), '/jitterSeconds'),
           )
         }
       }
@@ -574,9 +597,9 @@ function handFieldDiagnostics(kind: string, config: NodeConfig): Diagnostic[] {
       const keys = new Set<string>()
       for (const key of Object.keys(config.inputs ?? {})) {
         if (!key.trim()) {
-          diagnostics.push(fieldDiag(FIELD_CODES.INPUT_KEY_EMPTY, '入参键名不能为空', '/inputs'))
+          diagnostics.push(fieldDiag(FIELD_CODES.INPUT_KEY_EMPTY, t('validation:subgraph.inputKeyEmpty'), '/inputs'))
         } else if (keys.has(key)) {
-          diagnostics.push(fieldDiag(FIELD_CODES.INPUT_KEY_DUPLICATE, `入参键名重复：${key}`, `/inputs/${escapePointerToken(key)}`))
+          diagnostics.push(fieldDiag(FIELD_CODES.INPUT_KEY_DUPLICATE, t('validation:subgraph.inputKeyDuplicate', { key }), `/inputs/${escapePointerToken(key)}`))
         } else {
           keys.add(key)
         }
@@ -586,7 +609,7 @@ function handFieldDiagnostics(kind: string, config: NodeConfig): Diagnostic[] {
     case 'human_approval': {
       if (config.approvedTarget && config.approvedTarget === config.rejectedTarget) {
         diagnostics.push(
-          fieldDiag(FIELD_CODES.APPROVAL_TARGET_COLLISION, '通过目标与拒绝目标不能相同', '/approvedTarget'),
+          fieldDiag(FIELD_CODES.APPROVAL_TARGET_COLLISION, t('validation:approval.targetCollision'), '/approvedTarget'),
         )
       }
       break
@@ -624,6 +647,6 @@ export function validateNodeFields(kind: string, config: NodeConfig): Diagnostic
  */
 export function validateParamFields(schema: MetaSchema, params: unknown): Diagnostic[] {
   return validateSchemaFields(schema, params).map((finding) =>
-    fieldDiag(finding.code, FALLBACK_MESSAGES[finding.code] ?? '字段校验未通过', finding.pointer),
+    fieldDiag(finding.code, fieldCodeMessage(finding.code), finding.pointer),
   )
 }

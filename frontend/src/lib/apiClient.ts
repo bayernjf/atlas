@@ -11,6 +11,28 @@ import {
 } from './auth'
 import type { SerializedGraph } from './graphSerializer'
 import type { JsonSchema } from './scope'
+import { t } from '../locales'
+
+// docs/17 §2.4：后端认证错误返回 {code,message}；code 是契约，前端按 code 走 i18n。
+const AUTH_ERROR_KEYS: Record<string, string> = {
+  AUTH_INVALID_CREDENTIALS: 'error.auth.invalidCredentials',
+  AUTH_ACCOUNT_DISABLED: 'error.auth.accountDisabled',
+  AUTH_UNAUTHENTICATED: 'error.auth.unauthenticated',
+  AUTH_FORBIDDEN: 'error.auth.forbidden',
+  AUTH_NOT_FOUND: 'error.auth.notFound',
+}
+
+/** 把 FastAPI 的 detail（字符串 / 422 数组 / {code,message} 对象）解析为当前语言的错误文案。 */
+function resolveErrorMessage(detail: unknown, status: number): string {
+  if (Array.isArray(detail)) return detail.join('；')
+  if (detail !== null && typeof detail === 'object') {
+    const rec = detail as { code?: string; message?: string }
+    const key = rec.code ? AUTH_ERROR_KEYS[rec.code] : undefined
+    if (key) return t(key)
+    return rec.message ?? t('error.requestFailed', { status })
+  }
+  return (typeof detail === 'string' && detail) || t('error.requestFailed', { status })
+}
 
 export type CompileResult = {
   id: string
@@ -177,15 +199,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       // 登录端点的 401 是「用户名或密码错误」，不触发会话失效跳转
       if (path !== '/api/auth/login') handleUnauthorized()
     }
-    const detail = body?.detail
-    const fallback = `请求失败：${response.status}`
-    throw new Error(
-      Array.isArray(detail)
-        ? detail.join('；')
-        : typeof detail === 'object'
-          ? (detail?.message ?? fallback)
-          : detail || fallback,
-    )
+    throw new Error(resolveErrorMessage(body?.detail, response.status))
   }
   return body as T
 }
@@ -200,7 +214,7 @@ export async function login(username: string, password: string): Promise<LoginRe
   })
   const body = await response.json().catch(() => null)
   if (!response.ok) {
-    throw new Error(body?.detail || `登录失败：${response.status}`)
+    throw new Error(resolveErrorMessage(body?.detail, response.status))
   }
   const session = body as LoginResponse
   saveSession(session.token, session.principal)

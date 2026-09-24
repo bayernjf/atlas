@@ -1,0 +1,106 @@
+{
+  "field": {
+    "required": "该字段必填",
+    "type": "字段类型不正确",
+    "enum": "取值不在允许范围内",
+    "const": "取值不被允许",
+    "range": "数值超出允许范围",
+    "length": "内容长度不符合要求",
+    "pattern": "内容格式不符合要求",
+    "itemsMin": "条目数量不足",
+    "itemsMax": "条目数量超出上限",
+    "additionalProperties": "存在不允许的字段",
+    "oneOf": "未满足任一合法配置组合",
+    "generic": "字段校验未通过"
+  },
+  "branch": {
+    "tag": "第 {{n}} 个分支"
+  },
+  "trigger": {
+    "cronRequired": "定时触发必须填写 Cron 表达式",
+    "urlRequired": "Webhook 触发必须填写 URL"
+  },
+  "decision": {
+    "promptRequired": "AI 决策必须填写提示词模板",
+    "confidenceRange": "置信度阈值需在 0-1 之间"
+  },
+  "tool": {
+    "required": "工具调用必须选择工具"
+  },
+  "condition": {
+    "branchRequired": "条件节点至少需要一个分支",
+    "modeRequired": "判断模式必须为规则表达式或 LLM 语义判断",
+    "classifierLength": "附加判定要求长度不能超过 500 字符",
+    "branchLabelEmpty": "第 {{n}} 个分支名称不能为空",
+    "branchExpressionEmpty": "分支 {{tag}} 的表达式不能为空",
+    "branchDescriptionEmpty": "分支 {{tag}} 的语义描述不能为空",
+    "branchTargetRequired": "分支 {{tag}} 必须选择目标节点",
+    "defaultTargetRequired": "必须配置默认分支",
+    "labelDuplicate": "分支名称重复：{{label}}",
+    "llmExpressionNotAllowed": "LLM 分支 {{tag}} 不允许使用 expression",
+    "branchDescriptionLength": "分支 {{tag}} 的语义描述长度不能超过 300 字符",
+    "expressionSyntax": "分支 {{tag}} {{error}}",
+    "targetDuplicate": "分支目标重复：{{target}}",
+    "defaultTargetCollision": "默认分支目标不能与其他分支相同"
+  },
+  "loop": {
+    "continueRequired": "必须填写继续条件表达式",
+    "maxIterationsRange": "最大次数需为 1-{{max}} 的整数",
+    "itemsRequired": "必须填写遍历数组表达式",
+    "bodyTargetRequired": "必须选择循环体入口",
+    "exitTargetRequired": "必须选择退出目标",
+    "itemsExpressionSyntax": "遍历数组表达式{{error}}",
+    "itemNameIdentifier": "元素别名须为标识符（字母/下划线开头）",
+    "continueExpressionSyntax": "继续条件表达式{{error}}",
+    "targetCollision": "循环体入口与退出目标不能相同"
+  },
+  "parallel": {
+    "branchCount": "分支数需为 {{min}}-{{max}} 个",
+    "branchLabelEmpty": "第 {{n}} 个分支名称不能为空",
+    "branchTargetRequired": "分支 {{tag}} 必须选择目标节点",
+    "joinTargetRequired": "必须选择汇聚目标",
+    "labelDuplicate": "分支名称重复：{{label}}",
+    "targetDuplicate": "分支目标重复：{{target}}",
+    "joinCollision": "汇聚目标不能与任一分支目标相同"
+  },
+  "wait": {
+    "typeRequired": "等待类型必须为定时等待或事件等待",
+    "durationRange": "等待时长需为 {{min}}-{{max}} 秒的整数",
+    "eventKeyRequired": "事件标识必填（单键 eventKey 或多键 eventKeys 二选一），静态部分仅允许字母、数字及 :_-",
+    "eventKeyRequiredShort": "事件标识必填（单键 eventKey 或多键 eventKeys 二选一）",
+    "timeoutRange": "超时时间需为 {{min}}-{{max}} 秒的整数",
+    "onTimeoutContinueFail": "超时策略必须为继续或失败",
+    "eventKeysMutex": "eventKey 与 eventKeys 互斥，请只保留一种",
+    "eventKeysCount": "多事件需 1-{{max}} 个事件标识",
+    "eventKeyItemRequired": "第 {{n}} 个事件标识必填",
+    "eventKeyItemPattern": "第 {{n}} 个事件标识静态部分仅允许字母、数字及 :_-",
+    "eventKeyDuplicate": "多事件标识重复：{{key}}",
+    "allModeNeedsTwo": "全部命中（eventWaitMode=all）需配置至少 2 个事件",
+    "allModeNeedsMultiKey": "全部命中（eventWaitMode=all）需改用多事件 eventKeys 且至少 2 个",
+    "eventKeyPattern": "事件标识静态部分仅允许字母、数字及 :_-，占位内不检查",
+    "timeoutExpressionRequired": "超时表达式为必填",
+    "timeoutExpressionLength": "超时表达式长度不能超过 {{max}} 字符",
+    "timeoutSecondsRequired": "超时时间为必填（1-{{max}} 秒整数）",
+    "dynamicExpressionRequired": "动态时长表达式为必填",
+    "dynamicExpressionLength": "动态时长表达式长度不能超过 {{max}} 字符",
+    "absoluteRequired": "到点时刻为必填",
+    "absoluteLength": "到点时刻长度不能超过 {{max}} 字符",
+    "durationSecondsRequired": "等待时长为必填（1-{{max}} 秒整数）",
+    "jitterRange": "抖动上限需为 0-{{max}} 秒的整数"
+  },
+  "subgraph": {
+    "graphRequired": "必须选择引用的已保存子图",
+    "inputMappingEmpty": "入参 {{key}} 的映射值不能为空",
+    "emptyKey": "(空键)",
+    "inputKeyEmpty": "入参键名不能为空",
+    "inputKeyDuplicate": "入参键名重复：{{key}}"
+  },
+  "approval": {
+    "summaryRequired": "审批说明必填",
+    "timeoutRange": "超时时长需为 {{min}}-{{max}} 秒的整数",
+    "onTimeoutAuto": "超时策略必须为自动通过或自动拒绝",
+    "approvedTargetRequired": "必须选择通过目标",
+    "rejectedTargetRequired": "必须选择拒绝目标",
+    "targetCollision": "通过目标与拒绝目标不能相同"
+  }
+}

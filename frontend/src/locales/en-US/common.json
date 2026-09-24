@@ -78,8 +78,10 @@
       "invalidCredentials": "Incorrect username or password",
       "unauthenticated": "You are not signed in or your session has expired; please sign in again",
       "forbidden": "You do not have permission to perform this action",
+      "accountDisabled": "This account has been disabled; please contact an administrator",
       "notFound": "The resource does not exist or you do not have access"
-    }
+    },
+    "requestFailed": "Request failed: {{status}}"
   },
   "users": {
     "title": "User management",
