@@ -279,7 +279,9 @@
     "error": {
       "empty": "Please provide at least one on-call member",
       "tooMany": "At most 20 on-call members"
-    }
+    },
+    "intervalLabel": "Auto-rotation interval (days; blank = off)",
+    "autoTag": "Every {{days}}d · next {{date}}"
   },
   "silence": {
     "action": "Silence",
@@ -310,7 +312,11 @@
     "active": "Active",
     "expired": "Expired",
     "delete": "Lift",
-    "deleteConfirm": "Lift this silence rule early? Matching alerts will be raised again once it is lifted."
+    "deleteConfirm": "Lift this silence rule early? Matching alerts will be raised again once it is lifted.",
+    "edit": "Edit",
+    "editTitle": "Edit silence",
+    "extendLabel": "Extend expiry (from now)",
+    "save": "Save"
   },
   "webhookReliability": {
     "card": {

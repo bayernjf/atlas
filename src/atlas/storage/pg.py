@@ -30,11 +30,13 @@ from atlas.monitoring.alerts import (
     validate_rules,
 )
 from atlas.monitoring.silences import (
+    _UNSET,
     OnCallEmpty,
     OnCallSchedule,
     Silence,
     current_assignee,
     is_silence_active,
+    maybe_auto_rotate,
     silence_matches,
 )
 from atlas.monitoring.notify import (
@@ -1482,70 +1484,165 @@ class PgMonitoringStore:
             return OnCallSchedule()
         members = r[1] if isinstance(r[1], list) else list(r[1] or [])
         return OnCallSchedule(
-            members=members, index=r[2] or 0, updated_at=r[3], updated_by=r[4]
+            members=members,
+            index=r[2] or 0,
+            updated_at=r[3],
+            updated_by=r[4],
+            rotation_interval_days=r[5],
+            last_rotated_at=r[6],
         )
 
     def _oncall_row_locked(self, conn: Any) -> Any | None:
         return conn.execute(
             text(
-                "SELECT tenant_id, members, rot_index, updated_at, updated_by "
+                "SELECT tenant_id, members, rot_index, updated_at, updated_by, "
+                "rotation_interval_days, last_rotated_at "
                 "FROM monitoring_oncall WHERE tenant_id = :tenant_id"
             ),
             {"tenant_id": self._tenant_id},
         ).first()
 
+    def _auto_rotate_oncall_locked(self, conn: Any, now_dt: datetime) -> OnCallSchedule | None:
+        """docs/60 §4.2：读路径惰性按日轮换，推进则 UPDATE index/last_rotated_at。"""
+        schedule = self._oncall_from_row(self._oncall_row_locked(conn))
+        rotated = maybe_auto_rotate(schedule, now_dt)
+        if rotated is not None:
+            conn.execute(
+                text(
+                    "UPDATE monitoring_oncall SET rot_index = :rot_index, "
+                    "last_rotated_at = :last_rotated_at WHERE tenant_id = :tenant_id"
+                ),
+                {
+                    "rot_index": rotated.index,
+                    "last_rotated_at": rotated.last_rotated_at,
+                    "tenant_id": self._tenant_id,
+                },
+            )
+        return rotated
+
     def get_oncall(self) -> OnCallSchedule:
-        with self._engine.connect() as conn:
-            return self._oncall_from_row(self._oncall_row_locked(conn))
+        now_dt = datetime.now(timezone.utc)
+        with self._engine.begin() as conn:
+            self._auto_rotate_oncall_locked(conn, now_dt)
+            row = self._oncall_row_locked(conn)
+        return self._oncall_from_row(row)
 
     def _current_assignee_locked(self, conn: Any) -> str | None:
+        # 告警产生路径（外层写事务内）同样惰性轮换
+        self._auto_rotate_oncall_locked(conn, datetime.now(timezone.utc))
         return current_assignee(self._oncall_from_row(self._oncall_row_locked(conn)))
 
-    def set_oncall(self, *, members: list[str], updated_by: str) -> OnCallSchedule:
+    def set_oncall(
+        self, *, members: list[str], updated_by: str,
+        rotation_interval_days: int | None = None,
+    ) -> OnCallSchedule:
         # 去重保序、丢弃空白串、重置 index=0（与 OpsStore.set_oncall 同一规整逻辑）
         deduped = list(dict.fromkeys(m.strip() for m in members if m.strip()))
-        now = _now_iso()
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
+        interval = rotation_interval_days if (
+            isinstance(rotation_interval_days, int)
+            and not isinstance(rotation_interval_days, bool)
+            and 1 <= rotation_interval_days <= 365
+        ) else None
+        last_rotated = now_dt.date().isoformat() if interval is not None else None
         with self._engine.begin() as conn:
             conn.execute(
                 text(
                     "INSERT INTO monitoring_oncall "
-                    "(tenant_id, members, rot_index, updated_at, updated_by) "
-                    "VALUES (:tenant_id, :members, 0, :updated_at, :updated_by) "
+                    "(tenant_id, members, rot_index, updated_at, updated_by, "
+                    "rotation_interval_days, last_rotated_at) "
+                    "VALUES (:tenant_id, :members, 0, :updated_at, :updated_by, "
+                    ":interval, :last_rotated) "
                     "ON CONFLICT (tenant_id) DO UPDATE SET "
                     "members = EXCLUDED.members, rot_index = 0, "
-                    "updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by"
+                    "updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by, "
+                    "rotation_interval_days = EXCLUDED.rotation_interval_days, "
+                    "last_rotated_at = EXCLUDED.last_rotated_at"
                 ),
                 {
                     "tenant_id": self._tenant_id,
                     "members": json.dumps(deduped, ensure_ascii=False),
                     "updated_at": now,
                     "updated_by": updated_by,
+                    "interval": interval,
+                    "last_rotated": last_rotated,
                 },
             )
             row = self._oncall_row_locked(conn)
         return self._oncall_from_row(row)
 
     def rotate_oncall(self, *, updated_by: str) -> OnCallSchedule:
-        now = _now_iso()
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
         with self._engine.begin() as conn:
             schedule = self._oncall_from_row(self._oncall_row_locked(conn))
             total = len(schedule.members)
             if total == 0:
                 raise OnCallEmpty("值班表为空，无法轮换")
             new_index = (schedule.index + 1) % total
+            # docs/60 §4.2：手动轮换同步刷新按日轮换基准（仅开启自动间隔时）
+            last_rotated = (
+                now_dt.date().isoformat()
+                if schedule.rotation_interval_days is not None
+                else schedule.last_rotated_at
+            )
             conn.execute(
                 text(
                     "UPDATE monitoring_oncall SET rot_index = :rot_index, "
-                    "updated_at = :updated_at, updated_by = :updated_by "
+                    "updated_at = :updated_at, updated_by = :updated_by, "
+                    "last_rotated_at = :last_rotated_at "
                     "WHERE tenant_id = :tenant_id"
                 ),
                 {
                     "rot_index": new_index, "updated_at": now,
-                    "updated_by": updated_by, "tenant_id": self._tenant_id,
+                    "updated_by": updated_by, "last_rotated_at": last_rotated,
+                    "tenant_id": self._tenant_id,
                 },
             )
             row = self._oncall_row_locked(conn)
         return self._oncall_from_row(row)
+
+    def update_silence(
+        self, silence_id: str, *,
+        reason: object = _UNSET, rule_id: object = _UNSET,
+        graph_id: object = _UNSET, expires_at: object = _UNSET,
+    ) -> Silence | None:
+        """docs/60 §4.1：仅命中未过期静默可改（UPDATE ... expires_at > now）；否则 None。"""
+        now = _now_iso()
+        provided = {
+            key: val
+            for key, val in (
+                ("reason", reason),
+                ("rule_id", rule_id),
+                ("graph_id", graph_id),
+                ("expires_at", expires_at),
+            )
+            if val is not _UNSET
+        }
+        with self._engine.begin() as conn:
+            if provided:
+                assignments = ", ".join(f"{key} = :{key}" for key in provided)
+                params = {
+                    "tenant_id": self._tenant_id, "id": silence_id, "now": now, **provided
+                }
+                result = conn.execute(
+                    text(
+                        f"UPDATE monitoring_silences SET {assignments} "
+                        "WHERE tenant_id = :tenant_id AND id = :id AND expires_at > :now"
+                    ),
+                    params,
+                )
+                if result.rowcount == 0:
+                    return None
+            row = conn.execute(
+                text(
+                    f"SELECT {self._SILENCE_COLS} FROM monitoring_silences "
+                    "WHERE tenant_id = :tenant_id AND id = :id AND expires_at > :now"
+                ),
+                {"tenant_id": self._tenant_id, "id": silence_id, "now": now},
+            ).first()
+        return self._silence_from_row(row) if row is not None else None
 
     def reset(self) -> None:
         with self._engine.begin() as conn:

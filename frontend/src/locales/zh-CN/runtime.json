@@ -1,0 +1,23 @@
+{
+  "COND_SYNTAX_UNEXPECTED_CHAR": "语法错误：意外字符“{{token}}”（位置 {{pos}}）",
+  "COND_SYNTAX_INCOMPLETE": "语法错误：表达式不完整",
+  "COND_SYNTAX_UNEXPECTED_TOKEN": "语法错误：意外的词元“{{token}}”（位置 {{pos}}）",
+  "COND_SYNTAX_MISSING_PAREN": "语法错误：缺少右括号",
+  "COND_UNKNOWN_IDENTIFIER": "语法错误：未知标识符“{{token}}”（位置 {{pos}}；变量须用双花括号包裹）",
+  "COND_UNKNOWN_FUNC": "语法错误：未知函数“{{func}}”",
+  "COND_FUNC_ARITY": "函数“{{func}}”的参数数量不正确（实际 {{actual}} 个）",
+  "COND_TYPE_MISMATCH": "类型不匹配：{{detail}}",
+  "COND_DIVIDE_BY_ZERO": "算术“{{op}}”的除数不能为 0",
+  "COND_INVALID_DATE": "函数“{{func}}”构造了非法日期",
+  "COND_NULL_COMPARISON": "空值（null/缺失变量）只能做相等比较，不能参与大小比较",
+  "COND_EVAL_FAILED": "表达式求值失败",
+  "WAIT_ABSOLUTE_TIME_INVALID": "等待节点的绝对时间非法",
+  "WAIT_DURATION_INVALID": "等待节点的等待时长非法（须为未来 1–3600 秒）",
+  "WAIT_EVENT_FRAME_INVALID": "等待节点的事件帧非法",
+  "WAIT_EVENT_KEY_INVALID": "等待节点的事件键非法",
+  "WAIT_TIMEOUT_FAILED": "等待事件超时",
+  "LOOP_MAX_ITERATIONS": "已达最大循环次数，强制退出循环",
+  "LOOP_ITEMS_TOO_LARGE": "遍历数组长度超过上限",
+  "FOREACH_COLLECT_MISSING": "聚合节点无产出，跳过本轮收集",
+  "RUNTIME_UNEXPECTED": "运行时发生未预期错误"
+}

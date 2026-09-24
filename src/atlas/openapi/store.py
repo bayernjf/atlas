@@ -101,8 +101,11 @@ class ImportStore:
             self._specs[spec_id] = imported
             return imported
 
-    def list(self) -> list[ImportedSpec]:
+    def list(self, *, include_deleted: bool = False) -> list[ImportedSpec]:
+        """默认仅未删（零回归）；include_deleted=True 返回全部（含已软删，按导入序）。"""
         with self._lock:
+            if include_deleted:
+                return list(self._specs.values())
             return self._active()
 
     def get(self, spec_id: str) -> ImportedSpec | None:
@@ -117,6 +120,26 @@ class ImportStore:
             if spec is None or spec.deleted_at is not None:
                 return False
             spec.deleted_at = datetime.now(timezone.utc).isoformat()
+            return True
+
+    def purge(self, spec_id: str) -> bool:
+        """物理删除（docs/60 G2）：仅已软删记录可彻底删除。
+
+        - 记录不存在：返回 False（路由折算 404）；
+        - 存在但未软删：抛 OPENAPI_NOT_SOFT_DELETED（路由折算 409，提示先软删）；
+        - 已软删：物理移除并返回 True。凭证列与同行天然级联，无独立凭证表。
+        """
+        with self._lock:
+            spec = self._specs.get(spec_id)
+            if spec is None:
+                return False
+            if spec.deleted_at is None:
+                raise ImportStoreError(
+                    "OPENAPI_NOT_SOFT_DELETED",
+                    f"API 规格 {spec_id} 尚未软删除，请先删除再彻底删除",
+                    status_code=409,
+                )
+            del self._specs[spec_id]
             return True
 
     def restore(

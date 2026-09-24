@@ -1,8 +1,21 @@
 import { useEffect, useState } from 'react'
-import { Alert, Button, Input, Modal, Space, Tag, Tooltip } from 'antd'
+import { Alert, Button, Input, InputNumber, Modal, Space, Tag, Tooltip } from 'antd'
 import { useTranslation } from '../../locales'
 import { getOnCall, rotateOnCall, updateOnCall, type OnCallSchedule } from '../../lib/apiClient'
 import { parseMembers, validateMembers } from '../../lib/onCall'
+
+function nextRotationDate(lastRotated: string | null | undefined, intervalDays: number): string {
+  const last = new Date(`${(lastRotated ?? '').slice(0, 10)}T00:00:00Z`)
+  const today = new Date()
+  today.setUTCHours(0, 0, 0, 0)
+  let next = Number.isNaN(last.getTime()) ? new Date(today.getTime()) : new Date(last)
+  let guard = 0
+  while (next.getTime() < today.getTime() && guard < 400) {
+    next = new Date(next.getTime() + intervalDays * 86_400_000)
+    guard += 1
+  }
+  return next.toISOString().slice(0, 10)
+}
 
 /** docs/33 §5.4：告警 Card 顶部值班条（当前值班人 + 轮换 + 设置轮值表，写操作仅 admin）。 */
 export function OnCallBar({ canAdmin, onChanged }: { canAdmin: boolean; onChanged?: () => void }) {
@@ -14,6 +27,7 @@ export function OnCallBar({ canAdmin, onChanged }: { canAdmin: boolean; onChange
   const [memberText, setMemberText] = useState('')
   const [modalError, setModalError] = useState('')
   const [saving, setSaving] = useState(false)
+  const [intervalDays, setIntervalDays] = useState<number | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -34,6 +48,7 @@ export function OnCallBar({ canAdmin, onChanged }: { canAdmin: boolean; onChange
 
   const openModal = () => {
     setMemberText((schedule?.members ?? []).join(', '))
+    setIntervalDays(schedule?.rotation_interval_days ?? null)
     setModalError('')
     setModalOpen(true)
   }
@@ -57,7 +72,7 @@ export function OnCallBar({ canAdmin, onChanged }: { canAdmin: boolean; onChange
     }
     setSaving(true)
     try {
-      setSchedule(await updateOnCall(members))
+      setSchedule(await updateOnCall(members, intervalDays))
       setModalOpen(false)
       onChanged?.()
     } catch (err) {
@@ -83,6 +98,14 @@ export function OnCallBar({ canAdmin, onChanged }: { canAdmin: boolean; onChange
         ) : (
           <Tag>{t('onCall.nobody')}</Tag>
         )}
+        {schedule?.rotation_interval_days ? (
+          <Tag color="geekblue">
+            {t('onCall.autoTag', {
+              days: schedule.rotation_interval_days,
+              date: nextRotationDate(schedule.last_rotated_at, schedule.rotation_interval_days),
+            })}
+          </Tag>
+        ) : null}
         {canAdmin && (
           <>
             <Button size="small" disabled={total === 0} onClick={handleRotate}>
@@ -116,6 +139,16 @@ export function OnCallBar({ canAdmin, onChanged }: { canAdmin: boolean; onChange
           onChange={(event) => setMemberText(event.target.value)}
           placeholder={t('onCall.placeholder')}
         />
+        <div style={{ marginTop: 12 }}>
+          <div style={{ marginBottom: 4 }}>{t('onCall.intervalLabel')}</div>
+          <InputNumber
+            min={1}
+            max={365}
+            value={intervalDays}
+            placeholder={t('onCall.intervalLabel')}
+            onChange={(value) => setIntervalDays(typeof value === 'number' ? value : null)}
+          />
+        </div>
         {modalError && <Alert type="error" showIcon message={modalError} style={{ marginTop: 8 }} />}
       </Modal>
     </div>

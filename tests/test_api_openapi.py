@@ -511,3 +511,63 @@ def test_restore_requires_administer():
     client.delete("/api/openapi/imports/openapi-1", headers=ADMIN_A)
     denied = client.post("/api/openapi/imports/openapi-1/restore", headers=OPERATOR_A)
     assert denied.status_code == 403
+
+
+# --- docs/60 G2：include_deleted 列表 + 硬删除（purge） ---
+def test_include_deleted_requires_administer_and_returns_soft_deleted():
+    client.post("/api/openapi/imports", json=_content(), headers=ADMIN_A)
+    assert client.delete("/api/openapi/imports/openapi-1", headers=ADMIN_A).status_code == 200
+
+    # 默认（viewer/read）不返已删
+    default = client.get("/api/openapi/imports", headers=VIEWER_A)
+    assert default.status_code == 200
+    assert default.json()["items"] == []
+
+    # 非 administer 显式要 include_deleted → 403
+    assert client.get(
+        "/api/openapi/imports?include_deleted=true", headers=VIEWER_A
+    ).status_code == 403
+    assert client.get(
+        "/api/openapi/imports?include_deleted=true", headers=OPERATOR_A
+    ).status_code == 403
+
+    # administer 可见已删且带 deleted_at
+    admin = client.get("/api/openapi/imports?include_deleted=true", headers=ADMIN_A)
+    assert admin.status_code == 200
+    items = admin.json()["items"]
+    assert len(items) == 1 and items[0]["spec_id"] == "openapi-1"
+    assert items[0]["deleted_at"]
+
+
+def test_hard_purge_409_when_active_404_when_missing_204_after_soft_delete():
+    client.post("/api/openapi/imports", json=_content(), headers=ADMIN_A)
+
+    # 未软删直接 hard → 409
+    active = client.delete("/api/openapi/imports/openapi-1?hard=true", headers=ADMIN_A)
+    assert active.status_code == 409
+    assert active.json()["detail"]["code"] == "OPENAPI_NOT_SOFT_DELETED"
+
+    # hard 不存在 → 404
+    missing = client.delete("/api/openapi/imports/openapi-9?hard=true", headers=ADMIN_A)
+    assert missing.status_code == 404
+
+    # 软删 → hard 204，include_deleted 也不再含
+    assert client.delete("/api/openapi/imports/openapi-1", headers=ADMIN_A).status_code == 200
+    purged = client.delete("/api/openapi/imports/openapi-1?hard=true", headers=ADMIN_A)
+    assert purged.status_code == 204
+    assert purged.text == ""
+    admin = client.get("/api/openapi/imports?include_deleted=true", headers=ADMIN_A)
+    assert admin.json()["items"] == []
+
+    # 再次 hard 已物理删除 → 404
+    assert client.delete(
+        "/api/openapi/imports/openapi-1?hard=true", headers=ADMIN_A
+    ).status_code == 404
+
+
+def test_hard_purge_requires_administer():
+    client.post("/api/openapi/imports", json=_content(), headers=ADMIN_A)
+    client.delete("/api/openapi/imports/openapi-1", headers=ADMIN_A)
+    assert client.delete(
+        "/api/openapi/imports/openapi-1?hard=true", headers=OPERATOR_A
+    ).status_code == 403

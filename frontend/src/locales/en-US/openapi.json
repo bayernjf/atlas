@@ -6,7 +6,8 @@
     "preview": "Preview",
     "import": "Import as tools",
     "delete": "Delete",
-    "configure": "Configure secrets"
+    "configure": "Configure secrets",
+    "purge": "Purge"
   },
   "source": {
     "pasteTab": "Paste JSON",
@@ -62,7 +63,9 @@
       "method": "Method",
       "path": "Path",
       "permission": "Permission"
-    }
+    },
+    "showDeleted": "Show deleted",
+    "deletedTag": "Deleted"
   },
   "permission": {
     "read": "Read",
@@ -74,12 +77,17 @@
     "confirmTitle": "Delete imported spec",
     "confirm": "After deletion the tools are removed from the discovery list immediately; saved graphs are not rewritten, and later runs will report UNKNOWN_CAPABILITY. Delete \"{{title}}\"?"
   },
+  "purge": {
+    "confirmTitle": "Permanently delete spec",
+    "confirm": "This permanently removes \"{{title}}\" and its credential configuration from the database. This cannot be undone. Continue?"
+  },
   "readonly": {
     "note": "Your current role is Viewer; you can only view imported specs."
   },
   "message": {
     "importSuccess": "Import succeeded: {{title}}, {{count}} tools generated",
     "deleted": "Imported spec deleted",
-    "credentialsSaved": "Secret configuration saved"
+    "credentialsSaved": "Secret configuration saved",
+    "purged": "Imported spec permanently deleted"
   }
 }

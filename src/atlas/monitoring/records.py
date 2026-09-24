@@ -21,7 +21,7 @@ from .alerts import (
     rules_from_raw,
     validate_rules,
 )
-from .silences import OnCallSchedule, OpsStore, Silence
+from .silences import _UNSET, OnCallSchedule, OpsStore, Silence
 from .notify import (
     AlertChannel,
     AlertChannelDelivery,
@@ -408,11 +408,27 @@ class MonitoringStore:
     def delete_silence(self, silence_id: str) -> bool:
         return self._ops.delete_silence(silence_id)
 
+    def update_silence(
+        self, silence_id: str, *,
+        reason: object = _UNSET, rule_id: object = _UNSET,
+        graph_id: object = _UNSET, expires_at: object = _UNSET,
+    ) -> Silence | None:
+        return self._ops.update_silence(
+            silence_id, reason=reason, rule_id=rule_id,
+            graph_id=graph_id, expires_at=expires_at,
+        )
+
     def get_oncall(self) -> OnCallSchedule:
         return self._ops.get_oncall()
 
-    def set_oncall(self, *, members: list[str], updated_by: str) -> OnCallSchedule:
-        return self._ops.set_oncall(members=members, updated_by=updated_by)
+    def set_oncall(
+        self, *, members: list[str], updated_by: str,
+        rotation_interval_days: int | None = None,
+    ) -> OnCallSchedule:
+        return self._ops.set_oncall(
+            members=members, updated_by=updated_by,
+            rotation_interval_days=rotation_interval_days,
+        )
 
     def rotate_oncall(self, *, updated_by: str) -> OnCallSchedule:
         return self._ops.rotate_oncall(updated_by=updated_by)

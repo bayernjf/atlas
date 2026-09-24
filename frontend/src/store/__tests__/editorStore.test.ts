@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { nextId, useEditorStore, validateNodeId, type EditorNode } from '../editorStore'
+import type { SerializedGraph } from '../../lib/graphSerializer'
 import { defaultConfig, defaultRetry } from '../../lib/nodeCatalog'
 import { INITIAL_DIRTY } from '../../lib/validation/dirty'
 
@@ -616,5 +617,57 @@ describe('B 包断点增强（docs/27 §4.2，U135）', () => {
       hitCount: 2,
       logMessage: 'hit',
     })
+  })
+})
+
+
+describe('loadGraph persisted breakpoints (docs/60 §5)', () => {
+  function graphWith(debugSettings?: SerializedGraph['debugSettings']): SerializedGraph {
+    return {
+      version: 1,
+      variables: [],
+      nodes: [
+        {
+          id: 'trigger-1',
+          type: 'trigger',
+          name: '触发',
+          description: '',
+          position: { x: 0, y: 0 },
+          config: defaultConfig('trigger'),
+          retry: defaultRetry(),
+        },
+      ],
+      edges: [],
+      ...(debugSettings ? { debugSettings } : {}),
+    }
+  }
+
+  it('restores configured breakpoints and drops orphan node breakpoints', () => {
+    useEditorStore.getState().loadGraph(
+      graphWith({
+        breakpoints: [
+          { nodeId: 'trigger-1', expression: 'a == 1', hitCount: 2, logMessage: 'm', onException: true },
+          { nodeId: 'ghost-node' },
+        ],
+      }),
+    )
+    const breakpoints = useEditorStore.getState().breakpoints
+    expect(Object.keys(breakpoints)).toEqual(['trigger-1'])
+    expect(breakpoints['trigger-1']).toEqual({
+      expression: 'a == 1',
+      hitCount: 2,
+      logMessage: 'm',
+      onException: true,
+    })
+  })
+
+  it('restores a plain line breakpoint as an empty entry', () => {
+    useEditorStore.getState().loadGraph(graphWith({ breakpoints: [{ nodeId: 'trigger-1' }] }))
+    expect(useEditorStore.getState().breakpoints).toEqual({ 'trigger-1': {} })
+  })
+
+  it('yields no breakpoints when the graph has no debugSettings', () => {
+    useEditorStore.getState().loadGraph(graphWith())
+    expect(useEditorStore.getState().breakpoints).toEqual({})
   })
 })

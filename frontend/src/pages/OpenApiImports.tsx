@@ -8,6 +8,7 @@ import {
   Modal,
   Popconfirm,
   Space,
+  Switch,
   Table,
   Tabs,
   Tag,
@@ -18,6 +19,7 @@ import type { ColumnsType } from 'antd/es/table'
 import { UserBadge } from '../components/UserBadge'
 import {
   deleteOpenApiImport,
+  purgeOpenApiImport,
   importOpenApi,
   listOpenApiImports,
   previewOpenApi,
@@ -171,17 +173,18 @@ export function OpenApiImports({ principal, onLogout, onBack }: OpenApiImportsPr
   const [items, setItems] = useState<ImportedSpec[]>([])
   const [loading, setLoading] = useState(true)
   const [listError, setListError] = useState('')
+  const [showDeleted, setShowDeleted] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
-      setItems(await listOpenApiImports())
+      setItems(await listOpenApiImports(showDeleted))
       setListError('')
     } catch (error) {
       setListError(error instanceof Error ? error.message : t('imports.title'))
     } finally {
       setLoading(false)
     }
-  }, [t])
+  }, [t, showDeleted])
 
   useEffect(() => {
     // eslint-disable-next-line react/set-state-in-effect -- 首帧拉取外部 API，setState 均在 await 之后
@@ -238,6 +241,17 @@ export function OpenApiImports({ principal, onLogout, onBack }: OpenApiImportsPr
     try {
       await deleteOpenApiImport(spec.spec_id)
       antdMessage.success(t('message.deleted'))
+      void refresh()
+    } catch (error) {
+      antdMessage.error(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  // docs/60 G2：物理删除（仅已软删条目）
+  const handlePurge = async (spec: ImportedSpec) => {
+    try {
+      await purgeOpenApiImport(spec.spec_id)
+      antdMessage.success(t('message.purged'))
       void refresh()
     } catch (error) {
       antdMessage.error(error instanceof Error ? error.message : String(error))
@@ -311,7 +325,16 @@ export function OpenApiImports({ principal, onLogout, onBack }: OpenApiImportsPr
   ]
 
   const importColumns: ColumnsType<ImportedSpec> = [
-    { title: t('imports.column.title'), dataIndex: 'title' },
+    {
+      title: t('imports.column.title'),
+      dataIndex: 'title',
+      render: (value: string, record) => (
+        <Space size={6}>
+          <span>{value}</span>
+          {record.deleted_at ? <Tag color="red">{t('imports.deletedTag')}</Tag> : null}
+        </Space>
+      ),
+    },
     { title: t('imports.column.baseUrl'), dataIndex: 'base_url' },
     {
       title: t('imports.column.operations'),
@@ -363,21 +386,38 @@ export function OpenApiImports({ principal, onLogout, onBack }: OpenApiImportsPr
       render: (_, record) =>
         canAdmin ? (
           <Space>
-            <Button size="small" onClick={() => openCredentials(record)}>
-              {t('button.configure')}
-            </Button>
-            <Popconfirm
-              title={t('delete.confirmTitle')}
-              description={t('delete.confirm', { title: record.title })}
-              okText={t('button.delete')}
-              okButtonProps={{ danger: true }}
-              cancelText={t('common:button.cancel')}
-              onConfirm={() => handleDelete(record)}
-            >
-              <Button danger size="small">
-                {t('button.delete')}
-              </Button>
-            </Popconfirm>
+            {record.deleted_at ? (
+              <Popconfirm
+                title={t('purge.confirmTitle')}
+                description={t('purge.confirm', { title: record.title })}
+                okText={t('button.purge')}
+                okButtonProps={{ danger: true }}
+                cancelText={t('common:button.cancel')}
+                onConfirm={() => handlePurge(record)}
+              >
+                <Button danger size="small">
+                  {t('button.purge')}
+                </Button>
+              </Popconfirm>
+            ) : (
+              <>
+                <Button size="small" onClick={() => openCredentials(record)}>
+                  {t('button.configure')}
+                </Button>
+                <Popconfirm
+                  title={t('delete.confirmTitle')}
+                  description={t('delete.confirm', { title: record.title })}
+                  okText={t('button.delete')}
+                  okButtonProps={{ danger: true }}
+                  cancelText={t('common:button.cancel')}
+                  onConfirm={() => handleDelete(record)}
+                >
+                  <Button danger size="small">
+                    {t('button.delete')}
+                  </Button>
+                </Popconfirm>
+              </>
+            )}
           </Space>
         ) : null,
     },
@@ -481,7 +521,23 @@ export function OpenApiImports({ principal, onLogout, onBack }: OpenApiImportsPr
             </Card>
           )}
 
-          <Card title={t('imports.title')}>
+          <Card
+            title={t('imports.title')}
+            extra={
+              canAdmin ? (
+                <Space>
+                  <Switch
+                    size="small"
+                    checked={showDeleted}
+                    onChange={setShowDeleted}
+                  />
+                  <Typography.Text type="secondary">
+                    {t('imports.showDeleted')}
+                  </Typography.Text>
+                </Space>
+              ) : undefined
+            }
+          >
             {listError && (
               <Alert type="error" showIcon style={{ marginBottom: 12 }} message={listError} />
             )}

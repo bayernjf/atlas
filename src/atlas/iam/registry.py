@@ -20,6 +20,7 @@ from atlas.collaboration.event_waits import EventWaitBroker
 from atlas.coordination import TaskStore
 from atlas.observability.audit import AuditRepository, AuditStore
 from atlas.message.service import MessageService
+from atlas.message.deliveries import PgDeliveryStore as PgMessageDeliveryStore
 from atlas.message.smtp import get_smtp_sender
 from atlas.message.im import get_im_sender
 from atlas.message.webhook import get_webhook_sender
@@ -122,7 +123,12 @@ class TenantRegistry:
                 graph_store=backend.graph_store(tenant_id),
                 recording_store=backend.recording_store(tenant_id),
                 feedback_store=backend.feedback_store(tenant_id),
-                message_service=MessageService(email_sender=get_smtp_sender(), webhook_sender=get_webhook_sender(), im_sender=get_im_sender()),
+                message_service=MessageService(
+                    email_sender=get_smtp_sender(),
+                    webhook_sender=get_webhook_sender(),
+                    im_sender=get_im_sender(),
+                    delivery_store=PgMessageDeliveryStore(backend.engine, tenant_id),
+                ),
                 approval_broker=ApprovalBroker(),
                 debug_broker=DebuggerBroker(),
                 cancellation_broker=RunCancellationBroker(),

@@ -101,6 +101,20 @@ class WaitNodeFailure(Exception):
         self.code = code
 
 
+def runtime_error_meta(exc: Exception) -> dict[str, Any]:
+    """docs/60 G1：运行期终态异常归一化为机器可读码（中文 error 字符串仍由调用方原样保留）。
+
+    WaitNodeFailure 携带既有 WAIT_* 5 码与 nodeId；ConditionEvalError 携带 COND_* 码族与
+    params；其余未预期异常统一 RUNTIME_UNEXPECTED。返回 errorCode/errorParams 两键，供
+    run failed 结果与 SSE error 帧并行下发（纯超集，旧 error 字段不变）。
+    """
+    if isinstance(exc, WaitNodeFailure):
+        return {"errorCode": exc.code, "errorParams": {"nodeId": exc.node_id}}
+    if isinstance(exc, ConditionEvalError):
+        return {"errorCode": exc.code, "errorParams": dict(exc.params)}
+    return {"errorCode": "RUNTIME_UNEXPECTED", "errorParams": {}}
+
+
 _ABSOLUTE_EPOCH_RE = re.compile(r"^-?\d+(\.\d+)?$")
 
 
@@ -1389,12 +1403,14 @@ def _execute_loop(
     iterations = int(previous.get("iterations", 0)) if isinstance(previous, dict) else 0
 
     expression_errors: list[str] = []
+    expression_error_codes: list[str] = []
     exit_reason: str | None = None
 
     if iterations >= max_iterations:
         target = exit_target
         exit_reason = "max_iterations"
         expression_errors.append(f"已达最大次数 {max_iterations}，强制退出循环")
+        expression_error_codes.append("LOOP_MAX_ITERATIONS")
     else:
         # 首轮自身产出尚不存在；播种 index 供 {{loop-x.index}} 求值
         loop_context = {**context, node.id: {"index": iterations, "iterations": iterations}}
@@ -1404,6 +1420,7 @@ def _execute_loop(
             target = exit_target
             exit_reason = "expression_error"
             expression_errors.append(str(exc))
+            expression_error_codes.append(exc.code)
         else:
             if not isinstance(result, bool):
                 target = exit_target
@@ -1411,6 +1428,7 @@ def _execute_loop(
                 expression_errors.append(
                     f"继续条件结果必须是布尔值，实际为 {type(result).__name__}"
                 )
+                expression_error_codes.append("COND_TYPE_MISMATCH")
             elif result:
                 iterations += 1
                 target = body_target
@@ -1425,6 +1443,7 @@ def _execute_loop(
         "target": target,
         "exitReason": exit_reason,
         "expression_errors": expression_errors,
+        "expressionErrorCodes": expression_error_codes,
     }
 
 
@@ -1437,7 +1456,10 @@ def _foreach_output(
     target: str,
     exit_reason: str | None,
     expression_errors: list[str],
+    expression_error_codes: list[str] | None = None,
 ) -> dict[str, Any]:
+    if expression_error_codes is None:
+        expression_error_codes = [""] * len(expression_errors)
     return {
         "mode": "foreach",
         "items": items,
@@ -1448,6 +1470,7 @@ def _foreach_output(
         "target": target,
         "exitReason": exit_reason,
         "expression_errors": expression_errors,
+        "expressionErrorCodes": expression_error_codes,
     }
 
 
@@ -1463,7 +1486,7 @@ def _execute_foreach(
     if not isinstance(previous, dict):
         previous = {}
 
-    def fail_exit(message: str, exit_reason: str) -> dict[str, Any]:
+    def fail_exit(message: str, exit_reason: str, code: str = "") -> dict[str, Any]:
         return _foreach_output(
             items=[],
             index=0,
@@ -1472,6 +1495,7 @@ def _execute_foreach(
             target=exit_target,
             exit_reason=exit_reason,
             expression_errors=[message],
+            expression_error_codes=[code],
         )
 
     if "items" not in previous:
@@ -1479,15 +1503,18 @@ def _execute_foreach(
         try:
             items = evaluate_expression(config["itemsExpression"], seed_context, now=now)
         except ConditionEvalError as exc:
-            return fail_exit(str(exc), "expression_error")
+            return fail_exit(str(exc), "expression_error", exc.code)
         if not isinstance(items, list):
             return fail_exit(
-                f"遍历对象必须是数组，实际为 {type(items).__name__}", "expression_error"
+                f"遍历对象必须是数组，实际为 {type(items).__name__}",
+                "expression_error",
+                "COND_TYPE_MISMATCH",
             )
         if len(items) > MAX_LOOP_ITERATIONS:
             return fail_exit(
                 f"遍历数组长度 {len(items)} 超过上限 {MAX_LOOP_ITERATIONS}",
                 "items_too_large",
+                "LOOP_ITEMS_TOO_LARGE",
             )
         if not items:
             return _foreach_output(
@@ -1498,6 +1525,7 @@ def _execute_foreach(
                 target=exit_target,
                 exit_reason="empty",
                 expression_errors=[],
+                expression_error_codes=[],
             )
         return _foreach_output(
             items=items,
@@ -1507,6 +1535,7 @@ def _execute_foreach(
             target=body_target,
             exit_reason=None,
             expression_errors=[],
+            expression_error_codes=[],
         )
 
     items = previous["items"]
@@ -1515,12 +1544,14 @@ def _execute_foreach(
 
     collect_target = config.get("collectTarget") or ""
     expression_errors: list[str] = []
+    expression_error_codes: list[str] = []
     if collect_target:
         collected = state["outputs"].get(collect_target)
         if collected is None:
             expression_errors.append(
                 f"聚合节点 {collect_target} 无产出，跳过本轮收集"
             )
+            expression_error_codes.append("FOREACH_COLLECT_MISSING")
         else:
             results.append(collected)
 
@@ -1534,6 +1565,7 @@ def _execute_foreach(
             target=exit_target,
             exit_reason="completed",
             expression_errors=expression_errors,
+            expression_error_codes=expression_error_codes,
         )
     return _foreach_output(
         items=items,
@@ -1543,6 +1575,7 @@ def _execute_foreach(
         target=body_target,
         exit_reason=None,
         expression_errors=expression_errors,
+        expression_error_codes=expression_error_codes,
     )
 
 

@@ -279,7 +279,9 @@
     "error": {
       "empty": "请至少填写一名值班成员",
       "tooMany": "值班成员最多 20 人"
-    }
+    },
+    "intervalLabel": "自动轮换间隔（天，留空＝关闭）",
+    "autoTag": "每 {{days}} 天 · 下次 {{date}}"
   },
   "silence": {
     "action": "静默",
@@ -310,7 +312,11 @@
     "active": "生效中",
     "expired": "已过期",
     "delete": "解除",
-    "deleteConfirm": "确定提前解除该静默规则？解除后匹配的告警将恢复产生。"
+    "deleteConfirm": "确定提前解除该静默规则？解除后匹配的告警将恢复产生。",
+    "edit": "编辑",
+    "editTitle": "编辑静默",
+    "extendLabel": "延长到期（自现在起）",
+    "save": "保存"
   },
   "webhookReliability": {
     "card": {

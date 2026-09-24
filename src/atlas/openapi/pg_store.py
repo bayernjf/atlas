@@ -149,10 +149,11 @@ class PgImportStore:
             )
         return imported
 
-    def list(self) -> list[ImportedSpec]:
+    def list(self, *, include_deleted: bool = False) -> list[ImportedSpec]:
+        deleted_clause = "" if include_deleted else "AND deleted_at IS NULL"
         sql = (
             f"SELECT {_COLS} FROM openapi_imports "
-            "WHERE tenant_id = :t AND deleted_at IS NULL ORDER BY seq"
+            f"WHERE tenant_id = :t {deleted_clause} ORDER BY seq"
         )
         with self._engine.connect() as db:
             rows = db.execute(text(sql), {"t": self._tenant_id}).all()
@@ -180,6 +181,37 @@ class PgImportStore:
                     "t": self._tenant_id,
                     "id": spec_id,
                 },
+            )
+            return bool(result.rowcount)
+
+    def purge(self, spec_id: str) -> bool:
+        """物理删除（docs/60 G2），语义同 ImportStore.purge。
+
+        不存在返 False；存在但未软删抛 OPENAPI_NOT_SOFT_DELETED（409）；
+        已软删则 DELETE（security 两列同行天然级联）。
+        """
+        with self._engine.begin() as db:
+            row = db.execute(
+                text(
+                    "SELECT deleted_at FROM openapi_imports "
+                    "WHERE tenant_id = :t AND id = :id"
+                ),
+                {"t": self._tenant_id, "id": spec_id},
+            ).first()
+            if row is None:
+                return False
+            if row[0] is None:
+                raise ImportStoreError(
+                    "OPENAPI_NOT_SOFT_DELETED",
+                    f"API 规格 {spec_id} 尚未软删除，请先删除再彻底删除",
+                    status_code=409,
+                )
+            result = db.execute(
+                text(
+                    "DELETE FROM openapi_imports "
+                    "WHERE tenant_id = :t AND id = :id AND deleted_at IS NOT NULL"
+                ),
+                {"t": self._tenant_id, "id": spec_id},
             )
             return bool(result.rowcount)
 

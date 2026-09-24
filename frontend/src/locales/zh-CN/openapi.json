@@ -6,7 +6,8 @@
     "preview": "预览",
     "import": "导入为工具",
     "delete": "删除",
-    "configure": "配置密钥"
+    "configure": "配置密钥",
+    "purge": "彻底删除"
   },
   "source": {
     "pasteTab": "粘贴 JSON",
@@ -62,7 +63,9 @@
       "method": "方法",
       "path": "路径",
       "permission": "权限"
-    }
+    },
+    "showDeleted": "显示已删除",
+    "deletedTag": "已删除"
   },
   "permission": {
     "read": "只读",
@@ -74,12 +77,17 @@
     "confirmTitle": "删除导入规格",
     "confirm": "删除后工具立即从发现列表移除；已保存的图不会被改写，后续运行将报 UNKNOWN_CAPABILITY。确认删除「{{title}}」？"
   },
+  "purge": {
+    "confirmTitle": "彻底删除导入规格",
+    "confirm": "将从数据库物理删除「{{title}}」及其凭证配置，操作不可恢复。确认彻底删除？"
+  },
   "readonly": {
     "note": "当前角色为访客，仅可查看已导入的规格。"
   },
   "message": {
     "importSuccess": "导入成功：{{title}}，已生成 {{count}} 个工具",
     "deleted": "导入规格已删除",
-    "credentialsSaved": "密钥配置已保存"
+    "credentialsSaved": "密钥配置已保存",
+    "purged": "导入规格已彻底删除"
   }
 }

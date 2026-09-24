@@ -13,6 +13,22 @@ export type EditorNode = {
   data: EditorNodeData
 }
 
+/** docs/60 §5.1：随图持久化的断点（形状与后端 _validate_debug 入参一一对齐）。 */
+export type PersistedBreakpoint = {
+  nodeId: string
+  expression?: string | null
+  hitCount?: number | null
+  logMessage?: string | null
+  onException?: boolean
+}
+
+type BreakpointLike = {
+  expression?: string
+  hitCount?: number
+  logMessage?: string
+  onException?: boolean
+}
+
 export type SerializedGraph = {
   version: number
   variables: GraphVariable[]
@@ -26,10 +42,35 @@ export type SerializedGraph = {
     retry: EditorNodeData['retry']
   }>
   edges: Array<{ id: string; source: string; target: string }>
+  /** docs/60 §5.1：可选顶层；仅当存在至少一个启用断点时输出。 */
+  debugSettings?: { breakpoints: PersistedBreakpoint[] }
 }
 
-export function serializeGraph(nodes: EditorNode[], edges: Edge[], variables: GraphVariable[]): SerializedGraph {
-  return {
+/** 裁剪 undefined/默认值；空断点（普通行断点）输出为 { nodeId }。 */
+function toPersistedBreakpoint(nodeId: string, breakpoint: BreakpointLike): PersistedBreakpoint {
+  const persisted: PersistedBreakpoint = { nodeId }
+  const expression = breakpoint.expression?.trim()
+  if (expression) persisted.expression = expression
+  if (
+    typeof breakpoint.hitCount === 'number' &&
+    Number.isInteger(breakpoint.hitCount) &&
+    breakpoint.hitCount >= 1
+  ) {
+    persisted.hitCount = breakpoint.hitCount
+  }
+  const logMessage = breakpoint.logMessage?.trim()
+  if (logMessage) persisted.logMessage = logMessage
+  if (breakpoint.onException === true) persisted.onException = true
+  return persisted
+}
+
+export function serializeGraph(
+  nodes: EditorNode[],
+  edges: Edge[],
+  variables: GraphVariable[],
+  breakpoints?: Record<string, BreakpointLike>,
+): SerializedGraph {
+  const graph: SerializedGraph = {
     version: 1,
     variables,
     nodes: nodes.map((node) => ({
@@ -43,6 +84,14 @@ export function serializeGraph(nodes: EditorNode[], edges: Edge[], variables: Gr
     })),
     edges: edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target })),
   }
+  const persisted = Object.entries(breakpoints ?? {}).map(([nodeId, breakpoint]) =>
+    toPersistedBreakpoint(nodeId, breakpoint),
+  )
+  // 仅当存在至少一个启用断点时输出 debugSettings（旧形状零回归）
+  if (persisted.length > 0) {
+    graph.debugSettings = { breakpoints: persisted }
+  }
+  return graph
 }
 
 /**
@@ -53,6 +102,7 @@ export function deserializeGraph(graph: SerializedGraph): {
   nodes: EditorNode[]
   edges: Edge[]
   variables: GraphVariable[]
+  debugSettings?: { breakpoints: PersistedBreakpoint[] }
 } {
   return {
     nodes: graph.nodes.map((node) => ({
@@ -73,5 +123,6 @@ export function deserializeGraph(graph: SerializedGraph): {
       target: edge.target,
     })),
     variables: graph.variables,
+    debugSettings: graph.debugSettings,
   }
 }

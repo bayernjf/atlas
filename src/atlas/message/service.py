@@ -13,19 +13,19 @@ from __future__ import annotations
 
 import time
 import uuid
-from collections import deque
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable
 
 from atlas.security.egress import EgressDenied
+from .deliveries import DELIVERY_RING_SIZE, DeliveryStore, InMemoryDeliveryStore
 from .im import IM_CHANNELS, normalize_mentions
 
 MAX_RECIPIENTS = 20
 MAX_SECRET_LENGTH = 200
 
-# docs/56 §4：投递日志 ring 与退避重试参数
-DELIVERY_RING_SIZE = 200
+# docs/56 §4：投递日志 ring 与退避重试参数（ring 容量已迁至 deliveries 存储层，
+# 此 re-import 保持 ``from atlas.message.service import DELIVERY_RING_SIZE`` 兼容）
 DELIVERY_LIST_LIMIT = 100
 SUBJECT_LOG_LIMIT = 100
 ERROR_LOG_LIMIT = 300
@@ -88,6 +88,7 @@ class MessageService:
         im_sender: object | None = None,
         retry_delays: tuple[float, ...] = DEFAULT_RETRY_DELAYS,
         sleep_func: Callable[[float], None] = time.sleep,
+        delivery_store: DeliveryStore | None = None,
     ) -> None:
         # email_sender 需实现 send(to: list[str], subject: str, body: str)，
         # 生产为 message.smtp.SmtpSender；None 时 email 也只记录不投递（demo）。
@@ -100,8 +101,9 @@ class MessageService:
         self._im_sender = im_sender
         self._messages: list[dict[str, object]] = []
         self.last_send: dict[str, object] | None = None
-        # docs/56 §4：投递日志 ring（重启/reset 清空）与可注入退避（测试零等待）
-        self._deliveries: deque[DeliveryRecord] = deque(maxlen=DELIVERY_RING_SIZE)
+        # docs/60 §6：投递日志走存储抽象（缺省进程内 ring；PG 档注入 PgDeliveryStore）
+        self._delivery_store: DeliveryStore = delivery_store or InMemoryDeliveryStore()
+        # docs/56 §4：可注入退避（测试零等待）
         self._retry_delays = tuple(retry_delays)
         self._sleep: Callable[[float], None] = sleep_func
 
@@ -158,7 +160,7 @@ class MessageService:
             message: str | None = None,
             to: list[str] | None = None,
         ) -> None:
-            self._deliveries.append(
+            self._safe_record(
                 DeliveryRecord(
                     id=message_id,
                     channel=channel_value,
@@ -278,6 +280,13 @@ class MessageService:
         self.last_send = {k: record[k] for k in ("id", "channel", "to", "sent_at")}
         return record
 
+    def _safe_record(self, rec: DeliveryRecord) -> None:
+        """投递日志是旁路可观测数据，存储失败不得阻断消息发送主链路（docs/60 §11）。"""
+        try:
+            self._delivery_store.record(rec)
+        except Exception:
+            pass
+
     @staticmethod
     def _validate_secret(channel: str, secret: object) -> str | None:
         # secret：dingtalk/feishu 为机器人加签密钥、webhook 为出站 HMAC 签名密钥（docs/58）；
@@ -302,14 +311,12 @@ class MessageService:
         return list(self._messages)
 
     def list_deliveries(self, limit: int = DELIVERY_LIST_LIMIT) -> list[dict[str, object]]:
-        """投递日志倒序（最新在前），limit clamp 1-200（docs/56 §4.3）。"""
-        bounded = max(1, min(int(limit), DELIVERY_RING_SIZE))
-        recent = list(self._deliveries)[-bounded:]
-        return [asdict(item) for item in reversed(recent)]
+        """投递日志倒序（最新在前），limit clamp 1-200（docs/56 §4.3，docs/60 §6 委托存储层）。"""
+        return self._delivery_store.list(limit)
 
     def reset(self) -> None:
         self._messages = []
-        self._deliveries.clear()
+        self._delivery_store.clear()
         self.last_send = None
 
     @property

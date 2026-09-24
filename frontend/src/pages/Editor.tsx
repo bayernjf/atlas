@@ -32,6 +32,7 @@ import { useEditorStore } from '../store/editorStore'
 import { useValidationEngine } from '../lib/validation/useValidationEngine'
 import { serializeGraph } from '../lib/graphSerializer'
 import { toSteps } from '../lib/recordings'
+import { resolveExpressionErrors } from '../lib/runtimeError'
 import { isSubgraphInternal, subgraphPathPrefix, subgraphPathLabel } from '../lib/subgraphEvents'
 import { parseGlobalsDraft } from '../lib/debugOverrides'
 import {
@@ -185,7 +186,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
   const [runTarget, setRunTarget] = useState<'draft' | number>('draft')
   const [releaseBusy, setReleaseBusy] = useState(false)
 
-  const graphJson = JSON.stringify(serializeGraph(nodes, edges, variables), null, 2)
+  const graphJson = JSON.stringify(serializeGraph(nodes, edges, variables, breakpoints), null, 2)
 
   async function compileAndRun(shouldRecord = false, debugMode = false) {
     const order = DEMO_ORDERS.find((item) => item.order_id === selectedOrderId)
@@ -223,7 +224,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
     resetRunStatuses()
     const collected: RunEvent[] = []
     try {
-      const serialized = serializeGraph(nodes, edges, variables)
+      const serialized = serializeGraph(nodes, edges, variables, breakpoints)
       const pinnedVersion = runTarget === 'draft' ? undefined : runTarget
       let graphId: string
       if (pinnedVersion !== undefined && publishedRef) {
@@ -311,6 +312,8 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
             mode?: string
             iterations?: number
             exitReason?: string | null
+            expression_errors?: string[]
+            expressionErrorCodes?: string[]
             target?: string
             status?: string
             durationSeconds?: number
@@ -429,6 +432,16 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                   target: output.target,
                 }),
               )
+              // docs/60 G1：表达式错误退出时，按 expressionErrorCodes 解析当前语言明细；
+              // 无码条目回退后端中文 expression_errors（不泄漏 i18n key）。
+              if (output.exitReason === 'expression_error') {
+                resolveExpressionErrors(
+                  output.expressionErrorCodes,
+                  output.expression_errors,
+                ).forEach((detail) => {
+                  if (detail) appendLog(`  ${detail}`)
+                })
+              }
             }
           } else if (output?.mode === 'wait') {
             appendLog(
@@ -517,7 +530,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
   }
 
   async function ensureGraphId(): Promise<string> {
-    const current = serializeGraph(nodes, edges, variables)
+    const current = serializeGraph(nodes, edges, variables, breakpoints)
     if (draftGraphId) {
       await saveGraphDraft(draftGraphId, current)
       appendLog(t('log.draftUpdated', { graphId: draftGraphId }))

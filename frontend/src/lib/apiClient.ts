@@ -12,6 +12,7 @@ import {
 import type { SerializedGraph } from './graphSerializer'
 import type { JsonSchema } from './scope'
 import { getLanguage, t } from '../locales'
+import { isRuntimeErrorCode, resolveRuntimeDetail, resolveRuntimeError } from './runtimeError'
 
 // docs/17 §2.4：后端认证错误返回 {code,message}；code 是契约，前端按 code 走 i18n。
 const AUTH_ERROR_KEYS: Record<string, string> = {
@@ -68,9 +69,17 @@ function resolveErrorMessage(
 ): string {
   if (Array.isArray(detail)) return resolveValidationList(detail, codes, params)
   if (detail !== null && typeof detail === 'object') {
-    const rec = detail as { code?: string; message?: string }
+    const rec = detail as {
+      code?: string
+      message?: string
+      params?: Record<string, unknown>
+    }
     const key = rec.code ? AUTH_ERROR_KEYS[rec.code] : undefined
     if (key) return t(key)
+    // docs/60 G1：运行期 wait/condition/loop 结构化错误码（COND_*/WAIT_*/LOOP_*）。
+    if (isRuntimeErrorCode(rec.code)) {
+      return resolveRuntimeError(rec.code, rec.params, rec.message ?? '')
+    }
     return rec.message ?? t('error.requestFailed', { status })
   }
   return (typeof detail === 'string' && detail) || t('error.requestFailed', { status })
@@ -830,7 +839,13 @@ export async function streamRun(
   if (!response.ok || !response.body) {
     const body = await response.json().catch(() => null)
     if (response.status === 401) handleUnauthorized()
-    throw new Error(body?.detail || `流式运行失败：${response.status}`)
+    const rawDetail = body?.detail
+    const streamError =
+      rawDetail && typeof rawDetail === 'object'
+        ? resolveRuntimeDetail(rawDetail)
+        : (typeof rawDetail === 'string' && rawDetail) ||
+          `流式运行失败：${response.status}`
+    throw new Error(streamError)
   }
 
   const reader = response.body.getReader()
@@ -847,9 +862,17 @@ export async function streamRun(
     const chunks = buffer.split('\n\n')
     buffer = chunks.pop() ?? ''
     for (const chunk of chunks) {
-      const dataLine = chunk.split('\n').find((line) => line.startsWith('data: '))
+      const lines = chunk.split('\n')
+      const eventLine = lines.find((line) => line.startsWith('event: '))
+      const dataLine = lines.find((line) => line.startsWith('data: '))
       if (!dataLine) continue
+      const eventName = eventLine?.slice(7)
       const payload = JSON.parse(dataLine.slice(6))
+      // docs/60 G1：run failed 经 event:error 帧下发 {detail:{code,message,params}}，
+      // 解析为当前语言文案后抛出（否则只会落到“SSE 流缺少最终运行结果”）。
+      if (eventName === 'error') {
+        throw new Error(resolveRuntimeDetail(payload.detail))
+      }
       if (payload.id && payload.outputs) {
         result = payload as RunResult
       } else if (payload.type === 'stopped') {
@@ -1150,6 +1173,9 @@ export type OnCallSchedule = {
   current: string | null
   updated_at: string | null
   updated_by: string | null
+  // docs/60 §4.2：惰性按日自动轮换
+  rotation_interval_days?: number | null
+  last_rotated_at?: string | null
 }
 
 export async function createSilence(body: {
@@ -1171,12 +1197,35 @@ export async function deleteSilence(id: string): Promise<void> {
   await request(`/api/monitoring/silences/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
+// docs/60 §4.1：编辑静默可变字段（至少一项；expires_at 为未来 ISO 时刻）
+export async function updateSilence(
+  id: string,
+  body: {
+    reason?: string
+    rule_id?: string | null
+    graph_id?: string | null
+    expires_at?: string
+  },
+): Promise<Silence> {
+  return request(`/api/monitoring/silences/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
+}
+
 export async function getOnCall(): Promise<OnCallSchedule> {
   return request('/api/monitoring/on-call')
 }
 
-export async function updateOnCall(members: string[]): Promise<OnCallSchedule> {
-  return request('/api/monitoring/on-call', { method: 'PUT', body: JSON.stringify({ members }) })
+export async function updateOnCall(
+  members: string[],
+  rotationIntervalDays?: number | null,
+): Promise<OnCallSchedule> {
+  const payload: Record<string, unknown> = { members }
+  if (rotationIntervalDays !== undefined) {
+    payload.rotationIntervalDays = rotationIntervalDays
+  }
+  return request('/api/monitoring/on-call', { method: 'PUT', body: JSON.stringify(payload) })
 }
 
 export async function rotateOnCall(): Promise<OnCallSchedule> {
@@ -1914,6 +1963,8 @@ export type ImportedSpec = {
   operations: OperationDescriptor[]
   security_schemes: Record<string, SecurityScheme>
   credential_envelopes: Record<string, string>
+  content_hash?: string
+  deleted_at?: string | null
 }
 
 export async function previewOpenApi(source: OpenApiSource): Promise<OpenApiPreview> {
@@ -1940,8 +1991,9 @@ export async function putOpenApiCredentials(
   })
 }
 
-export async function listOpenApiImports(): Promise<ImportedSpec[]> {
-  const body = await request<{ items: ImportedSpec[] }>('/api/openapi/imports')
+export async function listOpenApiImports(includeDeleted = false): Promise<ImportedSpec[]> {
+  const query = includeDeleted ? '?include_deleted=true' : ''
+  const body = await request<{ items: ImportedSpec[] }>(`/api/openapi/imports${query}`)
   return body.items
 }
 
@@ -1951,4 +2003,11 @@ export async function getOpenApiImport(specId: string): Promise<ImportedSpec> {
 
 export async function deleteOpenApiImport(specId: string): Promise<{ deleted: boolean }> {
   return request(`/api/openapi/imports/${encodeURIComponent(specId)}`, { method: 'DELETE' })
+}
+
+// docs/60 G2：物理删除（仅已软删条目可删，后端对未软删返 409 OPENAPI_NOT_SOFT_DELETED）
+export async function purgeOpenApiImport(specId: string): Promise<void> {
+  await request(`/api/openapi/imports/${encodeURIComponent(specId)}?hard=true`, {
+    method: 'DELETE',
+  })
 }

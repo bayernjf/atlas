@@ -38,7 +38,7 @@ from atlas.cards import (
 from atlas.database.adapter import DatabaseHarnessAdapter
 from atlas.database.service import DatabaseClient, demo_engine
 from atlas.debug import DebugController, DebugStopped
-from atlas.graph.conditions import validate_expression
+from atlas.graph.conditions import ConditionEvalError, validate_expression
 from atlas.graph.dsl import GraphDSL, GraphValidationError, parse_graph, valid_event_key
 from atlas.graph.diff import diff_graph, diff_summary
 from atlas.graph.loader import (
@@ -46,6 +46,7 @@ from atlas.graph.loader import (
     _tool_permissions,
     compile_graph,
     run_graph,
+    runtime_error_meta,
     tool_input_schemas,
 )
 from atlas.collaboration.cancellations import RunCancelled
@@ -72,7 +73,7 @@ from atlas.iam.deps import (
 )
 from atlas.iam.accounts import UserExists
 from atlas.iam.passwords import validate_password, validate_username, verify_password
-from atlas.iam.principals import Principal, Role
+from atlas.iam.principals import Principal, Role, can
 from atlas.iam.registry import STORAGE_BACKEND, TenantServices
 from atlas.llm.nl_generate import generate_graph, validate_param_fills
 from atlas.memory.adapter import MemoryHarnessAdapter
@@ -330,6 +331,25 @@ def wait_node_failure_handler(_request: Request, exc: WaitNodeFailure) -> JSONRe
                 "code": exc.code,
                 "message": str(exc),
                 "nodeId": exc.node_id,
+            }
+        },
+    )
+
+
+@app.exception_handler(ConditionEvalError)
+def condition_eval_failure_handler(
+    _request: Request, exc: ConditionEvalError
+) -> JSONResponse:
+    # 运行期 condition/loop/foreach 表达式求值失败（docs/60 G1）：与 WaitNodeFailure
+    # 同形返回结构化 500，携带 COND_* 机器码与 params，前端可按当前语言渲染；中文
+    # message 仍是兜底真相。
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": {
+                "code": exc.code,
+                "message": str(exc),
+                "params": exc.params,
             }
         },
     )
@@ -1470,9 +1490,15 @@ def import_openapi(
 
 @app.get("/api/openapi/imports")
 def list_openapi_imports(
+    include_deleted: bool = False,
     principal: Principal = Depends(require("read")),
 ) -> dict[str, Any]:
-    items = services_for(principal).openapi_imports.list()
+    # docs/60 G2：查看含已软删条目需 administer；缺省/false 维持 read 且不返已删。
+    if include_deleted and not can(principal.role, "administer"):
+        raise HTTPException(status_code=403, detail="无权查看已删除的 API 规格")
+    items = services_for(principal).openapi_imports.list(
+        include_deleted=include_deleted
+    )
     return {"items": [spec.model_dump() for spec in items]}
 
 
@@ -1490,9 +1516,23 @@ def get_openapi_import(
 @app.delete("/api/openapi/imports/{spec_id}")
 def delete_openapi_import(
     spec_id: str,
+    hard: bool = False,
     principal: Principal = Depends(require("administer")),
-) -> dict[str, bool]:
-    if not services_for(principal).openapi_imports.delete(spec_id):
+) -> Response:
+    store = services_for(principal).openapi_imports
+    if hard:
+        # docs/60 G2：仅已软删记录可物理删除；未软删 → 409，不存在 → 404，成功 204。
+        try:
+            purged = store.purge(spec_id)
+        except ImportStoreError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"code": exc.code, "message": str(exc)},
+            ) from exc
+        if not purged:
+            raise HTTPException(status_code=404, detail="导入规格不存在")
+        return Response(status_code=204)
+    if not store.delete(spec_id):
         raise HTTPException(status_code=404, detail="导入规格不存在")
     return {"deleted": True}
 
@@ -2709,7 +2749,16 @@ def run_saved_graph_stream(
                         spans=tracer.to_tree() if tracer is not None else None,
                     )
                     evaluate_after_run(services, record)
-                events.put({"__error__": f"{type(exc).__name__}: {exc}"})
+                err_meta = runtime_error_meta(exc)
+                events.put(
+                    {
+                        "__error__": {
+                            "message": f"{type(exc).__name__}: {exc}",
+                            "code": err_meta["errorCode"],
+                            "params": err_meta["errorParams"],
+                        }
+                    }
+                )
             finally:
                 cancellation_broker.unregister(run_id)
 
@@ -3334,6 +3383,22 @@ def _normalize_optional_id(value: object, field: str, errors: list[str]) -> str 
     return text or None
 
 
+def _parse_future_expires_at(value: object, errors: list[str]) -> str | None:
+    """docs/60 §4.1：expires_at 必须是合法 ISO 8601 且严格晚于当前时刻。"""
+    if not isinstance(value, str) or not value.strip():
+        errors.append("expires_at 必须是 ISO 8601 时间字符串")
+        return None
+    text = value.strip()
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        errors.append("expires_at 必须是合法的 ISO 8601 时间")
+        return None
+    if parsed <= datetime.now(timezone.utc):
+        errors.append("expires_at 必须是未来时刻")
+    return text
+
+
 @app.post("/api/monitoring/silences", status_code=201)
 def create_silence(
     body: dict[str, Any], principal: Principal = Depends(require("administer"))
@@ -3387,6 +3452,41 @@ def delete_silence(
     return {"id": silence_id, "deleted": True}
 
 
+@app.put("/api/monitoring/silences/{silence_id}")
+def update_silence(
+    silence_id: str, body: dict[str, Any],
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, Any]:
+    """docs/60 §4.1：编辑静默可变字段（administer）；不存在/已过期 404，校验失败 422。"""
+    errors: list[str] = []
+    updates: dict[str, Any] = {}
+    if "reason" in body:
+        reason = body.get("reason")
+        if not isinstance(reason, str) or not reason.strip() or len(reason.strip()) > 200:
+            errors.append("reason 必须是非空且不超过 200 字的字符串")
+        else:
+            updates["reason"] = reason.strip()
+    if "rule_id" in body:
+        updates["rule_id"] = _normalize_optional_id(body.get("rule_id"), "rule_id", errors)
+    if "graph_id" in body:
+        updates["graph_id"] = _normalize_optional_id(body.get("graph_id"), "graph_id", errors)
+    if "expires_at" in body:
+        expires = _parse_future_expires_at(body.get("expires_at"), errors)
+        if expires is not None:
+            updates["expires_at"] = expires
+    if updates.get("rule_id") is not None and updates.get("graph_id") is not None:
+        errors.append("rule_id 与 graph_id 不得同时指定")
+    if not updates and not errors:
+        errors.append("至少提供一个可更新字段：reason / rule_id / graph_id / expires_at")
+    if errors:
+        raise HTTPException(status_code=422, detail="；".join(errors))
+    monitoring = services_for(principal).monitoring
+    updated = monitoring.update_silence(silence_id, **updates)
+    if updated is None:
+        raise HTTPException(status_code=404, detail=f"静默规则不存在或已过期：{silence_id}")
+    return {**updated.model_dump(), "active": is_silence_active(updated)}
+
+
 @app.get("/api/monitoring/on-call")
 def get_on_call(principal: Principal = Depends(require("read"))) -> dict[str, Any]:
     """docs/33 §5.3：值班表（read），current 为当前值班人（空表 null）。"""
@@ -3404,8 +3504,21 @@ def update_on_call(
         raise HTTPException(status_code=422, detail="members 必须是 1-20 个用户名字符串组成的数组")
     if any(not isinstance(m, str) or not m.strip() for m in members):
         raise HTTPException(status_code=422, detail="members 每项必须是非空字符串")
+    # docs/60 §4.2：可选 rotationIntervalDays（1-365 或 null）；未提供按整体替换置空（不自动）
+    rotation_interval_days: int | None = None
+    if "rotationIntervalDays" in body:
+        raw = body.get("rotationIntervalDays")
+        if raw is None:
+            rotation_interval_days = None
+        elif isinstance(raw, int) and not isinstance(raw, bool) and 1 <= raw <= 365:
+            rotation_interval_days = raw
+        else:
+            raise HTTPException(
+                status_code=422, detail="rotationIntervalDays 必须是 1-365 的整数或 null"
+            )
     schedule = services_for(principal).monitoring.set_oncall(
-        members=members, updated_by=principal.username
+        members=members, updated_by=principal.username,
+        rotation_interval_days=rotation_interval_days,
     )
     return {**schedule.model_dump(), "current": current_assignee(schedule)}
 

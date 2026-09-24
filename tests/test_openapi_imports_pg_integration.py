@@ -337,3 +337,31 @@ def test_restore_and_conflict_pg(setup):
     assert store.restore("openapi-nope") == (False, None, None)
     ok2, _, _ = store.restore(b.spec_id)  # b 未删，无可恢复项
     assert ok2 is False
+
+
+# --- docs/60 G2：include_deleted 列表 + 硬删除（purge），PG 档 ---------------
+def test_list_include_deleted_and_purge_pg(setup):
+    from atlas.openapi.store import ImportStoreError
+
+    engine, Store = setup
+    store = Store(engine, "oipit-g2")
+    a = store.add(_spec(title="G2 Alpha"))
+    b = store.add(_spec(title="G2 Beta"))
+    assert store.delete(a.spec_id) is True
+
+    # 默认仅未删；include_deleted 含已软删且带回 deleted_at
+    assert [s.spec_id for s in store.list()] == [b.spec_id]
+    all_specs = store.list(include_deleted=True)
+    assert {s.spec_id for s in all_specs} == {a.spec_id, b.spec_id}
+    assert next(s for s in all_specs if s.spec_id == a.spec_id).deleted_at is not None
+
+    # purge 未软删 → 409；不存在 → False
+    with pytest.raises(ImportStoreError) as exc:
+        store.purge(b.spec_id)
+    assert exc.value.code == "OPENAPI_NOT_SOFT_DELETED"
+    assert store.purge("openapi-nope") is False
+
+    # purge 已软删 → 物理移除，b 仍在
+    assert store.purge(a.spec_id) is True
+    assert [s.spec_id for s in store.list(include_deleted=True)] == [b.spec_id]
+    assert store.get(b.spec_id) is not None
