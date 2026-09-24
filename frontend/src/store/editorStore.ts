@@ -409,14 +409,26 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   loadGraph: (graph) => {
-    const { nodes, edges, variables } = deserializeGraph(graph)
+    const { nodes, edges, variables, debugSettings } = deserializeGraph(graph)
     const loadedNodes = nodes as EditorNode[]
+    // docs/60 §5.1：随图还原持久化断点；节点已不存在的孤儿断点丢弃。
+    const nodeIds = new Set(loadedNodes.map((node) => node.id))
+    const restoredBreakpoints: EditorState['breakpoints'] = {}
+    for (const persisted of debugSettings?.breakpoints ?? []) {
+      if (!nodeIds.has(persisted.nodeId)) continue
+      const breakpoint: Breakpoint = {}
+      if (persisted.expression) breakpoint.expression = persisted.expression
+      if (typeof persisted.hitCount === 'number') breakpoint.hitCount = persisted.hitCount
+      if (persisted.logMessage) breakpoint.logMessage = persisted.logMessage
+      if (persisted.onException === true) breakpoint.onException = true
+      restoredBreakpoints[persisted.nodeId] = breakpoint
+    }
     set((state) => ({
       nodes: loadedNodes,
       edges,
       variables,
       selectedNodeId: null,
-      breakpoints: {},
+      breakpoints: restoredBreakpoints,
       // 换图即失效：NL 参数警告只对刚生成/加载的那张草稿有意义
       nlWarnings: [],
       logs: [`已加载 NL 生成草稿：${loadedNodes.length} 个节点`],

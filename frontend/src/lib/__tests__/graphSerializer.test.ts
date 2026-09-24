@@ -76,3 +76,38 @@ describe('deserializeGraph', () => {
     expect(restored[0].data.config).toEqual(conditionNode.data.config)
   })
 })
+
+describe('serializeGraph debugSettings (docs/60 §5)', () => {
+  it('omits debugSettings when breakpoints absent or empty (legacy shape)', () => {
+    expect(serializeGraph(nodes, edges, variables).debugSettings).toBeUndefined()
+    expect(serializeGraph(nodes, edges, variables, {}).debugSettings).toBeUndefined()
+  })
+
+  it('persists a plain line breakpoint as bare { nodeId }', () => {
+    const graph = serializeGraph(nodes, edges, variables, { 'trigger-1': {} })
+    expect(graph.debugSettings).toEqual({ breakpoints: [{ nodeId: 'trigger-1' }] })
+  })
+
+  it('trims blank/default fields while keeping configured ones', () => {
+    const graph = serializeGraph(nodes, edges, variables, {
+      'trigger-1': { expression: '   ', hitCount: 0, logMessage: '', onException: false },
+      'tool_call-1': { expression: 'x > 1', hitCount: 3, logMessage: 'boom', onException: true },
+    })
+    expect(graph.debugSettings?.breakpoints).toEqual([
+      { nodeId: 'trigger-1' },
+      { nodeId: 'tool_call-1', expression: 'x > 1', hitCount: 3, logMessage: 'boom', onException: true },
+    ])
+  })
+
+  it('round-trips breakpoints through deserializeGraph', () => {
+    const graph = serializeGraph(nodes, edges, variables, {
+      'trigger-1': { expression: 'a == 1', hitCount: 2, logMessage: 'm', onException: true },
+    })
+    const { debugSettings } = deserializeGraph(graph)
+    expect(debugSettings).toEqual({
+      breakpoints: [
+        { nodeId: 'trigger-1', expression: 'a == 1', hitCount: 2, logMessage: 'm', onException: true },
+      ],
+    })
+  })
+})

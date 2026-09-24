@@ -186,7 +186,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
   const [runTarget, setRunTarget] = useState<'draft' | number>('draft')
   const [releaseBusy, setReleaseBusy] = useState(false)
 
-  const graphJson = JSON.stringify(serializeGraph(nodes, edges, variables), null, 2)
+  const graphJson = JSON.stringify(serializeGraph(nodes, edges, variables, breakpoints), null, 2)
 
   async function compileAndRun(shouldRecord = false, debugMode = false) {
     const order = DEMO_ORDERS.find((item) => item.order_id === selectedOrderId)
@@ -224,7 +224,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
     resetRunStatuses()
     const collected: RunEvent[] = []
     try {
-      const serialized = serializeGraph(nodes, edges, variables)
+      const serialized = serializeGraph(nodes, edges, variables, breakpoints)
       const pinnedVersion = runTarget === 'draft' ? undefined : runTarget
       let graphId: string
       if (pinnedVersion !== undefined && publishedRef) {
@@ -530,7 +530,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
   }
 
   async function ensureGraphId(): Promise<string> {
-    const current = serializeGraph(nodes, edges, variables)
+    const current = serializeGraph(nodes, edges, variables, breakpoints)
     if (draftGraphId) {
       await saveGraphDraft(draftGraphId, current)
       appendLog(t('log.draftUpdated', { graphId: draftGraphId }))
