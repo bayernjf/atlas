@@ -160,7 +160,7 @@ class MessageService:
             message: str | None = None,
             to: list[str] | None = None,
         ) -> None:
-            self._delivery_store.record(
+            self._safe_record(
                 DeliveryRecord(
                     id=message_id,
                     channel=channel_value,
@@ -279,6 +279,13 @@ class MessageService:
         self._messages.append(record)
         self.last_send = {k: record[k] for k in ("id", "channel", "to", "sent_at")}
         return record
+
+    def _safe_record(self, rec: DeliveryRecord) -> None:
+        """投递日志是旁路可观测数据，存储失败不得阻断消息发送主链路（docs/60 §11）。"""
+        try:
+            self._delivery_store.record(rec)
+        except Exception:
+            pass
 
     @staticmethod
     def _validate_secret(channel: str, secret: object) -> str | None:

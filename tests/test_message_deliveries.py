@@ -72,3 +72,23 @@ def test_message_service_uses_injected_store_and_reset_clears():
     assert isinstance(MessageService()._delivery_store, InMemoryDeliveryStore)
     service.reset()
     assert store.list(100) == []
+
+
+class _BoomStore:
+    """模拟 PG 不可用：record 抛错。"""
+
+    def record(self, rec) -> None:
+        raise RuntimeError("db down")
+
+    def list(self, limit: int):
+        return []
+
+    def clear(self) -> None:
+        pass
+
+
+def test_send_succeeds_when_delivery_store_raises():
+    # docs/60 §11：投递日志是旁路，存储失败不得阻断消息发送主链路
+    service = MessageService(delivery_store=_BoomStore())
+    record = service.send("email", "a@example.com", "hi", "body")
+    assert record["delivered"] == "in_process"
