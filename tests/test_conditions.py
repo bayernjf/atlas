@@ -241,3 +241,54 @@ def test_validate_datetime_functions():
     assert any("整数" in e for e in validate_expression("datetime(2026.5,1,1,0,0) == now()"))
     # today/now 为 0 参
     assert any("参数" in e for e in validate_expression("today(1) == true"))
+
+
+def test_condition_errors_carry_machine_code_and_params_docs60():
+    """docs/60 G1：ConditionEvalError 除中文 message 外并行携带 code/params（英文类型码）。"""
+
+    def raised(expr, ctx=None):
+        with pytest.raises(ConditionEvalError) as exc:
+            evaluate_expression(expr, ctx or {})
+        return exc.value
+
+    # 除零 / 模零
+    assert raised("1/0").code == "COND_DIVIDE_BY_ZERO"
+    assert raised("1/0").params["op"] == "/"
+    assert raised("1 % 0").params["op"] == "%"
+
+    # 算术类型不符（params 取左侧类型码）
+    exc = raised("'a' + 1")
+    assert exc.code == "COND_TYPE_MISMATCH"
+    assert exc.params["op"] == "+"
+    assert exc.params["expected"] == "number"
+    assert exc.params["actual"] == "string"
+
+    # 未知函数 / 未知标识符 / 缺右括号
+    assert raised("foo(1)").code == "COND_UNKNOWN_FUNC"
+    assert raised("foo(1)").params["func"] == "foo"
+    exc = raised("bar")
+    assert exc.code == "COND_UNKNOWN_IDENTIFIER"
+    assert exc.params["token"] == "bar"
+    assert raised("(1+2").code == "COND_SYNTAX_MISSING_PAREN"
+
+    # 函数 arity
+    exc = raised("len(1, 2)")
+    assert exc.code == "COND_FUNC_ARITY"
+    assert exc.params["func"] == "len"
+    assert exc.params["actual"] == 2
+
+    # null 参与有序比较
+    assert raised("{{x}} > 1", {"x": None}).code == "COND_NULL_COMPARISON"
+
+    # len 类型 / date 分量英文 token / 非法日期
+    exc = raised("len(1)")
+    assert exc.code == "COND_TYPE_MISMATCH"
+    assert exc.params["func"] == "len"
+    assert exc.params["expected"] == "string|array|object"
+    exc = raised("date(2026, 'x', 1)")
+    assert exc.code == "COND_TYPE_MISMATCH"
+    assert exc.params["component"] == "month"  # 英文 token，不泄漏中文分量名
+    assert raised("date(2026, 13, 40)").code == "COND_INVALID_DATE"
+
+    # 中文 message 始终保留（兜底真相）
+    assert "除数" in str(raised("1/0"))

@@ -1750,3 +1750,39 @@ def test_openapi_tool_receives_params_from_json():
     )
     output = _execute_tool(node, {}, registry)
     assert output["result"]["received"] == {"user": "alice", "password": "secret"}
+
+
+def test_loop_foreach_expression_error_codes_align_with_messages_docs60():
+    """docs/60 G1：loop/foreach 节点结果并行下发 expressionErrorCodes，与 expression_errors
+    等长；正常/空出口为空列表，终态 fail-safe 退出带确定机器码。"""
+    # while 达到最大次数
+    out = run_graph(_loop_graph("true", max_iterations=3))["outputs"]["loop-1"]
+    assert out["expressionErrorCodes"] == ["LOOP_MAX_ITERATIONS"]
+    assert len(out["expressionErrorCodes"]) == len(out["expression_errors"])
+
+    # while 继续表达式求值错误（null 有序比较 → COND_*）
+    out = run_graph(
+        _loop_graph("{{trigger-1.context.payload.missing}} > 1")
+    )["outputs"]["loop-1"]
+    assert out["exitReason"] == "expression_error"
+    assert len(out["expressionErrorCodes"]) == len(out["expression_errors"]) == 1
+    assert out["expressionErrorCodes"][0].startswith("COND_")
+
+    # foreach itemsExpression 结果非数组
+    out = run_graph(_foreach_graph(), inputs={"order_ids": "not-a-list"})["outputs"]["loop-1"]
+    assert out["exitReason"] == "expression_error"
+    assert out["expressionErrorCodes"] == ["COND_TYPE_MISMATCH"]
+    assert len(out["expressionErrorCodes"]) == len(out["expression_errors"])
+
+    # foreach 超长
+    out = run_graph(_foreach_graph(), inputs={"order_ids": list(range(101))})["outputs"]["loop-1"]
+    assert out["exitReason"] == "items_too_large"
+    assert out["expressionErrorCodes"] == ["LOOP_ITEMS_TOO_LARGE"]
+
+    # 空数组 / 正常完成出口 codes 为空
+    out = run_graph(_foreach_graph(), inputs={"order_ids": []})["outputs"]["loop-1"]
+    assert out["exitReason"] == "empty"
+    assert out["expressionErrorCodes"] == []
+    out = run_graph(_foreach_graph(), inputs={"order_ids": ["a"]})["outputs"]["loop-1"]
+    assert out["exitReason"] == "completed"
+    assert out["expressionErrorCodes"] == []

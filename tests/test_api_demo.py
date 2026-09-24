@@ -1311,7 +1311,11 @@ def test_i18_sync_and_stream_error_runs_record_run_error(monkeypatch):
 
     event_names, frames = _stream_run(graph_id)
     assert event_names[-1] == "error"
-    assert "RuntimeError" in frames[-1]["detail"]
+    # docs/60 G1：SSE error 帧 detail 升级为 {message,code,params} 结构化对象
+    error_detail = frames[-1]["detail"]
+    assert error_detail["code"] == "RUNTIME_UNEXPECTED"
+    assert error_detail["params"] == {}
+    assert "RuntimeError" in error_detail["message"]
 
     runs = client.get("/api/monitoring/runs").json()["items"]
     assert {run["status"] for run in runs} == {"error"}
