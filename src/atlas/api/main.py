@@ -38,7 +38,7 @@ from atlas.cards import (
 from atlas.database.adapter import DatabaseHarnessAdapter
 from atlas.database.service import DatabaseClient, demo_engine
 from atlas.debug import DebugController, DebugStopped
-from atlas.graph.conditions import validate_expression
+from atlas.graph.conditions import ConditionEvalError, validate_expression
 from atlas.graph.dsl import GraphDSL, GraphValidationError, parse_graph, valid_event_key
 from atlas.graph.diff import diff_graph, diff_summary
 from atlas.graph.loader import (
@@ -46,6 +46,7 @@ from atlas.graph.loader import (
     _tool_permissions,
     compile_graph,
     run_graph,
+    runtime_error_meta,
     tool_input_schemas,
 )
 from atlas.collaboration.cancellations import RunCancelled
@@ -330,6 +331,25 @@ def wait_node_failure_handler(_request: Request, exc: WaitNodeFailure) -> JSONRe
                 "code": exc.code,
                 "message": str(exc),
                 "nodeId": exc.node_id,
+            }
+        },
+    )
+
+
+@app.exception_handler(ConditionEvalError)
+def condition_eval_failure_handler(
+    _request: Request, exc: ConditionEvalError
+) -> JSONResponse:
+    # 运行期 condition/loop/foreach 表达式求值失败（docs/60 G1）：与 WaitNodeFailure
+    # 同形返回结构化 500，携带 COND_* 机器码与 params，前端可按当前语言渲染；中文
+    # message 仍是兜底真相。
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": {
+                "code": exc.code,
+                "message": str(exc),
+                "params": exc.params,
             }
         },
     )
@@ -2709,7 +2729,16 @@ def run_saved_graph_stream(
                         spans=tracer.to_tree() if tracer is not None else None,
                     )
                     evaluate_after_run(services, record)
-                events.put({"__error__": f"{type(exc).__name__}: {exc}"})
+                err_meta = runtime_error_meta(exc)
+                events.put(
+                    {
+                        "__error__": {
+                            "message": f"{type(exc).__name__}: {exc}",
+                            "code": err_meta["errorCode"],
+                            "params": err_meta["errorParams"],
+                        }
+                    }
+                )
             finally:
                 cancellation_broker.unregister(run_id)
 

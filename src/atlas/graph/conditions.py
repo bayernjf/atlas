@@ -48,7 +48,22 @@ _UNARY_OPS = ("!", "-", "+")
 
 
 class ConditionEvalError(Exception):
-    """表达式求值期错误（含变量的类型错误、缺失变量参与有序比较等）。"""
+    """表达式求值期错误（含变量的类型错误、缺失变量参与有序比较等）。
+
+    docs/60 G1：除中文 message 外携带机器可读 code 与 params（英文类型码，便于前端
+    英文态模板插值）；中文 message 始终是兜底真相，str(exc) 形状不变。
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "COND_EVAL_FAILED",
+        params: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.params = params or {}
 
 
 @dataclass
@@ -67,7 +82,7 @@ def _tokenize(expression: str) -> list[_Token]:
             continue
         match = _TOKEN_RE.match(expression, pos)
         if match is None or match.start() != pos:
-            raise ConditionEvalError(f'语法错误：意外字符 "{expression[pos]}"（位置 {pos + 1}）')
+            raise ConditionEvalError(f'语法错误：意外字符 "{expression[pos]}"（位置 {pos + 1}）', code="COND_SYNTAX_UNEXPECTED_CHAR", params={"token": expression[pos], "pos": pos + 1})
         text = match.group(0)
         if text.startswith("{{"):
             kind = "path"
@@ -139,7 +154,7 @@ class _Parser:
     def _consume(self) -> _Token:
         token = self._peek()
         if token is None:
-            raise ConditionEvalError("语法错误：表达式不完整")
+            raise ConditionEvalError("语法错误：表达式不完整", code="COND_SYNTAX_INCOMPLETE")
         self.index += 1
         return token
 
@@ -147,7 +162,7 @@ class _Parser:
         ast = self._parse_or()
         if self._peek() is not None:
             token = self._peek()
-            raise ConditionEvalError(f'语法错误：意外的 token "{token.value}"（位置 {token.pos + 1}）')
+            raise ConditionEvalError(f'语法错误：意外的 token "{token.value}"（位置 {token.pos + 1}）', code="COND_SYNTAX_UNEXPECTED_TOKEN", params={"token": token.value, "pos": token.pos + 1})
         return ast
 
     def _parse_or(self) -> tuple:
@@ -207,7 +222,7 @@ class _Parser:
             node = self._parse_or()
             closing = self._peek()
             if closing is None or closing.value != ")":
-                raise ConditionEvalError(f"语法错误：缺少右括号（自位置 {token.pos + 1}）")
+                raise ConditionEvalError(f"语法错误：缺少右括号（自位置 {token.pos + 1}）", code="COND_SYNTAX_MISSING_PAREN", params={"pos": token.pos + 1})
             self._consume()
             return node
         if token.kind == "path":
@@ -220,7 +235,7 @@ class _Parser:
             return ("lit", {"true": True, "false": False, "null": None}[token.value])
         if token.kind == "ident":
             return self._parse_identifier(token)
-        raise ConditionEvalError(f'语法错误：意外的 token "{token.value}"（位置 {token.pos + 1}）')
+        raise ConditionEvalError(f'语法错误：意外的 token "{token.value}"（位置 {token.pos + 1}）', code="COND_SYNTAX_UNEXPECTED_TOKEN", params={"token": token.value, "pos": token.pos + 1})
 
     def _parse_identifier(self, token: _Token) -> tuple:
         nxt = self._peek()
@@ -228,7 +243,9 @@ class _Parser:
             raise ConditionEvalError(
                 f'语法错误：未知标识符 "{token.value}"（位置 {token.pos + 1}；'
                 "变量须用 {{路径}} 包裹，字面量仅支持 true/false/null、数字、字符串，"
-                f"函数仅限白名单：{', '.join(_FUNCTIONS)}）"
+                f"函数仅限白名单：{', '.join(_FUNCTIONS)}）",
+                code="COND_UNKNOWN_IDENTIFIER",
+                params={"token": token.value, "pos": token.pos + 1},
             )
         # 函数调用
         self._consume()  # '('
@@ -240,11 +257,13 @@ class _Parser:
                 args.append(self._parse_or())
         closing = self._peek()
         if closing is None or closing.value != ")":
-            raise ConditionEvalError(f'语法错误：函数 "{token.value}" 缺少右括号')
+            raise ConditionEvalError(f'语法错误：函数 "{token.value}" 缺少右括号', code="COND_SYNTAX_MISSING_PAREN", params={"func": token.value})
         self._consume()  # ')'
         if token.value not in _FUNCTIONS:
             raise ConditionEvalError(
-                f'语法错误：未知函数 "{token.value}"（仅支持白名单函数：{", ".join(_FUNCTIONS)}）'
+                f'语法错误：未知函数 "{token.value}"（仅支持白名单函数：{", ".join(_FUNCTIONS)}）',
+                code="COND_UNKNOWN_FUNC",
+                params={"func": token.value},
             )
         min_args, max_args, _return_type = _FUNCTIONS[token.value]
         if len(args) < min_args or (max_args is not None and len(args) > max_args):
@@ -252,7 +271,7 @@ class _Parser:
                 want = f"{min_args} 个参数"
             else:
                 want = f"至少 {min_args} 个参数" if max_args is None else f"{min_args}-{max_args} 个参数"
-            raise ConditionEvalError(f'函数 "{token.value}" 需要{want}，实际 {len(args)} 个')
+            raise ConditionEvalError(f'函数 "{token.value}" 需要{want}，实际 {len(args)} 个', code="COND_FUNC_ARITY", params={"func": token.value, "actual": len(args)})
         return ("call", token.value, tuple(args))
 
 
@@ -373,11 +392,11 @@ def _evaluate(node: tuple, context: dict[str, Any], now: datetime.datetime | Non
         value = _evaluate(node[2], context, now)
         if op == "!":
             if not isinstance(value, bool):
-                raise ConditionEvalError(f'逻辑非 "!" 要求布尔值，实际为 {_type_name(value)}')
+                raise ConditionEvalError(f'逻辑非 "!" 要求布尔值，实际为 {_type_name(value)}', code="COND_TYPE_MISMATCH", params={"op": "!", "expected": "boolean", "actual": _type_code(value)})
             return not value
         # 一元 +/- 要求数值
         if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ConditionEvalError(f'一元 "{op}" 要求数值，实际为 {_type_name(value)}')
+            raise ConditionEvalError(f'一元 "{op}" 要求数值，实际为 {_type_name(value)}', code="COND_TYPE_MISMATCH", params={"op": op, "expected": "number", "actual": _type_code(value)})
         return +value if op == "+" else -value
     if kind == "call":
         return _evaluate_function(
@@ -387,12 +406,12 @@ def _evaluate(node: tuple, context: dict[str, Any], now: datetime.datetime | Non
     if op == "&&":
         left = _evaluate(left_node, context, now)
         if not isinstance(left, bool):
-            raise ConditionEvalError(f'"&&" 要求布尔值，实际为 {_type_name(left)}')
+            raise ConditionEvalError(f'"&&" 要求布尔值，实际为 {_type_name(left)}', code="COND_TYPE_MISMATCH", params={"op": "&&", "expected": "boolean", "actual": _type_code(left)})
         return left and _evaluate(right_node, context, now)
     if op == "||":
         left = _evaluate(left_node, context, now)
         if not isinstance(left, bool):
-            raise ConditionEvalError(f'"||" 要求布尔值，实际为 {_type_name(left)}')
+            raise ConditionEvalError(f'"||" 要求布尔值，实际为 {_type_name(left)}', code="COND_TYPE_MISMATCH", params={"op": "||", "expected": "boolean", "actual": _type_code(left)})
         return left or _evaluate(right_node, context, now)
     if op in _CMP_OPS:
         return _compare(
@@ -412,7 +431,9 @@ def _arith(op: str, left: Any, right: Any) -> Any:
         isinstance(left, (int, float)) and isinstance(right, (int, float))
     ):
         raise ConditionEvalError(
-            f'算术 "{op}" 要求两侧均为数值，实际为 {_type_name(left)} 与 {_type_name(right)}'
+            f'算术 "{op}" 要求两侧均为数值，实际为 {_type_name(left)} 与 {_type_name(right)}',
+            code="COND_TYPE_MISMATCH",
+            params={"op": op, "expected": "number", "actual": _type_code(left)},
         )
     if op == "+":
         return left + right
@@ -422,11 +443,11 @@ def _arith(op: str, left: Any, right: Any) -> Any:
         return left * right
     if op == "/":
         if right == 0:
-            raise ConditionEvalError('算术 "/" 除数不能为 0')
+            raise ConditionEvalError('算术 "/" 除数不能为 0', code="COND_DIVIDE_BY_ZERO", params={"op": "/"})
         return left / right
     # 截断式余数（与前端 JS Math.trunc 语义对齐，负数余数符号随被除数）
     if right == 0:
-        raise ConditionEvalError('算术 "%" 模数不能为 0')
+        raise ConditionEvalError('算术 "%" 模数不能为 0', code="COND_DIVIDE_BY_ZERO", params={"op": "%"})
     return left - right * math.trunc(left / right)
 
 
@@ -456,23 +477,25 @@ def _evaluate_function(
             return len(value)
         if isinstance(value, (list, dict)):
             return len(value)
-        raise ConditionEvalError(f'函数 "len" 要求字符串/数组/对象，实际为 {_type_name(value)}')
+        raise ConditionEvalError(f'函数 "len" 要求字符串/数组/对象，实际为 {_type_name(value)}', code="COND_TYPE_MISMATCH", params={"func": "len", "expected": "string|array|object", "actual": _type_code(value)})
     if name in ("lower", "upper"):
         if not isinstance(args[0], str):
-            raise ConditionEvalError(f'函数 "{name}" 要求字符串，实际为 {_type_name(args[0])}')
+            raise ConditionEvalError(f'函数 "{name}" 要求字符串，实际为 {_type_name(args[0])}', code="COND_TYPE_MISMATCH", params={"func": name, "expected": "string", "actual": _type_code(args[0])})
         return args[0].lower() if name == "lower" else args[0].upper()
     if name == "date":
         year, month, day = args
-        for component, value in (("年", year), ("月", month), ("日", day)):
+        for component, component_zh, value in (
+            ("year", "年", year), ("month", "月", month), ("day", "日", day),
+        ):
             if isinstance(value, bool) or not isinstance(value, int):
-                raise ConditionEvalError(f'函数 "date" 的{component}份必须是整数')
+                raise ConditionEvalError(f'函数 "date" 的{component_zh}份必须是整数', code="COND_TYPE_MISMATCH", params={"func": "date", "expected": "integer", "component": component})
         try:
             return datetime.date(year, month, day)
         except ValueError as exc:
-            raise ConditionEvalError(f'函数 "date" 构造了非法日期：{exc}') from None
+            raise ConditionEvalError(f'函数 "date" 构造了非法日期：{exc}', code="COND_INVALID_DATE", params={"func": "date"}) from None
     if name in ("year", "month", "day"):
         if not isinstance(args[0], datetime.date):
-            raise ConditionEvalError(f'函数 "{name}" 要求日期值（用 date(y,m,d) 构造），实际为 {_type_name(args[0])}')
+            raise ConditionEvalError(f'函数 "{name}" 要求日期值（用 date(y,m,d) 构造），实际为 {_type_name(args[0])}', code="COND_TYPE_MISMATCH", params={"func": name, "expected": "date", "actual": _type_code(args[0])})
         return getattr(args[0], name)
     if name == "daysBetween":
         start, end = args
@@ -481,7 +504,9 @@ def _evaluate_function(
         end_d = end.date() if isinstance(end, datetime.datetime) else end
         if not isinstance(start_d, datetime.date) or not isinstance(end_d, datetime.date):
             raise ConditionEvalError(
-                f'函数 "daysBetween" 要求两个日期值，实际为 {_type_name(start)} 与 {_type_name(end)}'
+                f'函数 "daysBetween" 要求两个日期值，实际为 {_type_name(start)} 与 {_type_name(end)}',
+                code="COND_TYPE_MISMATCH",
+                params={"func": "daysBetween", "expected": "date", "actual": _type_code(start)},
             )
         return (end_d - start_d).days
     if name == "today":
@@ -496,24 +521,24 @@ def _evaluate_function(
             second = 0
         else:
             year, month, day, hour, minute, second = args
-        for label, value in (
-            ("年", year), ("月", month), ("日", day),
-            ("小时", hour), ("分钟", minute), ("秒", second),
+        for component, component_zh, value in (
+            ("year", "年", year), ("month", "月", month), ("day", "日", day),
+            ("hour", "小时", hour), ("minute", "分钟", minute), ("second", "秒", second),
         ):
             if isinstance(value, bool) or not isinstance(value, int):
-                raise ConditionEvalError(f'函数 "datetime" 的{label}必须是整数')
+                raise ConditionEvalError(f'函数 "datetime" 的{component_zh}必须是整数', code="COND_TYPE_MISMATCH", params={"func": "datetime", "expected": "integer", "component": component})
         try:
             return datetime.datetime(
                 year, month, day, hour, minute, second, tzinfo=datetime.timezone.utc
             )
         except ValueError as exc:
-            raise ConditionEvalError(f'函数 "datetime" 构造了非法日期时间：{exc}') from None
+            raise ConditionEvalError(f'函数 "datetime" 构造了非法日期时间：{exc}', code="COND_INVALID_DATE", params={"func": "datetime"}) from None
     if name == "hoursBetween":
         start, end = args
         start_dt = _coerce_datetime(start)
         end_dt = _coerce_datetime(end)
         return (end_dt - start_dt).total_seconds() / 3600
-    raise ConditionEvalError(f'未知函数 "{name}"')  # 理论不可达（parse 已拦）
+    raise ConditionEvalError(f'未知函数 "{name}"', code="COND_UNKNOWN_FUNC", params={"func": name})  # 理论不可达（parse 已拦）
 
 
 def _coerce_datetime(value: Any) -> datetime.datetime:
@@ -526,13 +551,15 @@ def _coerce_datetime(value: Any) -> datetime.datetime:
         )
     raise ConditionEvalError(
         '函数 "hoursBetween" 要求日期时间值（用 datetime(...) 或 now() 构造，日期按当日 00:00 UTC），'
-        f"实际为 {_type_name(value)}"
+        f"实际为 {_type_name(value)}",
+        code="COND_TYPE_MISMATCH",
+        params={"func": "hoursBetween", "expected": "datetime", "actual": _type_code(value)},
     )
 
 
 def _require_number(name: str, value: Any) -> None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ConditionEvalError(f'函数 "{name}" 要求数值参数，实际为 {_type_name(value)}')
+        raise ConditionEvalError(f'函数 "{name}" 要求数值参数，实际为 {_type_name(value)}', code="COND_TYPE_MISMATCH", params={"func": name, "expected": "number", "actual": _type_code(value)})
 
 
 def _compare(op: str, left: Any, right: Any) -> bool:
@@ -540,19 +567,42 @@ def _compare(op: str, left: Any, right: Any) -> bool:
         equal = left == right
         return equal if op == "==" else not equal
     if left is None or right is None:
-        raise ConditionEvalError("空值（null/缺失变量）只能做 == / != 比较，不能参与大小比较")
+        raise ConditionEvalError("空值（null/缺失变量）只能做 == / != 比较，不能参与大小比较", code="COND_NULL_COMPARISON")
     if isinstance(left, bool) or isinstance(right, bool) or type(left) is not type(right):
         raise ConditionEvalError(
-            f'有序比较 "{op}" 要求两侧同为数字、字符串或日期，实际为 {_type_name(left)} 与 {_type_name(right)}'
+            f'有序比较 "{op}" 要求两侧同为数字、字符串或日期，实际为 {_type_name(left)} 与 {_type_name(right)}',
+            code="COND_TYPE_MISMATCH",
+            params={"op": op, "expected": "number|string|date", "actual": _type_code(left)},
         )
     if not isinstance(left, (int, float, str, datetime.date)):
-        raise ConditionEvalError(f'有序比较 "{op}" 不支持类型 {_type_name(left)}')
+        raise ConditionEvalError(f'有序比较 "{op}" 不支持类型 {_type_name(left)}', code="COND_TYPE_MISMATCH", params={"op": op, "actual": _type_code(left)})
     return {
         ">": left > right,
         ">=": left >= right,
         "<": left < right,
         "<=": left <= right,
     }[op]
+
+
+def _type_code(value: Any) -> str:
+    """与 _type_name 对应的英文机器码（docs/60 G1 params，供前端英文模板插值）。"""
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, (int, float)):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, datetime.datetime):
+        return "datetime"
+    if isinstance(value, datetime.date):
+        return "date"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    return type(value).__name__
 
 
 def _type_name(value: Any) -> str:
