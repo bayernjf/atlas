@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### chore：打包 G docs-only 立项（docs/60，2026-09-24；运行时错误 i18n / OpenAPI 硬删除 / 静默编辑·值班日轮换 / 断点持久化 / 投递日志 PG 化；零新依赖、迁移 025/026、无 ADR；D17 遗留＋D22/D24/D27/D28 部分取回不解除；落码中，门数字待收口回填）
+
+- 五项：G1 ConditionEvalError/WaitNodeFailure 运行时终态失败错误码化＋前端 runtime locale（zh/en）；G2 `GET /openapi/imports?include_deleted=` 与 `DELETE ?hard=true`（administer，内存/PG 双档 purge）；G3 `PUT /monitoring/silences/{id}` 与值班惰性按日轮换（maybe_auto_rotate、不引定时器、迁移 026）；G4 SerializedGraph 顶层可选 debugSettings.breakpoints 随图持久化（零迁移/零新端点，普通运行不受影响）；G5 抽 message/deliveries.py DeliveryStore＋PgDeliveryStore（迁移 025 message_deliveries，跨重启保留，REST 零改动；docs/24 §1.1 存储抽象演进记 docs/08/12，不新增 ADR）。测试候选 U663 起。形状权威 docs/60。
+
+
 ### feat：告警规则模板市场＋静默/值班/assignee PG 化落码收口（docs/59，打包 F，2026-09-24；dev、未 push；零新依赖/迁移 024/无 ADR/无新写端点）
 
 - D28 部分取回、不解除。两项：①**F-1 告警规则模板市场 v1（内置只读＋一键启用）**：新模块 `monitoring/rule_templates.py`（照 template/catalog，只读 Python 常量、无 DB/CRUD、不 reset、全局共享）4 内置模板 default-balanced/strict-sre/demo-lenient/custom-quickstart（config 为过 validate_rules 的完整 RuleConfig）；两只读端点 `GET /api/alert-rule-templates`（列表投影不含 config）与 `/{id}`（含 config、未知 404、read）；一键应用＝前端取 config 复用 `PUT /api/monitoring/rules`（administer 全量替换、Popconfirm 二次确认），**后端不新增写端点**；前端 AlertRuleTemplateMarket Modal＋规则卡 extra 入口＋monitoring.templates zh/en 各 11 键（`39e6daa`/`ac35b07`）。②**F-2 静默/值班/新建告警 assignee PG 化（仅 PG 档）**：迁移 024（002 新装库同步）新增 `monitoring_silences`/`monitoring_oncall` 两表；PgMonitoringStore 静默 3 方法＋值班 3 方法＋record_run 命中压下（SQL 粗筛租户/未过期、Python 端 `silence_matches` 单一事实源判首条命中并 suppressed_count+1）＋新建告警 assignee 全走 PG（cap100/惰性过期/取模轮换/空表 OnCallEmpty/reset 清两表），移除全部进程内 OpsStore 兜底（含勘察漏网的 resolve_alert 第 4 处）；**内存档 OpsStore/MonitoringStore 一行未动**（`88e4be9`）。
