@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### feat：运行时错误码 i18n / OpenAPI 硬删 / 静默编辑·值班日轮换 / 断点持久化 / 投递日志 PG 化落码收口（docs/60，打包 G，2026-09-24；dev；零新依赖、迁移 025/026、无 ADR；D22/D24/D27/D28 部分取回不解除）
+
+- **G1 运行时错误码化＋i18n（`2b00bbb`/`478c45c`/`9a2836a`）**：condition/loop 求值失败节点结果在中文 `expression_errors` 之外纯超集增 `errorCode=CONDITION_EVAL_INVALID` 与等长 `expressionErrorCodes[]`，wait 动态/绝对时刻失败挂 `errorCode`（WAIT_DURATION_INVALID/WAIT_ABSOLUTE_TIME_INVALID）；中文 message 全保留作日志兜底；前端新增 `lib/runtimeError.ts` 与 `locales/*/runtime.json`（zh/en，en 为成品翻译），按码定位分支/字段、缺码回退中文。
+- **G2 OpenAPI 硬删除（`a853700`/`1df73e2`/`1ee7482`）**：内存/PG 双档 `GET /api/openapi/imports?include_deleted=true`（administer，并入软删项）与 `DELETE /{id}?hard=true`（仅已软删可物理删，未软删 409 OPENAPI_NOT_SOFT_DELETED）；前端 admin「显示已删除」+「彻底删除」二次确认，无硬删恢复 UI。**偏差**：列表删除标记沿用 snake_case `deleted_at`（投影整体 model_dump snake_case）。
+- **G3 静默编辑＋值班日轮换（`9dfc593`/`6ba5816`/`89cc9ec`，迁移 026）**：`PUT /api/monitoring/silences/{id}`（administer 改 reason/到期，已过期 409）；OnCallSchedule 增 rotation_interval_days/last_rotated_at，纯函数 maybe_auto_rotate 在 get_oncall/告警取值班人读路径惰性按 UTC 日取模轮换（不引定时器/分布式锁）；前端 Popover 编辑＋值班间隔 InputNumber。**偏差**：last_rotated_at 用 TEXT 存 YYYY-MM-DD（与 024 同表时间列统一 TEXT，非 TIMESTAMPTZ）。
+- **G4 断点随 Graph JSON 持久化（`c8f1172`/`b46e12b`）**：SerializedGraph 顶层可选 `debugSettings.breakpoints` 随图往返（裁剪空字段、孤儿断点加载时丢弃）；**后端零产品改动/零迁移**——GraphDSL 无 extra=forbid、save 存原始 dict 天然透传；普通运行无 debug 不暂停（黑盒测试锁死）。
+- **G5 投递日志 PG 化（`532a3fe`/`e0d7fe1`/`5714db9`，迁移 025）**：抽 `message/deliveries.py` DeliveryStore（record/list/clear），InMemory 搬现 ring 200、PgDeliveryStore 落 `message_deliveries`（跨重启保留、惰性裁 200、reset 清本租户、REST 零改动），registry PG 档注入；record fail-safe try/except 不阻断发送主链路（§11，补漏 `5714db9`）。**偏差**：主键 `(tenant_id,seq)` 而非草拟 `(tenant_id,id)`（群发逐目标多条共享同一 message id，seq 取 storage_id_seq）。
+- 收口门（实跑）：后端全量 **1758 passed / 86 skipped / 0 failed**（134.97s；净增 24 常跑 + 9 PG skip＝33 新测试函数，候选 U663–U742 文件级登记 docs/13 §9）；PG 直连集成（migrations/storage/database/openapi/monitoring/message 六文件）**55 passed**（025/026 自动 apply）；前端 vitest **694 passed / 2 skipped / 52 文件**、tsc 0、oxlint **0 error / 6 既有 warning**、`npm run build` 过（index-L91FdD1n.js 1708.29 kB/gzip 529.73 kB）。YAML/oauth2/模板 CRUD/真正定时器/分布式锁/多值班组/团队共享断点/变量血缘/多实例中断/DLQ/短信/入站通用消费/OTel 仍缓做（docs/14，D22/D24/D27/D28 不解除）。
+
 ### chore：打包 G docs-only 立项（docs/60，2026-09-24；运行时错误 i18n / OpenAPI 硬删除 / 静默编辑·值班日轮换 / 断点持久化 / 投递日志 PG 化；零新依赖、迁移 025/026、无 ADR；D17 遗留＋D22/D24/D27/D28 部分取回不解除；落码中，门数字待收口回填）
 
 - 五项：G1 ConditionEvalError/WaitNodeFailure 运行时终态失败错误码化＋前端 runtime locale（zh/en）；G2 `GET /openapi/imports?include_deleted=` 与 `DELETE ?hard=true`（administer，内存/PG 双档 purge）；G3 `PUT /monitoring/silences/{id}` 与值班惰性按日轮换（maybe_auto_rotate、不引定时器、迁移 026）；G4 SerializedGraph 顶层可选 debugSettings.breakpoints 随图持久化（零迁移/零新端点，普通运行不受影响）；G5 抽 message/deliveries.py DeliveryStore＋PgDeliveryStore（迁移 025 message_deliveries，跨重启保留，REST 零改动；docs/24 §1.1 存储抽象演进记 docs/08/12，不新增 ADR）。测试候选 U663 起。形状权威 docs/60。
