@@ -253,7 +253,7 @@ CREATE INDEX IF NOT EXISTS idx_shadow_runs_tenant_seq
 
 > handoff 进度可在每个功能原子后按惯例补小 docs 提交（参照打包 F/G），但不计入功能原子。
 >
-> **收口时顺带订正（2026-09-25 立项后核对 git 状态时发现，用户已同意随本批收口一并改）**：handoff 顶部状态块与 Active work 若干条仍写「打包 G 14 个功能原子在 dev、**未 push**」，但 `origin/dev` 实际已含到 `8ba3a29`（打包 G 全批含收口 docs 原子均已在远端）。属状态措辞过时，收口原子内按实测 `git rev-list --left-right --count origin/dev...dev` 订正，并同步检查同段其余 push 表述。
+> **收口时顺带订正（2026-09-25 立项后核对 git 状态时发现，用户已同意随本批收口一并改）**：handoff 顶部状态块与 Active work 若干条仍写「打包 G 14 个功能原子在 dev、**未 push**」「合 main PR 须用户明确授权」，但实测两条均已过时：`origin/dev` 已含到 `8ba3a29`（打包 G 全批含收口 docs 原子均在远端），且 `git merge-base --is-ancestor 8ba3a29 origin/main` 为真＝**打包 G 已合并 main**。属状态措辞过时、非待办丢失；收口原子内按实测 `git rev-list --left-right --count origin/dev...dev` 与 `--is-ancestor` 重测后订正，并同步检查同段其余 push/合并表述。
 
 ## 10. 契约同步矩阵（立项原子内完成骨架，收口回填门数字）
 
