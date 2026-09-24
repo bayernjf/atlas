@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### feat：后端认证错误码化＋前端 L1 校验诊断 i18n 收口（docs/17 §2.4，i18n 第一批债，2026-09-24；dev、未 push；前后端、零新依赖/零迁移、无 ADR）
+
+- D12 部分取回、不解除。①**后端认证错误码化**：`iam/deps.py` 新增 code 常量与 `auth_error()`，detail 形状 `{code,message}`——login 用户/口令错 401 `AUTH_INVALID_CREDENTIALS`、账号停用 403 `AUTH_ACCOUNT_DISABLED`、缺凭证 401 `AUTH_UNAUTHENTICATED`、角色不足 403 `AUTH_FORBIDDEN`；中文 message 保留作日志/默认。跨租户 404 故意不区分「不存在/越权」（防资源泄漏），不补 code，故 `AUTH_NOT_FOUND` 未落码。②**前端认证错误 i18n**：common 补 `error.auth.accountDisabled`、`error.requestFailed`，`apiClient.resolveErrorMessage` 按 code 映射 `error.auth.*`（数组 join、对象按 code、无映射取 message、再退 requestFailed）。③**L1 校验诊断全量 i18n**：新建 `validation` namespace（zh/en 82 叶子键对齐、en 零汉字）并注册，`l1.ts` FALLBACK_MESSAGES 改 FIELD_MESSAGE_KEYS，约 80 条用户可见中文（fallback/schemaFieldMessage/约 40 处 fieldDiag）全 t() 化、用户可见中文清零；`engine.invalidateForLocale()` 清全部签名缓存，`useValidationEngine` 订阅语言并全量重算 L1/L2/L3，ToolCallConfig 参数诊断同步重算。
+- 测试：l1.test 加英文态 describe（切 en-US 后 condition 诊断无汉字、wait 缺 durationSeconds 匹配英文），l1.test 48 passed、validation 目录 126 passed。收口后端全量内存 **1713 passed / 69 skipped**（认证两文件 18 passed）、前端 vitest **663 passed / 2 skipped**（净增 1）、oxlint **0 error / 6 既有 warning**（语言依赖经显式 void 标记未新增）、`pnpm build` 过。仍显中文：Graph DSL 422 列表（`graph/dsl.py`，几十条，另起小批）、业务数据与节点目录/模板元数据（D13）。
+
 ### feat：webhook 出站 HMAC 签名 / IM markdown 富文本@人 / webhook·IM 多 URL 群发落码收口（docs/58，打包 E，2026-09-24；dev、未 push；后端、零新依赖/零迁移、无 ADR）
 
 - E-1 webhook 开放 secret、DefaultWebhookSender 紧凑 UTF-8 确定性序列化，附 `X-Atlas-Timestamp` / `X-Atlas-Signature: sha256=<hex>`（基串 `{ts}\n{raw}`），无 secret 不发头（`83d373a`）。
