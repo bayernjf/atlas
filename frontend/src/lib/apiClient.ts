@@ -1937,6 +1937,8 @@ export type ImportedSpec = {
   operations: OperationDescriptor[]
   security_schemes: Record<string, SecurityScheme>
   credential_envelopes: Record<string, string>
+  content_hash?: string
+  deleted_at?: string | null
 }
 
 export async function previewOpenApi(source: OpenApiSource): Promise<OpenApiPreview> {
@@ -1963,8 +1965,9 @@ export async function putOpenApiCredentials(
   })
 }
 
-export async function listOpenApiImports(): Promise<ImportedSpec[]> {
-  const body = await request<{ items: ImportedSpec[] }>('/api/openapi/imports')
+export async function listOpenApiImports(includeDeleted = false): Promise<ImportedSpec[]> {
+  const query = includeDeleted ? '?include_deleted=true' : ''
+  const body = await request<{ items: ImportedSpec[] }>(`/api/openapi/imports${query}`)
   return body.items
 }
 
@@ -1974,4 +1977,11 @@ export async function getOpenApiImport(specId: string): Promise<ImportedSpec> {
 
 export async function deleteOpenApiImport(specId: string): Promise<{ deleted: boolean }> {
   return request(`/api/openapi/imports/${encodeURIComponent(specId)}`, { method: 'DELETE' })
+}
+
+// docs/60 G2：物理删除（仅已软删条目可删，后端对未软删返 409 OPENAPI_NOT_SOFT_DELETED）
+export async function purgeOpenApiImport(specId: string): Promise<void> {
+  await request(`/api/openapi/imports/${encodeURIComponent(specId)}?hard=true`, {
+    method: 'DELETE',
+  })
 }

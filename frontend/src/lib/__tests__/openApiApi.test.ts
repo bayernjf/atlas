@@ -5,6 +5,7 @@ import {
   importOpenApi,
   listOpenApiImports,
   previewOpenApi,
+  purgeOpenApiImport,
   putOpenApiCredentials,
   type ImportedSpec,
   type OpenApiPreview,
@@ -187,5 +188,42 @@ describe('OpenAPI apiClient（docs/42 §5）', () => {
     )
 
     await expect(importOpenApi({ content: '{}' })).rejects.toThrow('每租户最多导入 5 份 API 规格')
+  })
+
+  it('listOpenApiImports(true) 带 include_deleted 查询参数', async () => {
+    const deleted: ImportedSpec = { ...imported, deleted_at: '2026-09-24T00:00:00+00:00' }
+    const fetchMock = mockFetch({ items: [imported, deleted] })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const items = await listOpenApiImports(true)
+    expect(items).toHaveLength(2)
+    expect(items[1].deleted_at).toBeTruthy()
+    expect(String(fetchMock.mock.calls[0][0])).toBe(
+      '/api/openapi/imports?include_deleted=true',
+    )
+  })
+
+  it('purgeOpenApiImport 发 hard=true DELETE 并容忍 204 空响应', async () => {
+    const fetchMock = mockFetch(null, 204)
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(purgeOpenApiImport('openapi-1')).resolves.toBeUndefined()
+    expect(String(fetchMock.mock.calls[0][0])).toBe(
+      '/api/openapi/imports/openapi-1?hard=true',
+    )
+    expect(fetchMock.mock.calls[0][1]?.method).toBe('DELETE')
+  })
+
+  it('purge 未软删时后端 409 OPENAPI_NOT_SOFT_DELETED 透传 message', async () => {
+    vi.stubGlobal(
+      'fetch',
+      mockFetch(
+        { detail: { code: 'OPENAPI_NOT_SOFT_DELETED', message: '尚未软删除，请先删除再彻底删除' } },
+        409,
+      ),
+    )
+    await expect(purgeOpenApiImport('openapi-1')).rejects.toThrow(
+      '尚未软删除，请先删除再彻底删除',
+    )
   })
 })
