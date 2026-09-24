@@ -29,7 +29,14 @@ from atlas.monitoring.alerts import (
     rules_from_raw,
     validate_rules,
 )
-from atlas.monitoring.silences import OnCallSchedule, OpsStore, Silence
+from atlas.monitoring.silences import (
+    OnCallEmpty,
+    OnCallSchedule,
+    Silence,
+    current_assignee,
+    is_silence_active,
+    silence_matches,
+)
 from atlas.monitoring.notify import (
     AlertChannel,
     AlertChannelDelivery,
@@ -690,8 +697,8 @@ class PgMonitoringStore:
     def __init__(self, engine: Engine, tenant_id: str):
         self._engine = engine
         self._tenant_id = tenant_id
-        # docs/33 §5：静默/值班/assignee 进程内（v1 不落库，重启清空；TenantServices 常驻保活）
-        self._ops = OpsStore()
+        # docs/59 F-2：静默/值班/assignee 落 PG（monitoring_silences/monitoring_oncall），
+        # 跨重启/跨实例保留；内存档仍用 OpsStore（monitoring/records.py），本类不再持有。
         self._notifier = None
         # docs/55 flapping：自动 recovery 冷却 (rule_id, graph_id)→UTC 时刻（进程内，不持久化）
         self._recovery_cooldown: dict[tuple[str, str], datetime] = {}
@@ -770,7 +777,9 @@ class PgMonitoringStore:
             )
             for event in events:
                 # docs/33 §5.1：命中活跃静默则压下（不 INSERT/不合并/不升级）
-                if self._ops.suppress_if_matched(event.rule_id, record.graph_id):
+                if self._suppress_if_matched_locked(
+                    conn, event.rule_id, record.graph_id, _now_iso()
+                ):
                     continue
                 raised = self._raise_or_merge_locked(conn, event, record)
                 if raised is not None:
@@ -917,10 +926,10 @@ class PgMonitoringStore:
                 {"id": row[0], "tenant_id": self._tenant_id},
             ).first()
             merged_alert = self._alert_from_row(merged_row)
-            merged_alert.assignee = merged_alert.assignee or self._ops.assignee_of(row[0])
+            # docs/59 F-2：assignee 以 PG 列为唯一权威（新建时已写值班人），不再进程内兜底。
             return merged_alert, "merged"
         alert_id = _next_id(conn, "alt")
-        assignee = self._ops.current_assignee()
+        assignee = self._current_assignee_locked(conn)
         conn.execute(
             text(
                 "INSERT INTO monitoring_alerts "
@@ -943,7 +952,6 @@ class PgMonitoringStore:
                 "assignee": assignee,
             },
         )
-        self._ops.remember_assignee(alert_id)
         return Alert(
             id=alert_id,
             rule_id=event.rule_id,
@@ -1063,8 +1071,6 @@ class PgMonitoringStore:
         escalated: list[Alert] = []
         for r in rows:
             alert = self._alert_from_row(r)
-            if not alert.assignee:
-                alert.assignee = self._ops.assignee_of(alert.id)
             upgraded = apply_escalation(alert, rules, now)
             if upgraded is not alert:
                 alert.severity = upgraded.severity
@@ -1173,8 +1179,7 @@ class PgMonitoringStore:
             )
             resolved_alert = self._alert_from_row(row)
             resolved_alert.status = "resolved"
-            if not resolved_alert.assignee:
-                resolved_alert.assignee = self._ops.assignee_of(alert_id)
+            # docs/59 F-2：assignee 以 PG 列为唯一权威，不再进程内兜底。
             cfg = self._channel_locked(conn)
         # docs/55：手动 resolve 发 resolved lifecycle 通知（不写 recovery 冷却）
         self._notify_outside_lock(resolved_alert, cfg, transition="resolved")
@@ -1340,7 +1345,7 @@ class PgMonitoringStore:
                         "action": json.dumps(action, ensure_ascii=False),
                     },
                 )
-                self._ops.remember_assignee(alert_id)
+                # docs/59 F-2：rollout_gate 门禁告警不指派值班人，assignee 保持 NULL。
                 created = True
             if created:
                 cfg = self._channel_locked(conn)
@@ -1355,30 +1360,192 @@ class PgMonitoringStore:
             action=action,
         )
 
-    # docs/33 §5：静默 / 值班（进程内，委托 OpsStore）
+    # docs/59 F-2：静默 / 值班 / assignee（PG 持久化；命中/轮换判定复用 silences 纯函数）
+
+    @staticmethod
+    def _silence_from_row(r: Any) -> Silence:
+        return Silence(
+            id=r[0], rule_id=r[1], graph_id=r[2], reason=r[3], created_by=r[4],
+            created_at=r[5], expires_at=r[6], suppressed_count=r[7] or 0,
+        )
+
+    _SILENCE_COLS = (
+        "id, rule_id, graph_id, reason, created_by, created_at, expires_at, suppressed_count"
+    )
+
     def create_silence(
         self, *, rule_id: str | None, graph_id: str | None, duration_minutes: int,
         reason: str, created_by: str,
     ) -> Silence:
-        return self._ops.create_silence(
-            rule_id=rule_id, graph_id=graph_id, duration_minutes=duration_minutes,
-            reason=reason, created_by=created_by,
-        )
+        with self._engine.begin() as conn:
+            now = _now_iso()
+            # 惰性清过期（对齐内存档 _purge_expired_locked）
+            conn.execute(
+                text(
+                    "DELETE FROM monitoring_silences "
+                    "WHERE tenant_id = :tenant_id AND expires_at <= :now"
+                ),
+                {"tenant_id": self._tenant_id, "now": now},
+            )
+            silence_id = _next_id(conn, "sil")
+            expires = (
+                datetime.fromisoformat(now) + timedelta(minutes=duration_minutes)
+            ).isoformat()
+            conn.execute(
+                text(
+                    "INSERT INTO monitoring_silences "
+                    "(id, tenant_id, rule_id, graph_id, reason, created_by, "
+                    "created_at, expires_at, suppressed_count) "
+                    "VALUES (:id, :tenant_id, :rule_id, :graph_id, :reason, :created_by, "
+                    ":created_at, :expires_at, 0)"
+                ),
+                {
+                    "id": silence_id, "tenant_id": self._tenant_id,
+                    "rule_id": rule_id, "graph_id": graph_id, "reason": reason,
+                    "created_by": created_by, "created_at": now, "expires_at": expires,
+                },
+            )
+            # cap 100：惰性清理后仍超额则淘汰最旧（保留最新 100 条）
+            conn.execute(
+                text(
+                    "DELETE FROM monitoring_silences WHERE tenant_id = :tenant_id AND id IN "
+                    "(SELECT id FROM monitoring_silences WHERE tenant_id = :tenant_id "
+                    "ORDER BY created_at ASC, id ASC LIMIT GREATEST("
+                    "(SELECT COUNT(*) FROM monitoring_silences WHERE tenant_id = :tenant_id) "
+                    "- 100, 0))"
+                ),
+                {"tenant_id": self._tenant_id},
+            )
+            row = conn.execute(
+                text(
+                    f"SELECT {self._SILENCE_COLS} FROM monitoring_silences "
+                    "WHERE tenant_id = :tenant_id AND id = :id"
+                ),
+                {"tenant_id": self._tenant_id, "id": silence_id},
+            ).first()
+        return self._silence_from_row(row)
+
+    def _suppress_if_matched_locked(
+        self, conn: Any, rule_id: str, graph_id: str, now: str
+    ) -> bool:
+        """告警产生路径（在外层事务内）：命中首条活跃静默则 suppressed_count +1 并压下。"""
+        rows = conn.execute(
+            text(
+                f"SELECT {self._SILENCE_COLS} FROM monitoring_silences "
+                "WHERE tenant_id = :tenant_id AND expires_at > :now "
+                "ORDER BY created_at ASC, id ASC"
+            ),
+            {"tenant_id": self._tenant_id, "now": now},
+        ).all()
+        for r in rows:
+            silence = self._silence_from_row(r)
+            if silence_matches(silence, rule_id, graph_id, now):
+                conn.execute(
+                    text(
+                        "UPDATE monitoring_silences SET suppressed_count = suppressed_count + 1 "
+                        "WHERE tenant_id = :tenant_id AND id = :id"
+                    ),
+                    {"tenant_id": self._tenant_id, "id": silence.id},
+                )
+                return True
+        return False
 
     def list_silences(self, active: bool | None = None) -> list[Silence]:
-        return self._ops.list_silences(active)
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    f"SELECT {self._SILENCE_COLS} FROM monitoring_silences "
+                    "WHERE tenant_id = :tenant_id ORDER BY created_at ASC, id ASC"
+                ),
+                {"tenant_id": self._tenant_id},
+            ).all()
+        items = [self._silence_from_row(r) for r in rows]
+        if active is None:
+            return items
+        now = _now_iso()
+        return [s for s in items if is_silence_active(s, now) is active]
 
     def delete_silence(self, silence_id: str) -> bool:
-        return self._ops.delete_silence(silence_id)
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                text(
+                    "DELETE FROM monitoring_silences "
+                    "WHERE tenant_id = :tenant_id AND id = :id"
+                ),
+                {"tenant_id": self._tenant_id, "id": silence_id},
+            )
+            return result.rowcount > 0
+
+    @staticmethod
+    def _oncall_from_row(r: Any | None) -> OnCallSchedule:
+        if r is None:
+            return OnCallSchedule()
+        members = r[1] if isinstance(r[1], list) else list(r[1] or [])
+        return OnCallSchedule(
+            members=members, index=r[2] or 0, updated_at=r[3], updated_by=r[4]
+        )
+
+    def _oncall_row_locked(self, conn: Any) -> Any | None:
+        return conn.execute(
+            text(
+                "SELECT tenant_id, members, rot_index, updated_at, updated_by "
+                "FROM monitoring_oncall WHERE tenant_id = :tenant_id"
+            ),
+            {"tenant_id": self._tenant_id},
+        ).first()
 
     def get_oncall(self) -> OnCallSchedule:
-        return self._ops.get_oncall()
+        with self._engine.connect() as conn:
+            return self._oncall_from_row(self._oncall_row_locked(conn))
+
+    def _current_assignee_locked(self, conn: Any) -> str | None:
+        return current_assignee(self._oncall_from_row(self._oncall_row_locked(conn)))
 
     def set_oncall(self, *, members: list[str], updated_by: str) -> OnCallSchedule:
-        return self._ops.set_oncall(members=members, updated_by=updated_by)
+        # 去重保序、丢弃空白串、重置 index=0（与 OpsStore.set_oncall 同一规整逻辑）
+        deduped = list(dict.fromkeys(m.strip() for m in members if m.strip()))
+        now = _now_iso()
+        with self._engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO monitoring_oncall "
+                    "(tenant_id, members, rot_index, updated_at, updated_by) "
+                    "VALUES (:tenant_id, :members, 0, :updated_at, :updated_by) "
+                    "ON CONFLICT (tenant_id) DO UPDATE SET "
+                    "members = EXCLUDED.members, rot_index = 0, "
+                    "updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by"
+                ),
+                {
+                    "tenant_id": self._tenant_id,
+                    "members": json.dumps(deduped, ensure_ascii=False),
+                    "updated_at": now,
+                    "updated_by": updated_by,
+                },
+            )
+            row = self._oncall_row_locked(conn)
+        return self._oncall_from_row(row)
 
     def rotate_oncall(self, *, updated_by: str) -> OnCallSchedule:
-        return self._ops.rotate_oncall(updated_by=updated_by)
+        now = _now_iso()
+        with self._engine.begin() as conn:
+            schedule = self._oncall_from_row(self._oncall_row_locked(conn))
+            total = len(schedule.members)
+            if total == 0:
+                raise OnCallEmpty("值班表为空，无法轮换")
+            new_index = (schedule.index + 1) % total
+            conn.execute(
+                text(
+                    "UPDATE monitoring_oncall SET rot_index = :rot_index, "
+                    "updated_at = :updated_at, updated_by = :updated_by "
+                    "WHERE tenant_id = :tenant_id"
+                ),
+                {
+                    "rot_index": new_index, "updated_at": now,
+                    "updated_by": updated_by, "tenant_id": self._tenant_id,
+                },
+            )
+            row = self._oncall_row_locked(conn)
+        return self._oncall_from_row(row)
 
     def reset(self) -> None:
         with self._engine.begin() as conn:
@@ -1398,8 +1565,15 @@ class PgMonitoringStore:
                 text("DELETE FROM alert_notify_settings WHERE tenant_id = :tenant_id"),
                 {"tenant_id": self._tenant_id},
             )
+            conn.execute(
+                text("DELETE FROM monitoring_silences WHERE tenant_id = :tenant_id"),
+                {"tenant_id": self._tenant_id},
+            )
+            conn.execute(
+                text("DELETE FROM monitoring_oncall WHERE tenant_id = :tenant_id"),
+                {"tenant_id": self._tenant_id},
+            )
         self._recovery_cooldown.clear()
-        self._ops.reset()
 
 
 class PgRunsStore:

@@ -6,7 +6,8 @@
 - 进程内 MonitoringStore：静默命中抑制并计数、删除/过期恢复、读时惰性升级、值班指派/合并不指派/reset；
 - REST（/api/monitoring/silences、/api/monitoring/on-call）：CRUD、active 过滤、中文 422、权限矩阵、
   轮换取模/空表 409、规则 escalation_ack_minutes 往返。
-- PG（U299，integration）：静默不 INSERT、assignee 进程内关联、读时升级（v1 均不持久化，重启重评幂等）。
+- PG（U299，integration）：docs/59 F-2（迁移 024）起静默/值班/assignee 落 PG、跨重启保留、suppressed_count 落库；
+  读时惰性升级回写 severity/escalated_at。持久化细项另见 U652–U659。
 """
 
 from __future__ import annotations
@@ -463,7 +464,7 @@ def test_u298_rules_escalation_roundtrip():
     os.environ.get("ATLAS_RUN_INTEGRATION") != "1" or not os.environ.get("DATABASE_URL"),
     reason="set ATLAS_RUN_INTEGRATION=1 and DATABASE_URL to run monitoring PG integration",
 )
-def test_u299_pg_silence_assignee_escalation_inprocess():
+def test_u299_pg_silence_assignee_escalation_persisted():
     from pathlib import Path
 
     from sqlalchemy import create_engine, text
@@ -503,13 +504,13 @@ def test_u299_pg_silence_assignee_escalation_inprocess():
     assert alert_count == 0
     assert store.list_silences(active=True)[0].suppressed_count == 1
 
-    # 解除静默 + 值班 a：新告警入库并进程内关联 assignee
+    # 解除静默 + 值班 a（index=0）：新告警入库，assignee 落 PG 列
     store.delete_silence(store.list_silences()[0].id)
     _failed_node_run(store)
     alerts = store.list_alerts()
     assert len(alerts) == 1 and alerts[0].assignee == "a"
 
-    # 升级：配置 1 分钟 + first_seen 拨到过去，读时惰性升级（不写 PG）
+    # 升级：配置 1 分钟 + first_seen 拨到过去，读时惰性升级并回写 PG
     store.update_rules(_valid_rules(1))
     with engine.begin() as conn:
         conn.execute(
