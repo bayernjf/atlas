@@ -1,6 +1,6 @@
 # 编译诊断定位 / 审批历史 PG / 审计过滤分页 / 影子运行 PG / 口径勘误 v1 批契约设计（打包 H）
 
-> **✅ 落码收口注记（2026-09-25，打包 H 五项全部落码，dev 未 push；本注记为最终事实，与下文正文冲突处以本注记为准）**
+> **✅ 落码收口注记（2026-09-25，打包 H 五项全部落码；push 状态唯一权威见 handoff 顶部收口块（本批 9 提交已在 origin/dev、8 个待 push）；本注记为最终事实，与下文正文冲突处以本注记为准）**
 >
 > **提交链（15 个提交自 `8ba3a29` 起，逐项 feat/test/docs 分原子）**：H1 `adb9b7c`(fix 定位 bug) → `bbb9a2c`(feat) → `eea76ad`(test)；H2 `33a5998`(feat) → `528f6b1`(test) → `e380f0b`(feat frontend 投影)；H3 `8a9f7df`(feat 后端) → `36a3cbb`(feat 前端) → `a07794c`(test)；H4 `2bb6d3c`(feat) → `3eac4af`(test)；H5 `55c1553`(docs 注释勘误)；立项与其后两条 git 状态注记共 3 个 docs 提交。
 >

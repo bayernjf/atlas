@@ -4,7 +4,7 @@
 
 ## [Unreleased]
 
-### feat：编译诊断逐条定位 / 已决审批历史 PG / 审计过滤分页 / 影子运行 PG / 口径勘误落码收口（docs/61，打包 H，2026-09-25；dev、未 push；零新依赖、迁移 027·028、无 ADR、零新 REST 端点·错误码；D11/D20/D26 部分取回不解除）
+### feat：编译诊断逐条定位 / 已决审批历史 PG / 审计过滤分页 / 影子运行 PG / 口径勘误落码收口（docs/61，打包 H，2026-09-25；push 状态见 handoff 顶部收口块；零新依赖、迁移 027·028、无 ADR、零新 REST 端点·错误码；D11/D20/D26 部分取回不解除）
 
 - **H1 编译 422 诊断逐条定位（`adb9b7c`/`bbb9a2c`/`eea76ad`，后端零改动）**：后端 422 body 早已带 `locations` 稀疏侧车（`{index,nodeId,pointer}`），但 `apiClient` 只读 `detail/codes/params`、侧车被整个丢弃且逐条映射被 join 成单串 —— M2 设计的定位能力从未被消费。本批增 `CompileIssue`/`buildCompileIssues`（以 detail 下标为主键、codes·params 非等长整列忽略、越界与非对象条目丢弃）与 `CompileValidationError`（**`message` 仍为既有 join 串、逐字一致**，toast/日志/断言零回归）；快照落 `validationStore`（该文件自述即「校验结果汇聚处」）并记下当时 `computedRevision`，**引擎一重算（＝图已变更）即整体隐藏**，严于契约原「仅切图时清」口径；Problems 面板按 `(nodeId,pointer,code)` 三元组去重、本地优先（本地实时且带 quickFix）、后端存活条目加「后端编译 / Backend compile」Tag，定位复用既有 `[data-pointer]` 精确·前缀匹配＋闪烁；诊断只存 code/params/中文兜底、**渲染期**解析故切语言自动重算，不新增 i18n 键（170 编译码已在 `validation.dsl`）。
 - **顺带修掉 M4 既有 bug（单独 `fix` 原子）**：Problems 面板「点击定位闪烁字段」**从未生效**——`.side-card` 被节点面板/变量面板/属性面板共用，`document.querySelector('.side-card')` 恒命中节点面板，而 `[data-pointer]` 锚点只在属性面板表单里；且原实现只在 `selectNode` 后固定等 60ms 查一次、查不到静默返回。改为逐面板查找＋有界重试 1.2s。由 H1 冒烟首轮「闪烁字段 0 个」暴露。
