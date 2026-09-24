@@ -1062,6 +1062,28 @@ export async function updateRules(rules: RuleConfig): Promise<RuleConfig> {
   return request('/api/monitoring/rules', { method: 'PUT', body: JSON.stringify(rules) })
 }
 
+/** docs/59 F-1：内置只读告警规则模板（列表投影不含 config）。 */
+export type AlertRuleTemplateSummary = {
+  id: string
+  name: string
+  description: string
+  tags: string[]
+}
+
+export type AlertRuleTemplate = AlertRuleTemplateSummary & {
+  /** 完整 RuleConfig，可直接交给 updateRules 全量替换（一键应用）。 */
+  config: RuleConfig
+}
+
+export async function getAlertRuleTemplates(): Promise<AlertRuleTemplateSummary[]> {
+  const body = await request<{ items: AlertRuleTemplateSummary[] }>('/api/alert-rule-templates')
+  return body.items
+}
+
+export async function getAlertRuleTemplate(id: string): Promise<AlertRuleTemplate> {
+  return request(`/api/alert-rule-templates/${encodeURIComponent(id)}`)
+}
+
 export type AlertChannelKind = 'dingtalk' | 'wecom' | 'feishu' | 'webhook' | 'email'
 export type AlertMinSeverity = 'critical' | 'warning'
 
