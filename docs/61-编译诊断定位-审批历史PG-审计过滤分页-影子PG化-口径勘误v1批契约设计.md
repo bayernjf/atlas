@@ -1,10 +1,34 @@
 # 编译诊断定位 / 审批历史 PG / 审计过滤分页 / 影子运行 PG / 口径勘误 v1 批契约设计（打包 H）
 
-> 立项时间：2026-09-26。AI 承接「打包 1–5 先做，出一份 docs-only 契约立项」授权。docs-only 契约先行，落码按本文 §9 原子序。
+> **✅ 落码收口注记（2026-09-25，打包 H 五项全部落码，dev 未 push；本注记为最终事实，与下文正文冲突处以本注记为准）**
+>
+> **提交链（15 个提交自 `8ba3a29` 起，逐项 feat/test/docs 分原子）**：H1 `adb9b7c`(fix 定位 bug) → `bbb9a2c`(feat) → `eea76ad`(test)；H2 `33a5998`(feat) → `528f6b1`(test) → `e380f0b`(feat frontend 投影)；H3 `8a9f7df`(feat 后端) → `36a3cbb`(feat 前端) → `a07794c`(test)；H4 `2bb6d3c`(feat) → `3eac4af`(test)；H5 `55c1553`(docs 注释勘误)；立项与其后两条 git 状态注记共 3 个 docs 提交。
+>
+> **三道门实跑**：后端内存档 **1799 passed / 105 skipped / 0 failed**（213.73s；基线 1758/86，净增 41 常跑＋19 PG skip）；PG 直连（approval history＋shadow＋audit filters＋原六文件）**89 passed**（迁移 027/028 由 `storage/migrations.py` glob+sorted 自动 apply，`scripts/ops/apply_migrations.py` 已登记 028）；前端 vitest **720 passed / 2 skipped / 53 文件**（基线 694/2/52，净增 26 测：compileDiagnostics 15＋auditFilters 9＋approvals ISO 2）、tsc 0 error、oxlint **0 error / 6 既有 warning（零新增）**、`pnpm build` 过。**bundle 代价**：`1708.29 kB → 1822.37 kB`（gzip 529.73 → **565.62 kB**，+112 kB/+35.9 kB gz），全部来自 H3 首次引入 AntD `DatePicker.RangePicker`（连带 dayjs 与 picker 样式）；chunk>500 kB 为既有提示。**已接受此代价**（审计页是 admin 低频页、区间筛选价值高于体积），如需回退改原生 `datetime-local` 输入即可零增量。
+>
+> **冒烟**：`scripts/dev/h1_diagnostics_smoke.py` **12/12**（真 :8000+:5174，模板载入→只清空 `/summary`→「编译并运行」触发运行前编译 422→Problems 面板出现带「后端编译」标记的逐条条目与 RFC6901 pointer→点击命中字段闪烁→英文态 chrome 全英文、残留汉字仅业务数据；4 截图 `docs/assets/h1-*.png`；绕开画布连线，见 docs/46 该限制记录；连跑 13 次、末 9 次全绿，早期一次为语言下拉点击竞态，已改为开合重试）。`scripts/dev/h3_audit_filters_smoke.py` **16/16**（HTTP 层：actor 精确、Z 后缀 since、游标第二页不重叠、非法 since→422 中文；UI 层：自铺 120 条写操作使默认 100 条页真有下一页→「加载更多」100→200 行且 id 无重复、不存在 actor 出空态、控制台零应用错误；4 截图 `docs/assets/h3-*.png`）。H2/H4 以 PG 直连「新 store 实例读同一库」等价验证跨重启可见（未跑真实容器重启）。
+>
+> **本批挖出并修掉的既有 bug（非本批引入）**：M4 的 Problems 面板「点击按 pointer 定位并闪烁字段」**从来没生效过**——`.side-card` 被节点面板/变量面板/属性面板共用，`document.querySelector('.side-card')` 恒命中节点面板，而 `[data-pointer]` 锚点只存在于属性面板表单内；且原实现只在 `selectNode` 后固定等 60ms 查一次、查不到静默 return。修法＝`findFieldAnchor` 逐面板查找（`ProblemsPanel.tsx:26`）＋有界重试 1.2s（`:19` `FLASH_RETRY_MS`、`:55`）。由 H1 冒烟首轮「闪烁字段 0 个」暴露。
+>
+> **落码偏差（6 条，均已在所在文档同步；锚点为落码后实测行号）**：
+> ① **H1 快照落位改 `validationStore`、陈旧判定改 revision 门控**（正文 §2.2 写 `editorStore` + 「编译成功/切图/图变更显式清」）。理由＝`validationStore.ts:1-5` 自述是「校验结果在此汇聚」，且只有它能读 `computedRevision`。现＝`serverIssues`＋`serverIssuesRevision`（`validationStore.ts:23/25`），写入时记下当时的 `computedRevision`（`:73`），`useProblems` 一旦发现引擎重算（＝图已变更）即整体隐藏后端快照（`:102`）。**严于**正文口径：任何编辑都失效，不只是 loadGraph；编译失败仍整体替换、每次尝试开始处显式清（`Editor.tsx` run 起始）。
+> ② **H1 用 `DiagnosticLayer` 加 `'server'` 值**（正文 §2.3 写 `source: 'server'`）——共用既有 `Diagnostic` 判别轴，避免平行字段。
+> ③ **H1 给 `t()` 新增可选 `lng`**（正文未提）。动机＝oxlint `react-hooks/exhaustive-deps` 正确指出「`language` 是 memo 的**多余依赖**」：语言在 memo 内是**隐式全局读**，依赖是假的。改为渲染路径显式传语言（`locales/index.ts:51` 加 `lng?: Locale`、`:216` `options?.lng ?? language`；`apiClient.ts:118` `compileIssueMessage(issue, lng)`），语言成为真依赖、缺省行为对全部既有调用方零变化。
+> ④ **H2 落定点是两个方法共享 `_record_history`**（正文 §3.4 字面「单一落定点」）。实测四类决策来源已全部收敛进 `resolve()`（人工 REST／邮件一键决策／run inputs 预置）与 `complete_timeout()`（超时），故两处各调一次共用 helper（`approvals.py:154/174`，helper `:194`，锁外写、异常只 warning）；`list_decided` 纯委托 store（`:238`），`reset` 连带清历史（`:273`）。§3.3 预告的**破坏性投影变更已执行**（`createdAt` float→UTC ISO＋新增 `resolvedAt`）：实测消费点确实只有 `pages/Approvals.tsx`「已处理」Tab 一处，未触发退化预案；`formatCreatedAt` 改为同时接受 epoch 秒与 ISO 串（pending Tab 仍拿 float）。
+> ⑤ **H3 `list()` 保持返回 `list`、`nextCursor` 在 API 层推导**（正文 §4.1 写返回 `(items, nextCursor)`）——tuple 会打破 3 个现有调用点（2 个测试＋1 个端点）。现＝`main.py:570` 满页才给下一页游标。参数名 store 层沿用既有 `action_prefix`、HTTP 层仍是 `action`。
+> ⑥ **H3 时间边界按时刻比、不按 TEXT 字典序**（正文 §4.1 写「TEXT 字典序即时间序」）。该前提**只是侥幸成立**：`now_iso()` 在微秒为 0 时会省略小数位，`"+00:00"` 与 `".500000+00:00"` 的字典序恰好同向，属隐式依赖；且前端 `Date.toISOString()` 带 `Z` 后缀、与存储侧 `+00:00` 不可直比。现＝`audit.py:51 parse_bound`（接受 Z、naive 按 UTC）两档统一按 aware datetime 比；PG 侧走 `at::timestamptz >= CAST(:since AS timestamptz)`（`pg.py:2103/2106`，绑参必须 CAST 形式，`:x::type` 会被 SQLAlchemy 当参数名吃掉——照 M11 教训）。游标 `seq < :cursor`（`pg.py:2098`）。
+> ⑦ **H4 `inputs` 列改为可空 JSONB**（正文 §5.2 写 `NOT NULL DEFAULT '{}'`）——内存档把「无入参」存 `None`，落成 `{}` 会让两档在前端留空的那个字段上投影分叉；`pg_shadow.py:98` 原样存 NULL，并有一条专门的对拍用例锁死（`test_null_inputs_stays_null_across_tiers`）。
+>
+> **测试初稿自误 4 处（均为改测试、产品正确，留痕防「测试即规格」误读）**：H2 两条把 `createdAt` 仍按 float 断言（ISO 变更预期内，已改判 ISO 可解析＋`resolvedAt >= createdAt`）；H3 翻页用例漏算 fixture 内 login 自身那条审计＋末页 `nextCursor=null` 时又请求了一页；H3 `_entry`/PG 租户参数各写错一次；H4 夹具用了分类器不认的工具名 `shop/create_refund` 并期望 `match=True`（`_refund_class` 只认 `shop/execute_refund` 等，且无人工结果时 `match` 恒为 `None`）。
+>
+> **未解除缓做、余部不变**：D12 i18next/navigator 探测/复数、D13 元数据多语言、D20 pending 挂起 PG 化之外的多实例决策竞态·评论流·动态审批人、D11 SIEM·保留归档·`resource_id` 维度·给 GET 补记审计、D26 影子自动旁路·SSE·报表趋势·跨租户共享、D22 YAML/oauth2。
+
+> 立项时间：2026-09-25。AI 承接「打包 1–5 先做，出一份 docs-only 契约立项」授权。docs-only 契约先行，落码按本文 §9 原子序。
+
 > 部分取回 docs/14 的 D11 / D20 / D26 余部，并收口 docs/20 M2 的 `locations` 侧车契约遗留；**全部进程内/单库可闭环、零外部资源、零新依赖（不引 PyYAML/定时器/OTel/SIEM 客户端），新增迁移 027/028，不新增 ADR，不解除任何缓做条目**。
 > 本文是打包 H 五项的唯一形状权威；与既有契约冲突以 01–08 规格文档为准，落码偏差在「落码收口注记」回填。
 
-## 0. 已核实的现状缺口（2026-09-26 对活代码）
+## 0. 已核实的现状缺口（2026-09-25 对活代码）
 
 | 项 | 现状（磁盘核实） | 缺口 |
 |---|---|---|
