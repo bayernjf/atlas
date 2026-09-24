@@ -158,3 +158,14 @@
 - **风险**：webhook 序列化由 httpx 默认改为紧凑 UTF-8，旧接收方若做了「字节级」而非「JSON 语义」比对会感知变化——Demo 期无已知接收方，且仅签名场景（新能力）启用新字节形态；未签名场景同样切换为确定性序列化（全渠道一致，避免同 payload 字节不稳定），JSON 语义等价。
 - **风险**：企微 markdown `<@all>` 无官方直接示例——逐字节测试只锁定我方构造，真实效果以客户群实测为准；交付文档（TRIAL/渠道说明）中注明 text 模式的 mentioned_list `"@all"` 是官方明文路径，对 @所有人可靠性要求高的场景建议用 text。
 - 回滚：纯后端增量（新参数全有默认值），回滚到上一 commit 即恢复 text/单 URL/无签名形态；无迁移、无数据形态变化。
+
+---
+
+## 落码收口注记（2026-09-24）
+
+E-1/E-2/E-3 全部落码收口（E-3 由另一会话起、本会话接力验证）：
+
+- E-1 webhook HMAC `83d373a`、E-2 IM markdown/@人 `4f2b39a`、E-3 多 URL 群发（feat 原子见 git log）。
+- E-3 实现：`MessageService._fan_out(transmit_one, label)`——逐 URL 调单目标 transmit（单目标内退避重试原样复用 docs/56），per-URL DeliveryRecord（`to` 钉该单 URL）；`EGRESS_*` 首目标即抛 fail-fast（次目标不发），投递类错误 best-effort 发完其余、聚合抛「群发部分失败 N/M」；全成才置 delivered 并写 `_messages`，部分失败不写。webhook 同一 payload（含同 id 幂等键）对每目标用同一密钥各签一次。
+- 验证：message IM/webhook 两文件 **96 passed**；后端全量内存门 **1713 passed / 69 skipped**（E-2 1709 净增 4，零失败，以收口实跑为准）；`.smoke/im_robot_smoke.py` **ALL PASS: 27 checks**（fan-out 全成/per-URL 记录/部分失败聚合/EGRESS fail-fast ＋ B 层 loopback 拦截/数组 fail-fast/email·unknown 零回归）。前端本批零改动（schema 驱动表单自动呈现 msgFormat/mentions，条件原子未触发）。
+- 零新依赖/零迁移/无新 REST·ADR；D24 部分取回、不解除。仍缓做：短信、IM 应用 OAuth/入站、模板系统、群发层整体重试、真实平台联调，触发条件不变。

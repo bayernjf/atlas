@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### feat：webhook 出站 HMAC 签名 / IM markdown 富文本@人 / webhook·IM 多 URL 群发落码收口（docs/58，打包 E，2026-09-24；dev、未 push；后端、零新依赖/零迁移、无 ADR）
+
+- E-1 webhook 开放 secret、DefaultWebhookSender 紧凑 UTF-8 确定性序列化，附 `X-Atlas-Timestamp` / `X-Atlas-Signature: sha256=<hex>`（基串 `{ts}\n{raw}`），无 secret 不发头（`83d373a`）。
+- E-2 ImSender 支持 `msgFormat=text|markdown` 与 `mentions`（userIds/mobiles/atAll），钉钉/企微/飞书三家富文本与 @人消息体对齐官方文档，normalize_mentions 去重保序（`4f2b39a`）。
+- E-3 webhook/IM `to` 放开为 1-20 个 URL 数组：`MessageService._fan_out` 逐 URL 投递、per-URL DeliveryRecord，EGRESS 拦截 fail-fast、投递错误 best-effort 发完聚合，全成才写 _messages；webhook 同一幂等 id 对每目标各签一次。message 两文件 **96 passed**、后端全量 **1713 passed / 69 skipped**（净增 4、零失败，以收口实跑为准）、im smoke **ALL PASS 27 checks**；前端本批零改动。D24 部分取回、不解除；短信/IM 应用 OAuth·入站/模板系统/真实平台联调仍缓做。
+
 ### feat：i18n en-US 首批全量翻译/语言切换/发布协作与审批属性面板组件抽取落码收口（docs/57，打包 D，2026-09-24；dev、未 push；纯前端、零新依赖、后端零改动、无 ADR）
 
 - D12/D13 部分取回、不解除。五步原子序：立项 `44b6c89` → D-1 全量翻译 `39328f0` → D-2 切换运行时 `aca379c` → D-3 四组件补抽 `2a5fb9f` → D-4 冒烟扩范围补抽 `d05e265` → docs 收口。①**en-US 全量翻译**：10 个非空 namespace（common/dashboard/editor/monitoring/memory/connections/channels/approvals/audit/openapi，demo 仍空）与 zh-CN 结构一一对齐，品牌名 Atlas Operations Orchestration Platform，技术专名（Atlas/Graph/Loop/Harness/OODA/SSE/P50/P95/webhook/HMAC/canary/rollout 等）不译，教学花括号 token 按 docs/57 §2.3 处理，省略号统一英文 `...`。②**语言切换运行时**：`readStoredLocale(storage?)` 纯函数 + 模块初始化读回 localStorage `atlas.locale`；新建 `locales/antdLocale.ts`（useSyncExternalStore，静态 import antd zh_CN/en_US，index.ts 保持零 UI 库依赖），App.tsx 三处 ConfigProvider 全注 locale；UserBadge 账户菜单纯文本语言组（selectable+selectedKeys）、Login 页脚两个 link Button（当前语言 disabled）。③**四组件补抽**：ReleaseModal→editor.release.*、RolloutModal→editor.rollout.*（含 GATE/SEGMENT/STATUS meta label）、FeedbackButton→common.feedback.*、CardRenderer→approvals.card.*。④**D-4 浏览器冒烟两次扩范围（计划外）**：Approvals.tsx（41 处）/EmailApproval.tsx（19 处）两整页接 useTranslation('approvals')（复用既有零引用孤儿键＋补缺键）；属性面板/表单引擎/画布约 84 处（AtlasNode/ProblemsPanel、Condition/HumanApproval/Loop/Parallel/Subgraph 标题、WaitConfig 全文、ToolCallConfig、FormRenderer 数组/键值行、nodeWidgets、widgets），editor 新增 problems/nodeTitles/tool/wait/form/nodePicker/widget 7 块约 120 键。
