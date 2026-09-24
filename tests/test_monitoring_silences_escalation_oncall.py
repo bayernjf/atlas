@@ -522,4 +522,6 @@ def test_u299_pg_silence_assignee_escalation_persisted():
     upgraded = store.list_alerts()[0]
     assert upgraded.severity == "critical" and upgraded.escalated_at is not None
 
+    # docs/59 F-2：静默/值班/告警已落 PG，结尾清理本测试专用 tenant，避免残留
+    store.reset()
     engine.dispose()
