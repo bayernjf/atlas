@@ -1,14 +1,17 @@
 """打包 H H3 浏览器冒烟：审计页 actor/时间过滤与游标加载更多（真实 :8000+:5174，admin-a）。
 
-审计页只有读操作与查询参数，无需连画布；重点验证三件 UI 事实：
-actor 精确过滤生效、时间区间不改变行数也不炸（边界换算走 UTC）、
-游标「加载更多」存在时点一次能追加且不出现重复行。
+审计页只有读操作与查询参数，无需连画布。重点验证四件事：
+actor 精确过滤生效；时间边界**双向**验真（设未来 since 必须掉到 0 行、设过去 since 必须回到
+有数据，只测「控件能打开」证明不了值打到后端）且送出的是换算后的 UTC ISO；
+游标「加载更多」存在时点一次能追加且不出现重复行；不存在的 actor 走空态。
 """
 import json
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
+from datetime import datetime, timedelta, timezone
 
 BASE = "http://localhost:5174"
 API = "http://localhost:8000"
@@ -171,11 +174,48 @@ def main() -> int:
         page.screenshot(path=f"{SHOTS}/h3-4-empty-filter.png", full_page=True)
 
         # 时间区间：选一个必然落在未来的区间 → 应空态且不炸
-        page.get_by_placeholder("起始时间").click()
-        page.wait_for_timeout(600)
-        check(page.locator(".ant-picker-panel").count() > 0, "时间区间选择器可打开")
-        page.keyboard.press("Escape")
-        page.wait_for_timeout(400)
+        # 时间边界：原生 datetime-local，必须**双向**验真——只测「能打开」证明不了值打到后端。
+        def time_input(label: str):
+            return page.locator("label.audit-time-label", has_text=label).locator("input")
+
+        # 先清掉上一步的 actor 过滤，否则「0 行」可能是 actor 造成的、不是 since（假绿）。
+        actor_box.fill("")
+        page.get_by_role("button", name=re.compile(r"筛\s*选")).click()
+        page.wait_for_timeout(2000)
+        baseline_rows = page.locator(".ant-table-row").count()
+        check(baseline_rows > 0, f"清 actor 后回到 {baseline_rows} 行，作为时间过滤的基线")
+
+        since_box = time_input("起始时间")
+        until_box = time_input("截止时间")
+        check(since_box.count() == 1 and until_box.count() == 1, "两个原生时间边界输入存在")
+
+        seen_urls: list[str] = []
+        page.on("request", lambda r: seen_urls.append(r.url) if "/api/audit/events" in r.url else None)
+
+        future = (datetime.now(timezone.utc) + timedelta(days=365)).strftime("%Y-%m-%dT%H:%M:%S")
+        since_box.fill(future)
+        page.get_by_role("button", name=re.compile(r"筛\s*选")).click()
+        page.wait_for_timeout(2000)
+        check(page.locator(".ant-table-row").count() == 0, "未来 since → 0 行（区间真生效）")
+        check(any("since=" in u for u in seen_urls), "请求确实带出 since 参数")
+        sent = next((u for u in seen_urls if "since=" in u), "")
+        sent_value = urllib.parse.unquote(sent.split("since=")[-1].split("&")[0]) if sent else ""
+        # 本地 datetime-local 串必须已换算成带时区偏移的 UTC ISO，而不是裸本地串。
+        check(sent_value.endswith("+00:00") and "T" in sent_value,
+              f"since 以 UTC ISO 送出：{sent_value}")
+        page.screenshot(path=f"{SHOTS}/h3-5-future-since-empty.png", full_page=True)
+
+        seen_urls.clear()
+        # 不用 2000-01-01：Chromium 的 datetime-local 会把超出其合法年份范围的串判为 Malformed value。
+        past = (datetime.now(timezone.utc) - timedelta(days=365)).strftime("%Y-%m-%dT%H:%M:%S")
+        since_box.fill(past)
+        until_box.fill((datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S"))
+        page.get_by_role("button", name=re.compile(r"筛\s*选")).click()
+        page.wait_for_timeout(2200)
+        rows_now = page.locator(".ant-table-row").count()
+        check(rows_now > 0, f"过去 since + 未来 until → 回到 {rows_now} 行（非单向假绿）")
+        check(bool(seen_urls), "第二次筛选仍发出请求")
+        page.screenshot(path=f"{SHOTS}/h3-6-past-since-rows.png", full_page=True)
 
         noisy = [
             text
