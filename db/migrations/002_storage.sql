@@ -157,3 +157,23 @@ CREATE TABLE IF NOT EXISTS monitoring_oncall (
     rotation_interval_days INTEGER NULL,
     last_rotated_at TEXT NULL
 );
+
+-- 消息投递日志（docs/60 §6 G5；增量迁移见 025_message_deliveries.sql）
+-- 群发逐目标多条共享消息 id，行唯一键用 (tenant_id, seq)。
+CREATE TABLE IF NOT EXISTS message_deliveries (
+    tenant_id     TEXT NOT NULL,
+    id            TEXT NOT NULL,
+    seq           BIGINT NOT NULL,
+    channel       TEXT NOT NULL,
+    to_targets    JSONB NOT NULL,
+    subject       TEXT NOT NULL DEFAULT '',
+    status        TEXT NOT NULL,
+    attempts      INTEGER NOT NULL,
+    elapsed_ms    INTEGER NOT NULL,
+    error_code    TEXT,
+    error_message TEXT,
+    sent_at       TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (tenant_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_message_deliveries_seq
+    ON message_deliveries (tenant_id, seq DESC);
