@@ -219,6 +219,8 @@ type Diagnostic = {
 ```
 > 后端 compile 422 形状微调（见 12 `/api/graphs/{id}/compile`、06 §6.13）：`detail: string[]`（中文文案/顺序/状态码不变）之外增稀疏侧车 `locations?: Array<{ index: number; nodeId?: string; pointer?: string }>`，index 对齐 detail 下标；图级错误（version/空图/连线/重复 id/全局变量）不出条目。不引入 Python 版 schema 解释器；运行期插值 fail-soft 不变。U37（前端）/U38（后端侧车）为候选用例。
 
+> **2026-09-24 错误码化（docs/17 §2.4）**：编译错误 `Issue` 升级为 `(message, location, code, params)` 四元组；compile/保存 422 响应在 `detail: string[]`（中文 message，保留作日志/兜底）与稀疏 `locations?` 之外，**新增与 detail 严格等长的 `codes: string[]` 与 `params: object[]`**（图级错误同样占下标；locations 仍只含有可定位错误、保持稀疏）。共 170 个编译码（前缀 GRAPH_/DSL_/NODE_/EDGE_/VARIABLE_/COND_/LOOP_/PAR_/WAIT_/SUB_/SUBREF_/APR_/REF_，兜底 GRAPH_VALIDATION_FAILED）；节点级 params 含 `owner`（出错节点 id），业务键 `nodeId` 表被引/未配置节点。前端按 `validation.dsl.<code>` 映射，缺键回退该条中文 detail。契约权威：错误码→params 键→zh/en 模板以 `frontend/src/locales/{zh-CN,en-US}/validation.json` 的 `dsl` 块与 `graph/dsl.py`、`graph/loader.py` 源码为准。
+
 
 ### `form_renderer` — 字段概览（M3 2026-09-16 立项、**2026-09-17 落码收口（2de5053→6d4a863）**；权威见 08 M3 立项条+落码条与 04 §4.10，落码承载 `frontend/src/lib/forms/`；ADR T17 见 10 §4）
 

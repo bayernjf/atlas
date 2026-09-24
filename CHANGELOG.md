@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### feat：Graph DSL 编译 422 错误列表码化＋前端按 code i18n（docs/17 §2.4，i18n 第二批债，2026-09-24；dev、未 push；前后端、零新依赖/零迁移、无 ADR）
+
+- D12 部分取回、不解除。**契约演进**：编译错误 `Issue` 由 `(message,location)` 二元组升级为 `(message,location,code,params)` 四元组，`_Issues` 增全量等长 codes/params（locations 仍稀疏），`GraphValidationError`/`validate_graph_report()` 同步（缺省兜底码 `GRAPH_VALIDATION_FAILED`）；中文 message 全量保留作日志/兜底，既有中文断言零改动。
+- **后端（`94a7cb6`）**：dsl.py 图级/condition/loop/parallel/wait/subgraph/human-approval/template-ref/data-cycle 与 loader.py 跨图 SUBREF 共 **170 个编译码**全量码化（前缀 GRAPH_/DSL_/NODE_/EDGE_/VARIABLE_/COND_/LOOP_/PAR_/WAIT_/SUB_/SUBREF_/APR_/REF_）；节点级 params 统一注入 `owner`=出错节点（区别业务键 nodeId=被引/未配置节点），loader 深层子图错误 owner=最外层子图节点；API 编译/保存 422 在 detail/稀疏 locations 外并行下发与 detail 等长的 `codes`/`params`（向后兼容）。
+- **前端（`cd3225c`）**：`apiClient.resolveValidationList` 逐下标按 `validation.dsl.<code>` 映射并插值（数组 join(', ')、审批分支 approved/rejected 插值前本地化、缺键/无 code 回退该条中文 detail、绝不泄漏 i18n key），`resolveErrorMessage` 贯通 request/login 两路径；zh/en validation.json 各增 `dsl` 块 172 键（170 码+`_branch_approved/_branch_rejected`），en dsl 零汉字、zh/en 键集合对齐。
+- 测试：后端新增 15 例（test_graph_dsl_codes 13：兜底码/坏 JSON/四元组等长/六类节点代表码/params/REF 走 check_refs/COND 透传/数据环白盒＋不变量；test_api_graph_error_codes 2：422 codes/params 等长与字段），旧 test_validation_locations/test_graph_ref_validation 适配四元组解包；前端新增 dslErrorI18n 6 例（中文映射、英文无汉字、数组 join、多错误分隔、审批分支中文、无 code/未知 code 回退）。
+- 收口门（实跑）：后端全量 **1728 passed / 69 skipped / 0 failed**（基线 1713＋15）、前端 vitest **669 passed / 2 skipped**（基线 663＋6）、oxlint **0 error / 6 既有 warning**、`pnpm build` 过、graph/api PG 集成 **29 passed**、live HTTP smoke（10 错误 codes/params/detail 等长、owner/数组/稀疏 locations 正确）、英文态浏览器冒烟（清空 AI prompt 触发编译失败，toast/调试台/属性面板全英文无汉字）。
+- 显式遗留（后续小批，不解除缓做）：condition/loop 表达式**求值**错误（`graph/conditions.py` ConditionEvalError）经 `params.detail` 透传、英文态混中文；运行时 wait 失败 5 码（`loader.WaitNodeFailure`，走运行失败通道非编译 422）未入 dsl locale；节点目录 label/description、模板元数据多语言（D13）。
+
+
 ### feat：后端认证错误码化＋前端 L1 校验诊断 i18n 收口（docs/17 §2.4，i18n 第一批债，2026-09-24；dev、未 push；前后端、零新依赖/零迁移、无 ADR）
 
 - D12 部分取回、不解除。①**后端认证错误码化**：`iam/deps.py` 新增 code 常量与 `auth_error()`，detail 形状 `{code,message}`——login 用户/口令错 401 `AUTH_INVALID_CREDENTIALS`、账号停用 403 `AUTH_ACCOUNT_DISABLED`、缺凭证 401 `AUTH_UNAUTHENTICATED`、角色不足 403 `AUTH_FORBIDDEN`；中文 message 保留作日志/默认。跨租户 404 故意不区分「不存在/越权」（防资源泄漏），不补 code，故 `AUTH_NOT_FOUND` 未落码。②**前端认证错误 i18n**：common 补 `error.auth.accountDisabled`、`error.requestFailed`，`apiClient.resolveErrorMessage` 按 code 映射 `error.auth.*`（数组 join、对象按 code、无映射取 message、再退 requestFailed）。③**L1 校验诊断全量 i18n**：新建 `validation` namespace（zh/en 82 叶子键对齐、en 零汉字）并注册，`l1.ts` FALLBACK_MESSAGES 改 FIELD_MESSAGE_KEYS，约 80 条用户可见中文（fallback/schemaFieldMessage/约 40 处 fieldDiag）全 t() 化、用户可见中文清零；`engine.invalidateForLocale()` 清全部签名缓存，`useValidationEngine` 订阅语言并全量重算 L1/L2/L3，ToolCallConfig 参数诊断同步重算。
