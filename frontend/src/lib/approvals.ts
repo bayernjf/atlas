@@ -30,7 +30,13 @@ export function formatRemaining(seconds: number): string {
 }
 
 /** epoch 秒 → 本地时间字符串（队列「创建时间」列）。 */
-export function formatCreatedAt(epochSeconds: number): string {
-  if (!epochSeconds) return ''
-  return new Date(epochSeconds * 1000).toLocaleString()
+/**
+ * 兼容两种时刻形状：pending 投影的 float epoch 秒，与已决历史的 UTC ISO-8601 串
+ * （docs/61 §3.3——已决 createdAt 改 ISO、并新增 resolvedAt）。
+ */
+export function formatCreatedAt(value: string | number): string {
+  if (typeof value === 'number') return value ? new Date(value * 1000).toLocaleString() : ''
+  if (!value) return ''
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString()
 }

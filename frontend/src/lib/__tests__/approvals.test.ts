@@ -67,4 +67,14 @@ describe('formatCreatedAt', () => {
     const formatted = formatCreatedAt(1_700_000_000)
     expect(formatted).toContain('2023')
   })
+
+  // docs/61 §3.3：已决审批历史的 createdAt/resolvedAt 改为 UTC ISO-8601 串。
+  it('formats a UTC ISO string', () => {
+    expect(formatCreatedAt('2023-11-14T22:13:20+00:00')).toContain('2023')
+  })
+
+  it('returns empty for an ISO string that is absent, and the raw text when unparsable', () => {
+    expect(formatCreatedAt('')).toBe('')
+    expect(formatCreatedAt('not-a-date')).toBe('not-a-date')
+  })
 })

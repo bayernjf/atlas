@@ -21,7 +21,8 @@
     "actions": "Actions",
     "decision": "Decision",
     "source": "Resolved by",
-    "comment": "Comment"
+    "comment": "Comment",
+    "resolvedAt": "Resolved at"
   },
   "source": {
     "human": "Handled by a human",

@@ -635,7 +635,9 @@ export type DecidedApprovalItem = {
   decision: 'approved' | 'rejected'
   resolvedBy: 'human' | 'email-link' | 'timeout' | 'input'
   comment: string
-  createdAt: number
+  /** 已决历史为 UTC ISO-8601 串（docs/61 §3.3）；pending 投影仍是 float epoch 秒。 */
+  createdAt: string
+  resolvedAt: string
   cardTemplateId?: string
 }
 
