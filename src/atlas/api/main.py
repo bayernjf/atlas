@@ -1762,7 +1762,9 @@ def list_all_release_reports(
 ) -> dict[str, Any]:
     """跨图批量回放报告看板（docs/28 §2.4）：倒序摘要，不含 cases，read 角色。
 
-    limit 默认 100、上限 200（非整数 query 由 FastAPI 422）；报告进程内 ring 不 PG 化。
+    limit 默认 100、上限 200（非整数 query 由 FastAPI 422）；报告两档：内存 ring 100 /
+    PG 表 `release_reports`（迁移 022 已落库，PG 档不做 ring 淘汰），原「不 PG 化」口径过时
+    （docs/61 §6 H5 勘误）。
     """
     services = services_for(principal)
     bounded = max(1, min(limit, 200))

@@ -70,11 +70,13 @@ class Alert(BaseModel):
     last_run_id: str
     # M9 纯超集：仅 rollout_gate 告警携带自动回滚动作 {type,from_version,to_version,reason,actor}
     action: dict | None = None
-    # docs/28 §4.2 ⑨：自定义规则名（内置规则缺省 None；PG 档 v1 不持久化此字段，读回为 None）
+    # docs/28 §4.2 ⑨：自定义规则名（内置规则缺省 None）。三字段均已落 PG：
+    # rule_name/escalated_at/assignee 由迁移 021 建列、PgMonitoringStore 读写，
+    # 静默与值班由迁移 024 落库（原「v1 不持久化/读回 None」口径已过时，docs/61 §6 H5 勘误）。
     rule_name: str | None = None
-    # docs/33 §5.2：惰性升级时间（v1 进程内，PG 读回 None 后重新惰性评估，语义幂等）
+    # docs/33 §5.2：惰性升级时间（读路径仍会惰性评估，落库后语义幂等）
     escalated_at: str | None = None
-    # docs/33 §5.3：新建时值班人（v1 进程内，PG alerts 不加列、读回 null）
+    # docs/33 §5.3：新建时值班人
     assignee: str | None = None
 
 
