@@ -33,14 +33,16 @@ import {
   remainingSeconds,
 } from '../lib/approvals'
 import { roleCan } from '../lib/auth'
+import { useTranslation } from '../locales'
 
 const { Content, Header } = Layout
 
-const RESOLVED_SOURCE_TEXT: Record<string, string> = {
-  human: '人工处理',
-  'email-link': '邮件链接处理',
-  timeout: '超时自动处理',
-  input: '输入预置',
+/** 已处理来源枚举 → approvals namespace i18n 键（docs/57 D-4 冒烟补抽） */
+const RESOLVED_SOURCE_KEYS: Record<string, string> = {
+  human: 'source.human',
+  'email-link': 'source.emailLink',
+  timeout: 'source.timeout',
+  input: 'source.input',
 }
 
 type ApprovalsProps = {
@@ -50,6 +52,7 @@ type ApprovalsProps = {
 }
 
 export function Approvals({ principal, onLogout, onBack }: ApprovalsProps): ReactElement {
+  const { t } = useTranslation('approvals')
   const [activeTab, setActiveTab] = useState<'pending' | 'decided'>('pending')
   const [items, setItems] = useState<QueueApprovalItem[]>([])
   const [loading, setLoading] = useState(false)
@@ -67,11 +70,11 @@ export function Approvals({ principal, onLogout, onBack }: ApprovalsProps): Reac
     try {
       setItems(await listApprovalsQueue())
     } catch (exc) {
-      message.error(exc instanceof Error ? exc.message : '加载审批队列失败')
+      message.error(exc instanceof Error ? exc.message : t('error.loadQueue'))
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [t])
 
   const refreshDecided = useCallback(async () => {
     setDecidedLoading(true)
@@ -80,11 +83,11 @@ export function Approvals({ principal, onLogout, onBack }: ApprovalsProps): Reac
       setDecidedItems(body.items)
       setDecidedLoaded(true)
     } catch (exc) {
-      message.error(exc instanceof Error ? exc.message : '加载已处理审批失败')
+      message.error(exc instanceof Error ? exc.message : t('error.loadDecided'))
     } finally {
       setDecidedLoading(false)
     }
-  }, [])
+  }, [t])
 
   useEffect(() => {
     void refresh()
@@ -124,7 +127,7 @@ export function Approvals({ principal, onLogout, onBack }: ApprovalsProps): Reac
       await decideApproval(token, decision)
       await refresh()
     } catch (exc) {
-      message.error(exc instanceof Error ? exc.message : '提交失败')
+      message.error(exc instanceof Error ? exc.message : t('error.submitFailed'))
     }
   }
 
@@ -138,23 +141,23 @@ export function Approvals({ principal, onLogout, onBack }: ApprovalsProps): Reac
       setCardToken(null)
       await refresh()
     } catch (exc) {
-      message.error(exc instanceof Error ? exc.message : '提交失败')
+      message.error(exc instanceof Error ? exc.message : t('error.submitFailed'))
     }
   }
 
   const columns: ColumnsType<QueueApprovalItem> = [
-    { title: '审批说明', dataIndex: 'summary' },
-    { title: '指定审批人', dataIndex: 'approver', width: 110 },
-    { title: '图', dataIndex: 'graph_id', width: 90 },
-    { title: '节点', dataIndex: 'node_id', width: 100 },
+    { title: t('columns.summary'), dataIndex: 'summary' },
+    { title: t('columns.approver'), dataIndex: 'approver', width: 110 },
+    { title: t('columns.graph'), dataIndex: 'graph_id', width: 90 },
+    { title: t('columns.node'), dataIndex: 'node_id', width: 100 },
     {
-      title: '创建时间',
+      title: t('columns.createdAt'),
       dataIndex: 'createdAt',
       width: 170,
       render: (value: number) => formatCreatedAt(value),
     },
     {
-      title: '剩余时间',
+      title: t('columns.remaining'),
       width: 110,
       render: (_, row) => {
         const remaining = remainingSeconds(row.createdAt, row.timeoutSeconds)
@@ -164,61 +167,64 @@ export function Approvals({ principal, onLogout, onBack }: ApprovalsProps): Reac
       },
     },
     {
-      title: '操作',
+      title: t('columns.actions'),
       width: 200,
       render: (_, row) =>
         canDecide ? (
           <Space size="small">
             {row.cardTemplateId && (
               <Button size="small" onClick={() => setCardToken(row.token)}>
-                查看卡片
+                {t('actions.viewCard')}
               </Button>
             )}
             <Popconfirm
-              title="确认同意？"
+              title={t('actions.confirmApprove')}
               onConfirm={() => void handleDecide(row.token, 'approved')}
             >
               <Button size="small" type="primary">
-                同意
+                {t('actions.approve')}
               </Button>
             </Popconfirm>
             <Popconfirm
-              title="确认拒绝？"
+              title={t('actions.confirmReject')}
               onConfirm={() => void handleDecide(row.token, 'rejected')}
             >
               <Button size="small" danger>
-                拒绝
+                {t('actions.reject')}
               </Button>
             </Popconfirm>
           </Space>
         ) : (
-          <Typography.Text type="secondary">只读</Typography.Text>
+          <Typography.Text type="secondary">{t('actions.readonly')}</Typography.Text>
         ),
     },
   ]
 
   const decidedColumns: ColumnsType<DecidedApprovalItem> = [
-    { title: '审批说明', dataIndex: 'summary' },
-    { title: '图', dataIndex: 'graph_id', width: 90 },
-    { title: '节点', dataIndex: 'node_id', width: 100 },
+    { title: t('columns.summary'), dataIndex: 'summary' },
+    { title: t('columns.graph'), dataIndex: 'graph_id', width: 90 },
+    { title: t('columns.node'), dataIndex: 'node_id', width: 100 },
     {
-      title: '处理结果',
+      title: t('columns.decision'),
       dataIndex: 'decision',
       width: 100,
       render: (value: string) => (
         <Tag color={value === 'approved' ? 'green' : 'red'}>
-          {value === 'approved' ? '同意' : '拒绝'}
+          {value === 'approved' ? t('actions.approve') : t('actions.reject')}
         </Tag>
       ),
     },
     {
-      title: '处理来源',
+      title: t('columns.source'),
       dataIndex: 'resolvedBy',
       width: 130,
-      render: (value: string) => RESOLVED_SOURCE_TEXT[value] ?? value,
+      render: (value: string) => {
+        const key = RESOLVED_SOURCE_KEYS[value]
+        return key ? t(key) : value
+      },
     },
     {
-      title: '处理备注',
+      title: t('columns.comment'),
       dataIndex: 'comment',
       width: 140,
       render: (value: string) =>
@@ -233,7 +239,7 @@ export function Approvals({ principal, onLogout, onBack }: ApprovalsProps): Reac
         ),
     },
     {
-      title: '创建时间',
+      title: t('columns.createdAt'),
       dataIndex: 'createdAt',
       width: 170,
       render: (value: number) => formatCreatedAt(value),
@@ -244,7 +250,7 @@ export function Approvals({ principal, onLogout, onBack }: ApprovalsProps): Reac
     <Layout style={{ minHeight: '100vh' }}>
       <Header style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
         <Typography.Text strong style={{ color: '#fff', fontSize: 16 }}>
-          审批队列
+          {t('title')}
         </Typography.Text>
         <div style={{ flex: 1 }} />
         <UserBadge principal={principal} onLogout={onLogout} />
@@ -253,7 +259,7 @@ export function Approvals({ principal, onLogout, onBack }: ApprovalsProps): Reac
         <Card
           extra={
             <Space>
-              <Button onClick={onBack}>返回</Button>
+              <Button onClick={onBack}>{t('back')}</Button>
             </Space>
           }
         >
@@ -263,15 +269,15 @@ export function Approvals({ principal, onLogout, onBack }: ApprovalsProps): Reac
             items={[
               {
                 key: 'pending',
-                label: '待处理',
+                label: t('tabs.pending'),
                 children: (
                   <>
                     <Space style={{ marginBottom: 12 }}>
                       <Typography.Text type="secondary">
-                        每 10 秒自动刷新
+                        {t('autoRefresh')}
                       </Typography.Text>
                       <Button onClick={() => void refresh()} loading={loading}>
-                        手动刷新
+                        {t('manualRefresh')}
                       </Button>
                     </Space>
                     <Table
@@ -280,14 +286,14 @@ export function Approvals({ principal, onLogout, onBack }: ApprovalsProps): Reac
                       dataSource={items}
                       loading={loading}
                       pagination={false}
-                      locale={{ emptyText: '当前没有待处理的审批请求' }}
+                      locale={{ emptyText: t('empty') }}
                     />
                   </>
                 ),
               },
               {
                 key: 'decided',
-                label: '已处理',
+                label: t('tabs.decided'),
                 children: (
                   <>
                     <Space style={{ marginBottom: 12 }}>
@@ -295,7 +301,7 @@ export function Approvals({ principal, onLogout, onBack }: ApprovalsProps): Reac
                         onClick={() => void refreshDecided()}
                         loading={decidedLoading}
                       >
-                        手动刷新
+                        {t('manualRefresh')}
                       </Button>
                     </Space>
                     <Table
@@ -304,7 +310,7 @@ export function Approvals({ principal, onLogout, onBack }: ApprovalsProps): Reac
                       dataSource={decidedItems}
                       loading={decidedLoading}
                       pagination={false}
-                      locale={{ emptyText: '当前没有已处理的审批记录' }}
+                      locale={{ emptyText: t('emptyDecided') }}
                     />
                   </>
                 ),
@@ -316,7 +322,7 @@ export function Approvals({ principal, onLogout, onBack }: ApprovalsProps): Reac
 
       <Modal
         open={cardToken !== null}
-        title="审批卡片"
+        title={t('cardModalTitle')}
         footer={null}
         width={640}
         onCancel={() => setCardToken(null)}
@@ -325,7 +331,7 @@ export function Approvals({ principal, onLogout, onBack }: ApprovalsProps): Reac
         {cardView ? (
           <CardRenderer card={cardView} onDecide={handleCardAction} />
         ) : (
-          !cardError && <Typography.Text type="secondary">卡片加载中…</Typography.Text>
+          !cardError && <Typography.Text type="secondary">{t('cardLoading')}</Typography.Text>
         )}
       </Modal>
     </Layout>

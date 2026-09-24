@@ -12,6 +12,7 @@ import {
   type NodeConfig,
 } from '../../lib/nodeCatalog'
 import { eventKeyStaticValid } from '../../lib/validation/l1'
+import { useTranslation } from '../../locales'
 
 type Props = {
   config: NodeConfig
@@ -19,6 +20,7 @@ type Props = {
 }
 
 export function WaitConfig({ config, update }: Props) {
+  const { t } = useTranslation('editor')
   const waitType = config.waitType === 'event' ? 'event' : 'duration'
 
   const seconds = config.durationSeconds
@@ -89,34 +91,34 @@ export function WaitConfig({ config, update }: Props) {
 
   return (
     <>
-      <Typography.Text strong>等待设置（挂起后沿唯一出边继续，04 §5.5）</Typography.Text>
+      <Typography.Text strong>{t('wait.title')}</Typography.Text>
       <label className="property-field">
-        <Typography.Text type="secondary">等待类型</Typography.Text>
+        <Typography.Text type="secondary">{t('wait.typeLabel')}</Typography.Text>
         <Radio.Group
           value={waitType}
           onChange={(event) => update({ waitType: event.target.value })}
         >
-          <Radio value="duration">定时等待</Radio>
-          <Radio value="event">事件等待</Radio>
+          <Radio value="duration">{t('wait.typeDuration')}</Radio>
+          <Radio value="event">{t('wait.typeEvent')}</Radio>
         </Radio.Group>
       </label>
       {waitType === 'duration' ? (
         <>
           <label className="property-field">
-            <Typography.Text type="secondary">时长模式</Typography.Text>
+            <Typography.Text type="secondary">{t('wait.durationModeLabel')}</Typography.Text>
             <Radio.Group
               value={durationMode}
               onChange={(event) => update({ durationMode: event.target.value })}
             >
-              <Radio value="static">固定时长</Radio>
-              <Radio value="dynamic">动态表达式</Radio>
-              <Radio value="absolute">到点时刻</Radio>
+              <Radio value="static">{t('wait.modeStatic')}</Radio>
+              <Radio value="dynamic">{t('wait.modeDynamic')}</Radio>
+              <Radio value="absolute">{t('wait.modeAbsolute')}</Radio>
             </Radio.Group>
           </label>
           {durationMode === 'static' ? (
             <>
               <label className="property-field">
-                <Typography.Text type="secondary">等待时长</Typography.Text>
+                <Typography.Text type="secondary">{t('wait.durationLabel')}</Typography.Text>
                 <Space.Compact>
                   <InputNumber
                     min={MIN_WAIT_SECONDS}
@@ -127,16 +129,16 @@ export function WaitConfig({ config, update }: Props) {
                     status={durationInvalid ? 'error' : undefined}
                     onChange={(value) => update({ durationSeconds: value ?? undefined })}
                   />
-                  <Button disabled>秒</Button>
+                  <Button disabled>{t('wait.unitSecond')}</Button>
                 </Space.Compact>
                 {durationInvalid && (
                   <Typography.Text type="danger">
-                    等待时长需为 {MIN_WAIT_SECONDS}-{MAX_WAIT_SECONDS} 秒的整数
+                    {t('wait.durationInvalid', { min: MIN_WAIT_SECONDS, max: MAX_WAIT_SECONDS })}
                   </Typography.Text>
                 )}
               </label>
               <label className="property-field">
-                <Typography.Text type="secondary">抖动上限（可选）</Typography.Text>
+                <Typography.Text type="secondary">{t('wait.jitterLabel')}</Typography.Text>
                 <Space.Compact>
                   <InputNumber
                     min={0}
@@ -147,25 +149,25 @@ export function WaitConfig({ config, update }: Props) {
                     status={jitterInvalid ? 'error' : undefined}
                     onChange={(value) => update({ jitterSeconds: value ?? undefined })}
                   />
-                  <Button disabled>秒</Button>
+                  <Button disabled>{t('wait.unitSecond')}</Button>
                 </Space.Compact>
                 {jitterInvalid ? (
                   <Typography.Text type="danger">
-                    抖动上限需为 0-{MAX_JITTER_SECONDS} 秒的整数
+                    {t('wait.jitterInvalid', { max: MAX_JITTER_SECONDS })}
                   </Typography.Text>
                 ) : (
                   <Typography.Text type="secondary">
-                    实际等待 = 等待时长 + 0~抖动上限之间的随机秒（docs/54，防雪崩）
+                    {t('wait.jitterHint')}
                   </Typography.Text>
                 )}
               </label>
             </>
               ) : durationMode === 'absolute' ? (
             <label className="property-field">
-              <Typography.Text type="secondary">到点时刻</Typography.Text>
+              <Typography.Text type="secondary">{t('wait.absoluteLabel')}</Typography.Text>
               <Input
                 value={absoluteTime}
-                placeholder="2026-09-23T18:00:00+08:00 或 epoch 秒，支持 {{}}"
+                placeholder={t('wait.absolutePlaceholder')}
                 status={absoluteTimeInvalid ? 'error' : undefined}
                 onChange={(event) =>
                   update({ absoluteTime: event.target.value })
@@ -173,17 +175,17 @@ export function WaitConfig({ config, update }: Props) {
               />
               {absoluteTimeInvalid ? (
                 <Typography.Text type="danger">
-                  必填，1-{MAX_ABSOLUTE_TIME_LENGTH} 字符
+                  {t('wait.absoluteInvalid', { max: MAX_ABSOLUTE_TIME_LENGTH })}
                 </Typography.Text>
               ) : (
                 <Typography.Text type="secondary">
-                  运行时解析，须为未来 1-{MAX_WAIT_SECONDS} 秒内的时刻
+                  {t('wait.absoluteHint', { max: MAX_WAIT_SECONDS })}
                 </Typography.Text>
               )}
             </label>
           ) : (
             <label className="property-field">
-              <Typography.Text type="secondary">时长表达式</Typography.Text>
+              <Typography.Text type="secondary">{t('wait.expressionLabel')}</Typography.Text>
               <Input
                 value={durationExpression}
                 placeholder="{{global.slaHours}} * 3600"
@@ -194,11 +196,11 @@ export function WaitConfig({ config, update }: Props) {
               />
               {durationExpressionInvalid ? (
                 <Typography.Text type="danger">
-                  必填，1-{MAX_DURATION_EXPRESSION_LENGTH} 字符
+                  {t('wait.expressionInvalid', { max: MAX_DURATION_EXPRESSION_LENGTH })}
                 </Typography.Text>
               ) : (
                 <Typography.Text type="secondary">
-                  运行时求值，须为 {MIN_WAIT_SECONDS}-{MAX_WAIT_SECONDS} 秒
+                  {t('wait.expressionHint', { min: MIN_WAIT_SECONDS, max: MAX_WAIT_SECONDS })}
                 </Typography.Text>
               )}
             </label>
@@ -207,19 +209,19 @@ export function WaitConfig({ config, update }: Props) {
       ) : (
         <>
           <label className="property-field">
-            <Typography.Text type="secondary">事件数量</Typography.Text>
+            <Typography.Text type="secondary">{t('wait.eventCountLabel')}</Typography.Text>
             <Radio.Group
               value={multiEvent ? 'multi' : 'single'}
               onChange={(event) => switchEventMode(event.target.value === 'multi')}
             >
-              <Radio value="single">单事件</Radio>
-              <Radio value="multi">多事件竞速（任一命中即继续）</Radio>
+              <Radio value="single">{t('wait.singleEvent')}</Radio>
+              <Radio value="multi">{t('wait.multiEvent')}</Radio>
             </Radio.Group>
           </label>
           {multiEvent ? (
             <label className="property-field">
               <Typography.Text type="secondary">
-                事件标识（{eventKeys.length}/{MAX_EVENT_KEYS}，OR 竞速，首达者胜出）
+                {t('wait.eventKeysLabel', { count: eventKeys.length, max: MAX_EVENT_KEYS })}
               </Typography.Text>
               {eventKeys.map((key, idx) => (
                 <Space key={idx} style={{ display: 'flex', marginBottom: 4 }}>
@@ -238,7 +240,7 @@ export function WaitConfig({ config, update }: Props) {
                     disabled={eventKeys.length <= 1}
                     onClick={() => removeEventKey(idx)}
                   >
-                    删除
+                    {t('common:button.delete')}
                   </Button>
                 </Space>
               ))}
@@ -248,16 +250,16 @@ export function WaitConfig({ config, update }: Props) {
                 disabled={eventKeys.length >= MAX_EVENT_KEYS}
                 onClick={addEventKey}
               >
-                ＋添加事件（最多 {MAX_EVENT_KEYS} 个）
+                {t('wait.addEvent', { max: MAX_EVENT_KEYS })}
               </Button>
               <Typography.Text type="secondary">
-                每个标识 1-{MAX_EVENT_KEY_LENGTH} 字符，静态部分仅允许字母、数字及 :_-
+                {t('wait.eventKeyRule', { max: MAX_EVENT_KEY_LENGTH })}
               </Typography.Text>
             </label>
           ) : null}
           {multiEvent && (
             <label className="property-field">
-              <Typography.Text type="secondary">命中方式（docs/55）</Typography.Text>
+              <Typography.Text type="secondary">{t('wait.matchModeLabel')}</Typography.Text>
               <Radio.Group
                 value={eventWaitMode}
                 onChange={(event) =>
@@ -266,21 +268,21 @@ export function WaitConfig({ config, update }: Props) {
                   })
                 }
               >
-                <Radio value="any">任一命中即继续（OR，首达者胜出）</Radio>
+                <Radio value="any">{t('wait.matchAny')}</Radio>
                 <Radio value="all" disabled={eventKeys.length < 2}>
-                  全部命中才继续（AND，需至少 2 个事件）
+                  {t('wait.matchAll')}
                 </Radio>
               </Radio.Group>
               {allModeTooFewKeys && (
                 <Typography.Text type="danger">
-                  全部命中（AND）需配置至少 2 个事件
+                  {t('wait.matchAllTooFew')}
                 </Typography.Text>
               )}
             </label>
           )}
           {multiEvent ? null : (
             <label className="property-field">
-              <Typography.Text type="secondary">事件标识</Typography.Text>
+              <Typography.Text type="secondary">{t('wait.eventKeyLabel')}</Typography.Text>
               <Input
                 value={eventKey}
                 placeholder="order_paid_{{trigger-1.context.payload.order_id}}"
@@ -289,18 +291,18 @@ export function WaitConfig({ config, update }: Props) {
               />
               {eventKeyInvalid ? (
                 <Typography.Text type="danger">
-                  必填，1-{MAX_EVENT_KEY_LENGTH} 字符；静态部分仅允许字母、数字及
-                  :_-，占位 {'{{路径}}'} 内不检查
+                  {t('wait.eventKeyInvalid', { max: MAX_EVENT_KEY_LENGTH })}
+                  {t('wait.eventKeyInvalidSuffix')}
                 </Typography.Text>
               ) : (
                 <Typography.Text type="secondary">
-                  支持 {'{{路径}}'} 插值；运行时渲染后再校验
+                  {t('wait.eventKeyHint')}
                 </Typography.Text>
               )}
             </label>
           )}
           <label className="property-field">
-            <Typography.Text type="secondary">超时时间</Typography.Text>
+            <Typography.Text type="secondary">{t('wait.timeoutLabel')}</Typography.Text>
             <Space.Compact>
               <InputNumber
                 min={MIN_EVENT_WAIT_SECONDS}
@@ -311,22 +313,22 @@ export function WaitConfig({ config, update }: Props) {
                 status={timeoutInvalid ? 'error' : undefined}
                 onChange={(value) => update({ timeoutSeconds: value ?? undefined })}
               />
-              <Button disabled>秒</Button>
+              <Button disabled>{t('wait.unitSecond')}</Button>
             </Space.Compact>
             {timeoutInvalid && (
               <Typography.Text type="danger">
-                超时时间需为 {MIN_EVENT_WAIT_SECONDS}-{MAX_EVENT_WAIT_SECONDS} 秒的整数
+                {t('wait.timeoutInvalid', { min: MIN_EVENT_WAIT_SECONDS, max: MAX_EVENT_WAIT_SECONDS })}
               </Typography.Text>
             )}
           </label>
           <label className="property-field">
-            <Typography.Text type="secondary">超时策略</Typography.Text>
+            <Typography.Text type="secondary">{t('wait.timeoutPolicyLabel')}</Typography.Text>
             <Radio.Group
               value={config.onTimeout === 'fail' ? 'fail' : 'continue'}
               onChange={(event) => update({ onTimeout: event.target.value })}
             >
-              <Radio value="continue">继续（超时沿出边继续）</Radio>
-              <Radio value="fail">失败（超时使流程失败）</Radio>
+              <Radio value="continue">{t('wait.onTimeoutContinue')}</Radio>
+              <Radio value="fail">{t('wait.onTimeoutFail')}</Radio>
             </Radio.Group>
           </label>
         </>

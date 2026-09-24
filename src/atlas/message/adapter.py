@@ -22,12 +22,23 @@ _SEND_INPUT_SCHEMA = {
     "properties": {
         "channel": {"type": "string", "description": "真实投递：email（SMTP）/webhook（单 URL POST JSON）/dingtalk/wecom/feishu（群机器人，均过 SSRF 校验）；sms 或其他标识仅进程内记录（v1 不路由）"},
         "to": {
-            "description": "收件人字符串或字符串数组（群发上限 20；email 渠道须含 @）；webhook 与 IM 渠道为单个 URL",
+            "description": "收件人字符串或字符串数组（群发上限 20；email 渠道须含 @）；webhook 与 IM 渠道为 1-20 个目标 URL（docs/58 群发：SSRF 拦截即停、投递错误发完其余后聚合报错）",
             "oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}, "maxItems": MAX_RECIPIENTS}],
         },
         "subject": {"type": "string"},
         "body": {"type": "string"},
-        "secret": {"type": "string", "description": "仅 dingtalk/feishu：群机器人加签密钥；留空不加签；运行时参数（生产应由 secret provider 注入）", "maxLength": MAX_SECRET_LENGTH},
+        "secret": {"type": "string", "description": "dingtalk/feishu 为群机器人加签密钥、webhook 为出站 HMAC-SHA256 签名密钥（X-Atlas-Signature，docs/58）；wecom 不支持；留空不加签；运行时参数（生产应由 secret provider 注入）", "maxLength": MAX_SECRET_LENGTH},
+        "msgFormat": {"type": "string", "enum": ["text", "markdown"], "description": "IM 渠道消息格式，缺省 text；markdown 时钉钉/企微发 markdown、飞书发 post 富文本；webhook/email 忽略（docs/58）"},
+        "mentions": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "userIds": {"type": "array", "items": {"type": "string"}, "maxItems": MAX_RECIPIENTS, "description": "被 @用户 ID：钉钉 userId、企微 userid、飞书 open_id/user_id"},
+                "mobiles": {"type": "array", "items": {"type": "string"}, "maxItems": MAX_RECIPIENTS, "description": "被 @手机号：仅钉钉与企微 text 生效；企微 markdown 与飞书忽略"},
+                "atAll": {"type": "boolean", "description": "是否 @所有人"},
+            },
+            "description": "IM @人（docs/58）；userIds/mobiles 各至多 20、自动去空白去重；webhook/email 忽略",
+        },
     },
     "required": ["channel", "to", "subject", "body"],
 }
@@ -81,6 +92,8 @@ class MessageHarnessAdapter(HarnessAdapter):
                 subject=params.get("subject"),
                 body=params.get("body"),
                 secret=params.get("secret"),
+                msg_format=params.get("msgFormat"),
+                mentions=params.get("mentions"),
             )
         except MessageSendError as exc:
             return ActionResult.failed(StructuredError(exc.code, str(exc)))

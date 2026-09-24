@@ -10,6 +10,7 @@ import { useState, type ReactElement } from 'react'
 import { Input, InputNumber, Radio, Select, Switch, Typography } from 'antd'
 import { splitTokenSegments } from './formTree'
 import type { WidgetComponent, WidgetProps } from './types'
+import { useTranslation } from '../../locales'
 
 /** enum/const 选项的展示文案：UISchema optionLabels 优先，缺省回退原始值字符串。 */
 function optionLabelOf(option: unknown, optionLabels?: Record<string, string>): string {
@@ -117,18 +118,21 @@ export const SwitchWidget: WidgetComponent = ({ value, onChange }) => (
   <Switch checked={value === true} onChange={(checked) => onChange(checked)} />
 )
 
-export const ExpressionWidget: WidgetComponent = ({ value, onChange, schema, diagnostics, placeholder }) => (
-  <>
-    <Input
-      value={value == null ? '' : String(value)}
-      placeholder={placeholder ?? schema.description ?? '{{路径}} 表达式'}
-      onChange={(event) => onChange(event.target.value)}
-      style={{ fontFamily: 'var(--atlas-mono, monospace)' }}
-      status={diagnostics?.some((d) => d.severity === 'error') ? 'error' : undefined}
-    />
-    <DiagnosticText diagnostics={diagnostics} />
-  </>
-)
+export const ExpressionWidget: WidgetComponent = ({ value, onChange, schema, diagnostics, placeholder }) => {
+  const { t } = useTranslation('editor')
+  return (
+    <>
+      <Input
+        value={value == null ? '' : String(value)}
+        placeholder={placeholder ?? schema.description ?? t('widget.pathExpr')}
+        onChange={(event) => onChange(event.target.value)}
+        style={{ fontFamily: 'var(--atlas-mono, monospace)' }}
+        status={diagnostics?.some((d) => d.severity === 'error') ? 'error' : undefined}
+      />
+      <DiagnosticText diagnostics={diagnostics} />
+    </>
+  )
+}
 
 /**
  * 模板文本控件：承载含 `{{路径}}` 的字符串值，并接入 M0 作用域补全与 M2 token 高亮。
@@ -148,6 +152,7 @@ export const VariableInputWidget: WidgetComponent = ({
   scope,
   nodeId,
 }) => {
+  const { t } = useTranslation('editor')
   const text = value == null ? '' : String(value)
   const variablePaths = scope?.listPathsAt(nodeId ?? '') ?? []
   const segments = markers && markers.length > 0 ? splitTokenSegments(text, markers, diagnostics) : []
@@ -157,7 +162,7 @@ export const VariableInputWidget: WidgetComponent = ({
       <Input.TextArea
         value={text}
         rows={rows ?? 3}
-        placeholder={placeholder ?? schema.description ?? '可插入 {{节点输出.字段}} 变量'}
+        placeholder={placeholder ?? schema.description ?? t('widget.insertableVar')}
         onChange={(event) => onChange(event.target.value)}
         style={{ fontFamily: 'var(--atlas-mono, monospace)' }}
         status={diagnostics?.some((d) => d.severity === 'error') ? 'error' : undefined}
@@ -167,7 +172,7 @@ export const VariableInputWidget: WidgetComponent = ({
           size="small"
           style={{ width: '100%', marginTop: 4 }}
           value={undefined}
-          placeholder="插入变量引用"
+          placeholder={t('widget.insertVar')}
           onChange={(path: string) => onChange(appendToken(text, path))}
           options={variablePaths.map((path) => ({ value: path, label: `{{${path}}}` }))}
         />

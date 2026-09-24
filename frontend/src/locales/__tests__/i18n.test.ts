@@ -1,5 +1,34 @@
-import { afterEach, describe, expect, it } from 'vitest'
-import { changeLanguage, getLanguage, t, DEFAULT_LOCALE } from '../index'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import {
+  changeLanguage,
+  getLanguage,
+  t,
+  DEFAULT_LOCALE,
+  LOCALE_STORAGE_KEY,
+  readStoredLocale,
+} from '../index'
+import zhApprovals from '../zh-CN/approvals.json'
+import zhAudit from '../zh-CN/audit.json'
+import zhChannels from '../zh-CN/channels.json'
+import zhCommon from '../zh-CN/common.json'
+import zhConnections from '../zh-CN/connections.json'
+import zhDashboard from '../zh-CN/dashboard.json'
+import zhDemo from '../zh-CN/demo.json'
+import zhEditor from '../zh-CN/editor.json'
+import zhMemory from '../zh-CN/memory.json'
+import zhMonitoring from '../zh-CN/monitoring.json'
+import zhOpenapi from '../zh-CN/openapi.json'
+import enApprovals from '../en-US/approvals.json'
+import enAudit from '../en-US/audit.json'
+import enChannels from '../en-US/channels.json'
+import enCommon from '../en-US/common.json'
+import enConnections from '../en-US/connections.json'
+import enDashboard from '../en-US/dashboard.json'
+import enDemo from '../en-US/demo.json'
+import enEditor from '../en-US/editor.json'
+import enMemory from '../en-US/memory.json'
+import enMonitoring from '../en-US/monitoring.json'
+import enOpenapi from '../en-US/openapi.json'
 
 /** Login.tsx / UserBadge.tsx 实际接线的全部 key（M12 样板范围）。 */
 const WIRED_KEYS = [
@@ -596,8 +625,8 @@ describe('zero-dependency i18n skeleton (docs/17 §2.3, M12)', () => {
     expect(t('nope.x', { defaultValue: '兜底' })).toBe('兜底')
   })
 
-  it('falls back from an empty namespace to common for the same key', () => {
-    // editor.json is an empty {} placeholder; common holds auth.login.submit
+  it('falls back from a namespace missing a key to common for the same key', () => {
+    // editor namespace holds no auth.login.submit; common does (zh-CN side)
     expect(t('editor:auth.login.submit')).toBe('登录')
   })
 
@@ -605,11 +634,17 @@ describe('zero-dependency i18n skeleton (docs/17 §2.3, M12)', () => {
     expect(t('wat:role.viewer')).toBe('wat:role.viewer')
   })
 
-  it('falls back to zh-CN text when switched to an empty en-US skeleton', () => {
+  it('returns English copy under en-US and keeps cross-namespace fallback (docs/57)', () => {
     changeLanguage('en-US')
     expect(getLanguage()).toBe('en-US')
-    // en-US/common.json is {} — must surface Chinese, never the raw key
-    expect(t('auth.login.submit')).toBe('登录')
+    // en-US/common.json is fully translated (docs/57 D-1)
+    expect(t('auth.login.submit')).toBe('Sign in')
+    expect(t('role.admin')).toBe('Admin')
+    expect(t('auth.session.logout')).toBe('Sign out')
+    // Cross-namespace fallback on the English side: editor lacks auth.login.submit → en-US common
+    expect(t('editor:auth.login.submit')).toBe('Sign in')
+    // An entirely unknown key still returns the key (i18next behavior)
+    expect(t('__nonexistent__.x')).toBe('__nonexistent__.x')
     changeLanguage('zh-CN')
     expect(t('auth.login.submit')).toBe('登录')
   })
@@ -639,10 +674,14 @@ describe('zero-dependency i18n skeleton (docs/17 §2.3, M12)', () => {
     expect(hasChinese(rendered)).toBe(true)
   })
 
-  it('every wired key still resolves under the empty en-US skeleton (never raw key)', () => {
+  it('every wired key resolves to English under en-US (never raw key)', () => {
     changeLanguage('en-US')
     for (const key of [...WIRED_KEYS, ...TEMPLATE_KEYS]) {
       expect(t(key)).not.toBe(key)
+    }
+    // English copy must carry no Han characters
+    for (const key of WIRED_KEYS) {
+      expect(hasChinese(t(key)), `${key} English copy must not contain Chinese`).toBe(false)
     }
   })
 
@@ -667,15 +706,22 @@ describe('zero-dependency i18n skeleton (docs/17 §2.3, M12)', () => {
     }
   })
 
-  it('falls back to zh-CN for dashboard copy under the empty en-US skeleton', () => {
+  it('renders English dashboard copy under en-US (docs/57)', () => {
     changeLanguage('en-US')
-    // en-US/dashboard.json stays {} (no translation yet); Chinese must still render
     for (const key of DASHBOARD_KEYS) {
-      expect(t(key, { ns: 'dashboard' })).not.toBe(key)
+      const value = t(key, { ns: 'dashboard' })
+      expect(value).not.toBe(key)
+      expect(hasChinese(value), `${key} English copy must not contain Chinese`).toBe(false)
     }
+    expect(t('demo.title', { ns: 'dashboard' })).toContain('refund automation')
     for (const key of SHARED_NAV_KEYS) {
-      expect(t(key, { ns: 'dashboard' })).not.toBe(key)
+      const value = t(key, { ns: 'dashboard' })
+      expect(value).not.toBe(key)
+      expect(hasChinese(value), `${key} English copy must not contain Chinese`).toBe(false)
     }
+    expect(t('common:brand.appName', { ns: 'dashboard' })).toBe(
+      'Atlas Operations Orchestration Platform',
+    )
   })
 
   it('resolves editor namespace static copy for frame, canvas and left panels (editor-a)', () => {
@@ -756,19 +802,35 @@ describe('zero-dependency i18n skeleton (docs/17 §2.3, M12)', () => {
     expect(hasChinese(promptLabel)).toBe(true)
   })
 
-  it('falls back to zh-CN for editor copy under the empty en-US skeleton', () => {
+  it('renders English editor copy under en-US with English teaching tokens (docs/57)', () => {
     changeLanguage('en-US')
     for (const key of EDITOR_KEYS) {
-      expect(t(key, { ns: 'editor' })).not.toBe(key)
+      const value = t(key, { ns: 'editor' })
+      expect(value).not.toBe(key)
+      expect(hasChinese(value), `${key} English copy must not contain Chinese`).toBe(false)
     }
     for (const { key, vars } of EDITOR_TEMPLATE_KEYS) {
-      expect(t(key, { ns: 'editor', ...vars })).not.toBe(key)
+      const value = t(key, { ns: 'editor', ...vars })
+      expect(value).not.toBe(key)
+      expect(value).not.toContain('{{')
     }
     for (const key of EDITOR_B_KEYS) {
-      expect(t(key, { ns: 'editor' })).not.toBe(key)
+      const value = t(key, { ns: 'editor' })
+      expect(value).not.toBe(key)
+      expect(hasChinese(value), `${key} English copy must not contain Chinese`).toBe(false)
     }
-    expect(t('debugConsole.eventCount', { ns: 'editor', count: 3 })).not.toContain('{{')
-    expect(t('decision.promptTemplateLabel', { ns: 'editor' })).toContain('{{路径}}')
+    // Interpolated count renders in English without a leftover placeholder
+    expect(t('debugConsole.eventCount', { ns: 'editor', count: 3 })).toBe('3 events')
+    // Teaching tokens: English {{path}} / {{variable.path}} / {{global.company_name}} survive
+    // verbatim because the page passes no such variables ({{path}} matches the interpolate rule
+    // but is intentionally left unbound; dotted/CJK tokens never match it).
+    expect(t('decision.promptTemplateLabel', { ns: 'editor' })).toContain('{{path}}')
+    const hint = t('variables.hint', { ns: 'editor' })
+    expect(hint).toContain('{{variable.path}}')
+    expect(hint).toContain('{{global.company_name}}')
+    expect(hasChinese(hint)).toBe(false)
+    // HTTP proper-noun fragment interpolates cleanly in English too
+    expect(t('log.toolHttpStatus', { ns: 'editor', status: 200 })).toBe(' (HTTP 200)')
   })
 
   it('resolves monitoring namespace static copy for the monitoring page', () => {
@@ -815,16 +877,43 @@ describe('zero-dependency i18n skeleton (docs/17 §2.3, M12)', () => {
     expect(t('common:button.delete', { ns: 'monitoring' })).toBe('删除')
   })
 
-  it('falls back to zh-CN for monitoring copy under the empty en-US skeleton', () => {
+  it('renders English monitoring copy under en-US with teaching tokens kept (docs/57)', () => {
     changeLanguage('en-US')
-    // en-US/monitoring.json stays {} (no translation yet); Chinese must still render, never a raw key.
     for (const key of MONITORING_KEYS) {
-      expect(t(key, { ns: 'monitoring' })).not.toBe(key)
+      const value = t(key, { ns: 'monitoring' })
+      expect(value).not.toBe(key)
+      expect(hasChinese(value), `${key} English copy must not contain Chinese`).toBe(false)
     }
     for (const { key, vars } of MONITORING_TEMPLATE_KEYS) {
-      expect(t(key, { ns: 'monitoring', ...vars })).not.toBe(key)
+      const value = t(key, { ns: 'monitoring', ...vars })
+      expect(value).not.toBe(key)
+      expect(value).not.toContain('{{')
     }
-    expect(t('custom.hint', { ns: 'monitoring' })).toContain('{{status}}')
+    // Spot-check composed shapes in English
+    expect(t('rollback.tag', { ns: 'monitoring', actor: 'Auto', from: 3, to: 2 })).toBe(
+      'Auto rollback v3 → v2',
+    )
+    expect(t('run.nodeSummary', { ns: 'monitoring', ok: 3, failed: 1 })).toBe('3 ok / 1 failed')
+    // custom.hint teaches the DSL variables; only status/hasError appear braced in the sample
+    // expression (mirrors zh-CN), durationMs/failedCount are named bare in the variable list.
+    const hint = t('custom.hint', { ns: 'monitoring' })
+    expect(hint).toContain('{{status}}')
+    expect(hint).toContain('{{hasError}}')
+    expect(hint).toContain('durationMs')
+    expect(hint).toContain('failedCount')
+    expect(hasChinese(hint)).toBe(false)
+    // Lib label keys resolve to English
+    expect(t('builtinRule.runError', { ns: 'monitoring' })).toBe('Run error')
+    expect(t('builtinRule.consecutiveFailures', { ns: 'monitoring' })).toBe('Consecutive failures')
+    expect(t('alertStatus.open', { ns: 'monitoring' })).toBe('Open')
+    // Shadow copy and the editor entry translate too; technical enums stay verbatim
+    expect(t('shadow.modal.title', { ns: 'monitoring' })).toBe('Shadow run (side-channel drill)')
+    expect(t('shadow.intent.dryRun', { ns: 'monitoring' })).toBe('Write short-circuited')
+    expect(t('shadow.verdict.consistent', { ns: 'monitoring' })).toBe('Consistent')
+    expect(t('shadow.action.refunded', { ns: 'monitoring' })).toBe('Auto refund')
+    expect(t('shadow.action.humanReview', { ns: 'monitoring' })).toBe('Escalate to human review')
+    expect(t('header.shadowRun', { ns: 'editor' })).toBe('Shadow run')
+    expect(t('SHADOW_DRY_RUN', { ns: 'monitoring' })).toBe('SHADOW_DRY_RUN')
     changeLanguage('zh-CN')
   })
 
@@ -866,13 +955,15 @@ describe('zero-dependency i18n skeleton (docs/17 §2.3, M12)', () => {
     expect(t('common:button.delete', { ns: 'memory' })).toBe('删除')
   })
 
-  it('falls back to zh-CN for memory copy under the empty en-US skeleton', () => {
+  it('renders English memory copy under en-US (docs/57)', () => {
     changeLanguage('en-US')
-    // en-US/memory.json stays {} (no translation yet); Chinese must still render, never a raw key.
     for (const key of MEMORY_KEYS) {
-      expect(t(key, { ns: 'memory' })).not.toBe(key)
+      const value = t(key, { ns: 'memory' })
+      expect(value).not.toBe(key)
+      expect(hasChinese(value), `${key} English copy must not contain Chinese`).toBe(false)
     }
-    expect(t('kind.fact', { ns: 'memory' })).toBe('事实')
+    expect(t('kind.fact', { ns: 'memory' })).toBe('Fact')
+    expect(t('kind.preference', { ns: 'memory' })).toBe('Preference')
     changeLanguage('zh-CN')
   })
 
@@ -888,11 +979,15 @@ describe('zero-dependency i18n skeleton (docs/17 §2.3, M12)', () => {
     expect(t('common:nav.connections', { ns: 'connections' })).toBe('连接管理')
   })
 
-  it('falls back to zh-CN for connections copy under the empty en-US skeleton', () => {
+  it('renders English connections copy under en-US (docs/57)', () => {
     changeLanguage('en-US')
     for (const key of CONNECTIONS_KEYS) {
-      expect(t(key, { ns: 'connections' })).not.toBe(key)
+      const value = t(key, { ns: 'connections' })
+      expect(value).not.toBe(key)
+      expect(hasChinese(value), `${key} English copy must not contain Chinese`).toBe(false)
     }
+    expect(t('status.connected', { ns: 'connections' })).toBe('Connected')
+    expect(t('common:nav.connections', { ns: 'connections' })).toBe('Connections')
     changeLanguage('zh-CN')
   })
 
@@ -908,11 +1003,294 @@ describe('zero-dependency i18n skeleton (docs/17 §2.3, M12)', () => {
     expect(t('provider.shopify', { ns: 'channels' })).toBe('Shopify')
   })
 
-  it('falls back to zh-CN for channels copy under the empty en-US skeleton', () => {
+  it('renders English channels copy under en-US (docs/57)', () => {
     changeLanguage('en-US')
     for (const key of CHANNELS_KEYS) {
-      expect(t(key, { ns: 'channels' })).not.toBe(key)
+      const value = t(key, { ns: 'channels' })
+      expect(value).not.toBe(key)
+      if (key !== 'provider.shopify') {
+        expect(hasChinese(value), `${key} English copy must not contain Chinese`).toBe(false)
+      }
     }
+    expect(t('provider.shopify', { ns: 'channels' })).toBe('Shopify')
+    expect(t('status.connected', { ns: 'channels' })).toBe('Connected')
     changeLanguage('zh-CN')
+  })
+})
+
+// ── Static parity guards over the JSON catalogs themselves (docs/57 §5) ─────────
+// These read the raw locale JSON rather than the runtime t(), so a missing/extra
+// key, a stray Han character in English copy, or a placeholder mismatch fails the
+// build even if no runtime test happens to resolve that key.
+const flatten = (obj: unknown, prefix = ''): Record<string, string> => {
+  const out: Record<string, string> = {}
+  if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+      const path = prefix ? `${prefix}.${k}` : k
+      if (v && typeof v === 'object') {
+        Object.assign(out, flatten(v, path))
+      } else {
+        out[path] = String(v)
+      }
+    }
+  }
+  return out
+}
+
+const INTERP_IDENT = /\{\{\s*([A-Za-z_$][\w$]*)\s*\}\}/g
+
+/**
+ * Teaching tokens deliberately diverge between zh and en (docs/57 §2.3): the zh
+ * copy uses CJK/dotted sample identifiers that never match the interpolate rule,
+ * while en uses English sample identifiers. They are rendered without variables
+ * and must survive verbatim, so they are excluded from the placeholder parity guard.
+ */
+const INTERPOLATION_PARITY_EXEMPT = new Set<string>([
+  'editor:variables.hint',
+  'editor:decision.promptTemplateLabel',
+])
+
+const PARITY_PAIRS: Array<{ ns: string; zh: unknown; en: unknown }> = [
+  { ns: 'approvals', zh: zhApprovals, en: enApprovals },
+  { ns: 'audit', zh: zhAudit, en: enAudit },
+  { ns: 'channels', zh: zhChannels, en: enChannels },
+  { ns: 'common', zh: zhCommon, en: enCommon },
+  { ns: 'connections', zh: zhConnections, en: enConnections },
+  { ns: 'dashboard', zh: zhDashboard, en: enDashboard },
+  { ns: 'demo', zh: zhDemo, en: enDemo },
+  { ns: 'editor', zh: zhEditor, en: enEditor },
+  { ns: 'memory', zh: zhMemory, en: enMemory },
+  { ns: 'monitoring', zh: zhMonitoring, en: enMonitoring },
+  { ns: 'openapi', zh: zhOpenapi, en: enOpenapi },
+]
+
+describe('zh-CN / en-US catalog parity (docs/57 §5)', () => {
+  it('has identical leaf-key sets in every namespace', () => {
+    for (const { ns, zh, en } of PARITY_PAIRS) {
+      const zhKeys = new Set(Object.keys(flatten(zh)))
+      const enKeys = new Set(Object.keys(flatten(en)))
+      const missing = [...zhKeys].filter((k) => !enKeys.has(k))
+      const extra = [...enKeys].filter((k) => !zhKeys.has(k))
+      expect(missing, `${ns}: keys missing in en-US`).toEqual([])
+      expect(extra, `${ns}: extra keys in en-US`).toEqual([])
+    }
+  })
+
+  it('contains no Han characters in any English leaf value (language autonym exempt)', () => {
+    // common.language.zhCN deliberately stays "中文" — language names are shown as autonyms
+    // in the switcher menu and never translated (docs/57 §4).
+    const CJK_EXEMPT = new Set(['common:language.zhCN'])
+    for (const { ns, en } of PARITY_PAIRS) {
+      for (const [key, value] of Object.entries(flatten(en))) {
+        if (CJK_EXEMPT.has(`${ns}:${key}`)) continue
+        expect(/[一-鿿]/.test(value), `${ns}:${key} still contains Chinese: ${value}`).toBe(false)
+      }
+    }
+  })
+
+  it('uses the same interpolation identifier set on both sides (teaching tokens exempt)', () => {
+    for (const { ns, zh, en } of PARITY_PAIRS) {
+      const zhFlat = flatten(zh)
+      const enFlat = flatten(en)
+      for (const key of Object.keys(zhFlat)) {
+        if (INTERPOLATION_PARITY_EXEMPT.has(`${ns}:${key}`)) continue
+        const zhVars = new Set(zhFlat[key].match(INTERP_IDENT) ?? [])
+        const enVars = new Set(enFlat[key].match(INTERP_IDENT) ?? [])
+        expect([...enVars].sort(), `${ns}:${key} placeholder mismatch`).toEqual(
+          [...zhVars].sort(),
+        )
+      }
+    }
+  })
+})
+
+// ── D-3 component copy: release / rollout / feedback / approval card (docs/57 §6 U619–U622) ──
+describe('docs/57 D-3 extracted component copy resolves bilingually', () => {
+  it('renders FeedbackButton copy (common.feedback.*) in both languages', () => {
+    expect(t('feedback.button')).toBe('反馈')
+    changeLanguage('en-US')
+    expect(t('feedback.button')).toBe('Feedback')
+    expect(t('feedback.doneTitle')).not.toMatch(/[一-鿿]/)
+    changeLanguage('zh-CN')
+  })
+
+  it('renders approval card copy (approvals.card.*) with interpolation in both languages', () => {
+    expect(t('card.requiredMissing', { ns: 'approvals', fields: '备注' })).toContain('备注')
+    changeLanguage('en-US')
+    expect(t('card.loading', { ns: 'approvals' })).toBe('Loading the interactive card...')
+    const warned = t('card.degradedWarning', { ns: 'approvals', error: 'boom' })
+    expect(warned).toContain('boom')
+    expect(warned).not.toMatch(/[一-鿿]/)
+    changeLanguage('zh-CN')
+  })
+
+  it('renders ReleaseModal copy (editor.release.*) including meta label keys and interpolation', () => {
+    expect(t('release.title', { ns: 'editor' })).toBe('发布门禁')
+    expect(t('release.conclusion.blocked', { ns: 'editor' })).toBe('未通过')
+    expect(t('release.trigger.manual', { ns: 'editor' })).toBe('手动门禁')
+    changeLanguage('en-US')
+    expect(t('release.title', { ns: 'editor' })).toBe('Release gate')
+    expect(t('release.blocked', { ns: 'editor', failed: 1, total: 3 })).toContain('1/3')
+    expect(t('release.upgrade.firstPin', { ns: 'editor', version: 7 })).toContain('@7')
+    expect(t('release.diff.part.nodesAdded', { ns: 'editor', count: 2 })).toBe('nodes +2')
+    changeLanguage('zh-CN')
+  })
+
+  it('renders RolloutModal copy (editor.rollout.*) including status/metric/segment meta keys', () => {
+    expect(t('rollout.action.start', { ns: 'editor' })).toBe('启动 canary')
+    expect(t('rollout.status.canary', { ns: 'editor' })).toBe('金丝雀中')
+    expect(t('rollout.metric.runErrorRate', { ns: 'editor' })).toBe('运行错误率')
+    expect(t('rollout.segment.lowValueBucket', { ns: 'editor' })).toBe('低金额桶')
+    changeLanguage('en-US')
+    expect(t('rollout.action.promote', { ns: 'editor' })).toBe('Promote to full (manual)')
+    expect(t('rollout.status.full', { ns: 'editor' })).toBe('Full rollout')
+    expect(t('rollout.eventLandedVersion', { ns: 'editor', version: 4 })).toContain('v4')
+    changeLanguage('zh-CN')
+  })
+})
+
+// D-4 browser smoke (U624) found two whole pages and the property-panel/canvas
+// layer still hard-coded in Chinese; they were extracted in the same batch.
+describe('docs/57 D-4 smoke-discovered copy (approval pages, canvas, property panels)', () => {
+  it('renders approval queue page copy (approvals title/tabs/source/error) bilingually', () => {
+    expect(t('title', { ns: 'approvals' })).toBe('审批队列')
+    expect(t('tabs.pending', { ns: 'approvals' })).toBe('待处理')
+    expect(t('source.timeout', { ns: 'approvals' })).toBe('超时自动处理')
+    expect(t('error.submitFailed', { ns: 'approvals' })).toBe('提交失败')
+    changeLanguage('en-US')
+    expect(t('title', { ns: 'approvals' })).toBe('Approval queue')
+    expect(t('tabs.decided', { ns: 'approvals' })).toBe('Decided')
+    expect(t('source.emailLink', { ns: 'approvals' })).toBe('Handled via email link')
+    expect(t('emptyDecided', { ns: 'approvals' })).not.toMatch(/[一-鿿]/)
+    changeLanguage('zh-CN')
+  })
+
+  it('renders email deep-link page copy (approvals.email.*) with resolved-line interpolation', () => {
+    const zhLine = t('email.resolvedLine', {
+      ns: 'approvals',
+      decision: '同意',
+      source: '人工处理',
+    })
+    expect(zhLine).toContain('同意')
+    expect(zhLine).toContain('人工处理')
+    changeLanguage('en-US')
+    expect(t('email.invalid', { ns: 'approvals' })).toBe(
+      'The approval link is invalid or has expired',
+    )
+    const enLine = t('email.resolvedLine', {
+      ns: 'approvals',
+      decision: 'Approved',
+      source: 'Handled by a human',
+    })
+    expect(enLine).toContain('Approved')
+    expect(enLine).toContain('Handled by a human')
+    expect(enLine).not.toMatch(/[一-鿿]/)
+    changeLanguage('zh-CN')
+  })
+
+  it('renders canvas node copy (editor.canvas.*) including branch/breakpoint interpolation', () => {
+    expect(t('canvas.branchFallback', { ns: 'editor', n: 2 })).toBe('分支 2')
+    expect(t('canvas.bp.node', { ns: 'editor' })).toBe('节点断点（点击取消）')
+    expect(t('canvas.statusRunning', { ns: 'editor' })).toBe('运行中…')
+    changeLanguage('en-US')
+    expect(t('canvas.branchFallback', { ns: 'editor', n: 2 })).toBe('Branch 2')
+    expect(t('canvas.bp.conditional', { ns: 'editor', expression: 'x > 1' })).toContain('x > 1')
+    expect(t('canvas.loopBody', { ns: 'editor' })).toBe('Loop body')
+    changeLanguage('zh-CN')
+  })
+
+  it('renders problems panel and node config titles bilingually', () => {
+    expect(t('problems.errors', { ns: 'editor', count: 3 })).toBe('错误 3')
+    expect(t('nodeTitles.wait', { ns: 'editor' })).toContain('等待设置')
+    changeLanguage('en-US')
+    expect(t('problems.warnings', { ns: 'editor', count: 2 })).toBe('2 warnings')
+    expect(t('nodeTitles.loopForeach', { ns: 'editor' })).toContain('For-each loop')
+    expect(t('nodeTitles.condition', { ns: 'editor' })).not.toMatch(/[一-鿿]/)
+    changeLanguage('zh-CN')
+  })
+
+  it('renders wait/tool/form/nodePicker/widget property-panel copy with interpolation', () => {
+    expect(t('wait.durationInvalid', { ns: 'editor', min: 1, max: 86400 })).toContain('86400')
+    expect(t('wait.addEvent', { ns: 'editor', max: 5 })).toContain('5')
+    expect(t('form.addCount', { ns: 'editor', count: 2, max: 10 })).toBe('添加（2/10）')
+    expect(t('nodePicker.nodeCount', { ns: 'editor', id: 'g1', count: 7 })).toContain('g1')
+    changeLanguage('en-US')
+    expect(t('tool.field', { ns: 'editor' })).toBe('Tool (adapter/capability)')
+    expect(t('wait.matchAll', { ns: 'editor' })).toContain('AND')
+    expect(t('form.empty', { ns: 'editor' })).toBe('No items')
+    expect(t('widget.pathExpr', { ns: 'editor' })).not.toMatch(/[一-鿿]/)
+    expect(t('nodePicker.nodeCount', { ns: 'editor', id: 'g1', count: 7 })).toBe('g1 (7 nodes)')
+    changeLanguage('zh-CN')
+  })
+})
+
+// ── Language switcher persistence runtime (docs/57 §4) ─────────────────────────
+// Vitest runs under node (no jsdom); install an in-memory localStorage for this
+// describe so the persistence path is exercised deterministically without a DOM dep.
+function memoryStorage(): Storage {
+  const m = new Map<string, string>()
+  return {
+    getItem: (k: string) => (m.has(k) ? (m.get(k) as string) : null),
+    setItem: (k: string, v: string) => {
+      m.set(k, String(v))
+    },
+    removeItem: (k: string) => {
+      m.delete(k)
+    },
+    clear: () => m.clear(),
+    key: (i: number) => [...m.keys()][i] ?? null,
+    get length() {
+      return m.size
+    },
+  } as Storage
+}
+
+describe('language persistence and switcher runtime (docs/57 §4)', () => {
+  const g = globalThis as { localStorage?: Storage }
+  const originalStorage = g.localStorage
+
+  beforeAll(() => {
+    g.localStorage = memoryStorage()
+  })
+
+  afterAll(() => {
+    if (originalStorage === undefined) delete g.localStorage
+    else g.localStorage = originalStorage
+    vi.resetModules()
+  })
+
+  it('readStoredLocale accepts a supported stored value', () => {
+    expect(readStoredLocale({ getItem: () => 'en-US' })).toBe('en-US')
+    expect(readStoredLocale({ getItem: () => 'zh-CN' })).toBe('zh-CN')
+  })
+
+  it('readStoredLocale falls back to the default for missing/unsupported values', () => {
+    expect(readStoredLocale({ getItem: () => null })).toBe(DEFAULT_LOCALE)
+    expect(readStoredLocale({ getItem: () => 'fr-FR' })).toBe(DEFAULT_LOCALE)
+    expect(readStoredLocale({ getItem: () => '' })).toBe(DEFAULT_LOCALE)
+    expect(readStoredLocale(null)).toBe(DEFAULT_LOCALE)
+  })
+
+  it('readStoredLocale falls back when the storage throws', () => {
+    expect(readStoredLocale({ getItem: () => { throw new Error('blocked') } })).toBe(DEFAULT_LOCALE)
+  })
+
+  it('persists the chosen language and reads it back', () => {
+    changeLanguage('en-US')
+    expect(g.localStorage?.getItem(LOCALE_STORAGE_KEY)).toBe('en-US')
+    expect(readStoredLocale()).toBe('en-US')
+    changeLanguage('zh-CN')
+    expect(g.localStorage?.getItem(LOCALE_STORAGE_KEY)).toBe('zh-CN')
+    expect(readStoredLocale()).toBe('zh-CN')
+  })
+
+  it('initializes the module language from localStorage on first import', async () => {
+    g.localStorage?.setItem(LOCALE_STORAGE_KEY, 'en-US')
+    vi.resetModules()
+    const fresh = await import('../index')
+    expect(fresh.getLanguage()).toBe('en-US')
+    expect(fresh.t('auth.login.submit')).toBe('Sign in')
+    vi.resetModules()
+    g.localStorage?.removeItem(LOCALE_STORAGE_KEY)
   })
 })

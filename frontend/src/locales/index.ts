@@ -1,16 +1,15 @@
 /**
- * 零依赖 i18n 文案骨架（docs/17 §2.3，M12，D12 部分取回）。
+ * 零依赖 i18n 文案骨架（docs/17 §2.3，M12；docs/57 全量翻译＋语言切换）。
  *
- * 触发条件（首个英文使用者 / 明确出海需求）未到之前，本模块**不引入
- * i18next / react-i18next**，只用纯 TS + 已有的 react 提供一个接口签名与
- * i18next 对齐的最小实现：`t(key, options)` / `useTranslation(ns)`。触发批次
- * 把本文件换成 i18next 初始化即可，组件侧调用方式不变（零返工）。
+ * 本模块**不引入 i18next / react-i18next**（docs/57 §3 决策：当前无复数/懒加载
+ * /Intl 需求，换库纯返工，D12 不解除），只用纯 TS + 已有的 react 提供一个接口
+ * 签名与 i18next 对齐的最小实现：`t(key, options)` / `useTranslation(ns)`。
  *
- * 当前仅 zh-CN/common 有文案，editor/dashboard/demo 与整个 en-US 为空对象
- * 占位；语言固定 zh-CN，`changeLanguage`/localStorage 持久化已预留但本批不接
- * 切换 UI、不做 navigator 自动探测（en 无翻译时自动探测会把 UI 变成 key）。
- * 后端 D7 结构化错误码（AUTH_*）与 AntD ConfigProvider locale 联动均留待
- * i18next 触发批次（docs/17 §2.2/§2.4）。
+ * docs/57 起 zh-CN/en-US 11 个 namespace 全量对齐；语言通过 `changeLanguage`
+ * 切换并持久化到 localStorage（key `atlas.locale`），模块初始化时读回
+ * （readStoredLocale）。**不做 navigator.language 自动探测**（种子客户定位中文，
+ * 避免英文 navigator 误显，docs/57 §3）。AntD ConfigProvider locale 联动见
+ * ./antdLocale.ts；后端结构化错误 detail 仍原样上屏、不 key 化。
  */
 import { useCallback, useSyncExternalStore } from 'react'
 
@@ -79,12 +78,35 @@ const resources: Record<Locale, Record<Namespace, Dict>> = {
 
 export const DEFAULT_LOCALE: Locale = 'zh-CN'
 export const SUPPORTED_LOCALES: Locale[] = ['zh-CN', 'en-US']
-const LOCALE_STORAGE_KEY = 'atlas.locale'
+export const LOCALE_STORAGE_KEY = 'atlas.locale'
 
-let language: Locale = DEFAULT_LOCALE
+type StorageLike = Pick<Storage, 'getItem'> | null | undefined
+
+/**
+ * 从存储读回上次选择的语言（docs/57 §4）：值为受支持的 locale 时原样返回，
+ * 缺失/非法/存储不可用一律回退 DEFAULT_LOCALE。纯函数、可注入 storage 单测；
+ * 不传 storage 时尝试全局 localStorage（SSR/隐私模式下安全回退）。
+ * 刻意不读 navigator.language（docs/57 §3 决策）。
+ */
+export function readStoredLocale(storage?: StorageLike): Locale {
+  let raw: string | null = null
+  try {
+    if (storage !== undefined) {
+      raw = storage?.getItem(LOCALE_STORAGE_KEY) ?? null
+    } else {
+      raw = localStorage.getItem(LOCALE_STORAGE_KEY)
+    }
+  } catch {
+    // 存储不可用（隐私模式/安全上下文/测试桩抛错）时回退默认语言
+    raw = null
+  }
+  return (SUPPORTED_LOCALES as string[]).includes(raw ?? '') ? (raw as Locale) : DEFAULT_LOCALE
+}
+
+let language: Locale = readStoredLocale()
 const listeners = new Set<() => void>()
 
-function subscribe(listener: () => void): () => void {
+export function subscribe(listener: () => void): () => void {
   listeners.add(listener)
   return () => {
     listeners.delete(listener)
@@ -100,8 +122,8 @@ function emitChange(): void {
 }
 
 /**
- * 切换语言（预留）：写内存状态并持久化到 localStorage，通知 hook 重渲染。
- * 本批无切换 UI 入口；en-US 翻译落地批次再启用并接 navigator 探测。
+ * 切换语言（docs/57 §4）：写内存状态并持久化到 localStorage，通知 hook 重渲染。
+ * 无 localStorage（测试/隐私模式）时仅内存生效；非法/相同语言静默忽略。
  */
 export function changeLanguage(next: Locale): void {
   if (!SUPPORTED_LOCALES.includes(next) || next === language) return
@@ -160,7 +182,7 @@ function resolve(lang: Locale, namespace: Namespace, key: string): string | unde
     hit = lookupPath(resources[lang].common, segments)
     if (hit !== undefined) return hit
   }
-  // 3. 回退到默认语言 zh-CN（en-US 空骨架期间仍显示中文，而非 key）
+  // 3. 回退到默认语言 zh-CN（en-US 个别缺键时仍显示中文，而非 key）
   if (lang !== DEFAULT_LOCALE) {
     hit = lookupPath(resources[DEFAULT_LOCALE][ns], segments)
     if (hit !== undefined) return hit

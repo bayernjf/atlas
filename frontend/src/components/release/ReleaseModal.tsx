@@ -24,6 +24,7 @@ import {
   reportConclusion,
   reportTimeLabel,
 } from '../../lib/release'
+import { useTranslation } from '../../locales'
 
 const { Text } = Typography
 
@@ -41,6 +42,7 @@ type Props = {
  * blocked 禁止发布、total=0 skipped 明示未覆盖但不阻塞。
  */
 export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
+  const { t } = useTranslation('editor')
   const [loading, setLoading] = useState(false)
   const [publishing, setPublishing] = useState(false)
   const [report, setReport] = useState<GateReport | null>(null)
@@ -147,25 +149,25 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
 
   const columns: ColumnsType<GateCaseRow> = [
     {
-      title: '结果',
+      title: t('release.col.result'),
       dataIndex: 'matches',
       width: 72,
       render: (matches: boolean) =>
-        matches ? <Tag color="green">✓ 一致</Tag> : <Tag color="red">✗ 不匹配</Tag>,
+        matches ? <Tag color="green">{t('release.match')}</Tag> : <Tag color="red">{t('release.mismatch')}</Tag>,
     },
-    { title: '用例', dataIndex: 'name' },
-    { title: '回放终态', dataIndex: 'replay_status', width: 110 },
-    { title: '说明', dataIndex: 'note' },
+    { title: t('release.col.case'), dataIndex: 'name' },
+    { title: t('release.col.replayStatus'), dataIndex: 'replay_status', width: 110 },
+    { title: t('release.col.note'), dataIndex: 'note' },
   ]
 
   const upgradeColumns: ColumnsType<SubgraphUpgrade> = [
-    { title: '节点', dataIndex: 'node_id', width: 150 },
-    { title: '子图', dataIndex: 'sub_id', width: 170 },
+    { title: t('release.upgrade.col.node'), dataIndex: 'node_id', width: 150 },
+    { title: t('release.upgrade.col.subgraph'), dataIndex: 'sub_id', width: 170 },
     {
-      title: '版本变化',
+      title: t('release.upgrade.col.change'),
       render: (_, row) =>
         row.first_pin || row.from_version === null ? (
-          <Tag color="blue">首次钉版 @{row.to_version}</Tag>
+          <Tag color="blue">{t('release.upgrade.firstPin', { version: row.to_version })}</Tag>
         ) : (
           <Space size={4}>
             <Tag>@{row.from_version}</Tag>
@@ -199,32 +201,32 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
 
   const historyColumns: ColumnsType<ReleaseReportSummary> = [
     {
-      title: '时间',
+      title: t('release.col.time'),
       dataIndex: 'created_at',
       width: 110,
       render: (createdAt: string) => reportTimeLabel(createdAt),
     },
     {
-      title: '触发方式',
+      title: t('release.col.trigger'),
       dataIndex: 'trigger',
       width: 100,
       render: (trigger: ReleaseReportSummary['trigger']) => {
         const meta = REPORT_TRIGGER_META[trigger]
-        return <Tag color={meta.color}>{meta.label}</Tag>
+        return <Tag color={meta.color}>{t(meta.label)}</Tag>
       },
     },
     {
-      title: '通过/总数',
+      title: t('release.col.passTotal'),
       width: 90,
       render: (_, row) => `${row.passed}/${row.total}`,
     },
     {
-      title: '通过率趋势',
+      title: t('release.col.trend'),
       dataIndex: 'pass_rate',
       width: 170,
       render: (passRate: number | null, row) =>
         passRate === null ? (
-          <Tag>未覆盖</Tag>
+          <Tag>{t('release.uncovered')}</Tag>
         ) : (
           <Progress
             percent={Math.round(passRate * 100)}
@@ -234,15 +236,15 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
         ),
     },
     {
-      title: '结论',
+      title: t('release.col.conclusion'),
       width: 90,
       render: (_, row) => {
         const meta = GATE_CONCLUSION_META[reportConclusion(row)]
-        return <Tag color={meta.color}>{meta.label}</Tag>
+        return <Tag color={meta.color}>{t(meta.label)}</Tag>
       },
     },
     {
-      title: '导出',
+      title: t('release.col.export'),
       width: 104,
       render: (_, row) => (
         <Space size={4}>
@@ -275,64 +277,58 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
 
   return (
     <Modal
-      title={`发布门禁${graphId ? `：${graphId}` : ''}`}
+      title={graphId ? t('release.titleWithGraph', { graphId }) : t('release.title')}
       open={open}
       width={760}
       onCancel={onClose}
       footer={
         <Space>
-          <Button onClick={onClose}>关闭</Button>
+          <Button onClick={onClose}>{t('common:button.close')}</Button>
           {conclusion !== 'blocked' && publishedVersion === null && (
             <Button type="primary" loading={publishing} onClick={doPublish}>
-              确认发布为新版本
+              {t('release.confirmPublish')}
             </Button>
           )}
         </Space>
       }
     >
       <Space orientation="vertical" size={12} style={{ width: '100%' }}>
-        <Text type="secondary">
-          对当前草稿批量回放本图录制用例并逐节点比对；存在不匹配用例时拦截发布（不产新版本）。
-        </Text>
+        <Text type="secondary">{t('release.intro')}</Text>
         {error && <Alert type="error" showIcon message={error} />}
         {publishedVersion !== null && (
           <Alert
             type="success"
             showIcon
-            message={`已发布为 v${publishedVersion}（不可变版本）`}
+            message={t('release.published', { version: publishedVersion })}
           />
         )}
         {report && conclusion === 'blocked' && (
           <Alert
             type="error"
             showIcon
-            message={`门禁未通过：${report.failed}/${report.total} 个用例不匹配，已禁止发布`}
+            message={t('release.blocked', { failed: report.failed, total: report.total })}
           />
         )}
         {report && conclusion === 'skipped' && (
-          <Alert
-            type="warning"
-            showIcon
-            message="本图没有可回放的录制用例（未覆盖），门禁不阻塞发布；建议先录制黄金用例。"
-          />
+          <Alert type="warning" showIcon message={t('release.skipped')} />
         )}
         {report && conclusion === 'passed' && (
           <Alert
             type="success"
             showIcon
-            message={`门禁通过：${report.passed}/${report.total} 个用例全部一致，可发布。`}
+            message={t('release.passed', { passed: report.passed, total: report.total })}
           />
         )}
         {upgrades !== null && (
           <div>
             <Space style={{ justifyContent: 'space-between', width: '100%' }}>
-              <Text strong>子图版本升级体检</Text>
+              <Text strong>{t('release.upgrade.title')}</Text>
               <Text type="secondary" style={{ fontSize: 12 }}>
-                发布将把子图引用钉到对应版本；升级后建议先跑门禁回归再发布（只读，不检测子图草稿改动）
+                {t('release.upgrade.hint')}
               </Text>
             </Space>
             {upgrades.length === 0 ? (
-              <Text type="secondary">本次发布无子图版本变化</Text>
+              <Text type="secondary">{t('release.upgrade.empty')}</Text>
             ) : (
               <Table
                 rowKey="node_id"
@@ -352,7 +348,7 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
           columns={columns}
           dataSource={report?.cases ?? []}
           pagination={false}
-          locale={{ emptyText: loading ? '回放中…' : '暂无匹配用例' }}
+          locale={{ emptyText: loading ? t('release.replaying') : t('release.emptyCases') }}
         />
         {graphDiff && (
           <Collapse
@@ -360,7 +356,14 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
             items={[
               {
                 key: 'configDiff',
-                label: `与 ${graphDiff.fromVersion === null ? '空图' : `v${graphDiff.fromVersion}`} 的配置差异（${diffLabelParts(graphDiff.summary).join(' · ') || '无变化'}）`,
+                label: t('release.diff.label', {
+                  base:
+                    graphDiff.fromVersion === null
+                      ? t('release.diff.emptyGraph')
+                      : `v${graphDiff.fromVersion}`,
+                  summary:
+                    diffLabelParts(graphDiff.summary, t).join(' · ') || t('release.diff.noChange'),
+                }),
                 children: <DiffView data={graphDiff.diff} />,
               },
             ]}
@@ -371,7 +374,9 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
           items={[
             {
               key: 'history',
-              label: `历史报告（通过率趋势）${history.length ? `· ${history.length} 条` : ''}`,
+              label: history.length
+                ? t('release.diff.historyTitleWithCount', { count: history.length })
+                : t('release.diff.historyTitle'),
               children: (
                 <Table
                   rowKey="id"
@@ -379,7 +384,7 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
                   columns={historyColumns}
                   dataSource={history}
                   pagination={false}
-                  locale={{ emptyText: '暂无历史报告（每次门禁/发布都会在此沉淀）' }}
+                  locale={{ emptyText: t('release.diff.emptyHistory') }}
                   expandable={{
                     onExpand: onExpandHistory,
                     expandedRowRender: (row) => {
@@ -408,47 +413,51 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
   )
 }
 
-/** B3：把 diff summary 折叠为「节点 +N」等中文片段（无变化返回空数组）。 */
-function diffLabelParts(summary: Record<string, number>): string[] {
+type Translate = (key: string, vars?: Record<string, unknown>) => string
+
+/** B3：把 diff summary 折叠为「节点 +N」等本地化片段（无变化返回空数组）。 */
+function diffLabelParts(summary: Record<string, number>, t: Translate): string[] {
   return [
-    summary.nodesAdded && `节点 +${summary.nodesAdded}`,
-    summary.nodesRemoved && `节点 -${summary.nodesRemoved}`,
-    summary.nodesChanged && `节点改 ${summary.nodesChanged}`,
-    summary.edgesAdded && `边 +${summary.edgesAdded}`,
-    summary.edgesRemoved && `边 -${summary.edgesRemoved}`,
-    summary.variablesAdded && `变量 +${summary.variablesAdded}`,
-    summary.variablesRemoved && `变量 -${summary.variablesRemoved}`,
-    summary.variablesChanged && `变量改 ${summary.variablesChanged}`,
+    summary.nodesAdded && t('release.diff.part.nodesAdded', { count: summary.nodesAdded }),
+    summary.nodesRemoved && t('release.diff.part.nodesRemoved', { count: summary.nodesRemoved }),
+    summary.nodesChanged && t('release.diff.part.nodesChanged', { count: summary.nodesChanged }),
+    summary.edgesAdded && t('release.diff.part.edgesAdded', { count: summary.edgesAdded }),
+    summary.edgesRemoved && t('release.diff.part.edgesRemoved', { count: summary.edgesRemoved }),
+    summary.variablesAdded && t('release.diff.part.variablesAdded', { count: summary.variablesAdded }),
+    summary.variablesRemoved && t('release.diff.part.variablesRemoved', { count: summary.variablesRemoved }),
+    summary.variablesChanged && t('release.diff.part.variablesChanged', { count: summary.variablesChanged }),
   ].filter((x): x is string => Boolean(x))
 }
 
 /** B3：渲染两版 graph 的配置结构差异。 */
 function DiffView({ data }: { data: GraphDiffResponse['diff'] }) {
+  const { t, i18n } = useTranslation('editor')
   const { nodes, edges, variables } = data
+  const listSeparator = i18n.language === 'en-US' ? ', ' : '、'
   const empty =
     nodes.added.length === 0 && nodes.removed.length === 0 && nodes.changed.length === 0 &&
     edges.added.length === 0 && edges.removed.length === 0 &&
     variables.added.length === 0 && variables.removed.length === 0 && variables.changed.length === 0
-  if (empty) return <Text type="secondary">两版结构一致，无配置差异。</Text>
+  if (empty) return <Text type="secondary">{t('release.diff.empty')}</Text>
   return (
     <Space orientation="vertical" size={8} style={{ width: '100%' }}>
       {nodes.added.length > 0 && (
-        <div><Text type="success">新增节点：</Text>{nodes.added.map((id) => <Tag key={id} color="success">{id}</Tag>)}</div>
+        <div><Text type="success">{t('release.diff.view.nodesAdded')}</Text>{nodes.added.map((id) => <Tag key={id} color="success">{id}</Tag>)}</div>
       )}
       {nodes.removed.length > 0 && (
-        <div><Text type="danger">删除节点：</Text>{nodes.removed.map((id) => <Tag key={id} color="error">{id}</Tag>)}</div>
+        <div><Text type="danger">{t('release.diff.view.nodesRemoved')}</Text>{nodes.removed.map((id) => <Tag key={id} color="error">{id}</Tag>)}</div>
       )}
       {nodes.changed.length > 0 && (
         <div>
-          <Text strong>修改节点：</Text>
+          <Text strong>{t('release.diff.view.nodesChanged')}</Text>
           {nodes.changed.map((c) => (
             <div key={c.id} style={{ marginLeft: 8, marginTop: 4 }}>
               <Tag>{c.id}</Tag>
               {c.changes.map((ch, i) =>
                 ch.field === 'config' ? (
-                  <Tag key={i} color="blue">配置：{ch.configKeys.join('、')}</Tag>
+                  <Tag key={i} color="blue">{t('release.diff.view.configKeys', { keys: ch.configKeys.join(listSeparator) })}</Tag>
                 ) : (
-                  <Tag key={i} color="orange">{ch.field}：{String(ch.from)} → {String(ch.to)}</Tag>
+                  <Tag key={i} color="orange">{t('release.diff.view.fieldChange', { field: ch.field, from: String(ch.from), to: String(ch.to) })}</Tag>
                 ),
               )}
             </div>
@@ -456,19 +465,19 @@ function DiffView({ data }: { data: GraphDiffResponse['diff'] }) {
         </div>
       )}
       {edges.added.length > 0 && (
-        <div><Text type="success">新增连线：</Text>{edges.added.map((id) => <Tag key={id} color="success">{id}</Tag>)}</div>
+        <div><Text type="success">{t('release.diff.view.edgesAdded')}</Text>{edges.added.map((id) => <Tag key={id} color="success">{id}</Tag>)}</div>
       )}
       {edges.removed.length > 0 && (
-        <div><Text type="danger">删除连线：</Text>{edges.removed.map((id) => <Tag key={id} color="error">{id}</Tag>)}</div>
+        <div><Text type="danger">{t('release.diff.view.edgesRemoved')}</Text>{edges.removed.map((id) => <Tag key={id} color="error">{id}</Tag>)}</div>
       )}
       {variables.added.length > 0 && (
-        <div><Text type="success">新增变量：</Text>{variables.added.map((n) => <Tag key={n} color="success">{n}</Tag>)}</div>
+        <div><Text type="success">{t('release.diff.view.variablesAdded')}</Text>{variables.added.map((n) => <Tag key={n} color="success">{n}</Tag>)}</div>
       )}
       {variables.removed.length > 0 && (
-        <div><Text type="danger">删除变量：</Text>{variables.removed.map((n) => <Tag key={n} color="error">{n}</Tag>)}</div>
+        <div><Text type="danger">{t('release.diff.view.variablesRemoved')}</Text>{variables.removed.map((n) => <Tag key={n} color="error">{n}</Tag>)}</div>
       )}
       {variables.changed.length > 0 && (
-        <div><Text strong>修改变量：</Text>{variables.changed.map((n) => <Tag key={n} color="blue">{n}</Tag>)}</div>
+        <div><Text strong>{t('release.diff.view.variablesChanged')}</Text>{variables.changed.map((n) => <Tag key={n} color="blue">{n}</Tag>)}</div>
       )}
     </Space>
   )

@@ -7,6 +7,24 @@
     "operator": "运营",
     "admin": "管理员"
   },
+  "language": {
+    "label": "语言",
+    "zhCN": "中文",
+    "enUS": "English"
+  },
+  "feedback": {
+    "button": "反馈",
+    "modalTitle": "提交试用反馈",
+    "submit": "提交反馈",
+    "intro": "遇到的问题或建议，一句话也行。告诉我们你当时想做什么、发生了什么。",
+    "typeBug": "问题 / Bug",
+    "typeSuggestion": "建议",
+    "contentPlaceholder": "例如：选了 12345 运行后，画布上的节点没有反应……",
+    "contactPlaceholder": "联系方式（选填，方便我们追问细节）",
+    "contentRequired": "请填写反馈内容",
+    "doneTitle": "反馈已收到，谢谢！",
+    "doneDescription": "你的反馈会直接决定我们下一步做什么。可以继续试用，也欢迎再提一条。"
+  },
   "nav": {
     "openEditor": "打开流程编辑器",
     "monitoring": "监控告警",

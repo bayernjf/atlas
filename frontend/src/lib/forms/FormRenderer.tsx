@@ -31,6 +31,7 @@ import type { WidgetRegistry } from './registry'
 import type { SchemaSource } from './resolveWidget'
 import type { WidgetScope } from './types'
 import { applyUiSchema, decorateNodeForRender, nestedHiddenFields, type UiSchema } from './uiSchema'
+import { useTranslation } from '../../locales'
 
 export type FormRendererProps = {
   /** 根 schema（工具 input_schema，或节点字段 schema 片段）。 */
@@ -177,6 +178,7 @@ function GroupView({ node, ctx }: { node: FormGroupNode; ctx: ViewContext }): Re
 }
 
 function ArrayView({ node, ctx }: { node: FormArrayNode; ctx: ViewContext }): ReactElement {
+  const { t } = useTranslation('editor')
   const itemSchema = node.schema.items ?? {}
   // minItems/maxItems 门控（M4 批 2 ⑨：parallel branches 2-10；schema 解释器
   // 同时产出 ITEMS_MIN/MAX 诊断，按钮禁用只负责防越界）。
@@ -184,7 +186,10 @@ function ArrayView({ node, ctx }: { node: FormArrayNode; ctx: ViewContext }): Re
   const maxItems = typeof node.schema.maxItems === 'number' ? node.schema.maxItems : undefined
   const canRemove = node.items.length > minItems
   const canAdd = maxItems === undefined || node.items.length < maxItems
-  const addLabel = maxItems === undefined ? '添加' : `添加（${node.items.length}/${maxItems}）`
+  const addLabel =
+    maxItems === undefined
+      ? t('form.add')
+      : t('form.addCount', { count: node.items.length, max: maxItems })
   return (
     <div className="property-field form-array" style={{ marginBottom: 8 }} data-pointer={node.pointer}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -203,7 +208,7 @@ function ArrayView({ node, ctx }: { node: FormArrayNode; ctx: ViewContext }): Re
         </Button>
       </div>
       {node.items.length === 0 && (
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无条目" />
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('form.empty')} />
       )}
       {node.items.map((item, index) => (
         <div
@@ -229,7 +234,7 @@ function ArrayView({ node, ctx }: { node: FormArrayNode; ctx: ViewContext }): Re
             disabled={!canRemove}
             onClick={() => ctx.onChange(removeAtPath(ctx.root, [...node.path, index]))}
           >
-            删除
+            {t('common:button.delete')}
           </Button>
         </div>
       ))}
@@ -238,6 +243,7 @@ function ArrayView({ node, ctx }: { node: FormArrayNode; ctx: ViewContext }): Re
 }
 
 function KeyValueView({ node, ctx }: { node: FormKeyValueNode; ctx: ViewContext }): ReactElement {
+  const { t } = useTranslation('editor')
   const keys = node.entries.map((entry) => entry.key)
   return (
     <div className="property-field form-keyvalue" style={{ marginBottom: 8 }} data-pointer={node.pointer}>
@@ -260,7 +266,7 @@ function KeyValueView({ node, ctx }: { node: FormKeyValueNode; ctx: ViewContext 
             )
           }
         >
-          添加
+          {t('form.add')}
         </Button>
       </div>
       {node.entries.map((entry, index) => (
@@ -269,7 +275,7 @@ function KeyValueView({ node, ctx }: { node: FormKeyValueNode; ctx: ViewContext 
           <Input
             style={{ width: '40%' }}
             value={entry.key}
-            placeholder={node.keyPlaceholder ?? '键名'}
+            placeholder={node.keyPlaceholder ?? t('form.keyPlaceholder')}
             onChange={(event) => ctx.onChange(renameKeyAtPath(ctx.root, node.path, entry.key, event.target.value))}
           />
           <div style={{ flex: 1 }}>
@@ -282,7 +288,7 @@ function KeyValueView({ node, ctx }: { node: FormKeyValueNode; ctx: ViewContext 
             />
           </div>
           <Button size="small" danger onClick={() => ctx.onChange(removeAtPath(ctx.root, [...node.path, entry.key]))}>
-            删除
+            {t('common:button.delete')}
           </Button>
         </div>
       ))}

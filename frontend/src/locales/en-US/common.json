@@ -1,1 +1,156 @@
-{}
+{
+  "brand": {
+    "appName": "Atlas Operations Orchestration Platform"
+  },
+  "role": {
+    "viewer": "Viewer",
+    "operator": "Operator",
+    "admin": "Admin"
+  },
+  "language": {
+    "label": "Language",
+    "zhCN": "中文",
+    "enUS": "English"
+  },
+  "feedback": {
+    "button": "Feedback",
+    "modalTitle": "Submit trial feedback",
+    "submit": "Submit feedback",
+    "intro": "A problem or a suggestion, even one sentence is fine. Tell us what you were trying to do and what happened.",
+    "typeBug": "Issue / Bug",
+    "typeSuggestion": "Suggestion",
+    "contentPlaceholder": "e.g. after selecting 12345 and running it, the nodes on the canvas did not respond...",
+    "contactPlaceholder": "Contact (optional, so we can follow up for details)",
+    "contentRequired": "Please enter the feedback content",
+    "doneTitle": "Feedback received, thank you!",
+    "doneDescription": "Your feedback directly shapes what we build next. Keep trying it out, and feel free to send another note."
+  },
+  "nav": {
+    "openEditor": "Open flow editor",
+    "monitoring": "Monitoring & alerts",
+    "memory": "Long-term memory",
+    "users": "User management",
+    "connections": "Connections",
+    "approvals": "Approval queue",
+    "audit": "Audit log",
+    "openapi": "API imports"
+  },
+  "button": {
+    "confirm": "OK",
+    "cancel": "Cancel",
+    "save": "Save",
+    "delete": "Delete",
+    "close": "Close",
+    "submit": "Submit",
+    "reset": "Reset",
+    "refresh": "Refresh",
+    "create": "Create",
+    "edit": "Edit"
+  },
+  "status": {
+    "success": "Success",
+    "failed": "Failed",
+    "loading": "Loading..."
+  },
+  "auth": {
+    "login": {
+      "title": "Atlas Operations Orchestration Platform",
+      "subtitle": "Sign in to enter your tenant workspace (04 §5.14)",
+      "username": "Username",
+      "usernameRequired": "Please enter your username",
+      "password": "Password",
+      "passwordRequired": "Please enter your password",
+      "submit": "Sign in",
+      "failed": "Sign-in failed",
+      "seedHintTitle": "Demo seed accounts (plaintext, for demo only):",
+      "seed": {
+        "tenantA": "Demo company A (t1)",
+        "tenantB": "Demo company B (t2)",
+        "accountLine": "{{user}} / {{pass}} ({{role}})"
+      }
+    },
+    "session": {
+      "logout": "Sign out"
+    }
+  },
+  "error": {
+    "auth": {
+      "invalidCredentials": "Incorrect username or password",
+      "unauthenticated": "You are not signed in or your session has expired; please sign in again",
+      "forbidden": "You do not have permission to perform this action",
+      "notFound": "The resource does not exist or you do not have access"
+    }
+  },
+  "users": {
+    "title": "User management",
+    "menu": {
+      "account": "Account",
+      "changePassword": "Change password"
+    },
+    "changePassword": {
+      "title": "Change password"
+    },
+    "column": {
+      "username": "Username",
+      "displayName": "Display name",
+      "role": "Role",
+      "status": "Status",
+      "createdAt": "Created at",
+      "actions": "Actions"
+    },
+    "status": {
+      "active": "Active",
+      "disabled": "Disabled"
+    },
+    "button": {
+      "back": "Back",
+      "create": "Create user",
+      "edit": "Edit",
+      "resetPassword": "Reset password",
+      "cancel": "Cancel",
+      "confirm": "OK",
+      "generate": "Regenerate"
+    },
+    "create": {
+      "title": "Create user"
+    },
+    "edit": {
+      "title": "Edit user {{username}}"
+    },
+    "reset": {
+      "title": "Reset password for {{username}}",
+      "hint": "After resetting, all of this user's sign-in sessions will be revoked; they must sign in again with the new password."
+    },
+    "field": {
+      "username": "Username",
+      "displayName": "Display name",
+      "password": "Password",
+      "role": "Role",
+      "disabled": "Disable this user",
+      "oldPassword": "Current password",
+      "newPassword": "New password",
+      "confirmPassword": "Confirm new password"
+    },
+    "error": {
+      "usernameRules": "Username must be 3-64 characters of lowercase letters, digits, or _ . -",
+      "displayNameRequired": "Please enter a display name",
+      "passwordLength": "Password must be 8-128 characters",
+      "passwordWeak": "This password is too common; please choose a stronger one",
+      "passwordSameAsOld": "The new password cannot be the same as the current one",
+      "oldPasswordRequired": "Please enter your current password",
+      "oldPasswordWrong": "Current password is incorrect",
+      "passwordMismatch": "The two new password entries do not match",
+      "loadFailed": "Failed to load the user list",
+      "createFailed": "Failed to create user",
+      "updateFailed": "Failed to update user",
+      "resetFailed": "Failed to reset password",
+      "changeFailed": "Failed to change password"
+    },
+    "message": {
+      "created": "User created",
+      "updated": "User updated",
+      "reset": "Password reset; the user's sessions have been revoked",
+      "passwordChanged": "Password changed; other devices have been signed out"
+    }
+  }
+}

@@ -23,6 +23,7 @@ import {
   type ApprovalRequest,
   type WebCardView,
 } from '../../lib/apiClient'
+import { useTranslation } from '../../locales'
 
 const { Text } = Typography
 
@@ -35,13 +36,16 @@ export function CardRenderer({
   busy?: boolean
   onDecide: (actionId: string, form: Record<string, string>) => void | Promise<void>
 }): ReactElement {
+  const { t, i18n } = useTranslation('approvals')
   const [values, setValues] = useState<Record<string, string>>(() => cardFormDefaults(card.form))
   const [formError, setFormError] = useState('')
 
   async function handleAction(actionId: string): Promise<void> {
     const missing = missingCardRequired(card.form, values)
     if (missing.length > 0) {
-      setFormError(`请先填写必填项：${missing.map((field) => field.label ?? field.name).join('、')}`)
+      const separator = i18n.language === 'en-US' ? ', ' : '、'
+      const fields = missing.map((field) => field.label ?? field.name).join(separator)
+      setFormError(t('card.requiredMissing', { fields }))
       return
     }
     setFormError('')
@@ -101,6 +105,7 @@ export function ApprovalCardGate({
   onCardDecided: (actionId: string, form: Record<string, string>) => void | Promise<void>
   onLegacyDecided: (decision: 'approved' | 'rejected') => void | Promise<void>
 }): ReactElement {
+  const { t } = useTranslation('approvals')
   const [card, setCard] = useState<WebCardView | null>(null)
   const [loadError, setLoadError] = useState('')
 
@@ -111,7 +116,7 @@ export function ApprovalCardGate({
       .then((rendered) => {
         if (cancelled) return
         if (rendered.channel === 'web') setCard(rendered)
-        else setLoadError('卡片渠道返回异常')
+        else setLoadError(t('card.channelError'))
       })
       .catch((error: Error) => {
         if (!cancelled) setLoadError(error.message)
@@ -119,7 +124,7 @@ export function ApprovalCardGate({
     return () => {
       cancelled = true
     }
-  }, [approval.token])
+  }, [approval.token, t])
 
   if (card) {
     return <CardRenderer card={card} busy={busy} onDecide={onCardDecided} />
@@ -129,25 +134,25 @@ export function ApprovalCardGate({
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, width: '100%' }}>
         <div>
-          <Text type="secondary">审批说明</Text>
+          <Text type="secondary">{t('card.summaryLabel')}</Text>
           <div>{approval.summary}</div>
         </div>
         <Alert
           type="warning"
           showIcon
-          title={`交互卡片暂不可用（${loadError}），已降级为默认审批`}
+          title={t('card.degradedWarning', { error: loadError })}
         />
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <Button danger loading={busy} onClick={() => void onLegacyDecided('rejected')}>
-            拒绝
+            {t('actions.reject')}
           </Button>
           <Button type="primary" loading={busy} onClick={() => void onLegacyDecided('approved')}>
-            同意
+            {t('actions.approve')}
           </Button>
         </div>
       </div>
     )
   }
 
-  return <Text type="secondary">交互卡片加载中…</Text>
+  return <Text type="secondary">{t('card.loading')}</Text>
 }

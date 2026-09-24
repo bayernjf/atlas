@@ -1,1 +1,63 @@
-{}
+{
+  "title": "Long-term memory",
+  "header": {
+    "refresh": "Refresh",
+    "back": "Back to Dashboard"
+  },
+  "notice": {
+    "message": "Local lexical vectors for mechanism demonstration only; not real semantics",
+    "description": "Similarity is computed by the built-in deterministic lexical vectors (offline and reproducible) and does not represent the quality of a commercial semantic model. Running flows write automatically through the memory tool; operators (operate permission) can manually create/edit memories here (marked as manual), and deletion requires an admin."
+  },
+  "col": {
+    "content": "Content",
+    "kind": "Kind",
+    "confidence": "Confidence",
+    "scope": "Scope",
+    "createdAt": "Created at",
+    "actions": "Actions",
+    "score": "Similarity"
+  },
+  "kind": {
+    "fact": "Fact",
+    "preference": "Preference"
+  },
+  "button": {
+    "edit": "Edit",
+    "search": "Search"
+  },
+  "deleteConfirm": {
+    "title": "Delete this memory?",
+    "description": "Deletion cannot be undone and does not affect runs that have already finished."
+  },
+  "filter": {
+    "allKinds": "All kinds"
+  },
+  "search": {
+    "cardTitle": "Semantic search",
+    "placeholder": "Enter natural language, e.g. the customer's delivery preferences",
+    "empty": "No matching memories",
+    "queryRequired": "Please enter a search query"
+  },
+  "list": {
+    "cardTitle": "Memory list",
+    "create": "Create memory",
+    "empty": "No memories yet"
+  },
+  "error": {
+    "loadList": "Failed to load memories",
+    "search": "Search failed",
+    "save": "Save failed",
+    "formInvalid": "The form is invalid"
+  },
+  "modal": {
+    "createTitle": "Create memory",
+    "editTitle": "Edit memory",
+    "sourceHint": "Manually created/edited memories are saved with source=manual; vectors are recomputed after the content changes.",
+    "kindLabel": "Kind",
+    "contentLabel": "Content",
+    "contentPlaceholder": "Memory content (required, up to 2000 characters)",
+    "confidenceLabel": "Confidence (0-1)",
+    "scopeLabel": "Scope (JSON object, string keys and values, optional)",
+    "metadataLabel": "Metadata (JSON object, string keys and values, optional)"
+  }
+}

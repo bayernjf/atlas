@@ -1,1 +1,90 @@
-{}
+{
+  "title": "Connections",
+  "header": {
+    "back": "Back",
+    "refresh": "Refresh"
+  },
+  "notice": {
+    "title": "Generic OAuth2 connections (platform-agnostic)",
+    "description": "Configure standard OAuth2 authorization-code connections here: fill in the platform's authorization/token endpoints and client credentials, and after starting authorization paste the code from the callback page back into \"Complete authorization\". This version ships with no specific platform built in and does not automatically call any platform's business APIs."
+  },
+  "list": {
+    "cardTitle": "OAuth2 connections"
+  },
+  "empty": "No connections yet; click \"Create connection\" to add one",
+  "col": {
+    "displayName": "Connection",
+    "status": "Status",
+    "scopes": "Scopes",
+    "expiresAt": "Access token expiry",
+    "createdAt": "Created at",
+    "actions": "Actions"
+  },
+  "status": {
+    "draft": "Unauthorized",
+    "connected": "Connected",
+    "error": "Error"
+  },
+  "button": {
+    "create": "Create connection",
+    "edit": "Edit",
+    "authorize": "Authorize",
+    "completeAuth": "Complete authorization",
+    "refresh": "Refresh token",
+    "test": "Test"
+  },
+  "deleteConfirm": {
+    "title": "Delete this connection?",
+    "description": "The saved token will also be cleared, and this cannot be undone."
+  },
+  "modal": {
+    "createTitle": "Create OAuth2 connection",
+    "editTitle": "Edit OAuth2 connection",
+    "secretKeepHint": "Leave empty to keep the current client secret; fill in to replace it."
+  },
+  "form": {
+    "provider": "Platform identifier (provider)",
+    "providerPlaceholder": "e.g. generic / shopify (used as a label only, customizable)",
+    "displayName": "Display name",
+    "displayNamePlaceholder": "e.g. some-platform shop connection",
+    "authUrl": "Authorization endpoint (authUrl, https)",
+    "tokenUrl": "Token endpoint (tokenUrl, https)",
+    "clientId": "Client ID (clientId)",
+    "clientIdPlaceholder": "The client_id assigned by the platform",
+    "clientSecret": "Client secret (clientSecret)",
+    "clientSecretPlaceholder": "The client_secret assigned by the platform",
+    "clientSecretKeepPlaceholder": "Leave empty to keep the current secret",
+    "clientSecretHint": "Secrets are stored with server-side envelope encryption and are never echoed back in any list or detail view.",
+    "scopes": "Scopes (space-separated)",
+    "scopesHint": "Separate multiple scopes with spaces; can be left empty.",
+    "redirectUri": "Redirect URI (redirectUri; leave empty for the default)",
+    "redirectUriHint": "Must match the callback registered in the platform console; leave empty to use the server default /connections/callback."
+  },
+  "authModal": {
+    "title": "Complete authorization",
+    "hint": "After approving authorization on the newly opened platform page, the callback page shows the authorization code and state. Paste them below (clicking \"Authorize\" already filled in state); on submit the server exchanges and encrypts the token for storage.",
+    "submit": "Complete authorization",
+    "stateLabel": "state (CSRF protection)",
+    "statePlaceholder": "Usually filled in automatically by \"Authorize\"; otherwise copy it from the callback page",
+    "codeLabel": "Authorization code",
+    "codePlaceholder": "Paste the code from the callback page",
+    "codeStateRequired": "Please provide both the authorization code and state"
+  },
+  "message": {
+    "saved": "Connection saved",
+    "deleted": "Connection deleted",
+    "authorized": "Authorization complete; token saved",
+    "refreshed": "Token refreshed",
+    "testOk": "Connection is usable",
+    "testFail": "The connection test did not pass"
+  },
+  "error": {
+    "loadList": "Failed to load the connection list",
+    "save": "Failed to save connection",
+    "authorize": "Authorization failed",
+    "refresh": "Failed to refresh the token",
+    "test": "Connection test failed",
+    "delete": "Failed to delete connection",
+    "formInvalid": "Form validation did not pass"
+  }
+}

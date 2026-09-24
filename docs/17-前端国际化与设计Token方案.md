@@ -1,7 +1,7 @@
 # Atlas 前端国际化（i18n）与设计 Token 方案
 
 > **来源**：工程推导文档。需求依据为 [04-组件设计-编辑后台.md](04-组件设计-编辑后台.md) 十、补充项 28「多语言支持」三条（界面多语言中/英切换可扩展、自然语言多语言、组件描述多语言）；01-08 正文为冻结的唯一事实源，本文只做工程化方案，不改写需求。
-> **状态**：方案已定（2026-09-13，2026-09-16 补 D7 多租户认证界面契约）。**设计 Token 等价替换已于 2026-09-13 落码**（`theme/tokens.ts` + `setup.ts`，三页面主体零视觉差异；2026-09-16 §3.5 收尾清单五项已全部清零，`src` 下仅 tokens.ts primitive 定义含 hex）；i18n 库按触发条件引入（见 §4 落地节奏与 [14-缓做事项登记表](14-缓做事项登记表.md) D12/D13）。**2026-09-20 M12 先行落地零依赖文案抽取骨架**（`frontend/src/locales/` 自写 t()/useTranslation 对齐 i18next 签名 + zh-CN/common 样板 + 登录页/UserBadge 接线，不装 i18next、不做切换 UI、不翻译 en-US；触发时零返工替换为 i18next，见 §4）。
+> **状态**：方案已定（2026-09-13，2026-09-16 补 D7 多租户认证界面契约）。**设计 Token 等价替换已于 2026-09-13 落码**（`theme/tokens.ts` + `setup.ts`，三页面主体零视觉差异；2026-09-16 §3.5 收尾清单五项已全部清零，`src` 下仅 tokens.ts primitive 定义含 hex）；i18n 库按触发条件引入（见 §4 落地节奏与 [14-缓做事项登记表](14-缓做事项登记表.md) D12/D13）。**2026-09-20 M12 先行落地零依赖文案抽取骨架**（`frontend/src/locales/` 自写 t()/useTranslation 对齐 i18next 签名 + zh-CN/common 样板 + 登录页/UserBadge 接线，不装 i18next、不做切换 UI、不翻译 en-US；触发时零返工替换为 i18next，见 §4）。**2026-09-24 docs/57 完成 en-US 首批全量翻译与语言切换**（10 个非空 namespace 全译、localStorage 持久化切换、UserBadge/Login 两入口、antd locale 联动、发布/灰度/反馈/审批/属性面板/表单/画布全接线；决策继续不引入 i18next、不做 navigator 探测；i18next 与元数据多语言仍缓做于 14 D12/D13，详见 docs/57 与本文 §4）。
 > **AI 使用提示**：前端新增界面文案、颜色/间距/圆角值时必须按本文契约预留（不裸写硬编码、不自创 key 规则）；落码 i18n/token 时以本文为方案依据。
 
 ## 1. 背景与现状
@@ -46,7 +46,7 @@ frontend/src/locales/
 
 - key 用语义层级命名：`editor.run.compile`、`demo.order.select`，**禁止用中文原文作 key**。
 - namespace 按页面/域拆分（common/editor/dashboard/demo），与组件目录对应。
-- 默认语言 `zh-CN`；用户选择存 `localStorage`，首次访问回退 `navigator.language`（非受支持语言回退 zh-CN）。
+- 默认语言 `zh-CN`；用户选择存 `localStorage`（key `atlas.locale`）。**2026-09-24 docs/57 决策 2 收口更正：不做 `navigator.language` 自动探测**（Phase 1 中文种子客户定位，防 en navigator 误显；自动探测留作出海批次），首次访问/非法存储值一律回退 zh-CN，语言只由用户显式切换决定。
 - 插值一律走 i18next `{{var}}`，不在组件里字符串拼接；复数用 i18next 后缀规则（`_one/_other`）。
 
 ### 2.4 后端文案边界（错误码契约）
@@ -144,9 +144,9 @@ frontend/src/theme/setup.ts    # main.tsx 引入一次，把 semantic 注入 :ro
 | editor namespace 抽取（编辑器大页，分两原子：框架/画布/左栏面板＋属性面板/调试台；纯展示文案全抽，节点类型/DSL/OODA/SSE 等技术专名按 §2.5 不译，后端中文 detail 原样上屏不 key 化） | ✅ 2026-09-21 docs/33 批 1 落码（`97d61dc`/`ad12f98`＋`bf9cdb6`/`888daf8`，en-US/editor 仍空 `{}`） | §2.3/§2.5 |
 | monitoring namespace 抽取（监控告警页：指标/规则/告警/适配器调用/Trace 时间线/影子运行/静默/值班全域；P50/P95、read/write/financial/administer、SHADOW_DRY_RUN、kind 名等专名不译） | ✅ 2026-09-21 docs/33 批 1 落码（`0c299ef`/`4bf7c7f`，en-US/monitoring 仍空 `{}`） | §2.3/§2.5 |
 | memory namespace 抽取（记忆/长期上下文页：记忆列表/kind 标签/置信度/scope/CRUD 表单；技术专名不译） | ✅ 2026-09-21 docs/33 批 1 落码（`3445576`/`f11dad5`，en-US/memory 仍空 `{}`） | §2.3/§2.5 |
-| i18n 库引入 + zh-CN 抽取 + en-US 骨架 | 触发式：首个英文使用者/明确出海需求（14 D12） | §2.2 |
-| 完整英文翻译 | 随首个英文客户试用 | §2.3 |
-| 组件/模板描述多语言 | Phase 2 模板库（14 D13） | 04 §28 第 3 条 |
+| i18n 库引入（i18next） | zh-CN 抽取与零依赖骨架 ✅（M12/docs/33）；**i18next 本体经 docs/57 决策 1 验证继续不引入**（自写 t() 经 11 namespace 全量翻译与切换验证够用），仍缓做于 14 D12：出现复数规则/namespace 懒加载硬需求时再换，组件侧 `t()`/`useTranslation()` 签名不变、零返工 | §2.2 |
+| 完整英文翻译（en-US UI 外壳 + 切换运行时） | ✅ **2026-09-24 docs/57 部分取回落码**：10 个非空 namespace 全量英译（demo 仍空）、localStorage 持久化切换（不做 navigator 探测）、UserBadge 语言组菜单 + Login 页脚两入口、antd locale 三处 ConfigProvider 联动、发布/灰度/反馈/审批卡片/审批两页/7 个 Config/WaitConfig/ToolCallConfig/FormRenderer/nodeWidgets/widgets/画布/Problems 全接线；静态守护三例（zh/en 键集合一致、en 零汉字〔唯一豁免 common:language.zhCN〕、插值标识符集合一致）；U610–U625 全过（前端 662 passed/2 skipped、lint 0 error、build ✓、双语浏览器冒烟 18 截图）。**仍显中文的层**：L1 校验诊断消息（如「该字段必填」）、后端中文 detail（§2.4 第一批债）、业务数据与节点目录/模板元数据（D13） | §2.3 |
+| 组件/模板描述多语言 | Phase 2 模板库（14 D13；docs/57 未取回：节点目录 label/description、模板 name/description/标签在英文态仍显中文，属业务/元数据豁免） | 04 §28 第 3 条 |
 | 暗色模式 | 有需求时按 §3.4 扩展点实施 | §3.4 |
 
 ## 5. 与其他文档的关系
@@ -154,4 +154,5 @@ frontend/src/theme/setup.ts    # main.tsx 引入一次，把 semantic 注入 :ro
 - 需求源：04 §补充项 28（冻结正文，不改写）。
 - 选型记录：10 文档 §1 决策表（T7）+ §4 变更记录（i18n 库；token 零新依赖方案）。
 - 目录落点：09 文档前端树 `locales/`、`theme/tokens.ts`（待落码标注）。
-- 触发缓做：14 文档 D12（i18n 落码）/ D13（组件描述多语言）。
+- 触发缓做：14 文档 D12（i18n 落码；docs/57 部分取回翻译与切换、i18next 本体仍缓做且不解除条目）/ D13（组件描述多语言）。
+- 落地批次：docs/57（en-US 首批全量翻译 + 语言切换 + 发布协作/审批/属性面板组件抽取，2026-09-24 收口）。

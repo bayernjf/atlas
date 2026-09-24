@@ -42,7 +42,16 @@
     "loopBody": "循环体",
     "loopExit": "退出",
     "approvalApproved": "通过",
-    "approvalRejected": "拒绝"
+    "approvalRejected": "拒绝",
+    "branchFallback": "分支 {{n}}",
+    "bp": {
+      "conditional": "条件断点：{{expression}}",
+      "node": "节点断点（点击取消）",
+      "set": "在此节点前设断点（调试运行）"
+    },
+    "statusRunning": "运行中…",
+    "statusPaused": "已暂停",
+    "diagSep": "；"
   },
   "export": {
     "title": "Graph 定义 JSON（W7-W8 DSL 编译输入）"
@@ -212,5 +221,243 @@
   "debugConsole": {
     "title": "调试控制台",
     "eventCount": "{{count}} 条事件"
+  },
+  "release": {
+    "title": "发布门禁",
+    "titleWithGraph": "发布门禁：{{graphId}}",
+    "confirmPublish": "确认发布为新版本",
+    "intro": "对当前草稿批量回放本图录制用例并逐节点比对；存在不匹配用例时拦截发布（不产新版本）。",
+    "published": "已发布为 v{{version}}（不可变版本）",
+    "blocked": "门禁未通过：{{failed}}/{{total}} 个用例不匹配，已禁止发布",
+    "skipped": "本图没有可回放的录制用例（未覆盖），门禁不阻塞发布；建议先录制黄金用例。",
+    "passed": "门禁通过：{{passed}}/{{total}} 个用例全部一致，可发布。",
+    "match": "✓ 一致",
+    "mismatch": "✗ 不匹配",
+    "uncovered": "未覆盖",
+    "replaying": "回放中…",
+    "emptyCases": "暂无匹配用例",
+    "col": {
+      "result": "结果",
+      "case": "用例",
+      "replayStatus": "回放终态",
+      "note": "说明",
+      "time": "时间",
+      "trigger": "触发方式",
+      "passTotal": "通过/总数",
+      "trend": "通过率趋势",
+      "conclusion": "结论",
+      "export": "导出"
+    },
+    "conclusion": {
+      "blocked": "未通过",
+      "skipped": "未覆盖",
+      "passed": "通过"
+    },
+    "trigger": {
+      "manual": "手动门禁",
+      "publishGate": "发布门禁"
+    },
+    "upgrade": {
+      "title": "子图版本升级体检",
+      "hint": "发布将把子图引用钉到对应版本；升级后建议先跑门禁回归再发布（只读，不检测子图草稿改动）",
+      "empty": "本次发布无子图版本变化",
+      "firstPin": "首次钉版 @{{version}}",
+      "col": {
+        "node": "节点",
+        "subgraph": "子图",
+        "change": "版本变化"
+      }
+    },
+    "diff": {
+      "label": "与 {{base}} 的配置差异（{{summary}}）",
+      "emptyGraph": "空图",
+      "noChange": "无变化",
+      "empty": "两版结构一致，无配置差异。",
+      "historyTitle": "历史报告（通过率趋势）",
+      "historyTitleWithCount": "历史报告（通过率趋势）· {{count}} 条",
+      "emptyHistory": "暂无历史报告（每次门禁/发布都会在此沉淀）",
+      "part": {
+        "nodesAdded": "节点 +{{count}}",
+        "nodesRemoved": "节点 -{{count}}",
+        "nodesChanged": "节点改 {{count}}",
+        "edgesAdded": "边 +{{count}}",
+        "edgesRemoved": "边 -{{count}}",
+        "variablesAdded": "变量 +{{count}}",
+        "variablesRemoved": "变量 -{{count}}",
+        "variablesChanged": "变量改 {{count}}"
+      },
+      "view": {
+        "nodesAdded": "新增节点：",
+        "nodesRemoved": "删除节点：",
+        "nodesChanged": "修改节点：",
+        "edgesAdded": "新增连线：",
+        "edgesRemoved": "删除连线：",
+        "variablesAdded": "新增变量：",
+        "variablesRemoved": "删除变量：",
+        "variablesChanged": "修改变量：",
+        "configKeys": "配置：{{keys}}",
+        "fieldChange": "{{field}}：{{from}} → {{to}}"
+      }
+    }
+  },
+  "rollout": {
+    "title": "灰度发布",
+    "titleWithGraph": "灰度发布：{{graphId}}",
+    "saved": "灰度配置已保存",
+    "noPublished": "尚无发布版",
+    "needTwoVersions": "（启动 canary 需至少 2 个发布版）",
+    "autoRollbackTag": "【自动回滚】",
+    "manualRollbackTag": "【手动回滚】",
+    "rulesLocked": "（canary 进行中/已结束，规则段锁定；如需调整请回滚后重新配置）",
+    "internalRule": "内部租户：命中租户事件全量走 candidate",
+    "tenantsPlaceholder": "租户 id，逗号分隔",
+    "bucketRule": "低金额桶：payload.amount ≤",
+    "bucketHash": "元，按稳定哈希放行",
+    "canaryRule": "百分比灰度（订单 id 稳定哈希，同对象不跳版本）",
+    "restHint": "其余流量落 stable；promote 到全量后所有流量走 candidate（full 段，无需配置）。",
+    "included": "已纳入门控",
+    "excluded": "未纳入",
+    "save": "保存灰度配置",
+    "payloadInvalid": "事件 payload 不是合法 JSON",
+    "eventLandedDraft": "本次事件落 stable/草稿",
+    "eventLandedVersion": "本次事件落 v{{version}}",
+    "trafficTitle": "流量计数（自本次 canary 起）",
+    "rulesTitle": "路由规则",
+    "gateTitle": "门控（越阈自动回滚，仅告警不自动放量）",
+    "simTitle": "模拟入站事件（沙盘验证三段分桶，无真实 webhook/IM ingress）",
+    "action": {
+      "start": "启动 canary",
+      "promote": "放量到全量（手动 promote）",
+      "rollback": "回滚到 stable"
+    },
+    "traffic": {
+      "stable": "stable（当前稳定版）",
+      "candidate": "candidate（灰度新版）"
+    },
+    "segment": {
+      "internal": "内部租户",
+      "lowValueBucket": "低金额桶",
+      "canary": "百分比灰度",
+      "full": "全量",
+      "fallback": "回退 stable"
+    },
+    "desc": {
+      "status": "状态",
+      "stableVersion": "stable 版本",
+      "candidateVersion": "candidate 版本",
+      "publishedVersions": "已发布版本",
+      "rollbackReason": "回滚原因"
+    },
+    "gate": {
+      "observeWindow": "观察窗",
+      "minutes": "分钟",
+      "minSamples": "最少样本",
+      "autoRollback": "越阈自动回滚",
+      "colMetric": "指标",
+      "colThreshold": "阈值（严格大于即越阈）",
+      "colEnabled": "启用"
+    },
+    "status": {
+      "idle": "未开始",
+      "canary": "金丝雀中",
+      "full": "全量放量",
+      "rolledBack": "已自动/手动回滚"
+    },
+    "metric": {
+      "runErrorRate": "运行错误率",
+      "manualEscalationRate": "人工升级率",
+      "refundAmountDiffRate": "退款金额差异率"
+    },
+    "sim": {
+      "sendEvent": "发送一次事件"
+    }
+  },
+  "problems": {
+    "title": "问题",
+    "errors": "错误 {{count}}",
+    "warnings": "警告 {{count}}",
+    "allClear": "无问题",
+    "wholeGraph": "全图",
+    "clickLocate": "点击定位"
+  },
+  "nodeTitles": {
+    "condition": "条件分支（规则自上而下短路；LLM 模式由模型按描述选择，04 §5.2）",
+    "human": "人机协作（暂停等待人工审批，04 §5.6）",
+    "loopForeach": "遍历循环（逐项执行循环体，04 §5.3 / docs/45）",
+    "loopWhile": "条件循环（表达式为真时进入循环体，04 §5.3）",
+    "parallel": "并行扇出（同时执行各分支后汇聚，04 §5.4）",
+    "subgraph": "子图设置（引用已保存图，沿唯一出边继续，04 §5.7）",
+    "wait": "等待设置（挂起后沿唯一出边继续，04 §5.5）"
+  },
+  "tool": {
+    "currentValue": "当前值（未在已注册列表）",
+    "field": "工具（适配器/能力）",
+    "discoveryFailed": "适配器发现失败，可手动输入，如 http/request",
+    "pickRegistered": "选择已注册工具",
+    "loading": "加载可用工具…",
+    "paramMapping": "参数映射（支持 {{...}} 引用）",
+    "insertVar": "插入变量引用",
+    "appendHint": "选择后追加到参数"
+  },
+  "wait": {
+    "title": "等待设置（挂起后沿唯一出边继续，04 §5.5）",
+    "typeLabel": "等待类型",
+    "typeDuration": "定时等待",
+    "typeEvent": "事件等待",
+    "durationModeLabel": "时长模式",
+    "modeStatic": "固定时长",
+    "modeDynamic": "动态表达式",
+    "modeAbsolute": "到点时刻",
+    "durationLabel": "等待时长",
+    "unitSecond": "秒",
+    "durationInvalid": "等待时长需为 {{min}}-{{max}} 秒的整数",
+    "jitterLabel": "抖动上限（可选）",
+    "jitterInvalid": "抖动上限需为 0-{{max}} 秒的整数",
+    "jitterHint": "实际等待 = 等待时长 + 0~抖动上限之间的随机秒（docs/54，防雪崩）",
+    "absoluteLabel": "到点时刻",
+    "absolutePlaceholder": "2026-09-23T18:00:00+08:00 或 epoch 秒，支持 {{}}",
+    "absoluteInvalid": "必填，1-{{max}} 字符",
+    "absoluteHint": "运行时解析，须为未来 1-{{max}} 秒内的时刻",
+    "expressionLabel": "时长表达式",
+    "expressionInvalid": "必填，1-{{max}} 字符",
+    "expressionHint": "运行时求值，须为 {{min}}-{{max}} 秒",
+    "eventCountLabel": "事件数量",
+    "singleEvent": "单事件",
+    "multiEvent": "多事件竞速（任一命中即继续）",
+    "eventKeysLabel": "事件标识（{{count}}/{{max}}，OR 竞速，首达者胜出）",
+    "addEvent": "＋添加事件（最多 {{max}} 个）",
+    "eventKeyRule": "每个标识 1-{{max}} 字符，静态部分仅允许字母、数字及 :_-",
+    "matchModeLabel": "命中方式（docs/55）",
+    "matchAny": "任一命中即继续（OR，首达者胜出）",
+    "matchAll": "全部命中才继续（AND，需至少 2 个事件）",
+    "matchAllTooFew": "全部命中（AND）需配置至少 2 个事件",
+    "eventKeyLabel": "事件标识",
+    "eventKeyInvalid": "必填，1-{{max}} 字符；静态部分仅允许字母、数字及",
+    "eventKeyInvalidSuffix": ":_-，占位 {{...}} 内不检查",
+    "eventKeyHint": "支持 {{...}} 插值；运行时渲染后再校验",
+    "timeoutLabel": "超时时间",
+    "timeoutInvalid": "超时时间需为 {{min}}-{{max}} 秒的整数",
+    "timeoutPolicyLabel": "超时策略",
+    "onTimeoutContinue": "继续（超时沿出边继续）",
+    "onTimeoutFail": "失败（超时使流程失败）"
+  },
+  "form": {
+    "add": "添加",
+    "addCount": "添加（{{count}}/{{max}}）",
+    "empty": "暂无条目",
+    "keyPlaceholder": "键名"
+  },
+  "nodePicker": {
+    "targetNode": "选择目标节点",
+    "savedGraphEmpty": "还没有已保存的图：先在编辑器搭好子流程并运行一次保存",
+    "pickSavedGraph": "选择已保存的图",
+    "nodeCount": "{{id}}（{{count}} 节点）",
+    "builtinCardEmpty": "暂无内置卡片：留空即使用默认审批说明",
+    "pickCard": "选择交互卡片（留空＝默认审批说明）"
+  },
+  "widget": {
+    "pathExpr": "{{...}} 表达式",
+    "insertableVar": "可插入 {{节点输出.字段}} 变量",
+    "insertVar": "插入变量引用"
   }
 }

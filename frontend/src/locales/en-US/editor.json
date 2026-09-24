@@ -1,1 +1,463 @@
-{}
+{
+  "header": {
+    "title": "Atlas flow editor",
+    "nlGenerate": "Natural-language generate",
+    "newFromTemplate": "New from template",
+    "recordings": "Record & replay",
+    "exportJson": "Export Graph JSON",
+    "publish": "Publish",
+    "rollout": "Canary rollout",
+    "debug": "Debug",
+    "compileAndRun": "Compile & run",
+    "emergencyStop": "Emergency stop",
+    "draftRun": "Draft run",
+    "publishedRun": "Published v{{version}}",
+    "shadowRun": "Shadow run"
+  },
+  "tabs": {
+    "nodes": "Nodes",
+    "variables": "Variables"
+  },
+  "nodePanel": {
+    "title": "Node panel (drag onto the canvas)"
+  },
+  "variables": {
+    "title": "Global variables (04 §6)",
+    "hint": "Use {{variable.path}} references throughout, e.g. {{global.company_name}}",
+    "namePlaceholder": "Variable name (English identifier)",
+    "valuePlaceholder": "Initial value",
+    "add": "Add global variable",
+    "invalidName": "Variable name must start with a letter or underscore and contain only letters, digits and underscores",
+    "duplicateName": "Variable name already exists",
+    "column": {
+      "ref": "Reference",
+      "name": "Name",
+      "type": "Type",
+      "value": "Value",
+      "actions": "Actions"
+    }
+  },
+  "canvas": {
+    "branchDefault": "Default",
+    "loopBody": "Loop body",
+    "loopExit": "Exit",
+    "approvalApproved": "Approved",
+    "approvalRejected": "Rejected",
+    "branchFallback": "Branch {{n}}",
+    "bp": {
+      "conditional": "Conditional breakpoint: {{expression}}",
+      "node": "Node breakpoint (click to remove)",
+      "set": "Set a breakpoint before this node (debug run)"
+    },
+    "statusRunning": "Running...",
+    "statusPaused": "Paused",
+    "diagSep": "; "
+  },
+  "export": {
+    "title": "Graph definition JSON (W7-W8 DSL compilation input)"
+  },
+  "runResult": {
+    "title": "Compile & run result",
+    "compiled": "Compiled successfully ({{entrypoints}} → {{terminals}})",
+    "status": "Run status: {{status}}"
+  },
+  "nl": {
+    "title": "Generate a flow draft from natural language",
+    "defaultPrompt": "Build an automated e-commerce refund approval flow for me",
+    "submit": "Generate and load onto canvas",
+    "paramWarning": "⚠ NL parameter notice: {{warning}}"
+  },
+  "template": {
+    "title": "New from template",
+    "replaceWarning": "Loading a template replaces the entire current canvas; unsaved changes will be lost.",
+    "loading": "Loading template...",
+    "nodeCount": "{{count}} nodes",
+    "use": "Use this template",
+    "loaded": "Template loaded: {{name}} ({{id}}); the canvas has been fully replaced"
+  },
+  "recording": {
+    "title": "Operation recording & replay",
+    "namePlaceholder": "Case name",
+    "recordButton": "Record one run of the current canvas",
+    "recordHint": "Runs once for real with the current order inputs (approval dialogs work as usual); the Graph snapshot is frozen into storage at the end",
+    "listTitle": "Recorded cases ({{count}})",
+    "empty": "No recorded cases yet.",
+    "replay": "Replay",
+    "collapse": "Collapse",
+    "edit": "Edit",
+    "deleteConfirm": "Delete this recorded case?",
+    "meta": "{{nodes}} nodes · {{steps}} steps · {{time}}",
+    "loadingCase": "Loading case...",
+    "inputsPlaceholder": "Replay inputs (JSON object; replaces the whole set on save)",
+    "editHint": "Only the name and inputs are editable; steps and the Graph snapshot cannot be changed (please re-record)",
+    "mockCheckbox": "Mock tool nodes (hit recorded outputs, never reach adapters; release gates do not accept mocks)",
+    "overridePlaceholder": "Input overrides (optional, JSON object such as {\"amount\": 100}; shallow-merged for this replay only, not persisted)",
+    "match": "Match",
+    "mismatch": "Mismatch",
+    "mockToolsTag": "Mock {{count}} tools",
+    "baselineReplay": "Baseline {{baseline}} → replay {{replay}}",
+    "defaultName": "Recording {{graphId}} {{time}}",
+    "defaultNameTime": "Recording {{time}}",
+    "saved": "Recorded case saved: {{id}} ({{steps}} steps)",
+    "stepDiffKeys": " (diff keys: {{keys}})",
+    "editRequired": "Please change at least the name or the inputs"
+  },
+  "approval": {
+    "title": "Human approval request",
+    "reject": "Reject",
+    "approve": "Approve",
+    "nodeLabel": "Node",
+    "subgraphLabel": "Approval inside subgraph (owning subgraph node: {{label}})",
+    "summaryLabel": "Approval summary",
+    "approverLabel": "Approver",
+    "approverUnspecified": "Unspecified",
+    "timeoutHint": "After waiting {{seconds}} seconds the decision is made automatically by the timeout policy; after closing the dialog it can still be approved via the API during the wait.",
+    "decisionApproved": "Approved",
+    "decisionRejected": "Rejected",
+    "sourceHuman": "Human",
+    "sourceTimeout": "Timeout",
+    "sourceInput": "Preset",
+    "waitingLog": "⏸ {{prefix}}{{node}} waiting for human approval: {{summary}}",
+    "resultLog": "✓ {{prefix}}{{node}} human approval: {{decision}} ({{source}}) → {{target}}"
+  },
+  "debug": {
+    "reason": {
+      "step": "Step",
+      "breakpoint": "Breakpoint",
+      "condition": "Condition",
+      "exception": "Exception"
+    },
+    "pausedTitle": "Debug paused at",
+    "step": "Step over",
+    "continue": "Continue",
+    "stop": "Stop",
+    "varFilterPlaceholder": "Filter variables by key",
+    "globalsHint": "Global variables globals (editable JSON; shallow-merged back on step/continue, ignored on stop)",
+    "outputsHint": "Node outputs (read-only snapshot)",
+    "exceptionTitle": "Exception breakpoint caught: {{type}}",
+    "exceptionHint": "The exception will be re-raised as-is after step/continue (v1 cannot ignore and continue); stop ends this debug session.",
+    "historyTitle": "Variable change history ({{count}})",
+    "historySince": "Passed nodes: {{path}}",
+    "historyEmpty": "No top-level global keys changed during this pause"
+  },
+  "log": {
+    "runPublished": "Running the published version: {{graphId}}@{{version}} (the current draft is not used)",
+    "draftUpdated": "Draft updated: {{graphId}}",
+    "compileSuccess": "Compiled successfully: entrypoints {{entrypoints}}",
+    "graphSaved": "Graph saved: {{graphId}}",
+    "paused": "⏸ Debug paused: {{prefix}}{{node}} ({{reason}})",
+    "logBreakpoint": "📝 {{prefix}}{{node}} log breakpoint (hit #{{hits}}): {{message}}",
+    "nodeStart": "▶ {{prefix}}Node started: {{node}}",
+    "nodeComplete": "✓ {{prefix}}Node completed: {{node}}",
+    "decision": "✓ {{node}} decision: {{action}}",
+    "branch": "✓ {{node}} branch: {{branch}} → {{target}}",
+    "branchDefault": "Default",
+    "parallelStarted": "✓ {{node}} started {{count}} branches in parallel",
+    "parallelFailed": "✓ {{node}} parallel join: {{count}} branches failed: {{detail}} (the join node still runs)",
+    "parallelAllOk": "✓ {{node}} parallel join: all succeeded",
+    "loopContinue": "✓ {{node}} continues loop: iteration {{iterations}} → {{target}}",
+    "loopExit": "✓ {{node}} exits loop: {{reason}}, {{iterations}} iterations total → {{target}}",
+    "loopReasonConditionFalse": "Condition not met",
+    "loopReasonMaxIterations": "Maximum iterations reached",
+    "loopReasonExpressionError": "Expression error",
+    "waitDone": "✓ {{node}} wait completed: {{seconds}} seconds",
+    "subgraphFailed": "✓ {{node}} subgraph completed: {{graphId}} (failure: {{error}})",
+    "subgraphOk": "✓ {{node}} subgraph completed: {{graphId}} (success)",
+    "toolSuccess": "✓ {{node}} tool call: SUCCESS{{http}}",
+    "toolHttpStatus": " (HTTP {{status}})",
+    "toolFailed": "✗ {{node}} tool call: FAILED ({{code}} {{message}})",
+    "rootComplete": "✓ Node completed: {{node}}",
+    "runComplete": "Run finished: {{status}}",
+    "stopped": "Debugging stopped: {{node}} (no run result)",
+    "cancelled": "⏹ Run emergency-stopped: {{node}} (cooperative cancellation, no run result)",
+    "runFailed": "✗ Run failed: {{message}}",
+    "resumeFailed": "✗ Debug resume failed: {{message}}",
+    "noActiveRun": "There is no in-flight run to cancel",
+    "noActiveRunMaybeEnded": "There is no in-flight run to cancel (it may have already ended)",
+    "stopRequested": "⏹ Emergency stop requested for {{runId}} (takes effect at the next node boundary)",
+    "stopFailed": "✗ Emergency stop failed: {{message}}",
+    "unknownError": "Unknown error"
+  },
+  "error": {
+    "compileRunFailed": "Compile/run failed",
+    "inputsInvalidJson": "The inputs are not valid JSON; please check the format",
+    "inputsNotObject": "The inputs must be a top-level JSON object ({})"
+  },
+  "property": {
+    "title": "Property panel",
+    "empty": "Select or drag in a node to configure its properties",
+    "nodeId": "Node ID",
+    "type": "Type",
+    "nodeName": "Node name",
+    "description": "Description",
+    "valid": "Configuration validation passed"
+  },
+  "breakpoint": {
+    "section": "Debugging (04 §5.12 session-level breakpoints)",
+    "pauseBefore": "Pause before executing this node",
+    "conditionLabel": "Condition expression (optional; pauses only when truthy)",
+    "conditionHint": "Breakpoints are valid for this session only and are not saved with the Graph; a broken expression fails safe and is treated as not matching.",
+    "hitCountLabel": "Hit count hitCount (pause once every N hits; leave empty to pause on every hit)",
+    "hitCountPlaceholder": "e.g. 3 (common for loops/re-entrant nodes)",
+    "logMessageLabel": "Log breakpoint logMessage (non-empty = only log on hit, do not pause)",
+    "logMessagePlaceholder": "e.g. reached the refund node (the message is output as-is, no interpolation)",
+    "logMessageHint": "When a message is provided this breakpoint becomes a log breakpoint: on hit it only prints to the debug console and does not pause the run; v1 does not combine it with hitCount and the message is emitted as-is without interpolation.",
+    "exceptionLabel": "Exception breakpoint (pauses when the node raises, docs/28 §3.2)",
+    "exceptionHint": "When enabled, an exception raised by the node logic pauses first and shows the exception type and message; it is re-raised as-is after step/continue (v1 cannot ignore and continue), and stop ends debugging; with no condition expression, continue mode pauses only when this node raises and does not pause on normal passage."
+  },
+  "retry": {
+    "section": "Retry and failure handling (04 §3.2 retry)",
+    "maxRetries": "Maximum retries",
+    "timeoutSeconds": "Timeout (seconds)",
+    "onError": "Failure handling"
+  },
+  "decision": {
+    "promptTemplateLabel": "Prompt template (supports {{path}} references)",
+    "insertVariable": "Insert variable reference",
+    "insertPlaceholder": "Appended to the template after selection",
+    "modelLabel": "Model (empty = system default)",
+    "confidenceLabel": "Confidence threshold (06 §6.2 default 0.6)"
+  },
+  "debugConsole": {
+    "title": "Debug console",
+    "eventCount": "{{count}} events"
+  },
+  "release": {
+    "title": "Release gate",
+    "titleWithGraph": "Release gate: {{graphId}}",
+    "confirmPublish": "Publish as a new version",
+    "intro": "Batch-replays this graph's recorded cases against the current draft and compares node by node; any mismatched case blocks publishing (no new version is produced).",
+    "published": "Published as v{{version}} (immutable version)",
+    "blocked": "Gate failed: {{failed}}/{{total}} cases do not match; publishing is blocked",
+    "skipped": "This graph has no replayable recorded cases (uncovered). The gate does not block publishing; recording golden cases first is recommended.",
+    "passed": "Gate passed: {{passed}}/{{total}} cases all match; ready to publish.",
+    "match": "✓ Match",
+    "mismatch": "✗ Mismatch",
+    "uncovered": "Uncovered",
+    "replaying": "Replaying...",
+    "emptyCases": "No matching cases",
+    "col": {
+      "result": "Result",
+      "case": "Case",
+      "replayStatus": "Replay end state",
+      "note": "Note",
+      "time": "Time",
+      "trigger": "Trigger",
+      "passTotal": "Pass/Total",
+      "trend": "Pass-rate trend",
+      "conclusion": "Conclusion",
+      "export": "Export"
+    },
+    "conclusion": {
+      "blocked": "Failed",
+      "skipped": "Uncovered",
+      "passed": "Passed"
+    },
+    "trigger": {
+      "manual": "Manual gate",
+      "publishGate": "Publish gate"
+    },
+    "upgrade": {
+      "title": "Subgraph version upgrade check",
+      "hint": "Publishing pins subgraph references to their corresponding versions; after an upgrade, run the gate for regression before publishing (read-only; subgraph draft changes are not checked)",
+      "empty": "No subgraph version changes in this release",
+      "firstPin": "First pin @{{version}}",
+      "col": {
+        "node": "Node",
+        "subgraph": "Subgraph",
+        "change": "Version change"
+      }
+    },
+    "diff": {
+      "label": "Config diff against {{base}} ({{summary}})",
+      "emptyGraph": "empty graph",
+      "noChange": "no changes",
+      "empty": "The two versions are structurally identical; there is no config diff.",
+      "historyTitle": "History reports (pass-rate trend)",
+      "historyTitleWithCount": "History reports (pass-rate trend) · {{count}}",
+      "emptyHistory": "No history reports yet (every gate run/publish is recorded here)",
+      "part": {
+        "nodesAdded": "nodes +{{count}}",
+        "nodesRemoved": "nodes -{{count}}",
+        "nodesChanged": "nodes changed {{count}}",
+        "edgesAdded": "edges +{{count}}",
+        "edgesRemoved": "edges -{{count}}",
+        "variablesAdded": "variables +{{count}}",
+        "variablesRemoved": "variables -{{count}}",
+        "variablesChanged": "variables changed {{count}}"
+      },
+      "view": {
+        "nodesAdded": "Added nodes: ",
+        "nodesRemoved": "Removed nodes: ",
+        "nodesChanged": "Changed nodes: ",
+        "edgesAdded": "Added edges: ",
+        "edgesRemoved": "Removed edges: ",
+        "variablesAdded": "Added variables: ",
+        "variablesRemoved": "Removed variables: ",
+        "variablesChanged": "Changed variables: ",
+        "configKeys": "Config: {{keys}}",
+        "fieldChange": "{{field}}: {{from}} → {{to}}"
+      }
+    }
+  },
+  "rollout": {
+    "title": "Rollout",
+    "titleWithGraph": "Rollout: {{graphId}}",
+    "saved": "Rollout configuration saved",
+    "noPublished": "No published versions yet",
+    "needTwoVersions": " (starting a canary requires at least 2 published versions)",
+    "autoRollbackTag": "[Auto rollback] ",
+    "manualRollbackTag": "[Manual rollback] ",
+    "rulesLocked": " (canary in progress or finished; rule segments are locked. Roll back first to reconfigure)",
+    "internalRule": "Internal tenants: events from matching tenants all go to candidate",
+    "tenantsPlaceholder": "Tenant ids, comma-separated",
+    "bucketRule": "Low-value bucket: payload.amount ≤",
+    "bucketHash": " CNY, admitted by stable hash",
+    "canaryRule": "Percentage canary (stable hash on order id; the same object never switches versions)",
+    "restHint": "The remaining traffic goes to stable; after promote to full, all traffic goes to candidate (the full segment needs no configuration).",
+    "included": "Included in gate",
+    "excluded": "Not included",
+    "save": "Save rollout configuration",
+    "payloadInvalid": "The event payload is not valid JSON",
+    "eventLandedDraft": "This event landed on stable/draft",
+    "eventLandedVersion": "This event landed on v{{version}}",
+    "trafficTitle": "Traffic counts (since this canary started)",
+    "rulesTitle": "Routing rules",
+    "gateTitle": "Gate (threshold breach auto-rolls back; alerts only, never auto-promotes)",
+    "simTitle": "Simulate inbound events (sandbox verification of three-segment bucketing; no real webhook/IM ingress)",
+    "action": {
+      "start": "Start canary",
+      "promote": "Promote to full (manual)",
+      "rollback": "Roll back to stable"
+    },
+    "traffic": {
+      "stable": "stable (current stable version)",
+      "candidate": "candidate (new canary version)"
+    },
+    "segment": {
+      "internal": "Internal tenants",
+      "lowValueBucket": "Low-value bucket",
+      "canary": "Percentage canary",
+      "full": "Full",
+      "fallback": "Fallback to stable"
+    },
+    "desc": {
+      "status": "Status",
+      "stableVersion": "stable version",
+      "candidateVersion": "candidate version",
+      "publishedVersions": "Published versions",
+      "rollbackReason": "Rollback reason"
+    },
+    "gate": {
+      "observeWindow": "Observation window",
+      "minutes": "min",
+      "minSamples": "Min samples",
+      "autoRollback": "Auto-rollback on breach",
+      "colMetric": "Metric",
+      "colThreshold": "Threshold (strictly greater means breach)",
+      "colEnabled": "Enabled"
+    },
+    "status": {
+      "idle": "Not started",
+      "canary": "Canary in progress",
+      "full": "Full rollout",
+      "rolledBack": "Auto/manually rolled back"
+    },
+    "metric": {
+      "runErrorRate": "Run error rate",
+      "manualEscalationRate": "Manual escalation rate",
+      "refundAmountDiffRate": "Refund amount diff rate"
+    },
+    "sim": {
+      "sendEvent": "Send one event"
+    }
+  },
+  "problems": {
+    "title": "Problems",
+    "errors": "{{count}} errors",
+    "warnings": "{{count}} warnings",
+    "allClear": "No problems",
+    "wholeGraph": "Whole graph",
+    "clickLocate": "Click to locate"
+  },
+  "nodeTitles": {
+    "condition": "Conditional branches (rules short-circuit top to bottom; in LLM mode the model picks by description, 04 §5.2)",
+    "human": "Human-in-the-loop (pauses to wait for human approval, 04 §5.6)",
+    "loopForeach": "For-each loop (runs the body once per item, 04 §5.3 / docs/45)",
+    "loopWhile": "While loop (enters the body while the expression is truthy, 04 §5.3)",
+    "parallel": "Parallel fan-out (runs all branches concurrently, then joins, 04 §5.4)",
+    "subgraph": "Subgraph settings (references a saved graph and continues along the single outgoing edge, 04 §5.7)",
+    "wait": "Wait settings (suspends, then continues along the single outgoing edge, 04 §5.5)"
+  },
+  "tool": {
+    "currentValue": "Current value (not in the registered list)",
+    "field": "Tool (adapter/capability)",
+    "discoveryFailed": "Adapter discovery failed; you can type manually, e.g. http/request",
+    "pickRegistered": "Select a registered tool",
+    "loading": "Loading available tools...",
+    "paramMapping": "Parameter mapping (supports {{...}} references)",
+    "insertVar": "Insert variable reference",
+    "appendHint": "Append to parameters after selecting"
+  },
+  "wait": {
+    "title": "Wait settings (suspends, then continues along the single outgoing edge, 04 §5.5)",
+    "typeLabel": "Wait type",
+    "typeDuration": "Timed wait",
+    "typeEvent": "Event wait",
+    "durationModeLabel": "Duration mode",
+    "modeStatic": "Fixed duration",
+    "modeDynamic": "Dynamic expression",
+    "modeAbsolute": "Absolute time",
+    "durationLabel": "Wait duration",
+    "unitSecond": "s",
+    "durationInvalid": "Wait duration must be an integer between {{min}} and {{max}} seconds",
+    "jitterLabel": "Jitter cap (optional)",
+    "jitterInvalid": "Jitter cap must be an integer between 0 and {{max}} seconds",
+    "jitterHint": "Actual wait = duration + a random number of seconds from 0 to the jitter cap (docs/54, thundering-herd prevention)",
+    "absoluteLabel": "Absolute time",
+    "absolutePlaceholder": "2026-09-23T18:00:00+08:00 or epoch seconds; {{}} supported",
+    "absoluteInvalid": "Required, 1-{{max}} characters",
+    "absoluteHint": "Resolved at runtime; must be a moment within the next 1-{{max}} seconds",
+    "expressionLabel": "Duration expression",
+    "expressionInvalid": "Required, 1-{{max}} characters",
+    "expressionHint": "Evaluated at runtime; must be {{min}}-{{max}} seconds",
+    "eventCountLabel": "Number of events",
+    "singleEvent": "Single event",
+    "multiEvent": "Multi-event race (continues when any one fires)",
+    "eventKeysLabel": "Event keys ({{count}}/{{max}}, OR race; the first to fire wins)",
+    "addEvent": "+ Add event (up to {{max}})",
+    "eventKeyRule": "Each key is 1-{{max}} characters; the static part allows only letters, digits and :_-",
+    "matchModeLabel": "Match mode (docs/55)",
+    "matchAny": "Continue when any fires (OR; the first wins)",
+    "matchAll": "Continue when all fire (AND; requires at least 2 events)",
+    "matchAllTooFew": "All-match (AND) requires at least 2 events",
+    "eventKeyLabel": "Event key",
+    "eventKeyInvalid": "Required, 1-{{max}} characters; the static part allows only letters, digits and",
+    "eventKeyInvalidSuffix": ":_-; the {{...}} placeholder is not checked",
+    "eventKeyHint": "Supports {{...}} interpolation; validated after runtime rendering",
+    "timeoutLabel": "Timeout",
+    "timeoutInvalid": "Timeout must be an integer between {{min}} and {{max}} seconds",
+    "timeoutPolicyLabel": "Timeout policy",
+    "onTimeoutContinue": "Continue (proceeds along the outgoing edge on timeout)",
+    "onTimeoutFail": "Fail (the flow fails on timeout)"
+  },
+  "form": {
+    "add": "Add",
+    "addCount": "Add ({{count}}/{{max}})",
+    "empty": "No items",
+    "keyPlaceholder": "Key"
+  },
+  "nodePicker": {
+    "targetNode": "Select target node",
+    "savedGraphEmpty": "No saved graphs yet: build a subflow in the editor and run it once to save it",
+    "pickSavedGraph": "Select a saved graph",
+    "nodeCount": "{{id}} ({{count}} nodes)",
+    "builtinCardEmpty": "No built-in cards: leave empty to use the default approval text",
+    "pickCard": "Select an interactive card (leave empty for the default approval text)"
+  },
+  "widget": {
+    "pathExpr": "{{...}} expression",
+    "insertableVar": "Variables such as {{node output.field}} can be inserted",
+    "insertVar": "Insert variable reference"
+  }
+}

@@ -3,8 +3,10 @@ import { NODE_CATALOG, type EditorNodeData } from '../../lib/nodeCatalog'
 import type { EditorNode } from '../../store/editorStore'
 import { useEditorStore } from '../../store/editorStore'
 import { useNodeDiagnostics } from '../../store/validationStore'
+import { useTranslation } from '../../locales'
 
 export function AtlasNode({ id, data, selected }: NodeProps<EditorNode>) {
+  const { t } = useTranslation('editor')
   const meta = NODE_CATALOG[data.kind]
   // M4 批 2 ⑦：诊断由分层校验引擎统一产出（不再每节点各建一次 ScopeIndex）。
   const diagnostics = useNodeDiagnostics(id)
@@ -23,10 +25,10 @@ export function AtlasNode({ id, data, selected }: NodeProps<EditorNode>) {
         className={`atlas-node-breakpoint ${breakpoint ? 'is-active' : ''}`}
         title={
           breakpoint?.expression?.trim()
-            ? `条件断点：${breakpoint.expression}`
+            ? t('canvas.bp.conditional', { expression: breakpoint.expression })
             : breakpoint
-              ? '节点断点（点击取消）'
-              : '在此节点前设断点（调试运行）'
+              ? t('canvas.bp.node')
+              : t('canvas.bp.set')
         }
         onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => {
@@ -38,11 +40,11 @@ export function AtlasNode({ id, data, selected }: NodeProps<EditorNode>) {
       </button>
       <div className="atlas-node-header" style={{ backgroundColor: meta.color }}>
         <span>{meta.label}</span>
-        {data.status === 'running' && <span className="atlas-node-status">运行中…</span>}
-        {data.status === 'paused' && <span className="atlas-node-status">已暂停</span>}
+        {data.status === 'running' && <span className="atlas-node-status">{t('canvas.statusRunning')}</span>}
+        {data.status === 'paused' && <span className="atlas-node-status">{t('canvas.statusPaused')}</span>}
         {data.status === 'completed' && <span className="atlas-node-status">✓</span>}
         {invalid && (
-          <span className="atlas-node-error-icon" title={diagnostics.map((d) => d.message).join('；')}>
+          <span className="atlas-node-error-icon" title={diagnostics.map((d) => d.message).join(t('canvas.diagSep'))}>
             !
           </span>
         )}
@@ -64,9 +66,10 @@ export function AtlasNode({ id, data, selected }: NodeProps<EditorNode>) {
 }
 
 function HumanApprovalHandles() {
+  const { t } = useTranslation('editor')
   const items = [
-    { id: 'approved', label: '通过' },
-    { id: 'rejected', label: '拒绝' },
+    { id: 'approved', label: t('canvas.approvalApproved') },
+    { id: 'rejected', label: t('canvas.approvalRejected') },
   ]
   return (
     <div className="atlas-node-branches">
@@ -81,9 +84,10 @@ function HumanApprovalHandles() {
 }
 
 function LoopHandles() {
+  const { t } = useTranslation('editor')
   const items = [
-    { id: 'body', label: '循环体' },
-    { id: 'exit', label: '退出' },
+    { id: 'body', label: t('canvas.loopBody') },
+    { id: 'exit', label: t('canvas.loopExit') },
   ]
   return (
     <div className="atlas-node-branches">
@@ -98,11 +102,12 @@ function LoopHandles() {
 }
 
 function ParallelHandles({ data }: { data: EditorNodeData }) {
+  const { t } = useTranslation('editor')
   const branches = data.config.branches ?? []
   return (
     <div className="atlas-node-branches">
       {branches.map((branch, index) => {
-        const label = branch.label || `分支 ${index + 1}`
+        const label = branch.label || t('canvas.branchFallback', { n: index + 1 })
         return (
           <div key={`b${index}`} className="atlas-node-branch">
             <span className="atlas-node-branch-label">{label}</span>
@@ -114,10 +119,12 @@ function ParallelHandles({ data }: { data: EditorNodeData }) {
   )
 }
 
-function ConditionHandles({ data }: { data: EditorNodeData }) {  const branches = data.config.branches ?? []
+function ConditionHandles({ data }: { data: EditorNodeData }) {
+  const { t } = useTranslation('editor')
+  const branches = data.config.branches ?? []
   const items = [
-    ...branches.map((branch, index) => ({ id: `b${index}`, label: branch.label || `分支 ${index + 1}` })),
-    { id: 'default', label: '默认' },
+    ...branches.map((branch, index) => ({ id: `b${index}`, label: branch.label || t('canvas.branchFallback', { n: index + 1 }) })),
+    { id: 'default', label: t('canvas.branchDefault') },
   ]
   return (
     <div className="atlas-node-branches">

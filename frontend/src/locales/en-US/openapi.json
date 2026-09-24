@@ -1,1 +1,85 @@
-{}
+{
+  "title": "OpenAPI imports",
+  "subtitle": "Paste an OpenAPI 3.x JSON document or provide a spec URL; the system automatically generates one orchestratable API tool per operation.",
+  "button": {
+    "back": "Back to workspace",
+    "preview": "Preview",
+    "import": "Import as tools",
+    "delete": "Delete",
+    "configure": "Configure secrets"
+  },
+  "source": {
+    "pasteTab": "Paste JSON",
+    "urlTab": "Fetch from URL",
+    "pastePlaceholder": "Paste the OpenAPI 3.x JSON document here...",
+    "pasteRequired": "Please paste a JSON document first",
+    "urlLabel": "Spec URL",
+    "urlPlaceholder": "https://example.com/openapi.json",
+    "urlRequired": "Please enter the spec URL"
+  },
+  "preview": {
+    "title": "Preview result",
+    "summary": "{{title}} ({{baseUrl}}): {{total}} operations in total, {{imported}} importable, {{skipped}} skipped",
+    "column": {
+      "method": "Method",
+      "name": "Name",
+      "path": "Path",
+      "summary": "Summary",
+      "permission": "Permission",
+      "skipReason": "Skip reason"
+    }
+  },
+  "credentials": {
+    "title": "Configure auth secrets",
+    "hint": "Secrets are envelope-encrypted before storage and decrypted only when calls are made; empty fields are not saved, and clearing an existing value deletes that secret.",
+    "label": {
+      "header": "{{name}} (header)",
+      "query": "{{name}} (query parameter)",
+      "bearer": "{{name}}: Bearer token",
+      "basic": "{{name}}: Basic username and password"
+    },
+    "placeholder": "Enter the secret",
+    "username": "Username",
+    "password": "Password",
+    "save": "Save",
+    "sectionTitle": "Auth secrets (optional)",
+    "sectionHint": "This document declares authentication requirements; you can fill them in now or later via \"Configure secrets\" after importing.",
+    "configured": "{{configured}}/{{total}} configured",
+    "none": "No secrets configured"
+  },
+  "imports": {
+    "title": "Imported APIs",
+    "empty": "No API specs imported yet",
+    "column": {
+      "title": "Name",
+      "baseUrl": "Base URL",
+      "operations": "Tools",
+      "auth": "Auth",
+      "createdAt": "Imported at",
+      "actions": "Actions"
+    },
+    "expand": {
+      "method": "Method",
+      "path": "Path",
+      "permission": "Permission"
+    }
+  },
+  "permission": {
+    "read": "Read",
+    "write": "Write",
+    "delete": "Delete",
+    "financial": "Financial"
+  },
+  "delete": {
+    "confirmTitle": "Delete imported spec",
+    "confirm": "After deletion the tools are removed from the discovery list immediately; saved graphs are not rewritten, and later runs will report UNKNOWN_CAPABILITY. Delete \"{{title}}\"?"
+  },
+  "readonly": {
+    "note": "Your current role is Viewer; you can only view imported specs."
+  },
+  "message": {
+    "importSuccess": "Import succeeded: {{title}}, {{count}} tools generated",
+    "deleted": "Imported spec deleted",
+    "credentialsSaved": "Secret configuration saved"
+  }
+}

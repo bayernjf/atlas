@@ -1,1 +1,11 @@
-{}
+{
+  "demo": {
+    "title": "W9-W10 end-to-end demo: e-commerce refund automation",
+    "description": "Pick a refund case and run it in one click: AI decides whether to refund automatically or escalate to a human based on the refund reason and approval limits, while the canvas shows node progress in real time. You can also generate a refund flow draft from natural language.",
+    "cards": {
+      "graph": "The refund flow is compiled from DSL to LangGraph and run; node events stream to the UI over SSE",
+      "loop": "Minimal OODA loop is up and running",
+      "harness": "Contract/registry layer plus the Playwright web adapter (three-layer targeting) are up and running"
+    }
+  }
+}

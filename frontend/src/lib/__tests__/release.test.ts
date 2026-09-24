@@ -177,13 +177,13 @@ describe('D26 报告 v1：reportConclusion（U60 ⑧，口径同 gateConclusion�
       ),
     ).toBe('blocked')
   })
-  it('三态结论 meta 与两种 trigger meta 均有中文标签/颜色', () => {
+  it('三态结论 meta 与两种 trigger meta 均持有 i18n 标签键与颜色（docs/57）', () => {
     for (const key of ['blocked', 'skipped', 'passed'] as const) {
-      expect(GATE_CONCLUSION_META[key].label).toBeTruthy()
+      expect(GATE_CONCLUSION_META[key].label).toMatch(/^release\.conclusion\./)
       expect(GATE_CONCLUSION_META[key].color).toBeTruthy()
     }
-    expect(REPORT_TRIGGER_META.manual.label).toBe('手动门禁')
-    expect(REPORT_TRIGGER_META['publish-gate'].label).toBe('发布门禁')
+    expect(REPORT_TRIGGER_META.manual.label).toBe('release.trigger.manual')
+    expect(REPORT_TRIGGER_META['publish-gate'].label).toBe('release.trigger.publishGate')
   })
 })
 

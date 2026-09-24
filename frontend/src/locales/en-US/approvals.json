@@ -1,1 +1,69 @@
-{}
+{
+  "title": "Approval queue",
+  "empty": "There are currently no pending approval requests",
+  "emptyDecided": "There are no decided approval records yet",
+  "autoRefresh": "Auto-refreshes every 10 seconds",
+  "manualRefresh": "Refresh now",
+  "back": "Back",
+  "tabs": {
+    "pending": "Pending",
+    "decided": "Decided"
+  },
+  "cardModalTitle": "Approval card",
+  "cardLoading": "Loading card...",
+  "columns": {
+    "summary": "Approval summary",
+    "approver": "Designated approver",
+    "graph": "Graph",
+    "node": "Node",
+    "createdAt": "Created at",
+    "remaining": "Time remaining",
+    "actions": "Actions",
+    "decision": "Decision",
+    "source": "Resolved by",
+    "comment": "Comment"
+  },
+  "source": {
+    "human": "Handled by a human",
+    "emailLink": "Handled via email link",
+    "timeout": "Auto-handled on timeout",
+    "input": "Preset input"
+  },
+  "error": {
+    "loadQueue": "Failed to load the approval queue",
+    "loadDecided": "Failed to load decided approvals",
+    "submitFailed": "Submission failed"
+  },
+  "actions": {
+    "approve": "Approve",
+    "reject": "Reject",
+    "viewCard": "View card",
+    "readonly": "Read-only",
+    "confirmApprove": "Confirm approval?",
+    "confirmReject": "Confirm rejection?"
+  },
+  "card": {
+    "requiredMissing": "Please fill in the required fields first: {{fields}}",
+    "channelError": "The card channel returned an unexpected response",
+    "summaryLabel": "Approval summary",
+    "degradedWarning": "The interactive card is temporarily unavailable ({{error}}); fell back to the default approval view",
+    "loading": "Loading the interactive card..."
+  },
+  "email": {
+    "header": "Atlas approval handling",
+    "commentPlaceholder": "Approval comment (optional)",
+    "invalid": "The approval link is invalid or has expired",
+    "invalidHint": "The link may have already been handled, passed its validity period, or had its address modified. Please reopen the application to view the latest approvals.",
+    "goToApp": "Go to the Atlas application",
+    "loading": "Loading...",
+    "resolvedApproved": "This approval has been handled: approved",
+    "resolvedRejected": "This approval has been handled: rejected",
+    "resolvedLine": "This approval has been handled: {{decision}} (source: {{source}})",
+    "labelSummary": "Approval summary",
+    "labelApprover": "Designated approver",
+    "labelGraphNode": "Graph / node",
+    "labelRemaining": "Time remaining",
+    "confirmApprove": "Approve this approval?",
+    "confirmReject": "Reject this approval?"
+  }
+}

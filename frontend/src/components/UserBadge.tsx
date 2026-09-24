@@ -1,9 +1,15 @@
 import { useState } from 'react'
 import { Button, Dropdown, Form, Input, Modal, Space, Tag, Typography, message } from 'antd'
 import { type Principal } from '../lib/auth'
-import { useTranslation } from '../locales'
+import { SUPPORTED_LOCALES, useTranslation, type Locale } from '../locales'
 import { changePassword } from '../lib/apiClient'
 import { validateChangePassword } from '../lib/users'
+
+/** 语言在菜单中显示各自原名，不随当前语言翻译（docs/57 §4）。 */
+const LOCALE_LABELS: Record<Locale, string> = {
+  'zh-CN': '中文',
+  'en-US': 'English',
+}
 
 type UserBadgeProps = {
   principal: Principal
@@ -17,7 +23,7 @@ const ROLE_COLORS = {
 } as const
 
 export function UserBadge({ principal, onLogout }: UserBadgeProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [changeOpen, setChangeOpen] = useState(false)
   const [form] = Form.useForm()
 
@@ -64,10 +70,23 @@ export function UserBadge({ principal, onLogout }: UserBadgeProps) {
           items: [
             { key: 'change-password', label: t('users.menu.changePassword') },
             { key: 'logout', label: t('auth.session.logout'), danger: true },
+            { type: 'divider' },
+            {
+              key: 'language-group',
+              type: 'group',
+              label: t('language.label'),
+              children: SUPPORTED_LOCALES.map((loc) => ({
+                key: `lang-${loc}`,
+                label: LOCALE_LABELS[loc],
+              })),
+            },
           ],
+          selectable: true,
+          selectedKeys: [`lang-${i18n.language}`],
           onClick: ({ key }) => {
             if (key === 'change-password') openChange()
             if (key === 'logout') onLogout()
+            if (key.startsWith('lang-')) i18n.changeLanguage(key.slice(5) as Locale)
           },
         }}
       >
