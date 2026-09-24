@@ -99,6 +99,7 @@ from atlas.openapi.store import ImportStoreError
 from atlas.security.egress import EgressDenied, EgressGuard
 from atlas.security.secrets import build_secret_provider_from_env
 from atlas.monitoring.silences import OnCallEmpty, current_assignee, is_silence_active
+from atlas.monitoring.rule_templates import get_rule_template, list_rule_templates
 from atlas.recording import (
     RecordingCreateRequest,
     RecordingUpdateRequest,
@@ -2042,6 +2043,35 @@ def get_catalog_template(
     if template is None:
         raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
     return template.model_dump()
+
+
+@app.get("/api/alert-rule-templates")
+def list_alert_rule_templates(
+    principal: Principal = Depends(require("read")),
+) -> dict[str, list[dict[str, Any]]]:
+    """列出内置告警规则模板（docs/59 F-1；只读代码常量，列表投影不含 config，不受 reset 影响）。"""
+    return {
+        "items": [
+            {
+                "id": tpl.id,
+                "name": tpl.name,
+                "description": tpl.description,
+                "tags": tpl.tags,
+            }
+            for tpl in list_rule_templates()
+        ]
+    }
+
+
+@app.get("/api/alert-rule-templates/{template_id}")
+def get_alert_rule_template(
+    template_id: str, principal: Principal = Depends(require("read"))
+) -> dict[str, Any]:
+    """返回告警规则模板完整元数据（含可直接 PUT rules 的 config），未知 id 404（docs/59 F-1）。"""
+    tpl = get_rule_template(template_id)
+    if tpl is None:
+        raise HTTPException(status_code=404, detail=f"告警规则模板不存在：{template_id}")
+    return tpl.model_dump()
 
 
 @app.get("/api/cards")
