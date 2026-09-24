@@ -107,3 +107,46 @@ def test_restore_success_conflict_and_missing():
     # 不存在 / 对未删项恢复 → (False, None, None)
     assert store.restore("openapi-nope") == (False, None, None)
     assert store.restore(b.spec_id) == (False, None, None)
+
+
+def test_list_include_deleted_returns_soft_deleted_with_flag():
+    """docs/60 G2：list 默认仅未删；include_deleted=True 含已软删（含 deleted_at）。"""
+    store = ImportStore()
+    a = store.add(_spec(title="A", paths=("/a",)))
+    b = store.add(_spec(title="B", paths=("/b",)))
+    assert store.delete(a.spec_id) is True
+
+    active = store.list()
+    assert [s.spec_id for s in active] == [b.spec_id]
+
+    all_specs = store.list(include_deleted=True)
+    assert {s.spec_id for s in all_specs} == {a.spec_id, b.spec_id}
+    deleted = next(s for s in all_specs if s.spec_id == a.spec_id)
+    assert deleted.deleted_at is not None
+    assert b.deleted_at is None
+
+
+def test_purge_requires_soft_delete_then_physically_removes():
+    """docs/60 G2：purge 未软删→409 OPENAPI_NOT_SOFT_DELETED；不存在→False；
+    已软删→物理移除 True，且 include_deleted 列表也不再含、指纹可重新导入。"""
+    store = ImportStore()
+    a = store.add(_spec(title="A", paths=("/a",)))
+
+    # 未软删直接 purge → 409 业务错误
+    with pytest.raises(ImportStoreError) as exc:
+        store.purge(a.spec_id)
+    assert exc.value.code == "OPENAPI_NOT_SOFT_DELETED"
+    assert exc.value.status_code == 409
+    # 未物理删除，仍在未删列表
+    assert [s.spec_id for s in store.list()] == [a.spec_id]
+
+    # 不存在 → False
+    assert store.purge("openapi-nope") is False
+
+    # 软删后 purge → True，物理消失
+    assert store.delete(a.spec_id) is True
+    assert store.purge(a.spec_id) is True
+    assert store.list(include_deleted=True) == []
+    # 物理删除后同指纹可重新导入（不再判重）
+    again = store.add(_spec(title="A", paths=("/a",)))
+    assert again.spec_id != a.spec_id
