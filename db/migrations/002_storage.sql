@@ -198,3 +198,25 @@ CREATE TABLE IF NOT EXISTS approval_history (
 );
 CREATE INDEX IF NOT EXISTS idx_approval_history_tenant_seq
     ON approval_history (tenant_id, seq DESC);
+
+-- 影子运行（docs/61 §5 H4；增量迁移见 028_shadow_runs.sql）
+-- 四子模型走 JSONB；id=sr-N 与内存档同形，seq 存数字部分供排序；ring 100 惰性裁剪。
+CREATE TABLE IF NOT EXISTS shadow_runs (
+    tenant_id     TEXT NOT NULL,
+    id            TEXT NOT NULL,
+    seq           BIGINT NOT NULL,
+    graph_id      TEXT NOT NULL,
+    inputs        JSONB,
+    status        TEXT NOT NULL,
+    error         TEXT,
+    decisions     JSONB NOT NULL DEFAULT '[]',
+    tool_intents  JSONB NOT NULL DEFAULT '[]',
+    trace_id      TEXT NOT NULL,
+    auto_action   TEXT,
+    human_outcome JSONB,
+    comparison    JSONB NOT NULL DEFAULT '{}',
+    created_at    TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, id)
+);
+CREATE INDEX IF NOT EXISTS idx_shadow_runs_tenant_seq
+    ON shadow_runs (tenant_id, seq DESC);
