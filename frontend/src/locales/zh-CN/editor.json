@@ -378,7 +378,8 @@
     "warnings": "警告 {{count}}",
     "allClear": "无问题",
     "wholeGraph": "全图",
-    "clickLocate": "点击定位"
+    "clickLocate": "点击定位",
+    "serverTag": "后端编译"
   },
   "nodeTitles": {
     "condition": "条件分支（规则自上而下短路；LLM 模式由模型按描述选择，04 §5.2）",

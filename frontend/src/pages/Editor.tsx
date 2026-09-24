@@ -30,6 +30,7 @@ import { roleCan, type Principal } from '../lib/auth'
 import { useTranslation } from '../locales'
 import { useEditorStore } from '../store/editorStore'
 import { useValidationEngine } from '../lib/validation/useValidationEngine'
+import { useValidationStore } from '../store/validationStore'
 import { serializeGraph } from '../lib/graphSerializer'
 import { toSteps } from '../lib/recordings'
 import { resolveExpressionErrors } from '../lib/runtimeError'
@@ -37,6 +38,7 @@ import { isSubgraphInternal, subgraphPathPrefix, subgraphPathLabel } from '../li
 import { parseGlobalsDraft } from '../lib/debugOverrides'
 import {
   compileGraph,
+  CompileValidationError,
   decideApproval,
   decideCardAction,
   deleteRecording,
@@ -118,6 +120,10 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
 
   // M4 批 2 ⑦：分层校验调度（L1 同步 / L2 防抖 / L3 idle），结果入 validationStore。
   useValidationEngine()
+
+  // docs/61 §2.2：后端编译 422 的逐条诊断快照通道（Problems 面板消费）。
+  const setServerIssues = useValidationStore((state) => state.setServerIssues)
+  const clearServerIssues = useValidationStore((state) => state.clearServerIssues)
 
   const [exportOpen, setExportOpen] = useState(false)
   const [runOpen, setRunOpen] = useState(false)
@@ -215,6 +221,8 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
     setRunning(true)
     setRunError(null)
     setCompileResult(null)
+    // 每次尝试都从零开始：上一轮的后端编译诊断不得残留（docs/61 §2.2）。
+    clearServerIssues()
     setRunResult(null)
     setPendingApprovals([])
     setApprovalError(null)
@@ -520,6 +528,9 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
         setRunError(message)
         if (shouldRecord) setRecordingError(message)
         appendLog(t('log.runFailed', { message }))
+        // docs/61 §2.2：编译/保存 422 额外带逐条可定位诊断，进 Problems 面板；
+        // 上方 message 仍是后端错误拼成的单串，日志与 toast 形状零变化。
+        if (error instanceof CompileValidationError) setServerIssues(error.issues)
       }
     } finally {
       setRunning(false)

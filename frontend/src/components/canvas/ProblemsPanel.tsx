@@ -1,8 +1,9 @@
 /**
  * Problems 面板（M4 批 2 ⑧ / U41③，04 §6.5 末扩展条）。
  *
- * 全图 Diagnostic（节点 L1/L2 + 图级 L3）经 rank 排序后聚合展示；
- * 点击条目：nodeId → 选中并居中画布节点；pointer → 同步滚动定位到右侧属性面板对应字段并闪烁。
+ * 全图 Diagnostic（节点 L1/L2 + 图级 L3 + 后端编译 422 快照，docs/61 §2）经 rank
+ * 排序后聚合展示；点击条目：nodeId → 选中并居中画布节点；pointer → 同步滚动定位到
+ * 右侧属性面板对应字段并闪烁。
  * 必须渲染在 ReactFlowProvider 内（FlowCanvasInner）以使用 useReactFlow。
  */
 import { useMemo, useState } from 'react'
@@ -125,6 +126,9 @@ export function ProblemsPanel() {
                   </Typography.Text>
                   <span className="problems-item-meta">
                     {nodeId && <span className="problems-item-node">{labelById.get(nodeId) ?? nodeId}</span>}
+                    {problem.layer === 'server' && (
+                      <span className="problems-item-server">{t('problems.serverTag')}</span>
+                    )}
                     {problem.loc.pointer && <span className="problems-item-pointer">{problem.loc.pointer}</span>}
                     {!nodeId && <span className="problems-item-node">{t('problems.wholeGraph')}</span>}
                   </span>

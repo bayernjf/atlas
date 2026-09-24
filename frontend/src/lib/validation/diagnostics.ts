@@ -8,7 +8,7 @@
 
 export type DiagnosticSeverity = 'error' | 'warning'
 
-export type DiagnosticLayer = 'field' | 'template' | 'graph'
+export type DiagnosticLayer = 'field' | 'template' | 'graph' | 'server'
 
 export type DiagnosticToken = {
   /** token 在所属模板字段文本中的起始下标（含 {{）。 */
@@ -87,4 +87,25 @@ export function rank(diagnostics: Diagnostic[], nodeOrder: string[] = []): Diagn
     const index = orderIndex.get(id)
     return index === undefined ? tail : index
   }
+}
+
+/**
+ * 同构诊断去重（docs/61 §2.3）：本地 L1/L2/L3 与后端编译 422 会对同一问题各报一条
+ * （M4 批 2 刻意做了同构对拍，重合是常态），以 (nodeId, pointer, code) 三元组判同，
+ * 本地优先——本地实时且可能带 quickFix。不修改入参，返回新数组。
+ */
+export function dedupeServerDiagnostics(
+  local: Diagnostic[],
+  server: Diagnostic[],
+): Diagnostic[] {
+  if (server.length === 0) return local
+  const seen = new Set(local.map(identityKey))
+  const kept = server.filter((diagnostic) => !seen.has(identityKey(diagnostic)))
+  return kept.length === 0 ? local : [...local, ...kept]
+}
+
+/** NUL 分隔：nodeId/pointer 自身可含冒号与斜杠，拼 ':' 会撞键。 */
+function identityKey(diagnostic: Diagnostic): string {
+  const { nodeId, pointer } = diagnostic.loc
+  return [nodeId ?? '', pointer ?? '', diagnostic.code].join('\u0000')
 }

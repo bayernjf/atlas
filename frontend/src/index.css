@@ -436,6 +436,14 @@ body,
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+/* docs/61 §2.3：标记条目来自后端编译 422，而非本地实时校验 */
+.problems-item-server {
+  padding: 0 5px;
+  border: 1px solid var(--atlas-color-primary-border, #91caff);
+  border-radius: 3px;
+  color: var(--atlas-color-primary, #1677ff);
+}
+
 /* M4 批 3 ⑪ quickFix「删除悬空引用」按钮 */
 .problems-fix-btn {
   flex: none;

@@ -11,7 +11,7 @@ import {
 } from './auth'
 import type { SerializedGraph } from './graphSerializer'
 import type { JsonSchema } from './scope'
-import { getLanguage, t } from '../locales'
+import { getLanguage, t, type Locale } from '../locales'
 import { isRuntimeErrorCode, resolveRuntimeDetail, resolveRuntimeError } from './runtimeError'
 
 // docs/17 §2.4：后端认证错误返回 {code,message}；code 是契约，前端按 code 走 i18n。
@@ -24,40 +24,131 @@ const AUTH_ERROR_KEYS: Record<string, string> = {
 }
 
 /**
- * 把后端 422 的错误列表（detail 中文数组 + 并行等长的 codes/params，docs/17 §2.4）
- * 逐条按错误码映射到当前语言文案；缺翻译键或无 code 时回退该条中文 detail（兜底，
- * 保证英文态最坏只混中文、不泄漏 i18n key）。params 中数组先 join 以便模板插值。
+ * 单条 422 项按错误码映射指定语言的文案；缺码/缺键回退该条中文 detail
+ * （保证英文态最坏只混中文、不泄漏 i18n key）。params 中数组先 join 以便模板插值。
+ * 逐条解析（编译诊断逐条定位，docs/61 §2）与整表 join 共用此唯一映射器，防两套漂移。
+ * lng 由调用方显式传入：memo 化渲染路径不读隐式全局语言（docs/61 §2.4）。
  */
-function resolveValidationList(
-  detail: unknown[],
-  codes: unknown,
-  params: unknown,
+function validationItemMessage(
+  item: unknown,
+  code: unknown,
+  param: unknown,
+  lng: Locale,
 ): string {
-  const sep = getLanguage().startsWith('en') ? '; ' : '；'
+  const fallback = typeof item === 'string' ? item : String(item)
+  if (typeof code !== 'string' || !code) return fallback
+  const raw = (param ?? {}) as Record<string, unknown>
+  const vars: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(raw)) {
+    vars[key] = Array.isArray(value) ? value.join(', ') : value
+  }
+  // 审批分支键是英文枚举（approved/rejected），插值前按当前语言本地化。
+  if (vars.branch === 'approved' || vars.branch === 'rejected') {
+    vars.branch = t(`dsl._branch_${vars.branch}`, {
+      ns: 'validation',
+      lng,
+      defaultValue: vars.branch as string,
+    })
+  }
+  return t(`dsl.${code}`, { ns: 'validation', lng, defaultValue: fallback, ...vars })
+}
+
+/**
+ * 把后端 422 的错误列表（detail 中文数组 + 并行等长的 codes/params，docs/17 §2.4）
+ * 逐条映射后拼成单串。
+ */
+function resolveValidationList(detail: unknown[], codes: unknown, params: unknown): string {
+  const lng = getLanguage()
+  const sep = lng.startsWith('en') ? '; ' : '；'
   const hasCodes = Array.isArray(codes) && codes.length === detail.length
   const ps = Array.isArray(params) ? params : []
   return detail
-    .map((item, index) => {
-      const fallback = typeof item === 'string' ? item : String(item)
-      const code = hasCodes ? codes[index] : undefined
-      if (typeof code === 'string' && code) {
-        const raw = (ps[index] ?? {}) as Record<string, unknown>
-        const vars: Record<string, unknown> = {}
-        for (const [key, value] of Object.entries(raw)) {
-          vars[key] = Array.isArray(value) ? value.join(', ') : value
-        }
-        // 审批分支键是英文枚举（approved/rejected），插值前按当前语言本地化。
-        if (vars.branch === 'approved' || vars.branch === 'rejected') {
-          vars.branch = t(`dsl._branch_${vars.branch}`, {
-            ns: 'validation',
-            defaultValue: vars.branch as string,
-          })
-        }
-        return t(`dsl.${code}`, { ns: 'validation', defaultValue: fallback, ...vars })
-      }
-      return fallback
-    })
+    .map((item, index) =>
+      validationItemMessage(item, hasCodes ? codes[index] : undefined, ps[index], lng),
+    )
     .join(sep)
+}
+
+/**
+ * 后端编译 422 的单条诊断（docs/61 §2.1）。detail 是等长真相，codes/params 与之并行，
+ * locations 稀疏侧车只覆盖有定位信息的条目，故按 detail 下标归位。
+ * message 存后端中文原文，渲染期才 t() 解析，切语言才能自动重算。
+ */
+export type CompileIssue = {
+  index: number
+  code?: string
+  message: string
+  params?: Record<string, unknown>
+  nodeId?: string
+  pointer?: string
+}
+
+/** locations 稀疏侧车按 index 归位到 detail 下标；越界/形状不符的条目直接丢弃。 */
+export function buildCompileIssues(
+  detail: unknown,
+  codes: unknown,
+  params: unknown,
+  locations: unknown,
+): CompileIssue[] {
+  if (!Array.isArray(detail)) return []
+  const hasCodes = Array.isArray(codes) && codes.length === detail.length
+  const hasParams = Array.isArray(params) && params.length === detail.length
+  const located = new Map<number, Pick<CompileIssue, 'nodeId' | 'pointer'>>()
+  if (Array.isArray(locations)) {
+    for (const entry of locations) {
+      if (entry === null || typeof entry !== 'object') continue
+      const rec = entry as { index?: unknown; nodeId?: unknown; pointer?: unknown }
+      if (typeof rec.index !== 'number' || rec.index < 0 || rec.index >= detail.length) continue
+      located.set(rec.index, {
+        nodeId: typeof rec.nodeId === 'string' && rec.nodeId ? rec.nodeId : undefined,
+        pointer: typeof rec.pointer === 'string' && rec.pointer ? rec.pointer : undefined,
+      })
+    }
+  }
+  return detail.map((item, index) => ({
+    index,
+    code: hasCodes && typeof codes[index] === 'string' && codes[index] ? codes[index] : undefined,
+    message: typeof item === 'string' ? item : String(item),
+    params: hasParams ? (params[index] as Record<string, unknown>) : undefined,
+    ...located.get(index),
+  }))
+}
+
+/** 渲染期解析单条编译诊断的指定语言文案（缺码/缺键回退中文兜底）。 */
+export function compileIssueMessage(issue: CompileIssue, lng: Locale): string {
+  return validationItemMessage(issue.message, issue.code, issue.params, lng)
+}
+
+/**
+ * 编译/保存图 422 的错误：message 保持与既有 request 一致的 join 单串
+ * （toast / 日志 / 断言零改动），额外携带可逐条定位的 issues。
+ */
+export class CompileValidationError extends Error {
+  readonly issues: CompileIssue[]
+
+  constructor(message: string, issues: CompileIssue[]) {
+    super(message)
+    this.name = 'CompileValidationError'
+    this.issues = issues
+  }
+}
+
+function requestError(body: unknown, status: number): Error {
+  const payload = body as {
+    detail?: unknown
+    codes?: unknown
+    params?: unknown
+    locations?: unknown
+  } | null
+  const detail = payload?.detail
+  const message = resolveErrorMessage(detail, status, payload?.codes, payload?.params)
+  if (Array.isArray(detail)) {
+    return new CompileValidationError(
+      message,
+      buildCompileIssues(detail, payload?.codes, payload?.params, payload?.locations),
+    )
+  }
+  return new Error(message)
 }
 
 /** 把 FastAPI 的 detail（字符串 / 422 数组 / {code,message} 对象）解析为当前语言的错误文案。 */
@@ -250,7 +341,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       // 登录端点的 401 是「用户名或密码错误」，不触发会话失效跳转
       if (path !== '/api/auth/login') handleUnauthorized()
     }
-    throw new Error(resolveErrorMessage(body?.detail, response.status, body?.codes, body?.params))
+    throw requestError(body, response.status)
   }
   return body as T
 }
@@ -265,7 +356,7 @@ export async function login(username: string, password: string): Promise<LoginRe
   })
   const body = await response.json().catch(() => null)
   if (!response.ok) {
-    throw new Error(resolveErrorMessage(body?.detail, response.status, body?.codes, body?.params))
+    throw requestError(body, response.status)
   }
   const session = body as LoginResponse
   saveSession(session.token, session.principal)

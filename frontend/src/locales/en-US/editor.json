@@ -378,7 +378,8 @@
     "warnings": "{{count}} warnings",
     "allClear": "No problems",
     "wholeGraph": "Whole graph",
-    "clickLocate": "Click to locate"
+    "clickLocate": "Click to locate",
+    "serverTag": "Backend compile"
   },
   "nodeTitles": {
     "condition": "Conditional branches (rules short-circuit top to bottom; in LLM mode the model picks by description, 04 §5.2)",
