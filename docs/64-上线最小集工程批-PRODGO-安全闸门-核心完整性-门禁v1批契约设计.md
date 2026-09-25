@@ -84,8 +84,7 @@
 
 ## 10. J-3b `limit` 补 `le=`
 
-- `api/main.py` 10 处 `limit: int = 100`（573/1051/1794/3771）与 `limit: int = 50`（1954/2951/2996/3140/3387/3849）统一加 `le=`（100 处 `le=100`、50 处 `le=50`）；FastAPI 自动 422 中文聚合（沿用 graph 422 惯例）。
-- 测试：抽取 2-3 个代表性端点各 1 测（`?limit=10**9` → 422），其余靠参数签名静态守护（收口 grep `limit: int = 50|100` 无裸项）。
+- **2026-09-25 落码勘误**：实测发现本仓全部 10 处 `limit` 端点**均已自带门禁**——7 处 clamp 语义（`max(1, min(limit, N))`：audit 1–500、decided/shadow/deliveries/memories 1–200 等）＋3 处手动 reject（runs/tasks `1 <= limit <= 200`、monitoring_runs `RUN_RING_SIZE`）。统一 `le=` 会把 clamp 语义破坏成 reject（`limit=999999` 由 200 变 422，三测断言 `clamped_not_rejected`/`clamp` 失败），故 **J-3b 以「确认有界」收口**：还原全部裸默认值，不引入 `le=`；越界一律由既有 clamp/reject 门禁处置（文档口径不变）。
 
 ## 11. J-3c `litellm.completion` timeout/max_tokens
 
