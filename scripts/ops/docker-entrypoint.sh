@@ -55,6 +55,15 @@ for arg in "$@"; do
 done
 
 python -m scripts.ops.apply_migrations
-python -m scripts.ops.seed_accounts
+
+# docs/64 J-1c：prod 不播种种子账号（含已知默认口令），本地/演示照常。
+case "${ATLAS_ENV:-dev}" in
+    prod)
+        echo "[entrypoint] ATLAS_ENV=prod：跳过种子账号播种（docs/64 J-1c）"
+        ;;
+    *)
+        python -m scripts.ops.seed_accounts
+        ;;
+esac
 
 exec "$@"

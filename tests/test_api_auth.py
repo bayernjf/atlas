@@ -244,3 +244,33 @@ def test_reset_scopes_to_caller_tenant_but_keeps_recordings_and_feedback():
     # 规则恢复默认（threshold 回到 3）
     rules = anon.get("/api/monitoring/rules", headers=ADMIN_A).json()
     assert rules["consecutive_failures"]["threshold"] == 3
+# ============================ J-1c 种子口令 prod 拒绝 ============================
+
+
+def test_login_rejects_seed_credential_in_prod(monkeypatch):
+    """J-1c：prod 下种子默认口令登录 → 403 AUTH_SEED_CREDENTIAL。"""
+    monkeypatch.setenv("ATLAS_ENV", "prod")
+    resp = anon.post("/api/auth/login", json={"username": "admin-a", "password": "admin123"})
+    assert resp.status_code == 403
+    assert resp.json()["detail"]["code"] == "AUTH_SEED_CREDENTIAL"
+
+
+def test_login_allows_custom_credential_in_prod(monkeypatch):
+    """J-1c：prod 下改密后的账号用新口令照常登录。"""
+    from atlas.iam.accounts import Role
+    from atlas.iam.deps import user_store
+
+    user_store.create(
+        tenant_id="t1", username="ops-prod", password="Str0ng!-9",
+        display_name="生产运营", role=Role.OPERATOR,
+    )
+    monkeypatch.setenv("ATLAS_ENV", "prod")
+    resp = anon.post("/api/auth/login", json={"username": "ops-prod", "password": "Str0ng!-9"})
+    assert resp.status_code == 200
+
+
+def test_login_allows_seed_credential_outside_prod(monkeypatch):
+    """J-1c：非 prod 种子口令登录行为不变。"""
+    monkeypatch.delenv("ATLAS_ENV", raising=False)
+    resp = anon.post("/api/auth/login", json={"username": "admin-a", "password": "admin123"})
+    assert resp.status_code == 200
