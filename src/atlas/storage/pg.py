@@ -2094,6 +2094,8 @@ class PgAuditStore:
             "path": path,
             "ip": ip or "",
             "at": at,
+            # docs/61 §4.1：与 list 投影逐键一致（游标分页 seq）。
+            "seq": seq,
         }
 
     @staticmethod
