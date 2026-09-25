@@ -240,7 +240,7 @@
     "SUB_INPUTS_NOT_OBJECT": "节点 {{owner}}：子图入参映射（inputs）必须是对象",
     "SUB_INPUT_KEY_DUPLICATE": "节点 {{owner}}：入参键名重复：{{key}}",
     "SUB_INPUT_KEY_EMPTY": "节点 {{owner}}：入参键名不能为空",
-    "SUB_INPUT_VALUE_REQUIRED": "节点 {{owner}}：入参 {{key}} 的映射值必须是非空文本（父图 {{路径}} 或字面量）",
+    "SUB_INPUT_VALUE_REQUIRED": "节点 {{owner}}：入参 {{key}} 的映射值必须是非空文本（父图变量引用或字面量）",
     "SUB_SUCCESSOR_MISSING": "节点 {{owner}}：后继节点不存在：{{target}}",
     "VARIABLE_NAME_DUPLICATE": "变量名重复：{{name}}",
     "WAIT_ABSOLUTE_TIME_REQUIRED": "节点 {{owner}}：到点时刻（absoluteTime）为必填",
