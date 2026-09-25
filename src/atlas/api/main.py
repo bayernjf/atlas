@@ -97,6 +97,10 @@ from atlas.channels.webhooks import (
 )
 from atlas.connections.service import ConnectionServiceError
 from atlas.observability.health import check_ready
+from atlas.observability.logging import (
+    configure_logging,
+    install_request_id_middleware,
+)
 from atlas.observability.metrics_export import render_prometheus
 from atlas.openapi.adapter import ImportedApiHarnessAdapter
 from atlas.openapi.errors import OpenApiError
@@ -299,10 +303,16 @@ async def lifespan(_app: FastAPI):
     yield
 
 
+# docs/65 K-D：统一日志 formatter（UTC 时间戳/级别/logger/request_id）；幂等。
+configure_logging()
+
 # docs/64 J-1a：prod 缺必需密钥 fail-closed（拒绝启动），非 prod 静默。
 assert_prod_secrets()
 
 app = FastAPI(title="Atlas API", version="0.0.1", lifespan=lifespan)
+
+# docs/65 K-D：request-id 中间件（X-Request-Id 响应头 + 日志 request_id 字段）。
+install_request_id_middleware(app)
 
 # Demo 单例：控制台页面与编译运行的图共享同一份店铺状态
 _demo_shop = DemoShopService()
