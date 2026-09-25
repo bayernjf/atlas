@@ -751,3 +751,212 @@ def test_U580_pg_report_store_roundtrip_and_isolation(backend):
     store.reset()
     assert len(other.list_summary("g-rr")) == 1  # 本租户 reset 不影响他租户
     other.reset()
+
+
+def test_u809_frame_resume_claim_is_one_time(backend):
+    """docs/62 §5 U809：互斥由**真库**裁决——同 token 并发 20 个认领恰一个 True，之后恒 False。
+
+    这条不能由自写假 store 代替：假对象只会重复实现作者已经想到的语义，
+    证不了 `UPDATE ... WHERE resumed_at IS NULL` 在 PG 行锁下真的串行（§0 教训）。
+    """
+    import threading
+
+    from atlas.storage.frame import build_frame, deadline_iso
+    from atlas.storage.recovery import (
+        PROCESS_IDENTITY,
+        claim_frame_for_resume,
+        load_pending_frames,
+        make_frame_sink,
+    )
+
+    engine = backend.engine
+    _cleanup(engine)
+    frame = build_frame(
+        token="tok-claim",
+        run_id="run-claim",
+        node_id="human-1",
+        kind="approval",
+        deadline_at=deadline_iso(30),
+        graph_snapshot={"version": 1, "nodes": [], "edges": []},
+        resume_state={"graph_id": "g-claim", "inputs": {}, "outputs": {}},
+        summary="订单退款审批",
+        approver="客服主管",
+    )
+    make_frame_sink(engine, TENANT, "run-claim")(frame)
+
+    # 写帧只落 NULL＝还没人越过这个挂起点（docs/62 §3.4 第 4 行）。
+    loaded = load_pending_frames(engine)
+    assert len(loaded) == 1
+    assert loaded[0]["resumed_at"] is None
+    assert loaded[0]["resumed_by"] is None
+
+    won: list[bool] = []
+    gate = threading.Event()
+
+    def drive() -> None:
+        gate.wait(2)
+        won.append(claim_frame_for_resume(engine, "tok-claim"))
+
+    threads = [threading.Thread(target=drive) for _ in range(20)]
+    for thread in threads:
+        thread.start()
+    gate.set()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert len(won) == 20
+    assert sum(won) == 1, "恰一个进程可越过挂起点；多一个＝双跑，少一个＝门焊死"
+
+    # 重复认领恒 False（at-most-once：帧一旦被消费，任何进程都不再有权执行其下游）。
+    assert claim_frame_for_resume(engine, "tok-claim") is False
+    # 不存在的 token 也判 False：缺行＝停止驱动，绝不因"查不到"而放行。
+    assert claim_frame_for_resume(engine, "tok-never-written") is False
+
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                "SELECT resumed_at, resumed_by FROM interruptions "
+                "WHERE resume_token = 'tok-claim'"
+            )
+        ).one()
+    assert row[0] is not None, "DB 时钟落库（不用应用侧 now_iso，docs/62 §2 D-3）"
+    assert row[1] == PROCESS_IDENTITY
+
+
+def test_u809b_recovery_skips_claimed_but_not_unclaimed_frames(backend):
+    """docs/62 §8.1 第②种：已认领帧不再重建 pending/起续跑线程；未认领帧必须照旧恢复。
+
+    两条方向都断言，否则"跳过"可能只是门焊死——U810b（重启仍须能续跑）的可执行答辩。
+    """
+    import time
+
+    from atlas.api.main import _resume_from_frame
+    from atlas.graph.dsl import parse_graph
+    from atlas.iam.deps import tenant_registry
+    from atlas.storage.frame import build_frame, deadline_iso
+    from atlas.storage.recovery import (
+        claim_frame_for_resume,
+        load_pending_frames,
+        make_frame_sink,
+    )
+
+    engine = backend.engine
+    _cleanup(engine)
+    graph = parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "wait-1", "type": "wait", "name": "等待",
+                 "position": {"x": 2, "y": 0},
+                 "config": {"waitType": "event", "eventKey": "order_paid",
+                            "timeoutSeconds": 30, "onTimeout": "continue"}},
+                {"id": "tool-after", "type": "tool_call", "name": "后继",
+                 "config": {"tool": "op-after"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "wait-1"},
+                {"id": "e2", "source": "wait-1", "target": "tool-after"},
+            ],
+        }
+    )
+    services = tenant_registry.get(TENANT)
+    services.event_wait_broker.reset()
+
+    def _event_frame(token: str) -> dict:
+        return build_frame(
+            token=token,
+            run_id=f"run-{token}",
+            node_id="wait-1",
+            kind="wait",
+            deadline_at=deadline_iso(30),
+            graph_snapshot=graph.model_dump(),
+            resume_state={"graph_id": "adhoc", "inputs": {},
+                          "outputs": {"trigger-1": {"context": {"payload": {}}}}},
+            wait={"waitType": "event", "eventKey": "order_paid",
+                  "onTimeout": "continue", "timeoutSeconds": 30},
+        )
+
+    for token in ("tok-consumed", "tok-live"):
+        frame = _event_frame(token)
+        services.run_store.begin(run_id=frame["run_id"], graph_id="adhoc", mode="run")
+        services.run_store.suspend(
+            run_id=frame["run_id"], node_id="wait-1", kind="wait",
+            resume_token=token, deadline_at=frame["deadline_at"],
+        )
+        make_frame_sink(engine, TENANT, frame["run_id"])(frame)
+
+    # 模拟"另一个进程已越过挂起点后崩溃"：帧已 claimed，行仍在。
+    assert claim_frame_for_resume(engine, "tok-consumed") is True
+    loaded = {f["resume_token"]: f for f in load_pending_frames(engine)}
+    assert set(loaded) == {"tok-consumed", "tok-live"}
+
+    _resume_from_frame(engine, loaded["tok-consumed"])
+    pending = [item["token"] for item in services.event_wait_broker.list_pending()]
+    assert "tok-consumed" not in pending, "已认领帧不得重建 pending（否则起僵尸续跑线程）"
+    assert services.run_store.get("run-tok-consumed")["status"] == "suspended", (
+        "卡住是设计选择：不自动重放，也不改判终态（收敛靠 D36）"
+    )
+
+    # 反向：未认领帧照旧恢复并跑完（门没有被焊死）。
+    _resume_from_frame(engine, loaded["tok-live"])
+    pending = [item["token"] for item in services.event_wait_broker.list_pending()]
+    assert "tok-live" in pending
+
+    assert services.event_wait_broker.signal_key("order_paid", {"paidAt": "2026-09-25"})[
+        "released"
+    ] == 1
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and load_pending_frames(engine):
+        time.sleep(0.02)
+    live = services.run_store.get("run-tok-live")
+    assert live["status"] == "completed"
+    assert "tool-after" in live["outputs"]
+    assert [f["resume_token"] for f in load_pending_frames(engine)] == ["tok-consumed"]
+    services.event_wait_broker.reset()
+
+
+def test_u809c_reverse_control_the_null_predicate_is_what_serializes(backend):
+    """反向对照（docs/62 §5）：同一条 UPDATE 去掉 `resumed_at IS NULL` 后每次都命中 1 行。
+
+    不去掉真代码里的谓词（那是拆闸门），而是并排跑两种 SQL 证明：**承重的正是那个谓词**，
+    不是 rowcount 的读数方式。少了这条对照，U809 的"恰一个 True"可能只是 rowcount 语义的巧合。
+    """
+    from sqlalchemy import text
+
+    from atlas.memory.database import create_database_engine
+    from atlas.storage.frame import build_frame, deadline_iso
+    from atlas.storage.recovery import claim_frame_for_resume, make_frame_sink
+
+    engine = backend.engine
+    _cleanup(engine)
+    frame = build_frame(
+        token="tok-pred",
+        run_id="run-pred",
+        node_id="human-1",
+        kind="approval",
+        deadline_at=deadline_iso(30),
+        graph_snapshot={"version": 1, "nodes": [], "edges": []},
+        resume_state={"graph_id": "g", "inputs": {}, "outputs": {}},
+    )
+    make_frame_sink(engine, TENANT, "run-pred")(frame)
+
+    # 真函数：第一次 True，其后恒 False。
+    assert claim_frame_for_resume(engine, "tok-pred") is True
+    assert claim_frame_for_resume(engine, "tok-pred") is False
+
+    # 同一行、同一条语句、只去掉谓词：每次都是 rowcount 1 ＝ 每个进程都自认赢家。
+    with engine.begin() as conn:
+        first = conn.execute(
+            text("UPDATE interruptions SET resumed_at = CURRENT_TIMESTAMP "
+                 "WHERE resume_token = 'tok-pred'")
+        )
+        second = conn.execute(
+            text("UPDATE interruptions SET resumed_at = CURRENT_TIMESTAMP "
+                 "WHERE resume_token = 'tok-pred'")
+        )
+    assert first.rowcount == 1 and second.rowcount == 1, (
+        "rowcount 本身区分不了赢家；若这里出现 0，说明测试环境不是 PG 行锁语义，U809 的结论不成立"
+    )
