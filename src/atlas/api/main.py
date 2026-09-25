@@ -3414,10 +3414,12 @@ def monitoring_metrics(
 @app.get("/api/monitoring/runs")
 def monitoring_runs(
     graph_id: str | None = None,
-    limit: int = Query(50, le=500),
+    limit: int = 50,
     principal: Principal = Depends(require("read")),
 ) -> dict[str, list[dict[str, Any]]]:
-    """最近运行（新→旧，默认 50、上限 200；04 §5.13；按租户分区）。"""
+    """最近运行（新→旧，默认 50、上限 200；04 §5.13；按租户分区）。
+    注：本端点保留 RUN_RING_SIZE 手动门禁（docs/64 J-3b 的 le= 批不含此处——
+    语义上限为环形缓冲大小，且手动校验保证 detail 为可读字符串）。"""
     if limit < 1 or limit > RUN_RING_SIZE:
         raise HTTPException(status_code=422, detail=f"limit 必须是 1-{RUN_RING_SIZE} 之间的整数")
     runs = services_for(principal).monitoring.list_runs(graph_id=graph_id, limit=limit)
@@ -3737,6 +3739,11 @@ def demo_mock_receipt(order_id: str, body: dict[str, Any] | None = None) -> dict
     return {"order_id": order_id, "body": body or {}, "received": True}
 
 
+def _demo_mock_enabled() -> bool:
+    """J-3e：demo 模拟面开关——prod 默认关（fail-closed），ATLAS_ENABLE_DEMO_MOCK=1 显式开。"""
+    return os.getenv("ATLAS_ENV", "dev") != "prod" or os.getenv("ATLAS_ENABLE_DEMO_MOCK") == "1"
+
+
 # Shopify Admin webhooks 资源的同进程模拟（docs/41 §D；随 demo reset 清空）。
 _MOCK_SHOPIFY_WEBHOOKS: dict[int, dict[str, Any]] = {}
 _mock_shopify_webhook_seq = count(1)
@@ -3744,6 +3751,8 @@ _mock_shopify_webhook_seq = count(1)
 
 @app.get("/api/demo/mock/shopify-admin/webhooks.json")
 def mock_shopify_admin_webhooks_list() -> dict[str, Any]:
+    if not _demo_mock_enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
     return {
         "webhooks": [
             {"id": remote_id, **record}
@@ -3756,6 +3765,8 @@ def mock_shopify_admin_webhooks_list() -> dict[str, Any]:
 def mock_shopify_admin_webhooks_create(
     body: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if not _demo_mock_enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
     webhook = (body or {}).get("webhook")
     if (
         not isinstance(webhook, dict)
@@ -3778,6 +3789,8 @@ def mock_shopify_admin_webhooks_create(
 
 @app.delete("/api/demo/mock/shopify-admin/webhooks/{webhook_id}.json")
 def mock_shopify_admin_webhooks_delete(webhook_id: str) -> dict[str, Any]:
+    if not _demo_mock_enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
     try:
         remote_id = int(webhook_id)
     except (TypeError, ValueError):
