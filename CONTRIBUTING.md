@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping build Atlas. This is an AI 运营体（Agent）编排平台 —— Python 引擎 + Go Harness 网关（Demo 阶段暂用 FastAPI 接口）+ React 前端。**题述工程化路线（docs/19/20）M1–M10 已全部闭合**（题一 Schema 内核 M1–M4；题二 M5 持久化+中断恢复 / M6 版本化 / M7 任务总线 / M8 交互卡片 / M9 灰度回滚 / M10 span 追踪）；**M11 记忆/长期上下文已 docs-only 立项，待契约确认后落码**（形状权威 [docs/26](docs/26-M11记忆长期上下文契约设计.md)）；W1-W10 Demo（2026-09-13）为基线。当前状态与待办见 [handoff.md](handoff.md)，缓做事项见 [docs/14-缓做事项登记表.md](docs/14-缓做事项登记表.md)，排期见 [docs/08](docs/08-任务迭代计划.md)。
+Thanks for helping build Atlas. This is an AI 运营体（Agent）编排平台 —— Python 引擎 + Go Harness 网关（Demo 阶段暂用 FastAPI 接口）+ React 前端。**题述工程化路线（docs/19/20）M1–M10 已全部闭合**（题一 Schema 内核 M1–M4；题二 M5 持久化+中断恢复 / M6 版本化 / M7 任务总线 / M8 交互卡片 / M9 灰度回滚 / M10 span 追踪）；**M11 记忆/长期上下文已落码收口**（2026-09-19，四批 `5441902`/`58d936c`/`73e53bd`/`75c4150`；形状权威 [docs/26](docs/26-M11记忆长期上下文契约设计.md)）；**其后进入「真实接入与交付」批链（docs/27–61，2026-09-20 → 09-25，逐批立项/落码见 [docs/08](docs/08-任务迭代计划.md)）**——真实渠道与入站 Webhook、OpenAPI 导入生成工具、审批闭环与审计、告警/静默/值班/影子运行、PG 持久化、en-US i18n；W1-W10 Demo（2026-09-13）为基线。当前状态与待办见 [handoff.md](handoff.md)，缓做事项见 [docs/14-缓做事项登记表.md](docs/14-缓做事项登记表.md)，排期见 [docs/08](docs/08-任务迭代计划.md)。
 
 ## Prerequisites
 
@@ -43,6 +43,8 @@ pnpm build                                # TypeScript 检查 + Vite 生产构�
 - `frontend/src/components/` — 画布、节点面板、属性面板、调试控制台
 - `frontend/src/pages/` — Dashboard / Editor
 - `frontend/src/store/` — Zustand 编辑器状态
+
+上面是 W1 期骨架清单，**已不完整**：此后落码新增的 `api`/`storage`/`iam`/`recording`/`monitoring`/`observability`/`tracing`/`routing`/`versioning`/`debug`/`cards`/`coordination`/`channels`/`connections`/`httpapi`/`database`/`security`/`openapi`/`message`/`llm`/`shop`/`logistics`/`template` 等包，**职责与契约一律以 [docs/09](docs/09-工程骨架与目录结构.md)「模块 → 文档映射」表为准**。
 
 模块职责与接口契约见 09 文档「模块 → 文档映射」表、03 Schema 契约索引、12 API 清单。
 

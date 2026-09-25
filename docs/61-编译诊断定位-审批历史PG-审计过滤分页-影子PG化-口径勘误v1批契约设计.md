@@ -1,8 +1,8 @@
 # 编译诊断定位 / 审批历史 PG / 审计过滤分页 / 影子运行 PG / 口径勘误 v1 批契约设计（打包 H）
 
-> **✅ 落码收口注记（2026-09-25，打包 H 五项全部落码；push 状态唯一权威见 handoff 顶部收口块（origin/dev=`e380f0b`，其后待 push）；本注记为最终事实，与下文正文冲突处以本注记为准）**
+> **✅ 落码收口注记（2026-09-25，打包 H 五项全部落码；push 状态唯一权威见 handoff 顶部收口块（批 H 已全部在 origin/dev，未合 main）；本注记为最终事实，与下文正文冲突处以本注记为准）**
 >
-> **提交链（15 个提交自 `8ba3a29` 起，逐项 feat/test/docs 分原子）**：H1 `adb9b7c`(fix 定位 bug) → `bbb9a2c`(feat) → `eea76ad`(test)；H2 `33a5998`(feat) → `528f6b1`(test) → `e380f0b`(feat frontend 投影)；H3 `8a9f7df`(feat 后端) → `36a3cbb`(feat 前端) → `a07794c`(test)；H4 `2bb6d3c`(feat) → `3eac4af`(test)；H5 `55c1553`(docs 注释勘误)；立项与其后两条 git 状态注记共 3 个 docs 提交。
+> **提交链（15 个提交自 `8ba3a29` 起，逐项 feat/test/docs 分原子）**：H1 `adb9b7c`(fix 定位 bug) → `bbb9a2c`(feat) → `eea76ad`(test)；H2 `33a5998`(feat) → `528f6b1`(test) → `e380f0b`(feat frontend 投影)；H3 `8a9f7df`(feat 后端) → `36a3cbb`(feat 前端) → `a07794c`(test)；H4 `2bb6d3c`(feat) → `3eac4af`(test)；H5 `55c1553`(docs 注释勘误)；**收口后追加的 RangePicker 回退** `6fac767`(refactor frontend) + `bdcb15f`(test 双向冒烟) + `a53f36f`/`c7583de`(docs 数字与 push 状态刷新)；另有立项与其后两条 git 状态注记共 3 个 docs 提交。**本链以哈希为准，不记原子数——原子数会随每次追加过期。**
 >
 > **三道门实跑**：后端内存档 **1799 passed / 105 skipped / 0 failed**（213.73s；基线 1758/86，净增 41 常跑＋19 PG skip）；PG 直连（approval history＋shadow＋audit filters＋原六文件）**89 passed**（迁移 027/028 由 `storage/migrations.py` glob+sorted 自动 apply，`scripts/ops/apply_migrations.py` 已登记 028）；前端 vitest **720 passed / 2 skipped / 53 文件**（基线 694/2/52，净增 26 测：compileDiagnostics 15＋auditFilters 9＋approvals ISO 2）、tsc 0 error、oxlint **0 error / 6 既有 warning（零新增）**、`pnpm build` 过。**bundle 与日期控件决策（收口后追加）**：H3 时间边界最终用**原生 `datetime-local` 双输入**：先按 AntD `DatePicker.RangePicker` 实现并落码，但实测两条硬事实导致回退——① 主 chunk 1708.29→1822.37 kB（**+112 kB**，全仓首个日期组件把 dayjs 一并拖入）；② RangePicker 的月/星期名取自 **dayjs 全局 locale**，而 dayjs 在 pnpm 隔离布局下**不可解析**（只存在于 `.pnpm/dayjs@1.11.23`，`require.resolve` 报 MODULE_NOT_FOUND），要正经本地化就得把 dayjs 提升为**声明的直接依赖**（AGENTS.md 要求的选型决策，不在本批擅改范围），否则中文后台渲染出 `2026年Sep` + `Su Mo Tu`。回退后 bundle **1712.68 kB / gzip 531.12 kB（相对基线仅 +4.4 kB / +1.4 kB gz）**，缺陷与体积同时消失、能力不丢。。chunk>500 kB 提示为既有。
 >

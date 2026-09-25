@@ -18,6 +18,13 @@ Atlas 是一个 **AI 运营体（Agent）编排平台**：以 **Harness / Graph 
 - **题二（多智能体端到端）M5–M10 全闭合**：M5 持久化 + 中断恢复（M5a 进程内 Repository 重构、M5b PG 实现 + 中断帧落库 + 恢复扫描器 + run 状态 + `GET /api/runs`）、M6 Graph 版本化（不可变 releaseVersion + subgraph 钉版）、M7 多 Bot 任务总线（任务信封状态机 + 幂等/CAS + 退货退款协同沙盘）、M8 交互模板系统（审批卡片双向 Schema + web/im/email 三渠道渲染降级）、M9 入站 Router + 灰度发布 + 指标门控自动回滚、M10 span 级链路追踪。
 - **缓做项提前取回**：D26 用例集报告 v1（通过率历史趋势/导出/定时回放 CI）、D30 余部（数据依赖环/类型 warning/作用域语义）、A+B 打包六项（D15 表达式函数库、D17 loop break·continue、D18 parallel any_success、parallel.result/subgraph.outputs 可见性、改节点 id quickFix 联动）。
 - **M11 已落码收口（2026-09-19）**：统一记忆条目（fact/preference）+ 本地确定性 256 维词法向量（纯 stdlib）+ memory/remember·recall 两适配器工具 + 进程内/PG(pgvector) 两档 + REST 浏览/语义搜索/删除 + 前端记忆页；后端 673/前端 449、两档 m11_smoke 全过、d26 零回归。形状权威 [docs/26](docs/26-M11记忆长期上下文契约设计.md)（ADR T23）；商业 embedding/working/summary/case/自动提取等产品化余部仍缓做 D35。
+- **M11 之后是「真实接入与交付」批链（docs/27–61，2026-09-20 → 2026-09-25）**，逐批立项与落码条见 [docs/08](docs/08-任务迭代计划.md)，能力面按组：
+  - **真实接入**：Shopify 渠道适配与入站 Webhook（HMAC 验签/幂等环/订阅注册）、OpenAPI 导入自动生成工具（规格 PG 持久化、securitySchemes 静态密钥、HTTP Basic 子集、去重软删）、通用 HTTP 与数据库渠道、出向安全准入（SSRF 校验 + 凭证信封 AES-256-GCM 加密与脱敏）。
+  - **审批与人机协同**：审批卡片三渠道渲染、邮件内一键决策（HMAC 签名 capability URL，免登录）、已决审批历史（打包 H 起 PG 落库）、审计日志页与写操作审计中间件。
+  - **可靠性与运维**：告警中心、静默/值班（PG 化 + 惰性按日自动轮换）、告警外部通知与投递退避、外部通知 flapping 抑制、灰度门控自动回滚、影子运行（旁路决策比对，打包 H 起 PG 落库）。
+  - **运行时体验**：span 级链路追踪、单步调试与条件断点、wait 三形态（动态时长/到点时刻/事件等待，事件帧跨重启）、condition LLM 语义分支、loop foreach 批处理、编译诊断逐条定位（打包 H 起后端 422 侧车在前端 Problems 面板兑现）。
+  - **产品化**：en-US 全量翻译与运行时语言切换、设计 Token 层、用例集报告 PG 持久化与跨图看板、审计过滤 + 游标分页。
+  - 验证命令：后端 `.venv/bin/pytest`、PG 直连见 [docs/13](docs/13-测试用例清单.md)、前端 `pnpm vitest run` / `pnpm run lint` / `pnpm build`；**最近一次门结果与推送状态以 [handoff.md](handoff.md) 为准**（本文件不复制会随下一次提交过期的数字）。
 - **W1-W10 Demo（2026-09-13）为基线**：电商退款端到端链路（webhook 退款单 → AI 决策 → shop 适配器执行退款或转人工，SSE 实时上屏，NL 生成草稿）；规则兜底离线可跑，配置 `LITELLM_MODEL` 即用真实 LLM。
 - 设计文档以 `docs/` 为唯一事实源；当前状态与待办见 [handoff.md](handoff.md)，排期见 [docs/08](docs/08-任务迭代计划.md)，种子客户计划见 [docs/18](docs/18-种子客户验证计划.md)。
 
@@ -81,5 +88,5 @@ Demo 里程碑 W1-W10 与验收标准见 [08 任务迭代计划](docs/08-任务�
 
 ## License
 
-暂无（许可证未定，LICENSE 文件已移除）。
+**不开放（proprietary）**——无 LICENSE 文件，`pyproject.toml` 与 `frontend/package.json` 亦无 license 字段。MIT 曾于 2026-09-22 短暂落地（`c40b46c`），同日由用户拍板删除并保持不开放（`f721c18`）；决策记录见 [docs/08](docs/08-任务迭代计划.md) 与 [docs/34](docs/34-MVP上线就绪评审-2026-09-22复审.md) 的 2026-09-22 更新注记。
 
