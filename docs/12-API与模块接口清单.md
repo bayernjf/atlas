@@ -1048,3 +1048,4 @@ evaluation_task:
 
 *本文为新增接口汇总文档；所有接口签名均有原文依据（06 代码示例 / 04 组件设计 / 05 Schema），REST 端点路径为按 Demo 需求推导、标注"推导"，落码时以 OpenAPI 正式化为准。*
 （docs/64 打包 J 注记：本批零新 REST 端点、零新错误码、零新迁移。行为级变化：①`POST /api/waits/{token}/signal` 沿用既有 `{payload}` 形状（前端操作台只发 payload，eventKey 冗余不接收）；②`/api/demo/mock/shopify-admin/webhooks*` 在 prod（ATLAS_ENV=prod 且未设 ATLAS_ENABLE_DEMO_MOCK=1）统一 404，非 prod 行为不变；③limit 参数维持各端点既有 clamp/reject 门禁，不引入 `le=`（见 docs/64 §10 勘误）；④入站 shopify webhook 新增 413（body>1MB）与事件循环解耦（同步查询下沉线程池）。）
+（docs/65 打包 K 注记：本批零新 REST 端点、零新错误码、零新迁移、零新依赖。行为级变化：①`/metrics` 在 prod（ATLAS_ENV=prod）未配置 `ATLAS_METRICS_TOKEN` 时返回 404（fail-closed），配置后必须 `Authorization: Bearer <token>` 否则 401；非 prod 行为不变。②新增 `X-Request-Id` 响应头（成功路径），日志统一 UTC ISO 时间戳 + `request_id=` 字段。③retention 为启动钩子 + CLI（`scripts/ops/run_retention.py`），不新增端点。）
