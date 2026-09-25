@@ -76,11 +76,13 @@ export function Waits({ principal, onLogout, onBack }: WaitsPageProps) {
     }
   }, [message])
 
+  /* oxlint-disable react/set-state-in-effect */
   useEffect(() => {
     refresh()
     const timer = window.setInterval(refresh, 10_000)
     return () => window.clearInterval(timer)
   }, [refresh])
+  /* oxlint-enable react/set-state-in-effect */
 
   async function submitBroadcast() {
     const payload = parsePayloadText(broadcastPayload)
