@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+### feat：挂起帧一次性认领（docs/62 打包 I L2）落码收口——单副本最贵那颗雷拆掉（2026-09-25，`af38176`/`593bed0`/`df5a18c`＋本 docs 原子；新增迁移 029，零新依赖、无新 ADR、零新 REST 端点与错误码，新增一个 SSE 终帧 `superseded`）
+
+- **落的是什么**：立项批（同日早些时候）只出契约，本批按 §6 原子④–⑦ 落码。`interruptions` 加 `resumed_at TIMESTAMPTZ`／`resumed_by TEXT`（迁移 029 ＋ `002_storage.sql` 同步；不建新索引——认领按主键单行命中），`storage/recovery.py` 出 `claim_frame_for_resume`：**一条 `UPDATE ... WHERE resume_token = :t AND resumed_at IS NULL` 的 rowcount 就是互斥本身**，不引 advisory lock、不引 `SELECT FOR UPDATE SKIP LOCKED`、不引定时器，时钟只取 DB 的 `CURRENT_TIMESTAMP`；库不可达**保守判负**（宁可停止驱动，也不重复执行）。
+- **门卡在哪儿**：`graph/loader.py` 三处挂起点（审批／事件等待／时长·到点等待）醒来后先认领，认不到抛控制流 `RunSuperseded`——**决策返回不等于获得继续执行的权利**。门放 loader 而不是放续跑线程，是因为 inline 续跑与重启续跑两条路径都经过 loader；续跑线程本身**不删**（它是重启后唯一的驱动力）。时长分支原先把 uuid 内联在 `_emit_frame` 里，本批改成具名 `wait_token`，否则续跑会去认一条从未写入的行、把自己判成输家。`RunSuperseded` 与 `RunCancelled`/`DebugStopped` 并列进两处控制流豁免，否则会被子图 fail-safe 吞成"节点失败"继续跑完整图。
+- **输家的形状**：四个入口（sync `/run`／`/run/stream`／webhook 后台跑图／`_resume_run` 续跑线程）各自 `except RunSuperseded`，**零终态写、零监控记录、不进门控评估、不清帧**——终态与清理都归赢家，否则把赢家的执行结果覆盖掉。sync 返回 `{status:"suspended", outputs:{}}`，流式发 `event: superseded` 后关流，刻意**不新增 run 状态、不新增错误码**。恢复扫描新增第 5 个接线点：已认领帧不再重建 pending、不起线程（否则每次启动多攒一条注定认不到的僵尸线程），行为仍是"这条 run 停在 suspended"。
+- **端到端硬门翻绿**：`scripts/dev/multi_instance_resume_recon.py` 退出码 **1 → 0**——同一条流程现在是"一次审批 → 下游落库 **1** 次（通过×1／拒绝×0）、run completed"；改造前是通过×1／拒绝×1 的双写。立项契约要求"去掉谓词必须重新报双跑"，本次**不去拆生产 SQL**，改在测试里并排放两条反向对照：认领恒真→两个驱动者都跑完（证明放行来自 False 而非 loader 结构）；同一行上去掉 `resumed_at IS NULL` 的 UPDATE 两次都 rowcount 1（证明承重的是谓词、不是 rowcount 读数）。另实跑植入缺陷：`_gate_resume` 判据短路后新文件 12 例转红 8 例，改回 12/12 绿。
+- **门（照 `.github/workflows/ci.yml` 原文）**：`pytest` **1811 passed / 108 skipped / 0 failed**（基线 1799/105，净增 12 常跑＋3 PG skip）；`-m integration` 在临时库 **43 passed / 1 failed / 1 skipped**，唯一红是既存缺陷 `tests/test_audit_log.py::test_pg_audit_store_roundtrip_list_export`（`PgAuditStore.record()` 投影缺 `seq` 而 `_EVENT_KEYS` 要求它；被 integration 默认 skip 掩盖，只在 `ATLAS_RUN_INTEGRATION=1` 下暴露），与本批无关、已单列候选。前端零改动，不跑前端门。
+- **不解除任何缓做，且要说清没做什么**：D19/D20/D27/D31/D32 **仍不解除**——本批只拆"一次审批退款两次"这颗最贵的雷，**L2 ≠ 支持多副本**，登录节流／`/metrics` 聚合／灰度态跨实例／跨进程急停一项没动，所以**单副本硬约束与三道闸一条都不撤**。新增缓做 **D37**（前端不认 `superseded` 帧，会把"被别的进程接管"报成「SSE 流缺少最终运行结果」；被 L1 护栏挡在门外故缓做）。D36（认领后崩溃＝永久 suspended、不自动重放）是本次**有意引入的收紧**，仍待 reconcile 批收敛。写帧路径**刻意不重置**已认领的 `resumed_at`——能复活已消费帧等于把本批要防的第二次执行重新打开。
+- **同批自我订正（两处口径错在立项批，本批读代码证伪后就地标注、不追溯改写原句）**：docs/62 §1 非目标与 §8.2 残余、docs/15 §四"为什么"都把「入站 webhook 幂等环」列为进程内残余——`channels/webhooks.py:171-183` 显示 PG 档先去重查 `webhook_deliveries` 表（迁移 025 已 PG 化），只在 store 不可用时才退回进程内环；当时是从"包目录里有 ring"推断、未逐行读代码。
+- 同步面：docs/00（地图状态）、03（`interruption_frame` 占位段转已落码＋两列入 yaml）、04 §5.6（让位语义）、08（A 组清零＋B 组两条新候选＋打包 I 收口段）、09（`recovery.py`/`loader.py` 两行）、12（`/run/stream` 帧清单）、13（新登一行）、14（D37 ＋ L2 收口注记）、15（§四 改口径）、30（§6 重启边界：帧仍在库、**可重放性**变了）、34（复审再更新注记）、62（§3.2/§3.4/§5/§6/§7/§8 回填）、CHANGELOG、handoff。
+
 ### test：i18n 奇偶守护补上 validation（13 个 namespace 至此全覆盖）（2026-09-25，`776b62c`＋`1a07582`；零迁移零端点零新依赖）
 
 - **缘起**：收口 14 D12 的「Graph DSL 422 中文列表」余部时逐条量代码，发现该余部**早已不成立**（后端 `src/atlas/graph/` 可抛码 197、前端 locales 有键 191，余 6 个是 `SUCCESS`/`FAILED`/`SIMULATED`/`SHADOW_DRY_RUN`/`INVALID_PARAMETER`/`UNKNOWN` 状态枚举、非用户可读消息），但同一次测量挖出真缺口：`frontend/src/locales` 的 13 个 namespace 里，**唯独承载全部 DSL 422 文案的 `validation` 不在 `i18n.test.ts` 的 `PARITY_PAIRS`（12 项）内**——「新增 422 码却漏配英文键」不违反任何门。
