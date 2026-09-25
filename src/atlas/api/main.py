@@ -19,7 +19,7 @@ from itertools import count
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 import httpx
 
@@ -42,6 +42,7 @@ from atlas.graph.conditions import ConditionEvalError, validate_expression
 from atlas.graph.dsl import GraphDSL, GraphValidationError, parse_graph, valid_event_key
 from atlas.graph.diff import diff_graph, diff_summary
 from atlas.graph.loader import (
+    RunSuperseded,
     WaitNodeFailure,
     _tool_permissions,
     compile_graph,
@@ -135,6 +136,7 @@ from atlas.storage.recovery import (
     clear_tenant_frames,
     load_pending_frames,
     make_frame_sink,
+    make_resume_claim,
 )
 from atlas.template import get_template, list_templates
 from atlas.versioning.publish import publish as publish_graph_version
@@ -175,6 +177,16 @@ def _resume_from_frame(engine, frame: dict) -> None:
     """按帧重建 pending（approval 重挂 Event + 剩余 deadline），并重启续跑线程。"""
     services = tenant_registry.get(frame["tenant_id"])
     token = frame["resume_token"]
+    if frame.get("resumed_at") is not None:
+        # docs/62 §2 D-1 / §8.1 第②种：帧已被某进程认领（写帧后、执行完前该进程崩了），
+        # at-most-once 语义下不再为它重建 pending、不起线程——宁可这条 run 停在 suspended，
+        # 也不重复执行下游；开口收敛属 D36（人工重放/reconcile）。
+        logger.info(
+            "帧 %s 已由 %s 认领，跳过恢复（不重建 pending、不起续跑线程）",
+            token,
+            frame.get("resumed_by") or "其它进程",
+        )
+        return
     if frame["kind"] == "approval":
         card_template_id = frame.get("card_template_id") or None
         services.approval_broker.restore(
@@ -224,6 +236,7 @@ def _resume_run(engine, services: TenantServices, frame: dict) -> None:
             graph_id=frame["resume_state"].get("graph_id", ""),
             graph_resolver=_tenant_graph_resolver(services),
             frame_sink=make_frame_sink(engine, frame["tenant_id"], run_id),
+            resume_claim=make_resume_claim(engine),
             resume=frame,
         )
         if run_id:
@@ -232,6 +245,10 @@ def _resume_run(engine, services: TenantServices, frame: dict) -> None:
                 outputs=result["outputs"], trace=result["trace"],
             )
         clear_frame(engine, frame["resume_token"])
+    except RunSuperseded as exc:
+        # docs/62 §2 D-4：续跑输家——帧已被其它进程认领，本线程停止驱动。
+        # 既不写 run 终态也不清帧（终态与清理都归赢家），否则会把赢家的执行结果覆盖掉。
+        logger.info("续跑让位 %s：%s", frame.get("resume_token"), exc)
     except Exception as exc:
         logger.error("续跑 %s 失败：%s", frame.get("resume_token"), exc)
         if run_id:
@@ -255,6 +272,17 @@ def _frame_sink_for(tenant_id: str, run_store, run_id: str):
             make_frame_sink(get_pg_backend().engine, tenant_id, run_id)(frame)
 
     return sink
+
+
+def _resume_claim_for() -> Callable[[str], bool] | None:
+    """挂起帧认领门（docs/62 §3.4）：只有 PG 后端有帧可认领，进程内后端返回 None＝恒放行。
+
+    与 `frame_sink` 严格配对注入——凡写帧的运行必带认领门，反之亦然，否则会出现
+    "有帧无人认领判定"或"无帧却被判定为已被接管"两种漂移。
+    """
+    if STORAGE_BACKEND != "pg":
+        return None
+    return make_resume_claim(get_pg_backend().engine)
 
 
 @asynccontextmanager
@@ -900,12 +928,17 @@ def _webhook_run_worker(
             graph_id=graph_id,
             graph_resolver=_tenant_graph_resolver(services),
             frame_sink=_frame_sink_for(tenant_id, run_store, run_id),
+            resume_claim=_resume_claim_for(),
             graph_version=version,
         )
         run_store.finish(
             run_id=run_id, status="completed",
             outputs=result["outputs"], trace=result["trace"],
         )
+    except RunSuperseded as exc:
+        # docs/62 §2 D-4：webhook 后台运行同样受认领门约束——输家不落 failed
+        # （否则把赢家的执行记录成失败），只让位并留日志。
+        logger.info("webhook 运行让位 graph=%s@%s：%s", graph_id, version, exc)
     except Exception as exc:
         logger.error("webhook 触发图运行失败 graph=%s@%s", graph_id, version, exc_info=True)
         run_store.finish(
@@ -2606,8 +2639,19 @@ def run_saved_graph(
             graph_resolver=_tenant_graph_resolver(services),
             emit=_metric_collect,
             frame_sink=frame_sink,
+            resume_claim=_resume_claim_for(),
             tracer=tracer,
             graph_version=tracer.graph_version,
+        )
+    except RunSuperseded as exc:
+        # docs/62 §2 D-4：输家停止驱动——不写 run 终态、不记监控、不进门控评估，
+        # 帧与终态都归赢家；本进程如实返回"仍在挂起"的形状（刻意不新增 run 状态/错误码）。
+        logger.info("同步运行让位：%s", exc)
+        return RunGraphResponse(
+            id=graph_id,
+            status="suspended",
+            outputs={},
+            trace=[f"{exc.node_id}: superseded by another process"],
         )
     except Exception as exc:
         services.run_store.finish(
@@ -2746,6 +2790,7 @@ def run_saved_graph_stream(
                     graph_resolver=graph_resolver,
                     debug_controller=debug_controller,
                     frame_sink=frame_sink,
+                    resume_claim=_resume_claim_for(),
                     tracer=tracer,
                     graph_version=tracer.graph_version if tracer is not None else None,
                     is_cancelled=cancel_event.is_set,
@@ -2772,6 +2817,11 @@ def run_saved_graph_stream(
                     )
                     evaluate_after_run(services, record)
                 events.put({"__result__": result})
+            except RunSuperseded as exc:
+                # docs/62 §2 D-4：输家零终态写——不 finish、不 record_run、不清帧，
+                # 只发让位帧让前端停手（赢家的流会继续出结果）。
+                logger.info("流式运行让位：%s", exc)
+                events.put({"__superseded__": exc.node_id})
             except DebugStopped as exc:
                 events.put({"__stopped__": exc.node_id})
             except RunCancelled as exc:
@@ -2854,6 +2904,20 @@ def run_saved_graph_stream(
                     + json.dumps(
                         {"type": "stopped", "node_id": event["__stopped__"],
                          "reason": "user_stop"},
+                        ensure_ascii=False,
+                    )
+                    + "\n\n"
+                )
+                break
+            if "__superseded__" in event:
+                yield (
+                    "event: superseded\ndata: "
+                    + json.dumps(
+                        {
+                            "type": "superseded",
+                            "node_id": event["__superseded__"],
+                            "reason": "resumed_by_other_process",
+                        },
                         ensure_ascii=False,
                     )
                     + "\n\n"

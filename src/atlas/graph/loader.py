@@ -92,6 +92,31 @@ _default_approval_broker = ApprovalBroker()
 _default_event_wait_broker = EventWaitBroker()
 
 
+class RunSuperseded(Exception):
+    """挂起帧已被其它进程认领 → 本进程停止驱动（docs/62 §2 D-4 L2）。
+
+    控制流信号，不是运行失败：捕获处（API 三入口）必须**跳过** run 终态写入、监控记录与
+    门控评估，否则输家会覆盖赢家的终态。刻意不新增 run 状态、不新增错误码。
+    """
+
+    def __init__(self, node_id: str, token: str) -> None:
+        super().__init__(f"运行已被其它进程接管（节点 {node_id}，帧 {token}）")
+        self.node_id = node_id
+        self.token = token
+
+
+def _gate_resume(
+    resume_claim: Callable[[str], bool] | None, token: str, node_id: str
+) -> None:
+    """越过挂起点之前的认领门。
+
+    `resume_claim is None`（进程内后端、以及从不写帧的子图重入）＝没有帧可认领＝恒放行；
+    有 claim 时，只有把 `resumed_at` 从 NULL 翻起来的那个进程可以继续执行下游。
+    """
+    if resume_claim is not None and not resume_claim(token):
+        raise RunSuperseded(node_id, token)
+
+
 class WaitNodeFailure(Exception):
     """wait 节点确定性失败（docs/47 §3.4）；run 标记 failed，不沿出边继续。"""
 
@@ -266,6 +291,7 @@ def _make_executor(
     subgraph_depth: int,
     debug_controller: Any = None,
     frame_sink: Callable[[dict], None] | None = None,
+    resume_claim: Callable[[str], bool] | None = None,
     resume: dict | None = None,
     graph_snapshot: dict | None = None,
     tracer: Tracer | None = None,
@@ -595,6 +621,7 @@ def _make_executor(
                             event_payload = event_wait_broker.wait(
                                 token, is_cancelled=is_cancelled
                             )
+                            _gate_resume(resume_claim, token, node.id)
                             waited = int(time.monotonic() - started)
                             if event_payload is not None:
                                 matched = event_payload.get("matchedEventKey", event_key)
@@ -688,12 +715,16 @@ def _make_executor(
                         else:
                             jitter_applied = 0
                         actual_seconds = seconds + jitter_applied
+                        # 首次进入用新随机 token 写帧；续跑沿用帧内原 token（认领按它判定）。
+                        wait_token = (
+                            str(resume["resume_token"]) if resume_here else uuid.uuid4().hex
+                        )
                         if not resume_here:
                             _emit_frame(
                                 frame_sink,
                                 node,
                                 state,
-                                token=uuid.uuid4().hex,
+                                token=wait_token,
                                 kind="wait",
                                 graph_id=graph_id,
                                 graph_snapshot=graph_snapshot,
@@ -701,6 +732,7 @@ def _make_executor(
                                 timeout_seconds=actual_seconds,
                             )
                         time.sleep(max(actual_seconds, 0))
+                        _gate_resume(resume_claim, wait_token, node.id)
                         output = {
                             "mode": "wait",
                             "waitType": "duration",
@@ -725,6 +757,8 @@ def _make_executor(
                         broker=approval_broker,
                         notifier=approval_notifier,
                     )
+                    # docs/62 §2 D-2：审批返回 ≠ 获得继续的权利——先认领越过点，输家就此停手。
+                    _gate_resume(resume_claim, approval_payload["token"], node.id)
                 elif node.type == "subgraph":
                     output, message = _execute_subgraph(
                         node,
@@ -791,7 +825,7 @@ def _make_executor(
                         if metric_event is not None:
                             emit(metric_event)
                     message = f"{node.id}({node.type}): executed"
-            except (RunCancelled, DebugStopped):
+            except (RunCancelled, DebugStopped, RunSuperseded):
                 raise
             except Exception as exc:
                 # docs/28 §3.2：仅调试流且该节点配置异常断点时暂停观测；
@@ -1111,9 +1145,10 @@ def _execute_subgraph(
                 shadow=shadow,
                 jitter_rng=jitter_rng,
             )
-    except (RunCancelled, DebugStopped):
+    except (RunCancelled, DebugStopped, RunSuperseded):
         # 取消与调试急停/异常断点 stop 均须穿透子图 fail-safe 兜底，冒泡终止整图
         # （docs/27 §4.1 修 RunCancelled；docs/28 §3.2/§3.3 补 DebugStopped）。
+        # RunSuperseded 同属控制流：被这里的 fail-safe 吞掉＝输家继续执行，正是 029 要防的事故。
         if isinstance(sub_span, Span):
             sub_span.end("error")
         raise
@@ -2079,6 +2114,7 @@ def compile_graph(
     _subgraph_depth: int = 0,
     debug_controller: Any = None,
     frame_sink: Callable[[dict], None] | None = None,
+    resume_claim: Callable[[str], bool] | None = None,
     resume: dict | None = None,
     _subgraph_path: tuple[str, ...] = (),
     validate_with: GraphDSL | None = None,
@@ -2191,6 +2227,7 @@ def compile_graph(
             subgraph_depth=_subgraph_depth,
             debug_controller=debug_controller,
             frame_sink=frame_sink,
+            resume_claim=resume_claim,
             resume=resume,
             graph_snapshot=graph_snapshot,
             tracer=tracer,
@@ -2444,6 +2481,7 @@ def run_graph(
     _subgraph_depth: int = 0,
     debug_controller: Any = None,
     frame_sink: Callable[[dict], None] | None = None,
+    resume_claim: Callable[[str], bool] | None = None,
     resume: dict | None = None,
     _subgraph_path: tuple[str, ...] = (),
     tracer: Tracer | None | object = _AUTO_TRACER,
@@ -2526,6 +2564,7 @@ def run_graph(
             _subgraph_depth=_subgraph_depth,
             debug_controller=debug_controller,
             frame_sink=frame_sink,
+            resume_claim=resume_claim,
             resume=resume,
             _subgraph_path=_subgraph_path,
             validate_with=resume_graph,
@@ -2565,6 +2604,7 @@ def run_graph(
         _subgraph_depth=_subgraph_depth,
         debug_controller=debug_controller,
         frame_sink=frame_sink,
+        resume_claim=resume_claim,
         _subgraph_path=_subgraph_path,
         tracer=tracer,
         graph_version=graph_version,
