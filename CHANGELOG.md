@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+### docs(review)：第四次上线复审——**撤回**同日「工程侧就绪」判定（docs/63 §0A，2026-09-25，纯 docs 原子）
+
+- **为什么再来一次**：用户第二次提出同一要求（「必须能达到产品核心完全可用的 MVP」）。上一节我把结论推进到「工程侧就绪」，那一推进**依赖"守卫存在且有单测"**这一判据；本轮换成真路径核验，两条结论当场站不住。
+- **N1 · `ATLAS_ENV=prod` 全新安装登录死锁（阻断）**：`iam/deps.py:43` 在 import 时无条件 `user_store.seed()`（其注释自陈"否则 PG 首启无管理员、无法登录"），种进去的就是 `admin123` 那套（`storage/pg.py:469` 哈希明文种子口令）；`deps.py:74-81` 却在 prod 拒绝任何等于种子口令的登录，文案"请先通过管理员改密"——而改密两条路都要求先有身份（`api/main.py:1404-1410` 需 `get_principal`、`:1432/:1479` 需 `administer`），全仓也没有带外建号手段（grep `BOOTSTRAP|FIRST_ADMIN|CREATE_ADMIN` 0 命中）。⇒ **新 prod 库起来后世界上没有能登录的账号**：打包 J 的 J-1c 把 S2「弱口令可登录」修成了「谁都进不去」，而它带着自己的单测（`tests/test_api_auth.py`）——单测只测"prod 拒种子口令"，没人测"那首个管理员从哪来"。修法含安全语义（首登豁免＋强制改密令牌／带外 CLI／一次性引导口令三选一），**登记为 docs/08 A 组 L-1，待用户拍板，不由代码顺手选**。
+- **N2 · 真实店铺退款在图里跑不出来（阻断"核心完全可用"）**：`graph/loader.py:1699` 的通用 JSON 参数通道只放行 `{http,database,message,memory}`（`:241`）与 `openapi:` 前缀，渠道适配器 id 为 `channel:shopify:<binding>`（`channels/adapter.py:63`），于是落进"其余适配器按能力硬编码装配"分支（`loader.py:1729-1754`），`create_refund` 不在特判名单里 ⇒ 只拿到 `{"note": …}` ⇒ `channels/adapter.py:110-114` 取 `params["order_id"]`/`["amount"]` KeyError ⇒ 节点 FAILED。全仓 `channel:shopify` 只有 `tests/test_api_channels.py:148/153` 断言"能不能被发现"，**没有一条测试把图跑过它**。顺带更正我上轮的引用口径：`tests/test_refund_e2e_full_chain.py` 确实把审批与退款串在一条测试里，但它打的是 `DemoShopService`（`:80`）＝演示店，不是真实店铺。
+- **N3/N4/N5 三项落差**：PRD 要求的 `web-playwright` 有实现有单测（`web/adapter.py:42`、`tests/test_web_browser_integration.py`）却未注册进运行期注册表，且 `tests/test_graph_loader.py:79` **反向把"未注册"锁死**；`schedule/cron` 只有 `dsl.py:1433` 的字段校验、`src/atlas` 内无任何调度器；`.env.example:11` 的 `ATLAS_ENV=development` 非法——实跑 `read_env_profile()` 对它抛 ValueError（`dev`/`prod` 正常）。
+- **自我更正两处（写宽了）**：S5「demo 模拟面 prod fail-closed」实况是 `_demo_mock_enabled()` 只守住 3 条 shopify-admin mock 路由（`main.py:3792/3806/3830`），`/api/demo/mock/orders*`、`/api/demo/shop/*`、`/demo/shop` 页面仍无鉴权；「S1–S8 清零 ⇒ 工程侧就绪」整条撤回。
+- **门与"门全绿不等于流程跑得通"**：本轮复跑后端 **1849 passed / 114 skipped / 0 failed**、前端 **728 passed / 2 skipped / 53 文件**、`pnpm lint` 0 error／6 既有 warning、`pnpm build` ✓（1723.04 kB／gzip 534.50 kB）——N1/N2 都藏在全绿的门后面。
+- **修订后判定**：**「产品核心完全可用的 MVP」未达到；demo／陪同试用可交付，自主上线不可交付。** 能力面（编辑器／编译校验／SSE 运行／人工审批／监控告警／多租户鉴权／i18n）确实可用；核心闭环面（真实店铺＋真实 LLM＋真实定时，并让运维登得进去）不可用。
+- **同步面**：docs/63 新增 §0A（撤回注，上方原判定与 S1–S8 表原文保留不删）、docs/00 与 docs/34 的入口判定句更正、docs/08 A 组重开 L-1／L-2 两行、handoff（Active #65＋Recently shipped＋状态行加 ⚠️ 撤回条）。**本轮零产品代码改动**，N1 未修（等策略拍板），N2 未修（等立项）。
+
+
 ### docs(review)：打包 J/K 收口后的文档复验与判定推进——docs/63 从「PROD 不 GO」推进为「工程侧就绪」（2026-09-25，纯 docs 原子）
 
 - **为什么还要动已收口的文档**：用户「更新项目文档，注意，不能只依赖于此会话的记忆，需要检查最近 commit、handoff」。回查发现我上次复审（docs/63）之后当日又进了**两整批**（打包 J `7600157`→`7d62f7e`、打包 K `c965d22`→`f0ae1f8`），契约与收口矩阵都在，但**入口文档的判定措辞停在 18:00 的"不 GO"**，且 docs/08 候选表有两行已解决没划掉。
