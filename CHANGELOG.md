@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### docs(review)：打包 J/K 收口后的文档复验与判定推进——docs/63 从「PROD 不 GO」推进为「工程侧就绪」（2026-09-25，纯 docs 原子）
+
+- **为什么还要动已收口的文档**：用户「更新项目文档，注意，不能只依赖于此会话的记忆，需要检查最近 commit、handoff」。回查发现我上次复审（docs/63）之后当日又进了**两整批**（打包 J `7600157`→`7d62f7e`、打包 K `c965d22`→`f0ae1f8`），契约与收口矩阵都在，但**入口文档的判定措辞停在 18:00 的"不 GO"**，且 docs/08 候选表有两行已解决没划掉。
+- **docs/63 追加「复审更新」注记（历史判定原文照旧保留不改写）**：八条阻断 **S1–S8 逐条关闭**，每条我**回代码复核**（`security/bootstrap.py` prod 缺密钥拒启、`email_token.py:102-114` `rcpt` 绑定、`docker-entrypoint.sh:60-65` prod 不播种、`storage/pg.py:487-495` 登录 `ORDER BY tenant_id`、`main.py:884/1013` 线程池＋1MB 上限、`main.py:3781-3782` demo 面 fail-closed、`llm/decision.py:74-75` timeout/`max_tokens`、`pg.py:74-100` `prune_expired`、`observability/logging.py`＋`main.py:307/315` request-id、`ci.yml:34/63` 两 job 挂 postgres）。**两处改口径收口如实标注、不写成"按原方案落地"**：J-3b 的 `limit` `le=` 落地后**还原**（10 处端点本已自带 clamp/reject，加 `le=` 反把 clamp 变 422），以「确认有界」收口（docs/64 §10）。§2 核心三条＝①② 已修、③ M7 验收链仍开放；§4 结构性缺口已闭（CI 现在守 integration）。
+- **新判定**：仓库内已知阻断清零，**"能否上线"从工程缺陷问题变成部署与商务问题**——生产 MVP 判定更新为「**工程侧就绪（PROD-ready codebase）**」，但 GO 仍有四条仓库外/另批前提：外部资源凭据、**一次 `ATLAS_ENV=prod` 真机部署演练（该形态目前零实例，四条 prod 收紧从未真机跑过）**、种子客户实测（docs/18 仍「假定 Go」）、多副本语义（D19/D20/D27/D31/D32 不解除＋D36/D37，本轮复 grep 确认 `frontend/src` 对 `superseded` 仍 0 命中）。
+- **门（本轮第一方复跑，非转抄）**：后端 **1849 passed / 114 skipped / 0 failed**（703.37s，与打包 K 自述逐字一致）、前端 lint **0 error/6 既有 warning**、`pnpm test` **728 passed / 2 skipped / 53 文件**、build ✓ 1723.04 kB（gzip 534.50 kB）。**未做**：本次没有新建临时库重跑 `-m integration`（权限门拦下建库），PG 全量数字沿用收口自述并**说明其可信度已由 CI 的 `backend-integration` job 承担**。
+- **同步面**：docs/63（追加更新注）、docs/08（A 组头改「0 项已清空」＋B 组划掉已修两行）、docs/00 与 docs/34（**入口文档的判定措辞最易过期**，两处同步为「同日推进为工程侧就绪」）、handoff（Quality gate 新增「打包 J/K 复验」条，明确标为第三方复核）。docs/13/14/64/65 经核已由两批收口自行同步，未重复改。
+
+
 ### fix(ops)：打包 K 收口——docs/63 的 P1-2 运维批全部落码（2026-09-25，契约 docs/65）
 
 - **retention 与过期会话清扫**（`5aa51ca`）：`PgBackend.prune_expired` 8 表按保留期淘汰（`runs` 仅终止态、`interruptions` 仅已认领，挂起态与未认领帧永不删；TEXT 时间列 `::timestamptz` 转时刻比较防字典序坑）；过期 `iam_sessions` 全量清扫；新 `scripts/ops/run_retention.py`（`--dry-run`）＋ lifespan 启动钩子（失败只 warning 不阻断）。

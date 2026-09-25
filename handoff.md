@@ -217,6 +217,14 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 
 ## Quality gate（质量门）
 
+### 2026-09-25 打包 J/K 复验（docs/64＋docs/65 收口后，本次为**第三方复核**：不是转抄收口自述）
+
+- 后端 `.venv/bin/pytest`（照 ci.yml 原文命令）：**1849 passed / 114 skipped / 0 failed**（703.37s）——与打包 K 收口自述**逐字一致**〔跑〕。
+- 前端（工作目录 `frontend`）：`pnpm lint` **0 error / 6 既有 warning**；`pnpm test` **728 passed / 2 skipped**（53 文件通过、1 跳过）；`pnpm build` ✓ **1723.04 kB / gzip 534.50 kB**〔跑〕。
+- 逐条回代码复验 S1–S8 关闭状态（全部命中真实实现，非注释级）：`security/bootstrap.py`（prod 缺密钥拒启）、`email_token.py:102-114`（`rcpt` 绑定）、`docker-entrypoint.sh:60-65`（prod 不播种）、`storage/pg.py:487-495`（登录 `ORDER BY tenant_id`）、`api/main.py:884/1013`（8-worker 池＋1MB 上限）、`main.py:3781-3782`（demo 面 prod fail-closed）、`llm/decision.py:74-75`（timeout/`max_tokens`）、`storage/pg.py:74-100`（`prune_expired`，runs 仅终止态·interruptions 仅已认领）、`observability/logging.py`＋`main.py:307/315`（formatter＋request-id）、`.github/workflows/ci.yml:34/63`（两个 job 都挂 postgres）〔码〕。
+- **两处改口径收口要留意**（不是放松，但也不能当"按原方案落地"）：J-3b 的 `limit` `le=` **落地后还原**（10 处端点本已自带 clamp/reject 门禁，加 `le=` 反把 clamp 变 422），以「确认有界」收口，详见 docs/64 §10；docs/63 S6 的更新注也照此措辞。
+- **本次未做**：未新建临时库重跑 `-m integration`（权限门拦下建库动作）；PG 全量数字沿用打包 K 收口自述 **1962/1/0**，其**可信度已由 CI 承担**——`backend-integration` job 现在每次 push 都跑，不再依赖手动。
+
 ### 2026-09-25 打包 I 收口（docs/62 L1＋L2，dev，未 push；后端 `.venv/bin/pytest` 109.10s）
 
 - 后端内存档 `.venv/bin/pytest`（照 `.github/workflows/ci.yml` 原文命令与工作目录）：**1811 passed / 108 skipped / 0 failed**（打包 H 基线 1799/105；净增 12 常跑＋3 PG skip，全部来自认领门与反向对照）。
