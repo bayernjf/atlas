@@ -376,6 +376,18 @@ class PgUserStore:
         for user in users or _default:
             now = _now_iso()
             with self._engine.begin() as conn:
+                clash = conn.execute(
+                    text(
+                        "SELECT tenant_id FROM iam_users WHERE username = :u "
+                        "ORDER BY tenant_id LIMIT 1"
+                    ),
+                    {"u": user.username},
+                ).first()
+                if clash is not None and clash[0] != user.tenant_id:
+                    raise ValueError(
+                        f"用户名 {user.username!r} 已被租户 {clash[0]} 占用，"
+                        "用户名全局唯一（docs/64 J-1d）"
+                    )
                 result = conn.execute(
                     text(
                         "INSERT INTO iam_users (tenant_id, username, password_hash, display_name, "
@@ -406,8 +418,12 @@ class PgUserStore:
 
     def get_by_username(self, username: str) -> "UserAccount | None":
         with self._engine.connect() as conn:
+            # docs/64 J-1d：确定性排序（字典序最小租户），不再依赖物理行序。
             row = conn.execute(
-                text(f"SELECT {self._COLUMNS} FROM iam_users WHERE username = :u"),
+                text(
+                    f"SELECT {self._COLUMNS} FROM iam_users "
+                    "WHERE username = :u ORDER BY tenant_id, username"
+                ),
                 {"u": username},
             ).first()
         return self._row_to_account(row) if row else None
@@ -437,6 +453,15 @@ class PgUserStore:
         now = _now_iso()
         try:
             with self._engine.begin() as conn:
+                clash = conn.execute(
+                    text(
+                        "SELECT tenant_id FROM iam_users WHERE username = :u "
+                        "ORDER BY tenant_id LIMIT 1"
+                    ),
+                    {"u": username},
+                ).first()
+                if clash is not None and clash[0] != tenant_id:
+                    raise UserExists(username)
                 conn.execute(
                     text(
                         "INSERT INTO iam_users (tenant_id, username, password_hash, display_name, "

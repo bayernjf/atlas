@@ -38,7 +38,7 @@ def _now_iso() -> str:
 class UserStore:
     def __init__(self, session_store: Any | None = None) -> None:
         self._users: dict[tuple[str, str], UserAccount] = {}
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()  # 可重入：create/seed 内复用 get_by_username
         self._session_store = session_store
 
     def bind_session_store(self, session_store: Any) -> None:
@@ -51,6 +51,12 @@ class UserStore:
             with self._lock:
                 if (user.tenant_id, user.username) in self._users:
                     continue
+                existing = self.get_by_username(user.username)
+                if existing is not None and existing.tenant_id != user.tenant_id:
+                    raise ValueError(
+                        f"用户名 {user.username!r} 已被租户 {existing.tenant_id} 占用，"
+                        "用户名全局唯一（docs/64 J-1d）"
+                    )
                 now = _now_iso()
                 account = UserAccount(
                     tenant_id=user.tenant_id,
@@ -72,9 +78,11 @@ class UserStore:
 
     def get_by_username(self, username: str) -> UserAccount | None:
         with self._lock:
-            account = next(
+            # docs/64 J-1d：确定性选择（字典序最小租户），不再依赖插入序。
+            account = min(
                 (account for account in self._users.values() if account.username == username),
-                None,
+                key=lambda a: (a.username, a.tenant_id),
+                default=None,
             )
         return account.model_copy(deep=True) if account else None
 
@@ -98,6 +106,10 @@ class UserStore:
     ) -> UserAccount:
         with self._lock:
             if (tenant_id, username) in self._users:
+                raise UserExists(username)
+            existing = self.get_by_username(username)
+            if existing is not None and existing.tenant_id != tenant_id:
+                # docs/64 J-1d：用户名全局唯一，跨租户重名拒绝（防登录歧义）。
                 raise UserExists(username)
             now = _now_iso()
             account = UserAccount(
