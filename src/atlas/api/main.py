@@ -12,7 +12,9 @@ import json
 import logging
 import os
 import queue
+import asyncio
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import time
 import uuid
 from itertools import count
@@ -76,6 +78,7 @@ from atlas.iam.accounts import UserExists
 from atlas.iam.passwords import validate_password, validate_username, verify_password
 from atlas.iam.principals import Principal, Role, can
 from atlas.iam.registry import STORAGE_BACKEND, TenantServices
+from atlas.llm.decision import get_decision_client
 from atlas.llm.nl_generate import generate_graph, validate_param_fills
 from atlas.memory.adapter import MemoryHarnessAdapter
 from atlas.memory.models import MemoryValidationError
@@ -98,6 +101,7 @@ from atlas.openapi.adapter import ImportedApiHarnessAdapter
 from atlas.openapi.errors import OpenApiError
 from atlas.openapi.parser import parse_document
 from atlas.openapi.store import ImportStoreError
+from atlas.security.bootstrap import assert_prod_secrets
 from atlas.security.egress import EgressDenied, EgressGuard
 from atlas.security.secrets import build_secret_provider_from_env
 from atlas.monitoring.silences import OnCallEmpty, current_assignee, is_silence_active
@@ -217,9 +221,7 @@ def _resume_from_frame(engine, frame: dict) -> None:
             if wait_payload.get("eventWaitMode") in ("any", "all")
             else "any",
         )
-    threading.Thread(
-        target=_resume_run, args=(engine, services, frame), daemon=True
-    ).start()
+    _BACKGROUND_WORKER_POOL.submit(_resume_run, engine, services, frame)
 
 
 def _resume_run(engine, services: TenantServices, frame: dict) -> None:
@@ -288,8 +290,13 @@ def _resume_claim_for() -> Callable[[str], bool] | None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     recover_pending()
+    # docs/64 J-2a：启动即打印决策器运行模式（含降级警告），不再静默。
+    get_decision_client()
     yield
 
+
+# docs/64 J-1a：prod 缺必需密钥 fail-closed（拒绝启动），非 prod 静默。
+assert_prod_secrets()
 
 app = FastAPI(title="Atlas API", version="0.0.1", lifespan=lifespan)
 
@@ -833,6 +840,10 @@ def delete_channel(
 # --- 入站 Webhook（docs/39，ADR T29）--------------------------------------
 
 MAX_WEBHOOK_SUBSCRIPTIONS = 10
+MAX_WEBHOOK_BODY_BYTES = 1024 * 1024
+
+# J-3d：后台出向（webhook 触发 / wait·approval 续跑）走共享线程池，防止每请求裸开线程。
+_BACKGROUND_WORKER_POOL = ThreadPoolExecutor(max_workers=8)
 
 
 class WebhookSubscriptionsRequest(BaseModel):
@@ -874,11 +885,9 @@ def _webhook_resolve(graph_id: str, tenant: str, event: TriggerEvent) -> int | N
 
 def _webhook_trigger(graph_id: str, version: int, event: TriggerEvent, tenant: str) -> None:
     services = tenant_registry.get(tenant)
-    threading.Thread(
-        target=_webhook_run_worker,
-        args=(services, tenant, graph_id, version, event),
-        daemon=True,
-    ).start()
+    _BACKGROUND_WORKER_POOL.submit(
+        _webhook_run_worker, services, tenant, graph_id, version, event
+    )
 
 
 def _webhook_audit(action: str, tenant: str, metadata: dict) -> None:
@@ -954,7 +963,7 @@ async def shopify_webhook_ingress(binding_id: str, http_request: Request) -> dic
     验签通过后一律 200（received/duplicate/ignored）；绑定不存在统一 404、
     签名失败统一 401（不泄漏原因差异）；密钥不可用 503；body/头非法 400。
     """
-    located = _locate_binding(binding_id)
+    located = await asyncio.to_thread(_locate_binding, binding_id)
     if located is None:
         raise HTTPException(status_code=404, detail="渠道绑定不存在")
     tenant_id, binding, services = located
@@ -962,6 +971,8 @@ async def shopify_webhook_ingress(binding_id: str, http_request: Request) -> dic
     if not secret:
         raise HTTPException(status_code=503, detail="Webhook 验签密钥暂不可用")
     raw = await http_request.body()
+    if len(raw) > MAX_WEBHOOK_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="Webhook 请求体超过 1MB 上限")
     signature = http_request.headers.get(HMAC_HEADER)
     if not verify_shopify_hmac(raw, signature, secret):
         raise HTTPException(status_code=401, detail="Webhook 签名校验失败")
@@ -3246,7 +3257,24 @@ def _resolve_email_signed(signed: str) -> tuple[Any, str, str]:
     services = tenant_registry.peek(tenant_id)
     if services is None:
         raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID)
+    if body.get("rcpt") is None:
+        # docs/64 J-1b：无收件人绑定的旧式 token 一律失效（TTL 仅 1h+grace，不向后兼容）。
+        raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID)
     return services, str(body.get("at", "")), tenant_id
+
+
+def _assert_email_token_recipient(
+    signed: str, approval_token: str, broker: Any
+) -> None:
+    """docs/64 J-1b：token 载荷 rcpt 必须属于该审批的收件人，否则 404（与验签同口径）。"""
+    try:
+        body = _email_token_issuer.verify(signed)
+    except EmailTokenError as exc:
+        raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID) from exc
+    rcpt = str(body.get("rcpt", "")).lower()
+    recipients = {r.lower() for r in broker.get_notify_recipients(approval_token)}
+    if rcpt not in recipients:
+        raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID)
 
 
 @app.get("/api/approvals/email-view")
@@ -3257,6 +3285,7 @@ def email_approval_view(token: str) -> dict[str, Any]:
     pending = broker.get(approval_token)
     if pending is None:
         raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID)
+    _assert_email_token_recipient(token, approval_token, broker)
     now = time.time()
     remaining = max(
         0.0, float(pending.get("createdAt", 0.0)) + float(pending["timeoutSeconds"]) - now
@@ -3309,6 +3338,7 @@ def email_approval_decision(
     pending = broker.get(approval_token)
     if pending is None:
         raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID)
+    _assert_email_token_recipient(request.token, approval_token, broker)
     notifier = EmailApprovalNotifier(
         services.message_service, _PUBLIC_URL, tenant_id
     )
@@ -3387,7 +3417,9 @@ def monitoring_runs(
     limit: int = 50,
     principal: Principal = Depends(require("read")),
 ) -> dict[str, list[dict[str, Any]]]:
-    """最近运行（新→旧，默认 50、上限 200；04 §5.13；按租户分区）。"""
+    """最近运行（新→旧，默认 50、上限 200；04 §5.13；按租户分区）。
+    注：本端点保留 RUN_RING_SIZE 手动门禁（docs/64 J-3b 的 le= 批不含此处——
+    语义上限为环形缓冲大小，且手动校验保证 detail 为可读字符串）。"""
     if limit < 1 or limit > RUN_RING_SIZE:
         raise HTTPException(status_code=422, detail=f"limit 必须是 1-{RUN_RING_SIZE} 之间的整数")
     runs = services_for(principal).monitoring.list_runs(graph_id=graph_id, limit=limit)
@@ -3707,6 +3739,11 @@ def demo_mock_receipt(order_id: str, body: dict[str, Any] | None = None) -> dict
     return {"order_id": order_id, "body": body or {}, "received": True}
 
 
+def _demo_mock_enabled() -> bool:
+    """J-3e：demo 模拟面开关——prod 默认关（fail-closed），ATLAS_ENABLE_DEMO_MOCK=1 显式开。"""
+    return os.getenv("ATLAS_ENV", "dev") != "prod" or os.getenv("ATLAS_ENABLE_DEMO_MOCK") == "1"
+
+
 # Shopify Admin webhooks 资源的同进程模拟（docs/41 §D；随 demo reset 清空）。
 _MOCK_SHOPIFY_WEBHOOKS: dict[int, dict[str, Any]] = {}
 _mock_shopify_webhook_seq = count(1)
@@ -3714,6 +3751,8 @@ _mock_shopify_webhook_seq = count(1)
 
 @app.get("/api/demo/mock/shopify-admin/webhooks.json")
 def mock_shopify_admin_webhooks_list() -> dict[str, Any]:
+    if not _demo_mock_enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
     return {
         "webhooks": [
             {"id": remote_id, **record}
@@ -3726,6 +3765,8 @@ def mock_shopify_admin_webhooks_list() -> dict[str, Any]:
 def mock_shopify_admin_webhooks_create(
     body: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if not _demo_mock_enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
     webhook = (body or {}).get("webhook")
     if (
         not isinstance(webhook, dict)
@@ -3748,6 +3789,8 @@ def mock_shopify_admin_webhooks_create(
 
 @app.delete("/api/demo/mock/shopify-admin/webhooks/{webhook_id}.json")
 def mock_shopify_admin_webhooks_delete(webhook_id: str) -> dict[str, Any]:
+    if not _demo_mock_enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
     try:
         remote_id = int(webhook_id)
     except (TypeError, ValueError):

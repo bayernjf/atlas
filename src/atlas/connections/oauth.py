@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
+from atlas.security.bootstrap import read_env_profile
+
 logger = logging.getLogger(__name__)
 
 STATE_TTL_SECONDS = 600
@@ -54,6 +56,10 @@ def resolve_state_secret() -> str:
     master = os.getenv("ATLAS_MASTER_KEY", "").strip()
     if master:
         return master
+    if read_env_profile() == "prod":
+        raise RuntimeError(
+            "ATLAS_ENV=prod 下必须配置 ATLAS_MASTER_KEY（≥32 字节），OAuth state 签名拒绝使用 dev 密钥"
+        )
     if not getattr(resolve_state_secret, "_warned", False):
         logger.warning(
             "ATLAS_MASTER_KEY 未配置：OAuth state 使用固定 dev 密钥签名，仅限本地开发；"

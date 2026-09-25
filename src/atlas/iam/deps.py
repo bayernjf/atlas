@@ -6,8 +6,10 @@ import os
 
 from fastapi import Depends, HTTPException, Request
 
+from atlas.security.bootstrap import read_env_profile
+
 from .passwords import verify_password
-from .principals import Capability, Principal, SEED_TENANTS, can
+from .principals import Capability, Principal, SEED_TENANTS, SEED_USERS, can
 from .registry import TenantRegistry, TenantServices
 from .sessions import SessionStore
 from .throttle import LoginThrottle
@@ -49,6 +51,10 @@ _FORBIDDEN = "当前角色无权执行此操作"
 # 前端按 code 走 i18n（error.auth.*）。跨租户 404 故意不区分「不存在/越权」，不补 code。
 CODE_INVALID_CREDENTIALS = "AUTH_INVALID_CREDENTIALS"
 CODE_ACCOUNT_DISABLED = "AUTH_ACCOUNT_DISABLED"
+CODE_SEED_CREDENTIAL = "AUTH_SEED_CREDENTIAL"
+
+# docs/64 J-1c：种子默认口令明文表（仅用于 prod 登录拒绝比对，非凭据存储）。
+_SEED_PASSWORD_BY_USERNAME = {u.username: u.password for u in SEED_USERS}
 CODE_UNAUTHENTICATED = "AUTH_UNAUTHENTICATED"
 CODE_FORBIDDEN = "AUTH_FORBIDDEN"
 
@@ -65,6 +71,15 @@ def authenticate_login(username: str, password: str) -> Principal:
     account = user_store.get_by_username(username)
     if account is None or not verify_password(password, account.password_hash):
         raise auth_error(401, CODE_INVALID_CREDENTIALS, "用户名或密码错误")
+    if (
+        read_env_profile() == "prod"
+        and password == _SEED_PASSWORD_BY_USERNAME.get(account.username)
+    ):
+        raise auth_error(
+            403,
+            CODE_SEED_CREDENTIAL,
+            "生产环境禁止使用种子账号默认口令登录，请先通过管理员改密",
+        )
     if account.status == "disabled":
         raise auth_error(403, CODE_ACCOUNT_DISABLED, "账号已停用，请联系管理员")
     tenant = SEED_TENANTS.get(account.tenant_id)

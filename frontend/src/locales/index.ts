@@ -26,6 +26,7 @@ import enMonitoring from './en-US/monitoring.json'
 import enOpenApi from './en-US/openapi.json'
 import enRuntime from './en-US/runtime.json'
 import enValidation from './en-US/validation.json'
+import enWaits from './en-US/waits.json'
 import zhCommon from './zh-CN/common.json'
 import zhApprovals from './zh-CN/approvals.json'
 import zhAudit from './zh-CN/audit.json'
@@ -39,9 +40,10 @@ import zhMonitoring from './zh-CN/monitoring.json'
 import zhOpenApi from './zh-CN/openapi.json'
 import zhRuntime from './zh-CN/runtime.json'
 import zhValidation from './zh-CN/validation.json'
+import zhWaits from './zh-CN/waits.json'
 
 export type Locale = 'zh-CN' | 'en-US'
-export type Namespace = 'common' | 'approvals' | 'audit' | 'editor' | 'dashboard' | 'demo' | 'monitoring' | 'memory' | 'connections' | 'channels' | 'openapi' | 'runtime' | 'validation'
+export type Namespace = 'common' | 'approvals' | 'audit' | 'editor' | 'dashboard' | 'demo' | 'monitoring' | 'memory' | 'connections' | 'channels' | 'openapi' | 'runtime' | 'validation' | 'waits'
 
 type Dict = Record<string, unknown>
 export type TranslateOptions = {
@@ -51,7 +53,7 @@ export type TranslateOptions = {
   lng?: Locale
 } & Record<string, unknown>
 
-const NAMESPACES: Namespace[] = ['common', 'approvals', 'audit', 'editor', 'dashboard', 'demo', 'monitoring', 'memory', 'connections', 'channels', 'openapi', 'runtime', 'validation']
+const NAMESPACES: Namespace[] = ['common', 'approvals', 'audit', 'editor', 'dashboard', 'demo', 'monitoring', 'memory', 'connections', 'channels', 'openapi', 'runtime', 'validation', 'waits']
 
 const resources: Record<Locale, Record<Namespace, Dict>> = {
   'zh-CN': {
@@ -68,6 +70,7 @@ const resources: Record<Locale, Record<Namespace, Dict>> = {
     openapi: zhOpenApi as Dict,
     runtime: zhRuntime as Dict,
     validation: zhValidation as Dict,
+    waits: zhWaits as Dict,
   },
   'en-US': {
     common: enCommon as Dict,
@@ -83,6 +86,7 @@ const resources: Record<Locale, Record<Namespace, Dict>> = {
     openapi: enOpenApi as Dict,
     runtime: enRuntime as Dict,
     validation: enValidation as Dict,
+    waits: enWaits as Dict,
   },
 }
 

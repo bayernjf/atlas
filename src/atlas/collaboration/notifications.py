@@ -79,7 +79,10 @@ class EmailApprovalNotifier:
     ) -> None:
         title = summary or node_id
         subject = f"[Atlas] 审批待处理：{title}"
-        signed = self._issuer.issue(self._tenant_id, token, timeout_seconds)
+        first_recipient = recipients[0] if recipients else None
+        signed = self._issuer.issue(
+            self._tenant_id, token, timeout_seconds, recipient=first_recipient
+        )
         decision_url = f"{self._public_url}/approvals/{signed}"
         lines = [
             "有一笔人机审批正在等待处理。",

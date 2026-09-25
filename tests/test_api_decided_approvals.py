@@ -105,6 +105,11 @@ def test_decided_shape_fields():
 
 
 def test_human_decision_sends_result_email_once():
+    # 增量计数：message_service 为跨用例共享单例（其他 email 用例也会写结果邮件），
+    # 只断言本决策恰好新增一封、重复决策不二次通知。
+    list_all = lambda: tenant_registry.get("t1").message_service.list()  # noqa: E731
+    before = sum(1 for m in list_all() if "审批已处理" in m.get("subject", ""))
+
     token = _request("t1", notify_recipients=["ops@example.com"])
     resp = anon.post(
         f"/api/approvals/{token}/decision",
@@ -112,9 +117,9 @@ def test_human_decision_sends_result_email_once():
         json={"decision": "approved"},
     )
     assert resp.status_code == 200
-    messages = tenant_registry.get("t1").message_service.list()
+    messages = list_all()
     result_mails = [m for m in messages if "审批已处理" in m.get("subject", "")]
-    assert len(result_mails) == 1
+    assert len(result_mails) == before + 1
     mail = result_mails[-1]
     assert mail["to"] == ["ops@example.com"]
     assert "/approvals/" not in mail["body"]
@@ -126,13 +131,13 @@ def test_human_decision_sends_result_email_once():
         json={"decision": "rejected"},
     )
     assert resp.status_code == 409
-    messages = tenant_registry.get("t1").message_service.list()
-    assert sum(1 for m in messages if "审批已处理" in m.get("subject", "")) == 1
+    after = sum(1 for m in list_all() if "审批已处理" in m.get("subject", ""))
+    assert after == before + 1
 
 
 def test_email_link_decision_sends_result_email():
     token = _request("t1", notify_recipients=["ops@example.com"])
-    signed = _email_token_issuer.issue("t1", token, 300)
+    signed = _email_token_issuer.issue("t1", token, 300, recipient="ops@example.com")
     resp = anon.post(
         "/api/approvals/email-decision",
         json={"token": signed, "decision": "rejected", "comment": "材料不全"},

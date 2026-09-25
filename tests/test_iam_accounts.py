@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from atlas.iam.accounts import UserExists, UserStore
 from atlas.iam.passwords import verify_password
 from atlas.iam.principals import Role
@@ -107,3 +109,57 @@ def test_revoke_for_user_keeps_named_token() -> None:
     sessions.revoke_for_user("t1", "operator-a", keep_token=token1)
     assert sessions.principal_for_token(token1) is not None
     assert sessions.principal_for_token(token2) is None
+# ============================ J-1d 全局唯一与确定性 ============================
+
+
+def test_create_rejects_cross_tenant_duplicate_username():
+    from atlas.iam.accounts import UserExists, UserStore
+    from atlas.iam.principals import SEED_USERS
+
+    store = UserStore()
+    store.seed(SEED_USERS)  # 已含 admin-a(t1)、admin-b(t2)
+    # 同一租户内重名 → UserExists（既有语义）
+    with pytest.raises(UserExists):
+        store.create(
+            tenant_id="t1", username="admin-a", password="x-12345",
+            display_name="dup", role=Role.OPERATOR,
+        )
+    # 跨租户重名（t2 想建 admin-a）→ UserExists（J-1d 全局唯一）
+    with pytest.raises(UserExists):
+        store.create(
+            tenant_id="t2", username="admin-a", password="x-12345",
+            display_name="dup", role=Role.OPERATOR,
+        )
+
+
+def test_seed_rejects_cross_tenant_duplicate_username():
+    from atlas.iam.accounts import UserStore
+    from atlas.iam.principals import SEED_USERS, TenantUser
+
+    store = UserStore()
+    store.seed(SEED_USERS)
+    clash = TenantUser(
+        tenant_id="t2", username="admin-a", password="x-12345",
+        display_name="clash", role=Role.OPERATOR,
+    )
+    with pytest.raises(ValueError, match="全局唯一"):
+        store.seed([clash])
+
+
+def test_get_by_username_deterministic_across_tenants():
+    from atlas.iam.accounts import UserStore
+    from atlas.iam.principals import SEED_USERS
+
+    store = UserStore()
+    store.seed(SEED_USERS)
+    import atlas.iam.accounts as mod
+
+    with store._lock:
+        account = mod.UserAccount(
+            tenant_id="t2", username="admin-a",
+            password_hash="x", display_name="dup", role=Role.OPERATOR,
+            created_at="now", updated_at="now",
+        )
+        store._users[(account.tenant_id, account.username)] = account
+    found = store.get_by_username("admin-a")
+    assert found is not None and found.tenant_id == "t1"  # 字典序最小租户

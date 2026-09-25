@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### feat(ops)：打包 J 收口——docs/63 的 P0-1 安全闸门＋P0-2 核心完整性＋P1-1 门禁三批全部落码（2026-09-25，契约 docs/64）
+
+- **P0-1 安全闸门**（`4ab6edc`/`0400be8`/`f0e50ed`/`ef3451a`）：`ATLAS_ENV` fail-closed（prod 缺两密钥拒绝启动）＋邮件决策 token 绑定收件人＋prod 不播种种子账号/种子口令 403＋登录查询确定性/用户名全局唯一。
+- **P0-2 核心完整性**（`f1c54aa`/`405161e`/`b220ba3`）：启动打印当前决策器与降级状态（不再静默）＋跨 human_approval 的真实退款全链 e2e（含拒绝侧）＋ waits/tasks 运行时操作台（D40 取回）。
+- **P1-1 门禁**（`9b4ec9a`/`c6a1afe`/`de023ab`/`4b0794a`）：CI 加 postgres service＋独立 integration job（含迁移步骤）＋ audit `seq` 投影修红＋三处 litellm 出向 timeout/`max_tokens`＋入站 webhook 线程池/1MB body 上限/事件循环解耦＋demo 模拟面 prod 默认 404 开关。**limit `le=` 落码勘误**：本仓 limit 端点均有 clamp/reject 门禁，`le=` 统一覆盖会把 clamp 破坏成 reject，故不引入（docs/64 §10）。
+- **三道门**：后端 **1834 passed / 108 skipped / 0 failed**；PG 直连 **1941 passed / 1 skipped / 0 failed**（原 1 红消除）；前端 vitest **728 passed / 2 skipped / 54 文件**、oxlint 0 error/6 既有 warning、`pnpm build` ✓。
+
 ### docs(review)：第三次项目级上线复审落成 docs/63——判定 生产 MVP 未达到（2026-09-25，纯 docs 原子，零产品代码改动）
 
 - **触发**：用户「做一次项目级别的功能性、完整度、是否可上线的评审，要求必须能达到产品核心完全可用的MVP，判断是否达到了MVP」。评审链＝docs/29 初评 → docs/34 复审 → **docs/63**。

@@ -20,6 +20,8 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
+from atlas.security.bootstrap import read_env_profile
+
 logger = logging.getLogger(__name__)
 
 # 仅在未配置签名密钥时使用的固定 dev 密钥（与 oauth dev state key 同策略）。
@@ -53,6 +55,11 @@ def resolve_token_secret() -> str:
     master = os.getenv("ATLAS_MASTER_KEY", "").strip()
     if master:
         return master
+    if read_env_profile() == "prod":
+        raise RuntimeError(
+            "ATLAS_ENV=prod 下必须配置 ATLAS_APPROVAL_HMAC_SECRET 或 "
+            "ATLAS_MASTER_KEY（≥32 字节），邮件决策签名拒绝使用 dev 密钥"
+        )
     if not getattr(resolve_token_secret, "_warned", False):
         logger.warning(
             "ATLAS_APPROVAL_HMAC_SECRET 未配置：邮件决策链接使用固定 dev 密钥签名，"
@@ -92,16 +99,19 @@ class TokenIssuer:
         tenant_id: str,
         approval_token: str,
         timeout_seconds: float,
+        recipient: str | None = None,
     ) -> str:
         now = int(self.clock())
         ttl = min(int(timeout_seconds), MAX_TTL_SECONDS) + EXPIRY_GRACE_SECONDS
-        body = {
+        body: dict[str, object] = {
             "v": 1,
             "tenant": tenant_id,
             "at": approval_token,
             "iat": now,
             "exp": now + ttl,
         }
+        if recipient and recipient.strip():
+            body["rcpt"] = recipient.strip().lower()
         payload_b64 = _b64url_encode(json.dumps(body, separators=(",", ":")).encode("utf-8"))
         return f"{payload_b64}.{_sign(payload_b64, self.secret or '')}"
 

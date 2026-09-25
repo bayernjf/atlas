@@ -1299,4 +1299,20 @@ describe('language persistence and switcher runtime (docs/57 §4)', () => {
     vi.resetModules()
     g.localStorage?.removeItem(LOCALE_STORAGE_KEY)
   })
+
+  it('resolves waits namespace copy (docs/64 J-2c 操作台) in both languages', () => {
+    expect(t('waits:title')).toBe('等待与任务')
+    expect(t('waits:signal')).toBe('发信号')
+    changeLanguage('en-US')
+    expect(t('waits:title')).toBe('Waits & Tasks')
+    expect(t('waits:signal')).toBe('Signal')
+    changeLanguage('zh-CN')
+  })
+
+  it('reaches waits nav copy via the common: prefix', () => {
+    expect(t('common:nav.waits')).toBe('等待与任务')
+    changeLanguage('en-US')
+    expect(t('common:nav.waits')).toBe('Waits & Tasks')
+    changeLanguage('zh-CN')
+  })
 })

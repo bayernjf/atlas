@@ -27,7 +27,7 @@ def test_llm_prompt_advertises_condition_kind_and_config(monkeypatch):
 
     captured: dict[str, str] = {}
 
-    def _fake_completion(*, model, messages, temperature):  # noqa: ANN001
+    def _fake_completion(*, model, messages, temperature, **kwargs):  # noqa: ANN001
         captured["system"] = messages[0]["content"]
         return {"choices": [{"message": {"content": "{}"}}]}
 
@@ -46,7 +46,7 @@ def test_llm_prompt_advertises_loop_kind_and_config(monkeypatch):
 
     captured: dict[str, str] = {}
 
-    def _fake_completion(*, model, messages, temperature):  # noqa: ANN001
+    def _fake_completion(*, model, messages, temperature, **kwargs):  # noqa: ANN001
         captured["system"] = messages[0]["content"]
         return {"choices": [{"message": {"content": "{}"}}]}
 
@@ -69,7 +69,7 @@ def test_llm_prompt_advertises_parallel_kind_and_config(monkeypatch):
 
     captured: dict[str, str] = {}
 
-    def _fake_completion(*, model, messages, temperature):  # noqa: ANN001
+    def _fake_completion(*, model, messages, temperature, **kwargs):  # noqa: ANN001
         captured["system"] = messages[0]["content"]
         return {"choices": [{"message": {"content": "{}"}}]}
 
@@ -94,7 +94,7 @@ def test_llm_prompt_advertises_wait_kind_and_config(monkeypatch):
 
     captured: dict[str, str] = {}
 
-    def _fake_completion(*, model, messages, temperature):  # noqa: ANN001
+    def _fake_completion(*, model, messages, temperature, **kwargs):  # noqa: ANN001
         captured["system"] = messages[0]["content"]
         return {"choices": [{"message": {"content": "{}"}}]}
 
@@ -123,7 +123,7 @@ def test_llm_prompt_advertises_subgraph_kind_and_config(monkeypatch):
 
     captured: dict[str, str] = {}
 
-    def _fake_completion(*, model, messages, temperature):  # noqa: ANN001
+    def _fake_completion(*, model, messages, temperature, **kwargs):  # noqa: ANN001
         captured["system"] = messages[0]["content"]
         return {"choices": [{"message": {"content": "{}"}}]}
 
@@ -146,7 +146,7 @@ def test_llm_prompt_advertises_registered_tools(monkeypatch):
 
     captured: dict[str, str] = {}
 
-    def _fake_completion(*, model, messages, temperature):  # noqa: ANN001
+    def _fake_completion(*, model, messages, temperature, **kwargs):  # noqa: ANN001
         captured["system"] = messages[0]["content"]
         return {"choices": [{"message": {"content": "{}"}}]}
 

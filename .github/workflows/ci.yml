@@ -30,6 +30,20 @@ jobs:
   backend:
     name: Backend pytest
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: atlas
+          POSTGRES_PASSWORD: atlas
+          POSTGRES_DB: atlas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U atlas"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -41,6 +55,40 @@ jobs:
       - name: Run unit tests
         run: pytest
         # integration-marked tests (PostgreSQL/Chromium/shop platform) opt in via ATLAS_RUN_INTEGRATION and skip by default
+
+  backend-integration:
+    name: Backend PG integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: atlas
+          POSTGRES_PASSWORD: atlas
+          POSTGRES_DB: atlas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U atlas"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      ATLAS_RUN_INTEGRATION: "1"
+      DATABASE_URL: postgresql+psycopg://atlas:atlas@localhost:5432/atlas
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install package
+        run: pip install -e ".[dev]"
+      - name: Apply migrations
+        run: python -m scripts.ops.apply_migrations
+      - name: Run PG integration tests
+        run: pytest
+        # docs/63 S3：生产形态 PG 档必须在 CI 每 PR 实跑（含迁移与 audit seq 断言）
 
   frontend:
     name: Frontend vitest + build

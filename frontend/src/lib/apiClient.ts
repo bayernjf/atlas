@@ -2130,3 +2130,64 @@ export async function purgeOpenApiImport(specId: string): Promise<void> {
     method: 'DELETE',
   })
 }
+
+// --- waits / tasks 运行时操作台（docs/64 J-2c，D40 取回） -------------------
+
+export type PendingWaitItem = {
+  token: string
+  eventKey: string
+  nodeId: string
+  graphId: string
+  timeoutSeconds: number
+  /** UTC ISO-8601（event_waits.list_pending 投影）。 */
+  deadlineAt: string
+  eventKeys?: string[]
+  eventWaitMode?: 'all'
+  receivedKeys?: string[]
+}
+
+export type TaskEnvelopeItem = {
+  taskId: string
+  runId: string
+  idempotencyKey: string
+  traceId: string
+  graphVersion: string
+  type: string
+  assignee: string
+  payload: Record<string, unknown>
+  deadlineMs: number
+  parentSpanId: string
+  state: 'pending' | 'accepted' | 'running' | 'done' | 'failed' | 'timeout'
+  result: Record<string, unknown>
+  attempt: number
+}
+
+export async function listWaits(): Promise<PendingWaitItem[]> {
+  const body = await request<{ items: PendingWaitItem[] }>('/api/waits')
+  return body.items
+}
+
+export async function listTasks(limit = 50): Promise<TaskEnvelopeItem[]> {
+  const body = await request<{ items: TaskEnvelopeItem[] }>(`/api/tasks?limit=${limit}`)
+  return body.items
+}
+
+export async function signalWait(
+  token: string,
+  payload: Record<string, unknown>,
+): Promise<{ token: string; released: boolean }> {
+  return request(`/api/waits/${encodeURIComponent(token)}/signal`, {
+    method: 'POST',
+    body: JSON.stringify({ payload }),
+  })
+}
+
+export async function broadcastWaitEvent(
+  eventKey: string,
+  payload: Record<string, unknown>,
+): Promise<{ released: number; queued: boolean }> {
+  return request('/api/waits/events', {
+    method: 'POST',
+    body: JSON.stringify({ eventKey, payload }),
+  })
+}

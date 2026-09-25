@@ -939,7 +939,7 @@ principal:
 ```yaml
 # iam_users 表（迁移 010）；(tenant_id, username) 复合 PK
 tenant_id: string
-username: string              # 3–64 位 [a-z0-9_.-]，登录保持全局按 username 查询的现语义
+username: string              # 3–64 位 [a-z0-9_.-]；用户名全局唯一（跨租户重名创建/播种拒绝，docs/64 J-1d，2026-09-25），登录按 username 确定性查询
 password_hash: string         # scrypt$16384$8$1$<salt b64>$<hash b64>（hashlib.scrypt n=2**14/r=8/p=1）
 display_name: string
 role: "viewer" | "operator" | "admin"
