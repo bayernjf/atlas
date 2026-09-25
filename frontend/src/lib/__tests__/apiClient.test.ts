@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  broadcastWaitEvent,
+  listTasks,
+  listWaits,
+  signalWait,
   DebugRunStoppedError,
   RunCancelledError,
   cancelActiveRun,
@@ -338,5 +342,59 @@ describe('真实渠道绑定 /api/channels（docs/38 §1C/§1E）', () => {
     const [url, init] = fetchMock.mock.calls[0]
     expect(url).toBe('/api/channels/webhooks/dead-letters/wh%2F1/replay')
     expect(init?.method).toBe('POST')
+  })
+
+  it('listWaits GETs /api/waits and unwraps items', async () => {
+    const items = [{
+      token: 'w-1', eventKey: 'order.created', nodeId: 'wait-1', graphId: 'graph-1',
+      timeoutSeconds: 300, deadlineAt: '2026-09-25T00:00:00Z',
+    }]
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => jsonResponse({ items }))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await listWaits()
+    expect(result).toEqual(items)
+    const [url] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/waits')
+  })
+
+  it('listTasks GETs /api/tasks with limit and unwraps items', async () => {
+    const items = [{
+      taskId: 't-1', runId: 'run-1', idempotencyKey: 'ik-1', traceId: 'tr-1',
+      graphVersion: '1', type: 'shop.login', assignee: 'ops', payload: {},
+      deadlineMs: 1000, parentSpanId: '', state: 'pending', result: {}, attempt: 1,
+    }]
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => jsonResponse({ items }))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await listTasks(200)
+    expect(result).toEqual(items)
+    const [url] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/tasks?limit=200')
+  })
+
+  it('signalWait POSTs payload to /api/waits/{token}/signal', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+      jsonResponse({ token: 'w/1', released: true }))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await signalWait('w/1', { order_id: '12345' })
+    expect(result).toEqual({ token: 'w/1', released: true })
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/waits/w%2F1/signal')
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(String(init?.body))).toEqual({ payload: { order_id: '12345' } })
+  })
+
+  it('broadcastWaitEvent POSTs eventKey and payload to /api/waits/events', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+      jsonResponse({ released: 2, queued: false }))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await broadcastWaitEvent('order.created', { order_id: '12345' })
+    expect(result).toEqual({ released: 2, queued: false })
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/waits/events')
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(String(init?.body))).toEqual({
+      eventKey: 'order.created',
+      payload: { order_id: '12345' },
+    })
   })
 })

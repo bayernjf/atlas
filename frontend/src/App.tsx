@@ -11,13 +11,14 @@ import { Approvals } from './pages/Approvals'
 import { AuditLog } from './pages/AuditLog'
 import { OpenApiImports } from './pages/OpenApiImports'
 import { EmailApproval } from './pages/EmailApproval'
+import { Waits } from './pages/Waits'
 import { logout as logoutApi } from './lib/apiClient'
 import { getStoredPrincipal, roleCan, UNAUTHORIZED_EVENT, type Principal } from './lib/auth'
 import { extractEmailToken } from './lib/approvals'
 import { antdTheme } from './theme/tokens'
 import { useAntdLocale } from './locales/antdLocale'
 
-type Page = 'dashboard' | 'editor' | 'monitoring' | 'memory' | 'connections' | 'users' | 'approvals' | 'audit' | 'openapi'
+type Page = 'dashboard' | 'editor' | 'monitoring' | 'memory' | 'connections' | 'users' | 'approvals' | 'audit' | 'openapi' | 'waits'
 
 function App() {
   const antdLocale = useAntdLocale()
@@ -78,6 +79,7 @@ function App() {
           onOpenApprovals={() => setPage('approvals')}
           onOpenAudit={() => setPage('audit')}
           onOpenOpenApi={() => setPage('openapi')}
+          onOpenWaits={() => setPage('waits')}
         />
       ) : page === 'approvals' ? (
         <Approvals
@@ -103,6 +105,12 @@ function App() {
         <Memory principal={principal} onLogout={handleLogout} onBack={() => setPage('dashboard')} />
       ) : page === 'connections' && roleCan(principal.role, 'operate') ? (
         <Connections principal={principal} onLogout={handleLogout} onBack={() => setPage('dashboard')} />
+      ) : page === 'waits' && roleCan(principal.role, 'operate') ? (
+        <Waits
+          principal={principal}
+          onLogout={handleLogout}
+          onBack={() => setPage('dashboard')}
+        />
       ) : page === 'openapi' ? (
         <OpenApiImports principal={principal} onLogout={handleLogout} onBack={() => setPage('dashboard')} />
       ) : (
