@@ -9,7 +9,7 @@
 - **缘起**：收口 14 D12 的「Graph DSL 422 中文列表」余部时逐条量代码，发现该余部**早已不成立**（后端 `src/atlas/graph/` 可抛码 197、前端 locales 有键 191，余 6 个是 `SUCCESS`/`FAILED`/`SIMULATED`/`SHADOW_DRY_RUN`/`INVALID_PARAMETER`/`UNKNOWN` 状态枚举、非用户可读消息），但同一次测量挖出真缺口：`frontend/src/locales` 的 13 个 namespace 里，**唯独承载全部 DSL 422 文案的 `validation` 不在 `i18n.test.ts` 的 `PARITY_PAIRS`（12 项）内**——「新增 422 码却漏配英文键」不违反任何门。
 - **两步收口**：① `776b62c` 改文案——`dsl.SUB_INPUT_VALUE_REQUIRED` 把示例写法本身写成了插值 token（zh `{{路径}}`、en `{{path}}`，两侧集合不一致且后端从不供该变量，只会以字面花括号出现在用户可见消息里），改为「父图变量引用」/「a parent-graph reference」；② `1a07582` 扩守护——`validation` 纳入 `PARITY_PAIRS`，奇偶／en 零汉字／插值标识三条守护同时覆盖它。
 - **反向门（证明不是永真断言）**：分别植入「zh 多出键」「en 值里混汉字」「两侧插值标识不一致」三种真漂移，对应守护逐条 rc≠0、还原后 rc=0。
-- **门（照 `.github/workflows/ci.yml` 原文，工作目录 `frontend`）**：`pnpm lint` 0 error / 6 既有 warning、`pnpm build` 过、i18n 套 55 passed。**全量 `pnpm test` 本轮未跑**（一次工具调用被权限层拦下，未强行重试）——本批只动两个 locale 值与该测试文件，其余用例不受涉及。
+- **门（照 `.github/workflows/ci.yml` 原文，工作目录 `frontend`）**：`pnpm lint` 0 error / 6 既有 warning、`pnpm build` 过、i18n 套 55 passed。全量 `pnpm test` **722 passed / 2 skipped（53 文件通过、1 跳过）**，与打包 H 基线逐字一致。
 - 同批回写口径：docs/14 D12（余部收缩为纯选型三项）、docs/17 状态行、docs/08 §八「下一批候选」B 组首行划销、handoff #62。
 
 ### docs：打包 I 立项——挂起帧一次性认领契约 ＋ 单副本硬约束护栏（docs/62，2026-09-25 用户「那你搞」；L1 当批落码、L2 只出契约待拍板）
