@@ -98,6 +98,7 @@ from atlas.openapi.adapter import ImportedApiHarnessAdapter
 from atlas.openapi.errors import OpenApiError
 from atlas.openapi.parser import parse_document
 from atlas.openapi.store import ImportStoreError
+from atlas.security.bootstrap import assert_prod_secrets
 from atlas.security.egress import EgressDenied, EgressGuard
 from atlas.security.secrets import build_secret_provider_from_env
 from atlas.monitoring.silences import OnCallEmpty, current_assignee, is_silence_active
@@ -290,6 +291,9 @@ async def lifespan(_app: FastAPI):
     recover_pending()
     yield
 
+
+# docs/64 J-1a：prod 缺必需密钥 fail-closed（拒绝启动），非 prod 静默。
+assert_prod_secrets()
 
 app = FastAPI(title="Atlas API", version="0.0.1", lifespan=lifespan)
 
