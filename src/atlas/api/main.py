@@ -135,6 +135,7 @@ from atlas.shop.service import DemoShopService
 from atlas.storage.frame import card_context_from_frame, remaining_seconds
 from atlas.storage.memory import ApprovalBroker, FeedbackRequest
 from atlas.storage.pg import get_pg_backend
+from atlas.storage.retention import run_retention_once
 from atlas.storage.recovery import (
     clear_frame,
     clear_tenant_frames,
@@ -292,6 +293,8 @@ async def lifespan(_app: FastAPI):
     recover_pending()
     # docs/64 J-2a：启动即打印决策器运行模式（含降级警告），不再静默。
     get_decision_client()
+    # docs/65 K-A：启动跑一次 retention 清扫（PG 档；失败只 warning 不阻断启动）。
+    run_retention_once()
     yield
 
 

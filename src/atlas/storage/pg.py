@@ -71,6 +71,74 @@ class PgBackend:
     def graph_store(self, tenant_id: str) -> "PgGraphStore":
         return PgGraphStore(self._engine, tenant_id)
 
+    def prune_expired(
+        self,
+        cutoffs: dict[str, str | None],
+        *,
+        session_sweep: bool = True,
+    ) -> dict[str, int]:
+        """docs/65 K-A：按保留期淘汰全局表过期行，返回 {表名: 删除行数}。
+
+        cutoffs: {表名: UTC ISO 截止串}；未知表名忽略、None 值跳过。
+        淘汰条件（契约 §2）：`runs` 仅终止态（finished_at 非空）、`interruptions`
+        仅已认领（resumed_at 非空）——挂起态运行与未认领挂起帧永不淘汰；
+        `iam_sessions` 过期全量清扫（NULL 视为不过期，与 011 语义一致）。
+        TEXT 时间列一律 `::timestamptz` 转时刻比较（docs/61 H3 同款，防字典序坑）；
+        TIMESTAMPTZ 列直接与 CAST 绑定比较。retention 是全局运维动作，不受租户分区约束。
+        """
+        statements: dict[str, str] = {
+            "audit_events": (
+                "DELETE FROM audit_events "
+                "WHERE at::timestamptz < CAST(:cutoff AS timestamptz)"
+            ),
+            "runs": (
+                "DELETE FROM runs "
+                "WHERE finished_at IS NOT NULL "
+                "AND finished_at::timestamptz < CAST(:cutoff AS timestamptz)"
+            ),
+            "webhook_deliveries": (
+                "DELETE FROM webhook_deliveries "
+                "WHERE created_at::timestamptz < CAST(:cutoff AS timestamptz)"
+            ),
+            "interruptions": (
+                "DELETE FROM interruptions "
+                "WHERE resumed_at IS NOT NULL "
+                "AND created_at::timestamptz < CAST(:cutoff AS timestamptz)"
+            ),
+            "graph_versions": (
+                "DELETE FROM graph_versions "
+                "WHERE created_at::timestamptz < CAST(:cutoff AS timestamptz)"
+            ),
+            "openapi_imports": (
+                "DELETE FROM openapi_imports "
+                "WHERE created_at < CAST(:cutoff AS timestamptz)"
+            ),
+            "message_deliveries": (
+                "DELETE FROM message_deliveries "
+                "WHERE sent_at < CAST(:cutoff AS timestamptz)"
+            ),
+        }
+        deleted: dict[str, int] = {}
+        with self._engine.begin() as conn:
+            for table, cutoff in cutoffs.items():
+                if cutoff is None:
+                    continue
+                sql = statements.get(table)
+                if sql is None:
+                    continue
+                result = conn.execute(text(sql), {"cutoff": cutoff})
+                deleted[table] = int(result.rowcount or 0)
+            if session_sweep:
+                result = conn.execute(
+                    text(
+                        "DELETE FROM iam_sessions "
+                        "WHERE expires_at IS NOT NULL "
+                        "AND expires_at::timestamptz <= CURRENT_TIMESTAMP"
+                    )
+                )
+                deleted["iam_sessions"] = int(result.rowcount or 0)
+        return deleted
+
     def session_store(self) -> "PgSessionStore":
         # SessionStore 是全局单例（不分租户）：token 全局唯一、principal_for_token 跨租户查。
         return PgSessionStore(self._engine)
