@@ -38,6 +38,12 @@ services:
     build:
       context: .
     image: atlas-demo:latest
+    # 单副本是硬约束，不是性能调优：第二个进程启动时会为第一个进程仍持有的挂起审批帧
+    # 重建 pending 并各自续跑，下游真实副作用被执行两遍（docs/34 的 2026-09-25 实测表）。
+    # 今天多副本还会先因 "8000:8000" 端口冲突起不来——那是巧合保护，不能当设计依赖，故显式钉住；
+    # 入口脚本另对 ATLAS_WORKERS>1 与命令行 --workers>1 fail-closed（docs/62 §4）。
+    deploy:
+      replicas: 1
     ports:
       - "8000:8000"
     environment:

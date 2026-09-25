@@ -27,5 +27,8 @@ ENV ATLAS_FRONTEND_DIST=/app/frontend/dist \
     PYTHONUNBUFFERED=1
 
 EXPOSE 8000
+# --workers 1 是**显式写出来的约束**，不是性能选择：多进程会让同一条挂起审批帧在各进程
+# 各自续跑一次，下游真实副作用被执行两遍（docs/34 的 2026-09-25 实测表、docs/62 §2 D-6）。
+# 入口脚本 scripts/ops/docker-entrypoint.sh 会同时拒绝 ATLAS_WORKERS>1 与命令行 --workers/-w >1。
 ENTRYPOINT ["./scripts/ops/docker-entrypoint.sh"]
-CMD ["uvicorn", "atlas.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "atlas.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
