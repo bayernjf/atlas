@@ -240,7 +240,7 @@
     "SUB_INPUTS_NOT_OBJECT": "Node {{owner}}: the subgraph input mapping must be an object",
     "SUB_INPUT_KEY_DUPLICATE": "Node {{owner}}: duplicate input key: {{key}}",
     "SUB_INPUT_KEY_EMPTY": "Node {{owner}}: an input key cannot be empty",
-    "SUB_INPUT_VALUE_REQUIRED": "Node {{owner}}: input {{key}} must map to non-empty text (a parent {{path}} or a literal)",
+    "SUB_INPUT_VALUE_REQUIRED": "Node {{owner}}: input {{key}} must map to non-empty text (a parent-graph reference or a literal)",
     "SUB_SUCCESSOR_MISSING": "Node {{owner}}: the successor node does not exist: {{target}}",
     "VARIABLE_NAME_DUPLICATE": "Duplicate variable name: {{name}}",
     "WAIT_ABSOLUTE_TIME_REQUIRED": "Node {{owner}}: an absolute time is required",
