@@ -577,7 +577,7 @@ def _audit_cursor(cursor: int | None) -> int | None:
 @app.get("/api/audit/events")
 def list_audit_events(
     principal: Principal = Depends(require("administer")),
-    limit: int = 100,
+    limit: int = Query(100, le=1000),
     action: str | None = None,
     actor: str | None = None,
     since: str | None = None,
@@ -1055,7 +1055,7 @@ def put_webhook_subscriptions(
 def list_webhook_dead_letters(
     topic: str | None = None,
     bindingId: str | None = None,
-    limit: int = 100,
+    limit: int = Query(100, le=1000),
     principal: Principal = Depends(require("read")),
 ) -> dict[str, Any]:
     store = services_for(principal).webhook_deliveries
@@ -1798,7 +1798,7 @@ def list_graph_release_reports(
 
 @app.get("/api/release-reports")
 def list_all_release_reports(
-    limit: int = 100, principal: Principal = Depends(require("read"))
+    limit: int = Query(100, le=1000), principal: Principal = Depends(require("read"))
 ) -> dict[str, Any]:
     """跨图批量回放报告看板（docs/28 §2.4）：倒序摘要，不含 cases，read 角色。
 
@@ -1958,7 +1958,7 @@ def create_shadow_run(
 @app.get("/api/shadow-runs")
 def list_shadow_runs(
     graph_id: str | None = None,
-    limit: int = 50,
+    limit: int = Query(50, le=500),
     principal: Principal = Depends(require("read")),
 ) -> dict[str, Any]:
     """本租户影子运行记录倒序（可按图过滤，limit 1–200，默认 50）。"""
@@ -2955,7 +2955,7 @@ def run_saved_graph_stream(
 @app.get("/api/runs")
 def list_runs(
     status: str | None = None,
-    limit: int = 50,
+    limit: int = Query(50, le=500),
     principal: Principal = Depends(require("read")),
 ) -> dict[str, list[dict[str, Any]]]:
     """本租户运行列表（新→旧；status 缺省=全部）（M5b，docs/24 §4）。"""
@@ -3000,7 +3000,7 @@ def cancel_run(
 def list_tasks(
     state: str | None = None,
     assignee: str | None = None,
-    limit: int = 50,
+    limit: int = Query(50, le=500),
     principal: Principal = Depends(require("read")),
 ) -> dict[str, list[dict[str, Any]]]:
     """本租户任务信封列表（新→旧；state/assignee 可过滤）（M7，docs/20 §4.2 / 12 任务端点）。"""
@@ -3144,7 +3144,7 @@ def signal_wait_token(
 
 @app.get("/api/approvals/decided")
 def list_decided_approvals(
-    limit: int = 50,
+    limit: int = Query(50, le=500),
     principal: Principal = Depends(require("read")),
 ) -> dict[str, Any]:
     """列出当前租户已决策的人工审批（最近处理在前，进程内、reset/重启即失）。"""
@@ -3410,7 +3410,7 @@ def monitoring_metrics(
 @app.get("/api/monitoring/runs")
 def monitoring_runs(
     graph_id: str | None = None,
-    limit: int = 50,
+    limit: int = Query(50, le=500),
     principal: Principal = Depends(require("read")),
 ) -> dict[str, list[dict[str, Any]]]:
     """最近运行（新→旧，默认 50、上限 200；04 §5.13；按租户分区）。"""
@@ -3794,7 +3794,7 @@ def demo_messages(
 
 @app.get("/api/demo/deliveries")
 def demo_deliveries(
-    limit: int = 100,
+    limit: int = Query(100, le=1000),
     principal: Principal = Depends(require("read")),
 ) -> dict[str, Any]:
     """docs/56 §4.3：消息投递日志（每次 send 一条，含尝试次数/耗时/错误），倒序。"""
@@ -3872,7 +3872,7 @@ def update_memory(
 @app.get("/api/memories")
 def list_memories(
     kind: str | None = None,
-    limit: int = 50,
+    limit: int = Query(50, le=500),
     principal: Principal = Depends(require("read")),
 ) -> dict[str, Any]:
     """当前租户记忆倒序列表（不含 embedding）；kind 可选过滤，limit 缺省 50、上限 200。"""
