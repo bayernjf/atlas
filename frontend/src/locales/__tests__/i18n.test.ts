@@ -19,6 +19,7 @@ import zhMemory from '../zh-CN/memory.json'
 import zhMonitoring from '../zh-CN/monitoring.json'
 import zhOpenapi from '../zh-CN/openapi.json'
 import zhRuntime from '../zh-CN/runtime.json'
+import zhValidation from '../zh-CN/validation.json'
 import enApprovals from '../en-US/approvals.json'
 import enAudit from '../en-US/audit.json'
 import enChannels from '../en-US/channels.json'
@@ -31,6 +32,7 @@ import enMemory from '../en-US/memory.json'
 import enMonitoring from '../en-US/monitoring.json'
 import enOpenapi from '../en-US/openapi.json'
 import enRuntime from '../en-US/runtime.json'
+import enValidation from '../en-US/validation.json'
 
 /** Login.tsx / UserBadge.tsx 实际接线的全部 key（M12 样板范围）。 */
 const WIRED_KEYS = [
@@ -1065,6 +1067,7 @@ const PARITY_PAIRS: Array<{ ns: string; zh: unknown; en: unknown }> = [
   { ns: 'monitoring', zh: zhMonitoring, en: enMonitoring },
   { ns: 'openapi', zh: zhOpenapi, en: enOpenapi },
   { ns: 'runtime', zh: zhRuntime, en: enRuntime },
+  { ns: 'validation', zh: zhValidation, en: enValidation },
 ]
 
 describe('zh-CN / en-US catalog parity (docs/57 §5)', () => {
