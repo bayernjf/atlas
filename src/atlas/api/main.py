@@ -3250,7 +3250,24 @@ def _resolve_email_signed(signed: str) -> tuple[Any, str, str]:
     services = tenant_registry.peek(tenant_id)
     if services is None:
         raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID)
+    if body.get("rcpt") is None:
+        # docs/64 J-1b：无收件人绑定的旧式 token 一律失效（TTL 仅 1h+grace，不向后兼容）。
+        raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID)
     return services, str(body.get("at", "")), tenant_id
+
+
+def _assert_email_token_recipient(
+    signed: str, approval_token: str, broker: Any
+) -> None:
+    """docs/64 J-1b：token 载荷 rcpt 必须属于该审批的收件人，否则 404（与验签同口径）。"""
+    try:
+        body = _email_token_issuer.verify(signed)
+    except EmailTokenError as exc:
+        raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID) from exc
+    rcpt = str(body.get("rcpt", "")).lower()
+    recipients = {r.lower() for r in broker.get_notify_recipients(approval_token)}
+    if rcpt not in recipients:
+        raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID)
 
 
 @app.get("/api/approvals/email-view")
@@ -3261,6 +3278,7 @@ def email_approval_view(token: str) -> dict[str, Any]:
     pending = broker.get(approval_token)
     if pending is None:
         raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID)
+    _assert_email_token_recipient(token, approval_token, broker)
     now = time.time()
     remaining = max(
         0.0, float(pending.get("createdAt", 0.0)) + float(pending["timeoutSeconds"]) - now
@@ -3313,6 +3331,7 @@ def email_approval_decision(
     pending = broker.get(approval_token)
     if pending is None:
         raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID)
+    _assert_email_token_recipient(request.token, approval_token, broker)
     notifier = EmailApprovalNotifier(
         services.message_service, _PUBLIC_URL, tenant_id
     )

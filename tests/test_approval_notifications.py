@@ -77,8 +77,8 @@ class FakeIssuer:
         self.exc = exc
         self.calls = []
 
-    def issue(self, tenant_id, approval_token, timeout_seconds):
-        self.calls.append((tenant_id, approval_token, timeout_seconds))
+    def issue(self, tenant_id, approval_token, timeout_seconds, recipient=None):
+        self.calls.append((tenant_id, approval_token, timeout_seconds, recipient))
         if self.exc is not None:
             raise self.exc
         return self.signed
@@ -123,8 +123,8 @@ def test_email_notifier_renders_plaintext_email():
         timeout_seconds=120,
         recipients=["a@example.com", "b@example.com"],
     )
-    # 签发入参：租户 + 原始审批 token + 超时秒
-    assert issuer.calls == [("t1", "tok-secret", 120)]
+    # 签发入参：租户 + 原始审批 token + 超时秒 + 首收件人（docs/64 J-1b 绑定）
+    assert issuer.calls == [("t1", "tok-secret", 120, "a@example.com")]
     assert len(msgs.sent) == 1
     mail = msgs.sent[0]
     assert mail["channel"] == "email"

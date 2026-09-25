@@ -23,6 +23,9 @@ T1 = "t1"
 T2 = "t2"
 
 
+RECIPIENT = "approver@example.com"
+
+
 def _request_pending(tenant: str, *, card_template_id=None, card_context=None,
                       timeout: int = 300) -> str:
     broker = tenant_registry.get(tenant).approval_broker
@@ -34,16 +37,52 @@ def _request_pending(tenant: str, *, card_template_id=None, card_context=None,
         timeout_seconds=timeout,
         card_template_id=card_template_id,
         card_context=card_context,
+        notify_recipients=[RECIPIENT],
     )
 
 
 def _sign(tenant: str, approval_token: str, timeout: int = 300) -> str:
-    return _email_token_issuer.issue(tenant, approval_token, timeout)
+    return _email_token_issuer.issue(
+        tenant, approval_token, timeout, recipient=RECIPIENT
+    )
 
 
 class PastClock:
     def __call__(self) -> float:
         return 1000.0
+
+
+def test_email_token_binds_recipient_in_payload():
+    """J-1b：issue 带 recipient 时载荷含小写 rcpt；verify 可回读。"""
+    from atlas.collaboration.email_token import TokenIssuer
+
+    issuer = TokenIssuer(secret="k" * 32)
+    signed = issuer.issue("t1", "approval-tok", 120, recipient="Approver@Example.com")
+    body = issuer.verify(signed)
+    assert body["rcpt"] == "approver@example.com"
+
+
+def test_email_view_rejects_token_for_other_recipient():
+    """J-1b：token 绑定的收件人不在该审批收件人集合 → 404（与验签同口径）。"""
+    approval_token = _request_pending(T1)
+    signed = _email_token_issuer.issue(
+        T1, approval_token, 300, recipient="intruder@example.com"
+    )
+    resp = client.get("/api/approvals/email-view", params={"token": signed})
+    assert resp.status_code == 404
+    resp = client.post(
+        "/api/approvals/email-decision",
+        json={"token": signed, "decision": "approved"},
+    )
+    assert resp.status_code == 404
+
+
+def test_email_view_rejects_token_without_recipient():
+    """J-1b：无 rcpt 绑定的旧式 token 一律 404（不向后兼容）。"""
+    approval_token = _request_pending(T1)
+    signed = _email_token_issuer.issue(T1, approval_token, 300)
+    resp = client.get("/api/approvals/email-view", params={"token": signed})
+    assert resp.status_code == 404
 
 
 # ============================ email-view ============================
@@ -85,7 +124,7 @@ def test_email_view_garbage_token_404():
 def test_email_view_expired_token_404():
     approval_token = _request_pending(T1)
     past_issuer = TokenIssuer(secret=_email_token_issuer.secret, clock=PastClock())
-    signed = past_issuer.issue(T1, approval_token, 300)
+    signed = past_issuer.issue(T1, approval_token, 300, recipient=RECIPIENT)
     resp = client.get("/api/approvals/email-view", params={"token": signed})
     assert resp.status_code == 404
 

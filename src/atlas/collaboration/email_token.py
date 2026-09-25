@@ -99,16 +99,19 @@ class TokenIssuer:
         tenant_id: str,
         approval_token: str,
         timeout_seconds: float,
+        recipient: str | None = None,
     ) -> str:
         now = int(self.clock())
         ttl = min(int(timeout_seconds), MAX_TTL_SECONDS) + EXPIRY_GRACE_SECONDS
-        body = {
+        body: dict[str, object] = {
             "v": 1,
             "tenant": tenant_id,
             "at": approval_token,
             "iat": now,
             "exp": now + ttl,
         }
+        if recipient and recipient.strip():
+            body["rcpt"] = recipient.strip().lower()
         payload_b64 = _b64url_encode(json.dumps(body, separators=(",", ":")).encode("utf-8"))
         return f"{payload_b64}.{_sign(payload_b64, self.secret or '')}"
 
