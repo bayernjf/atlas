@@ -53,7 +53,11 @@ CREATE TABLE IF NOT EXISTS interruptions (
     kind TEXT NOT NULL,
     payload JSONB NOT NULL,
     deadline_at TIMESTAMPTZ,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    -- 迁移 029（docs/62 §3 L2）：一次性认领——NULL＝还没人越过该挂起点，非空＝已消费、
+    -- 任何进程都不得再执行其下游。时钟只走 DB（CURRENT_TIMESTAMP）。
+    resumed_at TIMESTAMPTZ,
+    resumed_by TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_interruptions_tenant ON interruptions (tenant_id);
 
