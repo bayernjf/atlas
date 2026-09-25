@@ -158,6 +158,9 @@ def _generate_with_llm(prompt: str, model: str) -> dict[str, Any] | None:
         model=model,
         messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
         temperature=0.2,
+        # J-3c：出向 LLM 必须带超时与输出上限（NL 图草稿较长，放宽到 1024）
+        timeout=float(os.getenv("ATLAS_LLM_TIMEOUT_SECONDS", "60")),
+        max_tokens=1024,
     )
     content = response["choices"][0]["message"]["content"]
     match = re.search(r"\{.*\}", content, re.DOTALL)
