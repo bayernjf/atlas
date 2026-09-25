@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### docs(review)：第三次项目级上线复审落成 docs/63——判定 生产 MVP 未达到（2026-09-25，纯 docs 原子，零产品代码改动）
+
+- **触发**：用户「做一次项目级别的功能性、完整度、是否可上线的评审，要求必须能达到产品核心完全可用的MVP，判断是否达到了MVP」。评审链＝docs/29 初评 → docs/34 复审 → **docs/63**。
+- **判定**：**技术验证 MVP 达到；"产品核心完全可用"的生产 MVP 未达到，PROD 不 GO。** 工程纪律是真的强（门全绿：后端 **1811 passed / 108 skipped**、前端 **722 passed / 2 skipped / 53 文件**、`pnpm lint` 0 error；`src` 与 `frontend/src` 的 TODO/FIXME 各 0；迁移 001–029 每文件独立事务、全 `IF NOT EXISTS`、零 DROP）——**问题不在完成度纪律，在于过去没人审"不安全会怎样"这一维**。
+- **三条打到产品核心**（不是一堆边角）：① **交付形态里没有 AI**——`src/atlas/llm/decision.py:93-97` 在 `LITELLM_MODEL` 未配时**静默**返回规则决策器、连 warning 都不打，而 `docker-compose.yml:52` 写的正是 `LITELLM_MODEL: ${LITELLM_MODEL:-}`，所以按文档一键 `docker compose up` 起来的是**一套没有 AI 决策的编排壳**；② **退款端到端没有一条测试跑通全链**——`tests/test_refund_e2e.py:34` 覆盖真实退款但无审批节点、`tests/test_api_demo.py:199` 覆盖活体审批却走 `op-approve` 不落 shop 工具，docs/08 §7.3 criterion 4 立得住只因为原文写的是"自动执行退款**或**触发人工审批"；③ M7 验收链 `coordination/sandbox.py:29` 是手写函数、从不调 `compile_graph`/`run_graph`。
+- **八条阻断 S1–S8**（前四条我逐行读码确认）：S1 邮件一键决策是**不记名 capability token** 而签名密钥缺省是**仓库里写死的常量**（`collaboration/email_token.py:26,48-62`），路由 `api/main.py:3302` docstring 明写"无需登录"，compose 两个密钥都不注入、缺密钥只 `logger.warning` ⇒ 看到源码者可给**任意租户**签一条"退款通过"链接；S2 种子账号 `admin-a/admin123` 等由 `docker-entrypoint.sh:61` 播种进 `iam_users`、无禁用无强制改密；S3 登录查询 `storage/pg.py:407-413` **不带 `tenant_id`、无 `ORDER BY` 取 `.first()`**，而 `010_iam_users.sql` 的 PK 是 `(tenant_id, username)` ⇒ 跨租户重名命中哪行由 PG 决定；S4 公开入站 `async def` 里跑同步 SQLAlchemy（`main.py:842-852`）＋ body 先全量缓冲再验签＋每订阅一条裸线程 ⇒ **一条事件可卡死整个事件循环**；S5 十一条路由无鉴权依赖，其中七条 `/api/demo/*` 是**匿名可写**模拟面（`main.py:3711-3757` 写模块级 dict 无上限，而同区 mock orders 却要 `X-Demo-Token`——守卫自身不一致）；S6 十处 `limit` 无 `le=`（实测 0/10）＋三处 `litellm.completion` 无 timeout/`max_tokens`/租户预算；S7 `ATLAS_ENV`/`DEBUG` 只存在于 `.env.example`、`src/atlas` 从不读 ⇒ **没有任何一道能 fail-closed 的闸门**（S1/S2 的根因）；S8 六张表全无 retention（唯一 DELETE 在 demo reset 的 `clear()`）、`/metrics` 无鉴权、备份无轮转。
+- **最该被记住的一条是结构性的**：PG 档才是生产形态，而 `ci.yml` 的 backend job **没有 postgres service**、不设 `ATLAS_RUN_INTEGRATION` ⇒ **44 / 1918（2.3%）integration 用例永不执行**，M5b 以来所有"已 PG 化／跨重启可见"的承诺目前**没有任何自动化在守**。我手动跑了一次 `-m integration`，立刻抓出一条既存红（`PgAuditStore.record()` 投影缺 `seq`，`storage/pg.py:2063` vs `tests/test_audit_log.py:31`）。
+- **证据分级是本文的硬规矩**：docs/63 §0 定三级〔跑〕〔码〕〔勘〕，**〔勘〕级（子代理扫描、我未逐条复）一律不作上线判定依据**，只登记为待复项。本次并行派三份勘察，我把全部阻断级结论逐条回代码复核后才写。
+- **同步面**：docs/63 新建、docs/00 地图加行并订正 62 行首措辞、docs/34 加指向注、docs/08 决策记录条＋A 组补 3 批候选（P0-1 安全闸门／P0-2 核心完整性／P1-1 门禁）＋B 组补 2 条待复、docs/14 新缓做 **D38（retention＋备份轮转）/D39（可观测最小面）/D40（waits·tasks 运行时操作台 UI）**、handoff（索引＋Active #64＋Recently shipped＋状态行）。**解除零个缓做项**；单实例结论沿用不变（docs/62 L2 只拆最贵那颗雷，D19/D20/D27/D31/D32 仍不解除）。
+
 ### feat：挂起帧一次性认领（docs/62 打包 I L2）落码收口——单副本最贵那颗雷拆掉（2026-09-25，`af38176`/`593bed0`/`df5a18c`＋本 docs 原子；新增迁移 029，零新依赖、无新 ADR、零新 REST 端点与错误码，新增一个 SSE 终帧 `superseded`）
 
 - **落的是什么**：立项批（同日早些时候）只出契约，本批按 §6 原子④–⑦ 落码。`interruptions` 加 `resumed_at TIMESTAMPTZ`／`resumed_by TEXT`（迁移 029 ＋ `002_storage.sql` 同步；不建新索引——认领按主键单行命中），`storage/recovery.py` 出 `claim_frame_for_resume`：**一条 `UPDATE ... WHERE resume_token = :t AND resumed_at IS NULL` 的 rowcount 就是互斥本身**，不引 advisory lock、不引 `SELECT FOR UPDATE SKIP LOCKED`、不引定时器，时钟只取 DB 的 `CURRENT_TIMESTAMP`；库不可达**保守判负**（宁可停止驱动，也不重复执行）。
