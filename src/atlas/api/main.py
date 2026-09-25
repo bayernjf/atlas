@@ -12,7 +12,9 @@ import json
 import logging
 import os
 import queue
+import asyncio
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import time
 import uuid
 from itertools import count
@@ -219,9 +221,7 @@ def _resume_from_frame(engine, frame: dict) -> None:
             if wait_payload.get("eventWaitMode") in ("any", "all")
             else "any",
         )
-    threading.Thread(
-        target=_resume_run, args=(engine, services, frame), daemon=True
-    ).start()
+    _BACKGROUND_WORKER_POOL.submit(_resume_run, engine, services, frame)
 
 
 def _resume_run(engine, services: TenantServices, frame: dict) -> None:
@@ -840,6 +840,10 @@ def delete_channel(
 # --- 入站 Webhook（docs/39，ADR T29）--------------------------------------
 
 MAX_WEBHOOK_SUBSCRIPTIONS = 10
+MAX_WEBHOOK_BODY_BYTES = 1024 * 1024
+
+# J-3d：后台出向（webhook 触发 / wait·approval 续跑）走共享线程池，防止每请求裸开线程。
+_BACKGROUND_WORKER_POOL = ThreadPoolExecutor(max_workers=8)
 
 
 class WebhookSubscriptionsRequest(BaseModel):
@@ -881,11 +885,9 @@ def _webhook_resolve(graph_id: str, tenant: str, event: TriggerEvent) -> int | N
 
 def _webhook_trigger(graph_id: str, version: int, event: TriggerEvent, tenant: str) -> None:
     services = tenant_registry.get(tenant)
-    threading.Thread(
-        target=_webhook_run_worker,
-        args=(services, tenant, graph_id, version, event),
-        daemon=True,
-    ).start()
+    _BACKGROUND_WORKER_POOL.submit(
+        _webhook_run_worker, services, tenant, graph_id, version, event
+    )
 
 
 def _webhook_audit(action: str, tenant: str, metadata: dict) -> None:
@@ -961,7 +963,7 @@ async def shopify_webhook_ingress(binding_id: str, http_request: Request) -> dic
     验签通过后一律 200（received/duplicate/ignored）；绑定不存在统一 404、
     签名失败统一 401（不泄漏原因差异）；密钥不可用 503；body/头非法 400。
     """
-    located = _locate_binding(binding_id)
+    located = await asyncio.to_thread(_locate_binding, binding_id)
     if located is None:
         raise HTTPException(status_code=404, detail="渠道绑定不存在")
     tenant_id, binding, services = located
@@ -969,6 +971,8 @@ async def shopify_webhook_ingress(binding_id: str, http_request: Request) -> dic
     if not secret:
         raise HTTPException(status_code=503, detail="Webhook 验签密钥暂不可用")
     raw = await http_request.body()
+    if len(raw) > MAX_WEBHOOK_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="Webhook 请求体超过 1MB 上限")
     signature = http_request.headers.get(HMAC_HEADER)
     if not verify_shopify_hmac(raw, signature, secret):
         raise HTTPException(status_code=401, detail="Webhook 签名校验失败")
