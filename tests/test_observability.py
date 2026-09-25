@@ -65,6 +65,41 @@ def test_metrics_is_public_and_prometheus_format() -> None:
     assert "# TYPE atlas_tenants_active gauge" in body
 
 
+# ---------- docs/65 K-C：prod /metrics Bearer 闸门 ----------
+
+def test_metrics_prod_fail_closed_without_token(monkeypatch) -> None:
+    monkeypatch.setenv("ATLAS_ENV", "prod")
+    monkeypatch.delenv("ATLAS_METRICS_TOKEN", raising=False)
+    resp = client.get("/metrics")
+    assert resp.status_code == 404
+
+
+def test_metrics_prod_requires_bearer(monkeypatch) -> None:
+    monkeypatch.setenv("ATLAS_ENV", "prod")
+    monkeypatch.setenv("ATLAS_METRICS_TOKEN", "secret-token")
+    resp = client.get("/metrics")
+    assert resp.status_code == 401
+    resp = client.get("/metrics", headers={"Authorization": "Bearer wrong"})
+    assert resp.status_code == 401
+
+
+def test_metrics_prod_bearer_allowed(monkeypatch) -> None:
+    monkeypatch.setenv("ATLAS_ENV", "prod")
+    monkeypatch.setenv("ATLAS_METRICS_TOKEN", "secret-token")
+    resp = client.get("/metrics", headers={"Authorization": "Bearer secret-token"})
+    assert resp.status_code == 200
+    body = resp.text
+    assert "# TYPE atlas_up gauge" in body
+    assert "atlas_up 1" in body
+
+
+def test_metrics_non_prod_stays_public(monkeypatch) -> None:
+    monkeypatch.setenv("ATLAS_ENV", "dev")
+    monkeypatch.delenv("ATLAS_METRICS_TOKEN", raising=False)
+    resp = client.get("/metrics")
+    assert resp.status_code == 200
+
+
 def test_metrics_reflects_run_snapshots() -> None:
     """跑一次真实图后，/metrics 应出现该租户的 runs 指标序列。"""
     # 先取一个已装配租户（conftest 的 admin 会话装配了 t1）

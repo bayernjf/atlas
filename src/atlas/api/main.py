@@ -9,6 +9,7 @@ NL 生成草稿、适配器发现、模拟商家售后控制台。
 from __future__ import annotations
 
 import json
+import hmac
 import logging
 import os
 import queue
@@ -96,12 +97,16 @@ from atlas.channels.webhooks import (
 )
 from atlas.connections.service import ConnectionServiceError
 from atlas.observability.health import check_ready
+from atlas.observability.logging import (
+    configure_logging,
+    install_request_id_middleware,
+)
 from atlas.observability.metrics_export import render_prometheus
 from atlas.openapi.adapter import ImportedApiHarnessAdapter
 from atlas.openapi.errors import OpenApiError
 from atlas.openapi.parser import parse_document
 from atlas.openapi.store import ImportStoreError
-from atlas.security.bootstrap import assert_prod_secrets
+from atlas.security.bootstrap import assert_prod_secrets, read_env_profile
 from atlas.security.egress import EgressDenied, EgressGuard
 from atlas.security.secrets import build_secret_provider_from_env
 from atlas.monitoring.silences import OnCallEmpty, current_assignee, is_silence_active
@@ -135,6 +140,7 @@ from atlas.shop.service import DemoShopService
 from atlas.storage.frame import card_context_from_frame, remaining_seconds
 from atlas.storage.memory import ApprovalBroker, FeedbackRequest
 from atlas.storage.pg import get_pg_backend
+from atlas.storage.retention import run_retention_once
 from atlas.storage.recovery import (
     clear_frame,
     clear_tenant_frames,
@@ -292,13 +298,21 @@ async def lifespan(_app: FastAPI):
     recover_pending()
     # docs/64 J-2a：启动即打印决策器运行模式（含降级警告），不再静默。
     get_decision_client()
+    # docs/65 K-A：启动跑一次 retention 清扫（PG 档；失败只 warning 不阻断启动）。
+    run_retention_once()
     yield
 
+
+# docs/65 K-D：统一日志 formatter（UTC 时间戳/级别/logger/request_id）；幂等。
+configure_logging()
 
 # docs/64 J-1a：prod 缺必需密钥 fail-closed（拒绝启动），非 prod 静默。
 assert_prod_secrets()
 
 app = FastAPI(title="Atlas API", version="0.0.1", lifespan=lifespan)
+
+# docs/65 K-D：request-id 中间件（X-Request-Id 响应头 + 日志 request_id 字段）。
+install_request_id_middleware(app)
 
 # Demo 单例：控制台页面与编译运行的图共享同一份店铺状态
 _demo_shop = DemoShopService()
@@ -521,12 +535,36 @@ def ready() -> JSONResponse:
     return JSONResponse(detail, status_code=200 if ok else 503)
 
 
+def _metrics_auth_gate(request: Request) -> Response | None:
+    """docs/65 K-C：`/metrics` prod fail-closed Bearer 闸门。
+
+    非 prod 返回 None（放行，demo/本地拉取行为不变）；prod 下 `ATLAS_METRICS_TOKEN`
+    未配置 → 404（fail-closed，与 J-1a 同语义，避免误配置即裸奔）；配置后必须
+    `Authorization: Bearer <token>`（hmac.compare_digest 恒定时间），否则 401。
+    """
+    if read_env_profile() != "prod":
+        return None
+
+    token = os.environ.get("ATLAS_METRICS_TOKEN", "")
+    if not token:
+        logger.warning("ATLAS_METRICS_TOKEN 未配置：/metrics 已 fail-closed 关闭（prod）")
+        return Response(status_code=404)
+    auth = request.headers.get("Authorization", "")
+    expected = f"Bearer {token}"
+    if not hmac.compare_digest(auth, expected):
+        return Response(status_code=401)
+    return None
+
+
 @app.get("/metrics")
-def prometheus_metrics() -> Response:
-    """Prometheus 文本指标拉取端点（无鉴权，部署时由反代/网络层限制访问，见 deploy/）。
+def prometheus_metrics(request: Request) -> Response:
+    """Prometheus 文本指标拉取端点（docs/65 K-C：prod 走 Bearer token 闸门）。
 
     只暴露进程级与按租户聚合的计数/分位数；正式 OTel/Grafana 栈缓做 docs/14 D11。
     """
+    gate = _metrics_auth_gate(request)
+    if gate is not None:
+        return gate
     snapshots: list[tuple[str, dict[str, Any]]] = []
     for tenant_id in tenant_registry.all_tenant_ids():
         try:

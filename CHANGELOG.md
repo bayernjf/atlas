@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### fix(ops)：打包 K 收口——docs/63 的 P1-2 运维批全部落码（2026-09-25，契约 docs/65）
+
+- **retention 与过期会话清扫**（`5aa51ca`）：`PgBackend.prune_expired` 8 表按保留期淘汰（`runs` 仅终止态、`interruptions` 仅已认领，挂起态与未认领帧永不删；TEXT 时间列 `::timestamptz` 转时刻比较防字典序坑）；过期 `iam_sessions` 全量清扫；新 `scripts/ops/run_retention.py`（`--dry-run`）＋ lifespan 启动钩子（失败只 warning 不阻断）。
+- **备份轮转/异地**（`2d3ec70`）：`backup.sh` 加 `ATLAS_BACKUP_KEEP`（默认 7 份轮转，BSD head 兼容计数法）与 `ATLAS_BACKUP_REMOTE_DIR`（最新 dump 拷贝异地）；`--dry-run`。
+- **`/metrics` 收口**（`0082b1e`）：prod fail-closed——未配置 `ATLAS_METRICS_TOKEN` → 404，配置后须 `Bearer` 否则 401；非 prod 行为不变。
+- **日志 formatter + request-id**（`d171639`）：`observability/logging.py` 统一 UTC ISO 时间戳 formatter（`ATLAS_LOG_LEVEL` 可调）＋ `X-Request-Id` 响应头/日志 `request_id=` 字段（ContextVar）；异常路径以带 id 日志关联（落码偏差见 docs/65 §5）。
+- **三道门**：后端 **1849/114/0**；PG 直连 **1962/1/0**；前端零改动沿用 **728/2/54**、oxlint 0/6、build ✓。D38/D39 取回不解除（D11 OTel 仍缓做）。
+
 ### feat(ops)：打包 J 收口——docs/63 的 P0-1 安全闸门＋P0-2 核心完整性＋P1-1 门禁三批全部落码（2026-09-25，契约 docs/64）
 
 - **P0-1 安全闸门**（`4ab6edc`/`0400be8`/`f0e50ed`/`ef3451a`）：`ATLAS_ENV` fail-closed（prod 缺两密钥拒绝启动）＋邮件决策 token 绑定收件人＋prod 不播种种子账号/种子口令 403＋登录查询确定性/用户名全局唯一。
