@@ -71,3 +71,34 @@ def test_litellm_client_fail_safe_on_unparseable_output(monkeypatch):
     decision = LiteLLMDecisionClient("gpt-test").decide_refund(reason="商品破损", amount=100, limit=500)
     assert decision["action"] == HUMAN_APPROVAL
     assert decision["confidence"] == 0.0
+# ============================ J-2a 决策模式打印 ============================
+
+
+def test_get_decision_client_logs_degraded_mode_once(monkeypatch, caplog):
+    """J-2a：未配置 LITELLM_MODEL 时首次调用打印降级警告（不再静默），且只打印一次。"""
+    import logging
+
+    from atlas.llm import decision as mod
+
+    monkeypatch.delenv("LITELLM_MODEL", raising=False)
+    monkeypatch.setattr(mod, "_decision_mode_logged", False)
+    with caplog.at_level(logging.WARNING, logger="atlas.llm.decision"):
+        client = mod.get_decision_client()
+        mod.get_decision_client()  # 第二次不重复打印
+    assert isinstance(client, RuleBasedDecisionClient)
+    assert any("规则决策降级模式" in r.message for r in caplog.records)
+    assert sum(1 for r in caplog.records if "规则决策降级模式" in r.message) == 1
+
+
+def test_get_decision_client_logs_llm_mode_once(monkeypatch, caplog):
+    """J-2a：配置 LITELLM_MODEL 时首次调用打印 LiteLLM 模式。"""
+    import logging
+
+    from atlas.llm import decision as mod
+
+    monkeypatch.setenv("LITELLM_MODEL", "gpt-4o-mini")
+    monkeypatch.setattr(mod, "_decision_mode_logged", False)
+    with caplog.at_level(logging.INFO, logger="atlas.llm.decision"):
+        client = mod.get_decision_client()
+    assert isinstance(client, LiteLLMDecisionClient)
+    assert any("LiteLLM(model=gpt-4o-mini)" in r.message for r in caplog.records)

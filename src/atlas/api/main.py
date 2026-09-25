@@ -76,6 +76,7 @@ from atlas.iam.accounts import UserExists
 from atlas.iam.passwords import validate_password, validate_username, verify_password
 from atlas.iam.principals import Principal, Role, can
 from atlas.iam.registry import STORAGE_BACKEND, TenantServices
+from atlas.llm.decision import get_decision_client
 from atlas.llm.nl_generate import generate_graph, validate_param_fills
 from atlas.memory.adapter import MemoryHarnessAdapter
 from atlas.memory.models import MemoryValidationError
@@ -289,6 +290,8 @@ def _resume_claim_for() -> Callable[[str], bool] | None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     recover_pending()
+    # docs/64 J-2a：启动即打印决策器运行模式（含降级警告），不再静默。
+    get_decision_client()
     yield
 
 

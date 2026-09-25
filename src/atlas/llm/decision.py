@@ -11,9 +11,12 @@ W9-W10 对齐 docs/06 §9.2 黄金用例：
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from typing import Any, Protocol
+
+logger = logging.getLogger(__name__)
 
 AUTO_APPROVE = "approve_refund"
 HUMAN_APPROVAL = "request_human_approval"
@@ -90,8 +93,23 @@ class LiteLLMDecisionClient:
             }
 
 
+_decision_mode_logged = False
+
+
 def get_decision_client() -> DecisionClient:
+    """构建决策器；首次调用打印运行模式（docs/64 J-2a：不再静默降级）。"""
+    global _decision_mode_logged
     model = os.getenv("LITELLM_MODEL", "").strip()
     if model:
-        return LiteLLMDecisionClient(model)
+        client: DecisionClient = LiteLLMDecisionClient(model)
+        if not _decision_mode_logged:
+            logger.info("decision client: LiteLLM(model=%s)", model)
+            _decision_mode_logged = True
+        return client
+    if not _decision_mode_logged:
+        logger.warning(
+            "ATLAS 运行于规则决策降级模式（LITELLM_MODEL 未配置），无 LLM 语义判断；"
+            "如需真实 LLM，请在 .env 配置 LITELLM_MODEL 与供应商 key（docs/64 J-2a）"
+        )
+        _decision_mode_logged = True
     return RuleBasedDecisionClient()
