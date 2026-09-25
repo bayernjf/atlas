@@ -955,7 +955,7 @@ created_at / updated_at: string
 > 禁用/重置/改密均吊销对应用户会话（memory/PG 两档同构）；disabled 登录 → 403「账号已停用，请联系管理员」；未知用户/坏口令统一 401；登录节流 600s/5 次失败 → 429「登录尝试过于频繁，请稍后再试」（进程内滑动窗口，键 username\|client_ip，docs/31 步骤 6 已落码）。权威＝docs/31 与 04 §5.17（立项原文所写 §5.15 编号作废，该号已为链路追踪）；非目标（SSO/MFA/邮箱找回/JWT/审计/多实例节流）见 docs/31 §1.2 与 14。
 
 ### `interruption_frame` — 字段概览（M5 契约设计轮 2026-09-17 新增，**设计已定、T18 已拍板（B）、2026-09-17 已随 M5b 落码**；权威＝docs/24 §2.3/§5，落码承载 `src/atlas/storage/frame.py` + `recovery.py`）
-> **打包 I L2 待落码占位（2026-09-25 立项，零代码；形状权威＝[docs/62](62-挂起帧一次性认领-单副本硬约束护栏-v1批契约设计.md) §3.1/§3.2）**：本表拟增两列 `resumed_at TIMESTAMPTZ`（DB 时钟，NULL＝从未被续跑）与 `resumed_by TEXT`（进程身份，仅排障），并新增原子认领函数 `claim_frame_for_resume(engine, resume_token, who) -> bool`（`UPDATE ... WHERE resume_token = :t AND resumed_at IS NULL` 的 rowcount 判定，不引 advisory lock、不引 `SELECT FOR UPDATE SKIP LOCKED`、不引定时器）。**认领时机＝任一进程即将越过挂起点执行下游的那一刻**——`graph/loader.py` 三处挂起（审批 :721／事件等待 :595／时长·到点等待 :693 之后）经注入的 `resume_claim(token)` 判定，输家停止驱动、run 终态让给赢家；恢复扫描与续跑线程不变（单实例重启续跑靠它）。**动机＝实测：第二个进程启动时 `recover_pending`（`api/main.py:154`）会为同一活帧重建 pending 并起 `_resume_run` 续跑线程，一次审批可致下游执行两次**（证据表见 docs/34 的 2026-09-25 复审更新注记）。取向＝at-most-once（认领即消费，崩溃后该 run 不自动重放，代价明文写在 [docs/62](62-挂起帧一次性认领-单副本硬约束护栏-v1批契约设计.md) §8.1）。**立项批未落码，本段现状字段与形状仍按原文有效；落码时以本注记为改造点、并同步 002_storage.sql 与 docs/30 重启边界表。**
+> **打包 I L2 已落码收口（2026-09-25，`af38176`/`593bed0`/`df5a18c`；形状权威＝[docs/62](62-挂起帧一次性认领-单副本硬约束护栏-v1批契约设计.md) §3）**：本表两列 `resumed_at TIMESTAMPTZ`（DB 时钟，NULL＝从未被续跑）与 `resumed_by TEXT`（进程身份 `hostname:pid`，仅排障、不参与判定）已落（迁移 029 ＋ `002_storage.sql` 同步，不建新索引——认领按 `resume_token` 单行命中而它是主键）；原子认领函数 `claim_frame_for_resume(engine, resume_token, who) -> bool` ＋注入闭包 `make_resume_claim(engine)` 落 `storage/recovery.py`（`UPDATE ... WHERE resume_token = :t AND resumed_at IS NULL` 的 rowcount 判定，不引 advisory lock、不引 `SELECT FOR UPDATE SKIP LOCKED`、不引定时器；库不可达保守判负）。**认领时机＝任一进程即将越过挂起点执行下游的那一刻**——`graph/loader.py` 三处挂起（审批／事件等待／时长·到点等待）经注入的 `resume_claim(token)` 判定，返 False 抛控制流 `RunSuperseded`：输家零下游节点、零终态写、不清帧（sync `/run` 返回 suspended 形状、流式发 `superseded` 帧、webhook worker 只记日志、续跑线程只记日志）。`load_pending_frames` 现带出 `resumed_at/resumed_by`（不过滤），恢复扫描 `_resume_from_frame` 据此**跳过已认领帧**。**取向＝at-most-once**：认领之后、执行完成之前崩溃的帧不再被任何进程驱动，该 run 永久停在 suspended（宁可卡住不重复扣款，收敛靠 D36）。动机与实测见 docs/62 §0、docs/34 的 2026-09-25 复审注记。以下为原文形状，仍然有效（两列为**纯超集**，payload JSON 形状零改动）。
 
 ```yaml
 resume_token: string            # uuid4 hex，即现有 approval/debug token（决策/恢复端点零改动）
@@ -965,6 +965,8 @@ node_id: string
 kind: "approval" | "debug" | "wait"
 created_at: string              # UTC ISO-8601
 deadline_at: string | null      # UTC 绝对时刻（审批超时/wait 到点）；恢复后按剩余时长等待，不重计
+resumed_at: timestamp | null    # 迁移 029：DB 时钟（CURRENT_TIMESTAMP）置位＝本帧已被某进程认领越过挂起点；NULL＝还没人越过。不参与 payload，不进 JSON 帧
+resumed_by: string | null       # 迁移 029：认领进程身份 "hostname:pid"，仅排障，不参与判定
 wait: object | null             # 仅 wait-event 帧（docs/53；docs/54 纯超集）：{waitType:"event", eventKey(首键), eventKeys?:[...](多事件竞速 1-8), onTimeout:"continue"|"fail", timeoutSeconds(已求值秒,1-86400)}；duration 帧不带此键
 graph_snapshot: object          # 保存时图定义副本（M6 版本化未落地前随帧内嵌，防恢复错位）
 resume_state:                   # 续跑载荷（挂起点续跑，不重跑上游）
