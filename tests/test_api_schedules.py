@@ -62,13 +62,18 @@ def _publish(body: dict) -> tuple[str, int]:
     return graph_id, int(published.json()["releaseVersion"])
 
 
-@pytest.fixture()
-def schedule_graph():
-    """每个用例自己的图＋结束时清调度（store 是全局的，不清会串味）。"""
-    graph_id, version = _publish(_graph())
-    yield graph_id, version
+@pytest.fixture(autouse=True)
+def _clean_schedules():
+    """store 是全局的（不按租户装配的理由见 `scheduling/store.py`），用例之间必须归零。"""
+    yield
     schedule_store().reset_tenant("t1")
     schedule_store().reset_tenant("t2")
+
+
+@pytest.fixture()
+def schedule_graph():
+    graph_id, version = _publish(_graph())
+    return graph_id, version
 
 
 def _find(graph_id: str, headers=None) -> dict | None:
@@ -212,3 +217,39 @@ def test_u891_bad_cron_is_refused_at_save_time_with_a_precise_code(cron, code):
 def test_u891b_a_valid_cron_still_saves():
     graph_id, _ = _publish(_graph(cron="0 9 * * 1-5"))
     assert _find(graph_id)["cron"] == "0 9 * * 1-5"
+
+
+# --- U892–U894 cron 预演端点（步 ⑤ 补的只读口；合法与非法都回 200） ----------
+
+def test_u892_preview_returns_three_increasing_utc_slots_and_viewer_can_read():
+    before = client.get("/api/schedules", headers=VIEWER_A).json()["items"]
+    response = client.post("/api/schedules/cron-preview", json={"cron": "*/5 * * * *"}, headers=VIEWER_A)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["valid"] is True and body["timeZone"] == "UTC"
+    slots = [datetime.fromisoformat(item) for item in body["nextFireAt"]]
+    assert len(slots) == 3, "三槽是排障用的：少给一条就等于把判断又丢回给运营"
+    assert all(later > earlier for earlier, later in zip(slots, slots[1:])), slots
+    assert all(slot.minute % 5 == 0 and slot.tzinfo is not None for slot in slots)
+    # 预演不许留下任何痕迹：不建调度、不写认领
+    assert client.get("/api/schedules", headers=VIEWER_A).json()["items"] == before
+
+
+@pytest.mark.parametrize("cron,expect", [
+    ("5/2 * * * *", "不在支持的语法内"),
+    ("0 0 30 2 *", "没有任何触发时刻"),
+    ("0 0 * * MON", "不支持该取值"),
+])
+def test_u893_an_unusable_expression_is_an_answer_not_an_error(cron, expect):
+    response = client.post("/api/schedules/cron-preview", json={"cron": cron}, headers=OPERATOR_A)
+    assert response.status_code == 200, f"预演不该用 422 拦字段级问题：{response.text}"
+    body = response.json()
+    assert body["valid"] is False and body["nextFireAt"] == []
+    assert expect in body["message"]
+
+
+def test_u894_blank_cron_is_422_and_login_is_required():
+    assert client.post(
+        "/api/schedules/cron-preview", json={"cron": "   "}, headers=OPERATOR_A
+    ).status_code == 422
+    assert client.post("/api/schedules/cron-preview", json={"cron": "* * * * *"}).status_code == 401
