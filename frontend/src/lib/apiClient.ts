@@ -350,6 +350,8 @@ export type RunEvent =
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
   headers.set('Content-Type', 'application/json')
+  // D13 后端元数据多语言：把当前应用语言带给后端，使其按 locale 换模板/适配器描述（docs/70）
+  headers.set('Accept-Language', getLanguage())
   const token = getToken()
   if (token) headers.set('Authorization', `Bearer ${token}`)
   const response = await fetch(path, { ...init, headers })
