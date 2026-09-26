@@ -57,8 +57,10 @@ def ok(cond: bool, msg: str) -> None:
 
 
 def _key() -> str:
-    """主密钥/HMAC 密钥要求：base64url 解码后**恰 32 字节**（`secrets.token_urlsafe(48)`
-    解出 48 字节，会被拒——这条在真机器上踩过一次，所以留成函数而不是随手写）。"""
+    """两把密钥的**实际**要求不一样：`assert_prod_secrets()` 只查环境变量字符串 ≥32
+    （`bootstrap.py:69`，HMAC 密钥到此为止），而 `ATLAS_MASTER_KEY` 还要经 base64url
+    解码后**恰 32 字节**才能建 AES-GCM provider（`secrets.py:84`，`token_urlsafe(48)`
+    解出 48 字节会被拒）。这条在真机器上踩过一次，所以统一按最严的那个生成。"""
     return base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("=")
 
 
