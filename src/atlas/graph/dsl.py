@@ -16,6 +16,7 @@ from atlas.cards.catalog import get_card
 from atlas.graph.conditions import ConditionEvalError
 from atlas.graph.conditions import parse as parse_condition
 from atlas.graph.conditions import validate_expression
+from atlas.scheduling.cron import CronExpressionError, validate_cron
 
 IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 EVENT_KEY_PLACEHOLDER_RE = re.compile(r"\{\{.*?\}\}")
@@ -1430,8 +1431,13 @@ def _validate_node_config(node: NodeDSL) -> list[Issue]:
 
     if node.type == "trigger":
         trigger_type = config.get("triggerType")
-        if trigger_type in ("schedule", "cron") and not config.get("cron"):
-            return [add("定时触发必须填写 Cron 表达式", "/cron", "NODE_TRIGGER_CRON_REQUIRED")]
+        if trigger_type in ("schedule", "cron"):
+            if not config.get("cron"):
+                return [add("定时触发必须填写 Cron 表达式", "/cron", "NODE_TRIGGER_CRON_REQUIRED")]
+            try:
+                validate_cron(str(config.get("cron")))
+            except CronExpressionError as exc:
+                return [add(str(exc), "/cron", "NODE_TRIGGER_CRON_INVALID")]
         if trigger_type == "webhook" and not config.get("webhookUrl"):
             return [add("Webhook 触发必须填写 URL", "/webhookUrl", "NODE_TRIGGER_WEBHOOK_URL_REQUIRED")]
     elif node.type == "ai_decision":
