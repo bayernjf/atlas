@@ -3,6 +3,15 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### docs：打包 N 立项——定时触发调度器 v1 契约（docs/68，2026-09-26 用户「先开 N4 定时触发」；docs-only 未落码；ADR T30）
+
+- **真空在哪**：`schedule/cron` 触发节点自 W 系列起只有 `graph/dsl.py:1433` 的"填没填"校验，**`src/atlas` 内没有任何调度器**（grep 只命中该处校验与值班轮换）。运营者能把 trigger 选成"定时"、能发布、能保存，**但图永远不会自己跑**——而 `docs/05:437/490/720` 三处以"定时触发"为承诺。这是 docs/63 §0A 的 **N4**。
+- **七条决策（docs/68 §1，任何一条要改先改契约）**：① **自研最小 5 字段 cron 子集、零新依赖**（**ADR T30**，依 T16/T17 先例）——支持 `*`/`*/n`/`a-b`/`a-b/n`/列表/显式数值，不支持 `?`/`L`/`W`/`#`/秒/`@daily`；解析失败＝保存期 422 `NODE_TRIGGER_CRON_INVALID`，**不做"看不懂就当 `*`"的兜底**（静默放宽频率比拒绝保存危险）；② **UTC-only**（命名时区留待 docs/08 B 组函数库，不半吊子）；③ **只跑发布时钉下的版本，永不回落草稿**；④ **注册＝发布派生**（不是让用户另填一张表），`enabled` 跨重启保留；⑤ **槽位一次性认领**（`schedule_fires` PK `(schedule_id, slot_utc)` ＋ `ON CONFLICT DO NOTHING`，照 docs/62 L2 同一条纪律）⇒ **重启不补跑**、两进程也只触发一次；⑥ 同图 `running`/`suspended` ⇒ 跳过并计数、**不消耗该槽位认领**（否则一次重叠白吃一个槽）；⑦ **不解锁多副本**，单副本三道闸与 D19/D20/D27/D31/D32 一条不动。
+- **形状**：新包 `src/atlas/scheduling/{cron,engine,models}.py`，`engine.tick(now, schedules, claim, dispatch)` 全注入、不持线程不 import 存储（⇒ 调度语义可在不起真时钟下完整单测）；迁移 030 两表；lifespan 装配排在 `recover_pending` **之后**（避免恢复未完就派发）；新增 3 端点（列表／开关／`run-now`，`run-now` **不写认领表**、不占槽位）；前端一张调度表＋trigger 面板 cron 即时校验＋`schedules` i18n 两档。
+- **验收口径**（docs/68 §4，U874–U891）：除常规正测外明写**三条反向门**（把认领短路成恒真／把重叠跳过短路成直接派发／打开启动追赶，三条各自必须转红，实跑贴结果），以及**一次真进程端到端**——cron `* * * * *` ＋缩短 tick，等真实派发落 `runs`，再重启确认不补跑。"图真的会自己跑"只有这一种证据。
+- **六条残余风险照实写**（§6）：不补跑是选择不是缺陷（停 3 小时＝丢 3 小时槽，漏跑比补跑安全，可见性靠 `skipCount`/`lastFiredAt`）；UTC 对国内运营是真实认知负担；无别名/`?` 会让外部表达式保存失败（有意）；内存档认领历史易失⇒重启可能重复触发一次（生产必须 PG 档）；关调度不取消在途 run；**N3 仍开**，核心闭环没因本批翻绿。
+- **同步面**：docs/68 新建＋docs/10 §4 ADR T30＋docs/08 §八 立项条与 A 组新行（A 组由"0 项"改为"1 项"）＋docs/00 地图行＋docs/03 `schedule_record`/`schedule_fire` 两族契约占位、CHANGELOG、handoff。**零代码/零迁移/零依赖改动**；落码按 docs/68 §5 的 ②–⑥ 原子序另行开工。
+
 ### fix：打包 M——渠道工具接通通用 JSON 参数通道，图里第一次能真调 Shopify 退款（2026-09-25，契约 docs/67；`fix(graph)` → `test(graph)` → 收口 docs；零新迁移/端点/错误码/i18n 键）
 
 - **症状**：`channel:shopify/<binding>/create_refund` 在图里**必失败**。路由只把 `{http, database, message, memory}` 与 `openapi:` 送进通用 JSON 通道（`graph/loader.py:1701`），渠道 id 落进 demo shop 的**按能力硬编码装配**，`create_refund` 不在特判名单里 ⇒ 只拿到 `{"note": …}` ⇒ 真适配器取 `params["order_id"]` KeyError ⇒ `CHANNEL_INVALID_PARAMETER`。这是 docs/63 §0A 的 **N2**，也是"产品核心完全可用"判否的第二条。
