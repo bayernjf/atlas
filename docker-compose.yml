@@ -50,6 +50,13 @@ services:
       ATLAS_STORAGE_BACKEND: pg
       DATABASE_URL: postgresql+psycopg://atlas:atlas@db:5432/atlas
       LITELLM_MODEL: ${LITELLM_MODEL:-}
+      # 缺省仍是 dev 语义（种子账号照播）。要按 prod 起：ATLAS_ENV=prod 并同时给出
+      # ATLAS_MASTER_KEY／ATLAS_APPROVAL_HMAC_SECRET／ATLAS_ADMIN_BOOTSTRAP_PASSWORD，
+      # 任一缺失或过短都会**拒绝启动**（docs/64 J-1a、docs/66 打包 L）。
+      ATLAS_ENV: ${ATLAS_ENV:-dev}
+      ATLAS_MASTER_KEY: ${ATLAS_MASTER_KEY:-}
+      ATLAS_APPROVAL_HMAC_SECRET: ${ATLAS_APPROVAL_HMAC_SECRET:-}
+      ATLAS_ADMIN_BOOTSTRAP_PASSWORD: ${ATLAS_ADMIN_BOOTSTRAP_PASSWORD:-}
     depends_on:
       db:
         condition: service_healthy
