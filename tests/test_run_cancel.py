@@ -495,6 +495,87 @@ def test_cancel_finished_run_returns_409():
     assert resp.status_code == 409
 
 
+# --------------------------------------------------------------------------- #
+# U895–U897 打包 O（docs/69 §2）：同步 /run 的急停句柄
+#
+# 同步端点会阻塞请求线程，故在线程里发 /run、主线程轮询 runId 再取消
+# （与上方 _start_stream 同构）。_wait_graph 的 2 秒 wait 提供取消窗口。
+# --------------------------------------------------------------------------- #
+def _start_sync_run(graph_id: str, body: dict):
+    box: dict[str, Any] = {}
+
+    def work():
+        resp = client.post(
+            f"/api/graphs/{graph_id}/run", json=body, headers=DEFAULT_AUTH_HEADER
+        )
+        box["status"] = resp.status_code
+        box["json"] = resp.json() if resp.headers.get("content-type", "").startswith(
+            "application/json"
+        ) else resp.text
+
+    thread = threading.Thread(target=work, daemon=True)
+    thread.start()
+    return thread, box
+
+
+def _cancel_sync_run_in_flight(graph_id: str):
+    thread, box = _start_sync_run(graph_id, {"inputs": {}})
+    run_id = _find_run_id(graph_id)
+    time.sleep(0.4)  # 进入 wait 阻塞（不在中点强杀，等下一节点边界）
+    resp = client.post(f"/api/runs/{run_id}/cancel", headers=DEFAULT_AUTH_HEADER)
+    assert resp.status_code == 200 and resp.json() == {"run_id": run_id, "cancelled": True}
+    # 重复取消幂等 200（句柄仍在直至请求退出）。
+    assert (
+        client.post(f"/api/runs/{run_id}/cancel", headers=DEFAULT_AUTH_HEADER).status_code
+        == 200
+    )
+    thread.join(TIMEOUT)
+    assert not thread.is_alive(), "sync run thread hung"
+    return run_id, box
+
+
+def test_cancel_running_sync_run_returns_200_cancelled_shape():
+    gid = _create_graph(_wait_graph())
+    run_id, box = _cancel_sync_run_in_flight(gid)
+    assert box["status"] == 200
+    assert box["json"]["status"] == "cancelled"
+    assert box["json"]["outputs"] == {}
+    assert box["json"]["trace"][-1].endswith("cancelled by user")
+    detail = client.get(f"/api/runs/{run_id}", headers=DEFAULT_AUTH_HEADER).json()
+    assert detail["status"] == "cancelled"
+
+
+def test_sync_cancelled_run_never_enters_rollout_gate(monkeypatch):
+    """取消是用户主动终止，不算失败 ⇒ 不得进 M9 灰度门控评估（与流式 :3203 同口径）。
+
+    同测内并排一条对照：正常完成的同步运行必须进门控一次，否则这条断言
+    “一次都没进”可能只是探测器没接上。
+    """
+    seen: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        "atlas.api.main.evaluate_after_run",
+        lambda services, record: seen.append(record),
+    )
+    gid = _create_graph(_wait_graph())
+    _cancel_sync_run_in_flight(gid)
+    assert seen == []
+
+    control_gid = _create_graph(_linear_graph_dict())
+    control = client.post(
+        f"/api/graphs/{control_gid}/run", json={"inputs": {}}, headers=DEFAULT_AUTH_HEADER
+    )
+    assert control.status_code == 200
+    assert len(seen) == 1
+
+
+def test_cancel_sync_run_after_it_settled_returns_409():
+    """cancelled 出口也必须注销句柄（completed 出口由上一用例守着）。"""
+    gid = _create_graph(_wait_graph())
+    run_id, _box = _cancel_sync_run_in_flight(gid)
+    resp = client.post(f"/api/runs/{run_id}/cancel", headers=DEFAULT_AUTH_HEADER)
+    assert resp.status_code == 409
+
+
 def _linear_graph_dict() -> dict:
     return {
         "version": 1,
