@@ -8,6 +8,14 @@
 - **核实结论**：逐行复 `src/atlas/coordination/sandbox.py` 确证 `run_return_refund` 经 `TaskStore.dispatch/accept/start/complete` 编排客服核验＋物流签收、**从不调 `compile_graph`/`run_graph`**；`src/atlas/logistics/adapter.py:1` 自述为刻意假物流——`sandbox.py` 本身即 TaskStore 层协调演示，按设计不走完整图编译/运行路径。
 - **不修代码，改文档**：docs/63 §2 ③ 由"仍开放"改"✅ 已闭合"——验收链缺口实际已由 `tests/test_refund_e2e_full_chain.py`（`405161e`，§2 ②）经 `run_graph` 真实驱动含 `human_approval` 节点与真实 `shop/process_refund` 适配器覆盖；docs/63 :117 〔勘〕改〔勘·已复〕，并把"不得对外称端到端"的告诫收窄为仅适用于 `sandbox.py` 协调演示脚本本身，不再覆盖整个里程碑。docs/08 B 组 M7 行划销已收口、handoff 文档地图摘要同步；零代码、零测试、零迁移。
 
+### feat：D13 后端元数据多语言 切片（2026-09-27，契约 docs/70；零新依赖/零迁移/零新端点/零新错误码）
+
+- **后端按 `Accept-Language` 首档换模板/适配器描述**：`src/atlas/web/i18n.py`（`resolve_locale` 首档匹配 zh-CN/en-US、fail-closed 回退、`localize_template` 换 `name`/`description`、`localize_tool_desc` 仅换 `description`、集中翻译表 `TEMPLATE_I18N`/`CAPABILITY_I18N`）；`api/main.py` 三端点（`GET /api/templates`、`GET /api/templates/{id}`、`GET /api/adapters`）在返回前按 locale 换值。canonical 仍是各实体的 zh-CN 串，翻译集中在本模块、不改模型。
+- **前端自动透传语言**：`frontend/src/lib/apiClient.ts` 的 `request<T>` 注入 `Accept-Language: <getLanguage()>`，后端即可按当前应用语言返回本地化元数据（与既有 Bearer 注入同构）。
+- **约定（docs/70 §2/§8，落码前已拍板 D1/D3）**：模板 `name`/`description` 均本地化（模板 `id` 是独立稳定键）；适配器**仅 `description` 本地化**——`name` 是 wire 标识符，前端 `buildToolOptions` 用 `${adapter_id}/${tool.name}` 作 Select `value` 必须＝`config.tool`，本地化会破坏 tool_call 契约；`tags` 不翻译、技术专名（Shopify/PostgreSQL）保留原文。
+- **测试反向门 G1–G3 共 9 例**（`tests/test_api_i18n_metadata.py`，docs/13 U900–U908）：G1 en-US 返回英文、适配器 name 不随语言变；G2 缺省/非法/不支持语言 fail-closed 回退 zh-CN；G3 每个模板与能力双语非空（翻译覆盖完整性）。
+- **门（先跑后写）**：后端 `pytest` **1942 passed / 119 skipped / 0 failed** 零回归；前端零改动不跑全量门、`pnpm build` 过。**未解除** D13 整体——自然语言多语言、i18next 本体、navigator 探测仍缓做 docs/14 D13。
+
 ### fix：打包 O 收口——同步急停句柄 ＋ 前端认 superseded 帧（2026-09-27，契约 docs/69；零迁移/零新端点/零新错误码/零新依赖）
 
 - **O-1 同步 `/run` 补急停句柄**（docs/34 复审 `:70`、docs/14 `:133`/`:140` 既有缺口）：`cancellation_broker.register` 此前只在流式路径调用，同步端点从不登记 ⇒ `POST /api/runs/{id}/cancel` 对同步运行在途**恒 409**。现与流式同构——请求线程 `register(run_id)`、`run_graph(..., is_cancelled=cancel_event.is_set)`、`finally: unregister` 覆盖全部出口、`except RunCancelled` 排在 `except Exception` 之前（否则被吞成 500）；在途急停现返 **200 + `status="cancelled"`**（`run_store`/`monitoring` 落 cancelled、**不进** `evaluate_after_run`，与流式 cancelled 逐条对齐，避免新增错误码与灰度门控判据分叉），已结束无句柄仍 409（U895–U897）。
