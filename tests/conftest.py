@@ -8,7 +8,16 @@ test_api_auth.py 的未登录/跨角色场景使用自建 TestClient，不受本
 
 from __future__ import annotations
 
+import os
+
 import pytest
+
+# docs/68 §2.3：调度线程挂在 lifespan 上，而 test_api_demo 有三处用 `with TestClient(app)`
+# ——那会真的跑 startup，起一条跨用例活的后台 tick。实测后果是它能把别的用例的共享审批
+# broker 放行掉（test_subgraph_events 的审批用例被吹成 flaky）。测试默认关线程：
+# 调度语义由直接调用 tick/run_schedule_tick 的用例覆盖，真起线程的验收在真机端到端冒烟里。
+# setdefault 而不是直接赋值：真机冒烟脚本要能显式打开它。
+os.environ.setdefault("ATLAS_SCHEDULE_ENABLED", "0")
 
 # 决策/观察线程自建 TestClient 时复用当前 t1 admin 头（每用例刷新）。
 DEFAULT_AUTH_HEADER: dict[str, str] = {}
