@@ -148,6 +148,16 @@ from atlas.storage.recovery import (
     make_frame_sink,
     make_resume_claim,
 )
+from atlas.scheduling.cron import CronExpressionError, next_fire_utc, validate_cron
+from atlas.scheduling.engine import (
+    ACTION_SKIPPED_OVERLAP,
+    TickLedger,
+    TickOutcome,
+    tick,
+)
+from atlas.scheduling.models import ScheduleRecord, schedule_projection, slot_key
+from atlas.scheduling.pg_store import PgScheduleStore
+from atlas.scheduling.store import InMemoryScheduleStore, ScheduleStore
 from atlas.template import get_template, list_templates
 from atlas.versioning.publish import publish as publish_graph_version
 from atlas.versioning.upgrades import subgraph_upgrade_plan
@@ -300,7 +310,10 @@ async def lifespan(_app: FastAPI):
     get_decision_client()
     # docs/65 K-A：启动跑一次 retention 清扫（PG 档；失败只 warning 不阻断启动）。
     run_retention_once()
+    # docs/68 §2.3：调度线程在恢复扫描**之后**起——先让挂起帧归位，再派发新运行。
+    start_scheduler()
     yield
+    stop_scheduler()
 
 
 # docs/65 K-D：统一日志 formatter（UTC 时间戳/级别/logger/request_id）；幂等。
@@ -924,7 +937,7 @@ def _webhook_resolve(graph_id: str, tenant: str, event: TriggerEvent) -> int | N
 def _webhook_trigger(graph_id: str, version: int, event: TriggerEvent, tenant: str) -> None:
     services = tenant_registry.get(tenant)
     _BACKGROUND_WORKER_POOL.submit(
-        _webhook_run_worker, services, tenant, graph_id, version, event
+        _background_run_worker, services, tenant, graph_id, version, event
     )
 
 
@@ -949,14 +962,21 @@ _webhook_deliverer = WebhookDeliverer(
 )
 
 
-def _webhook_run_worker(
+def _background_run_worker(
     services: TenantServices, tenant_id: str,
     graph_id: str, version: int, event: TriggerEvent,
+    *, mode: str = "webhook", run_id: str | None = None,
 ) -> None:
-    """后台运行钉版图：run 记录独立于 HTTP 请求；失败落 failed，不回传 Shopify。"""
-    run_id = uuid.uuid4().hex
+    """后台运行钉版图：run 记录独立于 HTTP 请求；失败落 failed，不回传触发方。
+
+    webhook 与定时触发共用这条路径（docs/68 §1 D-3：派发按发布号钉版，绝不回落草稿）。
+    `run_id` 由调度派发方预先 begin 后传入——它必须在 tick 内就让 run 变成 running，
+    否则下一轮 tick 的"同图还在跑"判定会漏看这条刚提交的运行。
+    """
     run_store = services.run_store
-    run_store.begin(run_id=run_id, graph_id=graph_id, mode="webhook")
+    if run_id is None:
+        run_id = uuid.uuid4().hex
+        run_store.begin(run_id=run_id, graph_id=graph_id, mode=mode)
     try:
         raw = services.graph_store.get(graph_id, version)
         if raw is None:
@@ -983,15 +1003,320 @@ def _webhook_run_worker(
             outputs=result["outputs"], trace=result["trace"],
         )
     except RunSuperseded as exc:
-        # docs/62 §2 D-4：webhook 后台运行同样受认领门约束——输家不落 failed
+        # docs/62 §2 D-4：后台运行同样受认领门约束——输家不落 failed
         # （否则把赢家的执行记录成失败），只让位并留日志。
-        logger.info("webhook 运行让位 graph=%s@%s：%s", graph_id, version, exc)
+        logger.info("后台运行让位 graph=%s@%s：%s", graph_id, version, exc)
     except Exception as exc:
-        logger.error("webhook 触发图运行失败 graph=%s@%s", graph_id, version, exc_info=True)
+        logger.error("%s 触发图运行失败 graph=%s@%s", mode, graph_id, version, exc_info=True)
         run_store.finish(
             run_id=run_id, status="failed",
             error=f"{type(exc).__name__}: {exc}",
         )
+
+
+# --- 定时触发调度器（docs/68，打包 N／ADR T30） ---------------------------
+
+MIN_SCHEDULE_TICK_SECONDS = 1
+MAX_SCHEDULE_TICK_SECONDS = 300
+# 重叠判定要扫的在途运行条数上限：超过就会漏判（后果只是同图并发一次，派发互斥仍由
+# 认领表守着），扫全表换不来什么。
+BUSY_SCAN_LIMIT = 200
+
+
+def _schedule_tick_seconds() -> int:
+    raw = os.getenv("ATLAS_SCHEDULE_TICK_SECONDS", "").strip()
+    if not raw:
+        return 30
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("ATLAS_SCHEDULE_TICK_SECONDS 非整数（%r），按默认 30 秒", raw)
+        return 30
+    bounded = max(MIN_SCHEDULE_TICK_SECONDS, min(MAX_SCHEDULE_TICK_SECONDS, value))
+    if bounded != value:
+        logger.warning(
+            "ATLAS_SCHEDULE_TICK_SECONDS %s 超出 %s-%s，按 %s 秒",
+            raw, MIN_SCHEDULE_TICK_SECONDS, MAX_SCHEDULE_TICK_SECONDS, bounded,
+        )
+    return bounded
+
+
+def _schedule_enabled() -> bool:
+    return os.getenv("ATLAS_SCHEDULE_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+_schedule_store: ScheduleStore | None = None
+_schedule_store_lock = threading.Lock()
+_scheduler_stop = threading.Event()
+_scheduler_thread: threading.Thread | None = None
+
+
+def schedule_store() -> ScheduleStore:
+    """全局调度 store（惰性）：不按租户装配的理由见 `scheduling/store.py` 模块头。"""
+    global _schedule_store
+    with _schedule_store_lock:
+        if _schedule_store is None:
+            _schedule_store = (
+                PgScheduleStore(get_pg_backend().engine)
+                if STORAGE_BACKEND == "pg"
+                else InMemoryScheduleStore()
+            )
+        return _schedule_store
+
+
+def _start_pinned_run(
+    services: TenantServices, tenant_id: str, graph_id: str, version: int, payload: dict
+) -> str:
+    """按钉版起一次后台运行，返回 runId。
+
+    `begin` 在这里**同步**做完再交给线程池：调度 tick 必须立刻看得见这条 running，
+    否则同一张图会在下一轮（30 秒后）被"同图还在跑"判定放过去。
+    """
+    run_id = uuid.uuid4().hex
+    services.run_store.begin(run_id=run_id, graph_id=graph_id, mode="schedule")
+    event = TriggerEvent(channel="api", payload=payload)
+    _BACKGROUND_WORKER_POOL.submit(
+        _background_run_worker,
+        services, tenant_id, graph_id, version, event,
+        mode="schedule", run_id=run_id,
+    )
+    return run_id
+
+
+def _schedule_claim(record: ScheduleRecord, slot: datetime) -> bool:
+    return schedule_store().claim(record.tenant_id, record.graph_id, slot)
+
+
+def _schedule_is_busy(record: ScheduleRecord) -> bool:
+    """同图是否还有 running/suspended 运行（docs/68 §1 D-6，保守按图粒度判）。"""
+    services = tenant_registry.get(record.tenant_id)
+    for status in ("running", "suspended"):
+        for run in services.run_store.list(status=status, limit=BUSY_SCAN_LIMIT):
+            if run.get("graphId") == record.graph_id:
+                return True
+    return False
+
+
+def _schedule_dispatch(record: ScheduleRecord, slot: datetime) -> None:
+    """派发一次定时运行；事件载荷带槽位，图里可用 `{{global.event.payload.slot}}` 引用。"""
+    services = tenant_registry.get(record.tenant_id)
+    key = slot_key(slot)
+    _start_pinned_run(
+        services, record.tenant_id, record.graph_id, record.version,
+        {"source": "schedule", "slot": key, "cron": record.cron},
+    )
+    schedule_store().note_fired(record.tenant_id, record.graph_id, slot)
+    services.audit_store.record(
+        tenant_id=record.tenant_id, actor="scheduler", action="schedule.fire",
+        status_code=200, path=f"graph={record.graph_id}@{record.version} slot={key}", ip="",
+    )
+
+
+def run_schedule_tick(ledger: TickLedger | None = None) -> list[TickOutcome]:
+    """跑一轮调度评估：引擎只判定，写库与跳过计数都在这里（`scheduling/engine.py` 零 IO）。"""
+    store = schedule_store()
+    outcomes = tick(
+        datetime.now(timezone.utc),
+        store.list_all(),
+        _schedule_claim,
+        _schedule_dispatch,
+        busy=_schedule_is_busy,
+        ledger=ledger,
+    )
+    for outcome in outcomes:
+        if outcome.action == ACTION_SKIPPED_OVERLAP:
+            store.note_skipped(outcome.tenant_id, outcome.graph_id, outcome.slot_utc)
+    return outcomes
+
+
+def _scheduler_loop() -> None:
+    ledger = TickLedger()
+    interval = _schedule_tick_seconds()
+    while not _scheduler_stop.is_set():
+        try:
+            run_schedule_tick(ledger)
+        except Exception:  # noqa: BLE001 — 一轮调度的异常不能带走进程
+            logger.exception("调度 tick 异常，下一轮继续")
+        _scheduler_stop.wait(interval)
+
+
+def start_scheduler() -> None:
+    """在 lifespan 里、`recover_pending()` 之后起线程（docs/68 §2.3 的启动顺序）。"""
+    global _scheduler_thread
+    if _scheduler_thread is not None:
+        return
+    if not _schedule_enabled():
+        logger.info("定时触发调度器已由 ATLAS_SCHEDULE_ENABLED 关闭")
+        return
+    _scheduler_stop.clear()
+    _scheduler_thread = threading.Thread(
+        target=_scheduler_loop, name="atlas-scheduler", daemon=True
+    )
+    _scheduler_thread.start()
+    logger.info(
+        "定时触发调度器已启动：每 %s 秒评估一轮（UTC 槽位、不补跑；单副本约束不变）",
+        _schedule_tick_seconds(),
+    )
+
+
+def stop_scheduler(timeout_seconds: float = 2.0) -> None:
+    global _scheduler_thread
+    if _scheduler_thread is None:
+        return
+    _scheduler_stop.set()
+    _scheduler_thread.join(timeout=timeout_seconds)
+    if _scheduler_thread.is_alive():
+        # 宁可留着这个引用：清成 None 会让下一次 start_scheduler 再起**第二条** tick 循环。
+        # 两条循环不会双发（派发权在认领表），但会双份扫库与双份日志，排查时说不清是谁。
+        logger.warning("调度线程未在 %ss 内退出，保留引用避免起第二条", timeout_seconds)
+        return
+    _scheduler_thread = None
+
+
+def _schedule_cron_of_published(graph_raw: dict) -> str | None:
+    """已发布版本里定时触发节点的 cron（docs/68 §1 D-4：注册＝发布派生）。
+
+    多个定时触发节点时只按**第一个**建调度（一图一条调度是 v1 的形状），其余在日志里
+    点名——静默忽略第二个 cron 就是"配置看着在、跑的不是它"，与 docs/63 §0A 的"巧合式
+    验收"同形，不能自己再造一份。
+    """
+    found: list[str] = []
+    for node in graph_raw.get("nodes") or []:
+        if not isinstance(node, dict) or node.get("type") != "trigger":
+            continue
+        config = node.get("config") or {}
+        if config.get("triggerType") in ("schedule", "cron") and config.get("cron"):
+            found.append(str(config["cron"]))
+    if not found:
+        return None
+    if len(found) > 1:
+        logger.warning(
+            "图里有 %s 个定时触发节点，只按第一个（%s）建调度，其余忽略：%s",
+            len(found), found[0], found[1:],
+        )
+    return found[0]
+
+
+def _derive_schedule_on_publish(
+    services: TenantServices, tenant_id: str, graph_id: str, version: int
+) -> None:
+    """发布出口：有定时触发就 upsert，没有就撤销——发布是版本变化的唯一时刻。"""
+    raw = services.graph_store.get(graph_id, version)
+    if raw is None:
+        return
+    cron = _schedule_cron_of_published(raw)
+    store = schedule_store()
+    if cron is None:
+        store.remove(tenant_id, graph_id)
+        return
+    record = store.upsert_published(
+        tenant_id=tenant_id, graph_id=graph_id, version=version, cron=cron
+    )
+    logger.info(
+        "定时调度已登记：%s -> %s@%s（cron=%s，UTC）",
+        graph_id, graph_id, record.version, record.cron,
+    )
+
+
+class ScheduleEnabledRequest(BaseModel):
+    enabled: bool
+
+
+def _no_schedule_detail(graph_id: str) -> str:
+    return f"图 {graph_id} 没有定时调度：只有含定时触发节点的**已发布**版本才会登记"
+
+
+@app.get("/api/schedules")
+def list_schedules(principal: Principal = Depends(require("read"))) -> dict[str, Any]:
+    """本租户的调度登记（含下次触发时刻，UTC 口径）；纯只读，不改任何状态。"""
+    now = datetime.now(timezone.utc)
+    return {
+        "items": [
+            schedule_projection(record, now)
+            for record in schedule_store().list_tenant(principal.tenant_id)
+        ]
+    }
+
+
+@app.post("/api/schedules/{graph_id}/enabled")
+def set_schedule_enabled(
+    http_request: Request,
+    graph_id: str,
+    request: ScheduleEnabledRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """开/关一条调度（跨重启保留）。关只停未来触发，不取消在途运行（docs/68 §6.5）。"""
+    services = services_for(principal)
+    record = schedule_store().set_enabled(principal.tenant_id, graph_id, request.enabled)
+    if record is None:
+        raise HTTPException(status_code=404, detail=_no_schedule_detail(graph_id))
+    _record_audit(
+        services, principal, http_request,
+        "schedule.enable" if request.enabled else "schedule.disable", 200,
+    )
+    return schedule_projection(record, datetime.now(timezone.utc))
+
+
+@app.post("/api/schedules/{graph_id}/run-now")
+def run_schedule_now(
+    http_request: Request, graph_id: str, principal: Principal = Depends(require("operate"))
+) -> dict[str, Any]:
+    """按钉版立刻跑一次（联调与验收入口）：**不写认领表、不占槽位**（docs/68 §2.4）。"""
+    services = services_for(principal)
+    store = schedule_store()
+    record = store.get(principal.tenant_id, graph_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=_no_schedule_detail(graph_id))
+    if _schedule_is_busy(record):
+        raise HTTPException(
+            status_code=409,
+            detail=f"图 {graph_id} 仍有运行在执行中（running/suspended），本次立即运行已跳过",
+        )
+    now = datetime.now(timezone.utc)
+    run_id = _start_pinned_run(
+        services, principal.tenant_id, record.graph_id, record.version,
+        {"source": "schedule-run-now", "slot": slot_key(now), "cron": record.cron},
+    )
+    # 记的是"最近一次真实运行"，不是槽位认领：run-now 不占槽，但运营要看得见它跑过。
+    store.note_fired(principal.tenant_id, graph_id, now)
+    _record_audit(services, principal, http_request, "schedule.run_now", 200)
+    return {"runId": run_id, "graphId": record.graph_id, "version": record.version}
+
+
+class CronPreviewRequest(BaseModel):
+    cron: str = ""
+
+
+# 预览只数到第 3 个槽：再多没有排障意义，也防止逐分钟扫描变慢。
+MAX_CRON_PREVIEW_HITS = 3
+
+
+@app.post("/api/schedules/cron-preview")
+def preview_schedule_cron(
+    request: CronPreviewRequest, principal: Principal = Depends(require("read"))
+) -> dict[str, Any]:
+    """cron 预演：这个表达式合不合法、接下来三个 UTC 槽位是几点（不落库、不占槽位）。
+
+    刻意**不在前端复刻一个 cron 解析器**：两份实现对"日与周取并集""7＝周日"这类边角
+    迟早分叉，分叉的表现就是画布里看着绿、保存时才 422。合法与非法都回 200——请求本身
+    格式正确，"表达式不合法"是答案不是错误（与保存期 422 的分工：这里只预演，不拦保存）。
+    """
+    cron = request.cron.strip()
+    if not cron:
+        raise HTTPException(status_code=422, detail="请先填写 Cron 表达式（5 个字段：分 时 日 月 周）")
+    cursor = datetime.now(timezone.utc)
+    try:
+        spec = validate_cron(cron, now=cursor)
+    except CronExpressionError as exc:
+        return {"valid": False, "message": str(exc), "nextFireAt": [], "timeZone": "UTC"}
+    hits: list[str] = []
+    while len(hits) < MAX_CRON_PREVIEW_HITS:
+        upcoming = next_fire_utc(spec, cursor)
+        if upcoming is None:
+            break
+        hits.append(upcoming.isoformat())
+        cursor = upcoming
+    return {"valid": True, "message": "", "nextFireAt": hits, "timeZone": "UTC"}
 
 
 @app.post("/api/channels/hooks/shopify/{binding_id}")
@@ -2065,6 +2390,8 @@ def publish_graph(
         release_version = publish_graph_version(services.graph_store, graph_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Graph 不存在：{exc.args[0]}") from exc
+    # docs/68 §1 D-4：调度不是用户另填的一张表，是发布的派生物（同处撤销已删掉定时节点的调度）。
+    _derive_schedule_on_publish(services, principal.tenant_id, graph_id, release_version)
     return PublishGraphResponse(id=graph_id, releaseVersion=release_version)
 
 
@@ -3981,6 +4308,8 @@ def demo_reset(
     （04 §5.11；用例图已快照进自身）。
     """
     tenant_registry.reset_tenant(principal.tenant_id)
+    # docs/68 §1 D-4：图被清掉而注册项还在，就会对着一张不存在的图空转派发。
+    schedule_store().reset_tenant(principal.tenant_id)
     if STORAGE_BACKEND == "pg":
         # PG 档：清挂起帧表（帧是 loader frame_sink 写的，内存 broker 不负责；recordings/feedback 保留）。
         clear_tenant_frames(get_pg_backend().engine, principal.tenant_id)

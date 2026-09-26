@@ -12,13 +12,14 @@ import { AuditLog } from './pages/AuditLog'
 import { OpenApiImports } from './pages/OpenApiImports'
 import { EmailApproval } from './pages/EmailApproval'
 import { Waits } from './pages/Waits'
+import { Schedules } from './pages/Schedules'
 import { logout as logoutApi } from './lib/apiClient'
 import { getStoredPrincipal, roleCan, UNAUTHORIZED_EVENT, type Principal } from './lib/auth'
 import { extractEmailToken } from './lib/approvals'
 import { antdTheme } from './theme/tokens'
 import { useAntdLocale } from './locales/antdLocale'
 
-type Page = 'dashboard' | 'editor' | 'monitoring' | 'memory' | 'connections' | 'users' | 'approvals' | 'audit' | 'openapi' | 'waits'
+type Page = 'dashboard' | 'editor' | 'monitoring' | 'memory' | 'connections' | 'users' | 'approvals' | 'audit' | 'openapi' | 'waits' | 'schedules'
 
 function App() {
   const antdLocale = useAntdLocale()
@@ -80,6 +81,7 @@ function App() {
           onOpenAudit={() => setPage('audit')}
           onOpenOpenApi={() => setPage('openapi')}
           onOpenWaits={() => setPage('waits')}
+          onOpenSchedules={() => setPage('schedules')}
         />
       ) : page === 'approvals' ? (
         <Approvals
@@ -107,6 +109,13 @@ function App() {
         <Connections principal={principal} onLogout={handleLogout} onBack={() => setPage('dashboard')} />
       ) : page === 'waits' && roleCan(principal.role, 'operate') ? (
         <Waits
+          principal={principal}
+          onLogout={handleLogout}
+          onBack={() => setPage('dashboard')}
+        />
+      ) : page === 'schedules' ? (
+        // 列表是 read 面（viewer 也要能看见下次触发与跳过数），写操作在页内按角色禁用。
+        <Schedules
           principal={principal}
           onLogout={handleLogout}
           onBack={() => setPage('dashboard')}

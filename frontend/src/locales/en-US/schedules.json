@@ -1,0 +1,36 @@
+{
+  "page": {
+    "title": "Scheduled triggers",
+    "description": "Lists the timed triggers in your published graphs. A schedule only runs the version pinned at publish time; editing the draft changes nothing until you publish again.",
+    "utcNotice": "Every timestamp is UTC. Slots missed while the process was down are never replayed.",
+    "refresh": "Refresh",
+    "empty": "No schedules yet: add a scheduled (Cron) trigger node to a graph and publish it, and one appears here.",
+    "loadError": "Failed to load schedules"
+  },
+  "table": {
+    "graph": "Graph",
+    "cron": "Cron expression",
+    "version": "Version",
+    "nextFire": "Next fire (UTC)",
+    "lastFired": "Last fired (UTC)",
+    "skipped": "Skipped",
+    "enabled": "Enabled",
+    "actions": "Actions"
+  },
+  "actions": {
+    "runNow": "Run now",
+    "enabled": "Schedule enabled",
+    "disabled": "Schedule disabled",
+    "running": "Started one run at v{{version}} (it does not consume a scheduled slot)",
+    "toggleFailed": "The switch did not take effect",
+    "runFailed": "Run now failed"
+  },
+  "never": "—",
+  "cron": {
+    "hint": "Five fields: minute hour day-of-month month day-of-week, evaluated in UTC. Supports *, */n, a-b, a-b/n and comma lists; 7 means Sunday.",
+    "previewing": "Previewing…",
+    "unavailable": "Preview unavailable (the check could not reach the server) — saving still validates the expression.",
+    "next": "Next three (UTC): {{times}}",
+    "invalid": "Invalid expression: {{message}}"
+  }
+}

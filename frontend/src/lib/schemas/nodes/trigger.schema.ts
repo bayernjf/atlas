@@ -8,7 +8,7 @@ export const triggerSchema: NodeConfigSchema = {
   type: 'object',
   properties: {
     triggerType: { type: 'string', enum: ['manual', 'schedule', 'webhook'], default: 'manual' },
-    cron: { type: 'string', description: 'triggerType=schedule 时必填的 Cron 表达式' },
+    cron: { type: 'string', description: 'triggerType=schedule 时必填的 Cron 表达式', 'x-widget': 'cron-input' },
     webhookUrl: { type: 'string', description: 'triggerType=webhook 时必填' },
   },
   oneOf: [

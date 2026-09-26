@@ -1,0 +1,36 @@
+{
+  "page": {
+    "title": "定时调度",
+    "description": "这里列出已发布图里的定时触发。调度只跑发布时钉下的那个版本，改草稿不生效——要重新发布。",
+    "utcNotice": "所有时刻一律 UTC（北京时间 = UTC+8）。进程停摆期间错过的槽位不会补跑。",
+    "refresh": "刷新",
+    "empty": "还没有调度：在图里放一个「定时（Cron）」触发节点并发布，这里就会出现一条。",
+    "loadError": "调度列表加载失败"
+  },
+  "table": {
+    "graph": "图",
+    "cron": "Cron 表达式",
+    "version": "版本",
+    "nextFire": "下次触发（UTC）",
+    "lastFired": "最近触发（UTC）",
+    "skipped": "跳过次数",
+    "enabled": "启用",
+    "actions": "操作"
+  },
+  "actions": {
+    "runNow": "立即运行",
+    "enabled": "已开启调度",
+    "disabled": "已停用调度",
+    "running": "已按 v{{version}} 起了一次运行（不占用定时槽位）",
+    "toggleFailed": "开关未生效",
+    "runFailed": "立即运行未成功"
+  },
+  "never": "—",
+  "cron": {
+    "hint": "5 个字段：分 时 日 月 周，按 UTC 求值。支持 * 、*/n、a-b、a-b/n 与逗号列表；7 表示周日。",
+    "previewing": "正在预演…",
+    "unavailable": "预演没问到结果（网络或登录态问题），以保存后的校验为准。",
+    "next": "接下来三次（UTC）：{{times}}",
+    "invalid": "表达式不合法：{{message}}"
+  }
+}

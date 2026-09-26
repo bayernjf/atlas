@@ -25,6 +25,7 @@ import enMemory from './en-US/memory.json'
 import enMonitoring from './en-US/monitoring.json'
 import enOpenApi from './en-US/openapi.json'
 import enRuntime from './en-US/runtime.json'
+import enSchedules from './en-US/schedules.json'
 import enValidation from './en-US/validation.json'
 import enWaits from './en-US/waits.json'
 import zhCommon from './zh-CN/common.json'
@@ -39,11 +40,12 @@ import zhMemory from './zh-CN/memory.json'
 import zhMonitoring from './zh-CN/monitoring.json'
 import zhOpenApi from './zh-CN/openapi.json'
 import zhRuntime from './zh-CN/runtime.json'
+import zhSchedules from './zh-CN/schedules.json'
 import zhValidation from './zh-CN/validation.json'
 import zhWaits from './zh-CN/waits.json'
 
 export type Locale = 'zh-CN' | 'en-US'
-export type Namespace = 'common' | 'approvals' | 'audit' | 'editor' | 'dashboard' | 'demo' | 'monitoring' | 'memory' | 'connections' | 'channels' | 'openapi' | 'runtime' | 'validation' | 'waits'
+export type Namespace = 'common' | 'approvals' | 'audit' | 'editor' | 'dashboard' | 'demo' | 'monitoring' | 'memory' | 'connections' | 'channels' | 'openapi' | 'runtime' | 'schedules' | 'validation' | 'waits'
 
 type Dict = Record<string, unknown>
 export type TranslateOptions = {
@@ -53,7 +55,7 @@ export type TranslateOptions = {
   lng?: Locale
 } & Record<string, unknown>
 
-const NAMESPACES: Namespace[] = ['common', 'approvals', 'audit', 'editor', 'dashboard', 'demo', 'monitoring', 'memory', 'connections', 'channels', 'openapi', 'runtime', 'validation', 'waits']
+const NAMESPACES: Namespace[] = ['common', 'approvals', 'audit', 'editor', 'dashboard', 'demo', 'monitoring', 'memory', 'connections', 'channels', 'openapi', 'runtime', 'schedules', 'validation', 'waits']
 
 const resources: Record<Locale, Record<Namespace, Dict>> = {
   'zh-CN': {
@@ -69,6 +71,7 @@ const resources: Record<Locale, Record<Namespace, Dict>> = {
     memory: zhMemory as Dict,
     openapi: zhOpenApi as Dict,
     runtime: zhRuntime as Dict,
+    schedules: zhSchedules as Dict,
     validation: zhValidation as Dict,
     waits: zhWaits as Dict,
   },
@@ -85,6 +88,7 @@ const resources: Record<Locale, Record<Namespace, Dict>> = {
     memory: enMemory as Dict,
     openapi: enOpenApi as Dict,
     runtime: enRuntime as Dict,
+    schedules: enSchedules as Dict,
     validation: enValidation as Dict,
     waits: enWaits as Dict,
   },

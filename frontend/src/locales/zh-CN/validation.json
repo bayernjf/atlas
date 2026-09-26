@@ -188,6 +188,7 @@
     "NODE_ID_DUPLICATE": "节点 id 重复：{{nodeId}}",
     "NODE_NAME_REQUIRED": "节点 {{nodeId}} 的名称不能为空",
     "NODE_TOOL_REQUIRED": "节点 {{owner}}：工具调用必须选择工具",
+    "NODE_TRIGGER_CRON_INVALID": "节点 {{owner}}：{{reason}}",
     "NODE_TRIGGER_CRON_REQUIRED": "节点 {{owner}}：定时触发必须填写 Cron 表达式",
     "NODE_TRIGGER_WEBHOOK_URL_REQUIRED": "节点 {{owner}}：Webhook 触发必须填写 URL",
     "NODE_TYPE_UNSUPPORTED": "节点 {{nodeId}} 的类型不支持：{{type}}（支持的类型：{{supported}}）",

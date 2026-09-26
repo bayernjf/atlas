@@ -2191,3 +2191,56 @@ export async function broadcastWaitEvent(
     body: JSON.stringify({ eventKey, payload }),
   })
 }
+
+// ---------- 定时触发调度（docs/68 打包 N） ----------
+
+/** 一条调度登记：投影权威＝后端 `scheduling/models.py::schedule_projection`（两档共用）。 */
+export type ScheduleItem = {
+  graphId: string
+  version: number
+  cron: string
+  enabled: boolean
+  createdAt: string
+  lastFiredAt: string | null
+  lastSkippedAt: string | null
+  skipCount: number
+  /** 严格晚于"现在"的下一个触发槽，UTC ISO；表达式读不出时为 null。 */
+  nextFireAt: string | null
+}
+
+export type CronPreview = {
+  valid: boolean
+  message: string
+  nextFireAt: string[]
+  timeZone: 'UTC'
+}
+
+export async function listSchedules(): Promise<ScheduleItem[]> {
+  const body = await request<{ items: ScheduleItem[] }>('/api/schedules')
+  return body.items
+}
+
+export async function setScheduleEnabled(
+  graphId: string,
+  enabled: boolean,
+): Promise<ScheduleItem> {
+  return request(`/api/schedules/${encodeURIComponent(graphId)}/enabled`, {
+    method: 'POST',
+    body: JSON.stringify({ enabled }),
+  })
+}
+
+/** 立即按钉版跑一次；后端刻意不占槽位认领，所以它不会吃掉本分钟的自动触发。 */
+export async function runScheduleNow(
+  graphId: string,
+): Promise<{ runId: string; graphId: string; version: number }> {
+  return request(`/api/schedules/${encodeURIComponent(graphId)}/run-now`, { method: 'POST' })
+}
+
+/** 表达式预演：非法也回 200（`valid:false`），字段级问题不该走 HTTP 错误通道。 */
+export async function previewScheduleCron(cron: string): Promise<CronPreview> {
+  return request('/api/schedules/cron-preview', {
+    method: 'POST',
+    body: JSON.stringify({ cron }),
+  })
+}
