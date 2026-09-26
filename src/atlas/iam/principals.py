@@ -61,6 +61,35 @@ SEED_USERS: list[TenantUser] = [
 
 _USERNAME_INDEX: dict[str, TenantUser] = {user.username: user for user in SEED_USERS}
 
+
+def seed_plan_for_profile() -> list[TenantUser]:
+    """按环境档位给出**该播哪些账号**（docs/66 打包 L，补 docs/64 J-1c 的进门缺口）。
+
+    - dev/test：原样返回 `SEED_USERS`，演示与测试形态逐键不变。
+    - prod：只播各租户的 ADMIN，口令取 `ATLAS_ADMIN_BOOTSTRAP_PASSWORD`（由
+      `security.bootstrap.prod_bootstrap_password()` 校验，缺失即 raise＝拒绝启动）。
+      operator/viewer 不播——prod 里它们由首位 admin 经 `POST /api/users` 建立。
+
+    生产环境绝不播仓库内明文口令：那四套口令谁都登不进（`iam/deps.py` 的
+    `AUTH_SEED_CREDENTIAL` 拒绝），播了等于没有。
+    """
+    from atlas.security.bootstrap import prod_bootstrap_password
+
+    bootstrap = prod_bootstrap_password()
+    if bootstrap is None:
+        return SEED_USERS
+    return [
+        TenantUser(
+            tenant_id=user.tenant_id,
+            username=user.username,
+            password=bootstrap,
+            display_name=user.display_name,
+            role=user.role,
+        )
+        for user in SEED_USERS
+        if user.role is Role.ADMIN
+    ]
+
 _SEED_HASHES: dict[str, str] = {}
 _SEED_HASH_LOCK = threading.Lock()
 

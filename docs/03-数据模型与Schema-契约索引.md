@@ -935,6 +935,7 @@ principal:
 > 种子租户为代码常量；种子账号由幂等 seeder 写入 `iam_users`（迁移 010，口令以 scrypt 哈希存储、不写明文；seeder 只插缺失行、不覆盖后续改密，系统通道不经弱口令策略）：t1 演示企业 A = admin-a/admin123（admin）、operator-a/operator123（operator）、viewer-a/viewer123（viewer）；t2 演示企业 B = admin-b/admin123（admin）。除 login、health、静态、`/demo/shop`、`/api/demo/**` 外全部端点必须 Bearer：缺失/坏 token → 401「缺少或无效的登录凭证」；角色不足 → 403「当前角色无权执行此操作」；访问他租户对象 → 404（不泄漏存在性）。角色矩阵（端点级白名单）、分区资源与全局基础设施清单、reset 本租户语义权威见 04 §5.14；内部接口（iam 包）见 12 §3.10；REST 鉴权列见 12 §5。持久化账号/口令哈希已随 docs/31（2026-09-21）落码收口（`iam_users` 迁移 010、scrypt、生命周期五端点、会话绝对 TTL 迁移 011、登录节流，权威块 04 §5.17）；SSO/JWT/审计/多实例共享节流仍缓做 11 S1 + 14 D22。
 
 ### `identity_user` — 字段概览（docs/31；2026-09-21 全部落码收口：哈希/账号/生命周期端点/会话绝对 TTL/登录节流；权威块 04 §5.17）
+> **打包 L 追加（2026-09-25，docs/66；形状权威＝docs/66 §2）**：本族的**播种规则按环境档位分叉**——dev/test 播 `SEED_USERS` 四条（行为与既往逐键相同）；**prod 只播各租户一条 ADMIN，口令取 `ATLAS_ADMIN_BOOTSTRAP_PASSWORD`**（必填、过 `validate_password`，缺失或不合规则**拒绝启动**，见 `security/bootstrap.py`），operator/viewer 由首位 admin 经 `POST /api/users` 建立。两条播种入口（`iam/deps.py` 模块级 seed 与 `scripts/ops/seed_accounts.py`）共用 `iam/principals.seed_plan_for_profile()`，不留第二套口径。**prod 永不播种仓库内明文口令**（既往那样做会造成 docs/63 §0A N1 的登录死锁）。表结构与迁移零改动。
 
 ```yaml
 # iam_users 表（迁移 010）；(tenant_id, username) 复合 PK

@@ -49,6 +49,9 @@ def test_assert_prod_secrets_passes_with_both_keys(monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv("ATLAS_ENV", "prod")
     monkeypatch.setenv("ATLAS_APPROVAL_HMAC_SECRET", "a" * 32)
     monkeypatch.setenv("ATLAS_MASTER_KEY", "b" * 32)
+    # docs/66 打包 L 改了本条的前提：prod 除了两把密钥还要引导口令，缺它即拒启
+    # （原行为由 test_u861b_secret_gate_also_requires_the_bootstrap_value 反向钉住）。
+    monkeypatch.setenv("ATLAS_ADMIN_BOOTSTRAP_PASSWORD", "Boot-Strap-2026")
     assert_prod_secrets()  # 不 raise
 
 

@@ -3,6 +3,49 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### fix：打包 M——渠道工具接通通用 JSON 参数通道，图里第一次能真调 Shopify 退款（2026-09-25，契约 docs/67；`fix(graph)` → `test(graph)` → 收口 docs；零新迁移/端点/错误码/i18n 键）
+
+- **症状**：`channel:shopify/<binding>/create_refund` 在图里**必失败**。路由只把 `{http, database, message, memory}` 与 `openapi:` 送进通用 JSON 通道（`graph/loader.py:1701`），渠道 id 落进 demo shop 的**按能力硬编码装配**，`create_refund` 不在特判名单里 ⇒ 只拿到 `{"note": …}` ⇒ 真适配器取 `params["order_id"]` KeyError ⇒ `CHANNEL_INVALID_PARAMETER`。这是 docs/63 §0A 的 **N2**，也是"产品核心完全可用"判否的第二条。
+- **修法就一行前缀**：`startswith(("openapi:", "channel:"))`。全仓**只有这一处**路由门（收口时 grep 复核）。
+- **为什么不另写一套装配**：渠道能力的 `input_schema` 本来就是对象（`_REFUND_INPUT` 要求 `order_id`/`amount`），"params 插值后必须是 JSON 对象并整体透传"是 docs/04 §4.6–4.9 已定契约；给每个渠道再写硬编码＝第三套装配＋每加一个渠道改一次 loader；让适配器自己解析 `note` 字符串＝把 JSON 契约下沉。**demo `shop` 仍走硬编码**（`process_refund` 需要上游 AI 决策与 trigger 载荷，形状不同），`GENERIC_JSON_ADAPTERS` 也没被塞进 `channel:`（id 带 binding 后缀，只能按前缀判）。
+- **6 条新测试（U868–U873），外部只假在 HTTP 传输层**：真适配器＋真 `ShopifyChannelClient`＋真参数装配＋真图执行，断言请求体 `transactions[].amount=="299.00"` 与 URL `/orders/12345/refunds`；非法 JSON 不得打到外部 API（零次 HTTP）；缺参由适配器报而不是 KeyError 冒出；**U871 是完整链形** trigger→ai_decision→human_approval（预置通过）→真渠道退款，正面补齐 docs/63 §2.2 那"两段互不覆盖"。两条反向门：静态断言路由常量含 `channel:`/`openapi:`；**并排反证**把同一个真适配器注册前改名成非 `channel:` id，立刻退回缺参失败——证明承重的正是那条前缀而非巧合。
+- **同批把 N2 的口径钉准**：关闭证据是"真适配器＋真客户端＋**假 HTTP**"，**不是真 Shopify 返回 200**（那需要真实店铺凭据，属 docs/08 D 组外部资源）。`amount` 传字符串会怎样、部分退款分摊策略对不对，本批都不加新校验——避免凭想象收紧，等真数据暴露再定（docs/67 §4）。
+- **同步面**：docs/67 新建（含四条残余风险）、docs/00 地图行、docs/04 §4.9 前缀白名单追加、docs/13（U868–U873）、docs/63 §0A（**N2 标 ✅ 闭合**、N3/N4 明示未做）、docs/08 A 组 L-2 划销、CHANGELOG、handoff。解除缓做 0 个。
+- **门**：`pytest` **1874 passed / 114 skipped / 0 failed**（净增 6 条常跑）。**PROD 判定不因本批翻绿**：N3（浏览器自动化要不要算 MVP，是产品范围表态）与 N4（无调度器）仍开，外部资源与真机 prod 演练仍缺。
+
+### feat：打包 L 落地 prod 首任管理员引导——解 docs/63 §0A N1 的"新 prod 库谁都进不去"（2026-09-25，契约 docs/66；`66e977e` feat → `4f980df` test → 本收口原子；零新迁移、零新端点、零新错误码、零新依赖）
+
+- **要修的洞是上一批自己挖的**：docs/64 的 J-1c 关掉了"弱种子口令可登录"，却没给"第一个管理员从哪来"。实况是三段接不上：`iam/deps.py:43` 在 import 时照播仓库内明文种子口令（`storage/pg.py:469`），`deps.py:74-81` 又在 prod 拒绝这些口令，而改密与建号两条路都需要已有身份（`main.py:1404-1410` 要登录态、`:1432/:1479` 要 admin）——**prod ＋ 新库 ＝ 没有任何能登录的账号**。
+- **选定的策略（docs/66 §1）**：新增 `ATLAS_ADMIN_BOOTSTRAP_PASSWORD`，prod 必填且复用既有 `validate_password` 策略；**缺失或弱口令 → 拒绝启动**。prod 播种计划改为**每个租户一条 ADMIN ＋ 该引导口令**，operator/viewer 不再播、由首位 admin 经既有 `POST /api/users` 建立。被否方案：①"首登豁免＋一次性改密令牌"（要新造令牌子系统，且留下已知弱口令可登录的窗口，恰是 S2 原缺陷）；②"带外 CLI 建 admin"（把"装完还要手动跑一条命令"写进手册，且要在应用之外持有 DB 连接与哈希实现）；③ 直接回退 J-1c 的 prod 拒绝（等于放弃 S2 修复）。
+- **真机验过（不是只跑单测）**：`ATLAS_ENV=prod` 缺口令时连 `import atlas.iam` 都抛 RuntimeError＝进程起不来；给弱口令 `short` 抛"不合口令策略"；给合法引导口令则 `admin-a` 可登、`admin123` 被拒、`operator-a` 不存在。fail-closed 有**两次**机会（seeding 与启动门），任何一条路径都起不来一个进不去的实例。
+- **dev/test 零变化**：`seed_plan_for_profile()` 非 prod 原样返回 `SEED_USERS` 对象本身，U864 用 `is` 断言钉住；既有认证测试 36 例复跑全绿。**唯一被改的既有测试**是 `test_assert_prod_secrets_passes_with_both_keys`——它的"两把密钥即放行"前提确实被本批改变，补上引导口令并在注释里指向 docs/66，其旧语义由 U861b 反向覆盖（不是悄悄改断言凑绿）。
+- **同批修掉 N5 与两处过期措辞**：`.env.example` 的 `ATLAS_ENV=development` 改为 `dev`（旧值会让 `read_env_profile()` 抛错＝照示例配就起不来）并加 U867 守护；`docker-compose.yml` 开始注入 `ATLAS_ENV` 与三把密钥（缺省仍 dev 语义，`docker compose config` 渲染 rc=0），prod 形态第一次可以被"配出来"；README 里"要扩容先落帧一次性认领"更新为"已落码但仍不支持多副本"。
+- **播种入口收敛成一个计划**：应用 import（`iam/deps.py`）与 `scripts/ops/seed_accounts.py` 共用 `seed_plan_for_profile()`，不留第二套口径；entrypoint 的 prod 跳过保留，但已不是唯一路径（此前它给人的"prod 不播种"印象其实是假的）。
+- **同步面**：docs/66 新建（含四条残余风险：prod 仍无租户自助开通、引导口令轮换无有效期策略、N2/N3/N4 未做、prod 首启无 operator/viewer）、docs/00 地图行、docs/03（`identity_user` 族播种规则）、docs/12（登录端点 prod 口径，改在单元格内、竖线数不变）、docs/15 新增 §五 prod 启动前置、docs/13（U860–U867 登记）、docs/63 §0A（N1 标 ✅ 已闭合）、docs/64（J-1c 缺口就地注记，原文不改）、README、handoff。**解除缓做 0 个**；docs/08 A 组 L-1 划销、L-2 仍开。
+- **门**：`pytest` **1868 passed / 114 skipped / 0 failed**（基线 1856/114，净增本批 12 条常跑；受影响三文件复跑 36 passed；`docker compose config` rc=0）；先测后写，数字取实跑。
+
+### chore(governance)：把两条"没人执行的纸面约定"改成有机检的守护，并修掉它们藏住的断链（2026-09-25，Active #69；docs＋test 两原子，零产品代码改动）
+
+- **缘起**：用户批准先做零决策成本的治理三项。第一刀砍向两个"人人都说、没人执行"的约定，守护一跑就抓到真烂了的地方。
+- **迁移约定（`MIGRATION_CONVENTION.md` §3/§5 重写）**：自 2026-09-13（`e9c2b73`）起要求的英文模板头，**29 个迁移里只有 6 个遵守**（`001`、`012`–`016`），因为运行器 `storage/migrations.py` **从不解析它**（版本权威＝文件名 glob＋`schema_migrations` 记账，无内容 checksum）。与其把 23 个**已应用**迁移回改成合规样子（等于回改历史且谁也验证不了），不如承认旧规则是装饰：§3 只留两条**可机检**的真规则——① 文件名 `NNN_verb_snake.sql`、从 001 起**严格连续不重号**；② 首个非空行必须是 `--` 注释。旧模板整块移入 §3.1「留档不执行」；§5 示例此前一直在教已经被废弃的格式，现换成现行实况（照抄 `002_storage.sql` 的 `interruptions` DDL）并明文"后续加列走新迁移、绝不回改已应用文件"。
+- **新守护 `tests/test_migration_convention.py`（4 例）**：三条守护各有**反向门**——在本用例自己的 `tmp_path` 里造一套完整 001–030 再逐项破坏（坏命名／抽掉 015 造成跳号／030 缺首行注释），断言对应守护变红，且第 3 条**不回管** 029 及以前的留档文件。写反向门的过程揪出守护自身一个真 bug：命名不合规的文件会让第 3 条抛 `AttributeError` 而不是报告，已修成跳过并交给第 1 条报。
+- **handoff 索引约定（新 `tests/test_handoff_integrity.py`，3 例）**：Active work 编号唯一、全文每个 `Active work #N` 引用都能解析到真实条目、Recently shipped 上限 5 条（`↪` 归档指针行不计条目）。**首次运行就抓到三处事实缺陷**：① Active work 里**打包 G／J／K 三批从来没有条目**（现存 65 条编号连续到 65，而状态行两处引用 `#66` 指向不存在的条目、J 的 `#65` 指向别的批次）；② Recently shipped 被逐批追加到 **10 行**、编号重复成 1/2/2/3/4/2/3/4/5/5；③ 我上一轮自己插条目时只重编了顶部编号。已**补登记 #66（G）／#67（J）／#68（K）三条 Active 条目**（各自注明"事后补登记"）、改正两条悬空指针、滚 5 条旧条目进 `docs/handoff-archive-2026-09-25.md`。
+- **docs/29 状态更正**：其状态行长期自称「生产化缺口的**清单权威**」，而它之后的 docs/34 与 docs/56–65 已落掉其中多项，docs/63 §0A 又新增两条它完全没涵盖的阻断（N1 prod 登录死锁、N2 真实店铺退款跑不通）。按"入口文档措辞最易腐"的教训就地更正为**判定以 docs/63 为唯一最新事实源**，正文按留档规则不改。
+- **两处自我纠错记录在案**：先前把"Active work 编号撞号"当缺陷报，实测重复的 1–5 属 **Active work 与 Recently shipped 两张各自编号的列表**，是我把两者合起来量的方法论错误，结论已撤回；另外"为凑守护给 `010_iam_users.sql` 加头注释"的动作被权限门拦下，复核后**拦得对**——那正是本批新约定禁止的事，于是把第 3 条限定在 030 起。
+- **门（先测后写）**：`pytest` **1856 passed / 114 skipped / 0 failed**（1849 基线＋迁移守护 4 条＋handoff 守护 3 条，数字与实测逐字一致）。本轮零前端文件改动、未跑前端门；改动暂留本地，待用户授权后再同步远端。**未新增编号文档**（约定与守护属根文档／测试层），故 docs/00 地图不占位。
+
+
+### docs(review)：第四次上线复审——**撤回**同日「工程侧就绪」判定（docs/63 §0A，2026-09-25，纯 docs 原子）
+
+- **为什么再来一次**：用户第二次提出同一要求（「必须能达到产品核心完全可用的 MVP」）。上一节我把结论推进到「工程侧就绪」，那一推进**依赖"守卫存在且有单测"**这一判据；本轮换成真路径核验，两条结论当场站不住。
+- **N1 · `ATLAS_ENV=prod` 全新安装登录死锁（阻断）**：`iam/deps.py:43` 在 import 时无条件 `user_store.seed()`（其注释自陈"否则 PG 首启无管理员、无法登录"），种进去的就是 `admin123` 那套（`storage/pg.py:469` 哈希明文种子口令）；`deps.py:74-81` 却在 prod 拒绝任何等于种子口令的登录，文案"请先通过管理员改密"——而改密两条路都要求先有身份（`api/main.py:1404-1410` 需 `get_principal`、`:1432/:1479` 需 `administer`），全仓也没有带外建号手段（grep `BOOTSTRAP|FIRST_ADMIN|CREATE_ADMIN` 0 命中）。⇒ **新 prod 库起来后世界上没有能登录的账号**：打包 J 的 J-1c 把 S2「弱口令可登录」修成了「谁都进不去」，而它带着自己的单测（`tests/test_api_auth.py`）——单测只测"prod 拒种子口令"，没人测"那首个管理员从哪来"。修法含安全语义（首登豁免＋强制改密令牌／带外 CLI／一次性引导口令三选一），**登记为 docs/08 A 组 L-1，待用户拍板，不由代码顺手选**。
+- **N2 · 真实店铺退款在图里跑不出来（阻断"核心完全可用"）**：`graph/loader.py:1699` 的通用 JSON 参数通道只放行 `{http,database,message,memory}`（`:241`）与 `openapi:` 前缀，渠道适配器 id 为 `channel:shopify:<binding>`（`channels/adapter.py:63`），于是落进"其余适配器按能力硬编码装配"分支（`loader.py:1729-1754`），`create_refund` 不在特判名单里 ⇒ 只拿到 `{"note": …}` ⇒ `channels/adapter.py:110-114` 取 `params["order_id"]`/`["amount"]` KeyError ⇒ 节点 FAILED。全仓 `channel:shopify` 只有 `tests/test_api_channels.py:148/153` 断言"能不能被发现"，**没有一条测试把图跑过它**。顺带更正我上轮的引用口径：`tests/test_refund_e2e_full_chain.py` 确实把审批与退款串在一条测试里，但它打的是 `DemoShopService`（`:80`）＝演示店，不是真实店铺。
+- **N3/N4/N5 三项落差**：PRD 要求的 `web-playwright` 有实现有单测（`web/adapter.py:42`、`tests/test_web_browser_integration.py`）却未注册进运行期注册表，且 `tests/test_graph_loader.py:79` **反向把"未注册"锁死**；`schedule/cron` 只有 `dsl.py:1433` 的字段校验、`src/atlas` 内无任何调度器；`.env.example:11` 的 `ATLAS_ENV=development` 非法——实跑 `read_env_profile()` 对它抛 ValueError（`dev`/`prod` 正常）。
+- **自我更正两处（写宽了）**：S5「demo 模拟面 prod fail-closed」实况是 `_demo_mock_enabled()` 只守住 3 条 shopify-admin mock 路由（`main.py:3792/3806/3830`），`/api/demo/mock/orders*`、`/api/demo/shop/*`、`/demo/shop` 页面仍无鉴权；「S1–S8 清零 ⇒ 工程侧就绪」整条撤回。
+- **门与"门全绿不等于流程跑得通"**：本轮复跑后端 **1849 passed / 114 skipped / 0 failed**、前端 **728 passed / 2 skipped / 53 文件**、`pnpm lint` 0 error／6 既有 warning、`pnpm build` ✓（1723.04 kB／gzip 534.50 kB）——N1/N2 都藏在全绿的门后面。
+- **修订后判定**：**「产品核心完全可用的 MVP」未达到；demo／陪同试用可交付，自主上线不可交付。** 能力面（编辑器／编译校验／SSE 运行／人工审批／监控告警／多租户鉴权／i18n）确实可用；核心闭环面（真实店铺＋真实 LLM＋真实定时，并让运维登得进去）不可用。
+- **同步面**：docs/63 新增 §0A（撤回注，上方原判定与 S1–S8 表原文保留不删）、docs/00 与 docs/34 的入口判定句更正、docs/08 A 组重开 L-1／L-2 两行、handoff（Active #65＋Recently shipped＋状态行加 ⚠️ 撤回条）。**本轮零产品代码改动**，N1 未修（等策略拍板），N2 未修（等立项）。
+
 
 ### docs(review)：打包 J/K 收口后的文档复验与判定推进——docs/63 从「PROD 不 GO」推进为「工程侧就绪」（2026-09-25，纯 docs 原子）
 

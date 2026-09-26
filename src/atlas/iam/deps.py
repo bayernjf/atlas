@@ -9,7 +9,9 @@ from fastapi import Depends, HTTPException, Request
 from atlas.security.bootstrap import read_env_profile
 
 from .passwords import verify_password
-from .principals import Capability, Principal, SEED_TENANTS, SEED_USERS, can
+from .principals import (
+    Capability, Principal, SEED_TENANTS, SEED_USERS, can, seed_plan_for_profile,
+)
 from .registry import TenantRegistry, TenantServices
 from .sessions import SessionStore
 from .throttle import LoginThrottle
@@ -39,8 +41,9 @@ def select_user_store():
 session_store = select_session_store()
 user_store = select_user_store()
 user_store.bind_session_store(session_store)
-# 两档均幂等播种初始账号（PG ON CONFLICT DO NOTHING）；否则 PG 首启无管理员、无法登录。
-user_store.seed()
+# 两档均幂等播种（PG ON CONFLICT DO NOTHING），否则 PG 首启无管理员、无法登录。
+# 播哪些账号按环境档位定：prod 只播各租户 admin＋引导口令，绝不播仓库内明文口令（docs/66）。
+user_store.seed(seed_plan_for_profile())
 tenant_registry = TenantRegistry()
 login_throttle = LoginThrottle()
 
