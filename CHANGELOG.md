@@ -3,6 +3,14 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### docs：打包 P 立项——demo 模拟面 prod 闸门收口契约（docs/75，2026-09-27 用户「好的，开搞」批准 docs/74 X.3；docs-only 未落码；零新依赖／零迁移／零新端点·错误码）
+
+- **为什么会有一批"5 行代码"的活**：第五次复审（docs/74）回代码复核 docs/72 的「S1–S8 全部 remediation」，发现 **S5 只守住 3 条路由**。枚举 `app.routes`（**138** 条）后实况是：12 条无平台鉴权，8 条设计公开（health/ready/metrics·Bearer／shopify 入站 HMAC／OAuth 回调 state／登录／邮件两把签名 token），**5 条 demo 模拟面在 prod 仍匿名或固定口令可达**——`POST /api/demo/mock/orders/{order_id}/receipt`（无鉴权、无档位门、**把请求体原样回显**）、`GET /api/demo/mock/orders`（靠写进仓库的常量 `X-Demo-Token: demo-token`）、`POST /api/demo/shop/login`＋`GET /api/demo/shop/orders`（demo/demo）、`GET /demo/shop`（HTML 控制台）。
+- **顺带抓到门函数自己的 fail-open**：`_demo_mock_enabled()` 现写 `os.getenv("ATLAS_ENV","dev") != "prod"`，而 `read_env_profile()` 是大小写不敏感的 ⇒ **`ATLAS_ENV=PROD` 会被判成"非 prod"，匿名面全开还不报错**。本批把门改成走 `read_env_profile()`：大小写归一、非法档位抛错而不是默认放行。
+- **六条决策**：prod 一律 404（沿用既有 fail-closed 门，不造第二套开关；非 prod 逐键不变，TRIAL.md／docs/18 的演示形态与 compose 缺省 dev 都不受影响）／覆盖面就是那 5 条／**把"匿名可达面"变成机器枚举的显式 allowlist 守护**（多一条少一条都红——这才是本批的真正产出，防止下一批加无鉴权路由时又漏一次）／验收含**真进程 `ATLAS_ENV=prod` 探测**（TestClient 改环境变量不算，因为它评的正是"档位判定在真进程里成不成立"）／不动 8 条设计公开面、不动已有 RBAC 的三条 demo 数据面／**不解除任何缓做与单副本约束**。
+- **诚实边界**：真进程探测只是**部分**推进 docs/73 的 4.1（第一次有 prod 档进程被真驱动），**不等于 prod 演练**——没有真 LLM／真 Shopify／真 IM，也没有 Docker 与网络边界，4.1 仍留 ⬜。allowlist 守护只管"有没有鉴权依赖"，**不管鉴权对不对**。
+- **同步面**：docs/75 新建（含 §0 量出来的前提与 §6 五条残余风险）、docs/08 §八 立项条＋A 组新行（A 组由"0 项"回到"1 项"）、docs/00 地图行、CHANGELOG、handoff（Active **#74**）。落码按 docs/75 §5 的 ②–⑤ 原子序另行开工。
+
 ### docs（评审）：第五次项目级上线复审——两层判定不变，但两条承重断言被改（2026-09-27，docs/74；Active work #73）
 
 - **判的是什么**：用户第四次提出同一问句"必须能达到产品核心完全可用的 MVP"。结论仍是两层：**A 档（可演示／可陪同试用）✅ 达到；B 档（产品核心完全可用·自主上线）❌ 未达到**。区别于复述 docs/72——这次逐条回代码复核，因此产出两条更正。
