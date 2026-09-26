@@ -237,7 +237,9 @@ class GraphState(TypedDict):
 
 
 # params 插值后为 JSON 对象、整体透传给适配器的通用通道（04 §4.6-4.8）；
-# 其余适配器（shop）走下方按能力硬编码装配。
+# `channel:` 前缀同走此路（docs/67 打包 M）：渠道适配器的能力入参本来就是 JSON 形状
+# （create_refund 要 order_id/amount），此前落到下方 shop 硬编码装配只拿到 note ⇒ KeyError。
+# 只有 demo 的 shop 适配器仍走按能力硬编码装配。
 GENERIC_JSON_ADAPTERS = frozenset({"http", "database", "message", "memory"})
 
 
@@ -1696,7 +1698,7 @@ def _execute_tool(
     permission = (tool_permissions or {}).get(tool_name)
     shadow_blocked = shadow and permission != "read"
 
-    if adapter_id in GENERIC_JSON_ADAPTERS or adapter_id.startswith("openapi:"):
+    if adapter_id in GENERIC_JSON_ADAPTERS or adapter_id.startswith(("openapi:", "channel:")):
         # 通用 JSON 通道（04 §4.6-4.8）：params 插值后必须是 JSON 对象并整体透传
         try:
             parameters = json.loads(params_text) if params_text.strip() else {}
