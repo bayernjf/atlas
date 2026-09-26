@@ -3,6 +3,17 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### feat：打包 N 后端落地——图第一次会自己按时跑（2026-09-26，契约 docs/68；`dae7c77` → `e1d5869` → `4e8f2a4`；🔶 未收口：⑤ 前端与 ⑥ 真机端到端未做）
+
+- **补的是哪个真空**：`schedule/cron` 触发节点此前只有 `graph/dsl.py` 的"填没填"校验，`src/atlas` 内没有任何调度器 ⇒ 运营者能把 trigger 选成定时、能发布、能保存，**图永远不会自己跑**；而 docs/05 三处以"定时触发"为承诺。这是 docs/63 §0A 的 **N4**。
+- **cron 自研最小子集、零新依赖（ADR T30）**：`*`/`*/n`/`a`/`a-b`/`a-b/n`/逗号列表，`7`＝周日；不支持 `?`/`L`/`W`/`#`/秒/别名/裸 `a/n`/回绕区间，一律中文报错拒保存（`NODE_TRIGGER_CRON_INVALID`，与既有 `..._REQUIRED` 并存）。**不做"看不懂就当 `*`"的兜底**，并且额外拒掉"能解析但 5 年内没有任何触发时刻"的表达式（`0 0 30 2 *`）——它的表现与 N4 本身同形：图永远不会自己跑。日与周都受限时取**并集**（标准 cron 规则，不是 AND）。
+- **三条承重语义，各自有反向门**：① **槽位一次性认领**＝`schedule_fires` PK `(tenant_id, graph_id, slot_utc)` 的 `INSERT ... ON CONFLICT DO NOTHING`，rowcount 是派发权唯一来源；② **重启不补跑**＝引擎只回看当前分钟与前一分钟，**那一个常量就是不补跑的实现处**（反向门把窗口放宽到 15 分钟，立刻开始补跑旧槽）；③ **同图重叠 ⇒ 跳过且不写认领表**（反向门把 busy 短路掉，跳过条目立刻消失）。第三条反向门把认领恒真⇒两个"进程"各发一次，证明上一条正例靠的是认领表、不是引擎自己的 ledger。
+- **形状上的两个决定值得留痕**：store 是**全局**的而不是每租户一份——`TenantRegistry` 惰性装配，按租户装调度就等于"重启后还没被请求碰过的租户永远不被调度"，而定时任务恰恰多在夜里；`slot_utc` 用 **TIMESTAMPTZ** 而不是仓库其余时间列的 TEXT ISO——它是**唯一键**，文本键的字节差异（`Z` 与 `+00:00`、微秒省略）会给同一个槽造出两行，把"至多一次"变成"至多几次看序列化"。
+- **装配与运营面**：lifespan 在 `recover_pending()` **之后**起 daemon tick 线程（先让挂起帧归位再派发）；登记**由发布派生**（改成手动触发再发布 ⇒ 撤销调度，`enabled` 与跳过统计跨重发布保留），`POST /api/demo/reset` 连带清两表；三端点 `GET /api/schedules`／`POST .../enabled`／`POST .../run-now`，其中 **run-now 刻意不写认领表**（手工测试不该吃掉本分钟的自动触发），U889 用"同一槽随后仍能认领成功"来钉这条而不是去摸私有集合。开关 `ATLAS_SCHEDULE_ENABLED`（缺省开）＋`ATLAS_SCHEDULE_TICK_SECONDS`（缺省 30，clamp 1-300）。**运行期语义整体写进 docs/04 §5.21**（含 trigger 节点 `context.payload` 的实测双层嵌套形状）。
+- **测试侧的一个自我修正（照实记）**：`tests/conftest.py` 默认把调度线程关掉。起因不是整洁——三处用例用 `with TestClient(app)` 会真跑 startup，线程活了整场测试，会把**别的用例的共享审批 broker** 放行掉（实测把 `test_subgraph_events` 的审批用例吹成 flaky）。调度语义由直接调 `tick`/`run_schedule_tick` 覆盖，真起线程留给步 ⑥。
+- **门（先跑后写）**：`pytest` **1934 passed / 119 skipped / 0 failed**（基线 1874/114；净增 60 常跑＋5 条无库即 skip）；PG 直连本批 5 passed，同批迁移用例证明 001–030 在全新库全 apply、二次零变更。
+- **同步面**：docs/68 顶部落码进度注记（**八条落码偏差逐条**，含"没有新增 `dispatch_failed` 动作"的理由）＋§1.1/§2.2 就地订正＋§6.7 一图一调度；docs/02 选型行、docs/03 两族 ✅、docs/04 §5.21、docs/05 部署口径、docs/09 包位＋两张表、docs/11 两表、docs/12 三端点＋鉴权＋reset、docs/13 U874–U891、docs/14 新登 **D41**、docs/15 §六、docs/30 边界两行、docs/63 §0A N4 标 🔶、docs/10 ADR T30、docs/00 地图行、docs/08、README、`.env.example`、handoff。**解除缓做 0 个；单副本约束与三道闸一条不撤**。**未做＝⑤ 前端面板与 `schedules` i18n、⑥ 真机端到端** ⇒ 本批不收口、N4 不勾、PROD 判定不变。
+
 ### docs：打包 N 立项——定时触发调度器 v1 契约（docs/68，2026-09-26 用户「先开 N4 定时触发」；docs-only 未落码；ADR T30）
 
 - **真空在哪**：`schedule/cron` 触发节点自 W 系列起只有 `graph/dsl.py:1433` 的"填没填"校验，**`src/atlas` 内没有任何调度器**（grep 只命中该处校验与值班轮换）。运营者能把 trigger 选成"定时"、能发布、能保存，**但图永远不会自己跑**——而 `docs/05:437/490/720` 三处以"定时触发"为承诺。这是 docs/63 §0A 的 **N4**。
