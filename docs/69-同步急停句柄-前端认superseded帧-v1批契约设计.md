@@ -85,4 +85,7 @@ docs/12（sync `/run` 与 `/api/runs/{id}/cancel` 两行补"在途可取消、�
 
 ## 6. 落码收口注记
 
-> 收口时按实跑数字回填：门结果（`pytest` 基线 **1939 passed / 119 skipped / 0 failed**；前端 `pnpm test` 基线 **736/2/55**、`pnpm lint` 0 error / 7 既有 warning、`pnpm build` ✓）、commit 链、G1–G5 实跑结果、与本文的形状偏差（如有）。
+> **已收口（2026-09-27）**。commit 链：`efd8081` fix(api) 同步 `/run` 注册取消句柄＋`except RunCancelled` 前置＋`finally unregister`；`b36d418` test(api) U895–U897；`485cb88` feat(web) 前端认 superseded 帧＋`log.superseded` 两档＋`i18n.test.ts`；docs 原子随收口补。
+> 门（先跑后写，数字取实跑）：`pytest` **1942 passed / 119 skipped / 0 failed**（基线 1939/119，净增 3＝U895–U897）；前端 `pnpm test` **738 passed / 2 skipped / 54 文件**（基线 736/2，净增 2＝U898/U899）、`pnpm lint` **0 error / 7 warning**（warning 基线既有）、`pnpm build` ✓。
+> **G1–G5 反向门实跑结果**：G1 删 `is_cancelled`⇒U895 跑满 wait 返 `completed` 红；G2 删 `finally: unregister`⇒U897 由 409 变 200 红；G3 `except RunCancelled` 移到 `except Exception` 之后⇒HTTP 500＋U896 门控计数变 1 红；G4 删前端 superseded 分支⇒U898/U899 落回误导文案红；G5 只加 zh 不加 en⇒i18n PARITY「identical leaf-key sets」红。五门均确认红→还原绿。
+> **与本文的形状偏差**：`apiClient.test.ts` 首版误把 `await expect(...).rejects.toBeInstanceOf(...)` 当返回错误实例来取 `.message`/`.nodeId`，其实该式返回 void——U898 改用 try/catch 取 `caught`（与 U899 同构）。`Editor` 的 `log.superseded` 分支无组件级测试（项目无组件渲染测试基线），浏览器实测未做，照实记"未验"。

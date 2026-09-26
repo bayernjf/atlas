@@ -71,6 +71,7 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 * [docs/63-项目级上线复审-2026-09-25第三次.md](docs/63-项目级上线复审-2026-09-25第三次.md) —— **第三次项目级上线复审（当前上线判定权威）**：判定＝技术验证 MVP 达到／生产 MVP 未达到（PROD 不 GO）；三条核心完整性缺口（交付形态静默无 LLM 决策、退款全链无一条 e2e 测试、M7 验收链手写）＋八条安全阻断 S1–S8＋结构性缺口「CI 无 postgres service ⇒ 44/1918 integration 永不跑」；每条带证据分级〔跑/码/勘〕。docs/29·34 历史正文保留，冲突以 63 为准
 * [docs/66-prod首任管理员引导批-v1批契约设计.md](docs/66-prod首任管理员引导批-v1批契约设计.md) —— **打包 L：prod 首任管理员引导（2026-09-25 落码，解 docs/63 §0A N1）**：`ATLAS_ADMIN_BOOTSTRAP_PASSWORD` prod 必填、缺失或弱口令**拒绝启动**；prod 只播各租户 ADMIN＋该口令，dev/test 逐键不变；含被否三方案与四条残余风险
 * [docs/68-定时触发调度器批-v1批契约设计.md](docs/68-定时触发调度器批-v1批契约设计.md) —— **打包 N：定时触发调度器（2026-09-26 立项，解 docs/63 §0A N4；**✅ 同日落码收口（六代码原子＋真机端到端，N4 已闭合）**，形状权威与**十条落码偏差**＝该文顶部进度注记＋§7 收口注记）**：七条决策＝自研最小 5 字段 cron 子集零新依赖（**ADR T30**，坏表达式 422 拒保存不做兜底）／UTC-only／只跑发布钉版／注册＝发布派生／**槽位一次性认领**（`schedule_fires` PK＋ON CONFLICT DO NOTHING ⇒ 重启不补跑、双进程也只一次）／重叠跳过且**不消耗认领**／**不解锁多副本**；形状＝`scheduling/` 三文件＋迁移 030 两表＋lifespan（在 `recover_pending` 之后）＋3 端点＋前端调度表；验收 U874–U891 含**三条反向门**与一次**真进程端到端**（`* * * * *` 等真实派发落 `runs`，重启确认不补跑）；六条残余风险照实写
+* [docs/69-同步急停句柄-前端认superseded帧-v1批契约设计.md](docs/69-同步急停句柄-前端认superseded帧-v1批契约设计.md) —— **打包 O：同步急停句柄 ＋ 前端认 superseded 帧（2026-09-27 立项并落码收口，解 docs/14 D37；零迁移/零新端点/零新错误码/零新依赖）**：O-1 同步 `/run` 与流式同构注册取消句柄、在途急停返 200＋`status="cancelled"`（不进 `evaluate_after_run`）、已结束无句柄仍 409；O-2 前端 `streamRun` 认 `superseded` 终帧并抛 `RunSupersededError`（落到 `log.superseded`），不再误报「SSE 流缺少最终运行结果」；验收 U895–U899 ＋ 五道反向门 G1–G5（各自实跑转红→还原绿）；14 D37、docs/62 §6 原子⑨/§8 风险5、docs/34 `:70` 随之闭合；不解除单副本约束与 D19/D20/D27/D31/D32
 * [docs/67-渠道工具接通通用参数通道批-v1批契约设计.md](docs/67-渠道工具接通通用参数通道批-v1批契约设计.md) —— **打包 M：`channel:*` 接入通用 JSON 参数通道（解 docs/63 §0A N2）**：一行前缀路由改动＋U868–U873；图里现在能带 `order_id`/`amount` 真调 Shopify 退款；**关闭证据是真适配器＋假 HTTP，不是真店铺 200**
 * [docs/60-运行时错误i18n-OpenAPI硬删-静默值班轮换-断点持久化-投递PG化v1批契约设计.md](docs/60-运行时错误i18n-OpenAPI硬删-静默值班轮换-断点持久化-投递PG化v1批契约设计.md) — **✅ 落码收口 2026-09-24（打包 G；2b00bbb…5714db9 14 原子；零新依赖/迁移 025·026/无 ADR；D22/D24/D27/D28 部分取回不解除）**：G1 运行时错误码化＋前端 runtimeError zh/en、G2 OpenAPI include_deleted/硬删除、G3 静默编辑/值班惰性日轮换、G4 断点随 Graph JSON（后端零改动）、G5 投递日志 DeliveryStore PG 化；后端 1758/86/0、PG 55、前端 694/2；形状权威＝docs/60
 * [docs/59-告警规则模板市场-静默值班PG化v1批契约设计.md](docs/59-告警规则模板市场-静默值班PG化v1批契约设计.md) — **✅ 落码收口 2026-09-24（打包 F；迁移 024）**：内置只读告警规则模板市场＋一键应用（无写端点）、静默/值班/assignee PG 化（仅 PG 档、内存档不动）；后端 1734/77、PG 44、前端 675/2；形状权威＝docs/59
@@ -215,6 +216,7 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 
 ## Recently shipped（最近变更；只留最近 5 条）
 
+✅ **打包 O 落码收口＝同步急停句柄 ＋ 前端认 superseded 帧（docs/69，2026-09-27；零迁移/零新端点/零新错误码/零新依赖）**：O-1 `src/atlas/api/main.py` 同步 `/run` 与流式同构注册取消句柄（`register`＋`finally unregister`、`is_cancelled=cancel_event.is_set`、`except RunCancelled` 前置），在途急停现返 200＋`status="cancelled"`（不进 `evaluate_after_run`），已结束无句柄仍 409（U895–U897）；O-2 前端 `streamRun` 认 `superseded` 终帧并抛 `RunSupersededError`（`nodeId` 透传），`Editor` 落到 `log.superseded`（`apiClient.ts`/`Editor.tsx`/`editor.json` 两档＋`i18n.test.ts`），不再误报「SSE 流缺少最终运行结果」（U898/U899）。**五道反向门 G1–G5 各自植缺陷实跑转红→还原绿**。门：**1942/119/0**、前端 738/2/54、oxlint 0/7、build ✓。**闭合**：docs/14 D37、docs/62 §6 原子⑨/§8 风险5、docs/34 `:70` 缺口注记；**未解除**单副本约束与 D19/D20/D27/D31/D32，N3 仍开。
 ✅ **打包 N 落码收口＝定时触发调度器（docs/68，2026-09-26；`dae7c77`→`1f318c4` 六代码原子；关闭 docs/63 §0A N4）**：`src/atlas/scheduling/` 五文件（自研最小 5 字段 cron 子集零新依赖＝**ADR T30**、可注入引擎、两档 store）＋迁移 030 两表（`schedules`/`schedule_fires`，`slot_utc` 用 TIMESTAMPTZ 因为它是认领唯一键）＋lifespan 在 `recover_pending` 之后起 tick 线程＋4 端点（含 read 档 `cron-preview`，**前端因此不必复刻第二个解析器**）＋控制台「定时调度」页与画布预演。**三条承重语义各有反向门并实跑转红**（认领恒真⇒双发／busy 判假⇒无跳过／放宽回看窗口⇒开始补跑）。**"重启不补跑"第一次由真实墙钟证明**：`scripts/dev/schedule_e2e_smoke.py` 停服 130 秒后，停摆窗那一分钟**既无 run 也无认领行**，当分钟照常派发；浏览器实测三态（合法显三次 UTC／非法显后端原文／清空不留残留）。门：**1939/119/0**、前端 736/2/55、oxlint 0/7、build +7.2 kB。**没解除**：单副本三道闸一条不撤（"双进程同槽一次"≠支持多副本）、**N3 范围表态仍开**、外部凭据与真 prod 演练仍缺；四条余部新登 **D41**（命名时区／补跑开关／一图多调度／调度级并发）。
 ✅ **打包 L 落码＝prod 首任管理员引导口令（docs/66，2026-09-25；`66e977e`/`4f980df`＋收口原子）**：关闭 docs/63 §0A N1（新 prod 库登录死锁）——`ATLAS_ADMIN_BOOTSTRAP_PASSWORD` prod 必填、缺失或弱口令即拒绝启动，prod 只播各租户 admin＋引导口令，dev/test 逐键不变；同批修 N5 示例值与 README 过期措辞。**N2 真实渠道工具接通仍未做**。
 ✅ **打包 M 落码＝渠道工具接通通用 JSON 参数通道（docs/67，2026-09-25；`fix(graph)` 一行前缀＋`test(graph)` U868–U873）**：关闭 docs/63 §0A N2，图里第一次能带正确参数真调 Shopify 退款（测试只假在 HTTP 层）；**N3 范围表态与 N4 调度器未做，PROD 仍不 GO**。
@@ -225,6 +227,13 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 > 更早的完成项见 docs/handoff-archive-*.md（2026-09-18 / 09-19 / 09-24）。
 
 ## Quality gate（质量门）
+
+### 2026-09-27 打包 O 收口门（先跑后写，数字取实跑）
+
+- 后端 `.venv/bin/pytest`（照 ci.yml 原文命令）：**1942 passed / 119 skipped / 0 failed**（181.36s；打包 N 基线 1939/119 ⇒ 本批净增 3 常跑＝U895–U897）。
+- 前端（工作目录 `frontend`，照 ci.yml 三步）：`pnpm lint` **0 error / 7 warning**（warning 基线既有）；`pnpm test` **738 passed / 2 skipped / 54 文件**（基线 736/2 ⇒ 净增 2＝U898/U899）；`pnpm build` ✓ **1730.75 kB / gzip 536.83 kB**（基线 1730.23/536.67）。
+- **五道反向门（临时植入、验毕还原、未提交）全过**：G1 删 `is_cancelled`⇒U895 跑满 wait 返 `completed` 红；G2 删 `finally: unregister`⇒U897 由 409 变 200 红；G3 `except RunCancelled` 移到 `except Exception` 之后⇒HTTP 500＋U896 门控计数变 1 红；G4 删前端 superseded 分支⇒U898/U899 落回误导文案红；G5 只加 zh 不加 en⇒i18n PARITY「identical leaf-key sets」红。五门均确认红→还原绿。
+- **未验项（照实写）**：`Editor` 的 `log.superseded` 分支无组件级测试（项目无组件渲染测试基线），浏览器实测未做；superseded 后 run 仍 suspended、前端不补正，属 D36，不属本批。
 
 ### 2026-09-26 打包 N 收口门（先跑后写，数字取实跑）
 
