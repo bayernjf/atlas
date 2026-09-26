@@ -3,6 +3,17 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### docs（评审）：第五次项目级上线复审——两层判定不变，但两条承重断言被改（2026-09-27，docs/74；Active work #73）
+
+- **判的是什么**：用户第四次提出同一问句"必须能达到产品核心完全可用的 MVP"。结论仍是两层：**A 档（可演示／可陪同试用）✅ 达到；B 档（产品核心完全可用·自主上线）❌ 未达到**。区别于复述 docs/72——这次逐条回代码复核，因此产出两条更正。
+- **划掉一条假缺口**：docs/72 §1/§3.3/§4 与 docs/73 3.1 都把"调度 store 仍进程内、prod 形态需 PG 化"算作 B 档必答。实况〔码〕：`api/main.py:1059-1063` 在 `ATLAS_STORAGE_BACKEND=pg` 时装 `PgScheduleStore`（迁移 030 建两表），出厂 compose 第 50 行就是 pg 档，跨重启存活与"第二实例不重复触发同一分钟槽"有 5 例集成测试且 CI 每 PR 真跑。**把已完成项挂在待做清单上，和把未完成写成完成是同一种错**——它让缺口看起来更长、让真正的缺口被稀释。
+- **补回一条真缺口**：docs/72 §2 的"S1–S8 全部 remediation"在 S5 说宽。prod 档仍有 5 条 demo 模拟面路由不受 `_demo_mock_enabled()` 管辖，其中 `POST /api/demo/mock/orders/{order_id}/receipt`（`main.py:4148-4151`）**无鉴权、无档位门、把请求体原样回显**；另有固定公开串 `X-Demo-Token: demo-token` 与 demo/demo 两条。这条 docs/63 §0A 早更正过，docs/72 又收回成 ✅——**同一判断在两份文档间来回漂移是本项目最贵的失败模式**，故既写进 docs/74，也在 docs/72 就地补记，并在 docs/73 新增必答项 X.3。
+- **顺带过期一条**：docs/73 的 X.1「CI postgres service 未启用（44/1918 integration 永不跑）」——`ci.yml:58-90` 早已设 `ATLAS_RUN_INTEGRATION=1`＋先 apply 迁移再 `pytest`（打包 J 落码）。tracker 抄了评审的历史叙述而没回配置看，正是它自己 §0「翻状态要回代码」要防的事。
+- **A 档这轮加了真证据**：打包 N 真机四场景（无人点击下自动派发落 `runs`；停服 130 秒后**停摆窗那一分钟既无 run 也无认领行**；run-now；改手动再发布撤销）＋真浏览器看调度页与画布 cron 预演三态。docs/72 判 A 档那一格只标了 〔码〕。
+- **B 档去掉虚项后的真清单**：真 LLM 与真实通道凭据（compose 仍 `${LITELLM_MODEL:-}` 缺省空 ⇒ 自主上线形态"AI 运营体"是规则壳）、**N3 浏览器自动化的产品范围表态**（`web-playwright` 未接入运行期注册表且被 `tests/test_graph_loader.py:79-80` 反向锁死）、D36 崩溃后挂起帧 reconcile、X.3 闸门收口、一次真 `ATLAS_ENV=prod` 演练与种子客户数据。多副本/HA 显式后置。
+- **门的诚实处理**：本轮同机负载一度 279，全量 `pytest` 与一次 PG 探测未在超时内跑完，**评审因此不引用未跑出的数字**，也不把 docs/73 的 1951/738 当本轮实测（标 〔转抄〕）；已实测且与判定直接相关的是打包 N 收口那轮（后端 1939/119/0、前端 736/2/55、oxlint 0/7、build ✓）。
+- **同步面**：docs/74 新建＋docs/00 地图行＋docs/72 §7 就地补记（历史正文不改写）＋docs/73（3.1·X.1 翻 ✅、新增 X.3、总览/退出判据/§6 注记/流水）＋handoff 状态行与新 Active #73＋CHANGELOG。判定权威顺位：**docs/74 更正的两条 > docs/72 > docs/63**，其余框架仍用 docs/72。
+
 ### docs：M7 验收链复验收口（2026-09-27，docs-only；docs/63 §2 ③ / :117 〔勘〕已复）
 
 - **核实结论**：逐行复 `src/atlas/coordination/sandbox.py` 确证 `run_return_refund` 经 `TaskStore.dispatch/accept/start/complete` 编排客服核验＋物流签收、**从不调 `compile_graph`/`run_graph`**；`src/atlas/logistics/adapter.py:1` 自述为刻意假物流——`sandbox.py` 本身即 TaskStore 层协调演示，按设计不走完整图编译/运行路径。
