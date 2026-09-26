@@ -13,3 +13,7 @@
 3. ✅ **打包 F 收口（docs/59，2026-09-24，dev 已随 c1db210 push；迁移 024）**：F-1 告警规则模板市场 v1（4 内置只读模板＋两只读 GET＋一键应用复用 PUT rules，无新写端点）；F-2 静默/值班/新建告警 assignee PG 化（仅 PG 档，迁移 024 两表、移除进程内 OpsStore 兜底、内存档不动）。门：后端 1734/77/0、PG 44、前端 675/2/50、build 过、PG live smoke 20/20。
 4. ✅ **i18n 第二批：Graph DSL 422 码化（docs/17 遗留①，2026-09-24，dev 已 push）**：graph 422 全量码化（图级/节点/边/变量/条件/循环/等待），前端按码映射中/英＋定位（节点 id/字段/边/变量），旧中文 message 兜底保留；i18n.test 静态守护扩至该键表。〔2026-09-25 更正〕本条原写「graphErrors.ts」与「守护扩 graphErrors」均不确——该文件名在全 git 历史中不存在，实际承载处是 `frontend/src/lib/apiClient.ts:53` 的 `t('dsl.<CODE>', { ns: 'validation' })`（`validationItemMessage`，逐条与整表共用）；且 `validation` 这个 namespace **至今不在 `PARITY_PAIRS` 里**，详情与收口路径见 docs/14 D12 的 2026-09-25 注记。门：后端 1728/69/0、前端 673/2/50。
 5. ✅ **i18n 第一批：认证/L1 英文态（docs/17，2026-09-24，dev 已 push）**：登录/403/会话过期/认证错误码 zh/en；前端 L1 校验错误码化（required/range/type/pattern/enum 等），FormRenderer/CodeEditor/各 schema 面板按码展示；i18n.test 静态守护（缺失键/零硬编码中文/后端中文 detail 豁免）。
+
+### 2026-09-25 打包 L 收口滚出的 1 条
+
+3. ✅ **打包 I 全批收口＝L1 单副本护栏＋L2 挂起帧一次性认领（docs/62，2026-09-25；立项与 L1 `57a2477`/`4877677`＋docs 声明，L2 同日第二批 `af38176`/`593bed0`/`df5a18c`＋docs 收口；新增迁移 029）**：实测出的缺陷级阻断项（多副本＝重复扣款）落成两道防线——部署侧三道闸让第二进程起不来，数据侧一条 `UPDATE ... WHERE resumed_at IS NULL` 让"谁可以越过挂起点继续执行下游"只有一个答案。**端到端硬门翻绿**：`scripts/dev/multi_instance_resume_recon.py` 退出码 1→0（一次审批下游恰落一次；改造前通过×1／拒绝×1 双写）。**不解除 D19/D20/D27/D31/D32、单副本约束与三道闸一条都不撤**（只拆最贵那颗雷）；新增缓做 D37（前端未认 `superseded` 终帧）；D36（认领后崩溃＝永久 suspended、不自动重放）是本次有意引入的收紧。详见 Active work #63 与 Quality gate 2026-09-25 打包 I 条。

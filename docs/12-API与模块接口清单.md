@@ -861,7 +861,7 @@ class MemoryRepository(Protocol):
 
 | 方法 | 路径 | 功能 | 关联 |
 |---|---|---|---|
-| POST | /api/auth/login | 登录换会话（公开）：请求体 `{username, password}`，坏凭证 401「用户名或密码错误」（未知用户同文案防枚举）、停用账号 403「账号已停用，请联系管理员」、连续失败触发节流 429「登录尝试过于频繁，请稍后再试」（滑动窗口 600s/5 次、键 username|client_ip，docs/31/04 §5.17）；200 返回 `{token:"sess-<uuid hex>", principal:{tenant_id, tenant_name, username, display_name, role}}`（identity_session） | identity_session |
+| POST | /api/auth/login | 登录换会话（公开）：请求体 `{username, password}`，坏凭证 401「用户名或密码错误」（未知用户同文案防枚举）、停用账号 403「账号已停用，请联系管理员」、连续失败触发节流 429「登录尝试过于频繁，请稍后再试」（滑动窗口 600s/5 次、键 username|client_ip，docs/31/04 §5.17）；200 返回 `{token:"sess-<uuid hex>", principal:{tenant_id, tenant_name, username, display_name, role}}`（identity_session）。**打包 L（2026-09-25，docs/66）追加**：prod 档下唯一可登的种子账号是各租户 ADMIN，口令取 `ATLAS_ADMIN_BOOTSTRAP_PASSWORD`（缺该值进程根本不启动，故不存在"起了但没人能登"的状态）；`AUTH_SEED_CREDENTIAL` 对仓库内明文种子口令的拒绝照旧生效 | identity_session |
 | GET | /api/auth/me | 回显当前 Bearer 会话的 Principal（viewer+） | identity_session |
 | POST | /api/auth/logout | 吊销当前 token（viewer+；幂等，204/200） | identity_session |
 | POST | /api/auth/change-password | 【viewer+】登录用户改本人密码（docs/31/04 §5.17，已落码）：body `{oldPassword,newPassword}`；旧口令错 400「原密码错误」；新口令不达策略（8-128 位、弱口令黑名单）或与旧口令相同 → 422；成功吊销本人**除当前会话外**全部会话，返 `{changed:true}` | identity_user |

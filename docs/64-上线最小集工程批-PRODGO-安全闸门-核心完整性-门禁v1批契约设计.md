@@ -13,6 +13,8 @@
 | **P0-1 安全闸门** | J-1a `ATLAS_ENV` fail-closed 环境门 | docs/63 S7（根因）、S1 | 新增 `security/bootstrap.py`；api 启动接线；email_token + oauth 两 resolve 收口 |
 | | J-1b 邮件决策 token 绑定收件人 | docs/63 S1 | `collaboration/email_token.py` issue/verify + notifications.py + api 两端点 |
 | | J-1c prod 不播种种子账号＋种子口令登录拒绝 | docs/63 S2 | `scripts/ops/docker-entrypoint.sh` + `iam/principals.py` authenticate |
+
+> **落码后同日缺口（docs/63 §0A N1 查出、docs/66 打包 L 闭合）**：J-1c 只做了"拒绝"、没做"从哪进"——`iam/deps.py:43` 仍在 import 时播种明文种子口令，prod 又拒这些口令，改密/建号都要先有身份 ⇒ 新库无人能登。现由 `iam/principals.seed_plan_for_profile()` 统一播种计划（prod 只播各租户 ADMIN ＋ `ATLAS_ADMIN_BOOTSTRAP_PASSWORD`），两条播种入口（应用 import 与 `scripts/ops/seed_accounts.py`）共用同一计划；entrypoint 的 prod 跳过保留、但已非唯一路径。**本节原文按留档规则不追溯改写。**
 | | J-1d 登录查询确定性（ORDER BY ＋ 用户名全局唯一写契约） | docs/63 S3 | `storage/pg.py:410`、`iam/accounts.py:73`、`iam/principals.py:84` |
 | **P0-2 核心完整性** | J-2a 决策器运行模式启动打印（不再静默降级） | docs/63 §2.1 | `llm/decision.py` + api 启动 |
 | | J-2b 跨 human_approval 真实退款全链 e2e 测试 | docs/63 §2.2 | 新 `tests/test_refund_e2e_full_chain.py`；docs/08 §7.3 criterion 4 口径注记 |

@@ -3,6 +3,17 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### feat：打包 L 落地 prod 首任管理员引导——解 docs/63 §0A N1 的"新 prod 库谁都进不去"（2026-09-25，契约 docs/66；`66e977e` feat → `4f980df` test → 本收口原子；零新迁移、零新端点、零新错误码、零新依赖）
+
+- **要修的洞是上一批自己挖的**：docs/64 的 J-1c 关掉了"弱种子口令可登录"，却没给"第一个管理员从哪来"。实况是三段接不上：`iam/deps.py:43` 在 import 时照播仓库内明文种子口令（`storage/pg.py:469`），`deps.py:74-81` 又在 prod 拒绝这些口令，而改密与建号两条路都需要已有身份（`main.py:1404-1410` 要登录态、`:1432/:1479` 要 admin）——**prod ＋ 新库 ＝ 没有任何能登录的账号**。
+- **选定的策略（docs/66 §1）**：新增 `ATLAS_ADMIN_BOOTSTRAP_PASSWORD`，prod 必填且复用既有 `validate_password` 策略；**缺失或弱口令 → 拒绝启动**。prod 播种计划改为**每个租户一条 ADMIN ＋ 该引导口令**，operator/viewer 不再播、由首位 admin 经既有 `POST /api/users` 建立。被否方案：①"首登豁免＋一次性改密令牌"（要新造令牌子系统，且留下已知弱口令可登录的窗口，恰是 S2 原缺陷）；②"带外 CLI 建 admin"（把"装完还要手动跑一条命令"写进手册，且要在应用之外持有 DB 连接与哈希实现）；③ 直接回退 J-1c 的 prod 拒绝（等于放弃 S2 修复）。
+- **真机验过（不是只跑单测）**：`ATLAS_ENV=prod` 缺口令时连 `import atlas.iam` 都抛 RuntimeError＝进程起不来；给弱口令 `short` 抛"不合口令策略"；给合法引导口令则 `admin-a` 可登、`admin123` 被拒、`operator-a` 不存在。fail-closed 有**两次**机会（seeding 与启动门），任何一条路径都起不来一个进不去的实例。
+- **dev/test 零变化**：`seed_plan_for_profile()` 非 prod 原样返回 `SEED_USERS` 对象本身，U864 用 `is` 断言钉住；既有认证测试 36 例复跑全绿。**唯一被改的既有测试**是 `test_assert_prod_secrets_passes_with_both_keys`——它的"两把密钥即放行"前提确实被本批改变，补上引导口令并在注释里指向 docs/66，其旧语义由 U861b 反向覆盖（不是悄悄改断言凑绿）。
+- **同批修掉 N5 与两处过期措辞**：`.env.example` 的 `ATLAS_ENV=development` 改为 `dev`（旧值会让 `read_env_profile()` 抛错＝照示例配就起不来）并加 U867 守护；`docker-compose.yml` 开始注入 `ATLAS_ENV` 与三把密钥（缺省仍 dev 语义，`docker compose config` 渲染 rc=0），prod 形态第一次可以被"配出来"；README 里"要扩容先落帧一次性认领"更新为"已落码但仍不支持多副本"。
+- **播种入口收敛成一个计划**：应用 import（`iam/deps.py`）与 `scripts/ops/seed_accounts.py` 共用 `seed_plan_for_profile()`，不留第二套口径；entrypoint 的 prod 跳过保留，但已不是唯一路径（此前它给人的"prod 不播种"印象其实是假的）。
+- **同步面**：docs/66 新建（含四条残余风险：prod 仍无租户自助开通、引导口令轮换无有效期策略、N2/N3/N4 未做、prod 首启无 operator/viewer）、docs/00 地图行、docs/03（`identity_user` 族播种规则）、docs/12（登录端点 prod 口径，改在单元格内、竖线数不变）、docs/15 新增 §五 prod 启动前置、docs/13（U860–U867 登记）、docs/63 §0A（N1 标 ✅ 已闭合）、docs/64（J-1c 缺口就地注记，原文不改）、README、handoff。**解除缓做 0 个**；docs/08 A 组 L-1 划销、L-2 仍开。
+- **门**：`pytest` **1868 passed / 114 skipped / 0 failed**（基线 1856/114，净增本批 12 条常跑；受影响三文件复跑 36 passed；`docker compose config` rc=0）；先测后写，数字取实跑。
+
 ### chore(governance)：把两条"没人执行的纸面约定"改成有机检的守护，并修掉它们藏住的断链（2026-09-25，Active #69；docs＋test 两原子，零产品代码改动）
 
 - **缘起**：用户批准先做零决策成本的治理三项。第一刀砍向两个"人人都说、没人执行"的约定，守护一跑就抓到真烂了的地方。

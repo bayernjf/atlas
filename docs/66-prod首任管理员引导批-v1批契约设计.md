@@ -84,3 +84,15 @@ docs/03（`identity_user` 族：prod 播种规则）、04（无）、06（无）
 2. **引导口令轮替后的回收**：环境变量改值不会回滚已播种的账号（DB 里是新哈希），但若部署方忘记轮换，引导口令长期有效——需要口令有效期策略（仓库内无此机制，属 D31 之外的新面，未登记，等真有客户再定）。
 3. **本批不碰 N2/N3/N4**：真实渠道工具接通、浏览器适配器注册、定时调度器一条都不做，"核心闭环可用"仍不成立。
 4. **operator/viewer 在 prod 首启不存在**：若前端或文档假定了这些账号，prod 首启会看到空列表——属预期，但演示脚本不能在 prod 档跑。
+
+---
+
+## 9. 落码收口注记（2026-09-25 同日，✅ 全部四原子完成）
+
+- 原子：`66e977e` `feat(iam)`（bootstrap＋seed plan＋两条播种入口＋compose/.env.example）→ `4f980df` `test(iam)`（U860–U867）→ 本 docs 收口原子。⑤ 真机冒烟**已在收口时执行**（见下"实跑证据"）。
+- 与 §2 一致，无形状偏差；**两处按实况补强**：① 缺失与"弱口令"分两条错误消息（U861/U861a 分别断言，排障要能分辨）；② `AUTH_SEED_CREDENTIAL` 在 prod 的拒绝原样保留，本批只补"从哪进"，不放松它。
+- 门：`pytest` **1868 passed / 114 skipped / 0 failed**（基线 1856/114，净增本批 12 条常跑；受影响三文件复跑 36 passed；`docker compose config` rc=0）。
+- **实跑证据（真进程，非单测）**：`ATLAS_ENV=prod` 无引导口令 → `import atlas.iam` 抛 `RuntimeError: ...缺少 ATLAS_ADMIN_BOOTSTRAP_PASSWORD`；`ATLAS_ADMIN_BOOTSTRAP_PASSWORD=short` → 抛"不合口令策略——密码长度须为 8-128 位"；给合法口令 → `seed_plan_for_profile()`＝`[admin-a@t1, admin-b@t2]`，`authenticate_login("admin-a", 引导口令)` 返回 t1/admin，`admin123` 与 `operator-a` 均被拒。**这三条即 §2.3 行为矩阵的四行实况。**
+- **既有测试被改 1 处（契约变更所致，非凑绿）**：`tests/test_security_bootstrap.py::test_assert_prod_secrets_passes_with_both_keys` 补引导口令并在注释指向本文；其旧语义由 U861b 反向覆盖。
+- §3 同步矩阵回填结果：**已同步** docs/00（新行）·docs/03（`identity_user` 族播种规则）·docs/12（登录端点 prod 口径，改在单元格内、竖线数不变）·docs/13（U860–U867 登记行）·docs/15（新增 §五 prod 启动前置）·docs/63（§0A N1 标 ✅ 闭合）·docs/64（J-1c 缺口就地注）·README（单副本措辞更新＋prod 三件前置）·CHANGELOG·handoff（索引行／Active #70／Recently shipped 滚 1 条／状态行）。**零改动**＝docs/04·06·09·30·34·62（本批不触其形状）。
+- **§6 残余风险全部仍然成立**，其中第 2 条（引导口令无轮换有效期）与第 1 条（prod 无租户自助开通）本批明确不做；**N2／N3／N4 未动 ⇒ docs/63 的"核心闭环可用"仍判否。**
