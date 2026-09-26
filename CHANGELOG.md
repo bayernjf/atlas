@@ -3,6 +3,15 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### fix(observability)：日志行把 request id 和消息粘在一起了（2026-09-27，非批次小修；docs/65 K-D 的落地缺陷；零迁移／零新端点／零新错误码／零新依赖）
+
+- **量到的实况**（不是推断）：`configure_logging()` 装的格式串是 `… [%(name)s] %(request_id)s%(message)s`，真渲染出来是 `2026-09-26T21:13:47.907+00:00 INFO [atlas.demo] abc123hello world`——**id 与消息之间没有分隔符**，运维 grep 一条消息会把它前面的 id 一起吃进去，反之按 id 过滤也会。
+- **为什么它带着三条测试活了两天**：K-D 的 formatter 测试**自带格式串**（`_UtcFormatter("%(asctime)s %(levelname)s %(message)s")`），另一条断言的是 record 字段，**没有一条去看渲染后的那一行**；契约 docs/65:65 写的"断言 `request_id=` 字段"更是从未成立（字段名是 `request_id`，输出里根本没有等号）。**这是"测试测的是自己的假设"的又一个实例**——守护必须经过生产那条真路径。
+- **改法**：`RequestIdFilter` 写两个字段——`request_id` 仍是**原值**（将来的 JSON handler 与任何按字段取值的代码不该拿到被格式化过的串），新增 `request_id_tag` ＝ `"req=<id> "` 或空串；格式串改用 `%(request_id_tag)s`。分隔符**只在有 id 时存在**，所以既不会粘连，也不会让无请求上下文的行留下空槽或双空格。
+- **新增 U914–U915（`tests/test_observability_logging.py`）**：U914 从 `configure_logging()` 真装上去的那个 formatter 渲染整行并断言 `] req=<id> hello world$`；U915 是无 id 的正向对照（不得出现 `req=`、不得有双空格）。**先跑出红再修**：U914 改前实跑失败（输出粘连原文），U915 改前就通过——健康用例本来就好，这条绿只证明对照没写错。
+- **门**：后端 `.venv/bin/pytest` **1962 passed / 119 skipped / 0 failed**（104.20s；`--collect-only` 2081 条与 1962＋119 相符，无截断；本批净增 2 例）。前端零改动不重跑。
+- **同步面**：docs/65 §5 追加**订正条**（正文按留痕规则不改写，含"`request_id=` 是契约想当然"这句），docs/12 打包 K 注记就地补订正，docs/13 登记 U914–U915，`src/atlas/observability/logging.py` 模块 docstring 改为实况，handoff 状态行与质量门。**不动 D39 状态**（它记的是"可观测最小面已取回、OTel 仍缓做"，与本条渲染缺陷无关）。
+
 ### fix(security)：打包 P 收口——"哪些路由不需要凭证就能打"从人记的清单变成机检的表（2026-09-27，契约 docs/75；`563fbbc`→`ebcdb2d`→`d9163f3`＋本收口原子；零迁移／零新端点／零新错误码／零新依赖）
 
 - **落了什么**：① `563fbbc` 5 条 demo 模拟面路由（`/demo/shop`、`/api/demo/shop/login`、`/api/demo/shop/orders`、`/api/demo/mock/orders`、`/api/demo/mock/orders/{id}/receipt`）套上 `_demo_mock_enabled()`，prod 档一律 **404 而非 403**（拒绝语不该确认"这里确实有个被关掉的东西"）；同原子把门函数从自比字符串改成走 `read_env_profile()`，修掉 **`ATLAS_ENV=PROD` 大写静默开门** 这条真 fail-open，非法档位现在是起不来而不是默认按 dev 放行。② `ebcdb2d` `tests/test_demo_surface_prod_gate.py` U909–U913 共 9 例。③ `d9163f3` `scripts/dev/prod_surface_probe.py` 四段真进程探测。
