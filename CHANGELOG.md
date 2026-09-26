@@ -3,6 +3,16 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### fix(security)：打包 P 收口——"哪些路由不需要凭证就能打"从人记的清单变成机检的表（2026-09-27，契约 docs/75；`563fbbc`→`ebcdb2d`→`d9163f3`＋本收口原子；零迁移／零新端点／零新错误码／零新依赖）
+
+- **落了什么**：① `563fbbc` 5 条 demo 模拟面路由（`/demo/shop`、`/api/demo/shop/login`、`/api/demo/shop/orders`、`/api/demo/mock/orders`、`/api/demo/mock/orders/{id}/receipt`）套上 `_demo_mock_enabled()`，prod 档一律 **404 而非 403**（拒绝语不该确认"这里确实有个被关掉的东西"）；同原子把门函数从自比字符串改成走 `read_env_profile()`，修掉 **`ATLAS_ENV=PROD` 大写静默开门** 这条真 fail-open，非法档位现在是起不来而不是默认按 dev 放行。② `ebcdb2d` `tests/test_demo_surface_prod_gate.py` U909–U913 共 9 例。③ `d9163f3` `scripts/dev/prod_surface_probe.py` 四段真进程探测。
+- **本批真正的产出不是那 5 行门**：是 U909——匿名可达面（既无 `Principal` 依赖、函数体里也无档位门）现在是一张**机器枚举的显式 allowlist**，138 条路由里恰好 8 条设计公开（health／ready／metrics·Bearer／shopify 入站 HMAC／OAuth 回调／登录／邮件两把签名 token），**多一条少一条都红**。配了反向门：往 `app` 上临时挂一条无鉴权假路由，守护必须点名它，摘掉后必须回到原集合——否则那条 ✅ 不可信。**为什么值得为此写一批**：S5 这个判断已经在 docs/63 → docs/72 → docs/74 之间漂移过两次，靠人记是记不住的。
+- **老门语义没被改坏**：`LEGACY_DEMO_SURFACE` 三条（J-3e 之前就守着的 shopify-admin mock）与 `/api/demo/mock/orders` 保留的 `X-Demo-Token` 检查都仍在——**它是防误用，不是凭证**；有平台鉴权的三条 demo 数据面（reset／feedback）一条没动，prod 档下业务端点仍是 401 而不是 404（排障要说实话）。非 prod（dev/test）逐键不变，TRIAL.md／docs/18 的演示形态与 compose 缺省 dev 不受影响；`ATLAS_ENABLE_DEMO_MOCK=1` 是唯一开闸方式，且**一次开全**、不留半开状态。
+- **探测脚本自己抓到的三个"会假绿"**：① `POST` 不带 body 会被 pydantic 先 422，那时**门还没执行就被判成"挡住了"** ⇒ 每条路由配合法 body；② 清 `ATLAS_ENABLE_DEMO_MOCK` 的语句最初写在 overrides 之前，顺序反了会把第 2 段变成必然假红；③ 这批用例的绿依赖机器上残留的 `ATLAS_ENV`（同一份代码两台机器一绿一红）⇒ 加 autouse `_neutral_profile`，**每条用例自带档位**。密钥是脚本内一次性生成的随机值，不是任何真实凭据；库走内存档。
+- **门（先跑后写）**：后端 `.venv/bin/pytest` **1960 passed / 119 skipped / 0 failed**（104.16s；基线 1951/119，本批净增 9 例）。前端本批零改动、仍重跑确认没被牵连：`pnpm test` **738 passed / 2 skipped**、`pnpm lint` **0 error / 7 warning**（全既有）、`pnpm build` ✓ **1,730.78 kB / gzip 536.85 kB**。**〔跑〕 证据**：`scripts/dev/prod_surface_probe.py` 四段全过（prod 404／开关开回／大写 `PROD` 仍 404／非法档位起不来）。
+- **诚实边界**：真进程探测只是**部分**推进 docs/73 的 4.1——这是本仓第一次有 prod 档进程被真驱动，但没有真 LLM／真 Shopify／真 IM，也没有 Docker 与网络边界，**4.1 与"一次真 prod 演练"仍是 B 档必答**；allowlist 守护只管"有没有鉴权依赖"，**不管鉴权对不对**。**本批不解除**任何缓做项与单副本三道闸。docs/63 的 S5 就此补记最终闭合（历史正文不追溯改写）。
+- **同步面**：docs/08 §八 立项条＋落码收口注记＋A 组行划销（A 组回到 0 项）、docs/00 地图行翻 ✅、docs/73 X.3 ✅／退出判据／流水、docs/72 §7 再补记、docs/63 附录、docs/74 §7 收口注记（实测门数）、docs/12 鉴权四档段、docs/15 §五 两条、`tests/test_demo_surface_prod_gate.py`（U909–U913）、`scripts/dev/prod_surface_probe.py`、`.env.example`、docs/13 登记、handoff（Active **#74** ✅＋Recently shipped）、CHANGELOG。
+
 ### docs：打包 P 立项——demo 模拟面 prod 闸门收口契约（docs/75，2026-09-27 用户「好的，开搞」批准 docs/74 X.3；docs-only 未落码；零新依赖／零迁移／零新端点·错误码）
 
 - **为什么会有一批"5 行代码"的活**：第五次复审（docs/74）回代码复核 docs/72 的「S1–S8 全部 remediation」，发现 **S5 只守住 3 条路由**。枚举 `app.routes`（**138** 条）后实况是：12 条无平台鉴权，8 条设计公开（health/ready/metrics·Bearer／shopify 入站 HMAC／OAuth 回调 state／登录／邮件两把签名 token），**5 条 demo 模拟面在 prod 仍匿名或固定口令可达**——`POST /api/demo/mock/orders/{order_id}/receipt`（无鉴权、无档位门、**把请求体原样回显**）、`GET /api/demo/mock/orders`（靠写进仓库的常量 `X-Demo-Token: demo-token`）、`POST /api/demo/shop/login`＋`GET /api/demo/shop/orders`（demo/demo）、`GET /demo/shop`（HTML 控制台）。

@@ -61,3 +61,19 @@ docs/08（§八 立项条＋A 组新行→收口划销）、docs/12（demo 路�
 3. **`ATLAS_ENABLE_DEMO_MOCK=1` 是一个把门全开的单点开关**：v1 不做按路由细粒度开闸（会引入 5 个新配置项与新的解释负担）；需要细粒度时另批。
 4. **prod 探测仍不是"prod 演练"**：没有真 LLM／真 Shopify／真 IM，也没有 Docker 与网络边界。docs/73 的 4.1 只能部分推进，别把它翻成 ✅。
 5. **改 `_demo_mock_enabled()` 的档位读取方式会牵动既有 3 条路由**：已由 U913 覆盖，但它属于"共用函数的行为改动"，回归面比新增门略大——这一条写在这里是防止下一位把它当纯增量改动。
+
+## 7. 收口注记（2026-09-27 同日，落码 `563fbbc`→`ebcdb2d`→`d9163f3`＋本 docs 原子）
+
+**结论**：本批按 §1 六条决策全部落地，**docs/74 §3-A 第 1 项（X.3）关闭**、docs/63 的 S5 补记最终闭合、docs/73 的 X.3 翻 ✅（4.1 只记"部分推进"，本项仍 ⬜）。门：后端 `pytest` **1960 passed / 119 skipped / 0 failed**（104.16s，本批净增 9 例）；前端本批零改动仍重跑——`pnpm test` 738/2、`pnpm lint` 0 error·7 warning、`pnpm build` ✓ 1,730.78 kB（gzip 536.85）。**〔跑〕 证据**：`scripts/dev/prod_surface_probe.py` 四段全过（原文输出与逐条断言见 handoff「Quality gate › 2026-09-27 打包 P 收口门」）。
+
+**§3 同步矩阵回填（全部完成）**：docs/08 §八 立项条＋收口注记＋A 组行划销（A 组回到 0 项）／docs/12 鉴权四档段补"prod 一律 404"与 allowlist 说明／docs/13 U909–U913 登记／**docs/14 未新增缓做**（§1 D-6 与 §6 无新风险）／docs/15 §五 两条（档位只此一份读法＋prod 默认全关）／docs/63 §0A 附录「S5 的最终闭合」／docs/72 §7「再补记」／docs/73 X.3 ✅ 与 4.1 部分推进＋流水两行／docs/74 §7 收口注记（含实测门数）／`.env.example` 新增 `ATLAS_ENABLE_DEMO_MOCK` 注释段／README prod 段两句／CHANGELOG 收口条／handoff（状态行＋Active **#74** ✅＋Recently shipped 滚 1 条进归档＋Quality gate 新块）。
+
+**落码与契约的偏差（六条，逐条写清，防止后来者按契约文读代码）**：
+1. **U909 的集合口径与 §4 不同**：契约写"断言恰等于 allowlist（12 条＝8 设计公开＋4 demo 面）"，实现把守护问句收窄成**"既无平台鉴权依赖、函数体里也无 `_demo_mock_enabled()` 门"**，于是集合恰为 **8 条设计公开**；那 5 条 demo 面不再出现在 allowlist 里，改由 **U910 逐条断言 prod 404／开关开回**覆盖。这样"新加一条无鉴权路由"才必然红——若把 demo 面留在 allowlist 内，加一条同类路由会被当成"符合预期"放过。
+2. **U912 的非法档位比契约更强**：契约写"`ATLAS_ENV=production` ⇒ 请求处理时抛非法档位"，实测是**进程起不来**（`read_env_profile()` 在装载路径上就抛 `ValueError`，见 `bootstrap.py:32`），探测第 4 段因此断言的是"没起来＋stderr 里有档位原因"，而不是某个请求的状态码。
+3. **`PUBLIC_BY_DESIGN` 是带理由的 dict 而非 set**：每条公开面写明"它各自靠什么成立"（HMAC／state／签名 token／无敏感数据／速率门），否则 allowlist 会被读成"这 8 条不需要防护"。
+4. **探测脚本必须给 POST 配合法 body**：无 body 的 POST 被 pydantic 先 422，那时**闸门根本还没执行**——不带 body 的探测会把"被校验拦下"记成"被门拦下"，是一条假绿。契约 §4 没写这一层。
+5. **新增了一个契约里没有的 autouse fixture `_neutral_profile`**：这批用例的绿原本依赖机器上残留的 `ATLAS_ENV`（同一份代码两台机器一绿一红），现由它给每条用例钉档位并在退出时还原。
+6. **§5 原子 ④ 的 commit type 取 `test(dev)`**（探测脚本是证据生成器，不是产品功能）；顺带在 README 同一段补了主密钥长度口径（`assert_prod_secrets()` 只查"环境变量字符串 ≥32"，而 `secrets.py` 要求 base64url **解码后恰 32 字节**，`token_urlsafe(48)` 会在加密后端 fail-closed 中止）——契约未列，但与"prod 前置"同段落，留着不写就是下一次部署踩坑的源头。
+
+**仍然不做的（照 §1 D-6 与 §6 原文，未松动）**：不解除任何缓做项与单副本三道闸；不做按路由细粒度开闸；不复核其余 126 条路由的角色／租户分区；**没有真 LLM／真通道／真 Docker／网络边界，因此 docs/73 的 4.1 与"一次真 prod 演练"仍是 B 档必答**。

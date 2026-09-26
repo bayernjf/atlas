@@ -19,7 +19,7 @@
 | W2 | N3 范围决策（产品非工程） | 2.1 浏览器自动化进/出 MVP | ⬜ |
 | W3 | prod 形态持久化与韧性 | 3.1 调度 store PG 化（D32）/ 3.2 D36 崩溃兜底批 / 3.3 多副本解锁（后置） | ✅×1（3.1 已完成，2026-09-27 更正）／⬜×1（3.2；3.3 后置不计入 B 档） |
 | W4 | prod 演练（终门） | 4.1 `ATLAS_ENV=prod` 真机演练 | ⬜ |
-| X | 横切前提 | X.1 CI postgres service / X.2 凭据卫生（N5）/ X.3 demo 模拟面 prod 残留闸门（2026-09-27 新增） | ✅×1（X.1 已在跑，2026-09-27 更正）／⬜×2（X.2、X.3） |
+| X | 横切前提 | X.1 CI postgres service / X.2 凭据卫生（N5）/ X.3 demo 模拟面 prod 残留闸门（2026-09-27 新增并当日闭合） | ✅×2（X.1 已在跑；X.3 由打包 P 闭合）／⬜×1（X.2） |
 
 ## 2. 明细追踪表
 
@@ -32,10 +32,10 @@
 | 3.1 | W3 | 把 `schedule_fires`/注册（docs/68 当前进程内）迁 Postgres，跨重启/实例共享 | 调度触发跨进程重启存活**且**第二实例不重复触发（PG 支撑 `ON CONFLICT`）；由对真 postgres 的集成测试覆盖 | CI postgres service（X.1） | ✅ **2026-09-27 更正：本项已完成**〔码〕 | `api/main.py:1059-1063` 在 `ATLAS_STORAGE_BACKEND=pg` 时装 `PgScheduleStore`（迁移 030 建 `schedules`/`schedule_fires`），出厂 `docker-compose.yml:50` 即 pg 档；跨重启存活与"第二实例不重复触发"由 `tests/test_scheduling_pg_integration.py` 5 例覆盖并在 CI `Backend PG integration` 每 PR 真跑 | 即 docs/14 D32；原记 ⬜ 属 docs/72 §1 同源误判，见 §6 |
 | 3.2 | W3 | 立项 docs/62 §8 风险5 的 D36 批：单实例崩溃后 reconcile 挂起帧，保 at-most-once 续跑安全 | `kill -9` 挂起中途后重启⇒不重复执行；帧恢复或 fail-safe | 无（工程内可闭环） | ⬜ | — | docs/62 已登记 D36 |
 | 3.3 | W3 | **后置**：仅当要「生产级」而非「单实例 MVP」时，再解 docs/62 单副本硬约束；需 D36＋所有挂起/事件/等待态共享 PG | 非 B 档阻塞；单实例 MVP 今日可交付 | 3.2 + 全态 PG 化 | ⬜（后置） | — | HA 显式后置阶段 |
-| 4.1 | W4 | 真实凭据的 prod 全新部署；docs/66 引导口令 seed 管理员；首登强改密；跑通一条代表图（审批＋条件＋真 Shopify 退款＋IM 通知）至终态 | 真实基建上整链一次绿；把本次运行作为 〔跑〕 证据写入 docs/72 补记 | 1.1–1.3 全部 live | ⬜ | — | B 档终门 |
+| 4.1 | W4 | 真实凭据的 prod 全新部署；docs/66 引导口令 seed 管理员；首登强改密；跑通一条代表图（审批＋条件＋真 Shopify 退款＋IM 通知）至终态 | 真实基建上整链一次绿；把本次运行作为 〔跑〕 证据写入 docs/72 补记 | 1.1–1.3 全部 live | ⬜（**2026-09-27 部分推进，本项仍 ⬜**） | `scripts/dev/prod_surface_probe.py`（打包 P）：本仓第一次有 **prod 档进程被真驱动**——四段全过（prod 404／`ATLAS_ENABLE_DEMO_MOCK=1` 开回／大写 `PROD` 仍 404／非法档位起不来） | B 档终门。**探测≠演练**：没有真 LLM／真 Shopify／真 IM，也没有 Docker 与网络边界，整链一次绿仍未达成 |
 | X.1 | X | 启用 CI postgres service（docs/63 结构性缺口：当前 44/1918 integration 永不跑） | CI 中 integration 套件对真 postgres 实际执行；解锁 3.1 的集成证明 | 无（工程内） | ✅ **2026-09-27 更正：已在跑**〔码〕 | `.github/workflows/ci.yml:58-90` 的 `Backend PG integration` job 设 `ATLAS_RUN_INTEGRATION=1` ＋ `DATABASE_URL`，先 `python -m scripts.ops.apply_migrations` 再 `pytest`（打包 J P1-1 落码）；原记 ⬜ 是把 docs/63 当时的结构性缺口当成了现状 | 备注：本项翻 ✅ 直接解锁 3.1 的集成证明 |
 | X.2 | X | 凭据卫生：核 N5（`.env` example）已满足，且无明文 prod 凭据入库 | 仓库无明文 prod 秘钥；prod 走 vault/环境变量注入 | 无（工程内） | ⬜ | — | 见 docs/63 §0A N5 |
-| X.3 | X | **demo 模拟面 prod 残留闸门收口**（2026-09-27 第五次复审 docs/74 新增）：`_demo_mock_enabled()` 目前只守 3 条 shopify-admin mock 路由（`main.py:4166/4180/4204`），prod 档仍有 5 条匿名/固定口令可达——`POST /api/demo/mock/orders/{order_id}/receipt`（`main.py:4148-4151`，**无鉴权且回显请求体**）、`GET /api/demo/mock/orders`（固定公开串 `X-Demo-Token: demo-token`）、`POST /api/demo/shop/login` ＋ `GET /api/demo/shop/orders`（demo/demo）、`GET /demo/shop` | `ATLAS_ENV=prod` 下逐条真发请求 ⇒ 全部 404；并有一条反向测证明"去掉门就红" | 无（工程内，量小） | ⬜ | — | docs/63 §0A 曾更正 S5 只守 3 条；docs/72 §2 又收回成"全部 remediation"，故本文把它补成必答项 |
+| X.3 | X | **demo 模拟面 prod 残留闸门收口**（2026-09-27 第五次复审 docs/74 新增）：`_demo_mock_enabled()` 目前只守 3 条 shopify-admin mock 路由（`main.py:4166/4180/4204`），prod 档仍有 5 条匿名/固定口令可达——`POST /api/demo/mock/orders/{order_id}/receipt`（`main.py:4148-4151`，**无鉴权且回显请求体**）、`GET /api/demo/mock/orders`（固定公开串 `X-Demo-Token: demo-token`）、`POST /api/demo/shop/login` ＋ `GET /api/demo/shop/orders`（demo/demo）、`GET /demo/shop` | `ATLAS_ENV=prod` 下逐条真发请求 ⇒ 全部 404；并有一条反向测证明"去掉门就红" | 无（工程内，量小） | ✅ **2026-09-27 完成**〔跑〕 | `563fbbc` 门收口（含 D-2 那条大写 fail-open）＋`ebcdb2d` U909–U913 九例＋`d9163f3` 真进程四段探测；prod 档下 8 条 demo 面逐条 404、开关一次开全、`ATLAS_ENV=PROD` 大写不再开门、非法档位拒启 | 原由 docs/74 补进清单；S5 至此才算真关。**顺带留下一种防复发机制**：匿名可达面由 U909 机器枚举成 allowlist，新加无鉴权路由会当场红 |
 
 ## 3. 退出判据（B 档达成）
 
@@ -46,7 +46,7 @@
 - [ ] 1.3 真实消息/IM/SMTP/SMS/OAuth 至少主通道 live 且已演练
 - [ ] 2.1 N3 范围决策已记录
 - [x] ~~3.1 调度 store PG 化完成~~ **✅ 2026-09-27 更正：立项时已完成**（`api/main.py:1059-1063`＋迁移 030＋compose pg 档；集成测试 5 例在 CI 每 PR 真跑）
-- [ ] X.3 demo 模拟面 prod 残留闸门收口（2026-09-27 第五次复审新增，见 docs/74 §3-A）
+- [x] X.3 demo 模拟面 prod 残留闸门收口（✅ 2026-09-27 打包 P：`563fbbc`＋U909–U913＋真进程探测；匿名可达面从此由 allowlist 机器守护）
 - [ ] 4.1 `ATLAS_ENV=prod` 真机演练整链绿
 
 （3.2 / 3.3 / X.1 / X.2 为韧性/前置增强：3.2 强烈建议随 B 档同批；3.3 与 X 类为后置或横切，不单独阻断 B 档判定。）
@@ -75,3 +75,5 @@
 | 日期 | 动作 | 说明 |
 |---|---|---|
 | 2026-09-27 | 更正＋新增 | 第五次复审（docs/74）驱动：3.1 与 X.1 翻 ✅（附 〔码〕 证据与 file:line）；新增 X.3 demo 面 prod 残留闸门；总览两行与 §3 退出判据同步 |
+| 2026-09-27 | X.3 闭合 | 打包 P 落码收口（`563fbbc` 门＋D-2 大写 fail-open／`ebcdb2d` U909–U913 九例含 allowlist 反向门／`d9163f3` 真进程四段探测）。prod 档 8 条 demo 面逐条 404、开关一次开全、`ATLAS_ENV=PROD` 不再静默开门、非法档位拒启。**匿名可达面从此是机器枚举的 allowlist**，新加无鉴权路由当场红——这条比那 5 行门更耐久。门：后端 1960/119/0、前端 738/2/55、oxlint 0/7、build 未变（本批不碰前端） |
+| 2026-09-27 | 4.1 部分推进 | 同批的 `scripts/dev/prod_surface_probe.py` 是本仓第一次有 **prod 档进程被真驱动**（四段全过），故在 4.1 行就地记"部分推进"并把探测证据落到该行备注；**本项仍 ⬜**——没有真凭据、没有 Docker 与网络边界、整链未跑过一次 |
