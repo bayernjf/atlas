@@ -14,7 +14,7 @@
 - **前端自动透传语言**：`frontend/src/lib/apiClient.ts` 的 `request<T>` 注入 `Accept-Language: <getLanguage()>`，后端即可按当前应用语言返回本地化元数据（与既有 Bearer 注入同构）。
 - **约定（docs/70 §2/§8，落码前已拍板 D1/D3）**：模板 `name`/`description` 均本地化（模板 `id` 是独立稳定键）；适配器**仅 `description` 本地化**——`name` 是 wire 标识符，前端 `buildToolOptions` 用 `${adapter_id}/${tool.name}` 作 Select `value` 必须＝`config.tool`，本地化会破坏 tool_call 契约；`tags` 不翻译、技术专名（Shopify/PostgreSQL）保留原文。
 - **测试反向门 G1–G3 共 9 例**（`tests/test_api_i18n_metadata.py`，docs/13 U900–U908）：G1 en-US 返回英文、适配器 name 不随语言变；G2 缺省/非法/不支持语言 fail-closed 回退 zh-CN；G3 每个模板与能力双语非空（翻译覆盖完整性）。
-- **门（先跑后写）**：后端 `pytest` **1942 passed / 119 skipped / 0 failed** 零回归；前端零改动不跑全量门、`pnpm build` 过。**未解除** D13 整体——自然语言多语言、i18next 本体、navigator 探测仍缓做 docs/14 D13。
+- **门（先跑后写）**：后端 `pytest` **1951 passed / 119 skipped / 0 failed**（基线 1942/119，净增本批 9 常跑）零回归；前端零改动不跑全量门、`pnpm build` 过。**未解除** D13 整体——自然语言多语言、i18next 本体、navigator 探测仍缓做 docs/14 D13。
 
 ### fix：打包 O 收口——同步急停句柄 ＋ 前端认 superseded 帧（2026-09-27，契约 docs/69；零迁移/零新端点/零新错误码/零新依赖）
 
