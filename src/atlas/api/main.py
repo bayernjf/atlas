@@ -148,6 +148,7 @@ from atlas.storage.recovery import (
     make_frame_sink,
     make_resume_claim,
 )
+from atlas.scheduling.cron import CronExpressionError, next_fire_utc, validate_cron
 from atlas.scheduling.engine import (
     ACTION_SKIPPED_OVERLAP,
     TickLedger,
@@ -1280,6 +1281,42 @@ def run_schedule_now(
     store.note_fired(principal.tenant_id, graph_id, now)
     _record_audit(services, principal, http_request, "schedule.run_now", 200)
     return {"runId": run_id, "graphId": record.graph_id, "version": record.version}
+
+
+class CronPreviewRequest(BaseModel):
+    cron: str = ""
+
+
+# 预览只数到第 3 个槽：再多没有排障意义，也防止逐分钟扫描变慢。
+MAX_CRON_PREVIEW_HITS = 3
+
+
+@app.post("/api/schedules/cron-preview")
+def preview_schedule_cron(
+    request: CronPreviewRequest, principal: Principal = Depends(require("read"))
+) -> dict[str, Any]:
+    """cron 预演：这个表达式合不合法、接下来三个 UTC 槽位是几点（不落库、不占槽位）。
+
+    刻意**不在前端复刻一个 cron 解析器**：两份实现对"日与周取并集""7＝周日"这类边角
+    迟早分叉，分叉的表现就是画布里看着绿、保存时才 422。合法与非法都回 200——请求本身
+    格式正确，"表达式不合法"是答案不是错误（与保存期 422 的分工：这里只预演，不拦保存）。
+    """
+    cron = request.cron.strip()
+    if not cron:
+        raise HTTPException(status_code=422, detail="请先填写 Cron 表达式（5 个字段：分 时 日 月 周）")
+    cursor = datetime.now(timezone.utc)
+    try:
+        spec = validate_cron(cron, now=cursor)
+    except CronExpressionError as exc:
+        return {"valid": False, "message": str(exc), "nextFireAt": [], "timeZone": "UTC"}
+    hits: list[str] = []
+    while len(hits) < MAX_CRON_PREVIEW_HITS:
+        upcoming = next_fire_utc(spec, cursor)
+        if upcoming is None:
+            break
+        hits.append(upcoming.isoformat())
+        cursor = upcoming
+    return {"valid": True, "message": "", "nextFireAt": hits, "timeZone": "UTC"}
 
 
 @app.post("/api/channels/hooks/shopify/{binding_id}")

@@ -1434,10 +1434,15 @@ def _validate_node_config(node: NodeDSL) -> list[Issue]:
         if trigger_type in ("schedule", "cron"):
             if not config.get("cron"):
                 return [add("定时触发必须填写 Cron 表达式", "/cron", "NODE_TRIGGER_CRON_REQUIRED")]
+            cron_expression = str(config.get("cron"))
             try:
-                validate_cron(str(config.get("cron")))
+                validate_cron(cron_expression)
             except CronExpressionError as exc:
-                return [add(str(exc), "/cron", "NODE_TRIGGER_CRON_INVALID")]
+                # reason 一起进 params：这份解释只有后端那一个 cron 实现知道，前端不再复刻
+                # 一个解析器（docs/68 顶部落码偏差），插值比再造一份文案权威更诚实。
+                return [add(
+                    str(exc), "/cron", "NODE_TRIGGER_CRON_INVALID", {"reason": str(exc)}
+                )]
         if trigger_type == "webhook" and not config.get("webhookUrl"):
             return [add("Webhook 触发必须填写 URL", "/webhookUrl", "NODE_TRIGGER_WEBHOOK_URL_REQUIRED")]
     elif node.type == "ai_decision":
