@@ -3,6 +3,16 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### fix：打包 M——渠道工具接通通用 JSON 参数通道，图里第一次能真调 Shopify 退款（2026-09-25，契约 docs/67；`fix(graph)` → `test(graph)` → 收口 docs；零新迁移/端点/错误码/i18n 键）
+
+- **症状**：`channel:shopify/<binding>/create_refund` 在图里**必失败**。路由只把 `{http, database, message, memory}` 与 `openapi:` 送进通用 JSON 通道（`graph/loader.py:1701`），渠道 id 落进 demo shop 的**按能力硬编码装配**，`create_refund` 不在特判名单里 ⇒ 只拿到 `{"note": …}` ⇒ 真适配器取 `params["order_id"]` KeyError ⇒ `CHANNEL_INVALID_PARAMETER`。这是 docs/63 §0A 的 **N2**，也是"产品核心完全可用"判否的第二条。
+- **修法就一行前缀**：`startswith(("openapi:", "channel:"))`。全仓**只有这一处**路由门（收口时 grep 复核）。
+- **为什么不另写一套装配**：渠道能力的 `input_schema` 本来就是对象（`_REFUND_INPUT` 要求 `order_id`/`amount`），"params 插值后必须是 JSON 对象并整体透传"是 docs/04 §4.6–4.9 已定契约；给每个渠道再写硬编码＝第三套装配＋每加一个渠道改一次 loader；让适配器自己解析 `note` 字符串＝把 JSON 契约下沉。**demo `shop` 仍走硬编码**（`process_refund` 需要上游 AI 决策与 trigger 载荷，形状不同），`GENERIC_JSON_ADAPTERS` 也没被塞进 `channel:`（id 带 binding 后缀，只能按前缀判）。
+- **6 条新测试（U868–U873），外部只假在 HTTP 传输层**：真适配器＋真 `ShopifyChannelClient`＋真参数装配＋真图执行，断言请求体 `transactions[].amount=="299.00"` 与 URL `/orders/12345/refunds`；非法 JSON 不得打到外部 API（零次 HTTP）；缺参由适配器报而不是 KeyError 冒出；**U871 是完整链形** trigger→ai_decision→human_approval（预置通过）→真渠道退款，正面补齐 docs/63 §2.2 那"两段互不覆盖"。两条反向门：静态断言路由常量含 `channel:`/`openapi:`；**并排反证**把同一个真适配器注册前改名成非 `channel:` id，立刻退回缺参失败——证明承重的正是那条前缀而非巧合。
+- **同批把 N2 的口径钉准**：关闭证据是"真适配器＋真客户端＋**假 HTTP**"，**不是真 Shopify 返回 200**（那需要真实店铺凭据，属 docs/08 D 组外部资源）。`amount` 传字符串会怎样、部分退款分摊策略对不对，本批都不加新校验——避免凭想象收紧，等真数据暴露再定（docs/67 §4）。
+- **同步面**：docs/67 新建（含四条残余风险）、docs/00 地图行、docs/04 §4.9 前缀白名单追加、docs/13（U868–U873）、docs/63 §0A（**N2 标 ✅ 闭合**、N3/N4 明示未做）、docs/08 A 组 L-2 划销、CHANGELOG、handoff。解除缓做 0 个。
+- **门**：`pytest` **1874 passed / 114 skipped / 0 failed**（净增 6 条常跑）。**PROD 判定不因本批翻绿**：N3（浏览器自动化要不要算 MVP，是产品范围表态）与 N4（无调度器）仍开，外部资源与真机 prod 演练仍缺。
+
 ### feat：打包 L 落地 prod 首任管理员引导——解 docs/63 §0A N1 的"新 prod 库谁都进不去"（2026-09-25，契约 docs/66；`66e977e` feat → `4f980df` test → 本收口原子；零新迁移、零新端点、零新错误码、零新依赖）
 
 - **要修的洞是上一批自己挖的**：docs/64 的 J-1c 关掉了"弱种子口令可登录"，却没给"第一个管理员从哪来"。实况是三段接不上：`iam/deps.py:43` 在 import 时照播仓库内明文种子口令（`storage/pg.py:469`），`deps.py:74-81` 又在 prod 拒绝这些口令，而改密与建号两条路都需要已有身份（`main.py:1404-1410` 要登录态、`:1432/:1479` 要 admin）——**prod ＋ 新库 ＝ 没有任何能登录的账号**。

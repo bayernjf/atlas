@@ -17,3 +17,7 @@
 ### 2026-09-25 打包 L 收口滚出的 1 条
 
 3. ✅ **打包 I 全批收口＝L1 单副本护栏＋L2 挂起帧一次性认领（docs/62，2026-09-25；立项与 L1 `57a2477`/`4877677`＋docs 声明，L2 同日第二批 `af38176`/`593bed0`/`df5a18c`＋docs 收口；新增迁移 029）**：实测出的缺陷级阻断项（多副本＝重复扣款）落成两道防线——部署侧三道闸让第二进程起不来，数据侧一条 `UPDATE ... WHERE resumed_at IS NULL` 让"谁可以越过挂起点继续执行下游"只有一个答案。**端到端硬门翻绿**：`scripts/dev/multi_instance_resume_recon.py` 退出码 1→0（一次审批下游恰落一次；改造前通过×1／拒绝×1 双写）。**不解除 D19/D20/D27/D31/D32、单副本约束与三道闸一条都不撤**（只拆最贵那颗雷）；新增缓做 D37（前端未认 `superseded` 终帧）；D36（认领后崩溃＝永久 suspended、不自动重放）是本次有意引入的收紧。详见 Active work #63 与 Quality gate 2026-09-25 打包 I 条。
+
+### 2026-09-25 打包 M 收口滚出的 1 条
+
+3. ✅ **打包 J 全批收口＝P0-1 安全闸门＋P0-2 核心完整性＋P1-1 门禁（docs/64，2026-09-25；用户拍板「推进任务」立项，11 个功能原子＋2 个修正原子＋docs 收口原子）**：P0-1 `4ab6edc`（ATLAS_ENV fail-closed，prod 缺两密钥拒绝启动）/`0400be8`（邮件决策 token 绑收件人）/`f0e50ed`（prod 不播种＋种子口令 403）/`ef3451a`（登录确定性＋用户名全局唯一）；P0-2 `f1c54aa`（启动打印决策器与降级状态，不再静默）/`405161e`（跨 human_approval 真实退款全链 e2e，docs/08 criterion 4「或」字口径已补强）/`b220ba3`（waits/tasks 操作台 UI，D40 取回）；P1-1 `9b4ec9a`（CI postgres service＋integration job＋audit `seq` 红修）/`c6a1afe`（三处 litellm timeout+max_tokens）/`de023ab`（webhook 线程池＋1MB body 上限＋事件循环解耦）/`4b0794a`（demo 模拟面 prod 默认 404）。**J-3b limit `le=` 落码勘误**：本仓全部 limit 端点已有 clamp/reject 门禁，`le=` 统一覆盖会把 clamp 破坏成 reject（三测断言失败），故还原裸默认不引入（docs/64 §10）。**三道门**：后端 **1834/108/0**、PG 直连 **1941/1/0**（原 1 红消除）、前端 vitest **728/2/54 文件**、oxlint 0/6 既有、build ✓。D38/D39 与 D36 不解除；合 main 须用户授权。
