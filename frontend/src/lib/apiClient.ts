@@ -276,6 +276,13 @@ export type CancelledFrame = {
   reason: 'user_cancel'
 }
 
+/** 打包 O（docs/69 §1 D-2）：本进程在挂起点醒来却认不到帧（已被别的进程认领）的让位终帧。 */
+export type SupersededFrame = {
+  type: 'superseded'
+  node_id: string
+  reason: 'resumed_by_other_process'
+}
+
 /** 调试运行被「停止」结束（stopped 帧）；无 result，属正常终止而非请求失败。 */
 export class DebugRunStoppedError extends Error {
   nodeId: string
@@ -292,6 +299,16 @@ export class RunCancelledError extends Error {
   constructor(nodeId: string) {
     super(`运行已取消：${nodeId}`)
     this.name = 'RunCancelledError'
+    this.nodeId = nodeId
+  }
+}
+
+/** 打包 O（docs/69 §1 D-2）：本进程已让位、终态归赢家，非请求失败；与 cancelled/stopped 并列。 */
+export class RunSupersededError extends Error {
+  nodeId: string
+  constructor(nodeId: string) {
+    super(`运行已被其他进程接管：${nodeId}`)
+    this.name = 'RunSupersededError'
     this.nodeId = nodeId
   }
 }
@@ -328,10 +345,13 @@ export type RunEvent =
   | StoppedFrame
   | DebugLogFrame
   | CancelledFrame
+  | SupersededFrame
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
   headers.set('Content-Type', 'application/json')
+  // D13 后端元数据多语言：把当前应用语言带给后端，使其按 locale 换模板/适配器描述（docs/70）
+  headers.set('Accept-Language', getLanguage())
   const token = getToken()
   if (token) headers.set('Authorization', `Bearer ${token}`)
   const response = await fetch(path, { ...init, headers })
@@ -973,6 +993,7 @@ export async function streamRun(
   let result: RunResult | null = null
   let stoppedNodeId: string | null = null
   let cancelledNodeId: string | null = null
+  let supersededNodeId: string | null = null
 
   while (true) {
     const { done, value } = await reader.read()
@@ -1000,6 +1021,11 @@ export async function streamRun(
       } else if (payload.type === 'cancelled') {
         cancelledNodeId = payload.node_id
         onEvent(payload as CancelledFrame)
+      } else if (payload.type === 'superseded') {
+        // 打包 O（docs/69 §1 D-2）：本进程让位帧，与 cancelled/stopped 并列的正常终帧，
+        // 转发给 onEvent 后在循环末抛 RunSupersededError（不再误报 “SSE 流缺少最终运行结果”）。
+        supersededNodeId = payload.node_id
+        onEvent(payload as SupersededFrame)
       } else {
         onEvent(payload as RunEvent)
       }
@@ -1007,6 +1033,7 @@ export async function streamRun(
   }
   if (stoppedNodeId !== null) throw new DebugRunStoppedError(stoppedNodeId)
   if (cancelledNodeId !== null) throw new RunCancelledError(cancelledNodeId)
+  if (supersededNodeId !== null) throw new RunSupersededError(supersededNodeId)
   if (!result) throw new Error('SSE 流缺少最终运行结果')
   return result
 }

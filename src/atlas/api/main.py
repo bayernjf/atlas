@@ -26,7 +26,7 @@ from typing import Any, Callable, Literal
 
 import httpx
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -159,6 +159,7 @@ from atlas.scheduling.models import ScheduleRecord, schedule_projection, slot_ke
 from atlas.scheduling.pg_store import PgScheduleStore
 from atlas.scheduling.store import InMemoryScheduleStore, ScheduleStore
 from atlas.template import get_template, list_templates
+from atlas.web.i18n import localize_template, localize_tool_desc, resolve_locale
 from atlas.versioning.publish import publish as publish_graph_version
 from atlas.versioning.upgrades import subgraph_upgrade_plan
 
@@ -1816,9 +1817,16 @@ def reset_password(
 
 
 @app.get("/api/adapters")
-def list_adapters(principal: Principal = Depends(require("read"))) -> list[dict[str, Any]]:
+def list_adapters(
+    principal: Principal = Depends(require("read")),
+    accept_language: str | None = Header(default=None),
+) -> list[dict[str, Any]]:
     # 执行期注册表在全局基础设施之上合并本租户渠道适配器（docs/38 §1E）
-    return _runtime_registry(services_for(principal)).list_adapters()
+    locale = resolve_locale(accept_language)
+    adapters = _runtime_registry(services_for(principal)).list_adapters()
+    for adapter in adapters:
+        adapter["tools"] = [localize_tool_desc(tool, locale) for tool in adapter.get("tools", [])]
+    return adapters
 
 
 _OPENAPI_FETCH_TIMEOUT = 10.0
@@ -2530,17 +2538,22 @@ def rollback_rollout(
 @app.get("/api/templates")
 def list_catalog_templates(
     principal: Principal = Depends(require("read")),
+    accept_language: str | None = Header(default=None),
 ) -> dict[str, list[dict[str, Any]]]:
-    """列出内置流程模板（列表投影不含 graph，04 §5.10；12 §3.6）。"""
+    """列出内置流程模板（列表投影不含 graph，04 §5.10；12 §3.6）；name/description 按 Accept-Language 本地化（docs/70）。"""
+    locale = resolve_locale(accept_language)
     return {
         "items": [
-            {
-                "id": template.id,
-                "name": template.name,
-                "description": template.description,
-                "tags": template.tags,
-                "node_count": len(template.graph["nodes"]),
-            }
+            localize_template(
+                {
+                    "id": template.id,
+                    "name": template.name,
+                    "description": template.description,
+                    "tags": template.tags,
+                    "node_count": len(template.graph["nodes"]),
+                },
+                locale,
+            )
             for template in list_templates()
         ]
     }
@@ -2548,13 +2561,15 @@ def list_catalog_templates(
 
 @app.get("/api/templates/{template_id}")
 def get_catalog_template(
-    template_id: str, principal: Principal = Depends(require("read"))
+    template_id: str,
+    principal: Principal = Depends(require("read")),
+    accept_language: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    """返回模板完整元数据（含 graph），未知 id 404（04 §5.10）。"""
+    """返回模板完整元数据（含 graph），未知 id 404（04 §5.10）；name/description 按 Accept-Language 本地化（docs/70）。"""
     template = get_template(template_id)
     if template is None:
         raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
-    return template.model_dump()
+    return localize_template(template.model_dump(), resolve_locale(accept_language))
 
 
 @app.get("/api/alert-rule-templates")
@@ -3001,6 +3016,10 @@ def run_saved_graph(
         if event.get("type") == "tool_metric" and not event.get("subgraphPath"):
             tool_calls.append(_tool_call_from_event(event))
 
+    # 打包 O（docs/69 §1 D-1）：同步入口此前从不登记取消句柄（只有 :3115 的流式路径注册），
+    # 在途急停恒落 409「运行已结束」。与流式同构——请求线程注册，finally 注销覆盖全部出口。
+    cancellation_broker = services.cancellation_broker
+    cancel_event = cancellation_broker.register(run_id)
     try:
         result = run_graph(
             graph,
@@ -3018,6 +3037,7 @@ def run_saved_graph(
             resume_claim=_resume_claim_for(),
             tracer=tracer,
             graph_version=tracer.graph_version,
+            is_cancelled=cancel_event.is_set,
         )
     except RunSuperseded as exc:
         # docs/62 §2 D-4：输家停止驱动——不写 run 终态、不记监控、不进门控评估，
@@ -3028,6 +3048,29 @@ def run_saved_graph(
             status="suspended",
             outputs={},
             trace=[f"{exc.node_id}: superseded by another process"],
+        )
+    except RunCancelled as exc:
+        # 打包 O：同步入口的协作式急停与流式同形——用户主动 ⇒ 记 cancelled 且
+        # **不调 evaluate_after_run**（不算失败、不进 M9 灰度门控，与流式 :3203 逐条对齐）。
+        # 必须排在 except Exception 之前（RunCancelled 是 Exception 子类）。
+        services.run_store.finish(run_id=run_id, status="cancelled")
+        monitoring.record_run(
+            graph_id=graph_id,
+            mode="sync",
+            status="cancelled",
+            started_at=started_at,
+            duration_ms=(time.monotonic() - started) * 1000,
+            nodes=[],
+            trace_id=tracer.trace_id,
+            resolved_version=resolved_version,
+            tool_calls=tool_calls,
+            spans=tracer.to_tree(),
+        )
+        return RunGraphResponse(
+            id=graph_id,
+            status="cancelled",
+            outputs={},
+            trace=[f"{exc.node_id}: cancelled by user"],
         )
     except Exception as exc:
         services.run_store.finish(
@@ -3048,6 +3091,10 @@ def run_saved_graph(
         )
         evaluate_after_run(services, record)  # M9：异常运行同样计入 candidate 门控
         raise
+    finally:
+        # 打包 O：句柄必须随请求退出而注销——留着会让「已结束再取消」从 409 翻成 200
+        # （tests/test_run_cancel.py::test_cancel_finished_run_returns_409 守着这条不变量）。
+        cancellation_broker.unregister(run_id)
     services.run_store.finish(
         run_id=run_id, status="completed",
         outputs=result["outputs"], trace=result["trace"],

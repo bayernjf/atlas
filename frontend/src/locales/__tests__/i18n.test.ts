@@ -183,6 +183,7 @@ const EDITOR_TEMPLATE_KEYS: Array<{ key: string; vars: Record<string, unknown> }
   { key: 'debug.historySince', vars: { path: 'a → b' } },
   { key: 'log.paused', vars: { prefix: '', node: 'cond_1', reason: '断点' } },
   { key: 'log.runComplete', vars: { status: 'completed' } },
+  { key: 'log.superseded', vars: { node: 'wait_1' } },
 ]
 
 /** editor 页经 common: 前缀复用的跨页通用键（删除/取消/保存/加载中）。 */

@@ -58,6 +58,7 @@ import {
   cancelActiveRun,
   DebugRunStoppedError,
   RunCancelledError,
+  RunSupersededError,
   type ApprovalRequest,
   type CompileResult,
   type DebugAction,
@@ -277,6 +278,9 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
           setNodeStatus(event.node_id, 'idle')
         } else if (event.type === 'cancelled') {
           // 普通流急停终帧：复位暂停态；提示语在 catch RunCancelledError 统一记，避免重复。
+          setPausedFrame(null)
+        } else if (event.type === 'superseded') {
+          // 打包 O（docs/69 §1 D-2）：本进程让位终帧；复位暂停态、提示语在 catch 统一记。
           setPausedFrame(null)
         } else if (event.type === 'debug_log') {
           const logPrefix = subgraphPathPrefix(event.subgraphPath)
@@ -521,8 +525,10 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
     } catch (error) {
       if (error instanceof DebugRunStoppedError) {
         appendLog(t('log.stopped', { node: error.nodeId }))
-      } else if (error instanceof RunCancelledError) {
+      } else       if (error instanceof RunCancelledError) {
         appendLog(t('log.cancelled', { node: error.nodeId }))
+      } else if (error instanceof RunSupersededError) {
+        appendLog(t('log.superseded', { node: error.nodeId }))
       } else {
         const message = error instanceof Error ? error.message : String(error)
         setRunError(message)

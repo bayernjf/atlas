@@ -170,6 +170,7 @@
     "runComplete": "运行结束：{{status}}",
     "stopped": "调试已停止：{{node}}（无运行结果）",
     "cancelled": "⏹ 运行已急停：{{node}}（协作式取消，无运行结果）",
+    "superseded": "⏹ 运行已被其他进程接管：{{node}}（本进程已让位，无运行结果）",
     "runFailed": "✗ 运行失败：{{message}}",
     "resumeFailed": "✗ 调试放行失败：{{message}}",
     "noActiveRun": "当前没有在途运行可取消",

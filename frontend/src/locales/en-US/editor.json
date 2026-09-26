@@ -170,6 +170,7 @@
     "runComplete": "Run finished: {{status}}",
     "stopped": "Debugging stopped: {{node}} (no run result)",
     "cancelled": "⏹ Run emergency-stopped: {{node}} (cooperative cancellation, no run result)",
+    "superseded": "⏹ Run taken over by another process: {{node}} (this process yielded, no run result)",
     "runFailed": "✗ Run failed: {{message}}",
     "resumeFailed": "✗ Debug resume failed: {{message}}",
     "noActiveRun": "There is no in-flight run to cancel",

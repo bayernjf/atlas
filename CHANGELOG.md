@@ -3,6 +3,27 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### docs：M7 验收链复验收口（2026-09-27，docs-only；docs/63 §2 ③ / :117 〔勘〕已复）
+
+- **核实结论**：逐行复 `src/atlas/coordination/sandbox.py` 确证 `run_return_refund` 经 `TaskStore.dispatch/accept/start/complete` 编排客服核验＋物流签收、**从不调 `compile_graph`/`run_graph`**；`src/atlas/logistics/adapter.py:1` 自述为刻意假物流——`sandbox.py` 本身即 TaskStore 层协调演示，按设计不走完整图编译/运行路径。
+- **不修代码，改文档**：docs/63 §2 ③ 由"仍开放"改"✅ 已闭合"——验收链缺口实际已由 `tests/test_refund_e2e_full_chain.py`（`405161e`，§2 ②）经 `run_graph` 真实驱动含 `human_approval` 节点与真实 `shop/process_refund` 适配器覆盖；docs/63 :117 〔勘〕改〔勘·已复〕，并把"不得对外称端到端"的告诫收窄为仅适用于 `sandbox.py` 协调演示脚本本身，不再覆盖整个里程碑。docs/08 B 组 M7 行划销已收口、handoff 文档地图摘要同步；零代码、零测试、零迁移。
+
+### feat：D13 后端元数据多语言 切片（2026-09-27，契约 docs/70；零新依赖/零迁移/零新端点/零新错误码）
+
+- **后端按 `Accept-Language` 首档换模板/适配器描述**：`src/atlas/web/i18n.py`（`resolve_locale` 首档匹配 zh-CN/en-US、fail-closed 回退、`localize_template` 换 `name`/`description`、`localize_tool_desc` 仅换 `description`、集中翻译表 `TEMPLATE_I18N`/`CAPABILITY_I18N`）；`api/main.py` 三端点（`GET /api/templates`、`GET /api/templates/{id}`、`GET /api/adapters`）在返回前按 locale 换值。canonical 仍是各实体的 zh-CN 串，翻译集中在本模块、不改模型。
+- **前端自动透传语言**：`frontend/src/lib/apiClient.ts` 的 `request<T>` 注入 `Accept-Language: <getLanguage()>`，后端即可按当前应用语言返回本地化元数据（与既有 Bearer 注入同构）。
+- **约定（docs/70 §2/§8，落码前已拍板 D1/D3）**：模板 `name`/`description` 均本地化（模板 `id` 是独立稳定键）；适配器**仅 `description` 本地化**——`name` 是 wire 标识符，前端 `buildToolOptions` 用 `${adapter_id}/${tool.name}` 作 Select `value` 必须＝`config.tool`，本地化会破坏 tool_call 契约；`tags` 不翻译、技术专名（Shopify/PostgreSQL）保留原文。
+- **测试反向门 G1–G3 共 9 例**（`tests/test_api_i18n_metadata.py`，docs/13 U900–U908）：G1 en-US 返回英文、适配器 name 不随语言变；G2 缺省/非法/不支持语言 fail-closed 回退 zh-CN；G3 每个模板与能力双语非空（翻译覆盖完整性）。
+- **门（先跑后写）**：后端 `pytest` **1942 passed / 119 skipped / 0 failed** 零回归；前端零改动不跑全量门、`pnpm build` 过。**未解除** D13 整体——自然语言多语言、i18next 本体、navigator 探测仍缓做 docs/14 D13。
+
+### fix：打包 O 收口——同步急停句柄 ＋ 前端认 superseded 帧（2026-09-27，契约 docs/69；零迁移/零新端点/零新错误码/零新依赖）
+
+- **O-1 同步 `/run` 补急停句柄**（docs/34 复审 `:70`、docs/14 `:133`/`:140` 既有缺口）：`cancellation_broker.register` 此前只在流式路径调用，同步端点从不登记 ⇒ `POST /api/runs/{id}/cancel` 对同步运行在途**恒 409**。现与流式同构——请求线程 `register(run_id)`、`run_graph(..., is_cancelled=cancel_event.is_set)`、`finally: unregister` 覆盖全部出口、`except RunCancelled` 排在 `except Exception` 之前（否则被吞成 500）；在途急停现返 **200 + `status="cancelled"`**（`run_store`/`monitoring` 落 cancelled、**不进** `evaluate_after_run`，与流式 cancelled 逐条对齐，避免新增错误码与灰度门控判据分叉），已结束无句柄仍 409（U895–U897）。
+- **O-2 前端认 `superseded` 终帧**（docs/14 D37、docs/62 §6 原子⑨/§8 风险5）：`frontend/src` 全仓此前 grep `superseded` **0 命中**，`apiClient.ts` 把让位帧透传、流尾抛「SSE 流缺少最终运行结果」——把"本进程已被别的进程接管"报成协议故障。现新增 `SupersededFrame` 类型与 `RunSupersededError` 类，`streamRun` 把该帧升为与 `cancelled`/`stopped` 并列的正常终帧（转发 `onEvent` 后抛 `RunSupersededError`，`nodeId` 透传），`Editor` 落到 `log.superseded`「⏹ 运行已被其他进程接管：{{node}}（本进程已让位，无运行结果）」，不再误报（U898/U899）；i18n zh-CN/en-US 两档 `editor.log.superseded` 已补且过 PARITY。
+- **五道反向门（临时植入、验毕还原、未提交）全过**：G1 删 `is_cancelled`⇒U895 跑满 wait 返 `completed` 红；G2 删 `finally: unregister`⇒U897 由 409 变 200 红；G3 `except RunCancelled` 移到 `except Exception` 之后⇒HTTP 500＋U896 门控计数变 1 红；G4 删前端 superseded 分支⇒U898/U899 落回误导文案红；G5 只加 zh 不加 en⇒i18n PARITY「identical leaf-key sets」红。
+- **门（先跑后写）**：后端 `pytest` **1942 passed / 119 skipped / 0 failed**（基线 1939/119，净增 3＝U895–U897）；前端 vitest **738 passed / 2 skipped / 54 文件**（基线 736/2，净增 2＝U898/U899）、oxlint **0 error / 7 warning**、build ✓。**未解除**单副本约束与 D19/D20/D27/D31/D32，**N3 仍开**；`Editor` 的 `log.superseded` 分支无组件级测试、浏览器实测未做（照实记未验）。
+- **同步面**：docs/69 契约（§0 缺陷/§1 决策/§2 测试/§3 五道反向门/§4 矩阵）、docs/12 同步 `/run` 与 `/run/stream` superseded 终帧条款（`:932` 误导文案改写已闭合）、docs/13 U895–U899 登记、docs/14 D37 划销已闭合＋`:147` 注记、docs/62 §6 原子⑨/§8 风险5 闭合、docs/34 `:70` 缺口标已修、docs/08 B 组两行划销已收口、docs/00 地图、handoff（Project documents/Recently shipped/Quality gate）、CHANGELOG。
+
 ### feat：打包 N 收口——调度面板上了控制台，"图会自己跑"第一次由真实墙钟证明（2026-09-26，契约 docs/68 §7；`14f7127`→`1f318c4` 四原子；✅ 本批收口、docs/63 §0A N4 闭合）
 
 - **补掉的是上一批自己留下的两个"不能勾"**：⑤ 运营可达面（后端有调度器但控制台什么都没有，等于只有工程半边）、⑥ 真机端到端（docs/63 判否 N4 的原话就是"不能拿单测代替一次真跑"）。
