@@ -97,4 +97,36 @@ describe('Graph DSL 422 错误列表 i18n（docs/17 §2.4）', () => {
       expect(message).not.toContain('dsl.SOME_UNKNOWN_CODE')
     }
   })
+
+  it('cron 不合法：中文态把后端的 reason 插进本语言模板（docs/68 打包 N）', async () => {
+    stubValidationError({
+      detail: ["Cron 表达式 '5/2 * * * *' 无效：分钟字段的 '5/2' 不在支持的语法内"],
+      codes: ['NODE_TRIGGER_CRON_INVALID'],
+      params: [{ owner: 'trigger-1', reason: '分钟字段的 \'5/2\' 不在支持的语法内' }],
+    })
+    await expect(saveGraph(graph)).rejects.toThrow('节点 trigger-1：分钟字段的')
+  })
+
+  /**
+   * 英文态这条刻意**不**断"不含汉字"：cron 只有一份解释器（后端 `scheduling/cron.py`），
+   * 理由就是不让两处实现对边角分叉，所以解释文本必然来自后端。这里断的是**模板**为英文、
+   * reason 原样透传——前端复刻解析器才是该防的事。
+   */
+  it('cron 不合法：英文态用英文模板包后端 reason，不泄漏 key', async () => {
+    changeLanguage('en-US')
+    stubValidationError({
+      detail: ['兜底中文'],
+      codes: ['NODE_TRIGGER_CRON_INVALID'],
+      params: [{ owner: 'trigger-1', reason: '需要 5 个字段（分 时 日 月 周），当前 4 个' }],
+    })
+    try {
+      await saveGraph(graph)
+      throw new Error('应当抛错')
+    } catch (error) {
+      const message = (error as Error).message
+      expect(message.startsWith('Node trigger-1: ')).toBe(true)
+      expect(message).toContain('需要 5 个字段')
+      expect(message).not.toContain('dsl.NODE_TRIGGER_CRON_INVALID')
+    }
+  })
 })
