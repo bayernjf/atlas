@@ -43,7 +43,7 @@ curl -X POST http://localhost:8000/api/demo/reset   # 重置种子退款单与�
 
 > **prod 档位（`ATLAS_ENV=prod`）另需三样**：`ATLAS_MASTER_KEY`、`ATLAS_APPROVAL_HMAC_SECRET`（各 ≥32 字节），以及首任管理员引导口令 `ATLAS_ADMIN_BOOTSTRAP_PASSWORD`（[docs/66](docs/66-prod首任管理员引导批-v1批契约设计.md)）——任一缺失或不合规则，进程**拒绝启动**（fail-closed）。缺省档位是 `dev`，上面的 Demo 形态不需要任何密钥。
 
-> **定时触发（`schedule/cron` 节点）已有调度器**（2026-09-26 [docs/68](docs/68-定时触发调度器批-v1批契约设计.md) 打包 N 后端落码）：随进程起一条 tick 线程，同图按发布钉版派发。**运营要记住三条**——cron **一律 UTC**（`0 9 * * *` 是北京时间 17:00）、**重启/停摆错过的槽位不补跑**（宁漏不重跑，下游副作用不幂等）、**只跑已发布版本**（改草稿 cron 不生效，要重新发布）。开关见 `.env.example` 的 `ATLAS_SCHEDULE_ENABLED`／`ATLAS_SCHEDULE_TICK_SECONDS`；控制台调度面板与 cron 即时校验提示尚未做（docs/68 §5 步 ⑤）。
+> **定时触发（`schedule/cron` 节点）已有调度器**（2026-09-26 [docs/68](docs/68-定时触发调度器批-v1批契约设计.md) 打包 N 落码收口）：随进程起一条 tick 线程，同图按发布钉版派发。**运营要记住三条**——cron **一律 UTC**（`0 9 * * *` 是北京时间 17:00）、**重启/停摆错过的槽位不补跑**（宁漏不重跑，下游副作用不幂等）、**只跑已发布版本**（改草稿 cron 不生效，要重新发布）。开关见 `.env.example` 的 `ATLAS_SCHEDULE_ENABLED`／`ATLAS_SCHEDULE_TICK_SECONDS`；控制台「定时调度」页与画布里的 cron 预演（接下来三次 UTC 槽位）已随 ⑤ 落码。
 
 本地开发双进程：
 
