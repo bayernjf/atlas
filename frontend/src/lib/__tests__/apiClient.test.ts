@@ -6,6 +6,7 @@ import {
   signalWait,
   DebugRunStoppedError,
   RunCancelledError,
+  RunSupersededError,
   cancelActiveRun,
   createChannelBinding,
   deleteChannelBinding,
@@ -109,6 +110,49 @@ describe('B 包 streamRun 急停/日志帧（docs/27 §4，U134/U136）', () => 
       streamRun('graph-1', {}, (event) => events.push(event)),
     ).rejects.toBeInstanceOf(RunCancelledError)
     expect(events.map((event) => event.type)).toEqual(['node_start', 'cancelled'])
+  })
+
+  it('superseded 终帧转发并以 RunSupersededError 拒绝（无 result）', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        sseResponse([
+          { type: 'node_start', node_id: 'trigger-1', node_type: 'trigger' },
+          { type: 'superseded', node_id: 'tool-1', reason: 'resumed_by_other_process' },
+        ]),
+      ),
+    )
+    const events: RunEvent[] = []
+    let caught: unknown
+    try {
+      await streamRun('graph-1', {}, (event) => events.push(event))
+    } catch (e) {
+      caught = e
+    }
+    expect(caught).toBeInstanceOf(RunSupersededError)
+    expect(events.map((event) => event.type)).toEqual(['node_start', 'superseded'])
+    expect((caught as Error).message).not.toContain('SSE 流缺少最终运行结果')
+    expect((caught as RunSupersededError).nodeId).toBe('tool-1')
+  })
+
+  it('superseded 拒绝文案不再误报「SSE 流缺少最终运行结果」', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        sseResponse([
+          { type: 'node_start', node_id: 'trigger-1', node_type: 'trigger' },
+          { type: 'superseded', node_id: 'tool-1', reason: 'resumed_by_other_process' },
+        ]),
+      ),
+    )
+    let caught: unknown
+    try {
+      await streamRun('graph-1', {}, () => undefined)
+    } catch (e) {
+      caught = e
+    }
+    expect(caught).toBeInstanceOf(RunSupersededError)
+    expect((caught as Error).message).not.toContain('SSE 流缺少最终运行结果')
   })
 
   it('debug_log 帧转发给 onEvent 且不暂停、运行正常完成', async () => {
