@@ -7,8 +7,15 @@
  * 单一导出：组件文件不混出函数/常量）。
  */
 import { useEffect, useState } from 'react'
-import { Empty, Select, Typography } from 'antd'
-import { listCards, listGraphs, type CardSummary, type SavedGraphSummary } from '../apiClient'
+import { Empty, Input, Select, Typography } from 'antd'
+import {
+  listCards,
+  listGraphs,
+  previewScheduleCron,
+  type CardSummary,
+  type CronPreview,
+  type SavedGraphSummary,
+} from '../apiClient'
 import type { WidgetComponent } from './types'
 import { DiagnosticText } from './widgets'
 import { useTranslation } from '../../locales'
@@ -163,6 +170,93 @@ export const CardSelectWidget: WidgetComponent = ({
         options={cards.map((item) => ({ value: item.id, label: `${item.name}（${item.id}）` }))}
       />
       {loadError && <Typography.Text type="danger">{loadError}</Typography.Text>}
+      <DiagnosticText diagnostics={diagnostics} />
+    </>
+  )
+}
+
+/** 预演请求的防抖窗；输入节奏比它快时只发一次，避免每敲一个字符打一次后端。 */
+const CRON_PREVIEW_DEBOUNCE_MS = 400
+
+function utcClock(iso: string): string {
+  // 2026-09-26T09:45:00+00:00 → 2026-09-26 09:45（刻意不转本地时区：口径就是 UTC）
+  return iso.slice(0, 16).replace('T', ' ')
+}
+
+/**
+ * Cron 表达式输入（trigger.schedule）：把后端唯一那份 cron 子集解释器借过来用，
+ * 画布里就告诉运营"接下来三次几点响（UTC）"。
+ *
+ * 刻意**不在前端再写一个解析器**：两份实现对"日与周取并集""7＝周日"这类边角迟早分叉，
+ * 分叉的表现就是这里绿、保存时 422。所以合法性与下次触发都问 `POST /api/schedules/cron-preview`
+ * （理由与影响面记 docs/68 顶部落码偏差）。字段级不合法走这里的红字，不冒充 HTTP 错误。
+ */
+export const CronInputWidget: WidgetComponent = ({
+  value,
+  onChange,
+  diagnostics,
+  placeholder,
+}) => {
+  const { t } = useTranslation('schedules')
+  const cron = typeof value === 'string' ? value : ''
+  const trimmed = cron.trim()
+  /** 预演结果按"它属于哪个表达式"存着，显示与否靠派生——清空输入不会残留上一次的绿字。 */
+  const [settled, setSettled] = useState<{ expression: string; preview: CronPreview | null } | null>(
+    null,
+  )
+  const preview = settled?.expression === trimmed ? settled.preview : null
+  const pending = trimmed !== '' && preview === null && settled?.expression !== trimmed
+
+  useEffect(() => {
+    if (!trimmed) return
+    let cancelled = false
+    const timer = setTimeout(() => {
+      previewScheduleCron(trimmed)
+        .then((result) => {
+          if (!cancelled) setSettled({ expression: trimmed, preview: result })
+        })
+        .catch(() => {
+          // 预演打不通（断网/未登录竞态）时不下任何结论：显式"问不出结果"，也不挡编辑。
+          if (!cancelled) setSettled({ expression: trimmed, preview: null })
+        })
+    }, CRON_PREVIEW_DEBOUNCE_MS)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [trimmed])
+
+  return (
+    <>
+      <Input
+        value={cron}
+        placeholder={placeholder ?? '0 9 * * *'}
+        status={diagnostics?.some((d) => d.severity === 'error') ? 'error' : undefined}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+        {t('cron.hint')}
+      </Typography.Text>
+      {pending && (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {t('cron.previewing')}
+        </Typography.Text>
+      )}
+      {!pending && preview?.valid && (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {t('cron.next', { times: preview.nextFireAt.map(utcClock).join(' · ') })}
+        </Typography.Text>
+      )}
+      {!pending && preview && !preview.valid && (
+        <Typography.Text type="danger" style={{ fontSize: 12 }}>
+          {t('cron.invalid', { message: preview.message })}
+        </Typography.Text>
+      )}
+      {!pending && trimmed !== '' && preview === null && (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {t('cron.unavailable')}
+        </Typography.Text>
+      )}
       <DiagnosticText diagnostics={diagnostics} />
     </>
   )

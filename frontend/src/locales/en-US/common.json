@@ -34,7 +34,8 @@
     "approvals": "Approval queue",
     "audit": "Audit log",
     "openapi": "API imports",
-    "waits": "Waits & Tasks"
+    "waits": "Waits & Tasks",
+    "schedules": "Scheduled triggers"
   },
   "button": {
     "confirm": "OK",

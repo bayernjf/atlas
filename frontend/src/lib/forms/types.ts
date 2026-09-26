@@ -40,6 +40,12 @@ export const SAVED_GRAPH_SELECT_WIDGET = 'saved-graph-select'
  */
 export const CARD_SELECT_WIDGET = 'card-select'
 
+/**
+ * Cron 输入控件（docs/68 打包 N）：trigger.schedule 的 cron 字段。合法性与"接下来三次
+ * 几点响（UTC）"都问后端唯一那份解释器，前端不再实现第二个 cron 解析器。
+ */
+export const CRON_INPUT_WIDGET = 'cron-input'
+
 /** 目标节点候选项（target-select 节点业务控件消费）。 */
 export type WidgetTargetOption = { value: string; label: string }
 

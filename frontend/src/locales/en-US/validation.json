@@ -188,6 +188,7 @@
     "NODE_ID_DUPLICATE": "Duplicate node id: {{nodeId}}",
     "NODE_NAME_REQUIRED": "Node {{nodeId}} must have a name",
     "NODE_TOOL_REQUIRED": "Node {{owner}}: a tool call requires a selected tool",
+    "NODE_TRIGGER_CRON_INVALID": "Node {{owner}}: {{reason}}",
     "NODE_TRIGGER_CRON_REQUIRED": "Node {{owner}}: a scheduled trigger requires a Cron expression",
     "NODE_TRIGGER_WEBHOOK_URL_REQUIRED": "Node {{owner}}: a webhook trigger requires a URL",
     "NODE_TYPE_UNSUPPORTED": "Node {{nodeId}} has unsupported type \"{{type}}\" (supported: {{supported}})",
