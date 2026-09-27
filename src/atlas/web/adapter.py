@@ -3,6 +3,11 @@
 W3-W4 基本工具集：navigate / click / type / screenshot。
 浏览器经 Playwright sync API 驱动；headless 由 PLAYWRIGHT_HEADLESS 控制。
 层 2/3 视觉组件为可注入依赖，模型接入前可传桩实现。
+
+出向治理：`navigate` 的 url 先过 `EgressGuard`（与 httpapi 同一份策略与 env
+`ATLAS_HTTP_EGRESS_ALLOWLIST`），失败返回 `EGRESS_DENIED`／`EGRESS_INVALID_URL` 且**不碰浏览器**。
+**已知边界**：这条只判**初始 URL**——浏览器会跟随重定向并加载子资源，真要接进运行期
+（N3 复开）必须在 `page.route()` 层逐请求校验，否则一次 302 就绕过闸门。
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ from atlas.harness.base import (
     Permission,
     StructuredError,
 )
+from atlas.security.egress import EgressDenied, EgressGuard
 
 from .location import ThreeLayerLocator
 
@@ -50,12 +56,16 @@ class WebHarnessAdapter(HarnessAdapter):
         granted_permissions: set[Permission] | None = None,
         audit_sink=None,
         headless: bool | None = None,
+        egress: EgressGuard | None = None,
     ) -> None:
         super().__init__(granted_permissions=granted_permissions, audit_sink=audit_sink)
         self._locator = locator or ThreeLayerLocator()
         self._headless = (
             os.environ.get("PLAYWRIGHT_HEADLESS", "1") != "0" if headless is None else headless
         )
+        # 一条出向策略，不复用两份配置：浏览器与 httpx 走的是同一个"能不能出去"判断，
+        # 分叉的 knob 只会让人忘记配其中一个（docs/32 的 denylist 同族）。
+        self._egress = egress if egress is not None else EgressGuard.from_env()
         self._playwright = None
         self._browser = None
         self.page: Any = None
@@ -121,6 +131,12 @@ class WebHarnessAdapter(HarnessAdapter):
         url = request.parameters.get("url")
         if not url:
             return ActionResult.failed(StructuredError("MISSING_PARAMETER", "url is required"))
+        # 先闸门后浏览器：工具参数里的 url 直接交给 page.goto()，等于在 httpx 那套
+        # SSRF denylist 之外新开一条出向通道（内网/云元数据同形可达）。docs/32。
+        try:
+            self._egress.check(url)
+        except EgressDenied as exc:
+            return ActionResult.failed(StructuredError(exc.code, str(exc)))
         timeout = request.timeout or 30000
         self.page.goto(url, timeout=int(timeout * 1000))
         return ActionResult.success({"url": self.page.url})
