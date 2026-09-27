@@ -3,6 +3,15 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### fix(web)＋chore(deps)＋docs(selection)：把 N3 判成本轮非目标（顺手补掉它接线前的真缺陷），并删掉零引用的 redis 声明（2026-09-27，用户「那你搞」采纳建议）
+
+- **两条决定，一条附带修复**。上一轮 E 组复筛留下的两件事当场落地：**N3 浏览器自动化＝本轮不进 MVP**（显式非目标，含复开条件与三批顺序），**`redis` 声明依赖＝删**（纯减法，另立 ADR 才能再引入）。
+- **N3 的前置事实是量出来的，不是估的**〔码〕：`src/atlas/web/adapter.py` 的 `navigate` 把**工具参数里的 url 原样交给 `page.goto()`，没有任何出向校验**——httpapi 那套 SSRF denylist 管的是 `httpx`，**管不住一个真浏览器**（内网与云元数据同形可达）。所以"N3 进"过去的真实含义是**新开一条绕过现有防护的通道**，而 `tests/test_graph_loader.py:79-80` 那条反向锁恰好是挡着它的临时防线（**在该表态下它继续红**）。修复＝`navigate` 先过 `EgressGuard`（**与 httpapi 同一份策略与 env `ATLAS_HTTP_EGRESS_ALLOWLIST`，不开第二份配置**），被拒返回 `EGRESS_DENIED`／`EGRESS_INVALID_URL` **且一次都不碰浏览器**。
+- **U925（`tests/test_web_adapter_egress.py`，10 例，不启浏览器）**：云元数据／回环／私网／IPv6 唯一本地／`file:`／`data:`／十进制整数主机名七类必拒**且断言 `goto` 未被调用**；**判别对照**＝`http://8.8.8.8/` 必须真的走到 `goto`（否则"一律失败"能让整排断言空绿）；白名单仍生效、回环只经**代码注入缝** `permit_cidrs` 放行（与 httpapi 同一条缝，不开 env 后门）；缺省构造读同一条 env。反向门做在本批自己写的代码上：把 `check()` 摘掉 ⇒ **9 红 1 绿**，装回 ⇒ 10 绿。**残余边界写在代码与 docs/63**：只判初始 URL，重定向与子资源要 `page.route()` 逐请求校验——那属于真接线那一批。
+- **redis 删除的同步面比删除本身多**：`pyproject.toml` 与 `.env.example` 的声明移除（CI 走 `pip install -e ".[dev]"`，无 lock 需重生）；但更要紧的是**三处文档在说谎**——`docs/10:19` 把"缓存＝Redis"标成 ✅ 已采纳、`docs/10:49` 的骨架注释说 `memory.py` 用 Redis、`docs/02:86` 与 README 选型行列着它，而 `src/atlas/memory/items.py:48` 的短期记忆实际是 per-tenant 进程内 `list[dict]`、全仓零引用。按 AGENTS.md「选型变更必须先记录」补 **docs/10 §4 T31**（含"这不是否决该选型；真需要跨进程共享记忆时另立 ADR"）。
+- **B 档缺口从 4 条降到 3 条**：docs/73 的 2.1 与 W2 整组转 ✅、退出判据打勾，剩余＝真凭据（1.1–1.3）／D36（触发＝真 prod 出现该形态）／一次真 prod 演练与种子数据（4.1）。**A/B 两层判定本身不变**。
+- **门（先跑后写）**：定向 `tests/test_web_adapter_egress.py`＋`test_web_location.py`＋`test_graph_loader.py` **98 passed**（含那条"web-playwright 必须失败"的反向锁仍红得其所）；全量后端门与前端见下方 handoff Quality gate 记录。工作树清洁、无未清探针数据（本批不写库）。
+
 ### test(security)＋docs(governance)：把"删掉租户过滤就红"变成常跑拦得住的事，并复筛 E 组待拍板清单（2026-09-27 晚些，纯 test＋docs，零产品代码改动）
 
 - **为什么做**：docs/76 §8 偏差①我自己写下一句不好听的话——契约要求的反向门（摘掉 `WHERE tenant_id` 必须红）没以改生产代码方式执行，改成了集成测里的差分对照，**"它防不住将来有人删掉那条 WHERE，真防复发只剩 CI 每次都跑 integration"**。把一句自我交代留在那儿就等于留了个空口：这一条把它补成**任何一次 `pytest` 都会拦**的守护。

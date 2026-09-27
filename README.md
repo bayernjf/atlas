@@ -75,7 +75,9 @@ cd frontend && pnpm dev                                     # 编辑器 http://l
 
 ## 技术栈（已定选型）
 
-Python 3.11+（引擎）/ Go（Harness 网关产品化目标，Demo 暂用 FastAPI）/ TypeScript + React 19（满足 React 18+）/ **LangChain + LangGraph** / LiteLLM / Playwright + OmniParser / PostgreSQL + pgvector / Redis / Demo 进程内事件总线（NATS 留 Phase 2）/ `@xyflow/react`（React Flow 12）+ Zustand + Ant Design / FastAPI。
+Python 3.11+（引擎）/ Go（Harness 网关产品化目标，Demo 暂用 FastAPI）/ TypeScript + React 19（满足 React 18+）/ **LangChain + LangGraph** / LiteLLM / Playwright + OmniParser / PostgreSQL + pgvector / Demo 进程内事件总线（NATS 留 Phase 2）/ `@xyflow/react`（React Flow 12）+ Zustand + Ant Design / FastAPI。
+
+> **短期记忆是进程内的**（2026-09-27 起选型行不再写 Redis）：`src/atlas/memory/` 用 per-tenant `MemoryStore`，`redis` 声明依赖已删——它零引用却挂着，等于白付安装面还让文档说谎。真要跨进程共享记忆时按 [docs/10 §4 T31](docs/10-技术选型决策记录.md) 另立 ADR 再引入。
 
 > T1-T5 已于 2026-09-13 收口，见 [10 技术选型决策记录 §3](docs/10-技术选型决策记录.md)。
 
