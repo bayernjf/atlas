@@ -161,3 +161,75 @@ def test_u920_the_query_follows_the_principal_not_a_constant(pg_frames) -> None:
     client.get("/api/interruptions", headers=VIEWER_A)
     client.get("/api/interruptions", headers=ADMIN_B)
     assert pg_frames.calls == ["t1", "t2"], "查询参数没有跟着登录租户走＝越权面回来了"
+
+
+# --- U924：把"删掉 WHERE 就当场红"变成常跑能拦的事（docs/76 §8 偏差①的补口） ----
+
+
+class _RecordingConnection:
+    def __init__(self, calls: list) -> None:
+        self._calls = calls
+
+    def __enter__(self) -> "_RecordingConnection":
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        return None
+
+    def execute(self, statement, parameters=None):  # noqa: ANN001 - 只为记录 SQL
+        self._calls.append((" ".join(str(statement).split()), parameters))
+
+        class _Empty:
+            @staticmethod
+            def all() -> list:
+                return []
+
+        return _Empty()
+
+
+class _RecordingEngine:
+    """假到只够接住一条 SELECT 的引擎：用途是把**发给库的 SQL 与绑定参数**抓下来。"""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, object]] = []
+
+    def connect(self):  # noqa: ANN201
+        return _RecordingConnection(self.calls)
+
+
+def _one_normalized_sql(engine: _RecordingEngine) -> tuple[str, object]:
+    assert len(engine.calls) == 1, f"应当只发一条查询，实发 {len(engine.calls)} 条"
+    return engine.calls[0]
+
+
+def test_u924_the_tenant_reader_sends_a_tenant_filter_with_a_bound_value() -> None:
+    """读函数**发出去的 SQL** 必须带租户过滤，且值是绑定的（不是拼字符串）。
+
+    集成测（U921）只在 `-m integration` 真跑时才拦得住"删掉 WHERE"，CI 每次跑它是事实，
+    但"跑不跑"这件事本身不由代码说话——所以这里把它钉成常跑：任何一次 `pytest` 都会红。
+    断的是**编译出来的 SQL** 而不是源码文本，重排/换行不会误红。
+    """
+    from atlas.storage.recovery import list_tenant_frames
+
+    engine = _RecordingEngine()
+    assert list_tenant_frames(engine, "t1") == []
+    sql, params = _one_normalized_sql(engine)
+    assert "WHERE tenant_id = :tenant_id" in sql, f"租户过滤不在发出去的 SQL 里：{sql}"
+    assert params == {"tenant_id": "t1"}, f"租户值是拼进 SQL 的而不是绑定的：{params}"
+    assert "t1" not in sql, "租户标识被字面量拼接＝可注入面回来了"
+
+
+def test_u924_control_the_global_loader_really_has_no_filter() -> None:
+    """判别对照（没有它上一条可能是空断言）：全局那条**确实不带**租户过滤。
+
+    这正是 docs/76 D-2 禁止 HTTP 侧用 `load_pending_frames` 的理由，也是"删 WHERE 会红"
+    这条守护能红的前提——两半都断，才证明 WHERE 是被要求、而非碰巧写在句子中间。
+    """
+    from atlas.storage.recovery import load_pending_frames
+
+    engine = _RecordingEngine()
+    assert load_pending_frames(engine) == []
+    sql, params = _one_normalized_sql(engine)
+    assert "WHERE" not in sql, f"全局读函数不知何时被加了过滤，对照失效：{sql}"
+    assert params in (None, {}), f"全局读函数不该绑租户参数：{params}"
+    assert "tenant_id" not in sql.split("FROM", 1)[-1], "SELECT 之后出现了租户条件＝对照不再成立"
