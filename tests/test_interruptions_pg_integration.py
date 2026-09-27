@@ -25,7 +25,13 @@ from sqlalchemy import create_engine, text
 from atlas.api import main as api_main
 from atlas.api.main import app
 from atlas.iam.deps import session_store, tenant_registry
-from atlas.storage.recovery import claim_frame_for_resume, load_pending_frames, make_frame_sink
+from atlas.storage.pg import PgRunsStore
+from atlas.storage.recovery import (
+    claim_frame_for_resume,
+    list_tenant_frames,
+    load_pending_frames,
+    make_frame_sink,
+)
 
 pytestmark = [
     pytest.mark.integration,
@@ -178,3 +184,81 @@ def test_u921_reading_changes_nothing_in_the_table(engine, seeded) -> None:
     _rows(VIEWER_A)
     _rows(ADMIN_B)
     assert snapshot() == before, "读端点改动了帧的认领状态"
+
+
+# --- U923：运行到终态 ⇒ 本运行的帧了结；崩在半路 ⇒ 帧与雷都留着 ----------------
+
+
+def _write_frame(engine, tenant: str, run_id: str, token: str) -> None:
+    make_frame_sink(engine, tenant, run_id)({
+        "resume_token": token,
+        "node_id": "approval-1",
+        "kind": "approval",
+        "deadline_at": None,
+        "resume_state": {"graph_id": f"g-{tenant}"},
+    })
+
+
+def _tokens(engine, tenant: str) -> set[str]:
+    return {frame["resume_token"] for frame in list_tenant_frames(engine, tenant)}
+
+
+def test_u923_terminal_run_clears_its_own_frames_only(engine) -> None:
+    """一条运行到终态 ⇒ 它名下的挂起帧全部了结；**别的运行一条不许碰**。
+
+    这条测的是被 2026-09-27 实测逼出来的缺陷：活进程内审批通过是**常见路径**，
+    而当时只有"启动恢复续跑成功"会清帧 ⇒ 每次正常审批都永久留一行 `frame_lingering`，
+    把 docs/76 那张表淹成墓地、真正要看的 `claimed_suspended` 被埋掉。
+    """
+    tenant = f"u923_done_{uuid.uuid4().hex[:8]}"
+    done_run, other_run = f"{tenant}-run-done", f"{tenant}-run-other"
+    _write_frame(engine, tenant, done_run, f"{tenant}-tok-a")
+    _write_frame(engine, tenant, done_run, f"{tenant}-tok-b")   # 一图多次挂起也要一并清
+    _write_frame(engine, tenant, other_run, f"{tenant}-tok-c")
+    assert claim_frame_for_resume(engine, f"{tenant}-tok-a", "u923") is True
+
+    runs = PgRunsStore(engine, tenant)
+    runs.begin(run_id=done_run, graph_id="g-1", mode="api")
+    runs.suspend(run_id=done_run, node_id="approval-1", kind="approval",
+                 resume_token=f"{tenant}-tok-a", deadline_at=None)
+    assert f"{tenant}-tok-a" in _tokens(engine, tenant)
+
+    runs.finish(run_id=done_run, status="completed", outputs={}, trace=[])
+    remaining = _tokens(engine, tenant)
+    assert remaining == {f"{tenant}-tok-c"}, f"该清的没清干净／不该清的被误伤：{remaining}"
+    survivors = {f["resume_token"]: f for f in list_tenant_frames(engine, tenant)}
+    assert survivors[f"{tenant}-tok-c"]["resumed_at"] is None, "别的运行的帧被动过"
+
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM interruptions WHERE tenant_id = :t"), {"t": tenant})
+        conn.execute(text("DELETE FROM runs WHERE tenant_id = :t"), {"t": tenant})
+
+
+def test_u923_crashed_run_keeps_the_frame_and_the_mine_visible(engine) -> None:
+    """崩溃侧的反面：不调 finish ⇒ 帧留在表里且仍被认成 `claimed_suspended`。
+
+    没有这一半，上一条"清帧"完全可以靠"每次跑都清"来骗绿——**at-most-once 那颗雷必须
+    仍然可见**，这是 docs/76 整批存在的理由。
+    """
+    tenant = "u923_crash_tenant"
+    run_id = "u923-crash-run"
+    with engine.begin() as conn:  # 幂等：本用例自己收尾，不赖给保留期
+        conn.execute(text("DELETE FROM interruptions WHERE tenant_id = :t"), {"t": tenant})
+        conn.execute(text("DELETE FROM runs WHERE tenant_id = :t"), {"t": tenant})
+    _write_frame(engine, tenant, run_id, "u923-crash-token")
+    assert claim_frame_for_resume(engine, "u923-crash-token", "u923-crash") is True
+
+    runs = PgRunsStore(engine, tenant)
+    runs.begin(run_id=run_id, graph_id="g-crash", mode="api")
+    runs.suspend(run_id=run_id, node_id="approval-1", kind="approval",
+                 resume_token="u923-crash-token", deadline_at=None)
+
+    frames = list_tenant_frames(engine, tenant)
+    assert [f["resume_token"] for f in frames] == ["u923-crash-token"]
+    run = runs.get(run_id)
+    assert run and run["status"] == "suspended"
+    assert api_main._interruption_state(bool(frames[0]["resumed_at"]), run["status"]) == "claimed_suspended"
+
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM interruptions WHERE tenant_id = :t"), {"t": tenant})
+        conn.execute(text("DELETE FROM runs WHERE tenant_id = :t"), {"t": tenant})

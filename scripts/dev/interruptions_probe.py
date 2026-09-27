@@ -15,6 +15,9 @@
      与真认领，再经 HTTP 投影 ⇒ t1 看到自己的 awaiting 与 `claimed_suspended`，看不到 t2 的；
      t2 只看到自己的。无凭证 401。
   3. 只读性：投影跑两遍，库里帧的 `resumed_at/resumed_by` 一字不差。
+  4. **活进程内审批通过**（真图真运行，常见路径）⇒ 运行到终态时它的帧必须一起了结。
+     这段是 2026-09-27 实测逼出来的：当时只有"启动恢复后续跑成功"会清帧，所以每次正常
+     审批都永久留一行，把这张表淹成"健康运行的墓地"。只用 uvicorn 子进程测不到它。
 
 用法：
     .venv/bin/python scripts/dev/interruptions_probe.py --database-url postgresql+psycopg://…
@@ -31,6 +34,7 @@ import subprocess
 import sys
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 import httpx
@@ -110,6 +114,17 @@ def _login(base: str, username: str, password: str) -> dict[str, str]:
 def _rows(base: str, headers: dict[str, str] | None = None):
     response = httpx.get(f"{base}/api/interruptions", headers=headers or {}, timeout=10)
     return response
+
+
+@contextmanager
+def _engine(url: str):
+    """短生命周期连接，正常退出时提交（探针里的删除要真的落下去）。"""
+    eng = create_engine(url)
+    try:
+        with eng.begin() as conn:
+            yield conn
+    finally:
+        eng.dispose()
 
 
 def _apply_migrations(engine: Engine) -> None:
@@ -209,9 +224,12 @@ def main() -> int:
     engine = create_engine(args.database_url)
     _apply_migrations(engine)
     suffix = uuid.uuid4().hex[:8]
-    seeded = _seed(engine, suffix)
     server = Server(args.port)
     server.start({"ATLAS_STORAGE_BACKEND": "pg", "DATABASE_URL": args.database_url})
+    # **先起服务再播种**是必须的：启动恢复会把"未认领"的帧当成待续跑的真中断，替它起一条
+    # 续跑线程；我们的合成帧没有 graph_snapshot，那次续跑必然失败 ⇒ 运行落 failed ⇒
+    # 帧按"运行到终态即了结其帧"一并清掉（这条规则见 docs/76 §7 的 R 追记）。反过来先播种，第 2 段就会看见少一行（实测踩过）。
+    seeded = _seed(engine, suffix)
     try:
         ok(_rows(base).status_code == 401, "无凭证必须 401")
         viewer_a = _login(base, "viewer-a", "viewer123")
@@ -253,8 +271,99 @@ def main() -> int:
         ok(left == 0, f"探针自己写的帧已全部删除（残留 {left} 行）")
         print(f"  OK    清理完成：本探针写的 {len(seeded) - 1} 帧＋对应 run 已全部删除")
 
+    print("4｜活进程内审批通过（**常见路径**）⇒ 运行到终态时它的帧必须一起了结")
+    _live_approval_flow_clears_frames(args.database_url)
+
     print("\n探测全过 ✅")
     return 0
+
+
+def _live_approval_graph(name: str) -> dict:
+    return {
+        "version": 1, "name": name, "variables": [],
+        "nodes": [
+            {"id": "trigger-1", "type": "trigger", "name": "t",
+             "config": {"triggerType": "webhook", "webhookUrl": "/hooks/qprobe"}},
+            {"id": "human-1", "type": "human_approval", "name": "人工审批",
+             "config": {"summary": f"{name} 审批", "approver": "客服主管", "timeoutSeconds": 60,
+                        "onTimeout": "reject", "approvedTarget": "tool-approve",
+                        "rejectedTarget": "tool-reject"}},
+            {"id": "tool-approve", "type": "tool_call", "name": "通过侧",
+             "config": {"tool": "op-approve"}},
+            {"id": "tool-reject", "type": "tool_call", "name": "拒绝侧",
+             "config": {"tool": "op-reject"}},
+        ],
+        "edges": [
+            {"id": "e1", "source": "trigger-1", "target": "human-1"},
+            {"id": "e2", "source": "human-1", "target": "tool-approve"},
+            {"id": "e3", "source": "human-1", "target": "tool-reject"},
+        ],
+    }
+
+
+def _live_approval_flow_clears_frames(database_url: str) -> None:
+    """真起一次"审批在同一个进程里被决定"的运行——2026-09-27 就是这条路把帧表淹掉的。
+
+    只用 uvicorn 子进程测不到它：那清的是"启动恢复后续跑成功"那条少见的清帧路径。
+    """
+    import threading
+
+    os.environ["ATLAS_STORAGE_BACKEND"] = "pg"
+    os.environ["DATABASE_URL"] = database_url
+    os.environ["ATLAS_MASTER_KEY"] = _key()
+    os.environ["ATLAS_APPROVAL_HMAC_SECRET"] = _key()
+    os.environ["ATLAS_SCHEDULE_ENABLED"] = "0"
+    from fastapi.testclient import TestClient
+
+    from atlas.api.main import app
+
+    name = f"qprobe-live-{uuid.uuid4().hex[:8]}"
+    client = TestClient(app)
+    login = client.post("/api/auth/login", json={"username": "admin-a", "password": "admin123"})
+    ok(login.status_code == 200, f"admin-a 登录应 200（实得 {login.status_code}）")
+    headers = {"Authorization": f"Bearer {login.json()['token']}"}
+    graph_id = client.post("/api/graphs", json=_live_approval_graph(name), headers=headers).json()["id"]
+
+    outcome: dict = {}
+
+    def do_run() -> None:
+        outcome["resp"] = client.post(f"/api/graphs/{graph_id}/run",
+                                      json={"inputs": {"order_id": name}}, headers=headers)
+
+    thread = threading.Thread(target=do_run, daemon=True)
+    thread.start()
+    token = None
+    for _ in range(120):
+        time.sleep(0.25)
+        pending = client.get("/api/approvals", headers=headers).json().get("items", [])
+        hit = [a for a in pending if name in str(a.get("summary", ""))]
+        if hit:
+            token = hit[0]["token"]
+            break
+    ok(token is not None, "等到挂起的审批了（等不到＝常见路径没走通，本段结论无效）")
+    with _engine(database_url) as conn:
+        during = conn.execute(text("SELECT count(*) FROM interruptions WHERE resume_token = :t"),
+                              {"t": token}).scalar()
+    ok(during == 1, f"挂起中应当有 1 帧（实得 {during}）")
+
+    decision = client.post(f"/api/approvals/{token}/decision",
+                           json={"decision": "approved", "comment": "qprobe"}, headers=headers)
+    ok(decision.status_code == 200, f"决策应 200（实得 {decision.status_code}）")
+    thread.join(timeout=30)
+    resp = outcome.get("resp")
+    ok(resp is not None and resp.status_code == 200 and resp.json().get("status") == "completed",
+       f"运行该正常完成（实得 {resp.status_code if resp else '线程没结束'}）")
+    with _engine(database_url) as conn:
+        after = conn.execute(text("SELECT count(*) FROM interruptions WHERE resume_token = :t"),
+                             {"t": token}).scalar()
+        run_row = conn.execute(text("SELECT status FROM runs WHERE graph_id = :g"),
+                               {"g": graph_id}).scalar()
+    ok(after == 0, f"运行到终态后它的帧已了结（实得残留 {after} 行；不清就会把审批通过记成雷）")
+    ok(run_row == "completed", f"run 终态应为 completed（实得 {run_row}）")
+    with _engine(database_url) as conn:
+        conn.execute(text("DELETE FROM runs WHERE graph_id = :g"), {"g": graph_id})
+        conn.execute(text("DELETE FROM graphs WHERE id = :g"), {"g": graph_id})
+    print("  OK    本段建的图与运行已删除（帧由代码自己清，探针只验它没了）")
 
 
 if __name__ == "__main__":
