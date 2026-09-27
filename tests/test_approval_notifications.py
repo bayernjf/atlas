@@ -57,15 +57,17 @@ class FakeMessages:
 
 
 class FakeNotifier:
-    def __init__(self, exc: Exception | None = None):
+    def __init__(self, exc: Exception | None = None, returns: bool = True):
         self.calls = []
         self.decided_calls = []
         self.exc = exc
+        self.returns = returns
 
     def notify_pending(self, **kwargs):
         self.calls.append(kwargs)
         if self.exc is not None:
             raise self.exc
+        return self.returns
 
     def notify_decided(self, **kwargs):
         self.decided_calls.append(kwargs)
@@ -338,3 +340,106 @@ def test_decided_notification_failure_does_not_block_graph():
         _approval_graph(notify_emails=["ops@example.com"]), FailingNotifier()
     )
     assert result["status"] == "completed"
+
+
+# ============================ docs/77 R6 反向门 ============================
+# "notified 只证没抛异常"是假阳性——必须读 delivered 字段
+
+
+class DemoMessages(FakeMessages):
+    """模拟未配 SMTP 的默认分支：delivered='in_process'"""
+
+    def send(self, channel, to, subject, body):
+        self.sent.append({"channel": channel, "to": to, "subject": subject, "body": body})
+        return {"delivered": "in_process"}
+
+
+def test_email_notifier_returns_false_for_in_process_delivery():
+    """demo 回退 delivered='in_process' 不是真通知——R6 核心断言"""
+    msgs = DemoMessages()
+    notifier = EmailApprovalNotifier(
+        msgs, "http://app.example.com", tenant_id="t", issuer=FakeIssuer()
+    )
+    result = notifier.notify_pending(
+        graph_id="g", node_id="n", token="t", summary="s", approver="",
+        timeout_seconds=10, recipients=["a@example.com"],
+    )
+    assert result is False
+
+
+def test_email_notifier_delivered_field_alignment_with_messageservice():
+    """docs/77 R6 关键验证：EmailApprovalNotifier.notify_pending 的 delivered 判断
+    必须与 MessageService 实际写入 record['delivered'] 的值对齐。
+
+    真实 MessageService 成功投递后设 record['delivered'] = "smtp"/"webhook"/...
+    失败时抛异常；demo 回退时 delivered 保持初始值 "in_process"。
+    所以 notifier 应该：delivered == "in_process" → False；其余非 None/非 None
+    的渠道值 → True。
+    """
+    # 情况 A：demo 回退（未注入 sender）→ delivered="in_process" → False
+    class InProcessMessages:
+        def send(self, channel, to, subject, body):
+            return {"delivered": "in_process"}  # 真实 MessageService demo 分支返回值
+
+    notifier = EmailApprovalNotifier(
+        InProcessMessages(), "http://app.example.com",
+        tenant_id="t", issuer=FakeIssuer(),
+    )
+    assert notifier.notify_pending(
+        graph_id="g", node_id="n", token="t", summary="s", approver="",
+        timeout_seconds=10, recipients=["a@example.com"],
+    ) is False
+
+    # 情况 B：真实 SMTP 投递成功 → delivered="smtp" → True
+    class SmtpMessages:
+        def send(self, channel, to, subject, body):
+            return {"delivered": "smtp"}  # 真实 MessageService 成功投递后的值
+
+    notifier2 = EmailApprovalNotifier(
+        SmtpMessages(), "http://app.example.com",
+        tenant_id="t", issuer=FakeIssuer(),
+    )
+    assert notifier2.notify_pending(
+        graph_id="g", node_id="n", token="t", summary="s", approver="",
+        timeout_seconds=10, recipients=["a@example.com"],
+    ) is True
+
+    # 情况 C：webhook 投递成功 → delivered="webhook" → True
+    class WebhookMessages:
+        def send(self, channel, to, subject, body):
+            return {"delivered": "webhook"}
+
+    notifier3 = EmailApprovalNotifier(
+        WebhookMessages(), "http://app.example.com",
+        tenant_id="t", issuer=FakeIssuer(),
+    )
+    assert notifier3.notify_pending(
+        graph_id="g", node_id="n", token="t", summary="s", approver="",
+        timeout_seconds=10, recipients=["a@example.com"],
+    ) is True
+
+    # 情况 D：delivered 为 None（异常边界）→ False
+    class NullDeliveredMessages:
+        def send(self, channel, to, subject, body):
+            return {"delivered": None}
+
+    notifier4 = EmailApprovalNotifier(
+        NullDeliveredMessages(), "http://app.example.com",
+        tenant_id="t", issuer=FakeIssuer(),
+    )
+    assert notifier4.notify_pending(
+        graph_id="g", node_id="n", token="t", summary="s", approver="",
+        timeout_seconds=10, recipients=["a@example.com"],
+    ) is False
+
+
+def test_run_notifies_false_when_notifier_returns_false():
+    """loader 必须用 notifier 的返回值设 notified，而不是只看有没有抛异常。"""
+    # FakeNotifier(returns=False) 模拟 EmailApprovalNotifier 在 demo 回退时的行为
+    notifier = FakeNotifier(returns=False)
+    _, approval = _run_and_capture_approval(
+        _approval_graph(notify_emails=["ops@example.com"]), notifier
+    )
+    # 没抛异常，但返回了 False → notified 应为 False
+    assert approval["notified"] is False
+    assert "notifyError" not in approval  # 没抛异常就不设 error

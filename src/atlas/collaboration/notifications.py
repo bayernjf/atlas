@@ -32,7 +32,7 @@ class ApprovalNotifier(Protocol):
         approver: str,
         timeout_seconds: int,
         recipients: list[str],
-    ) -> None: ...
+    ) -> bool: ...
 
     def notify_decided(
         self,
@@ -76,7 +76,7 @@ class EmailApprovalNotifier:
         approver: str,
         timeout_seconds: int,
         recipients: list[str],
-    ) -> None:
+    ) -> bool:
         title = summary or node_id
         subject = f"[Atlas] 审批待处理：{title}"
         first_recipient = recipients[0] if recipients else None
@@ -99,7 +99,12 @@ class EmailApprovalNotifier:
         body = "\n".join(lines)
         # MessageService 负责真实 SMTP 投递或进程内记录（demo 回退）；
         # 投递失败会抛 MessageSendError，由 graph 调用方 fail-safe 捕获。
-        self._messages.send("email", list(recipients), subject, body)
+        record = self._messages.send("email", list(recipients), subject, body)
+        # docs/77 R6：notified 只证"没抛异常"是假阳性——必须读 delivered 字段。
+        # 真实 MessageService：成功投递后 delivered="smtp"/"webhook"/...（渠道名），
+        # 默认 demo 回退保持 delivered="in_process"，失败抛 MessageSendError。
+        delivered = record.get("delivered", "") if isinstance(record, dict) else ""
+        return isinstance(delivered, str) and delivered not in ("in_process", "")
 
     def notify_decided(
         self,
