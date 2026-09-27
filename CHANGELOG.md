@@ -3,6 +3,33 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### test(api)：修掉定时调度卡片测试的偶发红——两次读之间的 run 状态竞态（2026-09-28，CI push run 暴露）
+
+- **现象**：PR #84 的 `push` 触发那一跑里 `tests/test_api_schedules.py::test_u889d_schedule_card_carries_the_latest_run_status` 报 `AssertionError: assert 'completed' == 'running'`；同一 SHA 的 `pull_request` 跑全绿 ⇒ 偶发。
+- **根因（纯测试竞态，非产品缺陷）**：测试先 `run_store.get(runId)` 取**副本**快照，再 `GET /api/schedules` 让端点**另一次** `run_store.list()` 现读卡片（[main.py](src/atlas/api/main.py#L1282-L1294)）；`run-now` 起的 run 是异步的，`running → 终态` 若落在两次读之间，快照说 `running`、卡片说 `completed`。非本批引入——该测试由 `0fbde87`（R7 改动）带入，已在 `origin/main`。
+- **修法（只动测试）**：新增 `_await_run_terminal(run_id)`，先轮询等 run 离开 `running` 到终态，**再**读卡片比对；终态后 run 不再变化 ⇒ 两次读确定一致，强断言语义不变。
+- **验证**：PG 档（`ATLAS_RUN_INTEGRATION=1`＋本地 `atlas-pg`）该用例**连跑 20 次全绿**；两档该文件各 21 passed；后端全量 `.venv/bin/pytest` **2013 passed / 125 skipped / 0 failed**。
+
+### fix(graph)＋test＋docs：裸工具名在 prod 档不再静默"模拟成功"，改为显式失败（2026-09-27，W5-5.3 ③／R8，docs/73·docs/77）
+
+- **一句话**：docs/77 §4 R8 量出的假阳性——`tool_call` 节点工具名不带 `/`（如 `"op-approve"`）时 `_execute_tool` 静默返回 `{"status":"SIMULATED"}`、run 照常 `completed`，"看起来成功、其实没执行"——本批**只给 prod 补一道上层门**（口径 **A：prod fail-closed**，用户拍板），关闭 **R-批 3**，**docs/73 的 W5 三条前置项全部闭合**。零迁移／零新端点／零新错误码／零新依赖／零前端改动。
+- **为什么不按"裸名一律改 FAILED"修**：`SIMULATED` 是有定义的契约（"无 adapter/capability 或 registry 缺失的本地构造"，docs/28 §4.1、`monitoring/metrics.py:87`），dev/demo 画布上裸名是**文档化的** SIMULATED（监控 `simulated` 计数与影子色可见）；全局改 FAILED 会打掉 5 个锁定该契约的既有测试。
+- **改法（`graph/loader.py:_execute_tool`）**：把原混写的 `if "/" not in tool_name or registry is None` 拆开——`registry is None` 仍 `SIMULATED`；**裸名＋非空 registry** 再走 `security/bootstrap.demo_surface_enabled()`（**与 5.2 演示面闸门共用同一判定源**：非 prod 恒开、prod 仅 `ATLAS_ENABLE_DEMO_MOCK=1` 才开）。**demo/dev 保持 `SIMULATED` 契约不变**；**prod 且未开 demo 面时返回显式 `FAILED`**（`result.status=FAILED`＋`action_status=FAILED`＋`error:"工具名缺少 adapter/capability 形状：{name}"`）。
+- **测试（U939–U943，5 例，只增不改，`tests/test_tool_name_prod_gate.py`）**：prod 裸名⇒FAILED 且带文案／prod 开关开回⇒SIMULATED／dev 裸名⇒SIMULATED（契约零变化）／prod 规范名 `shop/login`⇒仍达注册表正常执行／prod 裸名的 `tool_metric` 记 **FAILED** 而非 simulated。
+- **门（先跑后写，取实跑）**：后端全量 `.venv/bin/pytest` ＝ **2013 passed / 125 skipped / 0 failed**（153.04s；基线 2008/125，净增 5，常跑零回归）；定向 163/1；前端零改动不跑。`tests/test_handoff_integrity.py` 3 passed。
+- **取舍照实**：这是"只收紧 prod 的档位门"，**非改 `SIMULATED` 契约本体**——关掉的是 prod 里"看起来成功、其实没执行"这一假阳性；demo 画布上裸名仍是文档化 SIMULATED。不动单副本三道闸、不解除任何缓做、**不 push 除非明确指示**。
+
+### feat(llm,graph)＋test＋docs：让 `ai_decision` 真读运营写的提示词，并把置信度闸门做成真挂起（2026-09-27，打包 R／W5-5.1，docs/78）
+
+- **一句话**：`promptTemplate` 曾是"编译期必填、运行期只回显"，`model`／`confidenceThreshold` **零读者**——运营在图里改提示词改不动模型输出，docs/06 §6.2 承诺的"记忆检索→含状态 prompt→强制结构化输出→**置信度低于阈值转人工**"四项皆无。本批走**真路线**（用户拍板，非契约降级）把四步落地，关闭 docs/77 §6 的 **R-批 1／R1**。零迁移／零新端点／零新错误码／零新依赖。
+- **接线（D-1…D-3）**：`llm/decision.py` 的 `decide_refund` 加 `prompt`／`model` 入参——运营 `promptTemplate` 经 `interpolate` 渲染后**逐字**作为发给模型的 user message（空串才退回退款专用兜底文案，保护直接调用方零变化）；节点 `model` 非空时**覆盖**环境默认 `LITELLM_MODEL`（仅本次调用），`source` 记为 `llm:{实际 model}`，使"这次到底谁答的"可从输出读出；结构化输出由 **system 消息＋`response_format={"type":"json_object"}`** 强制（**等价** docs/06 §6.2 的 `with_structured_output(DecisionSchema)`，不给运营第二份 schema）。`RuleBasedDecisionClient` 接受并**不读**两新参数（D-6 ②：无语义理解能力，离线 Demo 档语义不变）。
+- **置信度闸门＝真挂起（D-4）**：`graph/loader.py` 的 `ai_decision` 分支在 `confidence < confidenceThreshold` 时**真的挂起转人工**（复用既有 `ApprovalBroker` 登记 pending＋发一个带 `approval` 载荷的 node_start＋阻塞等待），而非只把 action 改成 `request_human_approval`。阈值缺省 **0.6**（对齐 06 §6.2 与前端 default）、非法值回退缺省、`confidence` 缺失按 0.0（fail-safe）、**边界为严格小于**；人审 **通过 ⇒ `approve_refund`**，**拒绝/超时 ⇒ `request_human_approval`**；缺 broker 时**不敢静默放行**，降级 `request_human_approval`＋`resolvedBy:"no_broker"` 且不阻塞。`decision` 内**多** `escalated`／`resolvedBy`／`threshold` 三键（既有四字段名不变，只做超集扩展）。
+- **有意不写 interruption 帧（D-5）**：`api/main.py:215` 的续跑扫描器把 `kind=="approval"` 的帧**一律按 `human_approval` 恢复**，而 `ai_decision` 执行分支无 resume 处理 ⇒ 写帧会让重启重跑决策并产生**第二个 token**（悬挂 token＋误恢复）。故低置信挂起为**纯进程内**，跨重启恢复／多实例随 **D20** 缓做——新增缓做 **D44** 登记。
+- **旗舰模板（D-6 ①）**：`template/graphs.py` 的 `refund-auto` `ai_decision-1` promptTemplate 补上真实运营规则（质量问题且不超限额自动退款、主观原因或超限额转人工），前端 demo 画布 `editorStore.ts` 同步同一文案（后端模板为单一事实源）。
+- **测试（U926–U938，13 例，只增不改）**：`tests/test_decision_client.py` +5（prompt 逐字作 user 消息／空 prompt 兜底／model 覆盖／空 model 回退／rule client 接受并忽略）；新建 `tests/test_ai_decision_realization.py` 8（渲染后 prompt＋节点 model 透传、空 model 传 `None`、低置信＋人工通过⇒`approve_refund`、低置信＋拒绝⇒保留 `request_human_approval`、`confidence == threshold` 不挂起、缺阈值默认 0.6、非法阈值回退、无 broker fail-safe 不阻塞）。
+- **门（先跑后写，取实跑）**：后端全量 `.venv/bin/pytest` ＝ **2008 passed / 125 skipped / 0 failed**（基线 1995/125，净增 13，常跑零回归；同机 load 100–300，时长不横比）；前端（本批只动 `editorStore.ts`）`pnpm test` **738/2**、`pnpm lint` **0 error / 7 既有 warning**、`pnpm build` ✓。
+- **残余照实（docs/78 §6）**：**真 LLM 端到端未验**——本批只证到"接线成立"（prompt 就是 user message、model 生效、闸门双向），"模型真按新 prompt 改变判定"要 1.1 的真 key，**不在本批**；低置信挂起无跨重启恢复（docs/14 **D44**）；规则兜底不读 prompt/model；置信度为模型自报、阈值 0.6 非实测调优值；只接 `ai_decision` 一个节点。
+
 ### docs(review)＋test(dev)：第六次项目级上线复审——判定不变，但"B 档还欠什么"被实测改掉（2026-09-27，docs/77）
 
 - **一句话**：**A 档 ✅／B 档 ❌ 与第五次一致**，但 docs/74 §5 那句"关掉 demo 面闸门 → 配真 LLM 与一条真通道 → 跑一次真 prod 演练"作为最小动作集**被打掉一半**——第一条同日已闭合，而后两条**即使全部到位仍不足够**，因为核心闭环还有两处工程断口（R1／R2）。零产品代码改动、零迁移、不解除任何缓做。

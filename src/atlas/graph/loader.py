@@ -41,10 +41,11 @@ from atlas.database.service import DatabaseClient, demo_engine
 from atlas.harness.base import ActionRequest, ActionStatus
 from atlas.harness.registry import AdapterRegistry
 from atlas.httpapi.adapter import HttpApiHarnessAdapter
-from atlas.llm.decision import get_decision_client
+from atlas.llm.decision import AUTO_APPROVE, HUMAN_APPROVAL, get_decision_client
 from atlas.llm.condition_classifier import get_condition_classifier
 from atlas.message.adapter import MessageHarnessAdapter
 from atlas.message.service import MessageService
+from atlas.security.bootstrap import demo_surface_enabled
 from atlas.shop.adapter import ShopHarnessAdapter
 from atlas.storage.frame import build_frame, deadline_iso, remaining_seconds
 from atlas.tracing import (
@@ -430,13 +431,30 @@ def _make_executor(
                         limit = float(context["global"].get("approval_limit", 500))
                     except (TypeError, ValueError):
                         limit = 500.0
+                    # W5-5.1：运营 promptTemplate 真实透传给决策器；节点 model 覆盖默认模型。
                     result = decision_client.decide_refund(
                         reason=str(payload.get("reason", "")),
                         amount=float(payload.get("amount", 0)),
                         limit=limit,
+                        prompt=prompt,
+                        model=(str(node.config.get("model") or "").strip() or None),
                     )
+                    threshold = _decision_confidence_threshold(node)
+                    if isinstance(result, dict) and _decision_confidence(result) < threshold:
+                        # docs/06 §6.2 第 4 步：置信度低于阈值 ⇒ 挂起转人工。
+                        result = _escalate_low_confidence(
+                            node,
+                            result=result,
+                            threshold=threshold,
+                            broker=approval_broker,
+                            graph_id=graph_id,
+                            emit=emit,
+                            start_event=start_event,
+                        )
+                        message = f"{node.id}({node.type}): escalated (confidence<{threshold:g})"
+                    else:
+                        message = f"{node.id}({node.type}): executed"
                     output = {"decision": result, "prompt_rendered": prompt}
-                    message = f"{node.id}({node.type}): executed"
                 elif node.type == "condition":
                     output = _execute_condition(
                         node,
@@ -1036,6 +1054,111 @@ def _await_human_approval(
         }
     message = f"{node.id}: {decision} ({resolved_by}) → {target}"
     return output, message
+
+
+# --- W5-5.1 ai_decision 置信度闸门（docs/06 §6.2 第 4 步） -------------------
+
+# 阈值缺省 0.6，与 docs/06 §6.2 和前端 ai_decision.schema.ts 的默认一致。
+_DEFAULT_CONFIDENCE_THRESHOLD = 0.6
+# 挂起时长：ai_decision 无 timeoutSeconds 配置，取 human_approval 上限同值。
+_DECISION_ESCALATION_TIMEOUT_SECONDS = 3600
+
+
+def _decision_confidence_threshold(node: NodeDSL) -> float:
+    """读节点 confidenceThreshold；非法值退回缺省，不因配置脏数据中断运行。"""
+    raw = node.config.get("confidenceThreshold", _DEFAULT_CONFIDENCE_THRESHOLD)
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return _DEFAULT_CONFIDENCE_THRESHOLD
+
+
+def _decision_confidence(result: Any) -> float:
+    """取决策置信度；缺字段/非法值按 0.0（低置信 ⇒ fail-safe 挂起）。"""
+    if not isinstance(result, dict):
+        return 0.0
+    try:
+        return float(result.get("confidence", 0.0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _escalate_low_confidence(
+    node: NodeDSL,
+    *,
+    result: dict[str, Any],
+    threshold: float,
+    broker: ApprovalBroker | None,
+    graph_id: str,
+    emit: EventCallback,
+    start_event: dict[str, Any],
+) -> dict[str, Any]:
+    """置信度低于阈值 ⇒ 挂起转人工（W5-5.1 真路线，复用既有 ApprovalBroker）。
+
+    fail-safe 口径：人审通过 ⇒ 采纳自动动作 ``approve_refund``；人审拒绝 / 超时 ⇒
+    ``request_human_approval``（同 human_approval 的 onTimeout=reject）。broker 缺失
+    时不敢静默放行，降级为 ``request_human_approval`` 且不阻塞。
+
+    边界：本挂起**不写 interruption 帧**（进程内，重启即失）——写帧会让续跑扫描器把
+    ai_decision 节点误当 human_approval 恢复；跨重启恢复随 D20 一并缓做。
+    """
+    confidence = _decision_confidence(result)
+    base_reason = str(result.get("reason", ""))
+    source = str(result.get("source", ""))
+    summary = (
+        f"{node.name or node.id}：模型置信度 {confidence:.2f} 低于阈值 {threshold:.2f}，"
+        f"需人工确认。原判定：{base_reason or '（无说明）'}"
+    )
+    if broker is None:
+        return {
+            "action": HUMAN_APPROVAL,
+            "reason": f"置信度 {confidence:.2f} < 阈值 {threshold:.2f} 且无审批通道，fail-safe 转人工",
+            "confidence": confidence,
+            "source": source,
+            "escalated": True,
+            "resolvedBy": "no_broker",
+            "threshold": threshold,
+        }
+    token = broker.request(
+        node_id=node.id,
+        graph_id=graph_id,
+        summary=summary,
+        approver="",
+        timeout_seconds=_DECISION_ESCALATION_TIMEOUT_SECONDS,
+    )
+    approval_payload = {
+        "token": token,
+        "summary": summary,
+        "approver": "",
+        "timeoutSeconds": _DECISION_ESCALATION_TIMEOUT_SECONDS,
+        "notified": False,
+    }
+    # 第二个 node_start 携带 approval 载荷：前端据此打开审批 Modal（同 human_approval 调试分支）。
+    emit({**start_event, "approval": approval_payload})
+    decision = broker.wait(token)
+    if decision is None:
+        decision, resolved_by = broker.complete_timeout(token, "rejected")
+    else:
+        resolved_by = broker.get(token)["resolvedBy"]
+    if decision == "approved":
+        return {
+            "action": AUTO_APPROVE,
+            "reason": f"人工采纳低置信度判定：{base_reason or '（无说明）'}",
+            "confidence": confidence,
+            "source": source,
+            "escalated": True,
+            "resolvedBy": resolved_by,
+            "threshold": threshold,
+        }
+    return {
+        "action": HUMAN_APPROVAL,
+        "reason": f"低置信度转人工，人工未放行（{resolved_by}）：{base_reason or '（无说明）'}",
+        "confidence": confidence,
+        "source": source,
+        "escalated": True,
+        "resolvedBy": resolved_by,
+        "threshold": threshold,
+    }
 
 
 def _namespaced_emit(parent: EventCallback, path: tuple[str, ...]) -> EventCallback:
@@ -1684,8 +1807,22 @@ def _execute_tool(
 ) -> dict[str, Any]:
     tool_name = node.config.get("tool", "")
     params_text = interpolate(node.config.get("params", ""), context)
-    if "/" not in tool_name or registry is None:
+    if registry is None:
         return {"result": {"status": "SIMULATED", "tool": tool_name}, "params_rendered": params_text}
+    if "/" not in tool_name:
+        # R8（docs/77 §4）：裸工具名在 prod 档不是"可执行的本地构造"而是**配置错误**——不许静默
+        # 模拟成功（旧行为会让 run 照常 completed、只在监控计数里露一个 simulated）。dev/demo 档
+        # 保持既有 SIMULATED 契约（demo_surface_enabled：非 prod 恒开、prod 仅显式开关才开）。
+        if demo_surface_enabled():
+            return {"result": {"status": "SIMULATED", "tool": tool_name}, "params_rendered": params_text}
+        return {
+            "result": {
+                "status": "FAILED",
+                "error": f"工具名缺少 adapter/capability 形状：{tool_name}",
+            },
+            "action_status": "FAILED",
+            "params_rendered": params_text,
+        }
 
     adapter_id, capability_name = tool_name.split("/", 1)
     try:
