@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import os
-
 from fastapi import Depends, HTTPException, Request
 
-from atlas.security.bootstrap import read_env_profile
+from atlas.security.bootstrap import read_env_profile, read_storage_backend
 
 from .passwords import verify_password
 from .principals import (
@@ -20,7 +18,7 @@ from .throttle import LoginThrottle
 def select_session_store():
     # docs/30 §4（ADR T24）：PG 档会话落 iam_sessions 表，进程重启/多实例共享令牌；
     # 密码哈希/JWT 仍属生产鉴权批次，不在此列。
-    if os.environ.get("ATLAS_STORAGE_BACKEND", "memory") == "pg":
+    if read_storage_backend() == "pg":
         from atlas.storage.pg import get_pg_backend
 
         return get_pg_backend().session_store()
@@ -29,7 +27,7 @@ def select_session_store():
 
 def select_user_store():
     # ADR T25（docs/31 §2）：PG 档账号落 iam_users；内存档惰性播种。
-    if os.environ.get("ATLAS_STORAGE_BACKEND", "memory") == "pg":
+    if read_storage_backend() == "pg":
         from atlas.storage.pg import get_pg_backend
 
         return get_pg_backend().user_store()
