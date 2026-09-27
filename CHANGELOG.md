@@ -3,6 +3,17 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### feat(ops)：打包 Q 收口——卡住的运行第一次查得到（docs/76，2026-09-27；做 14 **D42**；`03f9ddc`→`45f72ff` 六码原子＋本收口原子；**零迁移／零新语义／零写路径／零新依赖／无新 ADR**）
+
+- **落了什么**：`GET /api/interruptions` **只读投影**＝本租户每一条挂起帧配上"谁认领的、认领多久了、那条 run 现在什么状态"，控制台「等待与任务」多第三个 tab「挂起帧」。档位六选一：`awaiting`／`claimed_executing`／**`claimed_suspended`（docs/62 D-1 at-most-once 说的那颗雷，终于显形）**／`frame_lingering`（运行已终态而帧未清——`main.py:271-276` 失败路径不清帧的既存实况，本批只显形不修）／`claimed_unknown_run`／`claimed_other_state`。**内存档回 `visibility=frames-not-persisted` 并让页面不渲染表格、改出一条 warning**——因为帧只在 PG 档写入（`main.py:290`），空列表在那里绝不等于"没有卡住的运行"。
+- **零迁移是真的零迁移**：只用迁移 002 的表与 `idx_interruptions_tenant` 索引、迁移 029 的 `resumed_at`/`resumed_by` 两列。一行 DDL 也没写。
+- **为什么不复用那个现成的全局读函数**：`load_pending_frames` 服务"一个进程替所有租户恢复"，拿它做 HTTP 端点＝先把别租户的 `resume_token` 读进本进程内存再在 Python 里丢掉，还白丢了一条能走索引的 `WHERE`。于是 `recovery.py` 多一个 `list_tenant_frames`，两者共用同一个行→帧投影（防两条路漂移），并且**文档里写死"别把它当通用查询用"**。
+- **刻意不做的三件事（每件都是决定）**：① **不设阈值**——"已认领却仍挂起"里没有计时器，任何"多少秒才算卡"都要有人拍而没人拍过，所以交出 `claimedSeconds` 让人判读，并把"刚认领的可能是正在续跑"这条**已知瞬时假阳**写进契约与页面文案；② **不给重放留钩子**（连一个未被调用的函数都不留，留了就等于替 D36 拍板）；③ **不修失败路径不清帧**（那是写路径改动＋"失败后还想不想看现场"的取舍）。
+- **门（先跑后写）**：后端 **1967 passed / 123 skipped / 0 failed**（基线 1962/119；净增 5 常跑，另 4 条集成转 skip）；PG 直连 `-m integration` **59 passed / 1 skipped / 0 failed**（含 U921 四例）；前端 **738 passed / 2 skipped**、lint **0 error / 7 warning**、build ✓ **1,733.93 kB / gzip 537.98 kB**（+3.15 kB）；`scripts/dev/interruptions_probe.py` 三段全过并自证"自己写的行残留 0"。
+- **真浏览器实测（照实标证据形态）**：真 PG 真数据下三条帧在页面上分别落成"等待中·未认领／已认领·仍挂起（需人工看）／已认领·运行已终态而帧未清"，认领者与时长与 token 逐行对上；换内存档重启后该 tab 变「挂起帧 (0)」、表格不渲染、出现 warning Alert。**本轮 in-app 浏览器视口 0×0，指针点击与截图不可用，结论全部取自 DOM 结构读取**——"渲染出来的文字与组件对不对"是实测，"长什么样"没有目视核对。
+- **落码与契约的七条偏差记在 docs/76 §7**，其中两条要单独说：契约要求的反向门（摘掉 `WHERE tenant_id` 必须红）**没有以改生产代码的方式执行**——植入门被拦下、未绕道，改成同一库同一批真帧上的**差分对照**（全局那条确实看得见三条、租户那条看得见两条），证明力等价，**但它防不住将来有人删掉那条 WHERE**，真防复发只剩"CI 每次跑 integration"这一条；另一条是 `state` 从五档长成六档（多了"不认识的 run 状态不猜"）。
+- **同步面**：docs/76 §7 收口注记（含六条偏差与证据形态声明）、docs/08 §八 立项条＋收口注记＋C 组 D42 行划销、docs/14 **D42 ✅ 闭合（D36 状态与触发条件原样不动）**、docs/12 新端点行＋把 waits/tasks/interruptions 三项补进鉴权档登记、docs/13 U916–U922、docs/62 §2 D-1 代价条款追加"现已可查，但看得见≠有权处理"、docs/00 地图行、README「卡住的运行现在查得到」一段、CHANGELOG、handoff（状态行＋Active **#75** ✅＋Recently shipped＋Quality gate 一块；打包 L 那条滚入归档）。
+
 ### docs(ops)：打包 Q 立项——挂起点只读投影契约（docs/76，2026-09-27 用户「那你搞」批准 14 D42；docs-only 未落码；零迁移／零新语义／零写路径／无新 ADR）
 
 - **立项起因本身就是上一轮复筛的产物**：当天早上把候选池筛成"C 组无工程内可今日闭环的干净候选"，下午回代码核查 D36 时量出这条被漏掉的 **D42**——**认领后崩溃的 run 对运营完全不可见**：`resumed_at`/`resumed_by` 只在启动恢复路径被读一次（`api/main.py:201` 打一行 INFO 就跳过），`GET /api/waits`（`main.py:3503`）只列进程内 event broker 的 pending、**从不查 `interruptions` 表**。要发现一条卡住的 run，只能重启服务翻日志或手查数据库。**"清单说没有可做的"和"没有可做的"不是一回事**。

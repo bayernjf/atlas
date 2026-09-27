@@ -26,3 +26,7 @@
 ### 2026-09-27 打包 P 收口滚出的 1 条（原 Recently shipped 未编号条目，逐字保留）
 
 ✅ **打包 M 落码＝渠道工具接通通用 JSON 参数通道（docs/67，2026-09-25；`fix(graph)` 一行前缀＋`test(graph)` U868–U873）**：关闭 docs/63 §0A N2，图里第一次能带正确参数真调 Shopify 退款（测试只假在 HTTP 层）；**N3 范围表态与 N4 调度器未做，PROD 仍不 GO**。
+
+### 2026-09-27 打包 Q 收口滚出的 1 条（原 Recently shipped 未编号条目，逐字保留；其中"N2 真实渠道工具接通仍未做"与"N4 未做"都已被后续批次闭合，见上面两条与 docs/67·docs/68）
+
+✅ **打包 L 落码＝prod 首任管理员引导口令（docs/66，2026-09-25；`66e977e`/`4f980df`＋收口原子）**：关闭 docs/63 §0A N1（新 prod 库登录死锁）——`ATLAS_ADMIN_BOOTSTRAP_PASSWORD` prod 必填、缺失或弱口令即拒绝启动，prod 只播各租户 admin＋引导口令，dev/test 逐键不变；同批修 N5 示例值与 README 过期措辞。**N2 真实渠道工具接通仍未做**。
