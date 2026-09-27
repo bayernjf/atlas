@@ -17,9 +17,9 @@
 |---|---|---|---|
 | W1 | 真实外部凭据（硬阻断） | 1.1 真实 LLM 决策 / 1.2 真实 Shopify 退款 / 1.3 真实消息·IM·SMTP·SMS·OAuth | ⬜×3 |
 | W2 | N3 范围决策（产品非工程） | 2.1 浏览器自动化进/出 MVP | ⬜ |
-| W3 | prod 形态持久化与韧性 | 3.1 调度 store PG 化（D32）/ 3.2 D36 崩溃兜底批 / 3.3 多副本解锁（后置） | ⬜×2（3.3 后置不计入 B 档） |
-| W4 | prod 演练（终门） | 4.1 `ATLAS_ENV=prod` 真机演练 | ⬜ |
-| X | 横切前提 | X.1 CI postgres service / X.2 凭据卫生（N5） | ⬜×2 |
+| W3 | prod 形态持久化与韧性 | 3.1 调度 store PG 化（D32）/ 3.2 D36 崩溃兜底批 / 3.3 多副本解锁（后置） | ✅×1（3.1 已完成，2026-09-27 更正）／⬜×1（3.2；3.3 后置不计入 B 档） |
+| W4 | prod 演练（终门） | 4.1 `ATLAS_ENV=prod` 真机演练 | ⬜（**2026-09-27 记部分推进**：prod 档进程第一次被真驱动，演练本身仍未做） |
+| X | 横切前提 | X.1 CI postgres service / X.2 凭据卫生（N5）／**2026-09-27 已闭合** / X.3 demo 模拟面 prod 残留闸门（2026-09-27 新增并当日闭合） | ✅×3（X.1 已在跑；X.2 全史扫描零命中＋示例值有机检；X.3 由打包 P 闭合）／⬜×0 |
 
 ## 2. 明细追踪表
 
@@ -29,12 +29,13 @@
 | 1.2 | W1 | 配真实/沙箱 Shopify 店铺；把 `channel:*` 工具（docs/67）指向真店；用测试订单跑通一次受控退款 | 携带 `order_id`/`amount` 的图打到**真实** Shopify 退款 API 并返回 2xx；docs/67 的「真适配器＋假 HTTP」由真 200 替换 | 真实/合作沙箱 Shopify 店铺；动（测试）款审批 | ⬜ | — | docs/67 以「真适配器＋假 HTTP」闭 N2，此处补全真外发 |
 | 1.3 | W1 | 配真实 SMTP/IM webhook/SMS/OAuth 凭据；端到端验证发送路径 | 一条通知经 prod 配置真正投递到真实收件箱/IM 群（非 dev mock）；秘钥由 vault 注入，绝不明文 `.env` | 企业邮件/IM/SMS 供应商；OAuth 应用注册 | ⬜ | — | 见 docs/08 D 组外部通道 |
 | 2.1 | W2 | 产品/用户拍板 docs/63 §0A N3（浏览器自动化适配器）是否进 MVP：进→立项批次（新适配器＋工具＋测试，新 D 号＋ADR）；出→显式标记 N3 出 MVP | 决策写入 docs/08 迭代计划 + docs/72 同步注记 | 产品范围会议 | ⬜ | — | 纯产品决策，非工程缺陷 |
-| 3.1 | W3 | 把 `schedule_fires`/注册（docs/68 当前进程内）迁 Postgres，跨重启/实例共享 | 调度触发跨进程重启存活**且**第二实例不重复触发（PG 支撑 `ON CONFLICT`）；由对真 postgres 的集成测试覆盖 | CI postgres service（X.1） | ⬜ | — | 即 docs/14 D32，随 S1 |
+| 3.1 | W3 | 把 `schedule_fires`/注册（docs/68 当前进程内）迁 Postgres，跨重启/实例共享 | 调度触发跨进程重启存活**且**第二实例不重复触发（PG 支撑 `ON CONFLICT`）；由对真 postgres 的集成测试覆盖 | CI postgres service（X.1） | ✅ **2026-09-27 更正：本项已完成**〔码〕 | `api/main.py:1059-1063` 在 `ATLAS_STORAGE_BACKEND=pg` 时装 `PgScheduleStore`（迁移 030 建 `schedules`/`schedule_fires`），出厂 `docker-compose.yml:50` 即 pg 档；跨重启存活与"第二实例不重复触发"由 `tests/test_scheduling_pg_integration.py` 5 例覆盖并在 CI `Backend PG integration` 每 PR 真跑 | 即 docs/14 D32；原记 ⬜ 属 docs/72 §1 同源误判，见 §6 |
 | 3.2 | W3 | 立项 docs/62 §8 风险5 的 D36 批：单实例崩溃后 reconcile 挂起帧，保 at-most-once 续跑安全 | `kill -9` 挂起中途后重启⇒不重复执行；帧恢复或 fail-safe | 无（工程内可闭环） | ⬜ | — | docs/62 已登记 D36 |
 | 3.3 | W3 | **后置**：仅当要「生产级」而非「单实例 MVP」时，再解 docs/62 单副本硬约束；需 D36＋所有挂起/事件/等待态共享 PG | 非 B 档阻塞；单实例 MVP 今日可交付 | 3.2 + 全态 PG 化 | ⬜（后置） | — | HA 显式后置阶段 |
-| 4.1 | W4 | 真实凭据的 prod 全新部署；docs/66 引导口令 seed 管理员；首登强改密；跑通一条代表图（审批＋条件＋真 Shopify 退款＋IM 通知）至终态 | 真实基建上整链一次绿；把本次运行作为 〔跑〕 证据写入 docs/72 补记 | 1.1–1.3 全部 live | ⬜ | — | B 档终门 |
-| X.1 | X | 启用 CI postgres service（docs/63 结构性缺口：当前 44/1918 integration 永不跑） | CI 中 integration 套件对真 postgres 实际执行；解锁 3.1 的集成证明 | 无（工程内） | ⬜ | — | 结构性前置，阻塞 3.1 证明 |
-| X.2 | X | 凭据卫生：核 N5（`.env` example）已满足，且无明文 prod 凭据入库 | 仓库无明文 prod 秘钥；prod 走 vault/环境变量注入 | 无（工程内） | ⬜ | — | 见 docs/63 §0A N5 |
+| 4.1 | W4 | 真实凭据的 prod 全新部署；docs/66 引导口令 seed 管理员；首登强改密；跑通一条代表图（审批＋条件＋真 Shopify 退款＋IM 通知）至终态 | 真实基建上整链一次绿；把本次运行作为 〔跑〕 证据写入 docs/72 补记 | 1.1–1.3 全部 live | ⬜（**2026-09-27 部分推进，本项仍 ⬜**） | `scripts/dev/prod_surface_probe.py`（打包 P）：本仓第一次有 **prod 档进程被真驱动**——四段全过（prod 404／`ATLAS_ENABLE_DEMO_MOCK=1` 开回／大写 `PROD` 仍 404／非法档位起不来） | B 档终门。**探测≠演练**：没有真 LLM／真 Shopify／真 IM，也没有 Docker 与网络边界，整链一次绿仍未达成 |
+| X.1 | X | 启用 CI postgres service（docs/63 结构性缺口：当前 44/1918 integration 永不跑） | CI 中 integration 套件对真 postgres 实际执行；解锁 3.1 的集成证明 | 无（工程内） | ✅ **2026-09-27 更正：已在跑**〔码〕 | `.github/workflows/ci.yml:58-90` 的 `Backend PG integration` job 设 `ATLAS_RUN_INTEGRATION=1` ＋ `DATABASE_URL`，先 `python -m scripts.ops.apply_migrations` 再 `pytest`（打包 J P1-1 落码）；原记 ⬜ 是把 docs/63 当时的结构性缺口当成了现状 | 备注：本项翻 ✅ 直接解锁 3.1 的集成证明 |
+| X.2 | X | 凭据卫生：核 N5（`.env` example）已满足，且无明文 prod 凭据入库 | 仓库无明文 prod 秘钥；prod 走 vault/环境变量注入 | 无（工程内） | ✅ **2026-09-27 闭合**〔跑〕 | **全史扫描**：`gitleaks` 8.30.1 对本仓 HEAD 全历史跑 `gitleaks detect --source . --redact --log-opts="--all"` ⇒ **755 commits／14.07 MB，no leaks found**；CI 每次 push/PR 同扫（`ci.yml:17-28` gitleaks-action@v2，`fetch-depth: 0`）。**示例值合法**：`.env.example:13` 是 `ATLAS_ENV=dev`（N5 原缺陷＝曾写非法的 `development`），且 `tests/test_prod_bootstrap_admin.py::test_u867_env_example_values_are_valid` 机检"示例文件自身的值必须全部可被代码接受"。**真凭据不落盘**：`.gitignore:41-43` 忽略 `.env`/`.env.*` 并 `!.env.example`，`git ls-files` 里唯一的 env 形态文件就是示例；`docker-compose.yml` 全部走 `${VAR:-}` 注入（第 52/59 行等），无一处内联密钥 | 可复跑命令即本行证据。**边界照实**：① 探测器**不是万能**——正向对照里 gitleaks 认出了 `sk-`／PEM 形态（`leaks found: 1`），却**不认** AWS 官方文档示例对 `AKIAIOSFODNN7EXAMPLE`（那是它自己 allowlist 的教程值），所以"零命中"是关于规则集的事实，不是"绝无明文密钥"的数学证明；② 结论只覆盖到**今日 HEAD 的历史**，真部署后若有人提交真凭据需重扫；③ "prod 走 vault"这一半是**部署实践**，仓库侧只能证明"没把凭据写进代码与配置默认值"。dev 种子口令（`admin123` 等）是**有意的 dev-only 值**，prod 拒绝它们（`security/bootstrap.py`＋docs/66），不属于本项的"明文 prod 凭据" |
+| X.3 | X | **demo 模拟面 prod 残留闸门收口**（2026-09-27 第五次复审 docs/74 新增）：`_demo_mock_enabled()` 目前只守 3 条 shopify-admin mock 路由（`main.py:4166/4180/4204`），prod 档仍有 5 条匿名/固定口令可达——`POST /api/demo/mock/orders/{order_id}/receipt`（`main.py:4148-4151`，**无鉴权且回显请求体**）、`GET /api/demo/mock/orders`（固定公开串 `X-Demo-Token: demo-token`）、`POST /api/demo/shop/login` ＋ `GET /api/demo/shop/orders`（demo/demo）、`GET /demo/shop` | `ATLAS_ENV=prod` 下逐条真发请求 ⇒ 全部 404；并有一条反向测证明"去掉门就红" | 无（工程内，量小） | ✅ **2026-09-27 完成**〔跑〕 | `563fbbc` 门收口（含 D-2 那条大写 fail-open）＋`ebcdb2d` U909–U913 九例＋`d9163f3` 真进程四段探测；prod 档下 8 条 demo 面逐条 404、开关一次开全、`ATLAS_ENV=PROD` 大写不再开门、非法档位拒启 | 原由 docs/74 补进清单；S5 至此才算真关。**顺带留下一种防复发机制**：匿名可达面由 U909 机器枚举成 allowlist，新加无鉴权路由会当场红 |
 
 ## 3. 退出判据（B 档达成）
 
@@ -44,7 +45,8 @@
 - [ ] 1.2 真实 Shopify 退款 live 且已演练
 - [ ] 1.3 真实消息/IM/SMTP/SMS/OAuth 至少主通道 live 且已演练
 - [ ] 2.1 N3 范围决策已记录
-- [ ] 3.1 调度 store PG 化完成
+- [x] ~~3.1 调度 store PG 化完成~~ **✅ 2026-09-27 更正：立项时已完成**（`api/main.py:1059-1063`＋迁移 030＋compose pg 档；集成测试 5 例在 CI 每 PR 真跑）
+- [x] X.3 demo 模拟面 prod 残留闸门收口（✅ 2026-09-27 打包 P：`563fbbc`＋U909–U913＋真进程探测；匿名可达面从此由 allowlist 机器守护）
 - [ ] 4.1 `ATLAS_ENV=prod` 真机演练整链绿
 
 （3.2 / 3.3 / X.1 / X.2 为韧性/前置增强：3.2 强烈建议随 B 档同批；3.3 与 X 类为后置或横切，不单独阻断 B 档判定。）
@@ -60,3 +62,19 @@
 | 日期 | 动作 | 说明 |
 |---|---|---|
 | 2026-09-27 | 立项 | 据 docs/72 结论拆 B 档缺口为 10 个明细追踪项（1.1–1.3 / 2.1 / 3.1–3.3 / 4.1 / X.1–X.2），全部 ⬜ 起追踪 |
+
+## 6. 更正注记（2026-09-27，第五次复审 docs/74 带来）
+
+本文首版有两条状态是**沿 docs/72 叙述写的、没回代码核**，本次据 〔码〕 更正（历史行不删，按上文"刷新规则"就地补证）：
+
+1. **3.1「调度 store PG 化」不是待做，是已完成**——`api/main.py:1059-1063` 按 `ATLAS_STORAGE_BACKEND=pg` 装 `PgScheduleStore`（表＝迁移 030 的 `schedules`/`schedule_fires`），出厂 `docker-compose.yml:50` 就是 pg 档；跨重启存活与"第二实例不重复触发同一分钟槽"由 `tests/test_scheduling_pg_integration.py` 5 例钉住。
+2. **X.1「CI postgres service」不是待做，是已在跑**——`ci.yml:58-90` 的 `Backend PG integration` job 已设 `ATLAS_RUN_INTEGRATION=1`＋`DATABASE_URL`，先 apply 迁移再 `pytest`。首版那句"44/1918 integration 永不跑"是 docs/63 当时（打包 J 之前）的结构性缺口，被当成现状抄了过来。
+
+同时**新增一项必答**：X.3 demo 模拟面 prod 残留闸门（prod 档仍 5 条匿名/固定口令可达，含一条无鉴权且回显请求体的 POST）。这条的存在也说明本文 §3 的"退出判据"不能只看表格首版——**tracker 的每一项翻状态要回代码，不能沿评审叙述抄**。
+
+| 日期 | 动作 | 说明 |
+|---|---|---|
+| 2026-09-27 | 更正＋新增 | 第五次复审（docs/74）驱动：3.1 与 X.1 翻 ✅（附 〔码〕 证据与 file:line）；新增 X.3 demo 面 prod 残留闸门；总览两行与 §3 退出判据同步 |
+| 2026-09-27 | X.3 闭合 | 打包 P 落码收口（`563fbbc` 门＋D-2 大写 fail-open／`ebcdb2d` U909–U913 九例含 allowlist 反向门／`d9163f3` 真进程四段探测）。prod 档 8 条 demo 面逐条 404、开关一次开全、`ATLAS_ENV=PROD` 不再静默开门、非法档位拒启。**匿名可达面从此是机器枚举的 allowlist**，新加无鉴权路由当场红——这条比那 5 行门更耐久。门：后端 1960/119/0、前端 738/2/55、oxlint 0/7、build 未变（本批不碰前端） |
+| 2026-09-27 | 4.1 部分推进 | 同批的 `scripts/dev/prod_surface_probe.py` 是本仓第一次有 **prod 档进程被真驱动**（四段全过），故在 4.1 行就地记"部分推进"并把探测证据落到该行备注；**本项仍 ⬜**——没有真凭据、没有 Docker 与网络边界、整链未跑过一次 |
+| 2026-09-27 | X.2 闭合 | 凭据卫生做掉：`gitleaks` 8.30.1 全史扫描（**755 commits／14.07 MB ⇒ no leaks found**，命令写在 X.2 行可复跑）＋ CI 每 push/PR 同扫（`ci.yml:17-28`，`fetch-depth: 0`）＋ `.env.example` 示例值合法且由 `test_u867_env_example_values_are_valid` 机检 ＋ `.gitignore:41-43` 挡住真 `.env`、compose 全走 `${VAR:-}` 注入。**正向对照的边界照实写**：同一二进制认得出 `sk-`／PEM（`leaks found: 1`），认不出 AWS 官方教程示例键（被它自己 allowlist），所以"零命中"是规则集事实而非绝对证明；"prod 用 vault"那一半属部署实践，仓库侧只能证明没写进代码与配置默认值 |

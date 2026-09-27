@@ -4119,6 +4119,8 @@ def nl_generate(
 
 @app.post("/api/demo/shop/login")
 def demo_shop_login(request: DemoLoginRequest) -> dict[str, Any]:
+    if not _demo_mock_enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
     if not _demo_shop.login(request.username, request.password):
         raise HTTPException(status_code=401, detail="登录失败：用户名或密码错误（demo/demo）")
     return {"logged_in": True}
@@ -4126,6 +4128,8 @@ def demo_shop_login(request: DemoLoginRequest) -> dict[str, Any]:
 
 @app.get("/api/demo/shop/orders")
 def demo_shop_orders() -> dict[str, Any]:
+    if not _demo_mock_enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
     if not _demo_shop.logged_in:
         raise HTTPException(status_code=401, detail="未登录")
     return {"orders": _demo_shop.list_pending_refunds()}
@@ -4139,7 +4143,12 @@ _MOCK_ORDERS = [
 
 @app.get("/api/demo/mock/orders")
 def demo_mock_orders(request: Request) -> dict[str, Any]:
-    """API 适配器演示目标（04 §4.6 / 12 §5）：要求 X-Demo-Token: demo-token。"""
+    """API 适配器演示目标（04 §4.6 / 12 §5）：要求 X-Demo-Token: demo-token。
+
+    常量串只算"防误用"，不算凭证——它会 404 在这台进程是 prod 档的时候。
+    """
+    if not _demo_mock_enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
     if request.headers.get("x-demo-token") != "demo-token":
         raise HTTPException(status_code=401, detail="缺少或错误的 X-Demo-Token 请求头")
     return {"orders": _MOCK_ORDERS}
@@ -4147,13 +4156,23 @@ def demo_mock_orders(request: Request) -> dict[str, Any]:
 
 @app.post("/api/demo/mock/orders/{order_id}/receipt")
 def demo_mock_receipt(order_id: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
-    """API 适配器演示目标：回显 JSON 请求体，供 POST/body/插值端到端验证。"""
+    """API 适配器演示目标：回显 JSON 请求体，供 POST/body/插值端到端验证。
+
+    回显就是风险面：prod 档必须 404，否则任何人无需凭证即可让平台原样吐回它收到的体。
+    """
+    if not _demo_mock_enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
     return {"order_id": order_id, "body": body or {}, "received": True}
 
 
 def _demo_mock_enabled() -> bool:
-    """J-3e：demo 模拟面开关——prod 默认关（fail-closed），ATLAS_ENABLE_DEMO_MOCK=1 显式开。"""
-    return os.getenv("ATLAS_ENV", "dev") != "prod" or os.getenv("ATLAS_ENABLE_DEMO_MOCK") == "1"
+    """J-3e：demo 模拟面开关——prod 默认关（fail-closed），ATLAS_ENABLE_DEMO_MOCK=1 显式开。
+
+    档位一律走 `read_env_profile()`：它大小写不敏感且拒非法值。原先这里自己写
+    `os.getenv("ATLAS_ENV") != "prod"`，于是 `ATLAS_ENV=PROD` 会被判成"非 prod"、
+    整片匿名面**静默开门**——把"以为在 prod"和"真的在 prod"混成一个 bug。
+    """
+    return read_env_profile() != "prod" or os.getenv("ATLAS_ENABLE_DEMO_MOCK") == "1"
 
 
 # Shopify Admin webhooks 资源的同进程模拟（docs/41 §D；随 demo reset 清空）。
@@ -4414,6 +4433,8 @@ async function loadOrders(){
 
 @app.get("/demo/shop", response_class=HTMLResponse)
 def demo_shop_console() -> str:
+    if not _demo_mock_enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
     return _CONSOLE_HTML
 
 

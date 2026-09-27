@@ -3,6 +3,59 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### docs(review)：X.2 凭据卫生闭合——docs/73 的 X 类三条至此全绿（2026-09-27，纯 docs＋本机扫描，零代码改动）
+
+- **为什么这算推进**：docs/73 的 X 组三条横切前提里 X.2 一直挂 ⬜，而它**是这一列里唯一不需要外部凭据、不需要用户拍板的一条**——"仓库有没有把凭据写死"这件事今天就能测。清掉它，B 档剩下的就全是"真凭据／产品表态／真 prod 演练"三类，看清单的人不必再猜哪条是工程欠账。
+- **测了什么**：① 全史扫描 `gitleaks` 8.30.1 `detect --source . --redact --log-opts="--all"` ⇒ **755 commits／14.07 MB，no leaks found**；CI 每次 push/PR 用同一套（`ci.yml:17-28`，`fetch-depth: 0`）。② N5 那半：`.env.example:13` 现为合法档位 `ATLAS_ENV=dev`，且 `test_u867_env_example_values_are_valid` 机检"示例文件自己的值必须能被代码接受"（在 1962 绿的套件里）。③ 真 `.env` 不落盘：`.gitignore:41-43`（`.env`/`.env.*` 忽略、`!.env.example`），`git ls-files` 里唯一的 env 形态文件是示例；`docker-compose.yml` 的密钥位全部 `${VAR:-}` 注入。
+- **正向对照做在一个临时目录里，并照实记下它证明了什么、没证明什么**：同一二进制对 `sk-…`／PEM 报 `leaks found: 1`，**却不报 AWS 官方教程示例对 `AKIAIOSFODNN7EXAMPLE`**（那是 gitleaks 自己 allowlist 的示例值）。所以"零命中"是**关于规则集**的事实，不是"仓库绝无明文密钥"的数学证明；对照也只在 `--no-git` 目录模式跑过（往仓库里植一条假凭据提交的做法被权限门拦下，未绕道），**历史遍历那条路径的凭据是 "755 commits scanned" 这行输出＋CI 作业本身**。
+- **边界**：判据后半句"prod 走 vault/环境变量注入"是**部署实践**，仓库侧只能证到"没有内联凭据"。真部署之后再重跑一次扫描即可（命令写在 X.2 行）。
+- **同步面**：docs/73（X.2 行翻 ✅＋总览 W4/X 两行＋流水一行）、CHANGELOG、handoff。**未动**：docs/74 的 B 档四条清单（X.2 从来不在其中）、任何缓做与单副本约束。
+
+### docs(review)：把入口文档 docs/34 的当前态注记续到 2026-09-27（docs-only，零代码；防"入口文档停在上一次刷新"这类口径腐烂）
+
+- **为什么单独做这件事**：docs/34 的"来源与状态"段自述为**「生产化缺口清单的更新权威」**，而它的当前态注记停在 2026-09-25——从 docs/63 之后又落了六批（L/M/N/O/D13/P）并出了两次复审（docs/72/74）。这是本仓最快的腐烂路径：**契约文档由作者随批回填，入口文档没人回头改**，而人恰恰先点入口文档。
+- **做了什么**：在 docs/34 的 2026-09-25 注记之后**追加一条 2026-09-27 注记**（历史正文一律不改写，沿用该文件自己的"凡与本注记冲突以本注记为准"句式）。内容＝① 判定权威顺位改写为 **docs/74 更正的两条 > docs/72 > docs/63 > docs/34/docs/29**；② 两层判定现值（A ✅／B ❌）；③ 09-25 之后六批逐条**回代码点验**后列出（`security/bootstrap.py:40`／`graph/loader.py:1701`／`scheduling/`＋迁移 030／`apiClient.ts:281/307`＋`Editor.tsx:282/530`／docs/70／docs/75），并**就地关闭本文自己列的 D37**；④ 明确 `replicas > 1` 仍禁（打包 I 只堵住重复执行）；⑤ §五 未变项照实留（P0-3 真域名、**P1-7 真实客户回填＝唯一还挂业务侧的 P0 级缺口**）；⑥ B 档剩余四条与其性质（真凭据／N3 表态／D36／真 prod 演练）。
+- **同批改掉的三处"入口行比正文更旧"**：docs/00 的 docs/34 地图行（旧第 4 格写着"当前权威、下一轮立项参考"，现改为"只在要历史底稿时读它，问能不能上线先读 docs/74＋docs/73"）＋handoff 文档地图同一行＋该行的 2026-09-25 尾巴。**顺带核掉一条我自己的过期记忆**：曾记"README 与 handoff #30 仍写 MIT/待拍板"——实测 README:99 已是"不开放"、#30 已闭、仓库无 LICENSE 文件，那处残留不复存在。
+- **门**：纯文档，无代码改动；`tests/test_handoff_integrity.py`（编号唯一／引用可解／Recently shipped ≤5）绿，全量后端门 **1962 passed / 119 skipped / 0 failed**（与下一条小修同一提交段实测）。
+
+### fix(observability)：日志行把 request id 和消息粘在一起了（2026-09-27，非批次小修；docs/65 K-D 的落地缺陷；零迁移／零新端点／零新错误码／零新依赖）
+
+- **量到的实况**（不是推断）：`configure_logging()` 装的格式串是 `… [%(name)s] %(request_id)s%(message)s`，真渲染出来是 `2026-09-26T21:13:47.907+00:00 INFO [atlas.demo] abc123hello world`——**id 与消息之间没有分隔符**，运维 grep 一条消息会把它前面的 id 一起吃进去，反之按 id 过滤也会。
+- **为什么它带着三条测试活了两天**：K-D 的 formatter 测试**自带格式串**（`_UtcFormatter("%(asctime)s %(levelname)s %(message)s")`），另一条断言的是 record 字段，**没有一条去看渲染后的那一行**；契约 docs/65:65 写的"断言 `request_id=` 字段"更是从未成立（字段名是 `request_id`，输出里根本没有等号）。**这是"测试测的是自己的假设"的又一个实例**——守护必须经过生产那条真路径。
+- **改法**：`RequestIdFilter` 写两个字段——`request_id` 仍是**原值**（将来的 JSON handler 与任何按字段取值的代码不该拿到被格式化过的串），新增 `request_id_tag` ＝ `"req=<id> "` 或空串；格式串改用 `%(request_id_tag)s`。分隔符**只在有 id 时存在**，所以既不会粘连，也不会让无请求上下文的行留下空槽或双空格。
+- **新增 U914–U915（`tests/test_observability_logging.py`）**：U914 从 `configure_logging()` 真装上去的那个 formatter 渲染整行并断言 `] req=<id> hello world$`；U915 是无 id 的正向对照（不得出现 `req=`、不得有双空格）。**先跑出红再修**：U914 改前实跑失败（输出粘连原文），U915 改前就通过——健康用例本来就好，这条绿只证明对照没写错。
+- **门**：后端 `.venv/bin/pytest` **1962 passed / 119 skipped / 0 failed**（104.20s；`--collect-only` 2081 条与 1962＋119 相符，无截断；本批净增 2 例）。前端零改动不重跑。
+- **同步面**：docs/65 §5 追加**订正条**（正文按留痕规则不改写，含"`request_id=` 是契约想当然"这句），docs/12 打包 K 注记就地补订正，docs/13 登记 U914–U915，`src/atlas/observability/logging.py` 模块 docstring 改为实况，handoff 状态行与质量门。**不动 D39 状态**（它记的是"可观测最小面已取回、OTel 仍缓做"，与本条渲染缺陷无关）。
+
+### fix(security)：打包 P 收口——"哪些路由不需要凭证就能打"从人记的清单变成机检的表（2026-09-27，契约 docs/75；`563fbbc`→`ebcdb2d`→`d9163f3`＋本收口原子；零迁移／零新端点／零新错误码／零新依赖）
+
+- **落了什么**：① `563fbbc` 5 条 demo 模拟面路由（`/demo/shop`、`/api/demo/shop/login`、`/api/demo/shop/orders`、`/api/demo/mock/orders`、`/api/demo/mock/orders/{id}/receipt`）套上 `_demo_mock_enabled()`，prod 档一律 **404 而非 403**（拒绝语不该确认"这里确实有个被关掉的东西"）；同原子把门函数从自比字符串改成走 `read_env_profile()`，修掉 **`ATLAS_ENV=PROD` 大写静默开门** 这条真 fail-open，非法档位现在是起不来而不是默认按 dev 放行。② `ebcdb2d` `tests/test_demo_surface_prod_gate.py` U909–U913 共 9 例。③ `d9163f3` `scripts/dev/prod_surface_probe.py` 四段真进程探测。
+- **本批真正的产出不是那 5 行门**：是 U909——匿名可达面（既无 `Principal` 依赖、函数体里也无档位门）现在是一张**机器枚举的显式 allowlist**，138 条路由里恰好 8 条设计公开（health／ready／metrics·Bearer／shopify 入站 HMAC／OAuth 回调／登录／邮件两把签名 token），**多一条少一条都红**。配了反向门：往 `app` 上临时挂一条无鉴权假路由，守护必须点名它，摘掉后必须回到原集合——否则那条 ✅ 不可信。**为什么值得为此写一批**：S5 这个判断已经在 docs/63 → docs/72 → docs/74 之间漂移过两次，靠人记是记不住的。
+- **老门语义没被改坏**：`LEGACY_DEMO_SURFACE` 三条（J-3e 之前就守着的 shopify-admin mock）与 `/api/demo/mock/orders` 保留的 `X-Demo-Token` 检查都仍在——**它是防误用，不是凭证**；有平台鉴权的三条 demo 数据面（reset／feedback）一条没动，prod 档下业务端点仍是 401 而不是 404（排障要说实话）。非 prod（dev/test）逐键不变，TRIAL.md／docs/18 的演示形态与 compose 缺省 dev 不受影响；`ATLAS_ENABLE_DEMO_MOCK=1` 是唯一开闸方式，且**一次开全**、不留半开状态。
+- **探测脚本自己抓到的三个"会假绿"**：① `POST` 不带 body 会被 pydantic 先 422，那时**门还没执行就被判成"挡住了"** ⇒ 每条路由配合法 body；② 清 `ATLAS_ENABLE_DEMO_MOCK` 的语句最初写在 overrides 之前，顺序反了会把第 2 段变成必然假红；③ 这批用例的绿依赖机器上残留的 `ATLAS_ENV`（同一份代码两台机器一绿一红）⇒ 加 autouse `_neutral_profile`，**每条用例自带档位**。密钥是脚本内一次性生成的随机值，不是任何真实凭据；库走内存档。
+- **门（先跑后写）**：后端 `.venv/bin/pytest` **1960 passed / 119 skipped / 0 failed**（104.16s；基线 1951/119，本批净增 9 例）。前端本批零改动、仍重跑确认没被牵连：`pnpm test` **738 passed / 2 skipped**、`pnpm lint` **0 error / 7 warning**（全既有）、`pnpm build` ✓ **1,730.78 kB / gzip 536.85 kB**。**〔跑〕 证据**：`scripts/dev/prod_surface_probe.py` 四段全过（prod 404／开关开回／大写 `PROD` 仍 404／非法档位起不来）。
+- **诚实边界**：真进程探测只是**部分**推进 docs/73 的 4.1——这是本仓第一次有 prod 档进程被真驱动，但没有真 LLM／真 Shopify／真 IM，也没有 Docker 与网络边界，**4.1 与"一次真 prod 演练"仍是 B 档必答**；allowlist 守护只管"有没有鉴权依赖"，**不管鉴权对不对**。**本批不解除**任何缓做项与单副本三道闸。docs/63 的 S5 就此补记最终闭合（历史正文不追溯改写）。
+- **同步面**：docs/08 §八 立项条＋落码收口注记＋A 组行划销（A 组回到 0 项）、docs/00 地图行翻 ✅、docs/73 X.3 ✅／退出判据／流水、docs/72 §7 再补记、docs/63 附录、docs/74 §7 收口注记（实测门数）、docs/12 鉴权四档段、docs/15 §五 两条、`tests/test_demo_surface_prod_gate.py`（U909–U913）、`scripts/dev/prod_surface_probe.py`、`.env.example`、docs/13 登记、handoff（Active **#74** ✅＋Recently shipped）、CHANGELOG。
+
+### docs：打包 P 立项——demo 模拟面 prod 闸门收口契约（docs/75，2026-09-27 用户「好的，开搞」批准 docs/74 X.3；docs-only 未落码；零新依赖／零迁移／零新端点·错误码）
+
+- **为什么会有一批"5 行代码"的活**：第五次复审（docs/74）回代码复核 docs/72 的「S1–S8 全部 remediation」，发现 **S5 只守住 3 条路由**。枚举 `app.routes`（**138** 条）后实况是：12 条无平台鉴权，8 条设计公开（health/ready/metrics·Bearer／shopify 入站 HMAC／OAuth 回调 state／登录／邮件两把签名 token），**5 条 demo 模拟面在 prod 仍匿名或固定口令可达**——`POST /api/demo/mock/orders/{order_id}/receipt`（无鉴权、无档位门、**把请求体原样回显**）、`GET /api/demo/mock/orders`（靠写进仓库的常量 `X-Demo-Token: demo-token`）、`POST /api/demo/shop/login`＋`GET /api/demo/shop/orders`（demo/demo）、`GET /demo/shop`（HTML 控制台）。
+- **顺带抓到门函数自己的 fail-open**：`_demo_mock_enabled()` 现写 `os.getenv("ATLAS_ENV","dev") != "prod"`，而 `read_env_profile()` 是大小写不敏感的 ⇒ **`ATLAS_ENV=PROD` 会被判成"非 prod"，匿名面全开还不报错**。本批把门改成走 `read_env_profile()`：大小写归一、非法档位抛错而不是默认放行。
+- **六条决策**：prod 一律 404（沿用既有 fail-closed 门，不造第二套开关；非 prod 逐键不变，TRIAL.md／docs/18 的演示形态与 compose 缺省 dev 都不受影响）／覆盖面就是那 5 条／**把"匿名可达面"变成机器枚举的显式 allowlist 守护**（多一条少一条都红——这才是本批的真正产出，防止下一批加无鉴权路由时又漏一次）／验收含**真进程 `ATLAS_ENV=prod` 探测**（TestClient 改环境变量不算，因为它评的正是"档位判定在真进程里成不成立"）／不动 8 条设计公开面、不动已有 RBAC 的三条 demo 数据面／**不解除任何缓做与单副本约束**。
+- **诚实边界**：真进程探测只是**部分**推进 docs/73 的 4.1（第一次有 prod 档进程被真驱动），**不等于 prod 演练**——没有真 LLM／真 Shopify／真 IM，也没有 Docker 与网络边界，4.1 仍留 ⬜。allowlist 守护只管"有没有鉴权依赖"，**不管鉴权对不对**。
+- **同步面**：docs/75 新建（含 §0 量出来的前提与 §6 五条残余风险）、docs/08 §八 立项条＋A 组新行（A 组由"0 项"回到"1 项"）、docs/00 地图行、CHANGELOG、handoff（Active **#74**）。落码按 docs/75 §5 的 ②–⑤ 原子序另行开工。
+
+### docs（评审）：第五次项目级上线复审——两层判定不变，但两条承重断言被改（2026-09-27，docs/74；Active work #73）
+
+- **判的是什么**：用户第四次提出同一问句"必须能达到产品核心完全可用的 MVP"。结论仍是两层：**A 档（可演示／可陪同试用）✅ 达到；B 档（产品核心完全可用·自主上线）❌ 未达到**。区别于复述 docs/72——这次逐条回代码复核，因此产出两条更正。
+- **划掉一条假缺口**：docs/72 §1/§3.3/§4 与 docs/73 3.1 都把"调度 store 仍进程内、prod 形态需 PG 化"算作 B 档必答。实况〔码〕：`api/main.py:1059-1063` 在 `ATLAS_STORAGE_BACKEND=pg` 时装 `PgScheduleStore`（迁移 030 建两表），出厂 compose 第 50 行就是 pg 档，跨重启存活与"第二实例不重复触发同一分钟槽"有 5 例集成测试且 CI 每 PR 真跑。**把已完成项挂在待做清单上，和把未完成写成完成是同一种错**——它让缺口看起来更长、让真正的缺口被稀释。
+- **补回一条真缺口**：docs/72 §2 的"S1–S8 全部 remediation"在 S5 说宽。prod 档仍有 5 条 demo 模拟面路由不受 `_demo_mock_enabled()` 管辖，其中 `POST /api/demo/mock/orders/{order_id}/receipt`（`main.py:4148-4151`）**无鉴权、无档位门、把请求体原样回显**；另有固定公开串 `X-Demo-Token: demo-token` 与 demo/demo 两条。这条 docs/63 §0A 早更正过，docs/72 又收回成 ✅——**同一判断在两份文档间来回漂移是本项目最贵的失败模式**，故既写进 docs/74，也在 docs/72 就地补记，并在 docs/73 新增必答项 X.3。
+- **顺带过期一条**：docs/73 的 X.1「CI postgres service 未启用（44/1918 integration 永不跑）」——`ci.yml:58-90` 早已设 `ATLAS_RUN_INTEGRATION=1`＋先 apply 迁移再 `pytest`（打包 J 落码）。tracker 抄了评审的历史叙述而没回配置看，正是它自己 §0「翻状态要回代码」要防的事。
+- **A 档这轮加了真证据**：打包 N 真机四场景（无人点击下自动派发落 `runs`；停服 130 秒后**停摆窗那一分钟既无 run 也无认领行**；run-now；改手动再发布撤销）＋真浏览器看调度页与画布 cron 预演三态。docs/72 判 A 档那一格只标了 〔码〕。
+- **B 档去掉虚项后的真清单**：真 LLM 与真实通道凭据（compose 仍 `${LITELLM_MODEL:-}` 缺省空 ⇒ 自主上线形态"AI 运营体"是规则壳）、**N3 浏览器自动化的产品范围表态**（`web-playwright` 未接入运行期注册表且被 `tests/test_graph_loader.py:79-80` 反向锁死）、D36 崩溃后挂起帧 reconcile、X.3 闸门收口、一次真 `ATLAS_ENV=prod` 演练与种子客户数据。多副本/HA 显式后置。
+- **门的诚实处理**：本轮同机负载一度 279，全量 `pytest` 与一次 PG 探测未在超时内跑完，**评审因此不引用未跑出的数字**，也不把 docs/73 的 1951/738 当本轮实测（标 〔转抄〕）；已实测且与判定直接相关的是打包 N 收口那轮（后端 1939/119/0、前端 736/2/55、oxlint 0/7、build ✓）。
+- **同步面**：docs/74 新建＋docs/00 地图行＋docs/72 §7 就地补记（历史正文不改写）＋docs/73（3.1·X.1 翻 ✅、新增 X.3、总览/退出判据/§6 注记/流水）＋handoff 状态行与新 Active #73＋CHANGELOG。判定权威顺位：**docs/74 更正的两条 > docs/72 > docs/63**，其余框架仍用 docs/72。
+
 ### docs：M7 验收链复验收口（2026-09-27，docs-only；docs/63 §2 ③ / :117 〔勘〕已复）
 
 - **核实结论**：逐行复 `src/atlas/coordination/sandbox.py` 确证 `run_return_refund` 经 `TaskStore.dispatch/accept/start/complete` 编排客服核验＋物流签收、**从不调 `compile_graph`/`run_graph`**；`src/atlas/logistics/adapter.py:1` 自述为刻意假物流——`sandbox.py` 本身即 TaskStore 层协调演示，按设计不走完整图编译/运行路径。

@@ -3,7 +3,7 @@
 - `configure_logging()`：全仓统一日志格式（UTC 时间戳、级别、logger 名、request_id
   字段、消息）；级别 env `ATLAS_LOG_LEVEL`（默认 INFO）；幂等（重复调用不叠 handler）。
 - `request_id_var`：ContextVar；`install_request_id_middleware(app)` 生成 `X-Request-Id`
-  响应头并让后续日志 record 带上 `request_id=` 字段。
+  响应头并让后续日志行带上 `req=<id> ` 片段（无请求上下文时该片段为空，不占位）。
   【落码偏差（收口注记）】响应头只在成功路径可加（异常 500 由 Starlette 外层生成，
   中间件拿不到响应）；异常路径改为：捕获时以带 request_id 的 error 日志记录后 re-raise，
   日志仍可关联。契约 §5"成功与异常路径都带"按此收窄为"成功带响应头、异常带日志"。
@@ -21,10 +21,17 @@ request_id_var: ContextVar[str] = ContextVar("atlas_request_id", default="")
 
 
 class RequestIdFilter(logging.Filter):
-    """把当前请求 id 注入日志 record 的 request_id 字段（无请求时为空白）。"""
+    """把当前请求 id 注入日志 record（无请求时两个字段都为空白）。
+
+    `request_id` 存**原值**（给将来的 JSON handler 与断言用），`request_id_tag` 存**渲染片段**
+    ——分隔符必须在有 id 时才存在，`%(request_id)s%(message)s` 那种写法会把 id 和消息粘成
+    `abc123hello`（U914 抓到过），而 `[] %(x)s` 让无 id 的行留一个空槽。
+    """
 
     def filter(self, record: logging.LogRecord) -> bool:
-        record.request_id = request_id_var.get()
+        rid = request_id_var.get()
+        record.request_id = rid
+        record.request_id_tag = f"req={rid} " if rid else ""
         return True
 
 
@@ -54,7 +61,7 @@ def configure_logging() -> None:
     level = getattr(logging, level_name, logging.INFO)
     handler = logging.StreamHandler()
     handler.setFormatter(
-        _UtcFormatter("%(asctime)s %(levelname)s [%(name)s] %(request_id)s%(message)s")
+        _UtcFormatter("%(asctime)s %(levelname)s [%(name)s] %(request_id_tag)s%(message)s")
     )
     handler.addFilter(RequestIdFilter())
     root = logging.getLogger()

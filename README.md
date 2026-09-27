@@ -41,7 +41,9 @@ curl -X POST http://localhost:8000/api/demo/reset   # 重置种子退款单与�
 
 > **只能单副本运行**（一个进程、一台机器）。多进程会让同一条挂起审批帧在各进程各自续跑一次——2026-09-25 实测：一次人工"通过"后，一个进程走通过分支、另一个进程超时走拒绝分支，下游真实副作用被执行两遍（证据与机制见 [docs/34](docs/34-MVP上线就绪评审-2026-09-22复审.md) 的复审更新注记）。容器入口对 `workers>1` 直接拒绝启动，compose 已钉 `replicas: 1`；[docs/62](docs/62-挂起帧一次性认领-单副本硬约束护栏-v1批契约设计.md) 的帧一次性认领**已于 2026-09-25 落码**（一次审批下游只跑一遍），但**这不代表支持多副本**：登录节流、`/metrics` 聚合、灰度运行态、跨进程急停仍是进程内。部署面约束全文见 [docs/15](docs/15-环境与分支策略.md) §四。
 
-> **prod 档位（`ATLAS_ENV=prod`）另需三样**：`ATLAS_MASTER_KEY`、`ATLAS_APPROVAL_HMAC_SECRET`（各 ≥32 字节），以及首任管理员引导口令 `ATLAS_ADMIN_BOOTSTRAP_PASSWORD`（[docs/66](docs/66-prod首任管理员引导批-v1批契约设计.md)）——任一缺失或不合规则，进程**拒绝启动**（fail-closed）。缺省档位是 `dev`，上面的 Demo 形态不需要任何密钥。
+> **prod 档位（`ATLAS_ENV=prod`）另需三样**：`ATLAS_MASTER_KEY`、`ATLAS_APPROVAL_HMAC_SECRET`（各 ≥32 字节；主密钥还要是 base64url 解码后**恰 32 字节**的 AES-256 密钥——`secrets.token_urlsafe(48)` 解出 48 字节会在加密后端 fail-closed 中止，用 `token_urlsafe(32)`），以及首任管理员引导口令 `ATLAS_ADMIN_BOOTSTRAP_PASSWORD`（[docs/66](docs/66-prod首任管理员引导批-v1批契约设计.md)）——任一缺失或不合规则，进程**拒绝启动**（fail-closed）。缺省档位是 `dev`，上面的 Demo 形态不需要任何密钥。**档位大小写不敏感**（`PROD` 也算 prod），写非法值（如 `production`）同样是起不来。
+>
+> **prod 档下演示用的模拟面默认全关**（2026-09-27 [docs/75](docs/75-demo模拟面prod闸门收口批-v1批契约设计.md) 打包 P）：`/demo/shop` 商家控制台与 `/api/demo/shop/*`、`/api/demo/mock/*` 一律 **404**；需要对外演示时显式设 `ATLAS_ENABLE_DEMO_MOCK=1`（一个开关开全，不做按路由细粒度）。dev/test 档行为不变——上面的 Demo 形态照旧可跑。哪些路由不需要凭证就能打，现在是一张机器枚举的 allowlist 守着（`tests/test_demo_surface_prod_gate.py`）。
 
 > **定时触发（`schedule/cron` 节点）已有调度器**（2026-09-26 [docs/68](docs/68-定时触发调度器批-v1批契约设计.md) 打包 N 落码收口）：随进程起一条 tick 线程，同图按发布钉版派发。**运营要记住三条**——cron **一律 UTC**（`0 9 * * *` 是北京时间 17:00）、**重启/停摆错过的槽位不补跑**（宁漏不重跑，下游副作用不幂等）、**只跑已发布版本**（改草稿 cron 不生效，要重新发布）。开关见 `.env.example` 的 `ATLAS_SCHEDULE_ENABLED`／`ATLAS_SCHEDULE_TICK_SECONDS`；控制台「定时调度」页与画布里的 cron 预演（接下来三次 UTC 槽位）已随 ⑤ 落码。
 
