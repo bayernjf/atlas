@@ -17,8 +17,11 @@ import type { ColumnsType } from 'antd/es/table'
 import {
   broadcastWaitEvent,
   listTasks,
+  listInterruptions,
   listWaits,
   signalWait,
+  type InterruptionItem,
+  type InterruptionSurface,
   type PendingWaitItem,
   type TaskEnvelopeItem,
 } from '../lib/apiClient'
@@ -53,11 +56,32 @@ const TASK_STATE_COLORS: Record<string, string> = {
   timeout: 'orange',
 }
 
+/** 帧档位 → 文案键与颜色（docs/76 D-3：档位是描述，不是判决）。 */
+const INTERRUPTION_STATE_KEYS: Record<InterruptionItem['state'], string> = {
+  awaiting: 'stateAwaiting',
+  claimed_executing: 'stateClaimedExecuting',
+  claimed_suspended: 'stateClaimedSuspended',
+  frame_lingering: 'stateFrameLingering',
+  claimed_unknown_run: 'stateClaimedUnknownRun',
+  claimed_other_state: 'stateClaimedOtherState',
+}
+
+const INTERRUPTION_STATE_COLORS: Record<InterruptionItem['state'], string> = {
+  awaiting: 'blue',
+  claimed_executing: 'geekblue',
+  claimed_suspended: 'red',
+  frame_lingering: 'orange',
+  claimed_unknown_run: 'default',
+  claimed_other_state: 'default',
+}
+
 export function Waits({ principal, onLogout, onBack }: WaitsPageProps) {
   const { t } = useTranslation('waits')
   const { message } = App.useApp()
   const [waits, setWaits] = useState<PendingWaitItem[]>([])
   const [tasks, setTasks] = useState<TaskEnvelopeItem[]>([])
+  const [interruptions, setInterruptions] = useState<InterruptionItem[]>([])
+  const [frameVisibility, setFrameVisibility] = useState<InterruptionSurface['visibility']>('tenant-scoped')
   const [tab, setTab] = useState('waits')
   const [broadcastKey, setBroadcastKey] = useState('')
   const [broadcastPayload, setBroadcastPayload] = useState('')
@@ -68,9 +92,15 @@ export function Waits({ principal, onLogout, onBack }: WaitsPageProps) {
 
   const refresh = useCallback(async () => {
     try {
-      const [waitItems, taskItems] = await Promise.all([listWaits(), listTasks(50)])
+      const [waitItems, taskItems, frames] = await Promise.all([
+        listWaits(),
+        listTasks(50),
+        listInterruptions(),
+      ])
       setWaits(waitItems)
       setTasks(taskItems)
+      setInterruptions(frames.items)
+      setFrameVisibility(frames.visibility)
     } catch (error) {
       message.error(String(error))
     }
@@ -186,6 +216,37 @@ export function Waits({ principal, onLogout, onBack }: WaitsPageProps) {
     },
   ]
 
+  const interruptionColumns: ColumnsType<InterruptionItem> = [
+    {
+      title: t('state'),
+      dataIndex: 'state',
+      width: 150,
+      render: (value: InterruptionItem['state']) => (
+        <Tag color={INTERRUPTION_STATE_COLORS[value] ?? 'default'}>
+          {t(INTERRUPTION_STATE_KEYS[value] ?? value)}
+        </Tag>
+      ),
+    },
+    { title: t('runId'), dataIndex: 'runId', width: 160, ellipsis: true },
+    { title: t('runStatus'), dataIndex: 'runStatus', width: 110, render: (v: string | null) => v ?? '—' },
+    { title: t('nodeId'), dataIndex: 'nodeId', width: 110 },
+    { title: t('kind'), dataIndex: 'kind', width: 90 },
+    {
+      title: t('claimedBy'),
+      dataIndex: 'claimedBy',
+      width: 150,
+      ellipsis: true,
+      render: (v: string | null) => v ?? '—',
+    },
+    {
+      title: t('claimedAgo'),
+      dataIndex: 'claimedSeconds',
+      width: 100,
+      render: (v: number | null) => (v === null ? '—' : `${v}s`),
+    },
+    { title: t('token'), dataIndex: 'resumeToken', ellipsis: true },
+  ]
+
   return (
     <Layout className="page-layout">
       <Header className="page-header" style={{ justifyContent: 'space-between' }}>
@@ -245,6 +306,27 @@ export function Waits({ principal, onLogout, onBack }: WaitsPageProps) {
                     locale={{ emptyText: t('empty') }}
                   />
                 ),
+              },
+              {
+                key: 'frames',
+                label: `${t('framesTab')} (${interruptions.length})`,
+                children:
+                  frameVisibility === 'frames-not-persisted' ? (
+                    <Alert type="warning" showIcon message={t('framesNotPersisted')} />
+                  ) : (
+                    <>
+                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                        {t('framesHint')}
+                      </Typography.Text>
+                      <Table<InterruptionItem>
+                        rowKey="resumeToken"
+                        size="small"
+                        dataSource={interruptions}
+                        columns={interruptionColumns}
+                        locale={{ emptyText: t('framesEmpty') }}
+                      />
+                    </>
+                  ),
               },
             ]}
           />
