@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -79,6 +80,24 @@ def schedule_graph():
 def _find(graph_id: str, headers=None) -> dict | None:
     items = client.get("/api/schedules", headers=headers or ADMIN_A).json()["items"]
     return next((item for item in items if item["graphId"] == graph_id), None)
+
+
+def _await_run_terminal(run_id: str, *, timeout: float = 5.0) -> dict:
+    """等 run-now 起的异步 run 离开 running 再读，消除"快照 vs 卡片"两次读之间的竞态。
+
+    `run_store.get()` 返回的是**副本**，而卡片是端点里另一次 `run_store.list()` 现读；
+    run 从 running 走到终态若发生在这两次读之间，两次读就会各说各话（曾导致 CI 偶发红）。
+    等到终态后 run 不再变化，先读 run、再读卡片即确定一致。
+    """
+    store = tenant_registry.get("t1").run_store
+    deadline = time.monotonic() + timeout
+    run = store.get(run_id)
+    while run is not None and run["status"] == "running" and time.monotonic() < deadline:
+        time.sleep(0.02)
+        run = store.get(run_id)
+    assert run is not None, "run-now 返回了 runId 但没有对应的 run"
+    assert run["status"] != "running", "run 未在超时内离开 running"
+    return run
 
 
 # --- U887 发布派生 --------------------------------------------------------
@@ -168,8 +187,8 @@ def test_u889d_schedule_card_carries_the_latest_run_status(schedule_graph):
 
     response = client.post(f"/api/schedules/{graph_id}/run-now", headers=OPERATOR_A)
     assert response.status_code == 200, response.text
-    run = tenant_registry.get("t1").run_store.get(response.json()["runId"])
-    assert run is not None
+    # run-now 起的 run 是异步的：先等它到终态，再读卡片比对（否则两次读之间 run 变状态会偶发红）。
+    run = _await_run_terminal(response.json()["runId"])
 
     after = _find(graph_id)
     assert after["lastRunId"] == run["runId"]
