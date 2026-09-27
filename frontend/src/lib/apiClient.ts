@@ -2199,6 +2199,40 @@ export async function listTasks(limit = 50): Promise<TaskEnvelopeItem[]> {
   return body.items
 }
 
+/** 挂起帧的只读投影（docs/76 打包 Q）。`state` 只描述、不判决；无计时器阈值。 */
+export type InterruptionItem = {
+  resumeToken: string
+  runId: string
+  graphId: string
+  nodeId: string
+  kind: string
+  /** UTC ISO-8601，未认领为 null。 */
+  claimedAt: string | null
+  claimedBy: string | null
+  /** 已认领多久（秒）；算不出为 null——判读交给人，不替人拍阈值。 */
+  claimedSeconds: number | null
+  deadlineAt: string | null
+  runStatus: string | null
+  state:
+    | 'awaiting'
+    | 'claimed_executing'
+    | 'claimed_suspended'
+    | 'frame_lingering'
+    | 'claimed_unknown_run'
+    | 'claimed_other_state'
+}
+
+export type InterruptionSurface = {
+  backend: 'pg' | 'memory'
+  /** 'frames-not-persisted' ＝ 内存档根本不写帧表，空列表不代表没有卡住的 run。 */
+  visibility: 'tenant-scoped' | 'frames-not-persisted'
+  items: InterruptionItem[]
+}
+
+export async function listInterruptions(): Promise<InterruptionSurface> {
+  return request<InterruptionSurface>('/api/interruptions')
+}
+
 export async function signalWait(
   token: string,
   payload: Record<string, unknown>,

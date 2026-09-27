@@ -84,36 +84,57 @@ def make_frame_sink(engine: Engine, tenant_id: str, run_id: str) -> Callable[[di
     return sink
 
 
-def load_pending_frames(engine: Engine) -> list[dict]:
-    """读全部未决挂起帧（含 tenant_id/run_id），按 created_at 升序。
+def _frame_from_row(row: tuple) -> dict:
+    """帧行 → 投影 dict（payload 反序列化 ＋ 顶部附列值）。
 
-    返回的每帧为完整帧 dict（payload 反序列化）+ 顶部附加 tenant_id/run_id/resumed_at/resumed_by。
     `resumed_at` 是**列值而非 payload 值**（docs/62 §3.1）：NULL＝还没人越过这个挂起点，
-    非空＝已被某进程认领消费。本函数不过滤已认领帧——调用方按各自语义决定：
-    恢复扫描器据此跳过（不再为已消费的帧起线程），排障/测试则要看全量。
+    非空＝已被某进程认领消费。
+    """
+    payload = row[5]
+    # psycopg 3 读 jsonb 已解析为 dict；若驱动返回字符串则兜底反序列化。
+    frame = json.loads(payload) if isinstance(payload, str) else payload
+    frame["resume_token"] = row[0]
+    frame["tenant_id"] = row[1]
+    frame["run_id"] = row[2]
+    frame["node_id"] = row[3]
+    frame["kind"] = row[4]
+    frame["resumed_at"] = row[6]
+    frame["resumed_by"] = row[7]
+    return frame
+
+
+_FRAME_COLUMNS = (
+    "SELECT resume_token, tenant_id, run_id, node_id, kind, payload, "
+    "resumed_at, resumed_by "
+    "FROM interruptions "
+)
+
+
+def load_pending_frames(engine: Engine) -> list[dict]:
+    """读**全部**未决挂起帧（跨租户），按 created_at 升序。
+
+    跨租户是启动恢复的正确语义（一个进程替所有租户恢复），别把它当通用查询用——
+    HTTP 侧要租户内视图请用 `list_tenant_frames`（docs/76 §1 D-2）。本函数不过滤已认领
+    帧：恢复扫描器据此跳过，排障/测试则要看全量。
+    """
+    with engine.connect() as conn:
+        rows = conn.execute(text(_FRAME_COLUMNS + "ORDER BY created_at")).all()
+    return [_frame_from_row(row) for row in rows]
+
+
+def list_tenant_frames(engine: Engine, tenant_id: str) -> list[dict]:
+    """读**本租户**挂起帧（含已认领的），按 created_at 升序；走 `idx_interruptions_tenant`。
+
+    只读。与 `load_pending_frames` 分两条路是刻意的：把全局扫描拿来做 HTTP 端点，等于
+    先把别租户的 resume_token 读进本进程内存再在 Python 里丢掉，还放弃了租户索引
+    （docs/76 §1 D-2）。
     """
     with engine.connect() as conn:
         rows = conn.execute(
-            text(
-                "SELECT resume_token, tenant_id, run_id, node_id, kind, payload, "
-                "resumed_at, resumed_by "
-                "FROM interruptions ORDER BY created_at"
-            )
+            text(_FRAME_COLUMNS + "WHERE tenant_id = :tenant_id ORDER BY created_at"),
+            {"tenant_id": tenant_id},
         ).all()
-    frames: list[dict] = []
-    for row in rows:
-        payload = row[5]
-        # psycopg 3 读 jsonb 已解析为 dict；若驱动返回字符串则兜底反序列化。
-        frame = json.loads(payload) if isinstance(payload, str) else payload
-        frame["resume_token"] = row[0]
-        frame["tenant_id"] = row[1]
-        frame["run_id"] = row[2]
-        frame["node_id"] = row[3]
-        frame["kind"] = row[4]
-        frame["resumed_at"] = row[6]
-        frame["resumed_by"] = row[7]
-        frames.append(frame)
-    return frames
+    return [_frame_from_row(row) for row in rows]
 
 
 def clear_frame(engine: Engine, token: str) -> None:

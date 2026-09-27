@@ -21,6 +21,7 @@ import zhOpenapi from '../zh-CN/openapi.json'
 import zhRuntime from '../zh-CN/runtime.json'
 import zhSchedules from '../zh-CN/schedules.json'
 import zhValidation from '../zh-CN/validation.json'
+import zhWaits from '../zh-CN/waits.json'
 import enApprovals from '../en-US/approvals.json'
 import enAudit from '../en-US/audit.json'
 import enChannels from '../en-US/channels.json'
@@ -35,6 +36,7 @@ import enOpenapi from '../en-US/openapi.json'
 import enRuntime from '../en-US/runtime.json'
 import enSchedules from '../en-US/schedules.json'
 import enValidation from '../en-US/validation.json'
+import enWaits from '../en-US/waits.json'
 
 /** Login.tsx / UserBadge.tsx 实际接线的全部 key（M12 样板范围）。 */
 const WIRED_KEYS = [
@@ -1072,6 +1074,9 @@ const PARITY_PAIRS: Array<{ ns: string; zh: unknown; en: unknown }> = [
   { ns: 'runtime', zh: zhRuntime, en: enRuntime },
   { ns: 'schedules', zh: zhSchedules, en: enSchedules },
   { ns: 'validation', zh: zhValidation, en: enValidation },
+  // 打包 Q（docs/76 D-6）：waits 此前有 bilingual 用例却不在奇偶守护里，
+  // 于是"往一个没人核对的 namespace 加文案"这件事没有门。补上。
+  { ns: 'waits', zh: zhWaits, en: enWaits },
 ]
 
 describe('zh-CN / en-US catalog parity (docs/57 §5)', () => {

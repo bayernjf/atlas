@@ -26,5 +26,19 @@
   "attempt": "次数",
   "colEventKey": "事件键",
   "colState": "状态",
-  "colResult": "结果"
+  "colResult": "结果",
+  "framesTab": "挂起帧",
+  "framesHint": "只读投影：不重放、不清帧。\"已认领却仍挂起\"就是进程崩在续跑途中留下的现场（docs/76）。",
+  "framesEmpty": "本租户暂无挂起帧（PG 档下这才是\"没有\"）",
+  "framesNotPersisted": "当前是内存档：挂起帧不入库，本表恒空。空列表不代表没有卡住的 run——换 PG 档才有这张表。",
+  "kind": "挂起类型",
+  "runStatus": "运行状态",
+  "claimedBy": "认领者",
+  "claimedAgo": "已认领",
+  "stateAwaiting": "等待中·未认领",
+  "stateClaimedExecuting": "已认领·在跑",
+  "stateClaimedSuspended": "已认领·仍挂起（需人工看）",
+  "stateFrameLingering": "已认领·运行已终态而帧未清",
+  "stateClaimedUnknownRun": "已认领·查不到该运行",
+  "stateClaimedOtherState": "已认领·其它状态"
 }

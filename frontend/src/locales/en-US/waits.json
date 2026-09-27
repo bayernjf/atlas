@@ -26,5 +26,19 @@
   "attempt": "Attempt",
   "colEventKey": "Event key",
   "colState": "State",
-  "colResult": "Result"
+  "colResult": "Result",
+  "framesTab": "Suspension points",
+  "framesHint": "Read-only view: no replay, no frame clearing. \"Claimed yet still suspended\" is what a crashed resume leaves behind (docs/76).",
+  "framesEmpty": "No suspension points in this tenant (under Postgres this really means none)",
+  "framesNotPersisted": "Memory backend: suspension frames are never persisted, so this table is always empty. An empty list does not mean no stuck runs — only the Postgres backend writes this table.",
+  "kind": "Kind",
+  "runStatus": "Run status",
+  "claimedBy": "Claimed by",
+  "claimedAgo": "Claimed",
+  "stateAwaiting": "Awaiting · unclaimed",
+  "stateClaimedExecuting": "Claimed · running",
+  "stateClaimedSuspended": "Claimed · still suspended (needs a human)",
+  "stateFrameLingering": "Claimed · run terminal, frame left behind",
+  "stateClaimedUnknownRun": "Claimed · run not found",
+  "stateClaimedOtherState": "Claimed · other status"
 }
