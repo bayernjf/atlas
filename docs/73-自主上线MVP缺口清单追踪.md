@@ -16,7 +16,7 @@
 | 工作流 | 主题 | 明细项 | 状态汇总 |
 |---|---|---|---|
 | W1 | 真实外部凭据（硬阻断） | 1.1 真实 LLM 决策 / 1.2 真实 Shopify 退款 / 1.3 真实消息·IM·SMTP·SMS·OAuth | ⬜×3 |
-| W2 | N3 范围决策（产品非工程） | 2.1 浏览器自动化进/出 MVP | ⬜ |
+| W2 | N3 范围决策（产品非工程） | 2.1 浏览器自动化进/出 MVP | ✅ **2026-09-27 已表态＝不进 MVP（非目标），复开条件已写** |
 | W3 | prod 形态持久化与韧性 | 3.1 调度 store PG 化（D32）/ 3.2 D36 崩溃兜底批 / 3.3 多副本解锁（后置） | ✅×1（3.1 已完成，2026-09-27 更正）／⬜×1（3.2；3.3 后置不计入 B 档） |
 | W4 | prod 演练（终门） | 4.1 `ATLAS_ENV=prod` 真机演练 | ⬜（**2026-09-27 记部分推进**：prod 档进程第一次被真驱动，演练本身仍未做） |
 | X | 横切前提 | X.1 CI postgres service / X.2 凭据卫生（N5）／**2026-09-27 已闭合** / X.3 demo 模拟面 prod 残留闸门（2026-09-27 新增并当日闭合） | ✅×3（X.1 已在跑；X.2 全史扫描零命中＋示例值有机检；X.3 由打包 P 闭合）／⬜×0 |
@@ -28,7 +28,7 @@
 | 1.1 | W1 | 配 `LITELLM_MODEL` + 商业 API key 入 prod 秘钥；`ATLAS_ENV=prod` 时禁用 demo/mock LLM 兜底 | 一个 `condition` 节点（docs/48）及任何 LLM 驱动的运行在 prod 下发出 ≥1 次真实 LiteLLM 调用；prod 不静默走 mock 兜底 | 商业 LLM 账号 + 成本/额度预算 | ⬜ | — | demo 当前靠兜底；prod 必须真决策 |
 | 1.2 | W1 | 配真实/沙箱 Shopify 店铺；把 `channel:*` 工具（docs/67）指向真店；用测试订单跑通一次受控退款 | 携带 `order_id`/`amount` 的图打到**真实** Shopify 退款 API 并返回 2xx；docs/67 的「真适配器＋假 HTTP」由真 200 替换 | 真实/合作沙箱 Shopify 店铺；动（测试）款审批 | ⬜ | — | docs/67 以「真适配器＋假 HTTP」闭 N2，此处补全真外发 |
 | 1.3 | W1 | 配真实 SMTP/IM webhook/SMS/OAuth 凭据；端到端验证发送路径 | 一条通知经 prod 配置真正投递到真实收件箱/IM 群（非 dev mock）；秘钥由 vault 注入，绝不明文 `.env` | 企业邮件/IM/SMS 供应商；OAuth 应用注册 | ⬜ | — | 见 docs/08 D 组外部通道 |
-| 2.1 | W2 | 产品/用户拍板 docs/63 §0A N3（浏览器自动化适配器）是否进 MVP：进→立项批次（新适配器＋工具＋测试，新 D 号＋ADR）；出→显式标记 N3 出 MVP | 决策写入 docs/08 迭代计划 + docs/72 同步注记 | 产品范围会议 | ⬜ | — | 纯产品决策，非工程缺陷 |
+| 2.1 | W2 | 产品/用户拍板 docs/63 §0A N3（浏览器自动化适配器）是否进 MVP：进→立项批次（新适配器＋工具＋测试，新 D 号＋ADR）；出→显式标记 N3 出 MVP | 决策写入 docs/08 迭代计划 + docs/72 同步注记 | 产品范围会议 | ✅ **2026-09-27 已表态＝不进 MVP（本轮非目标）** | 决策与三条理由记在 docs/63 §0A N3 追记 ＋ docs/08 §八 E 组；**复开条件与三批顺序一并写明** | 纯产品决策，非工程缺陷。附带成果：接线前那条真缺陷（`page.goto()` 无出向校验）已先行修掉＝U925，故复开时是纯加法 |
 | 3.1 | W3 | 把 `schedule_fires`/注册（docs/68 当前进程内）迁 Postgres，跨重启/实例共享 | 调度触发跨进程重启存活**且**第二实例不重复触发（PG 支撑 `ON CONFLICT`）；由对真 postgres 的集成测试覆盖 | CI postgres service（X.1） | ✅ **2026-09-27 更正：本项已完成**〔码〕 | `api/main.py:1059-1063` 在 `ATLAS_STORAGE_BACKEND=pg` 时装 `PgScheduleStore`（迁移 030 建 `schedules`/`schedule_fires`），出厂 `docker-compose.yml:50` 即 pg 档；跨重启存活与"第二实例不重复触发"由 `tests/test_scheduling_pg_integration.py` 5 例覆盖并在 CI `Backend PG integration` 每 PR 真跑 | 即 docs/14 D32；原记 ⬜ 属 docs/72 §1 同源误判，见 §6 |
 | 3.2 | W3 | 立项 docs/62 §8 风险5 的 D36 批：单实例崩溃后 reconcile 挂起帧，保 at-most-once 续跑安全 | `kill -9` 挂起中途后重启⇒不重复执行；帧恢复或 fail-safe | 无（工程内可闭环） | ⬜ | — | docs/62 已登记 D36 |
 | 3.3 | W3 | **后置**：仅当要「生产级」而非「单实例 MVP」时，再解 docs/62 单副本硬约束；需 D36＋所有挂起/事件/等待态共享 PG | 非 B 档阻塞；单实例 MVP 今日可交付 | 3.2 + 全态 PG 化 | ⬜（后置） | — | HA 显式后置阶段 |
@@ -44,7 +44,7 @@
 - [ ] 1.1 真实 LLM 决策 live 且已演练
 - [ ] 1.2 真实 Shopify 退款 live 且已演练
 - [ ] 1.3 真实消息/IM/SMTP/SMS/OAuth 至少主通道 live 且已演练
-- [ ] 2.1 N3 范围决策已记录
+- [x] 2.1 N3 范围决策已记录（✅ 2026-09-27：**不进 MVP**，理由三条＋复开条件与三批顺序见 docs/63 §0A N3 追记）
 - [x] ~~3.1 调度 store PG 化完成~~ **✅ 2026-09-27 更正：立项时已完成**（`api/main.py:1059-1063`＋迁移 030＋compose pg 档；集成测试 5 例在 CI 每 PR 真跑）
 - [x] X.3 demo 模拟面 prod 残留闸门收口（✅ 2026-09-27 打包 P：`563fbbc`＋U909–U913＋真进程探测；匿名可达面从此由 allowlist 机器守护）
 - [ ] 4.1 `ATLAS_ENV=prod` 真机演练整链绿
@@ -78,3 +78,4 @@
 | 2026-09-27 | X.3 闭合 | 打包 P 落码收口（`563fbbc` 门＋D-2 大写 fail-open／`ebcdb2d` U909–U913 九例含 allowlist 反向门／`d9163f3` 真进程四段探测）。prod 档 8 条 demo 面逐条 404、开关一次开全、`ATLAS_ENV=PROD` 不再静默开门、非法档位拒启。**匿名可达面从此是机器枚举的 allowlist**，新加无鉴权路由当场红——这条比那 5 行门更耐久。门：后端 1960/119/0、前端 738/2/55、oxlint 0/7、build 未变（本批不碰前端） |
 | 2026-09-27 | 4.1 部分推进 | 同批的 `scripts/dev/prod_surface_probe.py` 是本仓第一次有 **prod 档进程被真驱动**（四段全过），故在 4.1 行就地记"部分推进"并把探测证据落到该行备注；**本项仍 ⬜**——没有真凭据、没有 Docker 与网络边界、整链未跑过一次 |
 | 2026-09-27 | X.2 闭合 | 凭据卫生做掉：`gitleaks` 8.30.1 全史扫描（**755 commits／14.07 MB ⇒ no leaks found**，命令写在 X.2 行可复跑）＋ CI 每 push/PR 同扫（`ci.yml:17-28`，`fetch-depth: 0`）＋ `.env.example` 示例值合法且由 `test_u867_env_example_values_are_valid` 机检 ＋ `.gitignore:41-43` 挡住真 `.env`、compose 全走 `${VAR:-}` 注入。**正向对照的边界照实写**：同一二进制认得出 `sk-`／PEM（`leaks found: 1`），认不出 AWS 官方教程示例键（被它自己 allowlist），所以"零命中"是规则集事实而非绝对证明；"prod 用 vault"那一半属部署实践，仓库侧只能证明没写进代码与配置默认值 |
+| 2026-09-27 | 2.1 闭合 | **N3 表态＝浏览器自动化本轮不进 MVP**（用户「那你搞」采纳建议），三条理由与**复开条件＋三批顺序**记在 docs/63 §0A N3 追记。**接线前先补的前置已顺手修掉**：`web/adapter.py` 的 `navigate` 原来把工具参数 `url` 原样交给 `page.goto()`、**无任何出向校验**（httpx 的 SSRF denylist 管不住真浏览器）；现先过 `EgressGuard`（与 httpapi 同一份策略），守护 U925 含"放行必须真走到 goto"的判别对照与"被拒不碰浏览器"断言。⇒ W2 整组转 ✅，B 档缺口从 4 条降到 **3 条**（真凭据／D36／一次真 prod 演练）。残余边界：只判初始 URL，重定向与子资源需 `page.route()` 逐请求校验，留到真接线那批 |

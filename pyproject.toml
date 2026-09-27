@@ -21,8 +21,8 @@ dependencies = [
     "httpx>=0.28,<0.29",
     # Web adapter (W3-W4)
     "playwright>=1.62",
-    # Memory layers: short-term Redis, long-term PostgreSQL + pgvector (06 §6.3)
-    "redis>=8.1,<9",
+    # Memory layers: short-term in-process, long-term PostgreSQL + pgvector (06 §6.3;
+    # Redis 未引入，见 docs/10 §4 T31——要跨进程共享记忆时另立 ADR)
     "psycopg[binary]>=3.3,<4",
     "sqlalchemy>=2.0,<3",
     "pgvector>=0.5",

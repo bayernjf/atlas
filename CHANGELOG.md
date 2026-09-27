@@ -3,6 +3,24 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### docs(spec)：把 N3／T31 两项拍板扫到**全部**文档面，顺手订正我自己写错的一处归因（2026-09-27，纯 docs）
+
+- **为什么单独一批**：前两条决定（N3＝非目标、`redis` 声明删除）落地时只同步了"我当时正在改的那几篇"。这批是把 01–16 全扫一遍，凡是**还在替旧状态说话**的面全部对平：`docs/01 §4.2/§4.3`、`docs/02` 选型行、`docs/03` 契约索引 `egress_guard` 行、`docs/04 §4.2/§4.6`、`docs/06 §6.3/§6.5`、`docs/08` E 组、`docs/10 §2/§4`、`docs/11 §1`、`docs/14`（新增 **D43**＋D35 补充条）、README。**零代码／零测试／零迁移改动**。
+- **N3 在规格面的形状**：`docs/01 §4.3` 那条"1个 Harness 适配器：Web浏览器操作"从"包含"移到"不包含"（原文划掉保留，不抹历史），并写明**这是拍板不是遗漏**；§4.2 两个场景加一条"是目标能力、本轮 Demo 不含"的注，免得读场景的人当成可跑功能。`docs/04 §4.2` 适配器行补上 `navigate` 与它的两个结果码，`docs/06 §6.5` 补运行期契约（闸门在 `page.goto()` 之前、只判初始 URL），`docs/03` 的 `egress_guard` 契约行从"接 HTTP 适配器"改成"同时接 Web `navigate`"。
+- **本批最有价值的一条是自我订正〔码〕**：我前天在 docs/02/08/10/README 四处把 `memory/items.py:44` 的 `MemoryStore` 写成"短期工作记忆的现状"——**该类 docstring 自陈是"进程内长期记忆"**，对应 docs/06 §6.3 的「长期事实记忆」档。短期工作记忆按 docs/26 §1.2 是"由 run 的 `outputs`/`globals` 承担、不另建"，Redis 与 LangGraph checkpointer 都没接（`graph/loader.py` 编译 `StateGraph` 不传）。四处同日订正＋docs/14 变更记录留痕。**删 `redis` 声明这件事不受影响**：它的理由只是"零引用"，与替代者是谁无关。
+- **`docs/11 §1` 加"现状对拍"条**：那份存储设计把 Redis／Checkpointer 写成已定介质。现状是运行状态落 PG `runs`（`storage/pg.py:1780`）、挂起时的图快照与 `outputs` 落 `interruptions` 帧表（`graph/loader.py:875`）——顺带把 docs/76 那张只读投影的表来源说清。
+- **新增 D43 而不是只写进复审文档**：AGENTS.md 规定缓做项的单一事实源是 docs/14，而 N3 表态此前只活在 docs/63/08/73/01 里。D43 行照抄 docs/63 §0A 的**三批复开顺序**（route 级闸门 → 注册表/工具声明/审计 → 回放与门控口径）与触发条件，并写明 `test_graph_loader.py:79-80` 那条守护在第一批做完前**应继续红**。
+- **门**：`tests/test_handoff_integrity.py` **3 passed**（本批只改 handoff 的状态行，未动 Active work 编号与 Recently shipped 行数）。表类编辑逐行核字段数：`docs/14` 的 D35/D41/D42/D43 均为 7 字段，未产生多余单元格。一处**行号自引用**因插入 D43 行而失效（"订正本表上面第 155 行那句"），已改成按标题引用（「2026-09-25 注记」）——这类"引用自己文件的行号"的写法在本项目会被任何中间插入打断，后续不再使用。
+
+### fix(web)＋chore(deps)＋docs(selection)：把 N3 判成本轮非目标（顺手补掉它接线前的真缺陷），并删掉零引用的 redis 声明（2026-09-27，用户「那你搞」采纳建议）
+
+- **两条决定，一条附带修复**。上一轮 E 组复筛留下的两件事当场落地：**N3 浏览器自动化＝本轮不进 MVP**（显式非目标，含复开条件与三批顺序），**`redis` 声明依赖＝删**（纯减法，另立 ADR 才能再引入）。
+- **N3 的前置事实是量出来的，不是估的**〔码〕：`src/atlas/web/adapter.py` 的 `navigate` 把**工具参数里的 url 原样交给 `page.goto()`，没有任何出向校验**——httpapi 那套 SSRF denylist 管的是 `httpx`，**管不住一个真浏览器**（内网与云元数据同形可达）。所以"N3 进"过去的真实含义是**新开一条绕过现有防护的通道**，而 `tests/test_graph_loader.py:79-80` 那条反向锁恰好是挡着它的临时防线（**在该表态下它继续红**）。修复＝`navigate` 先过 `EgressGuard`（**与 httpapi 同一份策略与 env `ATLAS_HTTP_EGRESS_ALLOWLIST`，不开第二份配置**），被拒返回 `EGRESS_DENIED`／`EGRESS_INVALID_URL` **且一次都不碰浏览器**。
+- **U925（`tests/test_web_adapter_egress.py`，10 例，不启浏览器）**：云元数据／回环／私网／IPv6 唯一本地／`file:`／`data:`／十进制整数主机名七类必拒**且断言 `goto` 未被调用**；**判别对照**＝`http://8.8.8.8/` 必须真的走到 `goto`（否则"一律失败"能让整排断言空绿）；白名单仍生效、回环只经**代码注入缝** `permit_cidrs` 放行（与 httpapi 同一条缝，不开 env 后门）；缺省构造读同一条 env。反向门做在本批自己写的代码上：把 `check()` 摘掉 ⇒ **9 红 1 绿**，装回 ⇒ 10 绿。**残余边界写在代码与 docs/63**：只判初始 URL，重定向与子资源要 `page.route()` 逐请求校验——那属于真接线那一批。
+- **redis 删除的同步面比删除本身多**：`pyproject.toml` 与 `.env.example` 的声明移除（CI 走 `pip install -e ".[dev]"`，无 lock 需重生）；但更要紧的是**三处文档在说谎**——`docs/10:19` 把"缓存＝Redis"标成 ✅ 已采纳、`docs/10:49` 的骨架注释说 `memory.py` 用 Redis、`docs/02:86` 与 README 选型行列着它，而 `src/atlas/memory/items.py:48` 的短期记忆实际是 per-tenant 进程内 `list[dict]`、全仓零引用。按 AGENTS.md「选型变更必须先记录」补 **docs/10 §4 T31**（含"这不是否决该选型；真需要跨进程共享记忆时另立 ADR"）。
+- **B 档缺口从 4 条降到 3 条**：docs/73 的 2.1 与 W2 整组转 ✅、退出判据打勾，剩余＝真凭据（1.1–1.3）／D36（触发＝真 prod 出现该形态）／一次真 prod 演练与种子数据（4.1）。**A/B 两层判定本身不变**。
+- **门（先跑后写）**：定向 `tests/test_web_adapter_egress.py`＋`test_web_location.py`＋`test_graph_loader.py` **98 passed**（含那条"web-playwright 必须失败"的反向锁仍红得其所）；全量后端门与前端见下方 handoff Quality gate 记录。工作树清洁、无未清探针数据（本批不写库）。
+
 ### test(security)＋docs(governance)：把"删掉租户过滤就红"变成常跑拦得住的事，并复筛 E 组待拍板清单（2026-09-27 晚些，纯 test＋docs，零产品代码改动）
 
 - **为什么做**：docs/76 §8 偏差①我自己写下一句不好听的话——契约要求的反向门（摘掉 `WHERE tenant_id` 必须红）没以改生产代码方式执行，改成了集成测里的差分对照，**"它防不住将来有人删掉那条 WHERE，真防复发只剩 CI 每次都跑 integration"**。把一句自我交代留在那儿就等于留了个空口：这一条把它补成**任何一次 `pytest` 都会拦**的守护。
@@ -10,7 +28,7 @@
 - **没再尝试"拆已交付护栏"式植红**：今天第二次被权限层拦下（合理），沿用已验证更强的做法——**同一份数据上做正反对照**，并照实写下它与"改代码植红"的差别（它能证明过滤存在，不能证明将来不会被删——现在这条由常跑守护接管，两半都齐了）。
 - **E 组复筛（docs/08 §八）——三条其实已经不欠**：① **迁移头约定已拍板**（MIGRATION_CONVENTION §3 于 2026-09-25 重写为"三条真规则＋基线豁免"，`tests/test_migration_convention.py:18` `BASELINE = 29`、`:43` 只要求 >029 带首行注释、`:53` 自证抓得住坏命名／跳号／缺注释；历史 021–028 是**明示豁免**不是违例）；② **D12 i18next 已明文决定不换**（docs/57），它不再是"等拍板"而是"何时值得复开"；③ **dev→main 授权今天已两次行使**（PR #78、#79 把当日全部提交合进 main，main 上 CI 各 success）。**真要拍的只剩三件**：`redis` 去留（〔码〕`pyproject.toml:25`＋`.env.example:29` 声明，`src/`·`tests/`·`scripts/` **0 引用**、compose 无服务 ⇒ 删除是纯减法，但擅动依赖违反 AGENTS.md 选型规矩）、**N3** 浏览器自动化是否进 MVP（`skills/web` 的三层定位实现在，缺接线＋注册＋测试）、D5/D6/D11 三项"要不要正式采纳"。
 - **顺带核掉自己一条过期记忆**：曾记"MIGRATION_CONVENTION §3 与 021–028 互相矛盾、二者取一待拍板"——该矛盾已于 2026-09-25 以重写 §3 的方式解决；同时核实 docs/63 里的 **1849/114/0** 是该文件当日的第一方实测（历史数字，非现状口径），不改。
-- **门**：本条目**零产品代码改动**。定向 `pytest tests/test_api_interruptions.py` **7 passed**；`tests/test_handoff_integrity.py` 绿。全量后端门**本轮不引数字**——同机 load 一度 **132**（多条其他会话在跑），时长与抖动不可比，等机器空下来或与 CI runner 自己的读数出来再记（"本地绿/红要先验负载与 collected 数"与"runner 数优先于本地数"两条教训）。
+- **门**：本条目**零产品代码改动**。定向 `pytest tests/test_api_interruptions.py` **7 passed**；`tests/test_handoff_integrity.py` 绿。全量后端门**本轮一开始不引数字**——同机 load 一度 **352**（多条其他会话在跑），时长与抖动不可比。**随后机器空下来（load 10）补跑成功：`pytest` 1969 passed / 125 skipped / 0 failed**（328.66s；1967＋U924 两条＝1969，skipped 不变 ⇒ 常跑零回归）。**时长仍不与前几轮横向比较**（这一轮机器已由饱和转空闲）。
 
 
 
