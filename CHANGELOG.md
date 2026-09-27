@@ -3,6 +3,15 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### docs(ops)：打包 Q 立项——挂起点只读投影契约（docs/76，2026-09-27 用户「那你搞」批准 14 D42；docs-only 未落码；零迁移／零新语义／零写路径／无新 ADR）
+
+- **立项起因本身就是上一轮复筛的产物**：当天早上把候选池筛成"C 组无工程内可今日闭环的干净候选"，下午回代码核查 D36 时量出这条被漏掉的 **D42**——**认领后崩溃的 run 对运营完全不可见**：`resumed_at`/`resumed_by` 只在启动恢复路径被读一次（`api/main.py:201` 打一行 INFO 就跳过），`GET /api/waits`（`main.py:3503`）只列进程内 event broker 的 pending、**从不查 `interruptions` 表**。要发现一条卡住的 run，只能重启服务翻日志或手查数据库。**"清单说没有可做的"和"没有可做的"不是一回事**。
+- **七条决策**：**D-1 只读**（新增 `GET /api/interruptions`，零迁移／零新写路径／零新依赖／无 ADR）；**D-2 新写 `list_tenant_frames`（带 `WHERE tenant_id`），不复用全局 `load_pending_frames`**——后者服务"一个进程替所有租户恢复"的正确语义，拿它做 HTTP 端点＝先把别租户 token 读进本进程内存再丢掉，且放弃了 `idx_interruptions_tenant` 的索引优势；**D-3 状态只描述不判决**（`awaiting`／`claimed_executing`／`claimed_suspended`／`frame_lingering`／`claimed_unknown_run`，全由帧列值＋run 状态算出）；**D-4 内存档自报"看不见"**（`visibility:"frames-not-persisted"`＋页面警示，因为帧只在 PG 档写入 `main.py:290`，"空列表"绝不等于"没有卡住的 run"）；**D-5 read 档鉴权、端点不接任何租户/runId 入参**（无可越权参数）；**D-6 顺手把 `waits` 纳入 i18n `PARITY_PAIRS`**（本批要往一个没有奇偶守护的 namespace 加文案）；**D-7 三不碰**（不修失败路径不清帧、不给重放留钩子、不动单副本与缓做）。
+- **两处刻意不做的设计**：① **不引计时器**判"卡了多久才算卡"——任何秒数都要有人拍，而没人拍过；改为交出 `claimedSeconds` 让运营判读，并在契约里明写"刚认领的可能是正在续跑"这条**已知瞬时假阳**；② **不给重放留任何未调用函数**，留了就等于替 D36 拍板。
+- **验收 U916–U922**：U916 租户隔离**含反向门**（摘掉 `WHERE tenant_id` 必须红）、U917 五档分类、U918 档位诚实、U919 鉴权档、U920 只读性（前后帧数与 `resumed_at` 不变）、**U921 真 PG 端到端**（真 `make_frame_sink` 写帧＋真 `claim_frame_for_resume` 认领 ⇒ `claimed_suspended`；常跑测里自写的帧字典证明不了这件事）、U922 waits 入奇偶守护含反向门；另 `scripts/dev/interruptions_probe.py` 真进程两段做 〔跑〕 凭据。
+- **诚实边界**：**本批一个字也不解决 D36**——它把"崩了几次、崩在哪条 run"变成查得到，重放与否仍是语义决策；`frame_lingering`（`main.py:271-276` 失败路径不清帧）只显形不修；已认领帧受 retention **30 天**淘汰（`storage/retention.py:21/31`＋`pg.py:104-105`）⇒ 本投影是"近期现场"，不是历史台账；内存档永远是盲区，所以警示文案不是装饰。
+- **同步面**：docs/76 新建（§0 八条已核实前提＋§6 六条残余风险）、docs/00 地图行、docs/08 §八 立项条＋C 组 D42 行指针、docs/14 D42 状态指针、handoff（状态行＋Active **#75**＋文档地图行；顺带把 docs/75 那行的"⬜ 未落码"改成已收口）、CHANGELOG。落码按 §5 原子序 ②–⑦ 另行开工。
+
 ### docs(governance)：待办复筛——摘掉两条假"进行中"，登记新缓做 **D42（卡住帧对运营不可见）**（2026-09-27 晚些，纯 docs，零代码）
 
 - **为什么会去做这件事**：用户问"还有待办任务吗"。回答它的正确动作不是复述上一次的清单，而是把清单本身对代码核一遍——核完发现三件事：两条已经做完的事还挂在 Active work 上、一处旧表述含一个从未定义过的依赖名、以及一个**登记为"缓做／触发未满足"但其实今天就能干净做掉**的半边。前两类正是本仓最贵的失败模式（把已完成当待做，会稀释真正的缺口）。
