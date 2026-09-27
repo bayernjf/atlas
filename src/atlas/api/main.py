@@ -106,7 +106,11 @@ from atlas.openapi.adapter import ImportedApiHarnessAdapter
 from atlas.openapi.errors import OpenApiError
 from atlas.openapi.parser import parse_document
 from atlas.openapi.store import ImportStoreError
-from atlas.security.bootstrap import assert_prod_secrets, read_env_profile
+from atlas.security.bootstrap import (
+    assert_prod_secrets,
+    demo_surface_enabled,
+    read_env_profile,
+)
 from atlas.security.egress import EgressDenied, EgressGuard
 from atlas.security.secrets import build_secret_provider_from_env
 from atlas.monitoring.silences import OnCallEmpty, current_assignee, is_silence_active
@@ -333,37 +337,60 @@ install_request_id_middleware(app)
 _demo_shop = DemoShopService()
 # 通用 HTTP 适配器：默认连接配置来自 ATLAS_HTTPAPI_* 环境变量（04 §4.6）
 _http_client = HttpApiClient.from_env()
-# 数据适配器：ATLAS_DATABASE_URL 出站连接（与平台 DATABASE_URL 隔离）；
-# 未配置时回退内置 SQLite demo 订单库（04 §4.7）
-_db_client = DatabaseClient.from_env()
-if _db_client is None:
-    _db_client = DatabaseClient(demo_engine(), demo=True)
 # Demo 全局基础设施（04 §5.14）：店铺/出向连接/适配器注册不按租户分区；
 # 图/录制/反馈/消息/审批/调试/监控每租户一套，由 iam.TenantRegistry 惰性装配。
 _FULL_PERMISSIONS = {Permission.READ, Permission.WRITE, Permission.DELETE, Permission.FINANCIAL}
-_demo_registry = AdapterRegistry()
-_demo_registry.register(
-    ShopHarnessAdapter(
-        service=_demo_shop,
-        granted_permissions=_FULL_PERMISSIONS,
+
+
+def _resolve_database_client(demo_surface: bool) -> DatabaseClient | None:
+    """数据适配器出站连接（04 §4.7）：ATLAS_DATABASE_URL 出站连接（与平台 DATABASE_URL 隔离）。
+
+    未配置时**仅演示面**回退内置 SQLite demo 订单库；docs/77 R2：prod 且未开 demo 面
+    返回 None（该适配器不注册，图里选不到），而不是静默打到演示 fixture。
+    """
+    client = DatabaseClient.from_env()
+    if client is None and demo_surface:
+        client = DatabaseClient(demo_engine(), demo=True)
+    return client
+
+
+def _build_demo_registry(demo_surface: bool, db_client: DatabaseClient | None) -> AdapterRegistry:
+    """全局基础设施/演示适配器（04 §5.14）。
+
+    docs/77 R2：`shop`（进程内 `DemoShopService`）与 `database`（内置 SQLite demo）
+    属**演示面**——prod 且未开 demo 面即不注册（与 HTTP mock 路由共用
+    `ATLAS_ENABLE_DEMO_MOCK` 一处判定）。`http`/`message`/`memory` 不依赖演示 fixture，照常注册。
+    """
+    registry = AdapterRegistry()
+    if demo_surface:
+        registry.register(
+            ShopHarnessAdapter(
+                service=_demo_shop,
+                granted_permissions=_FULL_PERMISSIONS,
+            )
+        )
+    registry.register(
+        HttpApiHarnessAdapter(
+            client=_http_client,
+            granted_permissions=_FULL_PERMISSIONS,
+        )
     )
-)
-_demo_registry.register(
-    HttpApiHarnessAdapter(
-        client=_http_client,
-        granted_permissions=_FULL_PERMISSIONS,
-    )
-)
-_demo_registry.register(
-    DatabaseHarnessAdapter(
-        client=_db_client,
-        granted_permissions=_FULL_PERMISSIONS,
-    )
-)
-# 全局注册表里的 message 实例仅供适配器发现；执行期注册表替换为租户消息服务
-_demo_registry.register(MessageHarnessAdapter(granted_permissions=_FULL_PERMISSIONS))
-# 全局注册表里的 memory 实例仅供适配器发现；执行期注册表替换为租户记忆存储（docs/26 §5.1）
-_demo_registry.register(MemoryHarnessAdapter(granted_permissions=_FULL_PERMISSIONS))
+    if db_client is not None:
+        registry.register(
+            DatabaseHarnessAdapter(
+                client=db_client,
+                granted_permissions=_FULL_PERMISSIONS,
+            )
+        )
+    # 全局注册表里的 message 实例仅供适配器发现；执行期注册表替换为租户消息服务
+    registry.register(MessageHarnessAdapter(granted_permissions=_FULL_PERMISSIONS))
+    # 全局注册表里的 memory 实例仅供适配器发现；执行期注册表替换为租户记忆存储（docs/26 §5.1）
+    registry.register(MemoryHarnessAdapter(granted_permissions=_FULL_PERMISSIONS))
+    return registry
+
+
+_db_client = _resolve_database_client(demo_surface_enabled())
+_demo_registry = _build_demo_registry(demo_surface_enabled(), _db_client)
 
 _secret_provider = build_secret_provider_from_env()
 
@@ -447,6 +474,19 @@ async def audit_write_actions(request: Request, call_next):
     except Exception as exc:  # 审计绝不阻断业务
         logger.warning("audit record failed: %s", exc)
     return response
+
+
+# docs/77 R3：FastAPI 自带文档面（/docs、/redoc、/openapi.json、oauth2 回调）是**非
+# APIRoute**，打包 P 的匿名面 allowlist（只遍历 APIRoute）管不到它们——prod 下匿名者
+# 能拿到完整 OpenAPI 形状。这里在 prod 且未开 demo 面时逐条 404（与 demo 面同一开关）。
+_OPENAPI_SURFACE = frozenset({"/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json"})
+
+
+@app.middleware("http")
+async def gate_openapi_surface(request: Request, call_next):
+    if request.url.path in _OPENAPI_SURFACE and not _demo_mock_enabled():
+        return JSONResponse(status_code=404, content={"detail": "Not Found"})
+    return await call_next(request)
 
 
 def _tenant_graph_resolver(services: TenantServices):
@@ -4258,8 +4298,12 @@ def _demo_mock_enabled() -> bool:
     档位一律走 `read_env_profile()`：它大小写不敏感且拒非法值。原先这里自己写
     `os.getenv("ATLAS_ENV") != "prod"`，于是 `ATLAS_ENV=PROD` 会被判成"非 prod"、
     整片匿名面**静默开门**——把"以为在 prod"和"真的在 prod"混成一个 bug。
+
+    docs/77 R2/R5：判定本身已上收到 `security.bootstrap.demo_surface_enabled()`，
+    HTTP mock 路由、运行期演示适配器、文档面与渠道出向测试缝共用同一处，此处只保留
+    这个历史入口名供既有调用点使用。
     """
-    return read_env_profile() != "prod" or os.getenv("ATLAS_ENABLE_DEMO_MOCK") == "1"
+    return demo_surface_enabled()
 
 
 # Shopify Admin webhooks 资源的同进程模拟（docs/41 §D；随 demo reset 清空）。
@@ -4467,7 +4511,8 @@ def demo_reset(
         # PG 档：清挂起帧表（帧是 loader frame_sink 写的，内存 broker 不负责；recordings/feedback 保留）。
         clear_tenant_frames(get_pg_backend().engine, principal.tenant_id)
     _demo_shop.reset()
-    _db_client.reseed_demo()
+    if _db_client is not None:  # docs/77 R2：prod 未开 demo 面时该适配器未装配
+        _db_client.reseed_demo()
     _MOCK_SHOPIFY_WEBHOOKS.clear()
     return {"reset": True}
 
