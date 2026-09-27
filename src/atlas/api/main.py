@@ -144,6 +144,7 @@ from atlas.storage.retention import run_retention_once
 from atlas.storage.recovery import (
     clear_frame,
     clear_tenant_frames,
+    list_tenant_frames,
     load_pending_frames,
     make_frame_sink,
     make_resume_claim,
@@ -155,7 +156,7 @@ from atlas.scheduling.engine import (
     TickOutcome,
     tick,
 )
-from atlas.scheduling.models import ScheduleRecord, schedule_projection, slot_key
+from atlas.scheduling.models import ScheduleRecord, schedule_projection, slot_key, to_utc_iso
 from atlas.scheduling.pg_store import PgScheduleStore
 from atlas.scheduling.store import InMemoryScheduleStore, ScheduleStore
 from atlas.template import get_template, list_templates
@@ -3506,6 +3507,75 @@ def list_waits(
 ) -> dict[str, list[dict[str, Any]]]:
     """列出当前租户 pending 的事件等待（进程内 broker，重启即失，docs/47 §4）。"""
     return {"items": services_for(principal).event_wait_broker.list_pending()}
+
+
+_TERMINAL_RUN_STATES = {"completed", "failed", "cancelled", "interrupted"}
+
+
+def _interruption_state(claimed: bool, run_status: str | None) -> str:
+    """帧列值＋run 状态 → 描述性档位（docs/76 §1 D-3：**只描述，不判决、不计时**）。"""
+    if not claimed:
+        return "awaiting"
+    if run_status is None:
+        return "claimed_unknown_run"
+    if run_status == "running":
+        return "claimed_executing"
+    if run_status == "suspended":
+        return "claimed_suspended"
+    if run_status in _TERMINAL_RUN_STATES:
+        return "frame_lingering"
+    return "claimed_other_state"
+
+
+def _claimed_seconds(claimed_at: object) -> int | None:
+    """已认领多久；算不出来就回 None（不拿 0 冒充"刚认领"）。"""
+    if isinstance(claimed_at, str):
+        try:
+            claimed_at = datetime.fromisoformat(claimed_at.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if not isinstance(claimed_at, datetime):
+        return None
+    moment = claimed_at if claimed_at.tzinfo else claimed_at.replace(tzinfo=timezone.utc)
+    return max(0, int((datetime.now(timezone.utc) - moment.astimezone(timezone.utc)).total_seconds()))
+
+
+@app.get("/api/interruptions")
+def list_interruptions(
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """本租户挂起帧的只读投影（docs/76 打包 Q，解 14 D42）。
+
+    存在的理由：`resumed_at` 此前只在启动恢复路径被读一次，崩在续跑途中的 run 除了重启
+    翻日志无处可查。**本端点不重放、不清帧、不改任何状态**——`claimed_suspended` 只是把
+    D36 那颗雷显形，怎么处理仍未决定。
+    """
+    if STORAGE_BACKEND != "pg":
+        # 内存档根本不写帧表（`_frame_sink_for`），所以"空"不是"没有卡住的 run"。
+        return {"backend": "memory", "visibility": "frames-not-persisted", "items": []}
+    run_store = services_for(principal).run_store
+    items: list[dict[str, Any]] = []
+    for frame in list_tenant_frames(get_pg_backend().engine, principal.tenant_id):
+        claimed_at = frame.get("resumed_at")
+        run_id = frame.get("run_id") or ""
+        run = run_store.get(run_id) if run_id else None
+        run_status = run.get("status") if run else None
+        items.append(
+            {
+                "resumeToken": frame.get("resume_token", ""),
+                "runId": run_id,
+                "graphId": (frame.get("resume_state") or {}).get("graph_id", ""),
+                "nodeId": frame.get("node_id", ""),
+                "kind": frame.get("kind", ""),
+                "claimedAt": to_utc_iso(claimed_at) if claimed_at else None,
+                "claimedBy": frame.get("resumed_by"),
+                "claimedSeconds": _claimed_seconds(claimed_at) if claimed_at else None,
+                "deadlineAt": frame.get("deadline_at"),
+                "runStatus": run_status,
+                "state": _interruption_state(bool(claimed_at), run_status),
+            }
+        )
+    return {"backend": "pg", "visibility": "tenant-scoped", "items": items}
 
 
 @app.post("/api/waits/events")
