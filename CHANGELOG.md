@@ -3,6 +3,16 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### docs(review)＋test(dev)：第六次项目级上线复审——判定不变，但"B 档还欠什么"被实测改掉（2026-09-27，docs/77）
+
+- **一句话**：**A 档 ✅／B 档 ❌ 与第五次一致**，但 docs/74 §5 那句"关掉 demo 面闸门 → 配真 LLM 与一条真通道 → 跑一次真 prod 演练"作为最小动作集**被打掉一半**——第一条同日已闭合，而后两条**即使全部到位仍不足够**，因为核心闭环还有两处工程断口（R1／R2）。零产品代码改动、零迁移、不解除任何缓做。
+- **R1 · `ai_decision` 不认识运营写的提示词**〔码〕：`promptTemplate` 是编译期**必填**（`dsl.py:1449`），运行期只被插值后回显成 `prompt_rendered`（`loader.py:428/438`），真正发给模型的是 `decision.py:61-68` 里写死的退款 prompt；节点 `model` 在 `src/atlas/` **零读者**、`confidenceThreshold` 无读者。⇒ docs/06 §6.2 承诺的"记忆检索→含状态与记忆的 prompt→强制结构化输出→**置信度低于阈值转人工**"四项皆无，而 `frontend/src/lib/schemas/nodes/ai_decision.schema.ts:11-13` 仍把三个字段摆给运营填。**这条与有没有真 key 无关。**
+- **R2 · prod 形态下图的落点仍是演示系统**〔跑〕：新增 `scripts/dev/prod_core_loop_probe.py`（prod＋pg＋一次性探针库，跑完自删），在 prod 进程里让 `database/query` 真执行，拿到的是 **`sqlite3.OperationalError`**——`ATLAS_DATABASE_URL` 未配即静默换内置 SQLite 演示库（`api/main.py:338-340`，compose 未设该变量且**无日志**）；`shop/*` 是 `:333/:345` 无条件注册的进程内 `DemoShopService`（带 `FINANCIAL`），改内存 dict 即 `ActionResult.success`（`shop/adapter.py:154-162`）。**打包 P 关的是 demo 的 HTTP 路由面，图内适配器面从来不在它管辖内** ⇒ "没配凭据"在 prod 里不是报错，是悄悄演示。
+- **另六条**：R3 匿名可达面守护只遍历 `APIRoute`（`/docs`·`/openapi.json`·SPA mount 在 prod 匿名可读，"多一条少一条都红"这句引申据此缩小）；R4 `ATLAS_STORAGE_BACKEND` 仍是打包 P 刚修那一类的漏网（`iam/registry.py:59` 裸比较、缺省 memory、写错值＝全内存运行而 `/api/ready` 恒 200）；R5 `.env.example:94` 挂着一设就关掉 SSRF 校验的 `_PassthroughEgress` 开关且无档位判定；R6 审批 `notified` 只证明"没抛异常"（`notifications.py:102` 丢弃 `delivered`，前端还零渲染）；R7 调度卡片不显最近一次 run 的状态；R8 工具名缺 `/` 时静默 `SIMULATED` 而 run 仍 completed（`loader.py:1687-1688`）。
+- **本轮被我自己证伪的三条**（docs/77 §5，不删）：`/api/demo/messages` 在 prod **是 200** 不是 404；含失败节点的 run 虽记 completed，`monitoring/metrics.is_healthy()` 会算它不健康，所以"没人知道"不成立；`ATLAS_SHOPIFY_ADMIN_BASE_URL` 我第一遍 grep 判成"文档里没有"，换一种写法重测发现 `.env.example:94` 确实有——**一次 grep 的否定结果不能当证据**。
+- **由此重排 B 档判据**：docs/73 新增 **W5 组 5.1／5.2／5.3**（三条都不依赖外部凭据、我方可立刻做），**1.1–1.3 排到它们之后而非并行**；决策记 docs/08 §八。**待用户拍**：R-批 1 走"`ai_decision` 真实化"还是"把契约与编辑器降级为退款专用决策器"——两条路都合法，**现在这条"字段存在但无读者"是唯一不合法的那条**。
+- **门（全部标测点）**：判定只取 **CI runner 自己读数**（SHA `3087495`／run `36306384856`，四 job 全绿）＝后端 **1979 passed / 125 skipped / 0 failed**、**PG 直连 2099 passed / 5 skipped**、前端 **738 / 2**、gitleaks ✓。本机同日全量跑到 40 分钟仍未出数（同机 load **229–309**），我**主动终止**了它——不转抄 CI 数当本地数，也不引抖动值。仓库状态实测：PR **#81 已 MERGED**，`git rev-list --count origin/main..dev` == **0**。
+
 ### docs(spec)：把 N3／T31 两项拍板扫到**全部**文档面，顺手订正我自己写错的一处归因（2026-09-27，纯 docs）
 
 - **为什么单独一批**：前两条决定（N3＝非目标、`redis` 声明删除）落地时只同步了"我当时正在改的那几篇"。这批是把 01–16 全扫一遍，凡是**还在替旧状态说话**的面全部对平：`docs/01 §4.2/§4.3`、`docs/02` 选型行、`docs/03` 契约索引 `egress_guard` 行、`docs/04 §4.2/§4.6`、`docs/06 §6.3/§6.5`、`docs/08` E 组、`docs/10 §2/§4`、`docs/11 §1`、`docs/14`（新增 **D43**＋D35 补充条）、README。**零代码／零测试／零迁移改动**。

@@ -934,7 +934,8 @@ def _register_approval(
     notify_error: str | None = None
     if notifier is not None and recipients:
         try:
-            notifier.notify_pending(
+            # docs/77 R6：notifier 返回 bool=True 才算真通知，False（含 demo 回退 in_process）不算
+            notified = notifier.notify_pending(
                 graph_id=graph_id,
                 node_id=node.id,
                 token=token,
@@ -943,7 +944,6 @@ def _register_approval(
                 timeout_seconds=timeout_seconds,
                 recipients=recipients,
             )
-            notified = True
         except Exception as exc:  # noqa: BLE001 旁路通知任何异常都不得阻断图
             notify_error = str(exc)
             logger.warning("审批挂起通知失败 node=%s: %s", node.id, exc)
