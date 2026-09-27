@@ -45,6 +45,7 @@ from atlas.llm.decision import AUTO_APPROVE, HUMAN_APPROVAL, get_decision_client
 from atlas.llm.condition_classifier import get_condition_classifier
 from atlas.message.adapter import MessageHarnessAdapter
 from atlas.message.service import MessageService
+from atlas.security.bootstrap import demo_surface_enabled
 from atlas.shop.adapter import ShopHarnessAdapter
 from atlas.storage.frame import build_frame, deadline_iso, remaining_seconds
 from atlas.tracing import (
@@ -1806,8 +1807,22 @@ def _execute_tool(
 ) -> dict[str, Any]:
     tool_name = node.config.get("tool", "")
     params_text = interpolate(node.config.get("params", ""), context)
-    if "/" not in tool_name or registry is None:
+    if registry is None:
         return {"result": {"status": "SIMULATED", "tool": tool_name}, "params_rendered": params_text}
+    if "/" not in tool_name:
+        # R8（docs/77 §4）：裸工具名在 prod 档不是"可执行的本地构造"而是**配置错误**——不许静默
+        # 模拟成功（旧行为会让 run 照常 completed、只在监控计数里露一个 simulated）。dev/demo 档
+        # 保持既有 SIMULATED 契约（demo_surface_enabled：非 prod 恒开、prod 仅显式开关才开）。
+        if demo_surface_enabled():
+            return {"result": {"status": "SIMULATED", "tool": tool_name}, "params_rendered": params_text}
+        return {
+            "result": {
+                "status": "FAILED",
+                "error": f"工具名缺少 adapter/capability 形状：{tool_name}",
+            },
+            "action_status": "FAILED",
+            "params_rendered": params_text,
+        }
 
     adapter_id, capability_name = tool_name.split("/", 1)
     try:
