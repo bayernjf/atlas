@@ -3,6 +3,17 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### feat(llm,graph)＋test＋docs：让 `ai_decision` 真读运营写的提示词，并把置信度闸门做成真挂起（2026-09-27，打包 R／W5-5.1，docs/78）
+
+- **一句话**：`promptTemplate` 曾是"编译期必填、运行期只回显"，`model`／`confidenceThreshold` **零读者**——运营在图里改提示词改不动模型输出，docs/06 §6.2 承诺的"记忆检索→含状态 prompt→强制结构化输出→**置信度低于阈值转人工**"四项皆无。本批走**真路线**（用户拍板，非契约降级）把四步落地，关闭 docs/77 §6 的 **R-批 1／R1**。零迁移／零新端点／零新错误码／零新依赖。
+- **接线（D-1…D-3）**：`llm/decision.py` 的 `decide_refund` 加 `prompt`／`model` 入参——运营 `promptTemplate` 经 `interpolate` 渲染后**逐字**作为发给模型的 user message（空串才退回退款专用兜底文案，保护直接调用方零变化）；节点 `model` 非空时**覆盖**环境默认 `LITELLM_MODEL`（仅本次调用），`source` 记为 `llm:{实际 model}`，使"这次到底谁答的"可从输出读出；结构化输出由 **system 消息＋`response_format={"type":"json_object"}`** 强制（**等价** docs/06 §6.2 的 `with_structured_output(DecisionSchema)`，不给运营第二份 schema）。`RuleBasedDecisionClient` 接受并**不读**两新参数（D-6 ②：无语义理解能力，离线 Demo 档语义不变）。
+- **置信度闸门＝真挂起（D-4）**：`graph/loader.py` 的 `ai_decision` 分支在 `confidence < confidenceThreshold` 时**真的挂起转人工**（复用既有 `ApprovalBroker` 登记 pending＋发一个带 `approval` 载荷的 node_start＋阻塞等待），而非只把 action 改成 `request_human_approval`。阈值缺省 **0.6**（对齐 06 §6.2 与前端 default）、非法值回退缺省、`confidence` 缺失按 0.0（fail-safe）、**边界为严格小于**；人审 **通过 ⇒ `approve_refund`**，**拒绝/超时 ⇒ `request_human_approval`**；缺 broker 时**不敢静默放行**，降级 `request_human_approval`＋`resolvedBy:"no_broker"` 且不阻塞。`decision` 内**多** `escalated`／`resolvedBy`／`threshold` 三键（既有四字段名不变，只做超集扩展）。
+- **有意不写 interruption 帧（D-5）**：`api/main.py:215` 的续跑扫描器把 `kind=="approval"` 的帧**一律按 `human_approval` 恢复**，而 `ai_decision` 执行分支无 resume 处理 ⇒ 写帧会让重启重跑决策并产生**第二个 token**（悬挂 token＋误恢复）。故低置信挂起为**纯进程内**，跨重启恢复／多实例随 **D20** 缓做——新增缓做 **D44** 登记。
+- **旗舰模板（D-6 ①）**：`template/graphs.py` 的 `refund-auto` `ai_decision-1` promptTemplate 补上真实运营规则（质量问题且不超限额自动退款、主观原因或超限额转人工），前端 demo 画布 `editorStore.ts` 同步同一文案（后端模板为单一事实源）。
+- **测试（U926–U938，13 例，只增不改）**：`tests/test_decision_client.py` +5（prompt 逐字作 user 消息／空 prompt 兜底／model 覆盖／空 model 回退／rule client 接受并忽略）；新建 `tests/test_ai_decision_realization.py` 8（渲染后 prompt＋节点 model 透传、空 model 传 `None`、低置信＋人工通过⇒`approve_refund`、低置信＋拒绝⇒保留 `request_human_approval`、`confidence == threshold` 不挂起、缺阈值默认 0.6、非法阈值回退、无 broker fail-safe 不阻塞）。
+- **门（先跑后写，取实跑）**：后端全量 `.venv/bin/pytest` ＝ **2008 passed / 125 skipped / 0 failed**（基线 1995/125，净增 13，常跑零回归；同机 load 100–300，时长不横比）；前端（本批只动 `editorStore.ts`）`pnpm test` **738/2**、`pnpm lint` **0 error / 7 既有 warning**、`pnpm build` ✓。
+- **残余照实（docs/78 §6）**：**真 LLM 端到端未验**——本批只证到"接线成立"（prompt 就是 user message、model 生效、闸门双向），"模型真按新 prompt 改变判定"要 1.1 的真 key，**不在本批**；低置信挂起无跨重启恢复（docs/14 **D44**）；规则兜底不读 prompt/model；置信度为模型自报、阈值 0.6 非实测调优值；只接 `ai_decision` 一个节点。
+
 ### docs(review)＋test(dev)：第六次项目级上线复审——判定不变，但"B 档还欠什么"被实测改掉（2026-09-27，docs/77）
 
 - **一句话**：**A 档 ✅／B 档 ❌ 与第五次一致**，但 docs/74 §5 那句"关掉 demo 面闸门 → 配真 LLM 与一条真通道 → 跑一次真 prod 演练"作为最小动作集**被打掉一半**——第一条同日已闭合，而后两条**即使全部到位仍不足够**，因为核心闭环还有两处工程断口（R1／R2）。零产品代码改动、零迁移、不解除任何缓做。

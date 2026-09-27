@@ -510,15 +510,20 @@ metrics:
 
 ### `refund_decision` — 字段概览（W9-W10；权威实现 `src/atlas/llm/decision.py`）
 
-退款决策客户端 `DecisionClient.decide_refund(reason, amount, limit)` 的输出 dict，ai_decision 节点产出与 shop/process_refund 入参均以此为准：
+退款决策客户端 `DecisionClient.decide_refund(*, reason, amount, limit, prompt="", model=None)` 的输出 dict，ai_decision 节点产出与 shop/process_refund 入参均以此为准：
 
 ```yaml
 action: enum[approve_refund, request_human_approval]   # 自动退款 / 转人工审批
 reason: string          # 中文决策说明（写入工具 note / 审批意见）
 confidence: number      # 规则兜底恒为 1.0；LLM 取模型输出，解析失败 0.0
-source: string          # "rule" 或 "llm:{model}"
+source: string          # "rule" 或 "llm:{实际使用的 model}"
+# 仅 ai_decision 低置信度挂起时追加（W5-5.1，docs/78）：
+escalated: bool         # 可选；true＝因 confidence < confidenceThreshold 走了人审闸门
+resolvedBy: string      # 可选；人审决策来源（人工/邮件/预置/超时 等，由 ApprovalBroker 记；缺审批通道为 "no_broker"）
+threshold: number       # 可选；触发挂起所用阈值（缺省 0.6）
 ```
 > 规则（06 §9.2）：质量原因（破损/质量/错漏发等关键词）且金额 ≤ 限额 → approve_refund；其余及 LLM JSON 解析失败 → request_human_approval（fail-safe）。
+> **W5-5.1 真实化（docs/78）**：`prompt` 非空时**逐字**作为发给模型的用户消息（运营 `promptTemplate` 经插值后真正生效），`model` 非空时覆盖环境默认模型（仅本次调用）。`ai_decision` 节点在 `confidence < confidenceThreshold` 时**真的挂起转人工**（06 §6.2 第 4 步，复用 `ApprovalBroker`，阈值缺省 0.6、非法回退、边界为严格小于）：人审通过 → `approve_refund`，拒绝/超时 → `request_human_approval`，并追加 `escalated`/`resolvedBy`/`threshold` 三键——**既有四字段名不变，只做超集扩展**。规则兜底 `RuleBasedDecisionClient` 接受但**不读** `prompt`/`model`（离线档语义不变）。
 
 ### `refund_order` — 字段概览（W9-W10；权威实现 `src/atlas/shop/service.py`）
 
