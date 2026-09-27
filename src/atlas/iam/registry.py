@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import os
 import threading
 from dataclasses import dataclass
 
@@ -31,6 +30,7 @@ from atlas.recording import ReportStore, ShadowStore
 from atlas.recording.pg_reports import PgReportStore
 from atlas.recording.pg_shadow import PgShadowStore
 from atlas.routing import RoutingStore
+from atlas.security.bootstrap import read_storage_backend
 from atlas.storage.base import (
     ApprovalRepository,
     DebugRepository,
@@ -56,7 +56,8 @@ from atlas.storage.memory import (
 # M5b 后端切换（docs/24 §1.2②）：ATLAS_STORAGE_BACKEND=pg 装配 PG 实现，
 # 缺省 memory（进程内实现为默认/测试后端）。SessionStore 是全局单例（iam/deps.py），
 # 不在 TenantServices，其后端切换不在此处。
-STORAGE_BACKEND = os.environ.get("ATLAS_STORAGE_BACKEND", "memory")
+# docs/77 R4：走统一档位读取器（大小写不敏感、非法值拒启），不再裸比较。
+STORAGE_BACKEND = read_storage_backend()
 
 
 @dataclass

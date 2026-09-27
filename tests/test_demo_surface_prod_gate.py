@@ -17,9 +17,16 @@ import uuid
 import pytest
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
+from starlette.routing import Mount
 
-from atlas.api.main import _demo_mock_enabled, app
-from atlas.security.bootstrap import read_env_profile
+from atlas.api.main import (
+    _build_demo_registry,
+    _demo_mock_enabled,
+    _frontend_dist,
+    _resolve_database_client,
+    app,
+)
+from atlas.security.bootstrap import demo_surface_enabled, read_env_profile
 
 client = TestClient(app)
 
@@ -44,6 +51,17 @@ DEMO_SURFACE = [
     ("get", "/demo/shop", None),
 ]
 
+# docs/77 R3：非 APIRoute 的匿名面。打包 P 只遍历 APIRoute，把这几条漏在守护之外。
+# prod 下由 `gate_openapi_surface` 逐条 404；非 prod 公开，故进 allowlist 而不是删除。
+ASGI_PUBLIC_BY_DESIGN: dict[str, str] = {
+    "GET /docs": "R3：FastAPI 文档面，prod 由 gate_openapi_surface 404",
+    "GET /docs/oauth2-redirect": "R3：Swagger UI 的 oauth2 回调，同上",
+    "GET /redoc": "R3：ReDoc 文档面，同上",
+    "GET /openapi.json": "R3：OpenAPI 形状，同上",
+}
+# SPA 的 app.mount("/")：编辑器应用壳/登录页，匿名可载；仅当构建产物存在时注册。
+SPA_MOUNT = "MOUNT /"
+
 # 收口前一直在开门、且已由 J-3e 守住的三条：证明改共用函数没把老门的语义改坏。
 LEGACY_DEMO_SURFACE = [
     ("get", "/api/demo/mock/shopify-admin/webhooks.json", None),
@@ -52,24 +70,44 @@ LEGACY_DEMO_SURFACE = [
 ]
 
 
+def _endpoint_is_gated(endpoint) -> bool:
+    """endpoint 是否自带平台鉴权依赖或 demo 档位门（对 APIRoute / starlette Route 同判）。"""
+    annotations = getattr(endpoint, "__annotations__", {})
+    if any("Principal" in str(value) for value in annotations.values()):
+        return True
+    try:
+        source = inspect.getsource(endpoint)
+    except (OSError, TypeError):  # pragma: no cover - 动态端点，理论上不会出现
+        source = ""
+    return "_demo_mock_enabled" in source
+
+
 def anonymous_surface() -> set[str]:
-    """枚举"既无平台鉴权依赖、也无 demo 档位门"的路由。"""
+    """枚举"既无平台鉴权依赖、也无 demo 档位门"的**整张 ASGI 面**。
+
+    docs/77 R3：打包 P 只遍历 `APIRoute`，把 `/docs`、`/redoc`、`/openapi.json` 与 SPA 的
+    `app.mount("/")` 漏在守护之外——"匿名可达面由机器枚举守护"在整张 ASGI 面上不成立。
+    这里把非 `APIRoute`（starlette `Route` / `Mount`）也纳入。
+    """
     found: set[str] = set()
     for route in app.routes:
-        if not isinstance(route, APIRoute):
+        if isinstance(route, Mount):
+            found.add(f"MOUNT {route.path or '/'}")  # Mount("/") 的 path 为空串
             continue
-        annotations = getattr(route.endpoint, "__annotations__", {})
-        if any("Principal" in str(value) for value in annotations.values()):
+        endpoint = getattr(route, "endpoint", None)
+        if endpoint is None or _endpoint_is_gated(endpoint):
             continue
-        try:
-            source = inspect.getsource(route.endpoint)
-        except (OSError, TypeError):  # pragma: no cover - 动态端点，理论上不会出现
-            source = ""
-        if "_demo_mock_enabled" in source:
-            continue
-        for method in sorted(m for m in route.methods if m != "HEAD"):
+        methods = getattr(route, "methods", None) or set()
+        for method in sorted(m for m in methods if m != "HEAD"):
             found.add(f"{method} {route.path}")
     return found
+
+
+def expected_public_surface() -> set[str]:
+    expected = set(PUBLIC_BY_DESIGN) | set(ASGI_PUBLIC_BY_DESIGN)
+    if _frontend_dist() is not None:  # 与 import 期 app.mount 的判定同源
+        expected.add(SPA_MOUNT)
+    return expected
 
 
 @pytest.fixture(autouse=True)
@@ -92,9 +130,9 @@ def _neutral_profile():
 
 def test_u909_anonymous_surface_is_exactly_the_public_by_design_allowlist():
     surface = anonymous_surface()
-    assert surface == set(PUBLIC_BY_DESIGN), (
-        f"多了：{sorted(surface - set(PUBLIC_BY_DESIGN))}；"
-        f"少了：{sorted(set(PUBLIC_BY_DESIGN) - surface)}"
+    expected = expected_public_surface()
+    assert surface == expected, (
+        f"多了：{sorted(surface - expected)}；少了：{sorted(expected - surface)}"
     )
 
 
@@ -115,6 +153,85 @@ def test_u909_reverse_gate_a_new_unauthenticated_route_is_caught():
         app.router.routes = [r for r in app.router.routes
                              if getattr(r, "path", "") != "/api/__u909_probe__"]
     assert anonymous_surface() == before, "探针没摘干净会污染后续用例"
+
+
+def test_r3_asgi_surface_beyond_apiroute_is_enumerated():
+    """R3 守护：非 APIRoute 的匿名面（FastAPI 文档面）必须进枚举，否则口径又窄回去。"""
+    surface = anonymous_surface()
+    assert set(ASGI_PUBLIC_BY_DESIGN) <= surface, (
+        f"文档面没进整张 ASGI 面枚举：{sorted(set(ASGI_PUBLIC_BY_DESIGN) - surface)}"
+    )
+
+
+def test_r3_openapi_surface_is_closed_in_prod(monkeypatch):
+    """R3 行为：prod 且未开 demo 面时，匿名者拿不到 OpenAPI 形状。"""
+    monkeypatch.setenv("ATLAS_ENV", "prod")
+    monkeypatch.delenv("ATLAS_ENABLE_DEMO_MOCK", raising=False)
+    for path in ("/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json"):
+        response = client.get(path)
+        assert response.status_code == 404, f"{path} 在 prod 仍可达：{response.status_code}"
+        assert response.json().get("detail") == "Not Found"
+
+
+def test_r3_openapi_surface_stays_open_in_dev():
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        assert client.get(path).status_code == 200, f"{path} 在 dev 被误关"
+
+
+def test_r3_demo_flag_reopens_the_openapi_surface(monkeypatch):
+    monkeypatch.setenv("ATLAS_ENV", "prod")
+    monkeypatch.setenv("ATLAS_ENABLE_DEMO_MOCK", "1")
+    assert client.get("/openapi.json").status_code == 200
+
+
+# --- docs/77 R2 运行期演示适配器收口 --------------------------------------
+
+def test_r2_prod_without_demo_flag_registers_no_demo_adapters(monkeypatch):
+    """prod 未开 demo 面：shop/database 不注册（图里选不到），且不回退内置演示库。"""
+    monkeypatch.setenv("ATLAS_ENV", "prod")
+    monkeypatch.delenv("ATLAS_ENABLE_DEMO_MOCK", raising=False)
+    monkeypatch.delenv("ATLAS_DATABASE_URL", raising=False)
+    assert demo_surface_enabled() is False
+    db_client = _resolve_database_client(demo_surface_enabled())
+    assert db_client is None, "prod 未配 ATLAS_DATABASE_URL 时不应回退内置 SQLite 演示库"
+    ids = {
+        item["id"]
+        for item in _build_demo_registry(demo_surface_enabled(), db_client).list_adapters()
+    }
+    assert "shop" not in ids, "prod 未开 demo 面却仍装配了进程内 DemoShopService"
+    assert "database" not in ids
+    assert {"http", "message", "memory"} <= ids, "非演示适配器不应被误摘"
+
+
+def test_r2_demo_surface_registers_shop_and_database(monkeypatch):
+    """dev（或 prod 显式开 demo 面）：演示适配器照旧装配。"""
+    monkeypatch.setenv("ATLAS_ENV", "dev")
+    monkeypatch.delenv("ATLAS_DATABASE_URL", raising=False)
+    assert demo_surface_enabled() is True
+    db_client = _resolve_database_client(demo_surface_enabled())
+    assert db_client is not None, "演示面应回退内置 SQLite 演示库"
+    ids = {
+        item["id"]
+        for item in _build_demo_registry(demo_surface_enabled(), db_client).list_adapters()
+    }
+    assert {"shop", "database"} <= ids
+
+
+def test_r2_prod_with_real_database_url_keeps_database_without_shop(monkeypatch):
+    """prod 配了真 ATLAS_DATABASE_URL：database 保留（真连接），shop 仍不装配。"""
+    monkeypatch.setenv("ATLAS_ENV", "prod")
+    monkeypatch.delenv("ATLAS_ENABLE_DEMO_MOCK", raising=False)
+    monkeypatch.setenv(
+        "ATLAS_DATABASE_URL", "postgresql+psycopg://u:p@127.0.0.1:5432/target_db"
+    )
+    db_client = _resolve_database_client(demo_surface_enabled())
+    assert db_client is not None
+    ids = {
+        item["id"]
+        for item in _build_demo_registry(demo_surface_enabled(), db_client).list_adapters()
+    }
+    assert "database" in ids
+    assert "shop" not in ids
 
 
 # --- U910 prod 档逐条 404 --------------------------------------------------
