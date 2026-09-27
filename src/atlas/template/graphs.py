@@ -60,10 +60,13 @@ def refund_template_graph() -> dict[str, Any]:
                 "position": {"x": 360, "y": 180},
                 "config": {
                     "promptTemplate": (
-                        "退款单 {{trigger-1.context.payload.order_id}}："
-                        "{{trigger-1.context.payload.reason}}，"
-                        "金额 {{trigger-1.context.payload.amount}}，"
-                        "审批限额 {{global.approval_limit}}"
+                        "你是电商售后审批员。请依据以下退款申请给出决策：\n"
+                        "退款单号：{{trigger-1.context.payload.order_id}}\n"
+                        "退款原因：{{trigger-1.context.payload.reason}}\n"
+                        "退款金额：{{trigger-1.context.payload.amount}} 元\n"
+                        "审批限额：{{global.approval_limit}} 元\n"
+                        "规则：商品质量问题（破损/质量缺陷/错漏发等）且金额不超过审批限额时自动退款；"
+                        "主观原因（如不想要了）或金额超限额时必须转人工。"
                     ),
                     "model": "",
                     "confidenceThreshold": 0.6,

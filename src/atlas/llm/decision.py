@@ -6,6 +6,12 @@ W9-W10 对齐 docs/06 §9.2 黄金用例：
 
 模型经 LiteLLM 调用，供应商/key 由环境变量切换（10 文档 T1）；
 未配置 `LITELLM_MODEL` 时使用规则决策，保证 Demo 离线可跑。
+
+W5-5.1（真路线，docs/78）：`ai_decision` 节点的运营配置真实生效——
+- 节点 `promptTemplate` 插值后**就是发给模型的用户消息**（不再回显硬编码退款 prompt）；
+- 节点 `model` 非空时覆盖环境变量默认模型，仅对本次调用生效；
+- 结构化输出由系统消息强制（等价 docs/06 §6.2 的 `with_structured_output(DecisionSchema)`）。
+规则兜底（未配 `LITELLM_MODEL`）不读 prompt，仅在离线 Demo 充当确定性决策壳。
 """
 
 from __future__ import annotations
@@ -25,15 +31,43 @@ _QUALITY_REASONS = ("破损", "损坏", "质量", "瑕疵", "残次", "漏发", 
 _DEFAULT_LIMIT = 500.0
 _DECISION_RE = re.compile(r"\{.*\}", re.DOTALL)
 
+# 结构化输出系统消息（等价 docs/06 §6.2 `with_structured_output(DecisionSchema)`）：
+# 运营的 promptTemplate 只管业务指令，输出形状由这一层强制，避免模型回散文。
+_STRUCTURED_SYSTEM_MESSAGE = (
+    "你只能输出一个 JSON 对象，不要输出任何解释性文字。字段："
+    '{"action": "approve_refund" 或 "request_human_approval", '
+    '"reason": "中文简述", "confidence": 0 到 1 的数字}'
+)
+
 
 class DecisionClient(Protocol):
-    def decide_refund(self, *, reason: str, amount: float, limit: float) -> dict[str, Any]: ...
+    def decide_refund(
+        self,
+        *,
+        reason: str,
+        amount: float,
+        limit: float,
+        prompt: str = "",
+        model: str | None = None,
+    ) -> dict[str, Any]: ...
 
 
 class RuleBasedDecisionClient:
-    """确定性规则决策（黄金测试集与离线 Demo 使用）。"""
+    """确定性规则决策（黄金测试集与离线 Demo 使用）。
 
-    def decide_refund(self, *, reason: str, amount: float, limit: float) -> dict[str, Any]:
+    W5-5.1：本兜底**不读** `prompt`/`model`（它没有语义理解能力），只按退款规则给出
+    确定性结论；配了 `LITELLM_MODEL` 才走 `LiteLLMDecisionClient` 真正消费运营 prompt。
+    """
+
+    def decide_refund(
+        self,
+        *,
+        reason: str,
+        amount: float,
+        limit: float,
+        prompt: str = "",
+        model: str | None = None,
+    ) -> dict[str, Any]:
         is_quality = any(keyword in reason for keyword in _QUALITY_REASONS)
         if is_quality and amount <= limit:
             return {
@@ -50,15 +84,18 @@ class RuleBasedDecisionClient:
 
 
 class LiteLLMDecisionClient:
-    """经 LiteLLM 的 LLM 决策；输出无法解析时 fail-safe 转人工。"""
+    """经 LiteLLM 的 LLM 决策；输出无法解析时 fail-safe 转人工。
+
+    W5-5.1：`prompt` 非空时直接作为用户消息发出（运营 promptTemplate 真实生效）；
+    `model` 非空时覆盖构造期默认模型，仅本次调用生效。
+    """
 
     def __init__(self, model: str):
         self.model = model
 
-    def decide_refund(self, *, reason: str, amount: float, limit: float) -> dict[str, Any]:
-        import litellm
-
-        prompt = (
+    def _default_prompt(self, reason: str, amount: float, limit: float) -> str:
+        """无运营 prompt 时的退款专用兜底文案（保留旧行为，供直接调用方使用）。"""
+        return (
             "你是电商售后审批员。根据退款原因和金额决定动作，只输出 JSON：\n"
             '{"action": "approve_refund" 或 "request_human_approval", "reason": "中文简述", '
             '"confidence": 0到1的数字}\n'
@@ -66,9 +103,28 @@ class LiteLLMDecisionClient:
             f"主观原因（不想要了等）或超限额必须转人工。\n"
             f"退款原因：{reason}\n退款金额：{amount:g}"
         )
+
+    def decide_refund(
+        self,
+        *,
+        reason: str,
+        amount: float,
+        limit: float,
+        prompt: str = "",
+        model: str | None = None,
+    ) -> dict[str, Any]:
+        import litellm
+
+        model_name = (model or "").strip() or self.model
+        # 运营 prompt 优先（就是发给模型的内容）；为空才退回退款专用兜底文案。
+        user_content = prompt.strip() or self._default_prompt(reason, amount, limit)
         response = litellm.completion(
-            model=self.model,
-            messages=[{"role": "user", "content": prompt}],
+            model=model_name,
+            messages=[
+                {"role": "system", "content": _STRUCTURED_SYSTEM_MESSAGE},
+                {"role": "user", "content": user_content},
+            ],
+            response_format={"type": "json_object"},
             temperature=0,
             # J-3c：出向 LLM 必须带超时与输出上限，防挂死/超长回包拖垮编排
             timeout=float(os.getenv("ATLAS_LLM_TIMEOUT_SECONDS", "60")),
@@ -85,14 +141,14 @@ class LiteLLMDecisionClient:
                 "action": action,
                 "reason": str(payload.get("reason", "")),
                 "confidence": float(payload.get("confidence", 0.0)),
-                "source": f"llm:{self.model}",
+                "source": f"llm:{model_name}",
             }
         except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
             return {
                 "action": HUMAN_APPROVAL,
                 "reason": f"LLM 输出解析失败，fail-safe 转人工：{exc}",
                 "confidence": 0.0,
-                "source": f"llm:{self.model}",
+                "source": f"llm:{model_name}",
             }
 
 
