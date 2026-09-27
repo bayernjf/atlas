@@ -152,6 +152,31 @@ def test_u889_run_now_starts_a_pinned_run_without_consuming_the_slot_claim(sched
     assert schedule_store().claim("t1", graph_id, now) is False, "认领表幂等性破了"
 
 
+def test_u889d_schedule_card_carries_the_latest_run_status(schedule_graph):
+    """docs/77 R7：卡片原先只有 lastFiredAt/lastSkippedAt，看不出"最近一次跑成没成"。
+
+    handler 层 enrich 最近一次 run（按 graph_id 匹配，不区分 schedule/manual）；
+    run-now 也是 run，所以它之后卡片必须带 lastRunStatus。
+    """
+    graph_id, _ = schedule_graph
+
+    # 还没跑过：不该凭空造出 run 字段（否则前端无法区分"没跑过"与"跑了"）。
+    before = _find(graph_id)
+    assert before is not None
+    assert "lastRunStatus" not in before and "lastRunId" not in before
+    assert before["nextFireAt"], "enrich 不能把原有投影键挤掉"
+
+    response = client.post(f"/api/schedules/{graph_id}/run-now", headers=OPERATOR_A)
+    assert response.status_code == 200, response.text
+    run = tenant_registry.get("t1").run_store.get(response.json()["runId"])
+    assert run is not None
+
+    after = _find(graph_id)
+    assert after["lastRunId"] == run["runId"]
+    assert after["lastRunStatus"] == run["status"]
+    assert after["lastRunStartedAt"] == run["startedAt"]
+
+
 def test_u889b_run_now_is_409_while_the_graph_still_has_a_live_run(schedule_graph):
     graph_id, _ = schedule_graph
     services = tenant_registry.get("t1")

@@ -1230,14 +1230,31 @@ def _no_schedule_detail(graph_id: str) -> str:
 
 @app.get("/api/schedules")
 def list_schedules(principal: Principal = Depends(require("read"))) -> dict[str, Any]:
-    """本租户的调度登记（含下次触发时刻，UTC 口径）；纯只读，不改任何状态。"""
+    """本租户的调度登记（含下次触发时刻，UTC 口径）；纯只读，不改任何状态。
+
+    docs/77 R7 enrich：每条 schedule 附带最近一次 run 的状态（handler 层查 run_store，
+    零迁移、零 store 结构改动；run 只按 graph_id 匹配，不区分 schedule/manual mode）。
+    """
     now = datetime.now(timezone.utc)
-    return {
-        "items": [
-            schedule_projection(record, now)
-            for record in schedule_store().list_tenant(principal.tenant_id)
-        ]
-    }
+    records = schedule_store().list_tenant(principal.tenant_id)
+    # 一次性拉所有 run 按 graph_id 分组，避免 N+1
+    services = tenant_registry.get(principal.tenant_id)
+    all_runs = services.run_store.list(status=None, limit=200)
+    runs_by_graph: dict[str, list[dict]] = {}
+    for run in all_runs:
+        gid = run.get("graphId", "")
+        runs_by_graph.setdefault(gid, []).append(run)
+    items: list[dict[str, Any]] = []
+    for record in records:
+        proj = schedule_projection(record, now)
+        graph_runs = runs_by_graph.get(record.graph_id, [])
+        if graph_runs:
+            latest = graph_runs[0]  # list 已按 startedAt DESC，第一条即最近
+            proj["lastRunId"] = latest.get("runId")
+            proj["lastRunStatus"] = latest.get("status")
+            proj["lastRunStartedAt"] = latest.get("startedAt")
+        items.append(proj)
+    return {"items": items}
 
 
 @app.post("/api/schedules/{graph_id}/enabled")
