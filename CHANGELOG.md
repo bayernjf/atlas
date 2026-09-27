@@ -3,6 +3,13 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### test(api)：修掉定时调度卡片测试的偶发红——两次读之间的 run 状态竞态（2026-09-28，CI push run 暴露）
+
+- **现象**：PR #84 的 `push` 触发那一跑里 `tests/test_api_schedules.py::test_u889d_schedule_card_carries_the_latest_run_status` 报 `AssertionError: assert 'completed' == 'running'`；同一 SHA 的 `pull_request` 跑全绿 ⇒ 偶发。
+- **根因（纯测试竞态，非产品缺陷）**：测试先 `run_store.get(runId)` 取**副本**快照，再 `GET /api/schedules` 让端点**另一次** `run_store.list()` 现读卡片（[main.py](src/atlas/api/main.py#L1282-L1294)）；`run-now` 起的 run 是异步的，`running → 终态` 若落在两次读之间，快照说 `running`、卡片说 `completed`。非本批引入——该测试由 `0fbde87`（R7 改动）带入，已在 `origin/main`。
+- **修法（只动测试）**：新增 `_await_run_terminal(run_id)`，先轮询等 run 离开 `running` 到终态，**再**读卡片比对；终态后 run 不再变化 ⇒ 两次读确定一致，强断言语义不变。
+- **验证**：PG 档（`ATLAS_RUN_INTEGRATION=1`＋本地 `atlas-pg`）该用例**连跑 20 次全绿**；两档该文件各 21 passed；后端全量 `.venv/bin/pytest` **2013 passed / 125 skipped / 0 failed**。
+
 ### fix(graph)＋test＋docs：裸工具名在 prod 档不再静默"模拟成功"，改为显式失败（2026-09-27，W5-5.3 ③／R8，docs/73·docs/77）
 
 - **一句话**：docs/77 §4 R8 量出的假阳性——`tool_call` 节点工具名不带 `/`（如 `"op-approve"`）时 `_execute_tool` 静默返回 `{"status":"SIMULATED"}`、run 照常 `completed`，"看起来成功、其实没执行"——本批**只给 prod 补一道上层门**（口径 **A：prod fail-closed**，用户拍板），关闭 **R-批 3**，**docs/73 的 W5 三条前置项全部闭合**。零迁移／零新端点／零新错误码／零新依赖／零前端改动。
