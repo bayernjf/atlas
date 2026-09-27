@@ -1820,6 +1820,15 @@ class PgRunsStore:
                     "trace": json.dumps(trace, ensure_ascii=False) if trace is not None else None,
                 },
             )
+            # 运行到了终态 ⇒ 它不再有"可越过的挂起点"，本运行名下所有挂起帧一并了结。
+            # 放在这里是必须的而不是便利：只有启动恢复路径会清帧，所以**活进程内审批通过**
+            # 的那条运行（常见路径，实测 2026-09-27：表从 0 行变 1 行、档位 frame_lingering）
+            # 原本永远留一行，把 docs/76 那张表淹成"健康运行的墓地"，真正要看的
+            # claimed_suspended 反而被埋掉。崩溃路径不叫 finish ⇒ 帧与雷照旧留下。
+            conn.execute(
+                text("DELETE FROM interruptions WHERE tenant_id = :tenant_id AND run_id = :run_id"),
+                {"tenant_id": self._tenant_id, "run_id": run_id},
+            )
 
     def get(self, run_id: str) -> dict | None:
         with self._engine.connect() as conn:
