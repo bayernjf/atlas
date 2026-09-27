@@ -339,6 +339,8 @@ class RunRecord(BaseModel):
 
 # docs/28 §4.1 ⑧：ToolCallMetric {node_id:str, tool:str, duration_ms:float,
 #   action_status:Literal["SUCCESS","FAILED","SIMULATED"], error_code:str|None=None}
+# prod 收紧注（2026-09-27，docs/73 W5-5.3 ③／docs/77 R8）：裸工具名（无 `/`）在 prod 且未开
+#   ATLAS_ENABLE_DEMO_MOCK 时记 FAILED（不再 SIMULATED）；demo/dev 仍 SIMULATED。守护 U939–U943
 
 class MonitoringStore:          # 进程内单例；重启清空（持久化随 11 S1/14 D28）
     def record_run(self, *, graph_id, mode, status, started_at,

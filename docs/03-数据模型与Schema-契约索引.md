@@ -567,6 +567,7 @@ duration_ms: number      # float，真实调用 monotonic 计时
 action_status: "SUCCESS" | "FAILED" | "SIMULATED"
 error_code: string?      # result.code，可空
 subgraphPath: string[]  # 子图内部工具携带则被监控采集吞掉（命名空间白名单不放行 tool_metric），只采顶层；mock 命中不发
+# prod 收紧注（2026-09-27，docs/73 W5-5.3 ③／docs/77 R8）：裸工具名（无 `/`，非 `adapter/capability`）在 prod 且未开 ATLAS_ENABLE_DEMO_MOCK 时 action_status 记 "FAILED"（不再 "SIMULATED"）；demo/dev 仍 "SIMULATED"。守护 U939–U943
 # 运行结束（SSE 末帧为 event: result，载荷 {id, status, outputs, traces}）
 type: "run_end"         # 随 run_graph 返回值展开
 traceId: string          # M10：run root span 的 trace id

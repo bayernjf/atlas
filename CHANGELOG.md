@@ -3,6 +3,15 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### fix(graph)＋test＋docs：裸工具名在 prod 档不再静默"模拟成功"，改为显式失败（2026-09-27，W5-5.3 ③／R8，docs/73·docs/77）
+
+- **一句话**：docs/77 §4 R8 量出的假阳性——`tool_call` 节点工具名不带 `/`（如 `"op-approve"`）时 `_execute_tool` 静默返回 `{"status":"SIMULATED"}`、run 照常 `completed`，"看起来成功、其实没执行"——本批**只给 prod 补一道上层门**（口径 **A：prod fail-closed**，用户拍板），关闭 **R-批 3**，**docs/73 的 W5 三条前置项全部闭合**。零迁移／零新端点／零新错误码／零新依赖／零前端改动。
+- **为什么不按"裸名一律改 FAILED"修**：`SIMULATED` 是有定义的契约（"无 adapter/capability 或 registry 缺失的本地构造"，docs/28 §4.1、`monitoring/metrics.py:87`），dev/demo 画布上裸名是**文档化的** SIMULATED（监控 `simulated` 计数与影子色可见）；全局改 FAILED 会打掉 5 个锁定该契约的既有测试。
+- **改法（`graph/loader.py:_execute_tool`）**：把原混写的 `if "/" not in tool_name or registry is None` 拆开——`registry is None` 仍 `SIMULATED`；**裸名＋非空 registry** 再走 `security/bootstrap.demo_surface_enabled()`（**与 5.2 演示面闸门共用同一判定源**：非 prod 恒开、prod 仅 `ATLAS_ENABLE_DEMO_MOCK=1` 才开）。**demo/dev 保持 `SIMULATED` 契约不变**；**prod 且未开 demo 面时返回显式 `FAILED`**（`result.status=FAILED`＋`action_status=FAILED`＋`error:"工具名缺少 adapter/capability 形状：{name}"`）。
+- **测试（U939–U943，5 例，只增不改，`tests/test_tool_name_prod_gate.py`）**：prod 裸名⇒FAILED 且带文案／prod 开关开回⇒SIMULATED／dev 裸名⇒SIMULATED（契约零变化）／prod 规范名 `shop/login`⇒仍达注册表正常执行／prod 裸名的 `tool_metric` 记 **FAILED** 而非 simulated。
+- **门（先跑后写，取实跑）**：后端全量 `.venv/bin/pytest` ＝ **2013 passed / 125 skipped / 0 failed**（153.04s；基线 2008/125，净增 5，常跑零回归）；定向 163/1；前端零改动不跑。`tests/test_handoff_integrity.py` 3 passed。
+- **取舍照实**：这是"只收紧 prod 的档位门"，**非改 `SIMULATED` 契约本体**——关掉的是 prod 里"看起来成功、其实没执行"这一假阳性；demo 画布上裸名仍是文档化 SIMULATED。不动单副本三道闸、不解除任何缓做、**不 push 除非明确指示**。
+
 ### feat(llm,graph)＋test＋docs：让 `ai_decision` 真读运营写的提示词，并把置信度闸门做成真挂起（2026-09-27，打包 R／W5-5.1，docs/78）
 
 - **一句话**：`promptTemplate` 曾是"编译期必填、运行期只回显"，`model`／`confidenceThreshold` **零读者**——运营在图里改提示词改不动模型输出，docs/06 §6.2 承诺的"记忆检索→含状态 prompt→强制结构化输出→**置信度低于阈值转人工**"四项皆无。本批走**真路线**（用户拍板，非契约降级）把四步落地，关闭 docs/77 §6 的 **R-批 1／R1**。零迁移／零新端点／零新错误码／零新依赖。
