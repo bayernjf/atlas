@@ -25,6 +25,7 @@ from atlas.connections.service import (
     ConnectionService,
     ConnectionServiceError,
 )
+from atlas.security.bootstrap import demo_surface_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -233,8 +234,17 @@ def build_channel_registry(
     ATLAS_SHOPIFY_ADMIN_BASE_URL 设置时（仅开发/测试缝，docs/41 §D）：Admin base 指向
     同进程 mock，传输显式不带 EgressGuard（localhost 恒被守卫 denylist 拦，无法 allowlist）；
     未设置时生产路径原样。
+
+    docs/77 R5：这条"测试缝"此前只写在 docstring 里，prod 档设了它照样生效（SSRF 校验
+    对所有租户全关）。现在 prod 且未开 demo 面时直接拒启——与 demo 面共用同一开关。
     """
     admin_base = os.getenv("ATLAS_SHOPIFY_ADMIN_BASE_URL")
+    if admin_base and not demo_surface_enabled():
+        raise RuntimeError(
+            "ATLAS_ENV=prod 拒绝使用 ATLAS_SHOPIFY_ADMIN_BASE_URL：它会把渠道出向校验换成 "
+            "_PassthroughEgress（SSRF 校验对所有租户全关）。该变量仅供 dev/test 冒烟；"
+            "若确要在 prod 演示请显式设 ATLAS_ENABLE_DEMO_MOCK=1（docs/77 R5）。"
+        )
     if admin_base:
         transport: ChannelTransport = HttpChannelTransport(egress=_PassthroughEgress())
         base_url = admin_base.rstrip("/")

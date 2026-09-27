@@ -48,6 +48,34 @@ def make_registry(tokens=None, transport=None):
     )
 
 
+# --- docs/77 R5：prod 拒用 _PassthroughEgress 测试缝 ------------------------
+
+_SEAM_URL = "http://127.0.0.1:8000/api/demo/mock/shopify-admin"
+
+
+def test_r5_prod_rejects_the_passthrough_egress_seam(monkeypatch) -> None:
+    """prod 且未开 demo 面时，ATLAS_SHOPIFY_ADMIN_BASE_URL 直接拒启（SSRF 校验不得被悄悄全关）。"""
+    from atlas.channels.registry import build_channel_registry
+
+    monkeypatch.setenv("ATLAS_ENV", "prod")
+    monkeypatch.delenv("ATLAS_ENABLE_DEMO_MOCK", raising=False)
+    monkeypatch.setenv("ATLAS_SHOPIFY_ADMIN_BASE_URL", _SEAM_URL)
+    with pytest.raises(RuntimeError, match="ATLAS_SHOPIFY_ADMIN_BASE_URL"):
+        build_channel_registry(object(), tenant_id="t1")
+
+
+def test_r5_dev_and_demo_flag_allow_the_seam(monkeypatch) -> None:
+    """dev 照旧；prod 显式开 demo 面（ATLAS_ENABLE_DEMO_MOCK=1）时也放行。"""
+    from atlas.channels.registry import build_channel_registry
+
+    monkeypatch.setenv("ATLAS_SHOPIFY_ADMIN_BASE_URL", _SEAM_URL)
+    monkeypatch.setenv("ATLAS_ENV", "dev")
+    assert build_channel_registry(object(), tenant_id="t1") is not None
+    monkeypatch.setenv("ATLAS_ENV", "prod")
+    monkeypatch.setenv("ATLAS_ENABLE_DEMO_MOCK", "1")
+    assert build_channel_registry(object(), tenant_id="t1") is not None
+
+
 def test_bind_success():
     reg = make_registry()
     view = reg.bind("shopify", "conn-1", {"shop": "Acme"})
