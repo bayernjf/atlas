@@ -10,6 +10,7 @@ import {
   Popconfirm,
   Select,
   Space,
+  Switch,
   Tabs,
   Typography,
   Input,
@@ -36,6 +37,11 @@ import { toSteps } from '../lib/recordings'
 import { resolveExpressionErrors } from '../lib/runtimeError'
 import { isSubgraphInternal, subgraphPathPrefix, subgraphPathLabel } from '../lib/subgraphEvents'
 import { parseGlobalsDraft } from '../lib/debugOverrides'
+import {
+  fieldsFromInputs,
+  overrideFromFields,
+  type ParamField,
+} from '../lib/paramWizard'
 import {
   compileGraph,
   CompileValidationError,
@@ -159,6 +165,15 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
   // docs/28 §2.2：单用例回放 Mock 勾选 / 入参覆写草稿（per-case，一次性不落库）
   const [mockToolsById, setMockToolsById] = useState<Record<string, boolean>>({})
   const [overrideById, setOverrideById] = useState<Record<string, string>>({})
+  // 04 §5.11 落码块：填空式参数化向导（每用例惰性拉完整 inputs，草稿仅本次会话）
+  const [wizardOpenId, setWizardOpenId] = useState<string | null>(null)
+  const [wizardLoadingId, setWizardLoadingId] = useState<string | null>(null)
+  const [wizardFieldsById, setWizardFieldsById] = useState<
+    Record<string, ParamField[]>
+  >({})
+  const [wizardErrorById, setWizardErrorById] = useState<
+    Record<string, { errorKey: string; errorCode: 'not_a_number' | 'invalid_json' } | null>
+  >({})
   // docs/28 §2.3：用例元信息编辑（仅 name/inputs）
   const [editingId, setEditingId] = useState<string | null>(null)
   const [loadingEditId, setLoadingEditId] = useState<string | null>(null)
@@ -682,12 +697,16 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
     await compileAndRun(true)
   }
 
-  async function runReplay(caseId: string) {
+  async function runReplay(
+    caseId: string,
+    wizardOverride?: Record<string, unknown>,
+  ) {
     setRecordingError(null)
     setReplayBusyId(caseId)
     try {
       const body: ReplayRequestOptions = {}
       if (mockToolsById[caseId]) body.mock_tools = true
+      let merged: Record<string, unknown> = {}
       const overrideText = (overrideById[caseId] ?? '').trim()
       if (overrideText) {
         const parsed = parseInputsObject(overrideText)
@@ -695,7 +714,12 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
           setRecordingError(t(parsed.error))
           return
         }
-        body.inputs_override = parsed.value as RunInputs
+        merged = parsed.value
+      }
+      // 04 §5.11：向导组装值与 TextArea 手写覆写浅合并，向导值优先。
+      if (wizardOverride) merged = { ...merged, ...wizardOverride }
+      if (Object.keys(merged).length > 0) {
+        body.inputs_override = merged as RunInputs
       }
       const report = await replayRecording(caseId, body)
       setReports((prev) => ({ ...prev, [caseId]: report }))
@@ -704,6 +728,51 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
     } finally {
       setReplayBusyId(null)
     }
+  }
+
+  async function toggleWizard(rec: RecordingSummary) {
+    setRecordingError(null)
+    if (wizardOpenId === rec.id) {
+      setWizardOpenId(null)
+      return
+    }
+    setWizardOpenId(rec.id)
+    if (wizardFieldsById[rec.id]) return
+    setWizardLoadingId(rec.id)
+    try {
+      const full: RecordingCase = await getRecording(rec.id)
+      setWizardFieldsById((prev) => ({
+        ...prev,
+        [rec.id]: fieldsFromInputs((full.inputs ?? {}) as Record<string, unknown>),
+      }))
+    } catch (error) {
+      setRecordingError(error instanceof Error ? error.message : String(error))
+      setWizardOpenId(null)
+    } finally {
+      setWizardLoadingId(null)
+    }
+  }
+
+  function updateWizardDraft(caseId: string, key: string, draft: string) {
+    setWizardFieldsById((prev) => ({
+      ...prev,
+      [caseId]: (prev[caseId] ?? []).map((field) =>
+        field.key === key ? { ...field, draft } : field,
+      ),
+    }))
+    setWizardErrorById((prev) => ({ ...prev, [caseId]: null }))
+  }
+
+  async function runWizardReplay(caseId: string) {
+    const result = overrideFromFields(wizardFieldsById[caseId] ?? [])
+    if (!result.ok || !result.value) {
+      setWizardErrorById((prev) => ({
+        ...prev,
+        [caseId]: { errorKey: result.errorKey ?? '', errorCode: result.errorCode ?? 'invalid_json' },
+      }))
+      return
+    }
+    await runReplay(caseId, result.value)
   }
 
   // docs/28 §2.3：展开编辑并拉完整用例预填 name/inputs（列表投影不含 inputs）
@@ -1237,6 +1306,131 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                       }
                       placeholder={t('recording.overridePlaceholder')}
                     />
+                    <div>
+                      <Button
+                        type="link"
+                        size="small"
+                        loading={wizardLoadingId === rec.id}
+                        onClick={() => toggleWizard(rec)}
+                      >
+                        {wizardOpenId === rec.id
+                          ? t('recording.wizardCollapse')
+                          : t('recording.wizardOpen')}
+                      </Button>
+                    </div>
+                    {wizardOpenId === rec.id && (
+                      <div
+                        style={{
+                          marginTop: 4,
+                          padding: 10,
+                          border: '1px dashed var(--atlas-color-border)',
+                          borderRadius: 8,
+                        }}
+                      >
+                        {wizardLoadingId === rec.id ? (
+                          <Typography.Text type="secondary">
+                            {t('recording.loadingCase')}
+                          </Typography.Text>
+                        ) : (wizardFieldsById[rec.id] ?? []).length === 0 ? (
+                          <Typography.Text type="secondary">
+                            {t('recording.wizardEmpty')}
+                          </Typography.Text>
+                        ) : (
+                          <Space
+                            orientation="vertical"
+                            size={8}
+                            style={{ width: '100%' }}
+                          >
+                            {(wizardFieldsById[rec.id] ?? []).map((field) => {
+                              const fieldError =
+                                wizardErrorById[rec.id]?.errorKey === field.key
+                                  ? wizardErrorById[rec.id]
+                                  : null
+                              return (
+                                <div key={field.key}>
+                                  <div
+                                    style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: 8,
+                                    }}
+                                  >
+                                    <Typography.Text
+                                      style={{ minWidth: 120 }}
+                                      ellipsis
+                                    >
+                                      {field.key}
+                                    </Typography.Text>
+                                    {field.kind === 'boolean' ? (
+                                      <Switch
+                                        checked={field.draft.trim() === 'true'}
+                                        onChange={(checked) =>
+                                          updateWizardDraft(
+                                            rec.id,
+                                            field.key,
+                                            String(checked),
+                                          )
+                                        }
+                                      />
+                                    ) : field.kind === 'json' ? (
+                                      <TextArea
+                                        autoSize={{ minRows: 1, maxRows: 4 }}
+                                        style={{ flex: 1 }}
+                                        value={field.draft}
+                                        status={fieldError ? 'error' : undefined}
+                                        onChange={(event) =>
+                                          updateWizardDraft(
+                                            rec.id,
+                                            field.key,
+                                            event.target.value,
+                                          )
+                                        }
+                                      />
+                                    ) : (
+                                      <Input
+                                        type={
+                                          field.kind === 'number'
+                                            ? 'number'
+                                            : undefined
+                                        }
+                                        style={{ flex: 1 }}
+                                        value={field.draft}
+                                        status={fieldError ? 'error' : undefined}
+                                        onChange={(event) =>
+                                          updateWizardDraft(
+                                            rec.id,
+                                            field.key,
+                                            event.target.value,
+                                          )
+                                        }
+                                      />
+                                    )}
+                                  </div>
+                                  {fieldError && (
+                                    <Typography.Text
+                                      type="danger"
+                                      style={{ fontSize: 12 }}
+                                    >
+                                      {fieldError.errorCode === 'not_a_number'
+                                        ? t('recording.wizardNotANumber')
+                                        : t('recording.wizardInvalidJson')}
+                                    </Typography.Text>
+                                  )}
+                                </div>
+                              )
+                            })}
+                            <Button
+                              type="primary"
+                              size="small"
+                              loading={replayBusyId === rec.id}
+                              onClick={() => runWizardReplay(rec.id)}
+                            >
+                              {t('recording.wizardReplay')}
+                            </Button>
+                          </Space>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
                 {report && (
