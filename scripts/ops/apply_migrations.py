@@ -12,7 +12,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from atlas.memory.database import create_database_engine
+from atlas.memory.database import create_database_engine, wait_for_database
 from atlas.storage.migrations import (
     apply_pending,
     default_migrations_dir,
@@ -29,10 +29,15 @@ def main() -> int:
     args = parser.parse_args()
 
     engine = create_database_engine()
-    processed = apply_pending(
-        engine,
-        default_migrations_dir(),
-        mark_existing=args.mark_existing,
+    # docs/79（打包 S）D-4：空卷首启的 PG recovery 窗口有界重试，重试的是整个
+    # apply_pending（连接可能落在任何一次 engine.begin() 上；每次入口重算已应用版本，
+    # 单事务执行 ⇒ 重试幂等安全）。预算耗尽仍抛 ⇒ 非零码退出，fail-closed 不变。
+    processed = wait_for_database(
+        lambda: apply_pending(
+            engine,
+            default_migrations_dir(),
+            mark_existing=args.mark_existing,
+        )
     )
     if processed:
         for version in processed:
