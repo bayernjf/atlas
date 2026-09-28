@@ -676,7 +676,7 @@ graph: graph_definition    # 录制时的图快照（冻结，非 graph_id 活�
 subgraphs: {graphId: raw}  # D26-b（2026-09-19，29bb3d9）纯超集：录制时递归冻结的子图 raw（深度≤3、visited 防环、引用缺失不阻断）；旧用例缺省 {}
 created_at: string         # UTC ISO-8601
 recorded_at: string | null # C 包（2026-09-19，3415377）纯超集：回放冻结时钟锚点（UTC ISO）；新用例入库时与 created_at 同 stamp（端点不重跑 baseline，锚点＝入库时刻），旧用例为 null（回放回退 created_at）；进程内/PG 两档一致（迁移 007）
-rng_seed: int | null       # 打包 W（docs/84；2026-09-29）纯超集：随机种子锚点（与 recorded_at 同类录制事实）；replay 与 gate 经 seed_anchor(case) 注入 run_graph，random/randint/uuid 确定重放；旧用例 null（挂 rng_seed_note，随机分支可能漂移）；随 case JSON 落盘零迁移
+rng_seed: int | null       # 打包 W（docs/84；2026-09-29）纯超集：随机种子锚点（与 recorded_at 同类录制事实）；replay 与 gate 经 seed_anchor(case) 注入 run_graph，random/randint/uuid 确定重放；旧用例 null（挂 rng_seed_note，随机分支可能漂移）；PG 档经 migration 033 补 recordings.rng_seed BIGINT（进程内档随 case JSON 落盘）
 # GET /api/recordings 列表投影（不含 graph/steps）
 items: [{id, name, graph_id, node_count, step_count, status, created_at}]
 # POST /api/recordings/{id}/replay（body 可省略；docs/28 §2.2，c7bf138，D26 部分取回）

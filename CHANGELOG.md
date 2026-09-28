@@ -3,6 +3,13 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### feat(recording)：随机/UUID 表达式函数与回放种子化，random/randint/uuid 按录制种子确定重放（2026-09-29；打包 W；D15 余部切片；migration 033／零新依赖）
+
+- **一句话**：条件表达式纯超集新增 `random()`／`randint(a,b)`／`uuid()` 三个白名单函数（前后端同构、禁 eval 不变），随机性全部来自**每次运行注入的种子 RNG**——`run_graph(rng_seed=None)` 未传则入口 `secrets.randbits(63)` 生成，一个 Random 经 compile_graph/`evaluate_expression(rng=)` 全链透传，subgraph 重入复用同一实例。
+- **录制事实**：seed 与 recorded_at 同类——RunResult 与 run_end 帧带 `rng_seed`，`RecordingCreateRequest`/`RecordingCase` 加 `rng_seed`（前端把所录运行的种子原样回带），replay（mock/非 mock 一致）与 gate 经 `seed_anchor(case)` 锚定；历史用例缺种子不伪造、报告挂中文 `rng_seed_note`。
+- **迁移**：PG 档 recordings 为显式列，migration **033** 补 `rng_seed BIGINT`（可空，历史行 NULL；早期契约稿"零迁移"判断仅对进程内档成立，docs/84 已订正）。
+- **门（先跑后写，取实跑）**：后端 U970–U973 落 `tests/test_random_seed_replay.py`（12 例：函数纯逻辑与 stdlib 同序、run_graph 同种复现/subgraph 共享流、API 全链路录制回放与历史回退），落码前基线 2047 passed/135 skipped；前端 748 passed/2 skipped、`pnpm build` ✓。
+- **边界照实**：`choice()`/按权重采样、客户端钉种子、断点续跑帧携种子、命名时区仍缓做，**D15 整体不解除**。契约 docs/84。
 ### feat(recording)：LLM 语义分支录制回放脚本化，mock 回放零 LLM 调用确定重放（2026-09-29；打包 V；D14 余部切片；零迁移／零新依赖／前端不动）
 
 - **一句话**：conditionMode=llm 的录制用例此前 mock_tools 回放只给 tool_call 打桩，LLM 分流仍走真实/离线分类器——CI 无模型必漂 defaultTarget，有模型也可能随供应商抖动。本批让 `mock_tools=true` 回放**按录制时的分支标签确定性重放**：分类器 Protocol 加可选 `node_id`（Offline/LiteLLM 签名补齐、行为不变），新 `ScriptedConditionClassifier`（命中 node_id 返录制标签含 `__default__`，未知节点/None 抛 ConditionClassifyError 走 defaultTarget），`recording/replay.py` 加 `build_condition_script(case)`（dedupe 后只收 mode=llm 的 condition 步骤）。
