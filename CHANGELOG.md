@@ -3,6 +3,14 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### feat(template)：用户自建流程模板库 v1，画布另存为租户私有模板、与内置目录合并展示并可删除（2026-09-29；打包 X；D25 余部切片；migration 034／零新依赖）
+
+- **一句话**：只读内置目录（`template/catalog.py`，5 个内置模板）之外，租户可把当前画布**另存为私有模板**，并在既有「从模板新建」浏览器里合并展示、可删除；按租户分区，进程内/PG 两档存储。
+- **REST**：`POST /api/templates`（operate）body `{name 1-60 trim 后非空, description 0-200 缺省"", tags 每项 1-20 至多 8, graph}`，`parse_graph` 仅校验图可编译（不过 compile/run；失败 422 中文），图原样存，201 返完整模板；`GET /api/templates` 合并——内置在前（目录序）、用户按 created_at 倒序接后，纯超集加 `source: "catalog"|"user"`/`deletable`（列表投影仍不含 graph）；`GET /api/templates/{id}` 内置未命中再查用户模板；`DELETE /api/templates/{id}`（operate）仅删用户模板返 `{deleted:true}`——**内置 id 与不存在 id（含已删、跨租户）统一 404** `模板不存在：{id}`，不做内置 id 枚举器，第二次删 404。无 PUT/PATCH（删旧建新）。
+- **存储**：内存 `template/user_store.py: UserTemplateStore`（单锁、租户内 seq）；PG `template/pg_store.py: PgUserTemplateStore`＋migration **034** `user_templates`（tenant_id+id PK、`(tenant_id,seq)` 唯一索引、tags/graph JSONB、created_at TEXT；seq 同租户行锁内 MAX+1）；TenantServices 装配，reset_tenant 随运行时数据清空。
+- **门（先跑后写，取实跑）**：后端 U974–U979 落 `tests/test_user_templates.py`（14 例：store CRUD/seq/clear、POST 201 与各类 422、GET 合并、DELETE 404 口径、跨租户分区、viewer 403、reset 清空），落码前基线 2059，全量 **2071 passed / 135 skipped / 0 failed**；前端 748 passed/2 skipped、`pnpm build` ✓；**真实浏览器验收**：另存→合并列表（5 内置「内置」Tag＋1「我的模板」）→Popconfirm 删除逐项通过、零意外 console 错误。
+- **边界照实**：模板更新/PUT、分类目录与搜索、市场/跨租户共享、URL 导入导出、版本钉版、参数化实例化向导仍缓做，**D25 整体不解除**。契约 docs/85。
+
 ### feat(recording)：随机/UUID 表达式函数与回放种子化，random/randint/uuid 按录制种子确定重放（2026-09-29；打包 W；D15 余部切片；migration 033／零新依赖）
 
 - **一句话**：条件表达式纯超集新增 `random()`／`randint(a,b)`／`uuid()` 三个白名单函数（前后端同构、禁 eval 不变），随机性全部来自**每次运行注入的种子 RNG**——`run_graph(rng_seed=None)` 未传则入口 `secrets.randbits(63)` 生成，一个 Random 经 compile_graph/`evaluate_expression(rng=)` 全链透传，subgraph 重入复用同一实例。

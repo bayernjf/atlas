@@ -42,6 +42,7 @@
 | `sql_read_only_guard` | 安全准入（docs/32，**2026-09-21 已落码**）：`src/atlas/database/guard.py`，接 04 §4.7 数据适配器 | 只读 SQL 静态审查（去注释/拒多语句/只放单条 SELECT/WITH…SELECT）、外部连接 execute 禁用；错误码 DB_SQL_NOT_READ_ONLY/DB_WRITE_FORBIDDEN |
 | `circuit_state` | 安全准入（docs/32，**2026-09-21 已落码**）：`src/atlas/httpapi/resilience.py`，接 04 §4.6 | RetryPolicy（传输层/429/502/503/504＋幂等方法、指数退避抖动）与按 host 熔断 closed/open/half-open；错误码 HTTP_CIRCUIT_OPEN |
 | `template_catalog` | 04 / 五、逻辑组件 5.10 流程模板库（内置只读）v1 契约（权威 blockquote）+ `src/atlas/template/catalog.py`（5 个内置模板元数据与 graph） | ### 5.10 流程模板库（内置只读） |
+| `user_template` | **打包 X（docs/85；2026-09-29 落码 `1756c67/e5e4f78`）**：租户私有自建模板，POST/DELETE /api/templates；两档存储＋migration 034 user_templates；形状权威 docs/85 | ### `user_template` — 字段概览 |
 | `recording_case` | 04 / 五、逻辑组件 5.11 操作录制与回放 v1 契约（权威 blockquote）+ `src/atlas/recording/{cases,replay,gate,snapshots}.py`（录制用例模型与进程内存储；M9 增 gate 发布前批量回放门禁；D26-b 增 `subgraphs` 快照内联，仅 replay 内联、gate 保持实时，见下行 `release_gate`；C 包 `3415377` 增 `recorded_at` 回放冻结时钟锚点与 today/now/datetime/hoursBetween 时钟函数，权威见 04 §5.1 C 注记；docs/28 批 1（2026-09-20）：PG 富字段 graph_id/subgraphs 持久化修复（d1f455b，迁移 008）、单用例 Mock 工具回放＋入参覆写（c7bf138）、PUT 用例编辑（89e21fc）） | ### 5.11 操作录制与回放 |
 | `debug_session` | 04 / 五、逻辑组件 5.12 单步调试与断点 v1 契约（权威 blockquote）+ `src/atlas/debug/{sessions,controller}.py`（运行期调试会话、暂停状态机、paused/stopped/debug_log 帧、hitCount/logpoint、resume globals 浅合并）+ `src/atlas/collaboration/cancellations.py`（B 包 f9a1301：RunCancelled/RunCancellationBroker 协作式急停、cancelled 帧） | ### 5.12 单步调试与断点 |
 | `monitoring` | 04 / 五、逻辑组件 5.13 基础监控告警 v1 契约（权威 blockquote）+ `src/atlas/monitoring/{records,metrics,alerts,business}.py`（运行记录 ring、指标聚合、规则求值与告警状态机；M9 增业务结果指标与 rollout_gate 告警动作，见下行 `business_metrics`） | ### 5.13 基础监控告警 |
@@ -653,11 +654,33 @@ description: string        # 一句话场景
 tags: [string]             # 展示标签
 graph: graph_definition    # 完整 version 1 Graph JSON，节点 id 固定，加载不重映射
 # GET /api/templates 列表投影（不含 graph）
-items: [{id, name, description, tags, node_count}]
+items: [{id, name, description, tags, node_count, source, deletable, created_at?}]
 node_count: int            # graph.nodes 数量（服务端投影）
+source: "catalog" | "user" # 打包 X（docs/85，2026-09-29）：内置恒 catalog
+deletable: bool            # 内置恒 false
 # GET /api/templates/{id} 返回完整 TemplateMeta（含 graph）；未知 id 404
 ```
-> 只读内置目录：随代码版本发布，无 DB、无 CRUD、`/api/demo/reset` 不影响；「从模板新建」为客户端整画布替换，保存后为普通 graph-N 与模板无关。权威契约见 04 §5.10，REST 见 12 §5。
+> 只读内置目录：随代码版本发布，无 DB、无 CRUD、`/api/demo/reset` 不影响；「从模板新建」为客户端整画布替换，保存后为普通 graph 与模板无关。权威契约见 04 §5.10，REST 见 12 §5。
+
+### `user_template` — 字段概览（**打包 X，docs/85；2026-09-29 落码 `1756c67/e5e4f78`**；租户私有，`POST/DELETE /api/templates`）
+
+```yaml
+# 请求 POST /api/templates（UserTemplateCreateRequest，operate；201）
+name: string               # 1-60，trim 后非空（否则 422 中文）
+description: string        # 0-200，缺省 ""
+tags: [string]             # 每项 1-20、至多 8 项，缺省 []（v1 前端不暴露控件）
+graph: graph_definition    # parse_graph 校验可编译（不过 compile/run；失败 422），校验后原样存
+# 用户模板（权威实现 template/user_store.py UserTemplate；PG 表 user_templates，migration 034）
+id: string                 # utpl-<租户内 seq>，每租户独立从 1 起
+created_at: string         # TEXT ISO
+# GET /api/templates 合并投影：内置在前（目录序），用户按 created_at 倒序接后；
+#   用户条目带 source="user"/deletable=true/created_at
+# GET /api/templates/{id}：内置未命中再查用户模板；返回同形 + source/deletable
+# DELETE /api/templates/{id}（operate）：仅删用户模板，返回 {deleted:true}；
+#   内置 id 与不存在 id（含已删）统一 404「模板不存在：{id}」，不做幂等 204
+# 无 PUT/PATCH（D-4）；reset_tenant 清空用户模板（运行时数据同口径）
+```
+> 租户私有：跨租户 GET 合并不可见、DELETE 他人 id 404；市场/共享/分类/更新仍随 D25 余部缓做。权威形状＝docs/85，REST 见 12 §5。
 
 ### `recording_case` — 字段概览（Phase 2 能力项，2026-09-15；`/api/recordings*`）
 

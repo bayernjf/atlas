@@ -190,6 +190,26 @@ def list_templates() -> list[TemplateMeta]: ...   # 目录常量直接返回
 def get_template(template_id: str) -> TemplateMeta | None: ...   # 未知 id 返 None（REST 映射 404）
 # graphs.py：refund_template_graph()（退款 golden 图单一事实源，llm/nl_generate.py 导入）
 #            + http/sql/审批四个模板图构造函数；每个模板 graph 必须过 parse_graph/validate_graph
+
+# --- 打包 X（docs/85；2026-09-29）：租户私有用户模板，两档同构 -------------
+# src/atlas/template/user_store.py
+class UserTemplate(BaseModel):
+    id: str                # "utpl-{租户内 seq}"
+    name: str
+    description: str
+    tags: list[str]
+    graph: dict
+    created_at: str        # ISO
+
+class UserTemplateStore:                    # 内存档（单锁、租户内 seq）
+    def add(self, *, name: str, description: str, tags: list[str], graph: dict) -> UserTemplate: ...
+    def get(self, template_id: str) -> UserTemplate | None: ...
+    def list(self) -> list[UserTemplate]: ...            # seq 倒序
+    def delete(self, template_id: str) -> bool: ...
+    def clear(self) -> None: ...
+# template/pg_store.py PgUserTemplateStore(engine, tenant_id)：方法面逐字一致；
+#   表 user_templates（migration 034），seq 取同租户 MAX+1（FOR UPDATE）。
+# 装配：TenantServices.user_templates（registry 两档分支）；reset_tenant.clear()
 ```
 
 ### 3.7 操作录制与回放（04 §5.11，06 §6.9）
@@ -894,8 +914,10 @@ class MemoryRepository(Protocol):
 | POST | /api/graphs/{id}/rollout/start | 【operate，M9】idle→canary：取最新两个发布版（stable=前一版、candidate=最新版）；发布版不足 2 个 → 409「至少需要两个发布版本才能开始灰度」；未配置 RolloutConfig 409；返回 rollout 快照 | rollout_config |
 | POST | /api/graphs/{id}/rollout/promote | 【operate，M9】canary→full：**唯一放量路径，仅手动**（全仓无自动 promote）；状态非 canary 409；返回快照 | rollout_config |
 | POST | /api/graphs/{id}/rollout/rollback | 【operate，M9】任意态→rolled_back（candidate 撤流、stable 接全量）；自动门控（actor="auto"）与手动（actor="manual"）同一幂等函数，重复回滚幂等 200；body 可选 `{reason?}`；返回快照 | rollout_config / business_metrics |
-| GET | /api/templates | 内置流程模板目录列表（Phase 2 能力项，只读代码常量；返回 `{items:[{id,name,description,tags,node_count}]}`，不含 graph；不受 reset 影响） | template_catalog |
-| GET | /api/templates/{id} | 模板详情：完整 TemplateMeta 含 `graph`（可直接载入画布/保存为新图）；未知 id 404 | template_catalog / graph_definition |
+| GET | /api/templates | 模板列表（read）：内置只读目录在前（目录序）＋租户自建模板（docs/85 打包 X，2026-09-29）按 created_at 倒序接后；返回 `{items:[{id,name,description,tags,node_count,source,deletable,created_at?}]}`，不含 graph；内置条目 source=catalog/deletable=false，不受 reset 影响 | template_catalog / user_template |
+| GET | /api/templates/{id} | 模板详情（read）：内置命中返回完整 TemplateMeta 含 `graph`（source=catalog/deletable=false）；未命中再查租户用户模板（source=user/deletable=true）；均无 404 | template_catalog / user_template / graph_definition |
+| POST | /api/templates | **打包 X（docs/85，2026-09-29 落码 `1756c67`，operate）**：画布另存为租户私有模板；body `{name 1-60 trim 后非空, description 0-200 缺省"", tags 每项 1-20 至多 8 缺省[], graph}`，`parse_graph` 仅校验可编译（失败 422 中文），图原样存；201 返回完整模板（含 source=user/deletable=true/created_at）；id=`utpl-<租户内 seq>` | user_template |
+| DELETE | /api/templates/{id} | **打包 X（docs/85，operate）**：仅删用户模板，返回 `{deleted:true}`；内置 id 与不存在 id（含已删、跨租户）统一 404 `模板不存在：{id}`，第二次删除 404（无幂等 204） | user_template |
 | GET | /api/cards | 内置交互卡片目录（M8 已落码 2026-09-18，viewer+；只读代码常量，不受 reset 影响）：`{items:[{id,name,channels,sections,actions,fallback?}]}`（CardTemplate 投影，供配置态 card-select 与运行态渲染） | card_template |
 | GET | /api/approvals/{token}/card | 审批卡片按渠道渲染（M8，viewer+）：`?channel=web\|im\|email`（缺省 web），返回 §3.11 对应渠道渲染产物；未知 token 404、该审批未配 cardTemplateId（无卡片）404、非法 channel 422；渲染上下文取挂起时快照（中断恢复后从帧重建）；**只读，不产生决策副作用**（邮件链接为 GET 落地页，决策一律走 POST） | card_template / human_approval |
 | POST | /api/recordings | 录制用例入库（Phase 2 能力项）：请求体 `{name(1-100), graph_id, inputs, steps:[{node_id,node_type,output}], status}`，服务端按 graph_id 取已保存图原始 JSON 作**快照**存入（不重新执行；graph 未知 404、steps 形状非法 422、空 steps 422），201 返回完整 RecordingCase；**M9 起 graph_id 一并落库**（纯超集，旧用例该字段为空串）；**D26-b（2026-09-19，`29bb3d9`）起录制创建时递归收集父图及嵌套子图 raw 入纯超集 `subgraphs:{graphId:raw}`**（深度≤3、visited 防环、引用缺失不阻断录制），单用例 replay 内联优先解析、发布门禁仍实时解析（见 04 §5.11）；**C 包 `3415377` 起入库即写 `recorded_at`（UTC ISO，与 created_at 同 stamp，回放冻结时钟锚点；端点不重跑 baseline）**；**打包 W（docs/84；2026-09-29）起请求体/RecordingCase 纯超集加 `rng_seed:int|null`（所录运行的随机种子，由 run 结果回传前端原样回带；PG 档经 migration 033 补 recordings.rng_seed BIGINT，进程内档随 case JSON 落盘）** | recording_case |
