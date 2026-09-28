@@ -3,6 +3,14 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### docs(governance)：实测"Atlas 能不能被外部系统经 MCP 使用"，并给它补上迟到的缓做登记 **D45**（2026-09-28，纯 docs）
+
+- **起因是一句提问**：用户问"atlas 有 skill／MCP 文档吗，其他系统通过 MCP 使用 atlas 需要说明的吧"。**答案要先量**：按词边界、忽略大小写搜 `src/` 对 `mcp|model context protocol|a2a` → **0 命中**；`pyproject.toml` 无相关依赖；仓库里其它 `MCP` 字样（docs/20／36／49）全是**我们自己跑浏览器冒烟用的工具**，不是 Atlas 的对外面。⇒ **"通过 MCP 操控 Atlas"今天不成立，那份说明书的前提不存在**；也没有"给外部 agent 看的集成说明"（`TRIAL.md` 给人用、docs/12 是内部接口清单）。
+- **治理缺口才是这条的重点**：docs/25 §① 早在 2026-09-19 就写了"无 MCP／A2A"，但它的缓做落点写成"见 14 文档 D5 NATS／D6 多实例网关"——那两条是任务总线与网关语言，**跟对外协议出入口不是一回事**。结果是这条缓做长期**没有自己的触发条件**，下一个人只能重新猜。按 AGENTS.md 与 docs/00"缓做项在 14 登记、每条带触发条件"，补 **D45**，并在 docs/25 原句后加同日补正（正文不改写）。
+- **现状说准，别写成"接不了外部系统"**：今天对接走三条路——REST（Bearer＋租户分区＋三角色 RBAC）、入站 webhook（`channels/webhooks.py:32/45-49` 对原始 body 做 HMAC-SHA256）、把外部 OpenAPI 规格导入成图内工具（`graph/loader.py:1838` 的 `openapi:` 通道）。**缺的是协议标准化与工具自描述，不是接入能力**——这个区分决定它是"补一层 MCP 门面"还是"重做集成层"，工作量差一个量级。
+- **立了规矩再动手**：真要做 MCP server 就是**选型变更**（引 MCP SDK vs 自研 stdio／HTTP ＋ 鉴权透传 ＋ 审批挂起语义映射），按本仓治理必须先落 docs/10 §4 的 ADR。D45 行与 docs/08 §八 都把这句写死了，免得将来有人直接写代码。**待你拍的现在攒两条**：MCP 立项三选项（只登记／写 REST 集成说明／立 MCP 批），以及 docs/73 4.2 首启就绪竞态选"有界重试"还是"改探针"。
+- **零代码／零测试改动**；`tests/test_handoff_integrity.py` 复跑绿。
+
 ### docs(review)：prod 形态第一次真跑 compose 全新安装——4.1 推进但未达成，并量出一条首启就绪竞态（2026-09-28，docs/77 §8／docs/73 新增 4.2；零代码改动）
 
 - **为什么单独记**：六次复审都在读闸门、跑单测，**没有人真在空卷上把 prod 形态起过一次**。这次做了（`docker compose -p review6`，project 命名空间隔离，自己的卷 `review6_atlas-pgdata`，收尾 `down -v` 只删自己那份；机器上另一套 `atlas_atlas-pgdata` 与 `atlas-*` 全程未触碰）。镜像必须先重建——`atlas-demo:latest` 是 7 天前的，不重建就演不到 W5-5.2 的新注册逻辑。
