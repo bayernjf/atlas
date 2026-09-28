@@ -3,6 +3,17 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### feat(memory)＋feat(ops)＋feat(api)＋test＋docs：空卷首启就绪竞态改为有界重试（2026-09-28，打包 S／docs/79，解 docs/73 明细项 4.2）
+
+- **一句话**：docs/77 §8 在 prod＋空卷第一次真跑时量出的**首启就绪竞态**——PG initdb 后有一段约 **90s** 的 recovery 窗口，其间一切连接被 `FATAL: the database system is in recovery mode` 拒绝，而 compose 给 `db` 的探针 `pg_isready` **在这窗口里判过了 healthy** ⇒ atlas 被 `depends_on: service_healthy` 放行 ⇒ 入口脚本迁移 CLI（`set -e`）连库即抛、容器退出，**靠 `restart: unless-stopped` 第二次才起**。本批让迁移与应用启动各自**有界等待连通性**，使"一次就到 ready"不再依赖重启策略。
+- **口径 (a)＝应用与迁移各自加有界重试**（用户拍板，否掉 (b) 把探针换成 `SELECT pg_is_in_recovery()`）⇒ **compose 一行未动**：`pg_isready` 探针、`depends_on: service_healthy`、`restart: unless-stopped` 全部保留（`restart` 降为**兜底**，不再是首启路径的依赖）。
+- **六条决策 D-1~D-6（形状权威＝docs/79）**：只重试**连通性类**错误——SQLAlchemy `OperationalError`/`InterfaceError` 且消息命中 `recovery mode`/`starting up`/`connection refused`/`could not connect`/`connection failed`/`connection reset`/`server closed the connection`/`terminating connection`，并**显式否定**认证失败/权限/不存在；**SQL 语法、约束、权限、认证失败一律不重试**（立即原样抛）／**有界预算**缺省 **120s**、间隔 **2s**（`ATLAS_DB_READY_TIMEOUT_SECONDS`/`ATLAS_DB_READY_INTERVAL_SECONDS`，非数字或负值回退缺省）／**迁移 CLI fail-closed 不变**：重试**整个** `apply_pending`（每次入口重算已应用版本、单文件单事务 ⇒ 幂等安全），预算耗尽仍抛 ⇒ 非零退出（`restart` 仍是最后一层）／**应用 lifespan 不阻断启动**：在 `recover_pending()` 之前先做有界连通性等待（成功 ⇒ 恢复扫描/retention 不再被静默跳过；耗尽 ⇒ 只记 warning，`/api/ready` 仍对 PG 真 `SELECT 1` 返 503）／零新依赖·零迁移·零新端点·零新错误码·无新 ADR／不动 `ping()` 返回契约与 `apply_pending` 签名。
+- **改动面**：`src/atlas/memory/database.py`（新件 `CONNECTIVITY_RETRY_MARKERS`／`is_retryable_connectivity_error`／`wait_for_database`／`database_ready_timeout_seconds`·`database_ready_interval_seconds`）＋**两接入点** `scripts/ops/apply_migrations.py`、`src/atlas/api/main.py` lifespan；`.env.example` 登记两 env。
+- **测试（U944–U950，7 例，新建 `tests/test_db_connect_retry.py`）**：分隔符判别（可重试/不可重试/非 SQLAlchemy 异常不重试）／预算内重试后成功并返回 `operation()` 结果／预算耗尽原样抛最后一次异常／非可重试立即抛不空等／env 读取容错回退缺省；docs/13 同步登记。
+- **门（先跑后写，取实跑）**：后端全量 `.venv/bin/pytest` ＝ **2020 passed / 125 skipped / 0 failed**（107.05s；基线 2013/125 ⇒ **净增 7**，skipped 不变 ⇒ 常跑零回归）；`tests/test_handoff_integrity.py` **3 passed**。
+- **真机〔跑〕**：`docker compose -p s79 --env-file <一次性随机密钥> up -d --build`（build 494s）⇒ `/api/ready` **T+9s 返 200**、atlas/db **`RestartCount=0`**、`applied 001…030`、prod 跳过播种；**但本机 load≈4.4、未触发 recovery 竞态**（迁移与启动首连即成功：`等待 0.0s、尝试 1 次`）。改以**窗口直测**补证：空卷 PG 下 `+0.00s connection failed: … Connection refused` → `+1.01s OK`；并记下坑——直接 `psycopg.connect` 抛的是 psycopg 自身 `OperationalError`（不继承 SQLAlchemy 的）⇒ 判别器会判 False，**经 SQLAlchemy 引擎（产品实际路径）则判 True，非缺陷**。
+- **取舍照实**：未在失控负载下重演 90s 窗口；资源用 `down -v` 收尾删净（机器上另一套 `atlas_atlas-pgdata` 与既有容器全程未触碰）。**不 push 除非明确指示**；不动单副本三道闸、不解除任何缓做、**不改 B 档判定**（4.1 prod 完整演练后半程仍未达）。
+
 ### docs(governance)：实测"Atlas 能不能被外部系统经 MCP 使用"，并给它补上迟到的缓做登记 **D45**（2026-09-28，纯 docs）
 
 - **起因是一句提问**：用户问"atlas 有 skill／MCP 文档吗，其他系统通过 MCP 使用 atlas 需要说明的吧"。**答案要先量**：按词边界、忽略大小写搜 `src/` 对 `mcp|model context protocol|a2a` → **0 命中**；`pyproject.toml` 无相关依赖；仓库里其它 `MCP` 字样（docs/20／36／49）全是**我们自己跑浏览器冒烟用的工具**，不是 Atlas 的对外面。⇒ **"通过 MCP 操控 Atlas"今天不成立，那份说明书的前提不存在**；也没有"给外部 agent 看的集成说明"（`TRIAL.md` 给人用、docs/12 是内部接口清单）。
