@@ -3,6 +3,38 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### feat(memory)＋feat(ops)＋feat(api)＋test＋docs：空卷首启就绪竞态改为有界重试（2026-09-28，打包 S／docs/79，解 docs/73 明细项 4.2）
+
+- **一句话**：docs/77 §8 在 prod＋空卷第一次真跑时量出的**首启就绪竞态**——PG initdb 后有一段约 **90s** 的 recovery 窗口，其间一切连接被 `FATAL: the database system is in recovery mode` 拒绝，而 compose 给 `db` 的探针 `pg_isready` **在这窗口里判过了 healthy** ⇒ atlas 被 `depends_on: service_healthy` 放行 ⇒ 入口脚本迁移 CLI（`set -e`）连库即抛、容器退出，**靠 `restart: unless-stopped` 第二次才起**。本批让迁移与应用启动各自**有界等待连通性**，使"一次就到 ready"不再依赖重启策略。
+- **口径 (a)＝应用与迁移各自加有界重试**（用户拍板，否掉 (b) 把探针换成 `SELECT pg_is_in_recovery()`）⇒ **compose 一行未动**：`pg_isready` 探针、`depends_on: service_healthy`、`restart: unless-stopped` 全部保留（`restart` 降为**兜底**，不再是首启路径的依赖）。
+- **六条决策 D-1~D-6（形状权威＝docs/79）**：只重试**连通性类**错误——SQLAlchemy `OperationalError`/`InterfaceError` 且消息命中 `recovery mode`/`starting up`/`connection refused`/`could not connect`/`connection failed`/`connection reset`/`server closed the connection`/`terminating connection`，并**显式否定**认证失败/权限/不存在；**SQL 语法、约束、权限、认证失败一律不重试**（立即原样抛）／**有界预算**缺省 **120s**、间隔 **2s**（`ATLAS_DB_READY_TIMEOUT_SECONDS`/`ATLAS_DB_READY_INTERVAL_SECONDS`，非数字或负值回退缺省）／**迁移 CLI fail-closed 不变**：重试**整个** `apply_pending`（每次入口重算已应用版本、单文件单事务 ⇒ 幂等安全），预算耗尽仍抛 ⇒ 非零退出（`restart` 仍是最后一层）／**应用 lifespan 不阻断启动**：在 `recover_pending()` 之前先做有界连通性等待（成功 ⇒ 恢复扫描/retention 不再被静默跳过；耗尽 ⇒ 只记 warning，`/api/ready` 仍对 PG 真 `SELECT 1` 返 503）／零新依赖·零迁移·零新端点·零新错误码·无新 ADR／不动 `ping()` 返回契约与 `apply_pending` 签名。
+- **改动面**：`src/atlas/memory/database.py`（新件 `CONNECTIVITY_RETRY_MARKERS`／`is_retryable_connectivity_error`／`wait_for_database`／`database_ready_timeout_seconds`·`database_ready_interval_seconds`）＋**两接入点** `scripts/ops/apply_migrations.py`、`src/atlas/api/main.py` lifespan；`.env.example` 登记两 env。
+- **测试（U944–U950，7 例，新建 `tests/test_db_connect_retry.py`）**：分隔符判别（可重试/不可重试/非 SQLAlchemy 异常不重试）／预算内重试后成功并返回 `operation()` 结果／预算耗尽原样抛最后一次异常／非可重试立即抛不空等／env 读取容错回退缺省；docs/13 同步登记。
+- **门（先跑后写，取实跑）**：后端全量 `.venv/bin/pytest` ＝ **2020 passed / 125 skipped / 0 failed**（107.05s；基线 2013/125 ⇒ **净增 7**，skipped 不变 ⇒ 常跑零回归）；`tests/test_handoff_integrity.py` **3 passed**。
+- **真机〔跑〕**：`docker compose -p s79 --env-file <一次性随机密钥> up -d --build`（build 494s）⇒ `/api/ready` **T+9s 返 200**、atlas/db **`RestartCount=0`**、`applied 001…030`、prod 跳过播种；**但本机 load≈4.4、未触发 recovery 竞态**（迁移与启动首连即成功：`等待 0.0s、尝试 1 次`）。改以**窗口直测**补证：空卷 PG 下 `+0.00s connection failed: … Connection refused` → `+1.01s OK`；并记下坑——直接 `psycopg.connect` 抛的是 psycopg 自身 `OperationalError`（不继承 SQLAlchemy 的）⇒ 判别器会判 False，**经 SQLAlchemy 引擎（产品实际路径）则判 True，非缺陷**。
+- **取舍照实**：未在失控负载下重演 90s 窗口；资源用 `down -v` 收尾删净（机器上另一套 `atlas_atlas-pgdata` 与既有容器全程未触碰）。**不 push 除非明确指示**；不动单副本三道闸、不解除任何缓做、**不改 B 档判定**（4.1 prod 完整演练后半程仍未达）。
+
+### docs(governance)：实测"Atlas 能不能被外部系统经 MCP 使用"，并给它补上迟到的缓做登记 **D45**（2026-09-28，纯 docs）
+
+- **起因是一句提问**：用户问"atlas 有 skill／MCP 文档吗，其他系统通过 MCP 使用 atlas 需要说明的吧"。**答案要先量**：按词边界、忽略大小写搜 `src/` 对 `mcp|model context protocol|a2a` → **0 命中**；`pyproject.toml` 无相关依赖；仓库里其它 `MCP` 字样（docs/20／36／49）全是**我们自己跑浏览器冒烟用的工具**，不是 Atlas 的对外面。⇒ **"通过 MCP 操控 Atlas"今天不成立，那份说明书的前提不存在**；也没有"给外部 agent 看的集成说明"（`TRIAL.md` 给人用、docs/12 是内部接口清单）。
+- **治理缺口才是这条的重点**：docs/25 §① 早在 2026-09-19 就写了"无 MCP／A2A"，但它的缓做落点写成"见 14 文档 D5 NATS／D6 多实例网关"——那两条是任务总线与网关语言，**跟对外协议出入口不是一回事**。结果是这条缓做长期**没有自己的触发条件**，下一个人只能重新猜。按 AGENTS.md 与 docs/00"缓做项在 14 登记、每条带触发条件"，补 **D45**，并在 docs/25 原句后加同日补正（正文不改写）。
+- **现状说准，别写成"接不了外部系统"**：今天对接走三条路——REST（Bearer＋租户分区＋三角色 RBAC）、入站 webhook（`channels/webhooks.py:32/45-49` 对原始 body 做 HMAC-SHA256）、把外部 OpenAPI 规格导入成图内工具（`graph/loader.py:1838` 的 `openapi:` 通道）。**缺的是协议标准化与工具自描述，不是接入能力**——这个区分决定它是"补一层 MCP 门面"还是"重做集成层"，工作量差一个量级。
+- **立了规矩再动手**：真要做 MCP server 就是**选型变更**（引 MCP SDK vs 自研 stdio／HTTP ＋ 鉴权透传 ＋ 审批挂起语义映射），按本仓治理必须先落 docs/10 §4 的 ADR。D45 行与 docs/08 §八 都把这句写死了，免得将来有人直接写代码。**待你拍的现在攒两条**：MCP 立项三选项（只登记／写 REST 集成说明／立 MCP 批），以及 docs/73 4.2 首启就绪竞态选"有界重试"还是"改探针"。
+- **零代码／零测试改动**；`tests/test_handoff_integrity.py` 复跑绿。
+
+### docs(review)：prod 形态第一次真跑 compose 全新安装——4.1 推进但未达成，并量出一条首启就绪竞态（2026-09-28，docs/77 §8／docs/73 新增 4.2；零代码改动）
+
+- **为什么单独记**：六次复审都在读闸门、跑单测，**没有人真在空卷上把 prod 形态起过一次**。这次做了（`docker compose -p review6`，project 命名空间隔离，自己的卷 `review6_atlas-pgdata`，收尾 `down -v` 只删自己那份；机器上另一套 `atlas_atlas-pgdata` 与 `atlas-*` 全程未触碰）。镜像必须先重建——`atlas-demo:latest` 是 7 天前的，不重建就演不到 W5-5.2 的新注册逻辑。
+- **拿到的运行级确认**〔跑〕：prod＋空卷首启逐条 `applied 001…030`（`schema_migrations` 30 行／27 张表）、entrypoint 明示 prod 跳过播种、`admin123` **401** 而一次性引导口令 **200**、`ready=200`；**`GET /api/adapters` 在 prod 只回 `['http','message','memory']`** ⇒ 本仓库 R2 要求的"演示适配器不再注册"第一次被真进程证明，而不是靠收口文档自述。编译校验也活着：我手搓的代表图被 `APR_TARGETS_SAME`／`APR_EXACTLY_TWO_EDGES` 422 拒（带 codes 与 locations）。
+- **量出的新缺陷＝docs/73 4.2**：postgres 在 initdb 之后有一段 `syncing data directory (fsync)`（本机日志刷到 **90.21 s**），其间 TCP 连接一律 `FATAL: the database system is in recovery mode`；而 compose 给 `db` 的探针是 `pg_isready`，**在这段窗口里判过了 healthy** ⇒ `depends_on: service_healthy` 放行 atlas ⇒ 应用 import 期连库即抛、进程退出，**第二次才起来靠 `restart: unless-stopped`（`RestartCount=1`），应用与 entrypoint 自身没有任何有界重试**。⇒ README／docs/30 那句"`docker compose up` 一步到位"在 prod＋空卷下不成立；且它**只在全新卷首启触发**，这就是它此前从未被发现的结构性原因。修法待拍：有界重试，或把探针换成能区分 recovery 的 `SELECT pg_is_in_recovery()`。
+- **不记 ✅ 的部分照实**：「审批挂起→重启→续跑」与「`pg_dump`→删卷→`restore.sh`→对平行数」两段**没做完**——这台机器同时段 load average **385／427／393**，两个容器的健康探针开始返回 **exit −1（探针自己超时）**、DB 一起 unhealthy、`/api/ready` 拒连，而 `docker inspect` 是 `status=running`／`OOMKilled=false`／`ExitCode=0`。⇒ **环境把容器压住，不是产品行为**，所以 4.1 仍算未达成，重跑要在安静机器或 CI（service 容器里那段 fsync 只有秒级）。演练的价值是"推进了＋撞出 4.2"，**不是跨过终门**。
+
+### docs(governance)：把打包 R 挂在记录里的 D44 落进缓做表，并对平第六次复审的门数（2026-09-27，纯 docs）
+
+- **D44 只有日志、没有表行**：docs/14 的变更记录写着"新增 **D44**（`ai_decision` 低置信度挂起无法跨重启恢复）"，但表里没有 `| D44 |` 行（D40–D43 都有）。该表自称缓做项的**单一事实源**、且规定"新增缓做项在此登记"，所以按自己立的规矩补上行，并把"为什么故意不写帧"的因果钉在行里：`api/main.py:216` 的续跑扫描器把 `kind=="approval"` 一律按 `human_approval` 恢复，`ai_decision` 分支无 resume ⇒ 直接写帧会让重启**重跑决策并产生第二个 token**。触发条件随 **D20**（不解除、也不早于它单独做）。
+- **docs/77 §6 的门数按实测对平**：三条收口属实，但引的 2008/125/0 只是打包 R 那个原子的读数；HEAD `d066578` 的 CI runner 自己读数＝**2013 passed / 125 skipped / 0 failed**、PG 直连 **2133 / 5**、前端 **738 / 2**、gitleaks ✓。同时**更正我自己在 §4 R8 里开的药方**：我写"编译期就拒不带 `/` 的工具名"，落码侧采的是"只给 prod 补运行期门"——我回测了爆炸半径（`tests/` 里 **25 个文件**用裸名夹具，最多一个串 27 处），编译期校验会把这些夹具全打掉，**那条修法不成立**，记录照此改。
+- **本条为纯 docs**：零代码、零测试改动；复核方式＝逐条回代码（`loader.py:434-439` 真透传 prompt／`api/main.py:392-393` 注册按 `demo_surface_enabled()`／`notifications.py:106-107` 读 `delivered`／新测试文件在册），不采信收口文档自述。
+
 ### test(api)：修掉定时调度卡片测试的偶发红——两次读之间的 run 状态竞态（2026-09-28，CI push run 暴露）
 
 - **现象**：PR #84 的 `push` 触发那一跑里 `tests/test_api_schedules.py::test_u889d_schedule_card_carries_the_latest_run_status` 报 `AssertionError: assert 'completed' == 'running'`；同一 SHA 的 `pull_request` 跑全绿 ⇒ 偶发。
