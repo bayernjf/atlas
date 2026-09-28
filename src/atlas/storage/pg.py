@@ -677,6 +677,7 @@ class PgRecordingStore:
         graph_id: str = "",
         subgraphs: dict[str, dict[str, Any]] | None = None,
         recorded_at: str | None = None,
+        rng_seed: int | None = None,
     ) -> RecordingCase:
         with self._engine.begin() as conn:
             case_id = _next_id(conn, "rec")
@@ -687,9 +688,9 @@ class PgRecordingStore:
                 text(
                     "INSERT INTO recordings "
                     "(id, tenant_id, name, graph_id, graph, inputs, steps, status, "
-                    "created_at, recorded_at, subgraphs) "
+                    "created_at, recorded_at, subgraphs, rng_seed) "
                     "VALUES (:id, :tenant_id, :name, :graph_id, :graph, :inputs, :steps, "
-                    ":status, :created_at, :recorded_at, :subgraphs)"
+                    ":status, :created_at, :recorded_at, :subgraphs, :rng_seed)"
                 ),
                 {
                     "id": case_id,
@@ -703,12 +704,13 @@ class PgRecordingStore:
                     "created_at": created_at,
                     "recorded_at": recorded,
                     "subgraphs": json.dumps(frozen_subgraphs, ensure_ascii=False),
+                    "rng_seed": rng_seed,
                 },
             )
         return RecordingCase(
             id=case_id, name=name, graph_id=graph_id, graph=graph, inputs=inputs,
             steps=steps, status=status, created_at=created_at, recorded_at=recorded,
-            subgraphs=frozen_subgraphs,
+            subgraphs=frozen_subgraphs, rng_seed=rng_seed,
         )
 
     @staticmethod
@@ -717,12 +719,12 @@ class PgRecordingStore:
             id=row[0], name=row[1], graph=row[2], inputs=row[3],
             steps=[RecordStep(**step) for step in row[4]],
             status=row[5], created_at=row[6], recorded_at=row[7],
-            graph_id=row[8] or "", subgraphs=row[9] or {},
+            graph_id=row[8] or "", subgraphs=row[9] or {}, rng_seed=row[10],
         )
 
     _SELECT_COLS = (
         "SELECT id, name, graph, inputs, steps, status, created_at, recorded_at, "
-        "graph_id, subgraphs FROM recordings "
+        "graph_id, subgraphs, rng_seed FROM recordings "
     )
 
     def list(self) -> list[RecordingCase]:

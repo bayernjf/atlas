@@ -5,6 +5,7 @@
 
 from collections.abc import Callable
 from datetime import datetime, timezone
+import secrets
 from typing import Any
 
 from .cases import RecordStep, RecordingCase
@@ -215,3 +216,16 @@ def clock_anchor(case: RecordingCase) -> tuple[datetime | None, str | None]:
     if anchor.tzinfo is None:
         anchor = anchor.replace(tzinfo=timezone.utc)
     return anchor.astimezone(timezone.utc), None
+
+
+def seed_anchor(case: RecordingCase) -> tuple[int | None, str | None]:
+    """打包 W（docs/84 D-3）：取回放 RNG 种子锚点。
+
+    用例携带 rng_seed 时原样钉住；历史用例缺省 None → 现场生成新种子，
+    调用方据此运行并在报告标注 random/randint/uuid 分支可能漂移；
+    不伪造锚点（与 clock_anchor 回退口径一致）。
+    """
+    seed = getattr(case, "rng_seed", None)
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        return secrets.randbits(63), "用例缺少 rng_seed，回放使用新随机种子（random/randint/uuid 分支可能漂移）"
+    return seed, None

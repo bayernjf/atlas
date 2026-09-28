@@ -53,10 +53,14 @@ const FUNCTIONS: Record<string, [number, number | null, string]> = {
   now: [0, 0, 'datetime'],
   datetime: [5, 6, 'datetime'],
   hoursBetween: [2, 2, 'number'],
+  // 打包 W（docs/84 D-1）：非确定随机函数，运行值由后端注入 RNG 决定，回放以 rng_seed 复现。
+  random: [0, 0, 'number'],
+  randint: [2, 2, 'number'],
+  uuid: [0, 0, 'string'],
 }
 const FN_NAMES = Object.keys(FUNCTIONS).join(', ')
-// 非确定函数：静态校验期不做常量折叠（其值依赖运行时钟）。
-const NONDETERMINISTIC = new Set(['today', 'now'])
+// 非确定函数：静态校验期不做常量折叠（其值依赖运行时钟/运行 RNG）。
+const NONDETERMINISTIC = new Set(['today', 'now', 'random', 'randint', 'uuid'])
 
 function tokenize(expression: string): Token[] {
   const tokens: Token[] = []
@@ -408,6 +412,25 @@ function evalFunction(name: string, args: unknown[]): unknown {
       }
       return (temporalTicks(end as DateValue | DateTimeValue) - temporalTicks(start as DateValue | DateTimeValue)) / 3600
     }
+    case 'random':
+      // 仅非折叠兜底；真实值由后端注入 RNG 产出（docs/84）。
+      return Math.random()
+    case 'randint': {
+      const [low, high] = args
+      const isInt = (value: unknown): boolean =>
+        typeof value === 'number' && Number.isInteger(value)
+      if (!isInt(low) || !isInt(high)) {
+        throw new Error('函数 "randint" 的参数必须是整数')
+      }
+      if ((low as number) > (high as number)) {
+        throw new Error('函数 "randint" 下界不能大于上界')
+      }
+      return Math.floor(
+        Math.random() * ((high as number) - (low as number) + 1),
+      ) + (low as number)
+    }
+    case 'uuid':
+      return crypto.randomUUID()
     default:
       throw new Error(`未知函数 "${name}"`)
   }

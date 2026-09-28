@@ -22,6 +22,9 @@ class RecordingCreateRequest(BaseModel):
     inputs: dict[str, Any] | None = None
     steps: list[RecordStep] = Field(min_length=1)
     status: str
+    # 打包 W（docs/84 D-3）：录制运行的表达式 RNG 种子，回放据此复现 random/randint/uuid；
+    # 旧前端/历史路径缺省 None → 回放使用新种子并在报告中注明漂移风险。
+    rng_seed: int | None = None
 
 
 class RecordingUpdateRequest(BaseModel):
@@ -58,6 +61,9 @@ class RecordingCase(BaseModel):
     # C（docs/27 §2.4）：录制时钟锚点（ISO UTC）。回放冻结到该时刻供 today()/now() 求值；
     # 新用例入库即生成（与 created_at 同刻），历史用例缺省 None → 回放回退 created_at。
     recorded_at: str | None = None
+    # 打包 W（docs/84 D-3）：录制事实——运行实际使用的 RNG 种子；
+    # 历史用例缺省 None，回放 seed_anchor 回退新种子并出 note。
+    rng_seed: int | None = None
     # D26 纯超集：录制时递归冻结的 subgraph 引用快照（key＝节点 config.graphId 引用原文，
     # 含 @N 钉版）。单用例冻结回放「内联优先」解析，使引用子图被 reset/删除/改动后
     # 用例仍可回放；旧用例缺省空 dict（回退租户实时 store，保持旧行为）。
@@ -80,6 +86,7 @@ class RecordingStore:
         graph_id: str = "",
         subgraphs: dict[str, dict[str, Any]] | None = None,
         recorded_at: str | None = None,
+        rng_seed: int | None = None,
     ) -> RecordingCase:
         self._counter += 1
         stamp = datetime.now(timezone.utc).isoformat()
@@ -93,6 +100,7 @@ class RecordingStore:
             status=status,
             created_at=stamp,
             recorded_at=recorded_at or stamp,
+            rng_seed=rng_seed,
             subgraphs=subgraphs or {},
         )
         self._items.append(case)

@@ -65,6 +65,7 @@ class RecordingRepository(Protocol):
         graph_id: str = "",
         subgraphs: dict[str, dict[str, Any]] | None = None,
         recorded_at: str | None = None,
+        rng_seed: int | None = None,
     ) -> RecordingCase: ...
     def update_meta(
         self,

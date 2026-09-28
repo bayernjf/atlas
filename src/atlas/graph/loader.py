@@ -22,6 +22,7 @@ import math
 import operator
 import random
 import re
+import secrets
 import time
 import uuid
 from contextlib import nullcontext
@@ -181,7 +182,8 @@ def _resolve_absolute_wait(
 
 
 def _resolve_wait_expression(
-    node_id: str, raw_expression: Any, context: dict[str, Any], lo: int, hi: int
+    node_id: str, raw_expression: Any, context: dict[str, Any], lo: int, hi: int,
+    rng: random.Random | None = None,
 ) -> int:
     """等待时长表达式 → 秒数（docs/49 duration dynamic；B5 event timeout expression）。
 
@@ -189,7 +191,7 @@ def _resolve_wait_expression(
     WaitNodeFailure(WAIT_DURATION_INVALID)，不睡眠。duration/event 共用，零新错误码。
     """
     try:
-        raw = evaluate_expression(str(raw_expression), context)
+        raw = evaluate_expression(str(raw_expression), context, rng=rng)
     except ConditionEvalError as exc:
         raise WaitNodeFailure(
             node_id,
@@ -307,6 +309,7 @@ def _make_executor(
     shadow: bool = False,
     tool_permissions: dict[str, str] | None = None,
     jitter_rng: random.Random | None = None,
+    expr_rng: random.Random | None = None,
 ):
     def execute(state: GraphState) -> dict:
         context = {"global": state["variables"].get("global", {}), **state["outputs"]}
@@ -462,6 +465,7 @@ def _make_executor(
                         context,
                         now=now,
                         classifier=condition_classifier,
+                        expr_rng=expr_rng,
                     )
                     if output.get("mode") == "llm":
                         message = (
@@ -470,7 +474,7 @@ def _make_executor(
                     else:
                         message = f"{node.id}: branch={output['branch']} → {output['target']}"
                 elif node.type == "loop":
-                    output = _execute_loop(node, state, context, now=now)
+                    output = _execute_loop(node, state, context, now=now, expr_rng=expr_rng)
                     if output["exitReason"] is None:
                         if output["mode"] == "foreach":
                             message = (
@@ -570,6 +574,7 @@ def _make_executor(
                                         context,
                                         MIN_EVENT_WAIT_SECONDS,
                                         MAX_EVENT_WAIT_SECONDS,
+                                        rng=expr_rng,
                                     )
                                 else:
                                     static_timeout = node.config.get("timeoutSeconds")
@@ -712,6 +717,7 @@ def _make_executor(
                                 context,
                                 MIN_WAIT_SECONDS,
                                 MAX_WAIT_SECONDS,
+                                rng=expr_rng,
                             )
                         elif resume_here:
                             # 续跑：按剩余时长等待（绝对 deadline 照扣，docs/24 §3.1）。
@@ -799,6 +805,7 @@ def _make_executor(
                         debug_controller=debug_controller,
                         shadow=shadow,
                         jitter_rng=jitter_rng,
+                        expr_rng=expr_rng,
                     )
                 elif tool_mocks is not None and node.id in tool_mocks:
                     # Mock 回放（docs/28 §2.2）：以录制桩 output 替代真实适配器调用，
@@ -1215,6 +1222,7 @@ def _execute_subgraph(
     debug_controller: Any = None,
     shadow: bool = False,
     jitter_rng: random.Random | None = None,
+    expr_rng: random.Random | None = None,
 ) -> tuple[dict[str, Any], str]:
     """进程内重入执行被引用子图（04 §5.7）；任何异常 fail-safe 为 failed，父 run 仍 completed。
 
@@ -1269,6 +1277,7 @@ def _execute_subgraph(
                 _parent_span=sub_span if isinstance(sub_span, Span) else None,
                 shadow=shadow,
                 jitter_rng=jitter_rng,
+                _expr_rng=expr_rng,
             )
     except (RunCancelled, DebugStopped, RunSuperseded):
         # 取消与调试急停/异常断点 stop 均须穿透子图 fail-safe 兜底，冒泡终止整图
@@ -1446,6 +1455,7 @@ def _execute_condition(
     *,
     now: datetime | None = None,
     classifier: Any = None,
+    expr_rng: random.Random | None = None,
 ) -> dict[str, Any]:
     """condition 求值（04 §5.2）；rule 顺序短路，llm 单次分类；异常 fail-safe 走 defaultTarget。"""
     config = node.config
@@ -1459,7 +1469,7 @@ def _execute_condition(
     for item in config.get("branches", []):
         label, expression = item["label"], item["expression"]
         try:
-            result = evaluate_expression(expression, context, now=now)
+            result = evaluate_expression(expression, context, now=now, rng=expr_rng)
         except ConditionEvalError as exc:
             errors.append(f"分支 {label}：{exc}")
             evaluation.append({"label": label, "expression": expression, "result": None})
@@ -1552,12 +1562,13 @@ def _node_outputs_projection(context: dict[str, Any]) -> dict[str, Any]:
 
 
 def _execute_loop(
-    node: NodeDSL, state: GraphState, context: dict[str, Any], *, now: datetime | None = None
+    node: NodeDSL, state: GraphState, context: dict[str, Any], *, now: datetime | None = None,
+    expr_rng: random.Random | None = None,
 ) -> dict[str, Any]:
     """条件循环重入求值（04 §5.3）；达上限/求值异常 fail-safe 走 exitTarget。"""
     config = node.config
     if config.get("mode") == "foreach":
-        return _execute_foreach(node, state, context, now=now)
+        return _execute_foreach(node, state, context, now=now, expr_rng=expr_rng)
     body_target = config["bodyTarget"]
     exit_target = config["exitTarget"]
     max_iterations = int(config.get("maxIterations", 10))
@@ -1578,7 +1589,7 @@ def _execute_loop(
         # 首轮自身产出尚不存在；播种 index 供 {{loop-x.index}} 求值
         loop_context = {**context, node.id: {"index": iterations, "iterations": iterations}}
         try:
-            result = evaluate_expression(config["continueExpression"], loop_context, now=now)
+            result = evaluate_expression(config["continueExpression"], loop_context, now=now, rng=expr_rng)
         except ConditionEvalError as exc:
             target = exit_target
             exit_reason = "expression_error"
@@ -1638,7 +1649,8 @@ def _foreach_output(
 
 
 def _execute_foreach(
-    node: NodeDSL, state: GraphState, context: dict[str, Any], *, now: datetime | None = None
+    node: NodeDSL, state: GraphState, context: dict[str, Any], *, now: datetime | None = None,
+    expr_rng: random.Random | None = None,
 ) -> dict[str, Any]:
     """遍历循环（04 §5.3 foreach 段，docs/45）：数组首轮求值冻结、串行逐项、回边聚合。"""
     config = node.config
@@ -1664,7 +1676,7 @@ def _execute_foreach(
     if "items" not in previous:
         seed_context = {**context, node.id: {"index": 0, "iterations": 0}}
         try:
-            items = evaluate_expression(config["itemsExpression"], seed_context, now=now)
+            items = evaluate_expression(config["itemsExpression"], seed_context, now=now, rng=expr_rng)
         except ConditionEvalError as exc:
             return fail_exit(str(exc), "expression_error", exc.code)
         if not isinstance(items, list):
@@ -2268,6 +2280,7 @@ def compile_graph(
     tool_mocks: dict[str, Any] | None = None,
     shadow: bool = False,
     jitter_rng: random.Random | None = None,
+    expr_rng: random.Random | None = None,
 ):
     decision_client = decision_client or get_decision_client()
     condition_classifier = condition_classifier or get_condition_classifier()
@@ -2382,6 +2395,7 @@ def compile_graph(
             shadow=shadow,
             tool_permissions=tool_permissions,
             jitter_rng=jitter_rng,
+            expr_rng=expr_rng,
         )
         if node.id in skip_guards:
             parallel_id, safe_target = skip_guards[node.id]
@@ -2634,6 +2648,8 @@ def run_graph(
     tool_mocks: dict[str, Any] | None = None,
     shadow: bool = False,
     jitter_rng: random.Random | None = None,
+    rng_seed: int | None = None,
+    _expr_rng: random.Random | None = None,
 ) -> dict[str, Any]:
     """编译并执行，返回状态/节点产出/轨迹。
 
@@ -2654,6 +2670,15 @@ def run_graph(
     if tracer is _AUTO_TRACER:
         tracer = Tracer(graph_id=graph_id, graph_version=graph_version)
     internal_run = _parent_span is not None
+    # 打包 W（docs/84 D-2）：每次运行一个表达式 RNG；子图重入复用同一实例，
+    # 未显式钉种子时入口生成 63-bit 种子，random/randint/uuid 回放据此复现。
+    if _expr_rng is not None:
+        expr_rng = _expr_rng
+        rng_seed = None
+    else:
+        if rng_seed is None:
+            rng_seed = secrets.randbits(63)
+        expr_rng = random.Random(rng_seed)
 
     def _finish(result: dict[str, Any], *, emit_end: bool) -> dict[str, Any]:
         """收尾：结束 root（仅顶层）、result 挂 traceId/traceTree、发 run_end 超集帧。
@@ -2679,6 +2704,7 @@ def run_graph(
                 "trace": result.get("trace", []),
                 "traceId": tracer.trace_id,
                 "spanId": tracer.root.span_id,
+                "rng_seed": result.get("rng_seed"),
             }
             if tracer.graph_version is not None:
                 run_end["graphVersion"] = tracer.graph_version
@@ -2718,6 +2744,7 @@ def run_graph(
             tool_mocks=tool_mocks,
             shadow=shadow,
             jitter_rng=jitter_rng,
+            expr_rng=expr_rng,
         )
         state = initial_state(tail, inputs=resume_inputs)
         state["outputs"] = resume_state.get("outputs", {})
@@ -2728,6 +2755,7 @@ def run_graph(
             "status": "completed",
             "outputs": final_state["outputs"],
             "trace": final_state["messages"],
+            "rng_seed": rng_seed,
         }
         return _finish(result, emit_end=True)
 
@@ -2756,6 +2784,7 @@ def run_graph(
         tool_mocks=tool_mocks,
         shadow=shadow,
         jitter_rng=jitter_rng,
+        expr_rng=expr_rng,
     )
     final_state = compiled.invoke(
         initial_state(graph, inputs=inputs),
@@ -2765,5 +2794,6 @@ def run_graph(
         "status": "completed",
         "outputs": final_state["outputs"],
         "trace": final_state["messages"],
+        "rng_seed": rng_seed,
     }
     return _finish(result, emit_end=True)

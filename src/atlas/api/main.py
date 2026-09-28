@@ -134,6 +134,7 @@ from atlas.recording import (
     preset_approvals,
     report_to_csv,
     run_release_gate,
+    seed_anchor,
 )
 from atlas.routing import (
     RolloutConfig,
@@ -587,6 +588,8 @@ class RunGraphResponse(BaseModel):
     status: str
     outputs: dict[str, Any]
     trace: list[str]
+    # 打包 W（docs/84）：实际执行完成的运行携带种子；cancelled/suspended 早退响应为 None。
+    rng_seed: int | None = None
 
 
 class NLGenerateRequest(BaseModel):
@@ -2748,6 +2751,7 @@ def create_recording(
         steps=request.steps,
         status=request.status,
         subgraphs=subgraphs,
+        rng_seed=request.rng_seed,
     )
     return case.model_dump()
 
@@ -2843,6 +2847,7 @@ def replay_recording(
         graph = parse_graph(case.graph)
         emit, take_steps = collect_steps()
         anchor, clock_note = clock_anchor(case)
+        seed, rng_note = seed_anchor(case)
         inputs = dict(case.inputs or {})
         if payload is not None and payload.inputs_override:
             # 顶层键浅合并（dict 值整体替换）；一次性覆写，不修改已入库用例。
@@ -2864,6 +2869,7 @@ def replay_recording(
                 case.subgraphs, _tenant_graph_resolver(services)
             ),
             now_override=anchor,
+            rng_seed=seed,
             tool_mocks=tool_mocks,
             condition_classifier=condition_script,
         )
@@ -2881,6 +2887,8 @@ def replay_recording(
         )
         if clock_note:
             report["clock_note"] = clock_note
+        if rng_note:
+            report["rng_seed_note"] = rng_note
         report["mocked_tools"] = mocked_tools
         report["mocked_conditions"] = mocked_conditions
         return report

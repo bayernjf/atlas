@@ -530,6 +530,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
           inputs: inputs ?? null,
           steps: toSteps(collected),
           status: executed.status,
+          rng_seed: executed.rng_seed,
         })
         appendLog(
           t('recording.saved', { id: savedCase.id, steps: savedCase.steps.length }),

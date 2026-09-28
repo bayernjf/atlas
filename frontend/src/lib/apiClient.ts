@@ -189,6 +189,8 @@ export type RunResult = {
   status: string
   outputs: Record<string, unknown>
   trace: string[]
+  // 打包 W（docs/84）：本次运行的表达式 RNG 种子；cancelled/suspended 早退响应缺省。
+  rng_seed?: number
 }
 
 export type RunInputs = Record<string, string | number>
@@ -878,6 +880,8 @@ export type RecordingCase = {
   recorded_at?: string | null
   /** 录制时递归冻结的 subgraph 引用快照（key＝引用原文含 @N） */
   subgraphs?: Record<string, SerializedGraph>
+  /** 打包 W（docs/84）：录制运行的 RNG 种子；历史用例缺省 */
+  rng_seed?: number | null
 }
 
 export type ReplayStepRow = {
@@ -896,6 +900,10 @@ export type ReplayReport = {
   clock_note?: string
   /** docs/28 §2.2：本次被桩替代的工具节点 id（未启用 mock 为 []） */
   mocked_tools?: string[]
+  /** 打包 V（docs/83）：本次被脚本钉住的 LLM condition 节点 id */
+  mocked_conditions?: string[]
+  /** 打包 W（docs/84）：用例缺 rng_seed（历史用例）时的漂移提示 */
+  rng_seed_note?: string
 }
 
 /** docs/28 §2.2/§2.3：单用例回放可选请求体 */
@@ -922,6 +930,8 @@ export async function saveRecording(input: {
   inputs: RunInputs | null
   steps: RecordStep[]
   status: string
+  // 打包 W（docs/84 D-3）：录制运行的种子原样带回，不补发。
+  rng_seed?: number
 }): Promise<RecordingCase> {
   return request('/api/recordings', { method: 'POST', body: JSON.stringify(input) })
 }

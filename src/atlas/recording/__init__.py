@@ -30,6 +30,7 @@ from .replay import (
     dedupe_steps,
     normalize,
     preset_approvals,
+    seed_anchor,
 )
 from .snapshots import collect_subgraph_snapshots, inline_first_resolver
 
@@ -64,6 +65,7 @@ __all__ = [
     "dedupe_steps",
     "normalize",
     "preset_approvals",
+    "seed_anchor",
     "collect_subgraph_snapshots",
     "inline_first_resolver",
 ]
