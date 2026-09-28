@@ -3,6 +3,15 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### docs(integration)：写「外部 agent 经 REST 驱动 Atlas」集成说明，补上 D45 路线 (b)（2026-09-29，纯 docs；零代码／零依赖／零端点／零错误码／不触发 ADR）
+
+- **一句话**：缓做登记 [docs/14 D45](docs/14-缓做事项登记表.md) 记着「外部系统经 REST、入站 webhook、OpenAPI 导入成图内工具三条路今天已经能接，缺的是**协议标准化与工具自描述**」。本批补的是**接入说明**那一半——从**调用者视角**（Hermes／Claude 一类 agent）把"怎么用 REST 把 Atlas 当工具面用"讲清楚，落到 [docs/80](docs/80-外部agent经REST驱动Atlas集成说明.md) 十节。
+- **这不是新契约**：正文只归纳既有契约（数据结构与签名以 03／12 为准、运行时语义以 04／06／24 为准），与正文冲突时以正文为准。**路线 (a)（只登记）本就已完成；(c) 真做 MCP server 仍是选型变更、仍须先立 docs/10 §4 的 ADR，未动。**
+- **重点写了三件最容易踩的事**：①**挂起审批会阻塞 HTTP 请求**——同步 `/run` 停在 `ApprovalBroker.wait(token)` 上，客户端 30s 超时断开**不等于取消**、服务端照跑；含审批的图应走 `/run/stream`，在 `node_start` 的 `approval` 载荷里拿 token（另两条路：`GET /api/approvals` 轮询、邮件深链），并写清「取消运行**不能**打断阻塞中的审批」「今天**没有** REST 续跑端点、不要靠再 POST 一次 /run 抢帧」。②**运行提交今天没有请求级幂等键**——重复 POST 就是两次运行，平台内确实存在的幂等（审批首决 409／取消 200／等待信号 409／webhook 计数去重／调度槽位认领／内部 M7）都在**别处**，逐条列表。③**错误码分四套口径**——`AUTH_*` 结构化、图编译 422 四数组按下标对齐（`codes`／`params`／稀疏 `locations`）、等待信号结构化、其余纯中文字符串；另附跨租户一律 **404**（不泄漏存在性）的语义。
+- **逐条对着源码核过，纠了自己四处错**：审计面（`/api/audit/events`、`/api/audit/export`）要 **`administer`** 不是 `read`；渠道绑定（`POST /api/channels`）只要 **`operate`** 不是 `administer`；§5.2 示例原写了个**不存在的 DSL 码**，换成真实的 `APR_SUMMARY_REQUIRED`，并把 `params` 从对象改回**与 `detail` 等长的数组**（项带 `owner`）；等待信号 404/409 实为**结构化**（`WAIT_TOKEN_NOT_FOUND`／`WAIT_ALREADY_SIGNALED`），从"纯字符串"一节挪出单列。另修一处悬空交叉引用（§3.2 原指向不存在的 §4.5）。
+- **同步面**：docs/00 地图行、docs/08 §八 路线 (b) 收口注记、docs/14 D45 行＋2026-09-28 注记区追记（**本行不解除**——MCP／A2A 的协议标准化仍无）、handoff（Project documents 索引＋Recently shipped）、CHANGELOG。
+- **门**：纯文档，**零代码／零测试改动**；`tests/test_handoff_integrity.py` 复跑绿（新增 Recently shipped 条目并滚出 5 条后，仍守编号唯一／引用可解析／上限 5）。**不 push 除非明确指示**；不解除任何缓做、不改 B 档判定。
+
 ### feat(memory)＋feat(ops)＋feat(api)＋test＋docs：空卷首启就绪竞态改为有界重试（2026-09-28，打包 S／docs/79，解 docs/73 明细项 4.2）
 
 - **一句话**：docs/77 §8 在 prod＋空卷第一次真跑时量出的**首启就绪竞态**——PG initdb 后有一段约 **90s** 的 recovery 窗口，其间一切连接被 `FATAL: the database system is in recovery mode` 拒绝，而 compose 给 `db` 的探针 `pg_isready` **在这窗口里判过了 healthy** ⇒ atlas 被 `depends_on: service_healthy` 放行 ⇒ 入口脚本迁移 CLI（`set -e`）连库即抛、容器退出，**靠 `restart: unless-stopped` 第二次才起**。本批让迁移与应用启动各自**有界等待连通性**，使"一次就到 ready"不再依赖重启策略。
