@@ -82,6 +82,7 @@ from atlas.iam.registry import STORAGE_BACKEND, TenantServices
 from atlas.llm.decision import get_decision_client
 from atlas.llm.nl_generate import generate_graph, validate_param_fills
 from atlas.memory.adapter import MemoryHarnessAdapter
+from atlas.memory.database import ping, wait_for_database
 from atlas.memory.models import MemoryValidationError
 from atlas.message.adapter import MessageHarnessAdapter
 from atlas.monitoring import RUN_RING_SIZE, extract_business, extract_node_results
@@ -177,6 +178,23 @@ MAX_WAIT_PAYLOAD_BYTES = 4096
 MAX_WAIT_PAYLOAD_KEYS = 50
 # docs/36 §3：邮件深链验签单例（密钥取 ATLAS_APPROVAL_HMAC_SECRET）。
 _email_token_issuer = TokenIssuer()
+
+
+def _wait_for_database_ready() -> None:
+    """docs/79（打包 S）D-4：启动钩子之前先有界等待 PG 连通。
+
+    空卷首启时 PG initdb 之后有一段 recovery 窗口（实测约 90s）会拒绝一切连接，
+    而 compose 的 `pg_isready` 探针在这段窗口里判过 healthy。此处等待使恢复扫描与
+    retention **不再被静默跳过**；预算耗尽只 warning 不阻断启动——与 recover_pending /
+    run_retention_once 的"清扫绝不挡服务起"语义一致（`/api/ready` 仍对 PG 做真 SELECT 1）。
+    非 PG 档直接返回（进程内档无跨重启状态可恢复）。
+    """
+    if STORAGE_BACKEND != "pg":
+        return
+    try:
+        wait_for_database(lambda: ping(get_pg_backend().engine))
+    except Exception as exc:  # 预算耗尽：与既有启动钩子同款，不阻断启动
+        logger.warning("PG 连通性等待超预算，启动继续（恢复扫描/retention 可能被跳过）：%s", exc)
 
 
 def recover_pending() -> None:
@@ -311,6 +329,8 @@ def _resume_claim_for() -> Callable[[str], bool] | None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    # docs/79（打包 S）D-4：先有界等待 PG 连通，再跑恢复扫描与 retention。
+    _wait_for_database_ready()
     recover_pending()
     # docs/64 J-2a：启动即打印决策器运行模式（含降级警告），不再静默。
     get_decision_client()
