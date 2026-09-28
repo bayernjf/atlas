@@ -3,6 +3,13 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### feat(message)：出站消息 DLQ，失败投递可过滤、可按原内容重放（2026-09-29；打包 U；D24 余部切片；迁移 032；零新依赖）
+
+- **一句话**：出站通知失败后 `message_deliveries` 只留失败痕、不存正文，内容不可恢复。本批迁移 **032** 加可空 `body`（存量 NULL 永不回填），`DeliveryRecord.body`（重放权威副本、不截断），两档 store 同形增 status 过滤列表（投影补 `seq`）与 `get(seq)`；`MessageService.replay_failed` 走现有 send 全路径产生新投递行，原 failed 行不可变。
+- **REST**：`GET /api/demo/deliveries?status=failed|delivered`（read；非法值 422）＋新 `POST /api/demo/deliveries/{seq}/replay`（operate；无行/跨租户 404、非 failed 409 `DLQ_NOT_FAILED`、body 缺失 422 `DLQ_BODY_UNAVAILABLE`）。前端本批不动。
+- **门（先跑后写，取实跑）**：后端常跑 `.venv/bin/pytest` ＝ **2036 passed / 135 skipped / 0 failed**（净增 16）；真 PG 一次性 pgvector:pg16 容器 **9 passed**——body 跨连接读回、重放新行落库且原行仍 failed、SQL 置 NULL 的历史行被 422 拦下；群发逐目标失败各自重放只发该目标。
+- **边界照实**：重放无幂等键、失败行可无限次重放（重复按＝重复通知）；body 明文落库（字段加密随 D22）；定时扫描/自动重放/前端页仍缓做，**D24 整体不解除**。契约 docs/82。
+
 ### feat(routing)：RoutingStore PG 化，灰度状态跨重启存活（2026-09-29；打包 T；D32 余部切片；迁移 031；零新端点／零错误码／零新依赖）
 
 - **一句话**：灰度配置与 rollout 状态机原来只活在进程内 `RoutingStore`，PG 档重启后 canary/full/rolled_back 状态、stable/candidate 版本钉与分流计数全部回 idle。本批新增 `rollout_states` 表（PK tenant_id+graph_id，config/traffic JSONB，时间列 TEXT ISO）与 `routing/pg_store.py: PgRoutingStore`，PG 档装配改为行锁落库；REST 投影与内存档逐字不变。

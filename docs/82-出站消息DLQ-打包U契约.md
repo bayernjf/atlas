@@ -31,14 +31,14 @@
 
 ## 3. 契约同步矩阵（收口时逐项回填）
 
-- [ ] `docs/03`：投递记录投影补 `body`；DLQ 两端点登记。
-- [ ] `docs/09`：无新文件（模块内演演进），必要时补注记。
-- [ ] `docs/12`：REST 表 deliveries 行更新＋replay 行（鉴权/404/409/422）。
-- [ ] `docs/13`：U958–U963 登记。
-- [ ] `docs/14 D24`：追记「2026-09-29 取回出站 DLQ 半边（不解除本条）」。
-- [ ] `docs/08 §八`：C 组 D24 行更新＋立项/收口注记。
-- [ ] `docs/00` 文档地图：docs/82 行。
-- [ ] handoff（Project documents＋Recently shipped，旧条目滚入归档）、CHANGELOG。
+- [x] `docs/03`：投递记录投影补 `body`；DLQ 两端点登记。
+- [x] `docs/09`：无新文件（模块内演进），不改。
+- [x] `docs/12`：REST 表 deliveries 行更新＋replay 行（鉴权/404/409/422）。
+- [x] `docs/13`：U958–U963 登记。
+- [x] `docs/14 D24`：追记「2026-09-29 取回出站 DLQ 半边（不解除本条）」。
+- [x] `docs/08 §八`：C 组 D24 行更新＋立项/收口注记。
+- [x] `docs/00` 文档地图：docs/82 行。
+- [x] handoff（Project documents＋Recently shipped，旧条目滚入归档）、CHANGELOG。
 
 ## 4. 测试与验收（U958 起；落常跑，失败行用假 sender 制造；PG 部分另挂 integration）
 
