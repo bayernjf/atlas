@@ -1509,7 +1509,10 @@ def _execute_llm_condition(
     label: str
     try:
         label = classifier.classify(
-            branches=branches, context_text=context_text, instruction=instruction
+            branches=branches,
+            context_text=context_text,
+            instruction=instruction,
+            node_id=node.id,
         )
     except Exception as exc:  # noqa: BLE001 - 供应商错误/解析错误统一 fail-safe
         label = "__default__"

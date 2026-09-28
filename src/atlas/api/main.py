@@ -121,6 +121,7 @@ from atlas.recording import (
     RecordingCreateRequest,
     RecordingUpdateRequest,
     ReplayRequest,
+    build_condition_script,
     build_tool_mocks,
     clock_anchor,
     collect_steps,
@@ -2832,8 +2833,11 @@ def replay_recording(
 
     tool_mocks: dict[str, Any] | None = None
     mocked_tools: list[str] = []
+    condition_script: Any | None = None
+    mocked_conditions: list[str] = []
     if payload is not None and payload.mock_tools:
         tool_mocks, mocked_tools = build_tool_mocks(case)
+        condition_script, mocked_conditions = build_condition_script(case)
 
     try:
         graph = parse_graph(case.graph)
@@ -2861,6 +2865,7 @@ def replay_recording(
             ),
             now_override=anchor,
             tool_mocks=tool_mocks,
+            condition_classifier=condition_script,
         )
         replay_steps = take_steps()
         tools_by_node = {
@@ -2877,6 +2882,7 @@ def replay_recording(
         if clock_note:
             report["clock_note"] = clock_note
         report["mocked_tools"] = mocked_tools
+        report["mocked_conditions"] = mocked_conditions
         return report
     except Exception as exc:  # 回放失败折叠为报告而非 500
         return {
@@ -2884,6 +2890,7 @@ def replay_recording(
             "baseline_status": case.status,
             "replay_status": "failed",
             "mocked_tools": mocked_tools,
+            "mocked_conditions": mocked_conditions,
             "steps": [
                 {
                     "node_id": step.node_id,

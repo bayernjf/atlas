@@ -138,6 +138,29 @@ def compare(
     }
 
 
+def build_condition_script(
+    case: RecordingCase,
+) -> tuple[Any, list[str]]:
+    """从录制步骤构造 LLM condition 回放脚本，返回 ``(classifier | None, node_ids)``（docs/83）。
+
+    只取 ``node_type=="condition"`` 且产出 ``mode=="llm"`` 的步骤，映射
+    node_id → 录制时 branch 标签（非空 str；坏值跳过该节点）。无 LLM condition
+    步骤返 ``(None, [])``。dedupe 保末，与 build_tool_mocks 同口径。
+    """
+    from atlas.llm.condition_classifier import ScriptedConditionClassifier
+
+    scripted: dict[str, str] = {}
+    for step in dedupe_steps(case.steps):
+        if step.node_type != "condition":
+            continue
+        branch = step.output.get("branch")
+        if step.output.get("mode") == "llm" and isinstance(branch, str) and branch:
+            scripted[step.node_id] = branch
+    if not scripted:
+        return None, []
+    return ScriptedConditionClassifier(scripted), list(scripted)
+
+
 def build_tool_mocks(case: RecordingCase) -> tuple[dict[str, Any], list[str]]:
     """从录制步骤构造工具桩，返回 ``(mocks, mocked_node_ids)``（docs/28 §2.2）。
 

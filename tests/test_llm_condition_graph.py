@@ -62,9 +62,9 @@ class _FixedClassifier:
         self.label = label
         self.seen: dict = {}
 
-    def classify(self, *, branches, context_text, instruction):
+    def classify(self, *, branches, context_text, instruction, node_id=None):
         self.seen = {"branches": branches, "context_text": context_text,
-                     "instruction": instruction}
+                     "instruction": instruction, "node_id": node_id}
         return self.label
 
 
@@ -72,7 +72,7 @@ class _RaisingClassifier:
     def __init__(self, exc: Exception):
         self.exc = exc
 
-    def classify(self, *, branches, context_text, instruction):
+    def classify(self, *, branches, context_text, instruction, node_id=None):
         raise self.exc
 
 
