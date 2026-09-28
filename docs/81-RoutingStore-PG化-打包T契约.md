@@ -29,13 +29,13 @@
 
 ## 3. 契约同步矩阵（收口时逐项回填）
 
-- [ ] `docs/03` `rollout_config` 段：补「PG 档运行态落 `rollout_states` 表、跨重启存活；投影字段不变」＋表登记到 Schema 所在位置。
-- [ ] `docs/09` 目录树/模块映射：routing 补 `pg_store.py`。
-- [ ] `docs/13`：U951–U957 登记。
-- [ ] `docs/14 D32`：追记「2026-09-29 取回 RoutingStore PG 化半边（不解除本条）」。
-- [ ] `docs/08 §八`：C 组 D32 行更新＋收口注记；新决策无（不触发 ADR）。
-- [ ] `docs/00` 文档地图：docs/81 行。
-- [ ] handoff（Project documents＋Recently shipped，旧条目滚入归档）、CHANGELOG。
+- [x] `docs/03` `rollout_config` 段：补「PG 档运行态落 `rollout_states` 表、跨重启存活；投影字段不变」＋表登记到 Schema 所在位置。
+- [x] `docs/09` 目录树/模块映射：routing 补 `pg_store.py`。
+- [x] `docs/13`：U951–U957 登记。
+- [x] `docs/14 D32`：追记「2026-09-29 取回 RoutingStore PG 化半边（不解除本条）」。
+- [x] `docs/08 §八`：C 组 D32 行更新＋收口注记；新决策无（不触发 ADR）。
+- [x] `docs/00` 文档地图：docs/81 行。
+- [x] handoff（Project documents＋Recently shipped，旧条目滚入归档）、CHANGELOG。
 
 ## 4. 测试与验收（U951 起；新建 `tests/test_routing_pg_integration.py`，只许增测）
 

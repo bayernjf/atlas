@@ -3,6 +3,13 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### feat(routing)：RoutingStore PG 化，灰度状态跨重启存活（2026-09-29；打包 T；D32 余部切片；迁移 031；零新端点／零错误码／零新依赖）
+
+- **一句话**：灰度配置与 rollout 状态机原来只活在进程内 `RoutingStore`，PG 档重启后 canary/full/rolled_back 状态、stable/candidate 版本钉与分流计数全部回 idle。本批新增 `rollout_states` 表（PK tenant_id+graph_id，config/traffic JSONB，时间列 TEXT ISO）与 `routing/pg_store.py: PgRoutingStore`，PG 档装配改为行锁落库；REST 投影与内存档逐字不变。
+- **并发口径**：状态机写与 resolve 读改写一律 `SELECT ... FOR UPDATE`（无行则事务内插 idle 行），snapshot 无行不写库，resolve 一律 UPSERT 保计数存活，rolled_back 原因/actor 持久保留（重启后新流量仍走 stable），reset＝按租户 DELETE。仅 registry pg 分支换构造，memory 分支与 API 层零改动；不进 PgBackend 工厂（routing 不反向依赖 storage）。
+- **门（先跑后写，取实跑）**：后端常跑 `.venv/bin/pytest` ＝ **2020 passed / 132 skipped / 0 failed**（零回归）；真 PG 一次性 pgvector:pg16 容器 U951–U957 **7 passed**——跨连接与 engine dispose 重建存活、跨租户隔离、40 线程并发 resolve traffic 总数恰为 40；rolled_back 重复回滚不覆盖首因。
+- **边界照实**：不解锁多实例语义（D20 帧恢复/D5 总线/D6 网关未动，单副本三道闸不撤），D32 整体不解除；resolve 变为每请求一次行锁事务，热点图同槽竞争是真实代价；图删后无外键联动、不做 retention。契约 docs/81。
+
 ### feat(recording)：回放面板加填空式用例参数化向导（2026-09-29，纯前端；D26 余部；零迁移／零端点／零新依赖）
 
 - **一句话**：录制回放原来只能在一块 TextArea 里手写整段 JSON 来覆盖入参，本批在回放面板加「按字段填空」的向导——展开即用例每个入参一行控件，改完直接回放。改动面：`frontend/src/lib/paramWizard.ts`（新纯逻辑）、`frontend/src/pages/Editor.tsx`（面板）、两档 `editor.json` 各 6 键＋i18n 必填键守护。
