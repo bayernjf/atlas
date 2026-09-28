@@ -542,12 +542,17 @@ export async function nlGenerate(prompt: string): Promise<{ graph: SerializedGra
   return request('/api/nl/generate', { method: 'POST', body: JSON.stringify({ prompt }) })
 }
 
+export type TemplateSource = 'catalog' | 'user'
+
 export type TemplateSummary = {
   id: string
   name: string
   description: string
   tags: string[]
   node_count: number
+  source: TemplateSource
+  deletable: boolean
+  created_at?: string
 }
 
 export type TemplateDetail = {
@@ -556,6 +561,9 @@ export type TemplateDetail = {
   description: string
   tags: string[]
   graph: SerializedGraph
+  source: TemplateSource
+  deletable: boolean
+  created_at?: string
 }
 
 export async function listTemplates(): Promise<TemplateSummary[]> {
@@ -565,6 +573,25 @@ export async function listTemplates(): Promise<TemplateSummary[]> {
 
 export async function getTemplate(id: string): Promise<TemplateDetail> {
   return request(`/api/templates/${id}`)
+}
+
+export async function createUserTemplate(input: {
+  name: string
+  description?: string
+  graph: SerializedGraph
+}): Promise<TemplateDetail> {
+  return request('/api/templates', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: input.name,
+      description: input.description ?? '',
+      graph: input.graph,
+    }),
+  })
+}
+
+export async function deleteUserTemplate(id: string): Promise<void> {
+  await request(`/api/templates/${id}`, { method: 'DELETE' })
 }
 
 export async function decideApproval(

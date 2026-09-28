@@ -3,6 +3,7 @@
     "title": "Atlas flow editor",
     "nlGenerate": "Natural-language generate",
     "newFromTemplate": "New from template",
+    "saveAsTemplate": "Save as template",
     "recordings": "Record & replay",
     "exportJson": "Export Graph JSON",
     "publish": "Publish",
@@ -73,7 +74,19 @@
     "loading": "Loading template...",
     "nodeCount": "{{count}} nodes",
     "use": "Use this template",
-    "loaded": "Template loaded: {{name}} ({{id}}); the canvas has been fully replaced"
+    "loaded": "Template loaded: {{name}} ({{id}}); the canvas has been fully replaced",
+    "source_catalog": "Built-in",
+    "source_user": "My templates",
+    "delete": "Delete",
+    "deleteConfirm": "Delete this template? This cannot be undone.",
+    "deleteOk": "Delete",
+    "deleteCancel": "Cancel",
+    "saveTitle": "Save canvas as template",
+    "saveOk": "Save",
+    "saved": "Template saved: {{name}}",
+    "nameRequired": "Template name is required",
+    "namePlaceholder": "Template name (required)",
+    "descriptionPlaceholder": "Description (optional)"
   },
   "recording": {
     "title": "Operation recording & replay",

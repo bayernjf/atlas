@@ -3,6 +3,7 @@
     "title": "Atlas 流程编辑器",
     "nlGenerate": "自然语言生成",
     "newFromTemplate": "从模板新建",
+    "saveAsTemplate": "保存为模板",
     "recordings": "录制与回放",
     "exportJson": "导出 Graph JSON",
     "publish": "发布",
@@ -73,7 +74,19 @@
     "loading": "模板加载中…",
     "nodeCount": "{{count}} 个节点",
     "use": "使用此模板",
-    "loaded": "已加载模板：{{name}}（{{id}}），画布已整体替换"
+    "loaded": "已加载模板：{{name}}（{{id}}），画布已整体替换",
+    "source_catalog": "内置",
+    "source_user": "我的模板",
+    "delete": "删除",
+    "deleteConfirm": "确认删除此模板？删除后不可恢复。",
+    "deleteOk": "删除",
+    "deleteCancel": "取消",
+    "saveTitle": "画布另存为模板",
+    "saveOk": "保存",
+    "saved": "已保存模板：{{name}}",
+    "nameRequired": "请填写模板名称",
+    "namePlaceholder": "模板名称（必填）",
+    "descriptionPlaceholder": "模板描述（选填）"
   },
   "recording": {
     "title": "操作录制与回放",
