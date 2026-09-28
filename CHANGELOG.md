@@ -3,6 +3,13 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### docs(review)：prod 形态第一次真跑 compose 全新安装——4.1 推进但未达成，并量出一条首启就绪竞态（2026-09-28，docs/77 §8／docs/73 新增 4.2；零代码改动）
+
+- **为什么单独记**：六次复审都在读闸门、跑单测，**没有人真在空卷上把 prod 形态起过一次**。这次做了（`docker compose -p review6`，project 命名空间隔离，自己的卷 `review6_atlas-pgdata`，收尾 `down -v` 只删自己那份；机器上另一套 `atlas_atlas-pgdata` 与 `atlas-*` 全程未触碰）。镜像必须先重建——`atlas-demo:latest` 是 7 天前的，不重建就演不到 W5-5.2 的新注册逻辑。
+- **拿到的运行级确认**〔跑〕：prod＋空卷首启逐条 `applied 001…030`（`schema_migrations` 30 行／27 张表）、entrypoint 明示 prod 跳过播种、`admin123` **401** 而一次性引导口令 **200**、`ready=200`；**`GET /api/adapters` 在 prod 只回 `['http','message','memory']`** ⇒ 本仓库 R2 要求的"演示适配器不再注册"第一次被真进程证明，而不是靠收口文档自述。编译校验也活着：我手搓的代表图被 `APR_TARGETS_SAME`／`APR_EXACTLY_TWO_EDGES` 422 拒（带 codes 与 locations）。
+- **量出的新缺陷＝docs/73 4.2**：postgres 在 initdb 之后有一段 `syncing data directory (fsync)`（本机日志刷到 **90.21 s**），其间 TCP 连接一律 `FATAL: the database system is in recovery mode`；而 compose 给 `db` 的探针是 `pg_isready`，**在这段窗口里判过了 healthy** ⇒ `depends_on: service_healthy` 放行 atlas ⇒ 应用 import 期连库即抛、进程退出，**第二次才起来靠 `restart: unless-stopped`（`RestartCount=1`），应用与 entrypoint 自身没有任何有界重试**。⇒ README／docs/30 那句"`docker compose up` 一步到位"在 prod＋空卷下不成立；且它**只在全新卷首启触发**，这就是它此前从未被发现的结构性原因。修法待拍：有界重试，或把探针换成能区分 recovery 的 `SELECT pg_is_in_recovery()`。
+- **不记 ✅ 的部分照实**：「审批挂起→重启→续跑」与「`pg_dump`→删卷→`restore.sh`→对平行数」两段**没做完**——这台机器同时段 load average **385／427／393**，两个容器的健康探针开始返回 **exit −1（探针自己超时）**、DB 一起 unhealthy、`/api/ready` 拒连，而 `docker inspect` 是 `status=running`／`OOMKilled=false`／`ExitCode=0`。⇒ **环境把容器压住，不是产品行为**，所以 4.1 仍算未达成，重跑要在安静机器或 CI（service 容器里那段 fsync 只有秒级）。演练的价值是"推进了＋撞出 4.2"，**不是跨过终门**。
+
 ### docs(governance)：把打包 R 挂在记录里的 D44 落进缓做表，并对平第六次复审的门数（2026-09-27，纯 docs）
 
 - **D44 只有日志、没有表行**：docs/14 的变更记录写着"新增 **D44**（`ai_decision` 低置信度挂起无法跨重启恢复）"，但表里没有 `| D44 |` 行（D40–D43 都有）。该表自称缓做项的**单一事实源**、且规定"新增缓做项在此登记"，所以按自己立的规矩补上行，并把"为什么故意不写帧"的因果钉在行里：`api/main.py:216` 的续跑扫描器把 `kind=="approval"` 一律按 `human_approval` 恢复，`ai_decision` 分支无 resume ⇒ 直接写帧会让重启**重跑决策并产生第二个 token**。触发条件随 **D20**（不解除、也不早于它单独做）。
