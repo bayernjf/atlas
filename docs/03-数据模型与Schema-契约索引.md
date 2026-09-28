@@ -1114,6 +1114,8 @@ cases:
     matches: boolean
     replay_status: string
     note: string?             # 分支漂移/回放异常等
+    clock_note?: string       # C 包：仅当该用例无法冻结时钟时附
+    rng_seed_note?: string    # 打包 W（docs/84）：仅当该用例缺 rng_seed（历史用例）时附
 # 逐例对草稿走标准 run_graph（审批预置同现有 replay 端点），复用 recording.replay.compare 产逐节点 diff_keys
 # D26 报告 v1（2026-09-18 已落码，见下 `release_report`）：响应纯超集加 id（沉淀报告 rr-N）；
 #   release-gate 沉淀 trigger=manual、publish gate 沉淀 trigger=publish-gate（含 blocked 409 报告体），skipped 也沉淀
