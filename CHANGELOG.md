@@ -3,6 +3,12 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### docs(governance)：把打包 R 挂在记录里的 D44 落进缓做表，并对平第六次复审的门数（2026-09-27，纯 docs）
+
+- **D44 只有日志、没有表行**：docs/14 的变更记录写着"新增 **D44**（`ai_decision` 低置信度挂起无法跨重启恢复）"，但表里没有 `| D44 |` 行（D40–D43 都有）。该表自称缓做项的**单一事实源**、且规定"新增缓做项在此登记"，所以按自己立的规矩补上行，并把"为什么故意不写帧"的因果钉在行里：`api/main.py:216` 的续跑扫描器把 `kind=="approval"` 一律按 `human_approval` 恢复，`ai_decision` 分支无 resume ⇒ 直接写帧会让重启**重跑决策并产生第二个 token**。触发条件随 **D20**（不解除、也不早于它单独做）。
+- **docs/77 §6 的门数按实测对平**：三条收口属实，但引的 2008/125/0 只是打包 R 那个原子的读数；HEAD `d066578` 的 CI runner 自己读数＝**2013 passed / 125 skipped / 0 failed**、PG 直连 **2133 / 5**、前端 **738 / 2**、gitleaks ✓。同时**更正我自己在 §4 R8 里开的药方**：我写"编译期就拒不带 `/` 的工具名"，落码侧采的是"只给 prod 补运行期门"——我回测了爆炸半径（`tests/` 里 **25 个文件**用裸名夹具，最多一个串 27 处），编译期校验会把这些夹具全打掉，**那条修法不成立**，记录照此改。
+- **本条为纯 docs**：零代码、零测试改动；复核方式＝逐条回代码（`loader.py:434-439` 真透传 prompt／`api/main.py:392-393` 注册按 `demo_surface_enabled()`／`notifications.py:106-107` 读 `delivered`／新测试文件在册），不采信收口文档自述。
+
 ### test(api)：修掉定时调度卡片测试的偶发红——两次读之间的 run 状态竞态（2026-09-28，CI push run 暴露）
 
 - **现象**：PR #84 的 `push` 触发那一跑里 `tests/test_api_schedules.py::test_u889d_schedule_card_carries_the_latest_run_status` 报 `AssertionError: assert 'completed' == 'running'`；同一 SHA 的 `pull_request` 跑全绿 ⇒ 偶发。
