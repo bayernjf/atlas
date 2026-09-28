@@ -17,15 +17,15 @@
 
 - **D-1 迁移 032 给 `message_deliveries` 加列 `body TEXT`（可空；`ADD COLUMN IF NOT EXISTS` 幂等）**。历史失败行 body 为 NULL：**不猜测、不用 subject 顶替**——对其重放明确失败（见 D-4），这是"冻结基线/存量数据"必须如实暴露的边界。
 - **D-2 `DeliveryRecord` 增 `body: str = ""`（dataclass 带缺省，位置追加在末，兼容既有构造点）**；两档 store 持久化并读回 body；list 投影新增 `body` 字段（失败行即原通知正文，长度不截断——subject 有 100 上限、error 有 300 上限，body 是重放唯一权威副本，截断会让重放内容失真）。
-- **D-3 store 增两个查询，两档同形**：①`list(limit, *, status: str | None = None)`——status 非空时按前缀/精确过滤：`failed`＝`status='failed'`；`delivered`＝`status LIKE 'delivered:%'`；None＝全部（现语义）。②`get_failed(seq) -> dict | None`——`WHERE tenant_id=:t AND seq=:seq AND status='failed'`。内存档在 deque 上同规则过滤，不靠 seq 之外的字段。
-- **D-4 `MessageService.replay_failed(seq) -> dict`**：经 store.get_failed 取行；**不存在（含跨租户/非 failed）由调用方映射 404/409，service 层返 None 让 API 判**；行 body 为 None → 抛 `MessageSendError("DLQ_BODY_UNAVAILABLE", ...)`（API → 422）。重放＝以存储的 channel/to/subject/body 走**现有 send 全路径**（校验、重试、逐目标投递日志全部生效），产生**新 message_id 与新投递行**；原 failed 行**原样保留不可变**（死信历史不就地改写）。返回 `{replay_of: seq, deliveries: [...]}`（新行投影）。
+- **D-3 store 增两个查询，两档同形**：①`list(limit, *, status: str | None = None)`——status 非空时按前缀/精确过滤：`failed`＝`status='failed'`；`delivered`＝`status LIKE 'delivered:%'`；None＝全部（现语义）。投影同时补 `seq`（重放端点入参，此前 PG 查而不投影）。②`get(seq) -> dict | None`——`WHERE tenant_id=:t AND seq=:seq`（**任意 status**；service 据此区分「无行→404」与「非 failed→409」，单一 `get_failed` 无法分辨这两态）。内存档在 deque 上同规则过滤，不靠 seq 之外的字段。
+- **D-4 `MessageService.replay_failed(seq) -> dict`**：经 store.get 取行；**无行（含跨租户）返 None**，API 映射 404；行在但 `status != 'failed'` → 抛 `MessageSendError("DLQ_NOT_FAILED", ...)`（API → 409）；行 body 为 None/空 → 抛 `MessageSendError("DLQ_BODY_UNAVAILABLE", ...)`（API → 422）。重放＝以存储的 channel/to/subject/body 走**现有 send 全路径**（校验、重试、逐目标投递日志全部生效），产生**新 message_id 与新投递行**；原 failed 行**原样保留不可变**（死信历史不就地改写）。返回 `{replay_of: seq, deliveries: [...]}`（本次重放新产生的投递行投影，倒序）。
 - **D-5 REST 变化两处，零新错误码体系（复用结构化 code 字符串）**：①`GET /api/demo/deliveries` 增可选 `status: str | None = None`（只接受 failed/delivered；其他值 → 422 `INVALID_PARAMETER`；鉴权仍 read）。②新 `POST /api/demo/deliveries/{seq}/replay`（鉴权 **operate**）——seq 跨租户/无此行 → **404**（不泄漏）；该行非 failed → **409** `DLQ_NOT_FAILED`；body NULL → **422** `DLQ_BODY_UNAVAILABLE`。**不设重放幂等键**：每按一次真发一次（与现 send 语义一致），文档明示，防呆只靠 UI/调用方。
 - **D-6 零新依赖／无新 ADR**（沿用 send 既有机制与 per-tenant store 模式）；前端本批**不动**（无现成投递页，API 先立；控制台页随未来真实运营需求，登 14 余部）；reset/ring 200 裁剪语义不变；不解除单副本三道闸与任何缓做。
 
 ## 2. 形状
 
 - 迁移 `db/migrations/032_message_delivery_body.sql`：首行注释块（成因/可空/存量 NULL 语义/幂等）＋`ALTER TABLE ... ADD COLUMN IF NOT EXISTS body TEXT`＋列 COMMENT。
-- `message/deliveries.py`：`InMemoryDeliveryStore.list(limit, *, status=None)`＋`get_failed(seq)`（seq 取投影内键；内存 deque 需保留 seq——内存记录现无 seq，补一条仅内存用的实例计数，从 1 起单调）；`PgDeliveryStore` 同两方法，`_COLS`/INSERT/_project 补 body。
+- `message/deliveries.py`：`InMemoryDeliveryStore.list(limit, *, status=None)`＋`get(seq)`（任意 status；内存 deque 需保留 seq——内存记录现无 seq，补一条仅内存用的实例计数，从 1 起单调）；`PgDeliveryStore` 同两方法，`_COLS`/INSERT/_project 补 body，list 投影补 seq。
 - `message/service.py`：`DeliveryRecord.body`；`list_deliveries(limit, *, status=None)` 透传；`replay_failed(seq)`。
 - `api/main.py`：`demo_deliveries(..., status=None)`；新 `demo_replay_delivery(seq)`。
 
