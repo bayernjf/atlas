@@ -689,6 +689,7 @@ replay_status: string      # 回放异常（如子图引用缺失）折叠为 "f
 steps: [{node_id, match, note, diff_keys?}]  # diff_keys 为归一化后差异顶层键
 clock_note?: string        # C 包（3415377）：仅当用例缺 recorded_at/created_at、无法冻结时钟时附（中文，提示 today()/now() 时间分支可能漂移）；单用例 replay 挂响应顶层，发布门禁挂对应 case 项
 mocked_tools?: string[]     # docs/28 §2.2（c7bf138）：本次被桩替代的工具节点 id（未启用 mock/缺省为 []）
+mocked_conditions?: string[] # 打包 V（docs/83；2026-09-29）：mock_tools 回放时按录制标签脚本化的 LLM condition 节点 id（无 LLM 条件/未启用/非 mock/异常折叠均为 []）；分类器 ScriptedConditionClassifier 经 Protocol 新可选入参 node_id 选标签，未知节点抛 ConditionClassifyError 走 defaultTarget
 # PUT /api/recordings/{id}（operate；docs/28 §2.3，89e21fc）：body {name?: 1-100字, inputs?: object}，仅 name/inputs 可改；
 #   steps/graph/subgraphs/graph_id/时间戳为录制事实不可改（请重新录制）；不存在 404、空名/超长/inputs 非对象 422；返完整 RecordingCase；进程内/PG 两档持久化
 ```
