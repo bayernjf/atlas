@@ -8,7 +8,7 @@
 - `RoutingStore`（`src/atlas/routing/store.py:63`）：进程内、`threading.Lock` 单锁，`_states: dict[str, RolloutState]`；方法面 `configure / snapshot / start / promote / rollback / resolve / reset`。两档装配**都**是进程内实例——`iam/registry.py:145`（pg 分支）与 `:173`（memory 分支）。
 - 存储抽象**不是未落地**：`src/atlas/storage/pg.py` 的 `PgBackend`＋二十余个 per-tenant PG store（`PgRunsStore` 等），pg 分支装配已是成熟模式；`docs/08 §八 C 组` 与 `docs/14 D32` 旧注记说「PG 化依赖 11 S1 存储抽象」**已过期**（11 S1 指多实例存储层重构，不是 per-tenant PG 落库能力）。
 - API 调用面：`api/main.py` 六处——rollout GET/PUT/start/promote/rollback（:2557–2608）与两处入站 `resolve`（:995／:2957）；REST 形状与 409/422 映射不动。
-- 迁移最新 **030**（`db/migrations/030_scheduled_triggers.sql`）；下一号 **031**。全量新装 schema 在 `db/migrations/002_storage.sql`，新表必须两处都登记。
+- 迁移最新 **030**（`db/migrations/030_scheduled_triggers.sql`）；下一号 **031**。新装库由迁移 CLI 顺序应用 001→最新（compose 实测 `applied 001…030`），`db/migrations/002_storage.sql` 是**冻结基线**——030 已未登记进 002，本批沿用此口径，不改 002。
 - D32 触发条件原文要求「真实生产发布或多实例部署」。本批取回的是其中**单实例也成立**的半边（配置/状态跨重启不丢），与打包 N（调度 PG store）同构；**多实例状态同步、热推送、图版本冻结的自动 pin 全部不在本批**，D32 整体不解除。
 
 ## 1. 决策（六条；改任何一条先改本文）
@@ -23,7 +23,6 @@
 ## 2. 形状
 
 - 迁移 `db/migrations/031_rollout_states.sql`：`CREATE TABLE IF NOT EXISTS`＋列 COMMENT（状态机语义、行锁口径、updated_at 用途）；首行按迁移约定带注释块（成因/键形态/时间列口径/幂等）。
-- `db/migrations/002_storage.sql`：补同一建表（全量新装不依赖增量迁移）。
 - `src/atlas/routing/pg_store.py`：`PgRoutingStore`；私有辅助 `_load_for_update(conn) -> RolloutState | None`、`_write(conn, state)`、`_insert_idle(conn)`；公共方法各开一个短事务。
 - `src/atlas/iam/registry.py:145`：pg 分支 `routing_store=PgRoutingStore(backend.engine, tenant_id)`（import 走函数内惰性）。
 - `src/atlas/routing/__init__.py`：导出 `PgRoutingStore`。
@@ -53,7 +52,7 @@
 ## 5. 原子序
 
 1. `docs(routing): specify the PG-backed rollout state store contract`（本文＋03／09／13／14／08／00 同步登记）。
-2. `feat(routing): add PG-backed rollout state store with row-level locking`（迁移 031＋002＋pg_store＋registry 接线）。
+2. `feat(routing): add PG-backed rollout state store with row-level locking`（迁移 031＋pg_store＋registry 接线；002 冻结基线不改）。
 3. `test(routing): cover the PG rollout store across restarts, tenants and concurrency`（U951–U957）。
 4. `docs(routing): close out the PG rollout state landing`（收口回填＋handoff＋CHANGELOG）。
 
