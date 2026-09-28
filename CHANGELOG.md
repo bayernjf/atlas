@@ -3,6 +3,15 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### feat(recording)：回放面板加填空式用例参数化向导（2026-09-29，纯前端；D26 余部；零迁移／零端点／零新依赖）
+
+- **一句话**：录制回放原来只能在一块 TextArea 里手写整段 JSON 来覆盖入参，本批在回放面板加「按字段填空」的向导——展开即用例每个入参一行控件，改完直接回放。改动面：`frontend/src/lib/paramWizard.ts`（新纯逻辑）、`frontend/src/pages/Editor.tsx`（面板）、两档 `editor.json` 各 6 键＋i18n 必填键守护。
+- **字段语义**：展开时懒加载用例全量（`GET /api/recordings/{id}` 拿 inputs），按值推类型 string/number/boolean/json——boolean 渲染 Switch、json 渲染多行输入、number 数字输入、其余文本输入；**草稿只活在当前页面会话**，不落库、不改录制本身。
+- **覆盖值组装**：留空字段（含纯空白字符串）不进 override；字符串保留用户原样输入（不 trim）；number 用 `Number()` 解析、非有限数就地报「请输入合法数字」且不发请求；json `JSON.parse` 失败就地报「JSON 格式不正确」。向导产出与 TextArea 里手写的 JSON **浅合并、向导字段优先**，最终经既有 `POST /api/recordings/{id}/replay` 的 `inputs_override` 发出——契约 04 §5.11 不变（仅当次回放有效、不持久化），故零迁移零端点。
+- **门（先跑后写，取实跑）**：前端全量 `pnpm exec vitest run` ＝ **748 passed / 2 skipped（56 files）**（向导逻辑新增 10 例）、`pnpm build` ✓、控制台 0 error。
+- **真浏览器实测**：后端 :8000（真 PG）admin-a 登录，录制用例入参 `{"order_id":"12345","reason":"商品破损","amount":299}`，向导中把 amount 改为 888 点「按参数回放」，抓包请求体逐字为 `{"inputs_override":{"order_id":"12345","reason":"商品破损","amount":888}}`；回放报告正确判为**不匹配**，列出 trigger-1（上下文）／ai_decision-1（决策·prompt_rendered）／tool_call-1（结果）三处 diff。
+- **残余照实**：not_a_number 的界面报错路径只由 vitest 覆盖（浏览器里手搓非法数字时输入实际被置空，走了「留空省略」分支）；**D26 整体不解除**——影子运行自动旁路/SSE、跨租户用例共享、长留存仍缓做 docs/14。**不 push 除非明确指示**。
+
 ### docs(integration)：写「外部 agent 经 REST 驱动 Atlas」集成说明，补上 D45 路线 (b)（2026-09-29，纯 docs；零代码／零依赖／零端点／零错误码／不触发 ADR）
 
 - **一句话**：缓做登记 [docs/14 D45](docs/14-缓做事项登记表.md) 记着「外部系统经 REST、入站 webhook、OpenAPI 导入成图内工具三条路今天已经能接，缺的是**协议标准化与工具自描述**」。本批补的是**接入说明**那一半——从**调用者视角**（Hermes／Claude 一类 agent）把"怎么用 REST 把 Atlas 当工具面用"讲清楚，落到 [docs/80](docs/80-外部agent经REST驱动Atlas集成说明.md) 十节。
