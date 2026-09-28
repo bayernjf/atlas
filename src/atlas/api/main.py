@@ -85,6 +85,7 @@ from atlas.memory.adapter import MemoryHarnessAdapter
 from atlas.memory.database import ping, wait_for_database
 from atlas.memory.models import MemoryValidationError
 from atlas.message.adapter import MessageHarnessAdapter
+from atlas.message.service import MessageSendError
 from atlas.monitoring import RUN_RING_SIZE, extract_business, extract_node_results
 from atlas.observability.audit import AUDITED_METHODS, LOGIN_PATH
 from atlas.channels.adapter import ShopifyHarnessAdapter
@@ -4394,11 +4395,46 @@ def demo_messages(
 @app.get("/api/demo/deliveries")
 def demo_deliveries(
     limit: int = 100,
+    status: str | None = None,
     principal: Principal = Depends(require("read")),
 ) -> dict[str, Any]:
-    """docs/56 §4.3：消息投递日志（每次 send 一条，含尝试次数/耗时/错误），倒序。"""
+    """docs/56 §4.3：消息投递日志（每次 send 一条，含尝试次数/耗时/错误），倒序。
+
+    打包 U：status=failed|delivered 过滤（docs/82 D-5），非法值 422。
+    """
+    if status is not None and status not in ("failed", "delivered"):
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "INVALID_PARAMETER", "message": "status 只接受 failed 或 delivered"},
+        )
     bounded = max(1, min(limit, 200))
-    return {"items": services_for(principal).message_service.list_deliveries(bounded)}
+    return {
+        "items": services_for(principal).message_service.list_deliveries(
+            bounded, status=status
+        )
+    }
+
+
+@app.post("/api/demo/deliveries/{seq}/replay")
+def demo_replay_delivery(
+    seq: int,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """打包 U（docs/82 D-5）：按原内容重放一条出站失败投递，原失败行不可变。"""
+    try:
+        result = services_for(principal).message_service.replay_failed(seq)
+    except MessageSendError as exc:
+        status_code = 422 if exc.code == "DLQ_BODY_UNAVAILABLE" else 409
+        raise HTTPException(
+            status_code=status_code,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "NOT_FOUND", "message": "投递记录不存在"},
+        )
+    return result
 
 
 # ---- M11 长期记忆（docs/26 §6 / docs/28 §5.1）：读 viewer+、手动新建/编辑 operate（source=manual）、删 admin；图内 remember 工具仍是运行时写入主路径 ----

@@ -29,11 +29,13 @@ DELIVERY_RING_SIZE = 200
 
 
 class DeliveryStore(Protocol):
-    """投递日志存储：record 追加、list 倒序投影、clear 租户清空。"""
+    """投递日志存储：record 追加、list 倒序投影、按 seq 取行、clear 租户清空。"""
 
     def record(self, rec: DeliveryRecord) -> None: ...
 
-    def list(self, limit: int) -> list[dict[str, Any]]: ...
+    def list(self, limit: int, *, status: str | None = None) -> list[dict[str, Any]]: ...
+
+    def get(self, seq: int) -> dict[str, Any] | None: ...
 
     def clear(self) -> None: ...
 
@@ -42,19 +44,50 @@ def _clamp_limit(limit: int) -> int:
     return max(1, min(int(limit), DELIVERY_RING_SIZE))
 
 
+def _matches_status(row_status: str, status: str | None) -> bool:
+    if status is None:
+        return True
+    if status == "failed":
+        return row_status == "failed"
+    if status == "delivered":
+        return row_status.startswith("delivered:")
+    raise ValueError(f"unsupported delivery status filter: {status!r}")
+
+
+def _project(seq: int, rec: DeliveryRecord) -> dict[str, Any]:
+    data = asdict(rec)
+    data["seq"] = seq
+    return data
+
+
 class InMemoryDeliveryStore:
-    """进程内 ring（deque maxlen=200），倒序、clamp 1-200，与旧 service 语义一致。"""
+    """进程内 ring（deque maxlen=200），倒序、clamp 1-200，与旧 service 语义一致。
+
+    打包 U：deque 内保留 (seq, record)——seq 为实例级单调计数（从 1 起），与 PG
+    的全局 storage_id_seq 同职责；ring 淘汰旧行后计数不回退。
+    """
 
     def __init__(self) -> None:
-        self._items: deque[DeliveryRecord] = deque(maxlen=DELIVERY_RING_SIZE)
+        self._items: deque[tuple[int, DeliveryRecord]] = deque(maxlen=DELIVERY_RING_SIZE)
+        self._next_seq = 0
 
     def record(self, rec: DeliveryRecord) -> None:
-        self._items.append(rec)
+        self._next_seq += 1
+        self._items.append((self._next_seq, rec))
 
-    def list(self, limit: int) -> list[dict[str, Any]]:
+    def list(self, limit: int, *, status: str | None = None) -> list[dict[str, Any]]:
         bounded = _clamp_limit(limit)
-        recent = list(self._items)[-bounded:]
-        return [asdict(item) for item in reversed(recent)]
+        matched = [
+            (seq, item) for seq, item in self._items if _matches_status(item.status, status)
+        ]
+        recent = matched[-bounded:]
+        return [_project(seq, item) for seq, item in reversed(recent)]
+
+    def get(self, seq: int) -> dict[str, Any] | None:
+        for item_seq, rec in self._items:
+            if item_seq == seq:
+                return _project(item_seq, rec)
+        return None
 
     def clear(self) -> None:
         self._items.clear()
@@ -73,7 +106,7 @@ class PgDeliveryStore:
 
     _COLS = (
         "id, seq, channel, to_targets, subject, status, attempts, "
-        "elapsed_ms, error_code, error_message, sent_at"
+        "elapsed_ms, error_code, error_message, sent_at, body"
     )
 
     def __init__(self, engine: Engine, tenant_id: str) -> None:
@@ -87,9 +120,9 @@ class PgDeliveryStore:
             db.execute(
                 text(
                     "INSERT INTO message_deliveries (tenant_id, id, seq, channel, to_targets, "
-                    "subject, status, attempts, elapsed_ms, error_code, error_message, sent_at) "
+                    "subject, status, attempts, elapsed_ms, error_code, error_message, sent_at, body) "
                     "VALUES (:tenant_id, :id, :seq, :channel, :to_targets, :subject, :status, "
-                    ":attempts, :elapsed_ms, :error_code, :error_message, :sent_at)"
+                    ":attempts, :elapsed_ms, :error_code, :error_message, :sent_at, :body)"
                 ),
                 {
                     "tenant_id": self._tenant_id,
@@ -104,6 +137,7 @@ class PgDeliveryStore:
                     "error_code": rec.errorCode,
                     "error_message": rec.errorMessage,
                     "sent_at": sent_at,
+                    "body": rec.body,
                 },
             )
             # 惰性 ring：删除本租户超出最近 200 条的旧行（与内存 deque maxlen 对齐）。
@@ -116,36 +150,55 @@ class PgDeliveryStore:
                 {"t": self._tenant_id, "keep": DELIVERY_RING_SIZE},
             )
 
-    def list(self, limit: int) -> list[dict[str, Any]]:
+    def list(self, limit: int, *, status: str | None = None) -> list[dict[str, Any]]:
         bounded = _clamp_limit(limit)
+        where_extra = ""
+        params: dict[str, Any] = {"t": self._tenant_id, "limit": bounded}
+        if status == "failed":
+            where_extra = " AND status = 'failed'"
+        elif status == "delivered":
+            where_extra = " AND status LIKE 'delivered:%'"
+        elif status is not None:
+            raise ValueError(f"unsupported delivery status filter: {status!r}")
         sql = (
             f"SELECT {self._COLS} FROM message_deliveries "
-            "WHERE tenant_id = :t ORDER BY seq DESC LIMIT :limit"
+            f"WHERE tenant_id = :t{where_extra} ORDER BY seq DESC LIMIT :limit"
         )
         with self._engine.connect() as db:
-            rows = db.execute(text(sql), {"t": self._tenant_id, "limit": bounded}).all()
+            rows = db.execute(text(sql), params).all()
 
-        def _project(row: Any) -> dict[str, Any]:
-            targets = row[3]
-            if isinstance(targets, str):
-                targets = json.loads(targets)
-            sent_at = row[10]
-            if isinstance(sent_at, datetime):
-                sent_at = sent_at.isoformat()
-            return {
-                "id": row[0],
-                "channel": row[2],
-                "to": targets or [],
-                "subject": row[4],
-                "sentAt": sent_at,
-                "status": row[5],
-                "attempts": row[6],
-                "elapsedMs": row[7],
-                "errorCode": row[8],
-                "errorMessage": row[9],
-            }
+        return [self._project_row(row) for row in rows]
 
-        return [_project(row) for row in rows]
+    def get(self, seq: int) -> dict[str, Any] | None:
+        sql = f"SELECT {self._COLS} FROM message_deliveries WHERE tenant_id = :t AND seq = :seq"
+        with self._engine.connect() as db:
+            row = db.execute(text(sql), {"t": self._tenant_id, "seq": int(seq)}).first()
+        if row is None:
+            return None
+        return self._project_row(row)
+
+    @staticmethod
+    def _project_row(row: Any) -> dict[str, Any]:
+        targets = row[3]
+        if isinstance(targets, str):
+            targets = json.loads(targets)
+        sent_at = row[10]
+        if isinstance(sent_at, datetime):
+            sent_at = sent_at.isoformat()
+        return {
+            "seq": row[1],
+            "id": row[0],
+            "channel": row[2],
+            "to": targets or [],
+            "subject": row[4],
+            "sentAt": sent_at,
+            "status": row[5],
+            "attempts": row[6],
+            "elapsedMs": row[7],
+            "errorCode": row[8],
+            "errorMessage": row[9],
+            "body": row[11],
+        }
 
     def clear(self) -> None:
         with self._engine.begin() as db:
