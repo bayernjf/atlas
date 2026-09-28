@@ -364,6 +364,8 @@ idempotency_key: string     # 幂等键
 >
 > **投递日志 PG 化注记（docs/60 G5，2026-09-24 落码收口 532a3fe/e0d7fe1/5714db9，迁移 025，部分取回 D24）**：投递日志从 MessageService 内 deque 抽为存储抽象 `message/deliveries.py` `DeliveryStore`（record/list/clear），InMemoryDeliveryStore 搬现 ring 200、PgDeliveryStore 落表。表 `message_deliveries`（迁移 025，002 同步）列：`tenant_id TEXT, id TEXT, seq BIGINT, channel TEXT, to_targets JSONB, subject TEXT DEFAULT '', status TEXT, attempts INT, elapsed_ms INT, error_code TEXT, error_message TEXT, sent_at TIMESTAMPTZ`，**主键 `(tenant_id, seq)`**（非草拟的 (tenant_id,id)——webhook/IM 群发逐目标多条共享同一 message id，seq 取 nextval('storage_id_seq')），索引 `(tenant_id, seq DESC)`；record 后惰性 `DELETE ... OFFSET 200` 裁到最近 200 行、list 倒序 clamp 1-200、reset（demo 清库）删本租户。REST 形状零改动（GET /api/demo/deliveries 见 12）。**fail-safe**：record 异常 try/except 吞掉，投递日志旁路不得阻断消息发送主链路（docs/60 §11）。registry PG 档注入 PgDeliveryStore、内存档缺省 InMemory；DeliveryStore 演进非选型变更、不新增 ADR（见 08/12）。短信/入站通用消费/模板 CRUD/DLQ/跨实例聚合仍缓做 D24。
 
+> **出站 DLQ 注记（打包 U，2026-09-29 立项，契约＝docs/82，部分取回 D24）**：`DeliveryRecord` 与 `message_deliveries` 投影增 `body`（迁移 032 加 `body TEXT` 可空；存量失败行 NULL 且**不可重放**）。store 增 `list(limit, *, status=None)`（failed／delivered:* 过滤）与 `get_failed(seq)`；`MessageService.replay_failed(seq)` 以存储的 channel/to/subject/body 走现有 send 全路径，产生**新 message_id 与新投递行**，原 failed 行不可变。REST：`GET /api/demo/deliveries?status=failed|delivered`（read）＋`POST /api/demo/deliveries/{seq}/replay`（operate；无行/跨租户 404、非 failed 409、body NULL 422）；重放无幂等键。U958–U963。模板系统/定时扫描/入站通用消费仍缓做，D24 不解除。
+
 ### `deployment_config` — 字段概览（完整定义见 05-组件设计-运营体五项核心.md #440，上下文章节：## 4.3 部署配置 Schema（示例））
 
 ```yaml
