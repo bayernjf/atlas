@@ -29,7 +29,7 @@ from atlas.openapi.store import ImportStore
 from atlas.recording import ReportStore, ShadowStore
 from atlas.recording.pg_reports import PgReportStore
 from atlas.recording.pg_shadow import PgShadowStore
-from atlas.routing import RoutingStore
+from atlas.routing import PgRoutingStore, RoutingStore
 from atlas.security.bootstrap import read_storage_backend
 from atlas.storage.base import (
     ApprovalRepository,
@@ -73,7 +73,7 @@ class TenantServices:
     monitoring: MonitoringRepository
     run_store: RunRepository
     task_store: TaskStore
-    routing_store: RoutingStore
+    routing_store: RoutingStore | PgRoutingStore
     report_store: ReportStore | PgReportStore  # docs/56：批量回放报告（内存 ring / PG release_reports）
     shadow_store: ShadowStore | PgShadowStore  # docs/61 §5 H4：影子运行（内存 ring 100 / PG shadow_runs）
     memory_store: MemoryRepository  # M11 长期记忆 fact/preference（批 3 PG 档换 PgMemoryStore）
@@ -142,7 +142,7 @@ class TenantRegistry:
                 monitoring=backend.monitoring_store(tenant_id),
                 run_store=backend.run_store(tenant_id),
                 task_store=TaskStore(),
-                routing_store=RoutingStore(),
+                routing_store=PgRoutingStore(backend.engine, tenant_id),
                 report_store=PgReportStore(backend.engine, tenant_id),
                 shadow_store=PgShadowStore(backend.engine, tenant_id),
                 memory_store=backend.memory_store(tenant_id),

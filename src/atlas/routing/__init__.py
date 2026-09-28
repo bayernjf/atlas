@@ -31,6 +31,7 @@ from .router import (
     resolve_version,
 )
 from .store import RolloutError, RolloutState, RoutingStore
+from .pg_store import PgRoutingStore
 from .gate import evaluate_after_run
 
 __all__ = [
@@ -46,6 +47,7 @@ __all__ = [
     "RolloutState",
     "RolloutStatus",
     "RoutingStore",
+    "PgRoutingStore",
     "TriggerEvent",
     "parse_rule",
     "SEGMENT_BUCKET",
