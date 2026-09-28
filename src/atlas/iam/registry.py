@@ -30,6 +30,7 @@ from atlas.recording import ReportStore, ShadowStore
 from atlas.recording.pg_reports import PgReportStore
 from atlas.recording.pg_shadow import PgShadowStore
 from atlas.routing import PgRoutingStore, RoutingStore
+from atlas.template.user_store import UserTemplateStore
 from atlas.security.bootstrap import read_storage_backend
 from atlas.storage.base import (
     ApprovalRepository,
@@ -82,6 +83,7 @@ class TenantServices:
     channel_registry: object  # 真实渠道绑定（docs/38；ADR T28，reset 不清）
     webhook_deliveries: object  # 入站投递去重/死信（docs/40；内存/PG 两档，reset 不清）
     openapi_imports: ImportStore | PgImportStore  # OpenAPI 导入规格（docs/42/43；内存/PG 两档，reset 不清）
+    user_templates: object  # 用户自建模板（docs/85 打包 X；内存/PG 两档，reset 同清）
 
 
 class TenantRegistry:
@@ -115,6 +117,7 @@ class TenantRegistry:
         # debug 会话是短命临时态、其帧落库不在 U43–U45 验收，批 1 保持内存实现。
         if STORAGE_BACKEND == "pg":
             from atlas.storage.pg import get_pg_backend
+            from atlas.template.pg_store import PgUserTemplateStore
 
             backend = get_pg_backend()
             connection_service = build_connection_service(
@@ -154,6 +157,7 @@ class TenantRegistry:
                 ),
                 webhook_deliveries=PgDeliveryStore(backend.engine, tenant_id),
                 openapi_imports=PgImportStore(backend.engine, tenant_id),
+                user_templates=PgUserTemplateStore(backend.engine, tenant_id),
             )
             TenantRegistry._wire_alert_notifier(services)
             return services
@@ -181,6 +185,7 @@ class TenantRegistry:
             ),
             webhook_deliveries=InMemoryDeliveryStore(),
             openapi_imports=ImportStore(),
+            user_templates=UserTemplateStore(),
         )
         TenantRegistry._wire_alert_notifier(services)
         return services
@@ -209,3 +214,4 @@ class TenantRegistry:
         services.report_store.reset()
         services.shadow_store.reset()
         services.memory_store.clear()
+        services.user_templates.clear()

@@ -2623,23 +2623,77 @@ def list_catalog_templates(
     principal: Principal = Depends(require("read")),
     accept_language: str | None = Header(default=None),
 ) -> dict[str, list[dict[str, Any]]]:
-    """列出内置流程模板（列表投影不含 graph，04 §5.10；12 §3.6）；name/description 按 Accept-Language 本地化（docs/70）。"""
+    """列出模板（内置目录 04 §5.10 在前、租户自建模板 docs/85 在后；列表投影不含 graph）；
+    内置 name/description 按 Accept-Language 本地化（docs/70）。"""
     locale = resolve_locale(accept_language)
-    return {
-        "items": [
-            localize_template(
-                {
-                    "id": template.id,
-                    "name": template.name,
-                    "description": template.description,
-                    "tags": template.tags,
-                    "node_count": len(template.graph["nodes"]),
-                },
-                locale,
-            )
-            for template in list_templates()
-        ]
-    }
+    items = [
+        localize_template(
+            {
+                "id": template.id,
+                "name": template.name,
+                "description": template.description,
+                "tags": template.tags,
+                "node_count": len(template.graph["nodes"]),
+                "source": "catalog",
+                "deletable": False,
+            },
+            locale,
+        )
+        for template in list_templates()
+    ]
+    items.extend(
+        {
+            "id": template.id,
+            "name": template.name,
+            "description": template.description,
+            "tags": template.tags,
+            "node_count": len(template.graph.get("nodes", [])),
+            "source": "user",
+            "deletable": True,
+            "created_at": template.created_at,
+        }
+        for template in services_for(principal).user_templates.list()
+    )
+    return {"items": items}
+
+
+class UserTemplateCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    description: str = Field(default="", max_length=200)
+    tags: list[str] = Field(default_factory=list, max_length=8)
+    graph: dict[str, Any]
+
+
+@app.post("/api/templates", status_code=201)
+def create_user_template(
+    body: UserTemplateCreateRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """画布另存为租户私有模板（docs/85 D-2）：parse_graph 仅校验可编译，图原样存。"""
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="模板名称不能为空")
+    tags = [tag.strip() for tag in body.tags]
+    for tag in tags:
+        if not 1 <= len(tag) <= 20:
+            raise HTTPException(status_code=422, detail="标签长度须在 1-20 字符之间")
+    parse_graph(body.graph)
+    template = services_for(principal).user_templates.add(
+        name=name, description=body.description, tags=tags, graph=body.graph
+    )
+    return {**template.model_dump(), "source": "user", "deletable": True}
+
+
+@app.delete("/api/templates/{template_id}")
+def delete_user_template(
+    template_id: str, principal: Principal = Depends(require("operate"))
+) -> dict[str, bool]:
+    """仅删用户模板（docs/85 D-3）：内置 id 与不存在 id 统一 404。"""
+    if get_template(template_id) is not None:
+        raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
+    if not services_for(principal).user_templates.delete(template_id):
+        raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
+    return {"deleted": True}
 
 
 @app.get("/api/templates/{template_id}")
@@ -2648,11 +2702,18 @@ def get_catalog_template(
     principal: Principal = Depends(require("read")),
     accept_language: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    """返回模板完整元数据（含 graph），未知 id 404（04 §5.10）；name/description 按 Accept-Language 本地化（docs/70）。"""
+    """返回模板完整元数据（含 graph），未知 id 404（04 §5.10；用户模板 docs/85）；
+    内置 name/description 按 Accept-Language 本地化（docs/70）。"""
     template = get_template(template_id)
-    if template is None:
+    if template is not None:
+        return localize_template(
+            {**template.model_dump(), "source": "catalog", "deletable": False},
+            resolve_locale(accept_language),
+        )
+    user_template = services_for(principal).user_templates.get(template_id)
+    if user_template is None:
         raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
-    return localize_template(template.model_dump(), resolve_locale(accept_language))
+    return {**user_template.model_dump(), "source": "user", "deletable": True}
 
 
 @app.get("/api/alert-rule-templates")
