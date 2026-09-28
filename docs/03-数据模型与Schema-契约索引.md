@@ -1054,13 +1054,17 @@ candidate: int | null            # 最新发布版
 started_at: string?
 rolled_back_at: string?
 rollback_reason: string?
+rollback_reason: string?
+rollback_actor: string?        # 最后一次回滚 actor（auto/manual）
 traffic: {stable: int, candidate: int, segments: {internal:int, lowValueBucket:int, canary:int, full:int, fallback:int}}
 # 状态迁移（POST .../rollout/{start|promote|rollback}）
 # configure 存配置不启动；start: idle→canary（发布版不足 2 个 409）；
 # promote: canary→full（唯一放量路径，仅手动，无任何自动 promote 代码）；
 # rollback: */→rolled_back（candidate 撤流、stable 接全量；actor auto|manual 同一幂等函数）
 ```
-> 每租户一个 RoutingStore 进程内实例（挂 TenantServices、reset 清空），与 iam 进程内分区/T20 任务总线同策略；真实多实例路由表同步/热推送/配置中心随 D6/D10b，沙盘不解除 D32。金融灰度硬条款（19 §2.5.5/20 §7.5）：业务桶 + 业务结果门控指标 + 回滚不改外部已发生事实，三条不可简化。
+> 每租户一个 RoutingStore 实例（挂 TenantServices、reset 清空），与 iam 进程内分区/T20 任务总线同策略；真实多实例路由表同步/热推送/配置中心随 D6/D10b，沙盘不解除 D32。金融灰度硬条款（19 §2.5.5/20 §7.5）：业务桶 + 业务结果门控指标 + 回滚不改外部已发生事实，三条不可简化。
+>
+> **PG 持久化注记（2026-09-29，打包 T；契约＝docs/81）**：PG 档运行态落 **`rollout_states` 表** PK (tenant_id, graph_id)——列即上方投影（config/traffic JSONB、时间列 TEXT ISO、无代理键），`PgRoutingStore`（`src/atlas/routing/pg_store.py`）方法面与内存 RoutingStore 一致，行锁（FOR UPDATE）串行状态机与计数，无行＝idle 默认、resolve 计数 UPSERT 存活；迁移 031。**REST 投影与 409/422 语义一字不变**；内存档仍是进程内。只取跨重启/跨连接一致这半边，**多实例同步不据此成立**，D32 整体不解除。
 
 ### `route_decision` — 字段概览（**M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；`src/atlas/routing/router.py` resolve_version 纯函数 + run 端点 event 接线）
 
