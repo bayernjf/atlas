@@ -54,3 +54,8 @@
 ### 2026-09-29 打包 U 出站消息 DLQ 落码滚出的 1 条（原 Recently shipped 未编号条目，逐字保留）
 
 ✅ **W5-5.3 ③ R8 收口＝裸工具名在 prod fail-closed（docs/73 W5-5.3 ③／docs/77 §4 R8，2026-09-27 承接用户「哪些阻塞MVP的任务可以推进呢」→ 选「R8 收尾」→ 口径「A：prod fail-closed」；**R-批 3 关闭，W5 三条全部闭合**）**：`loader.py` 原混写的 `if "/" not in tool_name or registry is None` 拆开——`registry is None` 仍 `SIMULATED`，**裸名＋非空 registry** 再走 `security/bootstrap.demo_surface_enabled()`（**与 5.2 演示面闸门共用同一判定源**）：**demo/dev 保持 `SIMULATED` 契约**、**prod 且未开 demo 面返回显式 `FAILED`**（`result.status=FAILED`＋`action_status=FAILED`＋`error`）。守护 **U939–U943**（`tests/test_tool_name_prod_gate.py` 5 例：prod 裸名⇒FAILED／prod 开关开回⇒SIMULATED／dev⇒SIMULATED（契约零变化）／prod 规范名⇒仍正常执行／prod 裸名 metric 记 FAILED）。**零既有测试改动**（5 个锁 SIMULATED 的测试全在 dev 档走恒开分支）。门：后端全量 **2013/125/0**（净增 5）、定向 163/1、前端零改动。**取舍照实**：只收紧 prod 档位门，非改 `SIMULATED` 契约本体；不动单副本三道闸、不解除缓做、不 push。
+
+
+### 2026-09-29 打包 V LLM 条件回放脚本化落码滚出的 1 条（原 Recently shipped 未编号条目，逐字保留）
+
+✅ **打包 S 落码收口＝空卷首启就绪竞态有界重试（docs/79，2026-09-28；解 docs/73 明细项 4.2；口径 (a)＝应用与迁移各自有界重试，**compose 一行未动**；零新依赖/迁移/端点/错误码/ADR）**：空卷首启时 PG initdb 后约 90s 的 recovery 窗口里 `pg_isready` 探针误判 healthy ⇒ atlas 被放行 ⇒ 迁移 CLI（`set -e`）连库即抛、容器退出、靠 `restart: unless-stopped` 第二次才起。改为**只重试连通性类错误**（`OperationalError`/`InterfaceError` 且命中恢复/连接标记，认证/权限/语法立即失败）、**有界预算**缺省 120s／间隔 2s（两个新 env）；**迁移 CLI fail-closed 不变**（重试整个 `apply_pending`，幂等安全）、**应用 lifespan 不阻断**（`recover_pending` 前先有界等，耗尽仅 warning）。形状＝`memory/database.py` 三新件＋两接入点（`apply_migrations.py`、`api/main.py`）。验收 **U944–U950**（`tests/test_db_connect_retry.py`）。门：后端全量 **2020/125/0**（净增 7）、handoff integrity 3 passed。真机〔跑〕`docker compose -p s79 up --build` ⇒ `/api/ready` **T+9s 返 200**、`RestartCount=0`、`applied 001…030`；**本机 load≈4.4 未触发竞态**，改以窗口直测补证。残余照实：未在失控负载下重演 90s 窗口；不 push、不动另一会话未 push 提交。

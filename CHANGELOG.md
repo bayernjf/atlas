@@ -3,6 +3,13 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### feat(recording)：LLM 语义分支录制回放脚本化，mock 回放零 LLM 调用确定重放（2026-09-29；打包 V；D14 余部切片；零迁移／零新依赖／前端不动）
+
+- **一句话**：conditionMode=llm 的录制用例此前 mock_tools 回放只给 tool_call 打桩，LLM 分流仍走真实/离线分类器——CI 无模型必漂 defaultTarget，有模型也可能随供应商抖动。本批让 `mock_tools=true` 回放**按录制时的分支标签确定性重放**：分类器 Protocol 加可选 `node_id`（Offline/LiteLLM 签名补齐、行为不变），新 `ScriptedConditionClassifier`（命中 node_id 返录制标签含 `__default__`，未知节点/None 抛 ConditionClassifyError 走 defaultTarget），`recording/replay.py` 加 `build_condition_script(case)`（dedupe 后只收 mode=llm 的 condition 步骤）。
+- **REST**：`POST /api/recordings/{id}/replay` 仅在 mock_tools 分支构造并透传 `condition_classifier`，报告纯超集加 `mocked_conditions: string[]`（正常与异常折叠两条路径都带）。**非 mock 回放与发布门禁语义不变**（真实求值、从不打桩）。
+- **门（先跑后写，取实跑）**：后端常跑 `.venv/bin/pytest` ＝ **2047 passed / 135 skipped / 0 failed**（净增 11；U964–U969 落 `tests/test_replay_llm_condition.py`）；`tests/test_handoff_integrity.py` 绿。
+- **边界照实**：脚本回放验的是「录制标签在当前图上是否仍导出同一路径/产出」，不验「LLM 今天还会不会这么判」；发布门禁仍真实调 LLM、供应商抖动可致 flaky。置信度阈值/多候选/澄清、每分支独立 prompt、模型按租户可选、字段级脱敏、structured outputs 仍缓做，**D14 整体不解除**。契约 docs/83。
+
 ### feat(message)：出站消息 DLQ，失败投递可过滤、可按原内容重放（2026-09-29；打包 U；D24 余部切片；迁移 032；零新依赖）
 
 - **一句话**：出站通知失败后 `message_deliveries` 只留失败痕、不存正文，内容不可恢复。本批迁移 **032** 加可空 `body`（存量 NULL 永不回填），`DeliveryRecord.body`（重放权威副本、不截断），两档 store 同形增 status 过滤列表（投影补 `seq`）与 `get(seq)`；`MessageService.replay_failed` 走现有 send 全路径产生新投递行，原 failed 行不可变。
