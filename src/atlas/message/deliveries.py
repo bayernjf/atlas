@@ -77,6 +77,8 @@ class InMemoryDeliveryStore:
 
     def list(self, limit: int, *, status: str | None = None) -> list[dict[str, Any]]:
         bounded = _clamp_limit(limit)
+        if status is not None and status not in ("failed", "delivered"):
+            raise ValueError(f"unsupported delivery status filter: {status!r}")
         matched = [
             (seq, item) for seq, item in self._items if _matches_status(item.status, status)
         ]
