@@ -575,6 +575,7 @@ type: "run_end"         # 随 run_graph 返回值展开
 traceId: string          # M10：run root span 的 trace id
 spanId: string           # M10：run root span id（parentSpanId 缺省）
 graphVersion: string     # M10：`graphId@<releaseVersion:int>`（发布版本，无 v 前缀，对齐 M6 钉版）/`graphId@draft`（草稿）
+rng_seed: int           # 打包 W（docs/84；2026-09-29）：本次运行实际使用的随机种子（未传则服务端 secrets 生成）；录制时由前端随用例回带入库
 ```
 > M10 起三帧均为 **19 §2.3.4 Trace 事件超集**：只新增 traceId/spanId/parentSpanId（run_end 另加 graphVersion），现有字段与帧类型不变，前端忽略未知字段即零改动。span 三元组位于事件顶层、**不进节点 output**（录制回放 collect_steps 只取 output，天然不受随机 id/时间影响）；完整 span 树经 `tracing` 包进程内导出，不进 SSE 高频帧。子图内部 span 经 `to_tree(include_internal=False)` 折叠（见下 `trace_span`，A 包后 span 树折叠口径不变）；A 包（`e594a4b`）后子图内部 node_start/node_end 改经可选 `subgraphPath` 上 SSE（见下），与 span 折叠相互独立。
 
@@ -667,6 +668,7 @@ graph_id: string           # 已保存图 id（服务端据此取图快照；未
 inputs: object | null      # 录制时的运行入参（trigger payload）
 steps: [{node_id, node_type, output}]  # 至少 1 步；node_id 重复时服务端保末
 status: string             # 录制运行终态
+rng_seed: int | null       # 打包 W（docs/84；2026-09-29）纯超集：所录运行的随机种子（由 /run 或 /run/stream 生成并随结果回传，前端原样回带）；缺省 null（历史用例，回放不锚定随机流）
 # 响应 201 / GET 详情（RecordingCase）
 id: string                 # rec-{自增}
 graph_id: string           # M9 新增纯超集：所属图 id（创建请求已收，M9 起落库；旧用例为空串，发布门禁不入选）
@@ -674,6 +676,7 @@ graph: graph_definition    # 录制时的图快照（冻结，非 graph_id 活�
 subgraphs: {graphId: raw}  # D26-b（2026-09-19，29bb3d9）纯超集：录制时递归冻结的子图 raw（深度≤3、visited 防环、引用缺失不阻断）；旧用例缺省 {}
 created_at: string         # UTC ISO-8601
 recorded_at: string | null # C 包（2026-09-19，3415377）纯超集：回放冻结时钟锚点（UTC ISO）；新用例入库时与 created_at 同 stamp（端点不重跑 baseline，锚点＝入库时刻），旧用例为 null（回放回退 created_at）；进程内/PG 两档一致（迁移 007）
+rng_seed: int | null       # 打包 W（docs/84；2026-09-29）纯超集：随机种子锚点（与 recorded_at 同类录制事实）；replay 与 gate 经 seed_anchor(case) 注入 run_graph，random/randint/uuid 确定重放；旧用例 null（挂 rng_seed_note，随机分支可能漂移）；随 case JSON 落盘零迁移
 # GET /api/recordings 列表投影（不含 graph/steps）
 items: [{id, name, graph_id, node_count, step_count, status, created_at}]
 # POST /api/recordings/{id}/replay（body 可省略；docs/28 §2.2，c7bf138，D26 部分取回）
@@ -690,6 +693,7 @@ steps: [{node_id, match, note, diff_keys?}]  # diff_keys 为归一化后差异�
 clock_note?: string        # C 包（3415377）：仅当用例缺 recorded_at/created_at、无法冻结时钟时附（中文，提示 today()/now() 时间分支可能漂移）；单用例 replay 挂响应顶层，发布门禁挂对应 case 项
 mocked_tools?: string[]     # docs/28 §2.2（c7bf138）：本次被桩替代的工具节点 id（未启用 mock/缺省为 []）
 mocked_conditions?: string[] # 打包 V（docs/83；2026-09-29）：mock_tools 回放时按录制标签脚本化的 LLM condition 节点 id（无 LLM 条件/未启用/非 mock/异常折叠均为 []）；分类器 ScriptedConditionClassifier 经 Protocol 新可选入参 node_id 选标签，未知节点抛 ConditionClassifyError 走 defaultTarget
+rng_seed_note?: string      # 打包 W（docs/84；2026-09-29）：仅当用例缺 rng_seed（历史用例）时附（中文，提示 random/randint/uuid 分支可能漂移）；单用例 replay 挂响应顶层，发布门禁挂对应 case 项
 # PUT /api/recordings/{id}（operate；docs/28 §2.3，89e21fc）：body {name?: 1-100字, inputs?: object}，仅 name/inputs 可改；
 #   steps/graph/subgraphs/graph_id/时间戳为录制事实不可改（请重新录制）；不存在 404、空名/超长/inputs 非对象 422；返完整 RecordingCase；进程内/PG 两档持久化
 ```
