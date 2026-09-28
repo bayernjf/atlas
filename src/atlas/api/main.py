@@ -2684,6 +2684,45 @@ def create_user_template(
     return {**template.model_dump(), "source": "user", "deletable": True}
 
 
+class UserTemplateUpdateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    description: str = Field(default="", max_length=200)
+    tags: list[str] | None = Field(default=None, max_length=8)
+    graph: dict[str, Any]
+
+
+@app.put("/api/templates/{template_id}")
+def update_user_template(
+    template_id: str,
+    body: UserTemplateUpdateRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """整体更新租户私有模板（docs/86 D-1）：id/seq/created_at 不变；
+    tags 字段缺省＝保留旧值（D-5 唯一例外），内置 id 与不存在统一 404。"""
+    store = services_for(principal).user_templates
+    if get_template(template_id) is not None:
+        raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
+    current = store.get(template_id)
+    if current is None:
+        raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="模板名称不能为空")
+    tags = current.tags if body.tags is None else [tag.strip() for tag in body.tags]
+    for tag in tags:
+        if not 1 <= len(tag) <= 20:
+            raise HTTPException(status_code=422, detail="标签长度须在 1-20 字符之间")
+    parse_graph(body.graph)
+    updated = store.update(
+        template_id,
+        name=name,
+        description=body.description,
+        tags=tags,
+        graph=body.graph,
+    )
+    return {**updated.model_dump(), "source": "user", "deletable": True}
+
+
 @app.delete("/api/templates/{template_id}")
 def delete_user_template(
     template_id: str, principal: Principal = Depends(require("operate"))

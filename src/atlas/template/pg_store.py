@@ -79,6 +79,35 @@ class PgUserTemplateStore:
             ).first()
         return self._to_model(row) if row is not None else None
 
+    def update(
+        self,
+        template_id: str,
+        *,
+        name: str,
+        description: str,
+        tags: list[str],
+        graph: dict[str, Any],
+    ) -> UserTemplate | None:
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                text(
+                    "UPDATE user_templates SET name = :name, description = :description, "
+                    "tags = CAST(:tags AS JSONB), graph = CAST(:graph AS JSONB) "
+                    "WHERE tenant_id = :tenant_id AND id = :id"
+                ),
+                {
+                    "name": name,
+                    "description": description,
+                    "tags": json.dumps(list(tags), ensure_ascii=False),
+                    "graph": json.dumps(graph, ensure_ascii=False),
+                    "tenant_id": self._tenant_id,
+                    "id": template_id,
+                },
+            )
+            if result.rowcount == 0:
+                return None
+        return self.get(template_id)
+
     def list(self) -> list[UserTemplate]:
         with self._engine.connect() as conn:
             rows = conn.execute(

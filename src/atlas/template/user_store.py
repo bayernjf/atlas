@@ -33,6 +33,16 @@ class UserTemplateRepository(Protocol):
 
     def get(self, template_id: str) -> UserTemplate | None: ...
 
+    def update(
+        self,
+        template_id: str,
+        *,
+        name: str,
+        description: str,
+        tags: list[str],
+        graph: dict[str, Any],
+    ) -> UserTemplate | None: ...
+
     def list(self) -> list[UserTemplate]: ...
 
     def delete(self, template_id: str) -> bool: ...
@@ -64,6 +74,30 @@ class UserTemplateStore:
 
     def get(self, template_id: str) -> UserTemplate | None:
         return self._items.get(template_id)
+
+    def update(
+        self,
+        template_id: str,
+        *,
+        name: str,
+        description: str,
+        tags: list[str],
+        graph: dict[str, Any],
+    ) -> UserTemplate | None:
+        with self._lock:
+            current = self._items.get(template_id)
+            if current is None:
+                return None
+            updated = UserTemplate(
+                id=current.id,
+                name=name,
+                description=description,
+                tags=list(tags),
+                graph=graph,
+                created_at=current.created_at,
+            )
+            self._items[template_id] = updated
+            return updated
 
     def list(self) -> list[UserTemplate]:
         # 新模板在前（id 序倒序等价创建序倒序）。
