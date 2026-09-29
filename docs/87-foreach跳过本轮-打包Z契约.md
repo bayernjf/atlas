@@ -25,6 +25,11 @@
   与 break（condition→exitTarget）同构。编译期把边 `(condition, loopId)` retarget
   到合成节点 `__skip__{loopId}`（新前缀常量 `SKIP_GATE_PREFIX="__skip__"`）。
   非 condition 体内节点连回 loop 仍是**普通聚合回边**，语义不变。
+  - **落码补记（2026-09-29）**：本条使「condition 连回 loop＝skip」成为唯一语义，
+    因此 foreach 体内 condition 的**普通 continue（要聚合本轮）不能直连 loop**——
+    须经一个非 condition 透传节点回 loop（边＝透传节点→loop，按普通聚合回边处理）。
+    D17 时代「condition defaultTarget 直连 loop 作 continue」的画法由此废止
+    （旧 foreach break 测试夹具已按新画法迁移；模板目录经扫描零受影响）。
 - **D-2 skip gate 语义：只推进、不聚合**——
   - `results` 原样保留：**不读** collectTarget，collectTarget 有产出也不追加；
     不产生 `FOREACH_COLLECT_MISSING`（与普通回边的区别仅此一条）。
@@ -55,15 +60,15 @@
 
 ## 3. 契约同步矩阵（收口时逐项回填）
 
-- [ ] `docs/04`：§5.3 foreach blockquote 补「skip-current 已取回」并改正
+- [x] `docs/04`：§5.3 foreach blockquote 补「skip-current 已取回」并改正
   「不做」列里的 skip-current 字样。
-- [ ] `docs/12`：编译期内部节点清单/loader 说明补 `__skip__ gate`。
-- [ ] `docs/13`：U986 起登记，真实浏览器验收回填。
-- [ ] `docs/14 D16`：追记「2026-09-29 再取回 skip-current 半边，本条不解除」。
-- [ ] `docs/08`：立项/收口注记。
-- [ ] `docs/00` 文档地图：docs/87 行。
-- [ ] docs/45：非目标表的 skip-current 行加「已由 docs/87 打包 Z 取回」注记。
-- [ ] handoff（Project documents＋Recently shipped）、CHANGELOG。
+- [x] `docs/12`：编译期内部节点清单/loader 说明补 `__skip__ gate`。
+- [x] `docs/13`：U986–U992 登记，验收结果回填。
+- [x] `docs/14 D16`：追记「2026-09-29 再取回 skip-current 半边，本条不解除」。
+- [x] `docs/08`：立项/收口注记。
+- [x] `docs/00` 文档地图：docs/87 行。
+- [x] docs/45：非目标表的 skip-current 行加「已由 docs/87 打包 Z 取回」注记。
+- [x] handoff（Project documents＋Recently shipped）、CHANGELOG。
 - 无 docs/03 项：foreach 输出形状零变化（无新字段、无新表）。
 
 ## 4. 测试候选（U986 起；落码时定号）
@@ -78,7 +83,12 @@
   重算；编译产物中无 `__skip__` 节点。
 - **U991 break＋skip 共存**：同图两条分支，分别触发时各进各门、输出正确。
 - **U992 全部跳过**：每轮都 skip ⇒ results=[]、exitReason=completed。
-- **浏览器验收**：真画 condition→loop 边，运行并核对聚合结果与 trace 文案。
+- **浏览器验收（2026-09-29 已做）**：真实后端 :8000 上经登录→保存→编译→
+  `/run/stream` SSE 跑通 skip-middle 图——index 1→2 时 results 保持
+  ['item=a'] 不变，终态 ['item=a','item=c'] / completed；浏览器 :5174
+  登录、编辑器加载、编译并运行退款 Demo（SSE 上屏、结果 refunded、控制台零错）。
+  未做项：未在画布上手工拖画 condition→loop 边（节点面板仅支持原生拖拽，
+  DevTools 无法模拟 dataTransfer）；该边属前端既有通用连线、本批零前端改动。
 
 ## 5. 原子序
 

@@ -3,10 +3,12 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
-### feat(loop)：foreach skip-current，condition 连回 loop 即跳过本轮（2026-09-29 立项；打包 Z；D16 余部切片；零迁移／零新依赖）
+### feat(loop)：foreach skip-current，condition 连回 loop 即跳过本轮（2026-09-29 ✅ 落码收口，commit f923525；打包 Z；D16 余部切片；零迁移／零新依赖）
 
 - **一句话**：foreach 循环体新增"跳过当前元素"——体内 condition 连一条分支回 loop 节点，编译期 retarget 到合成 `__skip__{loopId}` gate，gate 只推进 index/切换 item，**不读 collectTarget、不聚合本轮**；跳过末项即正常 completed 退出。
-- 非 condition 节点连回 loop 仍是普通聚合回边；while 模式 condition→loop 的 continue 重算语义不变（不建 gate）。零端点／错误码／DSL 校验变更，无新增 exitReason，前端零改动（边本就能画）；break 与 skip 可共存。验收 U986–U992。立项中，未收口。
+- **收口事实**：gate 以 loop 节点 id 重发一帧 node_end（SSE 上无 `__skip__*` 帧），条件边 bodyTarget/exitTarget；while 不生成 `__skip__`；break 与 skip 可共存（break 边仍经 `__break__` 聚合在途结果）；recursion_limit 对每个含 skip 源的 foreach 加 `MAX_LOOP_ITERATIONS`。
+- **画法订正（D-1）**：condition 连回 loop 在 foreach 体内成为**唯一 skip 语义**——要聚合本轮的普通 continue 不能直连 loop，须经一个非 condition 透传节点回 loop；D17 时代「condition defaultTarget 直连 loop 作 continue」的画法由此废止（旧 foreach break 测试夹具已迁移；内置模板扫描零受影响）。零端点／错误码／DSL 校验变更，无新增 exitReason，前端零改动。
+- **门（先跑后写，取实跑）**：U986–U992 并入 `tests/test_graph_loader.py`（中项跳过不聚合、不读 collectTarget、末项跳过 completed、普通回边回归、while 无 `__skip__`、break+skip 共存、全部跳过），全量 **2092 passed / 135 skipped / 0 failed**（净增 7）；真服 SSE 实跑验过 results 在跳过轮不变；真实浏览器登录跑 refund Demo 零控制台错误（手工拖 condition→loop 为原生拖拽、CDP 不可模拟，照实记 docs/87）。契约 docs/87；**D16 整体不解除**。
 
 ### feat(template)：用户自建模板 PUT 更新，原 id 整体替换、身份字段不变（2026-09-29；打包 Y；D25 余部切片；零迁移／零新依赖）
 

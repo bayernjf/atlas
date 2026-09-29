@@ -91,7 +91,7 @@
 - 向全局作用域注入裸 `item` 短名、自定义 item 的运行时路径（itemName 仅展示别名）。
 - 并行遍历（map-reduce 并发分支）——随 D18 动态分支 / Phase 3，foreach 为**串行**逐项。
 - 聚合结果的字段挑选/拍平/去重、按 item 失败续跑或重试策略（沿用节点级 retry）。
-- break 之外的 continue-skip（跳过当前单项）语义；while→foreach 的图自动迁移（手工切 mode）。
+- break 之外的 continue-skip（跳过当前单项）语义——**已由 [docs/87] 打包 Z 于 2026-09-29 取回**（condition 连回 loop 经 `__skip__` gate 只推进不聚合）；while→foreach 的图自动迁移（手工切 mode）。
 
 ## 3. Schema 契约（03 同步）
 
