@@ -312,7 +312,13 @@ def _make_executor(
     jitter_rng: random.Random | None = None,
     expr_rng: random.Random | None = None,
 ):
+    # 续跑只对挂起节点的**第一次**重入生效（每次编译=一次运行，闭包即运行级状态）：
+    # 挂起点在循环体内时该节点每轮都会重入，若每轮都走帧内 token，则第二项起的审批
+    # 会被第一项的决定静默顶掉（既不重新登记、也不写新帧）。消费一次后按正常路径走。
+    resume_consumed = False
+
     def execute(state: GraphState) -> dict:
+        nonlocal resume_consumed
         context = {"global": state["variables"].get("global", {}), **state["outputs"]}
 
         # M10：每节点一个 node span（parallel 用 parallel kind 并记 fork attrs）；
@@ -345,7 +351,13 @@ def _make_executor(
                 start_event.update(node_span.context())
 
             # 续跑时仅在挂起节点生效：用帧内原 token 继续等待（不重新登记审批）。
-            resume_here = resume is not None and node.id == resume["node_id"]
+            resume_here = (
+                resume is not None
+                and node.id == resume["node_id"]
+                and not resume_consumed
+            )
+            if resume_here:
+                resume_consumed = True
 
             approval_payload = None
             if node.type == "human_approval":
@@ -2542,8 +2554,14 @@ def compile_graph(
             retarget[(member, lnode.id)] = gate_id
 
     incoming = {edge.target for edge in graph.edges}
+    entries = {node.id for node in graph.nodes if node.id not in incoming}
+    # 续跑尾图：挂起节点是新入口（docs/24 §2.3）。它在循环体内时，前驱（loop 节点）
+    # 经回边同样自挂起节点可达、也在尾图里，故"无入边"判定不出入口，须显式补 START，
+    # 否则 langgraph 抛 ValueError: Graph must have an entrypoint。
+    if resume is not None and resume.get("node_id") in {node.id for node in graph.nodes}:
+        entries.add(resume["node_id"])
     for node in graph.nodes:
-        if node.id not in incoming:
+        if node.id in entries:
             builder.add_edge(START, node.id)
 
     condition_ids = {node.id for node in graph.nodes if node.type == "condition"}
