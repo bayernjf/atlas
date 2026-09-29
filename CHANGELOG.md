@@ -3,6 +3,21 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### test(loader)：循环体内挂起点续跑的另两种形态转为常跑守护（2026-09-29 追记；打包 ZD 追记；零代码改动）
+
+- **一句话**：打包 ZD 收口后对抗探测了同类的两条画法——**while 模式**循环体内的挂起点续跑、**foreach 体内 skip 分支（打包 Z）＋ 续跑**——**两条均无缺陷**，按「无缺陷不立项」不开新批，但探测脚本在 `.smoke/` 下不入 CI，故转成正式用例锁回归。
+- **U1004**：帧内 `iterations=4`、`n=5` 续跑后 `iterations=5`、`index=5`、`condition_false`、审批恰 2 行——`iterations` 终值由 `n` 决定、「续跑」与「重跑」相同，故判别式只能是循环体实际执行轮数（重跑会是 5 行）。
+- **U1005**：帧内游标预填到被跳过的第 2 项，续跑后 `completed`、`index=3`、审批 2 行、results 恰 `["id=1","id=3"]`、trace 含 `skip item`——锁「打包 Z 的 skip gate 在续跑尾图里照常推进游标且不聚合」。
+- **门（先跑后写，取实跑）**：U1004–U1005 并入 `tests/test_loader_resume.py`（该文件 9 例全绿），全量 **2105 passed / 135 skipped / 0 failed**（净增 2）。零代码改动、零迁移／端点／错误码／依赖／ADR，前端零改动；04 §5.3 末权威条目的测试引用同步扩到 U1001–U1005，D16/D20 均不解除。
+
+### fix(loader)：挂起点在循环体内时的续跑修正，逐项审批／等待不再被静默顶掉（2026-09-29 ✅ 落码收口，commit 3815ebb；打包 ZD；零迁移／零新依赖）
+
+- **一句话**：`human_approval`／`wait` 位于 foreach 循环体（04 §5.3/§5.5/§5.6 明确允许）时，从挂起帧续跑此前**编译期直接失败**，补上入口后又**每轮复用同一决定**——现在逐项各自成卡、各自可决，等待按完整时长逐项重计。
+- **缺陷一（硬失败）**：续跑尾图（`_tail_subgraph`）保留循环回边，挂起节点在尾图里仍有入边（来自 loop 节点），「无入边即入口」推导不出任何入口，langgraph 抛 `ValueError: Graph must have an entrypoint`。修法：尾图**显式以挂起节点为唯一入口**（它同时是入口与起点，上游视为已完成）。
+- **缺陷二（静默错结果）**：`resume_here` 原按「节点 id 命中」判定，是编译级常量，挂起节点每轮重入都走帧内 token —— 第二项起的审批**沿用第一项的决定**（既不重新登记 pending、也不写新中断帧），等待则因帧内剩余时长已归零而**静默跳过**。修法：帧内 token／deadline 在**一次续跑内只消费一次**（闭包计数，按运行级而非按 `outputs` 是否已有该节点产出），其后每轮走正常路径。
+- **顺带勘误**：docs/03 与 docs/24 原列 `resume_state` 含 `decisions`/`trace_prefix`/`retry` 三项，实测从未写入且不需要（决策随 `outputs` 走、trace 只留尾段、retry 从帧内 `graph_snapshot` 现读），实现形状为 `{graph_id, inputs, outputs}`；两处文档已按实现更正。
+- **门（先跑后写，取实跑）**：U1001–U1003 并入 `tests/test_loader_resume.py`（逐项审批各持 token 与按 item 渲染的 summary、挂起落在第 2 项时仍只消费帧内 token 一次、逐项等待首轮用帧内剩余／其后满额重计），全量 **2103 passed / 135 skipped / 0 failed**（净增 3）。非循环内挂起点的行为零改动（该节点每次运行只重入一次，消费规则退化为恒等）。零迁移／端点／错误码／ADR，前端零改动；契约 04 §5.3 末、docs/24 §2.3。
+
 ### fix(loop)：循环体内含 parallel 编译期拒绝，堵多轮扇出静默截断（2026-09-29 ✅ 落码收口，commit 5e04dcb；打包 ZC；零迁移／零新依赖）
 
 - **一句话**：foreach／while 的循环体内出现 parallel 节点时，解析期报 `LOOP_PARALLEL_IN_BODY`；此前该画法能通过编译，运行时第二轮起的扇出会被汇聚网关永久空转、流程静默截断而整体状态伪报 `completed`。

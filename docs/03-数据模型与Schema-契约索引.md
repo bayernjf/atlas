@@ -1014,12 +1014,12 @@ resumed_by: string | null       # 迁移 029：认领进程身份 "hostname:pid"
 wait: object | null             # 仅 wait-event 帧（docs/53；docs/54 纯超集）：{waitType:"event", eventKey(首键), eventKeys?:[...](多事件竞速 1-8), onTimeout:"continue"|"fail", timeoutSeconds(已求值秒,1-86400)}；duration 帧不带此键
 graph_snapshot: object          # 保存时图定义副本（M6 版本化未落地前随帧内嵌，防恢复错位）
 resume_state:                   # 续跑载荷（挂起点续跑，不重跑上游）
+  graph_id: string              # 本次运行所属图 id（恢复时还原 run 归属；docs/53 §2 已按此形状落码）
   inputs: object                # run inputs（同名覆盖全局变量口径不变）
   outputs: object               # 截至挂起点的已完成节点产出
-  decisions: object             # 已记录 branch/target 决策（condition/loop 续跑照走）
-  trace_prefix: string[]        # trace 前缀，恢复后追加
-  retry: object                 # 节点 retry 配置
 ```
+
+> **`resume_state` 形状勘误（2026-09-29，落码核对）**：上列三项即实现形状（唯一生产者 `graph/loader.py::_emit_frame`，形状权威＝docs/53 §2 与 docs/24 §2.3 追记）。docs/24 §2.3 原设计意图另列 **`decisions`（branch/target 决策）/`trace_prefix`（trace 前缀）/`retry`（节点 retry 配置）三项，实测从未写入**：决策本就随 `outputs` 走（condition 产出含 `target`、loop 产出含 `index/item/results`、human_approval 产出含 `decision/target`），续跑按同一套路由规则重读，无须另存；trace 前缀不携带（续跑只保留尾段 trace）；retry 配置从帧内 `graph_snapshot` 现读。`graph_id` 为原表未列的**新增项**（docs/53 起即按此实现，恢复侧 `main.py` 四处按 `resume_state["graph_id"]` 还原 run 归属）。**引用方勿按旧表构造帧**——以本块为准。
 
 > 可恢复边界：重启仅 `suspended` 帧可恢复（恢复扫描器逐帧重建 pending：approval 重挂 Event+剩余 deadline、debug 重挂暂停、wait 重排剩余 sleep）；`running` 中断的运行标 `interrupted`（失败档），不重放副作用。决策信号＝内存 `Event.set` + 恢复行落库双写，执行线程 `Event.wait(剩余)` + 1s PG 轮询复合等待。查询端点 `GET /api/runs?status=suspended`、`GET /api/runs/{run_id}`（12 已登记，**2026-09-17 已随 M5b 落码生效**）。
 
