@@ -46,6 +46,16 @@ describe('运行期错误码 i18n（docs/60 G1）', () => {
     )
   })
 
+  it('LLM_* 码（LLM 决策不可用）双语映射，英文态不含汉字', () => {
+    expect(resolveRuntimeError('LLM_DECISION_UNAVAILABLE', undefined, '兜底')).toContain(
+      '生产环境未配置 LLM 决策器',
+    )
+    changeLanguage('en-US')
+    const en = resolveRuntimeError('LLM_DECISION_UNAVAILABLE', undefined, '兜底')
+    expect(en).toContain('No LLM decision provider is configured in production')
+    expect(en).not.toMatch(/[一-鿿]/)
+  })
+
   it('TYPE_MISMATCH 运算符类型错误：双语 detail 组装、类型码本地化', () => {
     const zh = resolveRuntimeError(
       'COND_TYPE_MISMATCH',
@@ -109,6 +119,7 @@ describe('运行期错误码 i18n（docs/60 G1）', () => {
     expect(resolveRuntimeError('SOME_OTHER_CODE', undefined, '后端中文')).toBe('后端中文')
     expect(isRuntimeErrorCode('COND_FOO')).toBe(true)
     expect(isRuntimeErrorCode('WAIT_X')).toBe(true)
+    expect(isRuntimeErrorCode('LLM_DECISION_UNAVAILABLE')).toBe(true)
     expect(isRuntimeErrorCode('AUTH_BAD')).toBe(false)
     expect(isRuntimeErrorCode(undefined)).toBe(false)
   })
