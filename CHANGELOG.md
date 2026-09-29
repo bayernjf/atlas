@@ -3,6 +3,11 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### feat(loop)：foreach skip-current，condition 连回 loop 即跳过本轮（2026-09-29 立项；打包 Z；D16 余部切片；零迁移／零新依赖）
+
+- **一句话**：foreach 循环体新增"跳过当前元素"——体内 condition 连一条分支回 loop 节点，编译期 retarget 到合成 `__skip__{loopId}` gate，gate 只推进 index/切换 item，**不读 collectTarget、不聚合本轮**；跳过末项即正常 completed 退出。
+- 非 condition 节点连回 loop 仍是普通聚合回边；while 模式 condition→loop 的 continue 重算语义不变（不建 gate）。零端点／错误码／DSL 校验变更，无新增 exitReason，前端零改动（边本就能画）；break 与 skip 可共存。验收 U986–U992。立项中，未收口。
+
 ### feat(template)：用户自建模板 PUT 更新，原 id 整体替换、身份字段不变（2026-09-29；打包 Y；D25 余部切片；零迁移／零新依赖）
 
 - **一句话**：打包 X 之后改名/改图只能"删旧建新"；本批补 `PUT /api/templates/{id}`（operate）在原 id 上**整体替换** name/description/tags/graph，id、seq、created_at 与列表排序位置全部不变。
