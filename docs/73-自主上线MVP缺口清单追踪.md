@@ -10,13 +10,14 @@
 - **证据级**（同 docs/63 §0 / docs/72 §0）：〔跑〕＝本仓库执行过命令；〔码〕＝逐行读码确认；〔勘〕＝子代理勘察未复。状态翻 ✅ 须带证据级。
 - **当前门（实跑，2026-09-27）**：后端 `pytest` 1951 passed / 119 skipped / 0 failed；前端 `pnpm test` 738 passed / 2 skipped、`pnpm lint` 0 error / 7 既有 warning、`pnpm build` ✓。（**该行为 2026-09-27 上午立项时读数，已过期**）
 - **当前门（2026-09-27 第六次复审，CI runner 自己读数，SHA `3087495`／run `36306384856`，四 job 全绿）**：后端 `pytest` **1979 passed / 125 skipped / 0 failed**；**PG 直连 `pytest`（CI 开 `ATLAS_RUN_INTEGRATION`）2099 passed / 5 skipped**；前端 **738 passed / 2 skipped**、`pnpm build` ✓；gitleaks ✓。本机同日全量**未出数**——同机 load 一度 229–309，跑到 40 分钟我主动终止，**不拿抖动值也不拿 CI 数冒充本地数**。
+- **当前门（2026-09-30 本机全量）**：后端 `.venv/bin/pytest` **2105 passed / 135 skipped / 0 failed**（254.88s，exit 0）。项目**不加载 `.env`**（无 python-dotenv 依赖、无 `--env-file`），故该读数与凭据配置无关、测试语义未变。
 - **刷新规则**：任一项翻 ✅ 时，在同一行补「证据」与「完成日期」，并在文末变更流水追加一行；不删除历史行。
 
 ## 1. 缺口总览（按工作流）
 
 | 工作流 | 主题 | 明细项 | 状态汇总 |
 |---|---|---|---|
-| W1 | 真实外部凭据（硬阻断） | 1.1 真实 LLM 决策 / 1.2 真实 Shopify 退款 / 1.3 真实消息·IM·SMTP·SMS·OAuth | ⬜×3 |
+| W1 | 真实外部凭据（硬阻断） | 1.1 真实 LLM 决策 / 1.2 真实 Shopify 退款 / 1.3 真实消息·IM·SMTP·SMS·OAuth | 🟡×1（1.1 半程：凭据＋真实调用已验证，**prod 禁 mock 兜底未实现**）／⬜×2 |
 | W2 | N3 范围决策（产品非工程） | 2.1 浏览器自动化进/出 MVP | ✅ **2026-09-27 已表态＝不进 MVP（非目标），复开条件已写** |
 | W3 | prod 形态持久化与韧性 | 3.1 调度 store PG 化（D32）/ 3.2 D36 崩溃兜底批 / 3.3 多副本解锁（后置） | ✅×1（3.1 已完成，2026-09-27 更正）／⬜×1（3.2；3.3 后置不计入 B 档） |
 | W4 | prod 演练（终门） | 4.1 `ATLAS_ENV=prod` 真机演练 ／ 4.2 空卷首启就绪竞态 | ⬜×1（4.1：**2026-09-27 记部分推进**、2026-09-28 空卷 prod 首启跑到 `ready` 但仍未跑完整链）／✅×1（**4.2 已完成，2026-09-28**） |
@@ -27,7 +28,7 @@
 
 | ID | 工作流 | 动作 | 完成判据（Done-when） | 依赖 | 状态 | 证据 | 备注 |
 |---|---|---|---|---|---|---|---|
-| 1.1 | W1 | 配 `LITELLM_MODEL` + 商业 API key 入 prod 秘钥；`ATLAS_ENV=prod` 时禁用 demo/mock LLM 兜底 | 一个 `condition` 节点（docs/48）及任何 LLM 驱动的运行在 prod 下发出 ≥1 次真实 LiteLLM 调用；prod 不静默走 mock 兜底 | 商业 LLM 账号 + 成本/额度预算 | ⬜ | — | demo 当前靠兜底；prod 必须真决策 |
+| 1.1 | W1 | 配 `LITELLM_MODEL` + 商业 API key 入 prod 秘钥；`ATLAS_ENV=prod` 时禁用 demo/mock LLM 兜底 | 一个 `condition` 节点（docs/48）及任何 LLM 驱动的运行在 prod 下发出 ≥1 次真实 LiteLLM 调用；prod 不静默走 mock 兜底 | 商业 LLM 账号 + 成本/额度预算 | 🟡 **2026-09-30 半程**（真实凭据＋真实调用已验证；「prod 禁 mock 兜底」未实现） | 〔跑〕真实 LLM 调用：`POST /api/graphs/graph-1/run` 两条退款单各一次，`ai_decision-1` 产出 `source="llm:openai/agnes-2.5-flash"`——12345 破损/299 ⇒ `approve_refund` conf 0.98 ⇒ `process_refund` `{"status":"refunded"}` SUCCESS；12346 不想要了/5000 ⇒ `request_human_approval` conf 1.0 ⇒ `human_review`。启动日志 `decision client: LiteLLM(model=openai/agnes-2.5-flash)`，规则降级 WARNING 消失。〔码〕**顺带修掉两个让 key 配了也失效的管道缺陷**（commit `98fff8e`）：① `.env.example` 原记的 `LITELLM_API_KEY`/`LITELLM_BASE_URL` **不被 litellm 直连路径读取**——只被其 proxy/MCP 代码读，直连用的是 `OPENAI_API_KEY`/`OPENAI_BASE_URL`（源码 `litellm/llms/openai/common_utils.py:352-357`）；② `docker-compose.yml:52` 只透传 `LITELLM_MODEL`，key/base 进不了容器。〔码〕**未实现的那一半**：`src/atlas/llm/*.py` 对 `read_env_profile()`／prod **零引用**，`security/bootstrap.py` 的 `_REQUIRED_PROD_SECRETS` 不含任何 LLM 配置 ⇒ prod 档缺 `LITELLM_MODEL` 仍静默走规则兜底 | 真实 key 已入本地 `.env`（`.gitignore:41` 挡住，未进仓库；`git grep` 确认零命中）；「入 prod 秘钥」仍需 vault 注入（同 1.3 要求）。**完成判据里的「在 prod 下」未验**——本行证据是 dev 档真调用 |
 | 1.2 | W1 | 配真实/沙箱 Shopify 店铺；把 `channel:*` 工具（docs/67）指向真店；用测试订单跑通一次受控退款 | 携带 `order_id`/`amount` 的图打到**真实** Shopify 退款 API 并返回 2xx；docs/67 的「真适配器＋假 HTTP」由真 200 替换 | 真实/合作沙箱 Shopify 店铺；动（测试）款审批 | ⬜ | — | docs/67 以「真适配器＋假 HTTP」闭 N2，此处补全真外发 |
 | 1.3 | W1 | 配真实 SMTP/IM webhook/SMS/OAuth 凭据；端到端验证发送路径 | 一条通知经 prod 配置真正投递到真实收件箱/IM 群（非 dev mock）；秘钥由 vault 注入，绝不明文 `.env` | 企业邮件/IM/SMS 供应商；OAuth 应用注册 | ⬜ | — | 见 docs/08 D 组外部通道 |
 | 2.1 | W2 | 产品/用户拍板 docs/63 §0A N3（浏览器自动化适配器）是否进 MVP：进→立项批次（新适配器＋工具＋测试，新 D 号＋ADR）；出→显式标记 N3 出 MVP | 决策写入 docs/08 迭代计划 + docs/72 同步注记 | 产品范围会议 | ✅ **2026-09-27 已表态＝不进 MVP（本轮非目标）** | 决策与三条理由记在 docs/63 §0A N3 追记 ＋ docs/08 §八 E 组；**复开条件与三批顺序一并写明** | 纯产品决策，非工程缺陷。附带成果：接线前那条真缺陷（`page.goto()` 无出向校验）已先行修掉＝U925，故复开时是纯加法 |
@@ -47,7 +48,7 @@
 
 全部满足时，docs/72 的 B 档判定翻 ✅ 达成：
 
-- [ ] 1.1 真实 LLM 决策 live 且已演练
+- [ ] 1.1 真实 LLM 决策 live 且已演练（🟡 **2026-09-30 半程**：真实凭据＋真实调用已在 **dev** 档验证〔跑〕；判据里的「在 prod 下」与「prod 不静默走 mock 兜底」两项**均未达成**，故不勾）
 - [ ] 1.2 真实 Shopify 退款 live 且已演练
 - [ ] 1.3 真实消息/IM/SMTP/SMS/OAuth 至少主通道 live 且已演练
 - [x] 2.1 N3 范围决策已记录（✅ 2026-09-27：**不进 MVP**，理由三条＋复开条件与三批顺序见 docs/63 §0A N3 追记）
@@ -76,6 +77,7 @@
 | 日期 | 动作 | 说明 |
 |---|---|---|
 | 2026-09-27 | 立项 | 据 docs/72 结论拆 B 档缺口为 10 个明细追踪项（1.1–1.3 / 2.1 / 3.1–3.3 / 4.1 / X.1–X.2），全部 ⬜ 起追踪 |
+| 2026-09-30 | **1.1 半程推进（⬜→🟡）** | 真实 LLM 凭据配齐并**第一次跑出真实调用**：`LITELLM_MODEL=openai/agnes-2.5-flash` + `OPENAI_API_KEY`/`OPENAI_BASE_URL`（端点 `apihub.agnes-ai.com/v1`）入本地 `.env`，`/api/graphs/graph-1/run` 两条退款单产出 `source="llm:openai/agnes-2.5-flash"`（0.98 `approve_refund`／1.0 `request_human_approval`），启动日志 `decision client: LiteLLM(...)`、规则降级 WARNING 消失。**途中修掉两个"配了也不生效"的管道缺陷**（commit `98fff8e`）：`.env.example` 记的 `LITELLM_API_KEY`/`LITELLM_BASE_URL` 在 litellm 直连路径上**不被读取**（应 `OPENAI_*`，源码 `litellm/llms/openai/common_utils.py:352-357`）；`docker-compose.yml` 只透传 `LITELLM_MODEL` 而不透传 key/base。README 本地启动命令补 `--env-file .env`（项目本身不加载 `.env`）。**仍未达成**：① 完成判据要求"在 **prod** 下"发真实调用，本轮是 dev 档；② "prod 不静默走 mock 兜底"未实现——`src/atlas/llm/*.py` 对 prod 档零引用，`_REQUIRED_PROD_SECRETS` 不含 LLM 配置。故本项**不翻 ✅**，B 档缺口条数不变（3 条） |
 
 ## 6. 更正注记（2026-09-27，第五次复审 docs/74 带来）
 
