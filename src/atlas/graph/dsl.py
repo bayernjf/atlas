@@ -654,6 +654,15 @@ def _validate_loop_config(
         for member in body_triggers:
             add_graph(f"{prefix} 循环体内不能包含触发器节点：{member}",
                       code="LOOP_TRIGGER_IN_BODY", params={"member": member})
+        body_parallels = sorted(member for member in body if node_types.get(member) == "parallel")
+        for member in body_parallels:
+            add_graph(
+                f"{prefix} v1 循环体内不能包含并行节点：{member}"
+                "（汇聚网关按单次放行设计，循环内多轮扇出会静默死锁；"
+                "每项再扇出随 D16 并行 map-reduce 取回）",
+                code="LOOP_PARALLEL_IN_BODY",
+                params={"member": member},
+            )
 
         # D17/A2 break：允许循环体内 condition 节点经其分支直连 exit_target（break 出口）。
         break_sources = {

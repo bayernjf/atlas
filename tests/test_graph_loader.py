@@ -2162,3 +2162,72 @@ def test_foreach_item_field_on_scalar_element_still_failsoft_u998():
     assert rendered == [expected, expected, expected]
     assert all("branch=__default__" in line for line in result["trace"]
                if "condition-skip" in line)
+
+
+# 打包 ZC：循环体内含 parallel 编译期拒绝（U999–U1000，契约 04 §5.3）
+def _loop_parallel_body_raw(mode: str) -> dict:
+    loop_config: dict = {
+        "mode": mode,
+        "bodyTarget": "parallel-1",
+        "exitTarget": "tool-exit",
+    }
+    if mode == "foreach":
+        loop_config["itemsExpression"] = "{{global.orders}}"
+        loop_config["collectTarget"] = "tool-join"
+    else:
+        loop_config["continueExpression"] = "{{loop-1.iterations}} < 3"
+        loop_config["maxIterations"] = 3
+    return {
+        "version": 1,
+        "variables": [
+            {"name": "orders", "type": "array",
+             "required": mode == "foreach"},
+        ],
+        "nodes": [
+            {"id": "trigger-1", "type": "trigger", "name": "t",
+             "config": {"triggerType": "manual"}},
+            {"id": "loop-1", "type": "loop", "name": "循环",
+             "config": loop_config},
+            {"id": "parallel-1", "type": "parallel", "name": "并行",
+             "config": {
+                 "joinStrategy": "all_success",
+                 "branches": [
+                     {"label": "支A", "target": "tool-a"},
+                     {"label": "支B", "target": "tool-b"},
+                 ],
+                 "joinTarget": "tool-join",
+             }},
+            {"id": "tool-a", "type": "tool_call", "name": "A",
+             "config": {"tool": "op-a"}},
+            {"id": "tool-b", "type": "tool_call", "name": "B",
+             "config": {"tool": "op-b"}},
+            {"id": "tool-join", "type": "tool_call", "name": "汇聚",
+             "config": {"tool": "op-join"}},
+            {"id": "tool-exit", "type": "tool_call", "name": "退出",
+             "config": {"tool": "exit-op"}},
+        ],
+        "edges": [
+            {"id": "e1", "source": "trigger-1", "target": "loop-1"},
+            {"id": "e2", "source": "loop-1", "target": "parallel-1"},
+            {"id": "e3", "source": "loop-1", "target": "tool-exit"},
+            {"id": "e4", "source": "parallel-1", "target": "tool-a"},
+            {"id": "e5", "source": "parallel-1", "target": "tool-b"},
+            {"id": "e6", "source": "tool-a", "target": "tool-join"},
+            {"id": "e7", "source": "tool-b", "target": "tool-join"},
+            {"id": "e8", "source": "tool-join", "target": "loop-1"},
+        ],
+    }
+
+
+def test_foreach_body_with_parallel_rejected_u999():
+    with pytest.raises(GraphValidationError) as excinfo:
+        parse_graph(_loop_parallel_body_raw("foreach"))
+    assert any("循环体内不能包含并行节点" in msg for msg in excinfo.value.errors)
+    assert any("LOOP_PARALLEL_IN_BODY" == code for code in excinfo.value.codes)
+
+
+def test_while_body_with_parallel_rejected_u1000():
+    with pytest.raises(GraphValidationError) as excinfo:
+        parse_graph(_loop_parallel_body_raw("while"))
+    assert any("循环体内不能包含并行节点" in msg for msg in excinfo.value.errors)
+    assert any("LOOP_PARALLEL_IN_BODY" == code for code in excinfo.value.codes)
