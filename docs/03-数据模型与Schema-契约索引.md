@@ -147,7 +147,8 @@ type: object               # 节点类型专属配置；condition 节点 config 
                            #   唯一权威见 04 §5.6「human_approval 节点 config 契约」（含 M8 cardTemplateId 追加段）
                            # subgraph 节点 config 形状：
                            #   {graphId, inputs?: {<子图入参键>: "<父图 {{路径}}/字面量>"}}
-                           #   唯一权威见 04 §5.7「subgraph 节点 config 契约」
+                           #   值恰为单个 {{路径}} 时原类型透传（数组/数字/布尔/对象；None 回退占位符），
+                           #   其余按字符串插值；唯一权威见 04 §5.7「subgraph 节点 config 契约」
 inputs: 
 source: string           # 变量路径
 required: boolean
