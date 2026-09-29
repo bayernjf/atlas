@@ -13,6 +13,7 @@ from typing import Any
 
 _TEMPLATE_RE = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
 _PATH_SEGMENT_RE = re.compile(r"[^.[\]]+|\[\d+\]")
+_WHOLE_TEMPLATE_RE = re.compile(r"\s*\{\{\s*([^{}]+?)\s*\}\}\s*")
 
 
 def interpolate(template: str, context: dict[str, Any]) -> str:
@@ -23,6 +24,21 @@ def interpolate(template: str, context: dict[str, Any]) -> str:
         return match.group(0) if value is None else str(value)
 
     return _TEMPLATE_RE.sub(replace, template)
+
+
+def render_mapping_value(value: Any, context: dict[str, Any]) -> Any:
+    """渲染 subgraph inputs 映射值（04 §5.7）：值恰为单个 ``{{路径}}`` 时原类型透传。
+
+    解析为 None（缺失）时回退字符串插值，占位符按 fail-soft 原样保留；
+    字面量与混合模板按 §6.3 渲染为字符串。
+    """
+    text = value if isinstance(value, str) else str(value)
+    match = _WHOLE_TEMPLATE_RE.fullmatch(text)
+    if match is not None:
+        resolved = resolve_path(match.group(1), context)
+        if resolved is not None:
+            return resolved
+    return interpolate(text, context)
 
 
 def resolve_path(path: str, context: dict[str, Any]) -> Any:

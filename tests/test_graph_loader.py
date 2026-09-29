@@ -1922,3 +1922,161 @@ def test_foreach_all_items_skipping_completes_with_empty_results_u992():
     assert "tool-collect" not in result["outputs"]
     assert sum(1 for line in result["trace"] if line.startswith("tool-body")) == 3
     assert sum(1 for line in result["trace"] if "skip item" in line) == 3
+
+# ---------------------------------------------------------------------------
+# 打包 ZA：subgraph inputs 整值原类型透传（U993–U996，契约 04 §5.7）
+# ---------------------------------------------------------------------------
+
+
+def _subgraph_parent_graph(child_id: str, *, mapping: dict, variables: list | None = None):
+    return parse_graph(
+        {
+            "version": 1,
+            "variables": variables
+            if variables is not None
+            else [{"name": "order_ids", "type": "array", "value": "[]", "scope": "global"}],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "sub-1", "type": "subgraph", "name": "子图",
+                 "config": {"graphId": child_id, "inputs": mapping}},
+                {"id": "tool-done", "type": "tool_call", "name": "完成",
+                 "config": {"tool": "done-op"}},
+            ],
+            "edges": [
+                {"id": "p1", "source": "trigger-1", "target": "sub-1"},
+                {"id": "p2", "source": "sub-1", "target": "tool-done"},
+            ],
+        }
+    )
+
+
+def test_subgraph_array_input_passthrough_feeds_child_foreach_u993():
+    child = _foreach_skip_graph(skip_expression="{{loop-1.item}} == 'b'")
+    graph = _subgraph_parent_graph(
+        "inner-1", mapping={"order_ids": "{{global.order_ids}}"}
+    )
+    result = run_graph(
+        graph,
+        inputs={"order_ids": ["a", "b", "c"]},
+        graph_resolver={"inner-1": child}.get,
+    )
+    assert result["status"] == "completed"
+    sub = result["outputs"]["sub-1"]
+    assert sub["status"] == "success"
+    inner_loop = sub["outputs"]["loop-1"]
+    assert inner_loop["exitReason"] == "completed"
+    assert inner_loop["index"] == 3
+    assert [r["params_rendered"] for r in inner_loop["results"]] == ["item=a", "item=c"]
+    assert not any(key.startswith("__skip__") for key in result["outputs"])
+
+
+def test_subgraph_scalar_and_object_inputs_keep_native_types_u994():
+    child = parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+            ],
+            "edges": [],
+        }
+    )
+    variables = [
+        {"name": "limit", "type": "number", "value": "0", "scope": "global"},
+        {"name": "flag", "type": "boolean", "value": "false", "scope": "global"},
+        {"name": "meta", "type": "object", "value": "{}", "scope": "global"},
+    ]
+    mapping = {
+        "limit": "{{global.limit}}",
+        "flag": "{{global.flag}}",
+        "meta": "{{global.meta}}",
+    }
+    graph = _subgraph_parent_graph(
+        "inner-2", mapping=mapping, variables=variables
+    )
+    result = run_graph(
+        graph,
+        inputs={"limit": 7, "flag": True, "meta": {"k": 1}},
+        graph_resolver={"inner-2": child}.get,
+    )
+    payload = result["outputs"]["sub-1"]["outputs"]["trigger-1"]["context"]["payload"]
+    assert payload == {"limit": 7, "flag": True, "meta": {"k": 1}}
+
+
+def test_subgraph_mixed_and_literal_inputs_stay_strings_u995():
+    child = parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+            ],
+            "edges": [],
+        }
+    )
+    variables = [
+        {"name": "limit", "type": "number", "value": "0", "scope": "global"},
+        {"name": "name", "type": "string", "value": "", "scope": "global"},
+    ]
+    mapping = {
+        "mixed": "n={{global.limit}}",
+        "literal": "plain",
+        "text": "{{global.name}}",
+    }
+    graph = _subgraph_parent_graph(
+        "inner-3", mapping=mapping, variables=variables
+    )
+    result = run_graph(
+        graph,
+        inputs={"limit": 7, "name": "atlas"},
+        graph_resolver={"inner-3": child}.get,
+    )
+    payload = result["outputs"]["sub-1"]["outputs"]["trigger-1"]["context"]["payload"]
+    assert payload == {"mixed": "n=7", "literal": "plain", "text": "atlas"}
+    assert all(isinstance(value, str) for value in payload.values())
+
+
+def test_subgraph_missing_path_keeps_placeholder_and_plain_foreach_aggregates_u996():
+    child = _foreach_graph()
+    graph = _subgraph_parent_graph(
+        "inner-4", mapping={"order_ids": "{{global.order_ids}}"}
+    )
+    result = run_graph(
+        graph,
+        inputs={"order_ids": ["a", "b", "c"]},
+        graph_resolver={"inner-4": child}.get,
+    )
+    assert result["status"] == "completed"
+    inner_loop = result["outputs"]["sub-1"]["outputs"]["loop-1"]
+    assert inner_loop["exitReason"] == "completed"
+    assert len(inner_loop["results"]) == 3
+
+    bare_child = parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+            ],
+            "edges": [],
+        }
+    )
+    missing_graph = _subgraph_parent_graph(
+        "inner-5",
+        mapping={"gone": "{{global.meta.missing}}"},
+        variables=[
+            {"name": "order_ids", "type": "array", "value": "[]", "scope": "global"},
+            {"name": "meta", "type": "object", "value": "{}", "scope": "global"},
+        ],
+    )
+    missing_result = run_graph(
+        missing_graph,
+        inputs={"order_ids": [], "meta": {}},
+        graph_resolver={"inner-5": bare_child}.get,
+    )
+    payload = missing_result["outputs"]["sub-1"]["outputs"]["trigger-1"]["context"]["payload"]
+    assert payload == {"gone": "{{global.meta.missing}}"}

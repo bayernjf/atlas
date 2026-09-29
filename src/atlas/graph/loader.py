@@ -75,7 +75,7 @@ from .dsl import (
     MAX_JITTER_SECONDS,
     validate_graph_report,
 )
-from .interpolation import interpolate, resolve_path
+from .interpolation import interpolate, render_mapping_value, resolve_path
 
 EventCallback = Callable[[dict[str, Any]], None]
 
@@ -1238,7 +1238,7 @@ def _execute_subgraph(
     if debug_controller is not None and child_emit is not None:
         debug_controller.push_namespaced_emit(child_emit)
     mapping = node.config.get("inputs") or {}
-    child_inputs = {key: interpolate(str(value), context) for key, value in mapping.items()}
+    child_inputs = {key: render_mapping_value(value, context) for key, value in mapping.items()}
     # M10：subgraph span（非 internal，折叠后代表整段子图）；子图内部节点 span 标 internal。
     sub_cm = (
         tracer.span(
