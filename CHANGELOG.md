@@ -3,6 +3,12 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### feat(loop)：foreach item 字段深路径放行，对象元素 skip-current 可用（2026-09-29 ✅ 落码收口，commit b5f6ce5；打包 ZB；零迁移／零新依赖）
+
+- **一句话**：foreach 的 `item` 编译期按不透明元素处理，其下深层路径（如 `{{loop-1.item.state}}`）不再报 REF_PATH_NOT_FOUND，运行期按实际对象解析、缺失走 fail-soft；此前 `dsl.py` 对 loop 输出深层路径一刀切拒绝，与 docs/45:63 的既定承诺（`{{loop-x.item.amount}}`）漂移，对象数组上的 skip-current 因此不可用。
+- **收口事实**：编译期纯放宽，仅 foreach 且 root=`item` 时允许 `rest` 非空；`results`/`items` 深层路径与 while 模式仍编译期拒绝。运行期插值与条件求值链路零改动——字段存在即按实际对象 `resolve_path`，缺失 fail-soft 占位符原样保留、条件取不到值走默认分支。
+- **门（先跑后写，取实跑）**：U997–U998 并入 `tests/test_graph_loader.py`（对象元素按 `item.state` 命中 skip、gate 不聚合该轮；标量元素访问字段编译放行、运行期 fail-soft 占位符保留、三轮全收集），全量 **2098 passed / 135 skipped / 0 failed**（净增 2）。零迁移／端点／错误码／ADR／依赖，运行时语义与前端零改动；契约 04 §5.3。
+
 ### feat(subgraph)：inputs 整值原类型透传，父图数组可进子图 foreach（2026-09-29 ✅ 落码收口，commit 8a19b45；打包 ZA；零迁移／零新依赖）
 
 - **一句话**：subgraph 节点 inputs 映射值恰好为单个 `{{路径}}` 时，解析值按原类型（数组/数字/布尔/对象）透传进子图；此前统一字符串插值把非字符串值 `str()` 化，父图数组传不进子图 foreach（报「遍历对象必须是数组，实际为 str」）。
