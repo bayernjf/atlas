@@ -3,6 +3,12 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### feat(subgraph)：inputs 整值原类型透传，父图数组可进子图 foreach（2026-09-29 ✅ 落码收口，commit 8a19b45；打包 ZA；零迁移／零新依赖）
+
+- **一句话**：subgraph 节点 inputs 映射值恰好为单个 `{{路径}}` 时，解析值按原类型（数组/数字/布尔/对象）透传进子图；此前统一字符串插值把非字符串值 `str()` 化，父图数组传不进子图 foreach（报「遍历对象必须是数组，实际为 str」）。
+- **收口事实**：新增 `graph/interpolation.render_mapping_value`——整值模板解析非 None 即返回原值，None 回退字符串插值（占位符 fail-soft 原样保留）；字面量与混合模板（`prefix-{{x}}`）仍按 §6.3 渲染为字符串。`_execute_subgraph` 改调该函数，子图同名全局变量覆盖语义不变；未声明根变量仍编译期 REF_NODE_NOT_FOUND。
+- **门（先跑后写，取实跑）**：U993–U996 并入 `tests/test_graph_loader.py`（数组进子图 foreach＋skip、数字/布尔/对象原类型、混合模板仍字符串、深层缺失 fail-soft＋普通聚合 foreach），全量 **2096 passed / 135 skipped / 0 failed**（净增 4）。零迁移／端点／错误码／ADR，DSL 形态与前端零改动；契约 04 §5.7。
+
 ### feat(loop)：foreach skip-current，condition 连回 loop 即跳过本轮（2026-09-29 ✅ 落码收口，commit f923525；打包 Z；D16 余部切片；零迁移／零新依赖）
 
 - **一句话**：foreach 循环体新增"跳过当前元素"——体内 condition 连一条分支回 loop 节点，编译期 retarget 到合成 `__skip__{loopId}` gate，gate 只推进 index/切换 item，**不读 collectTarget、不聚合本轮**；跳过末项即正常 completed 退出。
