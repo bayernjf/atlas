@@ -590,6 +590,20 @@ export async function createUserTemplate(input: {
   })
 }
 
+export async function updateUserTemplate(
+  id: string,
+  input: { name: string; description?: string; graph: SerializedGraph },
+): Promise<TemplateDetail> {
+  return request(`/api/templates/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      name: input.name,
+      description: input.description ?? '',
+      graph: input.graph,
+    }),
+  })
+}
+
 export async function deleteUserTemplate(id: string): Promise<void> {
   await request(`/api/templates/${id}`, { method: 'DELETE' })
 }

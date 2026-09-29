@@ -49,6 +49,7 @@ import {
   decideCardAction,
   createUserTemplate,
   deleteRecording,
+  updateUserTemplate,
   deleteUserTemplate,
   getRecording,
   getTemplate,
@@ -145,6 +146,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
   const [applyingTemplateId, setApplyingTemplateId] = useState<string | null>(null)
   const [templateError, setTemplateError] = useState<string | null>(null)
   const [saveTemplateOpen, setSaveTemplateOpen] = useState(false)
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null)
   const [saveTemplateName, setSaveTemplateName] = useState('')
   const [saveTemplateDescription, setSaveTemplateDescription] = useState('')
   const [saveTemplateBusy, setSaveTemplateBusy] = useState(false)
@@ -681,9 +683,18 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
   }
 
   function openSaveTemplate() {
+    setEditingTemplateId(null)
     setSaveTemplateOpen(true)
     setSaveTemplateName('')
     setSaveTemplateDescription('')
+    setSaveTemplateError(null)
+  }
+
+  function openEditTemplate(template: TemplateSummary) {
+    setEditingTemplateId(template.id)
+    setSaveTemplateOpen(true)
+    setSaveTemplateName(template.name)
+    setSaveTemplateDescription(template.description)
     setSaveTemplateError(null)
   }
 
@@ -695,15 +706,25 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
     }
     setSaveTemplateBusy(true)
     setSaveTemplateError(null)
+    const graph = serializeGraph(nodes, edges, variables, breakpoints)
     try {
-      await createUserTemplate({
-        name,
-        description: saveTemplateDescription,
-        graph: serializeGraph(nodes, edges, variables, breakpoints),
-      })
+      if (editingTemplateId) {
+        await updateUserTemplate(editingTemplateId, {
+          name,
+          description: saveTemplateDescription,
+          graph,
+        })
+        appendLog(t('template.updated', { name }))
+      } else {
+        await createUserTemplate({
+          name,
+          description: saveTemplateDescription,
+          graph,
+        })
+        appendLog(t('template.saved', { name }))
+      }
       setSaveTemplateOpen(false)
       setTemplates([])
-      appendLog(t('template.saved', { name }))
     } catch (error) {
       setSaveTemplateError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -1184,6 +1205,11 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
               </div>
               <Space>
                 {template.deletable && (
+                  <Button type="link" onClick={() => openEditTemplate(template)}>
+                    {t('template.edit')}
+                  </Button>
+                )}
+                {template.deletable && (
                   <Popconfirm
                     title={t('template.deleteConfirm')}
                     okText={t('template.deleteOk')}
@@ -1210,12 +1236,12 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
         {templateError && <Alert type="error" showIcon title={templateError} style={{ marginTop: 12 }} />}
       </Modal>
       <Modal
-        title={t('template.saveTitle')}
+        title={editingTemplateId ? t('template.editTitle') : t('template.saveTitle')}
         open={saveTemplateOpen}
         onCancel={() => setSaveTemplateOpen(false)}
         onOk={saveAsTemplate}
         confirmLoading={saveTemplateBusy}
-        okText={t('template.saveOk')}
+        okText={editingTemplateId ? t('template.editOk') : t('template.saveOk')}
         cancelText={t('template.deleteCancel')}
         width={520}
       >

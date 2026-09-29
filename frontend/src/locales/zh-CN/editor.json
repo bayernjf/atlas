@@ -84,6 +84,10 @@
     "saveTitle": "画布另存为模板",
     "saveOk": "保存",
     "saved": "已保存模板：{{name}}",
+    "edit": "编辑",
+    "editTitle": "编辑模板",
+    "editOk": "更新",
+    "updated": "已更新模板：{{name}}",
     "nameRequired": "请填写模板名称",
     "namePlaceholder": "模板名称（必填）",
     "descriptionPlaceholder": "模板描述（选填）"

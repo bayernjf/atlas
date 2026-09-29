@@ -84,6 +84,10 @@
     "saveTitle": "Save canvas as template",
     "saveOk": "Save",
     "saved": "Template saved: {{name}}",
+    "edit": "Edit",
+    "editTitle": "Edit template",
+    "editOk": "Update",
+    "updated": "Template updated: {{name}}",
     "nameRequired": "Template name is required",
     "namePlaceholder": "Template name (required)",
     "descriptionPlaceholder": "Description (optional)"
