@@ -2080,3 +2080,85 @@ def test_subgraph_missing_path_keeps_placeholder_and_plain_foreach_aggregates_u9
     )
     payload = missing_result["outputs"]["sub-1"]["outputs"]["trigger-1"]["context"]["payload"]
     assert payload == {"gone": "{{global.meta.missing}}"}
+
+
+# ---------------------------------------------------------------------------
+# 打包 ZB：foreach item 字段深路径（U997–U998，契约 04 §5.3 / docs/45:63）
+# ---------------------------------------------------------------------------
+
+def _object_foreach_skip_graph():
+    """对象元素 foreach：body 模板引用 item 字段；condition 按 item.state 决定 skip。"""
+    branches = [
+        {"label": "skip", "expression": "{{loop-1.item.state}} == 'drop'",
+         "target": "loop-1"},
+    ]
+    return parse_graph(
+        {
+            "version": 1,
+            "variables": [
+                {"name": "orders", "type": "array", "value": "[]", "scope": "global"}
+            ],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "loop-1", "type": "loop", "name": "遍历循环",
+                 "config": {
+                     "mode": "foreach",
+                     "itemsExpression": "{{global.orders}}",
+                     "collectTarget": "tool-body",
+                     "bodyTarget": "tool-body",
+                     "exitTarget": "tool-exit",
+                 }},
+                {"id": "tool-body", "type": "tool_call", "name": "循环体",
+                 "config": {"tool": "body-op",
+                            "params": "id={{loop-1.item.id}};state={{loop-1.item.state}}"}},
+                {"id": "condition-skip", "type": "condition", "name": "跳过判断",
+                 "config": {"branches": branches,
+                            "defaultTarget": "tool-collect"}},
+                {"id": "tool-collect", "type": "tool_call", "name": "透传",
+                 "config": {"tool": "pass-op"}},
+                {"id": "tool-exit", "type": "tool_call", "name": "退出",
+                 "config": {"tool": "exit-op"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "loop-1"},
+                {"id": "e2", "source": "loop-1", "target": "tool-body"},
+                {"id": "e3", "source": "loop-1", "target": "tool-exit"},
+                {"id": "e4", "source": "tool-body", "target": "condition-skip"},
+                {"id": "e5", "source": "condition-skip", "target": "loop-1"},
+                {"id": "e6", "source": "condition-skip", "target": "tool-collect"},
+                {"id": "e7", "source": "tool-collect", "target": "loop-1"},
+            ],
+        }
+    )
+
+
+def test_foreach_skip_by_item_field_does_not_collect_u997():
+    orders = [
+        {"id": 1, "state": "keep"},
+        {"id": 2, "state": "drop"},
+        {"id": 3, "state": "keep"},
+    ]
+    result = run_graph(_object_foreach_skip_graph(), inputs={"orders": orders})
+    assert result["status"] == "completed"
+    loop_output = result["outputs"]["loop-1"]
+    assert loop_output["exitReason"] == "completed"
+    assert loop_output["index"] == 3
+    rendered = [r["params_rendered"] for r in loop_output["results"]]
+    assert rendered == ["id=1;state=keep", "id=3;state=keep"]
+    assert any("skip item 1" in line for line in result["trace"])
+
+
+def test_foreach_item_field_on_scalar_element_still_failsoft_u998():
+    # 标量元素上访问字段：编译期放行（item 不透明），运行期插值 fail-soft 原样保留；
+    # skip 表达式同样取不到字段，走默认聚合分支，三轮全收集。
+    result = run_graph(_object_foreach_skip_graph(),
+                       inputs={"orders": ["a", "b", "c"]})
+    assert result["status"] == "completed"
+    loop_output = result["outputs"]["loop-1"]
+    assert loop_output["exitReason"] == "completed"
+    rendered = [r["params_rendered"] for r in loop_output["results"]]
+    expected = "id={{loop-1.item.id}};state={{loop-1.item.state}}"
+    assert rendered == [expected, expected, expected]
+    assert all("branch=__default__" in line for line in result["trace"]
+               if "condition-skip" in line)

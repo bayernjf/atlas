@@ -1811,15 +1811,20 @@ def _validate_template_refs(
 
                 static_keys = _STATIC_OUTPUT_KEYS.get(ref_type)
                 if static_keys is not None:
+                    foreach = False
                     if ref_type == "loop":
                         ref_loop = next((candidate for candidate in graph.nodes if candidate.id == head), None)
                         if ref_loop is not None and ref_loop.config.get("mode") == "foreach":
+                            foreach = True
                             static_keys = (
                                 "mode", "items", "index", "iterations", "item",
                                 "results", "target", "exitReason", "expression_errors",
                             )
                     root, *rest = tail
-                    if root not in static_keys or rest:
+                    # foreach item 为不透明元素：其下字段按 docs/45:63 与 04 §5.3 放行，
+                    # 运行期按实际对象解析，缺失 fail-soft；results/items 深层仍拒。
+                    item_deep = foreach and root == "item" and rest
+                    if root not in static_keys or (rest and not item_deep):
                         add(
                             f"{prefix} 节点 {head} 的输出中不存在该路径（REF_PATH_NOT_FOUND）：{display}",
                             pointer,
