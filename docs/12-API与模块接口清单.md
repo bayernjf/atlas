@@ -191,7 +191,7 @@ def get_template(template_id: str) -> TemplateMeta | None: ...   # 未知 id 返
 # graphs.py：refund_template_graph()（退款 golden 图单一事实源，llm/nl_generate.py 导入）
 #            + http/sql/审批四个模板图构造函数；每个模板 graph 必须过 parse_graph/validate_graph
 
-# --- 打包 X（docs/85；2026-09-29）：租户私有用户模板，两档同构 -------------
+# --- 打包 X（docs/85）＋打包 Y（docs/86）：租户私有用户模板，两档同构 -------
 # src/atlas/template/user_store.py
 class UserTemplate(BaseModel):
     id: str                # "utpl-{租户内 seq}"
@@ -205,10 +205,13 @@ class UserTemplateStore:                    # 内存档（单锁、租户内 seq
     def add(self, *, name: str, description: str, tags: list[str], graph: dict) -> UserTemplate: ...
     def get(self, template_id: str) -> UserTemplate | None: ...
     def list(self) -> list[UserTemplate]: ...            # seq 倒序
+    def update(self, template_id: str, *, name: str, description: str,
+               tags: list[str], graph: dict) -> UserTemplate | None: ...   # 打包 Y；id/created_at 不变，无行 None
     def delete(self, template_id: str) -> bool: ...
     def clear(self) -> None: ...
 # template/pg_store.py PgUserTemplateStore(engine, tenant_id)：方法面逐字一致；
-#   表 user_templates（migration 034），seq 取同租户 MAX+1（FOR UPDATE）。
+#   表 user_templates（migration 034），seq 取同租户 MAX+1（FOR UPDATE）；
+#   update 为单 UPDATE（WHERE tenant_id+id，tags/graph CAST JSONB），rowcount=0 返 None。
 # 装配：TenantServices.user_templates（registry 两档分支）；reset_tenant.clear()
 ```
 
@@ -917,6 +920,7 @@ class MemoryRepository(Protocol):
 | GET | /api/templates | 模板列表（read）：内置只读目录在前（目录序）＋租户自建模板（docs/85 打包 X，2026-09-29）按 created_at 倒序接后；返回 `{items:[{id,name,description,tags,node_count,source,deletable,created_at?}]}`，不含 graph；内置条目 source=catalog/deletable=false，不受 reset 影响 | template_catalog / user_template |
 | GET | /api/templates/{id} | 模板详情（read）：内置命中返回完整 TemplateMeta 含 `graph`（source=catalog/deletable=false）；未命中再查租户用户模板（source=user/deletable=true）；均无 404 | template_catalog / user_template / graph_definition |
 | POST | /api/templates | **打包 X（docs/85，2026-09-29 落码 `1756c67`，operate）**：画布另存为租户私有模板；body `{name 1-60 trim 后非空, description 0-200 缺省"", tags 每项 1-20 至多 8 缺省[], graph}`，`parse_graph` 仅校验可编译（失败 422 中文），图原样存；201 返回完整模板（含 source=user/deletable=true/created_at）；id=`utpl-<租户内 seq>` | user_template |
+| PUT | /api/templates/{id} | **打包 Y（docs/86，2026-09-29 落码 `69b34ef`，operate）**：原 id 上整体替换；body 与 POST 同形但 `tags` 可缺省（缺省＝保留旧 tags，显式 []＝清空）；校验/422 文案逐字复用 POST；200 返回与 POST 201 同投影；id/seq/created_at 与排序位置不变；内置 id 与不存在 id（含已删、跨租户）统一 404 `模板不存在：{id}`，无 405 | user_template |
 | DELETE | /api/templates/{id} | **打包 X（docs/85，operate）**：仅删用户模板，返回 `{deleted:true}`；内置 id 与不存在 id（含已删、跨租户）统一 404 `模板不存在：{id}`，第二次删除 404（无幂等 204） | user_template |
 | GET | /api/cards | 内置交互卡片目录（M8 已落码 2026-09-18，viewer+；只读代码常量，不受 reset 影响）：`{items:[{id,name,channels,sections,actions,fallback?}]}`（CardTemplate 投影，供配置态 card-select 与运行态渲染） | card_template |
 | GET | /api/approvals/{token}/card | 审批卡片按渠道渲染（M8，viewer+）：`?channel=web\|im\|email`（缺省 web），返回 §3.11 对应渠道渲染产物；未知 token 404、该审批未配 cardTemplateId（无卡片）404、非法 channel 422；渲染上下文取挂起时快照（中断恢复后从帧重建）；**只读，不产生决策副作用**（邮件链接为 GET 落地页，决策一律走 POST） | card_template / human_approval |

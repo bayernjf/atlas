@@ -3,6 +3,15 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### feat(template)：用户自建模板 PUT 更新，原 id 整体替换、身份字段不变（2026-09-29；打包 Y；D25 余部切片；零迁移／零新依赖）
+
+- **一句话**：打包 X 之后改名/改图只能"删旧建新"；本批补 `PUT /api/templates/{id}`（operate）在原 id 上**整体替换** name/description/tags/graph，id、seq、created_at 与列表排序位置全部不变。
+- **REST**：请求体与 POST 同形，校验与 422 文案逐字复用 POST（`parse_graph` 后原样存），200 返回与 POST 201 同投影（source="user"/deletable=true）；内置 id 与不存在 id（含已删、跨租户）统一 404 `模板不存在：{id}`，不做 405；跨租户 PUT → 404 且 A 数据不变，viewer → 403。**唯一例外**：tags 字段缺省（None）⇒ 保留旧 tags，显式 [] ⇒ 清空（前端编辑表单不暴露 tags 控件）。
+- **存储**：两档 store 同形加 `update(template_id, *, name, description, tags, graph) -> UserTemplate | None`——内存持锁替换保 id/created_at；PG 单 UPDATE（WHERE tenant_id+id，tags/graph CAST JSONB）、rowcount=0 返 None。无 updated_at 列。
+- **前端**：浏览器用户行加「编辑」，另存 Modal 扩为 create/edit 两用（打开预填、标题/OK 文案随模式），`apiClient.updateUserTemplate`，zh/en 各补 4 键。
+- **门（先跑后写，取实跑）**：后端 U980–U985 并入 `tests/test_user_templates.py`（净增 12 例：store update、PUT 200、7 类 422、tags 缺省保留、404 口径、分区/权限），落码前基线 2073，全量 **2085 passed / 135 skipped / 0 failed**；前端 748 passed/2 skipped、`pnpm build` ✓；**真实浏览器验收**：建模板→编辑预填→改名改描述→更新→重开列表显示新名/新描述，控制台仅登录前 401。
+- **边界照实**：PATCH 局部更新/并发 CAS、updated_at/版本钉版与升级回归、分类目录与搜索、市场/跨租户共享、URL 导入导出、参数化实例化向导仍缓做，**D25 整体不解除**。契约 docs/86。
+
 ### feat(template)：用户自建流程模板库 v1，画布另存为租户私有模板、与内置目录合并展示并可删除（2026-09-29；打包 X；D25 余部切片；migration 034／零新依赖）
 
 - **一句话**：只读内置目录（`template/catalog.py`，5 个内置模板）之外，租户可把当前画布**另存为私有模板**，并在既有「从模板新建」浏览器里合并展示、可删除；按租户分区，进程内/PG 两档存储。
