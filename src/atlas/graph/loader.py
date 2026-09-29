@@ -42,7 +42,12 @@ from atlas.database.service import DatabaseClient, demo_engine
 from atlas.harness.base import ActionRequest, ActionStatus
 from atlas.harness.registry import AdapterRegistry
 from atlas.httpapi.adapter import HttpApiHarnessAdapter
-from atlas.llm.decision import AUTO_APPROVE, HUMAN_APPROVAL, get_decision_client
+from atlas.llm.decision import (
+    AUTO_APPROVE,
+    HUMAN_APPROVAL,
+    RuleBasedDecisionClient,
+    get_decision_client,
+)
 from atlas.llm.condition_classifier import get_condition_classifier
 from atlas.message.adapter import MessageHarnessAdapter
 from atlas.message.service import MessageService
@@ -129,17 +134,34 @@ class WaitNodeFailure(Exception):
         self.code = code
 
 
+class AiDecisionUnavailable(Exception):
+    """prod 档要执行 ai_decision 却没有可用的 LLM 决策器（docs/73 W1-1.1）。
+
+    run 标记 failed 并带机器码，不静默降级到规则兜底——"看起来在调模型、其实按写死的
+    退款规则判"这种假阳性一旦放行，下游真实副作用会照着它执行。
+    """
+
+    code = "LLM_DECISION_UNAVAILABLE"
+
+    def __init__(self, node_id: str, message: str) -> None:
+        super().__init__(f"{self.code}: {message}")
+        self.node_id = node_id
+
+
 def runtime_error_meta(exc: Exception) -> dict[str, Any]:
     """docs/60 G1：运行期终态异常归一化为机器可读码（中文 error 字符串仍由调用方原样保留）。
 
     WaitNodeFailure 携带既有 WAIT_* 5 码与 nodeId；ConditionEvalError 携带 COND_* 码族与
-    params；其余未预期异常统一 RUNTIME_UNEXPECTED。返回 errorCode/errorParams 两键，供
-    run failed 结果与 SSE error 帧并行下发（纯超集，旧 error 字段不变）。
+    params；AiDecisionUnavailable 携带 LLM_DECISION_UNAVAILABLE 与 nodeId；其余未预期异常
+    统一 RUNTIME_UNEXPECTED。返回 errorCode/errorParams 两键，供 run failed 结果与 SSE error
+    帧并行下发（纯超集，旧 error 字段不变）。
     """
     if isinstance(exc, WaitNodeFailure):
         return {"errorCode": exc.code, "errorParams": {"nodeId": exc.node_id}}
     if isinstance(exc, ConditionEvalError):
         return {"errorCode": exc.code, "errorParams": dict(exc.params)}
+    if isinstance(exc, AiDecisionUnavailable):
+        return {"errorCode": exc.code, "errorParams": {"nodeId": exc.node_id}}
     return {"errorCode": "RUNTIME_UNEXPECTED", "errorParams": {}}
 
 
@@ -441,6 +463,18 @@ def _make_executor(
                     }
                     message = f"{node.id}({node.type}): executed"
                 elif node.type == "ai_decision":
+                    # docs/73 W1-1.1：prod 档禁静默 mock 兜底。规则决策器在 prod 下意味着
+                    # "没接模型"，此时按写死的规则判退款＝假装调了 LLM，run 直接失败。
+                    # 与 R8（_execute_tool）同形：进程可起，节点执行时显式 FAILED。
+                    if not demo_surface_enabled() and isinstance(
+                        decision_client, RuleBasedDecisionClient
+                    ):
+                        raise AiDecisionUnavailable(
+                            node.id,
+                            "生产环境未配置 LLM 决策器，ai_decision 节点拒绝静默降级到规则兜底；"
+                            "请配置 LITELLM_MODEL 与 OPENAI_API_KEY / OPENAI_BASE_URL，"
+                            "或显式设置 ATLAS_ENABLE_DEMO_MOCK=1 以在演示实例上启用模拟决策。",
+                        )
                     payload = trigger_payload or {}
                     prompt = interpolate(node.config.get("promptTemplate", ""), context)
                     try:
