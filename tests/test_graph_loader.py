@@ -1542,7 +1542,9 @@ def test_loop_break_graph_validates_d17_a2():
 
 
 def _foreach_break_graph():
-    """foreach + 体内 condition break：第 2 个元素后中断，已收集结果保留。"""
+    """foreach + 体内 condition break：第 2 个元素后中断，已收集结果保留。
+    打包 Z 后 condition→loop 是 skip 语义；continue（聚合）路径经透传节点
+    tool-continue（非 condition→loop 仍为经典聚合回边）。"""
     return parse_graph(
         {
             "version": 1,
@@ -1566,8 +1568,10 @@ def _foreach_break_graph():
                          {"label": "stop", "expression": "{{loop-1.index}} >= 1",
                           "target": "tool-exit"}
                      ],
-                     "defaultTarget": "loop-1",
+                     "defaultTarget": "tool-continue",
                  }},
+                {"id": "tool-continue", "type": "tool_call", "name": "续行透传",
+                 "config": {"tool": "continue-op"}},
                 {"id": "tool-exit", "type": "tool_call", "name": "退出",
                  "config": {"tool": "exit-op"}},
             ],
@@ -1576,8 +1580,9 @@ def _foreach_break_graph():
                 {"id": "e2", "source": "loop-1", "target": "tool-body"},
                 {"id": "e3", "source": "loop-1", "target": "tool-exit"},
                 {"id": "e4", "source": "tool-body", "target": "condition-break"},
-                {"id": "e5", "source": "condition-break", "target": "loop-1"},
-                {"id": "e6", "source": "condition-break", "target": "tool-exit"},
+                {"id": "e5", "source": "condition-break", "target": "tool-exit"},
+                {"id": "e6", "source": "condition-break", "target": "tool-continue"},
+                {"id": "e7", "source": "tool-continue", "target": "loop-1"},
             ],
         }
     )
@@ -1786,3 +1791,134 @@ def test_loop_foreach_expression_error_codes_align_with_messages_docs60():
     out = run_graph(_foreach_graph(), inputs={"order_ids": ["a"]})["outputs"]["loop-1"]
     assert out["exitReason"] == "completed"
     assert out["expressionErrorCodes"] == []
+
+
+# ---------------------------------------------------------------------------
+# 打包 Z：foreach skip-current（U986–U992，契约 docs/87）
+# ---------------------------------------------------------------------------
+
+
+def _foreach_skip_graph(*, skip_expression: str, stop_expression: str | None = None):
+    """loop→tool-body→condition：skip 分支连回 loop（编译期 retarget 到 __skip__），
+    默认分支经透传节点 tool-collect 回 loop（真正聚合源 collectTarget=tool-body）；
+    可选 stop 分支测 break 共存（break gate 补收当前轮 tool-body 产出）。"""
+    branches = [
+        {"label": "skip", "expression": skip_expression, "target": "loop-1"},
+    ]
+    edges = [
+        {"id": "e1", "source": "trigger-1", "target": "loop-1"},
+        {"id": "e2", "source": "loop-1", "target": "tool-body"},
+        {"id": "e3", "source": "loop-1", "target": "tool-exit"},
+        {"id": "e4", "source": "tool-body", "target": "condition-skip"},
+        {"id": "e5", "source": "condition-skip", "target": "loop-1"},
+        {"id": "e6", "source": "condition-skip", "target": "tool-collect"},
+        {"id": "e7", "source": "tool-collect", "target": "loop-1"},
+    ]
+    if stop_expression is not None:
+        branches.append(
+            {"label": "stop", "expression": stop_expression, "target": "tool-exit"}
+        )
+        edges.append(
+            {"id": "e8", "source": "condition-skip", "target": "tool-exit"}
+        )
+    return parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "manual"}},
+                {"id": "loop-1", "type": "loop", "name": "遍历循环",
+                 "config": {
+                     "mode": "foreach",
+                     "itemsExpression": "{{global.order_ids}}",
+                     "collectTarget": "tool-body",
+                     "bodyTarget": "tool-body",
+                     "exitTarget": "tool-exit",
+                 }},
+                {"id": "tool-body", "type": "tool_call", "name": "循环体",
+                 "config": {"tool": "body-op", "params": "item={{loop-1.item}}"}},
+                {"id": "condition-skip", "type": "condition", "name": "跳过判断",
+                 "config": {"branches": branches, "defaultTarget": "tool-collect"}},
+                {"id": "tool-collect", "type": "tool_call", "name": "透传",
+                 "config": {"tool": "pass-op", "params": "item={{loop-1.item}}"}},
+                {"id": "tool-exit", "type": "tool_call", "name": "退出",
+                 "config": {"tool": "exit-op"}},
+            ],
+            "edges": edges,
+        }
+    )
+
+
+def test_foreach_skip_middle_item_advances_without_collecting_u986():
+    graph = _foreach_skip_graph(skip_expression="{{loop-1.item}} == 'b'")
+    result = run_graph(graph, inputs={"order_ids": ["a", "b", "c"]})
+    assert result["status"] == "completed"
+    loop_output = result["outputs"]["loop-1"]
+    assert loop_output["exitReason"] == "completed"
+    assert loop_output["index"] == 3
+    results = loop_output["results"]
+    assert [r["params_rendered"] for r in results] == ["item=a", "item=c"]
+    assert not any(key.startswith("__skip__") for key in result["outputs"])
+    assert any("skip item 1 → tool-body" in line for line in result["trace"])
+
+
+def test_foreach_skip_does_not_read_collect_target_u987():
+    # b 轮 tool-body 有当前产出；skip gate 不读 collectTarget，该产出不入 results。
+    graph = _foreach_skip_graph(skip_expression="{{loop-1.item}} == 'b'")
+    result = run_graph(graph, inputs={"order_ids": ["a", "b", "c"]})
+    results = result["outputs"]["loop-1"]["results"]
+    assert len(results) == 2
+    assert all("FOREACH_COLLECT_MISSING" not in code
+               for code in result["outputs"]["loop-1"]["expressionErrorCodes"])
+
+
+def test_foreach_skip_last_item_exits_completed_u988():
+    graph = _foreach_skip_graph(skip_expression="{{loop-1.item}} == 'b'")
+    result = run_graph(graph, inputs={"order_ids": ["a", "b"]})
+    loop_output = result["outputs"]["loop-1"]
+    assert loop_output["exitReason"] == "completed"
+    assert loop_output["index"] == 2
+    assert [r["params_rendered"] for r in loop_output["results"]] == ["item=a"]
+    assert "tool-exit" in result["outputs"]
+    assert any("skip item 1 → tool-exit" in line for line in result["trace"])
+
+
+def test_foreach_non_condition_backedge_still_aggregates_u989():
+    # 无 condition 的经典回边（tool-body→loop）不受 skip 改造影响。
+    result = run_graph(_foreach_graph(), inputs={"order_ids": ["a", "b", "c"]})
+    loop_output = result["outputs"]["loop-1"]
+    assert len(loop_output["results"]) == 3
+    assert loop_output["exitReason"] == "completed"
+
+
+def test_while_condition_to_loop_gets_no_skip_gate_u990():
+    graph = _loop_break_graph()
+    compiled = compile_graph(graph)
+    assert not any(key.startswith("__skip__") for key in compiled.get_graph().nodes)
+    result = run_graph(graph)
+    assert result["status"] == "completed"
+
+
+def test_foreach_break_and_skip_coexist_on_same_condition_u991():
+    graph = _foreach_skip_graph(
+        skip_expression="{{loop-1.item}} == 'b'",
+        stop_expression="{{loop-1.index}} >= 2",
+    )
+    result = run_graph(graph, inputs={"order_ids": ["a", "b", "c", "d"]})
+    loop_output = result["outputs"]["loop-1"]
+    assert loop_output["exitReason"] == "break"
+    assert [r["params_rendered"] for r in loop_output["results"]] == ["item=a", "item=c"]
+    assert sum(1 for line in result["trace"] if line.startswith("tool-body")) == 3
+
+
+def test_foreach_all_items_skipping_completes_with_empty_results_u992():
+    graph = _foreach_skip_graph(skip_expression="true")
+    result = run_graph(graph, inputs={"order_ids": ["a", "b", "c"]})
+    loop_output = result["outputs"]["loop-1"]
+    assert loop_output["exitReason"] == "completed"
+    assert loop_output["results"] == []
+    assert loop_output["index"] == 3
+    assert "tool-collect" not in result["outputs"]
+    assert sum(1 for line in result["trace"] if line.startswith("tool-body")) == 3
+    assert sum(1 for line in result["trace"] if "skip item" in line) == 3

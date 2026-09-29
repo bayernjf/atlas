@@ -82,6 +82,7 @@ EventCallback = Callable[[dict[str, Any]], None]
 # 编译期注入的汇聚网关节点名前缀（04 §5.4）；该节点事件不下发。
 JOIN_GATE_PREFIX = "__join__"
 BREAK_GATE_PREFIX = "__break__"
+SKIP_GATE_PREFIX = "__skip__"
 
 # M10：run_graph 的 tracer 哨兵——未显式传 tracer 时自建；显式传 None 表示不埋点
 # （debug 单步会话口径，04 §5.13/§5.15：SSE 帧保持无 span 字段的旧形状）。
@@ -1812,6 +1813,58 @@ def _make_break_gate(
     return gate
 
 
+def _make_skip_gate(
+    loop_node: NodeDSL,
+    emit: EventCallback,
+    *,
+    tracer: Tracer | None = None,
+    base_span: Span | None = None,
+):
+    """打包 Z skip-current 合成网关（仅 foreach）：体内 condition 连回 loop 的
+    skip 分支编译期 retarget 到本网关。与 break gate 同构，但只推进、不聚合——
+    results 原样保留，不读 collectTarget（有产出也不追加）。
+    """
+    body_target = loop_node.config["bodyTarget"]
+    exit_target = loop_node.config["exitTarget"]
+
+    def gate(state: GraphState) -> dict[str, Any]:
+        previous = state["outputs"].get(loop_node.id, {})
+        if not isinstance(previous, dict):
+            previous = {}
+        items = list(previous.get("items", []))
+        index = int(previous.get("index", 0))
+        results = list(previous.get("results", []))
+        next_index = index + 1
+        if next_index >= len(items):
+            output = _foreach_output(
+                items=items,
+                index=next_index,
+                item=previous.get("item"),
+                results=results,
+                target=exit_target,
+                exit_reason="completed",
+                expression_errors=[],
+            )
+            destination = exit_target
+        else:
+            output = _foreach_output(
+                items=items,
+                index=next_index,
+                item=items[next_index],
+                results=results,
+                target=body_target,
+                exit_reason=None,
+                expression_errors=[],
+                expression_error_codes=[],
+            )
+            destination = body_target
+        message = f"{loop_node.id}: skip item {index} → {destination}"
+        emit({"type": "node_end", "node_id": loop_node.id, "node_type": "loop", "output": output})
+        return {"outputs": {loop_node.id: output}, "messages": [message]}
+
+    return gate
+
+
 def _execute_tool(
     node: NodeDSL,
     context: dict[str, Any],
@@ -2449,6 +2502,45 @@ def compile_graph(
         for member in sources:
             retarget[(member, exit_target)] = gate_id
 
+    # 打包 Z skip-current：foreach 体内 condition 连回 loop 节点的边，编译期
+    # retarget 到合成 __skip__ 节点（只推进 index、不聚合本轮）；while 不装配。
+    for lnode in [
+        n for n in graph.nodes if n.type == "loop" and n.config.get("mode") == "foreach"
+    ]:
+        body_target = lnode.config.get("bodyTarget")
+        exit_target = lnode.config.get("exitTarget")
+        if not (
+            isinstance(body_target, str)
+            and isinstance(exit_target, str)
+            and body_target != lnode.id
+            and exit_target != lnode.id
+        ):
+            continue
+        body = _loop_body_set(body_target, lnode.id, exit_target, outgoing_set)
+        skip_sources = sorted(
+            member
+            for member in body
+            if type_by_id.get(member) == "condition"
+            and lnode.id in outgoing_set.get(member, set())
+        )
+        if not skip_sources:
+            continue
+        gate_id = f"{SKIP_GATE_PREFIX}{lnode.id}"
+        builder.add_node(
+            gate_id, _make_skip_gate(lnode, emit, tracer=tracer, base_span=base_span)
+        )
+
+        def route_skip(state: GraphState, cid: str = lnode.id) -> str:
+            return state["outputs"][cid]["target"]
+
+        builder.add_conditional_edges(
+            gate_id,
+            route_skip,
+            {body_target: body_target, exit_target: exit_target},
+        )
+        for member in skip_sources:
+            retarget[(member, lnode.id)] = gate_id
+
     incoming = {edge.target for edge in graph.edges}
     for node in graph.nodes:
         if node.id not in incoming:
@@ -2591,7 +2683,30 @@ def _recursion_limit(graph: GraphDSL) -> int:
             for member in body
         ):
             break_gates += 1
-    return 2 * len(graph.nodes) + 2 * loop_steps + parallel_wait + 2 * break_gates + 10
+    # 打包 Z：每个含 skip 出口的 foreach，__skip__ 网关每轮被跳过至多插入一次超步，
+    # 按迭代上限预留（while 的 condition→loop 是 continue 语义，不装网关）。
+    skip_gate_steps = 0
+    for node in graph.nodes:
+        if node.type != "loop" or node.config.get("mode") != "foreach":
+            continue
+        bt, et = node.config.get("bodyTarget"), node.config.get("exitTarget")
+        if not (isinstance(bt, str) and isinstance(et, str)):
+            continue
+        body = _loop_body_set(bt, node.id, et, outgoing)
+        if any(
+            type_by_id.get(member) == "condition"
+            and node.id in outgoing.get(member, set())
+            for member in body
+        ):
+            skip_gate_steps += MAX_LOOP_ITERATIONS
+    return (
+        2 * len(graph.nodes)
+        + 2 * loop_steps
+        + parallel_wait
+        + 2 * break_gates
+        + skip_gate_steps
+        + 10
+    )
 
 
 def _tail_subgraph(graph: GraphDSL, resume_node_id: str) -> GraphDSL:
