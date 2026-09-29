@@ -3,6 +3,12 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### fix(loop)：循环体内含 parallel 编译期拒绝，堵多轮扇出静默截断（2026-09-29 ✅ 落码收口，commit 5e04dcb；打包 ZC；零迁移／零新依赖）
+
+- **一句话**：foreach／while 的循环体内出现 parallel 节点时，解析期报 `LOOP_PARALLEL_IN_BODY`；此前该画法能通过编译，运行时第二轮起的扇出会被汇聚网关永久空转、流程静默截断而整体状态伪报 `completed`。
+- **根因**：`_make_join_gate` 以「joinTarget 已在 outputs」作为单次放行守卫，循环的 outputs 跨轮累积、第二轮 joinTarget 产出仍在，网关不再放行；契约（docs/45:92/§2、04 §5.3）本就把并行 map-reduce 划在 D16 缓做，但漏了同档编译期拦截。
+- **门（先跑后写，取实跑）**：U999–U1000 并入 `tests/test_graph_loader.py`（foreach/while 同一夹具：中文文案＋错误码断言），全量 **2100 passed / 135 skipped / 0 failed**（净增 2）。运行时零改动，零迁移／端点／ADR，前端零改动。
+
 ### feat(loop)：foreach item 字段深路径放行，对象元素 skip-current 可用（2026-09-29 ✅ 落码收口，commit b5f6ce5；打包 ZB；零迁移／零新依赖）
 
 - **一句话**：foreach 的 `item` 编译期按不透明元素处理，其下深层路径（如 `{{loop-1.item.state}}`）不再报 REF_PATH_NOT_FOUND，运行期按实际对象解析、缺失走 fail-soft；此前 `dsl.py` 对 loop 输出深层路径一刀切拒绝，与 docs/45:63 的既定承诺（`{{loop-x.item.amount}}`）漂移，对象数组上的 skip-current 因此不可用。
