@@ -10,6 +10,7 @@ import {
   Popconfirm,
   Select,
   Space,
+  Switch,
   Tabs,
   Typography,
   Input,
@@ -37,11 +38,19 @@ import { resolveExpressionErrors } from '../lib/runtimeError'
 import { isSubgraphInternal, subgraphPathPrefix, subgraphPathLabel } from '../lib/subgraphEvents'
 import { parseGlobalsDraft } from '../lib/debugOverrides'
 import {
+  fieldsFromInputs,
+  overrideFromFields,
+  type ParamField,
+} from '../lib/paramWizard'
+import {
   compileGraph,
   CompileValidationError,
   decideApproval,
   decideCardAction,
+  createUserTemplate,
   deleteRecording,
+  updateUserTemplate,
+  deleteUserTemplate,
   getRecording,
   getTemplate,
   listRecordings,
@@ -136,6 +145,13 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
   const [templatesLoading, setTemplatesLoading] = useState(false)
   const [applyingTemplateId, setApplyingTemplateId] = useState<string | null>(null)
   const [templateError, setTemplateError] = useState<string | null>(null)
+  const [saveTemplateOpen, setSaveTemplateOpen] = useState(false)
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null)
+  const [saveTemplateName, setSaveTemplateName] = useState('')
+  const [saveTemplateDescription, setSaveTemplateDescription] = useState('')
+  const [saveTemplateBusy, setSaveTemplateBusy] = useState(false)
+  const [saveTemplateError, setSaveTemplateError] = useState<string | null>(null)
+  const [deletingTemplateId, setDeletingTemplateId] = useState<string | null>(null)
   const [runError, setRunError] = useState<string | null>(null)
   const [nlError, setNlError] = useState<string | null>(null)
   const [compileResult, setCompileResult] = useState<CompileResult | null>(null)
@@ -159,6 +175,15 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
   // docs/28 §2.2：单用例回放 Mock 勾选 / 入参覆写草稿（per-case，一次性不落库）
   const [mockToolsById, setMockToolsById] = useState<Record<string, boolean>>({})
   const [overrideById, setOverrideById] = useState<Record<string, string>>({})
+  // 04 §5.11 落码块：填空式参数化向导（每用例惰性拉完整 inputs，草稿仅本次会话）
+  const [wizardOpenId, setWizardOpenId] = useState<string | null>(null)
+  const [wizardLoadingId, setWizardLoadingId] = useState<string | null>(null)
+  const [wizardFieldsById, setWizardFieldsById] = useState<
+    Record<string, ParamField[]>
+  >({})
+  const [wizardErrorById, setWizardErrorById] = useState<
+    Record<string, { errorKey: string; errorCode: 'not_a_number' | 'invalid_json' } | null>
+  >({})
   // docs/28 §2.3：用例元信息编辑（仅 name/inputs）
   const [editingId, setEditingId] = useState<string | null>(null)
   const [loadingEditId, setLoadingEditId] = useState<string | null>(null)
@@ -515,6 +540,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
           inputs: inputs ?? null,
           steps: toSteps(collected),
           status: executed.status,
+          rng_seed: executed.rng_seed,
         })
         appendLog(
           t('recording.saved', { id: savedCase.id, steps: savedCase.steps.length }),
@@ -633,7 +659,6 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
   async function openTemplateBrowser() {
     setTemplateOpen(true)
     setTemplateError(null)
-    if (templates.length > 0) return
     setTemplatesLoading(true)
     try {
       setTemplates(await listTemplates())
@@ -641,6 +666,69 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
       setTemplateError(error instanceof Error ? error.message : String(error))
     } finally {
       setTemplatesLoading(false)
+    }
+  }
+
+  async function removeTemplate(templateId: string) {
+    setDeletingTemplateId(templateId)
+    setTemplateError(null)
+    try {
+      await deleteUserTemplate(templateId)
+      setTemplates((current) => current.filter((template) => template.id !== templateId))
+    } catch (error) {
+      setTemplateError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setDeletingTemplateId(null)
+    }
+  }
+
+  function openSaveTemplate() {
+    setEditingTemplateId(null)
+    setSaveTemplateOpen(true)
+    setSaveTemplateName('')
+    setSaveTemplateDescription('')
+    setSaveTemplateError(null)
+  }
+
+  function openEditTemplate(template: TemplateSummary) {
+    setEditingTemplateId(template.id)
+    setSaveTemplateOpen(true)
+    setSaveTemplateName(template.name)
+    setSaveTemplateDescription(template.description)
+    setSaveTemplateError(null)
+  }
+
+  async function saveAsTemplate() {
+    const name = saveTemplateName.trim()
+    if (!name) {
+      setSaveTemplateError(t('template.nameRequired'))
+      return
+    }
+    setSaveTemplateBusy(true)
+    setSaveTemplateError(null)
+    const graph = serializeGraph(nodes, edges, variables, breakpoints)
+    try {
+      if (editingTemplateId) {
+        await updateUserTemplate(editingTemplateId, {
+          name,
+          description: saveTemplateDescription,
+          graph,
+        })
+        appendLog(t('template.updated', { name }))
+      } else {
+        await createUserTemplate({
+          name,
+          description: saveTemplateDescription,
+          graph,
+        })
+        appendLog(t('template.saved', { name }))
+      }
+      setSaveTemplateOpen(false)
+      setTemplates([])
+    } catch (error) {
+      setSaveTemplateError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setSaveTemplateBusy(false)
     }
   }
 
@@ -682,12 +770,16 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
     await compileAndRun(true)
   }
 
-  async function runReplay(caseId: string) {
+  async function runReplay(
+    caseId: string,
+    wizardOverride?: Record<string, unknown>,
+  ) {
     setRecordingError(null)
     setReplayBusyId(caseId)
     try {
       const body: ReplayRequestOptions = {}
       if (mockToolsById[caseId]) body.mock_tools = true
+      let merged: Record<string, unknown> = {}
       const overrideText = (overrideById[caseId] ?? '').trim()
       if (overrideText) {
         const parsed = parseInputsObject(overrideText)
@@ -695,7 +787,12 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
           setRecordingError(t(parsed.error))
           return
         }
-        body.inputs_override = parsed.value as RunInputs
+        merged = parsed.value
+      }
+      // 04 §5.11：向导组装值与 TextArea 手写覆写浅合并，向导值优先。
+      if (wizardOverride) merged = { ...merged, ...wizardOverride }
+      if (Object.keys(merged).length > 0) {
+        body.inputs_override = merged as RunInputs
       }
       const report = await replayRecording(caseId, body)
       setReports((prev) => ({ ...prev, [caseId]: report }))
@@ -704,6 +801,51 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
     } finally {
       setReplayBusyId(null)
     }
+  }
+
+  async function toggleWizard(rec: RecordingSummary) {
+    setRecordingError(null)
+    if (wizardOpenId === rec.id) {
+      setWizardOpenId(null)
+      return
+    }
+    setWizardOpenId(rec.id)
+    if (wizardFieldsById[rec.id]) return
+    setWizardLoadingId(rec.id)
+    try {
+      const full: RecordingCase = await getRecording(rec.id)
+      setWizardFieldsById((prev) => ({
+        ...prev,
+        [rec.id]: fieldsFromInputs((full.inputs ?? {}) as Record<string, unknown>),
+      }))
+    } catch (error) {
+      setRecordingError(error instanceof Error ? error.message : String(error))
+      setWizardOpenId(null)
+    } finally {
+      setWizardLoadingId(null)
+    }
+  }
+
+  function updateWizardDraft(caseId: string, key: string, draft: string) {
+    setWizardFieldsById((prev) => ({
+      ...prev,
+      [caseId]: (prev[caseId] ?? []).map((field) =>
+        field.key === key ? { ...field, draft } : field,
+      ),
+    }))
+    setWizardErrorById((prev) => ({ ...prev, [caseId]: null }))
+  }
+
+  async function runWizardReplay(caseId: string) {
+    const result = overrideFromFields(wizardFieldsById[caseId] ?? [])
+    if (!result.ok || !result.value) {
+      setWizardErrorById((prev) => ({
+        ...prev,
+        [caseId]: { errorKey: result.errorKey ?? '', errorCode: result.errorCode ?? 'invalid_json' },
+      }))
+      return
+    }
+    await runReplay(caseId, result.value)
   }
 
   // docs/28 §2.3：展开编辑并拉完整用例预填 name/inputs（列表投影不含 inputs）
@@ -897,6 +1039,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
           />
           {canOperate && <Button onClick={() => setNlOpen(true)}>{t('header.nlGenerate')}</Button>}
           <Button onClick={openTemplateBrowser}>{t('header.newFromTemplate')}</Button>
+          {canOperate && <Button onClick={openSaveTemplate}>{t('header.saveAsTemplate')}</Button>}
           {canOperate && <Button onClick={openRecordings}>{t('header.recordings')}</Button>}
           <Button onClick={() => setExportOpen(true)}>{t('header.exportJson')}</Button>
           <FeedbackButton />
@@ -1046,6 +1189,9 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
               <div>
                 <Space size={8} wrap style={{ marginBottom: 4 }}>
                   <Typography.Text strong>{template.name}</Typography.Text>
+                  <Tag color={template.source === 'user' ? 'blue' : 'default'}>
+                    {t(`template.source_${template.source}`)}
+                  </Tag>
                   {template.tags.map((tag) => (
                     <Tag key={tag}>{tag}</Tag>
                   ))}
@@ -1057,18 +1203,66 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                   <Typography.Text type="secondary">{template.description}</Typography.Text>
                 </div>
               </div>
-              <Button
-                type="link"
-                loading={applyingTemplateId === template.id}
-                disabled={applyingTemplateId !== null}
-                onClick={() => applyTemplate(template.id)}
-              >
-                {t('template.use')}
-              </Button>
+              <Space>
+                {template.deletable && (
+                  <Button type="link" onClick={() => openEditTemplate(template)}>
+                    {t('template.edit')}
+                  </Button>
+                )}
+                {template.deletable && (
+                  <Popconfirm
+                    title={t('template.deleteConfirm')}
+                    okText={t('template.deleteOk')}
+                    cancelText={t('template.deleteCancel')}
+                    onConfirm={() => removeTemplate(template.id)}
+                  >
+                    <Button danger type="link" loading={deletingTemplateId === template.id}>
+                      {t('template.delete')}
+                    </Button>
+                  </Popconfirm>
+                )}
+                <Button
+                  type="link"
+                  loading={applyingTemplateId === template.id}
+                  disabled={applyingTemplateId !== null}
+                  onClick={() => applyTemplate(template.id)}
+                >
+                  {t('template.use')}
+                </Button>
+              </Space>
             </div>
           ))}
         </Space>
         {templateError && <Alert type="error" showIcon title={templateError} style={{ marginTop: 12 }} />}
+      </Modal>
+      <Modal
+        title={editingTemplateId ? t('template.editTitle') : t('template.saveTitle')}
+        open={saveTemplateOpen}
+        onCancel={() => setSaveTemplateOpen(false)}
+        onOk={saveAsTemplate}
+        confirmLoading={saveTemplateBusy}
+        okText={editingTemplateId ? t('template.editOk') : t('template.saveOk')}
+        cancelText={t('template.deleteCancel')}
+        width={520}
+      >
+        <Space orientation="vertical" size={12} style={{ width: '100%' }}>
+          <Input
+            value={saveTemplateName}
+            maxLength={60}
+            placeholder={t('template.namePlaceholder')}
+            onChange={(event) => setSaveTemplateName(event.target.value)}
+          />
+          <Input.TextArea
+            value={saveTemplateDescription}
+            maxLength={200}
+            rows={3}
+            placeholder={t('template.descriptionPlaceholder')}
+            onChange={(event) => setSaveTemplateDescription(event.target.value)}
+          />
+        </Space>
+        {saveTemplateError && (
+          <Alert type="error" showIcon title={saveTemplateError} style={{ marginTop: 12 }} />
+        )}
       </Modal>
       <Modal
         title={t('recording.title')}
@@ -1237,6 +1431,131 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                       }
                       placeholder={t('recording.overridePlaceholder')}
                     />
+                    <div>
+                      <Button
+                        type="link"
+                        size="small"
+                        loading={wizardLoadingId === rec.id}
+                        onClick={() => toggleWizard(rec)}
+                      >
+                        {wizardOpenId === rec.id
+                          ? t('recording.wizardCollapse')
+                          : t('recording.wizardOpen')}
+                      </Button>
+                    </div>
+                    {wizardOpenId === rec.id && (
+                      <div
+                        style={{
+                          marginTop: 4,
+                          padding: 10,
+                          border: '1px dashed var(--atlas-color-border)',
+                          borderRadius: 8,
+                        }}
+                      >
+                        {wizardLoadingId === rec.id ? (
+                          <Typography.Text type="secondary">
+                            {t('recording.loadingCase')}
+                          </Typography.Text>
+                        ) : (wizardFieldsById[rec.id] ?? []).length === 0 ? (
+                          <Typography.Text type="secondary">
+                            {t('recording.wizardEmpty')}
+                          </Typography.Text>
+                        ) : (
+                          <Space
+                            orientation="vertical"
+                            size={8}
+                            style={{ width: '100%' }}
+                          >
+                            {(wizardFieldsById[rec.id] ?? []).map((field) => {
+                              const fieldError =
+                                wizardErrorById[rec.id]?.errorKey === field.key
+                                  ? wizardErrorById[rec.id]
+                                  : null
+                              return (
+                                <div key={field.key}>
+                                  <div
+                                    style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: 8,
+                                    }}
+                                  >
+                                    <Typography.Text
+                                      style={{ minWidth: 120 }}
+                                      ellipsis
+                                    >
+                                      {field.key}
+                                    </Typography.Text>
+                                    {field.kind === 'boolean' ? (
+                                      <Switch
+                                        checked={field.draft.trim() === 'true'}
+                                        onChange={(checked) =>
+                                          updateWizardDraft(
+                                            rec.id,
+                                            field.key,
+                                            String(checked),
+                                          )
+                                        }
+                                      />
+                                    ) : field.kind === 'json' ? (
+                                      <TextArea
+                                        autoSize={{ minRows: 1, maxRows: 4 }}
+                                        style={{ flex: 1 }}
+                                        value={field.draft}
+                                        status={fieldError ? 'error' : undefined}
+                                        onChange={(event) =>
+                                          updateWizardDraft(
+                                            rec.id,
+                                            field.key,
+                                            event.target.value,
+                                          )
+                                        }
+                                      />
+                                    ) : (
+                                      <Input
+                                        type={
+                                          field.kind === 'number'
+                                            ? 'number'
+                                            : undefined
+                                        }
+                                        style={{ flex: 1 }}
+                                        value={field.draft}
+                                        status={fieldError ? 'error' : undefined}
+                                        onChange={(event) =>
+                                          updateWizardDraft(
+                                            rec.id,
+                                            field.key,
+                                            event.target.value,
+                                          )
+                                        }
+                                      />
+                                    )}
+                                  </div>
+                                  {fieldError && (
+                                    <Typography.Text
+                                      type="danger"
+                                      style={{ fontSize: 12 }}
+                                    >
+                                      {fieldError.errorCode === 'not_a_number'
+                                        ? t('recording.wizardNotANumber')
+                                        : t('recording.wizardInvalidJson')}
+                                    </Typography.Text>
+                                  )}
+                                </div>
+                              )
+                            })}
+                            <Button
+                              type="primary"
+                              size="small"
+                              loading={replayBusyId === rec.id}
+                              onClick={() => runWizardReplay(rec.id)}
+                            >
+                              {t('recording.wizardReplay')}
+                            </Button>
+                          </Space>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
                 {report && (

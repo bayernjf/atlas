@@ -189,6 +189,8 @@ export type RunResult = {
   status: string
   outputs: Record<string, unknown>
   trace: string[]
+  // 打包 W（docs/84）：本次运行的表达式 RNG 种子；cancelled/suspended 早退响应缺省。
+  rng_seed?: number
 }
 
 export type RunInputs = Record<string, string | number>
@@ -540,12 +542,17 @@ export async function nlGenerate(prompt: string): Promise<{ graph: SerializedGra
   return request('/api/nl/generate', { method: 'POST', body: JSON.stringify({ prompt }) })
 }
 
+export type TemplateSource = 'catalog' | 'user'
+
 export type TemplateSummary = {
   id: string
   name: string
   description: string
   tags: string[]
   node_count: number
+  source: TemplateSource
+  deletable: boolean
+  created_at?: string
 }
 
 export type TemplateDetail = {
@@ -554,6 +561,9 @@ export type TemplateDetail = {
   description: string
   tags: string[]
   graph: SerializedGraph
+  source: TemplateSource
+  deletable: boolean
+  created_at?: string
 }
 
 export async function listTemplates(): Promise<TemplateSummary[]> {
@@ -563,6 +573,39 @@ export async function listTemplates(): Promise<TemplateSummary[]> {
 
 export async function getTemplate(id: string): Promise<TemplateDetail> {
   return request(`/api/templates/${id}`)
+}
+
+export async function createUserTemplate(input: {
+  name: string
+  description?: string
+  graph: SerializedGraph
+}): Promise<TemplateDetail> {
+  return request('/api/templates', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: input.name,
+      description: input.description ?? '',
+      graph: input.graph,
+    }),
+  })
+}
+
+export async function updateUserTemplate(
+  id: string,
+  input: { name: string; description?: string; graph: SerializedGraph },
+): Promise<TemplateDetail> {
+  return request(`/api/templates/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      name: input.name,
+      description: input.description ?? '',
+      graph: input.graph,
+    }),
+  })
+}
+
+export async function deleteUserTemplate(id: string): Promise<void> {
+  await request(`/api/templates/${id}`, { method: 'DELETE' })
 }
 
 export async function decideApproval(
@@ -878,6 +921,8 @@ export type RecordingCase = {
   recorded_at?: string | null
   /** 录制时递归冻结的 subgraph 引用快照（key＝引用原文含 @N） */
   subgraphs?: Record<string, SerializedGraph>
+  /** 打包 W（docs/84）：录制运行的 RNG 种子；历史用例缺省 */
+  rng_seed?: number | null
 }
 
 export type ReplayStepRow = {
@@ -896,6 +941,10 @@ export type ReplayReport = {
   clock_note?: string
   /** docs/28 §2.2：本次被桩替代的工具节点 id（未启用 mock 为 []） */
   mocked_tools?: string[]
+  /** 打包 V（docs/83）：本次被脚本钉住的 LLM condition 节点 id */
+  mocked_conditions?: string[]
+  /** 打包 W（docs/84）：用例缺 rng_seed（历史用例）时的漂移提示 */
+  rng_seed_note?: string
 }
 
 /** docs/28 §2.2/§2.3：单用例回放可选请求体 */
@@ -922,6 +971,8 @@ export async function saveRecording(input: {
   inputs: RunInputs | null
   steps: RecordStep[]
   status: string
+  // 打包 W（docs/84 D-3）：录制运行的种子原样带回，不补发。
+  rng_seed?: number
 }): Promise<RecordingCase> {
   return request('/api/recordings', { method: 'POST', body: JSON.stringify(input) })
 }

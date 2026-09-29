@@ -3,6 +3,94 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### fix(loop)：循环体内含 parallel 编译期拒绝，堵多轮扇出静默截断（2026-09-29 ✅ 落码收口，commit 5e04dcb；打包 ZC；零迁移／零新依赖）
+
+- **一句话**：foreach／while 的循环体内出现 parallel 节点时，解析期报 `LOOP_PARALLEL_IN_BODY`；此前该画法能通过编译，运行时第二轮起的扇出会被汇聚网关永久空转、流程静默截断而整体状态伪报 `completed`。
+- **根因**：`_make_join_gate` 以「joinTarget 已在 outputs」作为单次放行守卫，循环的 outputs 跨轮累积、第二轮 joinTarget 产出仍在，网关不再放行；契约（docs/45:92/§2、04 §5.3）本就把并行 map-reduce 划在 D16 缓做，但漏了同档编译期拦截。
+- **门（先跑后写，取实跑）**：U999–U1000 并入 `tests/test_graph_loader.py`（foreach/while 同一夹具：中文文案＋错误码断言），全量 **2100 passed / 135 skipped / 0 failed**（净增 2）。运行时零改动，零迁移／端点／ADR，前端零改动。
+
+### feat(loop)：foreach item 字段深路径放行，对象元素 skip-current 可用（2026-09-29 ✅ 落码收口，commit b5f6ce5；打包 ZB；零迁移／零新依赖）
+
+- **一句话**：foreach 的 `item` 编译期按不透明元素处理，其下深层路径（如 `{{loop-1.item.state}}`）不再报 REF_PATH_NOT_FOUND，运行期按实际对象解析、缺失走 fail-soft；此前 `dsl.py` 对 loop 输出深层路径一刀切拒绝，与 docs/45:63 的既定承诺（`{{loop-x.item.amount}}`）漂移，对象数组上的 skip-current 因此不可用。
+- **收口事实**：编译期纯放宽，仅 foreach 且 root=`item` 时允许 `rest` 非空；`results`/`items` 深层路径与 while 模式仍编译期拒绝。运行期插值与条件求值链路零改动——字段存在即按实际对象 `resolve_path`，缺失 fail-soft 占位符原样保留、条件取不到值走默认分支。
+- **门（先跑后写，取实跑）**：U997–U998 并入 `tests/test_graph_loader.py`（对象元素按 `item.state` 命中 skip、gate 不聚合该轮；标量元素访问字段编译放行、运行期 fail-soft 占位符保留、三轮全收集），全量 **2098 passed / 135 skipped / 0 failed**（净增 2）。零迁移／端点／错误码／ADR／依赖，运行时语义与前端零改动；契约 04 §5.3。
+
+### feat(subgraph)：inputs 整值原类型透传，父图数组可进子图 foreach（2026-09-29 ✅ 落码收口，commit 8a19b45；打包 ZA；零迁移／零新依赖）
+
+- **一句话**：subgraph 节点 inputs 映射值恰好为单个 `{{路径}}` 时，解析值按原类型（数组/数字/布尔/对象）透传进子图；此前统一字符串插值把非字符串值 `str()` 化，父图数组传不进子图 foreach（报「遍历对象必须是数组，实际为 str」）。
+- **收口事实**：新增 `graph/interpolation.render_mapping_value`——整值模板解析非 None 即返回原值，None 回退字符串插值（占位符 fail-soft 原样保留）；字面量与混合模板（`prefix-{{x}}`）仍按 §6.3 渲染为字符串。`_execute_subgraph` 改调该函数，子图同名全局变量覆盖语义不变；未声明根变量仍编译期 REF_NODE_NOT_FOUND。
+- **门（先跑后写，取实跑）**：U993–U996 并入 `tests/test_graph_loader.py`（数组进子图 foreach＋skip、数字/布尔/对象原类型、混合模板仍字符串、深层缺失 fail-soft＋普通聚合 foreach），全量 **2096 passed / 135 skipped / 0 failed**（净增 4）。零迁移／端点／错误码／ADR，DSL 形态与前端零改动；契约 04 §5.7。
+
+### feat(loop)：foreach skip-current，condition 连回 loop 即跳过本轮（2026-09-29 ✅ 落码收口，commit f923525；打包 Z；D16 余部切片；零迁移／零新依赖）
+
+- **一句话**：foreach 循环体新增"跳过当前元素"——体内 condition 连一条分支回 loop 节点，编译期 retarget 到合成 `__skip__{loopId}` gate，gate 只推进 index/切换 item，**不读 collectTarget、不聚合本轮**；跳过末项即正常 completed 退出。
+- **收口事实**：gate 以 loop 节点 id 重发一帧 node_end（SSE 上无 `__skip__*` 帧），条件边 bodyTarget/exitTarget；while 不生成 `__skip__`；break 与 skip 可共存（break 边仍经 `__break__` 聚合在途结果）；recursion_limit 对每个含 skip 源的 foreach 加 `MAX_LOOP_ITERATIONS`。
+- **画法订正（D-1）**：condition 连回 loop 在 foreach 体内成为**唯一 skip 语义**——要聚合本轮的普通 continue 不能直连 loop，须经一个非 condition 透传节点回 loop；D17 时代「condition defaultTarget 直连 loop 作 continue」的画法由此废止（旧 foreach break 测试夹具已迁移；内置模板扫描零受影响）。零端点／错误码／DSL 校验变更，无新增 exitReason，前端零改动。
+- **门（先跑后写，取实跑）**：U986–U992 并入 `tests/test_graph_loader.py`（中项跳过不聚合、不读 collectTarget、末项跳过 completed、普通回边回归、while 无 `__skip__`、break+skip 共存、全部跳过），全量 **2092 passed / 135 skipped / 0 failed**（净增 7）；真服 SSE 实跑验过 results 在跳过轮不变；真实浏览器登录跑 refund Demo 零控制台错误（手工拖 condition→loop 为原生拖拽、CDP 不可模拟，照实记 docs/87）。契约 docs/87；**D16 整体不解除**。
+
+### feat(template)：用户自建模板 PUT 更新，原 id 整体替换、身份字段不变（2026-09-29；打包 Y；D25 余部切片；零迁移／零新依赖）
+
+- **一句话**：打包 X 之后改名/改图只能"删旧建新"；本批补 `PUT /api/templates/{id}`（operate）在原 id 上**整体替换** name/description/tags/graph，id、seq、created_at 与列表排序位置全部不变。
+- **REST**：请求体与 POST 同形，校验与 422 文案逐字复用 POST（`parse_graph` 后原样存），200 返回与 POST 201 同投影（source="user"/deletable=true）；内置 id 与不存在 id（含已删、跨租户）统一 404 `模板不存在：{id}`，不做 405；跨租户 PUT → 404 且 A 数据不变，viewer → 403。**唯一例外**：tags 字段缺省（None）⇒ 保留旧 tags，显式 [] ⇒ 清空（前端编辑表单不暴露 tags 控件）。
+- **存储**：两档 store 同形加 `update(template_id, *, name, description, tags, graph) -> UserTemplate | None`——内存持锁替换保 id/created_at；PG 单 UPDATE（WHERE tenant_id+id，tags/graph CAST JSONB）、rowcount=0 返 None。无 updated_at 列。
+- **前端**：浏览器用户行加「编辑」，另存 Modal 扩为 create/edit 两用（打开预填、标题/OK 文案随模式），`apiClient.updateUserTemplate`，zh/en 各补 4 键。
+- **门（先跑后写，取实跑）**：后端 U980–U985 并入 `tests/test_user_templates.py`（净增 12 例：store update、PUT 200、7 类 422、tags 缺省保留、404 口径、分区/权限），落码前基线 2073，全量 **2085 passed / 135 skipped / 0 failed**；前端 748 passed/2 skipped、`pnpm build` ✓；**真实浏览器验收**：建模板→编辑预填→改名改描述→更新→重开列表显示新名/新描述，控制台仅登录前 401。
+- **边界照实**：PATCH 局部更新/并发 CAS、updated_at/版本钉版与升级回归、分类目录与搜索、市场/跨租户共享、URL 导入导出、参数化实例化向导仍缓做，**D25 整体不解除**。契约 docs/86。
+
+### feat(template)：用户自建流程模板库 v1，画布另存为租户私有模板、与内置目录合并展示并可删除（2026-09-29；打包 X；D25 余部切片；migration 034／零新依赖）
+
+- **一句话**：只读内置目录（`template/catalog.py`，5 个内置模板）之外，租户可把当前画布**另存为私有模板**，并在既有「从模板新建」浏览器里合并展示、可删除；按租户分区，进程内/PG 两档存储。
+- **REST**：`POST /api/templates`（operate）body `{name 1-60 trim 后非空, description 0-200 缺省"", tags 每项 1-20 至多 8, graph}`，`parse_graph` 仅校验图可编译（不过 compile/run；失败 422 中文），图原样存，201 返完整模板；`GET /api/templates` 合并——内置在前（目录序）、用户按 created_at 倒序接后，纯超集加 `source: "catalog"|"user"`/`deletable`（列表投影仍不含 graph）；`GET /api/templates/{id}` 内置未命中再查用户模板；`DELETE /api/templates/{id}`（operate）仅删用户模板返 `{deleted:true}`——**内置 id 与不存在 id（含已删、跨租户）统一 404** `模板不存在：{id}`，不做内置 id 枚举器，第二次删 404。无 PUT/PATCH（删旧建新）。
+- **存储**：内存 `template/user_store.py: UserTemplateStore`（单锁、租户内 seq）；PG `template/pg_store.py: PgUserTemplateStore`＋migration **034** `user_templates`（tenant_id+id PK、`(tenant_id,seq)` 唯一索引、tags/graph JSONB、created_at TEXT；seq 同租户行锁内 MAX+1）；TenantServices 装配，reset_tenant 随运行时数据清空。
+- **门（先跑后写，取实跑）**：后端 U974–U979 落 `tests/test_user_templates.py`（14 例：store CRUD/seq/clear、POST 201 与各类 422、GET 合并、DELETE 404 口径、跨租户分区、viewer 403、reset 清空），落码前基线 2059，全量 **2071 passed / 135 skipped / 0 failed**；前端 748 passed/2 skipped、`pnpm build` ✓；**真实浏览器验收**：另存→合并列表（5 内置「内置」Tag＋1「我的模板」）→Popconfirm 删除逐项通过、零意外 console 错误。
+- **边界照实**：模板更新/PUT、分类目录与搜索、市场/跨租户共享、URL 导入导出、版本钉版、参数化实例化向导仍缓做，**D25 整体不解除**。契约 docs/85。
+
+### feat(recording)：随机/UUID 表达式函数与回放种子化，random/randint/uuid 按录制种子确定重放（2026-09-29；打包 W；D15 余部切片；migration 033／零新依赖）
+
+- **一句话**：条件表达式纯超集新增 `random()`／`randint(a,b)`／`uuid()` 三个白名单函数（前后端同构、禁 eval 不变），随机性全部来自**每次运行注入的种子 RNG**——`run_graph(rng_seed=None)` 未传则入口 `secrets.randbits(63)` 生成，一个 Random 经 compile_graph/`evaluate_expression(rng=)` 全链透传，subgraph 重入复用同一实例。
+- **录制事实**：seed 与 recorded_at 同类——RunResult 与 run_end 帧带 `rng_seed`，`RecordingCreateRequest`/`RecordingCase` 加 `rng_seed`（前端把所录运行的种子原样回带），replay（mock/非 mock 一致）与 gate 经 `seed_anchor(case)` 锚定；历史用例缺种子不伪造、报告挂中文 `rng_seed_note`。
+- **迁移**：PG 档 recordings 为显式列，migration **033** 补 `rng_seed BIGINT`（可空，历史行 NULL；早期契约稿"零迁移"判断仅对进程内档成立，docs/84 已订正）。
+- **门（先跑后写，取实跑）**：后端 U970–U973 落 `tests/test_random_seed_replay.py`（12 例：函数纯逻辑与 stdlib 同序、run_graph 同种复现/subgraph 共享流、API 全链路录制回放与历史回退），落码前基线 2047 passed/135 skipped；前端 748 passed/2 skipped、`pnpm build` ✓。
+- **边界照实**：`choice()`/按权重采样、客户端钉种子、断点续跑帧携种子、命名时区仍缓做，**D15 整体不解除**。契约 docs/84。
+### feat(recording)：LLM 语义分支录制回放脚本化，mock 回放零 LLM 调用确定重放（2026-09-29；打包 V；D14 余部切片；零迁移／零新依赖／前端不动）
+
+- **一句话**：conditionMode=llm 的录制用例此前 mock_tools 回放只给 tool_call 打桩，LLM 分流仍走真实/离线分类器——CI 无模型必漂 defaultTarget，有模型也可能随供应商抖动。本批让 `mock_tools=true` 回放**按录制时的分支标签确定性重放**：分类器 Protocol 加可选 `node_id`（Offline/LiteLLM 签名补齐、行为不变），新 `ScriptedConditionClassifier`（命中 node_id 返录制标签含 `__default__`，未知节点/None 抛 ConditionClassifyError 走 defaultTarget），`recording/replay.py` 加 `build_condition_script(case)`（dedupe 后只收 mode=llm 的 condition 步骤）。
+- **REST**：`POST /api/recordings/{id}/replay` 仅在 mock_tools 分支构造并透传 `condition_classifier`，报告纯超集加 `mocked_conditions: string[]`（正常与异常折叠两条路径都带）。**非 mock 回放与发布门禁语义不变**（真实求值、从不打桩）。
+- **门（先跑后写，取实跑）**：后端常跑 `.venv/bin/pytest` ＝ **2047 passed / 135 skipped / 0 failed**（净增 11；U964–U969 落 `tests/test_replay_llm_condition.py`）；`tests/test_handoff_integrity.py` 绿。
+- **边界照实**：脚本回放验的是「录制标签在当前图上是否仍导出同一路径/产出」，不验「LLM 今天还会不会这么判」；发布门禁仍真实调 LLM、供应商抖动可致 flaky。置信度阈值/多候选/澄清、每分支独立 prompt、模型按租户可选、字段级脱敏、structured outputs 仍缓做，**D14 整体不解除**。契约 docs/83。
+
+### feat(message)：出站消息 DLQ，失败投递可过滤、可按原内容重放（2026-09-29；打包 U；D24 余部切片；迁移 032；零新依赖）
+
+- **一句话**：出站通知失败后 `message_deliveries` 只留失败痕、不存正文，内容不可恢复。本批迁移 **032** 加可空 `body`（存量 NULL 永不回填），`DeliveryRecord.body`（重放权威副本、不截断），两档 store 同形增 status 过滤列表（投影补 `seq`）与 `get(seq)`；`MessageService.replay_failed` 走现有 send 全路径产生新投递行，原 failed 行不可变。
+- **REST**：`GET /api/demo/deliveries?status=failed|delivered`（read；非法值 422）＋新 `POST /api/demo/deliveries/{seq}/replay`（operate；无行/跨租户 404、非 failed 409 `DLQ_NOT_FAILED`、body 缺失 422 `DLQ_BODY_UNAVAILABLE`）。前端本批不动。
+- **门（先跑后写，取实跑）**：后端常跑 `.venv/bin/pytest` ＝ **2036 passed / 135 skipped / 0 failed**（净增 16）；真 PG 一次性 pgvector:pg16 容器 **9 passed**——body 跨连接读回、重放新行落库且原行仍 failed、SQL 置 NULL 的历史行被 422 拦下；群发逐目标失败各自重放只发该目标。
+- **边界照实**：重放无幂等键、失败行可无限次重放（重复按＝重复通知）；body 明文落库（字段加密随 D22）；定时扫描/自动重放/前端页仍缓做，**D24 整体不解除**。契约 docs/82。
+
+### feat(routing)：RoutingStore PG 化，灰度状态跨重启存活（2026-09-29；打包 T；D32 余部切片；迁移 031；零新端点／零错误码／零新依赖）
+
+- **一句话**：灰度配置与 rollout 状态机原来只活在进程内 `RoutingStore`，PG 档重启后 canary/full/rolled_back 状态、stable/candidate 版本钉与分流计数全部回 idle。本批新增 `rollout_states` 表（PK tenant_id+graph_id，config/traffic JSONB，时间列 TEXT ISO）与 `routing/pg_store.py: PgRoutingStore`，PG 档装配改为行锁落库；REST 投影与内存档逐字不变。
+- **并发口径**：状态机写与 resolve 读改写一律 `SELECT ... FOR UPDATE`（无行则事务内插 idle 行），snapshot 无行不写库，resolve 一律 UPSERT 保计数存活，rolled_back 原因/actor 持久保留（重启后新流量仍走 stable），reset＝按租户 DELETE。仅 registry pg 分支换构造，memory 分支与 API 层零改动；不进 PgBackend 工厂（routing 不反向依赖 storage）。
+- **门（先跑后写，取实跑）**：后端常跑 `.venv/bin/pytest` ＝ **2020 passed / 132 skipped / 0 failed**（零回归）；真 PG 一次性 pgvector:pg16 容器 U951–U957 **7 passed**——跨连接与 engine dispose 重建存活、跨租户隔离、40 线程并发 resolve traffic 总数恰为 40；rolled_back 重复回滚不覆盖首因。
+- **边界照实**：不解锁多实例语义（D20 帧恢复/D5 总线/D6 网关未动，单副本三道闸不撤），D32 整体不解除；resolve 变为每请求一次行锁事务，热点图同槽竞争是真实代价；图删后无外键联动、不做 retention。契约 docs/81。
+
+### feat(recording)：回放面板加填空式用例参数化向导（2026-09-29，纯前端；D26 余部；零迁移／零端点／零新依赖）
+
+- **一句话**：录制回放原来只能在一块 TextArea 里手写整段 JSON 来覆盖入参，本批在回放面板加「按字段填空」的向导——展开即用例每个入参一行控件，改完直接回放。改动面：`frontend/src/lib/paramWizard.ts`（新纯逻辑）、`frontend/src/pages/Editor.tsx`（面板）、两档 `editor.json` 各 6 键＋i18n 必填键守护。
+- **字段语义**：展开时懒加载用例全量（`GET /api/recordings/{id}` 拿 inputs），按值推类型 string/number/boolean/json——boolean 渲染 Switch、json 渲染多行输入、number 数字输入、其余文本输入；**草稿只活在当前页面会话**，不落库、不改录制本身。
+- **覆盖值组装**：留空字段（含纯空白字符串）不进 override；字符串保留用户原样输入（不 trim）；number 用 `Number()` 解析、非有限数就地报「请输入合法数字」且不发请求；json `JSON.parse` 失败就地报「JSON 格式不正确」。向导产出与 TextArea 里手写的 JSON **浅合并、向导字段优先**，最终经既有 `POST /api/recordings/{id}/replay` 的 `inputs_override` 发出——契约 04 §5.11 不变（仅当次回放有效、不持久化），故零迁移零端点。
+- **门（先跑后写，取实跑）**：前端全量 `pnpm exec vitest run` ＝ **748 passed / 2 skipped（56 files）**（向导逻辑新增 10 例）、`pnpm build` ✓、控制台 0 error。
+- **真浏览器实测**：后端 :8000（真 PG）admin-a 登录，录制用例入参 `{"order_id":"12345","reason":"商品破损","amount":299}`，向导中把 amount 改为 888 点「按参数回放」，抓包请求体逐字为 `{"inputs_override":{"order_id":"12345","reason":"商品破损","amount":888}}`；回放报告正确判为**不匹配**，列出 trigger-1（上下文）／ai_decision-1（决策·prompt_rendered）／tool_call-1（结果）三处 diff。
+- **残余照实**：not_a_number 的界面报错路径只由 vitest 覆盖（浏览器里手搓非法数字时输入实际被置空，走了「留空省略」分支）；**D26 整体不解除**——影子运行自动旁路/SSE、跨租户用例共享、长留存仍缓做 docs/14。**不 push 除非明确指示**。
+
+### docs(integration)：写「外部 agent 经 REST 驱动 Atlas」集成说明，补上 D45 路线 (b)（2026-09-29，纯 docs；零代码／零依赖／零端点／零错误码／不触发 ADR）
+
+- **一句话**：缓做登记 [docs/14 D45](docs/14-缓做事项登记表.md) 记着「外部系统经 REST、入站 webhook、OpenAPI 导入成图内工具三条路今天已经能接，缺的是**协议标准化与工具自描述**」。本批补的是**接入说明**那一半——从**调用者视角**（Hermes／Claude 一类 agent）把"怎么用 REST 把 Atlas 当工具面用"讲清楚，落到 [docs/80](docs/80-外部agent经REST驱动Atlas集成说明.md) 十节。
+- **这不是新契约**：正文只归纳既有契约（数据结构与签名以 03／12 为准、运行时语义以 04／06／24 为准），与正文冲突时以正文为准。**路线 (a)（只登记）本就已完成；(c) 真做 MCP server 仍是选型变更、仍须先立 docs/10 §4 的 ADR，未动。**
+- **重点写了三件最容易踩的事**：①**挂起审批会阻塞 HTTP 请求**——同步 `/run` 停在 `ApprovalBroker.wait(token)` 上，客户端 30s 超时断开**不等于取消**、服务端照跑；含审批的图应走 `/run/stream`，在 `node_start` 的 `approval` 载荷里拿 token（另两条路：`GET /api/approvals` 轮询、邮件深链），并写清「取消运行**不能**打断阻塞中的审批」「今天**没有** REST 续跑端点、不要靠再 POST 一次 /run 抢帧」。②**运行提交今天没有请求级幂等键**——重复 POST 就是两次运行，平台内确实存在的幂等（审批首决 409／取消 200／等待信号 409／webhook 计数去重／调度槽位认领／内部 M7）都在**别处**，逐条列表。③**错误码分四套口径**——`AUTH_*` 结构化、图编译 422 四数组按下标对齐（`codes`／`params`／稀疏 `locations`）、等待信号结构化、其余纯中文字符串；另附跨租户一律 **404**（不泄漏存在性）的语义。
+- **逐条对着源码核过，纠了自己四处错**：审计面（`/api/audit/events`、`/api/audit/export`）要 **`administer`** 不是 `read`；渠道绑定（`POST /api/channels`）只要 **`operate`** 不是 `administer`；§5.2 示例原写了个**不存在的 DSL 码**，换成真实的 `APR_SUMMARY_REQUIRED`，并把 `params` 从对象改回**与 `detail` 等长的数组**（项带 `owner`）；等待信号 404/409 实为**结构化**（`WAIT_TOKEN_NOT_FOUND`／`WAIT_ALREADY_SIGNALED`），从"纯字符串"一节挪出单列。另修一处悬空交叉引用（§3.2 原指向不存在的 §4.5）。
+- **同步面**：docs/00 地图行、docs/08 §八 路线 (b) 收口注记、docs/14 D45 行＋2026-09-28 注记区追记（**本行不解除**——MCP／A2A 的协议标准化仍无）、handoff（Project documents 索引＋Recently shipped）、CHANGELOG。
+- **门**：纯文档，**零代码／零测试改动**；`tests/test_handoff_integrity.py` 复跑绿（新增 Recently shipped 条目并滚出 5 条后，仍守编号唯一／引用可解析／上限 5）。**不 push 除非明确指示**；不解除任何缓做、不改 B 档判定。
+
 ### feat(memory)＋feat(ops)＋feat(api)＋test＋docs：空卷首启就绪竞态改为有界重试（2026-09-28，打包 S／docs/79，解 docs/73 明细项 4.2）
 
 - **一句话**：docs/77 §8 在 prod＋空卷第一次真跑时量出的**首启就绪竞态**——PG initdb 后有一段约 **90s** 的 recovery 窗口，其间一切连接被 `FATAL: the database system is in recovery mode` 拒绝，而 compose 给 `db` 的探针 `pg_isready` **在这窗口里判过了 healthy** ⇒ atlas 被 `depends_on: service_healthy` 放行 ⇒ 入口脚本迁移 CLI（`set -e`）连库即抛、容器退出，**靠 `restart: unless-stopped` 第二次才起**。本批让迁移与应用启动各自**有界等待连通性**，使"一次就到 ready"不再依赖重启策略。

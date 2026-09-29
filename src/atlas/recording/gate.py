@@ -16,7 +16,7 @@ from typing import Any
 from ..graph.dsl import parse_graph
 from ..graph.loader import run_graph
 from .cases import RecordingCase
-from .replay import clock_anchor, collect_steps, compare, preset_approvals
+from .replay import clock_anchor, collect_steps, compare, preset_approvals, seed_anchor
 
 
 def _replay_one(
@@ -31,6 +31,7 @@ def _replay_one(
     try:
         emit, take_steps = collect_steps()
         anchor, clock_note = clock_anchor(case)
+        seed, rng_note = seed_anchor(case)
         inputs = dict(case.inputs or {})
         presets = preset_approvals(case.steps)
         if presets:
@@ -46,6 +47,7 @@ def _replay_one(
             emit=emit,
             graph_resolver=graph_resolver,
             now_override=anchor,
+            rng_seed=seed,
         )
         replay_steps = take_steps()
         tools_by_node = {
@@ -61,6 +63,8 @@ def _replay_one(
         )
         if clock_note:
             report["clock_note"] = clock_note
+        if rng_note:
+            report["rng_seed_note"] = rng_note
         return report
     except Exception as exc:  # 回放失败折叠为不匹配，不抛 500（对齐 replay 端点，06 §6.9）
         return {
@@ -138,6 +142,16 @@ def run_release_gate(
                 "matches": matches,
                 "replay_status": report["replay_status"],
                 "note": _case_note(report),
+                **(
+                    {"clock_note": report["clock_note"]}
+                    if report.get("clock_note")
+                    else {}
+                ),
+                **(
+                    {"rng_seed_note": report["rng_seed_note"]}
+                    if report.get("rng_seed_note")
+                    else {}
+                ),
             }
         )
 

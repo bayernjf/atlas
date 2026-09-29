@@ -22,6 +22,7 @@ import math
 import operator
 import random
 import re
+import secrets
 import time
 import uuid
 from contextlib import nullcontext
@@ -74,13 +75,14 @@ from .dsl import (
     MAX_JITTER_SECONDS,
     validate_graph_report,
 )
-from .interpolation import interpolate, resolve_path
+from .interpolation import interpolate, render_mapping_value, resolve_path
 
 EventCallback = Callable[[dict[str, Any]], None]
 
 # 编译期注入的汇聚网关节点名前缀（04 §5.4）；该节点事件不下发。
 JOIN_GATE_PREFIX = "__join__"
 BREAK_GATE_PREFIX = "__break__"
+SKIP_GATE_PREFIX = "__skip__"
 
 # M10：run_graph 的 tracer 哨兵——未显式传 tracer 时自建；显式传 None 表示不埋点
 # （debug 单步会话口径，04 §5.13/§5.15：SSE 帧保持无 span 字段的旧形状）。
@@ -181,7 +183,8 @@ def _resolve_absolute_wait(
 
 
 def _resolve_wait_expression(
-    node_id: str, raw_expression: Any, context: dict[str, Any], lo: int, hi: int
+    node_id: str, raw_expression: Any, context: dict[str, Any], lo: int, hi: int,
+    rng: random.Random | None = None,
 ) -> int:
     """等待时长表达式 → 秒数（docs/49 duration dynamic；B5 event timeout expression）。
 
@@ -189,7 +192,7 @@ def _resolve_wait_expression(
     WaitNodeFailure(WAIT_DURATION_INVALID)，不睡眠。duration/event 共用，零新错误码。
     """
     try:
-        raw = evaluate_expression(str(raw_expression), context)
+        raw = evaluate_expression(str(raw_expression), context, rng=rng)
     except ConditionEvalError as exc:
         raise WaitNodeFailure(
             node_id,
@@ -307,6 +310,7 @@ def _make_executor(
     shadow: bool = False,
     tool_permissions: dict[str, str] | None = None,
     jitter_rng: random.Random | None = None,
+    expr_rng: random.Random | None = None,
 ):
     def execute(state: GraphState) -> dict:
         context = {"global": state["variables"].get("global", {}), **state["outputs"]}
@@ -462,6 +466,7 @@ def _make_executor(
                         context,
                         now=now,
                         classifier=condition_classifier,
+                        expr_rng=expr_rng,
                     )
                     if output.get("mode") == "llm":
                         message = (
@@ -470,7 +475,7 @@ def _make_executor(
                     else:
                         message = f"{node.id}: branch={output['branch']} → {output['target']}"
                 elif node.type == "loop":
-                    output = _execute_loop(node, state, context, now=now)
+                    output = _execute_loop(node, state, context, now=now, expr_rng=expr_rng)
                     if output["exitReason"] is None:
                         if output["mode"] == "foreach":
                             message = (
@@ -570,6 +575,7 @@ def _make_executor(
                                         context,
                                         MIN_EVENT_WAIT_SECONDS,
                                         MAX_EVENT_WAIT_SECONDS,
+                                        rng=expr_rng,
                                     )
                                 else:
                                     static_timeout = node.config.get("timeoutSeconds")
@@ -712,6 +718,7 @@ def _make_executor(
                                 context,
                                 MIN_WAIT_SECONDS,
                                 MAX_WAIT_SECONDS,
+                                rng=expr_rng,
                             )
                         elif resume_here:
                             # 续跑：按剩余时长等待（绝对 deadline 照扣，docs/24 §3.1）。
@@ -799,6 +806,7 @@ def _make_executor(
                         debug_controller=debug_controller,
                         shadow=shadow,
                         jitter_rng=jitter_rng,
+                        expr_rng=expr_rng,
                     )
                 elif tool_mocks is not None and node.id in tool_mocks:
                     # Mock 回放（docs/28 §2.2）：以录制桩 output 替代真实适配器调用，
@@ -1215,6 +1223,7 @@ def _execute_subgraph(
     debug_controller: Any = None,
     shadow: bool = False,
     jitter_rng: random.Random | None = None,
+    expr_rng: random.Random | None = None,
 ) -> tuple[dict[str, Any], str]:
     """进程内重入执行被引用子图（04 §5.7）；任何异常 fail-safe 为 failed，父 run 仍 completed。
 
@@ -1229,7 +1238,7 @@ def _execute_subgraph(
     if debug_controller is not None and child_emit is not None:
         debug_controller.push_namespaced_emit(child_emit)
     mapping = node.config.get("inputs") or {}
-    child_inputs = {key: interpolate(str(value), context) for key, value in mapping.items()}
+    child_inputs = {key: render_mapping_value(value, context) for key, value in mapping.items()}
     # M10：subgraph span（非 internal，折叠后代表整段子图）；子图内部节点 span 标 internal。
     sub_cm = (
         tracer.span(
@@ -1269,6 +1278,7 @@ def _execute_subgraph(
                 _parent_span=sub_span if isinstance(sub_span, Span) else None,
                 shadow=shadow,
                 jitter_rng=jitter_rng,
+                _expr_rng=expr_rng,
             )
     except (RunCancelled, DebugStopped, RunSuperseded):
         # 取消与调试急停/异常断点 stop 均须穿透子图 fail-safe 兜底，冒泡终止整图
@@ -1446,6 +1456,7 @@ def _execute_condition(
     *,
     now: datetime | None = None,
     classifier: Any = None,
+    expr_rng: random.Random | None = None,
 ) -> dict[str, Any]:
     """condition 求值（04 §5.2）；rule 顺序短路，llm 单次分类；异常 fail-safe 走 defaultTarget。"""
     config = node.config
@@ -1459,7 +1470,7 @@ def _execute_condition(
     for item in config.get("branches", []):
         label, expression = item["label"], item["expression"]
         try:
-            result = evaluate_expression(expression, context, now=now)
+            result = evaluate_expression(expression, context, now=now, rng=expr_rng)
         except ConditionEvalError as exc:
             errors.append(f"分支 {label}：{exc}")
             evaluation.append({"label": label, "expression": expression, "result": None})
@@ -1509,7 +1520,10 @@ def _execute_llm_condition(
     label: str
     try:
         label = classifier.classify(
-            branches=branches, context_text=context_text, instruction=instruction
+            branches=branches,
+            context_text=context_text,
+            instruction=instruction,
+            node_id=node.id,
         )
     except Exception as exc:  # noqa: BLE001 - 供应商错误/解析错误统一 fail-safe
         label = "__default__"
@@ -1549,12 +1563,13 @@ def _node_outputs_projection(context: dict[str, Any]) -> dict[str, Any]:
 
 
 def _execute_loop(
-    node: NodeDSL, state: GraphState, context: dict[str, Any], *, now: datetime | None = None
+    node: NodeDSL, state: GraphState, context: dict[str, Any], *, now: datetime | None = None,
+    expr_rng: random.Random | None = None,
 ) -> dict[str, Any]:
     """条件循环重入求值（04 §5.3）；达上限/求值异常 fail-safe 走 exitTarget。"""
     config = node.config
     if config.get("mode") == "foreach":
-        return _execute_foreach(node, state, context, now=now)
+        return _execute_foreach(node, state, context, now=now, expr_rng=expr_rng)
     body_target = config["bodyTarget"]
     exit_target = config["exitTarget"]
     max_iterations = int(config.get("maxIterations", 10))
@@ -1575,7 +1590,7 @@ def _execute_loop(
         # 首轮自身产出尚不存在；播种 index 供 {{loop-x.index}} 求值
         loop_context = {**context, node.id: {"index": iterations, "iterations": iterations}}
         try:
-            result = evaluate_expression(config["continueExpression"], loop_context, now=now)
+            result = evaluate_expression(config["continueExpression"], loop_context, now=now, rng=expr_rng)
         except ConditionEvalError as exc:
             target = exit_target
             exit_reason = "expression_error"
@@ -1635,7 +1650,8 @@ def _foreach_output(
 
 
 def _execute_foreach(
-    node: NodeDSL, state: GraphState, context: dict[str, Any], *, now: datetime | None = None
+    node: NodeDSL, state: GraphState, context: dict[str, Any], *, now: datetime | None = None,
+    expr_rng: random.Random | None = None,
 ) -> dict[str, Any]:
     """遍历循环（04 §5.3 foreach 段，docs/45）：数组首轮求值冻结、串行逐项、回边聚合。"""
     config = node.config
@@ -1661,7 +1677,7 @@ def _execute_foreach(
     if "items" not in previous:
         seed_context = {**context, node.id: {"index": 0, "iterations": 0}}
         try:
-            items = evaluate_expression(config["itemsExpression"], seed_context, now=now)
+            items = evaluate_expression(config["itemsExpression"], seed_context, now=now, rng=expr_rng)
         except ConditionEvalError as exc:
             return fail_exit(str(exc), "expression_error", exc.code)
         if not isinstance(items, list):
@@ -1791,6 +1807,58 @@ def _make_break_gate(
         count = final_index if is_foreach else iterations
         message = f"{loop_node.id}: exit (break) after {count} → {exit_target}"
         # 以 loop 节点自身补发 node_end（同 __join__ 汇聚补发模式），供画布展示 break 终态。
+        emit({"type": "node_end", "node_id": loop_node.id, "node_type": "loop", "output": output})
+        return {"outputs": {loop_node.id: output}, "messages": [message]}
+
+    return gate
+
+
+def _make_skip_gate(
+    loop_node: NodeDSL,
+    emit: EventCallback,
+    *,
+    tracer: Tracer | None = None,
+    base_span: Span | None = None,
+):
+    """打包 Z skip-current 合成网关（仅 foreach）：体内 condition 连回 loop 的
+    skip 分支编译期 retarget 到本网关。与 break gate 同构，但只推进、不聚合——
+    results 原样保留，不读 collectTarget（有产出也不追加）。
+    """
+    body_target = loop_node.config["bodyTarget"]
+    exit_target = loop_node.config["exitTarget"]
+
+    def gate(state: GraphState) -> dict[str, Any]:
+        previous = state["outputs"].get(loop_node.id, {})
+        if not isinstance(previous, dict):
+            previous = {}
+        items = list(previous.get("items", []))
+        index = int(previous.get("index", 0))
+        results = list(previous.get("results", []))
+        next_index = index + 1
+        if next_index >= len(items):
+            output = _foreach_output(
+                items=items,
+                index=next_index,
+                item=previous.get("item"),
+                results=results,
+                target=exit_target,
+                exit_reason="completed",
+                expression_errors=[],
+            )
+            destination = exit_target
+        else:
+            output = _foreach_output(
+                items=items,
+                index=next_index,
+                item=items[next_index],
+                results=results,
+                target=body_target,
+                exit_reason=None,
+                expression_errors=[],
+                expression_error_codes=[],
+            )
+            destination = body_target
+        message = f"{loop_node.id}: skip item {index} → {destination}"
         emit({"type": "node_end", "node_id": loop_node.id, "node_type": "loop", "output": output})
         return {"outputs": {loop_node.id: output}, "messages": [message]}
 
@@ -2265,6 +2333,7 @@ def compile_graph(
     tool_mocks: dict[str, Any] | None = None,
     shadow: bool = False,
     jitter_rng: random.Random | None = None,
+    expr_rng: random.Random | None = None,
 ):
     decision_client = decision_client or get_decision_client()
     condition_classifier = condition_classifier or get_condition_classifier()
@@ -2379,6 +2448,7 @@ def compile_graph(
             shadow=shadow,
             tool_permissions=tool_permissions,
             jitter_rng=jitter_rng,
+            expr_rng=expr_rng,
         )
         if node.id in skip_guards:
             parallel_id, safe_target = skip_guards[node.id]
@@ -2431,6 +2501,45 @@ def compile_graph(
         builder.add_edge(gate_id, exit_target)
         for member in sources:
             retarget[(member, exit_target)] = gate_id
+
+    # 打包 Z skip-current：foreach 体内 condition 连回 loop 节点的边，编译期
+    # retarget 到合成 __skip__ 节点（只推进 index、不聚合本轮）；while 不装配。
+    for lnode in [
+        n for n in graph.nodes if n.type == "loop" and n.config.get("mode") == "foreach"
+    ]:
+        body_target = lnode.config.get("bodyTarget")
+        exit_target = lnode.config.get("exitTarget")
+        if not (
+            isinstance(body_target, str)
+            and isinstance(exit_target, str)
+            and body_target != lnode.id
+            and exit_target != lnode.id
+        ):
+            continue
+        body = _loop_body_set(body_target, lnode.id, exit_target, outgoing_set)
+        skip_sources = sorted(
+            member
+            for member in body
+            if type_by_id.get(member) == "condition"
+            and lnode.id in outgoing_set.get(member, set())
+        )
+        if not skip_sources:
+            continue
+        gate_id = f"{SKIP_GATE_PREFIX}{lnode.id}"
+        builder.add_node(
+            gate_id, _make_skip_gate(lnode, emit, tracer=tracer, base_span=base_span)
+        )
+
+        def route_skip(state: GraphState, cid: str = lnode.id) -> str:
+            return state["outputs"][cid]["target"]
+
+        builder.add_conditional_edges(
+            gate_id,
+            route_skip,
+            {body_target: body_target, exit_target: exit_target},
+        )
+        for member in skip_sources:
+            retarget[(member, lnode.id)] = gate_id
 
     incoming = {edge.target for edge in graph.edges}
     for node in graph.nodes:
@@ -2574,7 +2683,30 @@ def _recursion_limit(graph: GraphDSL) -> int:
             for member in body
         ):
             break_gates += 1
-    return 2 * len(graph.nodes) + 2 * loop_steps + parallel_wait + 2 * break_gates + 10
+    # 打包 Z：每个含 skip 出口的 foreach，__skip__ 网关每轮被跳过至多插入一次超步，
+    # 按迭代上限预留（while 的 condition→loop 是 continue 语义，不装网关）。
+    skip_gate_steps = 0
+    for node in graph.nodes:
+        if node.type != "loop" or node.config.get("mode") != "foreach":
+            continue
+        bt, et = node.config.get("bodyTarget"), node.config.get("exitTarget")
+        if not (isinstance(bt, str) and isinstance(et, str)):
+            continue
+        body = _loop_body_set(bt, node.id, et, outgoing)
+        if any(
+            type_by_id.get(member) == "condition"
+            and node.id in outgoing.get(member, set())
+            for member in body
+        ):
+            skip_gate_steps += MAX_LOOP_ITERATIONS
+    return (
+        2 * len(graph.nodes)
+        + 2 * loop_steps
+        + parallel_wait
+        + 2 * break_gates
+        + skip_gate_steps
+        + 10
+    )
 
 
 def _tail_subgraph(graph: GraphDSL, resume_node_id: str) -> GraphDSL:
@@ -2631,6 +2763,8 @@ def run_graph(
     tool_mocks: dict[str, Any] | None = None,
     shadow: bool = False,
     jitter_rng: random.Random | None = None,
+    rng_seed: int | None = None,
+    _expr_rng: random.Random | None = None,
 ) -> dict[str, Any]:
     """编译并执行，返回状态/节点产出/轨迹。
 
@@ -2651,6 +2785,15 @@ def run_graph(
     if tracer is _AUTO_TRACER:
         tracer = Tracer(graph_id=graph_id, graph_version=graph_version)
     internal_run = _parent_span is not None
+    # 打包 W（docs/84 D-2）：每次运行一个表达式 RNG；子图重入复用同一实例，
+    # 未显式钉种子时入口生成 63-bit 种子，random/randint/uuid 回放据此复现。
+    if _expr_rng is not None:
+        expr_rng = _expr_rng
+        rng_seed = None
+    else:
+        if rng_seed is None:
+            rng_seed = secrets.randbits(63)
+        expr_rng = random.Random(rng_seed)
 
     def _finish(result: dict[str, Any], *, emit_end: bool) -> dict[str, Any]:
         """收尾：结束 root（仅顶层）、result 挂 traceId/traceTree、发 run_end 超集帧。
@@ -2676,6 +2819,7 @@ def run_graph(
                 "trace": result.get("trace", []),
                 "traceId": tracer.trace_id,
                 "spanId": tracer.root.span_id,
+                "rng_seed": result.get("rng_seed"),
             }
             if tracer.graph_version is not None:
                 run_end["graphVersion"] = tracer.graph_version
@@ -2715,6 +2859,7 @@ def run_graph(
             tool_mocks=tool_mocks,
             shadow=shadow,
             jitter_rng=jitter_rng,
+            expr_rng=expr_rng,
         )
         state = initial_state(tail, inputs=resume_inputs)
         state["outputs"] = resume_state.get("outputs", {})
@@ -2725,6 +2870,7 @@ def run_graph(
             "status": "completed",
             "outputs": final_state["outputs"],
             "trace": final_state["messages"],
+            "rng_seed": rng_seed,
         }
         return _finish(result, emit_end=True)
 
@@ -2753,6 +2899,7 @@ def run_graph(
         tool_mocks=tool_mocks,
         shadow=shadow,
         jitter_rng=jitter_rng,
+        expr_rng=expr_rng,
     )
     final_state = compiled.invoke(
         initial_state(graph, inputs=inputs),
@@ -2762,5 +2909,6 @@ def run_graph(
         "status": "completed",
         "outputs": final_state["outputs"],
         "trace": final_state["messages"],
+        "rng_seed": rng_seed,
     }
     return _finish(result, emit_end=True)

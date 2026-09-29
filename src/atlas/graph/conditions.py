@@ -27,7 +27,9 @@ from __future__ import annotations
 
 import datetime
 import math
+import random
 import re
+import uuid
 from dataclasses import dataclass
 from typing import Any
 
@@ -125,10 +127,14 @@ _FUNCTIONS: dict[str, tuple[int, int | None, str]] = {
     "now": (0, 0, "datetime"),
     "datetime": (5, 6, "datetime"),
     "hoursBetween": (2, 2, "number"),
+    # 非确定随机函数（打包 W，docs/84，D15 余部）：随机字节全部取自注入 RNG，单运行种子固定、回放锚定。
+    "random": (0, 0, "number"),
+    "randint": (2, 2, "number"),
+    "uuid": (0, 0, "string"),
 }
 
-# 非确定函数：静态校验期不做常量折叠（其值依赖运行时钟），其余纯函数仍折叠暴露错误。
-_NONDETERMINISTIC = frozenset({"today", "now"})
+# 非确定函数：静态校验期不做常量折叠（其值依赖运行时钟或随机种子），其余纯函数仍折叠暴露错误。
+_NONDETERMINISTIC = frozenset({"today", "now", "random", "randint", "uuid"})
 
 
 def _default_now() -> datetime.datetime:
@@ -373,13 +379,23 @@ def _static_type_errors(node: tuple) -> list[str]:
 
 
 def evaluate_expression(
-    expression: str, context: dict[str, Any], *, now: datetime.datetime | None = None
+    expression: str,
+    context: dict[str, Any],
+    *,
+    now: datetime.datetime | None = None,
+    rng: random.Random | None = None,
 ) -> bool:
     ast = parse(expression)
-    return _evaluate(ast, context, _ensure_utc(now) if now is not None else _default_now())
+    clock = _ensure_utc(now) if now is not None else _default_now()
+    return _evaluate(ast, context, clock, rng)
 
 
-def _evaluate(node: tuple, context: dict[str, Any], now: datetime.datetime | None) -> Any:
+def _evaluate(
+    node: tuple,
+    context: dict[str, Any],
+    now: datetime.datetime | None,
+    rng: random.Random | None = None,
+) -> Any:
     kind = node[0]
     if kind == "lit":
         return node[1]
@@ -389,7 +405,7 @@ def _evaluate(node: tuple, context: dict[str, Any], now: datetime.datetime | Non
         return resolve_path(node[1], context)
     if kind == "unary":
         op = node[1]
-        value = _evaluate(node[2], context, now)
+        value = _evaluate(node[2], context, now, rng)
         if op == "!":
             if not isinstance(value, bool):
                 raise ConditionEvalError(f'逻辑非 "!" 要求布尔值，实际为 {_type_name(value)}', code="COND_TYPE_MISMATCH", params={"op": "!", "expected": "boolean", "actual": _type_code(value)})
@@ -400,29 +416,29 @@ def _evaluate(node: tuple, context: dict[str, Any], now: datetime.datetime | Non
         return +value if op == "+" else -value
     if kind == "call":
         return _evaluate_function(
-            node[1], [_evaluate(arg, context, now) for arg in node[2]], now
+            node[1], [_evaluate(arg, context, now, rng) for arg in node[2]], now, rng
         )
     op, left_node, right_node = node[1], node[2], node[3]
     if op == "&&":
-        left = _evaluate(left_node, context, now)
+        left = _evaluate(left_node, context, now, rng)
         if not isinstance(left, bool):
             raise ConditionEvalError(f'"&&" 要求布尔值，实际为 {_type_name(left)}', code="COND_TYPE_MISMATCH", params={"op": "&&", "expected": "boolean", "actual": _type_code(left)})
-        return left and _evaluate(right_node, context, now)
+        return left and _evaluate(right_node, context, now, rng)
     if op == "||":
-        left = _evaluate(left_node, context, now)
+        left = _evaluate(left_node, context, now, rng)
         if not isinstance(left, bool):
             raise ConditionEvalError(f'"||" 要求布尔值，实际为 {_type_name(left)}', code="COND_TYPE_MISMATCH", params={"op": "||", "expected": "boolean", "actual": _type_code(left)})
-        return left or _evaluate(right_node, context, now)
+        return left or _evaluate(right_node, context, now, rng)
     if op in _CMP_OPS:
         return _compare(
             op,
-            _evaluate(left_node, context, now),
-            _evaluate(right_node, context, now),
+            _evaluate(left_node, context, now, rng),
+            _evaluate(right_node, context, now, rng),
         )
     return _arith(
         op,
-        _evaluate(left_node, context, now),
-        _evaluate(right_node, context, now),
+        _evaluate(left_node, context, now, rng),
+        _evaluate(right_node, context, now, rng),
     )
 
 
@@ -452,7 +468,10 @@ def _arith(op: str, left: Any, right: Any) -> Any:
 
 
 def _evaluate_function(
-    name: str, args: list[Any], now: datetime.datetime | None
+    name: str,
+    args: list[Any],
+    now: datetime.datetime | None,
+    rng: random.Random | None = None,
 ) -> Any:
     if name == "abs":
         _require_number(name, args[0])
@@ -538,6 +557,25 @@ def _evaluate_function(
         start_dt = _coerce_datetime(start)
         end_dt = _coerce_datetime(end)
         return (end_dt - start_dt).total_seconds() / 3600
+    if name == "random":
+        source = rng or random.Random()
+        return source.random()
+    if name == "randint":
+        low, high = args
+        if isinstance(low, bool) or not isinstance(low, int):
+            raise ConditionEvalError('函数 "randint" 的参数必须是整数', code="COND_TYPE_MISMATCH", params={"func": "randint", "expected": "integer", "actual": _type_code(low)})
+        if isinstance(high, bool) or not isinstance(high, int):
+            raise ConditionEvalError('函数 "randint" 的参数必须是整数', code="COND_TYPE_MISMATCH", params={"func": "randint", "expected": "integer", "actual": _type_code(high)})
+        if low > high:
+            raise ConditionEvalError('函数 "randint" 下界不能大于上界', code="COND_INVALID_RANGE", params={"func": "randint", "low": low, "high": high})
+        source = rng or random.Random()
+        return source.randint(low, high)
+    if name == "uuid":
+        source = rng or random.Random()
+        value = uuid.UUID(
+            bytes=source.getrandbits(128).to_bytes(16, "big"), version=4
+        )
+        return str(value)
     raise ConditionEvalError(f'未知函数 "{name}"', code="COND_UNKNOWN_FUNC", params={"func": name})  # 理论不可达（parse 已拦）
 
 

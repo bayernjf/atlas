@@ -22,6 +22,7 @@ from .shadow import (
     preset_all_approvals,
 )
 from .replay import (
+    build_condition_script,
     build_tool_mocks,
     clock_anchor,
     collect_steps,
@@ -29,6 +30,7 @@ from .replay import (
     dedupe_steps,
     normalize,
     preset_approvals,
+    seed_anchor,
 )
 from .snapshots import collect_subgraph_snapshots, inline_first_resolver
 
@@ -58,10 +60,12 @@ __all__ = [
     "clock_anchor",
     "collect_steps",
     "build_tool_mocks",
+    "build_condition_script",
     "compare",
     "dedupe_steps",
     "normalize",
     "preset_approvals",
+    "seed_anchor",
     "collect_subgraph_snapshots",
     "inline_first_resolver",
 ]

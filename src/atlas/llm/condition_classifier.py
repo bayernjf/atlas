@@ -31,7 +31,12 @@ class ConditionClassifyError(Exception):
 
 class ConditionClassifier(Protocol):
     def classify(
-        self, *, branches: list[dict], context_text: str, instruction: str
+        self,
+        *,
+        branches: list[dict],
+        context_text: str,
+        instruction: str,
+        node_id: str | None = None,
     ) -> str: ...
 
 
@@ -39,7 +44,12 @@ class OfflineConditionClassifier:
     """未配置 LLM 模型时的兜底：语义判定必抛错，由 loader 走 defaultTarget。"""
 
     def classify(
-        self, *, branches: list[dict], context_text: str, instruction: str
+        self,
+        *,
+        branches: list[dict],
+        context_text: str,
+        instruction: str,
+        node_id: str | None = None,
     ) -> str:
         raise ConditionClassifyError("LLM 未配置，语义分支无法求值")
 
@@ -51,7 +61,12 @@ class LiteLLMConditionClassifier:
         self.model = model
 
     def classify(
-        self, *, branches: list[dict], context_text: str, instruction: str
+        self,
+        *,
+        branches: list[dict],
+        context_text: str,
+        instruction: str,
+        node_id: str | None = None,
     ) -> str:
         import litellm
 
@@ -88,6 +103,29 @@ class LiteLLMConditionClassifier:
         if label not in labels:
             raise ConditionClassifyError(f"LLM 返回了未知分支标签：{label}")
         return label
+
+
+class ScriptedConditionClassifier:
+    """回放专用（docs/83 打包 V）：按 node_id 返录制时的分支标签，零 LLM 调用。
+
+    node_id 缺失或不在脚本中 → 抛 ConditionClassifyError，由 loader 既有 fail-safe
+    走 defaultTarget（录制后新增的节点不猜语义，让 compare 报分支漂移）。
+    """
+
+    def __init__(self, branches_by_node: dict[str, str]):
+        self._branches = dict(branches_by_node)
+
+    def classify(
+        self,
+        *,
+        branches: list[dict],
+        context_text: str,
+        instruction: str,
+        node_id: str | None = None,
+    ) -> str:
+        if node_id is None or node_id not in self._branches:
+            raise ConditionClassifyError(f"回放脚本中无节点 {node_id!r} 的分支记录")
+        return self._branches[node_id]
 
 
 def get_condition_classifier() -> ConditionClassifier:

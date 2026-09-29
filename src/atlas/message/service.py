@@ -49,6 +49,7 @@ class DeliveryRecord:
     elapsedMs: int
     errorCode: str | None = None
     errorMessage: str | None = None
+    body: str = ""
 
 
 class MessageSendError(Exception):
@@ -172,6 +173,7 @@ class MessageService:
                     elapsedMs=int((time.monotonic() - started) * 1000),
                     errorCode=code,
                     errorMessage=(message[:ERROR_LOG_LIMIT] if message else None),
+                    body=body_value,
                 )
             )
 
@@ -310,9 +312,30 @@ class MessageService:
     def list(self) -> list[dict[str, object]]:
         return list(self._messages)
 
-    def list_deliveries(self, limit: int = DELIVERY_LIST_LIMIT) -> list[dict[str, object]]:
-        """投递日志倒序（最新在前），limit clamp 1-200（docs/56 §4.3，docs/60 §6 委托存储层）。"""
-        return self._delivery_store.list(limit)
+    def list_deliveries(
+        self, limit: int = DELIVERY_LIST_LIMIT, *, status: str | None = None
+    ) -> list[dict[str, object]]:
+        """投递日志倒序（最新在前），limit clamp 1-200（docs/56 §4.3，docs/60 §6 委托存储层）。
+
+        打包 U：status 非空时只返 failed 或 delivered:* 行（docs/82 D-3）。
+        """
+        return self._delivery_store.list(limit, status=status)
+
+    def replay_failed(self, seq: int) -> dict[str, object] | None:
+        """重放一条失败投递（docs/82 D-4）；无行返 None，非 failed／body 缺失抛 MessageSendError。"""
+        row = self._delivery_store.get(int(seq))
+        if row is None:
+            return None
+        if row["status"] != "failed":
+            raise MessageSendError("DLQ_NOT_FAILED", "该投递记录不是失败状态，无需重放")
+        body = row.get("body")
+        if not isinstance(body, str) or not body:
+            raise MessageSendError(
+                "DLQ_BODY_UNAVAILABLE", "该失败记录未保存消息正文，无法重放"
+            )
+        self.send(row["channel"], list(row["to"]), row["subject"], body)
+        # 重放逐单目标（群发失败行的 to 为单元素），新投递恰产生一条最新行。
+        return {"replayOf": int(seq), "deliveries": self._delivery_store.list(1)}
 
     def reset(self) -> None:
         self._messages = []

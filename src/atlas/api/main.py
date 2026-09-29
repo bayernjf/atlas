@@ -85,6 +85,7 @@ from atlas.memory.adapter import MemoryHarnessAdapter
 from atlas.memory.database import ping, wait_for_database
 from atlas.memory.models import MemoryValidationError
 from atlas.message.adapter import MessageHarnessAdapter
+from atlas.message.service import MessageSendError
 from atlas.monitoring import RUN_RING_SIZE, extract_business, extract_node_results
 from atlas.observability.audit import AUDITED_METHODS, LOGIN_PATH
 from atlas.channels.adapter import ShopifyHarnessAdapter
@@ -120,6 +121,7 @@ from atlas.recording import (
     RecordingCreateRequest,
     RecordingUpdateRequest,
     ReplayRequest,
+    build_condition_script,
     build_tool_mocks,
     clock_anchor,
     collect_steps,
@@ -132,6 +134,7 @@ from atlas.recording import (
     preset_approvals,
     report_to_csv,
     run_release_gate,
+    seed_anchor,
 )
 from atlas.routing import (
     RolloutConfig,
@@ -585,6 +588,8 @@ class RunGraphResponse(BaseModel):
     status: str
     outputs: dict[str, Any]
     trace: list[str]
+    # 打包 W（docs/84）：实际执行完成的运行携带种子；cancelled/suspended 早退响应为 None。
+    rng_seed: int | None = None
 
 
 class NLGenerateRequest(BaseModel):
@@ -2618,23 +2623,116 @@ def list_catalog_templates(
     principal: Principal = Depends(require("read")),
     accept_language: str | None = Header(default=None),
 ) -> dict[str, list[dict[str, Any]]]:
-    """列出内置流程模板（列表投影不含 graph，04 §5.10；12 §3.6）；name/description 按 Accept-Language 本地化（docs/70）。"""
+    """列出模板（内置目录 04 §5.10 在前、租户自建模板 docs/85 在后；列表投影不含 graph）；
+    内置 name/description 按 Accept-Language 本地化（docs/70）。"""
     locale = resolve_locale(accept_language)
-    return {
-        "items": [
-            localize_template(
-                {
-                    "id": template.id,
-                    "name": template.name,
-                    "description": template.description,
-                    "tags": template.tags,
-                    "node_count": len(template.graph["nodes"]),
-                },
-                locale,
-            )
-            for template in list_templates()
-        ]
-    }
+    items = [
+        localize_template(
+            {
+                "id": template.id,
+                "name": template.name,
+                "description": template.description,
+                "tags": template.tags,
+                "node_count": len(template.graph["nodes"]),
+                "source": "catalog",
+                "deletable": False,
+            },
+            locale,
+        )
+        for template in list_templates()
+    ]
+    items.extend(
+        {
+            "id": template.id,
+            "name": template.name,
+            "description": template.description,
+            "tags": template.tags,
+            "node_count": len(template.graph.get("nodes", [])),
+            "source": "user",
+            "deletable": True,
+            "created_at": template.created_at,
+        }
+        for template in services_for(principal).user_templates.list()
+    )
+    return {"items": items}
+
+
+class UserTemplateCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    description: str = Field(default="", max_length=200)
+    tags: list[str] = Field(default_factory=list, max_length=8)
+    graph: dict[str, Any]
+
+
+@app.post("/api/templates", status_code=201)
+def create_user_template(
+    body: UserTemplateCreateRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """画布另存为租户私有模板（docs/85 D-2）：parse_graph 仅校验可编译，图原样存。"""
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="模板名称不能为空")
+    tags = [tag.strip() for tag in body.tags]
+    for tag in tags:
+        if not 1 <= len(tag) <= 20:
+            raise HTTPException(status_code=422, detail="标签长度须在 1-20 字符之间")
+    parse_graph(body.graph)
+    template = services_for(principal).user_templates.add(
+        name=name, description=body.description, tags=tags, graph=body.graph
+    )
+    return {**template.model_dump(), "source": "user", "deletable": True}
+
+
+class UserTemplateUpdateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    description: str = Field(default="", max_length=200)
+    tags: list[str] | None = Field(default=None, max_length=8)
+    graph: dict[str, Any]
+
+
+@app.put("/api/templates/{template_id}")
+def update_user_template(
+    template_id: str,
+    body: UserTemplateUpdateRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """整体更新租户私有模板（docs/86 D-1）：id/seq/created_at 不变；
+    tags 字段缺省＝保留旧值（D-5 唯一例外），内置 id 与不存在统一 404。"""
+    store = services_for(principal).user_templates
+    if get_template(template_id) is not None:
+        raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
+    current = store.get(template_id)
+    if current is None:
+        raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="模板名称不能为空")
+    tags = current.tags if body.tags is None else [tag.strip() for tag in body.tags]
+    for tag in tags:
+        if not 1 <= len(tag) <= 20:
+            raise HTTPException(status_code=422, detail="标签长度须在 1-20 字符之间")
+    parse_graph(body.graph)
+    updated = store.update(
+        template_id,
+        name=name,
+        description=body.description,
+        tags=tags,
+        graph=body.graph,
+    )
+    return {**updated.model_dump(), "source": "user", "deletable": True}
+
+
+@app.delete("/api/templates/{template_id}")
+def delete_user_template(
+    template_id: str, principal: Principal = Depends(require("operate"))
+) -> dict[str, bool]:
+    """仅删用户模板（docs/85 D-3）：内置 id 与不存在 id 统一 404。"""
+    if get_template(template_id) is not None:
+        raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
+    if not services_for(principal).user_templates.delete(template_id):
+        raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
+    return {"deleted": True}
 
 
 @app.get("/api/templates/{template_id}")
@@ -2643,11 +2741,18 @@ def get_catalog_template(
     principal: Principal = Depends(require("read")),
     accept_language: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    """返回模板完整元数据（含 graph），未知 id 404（04 §5.10）；name/description 按 Accept-Language 本地化（docs/70）。"""
+    """返回模板完整元数据（含 graph），未知 id 404（04 §5.10；用户模板 docs/85）；
+    内置 name/description 按 Accept-Language 本地化（docs/70）。"""
     template = get_template(template_id)
-    if template is None:
+    if template is not None:
+        return localize_template(
+            {**template.model_dump(), "source": "catalog", "deletable": False},
+            resolve_locale(accept_language),
+        )
+    user_template = services_for(principal).user_templates.get(template_id)
+    if user_template is None:
         raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
-    return localize_template(template.model_dump(), resolve_locale(accept_language))
+    return {**user_template.model_dump(), "source": "user", "deletable": True}
 
 
 @app.get("/api/alert-rule-templates")
@@ -2746,6 +2851,7 @@ def create_recording(
         steps=request.steps,
         status=request.status,
         subgraphs=subgraphs,
+        rng_seed=request.rng_seed,
     )
     return case.model_dump()
 
@@ -2831,13 +2937,17 @@ def replay_recording(
 
     tool_mocks: dict[str, Any] | None = None
     mocked_tools: list[str] = []
+    condition_script: Any | None = None
+    mocked_conditions: list[str] = []
     if payload is not None and payload.mock_tools:
         tool_mocks, mocked_tools = build_tool_mocks(case)
+        condition_script, mocked_conditions = build_condition_script(case)
 
     try:
         graph = parse_graph(case.graph)
         emit, take_steps = collect_steps()
         anchor, clock_note = clock_anchor(case)
+        seed, rng_note = seed_anchor(case)
         inputs = dict(case.inputs or {})
         if payload is not None and payload.inputs_override:
             # 顶层键浅合并（dict 值整体替换）；一次性覆写，不修改已入库用例。
@@ -2859,7 +2969,9 @@ def replay_recording(
                 case.subgraphs, _tenant_graph_resolver(services)
             ),
             now_override=anchor,
+            rng_seed=seed,
             tool_mocks=tool_mocks,
+            condition_classifier=condition_script,
         )
         replay_steps = take_steps()
         tools_by_node = {
@@ -2875,7 +2987,10 @@ def replay_recording(
         )
         if clock_note:
             report["clock_note"] = clock_note
+        if rng_note:
+            report["rng_seed_note"] = rng_note
         report["mocked_tools"] = mocked_tools
+        report["mocked_conditions"] = mocked_conditions
         return report
     except Exception as exc:  # 回放失败折叠为报告而非 500
         return {
@@ -2883,6 +2998,7 @@ def replay_recording(
             "baseline_status": case.status,
             "replay_status": "failed",
             "mocked_tools": mocked_tools,
+            "mocked_conditions": mocked_conditions,
             "steps": [
                 {
                     "node_id": step.node_id,
@@ -4394,11 +4510,46 @@ def demo_messages(
 @app.get("/api/demo/deliveries")
 def demo_deliveries(
     limit: int = 100,
+    status: str | None = None,
     principal: Principal = Depends(require("read")),
 ) -> dict[str, Any]:
-    """docs/56 §4.3：消息投递日志（每次 send 一条，含尝试次数/耗时/错误），倒序。"""
+    """docs/56 §4.3：消息投递日志（每次 send 一条，含尝试次数/耗时/错误），倒序。
+
+    打包 U：status=failed|delivered 过滤（docs/82 D-5），非法值 422。
+    """
+    if status is not None and status not in ("failed", "delivered"):
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "INVALID_PARAMETER", "message": "status 只接受 failed 或 delivered"},
+        )
     bounded = max(1, min(limit, 200))
-    return {"items": services_for(principal).message_service.list_deliveries(bounded)}
+    return {
+        "items": services_for(principal).message_service.list_deliveries(
+            bounded, status=status
+        )
+    }
+
+
+@app.post("/api/demo/deliveries/{seq}/replay")
+def demo_replay_delivery(
+    seq: int,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """打包 U（docs/82 D-5）：按原内容重放一条出站失败投递，原失败行不可变。"""
+    try:
+        result = services_for(principal).message_service.replay_failed(seq)
+    except MessageSendError as exc:
+        status_code = 422 if exc.code == "DLQ_BODY_UNAVAILABLE" else 409
+        raise HTTPException(
+            status_code=status_code,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "NOT_FOUND", "message": "投递记录不存在"},
+        )
+    return result
 
 
 # ---- M11 长期记忆（docs/26 §6 / docs/28 §5.1）：读 viewer+、手动新建/编辑 operate（source=manual）、删 admin；图内 remember 工具仍是运行时写入主路径 ----

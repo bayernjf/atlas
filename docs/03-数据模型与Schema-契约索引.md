@@ -42,6 +42,7 @@
 | `sql_read_only_guard` | 安全准入（docs/32，**2026-09-21 已落码**）：`src/atlas/database/guard.py`，接 04 §4.7 数据适配器 | 只读 SQL 静态审查（去注释/拒多语句/只放单条 SELECT/WITH…SELECT）、外部连接 execute 禁用；错误码 DB_SQL_NOT_READ_ONLY/DB_WRITE_FORBIDDEN |
 | `circuit_state` | 安全准入（docs/32，**2026-09-21 已落码**）：`src/atlas/httpapi/resilience.py`，接 04 §4.6 | RetryPolicy（传输层/429/502/503/504＋幂等方法、指数退避抖动）与按 host 熔断 closed/open/half-open；错误码 HTTP_CIRCUIT_OPEN |
 | `template_catalog` | 04 / 五、逻辑组件 5.10 流程模板库（内置只读）v1 契约（权威 blockquote）+ `src/atlas/template/catalog.py`（5 个内置模板元数据与 graph） | ### 5.10 流程模板库（内置只读） |
+| `user_template` | **打包 X（docs/85；2026-09-29 落码 `1756c67/e5e4f78`）＋打包 Y（docs/86；2026-09-29 落码 `69b34ef/a53cfca`）**：租户私有自建模板，POST/PUT/DELETE /api/templates；两档存储＋migration 034 user_templates；形状权威 docs/85（POST/DELETE）、docs/86（PUT） | ### `user_template` — 字段概览 |
 | `recording_case` | 04 / 五、逻辑组件 5.11 操作录制与回放 v1 契约（权威 blockquote）+ `src/atlas/recording/{cases,replay,gate,snapshots}.py`（录制用例模型与进程内存储；M9 增 gate 发布前批量回放门禁；D26-b 增 `subgraphs` 快照内联，仅 replay 内联、gate 保持实时，见下行 `release_gate`；C 包 `3415377` 增 `recorded_at` 回放冻结时钟锚点与 today/now/datetime/hoursBetween 时钟函数，权威见 04 §5.1 C 注记；docs/28 批 1（2026-09-20）：PG 富字段 graph_id/subgraphs 持久化修复（d1f455b，迁移 008）、单用例 Mock 工具回放＋入参覆写（c7bf138）、PUT 用例编辑（89e21fc）） | ### 5.11 操作录制与回放 |
 | `debug_session` | 04 / 五、逻辑组件 5.12 单步调试与断点 v1 契约（权威 blockquote）+ `src/atlas/debug/{sessions,controller}.py`（运行期调试会话、暂停状态机、paused/stopped/debug_log 帧、hitCount/logpoint、resume globals 浅合并）+ `src/atlas/collaboration/cancellations.py`（B 包 f9a1301：RunCancelled/RunCancellationBroker 协作式急停、cancelled 帧） | ### 5.12 单步调试与断点 |
 | `monitoring` | 04 / 五、逻辑组件 5.13 基础监控告警 v1 契约（权威 blockquote）+ `src/atlas/monitoring/{records,metrics,alerts,business}.py`（运行记录 ring、指标聚合、规则求值与告警状态机；M9 增业务结果指标与 rollout_gate 告警动作，见下行 `business_metrics`） | ### 5.13 基础监控告警 |
@@ -146,7 +147,8 @@ type: object               # 节点类型专属配置；condition 节点 config 
                            #   唯一权威见 04 §5.6「human_approval 节点 config 契约」（含 M8 cardTemplateId 追加段）
                            # subgraph 节点 config 形状：
                            #   {graphId, inputs?: {<子图入参键>: "<父图 {{路径}}/字面量>"}}
-                           #   唯一权威见 04 §5.7「subgraph 节点 config 契约」
+                           #   值恰为单个 {{路径}} 时原类型透传（数组/数字/布尔/对象；None 回退占位符），
+                           #   其余按字符串插值；唯一权威见 04 §5.7「subgraph 节点 config 契约」
 inputs: 
 source: string           # 变量路径
 required: boolean
@@ -364,6 +366,8 @@ idempotency_key: string     # 幂等键
 >
 > **投递日志 PG 化注记（docs/60 G5，2026-09-24 落码收口 532a3fe/e0d7fe1/5714db9，迁移 025，部分取回 D24）**：投递日志从 MessageService 内 deque 抽为存储抽象 `message/deliveries.py` `DeliveryStore`（record/list/clear），InMemoryDeliveryStore 搬现 ring 200、PgDeliveryStore 落表。表 `message_deliveries`（迁移 025，002 同步）列：`tenant_id TEXT, id TEXT, seq BIGINT, channel TEXT, to_targets JSONB, subject TEXT DEFAULT '', status TEXT, attempts INT, elapsed_ms INT, error_code TEXT, error_message TEXT, sent_at TIMESTAMPTZ`，**主键 `(tenant_id, seq)`**（非草拟的 (tenant_id,id)——webhook/IM 群发逐目标多条共享同一 message id，seq 取 nextval('storage_id_seq')），索引 `(tenant_id, seq DESC)`；record 后惰性 `DELETE ... OFFSET 200` 裁到最近 200 行、list 倒序 clamp 1-200、reset（demo 清库）删本租户。REST 形状零改动（GET /api/demo/deliveries 见 12）。**fail-safe**：record 异常 try/except 吞掉，投递日志旁路不得阻断消息发送主链路（docs/60 §11）。registry PG 档注入 PgDeliveryStore、内存档缺省 InMemory；DeliveryStore 演进非选型变更、不新增 ADR（见 08/12）。短信/入站通用消费/模板 CRUD/DLQ/跨实例聚合仍缓做 D24。
 
+> **出站 DLQ 注记（打包 U，2026-09-29 立项，契约＝docs/82，部分取回 D24）**：`DeliveryRecord` 与 `message_deliveries` 投影增 `body`（迁移 032 加 `body TEXT` 可空；存量失败行 NULL 且**不可重放**）。store 增 `list(limit, *, status=None)`（failed／delivered:* 过滤，投影补 `seq`）与 `get(seq)`（任意 status，供区分 404/409）；`MessageService.replay_failed(seq)` 无行返 None（404）、非 failed 抛 `DLQ_NOT_FAILED`（409）、body NULL 抛 `DLQ_BODY_UNAVAILABLE`（422），以存储的 channel/to/subject/body 走现有 send 全路径，产生**新 message_id 与新投递行**，原 failed 行不可变。REST：`GET /api/demo/deliveries?status=failed|delivered`（read）＋`POST /api/demo/deliveries/{seq}/replay`（operate；无行/跨租户 404、非 failed 409、body NULL 422）；重放无幂等键。U958–U963。模板系统/定时扫描/入站通用消费仍缓做，D24 不解除。
+
 ### `deployment_config` — 字段概览（完整定义见 05-组件设计-运营体五项核心.md #440，上下文章节：## 4.3 部署配置 Schema（示例））
 
 ```yaml
@@ -573,6 +577,7 @@ type: "run_end"         # 随 run_graph 返回值展开
 traceId: string          # M10：run root span 的 trace id
 spanId: string           # M10：run root span id（parentSpanId 缺省）
 graphVersion: string     # M10：`graphId@<releaseVersion:int>`（发布版本，无 v 前缀，对齐 M6 钉版）/`graphId@draft`（草稿）
+rng_seed: int           # 打包 W（docs/84；2026-09-29）：本次运行实际使用的随机种子（未传则服务端 secrets 生成）；录制时由前端随用例回带入库
 ```
 > M10 起三帧均为 **19 §2.3.4 Trace 事件超集**：只新增 traceId/spanId/parentSpanId（run_end 另加 graphVersion），现有字段与帧类型不变，前端忽略未知字段即零改动。span 三元组位于事件顶层、**不进节点 output**（录制回放 collect_steps 只取 output，天然不受随机 id/时间影响）；完整 span 树经 `tracing` 包进程内导出，不进 SSE 高频帧。子图内部 span 经 `to_tree(include_internal=False)` 折叠（见下 `trace_span`，A 包后 span 树折叠口径不变）；A 包（`e594a4b`）后子图内部 node_start/node_end 改经可选 `subgraphPath` 上 SSE（见下），与 span 折叠相互独立。
 
@@ -650,11 +655,37 @@ description: string        # 一句话场景
 tags: [string]             # 展示标签
 graph: graph_definition    # 完整 version 1 Graph JSON，节点 id 固定，加载不重映射
 # GET /api/templates 列表投影（不含 graph）
-items: [{id, name, description, tags, node_count}]
+items: [{id, name, description, tags, node_count, source, deletable, created_at?}]
 node_count: int            # graph.nodes 数量（服务端投影）
+source: "catalog" | "user" # 打包 X（docs/85，2026-09-29）：内置恒 catalog
+deletable: bool            # 内置恒 false
 # GET /api/templates/{id} 返回完整 TemplateMeta（含 graph）；未知 id 404
 ```
-> 只读内置目录：随代码版本发布，无 DB、无 CRUD、`/api/demo/reset` 不影响；「从模板新建」为客户端整画布替换，保存后为普通 graph-N 与模板无关。权威契约见 04 §5.10，REST 见 12 §5。
+> 只读内置目录：随代码版本发布，无 DB、无 CRUD、`/api/demo/reset` 不影响；「从模板新建」为客户端整画布替换，保存后为普通 graph 与模板无关。权威契约见 04 §5.10，REST 见 12 §5。
+
+### `user_template` — 字段概览（**打包 X，docs/85；2026-09-29 落码 `1756c67/e5e4f78`**；**打包 Y，docs/86；2026-09-29 落码 `69b34ef/a53cfca`**；租户私有，`POST/PUT/DELETE /api/templates`）
+
+```yaml
+# 请求 POST /api/templates（UserTemplateCreateRequest，operate；201）
+name: string               # 1-60，trim 后非空（否则 422 中文）
+description: string        # 0-200，缺省 ""
+tags: [string]             # 每项 1-20、至多 8 项，缺省 []（v1 前端不暴露控件）
+graph: graph_definition    # parse_graph 校验可编译（不过 compile/run；失败 422），校验后原样存
+# 用户模板（权威实现 template/user_store.py UserTemplate；PG 表 user_templates，migration 034）
+id: string                 # utpl-<租户内 seq>，每租户独立从 1 起
+created_at: string         # TEXT ISO
+# GET /api/templates 合并投影：内置在前（目录序），用户按 created_at 倒序接后；
+#   用户条目带 source="user"/deletable=true/created_at
+# GET /api/templates/{id}：内置未命中再查用户模板；返回同形 + source/deletable
+# PUT /api/templates/{id}（operate；打包 Y）：整体替换，请求体与 POST 同形，
+#   200 同 POST 201 投影；id/seq/created_at 与列表排序位置不变。
+#   唯一例外：tags 字段可缺省（None）⇒ 保留旧 tags；显式 [] ⇒ 清空（前端表单无 tags 控件故不透传）。
+#   校验/422 文案逐字复用 POST；内置 id 与不存在 id（含已删）统一 404「模板不存在：{id}」，不做 405。
+# DELETE /api/templates/{id}（operate）：仅删用户模板，返回 {deleted:true}；
+#   内置 id 与不存在 id（含已删）统一 404「模板不存在：{id}」，不做幂等 204
+# 无 PATCH（D-4，随 D25 版本余部）；reset_tenant 清空用户模板（运行时数据同口径）
+```
+> 租户私有：跨租户 GET 合并不可见、PUT/DELETE 他人 id 404；市场/共享/分类/PATCH/版本仍随 D25 余部缓做。权威形状 POST/DELETE＝docs/85、PUT＝docs/86，REST 见 12 §5。
 
 ### `recording_case` — 字段概览（Phase 2 能力项，2026-09-15；`/api/recordings*`）
 
@@ -665,6 +696,7 @@ graph_id: string           # 已保存图 id（服务端据此取图快照；未
 inputs: object | null      # 录制时的运行入参（trigger payload）
 steps: [{node_id, node_type, output}]  # 至少 1 步；node_id 重复时服务端保末
 status: string             # 录制运行终态
+rng_seed: int | null       # 打包 W（docs/84；2026-09-29）纯超集：所录运行的随机种子（由 /run 或 /run/stream 生成并随结果回传，前端原样回带）；缺省 null（历史用例，回放不锚定随机流）
 # 响应 201 / GET 详情（RecordingCase）
 id: string                 # rec-{自增}
 graph_id: string           # M9 新增纯超集：所属图 id（创建请求已收，M9 起落库；旧用例为空串，发布门禁不入选）
@@ -672,6 +704,7 @@ graph: graph_definition    # 录制时的图快照（冻结，非 graph_id 活�
 subgraphs: {graphId: raw}  # D26-b（2026-09-19，29bb3d9）纯超集：录制时递归冻结的子图 raw（深度≤3、visited 防环、引用缺失不阻断）；旧用例缺省 {}
 created_at: string         # UTC ISO-8601
 recorded_at: string | null # C 包（2026-09-19，3415377）纯超集：回放冻结时钟锚点（UTC ISO）；新用例入库时与 created_at 同 stamp（端点不重跑 baseline，锚点＝入库时刻），旧用例为 null（回放回退 created_at）；进程内/PG 两档一致（迁移 007）
+rng_seed: int | null       # 打包 W（docs/84；2026-09-29）纯超集：随机种子锚点（与 recorded_at 同类录制事实）；replay 与 gate 经 seed_anchor(case) 注入 run_graph，random/randint/uuid 确定重放；旧用例 null（挂 rng_seed_note，随机分支可能漂移）；PG 档经 migration 033 补 recordings.rng_seed BIGINT（进程内档随 case JSON 落盘）
 # GET /api/recordings 列表投影（不含 graph/steps）
 items: [{id, name, graph_id, node_count, step_count, status, created_at}]
 # POST /api/recordings/{id}/replay（body 可省略；docs/28 §2.2，c7bf138，D26 部分取回）
@@ -687,6 +720,8 @@ replay_status: string      # 回放异常（如子图引用缺失）折叠为 "f
 steps: [{node_id, match, note, diff_keys?}]  # diff_keys 为归一化后差异顶层键
 clock_note?: string        # C 包（3415377）：仅当用例缺 recorded_at/created_at、无法冻结时钟时附（中文，提示 today()/now() 时间分支可能漂移）；单用例 replay 挂响应顶层，发布门禁挂对应 case 项
 mocked_tools?: string[]     # docs/28 §2.2（c7bf138）：本次被桩替代的工具节点 id（未启用 mock/缺省为 []）
+mocked_conditions?: string[] # 打包 V（docs/83；2026-09-29）：mock_tools 回放时按录制标签脚本化的 LLM condition 节点 id（无 LLM 条件/未启用/非 mock/异常折叠均为 []）；分类器 ScriptedConditionClassifier 经 Protocol 新可选入参 node_id 选标签，未知节点抛 ConditionClassifyError 走 defaultTarget
+rng_seed_note?: string      # 打包 W（docs/84；2026-09-29）：仅当用例缺 rng_seed（历史用例）时附（中文，提示 random/randint/uuid 分支可能漂移）；单用例 replay 挂响应顶层，发布门禁挂对应 case 项
 # PUT /api/recordings/{id}（operate；docs/28 §2.3，89e21fc）：body {name?: 1-100字, inputs?: object}，仅 name/inputs 可改；
 #   steps/graph/subgraphs/graph_id/时间戳为录制事实不可改（请重新录制）；不存在 404、空名/超长/inputs 非对象 422；返完整 RecordingCase；进程内/PG 两档持久化
 ```
@@ -1054,13 +1089,17 @@ candidate: int | null            # 最新发布版
 started_at: string?
 rolled_back_at: string?
 rollback_reason: string?
+rollback_reason: string?
+rollback_actor: string?        # 最后一次回滚 actor（auto/manual）
 traffic: {stable: int, candidate: int, segments: {internal:int, lowValueBucket:int, canary:int, full:int, fallback:int}}
 # 状态迁移（POST .../rollout/{start|promote|rollback}）
 # configure 存配置不启动；start: idle→canary（发布版不足 2 个 409）；
 # promote: canary→full（唯一放量路径，仅手动，无任何自动 promote 代码）；
 # rollback: */→rolled_back（candidate 撤流、stable 接全量；actor auto|manual 同一幂等函数）
 ```
-> 每租户一个 RoutingStore 进程内实例（挂 TenantServices、reset 清空），与 iam 进程内分区/T20 任务总线同策略；真实多实例路由表同步/热推送/配置中心随 D6/D10b，沙盘不解除 D32。金融灰度硬条款（19 §2.5.5/20 §7.5）：业务桶 + 业务结果门控指标 + 回滚不改外部已发生事实，三条不可简化。
+> 每租户一个 RoutingStore 实例（挂 TenantServices、reset 清空），与 iam 进程内分区/T20 任务总线同策略；真实多实例路由表同步/热推送/配置中心随 D6/D10b，沙盘不解除 D32。金融灰度硬条款（19 §2.5.5/20 §7.5）：业务桶 + 业务结果门控指标 + 回滚不改外部已发生事实，三条不可简化。
+>
+> **PG 持久化注记（2026-09-29，打包 T；契约＝docs/81）**：PG 档运行态落 **`rollout_states` 表** PK (tenant_id, graph_id)——列即上方投影（config/traffic JSONB、时间列 TEXT ISO、无代理键），`PgRoutingStore`（`src/atlas/routing/pg_store.py`）方法面与内存 RoutingStore 一致，行锁（FOR UPDATE）串行状态机与计数，无行＝idle 默认、resolve 计数 UPSERT 存活；迁移 031。**REST 投影与 409/422 语义一字不变**；内存档仍是进程内。只取跨重启/跨连接一致这半边，**多实例同步不据此成立**，D32 整体不解除。
 
 ### `route_decision` — 字段概览（**M9 已落码 2026-09-18（批 1-4＋收口；后端 602/前端 396，提交链见 08 与 CHANGELOG）**；`src/atlas/routing/router.py` resolve_version 纯函数 + run 端点 event 接线）
 
@@ -1103,6 +1142,8 @@ cases:
     matches: boolean
     replay_status: string
     note: string?             # 分支漂移/回放异常等
+    clock_note?: string       # C 包：仅当该用例无法冻结时钟时附
+    rng_seed_note?: string    # 打包 W（docs/84）：仅当该用例缺 rng_seed（历史用例）时附
 # 逐例对草稿走标准 run_graph（审批预置同现有 replay 端点），复用 recording.replay.compare 产逐节点 diff_keys
 # D26 报告 v1（2026-09-18 已落码，见下 `release_report`）：响应纯超集加 id（沉淀报告 rr-N）；
 #   release-gate 沉淀 trigger=manual、publish gate 沉淀 trigger=publish-gate（含 blocked 409 报告体），skipped 也沉淀
