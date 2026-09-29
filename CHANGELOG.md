@@ -3,6 +3,22 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### feat(runtime)：prod 档 `ai_decision` 禁静默走规则兜底（2026-09-30 ✅ 落码收口，commits 4113333／c2a4241／747bfed；docs/73 §1.1 后半；零迁移／端点／错误码／依赖／ADR）
+
+- **一句话**：prod 未配 `LITELLM_MODEL` 时 `ai_decision` 节点拿到的是 `RuleBasedDecisionClient`（不读 `prompt`/`model`，只按写死退款规则给结论、`confidence` 恒 1.0），此前照常"执行成功"——图上写着「AI 决策」、实际按硬编码规则判，**不报错不告警**，下游真实副作用照着假结论执行。现在该 run **显式 failed**，且不下发任何决策结论。
+- **口径（用户拍板「运行时 fail-closed（推荐）」）**：**进程照常启动**（prod 的非 LLM 部署不该被拦），只在节点真要执行且决策器是规则兜底时失败——与 R8（`_execute_tool` 的演示适配器门）同形，共用 `security/bootstrap.demo_surface_enabled()` 单一判定源；唯一开闸方式＝`ATLAS_ENABLE_DEMO_MOCK=1`（演示实例）。
+- **实现**：`graph/loader.py` 新增 `AiDecisionUnavailable`（`code="LLM_DECISION_UNAVAILABLE"`、携 `node_id`）＋`ai_decision` 分支入口门；`runtime_error_meta` 增一支归一为 `{errorCode, errorParams:{nodeId}}`（同步 500 与 SSE `event: error` 帧并行下发，旧 `error` 字段不变）；`api/main.py` 增 `ai_decision_unavailable_handler` ⇒ 结构化 500 `detail:{code,message,nodeId}`；前端 `runtimeError.ts` 的 `RUNTIME_CODE_RE` 加 `LLM_` 前缀、`runtime.json` 补双语键（英文态零汉字）。
+- **边界照实**：① 只管 `ai_decision`——`condition` 节点的 `OfflineConditionClassifier` **恒抛** `ConditionClassifyError`、loader 已 fail-safe 走 `defaultTarget`，本就没有"假装判过"的面，故未纳入；② 非 prod 零变化（`read_env_profile()` 缺省 `dev`）；③ 判据里「prod 档发出 ≥1 次真实 LiteLLM 调用」**仍未验**——本批验的是"缺模型时不静默"，不是"prod 真的调通了"。
+- **门（先跑后写，取实跑）**：U1006–U1010（新建 `tests/test_ai_decision_prod_gate.py`，5 例）——prod＋规则决策器抛码/`nodeId`/可行动文案；prod＋非规则决策器照常 `completed`；`ATLAS_ENABLE_DEMO_MOCK=1` 恢复规则兜底；dev 零变化；`runtime_error_meta`＋handler 的 HTTP 形状。全量 **2110 passed / 135 skipped / 0 failed**（332.78s，exit 0）；前端 749 passed / 2 skipped。docs/73 §1.1 仍 🟡（后半已落码、判据前半未验），B 档缺口仍 3 条。
+
+### test(conftest)：套件不再吃 litellm 从 `.env` 读进来的真实 LLM 凭据（2026-09-30 ✅ 收口，commit 6a919e9；零产品代码改动）
+
+- **一句话**：`litellm` 在 **import 时**自行 `load_dotenv()`（`litellm/__init__.py:27`），仓库 `.env` 里的真实 `LITELLM_MODEL`/`OPENAI_API_KEY` 因此进入测试进程——不是"多读了几个变量"，而是**让全量套件卡死**。
+- **缺陷链**：`tests/test_nl_generate.py:26` 的 `import litellm` 早于同文件第 36 行的 `monkeypatch.setenv("LITELLM_MODEL", …)` ⇒ 泄漏值被 monkeypatch 当成「原值」在拆解时还原，此后全进程 `get_decision_client()` 一律返 `LiteLLMDecisionClient`；`test_random_seed_replay::test_same_rng_seed_produces_identical_outputs` 的 `ai_decision` 节点**真出网**，拿到低置信结论后转人工、挂在 `ApprovalBroker.wait()`（`_DECISION_ESCALATION_TIMEOUT_SECONDS=3600`）——全量套件**跑到 76% 不动、CPU 不再增长**，不是失败是卡死。
+- **定位**：faulthandler 栈（`approvals.py:126` ← `loader.py:1192` ← `loader.py:495`）＋单例复现探针（设 `LITELLM_MODEL` 并 stub `completion` 返 `confidence=0.3`，单跑该用例即复现同一栈），双向确认与产品代码无关。
+- **修法**：`tests/conftest.py` 新增 autouse 夹具 `_no_real_llm_provider`，每用例前清 `LITELLM_MODEL`/`OPENAI_API_KEY`。要模型的用例自行 monkeypatch 打开（既有用例都是这么做的），故对它们零影响。**顺带更正 docs/73 §0 的一句断言**：「项目不加载 `.env` ⇒ 测试读数与凭据配置无关」在写下时（`.env` 于 2026-09-30 00:29:15 才落地）为真，`.env` 一存在即为假。
+- **门（先跑后写，取实跑）**：修后全量 **2110 passed / 135 skipped / 0 failed**（332.78s，exit 0）。零新依赖（不引 pytest-timeout——那属选型变更，须先走 docs/10 §4）。
+
 ### test(loader)：循环体内挂起点续跑的另两种形态转为常跑守护（2026-09-29 追记；打包 ZD 追记；零代码改动）
 
 - **一句话**：打包 ZD 收口后对抗探测了同类的两条画法——**while 模式**循环体内的挂起点续跑、**foreach 体内 skip 分支（打包 Z）＋ 续跑**——**两条均无缺陷**，按「无缺陷不立项」不开新批，但探测脚本在 `.smoke/` 下不入 CI，故转成正式用例锁回归。
