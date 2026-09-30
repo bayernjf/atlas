@@ -5,7 +5,7 @@
 # 重置本租户 Demo 数据（不删库，恢复 5 笔种子退款单）：
 #   curl -X POST http://localhost:8000/api/demo/reset
 # 数据持久化在 atlas-pgdata 卷；备份/恢复见 scripts/ops/backup.sh、restore.sh。
-# 接真实 LLM：在 .env 或下方 environment 配 LITELLM_MODEL 与供应商 key（见 .env.example）。
+# 接真实 LLM：在 .env 配 LITELLM_MODEL + OPENAI_API_KEY + OPENAI_BASE_URL（见 .env.example）。
 #
 # TLS 反代（可选，docs/34 P1 / deploy/README.md）：
 #   docker compose --profile edge up -d --build
@@ -50,6 +50,11 @@ services:
       ATLAS_STORAGE_BACKEND: pg
       DATABASE_URL: postgresql+psycopg://atlas:atlas@db:5432/atlas
       LITELLM_MODEL: ${LITELLM_MODEL:-}
+      # 直连 OpenAI 兼容端点：litellm 读的是 OPENAI_API_KEY / OPENAI_BASE_URL，
+      # 不是 LITELLM_API_KEY / LITELLM_BASE_URL（.env.example 已按源码更正）。
+      # 两者缺任一个，LITELLM_MODEL 配了也发不出真实调用（docs/73 §1.1 W1）。
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       # 缺省仍是 dev 语义（种子账号照播）。要按 prod 起：ATLAS_ENV=prod 并同时给出
       # ATLAS_MASTER_KEY／ATLAS_APPROVAL_HMAC_SECRET／ATLAS_ADMIN_BOOTSTRAP_PASSWORD，
       # 任一缺失或过短都会**拒绝启动**（docs/64 J-1a、docs/66 打包 L）。

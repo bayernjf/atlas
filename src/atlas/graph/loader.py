@@ -42,8 +42,16 @@ from atlas.database.service import DatabaseClient, demo_engine
 from atlas.harness.base import ActionRequest, ActionStatus
 from atlas.harness.registry import AdapterRegistry
 from atlas.httpapi.adapter import HttpApiHarnessAdapter
-from atlas.llm.decision import AUTO_APPROVE, HUMAN_APPROVAL, get_decision_client
-from atlas.llm.condition_classifier import get_condition_classifier
+from atlas.llm.decision import (
+    AUTO_APPROVE,
+    HUMAN_APPROVAL,
+    RuleBasedDecisionClient,
+    get_decision_client,
+)
+from atlas.llm.condition_classifier import (
+    OfflineConditionClassifier,
+    get_condition_classifier,
+)
 from atlas.message.adapter import MessageHarnessAdapter
 from atlas.message.service import MessageService
 from atlas.security.bootstrap import demo_surface_enabled
@@ -129,17 +137,52 @@ class WaitNodeFailure(Exception):
         self.code = code
 
 
+class AiDecisionUnavailable(Exception):
+    """prod 档要执行 ai_decision 却没有可用的 LLM 决策器（docs/73 W1-1.1）。
+
+    run 标记 failed 并带机器码，不静默降级到规则兜底——"看起来在调模型、其实按写死的
+    退款规则判"这种假阳性一旦放行，下游真实副作用会照着它执行。
+    """
+
+    code = "LLM_DECISION_UNAVAILABLE"
+
+    def __init__(self, node_id: str, message: str) -> None:
+        super().__init__(f"{self.code}: {message}")
+        self.node_id = node_id
+
+
+class ConditionClassifierUnavailable(Exception):
+    """prod 档要执行 condition(llm) 却没有可用的 LLM 分类器（docs/73 W5-5.4）。
+
+    与 AiDecisionUnavailable 同形：离线档（未配 `LITELLM_MODEL`）不是"模型这次调用失败"
+    而是"根本没接模型"，此时静默走 defaultTarget 会把全部流量悄悄改道、run 却仍报
+    completed，只在 llm_errors 留一行文案——图内若无 ai_decision 节点就再没有门兜住。
+    """
+
+    code = "LLM_CLASSIFIER_UNAVAILABLE"
+
+    def __init__(self, node_id: str, message: str) -> None:
+        super().__init__(f"{self.code}: {message}")
+        self.node_id = node_id
+
+
 def runtime_error_meta(exc: Exception) -> dict[str, Any]:
     """docs/60 G1：运行期终态异常归一化为机器可读码（中文 error 字符串仍由调用方原样保留）。
 
     WaitNodeFailure 携带既有 WAIT_* 5 码与 nodeId；ConditionEvalError 携带 COND_* 码族与
-    params；其余未预期异常统一 RUNTIME_UNEXPECTED。返回 errorCode/errorParams 两键，供
-    run failed 结果与 SSE error 帧并行下发（纯超集，旧 error 字段不变）。
+    params；AiDecisionUnavailable 携带 LLM_DECISION_UNAVAILABLE 与 nodeId；
+    ConditionClassifierUnavailable 携带 LLM_CLASSIFIER_UNAVAILABLE 与 nodeId；其余未预期异常
+    统一 RUNTIME_UNEXPECTED。返回 errorCode/errorParams 两键，供 run failed 结果与 SSE error
+    帧并行下发（纯超集，旧 error 字段不变）。
     """
     if isinstance(exc, WaitNodeFailure):
         return {"errorCode": exc.code, "errorParams": {"nodeId": exc.node_id}}
     if isinstance(exc, ConditionEvalError):
         return {"errorCode": exc.code, "errorParams": dict(exc.params)}
+    if isinstance(exc, AiDecisionUnavailable):
+        return {"errorCode": exc.code, "errorParams": {"nodeId": exc.node_id}}
+    if isinstance(exc, ConditionClassifierUnavailable):
+        return {"errorCode": exc.code, "errorParams": {"nodeId": exc.node_id}}
     return {"errorCode": "RUNTIME_UNEXPECTED", "errorParams": {}}
 
 
@@ -441,6 +484,18 @@ def _make_executor(
                     }
                     message = f"{node.id}({node.type}): executed"
                 elif node.type == "ai_decision":
+                    # docs/73 W1-1.1：prod 档禁静默 mock 兜底。规则决策器在 prod 下意味着
+                    # "没接模型"，此时按写死的规则判退款＝假装调了 LLM，run 直接失败。
+                    # 与 R8（_execute_tool）同形：进程可起，节点执行时显式 FAILED。
+                    if not demo_surface_enabled() and isinstance(
+                        decision_client, RuleBasedDecisionClient
+                    ):
+                        raise AiDecisionUnavailable(
+                            node.id,
+                            "生产环境未配置 LLM 决策器，ai_decision 节点拒绝静默降级到规则兜底；"
+                            "请配置 LITELLM_MODEL 与 OPENAI_API_KEY / OPENAI_BASE_URL，"
+                            "或显式设置 ATLAS_ENABLE_DEMO_MOCK=1 以在演示实例上启用模拟决策。",
+                        )
                     payload = trigger_payload or {}
                     prompt = interpolate(node.config.get("promptTemplate", ""), context)
                     try:
@@ -802,6 +857,7 @@ def _make_executor(
                     output, message = _execute_subgraph(
                         node,
                         context=context,
+                        trigger_payload=trigger_payload,
                         registry=registry,
                         decision_client=decision_client,
                         condition_classifier=condition_classifier,
@@ -1215,10 +1271,28 @@ def _namespaced_emit(parent: EventCallback, path: tuple[str, ...]) -> EventCallb
     return _emit
 
 
+def _scope_approvals(approvals: Any, node_id: str) -> dict[str, str]:
+    """把路径限定键（``"sub-1/human-1"``）按当前子图节点重根为本层键（``"human-1"``）。
+
+    04 §5.11：录制回放把子图内审批决策以 ``"sub-1/human-1"`` 形式并入 inputs.approvals。
+    子图重入时剥掉本层前缀再下发，使子图内 _await_human_approval 仍按裸 node id 查表；
+    更深层的 ``"sub-1/sub-2/human-2"`` 保留为 ``"sub-2/human-2"`` 供下一层继续剥。
+    """
+    if not isinstance(approvals, dict):
+        return {}
+    prefix = f"{node_id}/"
+    return {
+        key[len(prefix):]: value
+        for key, value in approvals.items()
+        if isinstance(key, str) and key.startswith(prefix)
+    }
+
+
 def _execute_subgraph(
     node: NodeDSL,
     *,
     context: dict[str, Any],
+    trigger_payload: dict[str, Any] | None = None,
     registry: AdapterRegistry | None,
     decision_client: Any,
     condition_classifier: Any,
@@ -1251,6 +1325,15 @@ def _execute_subgraph(
         debug_controller.push_namespaced_emit(child_emit)
     mapping = node.config.get("inputs") or {}
     child_inputs = {key: render_mapping_value(value, context) for key, value in mapping.items()}
+    # 04 §5.11：把路径限定的预置审批决策（"sub-1/human-1"）重根后下发子图，
+    # 使录制回放/影子/门禁的单份 inputs.approvals 能穿过 subgraph 边界（显式映射优先）。
+    scoped = _scope_approvals((trigger_payload or {}).get("approvals"), node.id)
+    if scoped:
+        explicit = child_inputs.get("approvals")
+        child_inputs["approvals"] = {
+            **(dict(explicit) if isinstance(explicit, dict) else {}),
+            **scoped,
+        }
     # M10：subgraph span（非 internal，折叠后代表整段子图）；子图内部节点 span 标 internal。
     sub_cm = (
         tracer.span(
@@ -1511,10 +1594,23 @@ _CONTEXT_LIMIT = 12000
 def _execute_llm_condition(
     node: NodeDSL, state: GraphState, context: dict[str, Any], *, classifier: Any
 ) -> dict[str, Any]:
-    """LLM 单次分类选唯一分支（04 §5.2 追加段，docs/48）；任何失败 fail-safe 走 defaultTarget。"""
+    """LLM 单次分类选唯一分支（04 §5.2 追加段，docs/48）；任何失败 fail-safe 走 defaultTarget。
+
+    prod 档例外（docs/73 W5-5.4）：判据是**分类器类型**而非异常类型——离线档＝根本没接
+    模型，与 ai_decision 的规则兜底同族；真接了模型但这次调用失败（网络/配额/坏 JSON/
+    标签越界）以及回放的 ScriptedConditionClassifier 全部保持 fail-safe 走 defaultTarget。
+    """
     config = node.config
     branches = config.get("branches", [])
     errors: list[str] = []
+
+    if not demo_surface_enabled() and isinstance(classifier, OfflineConditionClassifier):
+        raise ConditionClassifierUnavailable(
+            node.id,
+            "生产环境未配置 LLM 分类器，condition 节点拒绝静默降级到默认分支；"
+            "请配置 LITELLM_MODEL 与 OPENAI_API_KEY / OPENAI_BASE_URL，"
+            "或显式设置 ATLAS_ENABLE_DEMO_MOCK=1 以在演示实例上启用离线分支。",
+        )
 
     try:
         context_text = json.dumps(

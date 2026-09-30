@@ -122,6 +122,8 @@ fail-safe 时 `branch="__default__"`、evaluation 各项 `result=null`、`llm_er
 
 **无新增失败错误码**：llm condition 不使节点/run 失败，全部异常归一为 defaultTarget 路由（硬 fail-safe）。错误仅在节点产出 `llm_errors` 与 trace 可见。模型提供方网络/配额错误同样按此处理，不向上抛。
 
+**prod 档一处例外（2026-09-30 落码，docs/73 W5-5.4）**：上述「硬 fail-safe 不使 run 失败」的成立前提是**分类器本身接得通**——离线档（`OfflineConditionClassifier`，即未配 `LITELLM_MODEL`）不是「模型偶发失败」而是「根本没接模型」，此时静默走 `defaultTarget` 与 `ai_decision` 的规则兜底同族：**节点不报错、run 仍 `completed`**，只在 `llm_errors` 留一行「LLM 未配置」，图内若没有 `ai_decision` 节点（如 condition 直连工具）这条路径没有任何门兜住。故新增 prod fail-closed 门：`ATLAS_ENV=prod` 且未开演示面（`ATLAS_ENABLE_DEMO_MOCK≠1`）时，`conditionMode=llm` 节点若拿到的分类器是 `OfflineConditionClassifier`，抛 `ConditionClassifierUnavailable`（码 **`LLM_CLASSIFIER_UNAVAILABLE`**、携 `nodeId`），该 run 显式 failed、不下发任何分支路由；**唯一开闸方式仍是 `ATLAS_ENABLE_DEMO_MOCK=1`**，与 `ai_decision` 门（docs/78／06 §6.2 边界③）共用 `security/bootstrap.demo_surface_enabled()` 同一档位。**门的判据是分类器类型、不是异常类型**：`ScriptedConditionClassifier`（回放脚本化，docs/83 打包 V）与 `LiteLLMConditionClassifier` 的真调用失败（网络/配额/坏 JSON/标签越界）**全部保持原 fail-safe**，仍走 `defaultTarget` 且不使 run 失败——回放与「接了模型但这次调用失败」都不是「没接模型」。**进程照常启动**（prod 的非 LLM 部署不被拦），只在节点真执行时失败；非 prod 档零变化。码族取名 `LLM_*`（而非 `COND_*`）的理由：`COND_*` 是**表达式求值**错误族（`COND_TYPE_MISMATCH` 等），本门是「prod 没接 LLM」，与 `LLM_DECISION_UNAVAILABLE` 同族；`LLM_` 前缀前端 `runtimeError.ts` 的 `RUNTIME_CODE_RE` 已覆盖，零正则改动。
+
 ## 4. REST
 
 无新增端点、无新增 SSE 帧、无 run inputs 运行控制键。现有 run/监控/trace 投影天然携带新产出字段。

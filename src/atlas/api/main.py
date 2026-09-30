@@ -45,6 +45,8 @@ from atlas.graph.conditions import ConditionEvalError, validate_expression
 from atlas.graph.dsl import GraphDSL, GraphValidationError, parse_graph, valid_event_key
 from atlas.graph.diff import diff_graph, diff_summary
 from atlas.graph.loader import (
+    AiDecisionUnavailable,
+    ConditionClassifierUnavailable,
     RunSuperseded,
     WaitNodeFailure,
     _tool_permissions,
@@ -464,6 +466,42 @@ def condition_eval_failure_handler(
                 "code": exc.code,
                 "message": str(exc),
                 "params": exc.params,
+            }
+        },
+    )
+
+
+@app.exception_handler(AiDecisionUnavailable)
+def ai_decision_unavailable_handler(
+    _request: Request, exc: AiDecisionUnavailable
+) -> JSONResponse:
+    # prod 档 ai_decision 拿不到 LLM 决策器（docs/73 W1-1.1）：结构化 500 携带
+    # LLM_DECISION_UNAVAILABLE 与 nodeId，与 WaitNodeFailure 同形，前端按语言渲染文案。
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": {
+                "code": exc.code,
+                "message": str(exc),
+                "nodeId": exc.node_id,
+            }
+        },
+    )
+
+
+@app.exception_handler(ConditionClassifierUnavailable)
+def condition_classifier_unavailable_handler(
+    _request: Request, exc: ConditionClassifierUnavailable
+) -> JSONResponse:
+    # prod 档 condition(llm) 拿不到 LLM 分类器（docs/73 W5-5.4）：同形结构化 500 携带
+    # LLM_CLASSIFIER_UNAVAILABLE 与 nodeId，前端按 LLM_ 前缀渲染双语文案。
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": {
+                "code": exc.code,
+                "message": str(exc),
+                "nodeId": exc.node_id,
             }
         },
     )
@@ -2355,7 +2393,7 @@ def create_shadow_run(
     raw_inputs = body.get("inputs") if isinstance(body.get("inputs"), dict) else {}
     # approvals 是运行控制键（不进全局变量、不回记入记录 inputs）。
     inputs = dict(raw_inputs)
-    presets = preset_all_approvals(graph)
+    presets = preset_all_approvals(graph, resolver=_tenant_graph_resolver(services))
     if presets:
         inputs["approvals"] = {**presets, **(inputs.get("approvals") or {})}
     # 事件等待无法在影子中被信号放行：预置空 payload 秒过（docs/47 非目标）。
@@ -2952,7 +2990,7 @@ def replay_recording(
         if payload is not None and payload.inputs_override:
             # 顶层键浅合并（dict 值整体替换）；一次性覆写，不修改已入库用例。
             inputs = {**inputs, **payload.inputs_override}
-        presets = preset_approvals(case.steps)
+        presets = preset_approvals(case.steps, subgraphs=case.subgraphs)
         if presets:
             approvals = dict(inputs.get("approvals") or {})
             approvals.update(presets)

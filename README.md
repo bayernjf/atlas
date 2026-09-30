@@ -52,12 +52,14 @@ curl -X POST http://localhost:8000/api/demo/reset   # 重置种子退款单与�
 本地开发双进程：
 
 ```bash
-.venv/bin/uvicorn atlas.api.main:app --reload --port 8000   # 后端 API + 模拟商家控制台
+cp .env.example .env                                        # 首次：填 LITELLM_MODEL / OPENAI_API_KEY / OPENAI_BASE_URL
+.venv/bin/uvicorn atlas.api.main:app --reload --env-file .env --port 8000   # 后端 API + 模拟商家控制台
 cd frontend && pnpm dev                                     # 编辑器 http://localhost:5174
 ```
 
 - 模拟商家售后控制台：http://localhost:8000/demo/shop（demo/demo）
-- 配置 `LITELLM_MODEL`（及供应商 key）即用真实 LLM 决策/生成；不配置时走确定性规则，Demo 离线可跑（见 `.env.example`）
+- 配置 `LITELLM_MODEL` + `OPENAI_API_KEY` + `OPENAI_BASE_URL` 即用真实 LLM 决策/生成；不配置时走确定性规则，Demo 离线可跑（见 `.env.example`）。**三者缺任一都发不出真实调用**——`LITELLM_MODEL` 单独配只切换决策器类型，key/base 才是端点凭据；变量名是 `OPENAI_*` 而不是 `LITELLM_API_KEY`/`LITELLM_BASE_URL`（后者只被 litellm 的 proxy 代码读取，直连路径不生效）
+- `--env-file .env` 让 uvicorn 读 `.env`（项目本身不加载它）；`docker compose` 形态由 compose 自动读 `.env` 做变量替换，无需该参数
 
 ## 文档导航
 

@@ -4,8 +4,9 @@
  * 后端在 run failed 通道（同步 500 的 `detail:{code,message,params}`、SSE `event: error`
  * 帧）与 loop/foreach 节点结果（`expressionErrorCodes`，与 `expression_errors` 等长）
  * 并行下发机器可读码：COND_*（表达式求值）、WAIT_*（等待节点）、LOOP_* 与 FOREACH_*
- * （循环）、RUNTIME_UNEXPECTED（兜底）。中文 `message`、`expression_errors` 始终保留，
- * 是缺翻译键时的兜底真相——本模块保证英文态最坏只回退中文、绝不泄漏 i18n key。
+ * （循环）、LLM_*（LLM 决策不可用）、RUNTIME_UNEXPECTED（兜底）。中文 `message`、
+ * `expression_errors` 始终保留，是缺翻译键时的兜底真相——本模块保证英文态最坏只回退
+ * 中文、绝不泄漏 i18n key。
  *
  * 与 lib/apiClient.ts 内的 422 校验列表解析（resolveValidationList，validation.dsl.*）
  * 相互独立：那是编译期 DSL 诊断，本模块面向运行期终态/节点错误（runtime.* 命名空间）。
@@ -13,7 +14,7 @@
 import { getLanguage, t } from '../locales'
 
 /** 运行期错误码前缀（与后端 graph/conditions.py、graph/loader.py 码族对齐）。 */
-const RUNTIME_CODE_RE = /^(COND_|WAIT_|LOOP_|FOREACH_|RUNTIME_)/
+const RUNTIME_CODE_RE = /^(COND_|WAIT_|LOOP_|FOREACH_|LLM_|RUNTIME_)/
 
 const isEn = () => getLanguage().startsWith('en')
 

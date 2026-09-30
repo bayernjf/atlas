@@ -19,5 +19,7 @@
   "LOOP_MAX_ITERATIONS": "Reached the maximum number of iterations; exiting the loop",
   "LOOP_ITEMS_TOO_LARGE": "The iterated array exceeds the maximum length",
   "FOREACH_COLLECT_MISSING": "The collect node produced no output; skipping collection for this iteration",
+  "LLM_DECISION_UNAVAILABLE": "No LLM decision provider is configured in production; the AI decision node aborted this run instead of silently falling back to rules",
+  "LLM_CLASSIFIER_UNAVAILABLE": "No LLM classifier is configured in production; the condition node aborted this run instead of silently taking the default branch",
   "RUNTIME_UNEXPECTED": "An unexpected runtime error occurred"
 }

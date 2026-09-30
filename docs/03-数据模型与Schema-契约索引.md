@@ -725,7 +725,7 @@ rng_seed_note?: string      # 打包 W（docs/84；2026-09-29）：仅当用例�
 # PUT /api/recordings/{id}（operate；docs/28 §2.3，89e21fc）：body {name?: 1-100字, inputs?: object}，仅 name/inputs 可改；
 #   steps/graph/subgraphs/graph_id/时间戳为录制事实不可改（请重新录制）；不存在 404、空名/超长/inputs 非对象 422；返完整 RecordingCase；进程内/PG 两档持久化
 ```
-> 进程内存储（重启清空，持久化随 11 S1）；`/api/demo/reset` 不清除（测试资产，同 feedback）。回放从 human_approval 步骤抽解决策预置为 inputs.approvals，不挂起；比对前递归剔除 token/sent_at、消息记录 uuid id、HTTP headers date。权威契约见 04 §5.11，REST 见 12 §5。
+> 进程内存储（重启清空，持久化随 11 S1）；`/api/demo/reset` 不清除（测试资产，同 feedback）。回放从 human_approval 步骤抽解决策预置为 inputs.approvals，不挂起；**打包 ZF（2026-09-30）起子图内审批的键为路径限定 `"sub-1/human-1"`（父图 subgraph 节点 id 逐层前缀，按 `case.subgraphs` 录制快照递归抽取），子图重入时按当前层剥前缀重根下发，裸键不跨边界**；比对前递归剔除 token/sent_at、消息记录 uuid id、HTTP headers date，**subgraph 产出按子层 `mode` 递归施同一套规则并丢子图 `trace`**。权威契约见 04 §5.11，REST 见 12 §5。
 >
 > **M9 发布门禁（2026-09-18 已落码，D26 部分取回）**：`graph_id` 用于发布前批量回放筛选；`POST /api/graphs/{id}/release-gate` 对当前 latest 草稿逐例重跑 + compare 产 `release_gate` 报告（见下），publish 可带 `gate:true` 拦截坏版本。用例集趋势报告/影子模式/Mock 外部系统仍缓做 14 D26。 **docs/28 批 4⑪（2026-09-20 `ba97088`）增发布前子图版本升级体检**：`GET /api/graphs/{id}/subgraph-upgrades`（read、纯只读不产版本）返 `{items:[{node_id, sub_id, from_version: int|null, to_version: int, first_pin: bool}]}`，对父图草稿顶层 subgraph 节点比对「本次发布将钉版本 to（子图最新发布版，无则 1）vs 父图最新发布快照所钉 from」，仅列首次钉版（first_pin=true）或 from≠to 的升级；草稿不存在 404。纯函数在 `versioning/upgrades.py`（与 publish.py 同包，两档同构）；v1 只扫顶层、不阻断发布、不做草稿 pin 编辑器、不检测子图草稿 dirty，发布门禁回归仍是发布前权威门；前端 ReleaseModal 门禁表上方只读体检区。显式 pin 编辑/子图市场仍缓做 D21。
 >

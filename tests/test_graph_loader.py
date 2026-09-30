@@ -2231,3 +2231,121 @@ def test_while_body_with_parallel_rejected_u1000():
         parse_graph(_loop_parallel_body_raw("while"))
     assert any("循环体内不能包含并行节点" in msg for msg in excinfo.value.errors)
     assert any("LOOP_PARALLEL_IN_BODY" == code for code in excinfo.value.codes)
+
+
+# 打包 ZE：并行分支区域内含挂起点编译期拒绝（U1017–U1018，契约 04 §5.4）
+def _parallel_region_suspend_raw(node_type: str, in_region: bool = True) -> dict:
+    """区域内的挂起点（in_region=False：把挂起点移到汇聚目标之后，属区域外）。
+
+    区域推导从 branch target 出发 BFS 至 joinTarget 停止，故 join-1 之后与 parallel
+    之前都不在区域内——同两张图必须仍然合法（反向对照，防过度拒绝）。
+    """
+    if node_type == "human_approval":
+        suspend_id, terminals = "human-1", ["tool-ok", "tool-no"]
+        suspend_node = {
+            "id": suspend_id, "type": "human_approval", "name": "审批",
+            "config": {
+                "summary": "审批 {{trigger-1.context.payload.order_id}}",
+                "approver": "主管", "timeoutSeconds": 300, "onTimeout": "reject",
+                "approvedTarget": "tool-ok", "rejectedTarget": "tool-no",
+            },
+        }
+    else:
+        suspend_id, terminals = "wait-1", ["tool-ok"]
+        suspend_node = {
+            "id": suspend_id, "type": "wait", "name": "等待",
+            "config": {"waitType": "duration", "durationSeconds": 1},
+        }
+    terminal_nodes = [
+        {"id": "tool-ok", "type": "tool_call", "name": "通过",
+         "config": {"tool": "op-ok"}},
+    ]
+    if len(terminals) > 1:
+        terminal_nodes.append(
+            {"id": "tool-no", "type": "tool_call", "name": "拒绝",
+             "config": {"tool": "op-no"}}
+        )
+
+    if in_region:
+        branches = [("快支", "tool-a"), ("挂起支", suspend_id)]
+        region_edges = [("tool-a", "join-1")] + [(t, "join-1") for t in terminals]
+        tail_edges = [("join-1", "tool-after")]
+    else:
+        branches = [("快支", "tool-a"), ("慢支", "tool-b")]
+        region_edges = [("tool-a", "join-1"), ("tool-b", "join-1")]
+        tail_edges = [("join-1", suspend_id)] + [(t, "tool-after") for t in terminals]
+    suspend_edges = [(suspend_id, terminal) for terminal in terminals]
+
+    nodes = [
+        {"id": "trigger-1", "type": "trigger", "name": "触发",
+         "config": {"triggerType": "manual"}},
+        {"id": "par-1", "type": "parallel", "name": "并行",
+         "config": {
+             "joinStrategy": "all_success",
+             "branches": [{"label": label, "target": target}
+                          for label, target in branches],
+             "joinTarget": "join-1",
+         }},
+        {"id": "tool-a", "type": "tool_call", "name": "快支工具",
+         "config": {"tool": "op-a"}},
+    ]
+    if not in_region:
+        nodes.append({"id": "tool-b", "type": "tool_call", "name": "慢支工具",
+                      "config": {"tool": "op-b"}})
+    nodes += [
+        suspend_node,
+        *terminal_nodes,
+        {"id": "join-1", "type": "tool_call", "name": "汇聚",
+         "config": {"tool": "op-join"}},
+        {"id": "tool-after", "type": "tool_call", "name": "后续",
+         "config": {"tool": "op-after"}},
+    ]
+    edges = [
+        ("trigger-1", "par-1"),
+        *[("par-1", target) for _, target in branches],
+        *suspend_edges,
+        *region_edges,
+        *tail_edges,
+    ]
+    return {
+        "version": 1,
+        "variables": [],
+        "nodes": nodes,
+        "edges": [{"id": f"e{index + 1}", "source": source, "target": target}
+                  for index, (source, target) in enumerate(edges)],
+    }
+
+
+def test_parallel_region_with_human_approval_rejected_u1017():
+    with pytest.raises(GraphValidationError) as excinfo:
+        parse_graph(_parallel_region_suspend_raw("human_approval"))
+    assert any("分支区域内不能包含挂起点" in msg for msg in excinfo.value.errors)
+    assert any("PAR_SUSPEND_IN_REGION" == code for code in excinfo.value.codes)
+    index = excinfo.value.codes.index("PAR_SUSPEND_IN_REGION")
+    assert excinfo.value.params[index] == {"owner": "par-1", "member": "human-1"}
+
+    # 反向对照：审批落在汇聚目标之后（区域外）——同一张图必须合法且能跑完。
+    legal = _parallel_region_suspend_raw("human_approval", in_region=False)
+    result = run_graph(parse_graph(legal),
+                       inputs={"order_id": "12399", "approvals": {"human-1": "approved"}})
+    assert result["status"] == "completed"
+    assert set(result["outputs"]["par-1"]["result"]) == {"tool-a", "tool-b"}
+    assert result["outputs"]["human-1"]["decision"] == "approved"
+    assert result["outputs"]["human-1"]["resolvedBy"] == "input"
+
+
+def test_parallel_region_with_wait_rejected_u1018():
+    with pytest.raises(GraphValidationError) as excinfo:
+        parse_graph(_parallel_region_suspend_raw("wait"))
+    assert any("分支区域内不能包含挂起点" in msg for msg in excinfo.value.errors)
+    assert any("PAR_SUSPEND_IN_REGION" == code for code in excinfo.value.codes)
+    index = excinfo.value.codes.index("PAR_SUSPEND_IN_REGION")
+    assert excinfo.value.params[index] == {"owner": "par-1", "member": "wait-1"}
+
+    # 反向对照：等待落在汇聚目标之后（区域外）——同一张图必须合法且能跑完。
+    legal = _parallel_region_suspend_raw("wait", in_region=False)
+    result = run_graph(parse_graph(legal), inputs={})
+    assert result["status"] == "completed"
+    assert set(result["outputs"]["par-1"]["result"]) == {"tool-a", "tool-b"}
+    assert result["outputs"]["wait-1"]["waitType"] == "duration"
+    assert result["outputs"]["tool-after"]["result"]["tool"] == "op-after"
