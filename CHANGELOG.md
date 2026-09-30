@@ -3,12 +3,21 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### feat(runtime)：prod 档 `condition(llm)` 禁静默走默认分支（2026-09-30 ✅ 落码收口，commits fcd8989／2210f0b／7cf7dc3／32cf0a5；docs/73 明细 5.4 选项①；零迁移／端点／依赖／ADR）
+
+- **一句话**：prod 未配 `LITELLM_MODEL` 时 `get_condition_classifier()` 返 `OfflineConditionClassifier`，它的 `classify()` 恒抛 `ConditionClassifyError`，loader 把 label 落成 `__default__` 走 `defaultTarget`——**节点不报错、run 仍 `completed`**，只在 `llm_errors` 里留一行「LLM 未配置，语义分支无法求值」；图内若无 `ai_decision` 节点，全部流量就被静默改道而运行状态报绿。与 `ai_decision` 的规则兜底同族（prod 档静默降级＋状态报绿）。
+- **口径（用户拍板「5.4 走①」）**：与 `ai_decision` 门同形——**进程照常启动**，只在节点真要执行且分类器是离线档时把该 run 显式标 failed；共用 `security/bootstrap.demo_surface_enabled()` 单一档位，**唯一开闸＝`ATLAS_ENABLE_DEMO_MOCK=1`**。
+- **判据是分类器类型，不是异常类型**（本批最关键的一处口径）：门写成 `isinstance(classifier, OfflineConditionClassifier)`——「根本没接模型」才拦；真 `LiteLLMConditionClassifier` 的调用失败（网络／配额／坏 JSON／标签越界）与打包 V 的 `ScriptedConditionClassifier` 回放**都保持原 fail-safe**（U1012／U1013 直接钉住）。
+- **实现**：`graph/loader.py` 新增 `ConditionClassifierUnavailable`（`code="LLM_CLASSIFIER_UNAVAILABLE"`、携 `node_id`）＋`_execute_llm_condition` 入口门；`runtime_error_meta` 增一支归一为 `{errorCode, errorParams:{nodeId}}`（同步 500 与 SSE `event: error` 帧并行下发）；`api/main.py` 增 `condition_classifier_unavailable_handler` ⇒ 结构化 500 `detail:{code,message,nodeId}`；前端 `runtime.json` 双语加一码（`RUNTIME_CODE_RE` **已含 `LLM_` 前缀，零正则改动**）。**码名取 `LLM_CLASSIFIER_UNAVAILABLE` 而非 docs/73 原示例 `CONDITION_CLASSIFIER_UNAVAILABLE`**（原文写「码如」＝示例、非绑定）：`LLM_` 前缀已在正则内，且语义族同 `LLM_DECISION_UNAVAILABLE`，而 `COND_*` 是表达式求值错误族。形状权威＝docs/48 §3.4（docs/04 §5.2／docs/06 §6.23／docs/12 §3.18 指回）。
+- **门（先跑后写，取实跑）**：U1011–U1016（新建 `tests/test_condition_classifier_prod_gate.py`，6 例）——prod＋离线分类器抛码／`nodeId`／可行动文案（含 `LITELLM_MODEL`／`OPENAI_API_KEY`／`OPENAI_BASE_URL`／`ATLAS_ENABLE_DEMO_MOCK=1`）；prod＋真分类器照常 `completed` 且路由正确；prod＋打包 V 回放不受门影响；`ATLAS_ENABLE_DEMO_MOCK=1` 恢复 fail-safe；dev 零变化；`runtime_error_meta`＋处理器结构化 500。全量 **2116 passed / 135 skipped / 0 failed**（481.61s，exit 0）；前端 749 passed / 2 skipped、lint 0 error、build ✓。
+- **状态口径**：docs/73 **5.4 翻 ✅**；§1.1 判据后半至此对**两个 LLM 面**都成立，但 1.1 **仍 🟡**——残余已移到部署侧（凭据入 vault 同 1.3、真机整链 4.1）；B 档未动的仍是 **1.2／1.3／4.1** 三条。不解除任何缓做、不动单副本三道闸。
+
 ### docs(mvp)：prod 档真实 LLM 调用演练——docs/73 §1.1 判据前半达成，并新立缺口 5.4（2026-09-30，docs-only；零代码改动／零迁移／零端点／零依赖／无 ADR）
 
 - **一句话**：docs/73 1.1 剩下的那半句「任何 LLM 驱动的运行在 **prod** 下发出 ≥1 次真实 LiteLLM 调用」已用一次性脚本（`/tmp`，**未入库**）验真；同一次演练又量出一处同族的静默降级，新立 **5.4** 待拍板。
 - **〔跑〕演练（prod 档）**：`ATLAS_ENV=prod` ＋ 真 `LITELLM_MODEL`/`OPENAI_API_KEY`/`OPENAI_BASE_URL`（取自本地 `.env`，只读不打印）⇒ `assert_prod_secrets()` 通过、`demo_surface_enabled()=False`、`get_decision_client()→LiteLLMDecisionClient`、`get_condition_classifier()→LiteLLMConditionClassifier`；`trigger → condition(llm) → ai_decision` 跑 `completed`，condition `mode=llm`／`branch=质量类`／`llm_errors=[]`，`ai_decision` `source="llm:openai/agnes-2.5-flash"`／`action=approve_refund`／`confidence=0.95`。对照组（prod ＋ 无模型）抛 `AiDecisionUnavailable`（`LLM_DECISION_UNAVAILABLE`／`nodeId=ai-2`）⇒ 上批落的门是活的且不误伤真客户端。
 - **新缺口 5.4（⬜ 待拍板）**：prod 无模型档下 `condition(llm)` 节点**不报错**，静默走 `defaultTarget` 且 run 仍 `completed`（`llm_errors` 只留一行「LLM 未配置，语义分支无法求值」）；图内若无 `ai_decision` 节点（condition 直接接工具），这条路径不被新门兜住——与 R8（裸名工具名静默 `SIMULATED`）和 `ai_decision` 静默走规则**同一族**。**未自行落码的理由**：会改变既有合法画法的运行结果，属运行期行为变更；且上批已把「不纳入」写进文档，反向须用户拍板（建议与 `ai_decision` 同形的 prod fail-closed，共用 `demo_surface_enabled()`）。
-- **状态口径**：docs/73 §1.1 **仍 🟡**（判据后半目前只对 `ai_decision` 成立，待 5.4 收口才可勾）；B 档未动的仍是 **1.2／1.3／4.1** 三条。本批零代码改动、零迁移／端点／错误码／依赖、无 ADR。
+- **状态口径**：docs/73 §1.1 **仍 🟡**（判据后半目前只对 `ai_decision` 成立，待 5.4 收口才可勾）；B 档未动的仍是 **1.2／1.3／4.1** 三条。本批零代码改动、零迁移／端点／错误码／依赖、无 ADR。〔**2026-09-30 当日后 5.4 已按选项①落码收口，见上条**〕
 
 ### feat(runtime)：prod 档 `ai_decision` 禁静默走规则兜底（2026-09-30 ✅ 落码收口，commits 4113333／c2a4241／747bfed；docs/73 §1.1 后半；零迁移／端点／错误码／依赖／ADR）
 
