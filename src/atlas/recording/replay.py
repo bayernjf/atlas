@@ -26,6 +26,7 @@ def normalize(
     - human_approval 产出删除 ``resolvedBy``（回放经 inputs.approvals 预置，
       决策来源 input/timeout/human 属运行时来源，不是业务结果）；
     - trigger 产出删除 ``context.payload.approvals``（预置通道随载荷回显）；
+    - subgraph 产出递归剔除子层同类运行期值（见 ``_normalize_subgraph``）；
     - 任意层级删除 M10 span 元数据键 ``traceId/spanId/parentSpanId/graphVersion``
       （随机 id 与版本标注不参与逐节点比对）。
     业务键（order_id 等）不受影响。
@@ -37,7 +38,34 @@ def normalize(
         if isinstance(context, dict) and isinstance(context.get("payload"), dict):
             payload = {k: v for k, v in context["payload"].items() if k != "approvals"}
             value = {**value, "context": {**context, "payload": payload}}
+    elif node_type == "subgraph" and isinstance(value, dict):
+        value = _normalize_subgraph(value)
     return _normalize(value, tool)
+
+
+def _normalize_subgraph(value: Any, *, is_payload: bool = False) -> Any:
+    """子图步骤产出：按子层节点自述的 ``mode`` 递归剔除运行期值。
+
+    子图产出把子层各节点产出嵌在 ``outputs`` 里，逐节点归一化规则须下潜到该层：
+    ``mode=="human_approval"`` 删 ``resolvedBy``、``payload.approvals`` 删预置通道回显、
+    ``mode=="subgraph"`` 整条丢 ``trace``（人读日志，内嵌 ``(来源)`` 等运行期值，
+    业务结果在 ``outputs`` 里另有比对）。嵌套子图按同一规则递归。
+    """
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        mode = value.get("mode")
+        for key, item in value.items():
+            if key == "trace" and mode == "subgraph":
+                continue
+            if is_payload and key == "approvals":
+                continue
+            if key == "resolvedBy" and mode == "human_approval":
+                continue
+            out[key] = _normalize_subgraph(item, is_payload=(key == "payload"))
+        return out
+    if isinstance(value, list):
+        return [_normalize_subgraph(item) for item in value]
+    return value
 
 
 def _normalize(value: Any, tool: str | None) -> Any:
@@ -61,15 +89,55 @@ def _normalize(value: Any, tool: str | None) -> Any:
     return value
 
 
-def preset_approvals(steps: list[RecordStep]) -> dict[str, str]:
-    """从 baseline human_approval 步骤抽取 {node_id: decision}，供回放 inputs.approvals 预置。"""
+def preset_approvals(
+    steps: list[RecordStep],
+    *,
+    subgraphs: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, str]:
+    """从 baseline 步骤抽取 ``{node_id: decision}``，供回放 inputs.approvals 预置。
+
+    顶层 human_approval 步骤键为裸 node id；子图内审批经 ``subgraphs``（录制快照
+    ``{graphId 原文: raw}``）递归下潜，键为路径限定 ``"sub-1/human-1"``（04 §5.11），
+    与 loader ``_scope_approvals`` 的下发口径逐字对应。缺快照/引用缺失/形状异常时
+    该子树静默跳过（保持旧行为，不抛错）。
+    """
     presets: dict[str, str] = {}
     for step in steps:
         if step.node_type == "human_approval":
             decision = step.output.get("decision")
             if isinstance(decision, str):
                 presets[step.node_id] = decision
+        elif step.node_type == "subgraph":
+            _collect_nested_approvals(step.output, f"{step.node_id}/", subgraphs or {}, presets)
     return presets
+
+
+def _collect_nested_approvals(
+    subgraph_output: Any,
+    prefix: str,
+    subgraphs: dict[str, dict[str, Any]],
+    presets: dict[str, str],
+) -> None:
+    """按录制快照的节点类型，从 subgraph 步骤产出里递归抽取审批决策（键带路径前缀）。"""
+    if not isinstance(subgraph_output, dict):
+        return
+    raw = subgraphs.get(subgraph_output.get("graphId"))
+    outputs = subgraph_output.get("outputs")
+    if not isinstance(raw, dict) or not isinstance(outputs, dict):
+        return
+    for node in raw.get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        node_id = node.get("id")
+        child_output = outputs.get(node_id) if isinstance(node_id, str) else None
+        if not isinstance(node_id, str) or not isinstance(child_output, dict):
+            continue
+        if node.get("type") == "human_approval":
+            decision = child_output.get("decision")
+            if isinstance(decision, str):
+                presets[f"{prefix}{node_id}"] = decision
+        elif node.get("type") == "subgraph":
+            _collect_nested_approvals(child_output, f"{prefix}{node_id}/", subgraphs, presets)
 
 
 def dedupe_steps(steps: list[RecordStep]) -> list[RecordStep]:

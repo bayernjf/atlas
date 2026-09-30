@@ -33,7 +33,7 @@ def _replay_one(
         anchor, clock_note = clock_anchor(case)
         seed, rng_note = seed_anchor(case)
         inputs = dict(case.inputs or {})
-        presets = preset_approvals(case.steps)
+        presets = preset_approvals(case.steps, subgraphs=case.subgraphs)
         if presets:
             approvals = dict(inputs.get("approvals") or {})
             approvals.update(presets)

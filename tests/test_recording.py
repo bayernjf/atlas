@@ -214,6 +214,78 @@ def test_preset_approvals_ignores_non_human_steps():
     assert preset_approvals(steps) == {}
 
 
+# ---------- 打包 ZF：子图内审批的路径限定预置与子图产出归一化（04 §5.11） ----------
+
+def _subgraph_step(node_id: str, graph_id: str, outputs: dict, trace: list | None = None) -> RecordStep:
+    return RecordStep(
+        node_id=node_id,
+        node_type="subgraph",
+        output={
+            "mode": "subgraph",
+            "graphId": graph_id,
+            "status": "success",
+            "outputs": outputs,
+            "trace": trace or [],
+        },
+    )
+
+
+def test_preset_approvals_recurses_into_subgraph_snapshot():
+    """子图内审批经录制快照递归下潜，键为路径限定 "sub-1/human-1"（U1019）。"""
+    steps = [
+        _human_step("human-top", "approved"),
+        _subgraph_step("sub-1", "child-1", {
+            "human-1": {"mode": "human_approval", "decision": "rejected", "resolvedBy": "human"},
+            "sub-2": {
+                "mode": "subgraph", "graphId": "grand-1", "status": "success", "trace": [],
+                "outputs": {"human-2": {"mode": "human_approval", "decision": "approved"}},
+            },
+        }),
+    ]
+    snapshots = {
+        "child-1": {"nodes": [
+            {"id": "human-1", "type": "human_approval"},
+            {"id": "sub-2", "type": "subgraph"},
+        ]},
+        "grand-1": {"nodes": [{"id": "human-2", "type": "human_approval"}]},
+    }
+    assert preset_approvals(steps, subgraphs=snapshots) == {
+        "human-top": "approved",
+        "sub-1/human-1": "rejected",
+        "sub-1/sub-2/human-2": "approved",
+    }
+    # 无快照（旧用例）→ 只取顶层，不猜子层类型
+    assert preset_approvals(steps) == {"human-top": "approved"}
+    # 快照缺引用 / 产出形状异常 → 该子树静默跳过，不抛错
+    assert preset_approvals(steps, subgraphs={}) == {"human-top": "approved"}
+    assert preset_approvals([_subgraph_step("sub-1", "child-1", {})],
+                            subgraphs={"child-1": {"nodes": "bad"}}) == {}
+
+
+def test_normalize_subgraph_strips_nested_runtime_values():
+    """subgraph 产出按子层 mode 递归剔除运行期值，业务键原样保留（U1020）。"""
+    output = {
+        "mode": "subgraph", "graphId": "child-1", "status": "success",
+        "trace": ["human-1: approved (human) → ok"],
+        "outputs": {
+            "trigger-1": {"context": {"payload": {
+                "order_id": "12399", "approvals": {"human-1": "approved"}}}},
+            "human-1": {"mode": "human_approval", "decision": "approved",
+                        "target": "ok", "resolvedBy": "human", "token": "tok-1"},
+            "ok": {"result": {"status": "SIMULATED"}, "action_status": "SUCCESS"},
+        },
+    }
+    got = normalize(output, None, "subgraph")
+    assert "trace" not in got, "子层人读日志（内嵌决策来源）不参与比对"
+    assert got["outputs"]["human-1"] == {
+        "mode": "human_approval", "decision": "approved", "target": "ok"}
+    assert got["outputs"]["trigger-1"]["context"]["payload"] == {"order_id": "12399"}
+    assert got["outputs"]["ok"] == {"result": {"status": "SIMULATED"}, "action_status": "SUCCESS"}
+    # 顶层节点归一化规则不受影响（回归对照）
+    assert normalize({"mode": "human_approval", "decision": "approved", "resolvedBy": "human"},
+                     None, "human_approval") == {"mode": "human_approval", "decision": "approved"}
+
+
 # ---------- dedupe_steps ----------
 
 def test_dedupe_steps_keeps_last_occurrence_and_position():

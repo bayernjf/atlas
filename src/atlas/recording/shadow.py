@@ -23,7 +23,7 @@ from __future__ import annotations
 import threading
 from collections import deque
 from datetime import datetime, timezone
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from pydantic import BaseModel, Field
 
@@ -95,13 +95,27 @@ class ShadowRun(BaseModel):
 # --- 纯函数 -----------------------------------------------------------------------
 
 
-def preset_all_approvals(graph: GraphDSL) -> dict[str, str]:
-    """影子运行预置：全部 human_approval 节点 approved 秒过（docs/33 §3.1，零 loader 改动）。"""
-    return {
-        node.id: "approved"
-        for node in graph.nodes
-        if node.type == "human_approval"
-    }
+def preset_all_approvals(
+    graph: GraphDSL,
+    *,
+    resolver: Callable[[str], GraphDSL | None] | None = None,
+) -> dict[str, str]:
+    """影子运行预置：全部 human_approval 节点 approved 秒过（docs/33 §3.1，零 loader 改动）。
+
+    传入 ``resolver`` 时递归下潜子图，键为路径限定 ``"sub-1/human-1"``（与 loader
+    ``_scope_approvals`` 口径一致），使子图内审批同样秒过、不阻塞影子运行。
+    """
+    presets = {node.id: "approved" for node in graph.nodes if node.type == "human_approval"}
+    if resolver is not None:
+        for node in graph.nodes:
+            if node.type != "subgraph":
+                continue
+            child = resolver(str(node.config.get("graphId", "")))
+            if child is None:
+                continue
+            for key, decision in preset_all_approvals(child, resolver=resolver).items():
+                presets[f"{node.id}/{key}"] = decision
+    return presets
 
 
 def _tool_intent(

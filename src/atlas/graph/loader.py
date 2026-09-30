@@ -857,6 +857,7 @@ def _make_executor(
                     output, message = _execute_subgraph(
                         node,
                         context=context,
+                        trigger_payload=trigger_payload,
                         registry=registry,
                         decision_client=decision_client,
                         condition_classifier=condition_classifier,
@@ -1270,10 +1271,28 @@ def _namespaced_emit(parent: EventCallback, path: tuple[str, ...]) -> EventCallb
     return _emit
 
 
+def _scope_approvals(approvals: Any, node_id: str) -> dict[str, str]:
+    """把路径限定键（``"sub-1/human-1"``）按当前子图节点重根为本层键（``"human-1"``）。
+
+    04 §5.11：录制回放把子图内审批决策以 ``"sub-1/human-1"`` 形式并入 inputs.approvals。
+    子图重入时剥掉本层前缀再下发，使子图内 _await_human_approval 仍按裸 node id 查表；
+    更深层的 ``"sub-1/sub-2/human-2"`` 保留为 ``"sub-2/human-2"`` 供下一层继续剥。
+    """
+    if not isinstance(approvals, dict):
+        return {}
+    prefix = f"{node_id}/"
+    return {
+        key[len(prefix):]: value
+        for key, value in approvals.items()
+        if isinstance(key, str) and key.startswith(prefix)
+    }
+
+
 def _execute_subgraph(
     node: NodeDSL,
     *,
     context: dict[str, Any],
+    trigger_payload: dict[str, Any] | None = None,
     registry: AdapterRegistry | None,
     decision_client: Any,
     condition_classifier: Any,
@@ -1306,6 +1325,15 @@ def _execute_subgraph(
         debug_controller.push_namespaced_emit(child_emit)
     mapping = node.config.get("inputs") or {}
     child_inputs = {key: render_mapping_value(value, context) for key, value in mapping.items()}
+    # 04 §5.11：把路径限定的预置审批决策（"sub-1/human-1"）重根后下发子图，
+    # 使录制回放/影子/门禁的单份 inputs.approvals 能穿过 subgraph 边界（显式映射优先）。
+    scoped = _scope_approvals((trigger_payload or {}).get("approvals"), node.id)
+    if scoped:
+        explicit = child_inputs.get("approvals")
+        child_inputs["approvals"] = {
+            **(dict(explicit) if isinstance(explicit, dict) else {}),
+            **scoped,
+        }
     # M10：subgraph span（非 internal，折叠后代表整段子图）；子图内部节点 span 标 internal。
     sub_cm = (
         tracer.span(

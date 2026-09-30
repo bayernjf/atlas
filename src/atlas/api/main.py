@@ -2393,7 +2393,7 @@ def create_shadow_run(
     raw_inputs = body.get("inputs") if isinstance(body.get("inputs"), dict) else {}
     # approvals 是运行控制键（不进全局变量、不回记入记录 inputs）。
     inputs = dict(raw_inputs)
-    presets = preset_all_approvals(graph)
+    presets = preset_all_approvals(graph, resolver=_tenant_graph_resolver(services))
     if presets:
         inputs["approvals"] = {**presets, **(inputs.get("approvals") or {})}
     # 事件等待无法在影子中被信号放行：预置空 payload 秒过（docs/47 非目标）。
@@ -2990,7 +2990,7 @@ def replay_recording(
         if payload is not None and payload.inputs_override:
             # 顶层键浅合并（dict 值整体替换）；一次性覆写，不修改已入库用例。
             inputs = {**inputs, **payload.inputs_override}
-        presets = preset_approvals(case.steps)
+        presets = preset_approvals(case.steps, subgraphs=case.subgraphs)
         if presets:
             approvals = dict(inputs.get("approvals") or {})
             approvals.update(presets)

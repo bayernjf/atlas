@@ -17,7 +17,7 @@ from atlas.collaboration.approvals import ApprovalBroker
 from atlas.collaboration.event_waits import EventWaitBroker
 from atlas.graph.dsl import parse_graph
 from atlas.graph.loader import run_graph
-from atlas.recording.replay import collect_steps
+from atlas.recording.replay import collect_steps, compare, preset_approvals
 
 
 def _tool(node_id, name, tool="op-after", params=None):
@@ -170,34 +170,37 @@ def test_nested_subgraph_path_accumulates():
         assert ev.get("subgraphPath") == ["subgraph-outer"]
 
 
+def _approval_child_raw() -> dict:
+    """子图 raw JSON（录制快照与 preset_approvals 递归下潜用）。"""
+    return {
+        "version": 1,
+        "variables": [],
+        "nodes": [
+            {"id": "c-trigger", "type": "trigger", "name": "ct",
+             "config": {"triggerType": "manual"}},
+            {"id": "c-approve", "type": "human_approval", "name": "子图内审批",
+             "config": {
+                 "summary": "子图内退款审批",
+                 "approver": "客服主管",
+                 "timeoutSeconds": 30,
+                 "onTimeout": "reject",
+                 "approvedTarget": "c-yes",
+                 "rejectedTarget": "c-no",
+             }},
+            _tool("c-yes", "子通过侧", tool="op-approve"),
+            _tool("c-no", "子拒绝侧", tool="op-reject"),
+        ],
+        "edges": [
+            {"id": "ce1", "source": "c-trigger", "target": "c-approve"},
+            {"id": "ce2", "source": "c-approve", "target": "c-yes"},
+            {"id": "ce3", "source": "c-approve", "target": "c-no"},
+        ],
+    }
+
+
 def _approval_child():
     """子图内含一个 human_approval（双出口），审批通过走 c-yes。"""
-    return parse_graph(
-        {
-            "version": 1,
-            "variables": [],
-            "nodes": [
-                {"id": "c-trigger", "type": "trigger", "name": "ct",
-                 "config": {"triggerType": "manual"}},
-                {"id": "c-approve", "type": "human_approval", "name": "子图内审批",
-                 "config": {
-                     "summary": "子图内退款审批",
-                     "approver": "客服主管",
-                     "timeoutSeconds": 30,
-                     "onTimeout": "reject",
-                     "approvedTarget": "c-yes",
-                     "rejectedTarget": "c-no",
-                 }},
-                _tool("c-yes", "子通过侧", tool="op-approve"),
-                _tool("c-no", "子拒绝侧", tool="op-reject"),
-            ],
-            "edges": [
-                {"id": "ce1", "source": "c-trigger", "target": "c-approve"},
-                {"id": "ce2", "source": "c-approve", "target": "c-yes"},
-                {"id": "ce3", "source": "c-approve", "target": "c-no"},
-            ],
-        }
-    )
+    return parse_graph(_approval_child_raw())
 
 
 def test_in_subgraph_approval_payload_uses_shared_broker():
@@ -325,3 +328,79 @@ def test_parent_outputs_shape_unchanged():
     assert set(sub.keys()) >= {"mode", "graphId", "status", "outputs", "trace"}
     assert sub["mode"] == "subgraph"
     assert "c-tool" in sub["outputs"]
+
+
+def test_scope_approvals_reroots_one_level_only():
+    """打包 ZF（04 §5.11）：路径限定键按当前子图节点重根，裸键不跨边界（U1021）。
+
+    裸键不下发是刻意的：父子图常用同名节点 id（如 ``human-1``），无前缀转发会串味。
+    """
+    from atlas.graph.loader import _scope_approvals
+
+    approvals = {
+        "human-top": "approved",
+        "subgraph-1/c-approve": "approved",
+        "subgraph-1/sub-2/c-approve": "rejected",
+        "other-1/c-approve": "rejected",
+    }
+    assert _scope_approvals(approvals, "subgraph-1") == {
+        "c-approve": "approved",
+        "sub-2/c-approve": "rejected",
+    }
+    assert _scope_approvals(approvals, "other-1") == {"c-approve": "rejected"}
+    assert _scope_approvals(approvals, "absent-1") == {}
+    assert _scope_approvals(None, "subgraph-1") == {}
+    # 节点 id 是另一路径的前缀但本身没有斜杠分隔 → 不算本层
+    assert _scope_approvals({"subgraph-1": "approved"}, "subgraph-1") == {}
+
+
+def test_subgraph_approval_replay_is_deterministic():
+    """打包 ZF（04 §5.11）：子图内审批的基线决策经路径限定预置回放——不挂起、逐节点一致（U1022）。"""
+    parent = _parent_with_subgraph()
+    resolver = {"g-child": _approval_child()}.get
+
+    broker = ApprovalBroker()
+    emit, take_steps = collect_steps()
+    stop = threading.Event()
+
+    def approve_when_pending():
+        while not stop.is_set():
+            for pending in broker.list_pending():
+                broker.resolve(pending["token"], "approved", resolved_by="human")
+            time.sleep(0.01)
+
+    worker = threading.Thread(target=approve_when_pending, daemon=True)
+    worker.start()
+    baseline = run_graph(
+        parent, graph_id="g-parent", graph_resolver=resolver,
+        approval_broker=broker, emit=emit,
+    )
+    stop.set()
+    worker.join(timeout=5)
+    steps = take_steps()
+
+    child = baseline["outputs"]["subgraph-1"]["outputs"]
+    assert child["c-approve"]["decision"] == "approved"
+    assert child["c-approve"]["resolvedBy"] == "human", "基线为真人工放行"
+
+    presets = preset_approvals(steps, subgraphs={"g-child": _approval_child_raw()})
+    assert presets == {"subgraph-1/c-approve": "approved"}
+
+    replay_emit, replay_take = collect_steps()
+    started = time.time()
+    replay = run_graph(
+        parent, graph_id="g-parent", graph_resolver=resolver,
+        approval_broker=ApprovalBroker(),
+        inputs={"approvals": dict(presets)}, emit=replay_emit,
+    )
+    elapsed = time.time() - started
+    replayed = replay["outputs"]["subgraph-1"]["outputs"]
+    assert replayed["c-approve"]["decision"] == "approved"
+    assert replayed["c-approve"]["resolvedBy"] == "input", "预置命中须走 input 通道"
+    assert elapsed < 10, "预置命中应秒回，不得阻塞到子图内审批超时（timeoutSeconds=30）"
+
+    report = compare(
+        steps, replay_take(), tools_by_node={},
+        baseline_status=baseline["status"], replay_status=replay["status"],
+    )
+    assert report["matches"] is True, report["steps"]

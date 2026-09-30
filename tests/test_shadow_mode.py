@@ -239,6 +239,64 @@ def test_preset_all_approvals_covers_human_nodes():
     assert set(presets) == human_nodes
 
 
+def test_preset_all_approvals_recurses_into_subgraph_with_resolver():
+    """打包 ZF（docs/33 §3.1）：带 resolver 时递归下潜子图，键为路径限定（U1023）。"""
+    parent = parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "p-trigger", "type": "trigger", "name": "pt",
+                 "config": {"triggerType": "manual"}},
+                {"id": "sub-1", "type": "subgraph", "name": "子流程",
+                 "config": {"graphId": "g-child", "inputs": {}}},
+                {"id": "human-top", "type": "human_approval", "name": "顶层审批",
+                 "config": {"summary": "s", "timeoutSeconds": 30, "onTimeout": "reject",
+                            "approvedTarget": "t-yes", "rejectedTarget": "t-no"}},
+                {"id": "t-yes", "type": "tool_call", "name": "通过",
+                 "config": {"tool": "op-approve"}},
+                {"id": "t-no", "type": "tool_call", "name": "拒绝",
+                 "config": {"tool": "op-reject"}},
+            ],
+            "edges": [
+                {"id": "pe1", "source": "p-trigger", "target": "sub-1"},
+                {"id": "pe2", "source": "sub-1", "target": "human-top"},
+                {"id": "pe3", "source": "human-top", "target": "t-yes"},
+                {"id": "pe4", "source": "human-top", "target": "t-no"},
+            ],
+        }
+    )
+    child = parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "c-trigger", "type": "trigger", "name": "ct",
+                 "config": {"triggerType": "manual"}},
+                {"id": "c-approve", "type": "human_approval", "name": "子图内审批",
+                 "config": {"summary": "s", "timeoutSeconds": 30, "onTimeout": "reject",
+                            "approvedTarget": "c-yes", "rejectedTarget": "c-no"}},
+                {"id": "c-yes", "type": "tool_call", "name": "子通过",
+                 "config": {"tool": "op-approve"}},
+                {"id": "c-no", "type": "tool_call", "name": "子拒绝",
+                 "config": {"tool": "op-reject"}},
+            ],
+            "edges": [
+                {"id": "ce1", "source": "c-trigger", "target": "c-approve"},
+                {"id": "ce2", "source": "c-approve", "target": "c-yes"},
+                {"id": "ce3", "source": "c-approve", "target": "c-no"},
+            ],
+        }
+    )
+
+    presets = preset_all_approvals(parent, resolver={"g-child": child}.get)
+    assert presets == {"human-top": "approved", "sub-1/c-approve": "approved"}
+    # 无 resolver（旧调用）→ 只覆盖顶层，行为不变
+    assert preset_all_approvals(parent) == {"human-top": "approved"}
+    # resolver 取不到子图 → 静默跳过该子树
+    assert preset_all_approvals(parent, resolver=lambda gid: None) == {"human-top": "approved"}
+
+
 # ---------- U256 子图内写能力同样短路（运行级语义透传） ----------
 
 
