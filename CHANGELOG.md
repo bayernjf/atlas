@@ -3,6 +3,16 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### fix(recording)：子图内挂起点的预置决策跨边界下发（2026-10-01 ✅ 落码收口，commits 63589d6／44dd4c4／本收口 docs 提交；docs/04 §5.7／§5.11；零迁移／端点／错误码／依赖／ADR，DSL 与前端零改动；新缓做 D47）
+
+- **一句话**：图里只要有一个**子图**（含嵌套）内含 `human_approval`，录制回放/发布门禁/影子模式**整条契约失效**，而且是**静默错结果**——回放会真挂起到审批超时（10–3600s，`sql-approval-write` 模板级 3600s）再按超时分支走，`compare.matches=false`；门禁对好版本误报 `blocked`。§5.11「回放不挂起等待人工」与 docs/33 §3.1「预置全部 human_approval 秒过」在子图内**全部落空**。
+- **根因（三处叠加，各自都"对"）**：① `replay.collect_steps` 只收顶层 `node_end`（A 包刻意排除 `subgraphPath` 事件，口径正确但没给子层留第二条收集路）⇒ 子图内审批**根本不进用例**，`preset_approvals` 恒为 `{}`；② `_execute_subgraph` 构造 `child_inputs` 时**从不向子图下发 `approvals`** ⇒ 即便有预置也到不了子层；③ 影子 `preset_all_approvals` 只遍历顶层 `graph.nodes`。
+- **关键判别（决定了这不是"§5.7 写错了"）**：§5.7 原文「run inputs 预置与超时自动决策仍可用」**并不假**——图作者显式写 `inputs: {approvals: "{{trigger-1.context.payload.approvals}}"}` 时预置确实穿得过（探针实测 `resolvedBy=input`、0.16s）。缺陷在录制/回放/影子/门禁**没有自动补上这条映射**。
+- **实现（纯超集三层）**：`preset_approvals(steps, *, subgraphs=None)` 按录制快照（D26-b 的 `case.subgraphs`）递归下潜抽决策，键取**路径限定** `"sub-1/human-1"`（父图 subgraph 节点 id 逐层前缀，与 A 包 `[subgraphPath] nodeId` 上屏口径同构）；loader 新增 `_scope_approvals` 按当前 subgraph 节点 id 剥一层前缀重根，`_execute_subgraph` 经新 `trigger_payload` 参数并入 `child_inputs["approvals"]`；`normalize(..., "subgraph")` 按子层节点自述的 `mode` 递归剔运行期值（子层 `resolvedBy`、任意层级 `payload.approvals` 回显、子图 `trace` 人读行）；影子 `preset_all_approvals(graph, *, resolver=None)` 同口径递归。
+- **为什么是"路径限定"而不是"直接整体下传"**：父子图**常用同名节点 id**（两边都叫 `human-1` 是常态），无前缀转发会串味——这正是「裸键刻意不跨边界」的原因；路径限定键同时复用了 A 包已有的显示口径，前端零改动。
+- **门（先跑后写，取实跑）**：U1019–U1023（分三文件：纯函数 3 ＋ 端到端 2）。其中 **U1022 是修复前会真挂起 10s 的反向判别**——基线经进程内 broker 真人工放行（`resolvedBy="human"`）→ 快照抽得 `{"subgraph-1/c-approve": "approved"}` → 回放只给 `inputs.approvals`，断言子图内 `resolvedBy="input"`、`elapsed < 10`（`timeoutSeconds=30`）、`compare.matches is True`。全量 **2123 passed / 135 skipped / 0 failed**（308.15s，exit 0，净增 5）。
+- **状态口径**：`04 §5.7／§5.11` 补记唯一权威口径（03 索引同步）；**子图内 `wait` 的预置同族未做**——`inputs.waitEvents` 同样只在顶层生效、`_execute_subgraph` 不下发，且 wait 的 `resolvedBy` 不在归一化白名单里，登记 **D47**。不解除任何缓做（D26 影子/线上旁路录制、D20 持久化中断原样）。
+
 ### docs(audit)：项目级代码审计与产品功能全景＝docs/89（2026-09-30，只读勘察、零代码改动）
 
 - 五路并行只读勘察（核心运行时／存储持久化／API 与安全／集成与运维／前端）产出 **docs/89**：第一部分代码审计＝量化全景（31 包/33.6k 行后端、33.3k 行前端、143 路由、9 种节点、8 个 adapter、10 个 Repository Protocol、34 个迁移、后端 2118 passed/135 skipped、前端 749 passed/2 skipped）＋架构分层与三个承重抽象（Repository Protocol／Capability+Permission／GraphState）＋五域分域审计（各含结构·亮点·风险，带 `文件:行号`）＋五横切主题（租户隔离·安全面·中断恢复与单副本三道闸·测试策略·性能）＋**14 条风险总表**（P0 2 条、P1 7 条、P2 5 条）＋三档改进建议（立即/近期/长期）；第二部分功能全景＝**20 个功能域地图**（能力/入口/后端落点/成熟度）＋5 段典型用户旅程＋四级成熟度分级（真实可用／演示模拟／未接线／缓做）。
