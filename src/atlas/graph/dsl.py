@@ -39,6 +39,8 @@ MAX_LOOP_ITERATIONS = 100
 MIN_PARALLEL_BRANCHES = 2
 MAX_PARALLEL_BRANCHES = 10
 PARALLEL_JOIN_STRATEGIES = ("all_success", "all_completed", "any_success")
+#: 挂起点（执行时写中断帧并阻塞等待）：parallel 分支区域内不得出现，见 _validate_parallel_config。
+SUSPEND_NODE_TYPES = ("human_approval", "wait")
 MIN_WAIT_SECONDS = 1
 MAX_WAIT_SECONDS = 3600  # docs/54：duration 同步 sleep 上限 600→3600（更长改用可中断 event）
 MIN_EVENT_WAIT_SECONDS = 1
@@ -845,6 +847,16 @@ def _validate_parallel_config(
         for member in region_triggers:
             add_graph(f"{prefix} 分支区域内不能包含触发器节点：{member}",
                       code="PAR_TRIGGER_IN_REGION", params={"member": member})
+        region_suspends = sorted(
+            member for member in region if node_types.get(member) in SUSPEND_NODE_TYPES
+        )
+        for member in region_suspends:
+            add_graph(
+                f"{prefix} v1 分支区域内不能包含挂起点（审批/等待节点）：{member}"
+                "（续跑尾图从挂起节点向前推导，不含并行构造与兄弟分支，汇聚网关会缺失、"
+                "兄弟分支产出静默丢失；区域内挂起需并发区域级检查点，见 D46）",
+                code="PAR_SUSPEND_IN_REGION", params={"member": member},
+            )
 
         for member in sorted(region):
             for leak in outgoing.get(member, set()) - region - {join_target}:
