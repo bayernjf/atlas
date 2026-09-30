@@ -286,6 +286,85 @@ def test_normalize_subgraph_strips_nested_runtime_values():
                      None, "human_approval") == {"mode": "human_approval", "decision": "approved"}
 
 
+# ---------- 打包 ZG：子图内 tool 节点的归一化规则跨边界补齐（04 §5.11） ----------
+
+def _subgraph_http_output(graph_id: str, date_value: str) -> dict:
+    return {
+        "mode": "subgraph", "graphId": graph_id, "status": "success", "trace": [],
+        "outputs": {"http-1": _http_step("http-1", date_value).output},
+    }
+
+
+def test_normalize_subgraph_applies_tool_rule_via_snapshot():
+    """子图内 http/request 产出经录制快照识别 tool 后删 result.headers.date（U1024）。"""
+    snapshots = {"child-1": {"nodes": [
+        {"id": "http-1", "type": "tool_call", "config": {"tool": "http/request"}},
+    ]}}
+    got = normalize(_subgraph_http_output("child-1", "Mon, 15 Sep 2026 01:00:00 GMT"),
+                    None, "subgraph", subgraphs=snapshots)
+    headers = got["outputs"]["http-1"]["result"]["headers"]
+    assert "date" not in headers
+    assert headers["content-type"] == "application/json"
+    assert got["outputs"]["http-1"]["result"]["body"]["order_id"] == "12345"
+    # 反向对照：无快照 → 不知子层 tool → 逐字回退旧行为（date 保留）
+    raw = normalize(_subgraph_http_output("child-1", "Mon, 15 Sep 2026 01:00:00 GMT"),
+                    None, "subgraph")
+    assert raw["outputs"]["http-1"]["result"]["headers"]["date"]
+
+
+def test_normalize_subgraph_tool_rule_only_for_http_and_recurses():
+    """非 http 的 tool 不受影响；嵌套子图同口径递归（U1024）。"""
+    snapshots = {
+        "child-1": {"nodes": [
+            {"id": "http-1", "type": "tool_call", "config": {"tool": "http/request"}},
+            {"id": "msg-1", "type": "tool_call", "config": {"tool": "message/send"}},
+            {"id": "sub-2", "type": "subgraph"},
+        ]},
+        "grand-1": {"nodes": [
+            {"id": "http-2", "type": "tool_call", "config": {"tool": "http/request"}},
+        ]},
+    }
+    output = {
+        "mode": "subgraph", "graphId": "child-1", "status": "success", "trace": [],
+        "outputs": {
+            "http-1": _http_step("http-1", "Mon, 15 Sep 2026 01:00:00 GMT").output,
+            "msg-1": _message_step("msg-1", "uuid-1", "2026-09-15T01:00:00+00:00").output,
+            "sub-2": {
+                "mode": "subgraph", "graphId": "grand-1", "status": "success", "trace": [],
+                "outputs": {"http-2": _http_step("http-2", "Mon, 15 Sep 2026 09:00:00 GMT").output},
+            },
+        },
+    }
+    got = normalize(output, None, "subgraph", subgraphs=snapshots)
+    # http 专属规则下潜到子层
+    assert "date" not in got["outputs"]["http-1"]["result"]["headers"]
+    # 非 http 工具不受影响：message 记录仍按 sent_at/uuid id 规则剔除，业务键保留
+    assert "sent_at" not in got["outputs"]["msg-1"]["result"]
+    assert "id" not in got["outputs"]["msg-1"]["result"]
+    assert got["outputs"]["msg-1"]["result"]["channel"] == "email"
+    # 嵌套子图按同一口径递归
+    assert "date" not in got["outputs"]["sub-2"]["outputs"]["http-2"]["result"]["headers"]
+
+
+def test_compare_subgraph_nested_http_date_matches_only_with_snapshot():
+    """仅子层 http date 不同的两次运行：给快照才判一致（U1025，含反向对照）。"""
+    snapshots = {"child-1": {"nodes": [
+        {"id": "http-1", "type": "tool_call", "config": {"tool": "http/request"}},
+    ]}}
+    baseline = [RecordStep(node_id="sub-1", node_type="subgraph",
+                           output=_subgraph_http_output("child-1", "Mon, 15 Sep 2026 01:00:00 GMT"))]
+    replay = [RecordStep(node_id="sub-1", node_type="subgraph",
+                         output=_subgraph_http_output("child-1", "Mon, 15 Sep 2026 09:00:00 GMT"))]
+    with_snapshot = compare(baseline, replay, tools_by_node={"sub-1": None},
+                            baseline_status="completed", replay_status="completed",
+                            subgraphs=snapshots)
+    assert with_snapshot["matches"] is True
+    # 反向对照：无快照 → 不知子层 tool → 旧行为判不一致（门禁误报 blocked 的来源）
+    without = compare(baseline, replay, tools_by_node={"sub-1": None},
+                      baseline_status="completed", replay_status="completed")
+    assert without["matches"] is False
+
+
 # ---------- dedupe_steps ----------
 
 def test_dedupe_steps_keeps_last_occurrence_and_position():
