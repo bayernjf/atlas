@@ -20,5 +20,6 @@
   "LOOP_ITEMS_TOO_LARGE": "遍历数组长度超过上限",
   "FOREACH_COLLECT_MISSING": "聚合节点无产出，跳过本轮收集",
   "LLM_DECISION_UNAVAILABLE": "生产环境未配置 LLM 决策器，AI 决策节点中止了本次运行（不再静默降级为规则兜底）",
+  "LLM_CLASSIFIER_UNAVAILABLE": "生产环境未配置 LLM 分类器，条件节点中止了本次运行（不再静默改走默认分支）",
   "RUNTIME_UNEXPECTED": "运行时发生未预期错误"
 }

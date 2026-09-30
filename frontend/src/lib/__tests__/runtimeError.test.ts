@@ -46,14 +46,20 @@ describe('运行期错误码 i18n（docs/60 G1）', () => {
     )
   })
 
-  it('LLM_* 码（LLM 决策不可用）双语映射，英文态不含汉字', () => {
+  it('LLM_* 码（LLM 决策/分类不可用）双语映射，英文态不含汉字', () => {
     expect(resolveRuntimeError('LLM_DECISION_UNAVAILABLE', undefined, '兜底')).toContain(
       '生产环境未配置 LLM 决策器',
+    )
+    expect(resolveRuntimeError('LLM_CLASSIFIER_UNAVAILABLE', undefined, '兜底')).toContain(
+      '生产环境未配置 LLM 分类器',
     )
     changeLanguage('en-US')
     const en = resolveRuntimeError('LLM_DECISION_UNAVAILABLE', undefined, '兜底')
     expect(en).toContain('No LLM decision provider is configured in production')
     expect(en).not.toMatch(/[一-鿿]/)
+    const enCond = resolveRuntimeError('LLM_CLASSIFIER_UNAVAILABLE', undefined, '兜底')
+    expect(enCond).toContain('No LLM classifier is configured in production')
+    expect(enCond).not.toMatch(/[一-鿿]/)
   })
 
   it('TYPE_MISMATCH 运算符类型错误：双语 detail 组装、类型码本地化', () => {
