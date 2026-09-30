@@ -48,7 +48,10 @@ from atlas.llm.decision import (
     RuleBasedDecisionClient,
     get_decision_client,
 )
-from atlas.llm.condition_classifier import get_condition_classifier
+from atlas.llm.condition_classifier import (
+    OfflineConditionClassifier,
+    get_condition_classifier,
+)
 from atlas.message.adapter import MessageHarnessAdapter
 from atlas.message.service import MessageService
 from atlas.security.bootstrap import demo_surface_enabled
@@ -148,11 +151,27 @@ class AiDecisionUnavailable(Exception):
         self.node_id = node_id
 
 
+class ConditionClassifierUnavailable(Exception):
+    """prod 档要执行 condition(llm) 却没有可用的 LLM 分类器（docs/73 W5-5.4）。
+
+    与 AiDecisionUnavailable 同形：离线档（未配 `LITELLM_MODEL`）不是"模型这次调用失败"
+    而是"根本没接模型"，此时静默走 defaultTarget 会把全部流量悄悄改道、run 却仍报
+    completed，只在 llm_errors 留一行文案——图内若无 ai_decision 节点就再没有门兜住。
+    """
+
+    code = "LLM_CLASSIFIER_UNAVAILABLE"
+
+    def __init__(self, node_id: str, message: str) -> None:
+        super().__init__(f"{self.code}: {message}")
+        self.node_id = node_id
+
+
 def runtime_error_meta(exc: Exception) -> dict[str, Any]:
     """docs/60 G1：运行期终态异常归一化为机器可读码（中文 error 字符串仍由调用方原样保留）。
 
     WaitNodeFailure 携带既有 WAIT_* 5 码与 nodeId；ConditionEvalError 携带 COND_* 码族与
-    params；AiDecisionUnavailable 携带 LLM_DECISION_UNAVAILABLE 与 nodeId；其余未预期异常
+    params；AiDecisionUnavailable 携带 LLM_DECISION_UNAVAILABLE 与 nodeId；
+    ConditionClassifierUnavailable 携带 LLM_CLASSIFIER_UNAVAILABLE 与 nodeId；其余未预期异常
     统一 RUNTIME_UNEXPECTED。返回 errorCode/errorParams 两键，供 run failed 结果与 SSE error
     帧并行下发（纯超集，旧 error 字段不变）。
     """
@@ -161,6 +180,8 @@ def runtime_error_meta(exc: Exception) -> dict[str, Any]:
     if isinstance(exc, ConditionEvalError):
         return {"errorCode": exc.code, "errorParams": dict(exc.params)}
     if isinstance(exc, AiDecisionUnavailable):
+        return {"errorCode": exc.code, "errorParams": {"nodeId": exc.node_id}}
+    if isinstance(exc, ConditionClassifierUnavailable):
         return {"errorCode": exc.code, "errorParams": {"nodeId": exc.node_id}}
     return {"errorCode": "RUNTIME_UNEXPECTED", "errorParams": {}}
 
@@ -1545,10 +1566,23 @@ _CONTEXT_LIMIT = 12000
 def _execute_llm_condition(
     node: NodeDSL, state: GraphState, context: dict[str, Any], *, classifier: Any
 ) -> dict[str, Any]:
-    """LLM 单次分类选唯一分支（04 §5.2 追加段，docs/48）；任何失败 fail-safe 走 defaultTarget。"""
+    """LLM 单次分类选唯一分支（04 §5.2 追加段，docs/48）；任何失败 fail-safe 走 defaultTarget。
+
+    prod 档例外（docs/73 W5-5.4）：判据是**分类器类型**而非异常类型——离线档＝根本没接
+    模型，与 ai_decision 的规则兜底同族；真接了模型但这次调用失败（网络/配额/坏 JSON/
+    标签越界）以及回放的 ScriptedConditionClassifier 全部保持 fail-safe 走 defaultTarget。
+    """
     config = node.config
     branches = config.get("branches", [])
     errors: list[str] = []
+
+    if not demo_surface_enabled() and isinstance(classifier, OfflineConditionClassifier):
+        raise ConditionClassifierUnavailable(
+            node.id,
+            "生产环境未配置 LLM 分类器，condition 节点拒绝静默降级到默认分支；"
+            "请配置 LITELLM_MODEL 与 OPENAI_API_KEY / OPENAI_BASE_URL，"
+            "或显式设置 ATLAS_ENABLE_DEMO_MOCK=1 以在演示实例上启用离线分支。",
+        )
 
     try:
         context_text = json.dumps(

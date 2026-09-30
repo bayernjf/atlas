@@ -46,6 +46,7 @@ from atlas.graph.dsl import GraphDSL, GraphValidationError, parse_graph, valid_e
 from atlas.graph.diff import diff_graph, diff_summary
 from atlas.graph.loader import (
     AiDecisionUnavailable,
+    ConditionClassifierUnavailable,
     RunSuperseded,
     WaitNodeFailure,
     _tool_permissions,
@@ -476,6 +477,24 @@ def ai_decision_unavailable_handler(
 ) -> JSONResponse:
     # prod 档 ai_decision 拿不到 LLM 决策器（docs/73 W1-1.1）：结构化 500 携带
     # LLM_DECISION_UNAVAILABLE 与 nodeId，与 WaitNodeFailure 同形，前端按语言渲染文案。
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": {
+                "code": exc.code,
+                "message": str(exc),
+                "nodeId": exc.node_id,
+            }
+        },
+    )
+
+
+@app.exception_handler(ConditionClassifierUnavailable)
+def condition_classifier_unavailable_handler(
+    _request: Request, exc: ConditionClassifierUnavailable
+) -> JSONResponse:
+    # prod 档 condition(llm) 拿不到 LLM 分类器（docs/73 W5-5.4）：同形结构化 500 携带
+    # LLM_CLASSIFIER_UNAVAILABLE 与 nodeId，前端按 LLM_ 前缀渲染双语文案。
     return JSONResponse(
         status_code=500,
         content={
