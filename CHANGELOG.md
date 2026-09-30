@@ -3,12 +3,19 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### docs(mvp)：prod 档真实 LLM 调用演练——docs/73 §1.1 判据前半达成，并新立缺口 5.4（2026-09-30，docs-only；零代码改动／零迁移／零端点／零依赖／无 ADR）
+
+- **一句话**：docs/73 1.1 剩下的那半句「任何 LLM 驱动的运行在 **prod** 下发出 ≥1 次真实 LiteLLM 调用」已用一次性脚本（`/tmp`，**未入库**）验真；同一次演练又量出一处同族的静默降级，新立 **5.4** 待拍板。
+- **〔跑〕演练（prod 档）**：`ATLAS_ENV=prod` ＋ 真 `LITELLM_MODEL`/`OPENAI_API_KEY`/`OPENAI_BASE_URL`（取自本地 `.env`，只读不打印）⇒ `assert_prod_secrets()` 通过、`demo_surface_enabled()=False`、`get_decision_client()→LiteLLMDecisionClient`、`get_condition_classifier()→LiteLLMConditionClassifier`；`trigger → condition(llm) → ai_decision` 跑 `completed`，condition `mode=llm`／`branch=质量类`／`llm_errors=[]`，`ai_decision` `source="llm:openai/agnes-2.5-flash"`／`action=approve_refund`／`confidence=0.95`。对照组（prod ＋ 无模型）抛 `AiDecisionUnavailable`（`LLM_DECISION_UNAVAILABLE`／`nodeId=ai-2`）⇒ 上批落的门是活的且不误伤真客户端。
+- **新缺口 5.4（⬜ 待拍板）**：prod 无模型档下 `condition(llm)` 节点**不报错**，静默走 `defaultTarget` 且 run 仍 `completed`（`llm_errors` 只留一行「LLM 未配置，语义分支无法求值」）；图内若无 `ai_decision` 节点（condition 直接接工具），这条路径不被新门兜住——与 R8（裸名工具名静默 `SIMULATED`）和 `ai_decision` 静默走规则**同一族**。**未自行落码的理由**：会改变既有合法画法的运行结果，属运行期行为变更；且上批已把「不纳入」写进文档，反向须用户拍板（建议与 `ai_decision` 同形的 prod fail-closed，共用 `demo_surface_enabled()`）。
+- **状态口径**：docs/73 §1.1 **仍 🟡**（判据后半目前只对 `ai_decision` 成立，待 5.4 收口才可勾）；B 档未动的仍是 **1.2／1.3／4.1** 三条。本批零代码改动、零迁移／端点／错误码／依赖、无 ADR。
+
 ### feat(runtime)：prod 档 `ai_decision` 禁静默走规则兜底（2026-09-30 ✅ 落码收口，commits 4113333／c2a4241／747bfed；docs/73 §1.1 后半；零迁移／端点／错误码／依赖／ADR）
 
 - **一句话**：prod 未配 `LITELLM_MODEL` 时 `ai_decision` 节点拿到的是 `RuleBasedDecisionClient`（不读 `prompt`/`model`，只按写死退款规则给结论、`confidence` 恒 1.0），此前照常"执行成功"——图上写着「AI 决策」、实际按硬编码规则判，**不报错不告警**，下游真实副作用照着假结论执行。现在该 run **显式 failed**，且不下发任何决策结论。
 - **口径（用户拍板「运行时 fail-closed（推荐）」）**：**进程照常启动**（prod 的非 LLM 部署不该被拦），只在节点真要执行且决策器是规则兜底时失败——与 R8（`_execute_tool` 的演示适配器门）同形，共用 `security/bootstrap.demo_surface_enabled()` 单一判定源；唯一开闸方式＝`ATLAS_ENABLE_DEMO_MOCK=1`（演示实例）。
 - **实现**：`graph/loader.py` 新增 `AiDecisionUnavailable`（`code="LLM_DECISION_UNAVAILABLE"`、携 `node_id`）＋`ai_decision` 分支入口门；`runtime_error_meta` 增一支归一为 `{errorCode, errorParams:{nodeId}}`（同步 500 与 SSE `event: error` 帧并行下发，旧 `error` 字段不变）；`api/main.py` 增 `ai_decision_unavailable_handler` ⇒ 结构化 500 `detail:{code,message,nodeId}`；前端 `runtimeError.ts` 的 `RUNTIME_CODE_RE` 加 `LLM_` 前缀、`runtime.json` 补双语键（英文态零汉字）。
-- **边界照实**：① 只管 `ai_decision`——`condition` 节点的 `OfflineConditionClassifier` **恒抛** `ConditionClassifyError`、loader 已 fail-safe 走 `defaultTarget`，本就没有"假装判过"的面，故未纳入；② 非 prod 零变化（`read_env_profile()` 缺省 `dev`）；③ 判据里「prod 档发出 ≥1 次真实 LiteLLM 调用」**仍未验**——本批验的是"缺模型时不静默"，不是"prod 真的调通了"。
+- **边界照实**：① 只管 `ai_decision`——`condition` 节点的 `OfflineConditionClassifier` **恒抛** `ConditionClassifyError`、loader 已 fail-safe 走 `defaultTarget`，本就没有"假装判过"的面，故未纳入〔**2026-09-30 更正：本断句后半为假**——prod 无模型档下 `condition(llm)` 不抛错、静默走 `defaultTarget` 且 run 仍 `completed`，已立 docs/73 明细 **5.4**；见上方 docs 条目〕；② 非 prod 零变化（`read_env_profile()` 缺省 `dev`）；③ 判据里「prod 档发出 ≥1 次真实 LiteLLM 调用」**已于 2026-09-30 prod 档演练验真**——见上方 docs 条目。
 - **门（先跑后写，取实跑）**：U1006–U1010（新建 `tests/test_ai_decision_prod_gate.py`，5 例）——prod＋规则决策器抛码/`nodeId`/可行动文案；prod＋非规则决策器照常 `completed`；`ATLAS_ENABLE_DEMO_MOCK=1` 恢复规则兜底；dev 零变化；`runtime_error_meta`＋handler 的 HTTP 形状。全量 **2110 passed / 135 skipped / 0 failed**（332.78s，exit 0）；前端 749 passed / 2 skipped。docs/73 §1.1 仍 🟡（后半已落码、判据前半未验），B 档缺口仍 3 条。
 
 ### test(conftest)：套件不再吃 litellm 从 `.env` 读进来的真实 LLM 凭据（2026-09-30 ✅ 收口，commit 6a919e9；零产品代码改动）
