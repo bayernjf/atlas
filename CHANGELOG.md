@@ -3,6 +3,15 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### feat(parallel)：并行分支区域内的挂起点改为编译期拒绝（2026-09-30 ✅ 落码收口，commits 5cb5a7e／50ac0fd／本收口 docs 提交；docs/04 §5.4 末权威条目；零迁移／端点／依赖／ADR，前端零改动；新缓做 D46）
+
+- **一句话**：`human_approval`／`wait` 落在 parallel 分支区域内时，**不挂起**一切正常（审批由 `inputs.approvals` 秒过、兄弟分支照常执行、汇聚一次），但**挂起后从帧续跑**会静默出错——兄弟分支产出消失、run 仍报 `completed`（实测：基线 outputs 含 `tool-a`，续跑不含且 status=completed）。
+- **根因**：续跑尾图 `_tail_subgraph` 从挂起节点向前 BFS，parallel 是它的**祖先**、同超步兄弟分支是**旁系**，两者都不进尾图 ⇒ 合成汇聚网关 `__join__<parallel-id>` 根本没被编译进去 ⇒ `joinTarget` 退化成普通节点直接执行。（与打包 ZC 的循环体情形不同：那里 loop 节点可经回边从挂起节点前向到达，故 `3815ebb` 能修续跑；这里**不存在前向路径**，续跑无法修复。）
+- **为什么是「关死」而不是「修一下」**：挂起帧在挂起节点**开始时**写就，此刻同超步兄弟分支**已执行完、副作用已发生**（实测兄弟分支已发 `node_end`）但产出因超步未结束而**从未提交**。重跑＝副作用重复、不重跑＝分支永久缺失，两者都与 docs/62 §8.1「宁可永久卡住，也不重复扣款」冲突——是安全性问题，不是取舍。
+- **实现**：`dsl.py` 新增 `SUSPEND_NODE_TYPES = ("human_approval", "wait")`；`_validate_parallel_config` 在 `PAR_TRIGGER_IN_REGION` 之后对分支区域内的挂起点报错 `PAR_SUSPEND_IN_REGION`（`params` 带 `member`，`owner` 由 `add_graph` 注入）。**零运行时改动**；前端零改动（未本地化校验码经 `apiClient.ts` 回落后端中文文案，同 ZC）。
+- **门（先跑后写，取实跑）**：U1017–U1018（并入 `tests/test_graph_loader.py`，2 例）——区域内 `human_approval`／`wait` 各断言中文文案含「分支区域内不能包含挂起点」、码 `PAR_SUSPEND_IN_REGION`、`params == {"owner": "par-1", "member": "human-1"/"wait-1"}`；**各带一条反向对照**＝同一节点类型放在汇聚目标之后（区域外）时编译通过且跑完，兄弟分支产出齐全。全量 **2118 passed / 135 skipped / 0 failed**（325.85s，exit 0）。
+- **状态口径**：`04 §5.4` 新增唯一权威条目（§5.5／§5.6 原文「可位于 parallel 分支区域内」已同步改口）；真正「区域内挂起＋跨重启续跑」需**并发区域级检查点**，登记 **D46**（与 D16 并行 map-reduce 同批最省事）。不解除任何缓做、不动单副本三道闸。
+
 ### feat(runtime)：prod 档 `condition(llm)` 禁静默走默认分支（2026-09-30 ✅ 落码收口，commits fcd8989／2210f0b／7cf7dc3／32cf0a5；docs/73 明细 5.4 选项①；零迁移／端点／依赖／ADR）
 
 - **一句话**：prod 未配 `LITELLM_MODEL` 时 `get_condition_classifier()` 返 `OfflineConditionClassifier`，它的 `classify()` 恒抛 `ConditionClassifyError`，loader 把 label 落成 `__default__` 走 `defaultTarget`——**节点不报错、run 仍 `completed`**，只在 `llm_errors` 里留一行「LLM 未配置，语义分支无法求值」；图内若无 `ai_decision` 节点，全部流量就被静默改道而运行状态报绿。与 `ai_decision` 的规则兜底同族（prod 档静默降级＋状态报绿）。
