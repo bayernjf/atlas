@@ -761,6 +761,8 @@ def get_condition_classifier() -> ConditionClassifier: ...
 
 无新增 REST、无新增错误码：分类失败全部 fail-safe 路由 defaultTarget，原因进节点产出 `llm_errors` 与 trace。
 
+> **prod 档 fail-closed（docs/73 W5-5.4，2026-09-30 落码）**：`ATLAS_ENV=prod` 且未开 demo 面（`ATLAS_ENABLE_DEMO_MOCK≠1`）时，`conditionMode=llm` 节点若拿到 `OfflineConditionClassifier`（＝未配 `LITELLM_MODEL`）**不再静默走 `defaultTarget`**，抛 `ConditionClassifierUnavailable`（码 **`LLM_CLASSIFIER_UNAVAILABLE`**、携 `nodeId`）。同步 `/api/graphs/{id}/run` 返 **500** `detail:{code,message,nodeId}`（形状同 `WAIT_*`/`COND_*`/`LLM_DECISION_UNAVAILABLE` 通道，处理器 `condition_classifier_unavailable_handler`）；流式 `/run/stream` 以 `event: error` 帧收尾（`runtime_error_meta` 归一化）。中文 `message` 含 `LITELLM_MODEL`／`OPENAI_API_KEY`／`OPENAI_BASE_URL` 与开闸开关 `ATLAS_ENABLE_DEMO_MOCK=1`，为兜底真相；前端 `lib/runtimeError.ts` 的 `RUNTIME_CODE_RE` 已纳 `LLM_` 前缀（零正则改动），按码映射 `runtime.json` zh/en。**判据是分类器类型而非异常类型**：`ScriptedConditionClassifier`（回放，docs/83）与 `LiteLLMConditionClassifier` 真调用失败保持原 fail-safe；**非 prod 零变化**；**进程照常启动**（prod 的非 LLM 部署不被拦）。语义见 06 §6.23、契约权威 docs/48 §3.4 追加段。
+
 ### 3.19 定时等待动态时长内部接口（durationMode=dynamic v1；docs/49，2026-09-23 立项并落码收口 8580fcb/4eaaddd）
 
 ```python
