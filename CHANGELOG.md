@@ -3,6 +3,13 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### fix(recording)：子图内 tool 节点的归一化规则跨边界补齐（2026-10-01 ✅ 落码收口，commits 440b9f9／9a92cc5／本收口 docs 提交；docs/04 §5.11／docs/03；零迁移／端点／错误码／依赖／ADR，DSL 与前端零改动；不新增缓做）
+
+- **一句话**：图里只要有一个**子图**（含嵌套）内含 `http/request` 工具节点，录制回放/发布门禁的逐节点比对**恒判不一致**——真实 HTTP 服务器（uvicorn 亦然）每次响应都带 `Date`，而该键在子图内**从未被归一化剔除**，于是「同一草稿、同一基线」两次运行在该键上恒不相等，门禁对好版本**误报 `blocked`**、单用例回放**误报不一致**。
+- **根因**：`normalize` 的 tool 专属规则（`tool=="http/request"` 删 `result.headers.date`）只按**顶层** `tools_by_node` 生效（`gate._replay_one`／回放端点都由父图顶层节点构造 `{node.id: node.config.tool}`）；子图产出走 `_normalize_subgraph`，**只按子层节点自述的 `mode` 递归、拿不到子层节点的 tool**。缺陷面＝`tools_by_node` 只由父图顶层节点构造 ＋ `case.steps` 只含顶层步骤 ＋ 子图内工具节点既不入 `build_tool_mocks`（mock 只收顶层 `tool_call`）也不进 `tools_by_node`，三者叠加使该规则在子图内**从未生效**；docs/03 原文虽把「HTTP headers date」列进子图产出应施的「同一套规则」，实现却按 `mode` 递归、静默漏掉这条 tool 键规则。
+- **实现（纯超集）**：`normalize`／`_normalize_subgraph` 增可选 `subgraphs`（D26-b 录制快照 `{graphId 原文: raw}`），下潜 `outputs` 时经新 `_child_tools` 按快照里子层 `type=="tool_call"` 节点取其 `config.tool`，对该子层产出补施同一套 tool 规则（嵌套子图按同一口径递归）；**无快照／引用缺失／形状异常时逐字回退今日 `mode` 递归**（旧用例行为不变）。`compare` 增可选 `subgraphs` 并透传，`gate._replay_one` 与回放端点均传 `case.subgraphs`。非 http 工具（`message/send` 等）不受影响。
+- **门（先跑后写，取实跑）**：U1024–U1025（`tests/test_recording.py`，纯函数），各带**反向对照**——U1024 无快照时 `date` 保留（旧行为逐字不变）、非 http 工具与业务键不受影响、嵌套子图同口径；U1025 仅子层 `date` 不同的两次运行**给快照判一致、不给快照判不一致**（后者正是门禁误报的来源）。全量 **2126 passed / 135 skipped / 0 failed**（220.27s，exit 0，净增 3）。
+- **状态口径**：`04 §5.11` 补记唯一权威口径（03 索引同步）；**不新增缓做**——子图内 `wait` 的预置同族缺口已在打包 ZF 登记 D47（与本批不同族），本条不解除任何缓做。
 ### fix(recording)：子图内挂起点的预置决策跨边界下发（2026-10-01 ✅ 落码收口，commits 63589d6／44dd4c4／本收口 docs 提交；docs/04 §5.7／§5.11；零迁移／端点／错误码／依赖／ADR，DSL 与前端零改动；新缓做 D47）
 
 - **一句话**：图里只要有一个**子图**（含嵌套）内含 `human_approval`，录制回放/发布门禁/影子模式**整条契约失效**，而且是**静默错结果**——回放会真挂起到审批超时（10–3600s，`sql-approval-write` 模板级 3600s）再按超时分支走，`compare.matches=false`；门禁对好版本误报 `blocked`。§5.11「回放不挂起等待人工」与 docs/33 §3.1「预置全部 human_approval 秒过」在子图内**全部落空**。
