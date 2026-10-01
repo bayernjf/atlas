@@ -3,6 +3,15 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### docs(adr)：MCP server 面选型拍板 T33（2026-10-01，docs-only；零代码／测试／迁移／依赖改动；不解除 D45）
+
+- **一句话**：把 [docs/10](10-技术选型决策记录.md) §4 **T33** 从「🟡 提案（待拍板）」翻为「✅ 已拍板」，MCP server 面选型正式生效——**①B 引官方 `mcp` Python SDK v2（钉 `mcp>=2,<3`）＋ ②stdio 传输 ＋ ③只读/plan-only 工具面**（用户指令「按这个方案来，先执行 T33 拍板」）。
+- **为什么选 B**：MCP 现行 revision `2026-07-28` 属**季度级破坏性演进**（`2025-03-26 → 2025-06-18 → 2025-11-25 → 2026-07-28`；已删 `initialize` 握手与协议级会话、新增 `server/discover`、工具 schema 改完整 JSON Schema 2020-12、Streamable HTTP 删 GET 流与会话可续传），客户端必然**混版**；官方 v2（`mcp` 2.0.0）随新 spec 同期发布、**一个端点同时应答新旧两版**（旧客户端 `initialize` 回退由 SDK 兜住），自研子集须自行追协议形状、维护成本不划算 ⇒ 选 B。
+- **三处同步（AGENTS.md 硬约束，已即时完成）**：docs/10 §4 T33 状态翻转＋§1 决策总览新增「对外协议出入口」行；docs/02 第三部分技术选型总览新增同名行（A2A＋MCP server 面）；docs/09 新增 `src/atlas/mcp/` 树位＋待定项清单第 16 条（MCP server 面包位与形态）。
+- **缓做登记**：docs/14 **D45** 加 2026-10-01 追记二（MCP 选型已拍板、代码仍无，**D45 不解除**）＋新增 **D49** 承接未选面（①A 自研子集／②HTTP 远端／③含副作用工具／④resources·prompts·扩展，各带触发条件）；docs/08 立选型拍板条。
+- **边界照实**：本拍板**不往 `pyproject.toml` 加 `mcp`**——依 **T31**「依赖必须与代码同事实」，依赖与 `src/atlas/mcp/` 落码**同批**加（`src/` 对 `mcp` 仍零命中）；`docs/9x` 形状权威与 `src/atlas/mcp/` 落码**另立批**。**校正留痕**：T33 初稿按旧版 MCP 形状写（`initialize` 握手／`Mcp-Session-Id`／SSE 可续传），核实 `2026-07-28` 后重写并反向修正建议（①A 自研子集 → ①B 官方 SDK v2），前序两原子 `a824b8a`／`9041158`。
+- **门（先跑后写，数字取实跑）**：`tests/test_handoff_integrity.py` **3 passed**、`tests/test_migration_convention.py` **4 passed**、`tests/test_a2a_vassal.py` **13 passed**（合计 **20 passed**，1.13s，退出 0）。
+- **状态口径**：docs/10／02／09／08／14 同步、handoff Active **#90** 与 Quality gate 小节。**不 push；不解除 D45；未落任何 `mcp` 代码／依赖**。
 ### docs(a2a)：A2A 第二阶段第一批收口（2026-10-01，docs-only；零代码／测试／迁移／依赖改动；不解除任何缓做、W2 不关账）
 
 - **一句话**：把 [docs/90](90-A2A执行Agent面-Zeus联邦接入-v1批契约设计.md) §7「第二阶段待点工项」四项里**工程内可闭环的两项正式收口**，另两项明确保留待外部条件／拍板。
