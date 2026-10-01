@@ -28,6 +28,7 @@ from atlas.iam.deps import session_store, tenant_registry
 from atlas.storage.pg import PgRunsStore
 from atlas.storage.recovery import (
     claim_frame_for_resume,
+    interruption_state,
     list_tenant_frames,
     load_pending_frames,
     make_frame_sink,
