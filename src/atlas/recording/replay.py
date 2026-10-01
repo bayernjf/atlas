@@ -16,7 +16,11 @@ _TRACE_KEYS = ("traceId", "spanId", "parentSpanId", "graphVersion")
 
 
 def normalize(
-    value: Any, tool: str | None = None, node_type: str | None = None
+    value: Any,
+    tool: str | None = None,
+    node_type: str | None = None,
+    *,
+    subgraphs: dict[str, Any] | None = None,
 ) -> Any:
     """深拷贝后递归剔除运行时易变值。
 
@@ -27,6 +31,8 @@ def normalize(
       决策来源 input/timeout/human 属运行时来源，不是业务结果）；
     - trigger 产出删除 ``context.payload.approvals``（预置通道随载荷回显）；
     - subgraph 产出递归剔除子层同类运行期值（见 ``_normalize_subgraph``）；
+      传入录制快照 ``subgraphs`` 时，子层 ``tool_call`` 节点的 tool 专属规则
+      （``http/request`` 删 ``result.headers.date``）也一并下潜（打包 ZG）；
     - 任意层级删除 M10 span 元数据键 ``traceId/spanId/parentSpanId/graphVersion``
       （随机 id 与版本标注不参与逐节点比对）。
     业务键（order_id 等）不受影响。
@@ -39,21 +45,54 @@ def normalize(
             payload = {k: v for k, v in context["payload"].items() if k != "approvals"}
             value = {**value, "context": {**context, "payload": payload}}
     elif node_type == "subgraph" and isinstance(value, dict):
-        value = _normalize_subgraph(value)
+        value = _normalize_subgraph(value, subgraphs=subgraphs)
     return _normalize(value, tool)
 
 
-def _normalize_subgraph(value: Any, *, is_payload: bool = False) -> Any:
+def _child_tools(
+    subgraph_output: dict[str, Any], subgraphs: dict[str, Any] | None
+) -> dict[str, str | None]:
+    """从录制快照（D26-b ``{graphId 原文: raw}``）取子层 ``{node_id: tool}``（仅 tool_call）。
+
+    无快照／引用缺失／形状异常时返 ``{}``——调用方据此回退纯 ``mode`` 递归（打包 ZG）。
+    """
+    raw = (subgraphs or {}).get(subgraph_output.get("graphId"))
+    if not isinstance(raw, dict):
+        return {}
+    tools: dict[str, str | None] = {}
+    for node in raw.get("nodes") or []:
+        if not isinstance(node, dict) or node.get("type") != "tool_call":
+            continue
+        node_id = node.get("id")
+        config = node.get("config")
+        tool = config.get("tool") if isinstance(config, dict) else None
+        if isinstance(node_id, str):
+            tools[node_id] = tool if isinstance(tool, str) else None
+    return tools
+
+
+def _normalize_subgraph(
+    value: Any,
+    *,
+    is_payload: bool = False,
+    subgraphs: dict[str, Any] | None = None,
+) -> Any:
     """子图步骤产出：按子层节点自述的 ``mode`` 递归剔除运行期值。
 
     子图产出把子层各节点产出嵌在 ``outputs`` 里，逐节点归一化规则须下潜到该层：
     ``mode=="human_approval"`` 删 ``resolvedBy``、``payload.approvals`` 删预置通道回显、
     ``mode=="subgraph"`` 整条丢 ``trace``（人读日志，内嵌 ``(来源)`` 等运行期值，
     业务结果在 ``outputs`` 里另有比对）。嵌套子图按同一规则递归。
+
+    打包 ZG：``mode`` 只标运行期来源、不含节点类型，故 tool 专属规则（``http/request``
+    删 ``result.headers.date``）拿不到子层节点的 tool。传入录制快照 ``subgraphs`` 时，
+    按快照里子层 ``tool_call`` 节点的 ``config.tool`` 对 ``outputs`` 逐节点补施该规则；
+    无快照时逐字回退纯 ``mode`` 递归（旧用例行为不变）。
     """
     if isinstance(value, dict):
         out: dict[str, Any] = {}
         mode = value.get("mode")
+        tools = _child_tools(value, subgraphs) if mode == "subgraph" else {}
         for key, item in value.items():
             if key == "trace" and mode == "subgraph":
                 continue
@@ -61,10 +100,19 @@ def _normalize_subgraph(value: Any, *, is_payload: bool = False) -> Any:
                 continue
             if key == "resolvedBy" and mode == "human_approval":
                 continue
-            out[key] = _normalize_subgraph(item, is_payload=(key == "payload"))
+            if key == "outputs" and isinstance(item, dict) and tools:
+                out[key] = {
+                    node_id: _normalize(
+                        _normalize_subgraph(child, subgraphs=subgraphs),
+                        tools.get(node_id),
+                    )
+                    for node_id, child in item.items()
+                }
+                continue
+            out[key] = _normalize_subgraph(item, is_payload=(key == "payload"), subgraphs=subgraphs)
         return out
     if isinstance(value, list):
-        return [_normalize_subgraph(item) for item in value]
+        return [_normalize_subgraph(item, subgraphs=subgraphs) for item in value]
     return value
 
 
@@ -163,8 +211,13 @@ def compare(
     tools_by_node: dict[str, str | None],
     baseline_status: str,
     replay_status: str,
+    subgraphs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """序列先比对（多走/漏走节点 = 分支漂移），再逐节点归一化深等；产出 ReplayReport。"""
+    """序列先比对（多走/漏走节点 = 分支漂移），再逐节点归一化深等；产出 ReplayReport。
+
+    ``subgraphs``（D26-b 录制快照）透传给 ``normalize``，使子图内 ``tool_call`` 节点的
+    tool 专属归一化规则（打包 ZG）随比对下潜；缺省时行为与旧版逐字一致。
+    """
     base_steps = dedupe_steps(baseline)
     replay_steps = dedupe_steps(replay_steps)
     replay_by_id = {step.node_id: step for step in replay_steps}
@@ -180,8 +233,8 @@ def compare(
             all_match = False
             continue
         tool = tools_by_node.get(step.node_id)
-        expected = normalize(step.output, tool, step.node_type)
-        actual = normalize(replayed.output, tool, step.node_type)
+        expected = normalize(step.output, tool, step.node_type, subgraphs=subgraphs)
+        actual = normalize(replayed.output, tool, step.node_type, subgraphs=subgraphs)
         notes: list[str] = []
         if step.node_type != replayed.node_type:
             notes.append(f"节点类型不一致（baseline={step.node_type}，replay={replayed.node_type}）")

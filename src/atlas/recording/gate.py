@@ -60,6 +60,7 @@ def _replay_one(
             tools_by_node=tools_by_node,
             baseline_status=case.status,
             replay_status=result["status"],
+            subgraphs=case.subgraphs,
         )
         if clock_note:
             report["clock_note"] = clock_note
