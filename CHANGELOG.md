@@ -9,8 +9,8 @@
 - **[docs/25](docs/25-行业趋势对照与能力现状盘点.md) §① 与 §3 净结论表各追加〔2026-10-01 勘误〕**：「MCP／A2A 生态协议＝仍无」已被推翻——**A2A 面已落码**（`src/atlas/a2a/`，ADR T32，`src/atlas/` 对 `a2a` 有真实命中）＋**MCP 选型已拍板**（ADR T33，`src/atlas/mcp/` 代码未落）；缓做登记随之更新：对外协议出入口归 **D45**、未选面归 **D49**、A2A 任务台账持久化归 **D48**。
 - **[docs/89](docs/89-项目级代码审计与功能全景.md) 基线行追加勘误**：本行「31 个包／34 个迁移／143 条 REST 路由」按今日口径应读作 **33 个包／035 迁移／149 条路由**（A2A ＋1 包＋4 路由；reflection ＋1 包＋2 只读路由＋迁移 035），原文数字保留不改；其余结论（代码级证据、风险总表、功能域地图）不受影响——两批均为纯新增面，未改动被审计的既有代码。
 - **[README.md](README.md)「当前阶段」对齐**：批链范围由 docs/27–61 扩到 **docs/27–91**，新增「**对外协议出入口**」（A2A 已落码／MCP 契约已立）与「**自我进化**」（反思 L2 v1 已落码）两条 bullet。
-- **[docs/13](docs/13-测试用例清单.md) 补登 A2A v1 用例**：`tests/test_a2a_vassal.py` **13 例**（非 U 号，沿用 docs/90「测试不占 U 号」先例）。
-- **门（先跑后写，数字取实跑）**：`tests/test_handoff_integrity.py` **3 passed** ＋ `tests/test_migration_convention.py` **4 passed** ＝ **7 passed**（0.80s，退出 0）；另复核 `tests/test_a2a_vassal.py` **13 passed**。
+- **[docs/13](docs/13-测试用例清单.md) 补登 A2A v1 用例**：`tests/test_a2a_execution_agent.py` **13 例**（非 U 号，沿用 docs/90「测试不占 U 号」先例）。
+- **门（先跑后写，数字取实跑）**：`tests/test_handoff_integrity.py` **3 passed** ＋ `tests/test_migration_convention.py` **4 passed** ＝ **7 passed**（0.80s，退出 0）；另复核 `tests/test_a2a_execution_agent.py` **13 passed**。
 - **状态口径**：本批为 **纯 docs 勘误**，不改任何代码／缓存状态。核对过而未改的：docs/14 D45／D48／D49（已最新）、docs/12 L917–922（reflection＋A2A 路由**已在**）、docs/00 地图表、handoff Project documents。**不 push；不解除 D45；MCP 代码另立批落**。
 ### docs(mcp)：MCP server 面 v1 契约立项（2026-10-01，docs-only；零代码／测试／迁移／依赖改动；不解除 D45）
 
@@ -20,7 +20,7 @@
 - **铁律与三条刻意设计**：只调只读投影、不写不跑图不调 LLM、不裁决审批；工具**不带** `tenant_id` 入参（单租户绑定 `ATLAS_MCP_TENANT_ID`，缺失/未知即 fail-closed 拒启）⇒ 结构上无跨租户读取面。① `atlas_list_interruptions` 投影**剔除 `resumeToken`**（对外面收窄，理由 docs/89 A-8）；② 日志**必走 stderr**（stdio stdout 只能含 JSON-RPC 帧）；③ **不 `import api.main`**（避免拉起 FastAPI/调度/恢复扫描，违单副本纪律），复用既有 `iam.registry` 只读投影。
 - **§7 待点工 5 项**（均带推荐）与 **§8 落码批原子序 5 步**（依赖＋代码同批、测试不占 U 号、docs 收口）。
 - **边界照实**：本批**不动 `pyproject.toml`**（依 T31「依赖必须与代码同事实」，依赖与 `src/atlas/mcp/` 同批落）、`src/` 对 `mcp` 仍零命中、**不解除 D45**。**另同步 5 处 `docs/9x-MCP server 面 v1 契约设计.md` 占位引用改真实文件名**（docs/09 L106·L318、docs/10 §4 T33、docs/14 D49、docs/08 立项条＋handoff #90 行）。
-- **门（先跑后写，数字取实跑）**：`tests/test_handoff_integrity.py` **3 passed**、`tests/test_migration_convention.py` **4 passed**、`tests/test_a2a_vassal.py` **13 passed**（合计 **20 passed**，1.12s，退出 0）。
+- **门（先跑后写，数字取实跑）**：`tests/test_handoff_integrity.py` **3 passed**、`tests/test_migration_convention.py` **4 passed**、`tests/test_a2a_execution_agent.py` **13 passed**（合计 **20 passed**，1.12s，退出 0）。
 - **状态口径**：docs/00 文档地图表＋docs/08 立项条＋docs/09／10／14 引用同步、handoff Active **#91** 与 Quality gate 小节。**不 push；不解除 D45；未落任何 `mcp` 代码／依赖**。
 ### docs(adr)：MCP server 面选型拍板 T33（2026-10-01，docs-only；零代码／测试／迁移／依赖改动；不解除 D45）
 
@@ -29,25 +29,25 @@
 - **三处同步（AGENTS.md 硬约束，已即时完成）**：docs/10 §4 T33 状态翻转＋§1 决策总览新增「对外协议出入口」行；docs/02 第三部分技术选型总览新增同名行（A2A＋MCP server 面）；docs/09 新增 `src/atlas/mcp/` 树位＋待定项清单第 16 条（MCP server 面包位与形态）。
 - **缓做登记**：docs/14 **D45** 加 2026-10-01 追记二（MCP 选型已拍板、代码仍无，**D45 不解除**）＋新增 **D49** 承接未选面（①A 自研子集／②HTTP 远端／③含副作用工具／④resources·prompts·扩展，各带触发条件）；docs/08 立选型拍板条。
 - **边界照实**：本拍板**不往 `pyproject.toml` 加 `mcp`**——依 **T31**「依赖必须与代码同事实」，依赖与 `src/atlas/mcp/` 落码**同批**加（`src/` 对 `mcp` 仍零命中）；`docs/9x` 形状权威与 `src/atlas/mcp/` 落码**另立批**。**校正留痕**：T33 初稿按旧版 MCP 形状写（`initialize` 握手／`Mcp-Session-Id`／SSE 可续传），核实 `2026-07-28` 后重写并反向修正建议（①A 自研子集 → ①B 官方 SDK v2），前序两原子 `a824b8a`／`9041158`。
-- **门（先跑后写，数字取实跑）**：`tests/test_handoff_integrity.py` **3 passed**、`tests/test_migration_convention.py` **4 passed**、`tests/test_a2a_vassal.py` **13 passed**（合计 **20 passed**，1.13s，退出 0）。
+- **门（先跑后写，数字取实跑）**：`tests/test_handoff_integrity.py` **3 passed**、`tests/test_migration_convention.py` **4 passed**、`tests/test_a2a_execution_agent.py` **13 passed**（合计 **20 passed**，1.13s，退出 0）。
 - **状态口径**：docs/10／02／09／08／14 同步、handoff Active **#90** 与 Quality gate 小节。**不 push；不解除 D45；未落任何 `mcp` 代码／依赖**。
 ### docs(a2a)：A2A 第二阶段第一批收口（2026-10-01，docs-only；零代码／测试／迁移／依赖改动；不解除任何缓做、W2 不关账）
 
-- **一句话**：把 [docs/90](90-A2A执行Agent面-Zeus联邦接入-v1批契约设计.md) §7「第二阶段待点工项」四项里**工程内可闭环的两项正式收口**，另两项明确保留待外部条件／拍板。
-- **§7 第 2 项（纯标准 A2A 客户端超集守护复验）勾掉**：以 §6 实测证据为准——Zeus `scripts/acceptance-standard-a2a.mjs`（不认任何 `x-zeus-*`）真机 **exit 0**；首跑暴露的真实超集缺口（rpc 只认 Zeus data part ⇒ 纯 text 被 `-32602` 拒）已由 `255064b` 的 text 首分词兜底修复（见 §4）。常跑守护由 `tests/test_a2a_vassal.py` 两条纯 text part 用例承接。
+- **一句话**：把 [docs/90](90-A2A执行Agent面-Zeus协同决策平台接入-v1批契约设计.md) §7「第二阶段待点工项」四项里**工程内可闭环的两项正式收口**，另两项明确保留待外部条件／拍板。
+- **§7 第 2 项（纯标准 A2A 客户端超集守护复验）勾掉**：以 §6 实测证据为准——Zeus `scripts/acceptance-standard-a2a.mjs`（不认任何 `x-zeus-*`）真机 **exit 0**；首跑暴露的真实超集缺口（rpc 只认 Zeus data part ⇒ 纯 text 被 `-32602` 拒）已由 `255064b` 的 text 首分词兜底修复（见 §4）。常跑守护由 `tests/test_a2a_execution_agent.py` 两条纯 text part 用例承接。
 - **§7 第 3 项（任务持久化）＝明确沿用单副本内存台账**（决策，非遗漏）：A2A 任务为 plan-only 咨询性产物（`cost.llmTokens=0`）、零业务状态零副作用，进程重启丢失至多让调用方重发一次；为此引入持久化＋多副本＝为零业务价值付迁移与副本一致性代价；与 docs/62 单副本硬约束、loom Q150 同口径。**触发复评**＝一旦启用真 LLM／经 A2A 起真实 run（属独立立项），须连同挂起帧幂等（docs/62）一并重估——已登记缓做 **D48**。决策记录 docs/08。
 - **§7 第 1 项（生产部署同口径回归）保留待外部部署条件**（真实域名/TLS/网关、`ATLAS_A2A_TASK_TOKEN` fail-closed）；**第 4 项（多租户机器账号体系）保留待产品/契约口径拍板**（调用方身份／凭证分发轮换／审计归属）。两项本批不勾、**W2 不关账**。
 - **事实订正（非状态变更）**：docs/14 **D45** 原文「MCP／A2A 的协议标准化仍无」在 A2A v1 落码后对 A2A 半边已不成立——加 2026-10-01 追记（原文留痕）；**MCP server 面仍无，D45 仍不解除**。
-- **门（先跑后写，数字取实跑）**：`tests/test_a2a_vassal.py` **13 passed**、`tests/test_handoff_integrity.py` **3 passed**、`tests/test_migration_convention.py` **4 passed**（本批零代码／测试改动，常跑零回归）。
+- **门（先跑后写，数字取实跑）**：`tests/test_a2a_execution_agent.py` **13 passed**、`tests/test_handoff_integrity.py` **3 passed**、`tests/test_migration_convention.py` **4 passed**（本批零代码／测试改动，常跑零回归）。
 - **状态口径**：docs/90 状态行／§7 回填、docs/08 记决策、docs/00 索引、docs/14（D45 追记＋新增 D48）、handoff 同步。**不 push；不解除任何缓做；不动单副本三道闸；未起真实 run／未接真 LLM**。
-### feat(a2a)：A2A 执行 Agent 面 v1＝Zeus 联邦 W2 接入（2026-10-01 ✅ 落码收口，commits ccf6668／39155a7／255064b／3b7e405／本条为补记；形状权威 docs/90；ADR T32；零新依赖／零迁移／前端零改动）
+### feat(a2a)：A2A 执行 Agent 面 v1＝Zeus 协同决策平台 W2 接入（2026-10-01 ✅ 落码收口，commits ccf6668／39155a7／255064b／3b7e405／本条为补记；形状权威 docs/90；ADR T32；零新依赖／零迁移／前端零改动）
 
 - **背景（为什么补记）**：A2A v1 的代码与文档落码当时**漏登记 CHANGELOG**（`feat(a2a)` `ccf6668`／`docs(a2a)` `39155a7`／`fix(a2a)` `255064b`／`docs(a2a)` `3b7e405` 均无本文件条目），与「文档必须与代码同事实」不符，随第二阶段收口一并补齐里程碑追溯。
-- **一句话**：Atlas 首次对外暴露 **A2A 执行面**，按 Zeus 已定型的「标准 A2A ＋一层 `x-zeus-fealty` 契约扩展」接入联邦（W2，与 loom 同波），验证「从零按协议接入」的可复制性。**纯新增、plan-only**。
+- **一句话**：Atlas 首次对外暴露 **A2A 执行面**，按 Zeus 已定型的「标准 A2A ＋一层 `x-zeus-fealty` 契约扩展」接入 Zeus 协同决策平台（W2，与 loom 同波），验证「从零按协议接入」的可复制性。**纯新增、plan-only**。
 - **形状（docs/90 §1–§6 为唯一权威）**：只读公开 Agent Card 三端点（`GET /api/a2a/agent-card`、`/.well-known/agent-card.json`、`/.well-known/agent.json`，三者同卡）＋任务端点 `POST /api/a2a/tasks`（JSON-RPC `tasks/send`／`sendSubscribe`／`get`／`cancel`，SSE 流式帧 `submitted→working→artifact-update→completed(final)`）；两 plan-only skill（`plan-approval-flow`／`diagnose-run`）只回行动方案 artifact；Bearer 保护 `ATLAS_A2A_TASK_TOKEN`（与平台会话 `sess-` 及渠道凭证物理分离，prod 未配即 fail-closed 401，dev/test 放行打 WARNING）。
 - **plan-only 铁律**：不起 run、不改图、不调 LLM（`cost.llmTokens=0`）、不裁决人工审批；任务台账纯内存（单进程／30 分钟 TTL／500 上限，同 loom Q150）。
 - **超集而非闭墙（W2 协议承诺）**：真机守护复验（Zeus `scripts/acceptance-standard-a2a.mjs`，不认任何 `x-zeus-*`）首跑暴露真实缺口——`rpc._parse_skill_and_params` 只认 Zeus data part，纯 text 被 `-32602` 拒，即「只懂标准协议的调用方不可调用」；按 pr-helper `parseSkillAndParams` 口径加**无 data part 时取首个非空 text 首分词作 skill**的兜底（`255064b`）后复跑 **exit 0**（缺必填参数由 skill 层回合法终态 `input-required`、未知 skill `failed`，data/text 均无才 `-32602`）。
-- **门（先跑后写，数字取实跑）**：`tests/test_a2a_vassal.py` **13 passed**（卡片契约／rpc 全生命周期／SSE 成帧与收尾快照／get·cancel／坏 message `-32602`／纯 text 兜底两条／HTTP 三卡片公开＋Bearer 401·200／prod fail-closed）；本批 A2A 净增 13，工作区全量 `pytest` **2161 passed / 136 skipped / 0 failed**（372.49s）。真机协议级联调（uvicorn 127.0.0.1:8933，Zeus 真实 registry＋派发客户端）通过。**Atlas 侧业务链零改动**。
+- **门（先跑后写，数字取实跑）**：`tests/test_a2a_execution_agent.py` **13 passed**（卡片契约／rpc 全生命周期／SSE 成帧与收尾快照／get·cancel／坏 message `-32602`／纯 text 兜底两条／HTTP 三卡片公开＋Bearer 401·200／prod fail-closed）；本批 A2A 净增 13，工作区全量 `pytest` **2161 passed / 136 skipped / 0 failed**（372.49s）。真机协议级联调（uvicorn 127.0.0.1:8933，Zeus 真实 registry＋派发客户端）通过。**Atlas 侧业务链零改动**。
 - **状态口径**：docs/90 形状权威＋ADR **T32**（docs/10 §4）；docs/09 补模块映射、docs/12 补端点清单、docs/00 索引、docs/08 立项＋收口、`.env.example` 加 token 变量、`api/main.py` 挂路由；handoff Active #89 与 Recently shipped。**第二阶段**（生产部署回归、标准客户端超集守护复验、任务持久化、多调用方机器账号）另点工——其中「标准客户端守护复验」与「任务持久化」已在 docs/90 §7 第一批收口（见上一条）。
 ### feat(mcp)：MCP server 面 v1 落码＝第三个对外出入口（2026-10-01 ✅ 落码收口；形状权威 docs/91 §8 原子序；ADR T33；含 `pyproject.toml` 加 `mcp>=2,<3`／零新迁移／零新端点／零新错误码／无新 ADR）
 

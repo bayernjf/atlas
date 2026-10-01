@@ -2,9 +2,9 @@
 
 > 状态：**契约立项（2026-10-01，docs-only；零代码／测试／迁移／依赖改动）**。ADR **T33** 已拍板（见 [docs/10](10-技术选型决策记录.md) §4 T33）：**①B 引官方 `mcp` Python SDK v2（钉 `mcp>=2,<3`）＋ ②stdio 传输 ＋ ③只读/plan-only 工具面**。本文是**形状权威**——把「已拍板的选型」落成可实施的形状契约（工具集、协议边界、装配与租户绑定、验证计划、落码原子序）。**本文不落码、不解除 14 D45**：拍板 ≠ 代码已有，`src/` 对 `mcp` 仍零命中、`pyproject.toml` 仍不加 `mcp`（依 T31「依赖必须与代码同事实」，依赖与 `src/atlas/mcp/` **同批**落）。
 > **〔2026-10-01 落码收口〕**：本文形状权威已**按 §8 原子序完整落码**——`src/atlas/mcp/` 四文件＋`pyproject.toml` 加 `mcp>=2,<3`、`tests/test_mcp_server.py` **13 passed**（U1033–U1045）、后端全量 **2174 passed / 136 skipped / 0 failed**；随批把 `api/main.py` 注册表构造抽至 `harness/runtime.py`、挂起帧投影抽至 `storage/recovery.py`（REST 与 MCP 共用，消除两处漂移）。**D45 随之闭合**（A2A＋MCP 两半均落地，见 [docs/14](14-缓做事项登记表.md) D45 追记三）；未选面（HTTP 远端／写能力／扩展）留 **D49**。原子提交待 push、作者保持用户身份、无 AI co-author。
-> 背景：MCP server 面是 Atlas 的**第三个对外出入口**——前两个是平台 REST（[docs/80](80-外部agent经REST驱动Atlas集成说明.md) 归纳的调用面）与 A2A 执行 Agent 面（[docs/90](90-A2A执行Agent面-Zeus联邦接入-v1批契约设计.md)，ADR T32）。D45 记「外部系统今天经 REST／入站 webhook／OpenAPI 导入三条路已能接，缺的是**协议标准化与工具自描述**」——REST 半边已由 docs/80 补说明、A2A 半边已由 T32 落码，本面即**剩下的 MCP 半边**。
+> 背景：MCP server 面是 Atlas 的**第三个对外出入口**——前两个是平台 REST（[docs/80](80-外部agent经REST驱动Atlas集成说明.md) 归纳的调用面）与 A2A 执行 Agent 面（[docs/90](90-A2A执行Agent面-Zeus协同决策平台接入-v1批契约设计.md)，ADR T32）。D45 记「外部系统今天经 REST／入站 webhook／OpenAPI 导入三条路已能接，缺的是**协议标准化与工具自描述**」——REST 半边已由 docs/80 补说明、A2A 半边已由 T32 落码，本面即**剩下的 MCP 半边**。
 > 协议事实源：[docs/10](10-技术选型决策记录.md) §4 T33 的协议核实记录（modelcontextprotocol.io 规格 **`2026-07-28`**（current）＋该版 changelog ＋ PyPI `mcp` 2.0.0）。**本文不复制协议全文**；冲突时以协议原文与 T33 为准。
-> 结构模板：[docs/90](90-A2A执行Agent面-Zeus联邦接入-v1批契约设计.md)（同族的第二个对外协议入口）。
+> 结构模板：[docs/90](90-A2A执行Agent面-Zeus协同决策平台接入-v1批契约设计.md)（同族的第二个对外协议入口）。
 
 ## 1. 范围与非目标
 
@@ -13,7 +13,7 @@
 1. 一个 **stdio 子进程**形态的 MCP server（客户端拉起、本地进程、无网络监听面），入口 `python -m atlas.mcp`。
 2. 暴露面限 **`server/discover` ＋ `tools/list` ＋ `tools/call`**（现行 revision `2026-07-28` 的**无状态化**形状：无 `initialize` 握手、无协议级会话；新旧两版客户端由**官方 SDK v2** 一个端点同时应答兜住）。
 3. 一个**只读**工具面（若干清单/投影类工具，锚定既有只读 REST 投影，见 §3）——不起 run、不改图、不调 LLM（`cost.llmTokens` 不适用，本面**零模型调用**）、不裁决人工审批。
-4. **单租户绑定**：进程经 env `ATLAS_MCP_TENANT_ID` 绑定唯一租户；工具**不带** `tenant_id` 入参 ⇒ **结构上不存在跨租户读取面**（呼应 [docs/90](90-A2A执行Agent面-Zeus联邦接入-v1批契约设计.md) §7 第 4 项的教训）。
+4. **单租户绑定**：进程经 env `ATLAS_MCP_TENANT_ID` 绑定唯一租户；工具**不带** `tenant_id` 入参 ⇒ **结构上不存在跨租户读取面**（呼应 [docs/90](90-A2A执行Agent面-Zeus协同决策平台接入-v1批契约设计.md) §7 第 4 项的教训）。
 
 **明确不做（v1 非目标，与 T33 的「未选面」逐条对应）**：
 
