@@ -20,7 +20,7 @@
 
 ## 1. 决策与形状
 
-### D-1 同步运行在途被急停 ⇒ **HTTP 200 + `status="cancelled"`**（用户已拍板）
+### D-1 同步运行在途被急停 ⇒ **HTTP 200 + `status="cancelled"`**（用户已决策）
 
 `RunGraphResponse(id=graph_id, status="cancelled", outputs={}, trace=[f"{node_id}: cancelled by user"])`；
 `run_store.finish(run_id, status="cancelled")` ＋ `monitoring.record_run(..., mode="sync", status="cancelled", ...)`，**不调** `evaluate_after_run`。

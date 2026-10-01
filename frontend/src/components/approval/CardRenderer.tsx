@@ -3,7 +3,7 @@
  *
  * CardRenderer：把后端 render_card 的 web 投影落成「只读字段 + 表单 + 动作按钮」。
  * 表单经 FormRenderer 第三来源 source='card'（仅内置控件、扁平 object）；动作按钮
- * 按卡片 actions 渲染，提交前做必填门控，最终以 {actionId, form} 交回上层 POST
+ * 按卡片 actions 渲染，提交前做必填门控，最终以 {actionId, form} 交给上层 POST
  * （服务端 map_action_output 是 decision/comment 的唯一权威）。
  *
  * ApprovalCardGate：按 token 拉取 web 卡片；拉取失败（无卡 / 渲染错误 / 网络）
