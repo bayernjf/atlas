@@ -1059,6 +1059,10 @@ class MemoryRepository(Protocol):
 
 > **M11 记忆端点口径订正（2026-09-19，docs/26；批 4⑩ 2026-09-20 修订）**：上表取代原愿景 `GET/PUT /api/memories/{operator_id}`（memory_config 配置读写，05 §2.4）——五层策略配置随 D35 缓做，operator 维度降为记忆条目 `scope.user_id`，租户由会话 Principal 定。**初版 M11 写入只走图工具 `memory/remember`（手动造数走 `scripts/dev/m11_seed.py`）；docs/28 批 4⑩（`ec0fd81`）起补开 `POST/PUT /api/memories`（operate，source 固定 manual）承担运营手动新建/编辑**——图工具仍是运行时自动写入主路径，REST 为手动补录/纠错通道，删除仍仅 admin。
 
+> **非 REST 对外协议面（A2A / MCP）**：本节 §5 端点表只覆盖 HTTP REST；Atlas 还有两个**非 REST** 对外出入口，均不进平台 `sess-` 会话与租户鉴权链。
+> - **A2A（docs/90，ADR T32，2026-10-01 落码）**：HTTP 端点 `GET /api/a2a/agent-card`（＋两个 well-known 别名）与 `POST /api/a2a/tasks`（独立 Bearer `ATLAS_A2A_TASK_TOKEN`，prod 未配置即 fail-closed 401）；JSON-RPC/SSE，两个 plan-only skill。已列于 §5 端点表。
+> - **MCP server 面（docs/91，ADR T33，2026-10-01 落码）**：**stdio 传输，无 HTTP 端点**——由 `python -m atlas.mcp` 拉起，进程级绑定单租户（`ATLAS_MCP_TENANT_ID`，缺失/未知即非零退出，fail-closed）。协议面仅 `server/discover`＋`tools/list`＋`tools/call`（现行 revision `2026-07-28`：无握手/无会话、结果带 `resultType`）；**v1 七个只读/plan-only 工具**＝`atlas_list_graphs`／`atlas_get_graph`／`atlas_list_templates`／`atlas_get_template`／`atlas_list_runs`／`atlas_list_interruptions`／`atlas_list_adapters`，全部锚定既有 `read` 档 REST 投影、不带 `tenant_id` 入参、不起 run/不改图/不调 LLM/不裁决审批；`atlas_list_interruptions` 对外面**剔除 `resumeToken`**（收窄凭据外泄面）。日志必走 stderr、stdout 只含 JSON-RPC 帧。依赖 `mcp>=2,<3`（官方 SDK v2）。
+
 ## 6. 协同消息协议（依据 05 3.3 collaboration_message）
 
 ```yaml

@@ -1,6 +1,7 @@
 # MCP server 面 v1 契约设计
 
 > 状态：**契约立项（2026-10-01，docs-only；零代码／测试／迁移／依赖改动）**。ADR **T33** 已拍板（见 [docs/10](10-技术选型决策记录.md) §4 T33）：**①B 引官方 `mcp` Python SDK v2（钉 `mcp>=2,<3`）＋ ②stdio 传输 ＋ ③只读/plan-only 工具面**。本文是**形状权威**——把「已拍板的选型」落成可实施的形状契约（工具集、协议边界、装配与租户绑定、验证计划、落码原子序）。**本文不落码、不解除 14 D45**：拍板 ≠ 代码已有，`src/` 对 `mcp` 仍零命中、`pyproject.toml` 仍不加 `mcp`（依 T31「依赖必须与代码同事实」，依赖与 `src/atlas/mcp/` **同批**落）。
+> **〔2026-10-01 落码收口〕**：本文形状权威已**按 §8 原子序完整落码**——`src/atlas/mcp/` 四文件＋`pyproject.toml` 加 `mcp>=2,<3`、`tests/test_mcp_server.py` **13 passed**（U1033–U1045）、后端全量 **2174 passed / 136 skipped / 0 failed**；随批把 `api/main.py` 注册表构造抽至 `harness/runtime.py`、挂起帧投影抽至 `storage/recovery.py`（REST 与 MCP 共用，消除两处漂移）。**D45 随之闭合**（A2A＋MCP 两半均落地，见 [docs/14](14-缓做事项登记表.md) D45 追记三）；未选面（HTTP 远端／写能力／扩展）留 **D49**。原子提交待 push、作者保持用户身份、无 AI co-author。
 > 背景：MCP server 面是 Atlas 的**第三个对外出入口**——前两个是平台 REST（[docs/80](80-外部agent经REST驱动Atlas集成说明.md) 归纳的调用面）与 A2A 执行 Agent 面（[docs/90](90-A2A执行Agent面-Zeus联邦接入-v1批契约设计.md)，ADR T32）。D45 记「外部系统今天经 REST／入站 webhook／OpenAPI 导入三条路已能接，缺的是**协议标准化与工具自描述**」——REST 半边已由 docs/80 补说明、A2A 半边已由 T32 落码，本面即**剩下的 MCP 半边**。
 > 协议事实源：[docs/10](10-技术选型决策记录.md) §4 T33 的协议核实记录（modelcontextprotocol.io 规格 **`2026-07-28`**（current）＋该版 changelog ＋ PyPI `mcp` 2.0.0）。**本文不复制协议全文**；冲突时以协议原文与 T33 为准。
 > 结构模板：[docs/90](90-A2A执行Agent面-Zeus联邦接入-v1批契约设计.md)（同族的第二个对外协议入口）。
@@ -121,3 +122,5 @@
 5. 原子提交（docs-only 与代码分开），**不 push**（除非用户明确说）。
 
 **边界**：以上 1–5 全部属**另立批**，本批（本文档）只立形状，不落码、不加依赖、不解除 D45。
+
+> **〔2026-10-01 落码收口〕§8 五步已逐条完成**：① `pyproject.toml` 加 `mcp>=2,<3`（无 `uv.lock`，依仓库现状不重生锁文件）；② `src/atlas/mcp/` 四文件（`__init__`/`__main__`/`server`/`tools`）按本文形状实现；③ `tests/test_mcp_server.py` 13 例覆盖 §6 八层（discover/tools 面、每工具 happy path、只读不变量、失败口径、租户绑定 fail-closed、stdio stdout 纯净性、resumeToken 收窄、内存档自报）；④ docs/00／09／10 §4 T33／12（非 REST 注记）／13（U1033–U1045）／14（D45 闭合·D49 留白）／08（收口条）／handoff／CHANGELOG 已同步；⑤ 按原子提交（docs 与代码分开），未 push。详见 [CHANGELOG.md](CHANGELOG.md) `feat(mcp)` 与 handoff Recently shipped。
