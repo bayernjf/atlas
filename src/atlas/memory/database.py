@@ -1,7 +1,9 @@
 """PostgreSQL 连接层（记忆分层的关系/向量存储，依据 docs/11 §1）。
 
 W1 范围：引擎/会话工厂 + 连接健康探针 + pgvector 可用性检查。
-短期工作记忆（Redis）、Checkpointer 与各记忆表在后续周次接入。
+短期工作记忆没有独立存储层——其职责由 run 的 ``outputs``/``globals`` 承担，Redis 未引入
+（docs/10 §4 T31），LangGraph 也未配 checkpointer；长期事实记忆已落进程内与 PG 两档
+（``memory/items.py`` / ``storage/pg.py:PgMemoryStore``），其余档见 docs/14 D35。
 
 连接 URL 必须经 DATABASE_URL 环境变量提供（见 .env.example），
 不接受硬编码连接串。

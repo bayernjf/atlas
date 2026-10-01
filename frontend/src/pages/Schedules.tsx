@@ -25,13 +25,18 @@ function utcText(iso: string | null): string {
   return iso.slice(0, 16).replace('T', ' ')
 }
 
+/** 行标识：打包 ZH 起同图有 run 与 reflect 两条，只按 graphId 认行会串。 */
+function rowId(row: ScheduleItem): string {
+  return `${row.graphId}:${row.action}`
+}
+
 export function Schedules({ principal, onLogout, onBack }: SchedulesPageProps) {
   const { t } = useTranslation('schedules')
   const { message } = App.useApp()
   const [rows, setRows] = useState<ScheduleItem[]>([])
   const [loading, setLoading] = useState(false)
   const [listError, setListError] = useState('')
-  const [busyGraph, setBusyGraph] = useState('')
+  const [busyRow, setBusyRow] = useState('')
   const canOperate = roleCan(principal.role, 'operate')
 
   const refresh = useCallback(async () => {
@@ -52,35 +57,53 @@ export function Schedules({ principal, onLogout, onBack }: SchedulesPageProps) {
   }, [refresh])
 
   const onToggle = async (row: ScheduleItem, enabled: boolean) => {
-    setBusyGraph(row.graphId)
+    setBusyRow(rowId(row))
     try {
-      const next = await setScheduleEnabled(row.graphId, enabled)
-      setRows((current) => current.map((item) => (item.graphId === next.graphId ? next : item)))
+      const next = await setScheduleEnabled(row.graphId, enabled, row.action)
+      // 只换这一条：按 graphId 换会把同图的另一动作整行覆盖掉（两条一起变成 run 的投影）。
+      setRows((current) =>
+        current.map((item) => (rowId(item) === rowId(next) ? next : item)),
+      )
       message.success(t(enabled ? 'actions.enabled' : 'actions.disabled'))
     } catch (error) {
       message.error(`${t('actions.toggleFailed')}：${(error as Error).message}`)
       void refresh()
     } finally {
-      setBusyGraph('')
+      setBusyRow('')
     }
   }
 
   const onRunNow = async (row: ScheduleItem) => {
-    setBusyGraph(row.graphId)
+    setBusyRow(rowId(row))
     try {
-      const result = await runScheduleNow(row.graphId)
-      message.success(t('actions.running', { version: result.version }))
+      const result = await runScheduleNow(row.graphId, row.action)
+      // 两种回执形状不同（跑图回 runId、反思回报告摘要），按动作分别说话。
+      if ('runId' in result) {
+        message.success(t('actions.running', { version: result.version }))
+      } else {
+        message.success(t('actions.reflected', { status: result.status }))
+      }
       void refresh()
     } catch (error) {
       // 409（同图还在跑）与 404 的中文 detail 直接上屏：它们是答案，不是需要翻译的异常。
       message.error(`${t('actions.runFailed')}：${(error as Error).message}`)
     } finally {
-      setBusyGraph('')
+      setBusyRow('')
     }
   }
 
   const columns: ColumnsType<ScheduleItem> = [
     { title: t('table.graph'), dataIndex: 'graphId', ellipsis: true },
+    {
+      title: t('table.action'),
+      dataIndex: 'action',
+      width: 100,
+      render: (value: ScheduleItem['action']) => (
+        <Tag color={value === 'reflect' ? 'purple' : 'blue'}>
+          {t(value === 'reflect' ? 'action.reflect' : 'action.run')}
+        </Tag>
+      ),
+    },
     {
       title: t('table.cron'),
       dataIndex: 'cron',
@@ -113,7 +136,7 @@ export function Schedules({ principal, onLogout, onBack }: SchedulesPageProps) {
       render: (value: boolean, row) => (
         <Switch
           checked={value}
-          disabled={!canOperate || busyGraph === row.graphId}
+          disabled={!canOperate || busyRow === rowId(row)}
           onChange={(next) => void onToggle(row, next)}
         />
       ),
@@ -125,10 +148,10 @@ export function Schedules({ principal, onLogout, onBack }: SchedulesPageProps) {
         canOperate ? (
           <Button
             size="small"
-            loading={busyGraph === row.graphId}
+            loading={busyRow === rowId(row)}
             onClick={() => void onRunNow(row)}
           >
-            {t('actions.runNow')}
+            {row.action === 'reflect' ? t('actions.reflectNow') : t('actions.runNow')}
           </Button>
         ) : null,
     },
@@ -164,7 +187,7 @@ export function Schedules({ principal, onLogout, onBack }: SchedulesPageProps) {
           }
         >
           <Table
-            rowKey={(row) => `${row.graphId}`}
+            rowKey={(row) => rowId(row)}
             columns={columns}
             dataSource={rows}
             loading={loading}

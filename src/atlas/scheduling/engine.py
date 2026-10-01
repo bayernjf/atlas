@@ -9,6 +9,10 @@
    第二次决定"的去重，不承担安全性。
 2. 只看 `now` 往前一分钟内的槽位，永不回看更早的槽 ⇒ 重启/暂停**不补跑**（D-5）。
 3. 重叠判定在认领**之前**：跳过时不写认领表，白吃槽位的事情不会发生（D-6）。
+
+**动作维度（打包 ZH，2026-10-01；docs/88 §3 P-4）**：引擎对 `action` 完全无感——它只把
+`record.action` 一并透出（`TickOutcome.schedule_action`）与并入去重键（`_slot_key`）。
+`claim`／`dispatch`／`busy` 三个回调收到的是整条 `ScheduleRecord`，动作由装配方自己分支。
 """
 
 from __future__ import annotations
@@ -19,7 +23,12 @@ from datetime import datetime, timedelta
 from typing import Callable, Iterable, Literal, Optional
 
 from atlas.scheduling.cron import CronExpressionError, CronSpec, parse_cron, previous_fire_utc
-from atlas.scheduling.models import ScheduleRecord, slot_key
+from atlas.scheduling.models import (
+    DEFAULT_SCHEDULE_ACTION,
+    ScheduleAction,
+    ScheduleRecord,
+    slot_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,19 +52,24 @@ ScheduleIsBusy = Callable[[ScheduleRecord], bool]
 
 @dataclass(frozen=True)
 class TickOutcome:
-    """一个 tick 里真正发生过决定的一条调度。"""
+    """一个 tick 里真正发生过决定的一条调度。
+
+    `action` 是**本次决定**（fired／skipped_overlap／claim_lost），`schedule_action` 是
+    **这条注册要做的动作**（run／reflect）——两个"action"含义不同，故字段名不复用。
+    """
 
     tenant_id: str
     graph_id: str
     slot_utc: datetime
     action: TickAction
+    schedule_action: ScheduleAction = DEFAULT_SCHEDULE_ACTION
 
 
 class TickLedger:
     """本进程的去重与解析缓存（随调度线程活，不参与跨进程判定）。"""
 
     def __init__(self) -> None:
-        self._seen: dict[tuple[str, str, str], datetime] = {}
+        self._seen: dict[tuple[str, str, str, str], datetime] = {}
         self._specs: dict[str, Optional[CronSpec]] = {}
 
     def spec(self, expression: str) -> Optional[CronSpec]:
@@ -81,8 +95,8 @@ class TickLedger:
                 del self._seen[key]
 
 
-def _slot_key(record: ScheduleRecord, slot: datetime) -> tuple[str, str, str]:
-    return (record.tenant_id, record.graph_id, slot_key(slot))
+def _slot_key(record: ScheduleRecord, slot: datetime) -> tuple[str, str, str, str]:
+    return (record.tenant_id, record.graph_id, record.action, slot_key(slot))
 
 
 def tick(
@@ -114,17 +128,29 @@ def tick(
         state.mark(record, slot)
 
         if busy is not None and busy(record):
-            outcomes.append(TickOutcome(record.tenant_id, record.graph_id, slot, ACTION_SKIPPED_OVERLAP))
+            outcomes.append(
+                TickOutcome(
+                    record.tenant_id, record.graph_id, slot,
+                    ACTION_SKIPPED_OVERLAP, record.action,
+                )
+            )
             continue
         if not claim(record, slot):
-            outcomes.append(TickOutcome(record.tenant_id, record.graph_id, slot, ACTION_CLAIM_LOST))
+            outcomes.append(
+                TickOutcome(
+                    record.tenant_id, record.graph_id, slot,
+                    ACTION_CLAIM_LOST, record.action,
+                )
+            )
             continue
         try:
             dispatch(record, slot)
         except Exception:  # noqa: BLE001 — 单条调度失败不能带走整条循环（docs/68 §4 U885）
-            logger.exception("调度派发失败：tenant=%s graph=%s slot=%s",
-                             record.tenant_id, record.graph_id, slot)
+            logger.exception("调度派发失败：tenant=%s graph=%s action=%s slot=%s",
+                             record.tenant_id, record.graph_id, record.action, slot)
             continue
-        outcomes.append(TickOutcome(record.tenant_id, record.graph_id, slot, ACTION_FIRED))
+        outcomes.append(
+            TickOutcome(record.tenant_id, record.graph_id, slot, ACTION_FIRED, record.action)
+        )
 
     return outcomes

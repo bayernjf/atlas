@@ -77,9 +77,12 @@ def schedule_graph():
     return graph_id, version
 
 
-def _find(graph_id: str, headers=None) -> dict | None:
+def _find(graph_id: str, headers=None, action: str = "run") -> dict | None:
+    """取该图某动作的卡片。打包 ZH 起同图有 `run` 与 `reflect` 两条，必须点名动作。"""
     items = client.get("/api/schedules", headers=headers or ADMIN_A).json()["items"]
-    return next((item for item in items if item["graphId"] == graph_id), None)
+    return next(
+        (item for item in items if item["graphId"] == graph_id and item["action"] == action), None
+    )
 
 
 def _await_run_terminal(run_id: str, *, timeout: float = 5.0) -> dict:
@@ -297,3 +300,115 @@ def test_u894_blank_cron_is_422_and_login_is_required():
         "/api/schedules/cron-preview", json={"cron": "   "}, headers=OPERATOR_A
     ).status_code == 422
     assert client.post("/api/schedules/cron-preview", json={"cron": "* * * * *"}).status_code == 401
+
+
+# --- U1031 动作维度：同图两条注册、互不吃认领（打包 ZH，docs/88 §3 P-4；迁移 035） ---
+
+
+def test_u1031_publish_derives_both_run_and_reflect_rows(schedule_graph):
+    """发布派生出两条注册（同一 cron），各自有独立开关；投影多出 `action` 键。
+
+    反思项**必须是发布派生的**：既有调度项全部来自发布，不给它派生就等于没有入口
+    （docs/88 §3 拍板记录里那条订正说的正是这件事）。
+    """
+    graph_id, version = schedule_graph
+    run_row = _find(graph_id, action="run")
+    reflect_row = _find(graph_id, action="reflect")
+    assert run_row is not None and reflect_row is not None, "发布只派生了一条注册"
+    for row in (run_row, reflect_row):
+        assert row["version"] == version and row["cron"] == "*/5 * * * *"
+        assert row["enabled"] is True
+
+    # 开关互不影响：关掉跑图不动反思（反之亦然）——共用槽位形状，不共用启用状态。
+    assert client.post(
+        f"/api/schedules/{graph_id}/enabled",
+        json={"enabled": False, "action": "run"},
+        headers=OPERATOR_A,
+    ).status_code == 200
+    assert _find(graph_id, action="run")["enabled"] is False
+    assert _find(graph_id, action="reflect")["enabled"] is True
+
+    # 缺省动作逐字不变：不带 action 的请求仍然打在 run 项上（U888 的既有语义）。
+    assert client.post(
+        f"/api/schedules/{graph_id}/enabled", json={"enabled": True}, headers=OPERATOR_A
+    ).status_code == 200
+    assert _find(graph_id, action="run")["enabled"] is True
+    assert _find(graph_id, action="reflect")["enabled"] is True
+
+
+def test_u1031_missing_action_is_404_and_the_two_actions_do_not_share_a_claim(schedule_graph):
+    """两条注册的认领互不吞并：同一个槽位，run 与 reflect 各认各的（迁移 035 换键的理由）。"""
+    graph_id, _ = schedule_graph
+    # 不存在的动作组合按不存在处理（此处 t2 没有任何注册，借它验 404 文案带动作）。
+    assert client.post(
+        f"/api/schedules/{graph_id}/run-now",
+        json={"action": "reflect"},
+        headers=ADMIN_B,
+    ).status_code == 404
+
+    store = schedule_store()
+    moment = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    assert store.claim("t1", graph_id, moment, "run") is True
+    assert store.claim("t1", graph_id, moment, "reflect") is True, "反思被跑图的认领吃掉了"
+    assert store.claim("t1", graph_id, moment, "run") is False
+    assert store.claim("t1", graph_id, moment, "reflect") is False
+
+
+# --- U1032 `action="reflect"` 的派发与 run-now（打包 ZH） -------------------
+
+
+def test_u1032_reflect_tick_runs_a_reflection_pass_instead_of_a_graph_run(schedule_graph):
+    """`action="reflect"` 的 tick 走反思 pass：不产 run、只留收尾报告。"""
+    from atlas.api.main import _schedule_claim, _schedule_dispatch, _schedule_is_busy
+    from atlas.scheduling.engine import ACTION_FIRED, tick
+
+    graph_id, _ = schedule_graph
+    records = [
+        row for row in schedule_store().list_tenant("t1")
+        if row.graph_id == graph_id and row.action == "reflect"
+    ]
+    assert records, "发布没有派生反思调度项"
+
+    moment = datetime(2026, 10, 1, 10, 5, 30, tzinfo=timezone.utc)
+    outcomes = tick(moment, records, _schedule_claim, _schedule_dispatch, busy=_schedule_is_busy)
+    assert [(o.action, o.schedule_action) for o in outcomes] == [(ACTION_FIRED, "reflect")]
+
+    services = tenant_registry.get("t1")
+    assert [
+        run for run in services.run_store.list(status=None, limit=200)
+        if run.get("graphId") == graph_id
+    ] == [], "反思派发起了图运行（它不该写 run_store）"
+    reports = services.reflection_store.list_reports(graph_id=graph_id)
+    assert len(reports) == 1, "反思 pass 没留下收尾报告"
+    assert reports[0]["status"] == "no_evidence", "这张图没跑过，证据应为空（确定性、不依赖 LLM）"
+    assert _find(graph_id, action="reflect")["lastFiredAt"] is not None
+
+
+def test_u1032_run_now_reflect_returns_a_report_and_leaves_the_slot_unclaimed(schedule_graph):
+    """`run-now {action:"reflect"}` 立刻跑一次反思并回报告摘要；**不占槽位**（照 U889 同纪律）。"""
+    graph_id, version = schedule_graph
+    response = client.post(
+        f"/api/schedules/{graph_id}/run-now", json={"action": "reflect"}, headers=OPERATOR_A
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["graphId"] == graph_id and payload["baseVersion"] == version
+    assert payload["candidateId"] is None, "零证据的图不该凭空产出候选"
+    assert payload["status"] in ("ok", "no_evidence")
+
+    # 认领槽位必须还是空的：run-now 是"额外跑一次"，不是替本分钟交差。
+    moment = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    assert schedule_store().claim("t1", graph_id, moment, "reflect") is True
+
+    # 反思项不吃跑图的 busy 判定：图在跑也能反思（它不产运行、不争用任何东西）。
+    services = tenant_registry.get("t1")
+    services.run_store.begin(run_id="run-busy", graph_id=graph_id, mode="schedule")
+    try:
+        assert client.post(
+            f"/api/schedules/{graph_id}/run-now", json={"action": "reflect"}, headers=OPERATOR_A
+        ).status_code == 200
+        assert client.post(
+            f"/api/schedules/{graph_id}/run-now", headers=OPERATOR_A
+        ).status_code == 409, "跑图档的 busy 判定必须原样保留"
+    finally:
+        services.run_store.finish(run_id="run-busy", status="completed")

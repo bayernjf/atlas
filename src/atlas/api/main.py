@@ -99,6 +99,7 @@ from atlas.channels.webhooks import (
     build_envelope,
     verify_shopify_hmac,
 )
+from atlas.a2a.router import router as a2a_router  # docs/90 ADR T32 (Zeus A2A vassal face)
 from atlas.connections.service import ConnectionServiceError
 from atlas.observability.health import check_ready
 from atlas.observability.logging import (
@@ -166,9 +167,17 @@ from atlas.scheduling.engine import (
     TickOutcome,
     tick,
 )
-from atlas.scheduling.models import ScheduleRecord, schedule_projection, slot_key, to_utc_iso
+from atlas.scheduling.models import (
+    DEFAULT_SCHEDULE_ACTION,
+    ScheduleAction,
+    ScheduleRecord,
+    schedule_projection,
+    slot_key,
+    to_utc_iso,
+)
 from atlas.scheduling.pg_store import PgScheduleStore
 from atlas.scheduling.store import InMemoryScheduleStore, ScheduleStore
+from atlas.reflection import run_pass as run_reflection_pass
 from atlas.template import get_template, list_templates
 from atlas.web.i18n import localize_template, localize_tool_desc, resolve_locale
 from atlas.versioning.publish import publish as publish_graph_version
@@ -354,6 +363,9 @@ configure_logging()
 assert_prod_secrets()
 
 app = FastAPI(title="Atlas API", version="0.0.1", lifespan=lifespan)
+
+# docs/90 ADR T32：A2A 执行 Agent 面（Zeus 联邦，plan-only），卡片公开、任务 Bearer 保护。
+app.include_router(a2a_router)
 
 # docs/65 K-D：request-id 中间件（X-Request-Id 响应头 + 日志 request_id 字段）。
 install_request_id_middleware(app)
@@ -1189,11 +1201,17 @@ def _start_pinned_run(
 
 
 def _schedule_claim(record: ScheduleRecord, slot: datetime) -> bool:
-    return schedule_store().claim(record.tenant_id, record.graph_id, slot)
+    return schedule_store().claim(record.tenant_id, record.graph_id, slot, record.action)
 
 
 def _schedule_is_busy(record: ScheduleRecord) -> bool:
-    """同图是否还有 running/suspended 运行（docs/68 §1 D-6，保守按图粒度判）。"""
+    """同图是否还有 running/suspended 运行（docs/68 §1 D-6，保守按图粒度判）。
+
+    反思项**不受此限**：它是一次只读计算（读既有投影、不写图、不产运行），与在途运行
+    不争用任何东西；反过来拿"图在跑"挡住反思，会让繁忙的图永远得不到反思（docs/88 §3 P-4）。
+    """
+    if record.action == "reflect":
+        return False
     services = tenant_registry.get(record.tenant_id)
     for status in ("running", "suspended"):
         for run in services.run_store.list(status=status, limit=BUSY_SCAN_LIMIT):
@@ -1203,14 +1221,32 @@ def _schedule_is_busy(record: ScheduleRecord) -> bool:
 
 
 def _schedule_dispatch(record: ScheduleRecord, slot: datetime) -> None:
-    """派发一次定时运行；事件载荷带槽位，图里可用 `{{global.event.payload.slot}}` 引用。"""
+    """派发一次定时动作；跑图的事件载荷带槽位，图里可用 `{{global.event.payload.slot}}` 引用。
+
+    `reflect` 项共用调度载体，只共用**槽位与认领**：它不写 run_store、不发 TriggerEvent
+    ——反思不是"跑一次图"，把它塞进运行态会让监控里多出一批没有业务含义的 run（docs/88 §3 P-4）。
+    """
     services = tenant_registry.get(record.tenant_id)
     key = slot_key(slot)
+    if record.action == "reflect":
+        report = run_reflection_pass(
+            services, services.reflection_store,
+            tenant_id=record.tenant_id, graph_id=record.graph_id, base_version=record.version,
+        )
+        schedule_store().note_fired(record.tenant_id, record.graph_id, slot, record.action)
+        services.audit_store.record(
+            tenant_id=record.tenant_id, actor="scheduler", action="schedule.fire",
+            status_code=200,
+            path=(f"action=reflect graph={record.graph_id}@{record.version} "
+                  f"slot={key} status={report.status}"),
+            ip="",
+        )
+        return
     _start_pinned_run(
         services, record.tenant_id, record.graph_id, record.version,
         {"source": "schedule", "slot": key, "cron": record.cron},
     )
-    schedule_store().note_fired(record.tenant_id, record.graph_id, slot)
+    schedule_store().note_fired(record.tenant_id, record.graph_id, slot, record.action)
     services.audit_store.record(
         tenant_id=record.tenant_id, actor="scheduler", action="schedule.fire",
         status_code=200, path=f"graph={record.graph_id}@{record.version} slot={key}", ip="",
@@ -1230,7 +1266,9 @@ def run_schedule_tick(ledger: TickLedger | None = None) -> list[TickOutcome]:
     )
     for outcome in outcomes:
         if outcome.action == ACTION_SKIPPED_OVERLAP:
-            store.note_skipped(outcome.tenant_id, outcome.graph_id, outcome.slot_utc)
+            store.note_skipped(
+                outcome.tenant_id, outcome.graph_id, outcome.slot_utc, outcome.schedule_action
+            )
     return outcomes
 
 
@@ -1305,7 +1343,12 @@ def _schedule_cron_of_published(graph_raw: dict) -> str | None:
 def _derive_schedule_on_publish(
     services: TenantServices, tenant_id: str, graph_id: str, version: int
 ) -> None:
-    """发布出口：有定时触发就 upsert，没有就撤销——发布是版本变化的唯一时刻。"""
+    """发布出口：有定时触发就 upsert，没有就撤销——发布是版本变化的唯一时刻。
+
+    **两个动作一起派生**（docs/88 §3 P-4）：同一 cron 下登记 `run` 与 `reflect` 两条，
+    因为既有调度项全部是发布派生的，不给反思登记就没有任何入口。两条各自独立开关，
+    关掉跑图不影响反思（反之亦然）——它们共用的是槽位形状，不是启用状态。
+    """
     raw = services.graph_store.get(graph_id, version)
     if raw is None:
         return
@@ -1314,21 +1357,32 @@ def _derive_schedule_on_publish(
     if cron is None:
         store.remove(tenant_id, graph_id)
         return
-    record = store.upsert_published(
-        tenant_id=tenant_id, graph_id=graph_id, version=version, cron=cron
-    )
-    logger.info(
-        "定时调度已登记：%s -> %s@%s（cron=%s，UTC）",
-        graph_id, graph_id, record.version, record.cron,
-    )
+    for action in ("run", "reflect"):
+        record = store.upsert_published(
+            tenant_id=tenant_id, graph_id=graph_id, version=version, cron=cron, action=action
+        )
+        logger.info(
+            "定时调度已登记：%s -> %s@%s（action=%s，cron=%s，UTC）",
+            graph_id, graph_id, record.version, record.action, record.cron,
+        )
 
 
 class ScheduleEnabledRequest(BaseModel):
     enabled: bool
+    action: ScheduleAction = DEFAULT_SCHEDULE_ACTION
 
 
-def _no_schedule_detail(graph_id: str) -> str:
-    return f"图 {graph_id} 没有定时调度：只有含定时触发节点的**已发布**版本才会登记"
+class RunNowRequest(BaseModel):
+    """run-now 的可选 body（打包 ZH）；缺省＝`{"action": "run"}`，与旧行为逐字一致。"""
+
+    action: ScheduleAction = DEFAULT_SCHEDULE_ACTION
+
+
+def _no_schedule_detail(graph_id: str, action: ScheduleAction = DEFAULT_SCHEDULE_ACTION) -> str:
+    label = "" if action == DEFAULT_SCHEDULE_ACTION else f"（action={action}）"
+    return (
+        f"图 {graph_id} 没有定时调度{label}：只有含定时触发节点的**已发布**版本才会登记"
+    )
 
 
 @app.get("/api/schedules")
@@ -1351,7 +1405,9 @@ def list_schedules(principal: Principal = Depends(require("read"))) -> dict[str,
     for record in records:
         proj = schedule_projection(record, now)
         graph_runs = runs_by_graph.get(record.graph_id, [])
-        if graph_runs:
+        # 反思项不挂 lastRun*：反思 pass 不产 run（它不写 run_store），硬挂一条同图的跑图
+        # run 会让人以为"这条反思调度跑出过那个运行"（docs/88 §3 P-4）。
+        if graph_runs and record.action != "reflect":
             latest = graph_runs[0]  # list 已按 startedAt DESC，第一条即最近
             proj["lastRunId"] = latest.get("runId")
             proj["lastRunStatus"] = latest.get("status")
@@ -1369,9 +1425,11 @@ def set_schedule_enabled(
 ) -> dict[str, Any]:
     """开/关一条调度（跨重启保留）。关只停未来触发，不取消在途运行（docs/68 §6.5）。"""
     services = services_for(principal)
-    record = schedule_store().set_enabled(principal.tenant_id, graph_id, request.enabled)
+    record = schedule_store().set_enabled(
+        principal.tenant_id, graph_id, request.enabled, request.action
+    )
     if record is None:
-        raise HTTPException(status_code=404, detail=_no_schedule_detail(graph_id))
+        raise HTTPException(status_code=404, detail=_no_schedule_detail(graph_id, request.action))
     _record_audit(
         services, principal, http_request,
         "schedule.enable" if request.enabled else "schedule.disable", 200,
@@ -1381,28 +1439,77 @@ def set_schedule_enabled(
 
 @app.post("/api/schedules/{graph_id}/run-now")
 def run_schedule_now(
-    http_request: Request, graph_id: str, principal: Principal = Depends(require("operate"))
+    http_request: Request,
+    graph_id: str,
+    request: RunNowRequest | None = None,
+    principal: Principal = Depends(require("operate")),
 ) -> dict[str, Any]:
-    """按钉版立刻跑一次（联调与验收入口）：**不写认领表、不占槽位**（docs/68 §2.4）。"""
+    """按钉版立刻跑一次（联调与验收入口）：**不写认领表、不占槽位**（docs/68 §2.4）。
+
+    打包 ZH 起可选 `{"action": "reflect"}`：跑一次反思 pass 并返回收尾报告摘要
+    （`candidateId` 可为 null）。反思项**不做 busy 判定**——它不产运行、不与在途运行争用。
+    """
     services = services_for(principal)
     store = schedule_store()
-    record = store.get(principal.tenant_id, graph_id)
+    action = request.action if request is not None else DEFAULT_SCHEDULE_ACTION
+    record = store.get(principal.tenant_id, graph_id, action)
     if record is None:
-        raise HTTPException(status_code=404, detail=_no_schedule_detail(graph_id))
+        raise HTTPException(status_code=404, detail=_no_schedule_detail(graph_id, action))
+    now = datetime.now(timezone.utc)
+    if action == "reflect":
+        report = run_reflection_pass(
+            services, services.reflection_store,
+            tenant_id=principal.tenant_id, graph_id=graph_id, base_version=record.version,
+        )
+        # 同 run-now 的口径：记"最近一次真实执行"，不是槽位认领（不占槽）。
+        store.note_fired(principal.tenant_id, graph_id, now, action)
+        _record_audit(services, principal, http_request, "schedule.run_now", 200)
+        return {
+            "candidateId": report.candidate_id,
+            "graphId": graph_id,
+            "baseVersion": report.base_version,
+            "status": report.status,
+        }
     if _schedule_is_busy(record):
         raise HTTPException(
             status_code=409,
             detail=f"图 {graph_id} 仍有运行在执行中（running/suspended），本次立即运行已跳过",
         )
-    now = datetime.now(timezone.utc)
     run_id = _start_pinned_run(
         services, principal.tenant_id, record.graph_id, record.version,
         {"source": "schedule-run-now", "slot": slot_key(now), "cron": record.cron},
     )
     # 记的是"最近一次真实运行"，不是槽位认领：run-now 不占槽，但运营要看得见它跑过。
-    store.note_fired(principal.tenant_id, graph_id, now)
+    store.note_fired(principal.tenant_id, graph_id, now, action)
     _record_audit(services, principal, http_request, "schedule.run_now", 200)
     return {"runId": run_id, "graphId": record.graph_id, "version": record.version}
+
+
+@app.get("/api/reflection/reports")
+def list_reflection_reports(
+    graph_id: str | None = None,
+    limit: int = 50,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """本租户反思 pass 的收尾记录（进程内 ring，新→旧；docs/88 §4／docs/12）。
+
+    **纯只读**：反思无自动 apply／publish／promote，候选落草稿版本后由人走既有流程采纳。
+    `limit` 非整数由 FastAPI 挡成 422，越界由 store 侧 clamp 到 1–200（不报错）。
+    """
+    services = services_for(principal)
+    return {"items": services.reflection_store.list_reports(graph_id=graph_id, limit=limit)}
+
+
+@app.get("/api/reflection/candidates/{candidate_id}")
+def get_reflection_candidate(
+    candidate_id: str, principal: Principal = Depends(require("read"))
+) -> dict[str, Any]:
+    """单个反思候选详情；不存在或跨租户统一 404（候选表本就每租户一份，跨租户天然取不到）。"""
+    services = services_for(principal)
+    candidate = services.reflection_store.get_candidate(candidate_id)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail=f"反思候选不存在：{candidate_id}")
+    return candidate
 
 
 class CronPreviewRequest(BaseModel):

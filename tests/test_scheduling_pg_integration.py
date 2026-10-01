@@ -202,3 +202,51 @@ def test_u886e_reset_tenant_clears_rows_and_fire_history_for_that_tenant_only(pa
             text("SELECT count(*) FROM schedule_fires WHERE tenant_id = :t"), {"t": other}
         ).scalar_one()
     assert left == 0 and kept == 1, "reset 越界清了别人的认领历史"
+
+
+def test_u1031_action_dimension_keeps_run_and_reflect_apart_in_both_tiers(pair):
+    """打包 ZH（docs/88 §3 P-4；迁移 035）：键含 `action` ⇒ 同图两条、同槽两份认领。
+
+    这条必须两档同测：换键是**迁移**改的库形状，只测内存档等于没测迁移；只测 PG 档又
+    验不到"两档投影仍逐键一致"（U886 的同一条纪律）。
+    """
+    pg, pg_tenant, memory_tenant, memory = pair
+
+    for store, tenant in ((pg, pg_tenant), (memory, memory_tenant)):
+        run_row = store.upsert_published(
+            tenant_id=tenant, graph_id="g-6", version=3, cron="*/5 * * * *"
+        )
+        reflect_row = store.upsert_published(
+            tenant_id=tenant, graph_id="g-6", version=3, cron="*/5 * * * *", action="reflect"
+        )
+        assert run_row.action == "run", "缺省动作不是 run"
+        assert reflect_row.action == "reflect"
+
+        # 缺省参数逐字不变：不点名动作时读到的仍是 run 项（U886 的既有语义）。
+        assert store.get(tenant, "g-6").action == "run"
+        assert store.get(tenant, "g-6", "reflect").action == "reflect"
+
+        # 同一个槽位，两个动作各认各的——旧键下第二次 INSERT 会静默丢掉派发权。
+        assert store.claim(tenant, "g-6", slot(5), "run") is True
+        assert store.claim(tenant, "g-6", slot(5), "reflect") is True, "反思被跑图的认领吃掉了"
+        assert store.claim(tenant, "g-6", slot(5), "run") is False
+        assert store.claim(tenant, "g-6", slot(5), "reflect") is False
+
+        # 开关与跳过计数按动作各记各的。
+        store.set_enabled(tenant, "g-6", False, "run")
+        store.note_skipped(tenant, "g-6", slot(10), "reflect")
+        assert store.get(tenant, "g-6").enabled is False
+        assert store.get(tenant, "g-6").skip_count == 0
+        assert store.get(tenant, "g-6", "reflect").enabled is True
+        assert store.get(tenant, "g-6", "reflect").skip_count == 1
+
+        # 一图两行；投影带 action 键，且两档同形。
+        views = {
+            row.action: schedule_projection(row, slot(20)) for row in store.list_tenant(tenant)
+        }
+        assert set(views) == {"run", "reflect"}
+        assert views["run"]["action"] == "run" and views["reflect"]["action"] == "reflect"
+
+        # 撤销是整图（发布出口没有定时触发时调用）：全部动作一起走。
+        store.remove(tenant, "g-6")
+        assert store.list_tenant(tenant) == []
