@@ -3,6 +3,15 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### feat(frontend)：节点目录 label/description 多语言（打包 ZI，2026-10-02，14 D13 余部切片；D13 整体不解除）
+
+- **一句话**：`NODE_CATALOG` 9 种节点（trigger/ai_decision/tool_call/condition/loop/parallel/wait/subgraph/human_approval）的 label/description 由硬编码中文抽入 `editor.nodeCatalog.<kind>.label/description` 18 键（zh/en 两档、en 零汉字、无插值），三处消费方（NodePanel 节点面板、AtlasNode 画布节点标题、PropertyPanel 属性面板标签）走 `t()`——英文态节点目录/画布节点标题不再显中文（docs/57 未取回的 D13 余部）。
+- **刻意保留**：`NODE_CATALOG` 本体作数据源/兜底不动；`editorStore.addNodeAt` 默认 label 落图 JSON 与中文日志＝业务数据豁免（docs/17 §2.5 口径）。
+- **门（实跑）**：前端 vitest **753 passed / 2 skipped**（基线 751/2 净增 2）；oxlint **0 error / 7 既有 warning（非本批引入）**；`pnpm build`（tsc -b && vite build）过；i18n.test **59 passed**（新增 2 例：zh 与 `NODE_CATALOG` 数据源逐键一致、en 零汉字；PARITY 守护自动覆盖新键）。
+- **照实记录**：双语浏览器冒烟未跑——本执行环境所有浏览器进程访问本机 localhost 端口均 `ERR_CONNECTION_REFUSED`（外网可达，环境网络隔离，非产品问题），以键级断言＋PARITY 守护＋tsc 替代。
+- **提交**：`6d3acfe`（立项 docs）→ `3b785c1`（feat）→ `5a20fcf`（test）→ 收口 docs；作者 bayernjf、无 AI co-author、未 push。
+- **不解除**：D13 整体（自然语言多语言、i18next 本体、navigator 探测、复数/Intl 触发条件不变）。
+
 ### docs(errata)：项目文档与今日落码对齐（2026-10-01，纯 docs 勘误；零代码／测试／迁移／依赖改动；不解除 D45）
 
 - **一句话**：回查最近 commit（HEAD `89e0474`）与实际代码后，把**入口/快照文档**中已过期的陈述对齐（用户指令「更新项目文档」）——**快照类原文保留不改，只追加带日期的 〔勘误〕**（沿用 [docs/25](docs/25-行业趋势对照与能力现状盘点.md) §② 先例）。
