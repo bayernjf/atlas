@@ -116,10 +116,33 @@ def test_get_and_cancel_lifecycle():
     assert missing["error"]["code"] == -32001
 
 
-def test_message_without_data_part_is_invalid_params():
+def test_plain_text_part_falls_back_to_first_token_skill():
+    # 超集守护（docs/90 §3，对齐 pr-helper）：只懂标准 A2A 的调用方发纯 text part，
+    # 首个分词是已知 skill、无参数 -> skill 层回 input-required（合法标准终态），
+    # 而不是协议层 -32602 拒绝。
     resp = handle_jsonrpc(
         {"jsonrpc": "2.0", "id": 10, "method": "tasks/send",
-         "params": {"message": {"role": "user", "parts": [{"kind": "text", "text": "hi"}]}}}
+         "params": {"message": {"role": "user",
+                                 "parts": [{"kind": "text", "text": "diagnose-run"}]}}}
+    )
+    assert "error" not in resp
+    assert resp["result"]["status"]["state"] == "input-required"
+
+
+def test_plain_text_part_unknown_skill_fails_neutrally():
+    resp = handle_jsonrpc(
+        {"jsonrpc": "2.0", "id": 11, "method": "tasks/send",
+         "params": {"message": {"role": "user",
+                                 "parts": [{"kind": "text", "text": "no-such-skill"}]}}}
+    )
+    assert "error" not in resp
+    assert resp["result"]["status"]["state"] == "failed"
+
+
+def test_message_without_data_or_text_part_is_invalid_params():
+    resp = handle_jsonrpc(
+        {"jsonrpc": "2.0", "id": 12, "method": "tasks/send",
+         "params": {"message": {"role": "user", "parts": [{"kind": "file", "file": {}}]}}}
     )
     assert resp["error"]["code"] == -32602
 

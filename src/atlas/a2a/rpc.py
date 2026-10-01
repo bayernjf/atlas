@@ -65,13 +65,26 @@ def _parse_skill_and_params(message: dict) -> tuple[str, dict]:
             if isinstance(part, dict) and part.get("kind") == "data" and isinstance(part.get("data"), dict):
                 data = part["data"]
                 break
-    if data is None:
-        raise ValueError("message needs a data part")
-    skill = data.get("skill")
-    params = {k: v for k, v in data.items() if k != "skill"}
+    if data is not None:
+        skill = data.get("skill")
+        params = {k: v for k, v in data.items() if k != "skill"}
+    else:
+        # 标准 A2A 超集兜底（docs/90 §3，对齐 pr-helper parseSkillAndParams）：
+        # 只懂标准协议的调用方发纯 text part（不带 Zeus 的 data part）时，取第一个
+        # 非空 text 的首个空白分词作 skill、参数为空；缺必填参数由 skill 层回
+        # input-required（合法标准终态），而不是在协议层 -32602 拒绝标准调用方。
+        skill = None
+        params = {}
+        if isinstance(parts, list):
+            for part in parts:
+                if isinstance(part, dict) and part.get("kind") == "text" and isinstance(part.get("text"), str):
+                    token = part["text"].strip().split()
+                    if token:
+                        skill = token[0]
+                        break
     if isinstance(skill, str) and skill:
         return skill, params
-    raise ValueError("no skill found in message; include a data part with a skill field")
+    raise ValueError("no skill found in message; include a data part with a skill field or a text part")
 
 
 def execute_task(message: dict, on_event: Callable[[dict], None] | None = None) -> dict:
