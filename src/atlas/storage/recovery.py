@@ -14,9 +14,12 @@ from __future__ import annotations
 import json
 import os
 import socket
+from datetime import datetime, timezone
 from typing import Callable
 
 from sqlalchemy import Engine, text
+
+from atlas.scheduling.models import to_utc_iso
 
 #: 进程身份（仅落 `resumed_by` 供排障，不参与判定，不做注册中心）。
 PROCESS_IDENTITY = f"{socket.gethostname()}:{os.getpid()}"
@@ -153,3 +156,79 @@ def clear_tenant_frames(engine: Engine, tenant_id: str) -> None:
             text("DELETE FROM interruptions WHERE tenant_id = :tenant_id"),
             {"tenant_id": tenant_id},
         )
+
+
+# --- 挂起帧的只读投影（docs/76 打包 Q；REST 与 MCP 共用一份） --------------------
+#
+# 两个只读面都看同一张表：`GET /api/interruptions` 与 MCP 的 `atlas_list_interruptions`
+# 只差「是否带 resumeToken」（docs/91 §3 的刻意收窄），其余逐键一致由本函数保证。
+
+_TERMINAL_RUN_STATES = {"completed", "failed", "cancelled", "interrupted"}
+
+
+def interruption_state(claimed: bool, run_status: str | None) -> str:
+    """帧列值＋run 状态 → 描述性档位（docs/76 §1 D-3：**只描述，不判决、不计时**）。"""
+    if not claimed:
+        return "awaiting"
+    if run_status is None:
+        return "claimed_unknown_run"
+    if run_status == "running":
+        return "claimed_executing"
+    if run_status == "suspended":
+        return "claimed_suspended"
+    if run_status in _TERMINAL_RUN_STATES:
+        return "frame_lingering"
+    return "claimed_other_state"
+
+
+def claimed_seconds(claimed_at: object) -> int | None:
+    """已认领多久；算不出来就回 None（不拿 0 冒充"刚认领"）。"""
+    if isinstance(claimed_at, str):
+        try:
+            claimed_at = datetime.fromisoformat(claimed_at.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if not isinstance(claimed_at, datetime):
+        return None
+    moment = claimed_at if claimed_at.tzinfo else claimed_at.replace(tzinfo=timezone.utc)
+    return max(0, int((datetime.now(timezone.utc) - moment.astimezone(timezone.utc)).total_seconds()))
+
+
+def interruption_view(
+    *,
+    backend: str,
+    tenant_id: str,
+    engine: Engine | None,
+    run_status_of: Callable[[str], str | None],
+    include_resume_token: bool,
+) -> dict:
+    """本租户挂起帧的只读投影（docs/76 §1；**不重放、不清帧、不改任何状态**）。
+
+    `include_resume_token=False` 是 MCP 面的口径：对外面不携带可用于续跑的令牌
+    （docs/89 A-8 已登记该字段随投影外泄的风险）。REST 面仍为 True——收窄是本面行为，
+    不是全局改动。内存档根本不写帧表，故"空"不等于"没有卡住的 run"，显式自报
+    `visibility="frames-not-persisted"`。
+    """
+    if backend != "pg" or engine is None:
+        return {"backend": backend, "visibility": "frames-not-persisted", "items": []}
+    items: list[dict] = []
+    for frame in list_tenant_frames(engine, tenant_id):
+        claimed_at = frame.get("resumed_at")
+        run_id = frame.get("run_id") or ""
+        run_status = run_status_of(run_id) if run_id else None
+        item: dict = {
+            "runId": run_id,
+            "graphId": (frame.get("resume_state") or {}).get("graph_id", ""),
+            "nodeId": frame.get("node_id", ""),
+            "kind": frame.get("kind", ""),
+            "claimedAt": to_utc_iso(claimed_at) if claimed_at else None,
+            "claimedBy": frame.get("resumed_by"),
+            "claimedSeconds": claimed_seconds(claimed_at) if claimed_at else None,
+            "deadlineAt": frame.get("deadline_at"),
+            "runStatus": run_status,
+            "state": interruption_state(bool(claimed_at), run_status),
+        }
+        if include_resume_token:
+            item["resumeToken"] = frame.get("resume_token", "")
+        items.append(item)
+    return {"backend": backend, "visibility": "tenant-scoped", "items": items}

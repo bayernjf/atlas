@@ -55,7 +55,9 @@ def pg_frames(monkeypatch):
 
     monkeypatch.setattr(api_main, "STORAGE_BACKEND", "pg")
     monkeypatch.setattr(api_main, "get_pg_backend", lambda: SimpleNamespace(engine=object()))
-    monkeypatch.setattr(api_main, "list_tenant_frames", fake_list_tenant_frames)
+    from atlas.storage import recovery as recovery_mod
+
+    monkeypatch.setattr(recovery_mod, "list_tenant_frames", fake_list_tenant_frames)
     return SimpleNamespace(calls=calls, frames=state["frames"])
 
 
