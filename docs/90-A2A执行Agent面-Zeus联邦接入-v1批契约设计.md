@@ -1,6 +1,6 @@
 # A2A 执行 Agent 面（Zeus 联邦 W2 接入）— v1 批契约设计
 
-> 状态：**第一阶段已实施（2026-10-01，ADR T32）**。纯新增、plan-only、零业务链改动；后端新增 13 项单测（`tests/test_a2a_vassal.py`，含纯标准 A2A text part 兜底两条）。同日纯标准 A2A 客户端守护真机复验通过（见 §6），并据此补了 text part 超集兜底（commit `255064b`）。第二阶段（真 LLM / 起真实 run / 任务持久化 / 生产部署）须另点工。
+> 状态：**第一阶段已实施（2026-10-01，ADR T32）**。纯新增、plan-only、零业务链改动；后端新增 13 项单测（`tests/test_a2a_vassal.py`，含纯标准 A2A text part 兜底两条）。同日纯标准 A2A 客户端守护真机复验通过（见 §6），并据此补了 text part 超集兜底（commit `255064b`）。**第二阶段第一批已收口（2026-10-01，docs-only，零代码／测试／迁移／依赖改动）**：§7 第 2 项按 §6 实测证据正式勾掉；第 3 项定为**明确沿用单副本内存台账**（决策与理由见 §7，决策记录 docs/08）。**仍开两项**：第 1 项生产部署同口径回归（需真实域名/TLS/网关等外部部署条件）、第 4 项机器账号体系（多租户调用方区分，属产品/契约口径、待拍板）。
 > 背景：Zeus 是多 Agent 协同决策平台，已定「执行 Agent 协议 = 标准 A2A + 一层 x-zeus-fealty 契约扩展」；pr-helper 为 W1（已真机定型），loom 为 W2 首个已有 A2A 实现（Q150，2026-10-01 与 Zeus 协议级真机联调通过）。Atlas 与 loom 同波（W2），本批把**同一套已定型协议**第一次落到一个此前零 A2A 代码的产品，验证「从零按协议接入」的可复制性。
 > 上游契约事实源：zeus 仓 `docs/design-vassal-protocol.md`（协议）与 loom 仓 `docs/design-a2a-vassal.md` + `backend/app/core/a2a/`（同构参考实现）。本文只写 Atlas 侧落点，不复制协议全文。
 
@@ -87,11 +87,12 @@ fealty 取值（全部落在 Zeus 受控词表内，否则注册被拒）：
 - 真机协议级联调（2026-10-01）：本机 uvicorn `atlas.api.main:app`（dev，`ATLAS_PUBLIC_BASE_URL=http://127.0.0.1:8933`），Zeus 真实 `VassalRegistry.register` + `sendTaskSubscribe`/`sendTask`：fealty 五字段注册闸全过、卡片 `url` 直接解析任务端点、SSE 四帧正确拆解、`x-zeus-report`（plan，llmTokens=0）回传、缺参 input-required、非流式 send 与流式等价。**Atlas 侧业务链零改动**。
 - **纯标准 A2A 客户端守护复验（2026-10-01，Zeus `scripts/acceptance-standard-a2a.mjs`，不认任何 x-zeus-*）**：首跑暴露真实超集缺口——脚本发纯 text part，rpc 只认 data part ⇒ 回 `-32602 message needs a data part`，即「只懂标准协议的调用方不可调用」，违反超集承诺；按 §4 加 text 兜底后复跑 **exit 0**（发现 atlas 2 skill；纯 text `diagnose-run` 被受理并回合法终态 `input-required`，不抛协议错误）。
 - 复跑单测：`.venv/bin/pytest tests/test_a2a_vassal.py -q`；修复后全量 **2161 passed / 136 skipped / 0 failed**（372s，净增 2）。
-- 复跑单测：`.venv/bin/pytest tests/test_a2a_vassal.py -q`。
 
 ## 7. 第二阶段待点工项
 
-1. 生产部署上的同口径回归（真实域名/TLS/网关、`ATLAS_A2A_TASK_TOKEN` fail-closed）。
-2. 纯标准 A2A 客户端（不认 `x-zeus-*`）对 Atlas 的超集守护复验（协议第 6 条式）。
-3. 任务持久化或明确沿用单副本内存台账；真 LLM / 起真实 run 属独立立项，需先解决单副本与挂起帧幂等（docs/62）。
-4. 是否复用/新建机器账号体系（当前为单 env token，多租户调用方区分未做）。
+> 进度（2026-10-01，第二阶段第一批，docs-only，零代码／测试／迁移／依赖改动）：第 2、3 项已收口（见下），第 1、4 项仍开，需外部部署条件 / 产品契约口径拍板。
+
+1. ⬜ 生产部署上的同口径回归（真实域名/TLS/网关、`ATLAS_A2A_TASK_TOKEN` fail-closed）。**待外部部署条件**：需先在真实域名 + TLS 终结点 + 网关后部署一套 Atlas（当前仅有本机 `127.0.0.1` 联调与 demo 网关），并在该环境验证 Bearer fail-closed 与三卡片端点公网可达性；本轮无可闭环的工程内动作。
+2. ✅ 纯标准 A2A 客户端（不认 `x-zeus-*`）对 Atlas 的超集守护复验（协议第 6 条式）。**已收口**：以 §6 的真机复验证据为准——Zeus `scripts/acceptance-standard-a2a.mjs`（不认任何 `x-zeus-*`）在本机 dev 栈 **exit 0**，发现 atlas 2 个 skill，纯 text `diagnose-run` 被受理并回合法终态 `input-required`（首跑暴露的「只认 data part ⇒ -32602 拒标准调用方」缺口已由 `255064b` 的 text 首分词兜底修复，见 §4）。常跑守护由 `tests/test_a2a_vassal.py` 的两条纯 text part 用例（回退首分词→`input-required` / 未知 skill→`failed`）承接。
+3. ✅ 任务持久化或明确沿用单副本内存台账。**决策：明确沿用单副本内存台账**（与 `docs/62` 单副本硬约束一致，同 loom Q150 口径）。理由：A2A 任务为 plan-only 咨询性产物（`cost.llmTokens = 0`）、零业务状态零副作用，进程重启丢失至多导致调用方重发一次；若为此引入持久化＋多副本，只为零业务价值付迁移与副本一致性代价。**触发复评**：一旦启用真 LLM / 经 A2A 起真实 run（属独立立项），须连同挂起帧幂等（`docs/62`）一并重新评估持久化。决策记录见 `docs/08`；缓做登记见 `docs/14` D48。
+4. ⬜ 是否复用/新建机器账号体系（当前为单 env token，多租户调用方区分未做）。**待拍板**：属产品 / 契约口径（多租户调用方身份、凭证分发与轮换、审计归属），需与平台会话 / 渠道凭证体系一并定调，暂不擅自扩范围。
