@@ -3,6 +3,24 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### docs(a2a)：A2A 第二阶段第一批收口（2026-10-01，docs-only；零代码／测试／迁移／依赖改动；不解除任何缓做、W2 不关账）
+
+- **一句话**：把 [docs/90](90-A2A执行Agent面-Zeus联邦接入-v1批契约设计.md) §7「第二阶段待点工项」四项里**工程内可闭环的两项正式收口**，另两项明确保留待外部条件／拍板。
+- **§7 第 2 项（纯标准 A2A 客户端超集守护复验）勾掉**：以 §6 实测证据为准——Zeus `scripts/acceptance-standard-a2a.mjs`（不认任何 `x-zeus-*`）真机 **exit 0**；首跑暴露的真实超集缺口（rpc 只认 Zeus data part ⇒ 纯 text 被 `-32602` 拒）已由 `255064b` 的 text 首分词兜底修复（见 §4）。常跑守护由 `tests/test_a2a_vassal.py` 两条纯 text part 用例承接。
+- **§7 第 3 项（任务持久化）＝明确沿用单副本内存台账**（决策，非遗漏）：A2A 任务为 plan-only 咨询性产物（`cost.llmTokens=0`）、零业务状态零副作用，进程重启丢失至多让调用方重发一次；为此引入持久化＋多副本＝为零业务价值付迁移与副本一致性代价；与 docs/62 单副本硬约束、loom Q150 同口径。**触发复评**＝一旦启用真 LLM／经 A2A 起真实 run（属独立立项），须连同挂起帧幂等（docs/62）一并重估——已登记缓做 **D48**。决策记录 docs/08。
+- **§7 第 1 项（生产部署同口径回归）保留待外部部署条件**（真实域名/TLS/网关、`ATLAS_A2A_TASK_TOKEN` fail-closed）；**第 4 项（多租户机器账号体系）保留待产品/契约口径拍板**（调用方身份／凭证分发轮换／审计归属）。两项本批不勾、**W2 不关账**。
+- **事实订正（非状态变更）**：docs/14 **D45** 原文「MCP／A2A 的协议标准化仍无」在 A2A v1 落码后对 A2A 半边已不成立——加 2026-10-01 追记（原文留痕）；**MCP server 面仍无，D45 仍不解除**。
+- **门（先跑后写，数字取实跑）**：`tests/test_a2a_vassal.py` **13 passed**、`tests/test_handoff_integrity.py` **3 passed**、`tests/test_migration_convention.py` **4 passed**（本批零代码／测试改动，常跑零回归）。
+- **状态口径**：docs/90 状态行／§7 回填、docs/08 记决策、docs/00 索引、docs/14（D45 追记＋新增 D48）、handoff 同步。**不 push；不解除任何缓做；不动单副本三道闸；未起真实 run／未接真 LLM**。
+### feat(a2a)：A2A 执行 Agent 面 v1＝Zeus 联邦 W2 接入（2026-10-01 ✅ 落码收口，commits ccf6668／39155a7／255064b／3b7e405／本条为补记；形状权威 docs/90；ADR T32；零新依赖／零迁移／前端零改动）
+
+- **背景（为什么补记）**：A2A v1 的代码与文档落码当时**漏登记 CHANGELOG**（`feat(a2a)` `ccf6668`／`docs(a2a)` `39155a7`／`fix(a2a)` `255064b`／`docs(a2a)` `3b7e405` 均无本文件条目），与「文档必须与代码同事实」不符，随第二阶段收口一并补齐里程碑追溯。
+- **一句话**：Atlas 首次对外暴露 **A2A 执行面**，按 Zeus 已定型的「标准 A2A ＋一层 `x-zeus-fealty` 契约扩展」接入联邦（W2，与 loom 同波），验证「从零按协议接入」的可复制性。**纯新增、plan-only**。
+- **形状（docs/90 §1–§6 为唯一权威）**：只读公开 Agent Card 三端点（`GET /api/a2a/agent-card`、`/.well-known/agent-card.json`、`/.well-known/agent.json`，三者同卡）＋任务端点 `POST /api/a2a/tasks`（JSON-RPC `tasks/send`／`sendSubscribe`／`get`／`cancel`，SSE 流式帧 `submitted→working→artifact-update→completed(final)`）；两 plan-only skill（`plan-approval-flow`／`diagnose-run`）只回行动方案 artifact；Bearer 保护 `ATLAS_A2A_TASK_TOKEN`（与平台会话 `sess-` 及渠道凭证物理分离，prod 未配即 fail-closed 401，dev/test 放行打 WARNING）。
+- **plan-only 铁律**：不起 run、不改图、不调 LLM（`cost.llmTokens=0`）、不裁决人工审批；任务台账纯内存（单进程／30 分钟 TTL／500 上限，同 loom Q150）。
+- **超集而非闭墙（W2 协议承诺）**：真机守护复验（Zeus `scripts/acceptance-standard-a2a.mjs`，不认任何 `x-zeus-*`）首跑暴露真实缺口——`rpc._parse_skill_and_params` 只认 Zeus data part，纯 text 被 `-32602` 拒，即「只懂标准协议的调用方不可调用」；按 pr-helper `parseSkillAndParams` 口径加**无 data part 时取首个非空 text 首分词作 skill**的兜底（`255064b`）后复跑 **exit 0**（缺必填参数由 skill 层回合法终态 `input-required`、未知 skill `failed`，data/text 均无才 `-32602`）。
+- **门（先跑后写，数字取实跑）**：`tests/test_a2a_vassal.py` **13 passed**（卡片契约／rpc 全生命周期／SSE 成帧与收尾快照／get·cancel／坏 message `-32602`／纯 text 兜底两条／HTTP 三卡片公开＋Bearer 401·200／prod fail-closed）；本批 A2A 净增 13，工作区全量 `pytest` **2161 passed / 136 skipped / 0 failed**（372.49s）。真机协议级联调（uvicorn 127.0.0.1:8933，Zeus 真实 registry＋派发客户端）通过。**Atlas 侧业务链零改动**。
+- **状态口径**：docs/90 形状权威＋ADR **T32**（docs/10 §4）；docs/09 补模块映射、docs/12 补端点清单、docs/00 索引、docs/08 立项＋收口、`.env.example` 加 token 变量、`api/main.py` 挂路由；handoff Active #89 与 Recently shipped。**第二阶段**（生产部署回归、标准客户端超集守护复验、任务持久化、多调用方机器账号）另点工——其中「标准客户端守护复验」与「任务持久化」已在 docs/90 §7 第一批收口（见上一条）。
 ### docs(errata)：清掉四处仍在替「Redis 待拍板」说话的陈述（2026-10-01，纯 docs 勘误；零代码／测试／迁移／依赖改动）
 
 - **一句话**：`redis` 声明依赖早在 2026-09-27 就拍板**删除**（docs/10 §4 **T31**：`src/`·`tests/`·`scripts/` 零引用、compose 无服务），当时同步了 pyproject／`.env.example`／README／docs/02／docs/06／docs/10 §2 等面，但**漏了四处仍在把 Redis 写成"待拍板"或"待引入"的陈述**，今天按"文档必须与代码同事实"补齐。
