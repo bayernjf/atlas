@@ -3,6 +3,15 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### docs(errata)：项目文档与今日落码对齐（2026-10-01，纯 docs 勘误；零代码／测试／迁移／依赖改动；不解除 D45）
+
+- **一句话**：回查最近 commit（HEAD `89e0474`）与实际代码后，把**入口/快照文档**中已过期的陈述对齐（用户指令「更新项目文档」）——**快照类原文保留不改，只追加带日期的 〔勘误〕**（沿用 [docs/25](docs/25-行业趋势对照与能力现状盘点.md) §② 先例）。
+- **[docs/25](docs/25-行业趋势对照与能力现状盘点.md) §① 与 §3 净结论表各追加〔2026-10-01 勘误〕**：「MCP／A2A 生态协议＝仍无」已被推翻——**A2A 面已落码**（`src/atlas/a2a/`，ADR T32，`src/atlas/` 对 `a2a` 有真实命中）＋**MCP 选型已拍板**（ADR T33，`src/atlas/mcp/` 代码未落）；缓做登记随之更新：对外协议出入口归 **D45**、未选面归 **D49**、A2A 任务台账持久化归 **D48**。
+- **[docs/89](docs/89-项目级代码审计与功能全景.md) 基线行追加勘误**：本行「31 个包／34 个迁移／143 条 REST 路由」按今日口径应读作 **33 个包／035 迁移／149 条路由**（A2A ＋1 包＋4 路由；reflection ＋1 包＋2 只读路由＋迁移 035），原文数字保留不改；其余结论（代码级证据、风险总表、功能域地图）不受影响——两批均为纯新增面，未改动被审计的既有代码。
+- **[README.md](README.md)「当前阶段」对齐**：批链范围由 docs/27–61 扩到 **docs/27–91**，新增「**对外协议出入口**」（A2A 已落码／MCP 契约已立）与「**自我进化**」（反思 L2 v1 已落码）两条 bullet。
+- **[docs/13](docs/13-测试用例清单.md) 补登 A2A v1 用例**：`tests/test_a2a_vassal.py` **13 例**（非 U 号，沿用 docs/90「测试不占 U 号」先例）。
+- **门（先跑后写，数字取实跑）**：`tests/test_handoff_integrity.py` **3 passed** ＋ `tests/test_migration_convention.py` **4 passed** ＝ **7 passed**（0.80s，退出 0）；另复核 `tests/test_a2a_vassal.py` **13 passed**。
+- **状态口径**：本批为 **纯 docs 勘误**，不改任何代码／缓存状态。核对过而未改的：docs/14 D45／D48／D49（已最新）、docs/12 L917–922（reflection＋A2A 路由**已在**）、docs/00 地图表、handoff Project documents。**不 push；不解除 D45；MCP 代码另立批落**。
 ### docs(mcp)：MCP server 面 v1 契约立项（2026-10-01，docs-only；零代码／测试／迁移／依赖改动；不解除 D45）
 
 - **一句话**：承接 ADR **T33** 拍板（Active #90）的「下一步（另立批）先立形状权威」，立 [docs/91](91-MCP-server面-v1契约设计.md) 为 MCP server 面 v1 的**形状权威契约**——工具集、协议边界、装配与租户绑定、验证计划、落码原子序一次定形；本批 **docs-only，不落码**（用户指令「接着立 docs/9x-MCP server 面 v1 契约设计.md」）。
