@@ -12,6 +12,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 const item = {
   graphId: 'graph 1',
+  action: 'run' as const,
   version: 3,
   cron: '*/5 * * * *',
   enabled: true,
@@ -46,11 +47,23 @@ describe('定时调度 REST 面（docs/68 §2.4，打包 N ⑤）', () => {
     expect(fetchMock.mock.calls[0][0]).toBe('/api/schedules/graph%201/enabled')
     const init = fetchMock.mock.calls[0][1]
     expect(init?.method).toBe('POST')
-    expect(JSON.parse(init?.body as string)).toEqual({ enabled: false })
+    // 打包 ZH：动作必须点名，否则开关会打在 run 项上（缺省仍是 run）。
+    expect(JSON.parse(init?.body as string)).toEqual({ enabled: false, action: 'run' })
     expect(next.enabled).toBe(false)
   })
 
-  it('runScheduleNow 是带路径的 POST 且不带 body', async () => {
+  it('setScheduleEnabled 点名 reflect 时 body 带 action=reflect', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+      jsonResponse({ ...item, action: 'reflect', enabled: false }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const next = await setScheduleEnabled('graph 1', false, 'reflect')
+    const init = fetchMock.mock.calls[0][1]
+    expect(JSON.parse(init?.body as string)).toEqual({ enabled: false, action: 'reflect' })
+    expect(next.action).toBe('reflect')
+  })
+
+  it('runScheduleNow 是带路径的 POST 且 body 点名动作', async () => {
     const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
       jsonResponse({ runId: 'r-1', graphId: 'g1', version: 3 }),
     )
@@ -59,8 +72,21 @@ describe('定时调度 REST 面（docs/68 §2.4，打包 N ⑤）', () => {
     const init = fetchMock.mock.calls[0][1]
     expect(fetchMock.mock.calls[0][0]).toBe('/api/schedules/g1/run-now')
     expect(init?.method).toBe('POST')
-    expect(init?.body).toBeUndefined()
-    expect(result.runId).toBe('r-1')
+    expect(JSON.parse(init?.body as string)).toEqual({ action: 'run' })
+    expect('runId' in result && result.runId).toBe('r-1')
+  })
+
+  it('runScheduleNow reflect 回的是报告摘要（无 runId，candidateId 可空）', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, _init?: RequestInit) =>
+        jsonResponse({ candidateId: null, graphId: 'g1', baseVersion: 2, status: 'no_evidence' }),
+      ),
+    )
+    const result = await runScheduleNow('g1', 'reflect')
+    expect('runId' in result).toBe(false)
+    expect('candidateId' in result && result.candidateId).toBeNull()
+    expect('status' in result && result.status).toBe('no_evidence')
   })
 
   it('不合法的 cron 是答案不是异常（valid:false 正常 resolve）', async () => {

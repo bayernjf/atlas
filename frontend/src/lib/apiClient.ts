@@ -2304,11 +2304,16 @@ export async function broadcastWaitEvent(
   })
 }
 
-// ---------- 定时触发调度（docs/68 打包 N） ----------
+// ---------- 定时触发调度（docs/68 打包 N；动作维度 docs/88 打包 ZH） ----------
+
+/** 调度动作：`run`＝跑一次已发布钉版；`reflect`＝跑一次反思 pass（只出建议，不改图）。 */
+export type ScheduleAction = 'run' | 'reflect'
 
 /** 一条调度登记：投影权威＝后端 `scheduling/models.py::schedule_projection`（两档共用）。 */
 export type ScheduleItem = {
   graphId: string
+  /** 打包 ZH 起同图有两条（run 与 reflect），行标识必须带它。 */
+  action: ScheduleAction
   version: number
   cron: string
   enabled: boolean
@@ -2319,6 +2324,11 @@ export type ScheduleItem = {
   /** 严格晚于"现在"的下一个触发槽，UTC ISO；表达式读不出时为 null。 */
   nextFireAt: string | null
 }
+
+/** run-now 的两种回执：跑图回 runId，反思回收尾报告摘要（candidateId 可为 null）。 */
+export type RunNowResult =
+  | { runId: string; graphId: string; version: number }
+  | { candidateId: string | null; graphId: string; baseVersion: number; status: string }
 
 export type CronPreview = {
   valid: boolean
@@ -2335,18 +2345,23 @@ export async function listSchedules(): Promise<ScheduleItem[]> {
 export async function setScheduleEnabled(
   graphId: string,
   enabled: boolean,
+  action: ScheduleAction = 'run',
 ): Promise<ScheduleItem> {
   return request(`/api/schedules/${encodeURIComponent(graphId)}/enabled`, {
     method: 'POST',
-    body: JSON.stringify({ enabled }),
+    body: JSON.stringify({ enabled, action }),
   })
 }
 
 /** 立即按钉版跑一次；后端刻意不占槽位认领，所以它不会吃掉本分钟的自动触发。 */
 export async function runScheduleNow(
   graphId: string,
-): Promise<{ runId: string; graphId: string; version: number }> {
-  return request(`/api/schedules/${encodeURIComponent(graphId)}/run-now`, { method: 'POST' })
+  action: ScheduleAction = 'run',
+): Promise<RunNowResult> {
+  return request(`/api/schedules/${encodeURIComponent(graphId)}/run-now`, {
+    method: 'POST',
+    body: JSON.stringify({ action }),
+  })
 }
 
 /** 表达式预演：非法也回 200（`valid:false`），字段级问题不该走 HTTP 错误通道。 */

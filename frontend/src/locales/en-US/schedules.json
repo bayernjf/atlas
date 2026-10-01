@@ -1,14 +1,15 @@
 {
   "page": {
     "title": "Scheduled triggers",
-    "description": "Lists the timed triggers in your published graphs. A schedule only runs the version pinned at publish time; editing the draft changes nothing until you publish again.",
+    "description": "Lists the timed triggers in your published graphs. Each graph has two: one that runs it, one that reflects on it (reflection only proposes changes; it never edits the graph). A schedule only runs the version pinned at publish time; editing the draft changes nothing until you publish again.",
     "utcNotice": "Every timestamp is UTC. Slots missed while the process was down are never replayed.",
     "refresh": "Refresh",
-    "empty": "No schedules yet: add a scheduled (Cron) trigger node to a graph and publish it, and one appears here.",
+    "empty": "No schedules yet: add a scheduled (Cron) trigger node to a graph and publish it, and two rows appear here (run and reflect).",
     "loadError": "Failed to load schedules"
   },
   "table": {
     "graph": "Graph",
+    "action": "Action",
     "cron": "Cron expression",
     "version": "Version",
     "nextFire": "Next fire (UTC)",
@@ -17,13 +18,19 @@
     "enabled": "Enabled",
     "actions": "Actions"
   },
+  "action": {
+    "run": "Run",
+    "reflect": "Reflect"
+  },
   "actions": {
     "runNow": "Run now",
+    "reflectNow": "Reflect now",
     "enabled": "Schedule enabled",
     "disabled": "Schedule disabled",
     "running": "Started one run at v{{version}} (it does not consume a scheduled slot)",
+    "reflected": "Ran one reflection pass ({{status}}; proposals only, no scheduled slot consumed)",
     "toggleFailed": "The switch did not take effect",
-    "runFailed": "Run now failed"
+    "runFailed": "Immediate execution failed"
   },
   "never": "—",
   "cron": {
