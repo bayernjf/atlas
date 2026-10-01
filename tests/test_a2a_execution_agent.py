@@ -1,6 +1,6 @@
-"""A2A 执行 Agent 面（docs/90，ADR T32；Zeus 联邦 W2 接入第一阶段）。
+"""A2A 执行 Agent 面（docs/90，ADR T32；Zeus 协同决策平台 W2 接入第一阶段）。
 
-形状对齐 loom backend/tests/unit/test_a2a_vassal.py：rpc 纯函数 + 卡片契约
+形状对齐 loom backend/tests/unit/test_a2a_vassal.py（loom 侧原文件名）：rpc 纯函数 + 卡片契约
 + 任务端点 Bearer 闸门。plan-only，不触链/不起 run/不花 token。
 """
 

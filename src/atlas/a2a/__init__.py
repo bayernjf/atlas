@@ -1,4 +1,4 @@
-"""A2A 执行 Agent 面（Zeus 联邦 W2 接入，第一阶段；docs/90、ADR T32）。
+"""A2A 执行 Agent 面（Zeus 协同决策平台 W2 接入，第一阶段；docs/90、ADR T32）。
 
 与 loom Q150 同构：独立模块、不碰业务链，只暴露 plan-only 的编排域能力。
 - card.py：Agent Card + x-zeus-fealty 单一事实源。

@@ -95,7 +95,7 @@ from atlas.channels.webhooks import (
     build_envelope,
     verify_shopify_hmac,
 )
-from atlas.a2a.router import router as a2a_router  # docs/90 ADR T32 (Zeus A2A vassal face)
+from atlas.a2a.router import router as a2a_router  # docs/90 ADR T32 (Zeus A2A execution-agent face)
 from atlas.connections.service import ConnectionServiceError
 from atlas.observability.health import check_ready
 from atlas.observability.logging import (
@@ -357,7 +357,7 @@ assert_prod_secrets()
 
 app = FastAPI(title="Atlas API", version="0.0.1", lifespan=lifespan)
 
-# docs/90 ADR T32：A2A 执行 Agent 面（Zeus 联邦，plan-only），卡片公开、任务 Bearer 保护。
+# docs/90 ADR T32：A2A 执行 Agent 面（Zeus 协同决策平台，plan-only），卡片公开、任务 Bearer 保护。
 app.include_router(a2a_router)
 
 # docs/65 K-D：request-id 中间件（X-Request-Id 响应头 + 日志 request_id 字段）。
