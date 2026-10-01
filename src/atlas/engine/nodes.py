@@ -65,7 +65,12 @@ def act_node(state: LoopState) -> dict:
 
 
 def reflect_node(state: LoopState) -> dict:
-    """阶段性反思（W1：占位）。"""
+    """阶段性反思（W1：占位）。
+
+    **冻结（打包 ZH，2026-10-01；docs/88 §3 P-2(a)）**：历史占位，非运行路径。
+    v1 反思**不接在这里**，走 `src/atlas/reflection/`（读既有监控/录制产物出建议）；
+    本函数保持原样，不删除也不实现（删除会动 W1 冒烟测试的拓扑断言）。
+    """
     step = state["variables"]["step"]
     return {
         "current_node": "reflect",

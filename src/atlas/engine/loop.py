@@ -2,6 +2,11 @@
 
 拓扑：observe → orient →[should_continue]→ decide →[should_act_or_wait]→
 act →[should_reflect_or_continue]→ observe | reflect → END
+
+**冻结（打包 ZH，2026-10-01；docs/88 §3 P-2(a)）**：本模块是 W1 的历史骨架，
+`run_loop` **全仓零调用方**，真实运行时是 `graph/loader.py:run_graph`。此处**只标注、
+不删除、不实现**——v1 反思走 `src/atlas/reflection/`（读既有监控/录制产物），
+不从这条路径接入。
 """
 
 from __future__ import annotations
@@ -71,5 +76,6 @@ def initial_state(
 
 
 def run_loop(goal: str, *, max_steps: int = 3, memory_id: str = "") -> LoopState:
+    """历史骨架入口：全仓零调用方（docs/88 §3 P-2(a) 冻结，仅 demo 级冒烟测试使用）。"""
     graph = build_graph()
     return graph.invoke(initial_state(goal, max_steps=max_steps, memory_id=memory_id))
