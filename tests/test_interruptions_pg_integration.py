@@ -28,6 +28,7 @@ from atlas.iam.deps import session_store, tenant_registry
 from atlas.storage.pg import PgRunsStore
 from atlas.storage.recovery import (
     claim_frame_for_resume,
+    interruption_state,
     list_tenant_frames,
     load_pending_frames,
     make_frame_sink,
@@ -257,7 +258,7 @@ def test_u923_crashed_run_keeps_the_frame_and_the_mine_visible(engine) -> None:
     assert [f["resume_token"] for f in frames] == ["u923-crash-token"]
     run = runs.get(run_id)
     assert run and run["status"] == "suspended"
-    assert api_main._interruption_state(bool(frames[0]["resumed_at"]), run["status"]) == "claimed_suspended"
+    assert interruption_state(bool(frames[0]["resumed_at"]), run["status"]) == "claimed_suspended"
 
     with engine.begin() as conn:
         conn.execute(text("DELETE FROM interruptions WHERE tenant_id = :t"), {"t": tenant})

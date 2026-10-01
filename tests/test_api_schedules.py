@@ -309,7 +309,7 @@ def test_u1031_publish_derives_both_run_and_reflect_rows(schedule_graph):
     """发布派生出两条注册（同一 cron），各自有独立开关；投影多出 `action` 键。
 
     反思项**必须是发布派生的**：既有调度项全部来自发布，不给它派生就等于没有入口
-    （docs/88 §3 拍板记录里那条订正说的正是这件事）。
+    （docs/88 §3 决策记录里那条订正说的正是这件事）。
     """
     graph_id, version = schedule_graph
     run_row = _find(graph_id, action="run")

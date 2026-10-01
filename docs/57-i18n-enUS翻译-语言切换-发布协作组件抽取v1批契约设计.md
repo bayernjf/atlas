@@ -142,6 +142,8 @@ zh-CN 有两处文案故意携带不被插值解析的教学花括号（变量�
 2. UserBadge 改密码失败处 `detail === '原密码错误'` 是对后端中文错误串的匹配逻辑（非 UI 文案），随后端错误码国际化批次处理（docs/17 §2.4 第一批债，本批非目标已声明）；
 3. 业务数据豁免（docs/33 契约）：节点目录 label/description、模板 name/description/标签、演示订单 reason、租户/用户名、JSON 示例值。
 
+> 〔2026-10-02 勘误，打包 ZI 落码后〕本条"节点目录 label/description"已**取回**（`editor.nodeCatalog.<kind>.label/description` 18 键 zh/en 两档，消费方 NodePanel/AtlasNode/PropertyPanel 走 `t()`；`NODE_CATALOG` 本体保留作数据源/兜底——默认 label 落图 JSON 与中文日志仍豁免）；模板 name/description/标签亦已于 2026-09-27 docs/70 后端切片取回。演示订单 reason、租户/用户名、JSON 示例值豁免口径不变。形状权威＝docs/17 §2.4/§2.5。
+
 ## 7. 原子提交规划与实际提交链（不 push）
 
 | # | 规划 | 实际 hash |

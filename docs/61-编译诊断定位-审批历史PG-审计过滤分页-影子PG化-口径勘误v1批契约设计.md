@@ -53,6 +53,7 @@
 ### 1.2 非目标（继续缓做，触发条件不变）
 
 - H1：不改后端 422 契约（detail/codes/params/locations 形状不动）、不做后端码的 quickFix、不改 422 中文 detail 兜底、不引 i18next；节点目录 label/description 与模板元数据多语言仍属 D13。
+  > 〔2026-10-02 勘误，打包 ZI 落码后〕"节点目录 label/description 仍属 D13"已不再成立——已抽入 `editor.nodeCatalog.<kind>.label/description` 18 键并收口（`3b785c1`/`5a20fcf`）；模板元数据多语言口径以 docs/17 §2.4/§2.5 为准（后端切片 2026-09-27 docs/70 已取回 name/description/标签）。
 - H2：**pending 挂起审批不动**（已由 `storage/recovery.py` 帧表 + `interruptions` 承担）；多实例决策竞态/外部审批信号、通知重发、审批评论流、动态审批人与节点级角色、历史归档与长保留、账号邮箱绑定仍缓做（D20）。
 - H3：SIEM/外部转发、保留策略与表分区归档、`resource_id`/对象维度过滤、角色维度、CSV 导出、跨租户平台级审计、给读操作（GET）补记审计仍缓做（D11）；v1 不做 actor 模糊搜索（取值域固定四类）。
 - H4：影子自动旁路、影子 SSE、影子报表趋势、跨租户共享、长保留/归档仍缓做（D26）；PG 档沿用 ring 语义（每租户最近 100，与内存一致）。

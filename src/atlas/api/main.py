@@ -38,8 +38,6 @@ from atlas.cards import (
     map_action_output,
     render_card,
 )
-from atlas.database.adapter import DatabaseHarnessAdapter
-from atlas.database.service import DatabaseClient, demo_engine
 from atlas.debug import DebugController, DebugStopped
 from atlas.graph.conditions import ConditionEvalError, validate_expression
 from atlas.graph.dsl import GraphDSL, GraphValidationError, parse_graph, valid_event_key
@@ -63,10 +61,11 @@ from atlas.collaboration.event_waits import (
 from atlas.collaboration.notifications import EmailApprovalNotifier
 from atlas.collaboration.email_token import EmailTokenError, TokenIssuer
 from atlas.tracing import Tracer
-from atlas.harness.base import Permission
-from atlas.harness.registry import AdapterRegistry
-from atlas.httpapi.adapter import HttpApiHarnessAdapter
-from atlas.httpapi.service import HttpApiClient
+from atlas.harness.runtime import (
+    build_base_registry,
+    build_runtime_registry,
+    resolve_database_client,
+)
 from atlas.iam.deps import (
     authenticate_login,
     get_principal,
@@ -83,14 +82,11 @@ from atlas.iam.principals import Principal, Role, can
 from atlas.iam.registry import STORAGE_BACKEND, TenantServices
 from atlas.llm.decision import get_decision_client
 from atlas.llm.nl_generate import generate_graph, validate_param_fills
-from atlas.memory.adapter import MemoryHarnessAdapter
 from atlas.memory.database import ping, wait_for_database
 from atlas.memory.models import MemoryValidationError
-from atlas.message.adapter import MessageHarnessAdapter
 from atlas.message.service import MessageSendError
 from atlas.monitoring import RUN_RING_SIZE, extract_business, extract_node_results
 from atlas.observability.audit import AUDITED_METHODS, LOGIN_PATH
-from atlas.channels.adapter import ShopifyHarnessAdapter
 from atlas.channels.base import ChannelBinding, ChannelError
 from atlas.channels.webhooks import (
     HMAC_HEADER,
@@ -99,7 +95,7 @@ from atlas.channels.webhooks import (
     build_envelope,
     verify_shopify_hmac,
 )
-from atlas.a2a.router import router as a2a_router  # docs/90 ADR T32 (Zeus A2A vassal face)
+from atlas.a2a.router import router as a2a_router  # docs/90 ADR T32 (Zeus A2A execution-agent face)
 from atlas.connections.service import ConnectionServiceError
 from atlas.observability.health import check_ready
 from atlas.observability.logging import (
@@ -107,7 +103,6 @@ from atlas.observability.logging import (
     install_request_id_middleware,
 )
 from atlas.observability.metrics_export import render_prometheus
-from atlas.openapi.adapter import ImportedApiHarnessAdapter
 from atlas.openapi.errors import OpenApiError
 from atlas.openapi.parser import parse_document
 from atlas.openapi.store import ImportStoreError
@@ -146,7 +141,6 @@ from atlas.routing import (
     TriggerEvent,
     evaluate_after_run,
 )
-from atlas.shop.adapter import ShopHarnessAdapter
 from atlas.shop.service import DemoShopService
 from atlas.storage.frame import card_context_from_frame, remaining_seconds
 from atlas.storage.memory import ApprovalBroker, FeedbackRequest
@@ -155,7 +149,7 @@ from atlas.storage.retention import run_retention_once
 from atlas.storage.recovery import (
     clear_frame,
     clear_tenant_frames,
-    list_tenant_frames,
+    interruption_view,
     load_pending_frames,
     make_frame_sink,
     make_resume_claim,
@@ -173,7 +167,6 @@ from atlas.scheduling.models import (
     ScheduleRecord,
     schedule_projection,
     slot_key,
-    to_utc_iso,
 )
 from atlas.scheduling.pg_store import PgScheduleStore
 from atlas.scheduling.store import InMemoryScheduleStore, ScheduleStore
@@ -364,7 +357,7 @@ assert_prod_secrets()
 
 app = FastAPI(title="Atlas API", version="0.0.1", lifespan=lifespan)
 
-# docs/90 ADR T32：A2A 执行 Agent 面（Zeus 联邦，plan-only），卡片公开、任务 Bearer 保护。
+# docs/90 ADR T32：A2A 执行 Agent 面（Zeus 协同决策平台，plan-only），卡片公开、任务 Bearer 保护。
 app.include_router(a2a_router)
 
 # docs/65 K-D：request-id 中间件（X-Request-Id 响应头 + 日志 request_id 字段）。
@@ -372,62 +365,11 @@ install_request_id_middleware(app)
 
 # Demo 单例：控制台页面与编译运行的图共享同一份店铺状态
 _demo_shop = DemoShopService()
-# 通用 HTTP 适配器：默认连接配置来自 ATLAS_HTTPAPI_* 环境变量（04 §4.6）
-_http_client = HttpApiClient.from_env()
 # Demo 全局基础设施（04 §5.14）：店铺/出向连接/适配器注册不按租户分区；
 # 图/录制/反馈/消息/审批/调试/监控每租户一套，由 iam.TenantRegistry 惰性装配。
-_FULL_PERMISSIONS = {Permission.READ, Permission.WRITE, Permission.DELETE, Permission.FINANCIAL}
-
-
-def _resolve_database_client(demo_surface: bool) -> DatabaseClient | None:
-    """数据适配器出站连接（04 §4.7）：ATLAS_DATABASE_URL 出站连接（与平台 DATABASE_URL 隔离）。
-
-    未配置时**仅演示面**回退内置 SQLite demo 订单库；docs/77 R2：prod 且未开 demo 面
-    返回 None（该适配器不注册，图里选不到），而不是静默打到演示 fixture。
-    """
-    client = DatabaseClient.from_env()
-    if client is None and demo_surface:
-        client = DatabaseClient(demo_engine(), demo=True)
-    return client
-
-
-def _build_demo_registry(demo_surface: bool, db_client: DatabaseClient | None) -> AdapterRegistry:
-    """全局基础设施/演示适配器（04 §5.14）。
-
-    docs/77 R2：`shop`（进程内 `DemoShopService`）与 `database`（内置 SQLite demo）
-    属**演示面**——prod 且未开 demo 面即不注册（与 HTTP mock 路由共用
-    `ATLAS_ENABLE_DEMO_MOCK` 一处判定）。`http`/`message`/`memory` 不依赖演示 fixture，照常注册。
-    """
-    registry = AdapterRegistry()
-    if demo_surface:
-        registry.register(
-            ShopHarnessAdapter(
-                service=_demo_shop,
-                granted_permissions=_FULL_PERMISSIONS,
-            )
-        )
-    registry.register(
-        HttpApiHarnessAdapter(
-            client=_http_client,
-            granted_permissions=_FULL_PERMISSIONS,
-        )
-    )
-    if db_client is not None:
-        registry.register(
-            DatabaseHarnessAdapter(
-                client=db_client,
-                granted_permissions=_FULL_PERMISSIONS,
-            )
-        )
-    # 全局注册表里的 message 实例仅供适配器发现；执行期注册表替换为租户消息服务
-    registry.register(MessageHarnessAdapter(granted_permissions=_FULL_PERMISSIONS))
-    # 全局注册表里的 memory 实例仅供适配器发现；执行期注册表替换为租户记忆存储（docs/26 §5.1）
-    registry.register(MemoryHarnessAdapter(granted_permissions=_FULL_PERMISSIONS))
-    return registry
-
-
-_db_client = _resolve_database_client(demo_surface_enabled())
-_demo_registry = _build_demo_registry(demo_surface_enabled(), _db_client)
+# 装配逻辑在 atlas.harness.runtime（REST 与 MCP 两个只读面共用一份，防漂移）。
+_db_client = resolve_database_client(demo_surface_enabled())
+_demo_registry = build_base_registry(demo_surface_enabled(), _db_client, shop=_demo_shop)
 
 _secret_provider = build_secret_provider_from_env()
 
@@ -579,35 +521,10 @@ def _tenant_graph_resolver(services: TenantServices):
 
 def _runtime_registry(services: TenantServices) -> AdapterRegistry:
     """执行期适配器注册表：沿用全局 shop/http/database 适配器实例，
-    message 适配器替换为当前租户消息服务（04 §5.14 分区；06 §6.12）。"""
-    registry = AdapterRegistry()
-    for item in _demo_registry.list_adapters():
-        adapter = _demo_registry.get(item["id"])
-        if item["id"] == "message":
-            adapter = MessageHarnessAdapter(
-                service=services.message_service, granted_permissions=_FULL_PERMISSIONS
-            )
-        if item["id"] == "memory":
-            adapter = MemoryHarnessAdapter(
-                repo=services.memory_store, granted_permissions=_FULL_PERMISSIONS
-            )
-        registry.register(adapter)
-    for view in services.channel_registry.list():
-        registry.register(
-            ShopifyHarnessAdapter(
-                view["id"], services.channel_registry,
-                granted_permissions=_FULL_PERMISSIONS,
-            )
-        )
-    for imported in services.openapi_imports.list():
-        registry.register(
-            ImportedApiHarnessAdapter(
-                imported,
-                secret_provider=_secret_provider,
-                granted_permissions=_FULL_PERMISSIONS,
-            )
-        )
-    return registry
+    message 适配器替换为当前租户消息服务（04 §5.14 分区；06 §6.12）。
+
+    装配本体在 atlas.harness.runtime（MCP 的 atlas_list_adapters 锚同一张表）。"""
+    return build_runtime_registry(services, _demo_registry, _secret_provider)
 
 
 class SaveGraphResponse(BaseModel):
@@ -3848,37 +3765,6 @@ def list_waits(
     return {"items": services_for(principal).event_wait_broker.list_pending()}
 
 
-_TERMINAL_RUN_STATES = {"completed", "failed", "cancelled", "interrupted"}
-
-
-def _interruption_state(claimed: bool, run_status: str | None) -> str:
-    """帧列值＋run 状态 → 描述性档位（docs/76 §1 D-3：**只描述，不判决、不计时**）。"""
-    if not claimed:
-        return "awaiting"
-    if run_status is None:
-        return "claimed_unknown_run"
-    if run_status == "running":
-        return "claimed_executing"
-    if run_status == "suspended":
-        return "claimed_suspended"
-    if run_status in _TERMINAL_RUN_STATES:
-        return "frame_lingering"
-    return "claimed_other_state"
-
-
-def _claimed_seconds(claimed_at: object) -> int | None:
-    """已认领多久；算不出来就回 None（不拿 0 冒充"刚认领"）。"""
-    if isinstance(claimed_at, str):
-        try:
-            claimed_at = datetime.fromisoformat(claimed_at.replace("Z", "+00:00"))
-        except ValueError:
-            return None
-    if not isinstance(claimed_at, datetime):
-        return None
-    moment = claimed_at if claimed_at.tzinfo else claimed_at.replace(tzinfo=timezone.utc)
-    return max(0, int((datetime.now(timezone.utc) - moment.astimezone(timezone.utc)).total_seconds()))
-
-
 @app.get("/api/interruptions")
 def list_interruptions(
     principal: Principal = Depends(require("read")),
@@ -3888,33 +3774,18 @@ def list_interruptions(
     存在的理由：`resumed_at` 此前只在启动恢复路径被读一次，崩在续跑途中的 run 除了重启
     翻日志无处可查。**本端点不重放、不清帧、不改任何状态**——`claimed_suspended` 只是把
     D36 那颗雷显形，怎么处理仍未决定。
+
+    投影本体在 `atlas.storage.recovery.interruption_view`（MCP 面 `atlas_list_interruptions`
+    锚同一份，只差 resumeToken 收窄）。
     """
-    if STORAGE_BACKEND != "pg":
-        # 内存档根本不写帧表（`_frame_sink_for`），所以"空"不是"没有卡住的 run"。
-        return {"backend": "memory", "visibility": "frames-not-persisted", "items": []}
     run_store = services_for(principal).run_store
-    items: list[dict[str, Any]] = []
-    for frame in list_tenant_frames(get_pg_backend().engine, principal.tenant_id):
-        claimed_at = frame.get("resumed_at")
-        run_id = frame.get("run_id") or ""
-        run = run_store.get(run_id) if run_id else None
-        run_status = run.get("status") if run else None
-        items.append(
-            {
-                "resumeToken": frame.get("resume_token", ""),
-                "runId": run_id,
-                "graphId": (frame.get("resume_state") or {}).get("graph_id", ""),
-                "nodeId": frame.get("node_id", ""),
-                "kind": frame.get("kind", ""),
-                "claimedAt": to_utc_iso(claimed_at) if claimed_at else None,
-                "claimedBy": frame.get("resumed_by"),
-                "claimedSeconds": _claimed_seconds(claimed_at) if claimed_at else None,
-                "deadlineAt": frame.get("deadline_at"),
-                "runStatus": run_status,
-                "state": _interruption_state(bool(claimed_at), run_status),
-            }
-        )
-    return {"backend": "pg", "visibility": "tenant-scoped", "items": items}
+    return interruption_view(
+        backend=STORAGE_BACKEND,
+        tenant_id=principal.tenant_id,
+        engine=get_pg_backend().engine if STORAGE_BACKEND == "pg" else None,
+        run_status_of=lambda run_id: (run_store.get(run_id) or {}).get("status"),
+        include_resume_token=True,
+    )
 
 
 @app.post("/api/waits/events")

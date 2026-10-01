@@ -19,13 +19,8 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from starlette.routing import Mount
 
-from atlas.api.main import (
-    _build_demo_registry,
-    _demo_mock_enabled,
-    _frontend_dist,
-    _resolve_database_client,
-    app,
-)
+from atlas.api.main import _demo_mock_enabled, _frontend_dist, app
+from atlas.harness.runtime import build_base_registry, resolve_database_client
 from atlas.security.bootstrap import demo_surface_enabled, read_env_profile
 
 client = TestClient(app)
@@ -192,11 +187,11 @@ def test_r2_prod_without_demo_flag_registers_no_demo_adapters(monkeypatch):
     monkeypatch.delenv("ATLAS_ENABLE_DEMO_MOCK", raising=False)
     monkeypatch.delenv("ATLAS_DATABASE_URL", raising=False)
     assert demo_surface_enabled() is False
-    db_client = _resolve_database_client(demo_surface_enabled())
+    db_client = resolve_database_client(demo_surface_enabled())
     assert db_client is None, "prod 未配 ATLAS_DATABASE_URL 时不应回退内置 SQLite 演示库"
     ids = {
         item["id"]
-        for item in _build_demo_registry(demo_surface_enabled(), db_client).list_adapters()
+        for item in build_base_registry(demo_surface_enabled(), db_client).list_adapters()
     }
     assert "shop" not in ids, "prod 未开 demo 面却仍装配了进程内 DemoShopService"
     assert "database" not in ids
@@ -208,11 +203,11 @@ def test_r2_demo_surface_registers_shop_and_database(monkeypatch):
     monkeypatch.setenv("ATLAS_ENV", "dev")
     monkeypatch.delenv("ATLAS_DATABASE_URL", raising=False)
     assert demo_surface_enabled() is True
-    db_client = _resolve_database_client(demo_surface_enabled())
+    db_client = resolve_database_client(demo_surface_enabled())
     assert db_client is not None, "演示面应回退内置 SQLite 演示库"
     ids = {
         item["id"]
-        for item in _build_demo_registry(demo_surface_enabled(), db_client).list_adapters()
+        for item in build_base_registry(demo_surface_enabled(), db_client).list_adapters()
     }
     assert {"shop", "database"} <= ids
 
@@ -224,11 +219,11 @@ def test_r2_prod_with_real_database_url_keeps_database_without_shop(monkeypatch)
     monkeypatch.setenv(
         "ATLAS_DATABASE_URL", "postgresql+psycopg://u:p@127.0.0.1:5432/target_db"
     )
-    db_client = _resolve_database_client(demo_surface_enabled())
+    db_client = resolve_database_client(demo_surface_enabled())
     assert db_client is not None
     ids = {
         item["id"]
-        for item in _build_demo_registry(demo_surface_enabled(), db_client).list_adapters()
+        for item in build_base_registry(demo_surface_enabled(), db_client).list_adapters()
     }
     assert "database" in ids
     assert "shop" not in ids

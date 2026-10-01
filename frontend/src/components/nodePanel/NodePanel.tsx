@@ -24,9 +24,9 @@ export function NodePanel() {
             style={{ borderLeftColor: meta.color }}
           >
             <Tag color={meta.color} style={{ marginInlineEnd: 6 }}>
-              {meta.label}
+              {t(`nodeCatalog.${kind}.label`)}
             </Tag>
-            <Typography.Text type="secondary">{meta.description}</Typography.Text>
+            <Typography.Text type="secondary">{t(`nodeCatalog.${kind}.description`)}</Typography.Text>
           </div>
         )
       })}

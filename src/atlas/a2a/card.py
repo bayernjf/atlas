@@ -39,7 +39,7 @@ FEALTY: dict = {
     "escalationPolicy": "auto",
     "sla": {"ackSeconds": 10},
     "notes": (
-        "Plan-mode vassal: every skill returns an advisory plan artifact and "
+        "Plan-mode execution agent: every skill returns an advisory plan artifact and "
         "never starts a run, mutates a graph, spends model tokens, or resolves a "
         "human approval. Task execution is JSON-RPC at POST /api/a2a/tasks "
         "protected by ATLAS_A2A_TASK_TOKEN (Bearer). Task storage is in-memory "

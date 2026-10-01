@@ -23,7 +23,7 @@ from atlas.security.bootstrap import read_env_profile
 
 logger = logging.getLogger("atlas.a2a")
 
-router = APIRouter(tags=["a2a-vassal"])
+router = APIRouter(tags=["a2a-execution-agent"])
 
 
 def _card_response() -> JSONResponse:

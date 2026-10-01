@@ -24,7 +24,7 @@ Atlas 是一个 **AI 运营体（Agent）编排平台**：以 **Harness / Graph 
   - **可靠性与运维**：告警中心、静默/值班（PG 化 + 惰性按日自动轮换）、告警外部通知与投递退避、外部通知 flapping 抑制、灰度门控自动回滚、影子运行（旁路决策比对，打包 H 起 PG 落库）。
   - **运行时体验**：span 级链路追踪、单步调试与条件断点、wait 三形态（动态时长/到点时刻/事件等待，事件帧跨重启）、condition LLM 语义分支、loop foreach 批处理、编译诊断逐条定位（打包 H 起后端 422 侧车在前端 Problems 面板兑现）。
   - **产品化**：en-US 全量翻译与运行时语言切换、设计 Token 层、用例集报告 PG 持久化与跨图看板、审计过滤 + 游标分页。
-  - **对外协议出入口**：**A2A 执行 Agent 面 v1 已落码**（`src/atlas/a2a/`：公开 Agent Card ＋ `POST /api/a2a/tasks`，两个 plan-only skill，独立 Bearer，接进 Zeus 联邦 W2；形状权威 [docs/90](docs/90-A2A执行Agent面-Zeus联邦接入-v1批契约设计.md)／ADR T32）；**MCP server 面 v1 选型已拍板、契约已立**（官方 `mcp` Python SDK v2 ＋ stdio ＋ 只读/plan-only 工具面，形状权威 [docs/91](docs/91-MCP-server面-v1契约设计.md)／ADR T33），**代码另立批落**。
+  - **对外协议出入口**：**A2A 执行 Agent 面 v1 已落码**（`src/atlas/a2a/`：公开 Agent Card ＋ `POST /api/a2a/tasks`，两个 plan-only skill，独立 Bearer，接进 Zeus 协同决策平台 W2；形状权威 [docs/90](docs/90-A2A执行Agent面-Zeus协同决策平台接入-v1批契约设计.md)／ADR T32）；**MCP server 面 v1 选型已决策、契约已立**（官方 `mcp` Python SDK v2 ＋ stdio ＋ 只读/plan-only 工具面，形状权威 [docs/91](docs/91-MCP-server面-v1契约设计.md)／ADR T33），**代码另立批落**。
   - **自我进化**：反思进化 **L2 v1（单运营体反思）已落码**——`src/atlas/reflection/` 白名单调参候选 ＋ 未配 LLM 确定性降级，复用调度器（迁移 035 加 `action` 列）触发，只读报告端点；**无自动 apply／publish／promote**（形状权威 [docs/88](docs/88-反思进化模块-v1契约设计.md)）。
   - 验证命令：后端 `.venv/bin/pytest`、PG 直连见 [docs/13](docs/13-测试用例清单.md)、前端 `pnpm vitest run` / `pnpm run lint` / `pnpm build`；**最近一次门结果与推送状态以 [handoff.md](handoff.md) 为准**（本文件不复制会随下一次提交过期的数字）。
 - **W1-W10 Demo（2026-09-13）为基线**：电商退款端到端链路（webhook 退款单 → AI 决策 → shop 适配器执行退款或转人工，SSE 实时上屏，NL 生成草稿）；规则兜底离线可跑，配置 `LITELLM_MODEL` 即用真实 LLM。
@@ -79,7 +79,7 @@ cd frontend && pnpm dev                                     # 编辑器 http://l
 
 ## 技术栈（已定选型）
 
-Python 3.11+（引擎）/ Go（Harness 网关产品化目标，Demo 暂用 FastAPI）/ TypeScript + React 19（满足 React 18+）/ **LangChain + LangGraph** / LiteLLM / Playwright + OmniParser（**浏览器自动化本轮显式非目标**：`web-playwright` 不注册进运行期适配器注册表，三层定位与工具实现已在 `src/atlas/web/`、但图上不可达，拍板见 [docs/63 §0A N3](docs/63-项目级上线复审-2026-09-25第三次.md) 与 [docs/01 §4.3](docs/01-PRD-产品需求规格.md)）/ PostgreSQL + pgvector / Demo 进程内事件总线（NATS 留 Phase 2）/ `@xyflow/react`（React Flow 12）+ Zustand + Ant Design / FastAPI。
+Python 3.11+（引擎）/ Go（Harness 网关产品化目标，Demo 暂用 FastAPI）/ TypeScript + React 19（满足 React 18+）/ **LangChain + LangGraph** / LiteLLM / Playwright + OmniParser（**浏览器自动化本轮显式非目标**：`web-playwright` 不注册进运行期适配器注册表，三层定位与工具实现已在 `src/atlas/web/`、但图上不可达，决策见 [docs/63 §0A N3](docs/63-项目级上线复审-2026-09-25第三次.md) 与 [docs/01 §4.3](docs/01-PRD-产品需求规格.md)）/ PostgreSQL + pgvector / Demo 进程内事件总线（NATS 留 Phase 2）/ `@xyflow/react`（React Flow 12）+ Zustand + Ant Design / FastAPI。
 
 > **「短期记忆」这一档没有独立存储**（2026-09-27 起选型行不再写 Redis）：`redis` 声明依赖已删——它对 `src/`·`tests/`·`scripts/` 零引用却挂着，等于白付安装面还让文档说谎。**别把 `src/atlas/memory/` 的 per-tenant `MemoryStore` 当成它的替代**：那是「长期事实记忆」档（docs/06 §6.3），短期工作记忆的职责由 run 的 `outputs`/`globals` 承担、不另建（docs/26 §1.2）。真要跨进程共享记忆时按 [docs/10 §4 T31](docs/10-技术选型决策记录.md) 另立 ADR 再引入。
 
@@ -104,5 +104,5 @@ Demo 里程碑 W1-W10 与验收标准见 [08 任务迭代计划](docs/08-任务�
 
 ## License
 
-**不开放（proprietary）**——无 LICENSE 文件，`pyproject.toml` 与 `frontend/package.json` 亦无 license 字段。MIT 曾于 2026-09-22 短暂落地（`c40b46c`），同日由用户拍板删除并保持不开放（`f721c18`）；决策记录见 [docs/08](docs/08-任务迭代计划.md) 与 [docs/34](docs/34-MVP上线就绪评审-2026-09-22复审.md) 的 2026-09-22 更新注记。
+**不开放（proprietary）**——无 LICENSE 文件，`pyproject.toml` 与 `frontend/package.json` 亦无 license 字段。MIT 曾于 2026-09-22 短暂落地（`c40b46c`），同日由用户决策删除并保持不开放（`f721c18`）；决策记录见 [docs/08](docs/08-任务迭代计划.md) 与 [docs/34](docs/34-MVP上线就绪评审-2026-09-22复审.md) 的 2026-09-22 更新注记。
 
