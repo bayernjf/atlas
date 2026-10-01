@@ -10,11 +10,16 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
 from atlas.scheduling.cron import CronExpressionError, next_fire_utc, parse_cron
+
+#: 调度动作（docs/88 §3 P-4，打包 ZH；迁移 035）。`run`＝跑一次已发布钉版；
+#: `reflect`＝跑一次反思 pass（只出建议，不改图、不发布）。
+ScheduleAction = Literal["run", "reflect"]
+DEFAULT_SCHEDULE_ACTION: ScheduleAction = "run"
 
 
 def to_utc_iso(value: datetime | str) -> str:
@@ -31,10 +36,11 @@ def to_utc_iso(value: datetime | str) -> str:
 
 
 class ScheduleRecord(BaseModel):
-    """一张图的一条定时注册（PK `(tenant_id, graph_id)`）：发布时派生，只跑钉版。"""
+    """一张图的一条定时注册（PK `(tenant_id, graph_id, action)`）：发布时派生，只跑钉版。"""
 
     tenant_id: str
     graph_id: str
+    action: ScheduleAction = DEFAULT_SCHEDULE_ACTION
     version: int
     cron: str
     enabled: bool = True
@@ -45,13 +51,14 @@ class ScheduleRecord(BaseModel):
 
 
 class ScheduleFire(BaseModel):
-    """一次实际派发的槽位认领（PK `(tenant_id, graph_id, slot_utc)`）。
+    """一次实际派发的槽位认领（PK `(tenant_id, graph_id, action, slot_utc)`）。
 
     **只记实际派发**：重叠跳过不写本表（写了就等于白吃掉一个槽位，docs/68 §1 D-6）。
     """
 
     tenant_id: str
     graph_id: str
+    action: ScheduleAction = DEFAULT_SCHEDULE_ACTION
     slot_utc: str
     fired_at: str
 
@@ -75,6 +82,7 @@ def schedule_projection(record: ScheduleRecord, now: datetime) -> dict[str, Any]
     """REST 投影（camelCase，与仓库其余投影同形）；两档共用，逐键一致。"""
     return {
         "graphId": record.graph_id,
+        "action": record.action,
         "version": record.version,
         "cron": record.cron,
         "enabled": record.enabled,

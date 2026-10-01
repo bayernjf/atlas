@@ -29,6 +29,7 @@ from atlas.openapi.store import ImportStore
 from atlas.recording import ReportStore, ShadowStore
 from atlas.recording.pg_reports import PgReportStore
 from atlas.recording.pg_shadow import PgShadowStore
+from atlas.reflection import ReflectionStore
 from atlas.routing import PgRoutingStore, RoutingStore
 from atlas.template.user_store import UserTemplateStore
 from atlas.security.bootstrap import read_storage_backend
@@ -84,6 +85,7 @@ class TenantServices:
     webhook_deliveries: object  # 入站投递去重/死信（docs/40；内存/PG 两档，reset 不清）
     openapi_imports: ImportStore | PgImportStore  # OpenAPI 导入规格（docs/42/43；内存/PG 两档，reset 不清）
     user_templates: object  # 用户自建模板（docs/85 打包 X；内存/PG 两档，reset 同清）
+    reflection_store: ReflectionStore  # 反思候选与收尾报告（docs/88 打包 ZH；v1 进程内 ring，两档同为内存实例）
 
 
 class TenantRegistry:
@@ -158,6 +160,7 @@ class TenantRegistry:
                 webhook_deliveries=PgDeliveryStore(backend.engine, tenant_id),
                 openapi_imports=PgImportStore(backend.engine, tenant_id),
                 user_templates=PgUserTemplateStore(backend.engine, tenant_id),
+                reflection_store=ReflectionStore(),
             )
             TenantRegistry._wire_alert_notifier(services)
             return services
@@ -186,6 +189,7 @@ class TenantRegistry:
             webhook_deliveries=InMemoryDeliveryStore(),
             openapi_imports=ImportStore(),
             user_templates=UserTemplateStore(),
+            reflection_store=ReflectionStore(),
         )
         TenantRegistry._wire_alert_notifier(services)
         return services
@@ -199,7 +203,7 @@ class TenantRegistry:
         )
 
     def reset_tenant(self, tenant_id: str) -> None:
-        """本租户运行时数据重置：图/消息/审批/调试/监控/运行状态/灰度路由/批量回放报告/长期记忆清空，规则回默认；
+        """本租户运行时数据重置：图/消息/审批/调试/监控/运行状态/灰度路由/批量回放报告/长期记忆/反思报告清空，规则回默认；
         录制用例与反馈沿用「reset 不清除」语义保留；监控运行计数器不重置。"""
         services = self.get(tenant_id)
         services.graph_store.clear()
@@ -215,3 +219,4 @@ class TenantRegistry:
         services.shadow_store.reset()
         services.memory_store.clear()
         services.user_templates.clear()
+        services.reflection_store.reset()
