@@ -3,6 +3,16 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### docs(mcp)：MCP server 面 v1 契约立项（2026-10-01，docs-only；零代码／测试／迁移／依赖改动；不解除 D45）
+
+- **一句话**：承接 ADR **T33** 拍板（Active #90）的「下一步（另立批）先立形状权威」，立 [docs/91](91-MCP-server面-v1契约设计.md) 为 MCP server 面 v1 的**形状权威契约**——工具集、协议边界、装配与租户绑定、验证计划、落码原子序一次定形；本批 **docs-only，不落码**（用户指令「接着立 docs/9x-MCP server 面 v1 契约设计.md」）。
+- **形状（docs/91 §2–§4 为唯一权威）**：①官方 `mcp` Python SDK v2（钉 `mcp>=2,<3`）＋ ②stdio 传输（入口 `python -m atlas.mcp`）＋ ③只读/plan-only 工具面。**协议形状由 SDK 承担、Atlas 不自造**（revision `2026-07-28`：无 `initialize` 握手／无协议级会话、`server/discover` MUST、结果带 `resultType`、工具 schema 出完整 JSON Schema 2020-12；不声明 resources/prompts 与已弃用的 sampling/roots/logging）。
+- **v1 只读工具候选 7 项**：`atlas_list_graphs`／`atlas_get_graph`／`atlas_list_templates`／`atlas_get_template`／`atlas_list_runs`／`atlas_list_interruptions`／`atlas_list_adapters`，逐条锚既有 `read` 档 REST 投影（`api/main.py:2047/2319/2325/2766/2883/3711/3882`）。
+- **铁律与三条刻意设计**：只调只读投影、不写不跑图不调 LLM、不裁决审批；工具**不带** `tenant_id` 入参（单租户绑定 `ATLAS_MCP_TENANT_ID`，缺失/未知即 fail-closed 拒启）⇒ 结构上无跨租户读取面。① `atlas_list_interruptions` 投影**剔除 `resumeToken`**（对外面收窄，理由 docs/89 A-8）；② 日志**必走 stderr**（stdio stdout 只能含 JSON-RPC 帧）；③ **不 `import api.main`**（避免拉起 FastAPI/调度/恢复扫描，违单副本纪律），复用既有 `iam.registry` 只读投影。
+- **§7 待点工 5 项**（均带推荐）与 **§8 落码批原子序 5 步**（依赖＋代码同批、测试不占 U 号、docs 收口）。
+- **边界照实**：本批**不动 `pyproject.toml`**（依 T31「依赖必须与代码同事实」，依赖与 `src/atlas/mcp/` 同批落）、`src/` 对 `mcp` 仍零命中、**不解除 D45**。**另同步 5 处 `docs/9x-MCP server 面 v1 契约设计.md` 占位引用改真实文件名**（docs/09 L106·L318、docs/10 §4 T33、docs/14 D49、docs/08 立项条＋handoff #90 行）。
+- **门（先跑后写，数字取实跑）**：`tests/test_handoff_integrity.py` **3 passed**、`tests/test_migration_convention.py` **4 passed**、`tests/test_a2a_vassal.py` **13 passed**（合计 **20 passed**，1.12s，退出 0）。
+- **状态口径**：docs/00 文档地图表＋docs/08 立项条＋docs/09／10／14 引用同步、handoff Active **#91** 与 Quality gate 小节。**不 push；不解除 D45；未落任何 `mcp` 代码／依赖**。
 ### docs(adr)：MCP server 面选型拍板 T33（2026-10-01，docs-only；零代码／测试／迁移／依赖改动；不解除 D45）
 
 - **一句话**：把 [docs/10](10-技术选型决策记录.md) §4 **T33** 从「🟡 提案（待拍板）」翻为「✅ 已拍板」，MCP server 面选型正式生效——**①B 引官方 `mcp` Python SDK v2（钉 `mcp>=2,<3`）＋ ②stdio 传输 ＋ ③只读/plan-only 工具面**（用户指令「按这个方案来，先执行 T33 拍板」）。
