@@ -3,6 +3,15 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### docs(errata)：打包 ZI 后过期快照勘误（2026-10-02，纯 docs 勘误；零代码／测试／迁移／依赖改动；不解除 D13）
+
+- **一句话**：打包 ZI（节点目录多语言）收口后回查，三处历史契约快照仍写「节点目录 label/description 属业务数据豁免／仍属 D13」，已过时——**快照类原文保留不改，只追加带日期的〔勘误〕**（沿用 [docs/25](docs/25-行业趋势对照与能力现状盘点.md) §② 与 2026-10-01 docs(errata) 先例）。
+- **[docs/57](docs/57-i18n-enUS翻译-语言切换-发布协作组件抽取v1批契约设计.md)「D-4 后仍存在的中文层」第 3 条追加勘误**：「节点目录 label/description」已由打包 ZI 取回（`editor.nodeCatalog.<kind>.label/description` 18 键，消费方 NodePanel/AtlasNode/PropertyPanel 走 `t()`），不再属业务数据豁免；模板 name/description/标签已于 2026-09-27 docs/70 后端切片取回；演示订单 reason、租户/用户名、JSON 示例值豁免口径不变。
+- **[docs/61](docs/61-编译诊断定位-审批历史PG-审计过滤分页-影子PG化-口径勘误v1批契约设计.md) §1.2 H1 行追加勘误**：「节点目录 label/description 仍属 D13」已不再成立（ZI 取回）；模板元数据口径指向 docs/17 §2.4/§2.5。
+- **[docs/60](docs/60-运行时错误i18n-OpenAPI硬删-静默值班轮换-断点持久化-投递PG化v1批契约设计.md) §1.2 G1 行追加勘误**：同上（节点目录已取回、模板元数据口径指向 docs/17）。
+- **核查无过期**：README「当前阶段」（批链 docs/27–91）、docs/00、docs/25 §①/§3、docs/89 基线行（ZI 后端零改动、无新契约文档号）。
+- **D13 整体不解除**（自然语言多语言、i18next 本体、navigator 探测、复数/Intl 触发条件不变）。
+
 ### feat(frontend)：节点目录 label/description 多语言（打包 ZI，2026-10-02，14 D13 余部切片；D13 整体不解除）
 
 - **一句话**：`NODE_CATALOG` 9 种节点（trigger/ai_decision/tool_call/condition/loop/parallel/wait/subgraph/human_approval）的 label/description 由硬编码中文抽入 `editor.nodeCatalog.<kind>.label/description` 18 键（zh/en 两档、en 零汉字、无插值），三处消费方（NodePanel 节点面板、AtlasNode 画布节点标题、PropertyPanel 属性面板标签）走 `t()`——英文态节点目录/画布节点标题不再显中文（docs/57 未取回的 D13 余部）。
