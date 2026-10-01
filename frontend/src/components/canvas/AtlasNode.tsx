@@ -39,7 +39,7 @@ export function AtlasNode({ id, data, selected }: NodeProps<EditorNode>) {
         {breakpoint?.expression?.trim() ? <span className="atlas-node-breakpoint-dot" /> : null}
       </button>
       <div className="atlas-node-header" style={{ backgroundColor: meta.color }}>
-        <span>{meta.label}</span>
+        <span>{t(`nodeCatalog.${data.kind}.label`)}</span>
         {data.status === 'running' && <span className="atlas-node-status">{t('canvas.statusRunning')}</span>}
         {data.status === 'paused' && <span className="atlas-node-status">{t('canvas.statusPaused')}</span>}
         {data.status === 'completed' && <span className="atlas-node-status">✓</span>}

@@ -148,7 +148,7 @@ export function PropertyPanel() {
         <div>
           <Typography.Text type="secondary">{t('property.type')}</Typography.Text>
           <div>
-            <Tag color={meta.color}>{meta.label}</Tag>
+            <Tag color={meta.color}>{t(`nodeCatalog.${data.kind}.label`)}</Tag>
           </div>
         </div>
         <Field label={t('property.nodeName')}>
