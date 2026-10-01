@@ -81,3 +81,7 @@
 ### 2026-10-01 打包 ZG（子图内 tool 节点的归一化规则跨边界补齐）落码收口滚出的 1 条（原 Recently shipped 未编号条目，逐字保留）
 
 ✅ **prod 档 `ai_decision` 禁静默走规则兜底＝docs/73 §1.1 后半落码（2026-09-30；`c600149` 契约 → `4113333` feat＋`c2a4241` 前端＋`747bfed` U1006–U1010；自推；另有前置 `6a919e9` 修套件密闭性）**：prod 档且 `get_decision_client()` 落到规则兜底时，`ai_decision` 节点抛 `AiDecisionUnavailable`（`LLM_DECISION_UNAVAILABLE`）令该 run 显式 FAILED 并带中文文案，不再静默套规则；进程照常启动、非 LLM 部署不受阻（R8 同形闸门，复用 `demo_surface_enabled()`，`ATLAS_ENABLE_DEMO_MOCK=1` 为演示逃生口）。只覆盖 `ai_decision`（condition 走 `OfflineConditionClassifier` 恒抛 ⇒ fail-safe `defaultTarget`，无此面）。零迁移／零新端点／零新依赖／无 ADR；门：后端 **2110/135/0**（332.78s）、前端 **749/2**；docs/73 §1.1 仍 🟡（只差 prod 真调用）、B 档缺口仍 3。
+
+### 2026-10-01 打包 ZH（反思进化 L2 v1）落码收口滚出的 1 条（原 Recently shipped 未编号条目，逐字保留）
+
+✅ **prod 档 `condition(llm)` 禁静默走默认分支＝docs/73 明细 5.4 收口（2026-09-30；`fcd8989` 契约 → `2210f0b` feat(runtime)＋`7cf7dc3` 前端＋`32cf0a5` U1011–U1016 → 本收口 docs；用户拍板「5.4 走①」；自推）**：prod 档且未开演示面时，`condition(llm)` 节点拿到 `OfflineConditionClassifier` 即抛 `ConditionClassifierUnavailable`（`LLM_CLASSIFIER_UNAVAILABLE`＋`nodeId`）令该 run 显式 FAILED、不再静默把全部流量改走 `defaultTarget`；**判据是分类器类型**（真接线调用失败与打包 V 回放保持 fail-safe）；唯一开闸＝`ATLAS_ENABLE_DEMO_MOCK=1`，与 `ai_decision` 门／R8 共用 `demo_surface_enabled()` 单一档位。门：后端 **2116 passed / 135 skipped / 0 failed**（481.61s）、前端 749/2、lint 0 error、build ✓。docs/73 5.4 翻 ✅；§1.1 仍 🟡（残余移到部署侧）。作者 bayernjf，无 AI co-author，**均未 push**。
