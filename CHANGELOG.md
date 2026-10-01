@@ -3,6 +3,34 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### docs(errata)：项目文档与今日落码对齐（2026-10-01，纯 docs 勘误；零代码／测试／迁移／依赖改动；不解除 D45）
+
+- **一句话**：回查最近 commit（HEAD `89e0474`）与实际代码后，把**入口/快照文档**中已过期的陈述对齐（用户指令「更新项目文档」）——**快照类原文保留不改，只追加带日期的 〔勘误〕**（沿用 [docs/25](docs/25-行业趋势对照与能力现状盘点.md) §② 先例）。
+- **[docs/25](docs/25-行业趋势对照与能力现状盘点.md) §① 与 §3 净结论表各追加〔2026-10-01 勘误〕**：「MCP／A2A 生态协议＝仍无」已被推翻——**A2A 面已落码**（`src/atlas/a2a/`，ADR T32，`src/atlas/` 对 `a2a` 有真实命中）＋**MCP 选型已拍板**（ADR T33，`src/atlas/mcp/` 代码未落）；缓做登记随之更新：对外协议出入口归 **D45**、未选面归 **D49**、A2A 任务台账持久化归 **D48**。
+- **[docs/89](docs/89-项目级代码审计与功能全景.md) 基线行追加勘误**：本行「31 个包／34 个迁移／143 条 REST 路由」按今日口径应读作 **33 个包／035 迁移／149 条路由**（A2A ＋1 包＋4 路由；reflection ＋1 包＋2 只读路由＋迁移 035），原文数字保留不改；其余结论（代码级证据、风险总表、功能域地图）不受影响——两批均为纯新增面，未改动被审计的既有代码。
+- **[README.md](README.md)「当前阶段」对齐**：批链范围由 docs/27–61 扩到 **docs/27–91**，新增「**对外协议出入口**」（A2A 已落码／MCP 契约已立）与「**自我进化**」（反思 L2 v1 已落码）两条 bullet。
+- **[docs/13](docs/13-测试用例清单.md) 补登 A2A v1 用例**：`tests/test_a2a_vassal.py` **13 例**（非 U 号，沿用 docs/90「测试不占 U 号」先例）。
+- **门（先跑后写，数字取实跑）**：`tests/test_handoff_integrity.py` **3 passed** ＋ `tests/test_migration_convention.py` **4 passed** ＝ **7 passed**（0.80s，退出 0）；另复核 `tests/test_a2a_vassal.py` **13 passed**。
+- **状态口径**：本批为 **纯 docs 勘误**，不改任何代码／缓存状态。核对过而未改的：docs/14 D45／D48／D49（已最新）、docs/12 L917–922（reflection＋A2A 路由**已在**）、docs/00 地图表、handoff Project documents。**不 push；不解除 D45；MCP 代码另立批落**。
+### docs(mcp)：MCP server 面 v1 契约立项（2026-10-01，docs-only；零代码／测试／迁移／依赖改动；不解除 D45）
+
+- **一句话**：承接 ADR **T33** 拍板（Active #90）的「下一步（另立批）先立形状权威」，立 [docs/91](91-MCP-server面-v1契约设计.md) 为 MCP server 面 v1 的**形状权威契约**——工具集、协议边界、装配与租户绑定、验证计划、落码原子序一次定形；本批 **docs-only，不落码**（用户指令「接着立 docs/9x-MCP server 面 v1 契约设计.md」）。
+- **形状（docs/91 §2–§4 为唯一权威）**：①官方 `mcp` Python SDK v2（钉 `mcp>=2,<3`）＋ ②stdio 传输（入口 `python -m atlas.mcp`）＋ ③只读/plan-only 工具面。**协议形状由 SDK 承担、Atlas 不自造**（revision `2026-07-28`：无 `initialize` 握手／无协议级会话、`server/discover` MUST、结果带 `resultType`、工具 schema 出完整 JSON Schema 2020-12；不声明 resources/prompts 与已弃用的 sampling/roots/logging）。
+- **v1 只读工具候选 7 项**：`atlas_list_graphs`／`atlas_get_graph`／`atlas_list_templates`／`atlas_get_template`／`atlas_list_runs`／`atlas_list_interruptions`／`atlas_list_adapters`，逐条锚既有 `read` 档 REST 投影（`api/main.py:2047/2319/2325/2766/2883/3711/3882`）。
+- **铁律与三条刻意设计**：只调只读投影、不写不跑图不调 LLM、不裁决审批；工具**不带** `tenant_id` 入参（单租户绑定 `ATLAS_MCP_TENANT_ID`，缺失/未知即 fail-closed 拒启）⇒ 结构上无跨租户读取面。① `atlas_list_interruptions` 投影**剔除 `resumeToken`**（对外面收窄，理由 docs/89 A-8）；② 日志**必走 stderr**（stdio stdout 只能含 JSON-RPC 帧）；③ **不 `import api.main`**（避免拉起 FastAPI/调度/恢复扫描，违单副本纪律），复用既有 `iam.registry` 只读投影。
+- **§7 待点工 5 项**（均带推荐）与 **§8 落码批原子序 5 步**（依赖＋代码同批、测试不占 U 号、docs 收口）。
+- **边界照实**：本批**不动 `pyproject.toml`**（依 T31「依赖必须与代码同事实」，依赖与 `src/atlas/mcp/` 同批落）、`src/` 对 `mcp` 仍零命中、**不解除 D45**。**另同步 5 处 `docs/9x-MCP server 面 v1 契约设计.md` 占位引用改真实文件名**（docs/09 L106·L318、docs/10 §4 T33、docs/14 D49、docs/08 立项条＋handoff #90 行）。
+- **门（先跑后写，数字取实跑）**：`tests/test_handoff_integrity.py` **3 passed**、`tests/test_migration_convention.py` **4 passed**、`tests/test_a2a_vassal.py` **13 passed**（合计 **20 passed**，1.12s，退出 0）。
+- **状态口径**：docs/00 文档地图表＋docs/08 立项条＋docs/09／10／14 引用同步、handoff Active **#91** 与 Quality gate 小节。**不 push；不解除 D45；未落任何 `mcp` 代码／依赖**。
+### docs(adr)：MCP server 面选型拍板 T33（2026-10-01，docs-only；零代码／测试／迁移／依赖改动；不解除 D45）
+
+- **一句话**：把 [docs/10](10-技术选型决策记录.md) §4 **T33** 从「🟡 提案（待拍板）」翻为「✅ 已拍板」，MCP server 面选型正式生效——**①B 引官方 `mcp` Python SDK v2（钉 `mcp>=2,<3`）＋ ②stdio 传输 ＋ ③只读/plan-only 工具面**（用户指令「按这个方案来，先执行 T33 拍板」）。
+- **为什么选 B**：MCP 现行 revision `2026-07-28` 属**季度级破坏性演进**（`2025-03-26 → 2025-06-18 → 2025-11-25 → 2026-07-28`；已删 `initialize` 握手与协议级会话、新增 `server/discover`、工具 schema 改完整 JSON Schema 2020-12、Streamable HTTP 删 GET 流与会话可续传），客户端必然**混版**；官方 v2（`mcp` 2.0.0）随新 spec 同期发布、**一个端点同时应答新旧两版**（旧客户端 `initialize` 回退由 SDK 兜住），自研子集须自行追协议形状、维护成本不划算 ⇒ 选 B。
+- **三处同步（AGENTS.md 硬约束，已即时完成）**：docs/10 §4 T33 状态翻转＋§1 决策总览新增「对外协议出入口」行；docs/02 第三部分技术选型总览新增同名行（A2A＋MCP server 面）；docs/09 新增 `src/atlas/mcp/` 树位＋待定项清单第 16 条（MCP server 面包位与形态）。
+- **缓做登记**：docs/14 **D45** 加 2026-10-01 追记二（MCP 选型已拍板、代码仍无，**D45 不解除**）＋新增 **D49** 承接未选面（①A 自研子集／②HTTP 远端／③含副作用工具／④resources·prompts·扩展，各带触发条件）；docs/08 立选型拍板条。
+- **边界照实**：本拍板**不往 `pyproject.toml` 加 `mcp`**——依 **T31**「依赖必须与代码同事实」，依赖与 `src/atlas/mcp/` 落码**同批**加（`src/` 对 `mcp` 仍零命中）；`docs/9x` 形状权威与 `src/atlas/mcp/` 落码**另立批**。**校正留痕**：T33 初稿按旧版 MCP 形状写（`initialize` 握手／`Mcp-Session-Id`／SSE 可续传），核实 `2026-07-28` 后重写并反向修正建议（①A 自研子集 → ①B 官方 SDK v2），前序两原子 `a824b8a`／`9041158`。
+- **门（先跑后写，数字取实跑）**：`tests/test_handoff_integrity.py` **3 passed**、`tests/test_migration_convention.py` **4 passed**、`tests/test_a2a_vassal.py` **13 passed**（合计 **20 passed**，1.13s，退出 0）。
+- **状态口径**：docs/10／02／09／08／14 同步、handoff Active **#90** 与 Quality gate 小节。**不 push；不解除 D45；未落任何 `mcp` 代码／依赖**。
 ### docs(a2a)：A2A 第二阶段第一批收口（2026-10-01，docs-only；零代码／测试／迁移／依赖改动；不解除任何缓做、W2 不关账）
 
 - **一句话**：把 [docs/90](90-A2A执行Agent面-Zeus联邦接入-v1批契约设计.md) §7「第二阶段待点工项」四项里**工程内可闭环的两项正式收口**，另两项明确保留待外部条件／拍板。
