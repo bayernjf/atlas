@@ -37,6 +37,7 @@ import enRuntime from '../en-US/runtime.json'
 import enSchedules from '../en-US/schedules.json'
 import enValidation from '../en-US/validation.json'
 import enWaits from '../en-US/waits.json'
+import { NODE_CATALOG } from '../../lib/nodeCatalog'
 
 /** Login.tsx / UserBadge.tsx 实际接线的全部 key（M12 样板范围）。 */
 const WIRED_KEYS = [
@@ -68,7 +69,9 @@ const SHARED_NAV_KEYS = ['common:brand.appName', 'common:nav.openEditor', 'commo
 
 /**
  * Editor.tsx + 画布/左栏面板在 editor namespace 下接线的静态（无插值）key（M12 续批 editor-a）。
- * 业务数据（退款原因、节点目录 label/description、模板名、后端枚举）不在此列——它们不抽 key。
+ * 业务数据（退款原因、模板名、后端枚举）不在此列——它们不抽 key；
+ * 节点目录 label/description 已于打包 ZI（2026-10-02）抽为 editor.nodeCatalog.*（下方 describe 与
+ * NODE_CATALOG 数据源做奇偶守护）。
  */
 const EDITOR_KEYS = [
   'header.title',
@@ -1328,6 +1331,36 @@ describe('language persistence and switcher runtime (docs/57 §4)', () => {
     expect(t('common:nav.waits')).toBe('等待与任务')
     changeLanguage('en-US')
     expect(t('common:nav.waits')).toBe('Waits & Tasks')
+    changeLanguage('zh-CN')
+  })
+})
+
+describe('打包 ZI: node catalog label/description resolves bilingually (docs/17 D13 slice)', () => {
+  const NODE_KINDS = [
+    'trigger',
+    'ai_decision',
+    'tool_call',
+    'condition',
+    'loop',
+    'parallel',
+    'wait',
+    'subgraph',
+    'human_approval',
+  ] as const
+
+  it('matches NODE_CATALOG Chinese labels and descriptions (data-source parity)', () => {
+    for (const kind of NODE_KINDS) {
+      expect(t(`nodeCatalog.${kind}.label`, { ns: 'editor' })).toBe(NODE_CATALOG[kind].label)
+      expect(t(`nodeCatalog.${kind}.description`, { ns: 'editor' })).toBe(NODE_CATALOG[kind].description)
+    }
+  })
+
+  it('renders English labels and descriptions without CJK characters', () => {
+    changeLanguage('en-US')
+    for (const kind of NODE_KINDS) {
+      expect(t(`nodeCatalog.${kind}.label`, { ns: 'editor' })).not.toMatch(/[一-鿿]/)
+      expect(t(`nodeCatalog.${kind}.description`, { ns: 'editor' })).not.toMatch(/[一-鿿]/)
+    }
     changeLanguage('zh-CN')
   })
 })
