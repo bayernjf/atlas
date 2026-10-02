@@ -61,6 +61,7 @@ class TickOutcome:
 
     tenant_id: str
     graph_id: str
+    schedule_id: str
     slot_utc: datetime
     action: TickAction
     schedule_action: ScheduleAction = DEFAULT_SCHEDULE_ACTION
@@ -97,7 +98,7 @@ class TickLedger:
 
 
 def _slot_key(record: ScheduleRecord, slot: datetime) -> tuple[str, str, str, str]:
-    return (record.tenant_id, record.graph_id, record.action, slot_key(slot))
+    return (record.tenant_id, record.graph_id, record.schedule_id, slot_key(slot))
 
 
 def tick(
@@ -135,10 +136,12 @@ def tick(
             continue
         state.mark(record, slot)
 
-        if busy is not None and busy(record):
+        # D41 ④（打包 ZN）：overlap_policy="skip"（v1 缺省）才在 busy 时跳过；"allow"
+        # 无视 busy，继续认领派发并起一条新 run（不同槽位各自认领，天然并发）。
+        if busy is not None and record.overlap_policy == "skip" and busy(record):
             outcomes.append(
                 TickOutcome(
-                    record.tenant_id, record.graph_id, slot,
+                    record.tenant_id, record.graph_id, record.schedule_id, slot,
                     ACTION_SKIPPED_OVERLAP, record.action,
                 )
             )
@@ -146,7 +149,7 @@ def tick(
         if not claim(record, slot):
             outcomes.append(
                 TickOutcome(
-                    record.tenant_id, record.graph_id, slot,
+                    record.tenant_id, record.graph_id, record.schedule_id, slot,
                     ACTION_CLAIM_LOST, record.action,
                 )
             )
@@ -158,7 +161,8 @@ def tick(
                              record.tenant_id, record.graph_id, record.action, slot)
             continue
         outcomes.append(
-            TickOutcome(record.tenant_id, record.graph_id, slot, ACTION_FIRED, record.action)
+            TickOutcome(record.tenant_id, record.graph_id, record.schedule_id, slot,
+                        ACTION_FIRED, record.action)
         )
 
     return outcomes

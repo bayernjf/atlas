@@ -4,13 +4,14 @@
 每租户 store 由 `TenantRegistry` 惰性装配，那意味着"重启后还没被任何请求触及的租户"
 永远不会被调度——定时任务恰恰多在夜里，这个偏差会静默地只跑活跃租户。
 
-认领语义（`claim`）与 PG 档逐键一致：同一个 `(tenant, graph, action, slot)` 至多成功一次。
-内存档**易失**（docs/68 §1 D-7）：重启丢历史认领，同一分钟槽理论上可再派发一次；
-生产形态必须 PG 档。
+认领语义（`claim`）与 PG 档逐键一致：同一个 `(tenant, graph, schedule_id, slot)` 至多
+成功一次。内存档**易失**（docs/68 §1 D-7）：重启丢历史认领，同一分钟槽理论上可再
+派发一次；生产形态必须 PG 档。
 
-**动作维度（打包 ZH，2026-10-01；docs/88 §3 P-4；迁移 035）**：同一张已发布图可以同时有
-「跑图」与「反思」两条注册，故 `(graph_id, action)` 才是行键、`(graph_id, action, slot)` 才是
-认领键。两者分开是必须的：合并会让同槽的跑图与反思互相吃掉对方的派发权。
+**身份维度（打包 ZN，2026-10-03；docs/08 打包 ZN；迁移 037；D41 ③）**：
+`(graph_id, schedule_id)` 才是行键、`(graph_id, schedule_id, slot)` 才是认领键——
+一张图可挂多个定时触发节点，每个节点（schedule_id＝节点 id）一条 run 调度，另有一条
+图级 reflect（`__reflect__`）。`action` 只是行上的属性，不再承担身份。
 """
 
 from __future__ import annotations
@@ -21,7 +22,9 @@ from datetime import timezone as _dt_timezone
 from typing import Protocol
 
 from atlas.scheduling.models import (
+    DEFAULT_OVERLAP_POLICY,
     DEFAULT_SCHEDULE_ACTION,
+    OverlapPolicy,
     ScheduleAction,
     ScheduleRecord,
     slot_key,
@@ -41,19 +44,29 @@ class ScheduleStore(Protocol):
         *,
         tenant_id: str,
         graph_id: str,
+        schedule_id: str,
         version: int,
         cron: str,
         action: ScheduleAction = DEFAULT_SCHEDULE_ACTION,
+        timezone: str = "UTC",
+        catch_up_minutes: int = 0,
+        overlap_policy: OverlapPolicy = DEFAULT_OVERLAP_POLICY,
     ) -> ScheduleRecord:
-        """发布派生：更新版本与 cron，**保留** enabled/created_at/跳过统计（D-4）。"""
+        """发布派生：更新版本/cron/策略，**保留** enabled/created_at/跳过统计（D-4）。"""
         ...
 
     def remove(self, tenant_id: str, graph_id: str) -> None:
-        """撤销该图的**全部动作**注册与认领（发布出口无定时触发时调用）。"""
+        """撤销该图的**全部调度**注册与认领（发布出口无定时触发、或节点被删时调用）。"""
+        ...
+
+    def remove_schedule(
+        self, tenant_id: str, graph_id: str, schedule_id: str
+    ) -> None:
+        """撤销该图的**单条**调度（发布 reconcile 时，本次不再存在的 schedule_id 调用）。"""
         ...
 
     def get(
-        self, tenant_id: str, graph_id: str, action: ScheduleAction = DEFAULT_SCHEDULE_ACTION
+        self, tenant_id: str, graph_id: str, schedule_id: str
     ) -> ScheduleRecord | None: ...
 
     def list_tenant(self, tenant_id: str) -> list[ScheduleRecord]: ...
@@ -64,14 +77,15 @@ class ScheduleStore(Protocol):
         self,
         tenant_id: str,
         graph_id: str,
+        schedule_id: str,
         enabled: bool,
-        action: ScheduleAction = DEFAULT_SCHEDULE_ACTION,
     ) -> ScheduleRecord | None: ...
 
     def claim(
         self,
         tenant_id: str,
         graph_id: str,
+        schedule_id: str,
         slot: datetime,
         action: ScheduleAction = DEFAULT_SCHEDULE_ACTION,
     ) -> bool:
@@ -82,16 +96,16 @@ class ScheduleStore(Protocol):
         self,
         tenant_id: str,
         graph_id: str,
+        schedule_id: str,
         slot: datetime,
-        action: ScheduleAction = DEFAULT_SCHEDULE_ACTION,
     ) -> None: ...
 
     def note_skipped(
         self,
         tenant_id: str,
         graph_id: str,
+        schedule_id: str,
         slot: datetime,
-        action: ScheduleAction = DEFAULT_SCHEDULE_ACTION,
     ) -> None: ...
 
     def reset_tenant(self, tenant_id: str) -> None: ...
@@ -102,9 +116,9 @@ class InMemoryScheduleStore:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        # (tenant_id) -> (graph_id, action) -> record
+        # (tenant_id) -> (graph_id, schedule_id) -> record
         self._by_tenant: dict[str, dict[tuple[str, str], ScheduleRecord]] = {}
-        # (tenant_id, graph_id, action, slot) -> slot
+        # (tenant_id, graph_id, schedule_id, slot) -> slot
         self._claims: dict[tuple[str, str, str, str], datetime] = {}
 
     def upsert_published(
@@ -112,26 +126,31 @@ class InMemoryScheduleStore:
         *,
         tenant_id: str,
         graph_id: str,
+        schedule_id: str,
         version: int,
         cron: str,
         action: ScheduleAction = DEFAULT_SCHEDULE_ACTION,
         timezone: str = "UTC",
         catch_up_minutes: int = 0,
+        overlap_policy: OverlapPolicy = DEFAULT_OVERLAP_POLICY,
     ) -> ScheduleRecord:
-        key = (graph_id, action)
+        key = (graph_id, schedule_id)
         with self._lock:
             existing = self._by_tenant.setdefault(tenant_id, {}).get(key)
             if existing is None:
                 record = ScheduleRecord(
-                    tenant_id=tenant_id, graph_id=graph_id, action=action,
-                    version=version, cron=cron,
+                    tenant_id=tenant_id, graph_id=graph_id, schedule_id=schedule_id,
+                    action=action, version=version, cron=cron,
                     timezone=timezone, catch_up_minutes=catch_up_minutes,
+                    overlap_policy=overlap_policy,
                     enabled=True, created_at=to_utc_iso(datetime.now(_dt_timezone.utc)),
                 )
             else:
                 record = existing.model_copy(update={
+                    "action": action,
                     "version": version, "cron": cron,
                     "timezone": timezone, "catch_up_minutes": catch_up_minutes,
+                    "overlap_policy": overlap_policy,
                 })
             self._by_tenant[tenant_id][key] = record
             return record
@@ -144,11 +163,22 @@ class InMemoryScheduleStore:
             for key in [k for k in self._claims if k[0] == tenant_id and k[1] == graph_id]:
                 del self._claims[key]
 
+    def remove_schedule(
+        self, tenant_id: str, graph_id: str, schedule_id: str
+    ) -> None:
+        with self._lock:
+            self._by_tenant.get(tenant_id, {}).pop((graph_id, schedule_id), None)
+            for key in [
+                k for k in self._claims
+                if k[0] == tenant_id and k[1] == graph_id and k[2] == schedule_id
+            ]:
+                del self._claims[key]
+
     def get(
-        self, tenant_id: str, graph_id: str, action: ScheduleAction = DEFAULT_SCHEDULE_ACTION
+        self, tenant_id: str, graph_id: str, schedule_id: str
     ) -> ScheduleRecord | None:
         with self._lock:
-            record = self._by_tenant.get(tenant_id, {}).get((graph_id, action))
+            record = self._by_tenant.get(tenant_id, {}).get((graph_id, schedule_id))
             return record.model_copy() if record else None
 
     def list_tenant(self, tenant_id: str) -> list[ScheduleRecord]:
@@ -165,11 +195,11 @@ class InMemoryScheduleStore:
         self,
         tenant_id: str,
         graph_id: str,
+        schedule_id: str,
         enabled: bool,
-        action: ScheduleAction = DEFAULT_SCHEDULE_ACTION,
     ) -> ScheduleRecord | None:
         with self._lock:
-            key = (graph_id, action)
+            key = (graph_id, schedule_id)
             record = self._by_tenant.get(tenant_id, {}).get(key)
             if record is None:
                 return None
@@ -181,10 +211,11 @@ class InMemoryScheduleStore:
         self,
         tenant_id: str,
         graph_id: str,
+        schedule_id: str,
         slot: datetime,
         action: ScheduleAction = DEFAULT_SCHEDULE_ACTION,
     ) -> bool:
-        key = (tenant_id, graph_id, action, slot_key(slot))
+        key = (tenant_id, graph_id, schedule_id, slot_key(slot))
         with self._lock:
             self._prune_locked(slot)
             if key in self._claims:
@@ -196,20 +227,20 @@ class InMemoryScheduleStore:
         self,
         tenant_id: str,
         graph_id: str,
+        schedule_id: str,
         slot: datetime,
-        action: ScheduleAction = DEFAULT_SCHEDULE_ACTION,
     ) -> None:
-        self._patch(tenant_id, graph_id, action, {"last_fired_at": slot_key(slot)})
+        self._patch(tenant_id, graph_id, schedule_id, {"last_fired_at": slot_key(slot)})
 
     def note_skipped(
         self,
         tenant_id: str,
         graph_id: str,
+        schedule_id: str,
         slot: datetime,
-        action: ScheduleAction = DEFAULT_SCHEDULE_ACTION,
     ) -> None:
         with self._lock:
-            key = (graph_id, action)
+            key = (graph_id, schedule_id)
             record = self._by_tenant.get(tenant_id, {}).get(key)
             if record is None:
                 return
@@ -230,11 +261,11 @@ class InMemoryScheduleStore:
         self,
         tenant_id: str,
         graph_id: str,
-        action: ScheduleAction,
+        schedule_id: str,
         update: dict,
     ) -> None:
         with self._lock:
-            key = (graph_id, action)
+            key = (graph_id, schedule_id)
             record = self._by_tenant.get(tenant_id, {}).get(key)
             if record is None:
                 return
@@ -248,4 +279,4 @@ class InMemoryScheduleStore:
 
 
 def _sort_key(record: ScheduleRecord) -> tuple[str, str, str]:
-    return (record.tenant_id, record.graph_id, record.action)
+    return (record.tenant_id, record.graph_id, record.schedule_id)
