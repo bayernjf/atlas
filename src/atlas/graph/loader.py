@@ -166,6 +166,23 @@ class ConditionClassifierUnavailable(Exception):
         self.node_id = node_id
 
 
+class SubgraphSuspendUnsupported(Exception):
+    """子图内挂起点在持久化档（PG）下的显式拒绝（打包 ZK，04 §5.11）。
+
+    中断帧契约（docs/24 §2.3）只覆盖顶层挂起点：子图（含嵌套）内 human_approval/wait
+    真挂起时 `_execute_subgraph`→`run_graph(child,…)` 不传 frame_sink/resume_claim，
+    既不标 run suspended、也不写 interruptions 帧——PG 档跨进程重启即 run＋决策静默
+    丢失，且恢复扫描器与 D36 reconcile 都捡不到。宁可显式失败，不静默丢失（docs/62
+    §8.1 同口径）；进程内档（无跨进程承诺）照旧可挂起可 resolve。
+    """
+
+    code = "SUBGRAPH_SUSPEND_UNSUPPORTED"
+
+    def __init__(self, node_id: str, message: str) -> None:
+        super().__init__(f"{self.code}: {message}")
+        self.node_id = node_id
+
+
 def runtime_error_meta(exc: Exception) -> dict[str, Any]:
     """docs/60 G1：运行期终态异常归一化为机器可读码（中文 error 字符串仍由调用方原样保留）。
 
@@ -182,6 +199,8 @@ def runtime_error_meta(exc: Exception) -> dict[str, Any]:
     if isinstance(exc, AiDecisionUnavailable):
         return {"errorCode": exc.code, "errorParams": {"nodeId": exc.node_id}}
     if isinstance(exc, ConditionClassifierUnavailable):
+        return {"errorCode": exc.code, "errorParams": {"nodeId": exc.node_id}}
+    if isinstance(exc, SubgraphSuspendUnsupported):
         return {"errorCode": exc.code, "errorParams": {"nodeId": exc.node_id}}
     return {"errorCode": "RUNTIME_UNEXPECTED", "errorParams": {}}
 
@@ -354,6 +373,7 @@ def _make_executor(
     tool_permissions: dict[str, str] | None = None,
     jitter_rng: random.Random | None = None,
     expr_rng: random.Random | None = None,
+    block_subgraph_suspend: bool = False,
 ):
     # 续跑只对挂起节点的**第一次**重入生效（每次编译=一次运行，闭包即运行级状态）：
     # 挂起点在循环体内时该节点每轮都会重入，若每轮都走帧内 token，则第二项起的审批
@@ -404,6 +424,18 @@ def _make_executor(
 
             approval_payload = None
             if node.type == "human_approval":
+                # 打包 ZK：持久化档下子图内挂起不可跨进程恢复（不写帧、无法续跑），
+                # 跨进程重启即 run＋审批决策静默丢失 → 显式拒绝（fail-closed）。
+                # 顶层挂起不受影响；resume 续跑是顶层帧（node_id 不会指向子图内节点，防御放行）。
+                if subgraph_depth > 0 and block_subgraph_suspend and not resume_here:
+                    raise SubgraphSuspendUnsupported(
+                        node.id,
+                        f"子图内挂起点（{node.id}）在持久化档（PG）下不可跨进程恢复："
+                        f"中断帧契约不覆盖子图（docs/24 §2.3），子图内 human_approval 挂起"
+                        f"既不标 run suspended、也不写 interruptions 帧，跨进程重启会静默丢失"
+                        f"该 run 与其审批决策。请将审批节点移到图顶层，或经回放预置"
+                        f"（inputs.approvals 路径限定键）在测试/门禁场景验证。本 run 已显式失败。",
+                    )
                 if resume_here:
                     approval_payload = {
                         "token": resume["resume_token"],
@@ -564,6 +596,29 @@ def _make_executor(
                     targets = [branch["target"] for branch in node.config.get("branches", [])]
                     message = f"{node.id}: fork {len(targets)} branches → {', '.join(targets)}"
                 elif node.type == "wait":
+                    # 打包 ZK：持久化档下子图内挂起不可跨进程恢复（不写帧、无法续跑），
+                    # 跨进程重启即 run 静默丢失 → 显式拒绝（fail-closed）。event 预置与
+                    # resume 续跑不真挂起，放行；event 真挂起与 duration 延时（同为阻塞挂起）
+                    # 在持久化档子图内一律拦截。顶层挂起不受影响。
+                    _wait_preset_key = (trigger_payload.get("waitEvents") or {}).get(node.id)
+                    if (
+                        subgraph_depth > 0
+                        and block_subgraph_suspend
+                        and not resume_here
+                        and not (
+                            node.config["waitType"] == "event"
+                            and _wait_preset_key is not None
+                        )
+                    ):
+                        raise SubgraphSuspendUnsupported(
+                            node.id,
+                            f"子图内挂起点（{node.id}）在持久化档（PG）下不可跨进程恢复："
+                            f"中断帧契约不覆盖子图（docs/24 §2.3），子图内 wait 挂起既不标"
+                            f"run suspended、也不写 interruptions 帧，跨进程重启会静默丢失"
+                            f"该 run。请将 wait 节点移到图顶层，或经回放预置"
+                            f"（inputs.waitEvents 路径限定键）在测试/门禁场景验证。"
+                            f"本 run 已显式失败。",
+                        )
                     if node.config["waitType"] == "event":
                         preset_events = trigger_payload.get("waitEvents") or {}
                         preset = preset_events.get(node.id)
@@ -875,6 +930,7 @@ def _make_executor(
                         shadow=shadow,
                         jitter_rng=jitter_rng,
                         expr_rng=expr_rng,
+                        block_subgraph_suspend=block_subgraph_suspend,
                     )
                 elif tool_mocks is not None and node.id in tool_mocks:
                     # Mock 回放（docs/28 §2.2）：以录制桩 output 替代真实适配器调用，
@@ -1313,6 +1369,7 @@ def _execute_subgraph(
     shadow: bool = False,
     jitter_rng: random.Random | None = None,
     expr_rng: random.Random | None = None,
+    block_subgraph_suspend: bool = False,
 ) -> tuple[dict[str, Any], str]:
     """进程内重入执行被引用子图（04 §5.7）；任何异常 fail-safe 为 failed，父 run 仍 completed。
 
@@ -1387,11 +1444,17 @@ def _execute_subgraph(
                 shadow=shadow,
                 jitter_rng=jitter_rng,
                 _expr_rng=expr_rng,
+                # 打包 ZK：顶层已 resolve 的 bool 显式传入，子图 run_graph 不再按
+                # frame_sink 自动判断（子图 frame_sink 恒为 None，自动判断必得 False）。
+                _block_subgraph_suspend=block_subgraph_suspend,
             )
-    except (RunCancelled, DebugStopped, RunSuperseded):
+    except (RunCancelled, DebugStopped, RunSuperseded, SubgraphSuspendUnsupported):
         # 取消与调试急停/异常断点 stop 均须穿透子图 fail-safe 兜底，冒泡终止整图
         # （docs/27 §4.1 修 RunCancelled；docs/28 §3.2/§3.3 补 DebugStopped）。
         # RunSuperseded 同属控制流：被这里的 fail-safe 吞掉＝输家继续执行，正是 029 要防的事故。
+        # SubgraphSuspendUnsupported（打包 ZK）：子图内挂起在持久化档的显式拒绝，
+        # 必须穿透 fail-safe 令整个 run 显式 FAILED——被吞掉会变「子图 failed、父 run
+        # completed」的假完成，违背 fail-closed 语义。
         if isinstance(sub_span, Span):
             sub_span.end("error")
         raise
@@ -2455,6 +2518,7 @@ def compile_graph(
     shadow: bool = False,
     jitter_rng: random.Random | None = None,
     expr_rng: random.Random | None = None,
+    _block_subgraph_suspend: bool = False,
 ):
     decision_client = decision_client or get_decision_client()
     condition_classifier = condition_classifier or get_condition_classifier()
@@ -2478,6 +2542,9 @@ def compile_graph(
         else (tracer.root if tracer is not None else None)
     )
     internal_spans = _parent_span is not None
+    # 打包 ZK：顶层 run_graph 已 resolve 的判据（持久化档子图内挂起显式拒绝）。
+    # 直调 compile_graph（不经 run_graph）默认 False＝不拦，行为与旧版逐字相同。
+    block_subgraph_suspend = _block_subgraph_suspend
     payload = trigger_payload or {}
     graph_snapshot = graph.model_dump()
     # 续跑时校验用完整图（尾图节点仍引用上游已完成节点，其引用合法），
@@ -2570,6 +2637,7 @@ def compile_graph(
             tool_permissions=tool_permissions,
             jitter_rng=jitter_rng,
             expr_rng=expr_rng,
+            block_subgraph_suspend=block_subgraph_suspend,
         )
         if node.id in skip_guards:
             parallel_id, safe_target = skip_guards[node.id]
@@ -2892,6 +2960,7 @@ def run_graph(
     jitter_rng: random.Random | None = None,
     rng_seed: int | None = None,
     _expr_rng: random.Random | None = None,
+    _block_subgraph_suspend: bool | None = None,
 ) -> dict[str, Any]:
     """编译并执行，返回状态/节点产出/轨迹。
 
@@ -2912,6 +2981,15 @@ def run_graph(
     if tracer is _AUTO_TRACER:
         tracer = Tracer(graph_id=graph_id, graph_version=graph_version)
     internal_run = _parent_span is not None
+    # 打包 ZK：子图内挂起点在持久化档的显式拒绝。None 时自动＝"带挂起记录契约
+    # （frame_sink）即拦"——凡写中断帧的 run（持久化档由 api 显式传 True），子图内
+    # 挂起一律显式失败；内存档（demo/测试，无跨进程承诺）不拦、照旧可挂可 resolve。
+    # resolve 只发生在顶层 run_graph，_execute_subgraph 传递的是已 resolve 的 bool。
+    block_subgraph_suspend = (
+        _block_subgraph_suspend
+        if _block_subgraph_suspend is not None
+        else (frame_sink is not None)
+    )
     # 打包 W（docs/84 D-2）：每次运行一个表达式 RNG；子图重入复用同一实例，
     # 未显式钉种子时入口生成 63-bit 种子，random/randint/uuid 回放据此复现。
     if _expr_rng is not None:
@@ -2987,6 +3065,7 @@ def run_graph(
             shadow=shadow,
             jitter_rng=jitter_rng,
             expr_rng=expr_rng,
+            _block_subgraph_suspend=block_subgraph_suspend,
         )
         state = initial_state(tail, inputs=resume_inputs)
         state["outputs"] = resume_state.get("outputs", {})
@@ -3027,6 +3106,7 @@ def run_graph(
         shadow=shadow,
         jitter_rng=jitter_rng,
         expr_rng=expr_rng,
+        _block_subgraph_suspend=block_subgraph_suspend,
     )
     final_state = compiled.invoke(
         initial_state(graph, inputs=inputs),

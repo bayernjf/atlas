@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 ## [Unreleased]
+### docs(scheduling)：打包 ZL 立项＝D41 命名时区＋补跑开关（2026-10-02，docs-only，零代码/测试/迁移/依赖）
+- **一句话**：打包 N 收口时登记的 D41 取回前两件。① `timezone`（IANA、zoneinfo 零新依赖、cron 字段按该 tz 墙上时间解释、认领/投影仍归一 UTC）；② `catch_up_minutes`（显式 opt-in 补跑、默认 0不追赶、防抖窗口 1 分钟保留、已认领槽不重跑）。探测实证：cron.py 纯 UTC、engine.tick lookback 为全局参数、ScheduleRecord 无两字段。
+- **受验**：U1057–U1062（tz 槽位/DST 边界/非法 tz 422/catch_up 补跑/默认零回归反向门/前端时区选择）。
+- **同步**：03 `schedule_record` 行、》04 §5.21、》15 §六、》68 D-5、》14 D41 注记、》13 U 号、handoff。
+- **边界**：一图多调度／调度级并发仍缓做；不解锁多副本；落码另立批。
+
+### feat(subgraph)：子图内挂起点（human_approval／event wait）持久化档显式拒绝（打包 ZK，2026-10-02，fail-closed；纯后端）
+- **一句话**：`_execute_subgraph`→`run_graph(child,…)` 不传 frame_sink/resume_claim ⇒ 子图内挂起点不标 suspended、不写 interruptions 帧（loader.py:124「从不写帧的子图重入」注释互为印证），PG 档跨进程重启即 run＋决策静默丢失、recovery 与 D36 reconcile 均捡不到。本批在持久化档显式拒绝：新异常 `SubgraphSuspendUnsupported`（`SUBGRAPH_SUSPEND_UNSUPPORTED`、nodeId 透传）＋`_block_subgraph_suspend` 显式透传（顶层自动＝`frame_sink is not None`、子层恒 False 须显式传）＋human_approval/wait 两拦截点（`subgraph_depth>0 and block and not resume_here`；wait 路径限定预置键 `"subgraph-1/c-wait"` 放行，预置/回放不受拦）＋`_execute_subgraph` 异常穿透（防 fail-safe 吞掉变「子图 failed、父 run completed」假完成）＋api 三入口传 `_block_subgraph_suspend=(STORAGE_BACKEND=="pg")`（内存档放行可挂可 resolve）。零迁移／端点／ADR；新错误码一个；DSL 与前端零改动。
+- **门（实跑）**：`tests/test_subgraph_suspend_zk.py` **6 passed**（U1051–U1056 各带反向对照）；受影响回归 9 文件 **148 passed**；三道守护门 **20 passed / 1 warning**（starlette anyio 弃用，非本批）；exit 0。
+- **登记**：docs/14 注记六 **D50**（子图内挂起点跨进程持久化——真续跑需子图级续跑状态重建＋父图上下文栈，触发条件未满足，不解除任何缓做）。
+- **提交**：`9662ff6`（docs 契约四文档）→ `76f5ca9`（feat＋测试）；作者 bayernjf、无 AI co-author、**未 push**（用户 git 偏好）。
+
 ### feat(recording)：子图内 event wait 节点的回放/影子预置跨边界（打包 ZJ，2026-10-02，14 D47 取回并闭合；纯后端）
 
 - **一句话**：`inputs.waitEvents` 此前只在顶层生效（`loader.py:568` 按裸 node id 取预置、`_execute_subgraph` 从不下发），回放/门禁/影子遇**子图内** event wait 会真挂起到超时再走 timeout 分支，且 wait 产出的 `resolvedBy/signaled/waitedSeconds`/信号匹配键不在归一化白名单——预置命中（仅顶层）时基线 signal/timeout 与回放 input 产出也必比对失败。本批照打包 ZF 路径限定键口径补齐四层：`preset_wait_events`（顶层裸键＋子图含嵌套 `"sub-1/wait-1"`，无条件预置、非 dict payload 归一 `{}`）、`_execute_subgraph` 复用 `_scope_approvals` 剥前缀下发 waitEvents（裸键不跨边界）、`normalize`/`_normalize_subgraph` 对 `waitType=="event"` 剔信号侧回声键（业务 `payload` 保留；duration 型不受影响）、影子 `preset_all_wait_events` 递归下潜预置空 payload 秒过（不传 resolver 旧行为逐字不变）；回放端点与 `gate._replay_one` 接线。零迁移／端点／错误码／依赖／ADR，DSL 与前端零改动。

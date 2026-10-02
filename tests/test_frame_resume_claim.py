@@ -348,17 +348,30 @@ def test_reverse_control_always_admitting_claim_lets_both_drivers_through():
 def test_superseded_in_subgraph_passthrough_clause_exists():
     """子图 fail-safe（except Exception → 错误产出）会吞掉控制流；认领信号必须在豁免名单里。
 
-    这里静态断言豁免元组含 RunSuperseded：把它摘掉，输家会被记成"子图执行失败"并继续跑完整图，
-    正是 029 要防的事故形状。
+    这里静态断言两处豁免元组**都含** RunSuperseded：把它摘掉，输家会被记成"子图执行失败"
+    并继续跑完整图，正是 029 要防的事故形状。
+
+    断言的是"每个豁免点都含该成员"，不是元组的字面写法——元组会正当增员
+    （打包 ZK 就为此加了 SubgraphSuspendUnsupported），锁死字符串等于把正常演进判成回归。
     """
     import inspect
+    import re
 
     from atlas.graph import loader
 
     source = inspect.getsource(loader)
-    assert "except (RunCancelled, DebugStopped, RunSuperseded):" in source
-    assert source.count("except (RunCancelled, DebugStopped, RunSuperseded):") == 2, (
-        "节点执行器与子图 fail-safe 两处都要豁免，少一处就是给未来留双跑口子"
+    clauses = [
+        [member.strip() for member in clause.split(",")]
+        for clause in re.findall(r"except \(([^)]*)\):", source)
+    ]
+    control_flow = [members for members in clauses if "RunSuperseded" in members]
+    assert len(control_flow) == 2, (
+        "节点执行器与子图 fail-safe 两处都要豁免，"
+        f"实得 {len(control_flow)} 处控制流豁免点：{control_flow}"
+    )
+    assert any("SubgraphSuspendUnsupported" in members for members in control_flow), (
+        "打包 ZK：子图挂起在持久化档的显式拒绝必须穿透子图 fail-safe，否则成「子图 failed、"
+        "父 run completed」的假完成"
     )
 
 
