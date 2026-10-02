@@ -3,6 +3,13 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+## [Unreleased]
+### feat(recording)：子图内 event wait 节点的回放/影子预置跨边界（打包 ZJ，2026-10-02，14 D47 取回并闭合；纯后端）
+
+- **一句话**：`inputs.waitEvents` 此前只在顶层生效（`loader.py:568` 按裸 node id 取预置、`_execute_subgraph` 从不下发），回放/门禁/影子遇**子图内** event wait 会真挂起到超时再走 timeout 分支，且 wait 产出的 `resolvedBy/signaled/waitedSeconds`/信号匹配键不在归一化白名单——预置命中（仅顶层）时基线 signal/timeout 与回放 input 产出也必比对失败。本批照打包 ZF 路径限定键口径补齐四层：`preset_wait_events`（顶层裸键＋子图含嵌套 `"sub-1/wait-1"`，无条件预置、非 dict payload 归一 `{}`）、`_execute_subgraph` 复用 `_scope_approvals` 剥前缀下发 waitEvents（裸键不跨边界）、`normalize`/`_normalize_subgraph` 对 `waitType=="event"` 剔信号侧回声键（业务 `payload` 保留；duration 型不受影响）、影子 `preset_all_wait_events` 递归下潜预置空 payload 秒过（不传 resolver 旧行为逐字不变）；回放端点与 `gate._replay_one` 接线。零迁移／端点／错误码／依赖／ADR，DSL 与前端零改动。
+- **落码偏差一处（照实记录）**：trigger 产出除删 `context.payload.approvals` 外，`context.payload.waitEvents` 同为预置通道须一并删——U1048 端到端实测 `diff_keys=['context']` 暴露后补齐（`_normalize_subgraph` 的 `is_payload` 分支同口径）。
+- **门（实跑）**：三文件定向 **77 passed / 1 skipped**；后端全量 **2182 passed / 136 skipped / 0 failed**（基线 2174/136，净增 8＝U1046×3＋U1047×2＋U1048×1＋U1049×1＋U1050×1，567.95s，exit 0）。前端零改动不波及。
+
 ### docs(handoff)：补齐 MCP server 面落码批漏掉的收口三处（2026-10-02，纯 docs；零代码／测试／迁移／依赖改动；自推）
 
 - **一句话**：MCP server 面落码批（`6a87531` feat → `d911964` test → `513121a` docs）对 handoff 只落了 Recently shipped 一行（`git show 513121a -- handoff.md` 的 diff 恰 1 行），漏了收口惯例的三处，读起来像「MCP 代码仍未落」——本批按「验证后再断言」回代码核对后补齐。
