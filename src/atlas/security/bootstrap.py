@@ -105,8 +105,14 @@ def prod_bootstrap_password() -> str | None:
 
     raw = read_secret(PROD_BOOTSTRAP_PASSWORD_ENV).strip()
     if not raw:
+        # 与 assert_prod_secrets 同口径：点名实际在用的那个变量（_FILE 挂了就报 _FILE）。
+        source = (
+            f"{PROD_BOOTSTRAP_PASSWORD_ENV}_FILE"
+            if os.getenv(f"{PROD_BOOTSTRAP_PASSWORD_ENV}_FILE")
+            else PROD_BOOTSTRAP_PASSWORD_ENV
+        )
         raise RuntimeError(
-            f"ATLAS_ENV=prod 拒绝启动：缺少 {PROD_BOOTSTRAP_PASSWORD_ENV}"
+            f"ATLAS_ENV=prod 拒绝启动：缺少 {source}"
             "（prod 不播种仓库内明文口令，首任管理员需要引导口令，见 docs/66）"
         )
     try:
