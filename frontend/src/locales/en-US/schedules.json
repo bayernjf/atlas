@@ -1,16 +1,18 @@
 {
   "page": {
     "title": "Scheduled triggers",
-    "description": "Scheduled triggers derived from published graphs. Each graph yields two rows: Run and Reflect (reflection only proposes, never edits the graph). Scheduling always runs the pinned published version; editing the draft has no effect until republished.",
-    "utcNotice": "Cron is evaluated in UTC by default; when an IANA timezone is configured, it is evaluated against that timezone's wall-clock time. Claiming and display remain UTC (Beijing time = UTC+8). Missed slots are never replayed by default; only an explicit catch-up window (catch_up_minutes) replays unclaimed slots.",
+    "description": "Scheduled triggers derived from published graphs. Each scheduled trigger node yields a Run row (schedule id = node id), plus one graph-level Reflect row (reflection only proposes, never edits the graph). Scheduling always runs the pinned published version; editing the draft has no effect until republished.",
+    "utcNotice": "Cron is evaluated in UTC by default; when an IANA timezone is configured, it is evaluated against that timezone's wall-clock time. Claiming and display remain UTC (Beijing time = UTC+8). Missed slots are never replayed by default; only an explicit catch-up window (catch_up_minutes) replays unclaimed slots. Overlap policy: when the same schedule is still running, Skip does not trigger again, while Allow starts a concurrent run.",
     "refresh": "Refresh",
-    "empty": "No schedules yet: add a Schedule (Cron) trigger node to a graph and publish it to see both rows (Run and Reflect).",
+    "empty": "No schedules yet: add a Schedule (Cron) trigger node to a graph and publish it to see the Run and Reflect rows.",
     "loadError": "Failed to load schedules"
   },
   "table": {
     "graph": "Graph",
     "action": "Action",
+    "schedule": "Schedule id",
     "cron": "Cron",
+    "overlap": "Overlap",
     "timeZone": "Timezone (IANA)",
     "catchUp": "Catch-up (min)",
     "version": "Version",
@@ -23,6 +25,10 @@
   "action": {
     "run": "Run",
     "reflect": "Reflect"
+  },
+  "overlap": {
+    "skip": "Skip",
+    "allow": "Allow"
   },
   "actions": {
     "runNow": "Run now",
