@@ -109,6 +109,7 @@ from atlas.openapi.store import ImportStoreError
 from atlas.security.bootstrap import (
     assert_prod_secrets,
     demo_surface_enabled,
+    hydrate_file_secrets,
     read_env_profile,
 )
 from atlas.security.egress import EgressDenied, EgressGuard
@@ -355,6 +356,10 @@ async def lifespan(_app: FastAPI):
 
 # docs/65 K-D：统一日志 formatter（UTC 时间戳/级别/logger/request_id）；幂等。
 configure_logging()
+
+# docs/08 打包 ZO：先把 `*_FILE` 指向的密钥补进 env（litellm 自读 env，改不了它的
+# 读取点），必须在 import 期装配之前、且紧邻下面的启动门。
+hydrate_file_secrets()
 
 # docs/64 J-1a：prod 缺必需密钥 fail-closed（拒绝启动），非 prod 静默。
 assert_prod_secrets()
