@@ -2321,6 +2321,9 @@ export type ScheduleItem = {
   lastFiredAt: string | null
   lastSkippedAt: string | null
   skipCount: number
+  /** 打包 ZL：该调度的 IANA 时区（cron 墙上时间口径）与防抖窗口之上的补跑分钟数。 */
+  timeZone: string
+  catchUpMinutes: number
   /** 严格晚于"现在"的下一个触发槽，UTC ISO；表达式读不出时为 null。 */
   nextFireAt: string | null
 }
@@ -2334,7 +2337,8 @@ export type CronPreview = {
   valid: boolean
   message: string
   nextFireAt: string[]
-  timeZone: 'UTC'
+  /** 预演所用的 IANA 时区名（打包 ZL）；缺省请求回显 "UTC"。 */
+  timeZone: string
 }
 
 export async function listSchedules(): Promise<ScheduleItem[]> {
@@ -2364,10 +2368,14 @@ export async function runScheduleNow(
   })
 }
 
-/** 表达式预演：非法也回 200（`valid:false`），字段级问题不该走 HTTP 错误通道。 */
-export async function previewScheduleCron(cron: string): Promise<CronPreview> {
+/** 表达式预演：非法也回 200（`valid:false`），字段级问题不该走 HTTP 错误通道。
+ * 打包 ZL：预演可带 IANA 时区（缺省 UTC），后端按该 tz 的墙上时间求值。 */
+export async function previewScheduleCron(
+  cron: string,
+  timeZone: string = 'UTC',
+): Promise<CronPreview> {
   return request('/api/schedules/cron-preview', {
     method: 'POST',
-    body: JSON.stringify({ cron }),
+    body: JSON.stringify({ cron, timeZone }),
   })
 }

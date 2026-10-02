@@ -7,7 +7,7 @@
  * 单一导出：组件文件不混出函数/常量）。
  */
 import { useEffect, useState } from 'react'
-import { Empty, Input, Select, Typography } from 'antd'
+import { AutoComplete, Empty, Input, Select, Typography } from 'antd'
 import {
   listCards,
   listGraphs,
@@ -178,9 +178,39 @@ export const CardSelectWidget: WidgetComponent = ({
 /** 预演请求的防抖窗；输入节奏比它快时只发一次，避免每敲一个字符打一次后端。 */
 const CRON_PREVIEW_DEBOUNCE_MS = 400
 
-function utcClock(iso: string): string {
-  // 2026-09-26T09:45:00+00:00 → 2026-09-26 09:45（刻意不转本地时区：口径就是 UTC）
-  return iso.slice(0, 16).replace('T', ' ')
+/** IANA 常用时区（timezone-input 下拉候选；自由输入仍允许任何 IANA 名）。 */
+const COMMON_TIMEZONES = [
+  'UTC',
+  'Asia/Shanghai',
+  'Asia/Tokyo',
+  'Asia/Singapore',
+  'Asia/Kolkata',
+  'Australia/Sydney',
+  'Europe/London',
+  'Europe/Berlin',
+  'America/New_York',
+  'America/Los_Angeles',
+]
+
+function tzClock(iso: string, timeZone?: string): string {
+  // 槽位口径是 UTC；显示按调度的 IANA 时区转墙上时间（缺省/UTC＝旧行为逐字不变）。
+  // Intl 失败（非法 tz）时退回 UTC 切片，读路径绝不抛（与后端 tz_of 兜底同纪律）。
+  if (!timeZone || timeZone === 'UTC') return iso.slice(0, 16).replace('T', ' ')
+  try {
+    const parts = new Intl.DateTimeFormat('zh-CN', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(new Date(iso))
+    const get = (type: string) => parts.find((p) => p.type === type)?.value ?? ''
+    return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}`
+  } catch {
+    return iso.slice(0, 16).replace('T', ' ')
+  }
 }
 
 /**
@@ -196,6 +226,7 @@ export const CronInputWidget: WidgetComponent = ({
   onChange,
   diagnostics,
   placeholder,
+  timeZone,
 }) => {
   const { t } = useTranslation('schedules')
   const cron = typeof value === 'string' ? value : ''
@@ -211,7 +242,8 @@ export const CronInputWidget: WidgetComponent = ({
     if (!trimmed) return
     let cancelled = false
     const timer = setTimeout(() => {
-      previewScheduleCron(trimmed)
+      // 打包 ZL：预演带同 config 的 timezone（缺省 UTC），后端按该 tz 的墙上时间求值。
+      previewScheduleCron(trimmed, timeZone ?? 'UTC')
         .then((result) => {
           if (!cancelled) setSettled({ expression: trimmed, preview: result })
         })
@@ -224,7 +256,7 @@ export const CronInputWidget: WidgetComponent = ({
       cancelled = true
       clearTimeout(timer)
     }
-  }, [trimmed])
+  }, [trimmed, timeZone])
 
   return (
     <>
@@ -244,7 +276,7 @@ export const CronInputWidget: WidgetComponent = ({
       )}
       {!pending && preview?.valid && (
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          {t('cron.next', { times: preview.nextFireAt.map(utcClock).join(' · ') })}
+          {t('cron.next', { times: preview.nextFireAt.map((iso) => tzClock(iso, timeZone)).join(' · ') })}
         </Typography.Text>
       )}
       {!pending && preview && !preview.valid && (
@@ -257,6 +289,35 @@ export const CronInputWidget: WidgetComponent = ({
           {t('cron.unavailable')}
         </Typography.Text>
       )}
+      <DiagnosticText diagnostics={diagnostics} />
+    </>
+  )
+}
+
+/**
+ * 时区输入（trigger.schedule 的 timezone 字段，打包 ZL）：IANA 常用区下拉＋自由输入。
+ * 合法性在后端 DSL 保存期兜（NODE_TRIGGER_TZ_INVALID）；这里只做编辑与提示，不复制校验。
+ */
+export const TimezoneInputWidget: WidgetComponent = ({
+  value,
+  onChange,
+  diagnostics,
+  placeholder,
+}) => {
+  const { t } = useTranslation('schedules')
+  const tz = typeof value === 'string' ? value : ''
+  return (
+    <>
+      <AutoComplete
+        value={tz}
+        options={COMMON_TIMEZONES.map((zone) => ({ value: zone }))}
+        placeholder={placeholder ?? 'Asia/Shanghai'}
+        allowClear
+        onChange={(next) => onChange(next)}
+      />
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+        {t('cron.tzHint')}
+      </Typography.Text>
       <DiagnosticText diagnostics={diagnostics} />
     </>
   )

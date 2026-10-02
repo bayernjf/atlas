@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from typing import Any, Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, Field
 
@@ -1464,6 +1465,16 @@ def _validate_node_config(node: NodeDSL) -> list[Issue]:
                 return [add(
                     str(exc), "/cron", "NODE_TRIGGER_CRON_INVALID", {"reason": str(exc)}
                 )]
+            timezone = config.get("timezone")
+            if timezone is not None and str(timezone).strip():
+                try:
+                    ZoneInfo(str(timezone))
+                except (ZoneInfoNotFoundError, ValueError):
+                    return [add(
+                        "时区必须是 IANA 时区名（如 Asia/Shanghai、America/New_York；"
+                        "留空或 UTC 为默认）",
+                        "/timezone", "NODE_TRIGGER_TZ_INVALID",
+                    )]
         if trigger_type == "webhook" and not config.get("webhookUrl"):
             return [add("Webhook 触发必须填写 URL", "/webhookUrl", "NODE_TRIGGER_WEBHOOK_URL_REQUIRED")]
     elif node.type == "ai_decision":

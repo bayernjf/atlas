@@ -12,7 +12,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
+from datetime import timezone as _dt_timezone
 from typing import Any
 
 from sqlalchemy import Engine, text
@@ -28,8 +29,8 @@ from atlas.scheduling.models import (
 FIRE_RETENTION = timedelta(days=7)
 
 _COLUMNS = (
-    "tenant_id, graph_id, action, version, cron, enabled, created_at, "
-    "last_fired_at, last_skipped_at, skip_count"
+    "tenant_id, graph_id, action, version, cron, timezone, catch_up_minutes, "
+    "enabled, created_at, last_fired_at, last_skipped_at, skip_count"
 )
 
 
@@ -40,11 +41,13 @@ def _to_record(row: Any) -> ScheduleRecord:
         action=row[2],
         version=int(row[3]),
         cron=row[4],
-        enabled=bool(row[5]),
-        created_at=to_utc_iso(row[6]),
-        last_fired_at=to_utc_iso(row[7]) if row[7] is not None else None,
-        last_skipped_at=to_utc_iso(row[8]) if row[8] is not None else None,
-        skip_count=int(row[9] or 0),
+        timezone=row[5],
+        catch_up_minutes=int(row[6] or 0),
+        enabled=bool(row[7]),
+        created_at=to_utc_iso(row[8]),
+        last_fired_at=to_utc_iso(row[9]) if row[9] is not None else None,
+        last_skipped_at=to_utc_iso(row[10]) if row[10] is not None else None,
+        skip_count=int(row[11] or 0),
     )
 
 
@@ -62,14 +65,18 @@ class PgScheduleStore:
         version: int,
         cron: str,
         action: ScheduleAction = DEFAULT_SCHEDULE_ACTION,
+        timezone: str = "UTC",
+        catch_up_minutes: int = 0,
     ) -> ScheduleRecord:
         with self._engine.begin() as db:
             db.execute(
                 text(
-                    "INSERT INTO schedules (tenant_id, graph_id, action, version, cron) "
-                    "VALUES (:tenant_id, :graph_id, :action, :version, :cron) "
+                    "INSERT INTO schedules "
+                    "(tenant_id, graph_id, action, version, cron, timezone, catch_up_minutes) "
+                    "VALUES (:tenant_id, :graph_id, :action, :version, :cron, :timezone, :catch_up_minutes) "
                     "ON CONFLICT (tenant_id, graph_id, action) DO UPDATE SET "
-                    "version = EXCLUDED.version, cron = EXCLUDED.cron"
+                    "version = EXCLUDED.version, cron = EXCLUDED.cron, "
+                    "timezone = EXCLUDED.timezone, catch_up_minutes = EXCLUDED.catch_up_minutes"
                 ),
                 {
                     "tenant_id": tenant_id,
@@ -77,6 +84,8 @@ class PgScheduleStore:
                     "action": action,
                     "version": version,
                     "cron": cron,
+                    "timezone": timezone,
+                    "catch_up_minutes": catch_up_minutes,
                 },
             )
         record = self.get(tenant_id, graph_id, action)
@@ -206,5 +215,5 @@ class PgScheduleStore:
 def _as_utc(moment: datetime) -> datetime:
     """键列一律 TIMESTAMPTZ：naive 输入按 UTC 解释，绝不把本地偏移交给 DB 猜。"""
     if moment.tzinfo is None:
-        return moment.replace(tzinfo=timezone.utc)
-    return moment.astimezone(timezone.utc)
+        return moment.replace(tzinfo=_dt_timezone.utc)
+    return moment.astimezone(_dt_timezone.utc)

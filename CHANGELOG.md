@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 ## [Unreleased]
+### feat(scheduling)：命名时区（IANA）＋补跑开关（打包 ZL 落码，2026-10-03，D41 ①②闭合；docs/08 打包 ZL 立项块）
+
+- **一句话**：cron 字段按目标 tz 的墙上时间解释（zoneinfo 真 DST），认领/投影仍归一 UTC；`catch_up_minutes` 是防抖窗口（1 分钟）之上显式放宽的追赶分钟数，0＝严格不追赶（docs/68 D-5 逐字不变），>0 只补未认领槽位（`schedule_fires` PK＋`ON CONFLICT DO NOTHING` 一次性认领保证已认领不重跑）。
+- **落码**：`cron.py` 四函数可选 `tz`；`models.py` `tz_of`＋`ScheduleRecord` 两字段＋投影两键；`engine.py` tick 按 record 透传 tz＋放宽回看；`dsl.py` `NODE_TRIGGER_TZ_INVALID`（保存期 422）；`loader.py` 产出透传 `timezone`；迁移 030 幂等加两列＋COMMENT；`pg_store`/`store` upsert 增参；`api/main.py` 发布派生透传＋`CronPreviewRequest.timeZone`＋预演按 tz 求值回显；前端 `timezone-input` 控件＋`CronInputWidget` 预演带 tz 并按 tz 显示＋`Schedules.tsx` 时区/补跑列＋双语字典。
+- **门（实跑）**：后端全量 **2200 passed / 136 skipped / 0 failed**（基线 2182/136，净增 16）；前端 **753 passed / 2 skipped**＋oxlint 0 error＋tsc＋build 全过；U1057–U1062 契约面全部落地（U1062 冒烟以 vitest 替代，浏览器本机死路已知）。
+- **登记**：docs/03/04/15/68/14 状态回填；docs/13 ZL 候选段收口；D41 ①②闭合、③④ 不解除。
+- **提交**：feat＋test＋docs 三原子，作者 bayernjf、无 AI co-author、**未 push**（用户 git 偏好）。
+
 ### docs(scheduling)：打包 ZL 立项＝D41 命名时区＋补跑开关（2026-10-02，docs-only，零代码/测试/迁移/依赖）
 - **一句话**：打包 N 收口时登记的 D41 取回前两件。① `timezone`（IANA、zoneinfo 零新依赖、cron 字段按该 tz 墙上时间解释、认领/投影仍归一 UTC）；② `catch_up_minutes`（显式 opt-in 补跑、默认 0不追赶、防抖窗口 1 分钟保留、已认领槽不重跑）。探测实证：cron.py 纯 UTC、engine.tick lookback 为全局参数、ScheduleRecord 无两字段。
 - **受验**：U1057–U1062（tz 槽位/DST 边界/非法 tz 422/catch_up 补跑/默认零回归反向门/前端时区选择）。

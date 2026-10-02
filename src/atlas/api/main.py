@@ -169,6 +169,7 @@ from atlas.scheduling.models import (
     ScheduleRecord,
     schedule_projection,
     slot_key,
+    tz_of,
 )
 from atlas.scheduling.pg_store import PgScheduleStore
 from atlas.scheduling.store import InMemoryScheduleStore, ScheduleStore
@@ -1236,26 +1237,32 @@ def stop_scheduler(timeout_seconds: float = 2.0) -> None:
     _scheduler_thread = None
 
 
-def _schedule_cron_of_published(graph_raw: dict) -> str | None:
-    """已发布版本里定时触发节点的 cron（docs/68 §1 D-4：注册＝发布派生）。
+def _schedule_spec_of_published(graph_raw: dict) -> tuple[str, str, int] | None:
+    """已发布版本里定时触发节点的调度形状（docs/68 §1 D-4：注册＝发布派生）。
 
-    多个定时触发节点时只按**第一个**建调度（一图一条调度是 v1 的形状），其余在日志里
-    点名——静默忽略第二个 cron 就是"配置看着在、跑的不是它"，与 docs/63 §0A 的"巧合式
-    验收"同形，不能自己再造一份。
+    返回 `(cron, timezone, catch_up_minutes)`——timezone（IANA 名）与 catch_up_minutes
+    也随第一个定时节点派生（docs/08 打包 ZL）。多个定时触发节点时只按**第一个**建调度
+    （一图一条调度是 v1 的形状），其余在日志里点名——静默忽略第二个 cron 就是"配置看着在、
+    跑的不是它"，与 docs/63 §0A 的"巧合式验收"同形，不能自己再造一份。
     """
-    found: list[str] = []
+    found: list[tuple[str, str, int]] = []
     for node in graph_raw.get("nodes") or []:
         if not isinstance(node, dict) or node.get("type") != "trigger":
             continue
         config = node.get("config") or {}
         if config.get("triggerType") in ("schedule", "cron") and config.get("cron"):
-            found.append(str(config["cron"]))
+            catch_up = config.get("catchUpMinutes", 0)
+            try:
+                catch_up = max(0, int(catch_up))
+            except (TypeError, ValueError):
+                catch_up = 0
+            found.append((str(config["cron"]), str(config.get("timezone", "UTC")), catch_up))
     if not found:
         return None
     if len(found) > 1:
         logger.warning(
             "图里有 %s 个定时触发节点，只按第一个（%s）建调度，其余忽略：%s",
-            len(found), found[0], found[1:],
+            len(found), found[0][0], [item[0] for item in found[1:]],
         )
     return found[0]
 
@@ -1272,18 +1279,21 @@ def _derive_schedule_on_publish(
     raw = services.graph_store.get(graph_id, version)
     if raw is None:
         return
-    cron = _schedule_cron_of_published(raw)
+    spec = _schedule_spec_of_published(raw)
     store = schedule_store()
-    if cron is None:
+    if spec is None:
         store.remove(tenant_id, graph_id)
         return
+    cron, timezone, catch_up_minutes = spec
     for action in ("run", "reflect"):
         record = store.upsert_published(
-            tenant_id=tenant_id, graph_id=graph_id, version=version, cron=cron, action=action
+            tenant_id=tenant_id, graph_id=graph_id, version=version, cron=cron, action=action,
+            timezone=timezone, catch_up_minutes=catch_up_minutes,
         )
         logger.info(
-            "定时调度已登记：%s -> %s@%s（action=%s，cron=%s，UTC）",
+            "定时调度已登记：%s -> %s@%s（action=%s，cron=%s，tz=%s，catch_up=%s）",
             graph_id, graph_id, record.version, record.action, record.cron,
+            record.timezone, record.catch_up_minutes,
         )
 
 
@@ -1434,6 +1444,7 @@ def get_reflection_candidate(
 
 class CronPreviewRequest(BaseModel):
     cron: str = ""
+    timeZone: str = "UTC"
 
 
 # 预览只数到第 3 个槽：再多没有排障意义，也防止逐分钟扫描变慢。
@@ -1454,18 +1465,19 @@ def preview_schedule_cron(
     if not cron:
         raise HTTPException(status_code=422, detail="请先填写 Cron 表达式（5 个字段：分 时 日 月 周）")
     cursor = datetime.now(timezone.utc)
+    tz = tz_of(request.timeZone)  # 非法 tz 在保存期被 DSL 拦，这里回落 UTC 只做预演
     try:
-        spec = validate_cron(cron, now=cursor)
+        spec = validate_cron(cron, now=cursor, tz=tz)
     except CronExpressionError as exc:
-        return {"valid": False, "message": str(exc), "nextFireAt": [], "timeZone": "UTC"}
+        return {"valid": False, "message": str(exc), "nextFireAt": [], "timeZone": request.timeZone}
     hits: list[str] = []
     while len(hits) < MAX_CRON_PREVIEW_HITS:
-        upcoming = next_fire_utc(spec, cursor)
+        upcoming = next_fire_utc(spec, cursor, tz=tz)
         if upcoming is None:
             break
         hits.append(upcoming.isoformat())
         cursor = upcoming
-    return {"valid": True, "message": "", "nextFireAt": hits, "timeZone": "UTC"}
+    return {"valid": True, "message": "", "nextFireAt": hits, "timeZone": request.timeZone}
 
 
 @app.post("/api/channels/hooks/shopify/{binding_id}")

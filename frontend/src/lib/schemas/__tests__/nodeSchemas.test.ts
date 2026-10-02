@@ -5,7 +5,7 @@ import { validateSchemaFields } from '../../validation/l1'
 
 // 与 lib/scope.ts STATIC_OUTPUT_KEYS + trigger/tool_call 特例逐字段对齐（04 §6.5，U35④）。
 const EXPECTED_OUTPUT_KEYS: Record<string, string[] | Record<string, string[]>> = {
-  trigger: { context: ['triggerType', 'cron', 'webhookUrl', 'payload'] },
+  trigger: { context: ['triggerType', 'cron', 'timezone', 'webhookUrl', 'payload'] },
   tool_call: ['result'],
   ai_decision: ['decision', 'prompt_rendered'],
   condition: ['branch', 'mode', 'target'],

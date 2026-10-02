@@ -52,17 +52,19 @@ export const triggerUiSchema: UiSchema = {
   labels: {
     triggerType: '触发方式',
     cron: 'Cron 表达式',
+    timezone: '时区（IANA）',
     webhookUrl: 'Webhook 路径',
   },
   placeholders: {
     cron: '0 9 * * *',
+    timezone: 'Asia/Shanghai',
     webhookUrl: '/hooks/approval',
   },
   optionLabels: {
     triggerType: { manual: '手动触发', schedule: '定时（Cron）', webhook: 'Webhook' },
   },
   hiddenWhen: [
-    { field: 'triggerType', equals: 'schedule', show: ['cron'] },
+    { field: 'triggerType', equals: 'schedule', show: ['cron', 'timezone'] },
     { field: 'triggerType', equals: 'webhook', show: ['webhookUrl'] },
   ],
 }

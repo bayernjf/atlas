@@ -16,7 +16,8 @@
 from __future__ import annotations
 
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
+from datetime import timezone as _dt_timezone
 from typing import Protocol
 
 from atlas.scheduling.models import (
@@ -114,6 +115,8 @@ class InMemoryScheduleStore:
         version: int,
         cron: str,
         action: ScheduleAction = DEFAULT_SCHEDULE_ACTION,
+        timezone: str = "UTC",
+        catch_up_minutes: int = 0,
     ) -> ScheduleRecord:
         key = (graph_id, action)
         with self._lock:
@@ -122,10 +125,14 @@ class InMemoryScheduleStore:
                 record = ScheduleRecord(
                     tenant_id=tenant_id, graph_id=graph_id, action=action,
                     version=version, cron=cron,
-                    enabled=True, created_at=to_utc_iso(datetime.now(timezone.utc)),
+                    timezone=timezone, catch_up_minutes=catch_up_minutes,
+                    enabled=True, created_at=to_utc_iso(datetime.now(_dt_timezone.utc)),
                 )
             else:
-                record = existing.model_copy(update={"version": version, "cron": cron})
+                record = existing.model_copy(update={
+                    "version": version, "cron": cron,
+                    "timezone": timezone, "catch_up_minutes": catch_up_minutes,
+                })
             self._by_tenant[tenant_id][key] = record
             return record
 

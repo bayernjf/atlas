@@ -28,6 +28,7 @@ from atlas.scheduling.models import (
     ScheduleAction,
     ScheduleRecord,
     slot_key,
+    tz_of,
 )
 
 logger = logging.getLogger(__name__)
@@ -120,7 +121,14 @@ def tick(
         spec = state.spec(record.cron)
         if spec is None:
             continue
-        slot = previous_fire_utc(spec, now, lookback_minutes=lookback_minutes)
+        # 打包 ZL（docs/08 打包 ZL 立项块）：tz 按 record 的 IANA 名解释 cron 墙上时间
+        # （UTC/缺省时 None＝旧行为逐字不变）；回看窗口＝防抖 1 分钟＋显式补跑分钟数。
+        tz = tz_of(record.timezone)
+        slot = previous_fire_utc(
+            spec, now,
+            lookback_minutes=lookback_minutes + record.catch_up_minutes,
+            tz=tz,
+        )
         if slot is None:
             continue
         if state.seen(record, slot):

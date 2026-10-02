@@ -39,14 +39,20 @@ ONE_MINUTE = timedelta(minutes=1)
 FIVE_MINUTES = timedelta(minutes=5)
 
 
-def _graph(cron: str = "*/5 * * * *", *, trigger_type: str = "schedule", name: str = GRAPH_NAME) -> dict:
+def _graph(cron: str = "*/5 * * * *", *, trigger_type: str = "schedule", name: str = GRAPH_NAME,
+           timezone: str | None = None, catch_up_minutes: int | None = None) -> dict:
+    trigger_config: dict = {"triggerType": trigger_type, "cron": cron}
+    if timezone is not None:
+        trigger_config["timezone"] = timezone
+    if catch_up_minutes is not None:
+        trigger_config["catchUpMinutes"] = catch_up_minutes
     return {
         "version": 1,
         "name": name,
         "nodes": [
             {"id": "t1n", "type": "trigger", "name": "定时",
              "position": {"x": 0, "y": 0},
-             "config": {"triggerType": trigger_type, "cron": cron}},
+             "config": trigger_config},
             {"id": "a1", "type": "ai_decision", "name": "决策",
              "position": {"x": 1, "y": 0}, "config": {"promptTemplate": "要不要退款"}},
         ],
@@ -264,6 +270,53 @@ def test_u891_bad_cron_is_refused_at_save_time_with_a_precise_code(cron, code):
 def test_u891b_a_valid_cron_still_saves():
     graph_id, _ = _publish(_graph(cron="0 9 * * 1-5"))
     assert _find(graph_id)["cron"] == "0 9 * * 1-5"
+
+
+# --- 打包 ZL（docs/08 打包 ZL 立项块）：tz 保存期校验 U1059 ＋ 预演按 tz（U1057 的 REST 面） --
+
+@pytest.mark.parametrize("timezone", [
+    "Mars/Olympus",
+    "Not/AZone",
+    "Asia/ShanghaiX",
+])
+def test_u1059_unknown_timezone_is_refused_at_save_time_with_a_precise_code(timezone):
+    response = client.post("/api/graphs", json=_graph(timezone=timezone), headers=ADMIN_A)
+    assert response.status_code == 422, response.text
+    body = response.json()
+    assert "NODE_TRIGGER_TZ_INVALID" in body["codes"], body
+    assert any("\u4e00" <= char <= "\u9fff" for char in "".join(body["detail"])), body
+
+
+def test_u1059_utc_and_empty_timezone_still_save():
+    for tz_value in (None, "UTC"):
+        graph_id, _ = _publish(_graph(timezone=tz_value))
+        assert _find(graph_id)["timeZone"] == "UTC"
+
+
+def test_u1059_publish_derives_the_named_timezone_into_both_rows():
+    graph_id, _ = _publish(_graph(cron="0 9 * * *", timezone="Asia/Shanghai", catch_up_minutes=15))
+    items = client.get("/api/schedules", headers=VIEWER_A).json()["items"]
+    for action in ("run", "reflect"):
+        row = next(item for item in items if item["graphId"] == graph_id and item["action"] == action)
+        assert row["timeZone"] == "Asia/Shanghai"
+        assert row["catchUpMinutes"] == 15
+        assert row["nextFireAt"] is not None
+        # 上海 09:00 的槽位＝UTC 01:00（U1057 的 REST 面）；nextFireAt 是 UTC ISO
+        assert "+00:00" in row["nextFireAt"]
+
+
+def test_u892c_preview_honors_a_named_timezone_and_echoes_it_back():
+    response = client.post("/api/schedules/cron-preview",
+                           json={"cron": "0 9 * * *", "timeZone": "Asia/Shanghai"},
+                           headers=VIEWER_A)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["valid"] is True, body
+    assert body["timeZone"] == "Asia/Shanghai"
+    # 上海 09:00 → UTC 01:00（当日）；三个槽严格递增、均为 UTC ISO
+    assert "T01:00:00+00:00" in body["nextFireAt"][0], body["nextFireAt"]
+    assert len(body["nextFireAt"]) == 3
+    assert body["nextFireAt"] == sorted(body["nextFireAt"])
 
 
 # --- U892–U894 cron 预演端点（步 ⑤ 补的只读口；合法与非法都回 200） ----------

@@ -29,6 +29,7 @@ import {
 } from './formTree'
 import type { WidgetRegistry } from './registry'
 import type { SchemaSource } from './resolveWidget'
+import { CRON_INPUT_WIDGET } from './types'
 import type { WidgetScope } from './types'
 import { applyUiSchema, decorateNodeForRender, nestedHiddenFields, type UiSchema } from './uiSchema'
 import { useTranslation } from '../../locales'
@@ -298,6 +299,12 @@ function KeyValueView({ node, ctx }: { node: FormKeyValueNode; ctx: ViewContext 
 
 function WidgetView({ node, ctx }: { node: FormWidgetNode; ctx: ViewContext }): ReactElement {
   const component = widgetComponent(node.widget, ctx.registry)
+  // 打包 ZL：cron-input 的预演要按同 config 的 timezone 求值，把该字段值透传过去
+  // （WidgetProps.timeZone 可选，其他控件忽略）。
+  const timeZone =
+    String(node.widget) === CRON_INPUT_WIDGET && ctx.root && typeof ctx.root === 'object'
+      ? String((ctx.root as Record<string, unknown>).timezone ?? 'UTC')
+      : undefined
   return (
     <Field label={node.label} required={node.required} pointer={node.pointer}>
       {createElement(component, {
@@ -311,6 +318,7 @@ function WidgetView({ node, ctx }: { node: FormWidgetNode; ctx: ViewContext }): 
         placeholder: node.placeholder,
         optionLabels: node.optionLabels,
         rows: node.rows,
+        timeZone,
       })}
     </Field>
   )
