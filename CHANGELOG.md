@@ -3,7 +3,15 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
-## [Unreleased]
+
+### feat(scheduling)：一图多调度＋调度级并发策略（打包 ZN 落码，2026-10-03，D41 ③④闭合；docs/08 打包 ZN 立项块）
+
+- **一句话**：一张图可挂多个定时触发节点，每个节点（schedule_id＝节点 id、随图钉版稳定）派生一条 run 调度，另有一条图级 reflect（`__reflect__`，反思是整图 pass、不随节点倍增）；发布派生改全量 reconcile（删节点即撤销、幂等、保留开关）；新增调度级 `overlap_policy`：skip（默认，busy 即跳过）/allow（busy 也并发派发、并发起新 run），queue 排队仍缓做。
+- **落码**：`models.py` 加 `schedule_id`/`OverlapPolicy`、保留 id `__reflect__`/`__primary__`、投影带 `scheduleId`/`overlapPolicy`；`engine.py` `_slot_key` 含 schedule_id、busy 按 overlap_policy 分支、TickOutcome 带 schedule_id；`store.py`/`pg_store.py` 行键 `(graph,schedule_id)`、认领键含 schedule_id、新增 `remove_schedule`；`api/main.py` `_schedule_specs_of_published`/`_derive_schedule_on_publish` 全量 reconcile、`ScheduleEnabledRequest`/`RunNowRequest` 行键改 schedule_id；迁移 **037_schedule_identity.sql**（两表加 schedule_id/overlap_policy、回填、改 PK，幂等）；前端 `Schedules.tsx` 多条调度＋调度标识/并发策略列、apiClient 行键 schedule_id、中英双语。
+- **门（实跑）**：后端全量 **2229 passed / 136 skipped / 0 failed**（基线 2220/136，净增 9）；前端 vitest **757 passed / 2 skipped**、oxlint **0 error**、tsc、build 全过；守护门 **58 passed**；U1069–U1076 契约面全部落地。
+- **登记**：docs/08/13/14 状态回填；D41 ③④ 闭合（D41 全部完成）。
+- **提交**：docs 立项＋feat 后端＋test 后端＋feat 前端＋test 前端＋docs 收口六原子，无 AI co-author、**未 push**（用户 git 偏好）。
+
 ### feat(template)：模板分类管理＋URL 导入导出（打包 ZM 落码，2026-10-03，D25 取回「分类＋URL 导入导出」；docs/08 打包 ZM 立项块）
 
 - **一句话**：模板库产品化切片——内置/用户模板新增 `category` 分类（内置 5 模板按主题归类：退款流程／数据查询×2／审批协作×2，缺省空串、≤30 字符），并支持把任意模板导出为 `atlas-template-v1` 分享包、从包或 https URL 导入为租户私有模板。
