@@ -64,6 +64,7 @@ export type NodeConfig = {
   webhookUrl?: string
   // ai_decision
   promptTemplate?: string
+  // ai_decision / condition（ZP）共用：非空时覆盖默认模型，仅本次调用生效
   model?: string
   confidenceThreshold?: number
   // tool_call

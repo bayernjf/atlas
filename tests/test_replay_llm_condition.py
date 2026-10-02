@@ -39,7 +39,7 @@ class _FixedClassifier:
     def __init__(self, label: str):
         self.label = label
 
-    def classify(self, *, branches, context_text, instruction, node_id=None):
+    def classify(self, *, branches, context_text, instruction, node_id=None, model=None):
         return self.label
 
 

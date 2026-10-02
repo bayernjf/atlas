@@ -94,7 +94,7 @@ def _llm_condition_graph():
 class _FakeLlmClassifier:
     """非离线分类器（冒充 LiteLLM 分类器）：本门只认 OfflineConditionClassifier。"""
 
-    def classify(self, *, branches, context_text, instruction, node_id=None):
+    def classify(self, *, branches, context_text, instruction, node_id=None, model=None):
         return "普通咨询"
 
 

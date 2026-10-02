@@ -16,6 +16,7 @@ export const conditionSchema: NodeConfigSchema = {
       'x-widget': 'radio',
     },
     classifierPrompt: { type: 'string' },
+    model: { type: 'string' },
     branches: {
       type: 'array',
       minItems: 1,

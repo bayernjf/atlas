@@ -37,6 +37,7 @@ class ConditionClassifier(Protocol):
         context_text: str,
         instruction: str,
         node_id: str | None = None,
+        model: str | None = None,
     ) -> str: ...
 
 
@@ -50,6 +51,7 @@ class OfflineConditionClassifier:
         context_text: str,
         instruction: str,
         node_id: str | None = None,
+        model: str | None = None,
     ) -> str:
         raise ConditionClassifyError("LLM 未配置，语义分支无法求值")
 
@@ -67,9 +69,12 @@ class LiteLLMConditionClassifier:
         context_text: str,
         instruction: str,
         node_id: str | None = None,
+        model: str | None = None,
     ) -> str:
         import litellm
 
+        # ZP：节点级 model 覆盖（docs/08 打包 ZP 立项块）——非空覆盖构造期默认，仅本次调用生效。
+        model_name = (model or "").strip() or self.model
         labels = [item["label"] for item in branches]
         branch_lines = "\n".join(
             f"- {item['label']}：{item['description']}" for item in branches
@@ -81,7 +86,7 @@ class LiteLLMConditionClassifier:
             f"运行上下文：\n{context_text}"
         )
         response = litellm.completion(
-            model=self.model,
+            model=model_name,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
@@ -90,6 +95,8 @@ class LiteLLMConditionClassifier:
             # J-3c：出向 LLM 必须带超时与输出上限，防挂死/超长回包拖垮编排
             timeout=float(os.getenv("ATLAS_LLM_TIMEOUT_SECONDS", "60")),
             max_tokens=512,
+            # ZP：结构化输出强制（与 llm/decision.py:127 同构）；模型必须返纯 JSON。
+            response_format={"type": "json_object"},
         )
         content = response["choices"][0]["message"]["content"]
         try:
@@ -122,6 +129,7 @@ class ScriptedConditionClassifier:
         context_text: str,
         instruction: str,
         node_id: str | None = None,
+        model: str | None = None,
     ) -> str:
         if node_id is None or node_id not in self._branches:
             raise ConditionClassifyError(f"回放脚本中无节点 {node_id!r} 的分支记录")
