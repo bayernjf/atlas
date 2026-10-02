@@ -811,7 +811,9 @@ def _record_mockable_tool_case():
         "edges": [{"id": "e1", "source": "trigger-1", "target": "msg-1"}],
     }
     graph_id = client.post("/api/graphs", json=graph).json()["id"]
+    # 打包 ZL：trigger 产出 context 统一透传 timezone 键（默认 "UTC"，U1057 起的形状）。
     trigger_output = {"context": {"triggerType": "webhook", "cron": "",
+                                  "timezone": "UTC",
                                   "webhookUrl": "/hooks/x", "payload": {}}}
     tool_stub = {"result": {"status": "SUCCESS", "echo": "pong"}, "action_status": "SUCCESS"}
     case_id = client.post("/api/recordings", json={
@@ -862,6 +864,7 @@ def test_replay_inputs_override_shallow_merges_and_validates():
     graph_id = client.post("/api/graphs", json=graph).json()["id"]
     payload = {"amount": 100, "region": "cn"}
     trigger_output = {"context": {"triggerType": "webhook", "cron": "",
+                                  "timezone": "UTC",
                                   "webhookUrl": "/hooks/x", "payload": payload}}
     case_id = client.post("/api/recordings", json={
         "name": "入参覆写用例", "graph_id": graph_id, "inputs": dict(payload),

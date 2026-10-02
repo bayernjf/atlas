@@ -103,7 +103,8 @@ describe('定时调度 REST 面（docs/68 §2.4，打包 N ⑤）', () => {
     expect(preview.valid).toBe(false)
     expect(preview.nextFireAt).toEqual([])
     const init = fetchMock.mock.calls[0][1]
-    expect(JSON.parse(init?.body as string)).toEqual({ cron: '5/2 * * * *' })
+    // 打包 ZL：预演请求带 timeZone（缺省 UTC）
+    expect(JSON.parse(init?.body as string)).toEqual({ cron: '5/2 * * * *', timeZone: 'UTC' })
   })
 
   it('409（同图还在跑）把后端中文 detail 带进 Error，页面才说得出原因', async () => {
