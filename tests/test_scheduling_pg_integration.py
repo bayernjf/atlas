@@ -83,14 +83,16 @@ def pair(engine):
 
 def _replay(store, tenant: str) -> tuple[bool, bool]:
     """一条固定时间线：登记 → 停用 → 重发布 → 抢同一个槽两次 → 一次实发两次跳过。"""
-    store.upsert_published(tenant_id=tenant, graph_id="g-1", version=1, cron="*/5 * * * *")
-    store.set_enabled(tenant, "g-1", False)
-    store.upsert_published(tenant_id=tenant, graph_id="g-1", version=2, cron="*/5 * * * *")
-    first_claim = store.claim(tenant, "g-1", slot(5))
-    second_claim = store.claim(tenant, "g-1", slot(5))
-    store.note_fired(tenant, "g-1", slot(5))
-    store.note_skipped(tenant, "g-1", slot(10))
-    store.note_skipped(tenant, "g-1", slot(15))
+    store.upsert_published(tenant_id=tenant, graph_id="g-1", schedule_id="sch",
+                           version=1, cron="*/5 * * * *")
+    store.set_enabled(tenant, "g-1", "sch", False)
+    store.upsert_published(tenant_id=tenant, graph_id="g-1", schedule_id="sch",
+                           version=2, cron="*/5 * * * *")
+    first_claim = store.claim(tenant, "g-1", "sch", slot(5))
+    second_claim = store.claim(tenant, "g-1", "sch", slot(5))
+    store.note_fired(tenant, "g-1", "sch", slot(5))
+    store.note_skipped(tenant, "g-1", "sch", slot(10))
+    store.note_skipped(tenant, "g-1", "sch", slot(15))
     return first_claim, second_claim
 
 
@@ -120,46 +122,53 @@ def test_u886_both_tiers_answer_the_same_timeline_identically(pair):
 
 def test_u886b_republish_keeps_the_switch_and_the_counters(pair):
     pg, tenant, _, _ = pair
-    pg.upsert_published(tenant_id=tenant, graph_id="g-2", version=1, cron="0 * * * *")
-    pg.set_enabled(tenant, "g-2", False)
-    pg.note_skipped(tenant, "g-2", slot(0))
+    pg.upsert_published(tenant_id=tenant, graph_id="g-2", schedule_id="sch",
+                        version=1, cron="0 * * * *")
+    pg.set_enabled(tenant, "g-2", "sch", False)
+    pg.note_skipped(tenant, "g-2", "sch", slot(0))
 
     record = pg.upsert_published(
-        tenant_id=tenant, graph_id="g-2", version=2, cron="30 4 * * *"
+        tenant_id=tenant, graph_id="g-2", schedule_id="sch", version=2, cron="30 4 * * *"
     )
     assert record.version == 2 and record.cron == "30 4 * * *"
     assert record.enabled is False, "重发布翻回了运营者的开关"
     assert record.skip_count == 1
     created_before = record.created_at
-    again = pg.upsert_published(tenant_id=tenant, graph_id="g-2", version=3, cron="0 1 1 * *")
+    again = pg.upsert_published(
+        tenant_id=tenant, graph_id="g-2", schedule_id="sch", version=3, cron="0 1 1 * *"
+    )
     assert again.created_at == created_before, "重发布把注册时刻改成了今天"
 
 
 def test_u886c_pg_claim_survives_a_restart_and_memory_admits_it_does_not(pair):
     pg, tenant, _, _ = pair
-    pg.upsert_published(tenant_id=tenant, graph_id="g-3", version=1, cron="* * * * *")
-    assert pg.claim(tenant, "g-3", slot(30)) is True
+    pg.upsert_published(tenant_id=tenant, graph_id="g-3", schedule_id="sch",
+                        version=1, cron="* * * * *")
+    assert pg.claim(tenant, "g-3", "sch", slot(30)) is True
 
     restarted = PgScheduleStore(pg._engine)  # 新实例＝新进程，同一个库
-    assert restarted.claim(tenant, "g-3", slot(30)) is False, "PG 档重启后重复派发了同一个槽"
-    assert restarted.claim(tenant, "g-3", slot(31)) is True
+    assert restarted.claim(tenant, "g-3", "sch", slot(30)) is False, \
+        "PG 档重启后重复派发了同一个槽"
+    assert restarted.claim(tenant, "g-3", "sch", slot(31)) is True
 
     memory = InMemoryScheduleStore()
-    memory.upsert_published(tenant_id="mem", graph_id="g-3", version=1, cron="* * * * *")
-    assert memory.claim("mem", "g-3", slot(30)) is True
+    memory.upsert_published(tenant_id="mem", graph_id="g-3", schedule_id="sch",
+                            version=1, cron="* * * * *")
+    assert memory.claim("mem", "g-3", "sch", slot(30)) is True
     # 这条断言**期望 True**：内存档易失是契约（docs/68 §1 D-7），
     # 把它断成 False 才是自欺——生产形态必须 PG 档这件事就靠这行留着提醒。
-    assert InMemoryScheduleStore().claim("mem", "g-3", slot(30)) is True
+    assert InMemoryScheduleStore().claim("mem", "g-3", "sch", slot(30)) is True
 
 
 def test_u886d_the_engine_drives_the_pg_store_end_to_end(pair):
     pg, tenant, _, _ = pair
-    pg.upsert_published(tenant_id=tenant, graph_id="g-4", version=7, cron="*/5 * * * *")
+    pg.upsert_published(tenant_id=tenant, graph_id="g-4", schedule_id="sch",
+                        version=7, cron="*/5 * * * *")
     records = pg.list_tenant(tenant)
     dispatched: list[str] = []
 
     def claim(record, moment):
-        return pg.claim(record.tenant_id, record.graph_id, moment)
+        return pg.claim(record.tenant_id, record.graph_id, record.schedule_id, moment)
 
     def dispatch(record, moment):
         dispatched.append(f"{record.graph_id}@{record.version}:{moment.isoformat()}")
@@ -179,21 +188,23 @@ def test_u886d_the_engine_drives_the_pg_store_end_to_end(pair):
             {"t": tenant, "g": "g-4"},
         ).all()
     assert [str(row[0]) for row in rows] == ["2026-09-26 10:05:00+00:00"]
-    assert pg.get(tenant, "g-4").last_fired_at is None
+    assert pg.get(tenant, "g-4", "sch").last_fired_at is None
 
 
 def test_u886e_reset_tenant_clears_rows_and_fire_history_for_that_tenant_only(pair):
     pg, tenant, _, _ = pair
     other = f"{tenant}-b"
     for name in (tenant, other):
-        pg.upsert_published(tenant_id=name, graph_id="g-5", version=1, cron="0 * * * *")
-        pg.claim(name, "g-5", slot(40))
-    pg.upsert_published(tenant_id=other, graph_id="keep-me", version=1, cron="0 * * * *")
+        pg.upsert_published(tenant_id=name, graph_id="g-5", schedule_id="sch",
+                            version=1, cron="0 * * * *")
+        pg.claim(name, "g-5", "sch", slot(40))
+    pg.upsert_published(tenant_id=other, graph_id="keep-me", schedule_id="sch",
+                        version=1, cron="0 * * * *")
 
     pg.reset_tenant(tenant)
-    assert pg.get(tenant, "g-5") is None
-    assert pg.get(other, "g-5") is not None
-    assert pg.get(other, "keep-me") is not None
+    assert pg.get(tenant, "g-5", "sch") is None
+    assert pg.get(other, "g-5", "sch") is not None
+    assert pg.get(other, "keep-me", "sch") is not None
     with pg._engine.connect() as conn:
         left = conn.execute(
             text("SELECT count(*) FROM schedule_fires WHERE tenant_id = :t"), {"t": tenant}
@@ -204,49 +215,56 @@ def test_u886e_reset_tenant_clears_rows_and_fire_history_for_that_tenant_only(pa
     assert left == 0 and kept == 1, "reset 越界清了别人的认领历史"
 
 
-def test_u1031_action_dimension_keeps_run_and_reflect_apart_in_both_tiers(pair):
-    """打包 ZH（docs/88 §3 P-4；迁移 035）：键含 `action` ⇒ 同图两条、同槽两份认领。
+def test_u1031_schedule_identity_keeps_run_and_reflect_apart_in_both_tiers(pair):
+    """打包 ZN（docs/08 打包 ZN；迁移 037；D41 ③）：行键含 `schedule_id` ⇒ 同图 run 与
+    reflect 两条、同槽两份认领。
 
-    这条必须两档同测：换键是**迁移**改的库形状，只测内存档等于没测迁移；只测 PG 档又
-    验不到"两档投影仍逐键一致"（U886 的同一条纪律）。
+    run 的 schedule_id 是定时触发节点 id（这里用 "sch" 代），reflect 固定 "__reflect__"。
+    必须两档同测：换键是**迁移**改的库形状，只测内存档等于没测迁移；只测 PG 档又验不到
+    "两档投影仍逐键一致"（U886 的同一条纪律）。
     """
     pg, pg_tenant, memory_tenant, memory = pair
 
     for store, tenant in ((pg, pg_tenant), (memory, memory_tenant)):
         run_row = store.upsert_published(
-            tenant_id=tenant, graph_id="g-6", version=3, cron="*/5 * * * *"
+            tenant_id=tenant, graph_id="g-6", schedule_id="sch",
+            version=3, cron="*/5 * * * *"
         )
         reflect_row = store.upsert_published(
-            tenant_id=tenant, graph_id="g-6", version=3, cron="*/5 * * * *", action="reflect"
+            tenant_id=tenant, graph_id="g-6", schedule_id="__reflect__",
+            version=3, cron="*/5 * * * *", action="reflect"
         )
         assert run_row.action == "run", "缺省动作不是 run"
         assert reflect_row.action == "reflect"
 
-        # 缺省参数逐字不变：不点名动作时读到的仍是 run 项（U886 的既有语义）。
-        assert store.get(tenant, "g-6").action == "run"
-        assert store.get(tenant, "g-6", "reflect").action == "reflect"
+        # 点名 schedule_id 读取：run 项与 reflect 项各取各的。
+        assert store.get(tenant, "g-6", "sch").action == "run"
+        assert store.get(tenant, "g-6", "__reflect__").action == "reflect"
 
-        # 同一个槽位，两个动作各认各的——旧键下第二次 INSERT 会静默丢掉派发权。
-        assert store.claim(tenant, "g-6", slot(5), "run") is True
-        assert store.claim(tenant, "g-6", slot(5), "reflect") is True, "反思被跑图的认领吃掉了"
-        assert store.claim(tenant, "g-6", slot(5), "run") is False
-        assert store.claim(tenant, "g-6", slot(5), "reflect") is False
+        # 同一个槽位，两条调度各认各的——旧键下第二次 INSERT 会静默丢掉派发权。
+        assert store.claim(tenant, "g-6", "sch", slot(5)) is True
+        assert store.claim(tenant, "g-6", "__reflect__", slot(5), "reflect") is True, \
+            "反思被跑图的认领吃掉了"
+        assert store.claim(tenant, "g-6", "sch", slot(5)) is False
+        assert store.claim(tenant, "g-6", "__reflect__", slot(5), "reflect") is False
 
-        # 开关与跳过计数按动作各记各的。
-        store.set_enabled(tenant, "g-6", False, "run")
-        store.note_skipped(tenant, "g-6", slot(10), "reflect")
-        assert store.get(tenant, "g-6").enabled is False
-        assert store.get(tenant, "g-6").skip_count == 0
-        assert store.get(tenant, "g-6", "reflect").enabled is True
-        assert store.get(tenant, "g-6", "reflect").skip_count == 1
+        # 开关与跳过计数按 schedule_id 各记各的。
+        store.set_enabled(tenant, "g-6", "sch", False)
+        store.note_skipped(tenant, "g-6", "__reflect__", slot(10))
+        assert store.get(tenant, "g-6", "sch").enabled is False
+        assert store.get(tenant, "g-6", "sch").skip_count == 0
+        assert store.get(tenant, "g-6", "__reflect__").enabled is True
+        assert store.get(tenant, "g-6", "__reflect__").skip_count == 1
 
-        # 一图两行；投影带 action 键，且两档同形。
+        # 一图两行；投影带 scheduleId/action 键，且两档同形。
         views = {
-            row.action: schedule_projection(row, slot(20)) for row in store.list_tenant(tenant)
+            row.schedule_id: schedule_projection(row, slot(20))
+            for row in store.list_tenant(tenant)
         }
-        assert set(views) == {"run", "reflect"}
-        assert views["run"]["action"] == "run" and views["reflect"]["action"] == "reflect"
+        assert set(views) == {"sch", "__reflect__"}
+        assert views["sch"]["action"] == "run"
+        assert views["__reflect__"]["action"] == "reflect"
 
-        # 撤销是整图（发布出口没有定时触发时调用）：全部动作一起走。
+        # 撤销是整图（发布出口没有定时触发时调用）：该图全部 schedule_id 一起走。
         store.remove(tenant, "g-6")
         assert store.list_tenant(tenant) == []
