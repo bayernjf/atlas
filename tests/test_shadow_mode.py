@@ -690,3 +690,64 @@ def test_pg_tenant_services_shadow_store_inprocess():
     assert saved["auto_action"] == "refunded"
     assert services.shadow_store.get(saved["id"])["id"] == saved["id"]
     services.shadow_store.reset()
+
+
+def test_preset_all_wait_events_covers_event_waits_and_recurses():
+    """打包 ZJ（docs/47 §3.3）：预置全部 event wait 空 payload 秒过，子图递归路径限定（U1049）。"""
+    from atlas.recording.shadow import preset_all_wait_events
+
+    parent = parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "p-trigger", "type": "trigger", "name": "pt",
+                 "config": {"triggerType": "manual"}},
+                {"id": "wait-top", "type": "wait", "name": "顶层等待",
+                 "config": {"waitType": "event", "eventKey": "order_paid",
+                            "timeoutSeconds": 30, "onTimeout": "continue"}},
+                {"id": "sub-1", "type": "subgraph", "name": "子流程",
+                 "config": {"graphId": "g-child", "inputs": {}}},
+                {"id": "dur-1", "type": "wait", "name": "定时等待",
+                 "config": {"waitType": "duration", "durationSeconds": 3}},
+                {"id": "t-end", "type": "tool_call", "name": "收尾",
+                 "config": {"tool": "op-after"}},
+            ],
+            "edges": [
+                {"id": "pe1", "source": "p-trigger", "target": "wait-top"},
+                {"id": "pe2", "source": "wait-top", "target": "sub-1"},
+                {"id": "pe3", "source": "sub-1", "target": "dur-1"},
+                {"id": "pe4", "source": "dur-1", "target": "t-end"},
+            ],
+        }
+    )
+    child = parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "c-trigger", "type": "trigger", "name": "ct",
+                 "config": {"triggerType": "manual"}},
+                {"id": "c-wait", "type": "wait", "name": "子等待",
+                 "config": {"waitType": "event", "eventKey": "order_paid",
+                            "timeoutSeconds": 30, "onTimeout": "continue"}},
+                {"id": "c-dur", "type": "wait", "name": "子定时",
+                 "config": {"waitType": "duration", "durationSeconds": 2}},
+                {"id": "c-end", "type": "tool_call", "name": "子收尾",
+                 "config": {"tool": "op-after"}},
+            ],
+            "edges": [
+                {"id": "ce1", "source": "c-trigger", "target": "c-wait"},
+                {"id": "ce2", "source": "c-wait", "target": "c-dur"},
+                {"id": "ce3", "source": "c-dur", "target": "c-end"},
+            ],
+        }
+    )
+
+    presets = preset_all_wait_events(parent, resolver={"g-child": child}.get)
+    # 只预置 event wait（顶层裸键 + 子图内路径限定），duration 型不预置；值恒 {}
+    assert presets == {"wait-top": {}, "sub-1/c-wait": {}}
+    # 无 resolver（旧调用）→ 只覆盖顶层，行为不变
+    assert preset_all_wait_events(parent) == {"wait-top": {}}
+    # resolver 取不到子图 → 静默跳过该子树
+    assert preset_all_wait_events(parent, resolver=lambda gid: None) == {"wait-top": {}}

@@ -674,3 +674,139 @@ def test_inline_first_resolver_prefers_snapshot_then_falls_back():
 
 def _parsed_has_trigger(graph, node_id: str) -> bool:
     return any(node.id == node_id for node in graph.nodes)
+
+
+# ---------- 打包 ZJ：event wait 的预置抽取与归一化（04 §5.11，D47） ----------
+
+def _wait_step(
+    node_id: str,
+    wait_type: str = "event",
+    resolved_by: str = "signal",
+    payload: dict | None = None,
+    signaled: bool = True,
+    waited: int = 3,
+    event_key: str = "order_paid",
+) -> RecordStep:
+    """构造 wait 步骤产出（signal 形状；timeout 形状由参数覆盖）。"""
+    output: dict = {
+        "mode": "wait",
+        "waitType": wait_type,
+        "signaled": signaled,
+        "waitedSeconds": waited,
+        "resolvedBy": resolved_by,
+        "token": f"wait-{node_id}",
+    }
+    if wait_type == "event":
+        output["eventKey"] = event_key
+        output["payload"] = payload if payload is not None else {}
+    else:
+        output["durationSeconds"] = waited
+        output["payload"] = {}
+    return RecordStep(node_id=node_id, node_type="wait", output=output)
+
+
+def test_preset_wait_events_extracts_event_wait_payloads():
+    """顶层 event wait 抽 payload 为 {node_id: payload}，duration 型不抽（U1046）。"""
+    from atlas.recording import preset_wait_events
+
+    steps = [
+        _wait_step("wait-1", resolved_by="signal", payload={"paidAt": "2026-09-23"}),
+        _wait_step("wait-2", wait_type="duration", payload={}),
+    ]
+    assert preset_wait_events(steps) == {"wait-1": {"paidAt": "2026-09-23"}}
+
+
+def test_preset_wait_events_unconditional_and_payload_normalization():
+    """无条件预置：timeout 基线（空 payload）与非 dict payload 归一 {}，不真挂起（U1046）。"""
+    from atlas.recording import preset_wait_events
+
+    # 基线走 timeout（signaled=False、payload {}）——仍预置 {} 秒过
+    timeout_steps = [_wait_step("wait-1", resolved_by="timeout", signaled=False, payload={})]
+    assert preset_wait_events(timeout_steps) == {"wait-1": {}}
+    # 预置值为非 dict（录制异常/字符串 payload）→ 归一 {}
+    non_dict = [_wait_step("wait-1", resolved_by="signal", payload="done")]
+    assert preset_wait_events(non_dict) == {"wait-1": {}}
+
+
+def test_preset_wait_events_recurses_into_subgraph_snapshot():
+    """子图内 event wait 经录制快照递归下潜，键为路径限定 "sub-1/wait-1"（U1046）。"""
+    from atlas.recording import preset_wait_events
+
+    steps = [
+        _wait_step("wait-top", resolved_by="signal", payload={"top": 1}),
+        _subgraph_step("sub-1", "child-1", {
+            "wait-1": {"mode": "wait", "waitType": "event", "signaled": True,
+                       "resolvedBy": "signal", "payload": {"paidAt": "2026-09-23"}},
+            "sub-2": {
+                "mode": "subgraph", "graphId": "grand-1", "status": "success", "trace": [],
+                "outputs": {"wait-2": {"mode": "wait", "waitType": "event", "signaled": False,
+                                       "resolvedBy": "timeout", "payload": {}}},
+            },
+        }),
+    ]
+    snapshots = {
+        "child-1": {"nodes": [
+            {"id": "wait-1", "type": "wait", "config": {"waitType": "event"}},
+            {"id": "sub-2", "type": "subgraph"},
+        ]},
+        "grand-1": {"nodes": [
+            {"id": "wait-2", "type": "wait", "config": {"waitType": "event"}},
+            {"id": "dur-1", "type": "wait", "config": {"waitType": "duration"}},
+        ]},
+    }
+    assert preset_wait_events(steps, subgraphs=snapshots) == {
+        "wait-top": {"top": 1},
+        "sub-1/wait-1": {"paidAt": "2026-09-23"},
+        "sub-1/sub-2/wait-2": {},
+    }
+    # 无快照（旧用例）→ 只取顶层，不猜子层类型
+    assert preset_wait_events(steps) == {"wait-top": {"top": 1}}
+    # 快照缺引用 / 产出形状异常 / 快照节点缺 config → 该子树静默跳过，不抛错
+    assert preset_wait_events(steps, subgraphs={}) == {"wait-top": {"top": 1}}
+    assert preset_wait_events(
+        [_subgraph_step("sub-1", "child-1", {})],
+        subgraphs={"child-1": {"nodes": "bad"}},
+    ) == {}
+    assert preset_wait_events(
+        [_subgraph_step("sub-1", "child-1", {"wait-1": {"mode": "wait"}})],
+        subgraphs={"child-1": {"nodes": [{"id": "wait-1", "type": "wait"}]}},  # 无 config → 不抽
+    ) == {}
+
+
+def test_normalize_wait_event_strips_signal_echo_but_keeps_payload():
+    """event wait 归一化：signal 形状与 input 预置形状对齐到同一 payload（U1047）。"""
+    from atlas.recording import normalize
+
+    signal = _wait_step("wait-1", resolved_by="signal", payload={"paidAt": "2026-09-23"},
+                        event_key="order_paid", waited=7)
+    signal_output = signal.output
+    # 多事件 OR 竞速形状（matchedEventKey/matchedEventKeys/matchedPayloads 等信号匹配细节）
+    signal_output["matchedEventKey"] = "order_paid"
+    signal_output["eventKeys"] = ["order_paid", "payment_captured"]
+    signal_output["eventWaitMode"] = "any"
+
+    # 回放走 input 预置的形状（eventKey 空、signaled True、waitedSeconds 0、resolvedBy input）
+    replayed = {
+        "mode": "wait", "waitType": "event", "eventKey": "",
+        "signaled": True, "payload": {"paidAt": "2026-09-23"},
+        "waitedSeconds": 0, "resolvedBy": "input", "token": "",
+    }
+    assert normalize(signal_output, None, "wait") == normalize(replayed, None, "wait") == {
+        "mode": "wait", "waitType": "event", "payload": {"paidAt": "2026-09-23"},
+    }
+    # 反向对照：不归一化时两者不同（缺陷面证据）
+    assert signal_output != replayed
+
+
+def test_normalize_wait_duration_unaffected():
+    """duration wait 是确定性时长：不剔除运行期键、原样保留（U1047 反向对照）。"""
+    from atlas.recording import normalize
+
+    dur = _wait_step("wait-1", wait_type="duration", resolved_by="duration",
+                     payload={}, signaled=False, waited=5)
+    got = normalize(dur.output, None, "wait")
+    assert got == {
+        "mode": "wait", "waitType": "duration", "signaled": False,
+        "waitedSeconds": 5, "resolvedBy": "duration",
+        "durationSeconds": 5, "payload": {},
+    }
