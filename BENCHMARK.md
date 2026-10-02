@@ -51,7 +51,13 @@ cd frontend && pnpm bench    # 等价 RUN_BENCH=1 vitest run bench/validation.pe
 | 2026-09-17 | 875922b | 前端 L3 冷启动（N=500 链式） | validateL3 不可达/环 p50/p95 (ms) | 0.726 / 1.308 ms | 近线性 |
 | 2026-09-17 | 875922b | 前端 L3 热态（N=500 链式） | 结构签名命中 p50/p95 (ms) | 0.189 / 0.357 ms | 编辑模板文本不触发重算 |
 | 2026-09-17 | 875922b | 前端全量聚合 L1+L2+L3（N=500 链式） | validateGraph 无缓存一次 p50/p95 (ms) | 45.266 / 69.828 ms | 换图/首挂一次性；稳态编辑走增量不在此路径 |
-| 2026-09-18 | 9e1d43c | M9 Router 三段分桶 | 单次 resolve_version（internal→低金额桶→canary 哈希）p50/p99 (ms)；吞吐 resolves/s | 0.0041 / 0.0450 ms；约 242000 resolves/s | 纯函数字典/稳定哈希、零 IO；混合 10% internal、40% 低金额桶、其余 canary 哈希；CPython 3.11，macOS arm64，固定 10000 次采样（warmup 1000） |
+| 2026-09-18 | 9e1d43c | M9 Router 三段分桶
+| 2026-10-02 | babb40a | OODA loop throughput | loop latency p50/p99 (ms)；吞吐 loops/s（取 p50 倒数） | 5.70 / 11.75 ms；175.3 loops/s | 确定性占位节点，无 LLM/IO；CPython 3.11.15, macOS-27.0-arm64, 300 次/场景 |
+| 2026-10-02 | babb40a | Graph compile latency | 3 节点退款图单次编译 p50/p99 (ms) | 51.69 / 173.77 ms | DSL→LangGraph StateGraph 装配，进程内 |
+| 2026-10-02 | babb40a | Refund e2e latency（12345 auto-refund） | 触发→规则决策→shop 执行 p50/p99 (ms) | 51.18 / 124.42 ms | 规则决策路径，不含 LLM 网络时延；service.reset 在计时外 |
+| 2026-10-02 | babb40a | Parallel fan-out/fan-in latency（N=4 branches） | trigger→parallel→4 只读分支→join 单次运行 p50/p99 (ms) | 132.74 / 279.58 ms | 合成 __join__ 屏障 + 就绪等待超步；分支均为 list_pending_refunds 只读 |
+| 2026-10-02 | babb40a | Harness call overhead | shop/list_pending_refunds 单次调用 p50/p99 (ms) | 0.034 / 0.125 ms | 权限校验+审计+进程内分发，不含外部平台耗时 |
+| 2026-10-02 | babb40a | M9 Router 三段分桶 | 单次 resolve_version（internal→低金额桶→canary 哈希）p50/p99 (ms)；吞吐 resolves/s | 0.0037 / 0.0228 ms；272714 resolves/s | 纯函数字典/稳定哈希、零 IO；混合 10% internal、40% 低金额桶、其余 canary 哈希；固定 10000 次采样 | | 单次 resolve_version（internal→低金额桶→canary 哈希）p50/p99 (ms)；吞吐 resolves/s | 0.0041 / 0.0450 ms；约 242000 resolves/s | 纯函数字典/稳定哈希、零 IO；混合 10% internal、40% 低金额桶、其余 canary 哈希；CPython 3.11，macOS arm64，固定 10000 次采样（warmup 1000） |
 
 数值为单机单次基线，仅作后续回归对比锚点，不代表生产容量；跨环境对比需在同一硬件/负载下重跑脚本并追加行。
 
