@@ -1032,6 +1032,7 @@ def _background_run_worker(
             graph_resolver=_tenant_graph_resolver(services),
             frame_sink=_frame_sink_for(tenant_id, run_store, run_id),
             resume_claim=_resume_claim_for(),
+            _block_subgraph_suspend=(STORAGE_BACKEND == "pg"),
             graph_version=version,
         )
         run_store.finish(
@@ -3301,6 +3302,7 @@ def run_saved_graph(
             tracer=tracer,
             graph_version=tracer.graph_version,
             is_cancelled=cancel_event.is_set,
+            _block_subgraph_suspend=(STORAGE_BACKEND == "pg"),
         )
     except RunSuperseded as exc:
         # docs/62 §2 D-4：输家停止驱动——不写 run 终态、不记监控、不进门控评估，
@@ -3480,6 +3482,7 @@ def run_saved_graph_stream(
                     tracer=tracer,
                     graph_version=tracer.graph_version if tracer is not None else None,
                     is_cancelled=cancel_event.is_set,
+                    _block_subgraph_suspend=(STORAGE_BACKEND == "pg"),
                 )
                 if monitored:
                     run_store.finish(
