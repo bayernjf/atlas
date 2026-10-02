@@ -98,6 +98,8 @@ class EventWaitBroker:
 
 `inputs.waitEvents = {"<wait 节点 id>": <payload 对象>}`：节点不登记 broker、不阻塞，直接产出 `signaled:true, resolvedBy:"input", payload:<预置值>`（非对象 payload 归一为 `{}`；预置键不匹配任何节点忽略，同 approvals 预置）。waitEvents 是运行控制键，不进全局变量、不回写记录 inputs（同 approvals）。
 
+> **跨边界下发（2026-10-02 打包 ZJ 取回 D47）**：子图（含嵌套）内 event wait 的预置键为**路径限定**——父图 subgraph 节点 id 逐层前缀，如 `"sub-1/wait-1"`、嵌套 `"sub-1/sub-2/wait-2"`（与 `inputs.approvals` 的子图内审批同口径，04 §5.7 打包 ZF 块）；子图重入时按当前层剥掉本层前缀重根后下发，使子图内 wait 仍按裸 node id 查表，**裸键不跨边界**（父子图常用同名节点 id，无前缀转发会串味），子图节点显式 `inputs` 映射里的同名键优先。录制回放与发布门禁从 baseline 的 wait 步骤自动抽取预置（`recording.replay.preset_wait_events`，无条件预置、payload 取基线产出），影子运行预置空 payload 秒过（`recording.shadow.preset_all_wait_events`）。回放/门禁/影子的比对归一化剔除 wait 产出的信号侧运行期回声键（`resolvedBy`/`signaled`/`waitedSeconds`/信号匹配键，业务结果 `payload` 保留），权威口径 04 §5.11 打包 ZJ 块。
+
 ### 3.4 失败口径
 
 | 情形 | 形态 |
