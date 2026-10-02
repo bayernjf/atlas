@@ -1702,6 +1702,8 @@ def _execute_llm_condition(
         context_text = context_text[:_CONTEXT_LIMIT] + "\n…<截断>"
 
     instruction = str(config.get("classifierPrompt") or "").strip()
+    # ZP：节点级 model 覆盖（docs/08 打包 ZP 立项块）——非空覆盖环境默认，仅本次调用生效。
+    node_model = str(config.get("model") or "").strip() or None
     label: str
     try:
         label = classifier.classify(
@@ -1709,6 +1711,7 @@ def _execute_llm_condition(
             context_text=context_text,
             instruction=instruction,
             node_id=node.id,
+            model=node_model,
         )
     except Exception as exc:  # noqa: BLE001 - 供应商错误/解析错误统一 fail-safe
         label = "__default__"

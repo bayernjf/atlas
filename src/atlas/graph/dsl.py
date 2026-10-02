@@ -393,6 +393,7 @@ def _validate_condition_config(
         mode = "rule"
 
     classifier_prompt = config.get("classifierPrompt")
+    node_model = config.get("model")
     if mode == "llm":
         if classifier_prompt is not None and (
             not isinstance(classifier_prompt, str)
@@ -400,9 +401,18 @@ def _validate_condition_config(
         ):
             add(f"{prefix} 的 classifierPrompt 长度不能超过 500 字符", "/classifierPrompt",
                 code="COND_LLM_PROMPT_TOO_LONG", params={"max": 500})
+        if node_model is not None and not isinstance(node_model, str):
+            add(f"{prefix} 的 model 必须是字符串", "/model",
+                code="COND_LLM_MODEL_NOT_STRING")
+        elif node_model is not None and len(node_model.strip()) > 200:
+            add(f"{prefix} 的 model 长度不能超过 200 字符", "/model",
+                code="COND_LLM_MODEL_TOO_LONG", params={"max": 200})
     elif classifier_prompt is not None and not isinstance(classifier_prompt, str):
         add(f"{prefix} 的 classifierPrompt 必须是字符串", "/classifierPrompt",
             code="COND_LLM_PROMPT_NOT_STRING")
+    elif node_model is not None and not isinstance(node_model, str):
+        add(f"{prefix} 的 model 必须是字符串", "/model",
+            code="COND_LLM_MODEL_NOT_STRING")
 
     default_target = config.get("defaultTarget")
     if not isinstance(default_target, str) or not default_target.strip():
