@@ -4,14 +4,17 @@
 不支持：`?`、`L`、`W`、`#`、秒字段、`a/n`、月份名／星期名别名——一律中文报错拒绝，
 不做"看不懂就当 `*`"的兜底（静默放宽调度频率比拒绝保存危险）。
 
-时间口径只有 UTC（docs/68 §1 D-2）。本模块纯 stdlib、不读时钟、不触网：时刻一律由调用方
-注入，所以"跨月／闰年／日与周取并集"这些语义可以在不起真时钟的情况下被测完。
+时间口径默认只有 UTC（docs/68 §1 D-2）；打包 ZL（docs/08 打包 ZL 立项块）起三函数支持可选 `tz`——
+cron 字段按目标 tz 的**墙上时间**解释（DST 由 zoneinfo 处理），但返回的槽位／认领键**仍归一 UTC**
+（跨时区安全，认领键口径不变）。本模块纯 stdlib、不读时钟、不触网：时刻一律由调用方
+注入，所以"跨月／闰年／日与周取并集／DST"这些语义可以在不起真时钟的情况下被测完。
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 # 求值时域：`0 0 30 2 *` 这类"能解析但几乎永不出声"的表达式在保存期就拒（docs/68 §1.1 第 4 条）。
 NEVER_FIRES_HORIZON_YEARS = 5
@@ -173,12 +176,17 @@ def day_matches(spec: CronSpec, day: datetime) -> bool:
     return True
 
 
-def matches(spec: CronSpec, moment: datetime) -> bool:
-    """moment 是否正好落在某个触发分钟上（秒／微秒忽略）。"""
+def matches(spec: CronSpec, moment: datetime, tz: ZoneInfo | None = None) -> bool:
+    """moment 是否正好落在某个触发分钟上（秒／微秒忽略）。
+
+    tz 非空时先把 moment 转到该时区，cron 字段按目标 tz 的**墙上时间**解释
+    （DST 由 zoneinfo 处理）；槽位／认领／投影仍归一 UTC（docs/08 打包 ZL）。
+    """
+    local = moment.astimezone(tz) if tz is not None else moment
     return (
-        day_matches(spec, moment)
-        and moment.hour in spec.hours
-        and moment.minute in spec.minutes
+        day_matches(spec, local)
+        and local.hour in spec.hours
+        and local.minute in spec.minutes
     )
 
 
@@ -202,13 +210,17 @@ def next_fire_utc(
     spec: CronSpec,
     after: datetime,
     horizon_days: int = NEVER_FIRES_HORIZON_DAYS,
+    tz: ZoneInfo | None = None,
 ) -> datetime | None:
     """`after` 之后第一个触发分钟（严格大于，秒位归零）；horizon 内无解返回 None。
 
     按 月→日→时→分 逐级跳过，不是逐分钟扫描：`0 0 29 2 *` 这种一次调用要走 4 个日级跳跃，
-    逐分钟扫 5 年是 260 万次循环。
+    逐分钟扫 5 年是 260 万次循环。tz 非空时先在目标 tz 的墙上时间域跳跃求值，
+    返回的槽位仍转回 UTC（认领键口径不变）。
     """
     cursor = after.replace(second=0, microsecond=0) + timedelta(minutes=1)
+    if tz is not None:
+        cursor = cursor.astimezone(tz)
     limit = after + timedelta(days=horizon_days)
     while cursor <= limit:
         if cursor.month not in spec.months:
@@ -223,32 +235,44 @@ def next_fire_utc(
         if cursor.minute not in spec.minutes:
             cursor += timedelta(minutes=1)
             continue
-        return cursor
+        return cursor.astimezone(timezone.utc) if tz is not None else cursor
     return None
 
 
-def validate_cron(expression: str, now: datetime | None = None) -> CronSpec:
+def validate_cron(
+    expression: str, now: datetime | None = None, tz: ZoneInfo | None = None
+) -> CronSpec:
     """保存期校验：语法合法 **且** 在时域内至少有一个触发分钟。
 
     返回解析结果供调用方复用。"能解析但永不触发"必须在这里拒掉——它落库后的表现是
-    "图永远不会自己跑"，与 docs/63 §0A N4 要修的真空完全同形。
+    "图永远不会自己跑"，与 docs/63 §0A N4 要修的真空完全同形。tz 非空时按该时区
+    的墙上时间判断"未来 N 年有触发"（DST 场景下 UTC 直判会误判，见 U1058）。
     """
     spec = parse_cron(expression)
     reference = now if now is not None else datetime.now(timezone.utc)
-    if next_fire_utc(spec, reference) is None:
+    if next_fire_utc(spec, reference, tz=tz) is None:
         raise _reject(expression, f"未来 {NEVER_FIRES_HORIZON_YEARS} 年内没有任何触发时刻")
     return spec
 
 
-def previous_fire_utc(spec: CronSpec, moment: datetime, lookback_minutes: int = 1) -> datetime | None:
+def previous_fire_utc(
+    spec: CronSpec,
+    moment: datetime,
+    lookback_minutes: int = 1,
+    tz: ZoneInfo | None = None,
+) -> datetime | None:
     """`moment` 所在分钟起往前最多 `lookback_minutes` 分钟里最近的触发分钟。
 
     窗口刻意只有一分钟宽：它就是"不补跑"的实现处（docs/68 §1 D-5）。放宽窗口＝开一条
-    追赶逻辑，进程停三小时会把它没看见的槽位全补一遍。
+    追赶逻辑，进程停三小时会把它没看见的槽位全补一遍（打包 ZL 起由
+    `catch_up_minutes` 显式放宽，默认仍 0）。tz 非空时按目标 tz 墙上时间找槽，
+    命中后转回 UTC（认领键口径不变）。
     """
     cursor = moment.replace(second=0, microsecond=0)
+    if tz is not None:
+        cursor = cursor.astimezone(tz)
     for _ in range(lookback_minutes + 1):
         if matches(spec, cursor):
-            return cursor
+            return cursor.astimezone(timezone.utc) if tz is not None else cursor
         cursor -= timedelta(minutes=1)
     return None

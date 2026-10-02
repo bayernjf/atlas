@@ -111,6 +111,18 @@ export function Schedules({ principal, onLogout, onBack }: SchedulesPageProps) {
       render: (value: string) => <Typography.Text code>{value}</Typography.Text>,
     },
     {
+      title: t('table.timeZone'),
+      dataIndex: 'timeZone',
+      width: 150,
+      render: (value: string) => <Typography.Text>{value}</Typography.Text>,
+    },
+    {
+      title: t('table.catchUp'),
+      dataIndex: 'catchUpMinutes',
+      width: 110,
+      render: (value: number) => (value > 0 ? `${value} 分钟` : t('catchUpNone')),
+    },
+    {
       title: t('table.version'),
       dataIndex: 'version',
       width: 90,

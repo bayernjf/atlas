@@ -9,6 +9,7 @@ export const triggerSchema: NodeConfigSchema = {
   properties: {
     triggerType: { type: 'string', enum: ['manual', 'schedule', 'webhook'], default: 'manual' },
     cron: { type: 'string', description: 'triggerType=schedule 时必填的 Cron 表达式', 'x-widget': 'cron-input' },
+    timezone: { type: 'string', default: 'UTC', description: 'IANA 时区名（默认 UTC）：cron 按该时区的墙上时间求值', 'x-widget': 'timezone-input' },
     webhookUrl: { type: 'string', description: 'triggerType=webhook 时必填' },
   },
   oneOf: [
@@ -36,6 +37,7 @@ export const triggerSchema: NodeConfigSchema = {
         properties: {
           triggerType: { type: 'string' },
           cron: { type: 'string' },
+          timezone: { type: 'string' },
           webhookUrl: { type: 'string' },
           payload: {},
         },

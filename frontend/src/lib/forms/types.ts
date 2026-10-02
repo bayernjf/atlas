@@ -46,6 +46,9 @@ export const CARD_SELECT_WIDGET = 'card-select'
  */
 export const CRON_INPUT_WIDGET = 'cron-input'
 
+/** 时区输入控件（打包 ZL）：trigger.schedule 的 timezone 字段（IANA 常用区下拉＋自由输入）。 */
+export const TIMEZONE_INPUT_WIDGET = 'timezone-input'
+
 /** 目标节点候选项（target-select 节点业务控件消费）。 */
 export type WidgetTargetOption = { value: string; label: string }
 
@@ -59,6 +62,8 @@ export type WidgetScope = {
 export type WidgetProps = {
   /** 当前字段值（params 对象内的解析后值；json 控件可持有未解析草稿）。 */
   value: unknown
+  /** 打包 ZL：cron-input 消费——同 config 里 timezone 字段的值（IANA 名）；缺省 UTC。 */
+  timeZone?: string
   /** 受控更新：接收下一整个字段值；对象/数组由 FormRenderer 不可变合并。 */
   onChange(next: unknown): void
   /** 当前字段 schema 片段（MetaSchema/Capability 白名单子集）。 */

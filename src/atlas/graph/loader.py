@@ -510,6 +510,7 @@ def _make_executor(
                         "context": {
                             "triggerType": node.config.get("triggerType", "manual"),
                             "cron": node.config.get("cron", ""),
+                            "timezone": node.config.get("timezone", "UTC"),
                             "webhookUrl": node.config.get("webhookUrl", ""),
                             "payload": trigger_payload,
                         }

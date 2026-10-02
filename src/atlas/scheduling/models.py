@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel
 
@@ -20,6 +21,20 @@ from atlas.scheduling.cron import CronExpressionError, next_fire_utc, parse_cron
 #: `reflect`＝跑一次反思 pass（只出建议，不改图、不发布）。
 ScheduleAction = Literal["run", "reflect"]
 DEFAULT_SCHEDULE_ACTION: ScheduleAction = "run"
+
+
+def tz_of(name: str) -> ZoneInfo | None:
+    """IANA 名 → ZoneInfo；`None`（缺省/UTC/查不到）＝UTC 语义，逐字等价旧行为。
+
+    保存期已被 DSL 校验（NODE_TRIGGER_TZ_INVALID），读路径再兜一层：查不到就按 UTC 处理，
+    绝不在读/派发路径抛异常（与 `next_fire_at` 的"读路径不抛"同纪律）。
+    """
+    if not name or name == "UTC":
+        return None
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return None
 
 
 def to_utc_iso(value: datetime | str) -> str:
@@ -36,13 +51,20 @@ def to_utc_iso(value: datetime | str) -> str:
 
 
 class ScheduleRecord(BaseModel):
-    """一张图的一条定时注册（PK `(tenant_id, graph_id, action)`）：发布时派生，只跑钉版。"""
+    """一张图的一条定时注册（PK `(tenant_id, graph_id, action)`）：发布时派生，只跑钉版。
+
+    打包 ZL（docs/08 打包 ZL 立项块）：`timezone` 只解释 cron 字段的墙上时间
+    （IANA 名，迁移 030 加列，默认 "UTC"）；`catch_up_minutes` 是防抖窗口（1 分钟）之上
+    额外放宽的追赶分钟数，默认 0＝严格不追赶（docs/68 D-5「宁漏不重跑」）。
+    """
 
     tenant_id: str
     graph_id: str
     action: ScheduleAction = DEFAULT_SCHEDULE_ACTION
     version: int
     cron: str
+    timezone: str = "UTC"
+    catch_up_minutes: int = 0
     enabled: bool = True
     created_at: str
     last_fired_at: str | None = None
@@ -74,7 +96,7 @@ def next_fire_at(record: ScheduleRecord, now: datetime) -> str | None:
         spec = parse_cron(record.cron)
     except CronExpressionError:
         return None
-    upcoming = next_fire_utc(spec, now)
+    upcoming = next_fire_utc(spec, now, tz=tz_of(record.timezone))
     return upcoming.isoformat() if upcoming is not None else None
 
 
@@ -85,6 +107,8 @@ def schedule_projection(record: ScheduleRecord, now: datetime) -> dict[str, Any]
         "action": record.action,
         "version": record.version,
         "cron": record.cron,
+        "timeZone": record.timezone,
+        "catchUpMinutes": record.catch_up_minutes,
         "enabled": record.enabled,
         "createdAt": record.created_at,
         "lastFiredAt": record.last_fired_at,

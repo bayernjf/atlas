@@ -1,20 +1,22 @@
 {
   "page": {
     "title": "Scheduled triggers",
-    "description": "Lists the timed triggers in your published graphs. Each graph has two: one that runs it, one that reflects on it (reflection only proposes changes; it never edits the graph). A schedule only runs the version pinned at publish time; editing the draft changes nothing until you publish again.",
-    "utcNotice": "Every timestamp is UTC. Slots missed while the process was down are never replayed.",
+    "description": "Scheduled triggers derived from published graphs. Each graph yields two rows: Run and Reflect (reflection only proposes, never edits the graph). Scheduling always runs the pinned published version; editing the draft has no effect until republished.",
+    "utcNotice": "Cron is evaluated in UTC by default; when an IANA timezone is configured, it is evaluated against that timezone's wall-clock time. Claiming and display remain UTC (Beijing time = UTC+8). Missed slots are never replayed by default; only an explicit catch-up window (catch_up_minutes) replays unclaimed slots.",
     "refresh": "Refresh",
-    "empty": "No schedules yet: add a scheduled (Cron) trigger node to a graph and publish it, and two rows appear here (run and reflect).",
+    "empty": "No schedules yet: add a Schedule (Cron) trigger node to a graph and publish it to see both rows (Run and Reflect).",
     "loadError": "Failed to load schedules"
   },
   "table": {
     "graph": "Graph",
     "action": "Action",
-    "cron": "Cron expression",
+    "cron": "Cron",
+    "timeZone": "Timezone (IANA)",
+    "catchUp": "Catch-up (min)",
     "version": "Version",
     "nextFire": "Next fire (UTC)",
     "lastFired": "Last fired (UTC)",
-    "skipped": "Skipped",
+    "skipped": "Skips",
     "enabled": "Enabled",
     "actions": "Actions"
   },
@@ -27,17 +29,19 @@
     "reflectNow": "Reflect now",
     "enabled": "Schedule enabled",
     "disabled": "Schedule disabled",
-    "running": "Started one run at v{{version}} (it does not consume a scheduled slot)",
-    "reflected": "Ran one reflection pass ({{status}}; proposals only, no scheduled slot consumed)",
-    "toggleFailed": "The switch did not take effect",
-    "runFailed": "Immediate execution failed"
+    "running": "Started a run pinned to v{{version}} (does not consume the scheduled slot)",
+    "reflected": "Ran a reflection pass ({{status}}; proposals only, no slot consumed)",
+    "toggleFailed": "Toggle failed",
+    "runFailed": "Run now failed"
   },
   "never": "—",
   "cron": {
-    "hint": "Five fields: minute hour day-of-month month day-of-week, evaluated in UTC. Supports *, */n, a-b, a-b/n and comma lists; 7 means Sunday.",
+    "hint": "5 fields: minute hour day month weekday, evaluated in the selected timezone's wall-clock time. Supports * , */n, a-b, a-b/n and comma lists; 7 means Sunday.",
+    "tzHint": "IANA timezone name (e.g. Asia/Shanghai). Leave empty or UTC to evaluate in UTC.",
     "previewing": "Previewing…",
-    "unavailable": "Preview unavailable (the check could not reach the server) — saving still validates the expression.",
-    "next": "Next three (UTC): {{times}}",
+    "unavailable": "Preview unavailable (network or session issue); validation on save is authoritative.",
+    "next": "Next three: {{times}}",
     "invalid": "Invalid expression: {{message}}"
-  }
+  },
+  "catchUpNone": "No catch-up"
 }

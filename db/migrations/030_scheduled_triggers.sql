@@ -42,3 +42,14 @@ CREATE TABLE IF NOT EXISTS schedule_fires (
 COMMENT ON TABLE schedule_fires IS '槽位一次性认领账本：INSERT ... ON CONFLICT DO NOTHING 的 rowcount 即互斥（docs/68 §1 D-5，照 029/docs/62 L2 同一条纪律）';
 COMMENT ON COLUMN schedule_fires.slot_utc IS '被认领的分钟槽（秒/微秒归零）；一行＝该槽至多派发一次';
 COMMENT ON COLUMN schedule_fires.fired_at IS '实际写认领行的时刻，与 slot_utc 不同：槽位是计划，这列是发生';
+
+-- docs/08 打包 ZL（2026-10-03）：命名时区（IANA）＋补跑开关（D41 切片前两件）。
+--   timezone：cron 字段按目标 tz 的墙上时间解释（zoneinfo 处理 DST），认领/投影仍归一 UTC；
+--   存量行默认 'UTC'，行为逐字不变（U1061 反向门）。
+--   catch_up_minutes：防抖窗口（1 分钟）之上额外放宽的追赶分钟数；默认 0＝不追赶
+--   （docs/68 §1 D-5「宁漏不重跑」逐字不变），>0 只补未认领槽位（认领 PK 一次性保证）。
+-- 幂等：ADD COLUMN IF NOT EXISTS，可重复执行；不改 002_storage.sql（冻结基线）。
+ALTER TABLE schedules ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'UTC';
+ALTER TABLE schedules ADD COLUMN IF NOT EXISTS catch_up_minutes INTEGER NOT NULL DEFAULT 0;
+COMMENT ON COLUMN schedules.timezone IS 'IANA 时区名（默认 UTC）：cron 字段按该 tz 的墙上时间解释，槽位/认领/投影仍归一 UTC';
+COMMENT ON COLUMN schedules.catch_up_minutes IS '防抖窗口之上额外追赶的分钟数；默认 0＝严格不追赶（docs/68 D-5），>0 只补未认领槽位';
