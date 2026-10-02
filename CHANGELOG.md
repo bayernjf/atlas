@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### feat(llm)：condition 节点级 model 覆盖＋structured outputs 强制（打包 ZP 落码，2026-10-03，docs/08 打包 ZP 立项块）
+
+- **一句话**：condition(llm) 节点的 config 增可选 `model`——非空覆盖 `LITELLM_MODEL` 环境默认、仅本次调用生效；`LiteLLMConditionClassifier` 强制 `response_format=json_object`（与 `ai_decision` 同构）。产出形状不变、fail-safe 语义不变、Scripted 回放零影响。
+- **落码**：`llm/condition_classifier.py`（classify 加可选 `model` 参、LiteLLM per-call 覆盖＋response_format；Offline/Scripted 签名对齐）、`graph/loader.py`（config.model 透传）、`graph/dsl.py`（新增 `COND_LLM_MODEL_NOT_STRING`/`COND_LLM_MODEL_TOO_LONG` 校验）、前端 condition schema/uiSchema/nodeCatalog（llm 模式显示 model 输入框）。
+- **门（实跑）**：新增 `tests/test_condition_model_override.py` U1082–U1091（10 例）；后端全量 2245 passed、前端 vitest 757 passed／oxlint 0 error／tsc+build 过；prod gate U1012 等既有 fake classifier 签名对齐后重跑绿。
 ### feat(security)：prod 凭据注入＝文件型密钥 `<NAME>_FILE`（打包 ZO 落码，2026-10-03，docs/73 1.1 残余的工程半边；docs/08 打包 ZO 立项块）
 
 - **一句话**：prod 的每把密钥都有第二条注入路径——设 `{name}_FILE` 指向文件（docker secret 挂载点／vault 渲染落盘）即可，**明文不必再进 `.env`**；`_FILE` 设了却读不到（不存在/不可读/空）一律按缺失 fail-closed，**绝不**静默回退同名 env。

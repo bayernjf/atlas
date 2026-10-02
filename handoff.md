@@ -1,5 +1,7 @@
 # Handoff — Atlas
 
+> **打包 ZP 收口＝condition(llm) 节点级 model 覆盖＋structured outputs 强制（2026-10-03，docs/13 U1082-U1091；docs/14 D14 半边再取回）**：落码按立项（classify per-call model 覆盖＋response_format=json_object、loader 透传、DSL 两个新校验码、前端 llm 模式 model 输入框）；后端全量 2245 passed、前端 vitest 757 passed／oxlint 0 error／tsc+build 过；产出形状不变、Scripted 回放零影响。**D14 整体仍不解除**。已回填 docs/13＋docs/08 收口块＋docs/14 注记＋CHANGELOG。
+
 > **打包 ZP 立项＝condition(llm) 节点级 model 覆盖＋结构化输出强制（14 D14 余部切片；2026-10-03 用户「都做」批准；docs-only 立项原子，零代码/测试/迁移/依赖改动；自推）**：D14 余部取与打包 R 同构两件最小可闭环切片——condition config 增可选 `model`（非空覆盖 `LITELLM_MODEL`、仅本次调用生效）＋`LiteLLMConditionClassifier` 强制 `response_format=json_object`（与 `decision.py:127` 同构）；产出形状不变（防历史用例 compare 漂移）、fail-safe 语义不变、Scripted 回放零影响、无新端点/错误码/依赖/ADR。落点：`llm/condition_classifier.py`（classify 加可选 model 参＋response_format）、`graph/loader.py:_execute_llm_condition`（config.model 透传）、`dsl.py:_validate_condition_config`（model 校验）、前端 nodeCatalog＋表单。**D14 整体不解除**。已回填 docs/08 立项块＋docs/14 D14 注记。
 
 > **候选池复筛（2026-10-03，用户「OK，你开搞」授权；docs-only，零代码／测试／迁移／依赖改动；自推）**：逐条核对 docs/14 全部未闭合缓做行（**21 条**，以各行最后带日期注记为准）——**无工程内可今日闭环的干净候选**，与 2026-09-27 B/C 组排干结论一致：17 条触发明确未满足（D1/D3/D4/D5/D6/D8/D16/D18/D23/D29/D30/D31/D36/D44/D46/D48/D49）、2 条边界存疑（D14 真 LLM 已接入但无真实分支场景、D15 命名时区确定性判据仍在）、1 条显式排除（D43 用户决策非目标）。下一条候选＝等真实触发落到某行，或用户拍 E 组选型（D5 NATS／D6 Go Harness／D11 OTel）解锁新方向；对比表事实取 10 §4 T4/T5/T21。已回填 docs/08 候选池维护区；**不解除任何缓做**。
