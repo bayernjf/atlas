@@ -1991,6 +1991,10 @@ def list_adapters(
 
 _OPENAPI_FETCH_TIMEOUT = 10.0
 _openapi_egress = EgressGuard.from_env()
+# 打包 ZM：模板远程导入的出向校验（与 httpapi/openapi 同一份策略与 env，不开第二份配置）。
+_template_import_egress = EgressGuard.from_env()
+_TEMPLATE_IMPORT_TIMEOUT = 10.0
+_TEMPLATE_IMPORT_MAX_BYTES = 256 * 1024
 
 
 def _fetch_openapi_spec(url: str) -> str:
@@ -2707,6 +2711,7 @@ def list_catalog_templates(
                 "name": template.name,
                 "description": template.description,
                 "tags": template.tags,
+                "category": template.category,
                 "node_count": len(template.graph["nodes"]),
                 "source": "catalog",
                 "deletable": False,
@@ -2721,6 +2726,7 @@ def list_catalog_templates(
             "name": template.name,
             "description": template.description,
             "tags": template.tags,
+            "category": template.category,
             "node_count": len(template.graph.get("nodes", [])),
             "source": "user",
             "deletable": True,
@@ -2735,6 +2741,7 @@ class UserTemplateCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     description: str = Field(default="", max_length=200)
     tags: list[str] = Field(default_factory=list, max_length=8)
+    category: str = Field(default="", max_length=30)
     graph: dict[str, Any]
 
 
@@ -2751,9 +2758,14 @@ def create_user_template(
     for tag in tags:
         if not 1 <= len(tag) <= 20:
             raise HTTPException(status_code=422, detail="标签长度须在 1-20 字符之间")
+    category = body.category.strip()
+    if not category:
+        category = ""
+    elif len(category) > 30:
+        raise HTTPException(status_code=422, detail="分类长度须在 30 字符以内")
     parse_graph(body.graph)
     template = services_for(principal).user_templates.add(
-        name=name, description=body.description, tags=tags, graph=body.graph
+        name=name, description=body.description, tags=tags, category=category, graph=body.graph
     )
     return {**template.model_dump(), "source": "user", "deletable": True}
 
@@ -2762,6 +2774,7 @@ class UserTemplateUpdateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     description: str = Field(default="", max_length=200)
     tags: list[str] | None = Field(default=None, max_length=8)
+    category: str | None = Field(default=None, max_length=30)
     graph: dict[str, Any]
 
 
@@ -2786,12 +2799,16 @@ def update_user_template(
     for tag in tags:
         if not 1 <= len(tag) <= 20:
             raise HTTPException(status_code=422, detail="标签长度须在 1-20 字符之间")
+    category = current.category if body.category is None else body.category.strip()
+    if len(category) > 30:
+        raise HTTPException(status_code=422, detail="分类长度须在 30 字符以内")
     parse_graph(body.graph)
     updated = store.update(
         template_id,
         name=name,
         description=body.description,
         tags=tags,
+        category=category,
         graph=body.graph,
     )
     return {**updated.model_dump(), "source": "user", "deletable": True}
@@ -2827,6 +2844,116 @@ def get_catalog_template(
     if user_template is None:
         raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
     return {**user_template.model_dump(), "source": "user", "deletable": True}
+
+
+class TemplateImportRequest(BaseModel):
+    package: dict[str, Any] | None = None
+    url: str | None = None
+
+
+@app.get("/api/templates/{template_id}/export")
+def export_template_package(
+    template_id: str,
+    principal: Principal = Depends(require("read")),
+) -> Response:
+    """导出模板包 JSON（打包 ZM）：内置/用户模板均可，read 档。
+
+    格式 atlas-template-v1：{format, meta: {name, description, tags, category}, graph}；
+    attachment 文件名 {id}.atlas-template.json；未知 id 404。
+    """
+    template = get_template(template_id)
+    if template is not None:
+        meta = {
+            "name": template.name,
+            "description": template.description,
+            "tags": template.tags,
+            "category": template.category,
+        }
+        graph = template.graph
+    else:
+        user = services_for(principal).user_templates.get(template_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
+        meta = {
+            "name": user.name,
+            "description": user.description,
+            "tags": user.tags,
+            "category": user.category,
+        }
+        graph = user.graph
+    package = {"format": "atlas-template-v1", "meta": meta, "graph": graph}
+    filename = f"{template_id}.atlas-template.json"
+    return Response(
+        content=json.dumps(package, ensure_ascii=False, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/api/templates/import", status_code=201)
+def import_template_package(
+    body: TemplateImportRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """导入模板包（打包 ZM）：body 二选一——package 直接包 / url 远程拉取。
+
+    远程拉取：仅 https、先过 EgressGuard（与 httpapi 同一份策略/env）、
+    10s 超时、不跟随重定向、响应体 ≤256KB；meta/graph 校验同创建端点。
+    """
+    if (body.package is None) == (body.url is None):
+        raise HTTPException(status_code=422, detail="必须且只能提供 package 或 url 之一")
+    if body.url is not None:
+        if not body.url.startswith("https://"):
+            raise HTTPException(status_code=422, detail="仅支持 https 远程导入")
+        try:
+            _template_import_egress.check(body.url)
+            with httpx.Client(follow_redirects=False) as client:
+                response = client.get(body.url, timeout=_TEMPLATE_IMPORT_TIMEOUT)
+        except (EgressDenied, httpx.HTTPError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=f"远程模板拉取失败：{exc}") from exc
+        if response.status_code >= 400:
+            raise HTTPException(
+                status_code=422, detail=f"远程模板拉取失败：HTTP {response.status_code}"
+            )
+        if len(response.content) > _TEMPLATE_IMPORT_MAX_BYTES:
+            raise HTTPException(status_code=422, detail="远程模板包超过 256KB 上限")
+        try:
+            raw = response.json()
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="远程内容不是合法 JSON") from exc
+    else:
+        raw = body.package or {}
+    if raw.get("format") != "atlas-template-v1":
+        raise HTTPException(status_code=422, detail="不认识的模板包格式（需 atlas-template-v1）")
+    meta = raw.get("meta")
+    if not isinstance(meta, dict):
+        raise HTTPException(status_code=422, detail="模板包缺少 meta")
+    name = str(meta.get("name", "")).strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="模板名称不能为空")
+    if not 1 <= len(name) <= 60:
+        raise HTTPException(status_code=422, detail="模板名称长度须在 1-60 字符之间")
+    description = str(meta.get("description", "")).strip()
+    if len(description) > 200:
+        raise HTTPException(status_code=422, detail="模板描述长度须在 200 字符以内")
+    tags_raw = meta.get("tags", [])
+    if not isinstance(tags_raw, list) or len(tags_raw) > 8:
+        raise HTTPException(status_code=422, detail="标签须为列表且不超过 8 个")
+    tags = [str(tag).strip() for tag in tags_raw]
+    for tag in tags:
+        if not 1 <= len(tag) <= 20:
+            raise HTTPException(status_code=422, detail="标签长度须在 1-20 字符之间")
+    category = str(meta.get("category", "")).strip()
+    if len(category) > 30:
+        raise HTTPException(status_code=422, detail="分类长度须在 30 字符以内")
+    graph = raw.get("graph")
+    if not isinstance(graph, dict):
+        raise HTTPException(status_code=422, detail="模板包缺少 graph")
+    parse_graph(graph)
+    template = services_for(principal).user_templates.add(
+        name=name, description=description, tags=tags, category=category, graph=graph
+    )
+    return {**template.model_dump(), "source": "user", "deletable": True}
 
 
 @app.get("/api/alert-rule-templates")

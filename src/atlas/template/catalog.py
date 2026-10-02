@@ -24,12 +24,14 @@ class TemplateMeta(BaseModel):
     name: str
     description: str
     tags: list[str] = Field(default_factory=list)
+    category: str = ""
     graph: dict[str, Any]
 
 
 TEMPLATES: tuple[TemplateMeta, ...] = (
     TemplateMeta(
         id="refund-auto",
+        category="退款流程",
         name="退款自动审批",
         description="电商退款 golden 流程：AI 按原因与金额决策，限额内自动退款、超额转人工。",
         tags=["退款", "AI 决策", "shop"],
@@ -37,6 +39,7 @@ TEMPLATES: tuple[TemplateMeta, ...] = (
     ),
     TemplateMeta(
         id="http-orders-branch",
+        category="数据查询",
         name="HTTP 拉单 + 条件分流",
         description="通用 HTTP 拉取演示订单，按 HTTP 状态码分流发送成功通知或失败告警。",
         tags=["HTTP", "条件分支", "消息"],
@@ -44,6 +47,7 @@ TEMPLATES: tuple[TemplateMeta, ...] = (
     ),
     TemplateMeta(
         id="sql-query-notify",
+        category="数据查询",
         name="SQL 查询 + 条件通知",
         description="按阈值查询 demo 订单库（绑定参数），有大额订单则通知运营，否则发巡检正常消息。运行时输入 min_amount。",
         tags=["数据库", "条件分支", "消息"],
@@ -51,6 +55,7 @@ TEMPLATES: tuple[TemplateMeta, ...] = (
     ),
     TemplateMeta(
         id="sql-approval-write",
+        category="审批协作",
         name="SQL 写入审批后执行",
         description="写库操作先经人工审批：通过后执行 UPDATE，拒绝（含超时）则发消息通知。运行时输入 order_id。",
         tags=["数据库", "人机协作", "审批"],
@@ -58,6 +63,7 @@ TEMPLATES: tuple[TemplateMeta, ...] = (
     ),
     TemplateMeta(
         id="approval-timeout-reject",
+        category="审批协作",
         name="审批超时默认拒绝演示",
         description="人机协作节点 10 秒不审批自动拒绝，分别走通过/拒绝两条消息通知分支。",
         tags=["人机协作", "超时", "消息"],

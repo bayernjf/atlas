@@ -22,13 +22,14 @@ class UserTemplate(BaseModel):
     name: str
     description: str = ""
     tags: list[str] = Field(default_factory=list)
+    category: str = ""
     graph: dict[str, Any]
     created_at: str
 
 
 class UserTemplateRepository(Protocol):
     def add(
-        self, *, name: str, description: str, tags: list[str], graph: dict[str, Any]
+        self, *, name: str, description: str, tags: list[str], category: str = "", graph: dict[str, Any]
     ) -> UserTemplate: ...
 
     def get(self, template_id: str) -> UserTemplate | None: ...
@@ -40,6 +41,7 @@ class UserTemplateRepository(Protocol):
         name: str,
         description: str,
         tags: list[str],
+        category: str = "",
         graph: dict[str, Any],
     ) -> UserTemplate | None: ...
 
@@ -57,7 +59,7 @@ class UserTemplateStore:
         self._lock = threading.Lock()
 
     def add(
-        self, *, name: str, description: str, tags: list[str], graph: dict[str, Any]
+        self, *, name: str, description: str, tags: list[str], category: str = "", graph: dict[str, Any]
     ) -> UserTemplate:
         with self._lock:
             self._seq += 1
@@ -66,6 +68,7 @@ class UserTemplateStore:
                 name=name,
                 description=description,
                 tags=list(tags),
+                category=category,
                 graph=graph,
                 created_at=_now_iso(),
             )
@@ -82,6 +85,7 @@ class UserTemplateStore:
         name: str,
         description: str,
         tags: list[str],
+        category: str = "",
         graph: dict[str, Any],
     ) -> UserTemplate | None:
         with self._lock:
@@ -93,6 +97,7 @@ class UserTemplateStore:
                 name=name,
                 description=description,
                 tags=list(tags),
+                category=category,
                 graph=graph,
                 created_at=current.created_at,
             )

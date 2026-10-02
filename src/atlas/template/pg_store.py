@@ -28,7 +28,7 @@ class PgUserTemplateStore:
         self._tenant_id = tenant_id
 
     def add(
-        self, *, name: str, description: str, tags: list[str], graph: dict[str, Any]
+        self, *, name: str, description: str, tags: list[str], category: str = "", graph: dict[str, Any]
     ) -> UserTemplate:
         created_at = _now_iso()
         with self._engine.begin() as conn:
@@ -44,9 +44,9 @@ class PgUserTemplateStore:
             conn.execute(
                 text(
                     "INSERT INTO user_templates "
-                    "(tenant_id, id, seq, name, description, tags, graph, created_at) "
+                    "(tenant_id, id, seq, name, description, tags, category, graph, created_at) "
                     "VALUES (:tenant_id, :id, :seq, :name, :description, "
-                    "CAST(:tags AS JSONB), CAST(:graph AS JSONB), :created_at)"
+                    "CAST(:tags AS JSONB), :category, CAST(:graph AS JSONB), :created_at)"
                 ),
                 {
                     "tenant_id": self._tenant_id,
@@ -55,6 +55,7 @@ class PgUserTemplateStore:
                     "name": name,
                     "description": description,
                     "tags": json.dumps(list(tags), ensure_ascii=False),
+                    "category": category,
                     "graph": json.dumps(graph, ensure_ascii=False),
                     "created_at": created_at,
                 },
@@ -64,6 +65,7 @@ class PgUserTemplateStore:
             name=name,
             description=description,
             tags=list(tags),
+            category=category,
             graph=graph,
             created_at=created_at,
         )
@@ -72,7 +74,7 @@ class PgUserTemplateStore:
         with self._engine.connect() as conn:
             row = conn.execute(
                 text(
-                    "SELECT id, name, description, tags, graph, created_at "
+                    "SELECT id, name, description, tags, category, graph, created_at "
                     "FROM user_templates WHERE tenant_id = :tenant_id AND id = :id"
                 ),
                 {"tenant_id": self._tenant_id, "id": template_id},
@@ -86,19 +88,21 @@ class PgUserTemplateStore:
         name: str,
         description: str,
         tags: list[str],
+        category: str = "",
         graph: dict[str, Any],
     ) -> UserTemplate | None:
         with self._engine.begin() as conn:
             result = conn.execute(
                 text(
                     "UPDATE user_templates SET name = :name, description = :description, "
-                    "tags = CAST(:tags AS JSONB), graph = CAST(:graph AS JSONB) "
+                    "tags = CAST(:tags AS JSONB), category = :category, graph = CAST(:graph AS JSONB) "
                     "WHERE tenant_id = :tenant_id AND id = :id"
                 ),
                 {
                     "name": name,
                     "description": description,
                     "tags": json.dumps(list(tags), ensure_ascii=False),
+                    "category": category,
                     "graph": json.dumps(graph, ensure_ascii=False),
                     "tenant_id": self._tenant_id,
                     "id": template_id,
@@ -112,7 +116,7 @@ class PgUserTemplateStore:
         with self._engine.connect() as conn:
             rows = conn.execute(
                 text(
-                    "SELECT id, name, description, tags, graph, created_at "
+                    "SELECT id, name, description, tags, category, graph, created_at "
                     "FROM user_templates WHERE tenant_id = :tenant_id ORDER BY seq DESC"
                 ),
                 {"tenant_id": self._tenant_id},
@@ -142,7 +146,8 @@ class PgUserTemplateStore:
         tags = row[3]
         if isinstance(tags, str):
             tags = json.loads(tags)
-        graph = row[4]
+        category = row[4] if row[4] is not None else ""
+        graph = row[5]
         if isinstance(graph, str):
             graph = json.loads(graph)
         return UserTemplate(
@@ -150,6 +155,7 @@ class PgUserTemplateStore:
             name=row[1],
             description=row[2],
             tags=list(tags or []),
+            category=str(category),
             graph=dict(graph or {}),
-            created_at=row[5],
+            created_at=row[6],
         )
