@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
-from atlas.security.bootstrap import read_env_profile
+from atlas.security.bootstrap import read_env_profile, read_secret
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ class TokenBundle:
 
 def resolve_state_secret() -> str:
     """state HMAC 密钥：优先 ATLAS_MASTER_KEY；缺失用固定 dev 密钥并 warning（仅一次）。"""
-    master = os.getenv("ATLAS_MASTER_KEY", "").strip()
+    master = read_secret("ATLAS_MASTER_KEY").strip()
     if master:
         return master
     if read_env_profile() == "prod":

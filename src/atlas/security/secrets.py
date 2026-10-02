@@ -198,7 +198,10 @@ def build_secret_provider_from_env() -> SecretProvider:
             raise ValueError("ATLAS_SECRETS 必须是 {name: str} 的 JSON 对象")
         secrets = {str(k): str(v) for k, v in parsed.items()}
 
-    master = os.getenv("ATLAS_MASTER_KEY", "").strip()
+    # docs/08 打包 ZO：密钥读取统一走 read_secret，支持 `<NAME>_FILE` 文件形态注入。
+    from atlas.security.bootstrap import read_secret
+
+    master = read_secret("ATLAS_MASTER_KEY").strip()
     if not master:
         logger.warning(
             "ATLAS_MASTER_KEY 未配置：使用明文 secret provider，秘密不受加密保护，"

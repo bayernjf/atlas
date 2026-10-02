@@ -20,7 +20,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
-from atlas.security.bootstrap import read_env_profile
+from atlas.security.bootstrap import read_env_profile, read_secret
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +49,10 @@ class TokenExpired(EmailTokenError):
 
 def resolve_token_secret() -> str:
     """签名密钥：优先 ATLAS_APPROVAL_HMAC_SECRET，其次 ATLAS_MASTER_KEY；都缺用固定 dev 密钥并 warning。"""
-    configured = os.getenv("ATLAS_APPROVAL_HMAC_SECRET", "").strip()
+    configured = read_secret("ATLAS_APPROVAL_HMAC_SECRET").strip()
     if configured:
         return configured
-    master = os.getenv("ATLAS_MASTER_KEY", "").strip()
+    master = read_secret("ATLAS_MASTER_KEY").strip()
     if master:
         return master
     if read_env_profile() == "prod":
