@@ -1277,6 +1277,9 @@ def _scope_approvals(approvals: Any, node_id: str) -> dict[str, str]:
     04 §5.11：录制回放把子图内审批决策以 ``"sub-1/human-1"`` 形式并入 inputs.approvals。
     子图重入时剥掉本层前缀再下发，使子图内 _await_human_approval 仍按裸 node id 查表；
     更深层的 ``"sub-1/sub-2/human-2"`` 保留为 ``"sub-2/human-2"`` 供下一层继续剥。
+
+    打包 ZJ（D47）：同一路径限定键语义也用于 ``inputs.waitEvents`` 的子图内 event wait
+    预置（``"sub-1/wait-1"``）——函数与形状共用，调用方按键源传入 approvals 或 waitEvents。
     """
     if not isinstance(approvals, dict):
         return {}
@@ -1333,6 +1336,16 @@ def _execute_subgraph(
         child_inputs["approvals"] = {
             **(dict(explicit) if isinstance(explicit, dict) else {}),
             **scoped,
+        }
+    # 打包 ZJ（D47）：waitEvents 同口径——子图内 event wait 预置键为路径限定
+    # （"sub-1/wait-1"），剥本层前缀重根后下发，使子图内 wait 仍按裸 node id 查表
+    # （裸键不跨边界，防父子图同名节点串味；显式映射同名键优先）。
+    scoped_events = _scope_approvals((trigger_payload or {}).get("waitEvents"), node.id)
+    if scoped_events:
+        explicit_events = child_inputs.get("waitEvents")
+        child_inputs["waitEvents"] = {
+            **(dict(explicit_events) if isinstance(explicit_events, dict) else {}),
+            **scoped_events,
         }
     # M10：subgraph span（非 internal，折叠后代表整段子图）；子图内部节点 span 标 internal。
     sub_cm = (
