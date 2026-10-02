@@ -118,6 +118,34 @@ def preset_all_approvals(
     return presets
 
 
+def preset_all_wait_events(
+    graph: GraphDSL,
+    *,
+    resolver: Callable[[str], GraphDSL | None] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """影子运行预置：全部 event wait 节点空 payload 秒过（打包 ZJ，D47；docs/47 §3.3）。
+
+    影子无法被信号放行，预置空 ``{}`` 使 wait 不登记 broker、不阻塞。传入 ``resolver`` 时
+    递归下潜子图，键为路径限定 ``"sub-1/wait-1"``（与 loader ``_scope_approvals`` 口径
+    一致），使子图内 event wait 同样秒过；不传 resolver 时行为与旧版（顶层遍历）逐字相同。
+    """
+    presets = {
+        node.id: {}
+        for node in graph.nodes
+        if node.type == "wait" and node.config.get("waitType") == "event"
+    }
+    if resolver is not None:
+        for node in graph.nodes:
+            if node.type != "subgraph":
+                continue
+            child = resolver(str(node.config.get("graphId", "")))
+            if child is None:
+                continue
+            for key in preset_all_wait_events(child, resolver=resolver):
+                presets[f"{node.id}/{key}"] = {}
+    return presets
+
+
 def _tool_intent(
     node: NodeDSL, output: dict[str, Any], tool_permissions: dict[str, str]
 ) -> ToolIntent:

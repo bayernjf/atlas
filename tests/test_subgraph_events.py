@@ -404,3 +404,167 @@ def test_subgraph_approval_replay_is_deterministic():
         baseline_status=baseline["status"], replay_status=replay["status"],
     )
     assert report["matches"] is True, report["steps"]
+
+
+# ---------- 打包 ZJ：子图内 event wait 的回放确定性（04 §5.11，D47；U1048/U1050） ----------
+
+from atlas.recording.replay import preset_wait_events
+
+
+def _wait_child(timeout_seconds: int = 30, on_timeout: str = "continue"):
+    """子图：c-trigger -> c-wait(event) -> c-tool-after。"""
+    return parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "c-trigger", "type": "trigger", "name": "ct",
+                 "config": {"triggerType": "manual"}},
+                {"id": "c-wait", "type": "wait", "name": "等待事件",
+                 "config": {"waitType": "event", "eventKey": "order_paid",
+                            "timeoutSeconds": timeout_seconds, "onTimeout": on_timeout}},
+                _tool("c-tool-after", "子后继", params="done"),
+            ],
+            "edges": [
+                {"id": "ce1", "source": "c-trigger", "target": "c-wait"},
+                {"id": "ce2", "source": "c-wait", "target": "c-tool-after"},
+            ],
+        }
+    )
+
+
+def _wait_child_raw(timeout_seconds: int = 30) -> dict:
+    """录制快照形态（D26-b {graphId: raw}），preset_wait_events 据此识别子层 wait。"""
+    return {
+        "version": 1,
+        "nodes": [
+            {"id": "c-trigger", "type": "trigger"},
+            {"id": "c-wait", "type": "wait", "config": {"waitType": "event"}},
+            {"id": "c-tool-after", "type": "tool_call"},
+        ],
+    }
+
+
+def test_subgraph_event_wait_replay_is_deterministic():
+    """打包 ZJ（04 §5.11）：子图内 event wait 的基线 payload 经路径限定预置回放——
+    不挂起、payload 一致、逐节点一致（U1048）。
+
+    反向判别：timeoutSeconds=30，未命中预置会真挂起 30s——断言 elapsed < 10 即证明秒过。
+    """
+    from atlas.recording.replay import compare
+
+    parent = _parent_with_subgraph()
+    resolver = {"g-child": _wait_child()}.get
+
+    broker = EventWaitBroker()
+    emit, take_steps = collect_steps()
+    stop = threading.Event()
+
+    from atlas.collaboration.event_waits import WaitAlreadySignaled
+
+    def signal_when_registered():
+        while not stop.is_set():
+            for pending in broker.list_pending():
+                try:
+                    broker.signal_token(pending["token"], {"paidAt": "2026-09-23"})
+                except WaitAlreadySignaled:
+                    pass  # 同一 pending 只放行一次；worker 轮询天然会重读 pending
+            time.sleep(0.01)
+
+    worker = threading.Thread(target=signal_when_registered, daemon=True)
+    worker.start()
+    baseline = run_graph(
+        parent, graph_id="g-parent", graph_resolver=resolver,
+        event_wait_broker=broker, emit=emit,
+    )
+    stop.set()
+    worker.join(timeout=5)
+    steps = take_steps()
+
+    child = baseline["outputs"]["subgraph-1"]["outputs"]
+    assert child["c-wait"]["resolvedBy"] == "signal", "基线为真信号放行"
+    # signal 负载形状：业务 payload 附信号匹配细节（matchedEventKey）
+    assert child["c-wait"]["payload"]["paidAt"] == "2026-09-23"
+    baseline_payload = dict(child["c-wait"]["payload"])
+
+    wait_presets = preset_wait_events(steps, subgraphs={"g-child": _wait_child_raw()})
+    assert wait_presets == {"subgraph-1/c-wait": baseline_payload}
+
+    replay_emit, replay_take = collect_steps()
+    started = time.time()
+    replay = run_graph(
+        parent, graph_id="g-parent", graph_resolver=resolver,
+        event_wait_broker=EventWaitBroker(),
+        inputs={"waitEvents": dict(wait_presets)}, emit=replay_emit,
+    )
+    elapsed = time.time() - started
+    replayed = replay["outputs"]["subgraph-1"]["outputs"]
+    assert replayed["c-wait"]["resolvedBy"] == "input", "预置命中须走 input 通道"
+    assert replayed["c-wait"]["payload"]["paidAt"] == "2026-09-23"
+    assert elapsed < 10, "预置命中应秒回，不得阻塞到子图内 wait 超时（timeoutSeconds=30）"
+
+    report = compare(
+        steps, replay_take(), tools_by_node={},
+        baseline_status=baseline["status"], replay_status=replay["status"],
+        subgraphs={"g-child": _wait_child_raw()},
+    )
+    assert report["matches"] is True, report["steps"]
+
+
+def test_subgraph_event_wait_replay_without_preset_hangs_to_timeout():
+    """打包 ZJ 反向对照（U1050）：不预置 waitEvents 时子图内 wait 真挂起到超时——
+    走 timeout 分支（payload 空）与基线 signal 产出比对失败，证明预置是必要修复。
+
+    修复前行为逐字保留：timeoutSeconds=1 快速超时、onTimeout=continue 沿出边继续。
+    """
+    from atlas.recording.replay import compare
+
+    parent = _parent_with_subgraph()
+    resolver = {"g-child": _wait_child(timeout_seconds=1)}.get
+
+    broker = EventWaitBroker()
+    emit, take_steps = collect_steps()
+    stop = threading.Event()
+
+    from atlas.collaboration.event_waits import WaitAlreadySignaled
+
+    def signal_when_registered():
+        while not stop.is_set():
+            for pending in broker.list_pending():
+                try:
+                    broker.signal_token(pending["token"], {"paidAt": "2026-09-23"})
+                except WaitAlreadySignaled:
+                    pass  # 同一 pending 只放行一次；worker 轮询天然会重读 pending
+            time.sleep(0.01)
+
+    worker = threading.Thread(target=signal_when_registered, daemon=True)
+    worker.start()
+    baseline = run_graph(
+        parent, graph_id="g-parent", graph_resolver=resolver,
+        event_wait_broker=broker, emit=emit,
+    )
+    stop.set()
+    worker.join(timeout=5)
+    steps = take_steps()
+    assert baseline["outputs"]["subgraph-1"]["outputs"]["c-wait"]["resolvedBy"] == "signal"
+
+    # 回放不给 waitEvents 预置 → 子图内 wait 真挂起 1s 走 timeout 分支（continue）
+    replay_emit, replay_take = collect_steps()
+    replay = run_graph(
+        parent, graph_id="g-parent", graph_resolver=resolver,
+        event_wait_broker=EventWaitBroker(),
+        inputs={}, emit=replay_emit,
+    )
+    replayed = replay["outputs"]["subgraph-1"]["outputs"]
+    assert replayed["c-wait"]["resolvedBy"] == "timeout", "未预置须真挂起到超时"
+    assert replayed["c-wait"]["signaled"] is False
+    assert replayed["c-wait"]["payload"] == {}
+    assert "c-tool-after" in replayed, "onTimeout=continue 应沿出边继续"
+
+    report = compare(
+        steps, replay_take(), tools_by_node={},
+        baseline_status=baseline["status"], replay_status=replay["status"],
+        subgraphs={"g-child": _wait_child_raw(timeout_seconds=1)},
+    )
+    # 归一化后仍因 payload（信号负载 vs 空）不同而判不匹配——预置缺口使回放不稳定
+    assert report["matches"] is False, "基线 signal 与回放 timeout 产出不得判为一致"

@@ -16,7 +16,14 @@ from typing import Any
 from ..graph.dsl import parse_graph
 from ..graph.loader import run_graph
 from .cases import RecordingCase
-from .replay import clock_anchor, collect_steps, compare, preset_approvals, seed_anchor
+from .replay import (
+    clock_anchor,
+    collect_steps,
+    compare,
+    preset_approvals,
+    preset_wait_events,
+    seed_anchor,
+)
 
 
 def _replay_one(
@@ -38,6 +45,12 @@ def _replay_one(
             approvals = dict(inputs.get("approvals") or {})
             approvals.update(presets)
             inputs["approvals"] = approvals
+        # 打包 ZJ（D47）：event wait 预置跨边界（子图内路径限定键），门禁回放不真挂起。
+        wait_presets = preset_wait_events(case.steps, subgraphs=case.subgraphs)
+        if wait_presets:
+            wait_events = dict(inputs.get("waitEvents") or {})
+            wait_events.update(wait_presets)
+            inputs["waitEvents"] = wait_events
         result = run_graph(
             graph,
             inputs=inputs,

@@ -129,7 +129,9 @@ from atlas.recording import (
     HumanOutcome,
     inline_first_resolver,
     preset_all_approvals,
+    preset_all_wait_events,
     preset_approvals,
+    preset_wait_events,
     report_to_csv,
     run_release_gate,
     seed_anchor,
@@ -2420,12 +2422,9 @@ def create_shadow_run(
     presets = preset_all_approvals(graph, resolver=_tenant_graph_resolver(services))
     if presets:
         inputs["approvals"] = {**presets, **(inputs.get("approvals") or {})}
-    # 事件等待无法在影子中被信号放行：预置空 payload 秒过（docs/47 非目标）。
-    event_presets = {
-        node.id: {}
-        for node in graph.nodes
-        if node.type == "wait" and node.config.get("waitType") == "event"
-    }
+    # 事件等待无法在影子中被信号放行：预置空 payload 秒过（docs/47 §3.3）。
+    # 打包 ZJ（D47）：递归下潜子图，键路径限定（"sub-1/wait-1"），子图内 wait 同样秒过。
+    event_presets = preset_all_wait_events(graph, resolver=_tenant_graph_resolver(services))
     if event_presets:
         inputs["waitEvents"] = {**event_presets, **(inputs.get("waitEvents") or {})}
     outcome = _parse_human_outcome(body.get("human_outcome"))
@@ -3019,6 +3018,13 @@ def replay_recording(
             approvals = dict(inputs.get("approvals") or {})
             approvals.update(presets)
             inputs["approvals"] = approvals
+        # 打包 ZJ（D47）：event wait 预置跨边界——从 baseline 抽 {node_id: payload}
+        # （子图内路径限定 "sub-1/wait-1"），回放不真挂起；显式 inputs 优先。
+        wait_presets = preset_wait_events(case.steps, subgraphs=case.subgraphs)
+        if wait_presets:
+            wait_events = dict(inputs.get("waitEvents") or {})
+            wait_events.update(wait_presets)
+            inputs["waitEvents"] = wait_events
         result = run_graph(
             graph,
             inputs=inputs,

@@ -13,6 +13,23 @@ from .cases import RecordStep, RecordingCase
 _VOLATILE_KEYS = ("token", "sent_at")
 # M10：span 元数据键（随机 id/版本标注）不参与录制回放逐节点比对（04 §5.15、U52）。
 _TRACE_KEYS = ("traceId", "spanId", "parentSpanId", "graphVersion")
+# 打包 ZJ（D47）：event wait 产出的信号侧运行期回声键——基线走 signal/timeout、回放
+# 走 input 预置时这些键必不同（resolvedBy/signaled/waitedSeconds 是来源与时长，eventKey/
+# eventKeys/eventWaitMode 是配置回声或竞速实际匹配键，matchedEventKey/matchedEventKeys/
+# matchedPayloads/receivedKeys 是信号匹配细节）；业务结果 payload 保留。duration wait 是
+# 确定性时长（无预置通道、回放与基线一致）不受本集合影响。
+_WAIT_EVENT_ECHO_KEYS = (
+    "eventKey",
+    "eventKeys",
+    "eventWaitMode",
+    "matchedEventKey",
+    "matchedEventKeys",
+    "matchedPayloads",
+    "receivedKeys",
+    "signaled",
+    "waitedSeconds",
+    "resolvedBy",
+)
 
 
 def normalize(
@@ -29,7 +46,13 @@ def normalize(
     - tool == "http/request" 的节点产出删除 ``result.headers.date``；
     - human_approval 产出删除 ``resolvedBy``（回放经 inputs.approvals 预置，
       决策来源 input/timeout/human 属运行时来源，不是业务结果）；
-    - trigger 产出删除 ``context.payload.approvals``（预置通道随载荷回显）；
+    - event wait 产出（``waitType=="event"``）删除信号侧运行期回声键
+      ``resolvedBy/signaled/waitedSeconds/eventKey/eventKeys/eventWaitMode/
+      matchedEventKey/matchedEventKeys/matchedPayloads/receivedKeys``（打包 ZJ：
+      基线走 signal/timeout、回放走 input 预置时这些键必不同；业务结果 ``payload``
+      保留；``waitType=="duration"`` 是确定性时长不受影响）；
+    - trigger 产出删除 ``context.payload.approvals`` 与 ``context.payload.waitEvents``
+      （approvals/waitEvents 均为预置通道，打包 ZF/ZJ：回放时随载荷回显、基线没有）；
     - subgraph 产出递归剔除子层同类运行期值（见 ``_normalize_subgraph``）；
       传入录制快照 ``subgraphs`` 时，子层 ``tool_call`` 节点的 tool 专属规则
       （``http/request`` 删 ``result.headers.date``）也一并下潜（打包 ZG）；
@@ -39,10 +62,13 @@ def normalize(
     """
     if node_type == "human_approval" and isinstance(value, dict):
         value = {k: v for k, v in value.items() if k != "resolvedBy"}
+    elif node_type == "wait" and isinstance(value, dict) and value.get("waitType") == "event":
+        value = {k: v for k, v in value.items() if k not in _WAIT_EVENT_ECHO_KEYS}
     elif node_type == "trigger" and isinstance(value, dict):
         context = value.get("context")
         if isinstance(context, dict) and isinstance(context.get("payload"), dict):
-            payload = {k: v for k, v in context["payload"].items() if k != "approvals"}
+            # approvals/waitEvents 均为预置通道（打包 ZF/ZJ）：回放时随载荷回显、基线没有
+            payload = {k: v for k, v in context["payload"].items() if k not in ("approvals", "waitEvents")}
             value = {**value, "context": {**context, "payload": payload}}
     elif node_type == "subgraph" and isinstance(value, dict):
         value = _normalize_subgraph(value, subgraphs=subgraphs)
@@ -83,6 +109,9 @@ def _normalize_subgraph(
     ``mode=="human_approval"`` 删 ``resolvedBy``、``payload.approvals`` 删预置通道回显、
     ``mode=="subgraph"`` 整条丢 ``trace``（人读日志，内嵌 ``(来源)`` 等运行期值，
     业务结果在 ``outputs`` 里另有比对）。嵌套子图按同一规则递归。
+    ``mode=="wait"`` 且 ``waitType=="event"`` 删信号侧运行期回声键（打包 ZJ，同顶层
+    ``_WAIT_EVENT_ECHO_KEYS``：基线走 signal/timeout、回放走 input 预置时这些键必不同，
+    业务结果 ``payload`` 保留；``waitType=="duration"`` 是确定性时长不受影响）。
 
     打包 ZG：``mode`` 只标运行期来源、不含节点类型，故 tool 专属规则（``http/request``
     删 ``result.headers.date``）拿不到子层节点的 tool。传入录制快照 ``subgraphs`` 时，
@@ -92,13 +121,16 @@ def _normalize_subgraph(
     if isinstance(value, dict):
         out: dict[str, Any] = {}
         mode = value.get("mode")
+        wait_type = value.get("waitType")
         tools = _child_tools(value, subgraphs) if mode == "subgraph" else {}
         for key, item in value.items():
             if key == "trace" and mode == "subgraph":
                 continue
-            if is_payload and key == "approvals":
+            if is_payload and key in ("approvals", "waitEvents"):
                 continue
             if key == "resolvedBy" and mode == "human_approval":
+                continue
+            if mode == "wait" and wait_type == "event" and key in _WAIT_EVENT_ECHO_KEYS:
                 continue
             if key == "outputs" and isinstance(item, dict) and tools:
                 out[key] = {
@@ -186,6 +218,62 @@ def _collect_nested_approvals(
                 presets[f"{prefix}{node_id}"] = decision
         elif node.get("type") == "subgraph":
             _collect_nested_approvals(child_output, f"{prefix}{node_id}/", subgraphs, presets)
+
+
+def preset_wait_events(
+    steps: list[RecordStep],
+    *,
+    subgraphs: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """从 baseline 步骤抽取 ``{node_id: payload}``，供回放 inputs.waitEvents 预置（打包 ZJ）。
+
+    顶层 event wait 步骤键为裸 node id；子图内 wait 经 ``subgraphs``（录制快照
+    ``{graphId 原文: raw}``）递归下潜，键为路径限定 ``"sub-1/wait-1"``（04 §5.11 打包 ZJ），
+    与 loader 剥前缀下发口径逐字对应。payload 取 baseline 步骤产出（signal 时事件负载、
+    timeout 时空 ``{}``、非 dict 归一 ``{}``）；**无条件预置**——回放确定性：无论基线走
+    signal 还是 timeout 都秒过不真挂起。缺快照/引用缺失/形状异常时该子树静默跳过
+    （保持旧行为，不抛错）。
+    """
+    presets: dict[str, Any] = {}
+    for step in steps:
+        if step.node_type == "wait":
+            output = step.output
+            if isinstance(output, dict) and output.get("waitType") == "event":
+                payload = output.get("payload")
+                presets[step.node_id] = payload if isinstance(payload, dict) else {}
+        elif step.node_type == "subgraph":
+            _collect_nested_wait_events(step.output, f"{step.node_id}/", subgraphs or {}, presets)
+    return presets
+
+
+def _collect_nested_wait_events(
+    subgraph_output: Any,
+    prefix: str,
+    subgraphs: dict[str, dict[str, Any]],
+    presets: dict[str, Any],
+) -> None:
+    """按录制快照的节点类型，从 subgraph 步骤产出里递归抽取 event wait 预置（键带路径前缀）。"""
+    if not isinstance(subgraph_output, dict):
+        return
+    raw = subgraphs.get(subgraph_output.get("graphId"))
+    outputs = subgraph_output.get("outputs")
+    if not isinstance(raw, dict) or not isinstance(outputs, dict):
+        return
+    for node in raw.get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        node_id = node.get("id")
+        child_output = outputs.get(node_id) if isinstance(node_id, str) else None
+        if not isinstance(node_id, str) or not isinstance(child_output, dict):
+            continue
+        node_type = node.get("type")
+        if node_type == "wait":
+            config = node.get("config")
+            if isinstance(config, dict) and config.get("waitType") == "event":
+                payload = child_output.get("payload")
+                presets[f"{prefix}{node_id}"] = payload if isinstance(payload, dict) else {}
+        elif node_type == "subgraph":
+            _collect_nested_wait_events(child_output, f"{prefix}{node_id}/", subgraphs, presets)
 
 
 def dedupe_steps(steps: list[RecordStep]) -> list[RecordStep]:

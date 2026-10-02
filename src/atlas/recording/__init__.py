@@ -20,6 +20,7 @@ from .shadow import (
     infer_auto_action,
     normalize_human_action,
     preset_all_approvals,
+    preset_all_wait_events,
 )
 from .replay import (
     build_condition_script,
@@ -30,6 +31,7 @@ from .replay import (
     dedupe_steps,
     normalize,
     preset_approvals,
+    preset_wait_events,
     seed_anchor,
 )
 from .snapshots import collect_subgraph_snapshots, inline_first_resolver
@@ -57,6 +59,7 @@ __all__ = [
     "infer_auto_action",
     "normalize_human_action",
     "preset_all_approvals",
+    "preset_all_wait_events",
     "clock_anchor",
     "collect_steps",
     "build_tool_mocks",
@@ -65,6 +68,7 @@ __all__ = [
     "dedupe_steps",
     "normalize",
     "preset_approvals",
+    "preset_wait_events",
     "seed_anchor",
     "collect_subgraph_snapshots",
     "inline_first_resolver",

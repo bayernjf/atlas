@@ -3,6 +3,23 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+## [Unreleased]
+### feat(recording)：子图内 event wait 节点的回放/影子预置跨边界（打包 ZJ，2026-10-02，14 D47 取回并闭合；纯后端）
+
+- **一句话**：`inputs.waitEvents` 此前只在顶层生效（`loader.py:568` 按裸 node id 取预置、`_execute_subgraph` 从不下发），回放/门禁/影子遇**子图内** event wait 会真挂起到超时再走 timeout 分支，且 wait 产出的 `resolvedBy/signaled/waitedSeconds`/信号匹配键不在归一化白名单——预置命中（仅顶层）时基线 signal/timeout 与回放 input 产出也必比对失败。本批照打包 ZF 路径限定键口径补齐四层：`preset_wait_events`（顶层裸键＋子图含嵌套 `"sub-1/wait-1"`，无条件预置、非 dict payload 归一 `{}`）、`_execute_subgraph` 复用 `_scope_approvals` 剥前缀下发 waitEvents（裸键不跨边界）、`normalize`/`_normalize_subgraph` 对 `waitType=="event"` 剔信号侧回声键（业务 `payload` 保留；duration 型不受影响）、影子 `preset_all_wait_events` 递归下潜预置空 payload 秒过（不传 resolver 旧行为逐字不变）；回放端点与 `gate._replay_one` 接线。零迁移／端点／错误码／依赖／ADR，DSL 与前端零改动。
+- **落码偏差一处（照实记录）**：trigger 产出除删 `context.payload.approvals` 外，`context.payload.waitEvents` 同为预置通道须一并删——U1048 端到端实测 `diff_keys=['context']` 暴露后补齐（`_normalize_subgraph` 的 `is_payload` 分支同口径）。
+- **门（实跑）**：三文件定向 **77 passed / 1 skipped**；后端全量 **2182 passed / 136 skipped / 0 failed**（基线 2174/136，净增 8＝U1046×3＋U1047×2＋U1048×1＋U1049×1＋U1050×1，567.95s，exit 0）。前端零改动不波及。
+
+### docs(handoff)：补齐 MCP server 面落码批漏掉的收口三处（2026-10-02，纯 docs；零代码／测试／迁移／依赖改动；自推）
+
+- **一句话**：MCP server 面落码批（`6a87531` feat → `d911964` test → `513121a` docs）对 handoff 只落了 Recently shipped 一行（`git show 513121a -- handoff.md` 的 diff 恰 1 行），漏了收口惯例的三处，读起来像「MCP 代码仍未落」——本批按「验证后再断言」回代码核对后补齐。
+- **① Active work #91 行尾**追加〔2026-10-01 落码收口〕：`src/atlas/mcp/` 四文件（`__init__`/`__main__`/`server`/`tools`）＋ `pyproject.toml` 加 `mcp>=2,<3`（依 T31 依赖与代码同批）、`tests/test_mcp_server.py` 13 例（U1033–U1045）、随批重构（私有注册表构造抽至 `harness/runtime.py`、挂起帧只读投影抽至 `storage/recovery.py`，REST 与 MCP 共用装配与同一份投影）；docs/14 **D45 闭合**。
+- **② `更新时间` 日志条**：line 3 补记本条（此前只有 #91 契约立项与 T33 决策两条，无落码条）。
+- **③ Quality gate**：新增「MCP server 面 v1 落码收口」门——`tests/test_mcp_server.py` **13 passed**、`test_handoff_integrity` **3 passed** ＋ `test_migration_convention` **4 passed**、后端全量 **2174 passed / 136 skipped / 0 failed**（207.40s，退出 0）。
+- **④ 订正 Recently shipped 首行**「feat 原子**待提交**」为**已提交**（`6a87531`；`git log` 实跑核对）。
+- **核对过而未改**：docs/91 §8 落码收口注记、docs/13 U1033–U1045、docs/14 D45 闭合、CHANGELOG `feat(mcp)`（:70）均已在位；历史 gate 行（#90／#91／docs(errata) 批）中「`src/` 对 `mcp` 仍零命中／不解除 D45」按**留痕惯例不改**——那是各批当时的边界陈述，不是当前状态。
+- **本批不做的（边界）**：纯 handoff 收口补齐，零代码／测试／迁移／端点／错误码／依赖改动；不改 docs/91、docs/13、docs/14、`pyproject.toml`。
+
 ### docs(errata)：打包 ZI 后过期快照勘误（2026-10-02，纯 docs 勘误；零代码／测试／迁移／依赖改动；不解除 D13）
 
 - **一句话**：打包 ZI（节点目录多语言）收口后回查，三处历史契约快照仍写「节点目录 label/description 属业务数据豁免／仍属 D13」，已过时——**快照类原文保留不改，只追加带日期的〔勘误〕**（沿用 [docs/25](docs/25-行业趋势对照与能力现状盘点.md) §② 与 2026-10-01 docs(errata) 先例）。
