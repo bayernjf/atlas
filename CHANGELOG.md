@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### feat(security)：prod 凭据注入＝文件型密钥 `<NAME>_FILE`（打包 ZO 落码，2026-10-03，docs/73 1.1 残余的工程半边；docs/08 打包 ZO 立项块）
+
+- **一句话**：prod 的每把密钥都有第二条注入路径——设 `{name}_FILE` 指向文件（docker secret 挂载点／vault 渲染落盘）即可，**明文不必再进 `.env`**；`_FILE` 设了却读不到（不存在/不可读/空）一律按缺失 fail-closed，**绝不**静默回退同名 env。
+- **落码**：`security/bootstrap.py` 新增 `read_secret(name)`（文件优先、只剥一个尾换行、读不到返回空）与 `hydrate_file_secrets()`（`OPENAI_API_KEY_FILE` → env，litellm 自己读 env、改不了它的读取点，env 已有值不覆盖）；五个读取点统一走它——`assert_prod_secrets()` 两把、`prod_bootstrap_password()`、`collaboration/email_token.py` 邮件决策签名、`connections/oauth.py` state 签名、`security/secrets.py` 信封 AES-GCM 主密钥；拒启消息点名实际在用的那个变量（`_FILE` 挂了就报 `_FILE`）；`api/main.py` 启动时先补水再过启动门。
+- **为什么补运行期三处**：只改启动门不改消费点等于假绿——服务起得来，但签名与信封加密仍拿不到文件里的密钥。
+- **门（实跑）**：新增 `tests/test_secret_file_injection.py` U1077–U1081（7 例，两条反向门各自植缺陷实跑转红后还原）；真进程探测 `scripts/dev/secret_file_probe.py` 五段全过（只经文件能起并登录／指向不存在拒启／空文件拒启／LLM key 补水与不覆盖／env 老路径零回归）。
+- **不做（照实）**：`ATLAS_SMTP_PASSWORD`／Shopify 凭据未接入（1.2/1.3 无任何真实配置，等接入时照同一约定落）；compose 不加 `secrets:` 段（会破坏一键演示，随 4.1 演练批定）。
+- **登记**：docs/08 立项块＋docs/15 §七＋docs/13 U1077–U1081＋`.env.example`＋docs/73 1.1 注记。
+- **提交**：docs 立项＋feat＋test＋docs 收口四原子，无 AI co-author、**未 push**。
+
 ### feat(scheduling)：一图多调度＋调度级并发策略（打包 ZN 落码，2026-10-03，D41 ③④闭合；docs/08 打包 ZN 立项块）
 
 - **一句话**：一张图可挂多个定时触发节点，每个节点（schedule_id＝节点 id、随图钉版稳定）派生一条 run 调度，另有一条图级 reflect（`__reflect__`，反思是整图 pass、不随节点倍增）；发布派生改全量 reconcile（删节点即撤销、幂等、保留开关）；新增调度级 `overlap_policy`：skip（默认，busy 即跳过）/allow（busy 也并发派发、并发起新 run），queue 排队仍缓做。
