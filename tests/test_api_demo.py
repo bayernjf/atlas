@@ -635,7 +635,8 @@ def test_template_list_returns_projection_without_graph():
     items = client.get("/api/templates").json()["items"]
     assert len(items) == 5
     for item in items:
-        assert set(item) == {"id", "name", "description", "tags", "node_count", "source", "deletable"}
+        assert set(item) == {"id", "name", "description", "tags", "category", "node_count", "source", "deletable"}
+        assert isinstance(item["category"], str)
         assert "graph" not in item
         assert item["source"] == "catalog"
         assert item["deletable"] is False
@@ -655,7 +656,8 @@ def test_template_detail_includes_graph_and_unknown_id_404():
     assert detail.status_code == 200
     body = detail.json()
     assert body["id"] == "sql-query-notify"
-    assert set(body) == {"id", "name", "description", "tags", "graph", "source", "deletable"}
+    assert set(body) == {"id", "name", "description", "tags", "category", "graph", "source", "deletable"}
+    assert body["category"] == "数据查询"
     assert body["source"] == "catalog"
     assert body["deletable"] is False
     assert body["graph"]["nodes"]
