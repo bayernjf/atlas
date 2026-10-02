@@ -549,6 +549,7 @@ export type TemplateSummary = {
   name: string
   description: string
   tags: string[]
+  category: string
   node_count: number
   source: TemplateSource
   deletable: boolean
@@ -560,6 +561,7 @@ export type TemplateDetail = {
   name: string
   description: string
   tags: string[]
+  category: string
   graph: SerializedGraph
   source: TemplateSource
   deletable: boolean
@@ -578,6 +580,7 @@ export async function getTemplate(id: string): Promise<TemplateDetail> {
 export async function createUserTemplate(input: {
   name: string
   description?: string
+  category?: string
   graph: SerializedGraph
 }): Promise<TemplateDetail> {
   return request('/api/templates', {
@@ -585,6 +588,7 @@ export async function createUserTemplate(input: {
     body: JSON.stringify({
       name: input.name,
       description: input.description ?? '',
+      category: input.category ?? '',
       graph: input.graph,
     }),
   })
@@ -592,13 +596,14 @@ export async function createUserTemplate(input: {
 
 export async function updateUserTemplate(
   id: string,
-  input: { name: string; description?: string; graph: SerializedGraph },
+  input: { name: string; description?: string; category?: string; graph: SerializedGraph },
 ): Promise<TemplateDetail> {
   return request(`/api/templates/${id}`, {
     method: 'PUT',
     body: JSON.stringify({
       name: input.name,
       description: input.description ?? '',
+      ...(input.category === undefined ? {} : { category: input.category }),
       graph: input.graph,
     }),
   })
@@ -606,6 +611,32 @@ export async function updateUserTemplate(
 
 export async function deleteUserTemplate(id: string): Promise<void> {
   await request(`/api/templates/${id}`, { method: 'DELETE' })
+}
+
+export async function exportTemplate(
+  id: string,
+): Promise<{ filename: string; packageText: string }> {
+  const headers = new Headers()
+  const token = getToken()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  const response = await fetch(`/api/templates/${id}/export`, { headers })
+  if (!response.ok) {
+    const body = await response.json().catch(() => null)
+    throw requestError(body, response.status)
+  }
+  const disposition = response.headers.get('content-disposition') ?? ''
+  const match = /filename="?([^";]+)"?/.exec(disposition)
+  const filename = match ? match[1] : `${id}.atlas-template.json`
+  return { filename, packageText: await response.text() }
+}
+
+export async function importTemplate(
+  payload: { package: unknown } | { url: string },
+): Promise<TemplateDetail> {
+  return request('/api/templates/import', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
 }
 
 export async function decideApproval(
@@ -2308,11 +2339,14 @@ export async function broadcastWaitEvent(
 
 /** 调度动作：`run`＝跑一次已发布钉版；`reflect`＝跑一次反思 pass（只出建议，不改图）。 */
 export type ScheduleAction = 'run' | 'reflect'
+export type OverlapPolicy = 'skip' | 'allow'
 
 /** 一条调度登记：投影权威＝后端 `scheduling/models.py::schedule_projection`（两档共用）。 */
 export type ScheduleItem = {
   graphId: string
-  /** 打包 ZH 起同图有两条（run 与 reflect），行标识必须带它。 */
+  /** 打包 ZN 起行键含它：run＝定时触发节点 id，reflect 固定 "__reflect__"。 */
+  scheduleId: string
+  /** action 只是行属性（run/reflect），不再承担身份。 */
   action: ScheduleAction
   version: number
   cron: string
@@ -2324,6 +2358,8 @@ export type ScheduleItem = {
   /** 打包 ZL：该调度的 IANA 时区（cron 墙上时间口径）与防抖窗口之上的补跑分钟数。 */
   timeZone: string
   catchUpMinutes: number
+  /** 打包 ZN：busy 时 skip（跳过）还是 allow（并发派发）。 */
+  overlapPolicy: OverlapPolicy
   /** 严格晚于"现在"的下一个触发槽，UTC ISO；表达式读不出时为 null。 */
   nextFireAt: string | null
 }
@@ -2349,22 +2385,22 @@ export async function listSchedules(): Promise<ScheduleItem[]> {
 export async function setScheduleEnabled(
   graphId: string,
   enabled: boolean,
-  action: ScheduleAction = 'run',
+  scheduleId: string,
 ): Promise<ScheduleItem> {
   return request(`/api/schedules/${encodeURIComponent(graphId)}/enabled`, {
     method: 'POST',
-    body: JSON.stringify({ enabled, action }),
+    body: JSON.stringify({ enabled, schedule_id: scheduleId }),
   })
 }
 
 /** 立即按钉版跑一次；后端刻意不占槽位认领，所以它不会吃掉本分钟的自动触发。 */
 export async function runScheduleNow(
   graphId: string,
-  action: ScheduleAction = 'run',
+  scheduleId: string,
 ): Promise<RunNowResult> {
   return request(`/api/schedules/${encodeURIComponent(graphId)}/run-now`, {
     method: 'POST',
-    body: JSON.stringify({ action }),
+    body: JSON.stringify({ schedule_id: scheduleId }),
   })
 }
 

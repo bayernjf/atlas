@@ -40,12 +40,15 @@ FIVE_MINUTES = timedelta(minutes=5)
 
 
 def _graph(cron: str = "*/5 * * * *", *, trigger_type: str = "schedule", name: str = GRAPH_NAME,
-           timezone: str | None = None, catch_up_minutes: int | None = None) -> dict:
+           timezone: str | None = None, catch_up_minutes: int | None = None,
+           overlap_policy: str | None = None) -> dict:
     trigger_config: dict = {"triggerType": trigger_type, "cron": cron}
     if timezone is not None:
         trigger_config["timezone"] = timezone
     if catch_up_minutes is not None:
         trigger_config["catchUpMinutes"] = catch_up_minutes
+    if overlap_policy is not None:
+        trigger_config["overlapPolicy"] = overlap_policy
     return {
         "version": 1,
         "name": name,
@@ -146,7 +149,8 @@ def test_u887c_republishing_without_the_trigger_revokes_the_schedule(schedule_gr
 def test_u888_republish_updates_version_and_cron_but_keeps_the_switch(schedule_graph):
     graph_id, _ = schedule_graph
     assert client.post(
-        f"/api/schedules/{graph_id}/enabled", json={"enabled": False}, headers=OPERATOR_A
+        f"/api/schedules/{graph_id}/enabled",
+        json={"enabled": False, "schedule_id": "t1n"}, headers=OPERATOR_A
     ).status_code == 200
 
     body = _graph(cron="15 3 * * *")
@@ -176,8 +180,8 @@ def test_u889_run_now_starts_a_pinned_run_without_consuming_the_slot_claim(sched
 
     # 认领槽位必须还是空的：run-now 是"额外跑一次"，不是替本分钟交差。
     now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
-    assert schedule_store().claim("t1", graph_id, now) is True
-    assert schedule_store().claim("t1", graph_id, now) is False, "认领表幂等性破了"
+    assert schedule_store().claim("t1", graph_id, "t1n", now) is True
+    assert schedule_store().claim("t1", graph_id, "t1n", now) is False, "认领表幂等性破了"
 
 
 def test_u889d_schedule_card_carries_the_latest_run_status(schedule_graph):
@@ -220,7 +224,8 @@ def test_u889b_run_now_is_409_while_the_graph_still_has_a_live_run(schedule_grap
 def test_u889c_unknown_graph_and_missing_schedule_are_404():
     assert client.post("/api/schedules/no-such-graph/run-now", headers=OPERATOR_A).status_code == 404
     assert client.post(
-        "/api/schedules/no-such-graph/enabled", json={"enabled": True}, headers=OPERATOR_A
+        "/api/schedules/no-such-graph/enabled",
+        json={"enabled": True, "schedule_id": "t1n"}, headers=OPERATOR_A
     ).status_code == 404
 
 
@@ -375,7 +380,7 @@ def test_u1031_publish_derives_both_run_and_reflect_rows(schedule_graph):
     # 开关互不影响：关掉跑图不动反思（反之亦然）——共用槽位形状，不共用启用状态。
     assert client.post(
         f"/api/schedules/{graph_id}/enabled",
-        json={"enabled": False, "action": "run"},
+        json={"enabled": False, "schedule_id": "t1n"},
         headers=OPERATOR_A,
     ).status_code == 200
     assert _find(graph_id, action="run")["enabled"] is False
@@ -383,7 +388,8 @@ def test_u1031_publish_derives_both_run_and_reflect_rows(schedule_graph):
 
     # 缺省动作逐字不变：不带 action 的请求仍然打在 run 项上（U888 的既有语义）。
     assert client.post(
-        f"/api/schedules/{graph_id}/enabled", json={"enabled": True}, headers=OPERATOR_A
+        f"/api/schedules/{graph_id}/enabled",
+        json={"enabled": True, "schedule_id": "t1n"}, headers=OPERATOR_A
     ).status_code == 200
     assert _find(graph_id, action="run")["enabled"] is True
     assert _find(graph_id, action="reflect")["enabled"] is True
@@ -395,16 +401,17 @@ def test_u1031_missing_action_is_404_and_the_two_actions_do_not_share_a_claim(sc
     # 不存在的动作组合按不存在处理（此处 t2 没有任何注册，借它验 404 文案带动作）。
     assert client.post(
         f"/api/schedules/{graph_id}/run-now",
-        json={"action": "reflect"},
+        json={"schedule_id": "__reflect__"},
         headers=ADMIN_B,
     ).status_code == 404
 
     store = schedule_store()
     moment = datetime.now(timezone.utc).replace(second=0, microsecond=0)
-    assert store.claim("t1", graph_id, moment, "run") is True
-    assert store.claim("t1", graph_id, moment, "reflect") is True, "反思被跑图的认领吃掉了"
-    assert store.claim("t1", graph_id, moment, "run") is False
-    assert store.claim("t1", graph_id, moment, "reflect") is False
+    assert store.claim("t1", graph_id, "t1n", moment) is True
+    assert store.claim("t1", graph_id, "__reflect__", moment, "reflect") is True, \
+        "反思被跑图的认领吃掉了"
+    assert store.claim("t1", graph_id, "t1n", moment) is False
+    assert store.claim("t1", graph_id, "__reflect__", moment, "reflect") is False
 
 
 # --- U1032 `action="reflect"` 的派发与 run-now（打包 ZH） -------------------
@@ -441,7 +448,8 @@ def test_u1032_run_now_reflect_returns_a_report_and_leaves_the_slot_unclaimed(sc
     """`run-now {action:"reflect"}` 立刻跑一次反思并回报告摘要；**不占槽位**（照 U889 同纪律）。"""
     graph_id, version = schedule_graph
     response = client.post(
-        f"/api/schedules/{graph_id}/run-now", json={"action": "reflect"}, headers=OPERATOR_A
+        f"/api/schedules/{graph_id}/run-now",
+        json={"schedule_id": "__reflect__"}, headers=OPERATOR_A
     )
     assert response.status_code == 200, response.text
     payload = response.json()
@@ -451,14 +459,15 @@ def test_u1032_run_now_reflect_returns_a_report_and_leaves_the_slot_unclaimed(sc
 
     # 认领槽位必须还是空的：run-now 是"额外跑一次"，不是替本分钟交差。
     moment = datetime.now(timezone.utc).replace(second=0, microsecond=0)
-    assert schedule_store().claim("t1", graph_id, moment, "reflect") is True
+    assert schedule_store().claim("t1", graph_id, "__reflect__", moment, "reflect") is True
 
     # 反思项不吃跑图的 busy 判定：图在跑也能反思（它不产运行、不争用任何东西）。
     services = tenant_registry.get("t1")
     services.run_store.begin(run_id="run-busy", graph_id=graph_id, mode="schedule")
     try:
         assert client.post(
-            f"/api/schedules/{graph_id}/run-now", json={"action": "reflect"}, headers=OPERATOR_A
+            f"/api/schedules/{graph_id}/run-now",
+            json={"schedule_id": "__reflect__"}, headers=OPERATOR_A
         ).status_code == 200
         assert client.post(
             f"/api/schedules/{graph_id}/run-now", headers=OPERATOR_A

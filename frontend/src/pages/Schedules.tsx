@@ -25,9 +25,9 @@ function utcText(iso: string | null): string {
   return iso.slice(0, 16).replace('T', ' ')
 }
 
-/** 行标识：打包 ZH 起同图有 run 与 reflect 两条，只按 graphId 认行会串。 */
+/** 行标识：打包 ZN 起同图可有多条 run＋一条 reflect，行键是 (graphId, scheduleId)。 */
 function rowId(row: ScheduleItem): string {
-  return `${row.graphId}:${row.action}`
+  return `${row.graphId}:${row.scheduleId}`
 }
 
 export function Schedules({ principal, onLogout, onBack }: SchedulesPageProps) {
@@ -59,8 +59,8 @@ export function Schedules({ principal, onLogout, onBack }: SchedulesPageProps) {
   const onToggle = async (row: ScheduleItem, enabled: boolean) => {
     setBusyRow(rowId(row))
     try {
-      const next = await setScheduleEnabled(row.graphId, enabled, row.action)
-      // 只换这一条：按 graphId 换会把同图的另一动作整行覆盖掉（两条一起变成 run 的投影）。
+      const next = await setScheduleEnabled(row.graphId, enabled, row.scheduleId)
+      // 只换这一条：按 graphId 换会把同图的其它调度整行覆盖掉。
       setRows((current) =>
         current.map((item) => (rowId(item) === rowId(next) ? next : item)),
       )
@@ -76,7 +76,7 @@ export function Schedules({ principal, onLogout, onBack }: SchedulesPageProps) {
   const onRunNow = async (row: ScheduleItem) => {
     setBusyRow(rowId(row))
     try {
-      const result = await runScheduleNow(row.graphId, row.action)
+      const result = await runScheduleNow(row.graphId, row.scheduleId)
       // 两种回执形状不同（跑图回 runId、反思回报告摘要），按动作分别说话。
       if ('runId' in result) {
         message.success(t('actions.running', { version: result.version }))
@@ -105,10 +105,30 @@ export function Schedules({ principal, onLogout, onBack }: SchedulesPageProps) {
       ),
     },
     {
+      title: t('table.schedule'),
+      dataIndex: 'scheduleId',
+      width: 140,
+      render: (value: string) => (
+        <Typography.Text code style={{ fontSize: 12 }}>
+          {value}
+        </Typography.Text>
+      ),
+    },
+    {
       title: t('table.cron'),
       dataIndex: 'cron',
       width: 150,
       render: (value: string) => <Typography.Text code>{value}</Typography.Text>,
+    },
+    {
+      title: t('table.overlap'),
+      dataIndex: 'overlapPolicy',
+      width: 110,
+      render: (value: ScheduleItem['overlapPolicy']) => (
+        <Tag color={value === 'allow' ? 'orange' : 'default'}>
+          {t(value === 'allow' ? 'overlap.allow' : 'overlap.skip')}
+        </Tag>
+      ),
     },
     {
       title: t('table.timeZone'),

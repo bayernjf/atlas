@@ -51,6 +51,8 @@ import {
   deleteRecording,
   updateUserTemplate,
   deleteUserTemplate,
+  exportTemplate,
+  importTemplate,
   getRecording,
   getTemplate,
   listRecordings,
@@ -152,6 +154,11 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
   const [saveTemplateBusy, setSaveTemplateBusy] = useState(false)
   const [saveTemplateError, setSaveTemplateError] = useState<string | null>(null)
   const [deletingTemplateId, setDeletingTemplateId] = useState<string | null>(null)
+  const [templateImportOpen, setTemplateImportOpen] = useState(false)
+  const [templateImportInput, setTemplateImportInput] = useState('')
+  const [templateImportBusy, setTemplateImportBusy] = useState(false)
+  const [templateImportError, setTemplateImportError] = useState<string | null>(null)
+  const [exportingTemplateId, setExportingTemplateId] = useState<string | null>(null)
   const [runError, setRunError] = useState<string | null>(null)
   const [nlError, setNlError] = useState<string | null>(null)
   const [compileResult, setCompileResult] = useState<CompileResult | null>(null)
@@ -669,6 +676,59 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
     }
   }
 
+  async function exportTemplatePackage(templateId: string, name: string) {
+    setExportingTemplateId(templateId)
+    try {
+      const { filename, packageText } = await exportTemplate(templateId)
+      const blob = new Blob([packageText], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = filename
+      anchor.click()
+      URL.revokeObjectURL(url)
+      appendLog(t('template.exported', { name }))
+    } catch (error) {
+      appendLog(t('template.exportFailed', { message: error instanceof Error ? error.message : String(error) }))
+    } finally {
+      setExportingTemplateId(null)
+    }
+  }
+
+  async function importTemplatePackage() {
+    const input = templateImportInput.trim()
+    if (!input) {
+      setTemplateImportError(t('template.nameRequired'))
+      return
+    }
+    setTemplateImportBusy(true)
+    setTemplateImportError(null)
+    try {
+      let payload: { package: unknown } | { url: string }
+      if (input.startsWith('https://')) {
+        payload = { url: input }
+      } else {
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(input)
+        } catch {
+          setTemplateImportError(t('template.importInvalidJson'))
+          return
+        }
+        payload = { package: parsed }
+      }
+      const created = await importTemplate(payload)
+      appendLog(t('template.imported', { name: created.name }))
+      setTemplateImportOpen(false)
+      setTemplateImportInput('')
+      setTemplates([])
+    } catch (error) {
+      setTemplateImportError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setTemplateImportBusy(false)
+    }
+  }
+
   async function removeTemplate(templateId: string) {
     setDeletingTemplateId(templateId)
     setTemplateError(null)
@@ -1170,6 +1230,18 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
           title={t('template.replaceWarning')}
           style={{ marginBottom: 12 }}
         />
+        <Button
+          type="primary"
+          ghost
+          onClick={() => {
+            setTemplateImportInput('')
+            setTemplateImportError(null)
+            setTemplateImportOpen(true)
+          }}
+          style={{ marginBottom: 12 }}
+        >
+          {t('template.import')}
+        </Button>
         <Space orientation="vertical" size={12} style={{ width: '100%' }}>
           {templatesLoading && (
             <Typography.Text type="secondary">{t('template.loading')}</Typography.Text>
@@ -1192,6 +1264,7 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                   <Tag color={template.source === 'user' ? 'blue' : 'default'}>
                     {t(`template.source_${template.source}`)}
                   </Tag>
+                  {template.category && <Tag color="green">{template.category}</Tag>}
                   {template.tags.map((tag) => (
                     <Tag key={tag}>{tag}</Tag>
                   ))}
@@ -1223,6 +1296,14 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
                 )}
                 <Button
                   type="link"
+                  loading={exportingTemplateId === template.id}
+                  disabled={exportingTemplateId !== null}
+                  onClick={() => exportTemplatePackage(template.id, template.name)}
+                >
+                  {t('template.export')}
+                </Button>
+                <Button
+                  type="link"
                   loading={applyingTemplateId === template.id}
                   disabled={applyingTemplateId !== null}
                   onClick={() => applyTemplate(template.id)}
@@ -1234,6 +1315,29 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
           ))}
         </Space>
         {templateError && <Alert type="error" showIcon title={templateError} style={{ marginTop: 12 }} />}
+      </Modal>
+      <Modal
+        title={t('template.importTitle')}
+        open={templateImportOpen}
+        onCancel={() => setTemplateImportOpen(false)}
+        onOk={importTemplatePackage}
+        confirmLoading={templateImportBusy}
+        okText={t('template.importOk')}
+        cancelText={t('template.importCancel')}
+        width={560}
+      >
+        <Space orientation="vertical" size={12} style={{ width: '100%' }}>
+          <Typography.Text type="secondary">{t('template.importHint')}</Typography.Text>
+          <Input.TextArea
+            value={templateImportInput}
+            rows={5}
+            placeholder={t('template.importPlaceholder')}
+            onChange={(event) => setTemplateImportInput(event.target.value)}
+          />
+        </Space>
+        {templateImportError && (
+          <Alert type="error" showIcon title={templateImportError} style={{ marginTop: 12 }} />
+        )}
       </Modal>
       <Modal
         title={editingTemplateId ? t('template.editTitle') : t('template.saveTitle')}

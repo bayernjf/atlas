@@ -26,23 +26,28 @@ def utc(minute: int, second: int = 10) -> datetime:
     return datetime(2026, 9, 26, 10, minute, second, tzinfo=timezone.utc)
 
 
-def record(cron: str = "*/5 * * * *", *, enabled: bool = True, graph_id: str = "g1") -> ScheduleRecord:
+def record(
+    cron: str = "*/5 * * * *", *, enabled: bool = True, graph_id: str = "g1",
+    schedule_id: str = "sch-1", overlap_policy: str = "skip",
+) -> ScheduleRecord:
     return ScheduleRecord(
-        tenant_id="t1", graph_id=graph_id, version=2, cron=cron, enabled=enabled,
+        tenant_id="t1", graph_id=graph_id, schedule_id=schedule_id,
+        version=2, cron=cron, enabled=enabled, overlap_policy=overlap_policy,
         created_at="2026-09-26T00:00:00+00:00",
     )
 
 
 class Recorder:
-    """假的认领表＋派发出口：认领按 (tenant, graph, slot) 幂等，语义与两档 store 一致。"""
+    """假的认领表＋派发出口：认领按 (tenant, graph, schedule_id, slot) 幂等，与两档 store 一致。"""
 
     def __init__(self, *, claim_always_true: bool = False) -> None:
-        self.claims: list[tuple[str, str, str]] = []
+        self.claims: list[tuple[str, str, str, str]] = []
         self.dispatched: list[tuple[str, str]] = []
         self._claim_always_true = claim_always_true
 
     def claim(self, item: ScheduleRecord, slot: datetime) -> bool:
-        key = (item.tenant_id, item.graph_id, slot.replace(second=0, microsecond=0).isoformat())
+        key = (item.tenant_id, item.graph_id, item.schedule_id,
+               slot.replace(second=0, microsecond=0).isoformat())
         if not self._claim_always_true and key in self.claims:
             return False
         self.claims.append(key)

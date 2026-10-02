@@ -165,6 +165,7 @@ from atlas.scheduling.engine import (
 )
 from atlas.scheduling.models import (
     DEFAULT_SCHEDULE_ACTION,
+    REFLECT_SCHEDULE_ID,
     ScheduleAction,
     ScheduleRecord,
     schedule_projection,
@@ -1122,7 +1123,9 @@ def _start_pinned_run(
 
 
 def _schedule_claim(record: ScheduleRecord, slot: datetime) -> bool:
-    return schedule_store().claim(record.tenant_id, record.graph_id, slot, record.action)
+    return schedule_store().claim(
+        record.tenant_id, record.graph_id, record.schedule_id, slot, record.action
+    )
 
 
 def _schedule_is_busy(record: ScheduleRecord) -> bool:
@@ -1154,7 +1157,9 @@ def _schedule_dispatch(record: ScheduleRecord, slot: datetime) -> None:
             services, services.reflection_store,
             tenant_id=record.tenant_id, graph_id=record.graph_id, base_version=record.version,
         )
-        schedule_store().note_fired(record.tenant_id, record.graph_id, slot, record.action)
+        schedule_store().note_fired(
+            record.tenant_id, record.graph_id, record.schedule_id, slot
+        )
         services.audit_store.record(
             tenant_id=record.tenant_id, actor="scheduler", action="schedule.fire",
             status_code=200,
@@ -1167,7 +1172,9 @@ def _schedule_dispatch(record: ScheduleRecord, slot: datetime) -> None:
         services, record.tenant_id, record.graph_id, record.version,
         {"source": "schedule", "slot": key, "cron": record.cron},
     )
-    schedule_store().note_fired(record.tenant_id, record.graph_id, slot, record.action)
+    schedule_store().note_fired(
+        record.tenant_id, record.graph_id, record.schedule_id, slot
+    )
     services.audit_store.record(
         tenant_id=record.tenant_id, actor="scheduler", action="schedule.fire",
         status_code=200, path=f"graph={record.graph_id}@{record.version} slot={key}", ip="",
@@ -1188,7 +1195,7 @@ def run_schedule_tick(ledger: TickLedger | None = None) -> list[TickOutcome]:
     for outcome in outcomes:
         if outcome.action == ACTION_SKIPPED_OVERLAP:
             store.note_skipped(
-                outcome.tenant_id, outcome.graph_id, outcome.slot_utc, outcome.schedule_action
+                outcome.tenant_id, outcome.graph_id, outcome.schedule_id, outcome.slot_utc
             )
     return outcomes
 
@@ -1237,82 +1244,119 @@ def stop_scheduler(timeout_seconds: float = 2.0) -> None:
     _scheduler_thread = None
 
 
-def _schedule_spec_of_published(graph_raw: dict) -> tuple[str, str, int] | None:
-    """已发布版本里定时触发节点的调度形状（docs/68 §1 D-4：注册＝发布派生）。
+def _schedule_specs_of_published(
+    graph_raw: dict,
+) -> list[tuple[str, str, str, int, str]]:
+    """已发布版本里**全部**定时触发节点的调度形状（打包 ZN，D41 ③；发布派生）。
 
-    返回 `(cron, timezone, catch_up_minutes)`——timezone（IANA 名）与 catch_up_minutes
-    也随第一个定时节点派生（docs/08 打包 ZL）。多个定时触发节点时只按**第一个**建调度
-    （一图一条调度是 v1 的形状），其余在日志里点名——静默忽略第二个 cron 就是"配置看着在、
-    跑的不是它"，与 docs/63 §0A 的"巧合式验收"同形，不能自己再造一份。
+    返回每条 `(schedule_id, cron, timezone, catch_up_minutes, overlap_policy)`——
+    schedule_id 即该定时触发**节点 id**（随图钉版、稳定），一图挂 N 个定时节点就返回 N 条。
+    节点 id 缺失或以保留前缀 `__` 开头（撞 reflect／存量回填命名空间）时日志点名跳过：
+    静默建一条会与保留行主键冲突，阻断发布又把极端命名问题变成发布事故，二者都不取。
     """
-    found: list[tuple[str, str, int]] = []
+    found: list[tuple[str, str, str, int, str]] = []
     for node in graph_raw.get("nodes") or []:
         if not isinstance(node, dict) or node.get("type") != "trigger":
             continue
         config = node.get("config") or {}
         if config.get("triggerType") in ("schedule", "cron") and config.get("cron"):
+            node_id = str(node.get("id", ""))
+            if not node_id or node_id.startswith("__"):
+                logger.warning(
+                    "定时触发节点 id 缺失或撞保留命名空间，跳过该调度：%r", node_id
+                )
+                continue
             catch_up = config.get("catchUpMinutes", 0)
             try:
                 catch_up = max(0, int(catch_up))
             except (TypeError, ValueError):
                 catch_up = 0
-            found.append((str(config["cron"]), str(config.get("timezone", "UTC")), catch_up))
-    if not found:
-        return None
-    if len(found) > 1:
-        logger.warning(
-            "图里有 %s 个定时触发节点，只按第一个（%s）建调度，其余忽略：%s",
-            len(found), found[0][0], [item[0] for item in found[1:]],
-        )
-    return found[0]
+            overlap = config.get("overlapPolicy", "skip")
+            overlap = overlap if overlap in ("skip", "allow") else "skip"
+            found.append((
+                node_id, str(config["cron"]),
+                str(config.get("timezone", "UTC")), catch_up, overlap,
+            ))
+    return found
 
 
 def _derive_schedule_on_publish(
     services: TenantServices, tenant_id: str, graph_id: str, version: int
 ) -> None:
-    """发布出口：有定时触发就 upsert，没有就撤销——发布是版本变化的唯一时刻。
+    """发布出口：按图内定时节点**全量 reconcile** 调度注册——发布是版本变化的唯一时刻。
 
-    **两个动作一起派生**（docs/88 §3 P-4）：同一 cron 下登记 `run` 与 `reflect` 两条，
-    因为既有调度项全部是发布派生的，不给反思登记就没有任何入口。两条各自独立开关，
-    关掉跑图不影响反思（反之亦然）——它们共用的是槽位形状，不是启用状态。
+    （打包 ZN，D41 ③④）每个定时触发节点派生一条 `run`（schedule_id＝节点 id，各自
+    cron/tz/catch_up/overlap_policy）；另派生**一条**图级 `reflect`（`__reflect__`，反思是
+    整图 pass，不随节点倍增，节奏跟第一个定时节点，overlap 固定 skip）。本次派生集合之外、
+    库里本图仍存在的 schedule_id（节点被删）一律撤销——替代旧「只取第一个、其余 warning」。
     """
     raw = services.graph_store.get(graph_id, version)
     if raw is None:
         return
-    spec = _schedule_spec_of_published(raw)
+    specs = _schedule_specs_of_published(raw)
     store = schedule_store()
-    if spec is None:
+    if not specs:
         store.remove(tenant_id, graph_id)
         return
-    cron, timezone, catch_up_minutes = spec
-    for action in ("run", "reflect"):
-        record = store.upsert_published(
-            tenant_id=tenant_id, graph_id=graph_id, version=version, cron=cron, action=action,
-            timezone=timezone, catch_up_minutes=catch_up_minutes,
+    desired: set[str] = set()
+    for schedule_id, cron, tz_name, catch_up, overlap in specs:
+        desired.add(schedule_id)
+        store.upsert_published(
+            tenant_id=tenant_id, graph_id=graph_id, schedule_id=schedule_id,
+            version=version, cron=cron, action="run", timezone=tz_name,
+            catch_up_minutes=catch_up, overlap_policy=overlap,
         )
         logger.info(
-            "定时调度已登记：%s -> %s@%s（action=%s，cron=%s，tz=%s，catch_up=%s）",
-            graph_id, graph_id, record.version, record.action, record.cron,
-            record.timezone, record.catch_up_minutes,
+            "定时跑图调度已登记：graph=%s schedule=%s@%s（cron=%s，tz=%s，catch_up=%s，overlap=%s）",
+            graph_id, schedule_id, version, cron, tz_name, catch_up, overlap,
         )
+    # 图级反思一条：节奏（cron/tz/catch_up）跟第一个定时节点。
+    _, cron0, tz0, catch0, _ = specs[0]
+    desired.add(REFLECT_SCHEDULE_ID)
+    store.upsert_published(
+        tenant_id=tenant_id, graph_id=graph_id, schedule_id=REFLECT_SCHEDULE_ID,
+        version=version, cron=cron0, action="reflect", timezone=tz0,
+        catch_up_minutes=catch0, overlap_policy="skip",
+    )
+    logger.info(
+        "定时反思调度已登记：graph=%s schedule=%s@%s（cron=%s，tz=%s）",
+        graph_id, REFLECT_SCHEDULE_ID, version, cron0, tz0,
+    )
+    # reconcile：撤销本次不再存在的调度（删掉的定时节点）。
+    existing = {
+        row.schedule_id
+        for row in store.list_tenant(tenant_id) if row.graph_id == graph_id
+    }
+    for stale in sorted(existing - desired):
+        store.remove_schedule(tenant_id, graph_id, stale)
+        logger.info("定时调度已撤销：graph=%s schedule=%s", graph_id, stale)
 
 
 class ScheduleEnabledRequest(BaseModel):
     enabled: bool
-    action: ScheduleAction = DEFAULT_SCHEDULE_ACTION
+    schedule_id: str
 
 
 class RunNowRequest(BaseModel):
-    """run-now 的可选 body（打包 ZH）；缺省＝`{"action": "run"}`，与旧行为逐字一致。"""
+    """run-now 的可选 body（打包 ZN）：`scheduleId` 指定跑哪条调度；缺省（null／无 body）
+    ＝该图第一条 run 调度（v1 一图一调度时即主调度，逐字等价旧的无 body 行为）。"""
 
-    action: ScheduleAction = DEFAULT_SCHEDULE_ACTION
+    schedule_id: str | None = None
 
 
-def _no_schedule_detail(graph_id: str, action: ScheduleAction = DEFAULT_SCHEDULE_ACTION) -> str:
-    label = "" if action == DEFAULT_SCHEDULE_ACTION else f"（action={action}）"
+def _no_schedule_detail(graph_id: str, schedule_id: str | None = None) -> str:
+    label = f"（schedule={schedule_id}）" if schedule_id else ""
     return (
         f"图 {graph_id} 没有定时调度{label}：只有含定时触发节点的**已发布**版本才会登记"
     )
+
+
+def _first_run_schedule(tenant_id: str, graph_id: str) -> ScheduleRecord | None:
+    """该图第一条 run 调度（run-now 缺省目标）；reflect 不计入。"""
+    for record in schedule_store().list_tenant(tenant_id):
+        if record.graph_id == graph_id and record.action == "run":
+            return record
+    return None
 
 
 @app.get("/api/schedules")
@@ -1356,10 +1400,12 @@ def set_schedule_enabled(
     """开/关一条调度（跨重启保留）。关只停未来触发，不取消在途运行（docs/68 §6.5）。"""
     services = services_for(principal)
     record = schedule_store().set_enabled(
-        principal.tenant_id, graph_id, request.enabled, request.action
+        principal.tenant_id, graph_id, request.schedule_id, request.enabled
     )
     if record is None:
-        raise HTTPException(status_code=404, detail=_no_schedule_detail(graph_id, request.action))
+        raise HTTPException(
+            status_code=404, detail=_no_schedule_detail(graph_id, request.schedule_id)
+        )
     _record_audit(
         services, principal, http_request,
         "schedule.enable" if request.enabled else "schedule.disable", 200,
@@ -1376,23 +1422,29 @@ def run_schedule_now(
 ) -> dict[str, Any]:
     """按钉版立刻跑一次（联调与验收入口）：**不写认领表、不占槽位**（docs/68 §2.4）。
 
-    打包 ZH 起可选 `{"action": "reflect"}`：跑一次反思 pass 并返回收尾报告摘要
-    （`candidateId` 可为 null）。反思项**不做 busy 判定**——它不产运行、不与在途运行争用。
+    打包 ZN 起 body 用 `scheduleId` 指定调度；要跑反思传 `{"scheduleId": "__reflect__"}`
+    （返回收尾报告摘要，`candidateId` 可为 null）。反思项**不做 busy 判定**——它不产运行、
+    不与在途运行争用。缺省 body（null／无）跑该图第一条 run 调度。
     """
     services = services_for(principal)
     store = schedule_store()
-    action = request.action if request is not None else DEFAULT_SCHEDULE_ACTION
-    record = store.get(principal.tenant_id, graph_id, action)
+    sid = request.schedule_id if request is not None else None
+    record = (
+        store.get(principal.tenant_id, graph_id, sid)
+        if sid is not None
+        else _first_run_schedule(principal.tenant_id, graph_id)
+    )
     if record is None:
-        raise HTTPException(status_code=404, detail=_no_schedule_detail(graph_id, action))
+        raise HTTPException(status_code=404, detail=_no_schedule_detail(graph_id, sid))
+    sid = record.schedule_id
     now = datetime.now(timezone.utc)
-    if action == "reflect":
+    if record.action == "reflect":
         report = run_reflection_pass(
             services, services.reflection_store,
             tenant_id=principal.tenant_id, graph_id=graph_id, base_version=record.version,
         )
         # 同 run-now 的口径：记"最近一次真实执行"，不是槽位认领（不占槽）。
-        store.note_fired(principal.tenant_id, graph_id, now, action)
+        store.note_fired(principal.tenant_id, graph_id, sid, now)
         _record_audit(services, principal, http_request, "schedule.run_now", 200)
         return {
             "candidateId": report.candidate_id,
@@ -1410,9 +1462,12 @@ def run_schedule_now(
         {"source": "schedule-run-now", "slot": slot_key(now), "cron": record.cron},
     )
     # 记的是"最近一次真实运行"，不是槽位认领：run-now 不占槽，但运营要看得见它跑过。
-    store.note_fired(principal.tenant_id, graph_id, now, action)
+    store.note_fired(principal.tenant_id, graph_id, sid, now)
     _record_audit(services, principal, http_request, "schedule.run_now", 200)
-    return {"runId": run_id, "graphId": record.graph_id, "version": record.version}
+    return {
+        "runId": run_id, "graphId": record.graph_id, "version": record.version,
+        "scheduleId": sid,
+    }
 
 
 @app.get("/api/reflection/reports")
@@ -1991,6 +2046,10 @@ def list_adapters(
 
 _OPENAPI_FETCH_TIMEOUT = 10.0
 _openapi_egress = EgressGuard.from_env()
+# 打包 ZM：模板远程导入的出向校验（与 httpapi/openapi 同一份策略与 env，不开第二份配置）。
+_template_import_egress = EgressGuard.from_env()
+_TEMPLATE_IMPORT_TIMEOUT = 10.0
+_TEMPLATE_IMPORT_MAX_BYTES = 256 * 1024
 
 
 def _fetch_openapi_spec(url: str) -> str:
@@ -2707,6 +2766,7 @@ def list_catalog_templates(
                 "name": template.name,
                 "description": template.description,
                 "tags": template.tags,
+                "category": template.category,
                 "node_count": len(template.graph["nodes"]),
                 "source": "catalog",
                 "deletable": False,
@@ -2721,6 +2781,7 @@ def list_catalog_templates(
             "name": template.name,
             "description": template.description,
             "tags": template.tags,
+            "category": template.category,
             "node_count": len(template.graph.get("nodes", [])),
             "source": "user",
             "deletable": True,
@@ -2735,6 +2796,7 @@ class UserTemplateCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     description: str = Field(default="", max_length=200)
     tags: list[str] = Field(default_factory=list, max_length=8)
+    category: str = Field(default="", max_length=30)
     graph: dict[str, Any]
 
 
@@ -2751,9 +2813,14 @@ def create_user_template(
     for tag in tags:
         if not 1 <= len(tag) <= 20:
             raise HTTPException(status_code=422, detail="标签长度须在 1-20 字符之间")
+    category = body.category.strip()
+    if not category:
+        category = ""
+    elif len(category) > 30:
+        raise HTTPException(status_code=422, detail="分类长度须在 30 字符以内")
     parse_graph(body.graph)
     template = services_for(principal).user_templates.add(
-        name=name, description=body.description, tags=tags, graph=body.graph
+        name=name, description=body.description, tags=tags, category=category, graph=body.graph
     )
     return {**template.model_dump(), "source": "user", "deletable": True}
 
@@ -2762,6 +2829,7 @@ class UserTemplateUpdateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     description: str = Field(default="", max_length=200)
     tags: list[str] | None = Field(default=None, max_length=8)
+    category: str | None = Field(default=None, max_length=30)
     graph: dict[str, Any]
 
 
@@ -2786,12 +2854,16 @@ def update_user_template(
     for tag in tags:
         if not 1 <= len(tag) <= 20:
             raise HTTPException(status_code=422, detail="标签长度须在 1-20 字符之间")
+    category = current.category if body.category is None else body.category.strip()
+    if len(category) > 30:
+        raise HTTPException(status_code=422, detail="分类长度须在 30 字符以内")
     parse_graph(body.graph)
     updated = store.update(
         template_id,
         name=name,
         description=body.description,
         tags=tags,
+        category=category,
         graph=body.graph,
     )
     return {**updated.model_dump(), "source": "user", "deletable": True}
@@ -2827,6 +2899,116 @@ def get_catalog_template(
     if user_template is None:
         raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
     return {**user_template.model_dump(), "source": "user", "deletable": True}
+
+
+class TemplateImportRequest(BaseModel):
+    package: dict[str, Any] | None = None
+    url: str | None = None
+
+
+@app.get("/api/templates/{template_id}/export")
+def export_template_package(
+    template_id: str,
+    principal: Principal = Depends(require("read")),
+) -> Response:
+    """导出模板包 JSON（打包 ZM）：内置/用户模板均可，read 档。
+
+    格式 atlas-template-v1：{format, meta: {name, description, tags, category}, graph}；
+    attachment 文件名 {id}.atlas-template.json；未知 id 404。
+    """
+    template = get_template(template_id)
+    if template is not None:
+        meta = {
+            "name": template.name,
+            "description": template.description,
+            "tags": template.tags,
+            "category": template.category,
+        }
+        graph = template.graph
+    else:
+        user = services_for(principal).user_templates.get(template_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
+        meta = {
+            "name": user.name,
+            "description": user.description,
+            "tags": user.tags,
+            "category": user.category,
+        }
+        graph = user.graph
+    package = {"format": "atlas-template-v1", "meta": meta, "graph": graph}
+    filename = f"{template_id}.atlas-template.json"
+    return Response(
+        content=json.dumps(package, ensure_ascii=False, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/api/templates/import", status_code=201)
+def import_template_package(
+    body: TemplateImportRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """导入模板包（打包 ZM）：body 二选一——package 直接包 / url 远程拉取。
+
+    远程拉取：仅 https、先过 EgressGuard（与 httpapi 同一份策略/env）、
+    10s 超时、不跟随重定向、响应体 ≤256KB；meta/graph 校验同创建端点。
+    """
+    if (body.package is None) == (body.url is None):
+        raise HTTPException(status_code=422, detail="必须且只能提供 package 或 url 之一")
+    if body.url is not None:
+        if not body.url.startswith("https://"):
+            raise HTTPException(status_code=422, detail="仅支持 https 远程导入")
+        try:
+            _template_import_egress.check(body.url)
+            with httpx.Client(follow_redirects=False) as client:
+                response = client.get(body.url, timeout=_TEMPLATE_IMPORT_TIMEOUT)
+        except (EgressDenied, httpx.HTTPError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=f"远程模板拉取失败：{exc}") from exc
+        if response.status_code >= 400:
+            raise HTTPException(
+                status_code=422, detail=f"远程模板拉取失败：HTTP {response.status_code}"
+            )
+        if len(response.content) > _TEMPLATE_IMPORT_MAX_BYTES:
+            raise HTTPException(status_code=422, detail="远程模板包超过 256KB 上限")
+        try:
+            raw = response.json()
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="远程内容不是合法 JSON") from exc
+    else:
+        raw = body.package or {}
+    if raw.get("format") != "atlas-template-v1":
+        raise HTTPException(status_code=422, detail="不认识的模板包格式（需 atlas-template-v1）")
+    meta = raw.get("meta")
+    if not isinstance(meta, dict):
+        raise HTTPException(status_code=422, detail="模板包缺少 meta")
+    name = str(meta.get("name", "")).strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="模板名称不能为空")
+    if not 1 <= len(name) <= 60:
+        raise HTTPException(status_code=422, detail="模板名称长度须在 1-60 字符之间")
+    description = str(meta.get("description", "")).strip()
+    if len(description) > 200:
+        raise HTTPException(status_code=422, detail="模板描述长度须在 200 字符以内")
+    tags_raw = meta.get("tags", [])
+    if not isinstance(tags_raw, list) or len(tags_raw) > 8:
+        raise HTTPException(status_code=422, detail="标签须为列表且不超过 8 个")
+    tags = [str(tag).strip() for tag in tags_raw]
+    for tag in tags:
+        if not 1 <= len(tag) <= 20:
+            raise HTTPException(status_code=422, detail="标签长度须在 1-20 字符之间")
+    category = str(meta.get("category", "")).strip()
+    if len(category) > 30:
+        raise HTTPException(status_code=422, detail="分类长度须在 30 字符以内")
+    graph = raw.get("graph")
+    if not isinstance(graph, dict):
+        raise HTTPException(status_code=422, detail="模板包缺少 graph")
+    parse_graph(graph)
+    template = services_for(principal).user_templates.add(
+        name=name, description=description, tags=tags, category=category, graph=graph
+    )
+    return {**template.model_dump(), "source": "user", "deletable": True}
 
 
 @app.get("/api/alert-rule-templates")
