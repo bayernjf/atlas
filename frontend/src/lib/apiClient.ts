@@ -549,6 +549,7 @@ export type TemplateSummary = {
   name: string
   description: string
   tags: string[]
+  category: string
   node_count: number
   source: TemplateSource
   deletable: boolean
@@ -560,6 +561,7 @@ export type TemplateDetail = {
   name: string
   description: string
   tags: string[]
+  category: string
   graph: SerializedGraph
   source: TemplateSource
   deletable: boolean
@@ -578,6 +580,7 @@ export async function getTemplate(id: string): Promise<TemplateDetail> {
 export async function createUserTemplate(input: {
   name: string
   description?: string
+  category?: string
   graph: SerializedGraph
 }): Promise<TemplateDetail> {
   return request('/api/templates', {
@@ -585,6 +588,7 @@ export async function createUserTemplate(input: {
     body: JSON.stringify({
       name: input.name,
       description: input.description ?? '',
+      category: input.category ?? '',
       graph: input.graph,
     }),
   })
@@ -592,13 +596,14 @@ export async function createUserTemplate(input: {
 
 export async function updateUserTemplate(
   id: string,
-  input: { name: string; description?: string; graph: SerializedGraph },
+  input: { name: string; description?: string; category?: string; graph: SerializedGraph },
 ): Promise<TemplateDetail> {
   return request(`/api/templates/${id}`, {
     method: 'PUT',
     body: JSON.stringify({
       name: input.name,
       description: input.description ?? '',
+      ...(input.category === undefined ? {} : { category: input.category }),
       graph: input.graph,
     }),
   })
@@ -606,6 +611,32 @@ export async function updateUserTemplate(
 
 export async function deleteUserTemplate(id: string): Promise<void> {
   await request(`/api/templates/${id}`, { method: 'DELETE' })
+}
+
+export async function exportTemplate(
+  id: string,
+): Promise<{ filename: string; packageText: string }> {
+  const headers = new Headers()
+  const token = getToken()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  const response = await fetch(`/api/templates/${id}/export`, { headers })
+  if (!response.ok) {
+    const body = await response.json().catch(() => null)
+    throw requestError(body, response.status)
+  }
+  const disposition = response.headers.get('content-disposition') ?? ''
+  const match = /filename="?([^";]+)"?/.exec(disposition)
+  const filename = match ? match[1] : `${id}.atlas-template.json`
+  return { filename, packageText: await response.text() }
+}
+
+export async function importTemplate(
+  payload: { package: unknown } | { url: string },
+): Promise<TemplateDetail> {
+  return request('/api/templates/import', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
 }
 
 export async function decideApproval(

@@ -90,7 +90,19 @@
     "updated": "已更新模板：{{name}}",
     "nameRequired": "请填写模板名称",
     "namePlaceholder": "模板名称（必填）",
-    "descriptionPlaceholder": "模板描述（选填）"
+    "descriptionPlaceholder": "模板描述（选填）",
+    "export": "导出",
+    "exported": "已导出模板：{{name}}",
+    "exportFailed": "导出失败：{{message}}",
+    "import": "导入",
+    "importTitle": "导入模板包",
+    "importHint": "支持 atlas-template-v1 模板包或 https 分享 URL（仅 https，出向受 EgressGuard 约束）。",
+    "importPlaceholder": "粘贴模板包 JSON，或 https 分享 URL",
+    "importOk": "导入",
+    "importCancel": "取消",
+    "importInvalidJson": "输入既不是 https URL，也不是合法 JSON",
+    "imported": "已导入模板：{{name}}",
+    "importFailed": "导入失败：{{message}}"
   },
   "recording": {
     "title": "操作录制与回放",

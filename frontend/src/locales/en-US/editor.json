@@ -90,7 +90,19 @@
     "updated": "Template updated: {{name}}",
     "nameRequired": "Template name is required",
     "namePlaceholder": "Template name (required)",
-    "descriptionPlaceholder": "Description (optional)"
+    "descriptionPlaceholder": "Description (optional)",
+    "export": "Export",
+    "exported": "Template exported: {{name}}",
+    "exportFailed": "Export failed: {{message}}",
+    "import": "Import",
+    "importTitle": "Import template package",
+    "importHint": "Accepts an atlas-template-v1 package or an https share URL (https only, egress-guarded).",
+    "importPlaceholder": "Paste template package JSON or an https share URL",
+    "importOk": "Import",
+    "importCancel": "Cancel",
+    "importInvalidJson": "Input is neither an https URL nor valid JSON",
+    "imported": "Template imported: {{name}}",
+    "importFailed": "Import failed: {{message}}"
   },
   "recording": {
     "title": "Operation recording & replay",

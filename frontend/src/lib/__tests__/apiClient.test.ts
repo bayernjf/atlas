@@ -10,7 +10,10 @@ import {
   cancelActiveRun,
   createChannelBinding,
   deleteChannelBinding,
+  exportTemplate,
   getWebhookSubscriptions,
+  importTemplate,
+  listTemplates,
   listChannelBindings,
   listRemoteWebhooks,
   listWebhookDeadLetters,
@@ -440,5 +443,69 @@ describe('真实渠道绑定 /api/channels（docs/38 §1C/§1E）', () => {
       eventKey: 'order.created',
       payload: { order_id: '12345' },
     })
+  })
+})
+
+describe('template category + URL import/export (pack ZM, docs/08)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('listTemplates keeps category projection', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse({
+          items: [
+            { id: 'refund-auto', name: 'n', description: '', tags: [], category: '退款流程', node_count: 2, source: 'catalog', deletable: false },
+            { id: 'utpl-1', name: 'u', description: '', tags: [], category: '', node_count: 2, source: 'user', deletable: true, created_at: 'x' },
+          ],
+        }),
+      ),
+    )
+    const items = await listTemplates()
+    expect(items[0].category).toBe('退款流程')
+    expect(items[1].category).toBe('')
+  })
+
+  it('exportTemplate parses attachment filename and body text', async () => {
+    const pkg = { format: 'atlas-template-v1', meta: { name: 'n' }, graph: { nodes: [] } }
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => ({
+      ok: true,
+      status: 200,
+      headers: new Headers({
+        'content-disposition': 'attachment; filename="refund-auto.atlas-template.json"',
+      }),
+      json: async () => pkg,
+      text: async () => JSON.stringify(pkg),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await exportTemplate('refund-auto')
+    expect(result.filename).toBe('refund-auto.atlas-template.json')
+    expect(JSON.parse(result.packageText).format).toBe('atlas-template-v1')
+    const [url] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/templates/refund-auto/export')
+  })
+
+  it('importTemplate POSTs a package payload', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+      jsonResponse({ id: 'utpl-9', name: 'n', description: '', tags: [], category: '数据查询', graph: { nodes: [] }, source: 'user', deletable: true, created_at: 'x' }))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await importTemplate({ package: { format: 'atlas-template-v1', meta: { name: 'n' }, graph: { nodes: [] } } })
+    expect(result.category).toBe('数据查询')
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/templates/import')
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(String(init?.body))).toEqual({ package: { format: 'atlas-template-v1', meta: { name: 'n' }, graph: { nodes: [] } } })
+  })
+
+  it('importTemplate POSTs a URL payload', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+      jsonResponse({ id: 'utpl-10', name: 'r', description: '', tags: [], category: '', graph: { nodes: [] }, source: 'user', deletable: true, created_at: 'x' }))
+    vi.stubGlobal('fetch', fetchMock)
+    await importTemplate({ url: 'https://example.com/share/t.json' })
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/templates/import')
+    expect(JSON.parse(String(init?.body))).toEqual({ url: 'https://example.com/share/t.json' })
   })
 })
