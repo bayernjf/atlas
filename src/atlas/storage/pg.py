@@ -103,7 +103,7 @@ class PgBackend:
             "interruptions": (
                 "DELETE FROM interruptions "
                 "WHERE resumed_at IS NOT NULL "
-                "AND created_at::timestamptz < CAST(:cutoff AS timestamptz)"
+                "AND created_at < CAST(:cutoff AS timestamptz)"
             ),
             "graph_versions": (
                 "DELETE FROM graph_versions "
