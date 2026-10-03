@@ -11,7 +11,7 @@ from .principals import (
     Capability, Principal, SEED_TENANTS, SEED_USERS, can, seed_plan_for_profile,
 )
 from .registry import TenantRegistry, TenantServices
-from .sessions import SessionStore
+from .sessions import SESSION_COOKIE, SessionStore
 from .throttle import LoginThrottle
 
 
@@ -94,8 +94,12 @@ def authenticate_login(username: str, password: str) -> Principal:
 
 
 def get_principal(request: Request) -> Principal:
-    header = request.headers.get("authorization", "")
-    token = header[7:].strip() if header[:7].lower() == "bearer " else None
+    # 打包 ZQ Q4：会话凭证优先读 httpOnly Cookie（前端不再落盘 token）；Bearer 保留兼容
+    # A2A/MCP 与旧调用方。SameSite=Strict 使浏览器对跨站请求不发本 Cookie（CSRF 面收敛）。
+    token = request.cookies.get(SESSION_COOKIE)
+    if token is None:
+        header = request.headers.get("authorization", "")
+        token = header[7:].strip() if header[:7].lower() == "bearer " else None
     principal = session_store.principal_for_token(token)
     if principal is None:
         raise auth_error(401, CODE_UNAUTHENTICATED, _UNAUTHENTICATED)

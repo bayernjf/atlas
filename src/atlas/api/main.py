@@ -67,6 +67,7 @@ from atlas.harness.runtime import (
     resolve_database_client,
 )
 from atlas.iam.deps import (
+    SESSION_COOKIE,
     authenticate_login,
     get_principal,
     login_throttle,
@@ -1849,8 +1850,22 @@ def _bearer_token(request: Request) -> str | None:
     return header[7:].strip() if header[:7].lower() == "bearer " else None
 
 
+def _session_token(request: Request) -> str | None:
+    """打包 ZQ Q4：会话凭证优先 httpOnly Cookie，Bearer 兜底（A2A/MCP/旧调用）。"""
+    token = request.cookies.get(SESSION_COOKIE)
+    if token is not None:
+        return token
+    return _bearer_token(request)
+
+
+def _cookie_secure() -> bool:
+    """httpOnly Cookie 的 Secure 位：真 prod（ATLAS_ENV=prod 且未开 demo mock）置位，
+    要求 https；演练档（prod 开 demo mock / dev）不置位，保证 http://localhost 可登录。"""
+    return read_env_profile() == "prod" and not demo_surface_enabled()
+
+
 @app.post("/api/auth/login", response_model=LoginResponse)
-def login(request: LoginRequest, http_request: Request) -> LoginResponse:
+def login(request: LoginRequest, http_request: Request, response: Response) -> LoginResponse:
     """账号登录换 sess-token（04 §5.14，docs/31 §2.2/§5）。
 
     坏凭证 401、停用 403；600s 内同 username+IP 5 次失败 → 429（锁定时不校验口令）；成功清零。
@@ -1882,19 +1897,34 @@ def login(request: LoginRequest, http_request: Request) -> LoginResponse:
         )
     except Exception as exc:  # 审计绝不阻断登录
         logger.warning("login audit record failed: %s", exc)
+    # 打包 ZQ Q4：会话凭证同时以 httpOnly Cookie 下发（HttpOnly＋SameSite=Strict＋prod Secure）；
+    # 前端不落盘 token，浏览器自动携带。响应体仍带 token 以兼容既有客户端与 A2A 调用方。
+    response.set_cookie(
+        SESSION_COOKIE,
+        token,
+        httponly=True,
+        samesite="strict",
+        secure=_cookie_secure(),
+        path="/",
+    )
     return LoginResponse(token=token, principal=principal)
 
 
 @app.get("/api/auth/me", response_model=LoginResponse)
 def me(request: Request, principal: Principal = Depends(get_principal)) -> LoginResponse:
-    return LoginResponse(token=_bearer_token(request) or "", principal=principal)
+    return LoginResponse(token=_session_token(request) or "", principal=principal)
 
 
 @app.post("/api/auth/logout")
-def logout(request: Request, principal: Principal = Depends(get_principal)) -> dict[str, bool]:
-    token = _bearer_token(request)
+def logout(
+    request: Request,
+    response: Response,
+    principal: Principal = Depends(get_principal),
+) -> dict[str, bool]:
+    token = _session_token(request)
     if token:
         session_store.revoke(token)
+    response.delete_cookie(SESSION_COOKIE, path="/")
     return {"logged_out": True}
 
 
