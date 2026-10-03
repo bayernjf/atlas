@@ -1924,7 +1924,7 @@ def logout(
     token = _session_token(request)
     if token:
         session_store.revoke(token)
-    response.delete_cookie(SESSION_COOKIE, path="/")
+    response.delete_cookie(SESSION_COOKIE, httponly=True, samesite="strict", path="/")
     return {"logged_out": True}
 
 
