@@ -20,6 +20,7 @@ from atlas.message.adapter import MessageHarnessAdapter
 from atlas.openapi.adapter import ImportedApiHarnessAdapter
 from atlas.shop.adapter import ShopHarnessAdapter
 from atlas.shop.service import DemoShopService
+from atlas.web.adapter import WebHarnessAdapter
 
 # 适配器在平台内一律按全权限装配：权限收窄发生在人工审批与出向准入，不在这里
 # （04 §4.4；docs/32 §5）。
@@ -65,6 +66,12 @@ def build_base_registry(
             client=HttpApiClient.from_env(),
             granted_permissions=FULL_PERMISSIONS,
         )
+    )
+    # 打包 ZQ Q1：web-playwright（docs/89 §9 此前未接线）——浏览器 sync API 惰性加载，
+    # 注册不触碰 playwright；Playwright 未安装时仅 execute 时报错（与 docs/32 的
+    # 运行期失败语义一致）。EGRESS 与 headless 取默认 env。
+    registry.register(
+        WebHarnessAdapter(granted_permissions=FULL_PERMISSIONS)
     )
     if db_client is not None:
         registry.register(

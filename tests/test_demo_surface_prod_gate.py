@@ -196,6 +196,7 @@ def test_r2_prod_without_demo_flag_registers_no_demo_adapters(monkeypatch):
     assert "shop" not in ids, "prod 未开 demo 面却仍装配了进程内 DemoShopService"
     assert "database" not in ids
     assert {"http", "message", "memory"} <= ids, "非演示适配器不应被误摘"
+    assert "web-playwright" in ids, "打包 ZQ Q1：web 适配器不受演示面开关影响，照常注册"
 
 
 def test_r2_demo_surface_registers_shop_and_database(monkeypatch):
@@ -210,6 +211,7 @@ def test_r2_demo_surface_registers_shop_and_database(monkeypatch):
         for item in build_base_registry(demo_surface_enabled(), db_client).list_adapters()
     }
     assert {"shop", "database"} <= ids
+    assert "web-playwright" in ids, "打包 ZQ Q1：web 适配器在 demo 档照常注册"
 
 
 def test_r2_prod_with_real_database_url_keeps_database_without_shop(monkeypatch):
@@ -227,6 +229,7 @@ def test_r2_prod_with_real_database_url_keeps_database_without_shop(monkeypatch)
     }
     assert "database" in ids
     assert "shop" not in ids
+    assert "web-playwright" in ids, "打包 ZQ Q1：web 适配器与 database 真连接并存"
 
 
 # --- U910 prod 档逐条 404 --------------------------------------------------
