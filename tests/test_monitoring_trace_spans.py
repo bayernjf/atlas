@@ -216,21 +216,8 @@ def test_u278_pg_spans_roundtrip_and_list_projection():
     engine = create_engine(database_url)
 
     # 幂等应用全部迁移（含 012 spans 列）。
-    migrations_dir = Path(__file__).resolve().parents[1] / "db" / "migrations"
-    for path in sorted(migrations_dir.glob("*.sql")):
-        statements: list[str] = []
-        current: list[str] = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith("--"):
-                continue
-            current.append(line)
-            if stripped.endswith(";"):
-                statements.append("\n".join(current))
-                current = []
-        with engine.begin() as conn:
-            for statement in statements:
-                conn.execute(text(statement))
+    from atlas.storage.migrations import apply_pending
+    apply_pending(engine)
 
     tenant = f"pgtrspans-{uuid.uuid4().hex[:8]}"
     store = PgMonitoringStore(engine, tenant)

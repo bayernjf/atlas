@@ -6,6 +6,12 @@
 
 **已决审批历史已可持久化**（docs/61 §3 H2）：broker 挂 `ApprovalHistoryStore`，
 内存档 ring 200 / PG 档落 approval_history 表；pending 挂起帧仍走 interruptions。
+
+**pending 有界（docs/08 打包 ZR R3）**：`_pending` 条目自 resolve/超时后不再有消费点
+（list_pending 只过滤 `decision is None`），历史批次漏了移除 ⇒ 单进程长期运行无界增长。
+修复＝`request()`/`list_pending()` 两入口懒 `_prune_resolved()` 清走已决条目；`resolve`/
+`complete_timeout` 不动 dict（保 `get_notify_recipients` 邮件链路 resolve 后仍可查、
+`wait()` 持引用读 decision 不受影响），并设 `_MAX_PENDING` 硬上限 fail-closed 防御。
 """
 
 from __future__ import annotations
@@ -28,6 +34,10 @@ from .history import (
 Decision = Literal["approved", "rejected"]
 
 logger = logging.getLogger(__name__)
+
+#: pending 硬上限（防御护栏）：懒 prune 已保证 dict 有界（未决数＋自上次 request 以来新已决数），
+#: 该常量只兜极端并发/异常路径，超限 fail-closed 拒绝新挂起，不让 broker 无限膨胀。
+_MAX_PENDING = 5000
 
 
 @dataclass
@@ -60,6 +70,13 @@ class ApprovalBroker:
     """已决审批历史（docs/61 §3）：缺省进程内 ring 200，PG 档由 registry 注入落库实现。"""
     history_store: ApprovalHistoryStore = field(default_factory=InMemoryApprovalHistoryStore)
 
+    def _prune_resolved(self) -> None:
+        """锁内懒清理：已决条目不再有消费点（list_pending 只过滤 decision is None），
+        随新请求/列表入口清走，保证 `_pending` 有界。"""
+        stale = [t for t, p in self._pending.items() if p.decision is not None]
+        for token in stale:
+            self._pending.pop(token, None)
+
     def request(
         self,
         *,
@@ -74,6 +91,11 @@ class ApprovalBroker:
     ) -> str:
         token = uuid.uuid4().hex
         with self._lock:
+            self._prune_resolved()
+            if len(self._pending) >= _MAX_PENDING:
+                raise RuntimeError(
+                    f"pending 超过硬上限 {_MAX_PENDING}：拒绝新挂起（fail-closed，docs/08 打包 ZR R3）"
+                )
             self._pending[token] = _Pending(
                 event=threading.Event(),
                 summary=summary,
@@ -232,6 +254,7 @@ class ApprovalBroker:
 
     def list_pending(self) -> list[dict]:
         with self._lock:
+            self._prune_resolved()
             tokens = [t for t, p in self._pending.items() if p.decision is None]
             return [self._public(t, self._pending[t]) for t in tokens]
 
