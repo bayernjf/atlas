@@ -1,5 +1,7 @@
 # Handoff — Atlas
 
+> **打包 ZQ 立项＝真实化与安全四件（2026-10-03 用户「那你搞」批准）**：Q1 web-playwright 注册（14 D43 半边）、Q2 database 静默回退诚实化（prod 显式拒绝）、Q3 静默 except 补日志（≥8 处）、Q4 前端 token 迁 httpOnly Cookie（唯一 P1 前端安全项）。边界：无新端点/错误码/依赖/ADR；A2A/MCP 独立 Bearer 不受影响。已回填 docs/08 立项块＋docs/14 D43 注记。
+
 > **模型口径跟进＝.env LLM 段对齐 agnes 2.5 家族（2026-10-03，用户提供清理口径截图）**：`.env` 的 `LITELLM_MODEL=openai/agnes-2.5-flash` 与口径一致（文本主消费）；图像/视频在 Atlas **无消费点**，`.env.example` 补 `LITELLM_IMAGE_MODEL=agnes-image-2.5-flash`／`LITELLM_VIDEO_MODEL=agnes-video-2.5-flash` 备用占位注释（配了也不生效），不写入 `.env`。
 
 > **打包 ZP 收口＝condition(llm) 节点级 model 覆盖＋structured outputs 强制（2026-10-03，docs/13 U1082-U1091；docs/14 D14 半边再取回）**：落码按立项（classify per-call model 覆盖＋response_format=json_object、loader 透传、DSL 两个新校验码、前端 llm 模式 model 输入框）；后端全量 2245 passed、前端 vitest 757 passed／oxlint 0 error／tsc+build 过；产出形状不变、Scripted 回放零影响。**D14 整体仍不解除**。已回填 docs/13＋docs/08 收口块＋docs/14 注记＋CHANGELOG。
