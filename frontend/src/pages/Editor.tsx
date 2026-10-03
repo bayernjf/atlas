@@ -53,6 +53,7 @@ import {
   deleteUserTemplate,
   exportTemplate,
   importTemplate,
+  getGraph,
   getRecording,
   getTemplate,
   listRecordings,
@@ -114,7 +115,16 @@ const DEMO_ORDERS: Array<{ order_id: string; reason: string; amount: number }> =
   { order_id: '12349', reason: '尺寸不合适', amount: 899 },
 ]
 
-export function Editor({ principal, onLogout }: { principal: Principal; onLogout: () => void }) {
+export function Editor({
+  principal,
+  onLogout,
+  initialGraphId,
+}: {
+  principal: Principal
+  onLogout: () => void
+  /** 打包 ZS（docs/92 E-3）：反思「去修改」跳转时待打开的图 id；App 状态导航传入，无 router。 */
+  initialGraphId?: string | null
+}) {
   const { t } = useTranslation('editor')
   const canOperate = roleCan(principal.role, 'operate')
   // docs/28 §3：调试暂停原因中文映射（含批 2 异常断点）；未知 reason 回退原值（后端枚举数据不译）。
@@ -132,6 +142,26 @@ export function Editor({ principal, onLogout }: { principal: Principal; onLogout
 
   // M4 批 2 ⑦：分层校验调度（L1 同步 / L2 防抖 / L3 idle），结果入 validationStore。
   useValidationEngine()
+
+  // 打包 ZS（docs/92 E-3）：反思「去修改」跳转时按 id 打开对应图（latest 草稿，只读）。
+  useEffect(() => {
+    if (!initialGraphId) return
+    let cancelled = false
+    getGraph(initialGraphId)
+      .then((graph) => {
+        if (cancelled) return
+        loadGraph(graph)
+        setDraftGraphId(initialGraphId)
+        setPublishedRef(null)
+        setRunTarget('draft')
+      })
+      .catch((error) => {
+        if (!cancelled) appendLog(error instanceof Error ? error.message : String(error))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [initialGraphId, loadGraph, appendLog])
 
   // docs/61 §2.2：后端编译 422 的逐条诊断快照通道（Problems 面板消费）。
   const setServerIssues = useValidationStore((state) => state.setServerIssues)

@@ -499,6 +499,62 @@ export async function listGraphs(): Promise<SavedGraphSummary[]> {
   return body.items
 }
 
+/** 加载单个图的 latest 草稿（打包 ZS：反思「去修改」跳转编辑器时按 id 打开对应图；只读，复用既有端点）。 */
+export async function getGraph(graphId: string): Promise<SerializedGraph> {
+  return request<SerializedGraph>(`/api/graphs/${encodeURIComponent(graphId)}`)
+}
+
+// --- 反思进化（打包 ZS，docs/92）：只读消费两个现有端点，页内零写调用（U1108） ------------
+
+export type ReflectionStatus = 'ok' | 'rejected_whitelist' | 'rejected_bounds' | 'no_evidence'
+
+export type ReflectionReportItem = {
+  candidate_id: string | null
+  graph_id: string
+  base_version: number
+  status: ReflectionStatus
+  reasons: string[]
+  generated_at: string
+}
+
+export type ReflectionChange = {
+  param_key: string
+  from: unknown
+  to: unknown
+  reason: string
+}
+
+export type ReflectionCandidate = {
+  candidate_id: string
+  graph_id: string
+  base_version: number
+  changes: ReflectionChange[]
+  prompt_suggestions: string[]
+  evidence_digest: string
+  generated_at: string
+}
+
+export async function listReflectionReports(
+  graphId?: string,
+  limit = 50,
+): Promise<ReflectionReportItem[]> {
+  const params = new URLSearchParams()
+  if (graphId) params.set('graph_id', graphId)
+  params.set('limit', String(limit))
+  const body = await request<{ items: ReflectionReportItem[] }>(
+    `/api/reflection/reports?${params.toString()}`,
+  )
+  return body.items
+}
+
+export async function getReflectionCandidate(
+  candidateId: string,
+): Promise<ReflectionCandidate> {
+  return request<ReflectionCandidate>(
+    `/api/reflection/candidates/${encodeURIComponent(candidateId)}`,
+  )
+}
+
 /** 覆盖已存图的 latest 草稿（M9：同一 graph 迭代多版本，不新建 id；已发布版本不可变） */
 export async function saveGraphDraft(
   graphId: string,

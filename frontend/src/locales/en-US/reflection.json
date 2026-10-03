@@ -1,0 +1,45 @@
+{
+  "menu": {
+    "reflection": "Reflection"
+  },
+  "title": "Reflection Evolution",
+  "empty": {
+    "title": "No reflection reports yet",
+    "hint": "Add a reflect schedule item for a graph on the Schedules page, or click \"Run now\" for a scheduled graph."
+  },
+  "filter": {
+    "allGraphs": "All graphs"
+  },
+  "refresh": "Refresh",
+  "status": {
+    "ok": "Generated",
+    "rejected_whitelist": "Rejected: not in whitelist",
+    "rejected_bounds": "Rejected: out of bounds",
+    "no_evidence": "No evidence"
+  },
+  "report": {
+    "baseVersion": "Baseline version",
+    "generatedAt": "Generated at",
+    "reasons": "Reasons"
+  },
+  "candidate": {
+    "none": "No candidate suggestion",
+    "changes": "Suggested changes",
+    "param": "Parameter",
+    "from": "Current",
+    "to": "Suggested",
+    "reason": "Reason",
+    "suggestions": "Prompt suggestions",
+    "digest": "Evidence",
+    "gotoEdit": "Edit"
+  },
+  "goto": {
+    "graphVariable": "Open editor: graph variables",
+    "nodeConfig": "Open editor: find confidenceThreshold in node config",
+    "monitorRule": "Open monitoring: rule settings",
+    "gateConfig": "Open editor: release / rollout settings",
+    "disabled": "Graph id missing, cannot locate"
+  },
+  "loadFailed": "Failed to load reflection reports",
+  "loadFailedHint": "Please refresh and try again later."
+}

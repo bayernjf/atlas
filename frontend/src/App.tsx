@@ -13,13 +13,14 @@ import { OpenApiImports } from './pages/OpenApiImports'
 import { EmailApproval } from './pages/EmailApproval'
 import { Waits } from './pages/Waits'
 import { Schedules } from './pages/Schedules'
+import { Reflection } from './pages/Reflection'
 import { logout as logoutApi } from './lib/apiClient'
 import { getStoredPrincipal, roleCan, UNAUTHORIZED_EVENT, type Principal } from './lib/auth'
 import { extractEmailToken } from './lib/approvals'
 import { antdTheme } from './theme/tokens'
 import { useAntdLocale } from './locales/antdLocale'
 
-type Page = 'dashboard' | 'editor' | 'monitoring' | 'memory' | 'connections' | 'users' | 'approvals' | 'audit' | 'openapi' | 'waits' | 'schedules'
+type Page = 'dashboard' | 'editor' | 'monitoring' | 'memory' | 'connections' | 'users' | 'approvals' | 'audit' | 'openapi' | 'waits' | 'schedules' | 'reflection'
 
 function App() {
   const antdLocale = useAntdLocale()
@@ -28,6 +29,8 @@ function App() {
     emailToken ? null : getStoredPrincipal(),
   )
   const [page, setPage] = useState<Page>('dashboard')
+  // 打包 ZS（docs/92 E-3）：反思「去修改」跳转编辑器时待打开的图 id（App 状态导航，无 router）。
+  const [editorGraphId, setEditorGraphId] = useState<string | null>(null)
 
   useEffect(() => {
     const onUnauthorized = () => {
@@ -82,6 +85,7 @@ function App() {
           onOpenOpenApi={() => setPage('openapi')}
           onOpenWaits={() => setPage('waits')}
           onOpenSchedules={() => setPage('schedules')}
+          onOpenReflection={() => setPage('reflection')}
         />
       ) : page === 'approvals' ? (
         <Approvals
@@ -120,10 +124,21 @@ function App() {
           onLogout={handleLogout}
           onBack={() => setPage('dashboard')}
         />
+      ) : page === 'reflection' ? (
+        <Reflection
+          principal={principal}
+          onLogout={handleLogout}
+          onBack={() => setPage('dashboard')}
+          onOpenEditor={(graphId) => {
+            setEditorGraphId(graphId)
+            setPage('editor')
+          }}
+          onOpenMonitoring={() => setPage('monitoring')}
+        />
       ) : page === 'openapi' ? (
         <OpenApiImports principal={principal} onLogout={handleLogout} onBack={() => setPage('dashboard')} />
       ) : (
-        <Editor principal={principal} onLogout={handleLogout} />
+        <Editor principal={principal} onLogout={handleLogout} initialGraphId={editorGraphId} />
       )}
     </ConfigProvider>
   )

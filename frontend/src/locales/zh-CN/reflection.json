@@ -1,0 +1,45 @@
+{
+  "menu": {
+    "reflection": "反思进化"
+  },
+  "title": "反思进化",
+  "empty": {
+    "title": "暂无反思报告",
+    "hint": "可在「定时调度」页为图添加 reflect 调度项，或对已配调度的图点「立即执行」。"
+  },
+  "filter": {
+    "allGraphs": "全部图"
+  },
+  "refresh": "刷新",
+  "status": {
+    "ok": "已生成",
+    "rejected_whitelist": "白名单越界拒绝",
+    "rejected_bounds": "取值越界拒绝",
+    "no_evidence": "无证据"
+  },
+  "report": {
+    "baseVersion": "基线版本",
+    "generatedAt": "生成时间",
+    "reasons": "原因"
+  },
+  "candidate": {
+    "none": "无候选建议",
+    "changes": "参数变更建议",
+    "param": "参数",
+    "from": "当前值",
+    "to": "建议值",
+    "reason": "理由",
+    "suggestions": "提示词建议",
+    "digest": "证据摘要",
+    "gotoEdit": "去修改"
+  },
+  "goto": {
+    "graphVariable": "打开编辑器：图全局变量",
+    "nodeConfig": "打开编辑器：按节点查找 confidenceThreshold",
+    "monitorRule": "打开监控：规则设置",
+    "gateConfig": "打开编辑器：发布/灰度配置",
+    "disabled": "缺少图 id，无法定位"
+  },
+  "loadFailed": "反思报告加载失败",
+  "loadFailedHint": "请稍后刷新重试。"
+}
