@@ -430,6 +430,8 @@ def _login(role: str) -> dict[str, str]:
 
 
 def test_api_requires_auth_and_permissions():
+    client.cookies.clear()  # 打包 ZQ Q4：httpOnly Cookie 由前序测试残留——未认证用例需干净 jar
+
     assert client.post("/api/connections", json=CONN_BODY).status_code == 401
     viewer = _login("viewer")
     assert client.get("/api/connections", headers=viewer).status_code == 200  # viewer 可读

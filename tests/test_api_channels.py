@@ -71,6 +71,8 @@ def _bind(headers, conn_id, shop="acme"):
 
 
 def test_requires_auth_and_role_gates():
+    client.cookies.clear()  # 打包 ZQ Q4：httpOnly Cookie 由前序测试残留——未认证用例需干净 jar
+
     assert client.get("/api/channels").status_code == 401
     viewer = _login("viewer")
     assert client.get("/api/channels", headers=viewer).status_code == 200

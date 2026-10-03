@@ -209,6 +209,8 @@ def test_path_parameter_action_uses_route_template(_clean_audit):
 
 
 def test_audit_events_requires_admin(_clean_audit):
+    client.cookies.clear()  # 打包 ZQ Q4：httpOnly Cookie 由前序测试残留——未认证用例需干净 jar
+
     assert _events({}).status_code == 401  # 未认证
     assert _events(_login("viewer")).status_code == 403
     assert _events(_login("operator")).status_code == 403

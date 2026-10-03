@@ -138,6 +138,8 @@ def _seed(tenant: str = "t1") -> str:
 
 
 def test_u89_list_and_kind_filter_viewer_can_read():
+    client.cookies.clear()  # 打包 ZQ Q4：httpOnly Cookie 由前序测试残留——未认证用例需干净 jar
+
     _seed()
     response = client.get("/api/memories")
     assert response.status_code == 200
