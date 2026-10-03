@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### docs(reflection)：打包 ZS 立项＝反思进化 L2 v2 前端候选呈现与人工采纳入口（2026-10-03，docs-only，零代码/测试/迁移/依赖改动；形状权威 docs/92）
+
+- **一句话**：反思进化 L2 v2 前端面契约立项——纯前端批（`pages/Reflection.tsx`＋侧边栏「反思进化」＋apiClient 两只读函数＋i18n 新 ns `reflection.json` zh/en 两档），复用现有只读端点 `GET /api/reflection/reports`／`/api/reflection/candidates/{id}`；人工采纳入口＝按 param_key scope 分流「去修改」跳转引导（graph_variable→全局变量、node_config→编辑器图级定位、monitor_rule→监控规则、gate_config→发布/灰度），页内零写调用（U1108 机检守护），不新增自动 apply（守 docs/88 D-5/T22）。采纳状态持久化、节点级定位登记缓做；L1/L3 门控全部不变。验收 U1103–U1108（号段校正：docs/88 原 U1033 起被 MCP 批占用）。已回填 docs/92＋docs/00 地图＋docs/08 立项块＋docs/09 frontend 映射＋docs/13 候选用例段＋本文件。
+
 ### fix(storage/collaboration)：P2 工程债三件（打包 ZR 落码，2026-10-03，docs/08 打包 ZR 立项块）
 
 - **一句话**：`interruptions.created_at` 从 TEXT 历史异类归队 TIMESTAMPTZ（写入侧本就走 DB 时钟 CURRENT_TIMESTAMP，排序与清理不再依赖字典序/强转），补 `(tenant_id, created_at)` 复合索引；retention 清理去 `::timestamptz` 强转（原生比较、索引可用）；审批 broker 的 `_pending` 不再无界增长（已决条目懒 prune ＋ 5000 硬上限 fail-closed）。
