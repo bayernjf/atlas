@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### feat(frontend)+docs：合 main 批＝PR #101（2026-10-03，用户「按你推荐来」；含 E 组选型收口决策＋ZS 落码＋CI 前端类型门修复）
+
+- 合并：dev→main 经 PR #101（merge commit `a36360a`）合入，head＝`6800ad1`，含 E 组三选型收口原子 `9294b8f`＋ZS 三原子＋CI 修复原子 `6800ad1`。
+- CI 修复（6 个真实 TS 错误）：本地裸 `tsc --noEmit` 在根 tsconfig `files:[]`＋references 下是空编译假绿；CI `pnpm build`（＝`tsc -b && vite build`）才是真门。修复：`loadGraphForEditor` 返回类型、`ReflectionChange` re-export、`isEmptyReports` 收 `readonly unknown[]`、U1108 机检改 Vite `?raw` 导入＋`part` 显式标注。经验：前端类型门必须用 `pnpm build`。
+- 同步面：handoff 顶部流水＋docs/08 E 组行注记。零后端/迁移改动。
+
 ### docs：E 组选型决策收口＝D5 NATS／D6 Go Harness／D11 OTel 三个"是否正式采纳"（2026-10-03，用户「按你推荐来」；docs/10 §4 T34）
 
 - **决策**：三个选型正式收口为"维持现状不采纳、触发条件不变"——三者均有进程内/自研替身在守（T4 进程内事件总线、T5 Python/FastAPI 同构网关、T21 自研 span 模型＋D28 进程内监控替身），正式栈引入在单进程 Demo 无试用收益且触发条件未满足（D5/D6＝Phase 2 多实例部署、D11＝真实运行环境/部署后）。
