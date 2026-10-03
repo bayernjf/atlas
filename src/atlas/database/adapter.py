@@ -5,10 +5,6 @@
 运行时语义见 06 §6.7。
 """
 
-import logging
-
-logger = logging.getLogger(__name__)
-from __future__ import annotations
 
 from atlas.harness.base import (
     ActionRequest,
@@ -19,6 +15,10 @@ from atlas.harness.base import (
     Permission,
     StructuredError,
 )
+import logging
+
+logger = logging.getLogger(__name__)
+
 from .service import DEFAULT_LIMIT, MAX_LIMIT, DatabaseAdapterError, DatabaseClient
 
 _QUERY_INPUT_SCHEMA = {

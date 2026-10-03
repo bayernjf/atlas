@@ -7,14 +7,14 @@
 归一后再进投影——同一个槽位在两档里必须落成同一个字符串键，否则"逐键一致"从投影开始就漏。
 """
 
-import logging
-
-logger = logging.getLogger(__name__)
-from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 from pydantic import BaseModel
 

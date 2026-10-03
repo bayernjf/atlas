@@ -5,14 +5,14 @@
 保证 Demo 离线可用。返回值为可直接回显画布的 SerializedGraph 字典。
 """
 
-import logging
-
-logger = logging.getLogger(__name__)
-from __future__ import annotations
 
 import json
 import os
 import re
+import logging
+
+logger = logging.getLogger(__name__)
+
 from typing import Any
 
 from atlas.template.graphs import refund_template_graph

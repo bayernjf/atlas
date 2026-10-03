@@ -10,14 +10,14 @@
 `_Pending` 内存态仍是 `time.time()` float epoch，仅在写历史/出投影时经 `epoch_to_iso` 转换。
 """
 
-import logging
-
-logger = logging.getLogger(__name__)
-from __future__ import annotations
 
 import threading
 from collections import deque
 from dataclasses import dataclass
+import logging
+
+logger = logging.getLogger(__name__)
+
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
