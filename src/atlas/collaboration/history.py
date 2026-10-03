@@ -10,6 +10,9 @@
 `_Pending` 内存态仍是 `time.time()` float epoch，仅在写历史/出投影时经 `epoch_to_iso` 转换。
 """
 
+import logging
+
+logger = logging.getLogger(__name__)
 from __future__ import annotations
 
 import threading
@@ -33,6 +36,7 @@ def epoch_to_iso(ts: object) -> str:
     try:
         seconds = float(ts)  # type: ignore[arg-type]
     except (TypeError, ValueError):
+        logger.warning("epoch_to_iso: 非法时间戳 %r 回退 epoch 零点", ts)
         seconds = 0.0
     if seconds != seconds or seconds in (float("inf"), float("-inf")) or seconds < 0:
         seconds = 0.0

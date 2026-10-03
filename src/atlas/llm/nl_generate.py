@@ -5,6 +5,9 @@
 保证 Demo 离线可用。返回值为可直接回显画布的 SerializedGraph 字典。
 """
 
+import logging
+
+logger = logging.getLogger(__name__)
 from __future__ import annotations
 
 import json
@@ -67,6 +70,7 @@ def validate_param_fills(
         try:
             params = json.loads(raw_params)
         except json.JSONDecodeError:
+            logger.warning("nl_generate: 节点 %s 工具 %s 的参数 JSON 解析失败，跳过该节点", node_id, tool)
             continue
         if not isinstance(params, dict):
             continue
@@ -171,4 +175,5 @@ def _generate_with_llm(prompt: str, model: str) -> dict[str, Any] | None:
         graph["version"] = 1
         return graph
     except json.JSONDecodeError:
+        logger.warning("nl_generate: LLM 返回的 JSON 提取失败，返回 None")
         return None
