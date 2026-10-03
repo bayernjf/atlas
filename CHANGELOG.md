@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### docs：E 组选型决策收口＝D5 NATS／D6 Go Harness／D11 OTel 三个"是否正式采纳"（2026-10-03，用户「按你推荐来」；docs/10 §4 T34）
+
+- **决策**：三个选型正式收口为"维持现状不采纳、触发条件不变"——三者均有进程内/自研替身在守（T4 进程内事件总线、T5 Python/FastAPI 同构网关、T21 自研 span 模型＋D28 进程内监控替身），正式栈引入在单进程 Demo 无试用收益且触发条件未满足（D5/D6＝Phase 2 多实例部署、D11＝真实运行环境/部署后）。
+- **重开判据**：Phase 2 多实例部署或真实运行环境出现时携实测案例复开。
+- **同步面**：docs/10 §4 T34（新增行）＋docs/08 E 组行注记＋docs/14 D5/D6/D11 注记＋handoff（顶部流水/Active #100/Recently shipped）。零代码/测试/迁移/依赖改动。
+
 ### feat(frontend)＋test(frontend)＋docs：打包 ZS 落码＝反思进化 L2 v2 前端候选呈现与人工采纳入口（2026-10-03，用户「好的，你搞」批准；纯前端批，后端零改动；docs/13 U1103–U1108，形状权威 docs/92）
 
 - **一句话**：反思报告只读呈现＋人工采纳入口（v1 最小诚实形态）落地。新页 `frontend/src/pages/Reflection.tsx`：报告列表（status 四值徽标 Tag＋graph 过滤下拉＋空态/加载失败态）＋候选详情（changes 表 param/from/to/reason 逐列、prompt_suggestions 引用块只读、evidence_digest 摘要）＋「去修改」按 param_key scope 分流跳转（graph_variable/node_config/gate_config→编辑器〔图级定位〕、monitor_rule→监控页、graph_id 缺省禁用）；apiClient 新增三只读函数 `listReflectionReports`／`getReflectionCandidate`／`getGraph`（getGraph 复用既有 `GET /api/graphs/{id}` 供 E-3「打开编辑器对应图」）；`lib/reflection.ts` 数据层＋纯函数＋U1108 只读白名单机检；App state 导航（`editorGraphId`→Editor `initialGraphId` 挂载加载，现有前端无 router，契约 E-3 的 `/editor?graph=` 形态落码为状态传递，见 docs/92 收口注记）；i18n 新 ns `reflection.json`（zh/en 两档，PARITY 守护）；Dashboard 主导航「反思进化」入口。页内零写调用（U1108 机检守护）；不新增自动 apply（守 docs/88 D-5/T22）；L1/L3 门控与 docs/14 缓做全部不变。
