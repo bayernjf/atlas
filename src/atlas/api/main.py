@@ -81,6 +81,7 @@ from atlas.iam.accounts import UserExists
 from atlas.iam.passwords import validate_password, validate_username, verify_password
 from atlas.iam.principals import Principal, Role, can
 from atlas.iam.registry import STORAGE_BACKEND, TenantServices
+from atlas.llm.config import ModelConfig
 from atlas.llm.decision import get_decision_client
 from atlas.llm.nl_generate import generate_graph, validate_param_fills
 from atlas.memory.database import ping, wait_for_database
@@ -293,6 +294,7 @@ def _resume_run(engine, services: TenantServices, frame: dict) -> None:
             frame_sink=make_frame_sink(engine, frame["tenant_id"], run_id),
             resume_claim=make_resume_claim(engine),
             resume=frame,
+            tenant_id=frame["tenant_id"],
         )
         if run_id:
             services.run_store.finish(
@@ -809,6 +811,131 @@ def delete_connection(conn_id: str, principal: Principal = Depends(require("admi
     return {"deleted": deleted}
 
 
+# ================= LLM 模型配置管理（docs/93 打包 Y；内置模型＋BYOK）=================
+
+class ModelConfigRequest(BaseModel):
+    model: str | None = None
+    apiKey: str | None = None  # 明文 key，写入即 AES-GCM 加密；空/未传保留原信封
+    baseUrl: str | None = None
+    enabled: bool | None = None
+
+
+def _now_iso_utc() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _masked_view(cfg: ModelConfig) -> dict[str, Any]:
+    """HTTP 脱敏视图：api_key 回 ``***``＋**明文**尾 4 位（docs/93 §2.3）。
+
+    public_view() 只够在 store 层防御性用（信封尾 4 位无意义）；产品语义要的是
+    明文 key 尾 4 位，故在此解密一次。解密失败（密钥轮换/坏信封）只回 ***。
+    """
+    view = cfg.public_view()
+    if cfg.api_key_enc:
+        from atlas.connections.service import get_secret_provider
+
+        try:
+            plain = get_secret_provider().decrypt(cfg.api_key_enc)
+            view["apiKey"] = f"***{plain[-4:]}" if plain else ""
+        except Exception:  # 坏信封/密钥不可用：只回占位，绝不泄漏
+            view["apiKey"] = "***"
+    return view
+
+
+def _seal_api_key(api_key: str | None, existing: str | None) -> str | None:
+    """明文 key → AES-GCM 信封；None/空串保留原信封（照 connection.client_secret 语义）。"""
+    if api_key is None or not api_key.strip():
+        return existing  # 未传/空 → 不动（前端脱敏回显不会回明文）
+    from atlas.connections.service import get_secret_provider
+
+    return get_secret_provider().encrypt(api_key.strip())
+
+
+def _build_model_config(
+    mode: str, raw: ModelConfigRequest, existing: ModelConfig | None,
+    *, updated_by: str,
+) -> ModelConfig:
+    """由请求体构造 ModelConfig；api_key 写即加密，缺省字段沿用现状。"""
+    prev = existing
+    model = (raw.model or "").strip() or (prev.model if prev else "")
+    if not model:
+        raise HTTPException(status_code=422, detail="模型名不能为空")
+    api_key_enc = _seal_api_key(raw.apiKey, prev.api_key_enc if prev else None)
+    return ModelConfig(
+        mode=mode,
+        model=model,
+        api_key_enc=api_key_enc or "",
+        base_url=(raw.baseUrl or "").strip() or (prev.base_url if prev else None),
+        enabled=raw.enabled if raw.enabled is not None else (prev.enabled if prev else True),
+        updated_by=updated_by,
+        updated_at=_now_iso_utc(),
+    )
+
+
+def _effective_model_summary(services: TenantServices, tenant_id: str) -> dict[str, Any]:
+    """当前生效摘要（docs/93 §2.3 GET /api/models）：BYOK > 内置 > env 兜底。"""
+    from atlas.llm.config import resolve_default_model
+
+    store = services.model_config
+    cfg = resolve_default_model(store, tenant_id)
+    if cfg is not None:
+        return {"source": cfg.mode, **_masked_view(cfg)}
+    model = os.getenv("LITELLM_MODEL", "").strip()
+    if model:
+        return {"source": "env", "model": model, "apiKey": "", "baseUrl": None,
+                "enabled": True, "mode": "builtin", "updatedBy": "", "updatedAt": ""}
+    return {"source": "none", "model": "", "apiKey": "", "baseUrl": None,
+            "enabled": False, "mode": "builtin", "updatedBy": "", "updatedAt": ""}
+
+
+@app.get("/api/models")
+def get_models(principal: Principal = Depends(require("read"))) -> dict[str, Any]:
+    """模型配置总览（read 门可读；api_key 全脱敏）。"""
+    services = services_for(principal)
+    store = services.model_config
+    builtin = store.get_builtin()
+    byok = store.get_byok(principal.tenant_id)
+    return {
+        "builtin": _masked_view(builtin) if builtin else None,
+        "byok": _masked_view(byok) if byok else None,
+        "effective": _effective_model_summary(services, principal.tenant_id),
+    }
+
+
+@app.put("/api/models/builtin")
+def put_builtin_model(
+    body: ModelConfigRequest,
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, Any]:
+    """admin 维护内置模型（docs/93 §1：平台级单一配置，所有租户共享）。"""
+    services = services_for(principal)
+    store = services.model_config
+    existing = store.get_builtin()
+    cfg = _build_model_config("builtin", body, existing, updated_by=principal.username)
+    return _masked_view(store.set_builtin(cfg))
+
+
+@app.get("/api/models/byok")
+def get_byok_model(principal: Principal = Depends(require("read"))) -> dict[str, Any]:
+    """本租户 BYOK 配置（脱敏）。"""
+    services = services_for(principal)
+    cfg = services.model_config.get_byok(principal.tenant_id)
+    return _masked_view(cfg) if cfg else {"configured": False}
+
+
+@app.put("/api/models/byok")
+def put_byok_model(
+    body: ModelConfigRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """租户管理员/operator 维护本租户 BYOK（docs/93 §1 语义约束 2：operate 可配自己的 key）。"""
+    services = services_for(principal)
+    store = services.model_config
+    existing = store.get_byok(principal.tenant_id)
+    cfg = _build_model_config("byok", body, existing, updated_by=principal.username)
+    return _masked_view(store.set_byok(principal.tenant_id, cfg))
+
+
 @app.post("/api/connections/{conn_id}/authorize")
 def authorize_connection(conn_id: str, principal: Principal = Depends(require("operate"))) -> dict[str, Any]:
     """返回授权 URL 与 state（前端 window.open 打开，state 10 分钟有效，仅防 CSRF）。"""
@@ -1042,6 +1169,7 @@ def _background_run_worker(
             resume_claim=_resume_claim_for(),
             _block_subgraph_suspend=(STORAGE_BACKEND == "pg"),
             graph_version=version,
+            tenant_id=tenant_id,
         )
         run_store.finish(
             run_id=run_id, status="completed",
@@ -2563,6 +2691,7 @@ def create_shadow_run(
             emit=shadow_emit,
             tracer=tracer,
             shadow=True,
+            tenant_id=principal.tenant_id,
         )
     except Exception as exc:  # 影子异常也沉淀记录，绝不影响生产链路
         status = "error"
@@ -3270,6 +3399,7 @@ def replay_recording(
             rng_seed=seed,
             tool_mocks=tool_mocks,
             condition_classifier=condition_script,
+            tenant_id=principal.tenant_id,
         )
         replay_steps = take_steps()
         tools_by_node = {
@@ -3532,6 +3662,7 @@ def run_saved_graph(
             graph_version=tracer.graph_version,
             is_cancelled=cancel_event.is_set,
             _block_subgraph_suspend=(STORAGE_BACKEND == "pg"),
+            tenant_id=principal.tenant_id,
         )
     except RunSuperseded as exc:
         # docs/62 §2 D-4：输家停止驱动——不写 run 终态、不记监控、不进门控评估，
@@ -3712,6 +3843,7 @@ def run_saved_graph_stream(
                     graph_version=tracer.graph_version if tracer is not None else None,
                     is_cancelled=cancel_event.is_set,
                     _block_subgraph_suspend=(STORAGE_BACKEND == "pg"),
+                    tenant_id=principal.tenant_id,
                 )
                 if monitored:
                     run_store.finish(
@@ -4628,7 +4760,7 @@ def nl_generate(
     request: NLGenerateRequest, principal: Principal = Depends(require("operate"))
 ) -> dict[str, Any]:
     try:
-        graph = generate_graph(request.prompt)
+        graph = generate_graph(request.prompt, tenant_id=principal.tenant_id)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     warnings = validate_param_fills(graph, tool_input_schemas(_demo_registry))
