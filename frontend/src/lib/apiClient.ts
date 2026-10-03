@@ -354,8 +354,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   headers.set('Content-Type', 'application/json')
   // D13 后端元数据多语言：把当前应用语言带给后端，使其按 locale 换模板/适配器描述（docs/70）
   headers.set('Accept-Language', getLanguage())
-  const token = getToken()
-  if (token) headers.set('Authorization', `Bearer ${token}`)
+  // 打包 ZQ Q4：前端不再带 Bearer（getToken 恒 null）——凭证走浏览器自动携带的
+  // httpOnly Cookie；A2A/MCP 等独立调用方仍由后端 Bearer 兼容路径覆盖。
   const response = await fetch(path, { ...init, headers })
   const body = await response.json().catch(() => null)
   if (!response.ok) {
@@ -391,7 +391,8 @@ export async function me(): Promise<LoginResponse> {
 
 export async function logout(): Promise<void> {
   try {
-    if (getToken()) await request('/api/auth/logout', { method: 'POST' })
+    // 打包 ZQ Q4：无条件调登出（凭证在 Cookie 里，浏览器自动携带）；后端吊销并清 Cookie。
+    await request('/api/auth/logout', { method: 'POST' })
   } finally {
     clearSession()
   }
