@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### docs：LLM 模型配置管理面立项契约＝内置模型（admin 管理）＋BYOK（用户自配）（2026-10-04 docs-only；形状权威 docs/93，落码否待用户拍板）
+
+- 口径：用户定义产品模型分两种＝① 内置模型（平台方内置 Agnes、admin UI 管理密钥/模型/开关）；② BYOK（用户自配置 key、per-tenant 生效）。
+- 现状：四消费点直读全局 env（LITELLM_MODEL+OPENAI_API_KEY/BASE_URL）、零管理 UI、零 per-tenant；litellm 直连自读 env 是最大风险点（BYOK 须显式传 key/base_url）。
+- 范围：配置模型＋两档 store（内存/PG）挂 TenantServices、四消费点优先级＝节点显式 model > BYOK > 内置 > env、三 REST 端点（administer/read）、Models.tsx 页；密钥 AES-GCM 信封（复用 T26）。非目标：用户级 BYOK/多模型路由/用量统计/RBAC 细分。验收 U1090–U1096。零迁移/零依赖/无 ADR；D14 其余余部不解除。
+- 同步面：docs/08 C 组候选行（立项注记）、docs/00 地图登记 93、docs/73 §10（待拍板点已在契约内拍定）、handoff Active #101。零代码/测试/迁移改动。
+
 ### docs：LLM 模型配置管理面产品口径登记（内置模型＋BYOK）（2026-10-03，用户产品定义；docs/73 §10）
 
 - 口径：产品模型分两种——① 内置模型＝平台方内置（Agnes 已给），由 admin UI 管理（密钥/模型/开关），用户直接用；② BYOK＝用户自己配置自己的 key（per-tenant 生效）。
