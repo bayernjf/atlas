@@ -87,6 +87,8 @@ def test_operator_cannot_update():
 
 
 def test_missing_token_is_unauthorized():
+    client.cookies.clear()  # 打包 ZQ Q4：httpOnly Cookie 由前序测试残留——未认证用例需干净 jar
+
     assert client.get("/api/monitoring/alert-channel").status_code == 401
     assert client.put(
         "/api/monitoring/alert-channel", json=_raw()

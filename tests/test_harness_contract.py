@@ -223,6 +223,10 @@ def test_demo_capabilities_project_subset_schemas():
         ("database", "query"),
         ("database", "execute"),
         ("message", "send"),
+        ("web-playwright", "navigate"),
+        ("web-playwright", "click"),
+        ("web-playwright", "type"),
+        ("web-playwright", "screenshot"),
     }
 
     expected_output_keys = {
@@ -235,8 +239,13 @@ def test_demo_capabilities_project_subset_schemas():
         ("database", "query"): {"columns", "rows", "row_count", "truncated"},
         ("database", "execute"): {"rowcount"},
         ("message", "send"): {"id", "channel", "to", "subject", "body", "sent_at"},
+        ("web-playwright", "navigate"): None,
+        ("web-playwright", "click"): None,
+        ("web-playwright", "type"): None,
+        ("web-playwright", "screenshot"): None,
     }
     for key, tool in projected.items():
         assert isinstance(tool["input_schema"], dict)
         assert isinstance(tool["output_schema"], dict)
-        assert set(tool["output_schema"]["properties"]) == expected_output_keys[key]
+        if expected_output_keys[key] is not None:
+            assert set(tool["output_schema"]["properties"]) == expected_output_keys[key]

@@ -258,6 +258,7 @@ def test_rest_limit_still_clamped_not_rejected(headers):
 def test_audit_read_stays_admin_only(headers):
     viewer = _login("viewer-a", "viewer123")
     assert anon.get("/api/audit/events", headers=viewer).status_code == 403
+    anon.cookies.clear()  # 打包 ZQ Q4：_login 通过 httpOnly Cookie 建立会话，未认证用例需干净 jar
     assert anon.get("/api/audit/events", headers={}).status_code == 401
 
 

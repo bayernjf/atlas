@@ -41,7 +41,7 @@ def _sample_graph():
                  "config": {"promptTemplate": "公司 {{global.company_name}} 限额 {{global.approval_limit}} 缺失 {{trigger-1.context.payload.missing}}",
                             "confidenceThreshold": 0.6, "model": "demo"}},
                 {"id": "tool_call-1", "type": "tool_call", "name": "工具",
-                 "config": {"tool": "web-playwright/click",
+                 "config": {"tool": "ghost-adapter/click",
                             "params": "依据 {{ai_decision-1.decision}} 执行"}},
             ],
             "edges": [
@@ -77,7 +77,7 @@ def test_compile_produces_graph_and_runs_in_edge_order():
     # 未在 Demo 注册表中的适配器 → 结构化失败，不抛异常
     tool_output = result["outputs"]["tool_call-1"]["result"]
     assert tool_output["status"] == "FAILED"
-    assert "web-playwright" in tool_output["error"]
+    assert "ghost-adapter" in tool_output["error"]
     assert result["trace"][0].startswith("trigger-1")
 
 

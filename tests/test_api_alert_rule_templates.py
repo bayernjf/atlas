@@ -107,6 +107,8 @@ def test_unknown_template_returns_chinese_404():
 
 # U651 ---------------------------------------------------------------------
 def test_auth_and_one_click_apply_via_put_rules():
+    client.cookies.clear()  # 打包 ZQ Q4：httpOnly Cookie 由前序测试残留——未认证用例需干净 jar
+
     # 未登录 401
     assert client.get("/api/alert-rule-templates").status_code == 401
     # viewer 可读（read）

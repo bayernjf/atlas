@@ -117,11 +117,20 @@ def _neutral_profile():
 # --- U1011 prod 无 LLM：显式 failed，不静默走默认分支 ------------------------
 
 
+def _demo_registry():
+    """打包 ZQ Q2：本组测试测 condition 分类器门而非 registry 装配——显式注入 demo 适配器表，
+    避免 prod 档走 loader 兜底（prod 无 registry 已改为显式拒绝）。"""
+    from atlas.graph.loader import build_demo_registry
+
+    return build_demo_registry()
+
+
 def test_u1011_prod_offline_classifier_is_refused_with_a_machine_code(monkeypatch):
     monkeypatch.setenv("ATLAS_ENV", "prod")
     monkeypatch.delenv("ATLAS_ENABLE_DEMO_MOCK", raising=False)
     with pytest.raises(ConditionClassifierUnavailable) as excinfo:
-        run_graph(_llm_condition_graph(), condition_classifier=OfflineConditionClassifier())
+        run_graph(_llm_condition_graph(), registry=_demo_registry(),
+                  condition_classifier=OfflineConditionClassifier())
     assert excinfo.value.code == "LLM_CLASSIFIER_UNAVAILABLE"
     assert excinfo.value.node_id == "cond-1"
     message = str(excinfo.value)
@@ -135,7 +144,8 @@ def test_u1012_prod_with_a_real_classifier_runs_unchanged(monkeypatch):
     """门只认离线档：真接了模型（任何非 OfflineConditionClassifier）照常分类与路由。"""
     monkeypatch.setenv("ATLAS_ENV", "prod")
     monkeypatch.delenv("ATLAS_ENABLE_DEMO_MOCK", raising=False)
-    result = run_graph(_llm_condition_graph(), condition_classifier=_FakeLlmClassifier())
+    result = run_graph(_llm_condition_graph(), registry=_demo_registry(),
+                      condition_classifier=_FakeLlmClassifier())
     assert result["status"] == "completed"
     output = result["outputs"]["cond-1"]
     assert output["mode"] == "llm"
@@ -150,6 +160,7 @@ def test_u1013_prod_replay_scripted_classifier_is_not_gated(monkeypatch):
     monkeypatch.delenv("ATLAS_ENABLE_DEMO_MOCK", raising=False)
     result = run_graph(
         _llm_condition_graph(),
+        registry=_demo_registry(),
         condition_classifier=ScriptedConditionClassifier({"cond-1": "愤怒投诉"}),
     )
     assert result["status"] == "completed"

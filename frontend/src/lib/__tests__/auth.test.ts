@@ -41,12 +41,15 @@ beforeEach(() => {
 })
 
 describe('auth session storage (04 §5.14)', () => {
-  it('persists and restores token + principal, then clears both', () => {
+  it('keeps token off localStorage (pack ZQ Q4) while persisting principal', () => {
+    // 打包 ZQ Q4：会话凭证改由后端 httpOnly Cookie 持有，前端不落盘 token——
+    // getToken 恒 null；Principal（非敏感角色镜像）仍写 localStorage。
     expect(getToken()).toBeNull()
     expect(getStoredPrincipal()).toBeNull()
 
     saveSession('sess-abc', viewer)
-    expect(getToken()).toBe('sess-abc')
+    expect(getToken()).toBeNull()
+    expect(localStorage.getItem('atlas.session_token')).toBeNull()
     expect(getStoredPrincipal()).toEqual(viewer)
 
     clearSession()

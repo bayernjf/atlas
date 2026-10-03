@@ -196,6 +196,7 @@ def test_r2_prod_without_demo_flag_registers_no_demo_adapters(monkeypatch):
     assert "shop" not in ids, "prod 未开 demo 面却仍装配了进程内 DemoShopService"
     assert "database" not in ids
     assert {"http", "message", "memory"} <= ids, "非演示适配器不应被误摘"
+    assert "web-playwright" in ids, "打包 ZQ Q1：web 适配器不受演示面开关影响，照常注册"
 
 
 def test_r2_demo_surface_registers_shop_and_database(monkeypatch):
@@ -210,6 +211,7 @@ def test_r2_demo_surface_registers_shop_and_database(monkeypatch):
         for item in build_base_registry(demo_surface_enabled(), db_client).list_adapters()
     }
     assert {"shop", "database"} <= ids
+    assert "web-playwright" in ids, "打包 ZQ Q1：web 适配器在 demo 档照常注册"
 
 
 def test_r2_prod_with_real_database_url_keeps_database_without_shop(monkeypatch):
@@ -227,6 +229,32 @@ def test_r2_prod_with_real_database_url_keeps_database_without_shop(monkeypatch)
     }
     assert "database" in ids
     assert "shop" not in ids
+    assert "web-playwright" in ids, "打包 ZQ Q1：web 适配器与 database 真连接并存"
+
+
+# --- 打包 ZQ Q2：prod 未注入 registry 拒绝静默 SQLite 兜底 --------------------
+
+def test_q2_prod_without_registry_refuses_silent_demo_fallback(monkeypatch):
+    """prod 且未开 demo 面：run_graph 不传 registry 时显式拒绝，不静默打进 SQLite 演示库。"""
+    from atlas.graph.loader import _resolve_registry
+
+    monkeypatch.setenv("ATLAS_ENV", "prod")
+    monkeypatch.delenv("ATLAS_ENABLE_DEMO_MOCK", raising=False)
+    assert demo_surface_enabled() is False
+    with pytest.raises(RuntimeError, match="静默回退内置 SQLite 演示适配器"):
+        _resolve_registry(None)
+
+
+def test_q2_demo_surface_allows_default_registry(monkeypatch):
+    """demo 档未注入 registry：兜底默认演示适配器表照常可用（行为不变）。"""
+    from atlas.graph.loader import _resolve_registry
+
+    monkeypatch.setenv("ATLAS_ENV", "dev")
+    monkeypatch.delenv("ATLAS_DATABASE_URL", raising=False)
+    assert demo_surface_enabled() is True
+    reg = _resolve_registry(None)
+    ids = {item["id"] for item in reg.list_adapters()}
+    assert {"shop", "database", "web-playwright"} <= ids
 
 
 # --- U910 prod 档逐条 404 --------------------------------------------------

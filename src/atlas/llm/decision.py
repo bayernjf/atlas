@@ -144,6 +144,7 @@ class LiteLLMDecisionClient:
                 "source": f"llm:{model_name}",
             }
         except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+            logger.warning("decision: LLM 输出解析失败（model=%s）fail-safe 转人工：%s", model_name, exc)
             return {
                 "action": HUMAN_APPROVAL,
                 "reason": f"LLM 输出解析失败，fail-safe 转人工：{exc}",

@@ -42,6 +42,9 @@ class _SessionEntry:
     expires_at: float
 
 
+SESSION_COOKIE = "atlas_session"
+
+
 class SessionStore:
     def __init__(self) -> None:
         self._tokens: dict[str, _SessionEntry] = {}

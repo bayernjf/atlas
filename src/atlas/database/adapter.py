@@ -5,7 +5,6 @@
 运行时语义见 06 §6.7。
 """
 
-from __future__ import annotations
 
 from atlas.harness.base import (
     ActionRequest,
@@ -16,6 +15,10 @@ from atlas.harness.base import (
     Permission,
     StructuredError,
 )
+import logging
+
+logger = logging.getLogger(__name__)
+
 from .service import DEFAULT_LIMIT, MAX_LIMIT, DatabaseAdapterError, DatabaseClient
 
 _QUERY_INPUT_SCHEMA = {
@@ -123,6 +126,7 @@ class DatabaseHarnessAdapter(HarnessAdapter):
         try:
             client = self._get_client()
         except DatabaseAdapterError:
+            logger.warning("database observe: 适配器未配置（ATLAS_DATABASE_URL 缺失或连接失败），降级返回 unconfigured 观测")
             return Observation(
                 url="obs://database?unconfigured",
                 title="数据适配器（通用 SQL）",

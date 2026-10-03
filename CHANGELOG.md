@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### feat(harness/auth/observability)：真实化与安全四件（打包 ZQ 落码，2026-10-03，docs/08 打包 ZQ 立项块）
+
+- **一句话**：web-playwright 适配器正式注册进图内工具表（`web-playwright/navigate·click·type·screenshot`）；prod 档 `run_graph` 未注入 registry 时显式拒绝、不再静默回退内置 SQLite 演示适配器；8 处静默 except 补 warning 日志；前端会话凭证从 localStorage 迁到后端 httpOnly Cookie（`atlas_session`，HttpOnly＋SameSite=strict，XSS 不可窃取），Bearer 保留兼容 A2A/MCP。
+- **落码**：`harness/runtime.py`＋`graph/loader.py`（Q1/Q2）；`collaboration/history.py`／`scheduling/models.py`／`database/adapter.py`／`llm/nl_generate.py`／`llm/decision.py`（Q3 日志）；`iam/sessions.py`＋`iam/deps.py`＋`api/main.py`（Q4 后端 Cookie）；`frontend/src/lib/auth.ts`＋`apiClient.ts`（Q4 前端 token 不落盘）。
+- **鉴权语义（定稿）**：请求显式带 Authorization 头即以头为准（空/坏头即 401，不被 Cookie 掩盖）；完全未带头才读 Cookie——真实浏览器前端走 Cookie，A2A/MCP 走 Bearer。
+- **门（实跑）**：后端全量 2251 passed / 136 skipped / 0 failed；前端 vitest 757 passed／oxlint 0 error／tsc+build 过；API 冒烟（登录 Set-Cookie／Cookie 鉴权／坏头 401／logout 清 Cookie）全链路验证。D43 注册接线半边取回、本条仍缓做。
+
+
 ### feat(llm)：condition 节点级 model 覆盖＋structured outputs 强制（打包 ZP 落码，2026-10-03，docs/08 打包 ZP 立项块）
 
 - **一句话**：condition(llm) 节点的 config 增可选 `model`——非空覆盖 `LITELLM_MODEL` 环境默认、仅本次调用生效；`LiteLLMConditionClassifier` 强制 `response_format=json_object`（与 `ai_decision` 同构）。产出形状不变、fail-safe 语义不变、Scripted 回放零影响。

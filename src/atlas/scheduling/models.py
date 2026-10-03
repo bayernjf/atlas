@@ -7,11 +7,14 @@
 归一后再进投影——同一个槽位在两档里必须落成同一个字符串键，否则"逐键一致"从投影开始就漏。
 """
 
-from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 from pydantic import BaseModel
 
@@ -45,6 +48,7 @@ def tz_of(name: str) -> ZoneInfo | None:
     try:
         return ZoneInfo(name)
     except (ZoneInfoNotFoundError, ValueError):
+        logger.warning("tz_of: 未知时区名 %r 回退 UTC", name)
         return None
 
 
@@ -54,6 +58,7 @@ def to_utc_iso(value: datetime | str) -> str:
         try:
             parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
         except ValueError:
+            logger.warning("to_utc_iso: 无法解析时间字符串 %r，原样返回", value)
             return value
         value = parsed
     if value.tzinfo is None:
@@ -114,6 +119,7 @@ def next_fire_at(record: ScheduleRecord, now: datetime) -> str | None:
     try:
         spec = parse_cron(record.cron)
     except CronExpressionError:
+        logger.warning("next_fire_at: cron 表达式解析失败（graph=%s schedule=%s）返回 None", record.graph_id, record.schedule_id)
         return None
     upcoming = next_fire_utc(spec, now, tz=tz_of(record.timezone))
     return upcoming.isoformat() if upcoming is not None else None

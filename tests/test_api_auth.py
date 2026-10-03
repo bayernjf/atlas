@@ -274,3 +274,43 @@ def test_login_allows_seed_credential_outside_prod(monkeypatch):
     monkeypatch.delenv("ATLAS_ENV", raising=False)
     resp = anon.post("/api/auth/login", json={"username": "admin-a", "password": "admin123"})
     assert resp.status_code == 200
+
+
+# --- 打包 ZQ Q4：会话凭证 httpOnly Cookie 化 -----------------------------------
+
+
+def test_login_sets_httponly_session_cookie_and_cookie_auth_works():
+    """登录 Set-Cookie atlas_session（HttpOnly＋SameSite=Strict），Cookie 可直接用于鉴权。"""
+    client = anon  # TestClient 共享 cookie jar：登录后 Cookie 自动携带
+    login = client.post(
+        "/api/auth/login", json={"username": "viewer-a", "password": "viewer123"}
+    )
+    assert login.status_code == 200
+    set_cookie = login.headers.get("set-cookie", "")
+    assert "atlas_session=" in set_cookie
+    assert "HttpOnly" in set_cookie
+    assert "samesite=strict" in set_cookie.lower()
+    # Cookie 鉴权：无 Authorization 头，仅靠浏览器自动携带的 Cookie
+    me = client.get("/api/auth/me")
+    assert me.status_code == 200
+    assert me.json()["principal"]["username"] == "viewer-a"
+
+
+def test_logout_clears_session_cookie():
+    client = anon
+    client.post("/api/auth/login", json={"username": "viewer-a", "password": "viewer123"})
+    assert client.get("/api/auth/me").status_code == 200
+    out = client.post("/api/auth/logout")
+    assert out.status_code == 200
+    assert out.json() == {"logged_out": True}
+    # Cookie 已清，无凭证 → 401
+    assert client.get("/api/auth/me").status_code == 401
+
+
+def test_login_cookie_secure_flag_off_in_dev():
+    """dev 档（本地 http）不置 Secure 位，否则 http://localhost 登录会失效。"""
+    login = anon.post(
+        "/api/auth/login", json={"username": "viewer-a", "password": "viewer123"}
+    )
+    set_cookie = login.headers.get("set-cookie", "")
+    assert "Secure" not in set_cookie

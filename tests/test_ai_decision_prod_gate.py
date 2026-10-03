@@ -81,11 +81,20 @@ def _neutral_profile():
 # --- U1006 prod 无 LLM：显式 failed，不静默走规则 ---------------------------
 
 
+def _demo_registry():
+    """打包 ZQ Q2：本组测试测 ai_decision 门而非 registry 装配——显式注入 demo 适配器表，
+    避免 prod 档走 loader 兜底（prod 无 registry 已改为显式拒绝）。"""
+    from atlas.graph.loader import build_demo_registry
+
+    return build_demo_registry()
+
+
 def test_u1006_prod_rule_fallback_is_refused_with_a_machine_code(monkeypatch):
     monkeypatch.setenv("ATLAS_ENV", "prod")
     monkeypatch.delenv("ATLAS_ENABLE_DEMO_MOCK", raising=False)
     with pytest.raises(AiDecisionUnavailable) as excinfo:
-        run_graph(_decision_graph(), decision_client=RuleBasedDecisionClient())
+        run_graph(_decision_graph(), registry=_demo_registry(),
+                  decision_client=RuleBasedDecisionClient())
     assert excinfo.value.code == "LLM_DECISION_UNAVAILABLE"
     assert excinfo.value.node_id == "ai-1"
     message = str(excinfo.value)
@@ -99,7 +108,8 @@ def test_u1007_prod_with_llm_client_runs_unchanged(monkeypatch):
     """门只认规则兜底：真接了模型（任何非 RuleBasedDecisionClient）照常执行。"""
     monkeypatch.setenv("ATLAS_ENV", "prod")
     monkeypatch.delenv("ATLAS_ENABLE_DEMO_MOCK", raising=False)
-    result = run_graph(_decision_graph(), decision_client=_FakeLlmClient())
+    result = run_graph(_decision_graph(), registry=_demo_registry(),
+                      decision_client=_FakeLlmClient())
     assert result["status"] == "completed"
     assert result["outputs"]["ai-1"]["decision"]["source"] == "llm:fake"
 

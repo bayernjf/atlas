@@ -161,6 +161,8 @@ def test_u209_plan_is_read_only_and_does_not_create_versions():
 
 
 def test_u210_endpoint_read_role_404_and_payload_shape():
+    client.cookies.clear()  # 打包 ZQ Q4：httpOnly Cookie 由前序测试残留——未认证用例需干净 jar
+
     store = services_for(T1_ADMIN).graph_store
     sub = store.save({"nodes": [_tool("s")]})
     _publish(store, sub)  # sub v1

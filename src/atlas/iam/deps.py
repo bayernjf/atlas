@@ -11,7 +11,7 @@ from .principals import (
     Capability, Principal, SEED_TENANTS, SEED_USERS, can, seed_plan_for_profile,
 )
 from .registry import TenantRegistry, TenantServices
-from .sessions import SessionStore
+from .sessions import SESSION_COOKIE, SessionStore
 from .throttle import LoginThrottle
 
 
@@ -94,8 +94,15 @@ def authenticate_login(username: str, password: str) -> Principal:
 
 
 def get_principal(request: Request) -> Principal:
-    header = request.headers.get("authorization", "")
-    token = header[7:].strip() if header[:7].lower() == "bearer " else None
+    # 打包 ZQ Q4：前端不再落盘 token，凭证由 httpOnly Cookie 自动携带（SameSite=Strict
+    # 收敛 CSRF 面）；Bearer 保留兼容 A2A/MCP 与旧调用方。取数规则：**请求显式带了
+    # Authorization 头（键存在，含空值）就以头为准**——空/坏头即无效凭证，不被 Cookie 掩盖；
+    # 完全未带 Authorization 键才读 Cookie——真实浏览器前端不带 Authorization 头，走 Cookie 路径。
+    if "authorization" in request.headers:
+        header = request.headers["authorization"]
+        token = header[7:].strip() if header[:7].lower() == "bearer " else None
+    else:
+        token = request.cookies.get(SESSION_COOKIE)
     principal = session_store.principal_for_token(token)
     if principal is None:
         raise auth_error(401, CODE_UNAUTHENTICATED, _UNAUTHENTICATED)

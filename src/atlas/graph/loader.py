@@ -56,6 +56,7 @@ from atlas.message.adapter import MessageHarnessAdapter
 from atlas.message.service import MessageService
 from atlas.security.bootstrap import demo_surface_enabled
 from atlas.shop.adapter import ShopHarnessAdapter
+from atlas.web.adapter import WebHarnessAdapter
 from atlas.storage.frame import build_frame, deadline_iso, remaining_seconds
 from atlas.tracing import (
     KIND_NODE,
@@ -324,7 +325,26 @@ def build_demo_registry() -> AdapterRegistry:
     registry.register(
         MessageHarnessAdapter(service=MessageService(), granted_permissions=permissions)
     )
+    # 打包 ZQ Q1/Q2：web-playwright 与执行期注册表保持一致（兜底路径同样可选到浏览器操作工具）
+    registry.register(
+        WebHarnessAdapter(granted_permissions=permissions)
+    )
     return registry
+
+
+def _resolve_registry(registry: AdapterRegistry | None) -> AdapterRegistry:
+    """打包 ZQ Q2（docs/89 §9 🟡 → 诚实化）：registry 缺省只允许演示面兜底内置 demo 表。
+
+    prod 且未开 demo 面时显式拒绝，杜绝「忘传 registry 即静默打进 SQLite 演示库」
+    的隐晦降级——与 docs/77 R2 同族（prod 不静默走 mock 兜底）。
+    """
+    if registry is not None:
+        return registry
+    if not demo_surface_enabled():
+        raise RuntimeError(
+            "run_graph 未注入 registry 且演示面关闭：不允许静默回退内置 SQLite 演示适配器"
+        )
+    return build_demo_registry()
 
 
 def _seed_variables(graph: GraphDSL) -> dict[str, Any]:
@@ -2526,7 +2546,7 @@ def compile_graph(
 ):
     decision_client = decision_client or get_decision_client()
     condition_classifier = condition_classifier or get_condition_classifier()
-    registry = registry if registry is not None else build_demo_registry()
+    registry = _resolve_registry(registry)
     approval_broker = approval_broker or _default_approval_broker
     event_wait_broker = event_wait_broker or _default_event_wait_broker
     # C（docs/27 §2.1）：单次编译/运行固定一个 UTC 时钟，供 today()/now() 与条件断点求值；
