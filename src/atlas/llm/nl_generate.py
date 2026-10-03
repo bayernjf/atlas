@@ -29,15 +29,37 @@ _TYPE_CHECKS = {
 }
 
 
-def generate_graph(prompt: str) -> dict[str, Any]:
-    model = os.getenv("LITELLM_MODEL", "").strip()
+def generate_graph(prompt: str, tenant_id: str | None = None) -> dict[str, Any]:
+    """docs/93 打包 Y：可选 tenant_id 解析租户 BYOK/内置模型（显式传 key/base_url）；
+    无租户上下文或未配置时回退 env（LITELLM_MODEL），行为与现状一致。"""
+    model, api_key, base_url = _resolve_llm_config(tenant_id)
     if model:
-        generated = _generate_with_llm(prompt, model)
+        generated = _generate_with_llm(prompt, model, api_key=api_key, base_url=base_url)
         if generated is not None:
             return generated
     if any(keyword in prompt for keyword in _REFUND_KEYWORDS):
         return refund_template_graph()
     raise ValueError("未能识别流程意图（规则兜底仅支持退款/售后场景；配置 LITELLM_MODEL 可支持任意描述）")
+
+
+def _resolve_llm_config(
+    tenant_id: str | None,
+) -> tuple[str, str | None, str | None]:
+    """按优先级解析构造期默认模型（docs/93 §1 语义约束 3）：租户 BYOK > 内置 > env。
+
+    返回 ``(model, api_key_plaintext, base_url)``；无任何配置时 model 为空串（调用方走规则兜底）。
+    """
+    if tenant_id is not None:
+        from atlas.connections.service import get_secret_provider
+        from atlas.llm.config import get_model_config_store, resolve_default_model
+
+        cfg = resolve_default_model(get_model_config_store(), tenant_id)
+        if cfg is not None:
+            api_key = (
+                get_secret_provider().decrypt(cfg.api_key_enc) if cfg.api_key_enc else None
+            )
+            return cfg.model, api_key, cfg.base_url
+    return os.getenv("LITELLM_MODEL", "").strip(), None, None
 
 
 def validate_param_fills(
@@ -99,7 +121,13 @@ def validate_param_fills(
 
 
 
-def _generate_with_llm(prompt: str, model: str) -> dict[str, Any] | None:
+def _generate_with_llm(
+    prompt: str,
+    model: str,
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
+) -> dict[str, Any] | None:
     import litellm
 
     system = (
@@ -158,14 +186,20 @@ def _generate_with_llm(prompt: str, model: str) -> dict[str, Any] | None:
         "店铺退款 Demo 的工具为 shop/login、shop/list_pending_refunds、shop/execute_refund、"
         "shop/request_human_approval、shop/process_refund。"
     )
-    response = litellm.completion(
-        model=model,
-        messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
-        temperature=0.2,
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+        "temperature": 0.2,
         # J-3c：出向 LLM 必须带超时与输出上限（NL 图草稿较长，放宽到 1024）
-        timeout=float(os.getenv("ATLAS_LLM_TIMEOUT_SECONDS", "60")),
-        max_tokens=1024,
-    )
+        "timeout": float(os.getenv("ATLAS_LLM_TIMEOUT_SECONDS", "60")),
+        "max_tokens": 1024,
+    }
+    # docs/93 打包 Y：BYOK/内置显式传 key/base_url；None 时不传，litellm 走 env。
+    if api_key:
+        kwargs["api_key"] = api_key
+    if base_url:
+        kwargs["base_url"] = base_url
+    response = litellm.completion(**kwargs)
     content = response["choices"][0]["message"]["content"]
     match = re.search(r"\{.*\}", content, re.DOTALL)
     if not match:

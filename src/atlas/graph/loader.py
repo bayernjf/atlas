@@ -2543,9 +2543,10 @@ def compile_graph(
     jitter_rng: random.Random | None = None,
     expr_rng: random.Random | None = None,
     _block_subgraph_suspend: bool = False,
+    tenant_id: str | None = None,  # docs/93 打包 Y：LLM 模型配置按租户解析（None＝回退 env）
 ):
-    decision_client = decision_client or get_decision_client()
-    condition_classifier = condition_classifier or get_condition_classifier()
+    decision_client = decision_client or get_decision_client(tenant_id=tenant_id)
+    condition_classifier = condition_classifier or get_condition_classifier(tenant_id=tenant_id)
     registry = _resolve_registry(registry)
     approval_broker = approval_broker or _default_approval_broker
     event_wait_broker = event_wait_broker or _default_event_wait_broker
@@ -2985,6 +2986,7 @@ def run_graph(
     rng_seed: int | None = None,
     _expr_rng: random.Random | None = None,
     _block_subgraph_suspend: bool | None = None,
+    tenant_id: str | None = None,  # docs/93 打包 Y：LLM 模型配置按租户解析（None＝回退 env）
 ) -> dict[str, Any]:
     """编译并执行，返回状态/节点产出/轨迹。
 
@@ -3090,6 +3092,7 @@ def run_graph(
             jitter_rng=jitter_rng,
             expr_rng=expr_rng,
             _block_subgraph_suspend=block_subgraph_suspend,
+            tenant_id=tenant_id,
         )
         state = initial_state(tail, inputs=resume_inputs)
         state["outputs"] = resume_state.get("outputs", {})
@@ -3131,6 +3134,7 @@ def run_graph(
         jitter_rng=jitter_rng,
         expr_rng=expr_rng,
         _block_subgraph_suspend=block_subgraph_suspend,
+        tenant_id=tenant_id,
     )
     final_state = compiled.invoke(
         initial_state(graph, inputs=inputs),

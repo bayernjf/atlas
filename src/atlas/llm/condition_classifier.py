@@ -57,10 +57,16 @@ class OfflineConditionClassifier:
 
 
 class LiteLLMConditionClassifier:
-    """经 LiteLLM 的语义分类；输出无法解析或标签越界抛 ConditionClassifyError。"""
+    """经 LiteLLM 的语义分类；输出无法解析或标签越界抛 ConditionClassifyError。
 
-    def __init__(self, model: str):
+    docs/93 打包 Y：api_key/base_url 可选显式供应商凭据（BYOK/内置），
+    非空时传给 litellm.completion（不靠 env）；为空则 litellm 自读 env。
+    """
+
+    def __init__(self, model: str, *, api_key: str | None = None, base_url: str | None = None):
         self.model = model
+        self.api_key = api_key
+        self.base_url = base_url
 
     def classify(
         self,
@@ -85,19 +91,25 @@ class LiteLLMConditionClassifier:
             f"{instruction_block}"
             f"运行上下文：\n{context_text}"
         )
-        response = litellm.completion(
-            model=model_name,
-            messages=[
+        kwargs: dict[str, Any] = {
+            "model": model_name,
+            "messages": [
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0,
+            "temperature": 0,
             # J-3c：出向 LLM 必须带超时与输出上限，防挂死/超长回包拖垮编排
-            timeout=float(os.getenv("ATLAS_LLM_TIMEOUT_SECONDS", "60")),
-            max_tokens=512,
+            "timeout": float(os.getenv("ATLAS_LLM_TIMEOUT_SECONDS", "60")),
+            "max_tokens": 512,
             # ZP：结构化输出强制（与 llm/decision.py:127 同构）；模型必须返纯 JSON。
-            response_format={"type": "json_object"},
-        )
+            "response_format": {"type": "json_object"},
+        }
+        # docs/93 打包 Y：BYOK/内置显式传 key/base_url；None 时不传，litellm 走 env。
+        if self.api_key:
+            kwargs["api_key"] = self.api_key
+        if self.base_url:
+            kwargs["base_url"] = self.base_url
+        response = litellm.completion(**kwargs)
         content = response["choices"][0]["message"]["content"]
         try:
             match = _BRANCH_RE.search(content)
@@ -136,8 +148,33 @@ class ScriptedConditionClassifier:
         return self._branches[node_id]
 
 
-def get_condition_classifier() -> ConditionClassifier:
+def get_condition_classifier(
+    tenant_id: str | None = None,
+) -> ConditionClassifier:
+    """构建分类器；docs/93 打包 Y：可选 tenant_id 解析租户 BYOK/内置模型，
+    无租户上下文或未配置时回退 env（LITELLM_MODEL），行为与现状一致。"""
+    resolved = _resolve_llm_config(tenant_id)
+    if resolved is not None:
+        model, api_key, base_url = resolved
+        return LiteLLMConditionClassifier(model, api_key=api_key, base_url=base_url)
     model = os.getenv("LITELLM_MODEL", "").strip()
     if model:
         return LiteLLMConditionClassifier(model)
     return OfflineConditionClassifier()
+
+
+def _resolve_llm_config(tenant_id: str | None) -> tuple[str, str | None, str | None] | None:
+    """按优先级解析构造期默认模型（docs/93 §1 语义约束 3）：租户 BYOK > 内置。
+
+    返回 ``(model, api_key_plaintext, base_url)``；无租户上下文或未配置 → None（落 env）。
+    """
+    if tenant_id is None:
+        return None
+    from atlas.connections.service import get_secret_provider
+    from atlas.llm.config import get_model_config_store, resolve_default_model
+
+    cfg = resolve_default_model(get_model_config_store(), tenant_id)
+    if cfg is None:
+        return None
+    api_key = get_secret_provider().decrypt(cfg.api_key_enc) if cfg.api_key_enc else None
+    return cfg.model, api_key, cfg.base_url
