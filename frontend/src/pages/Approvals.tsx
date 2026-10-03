@@ -89,6 +89,7 @@ export function Approvals({ principal, onLogout, onBack }: ApprovalsProps): Reac
     }
   }, [t])
 
+  /* oxlint-disable react/set-state-in-effect */
   useEffect(() => {
     void refresh()
   }, [refresh])
@@ -97,6 +98,7 @@ export function Approvals({ principal, onLogout, onBack }: ApprovalsProps): Reac
   useEffect(() => {
     if (activeTab === 'decided' && !decidedLoaded) void refreshDecided()
   }, [activeTab, decidedLoaded, refreshDecided])
+  /* oxlint-enable react/set-state-in-effect */
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -108,6 +110,7 @@ export function Approvals({ principal, onLogout, onBack }: ApprovalsProps): Reac
     return () => clearInterval(timer)
   }, [refresh, activeTab])
 
+  /* oxlint-disable react/set-state-in-effect */
   useEffect(() => {
     if (cardToken === null) return
     setCardView(null)
@@ -118,6 +121,7 @@ export function Approvals({ principal, onLogout, onBack }: ApprovalsProps): Reac
       })
       .catch((exc: Error) => setCardError(exc.message))
   }, [cardToken])
+  /* oxlint-enable react/set-state-in-effect */
 
   async function handleDecide(
     token: string,

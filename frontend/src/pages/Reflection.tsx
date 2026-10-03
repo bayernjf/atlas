@@ -100,7 +100,7 @@ export function Reflection({
     try {
       const detail = await loadCandidate(candidateId)
       setCandidates((prev) => ({ ...prev, [candidateId]: detail }))
-    } catch (error) {
+    } catch {
       message.error(t('loadFailed'))
     } finally {
       setLoadingCandidateId(null)

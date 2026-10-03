@@ -40,9 +40,11 @@ export function EmailApproval({ token }: { token: string }): ReactElement {
     }
   }, [token])
 
+  /* oxlint-disable react/set-state-in-effect */
   useEffect(() => {
     void refresh()
   }, [refresh])
+  /* oxlint-enable react/set-state-in-effect */
 
   useEffect(() => {
     if (!view || view.status !== 'pending') return
