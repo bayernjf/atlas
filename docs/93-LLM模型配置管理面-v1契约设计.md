@@ -61,15 +61,16 @@
 - **不解除 docs/14 D14 其余余部**（置信度阈值/多候选/结构化输出字段级脱敏仍缓做）。
 - **不动 env 兜底路径**（Demo/dev 形态零变化；`LITELLM_MODEL` 仍有效）。
 
-## 4. 验收（落码批门禁；13 候选用例 U1090 起）
+## 4. 验收（落码批门禁；13 候选用例 U1109 起）
 
-- **U1090**：内置配置 CRUD（admin）——写 key 后读回脱敏、响应零明文；enabled=false 时消费点回退 env。
-- **U1091**：BYOK 配置 per-tenant 隔离——租户 A 配 key 不影响租户 B；B 无配置走内置。
-- **U1092**：优先级——节点显式 model > BYOK > 内置 > env（各档构造正确客户端类型）。
-- **U1093**：四消费点改造后，无任何配置（清 env）时行为与现状一致（规则/Offline/Null 兜底）。
-- **U1094**：prod fail-closed 门零回归（`test_ai_decision_prod_gate.py`/`test_condition_classifier_prod_gate.py` 原样绿）。
-- **U1095**：密钥 AES-GCM 信封——库中明文零命中（gitleaks/机检）、`_FILE` 补水路径兼容（复用 ZO）。
-- **U1096**：前端 Models 页——admin 可编辑内置/BYOK、脱敏展示、双语键 PARITY。
+> **号段更正（2026-10-04 落码批）**：立项批原写「U1090–U1096」，实测 docs/13 号段已满——打包 ZP 占 U1082–U1091、打包 ZQ 占 U1092–U1096、打包 ZR 占 U1097–U1100、docs/92 反思前端占 U1101–U1108。本批统一改 **U1109–U1114**（测试文件 `tests/test_model_config.py` 已按此落）。
+
+- **U1109**：内置配置 CRUD（admin）——写 key 后读回脱敏、响应零明文；enabled=false 时消费点回退 env。
+- **U1110**：BYOK 配置 per-tenant 隔离——租户 A 配 key 不影响租户 B；B 无配置走内置。
+- **U1111**：优先级——节点显式 model > BYOK > 内置 > env（各档构造正确客户端类型）；BYOK 显式传 api_key/base_url 给 litellm（最大风险点）。
+- **U1112**：四消费点改造后，无任何配置（清 env）时行为与现状一致（规则/Offline/Null 兜底）。
+- **U1113**：prod fail-closed 门零回归（`test_ai_decision_prod_gate.py`/`test_condition_classifier_prod_gate.py` 原样绿；判据是客户端类型，不随配置来源变）。
+- **U1114**：密钥 AES-GCM 信封——库中明文零命中（gitleaks/机检）、`_FILE` 补水路径兼容（复用 ZO）。
 - **后端门**：全量 pytest（基线 2229 passed/136 skipped）零回归；**前端门**：vitest（基线 772/2）＋oxlint 0/0＋`pnpm build`；**守护门**：`test_handoff_integrity.py`/`test_migration_convention.py`（若零迁移则后者原样绿）。
 
 ## 5. 原子提交序（落码批执行）
@@ -77,15 +78,15 @@
 1. `docs(contract)` 本文（+08 立项条/03 契约注记/14 注记/00 地图/handoff/CHANGELOG）。
 2. `feat(llm)` `config.py`＋两档 store＋`TenantServices.model_config` 装配（含 AES-GCM 信封复用）。
 3. `feat(llm)` 四消费点改造（优先级解析；无租户上下文回退 env）。
-4. `feat(api)` 三 REST 端点（administer/read 门，脱敏）。
+4. `feat(api)` REST 四端点（GET /api/models、PUT /api/models/builtin〔administer〕、GET/PUT /api/models/byok〔operate〕，脱敏）。
 5. `feat(frontend)` Models 页＋i18n 双语。
-6. `test` U1090–U1096＋既有门零回归。
+6. `test` U1109–U1114＋既有门零回归。
 7. `docs(closeout)` 回填 08/13/73/14/00/handoff/CHANGELOG。
 
 ## 6. 同步矩阵（契约门，本批已做/落码批补）
 
 - **docs/08**：C 组候选行已登记（2026-10-03）；本契约为其形状权威，落码批在此追加立项注记。
-- **docs/03**：契约索引新增 `model_config`（若 PG 化含表名；本批零迁移则只注记）。
+- **docs/03**：契约索引新增 `model_config`（含表名——**落码批已落迁移 040**，非零迁移；§2.1 两档 store＋PG 档持久化按形状权威执行）。
 - **docs/73 §10**：1.1 残余追踪——管理面落码后转「已实现」，1.1 判据（prod 真调用）随部署侧走。
 - **docs/14**：D14 余部「按租户模型配置」注记——本批取回半边（管理面），其余不解除。
 - **docs/00**：文档地图登记 93。
@@ -94,5 +95,5 @@
 ## 7. 风险与边界
 
 - **密钥安全**：AES-GCM 信封主密钥仍走 `security/bootstrap.py` 启动门（docs/32 T26 既有）；本批不新增密钥，只复用加密工具。**写日志/异常信息时 api_key 必须脱敏**（现状 `_SYSTEM_PROMPT` 与错误信息无明文泄漏，需机检守护）。
-- **litellm 读 env 的耦合**：litellm 直连路径自读 `OPENAI_API_KEY`/`OPENAI_BASE_URL`（docs/73 实证）——BYOK 按租户传入时**不能靠 env**，须在调用点显式传 `api_key`/`base_url` 给 `litellm.completion`（现状 decision/condition_classifier 未传，落码批须补）。这是本批**最大的实现风险点**，验收 U1092 专门钉它。
+- **litellm 读 env 的耦合**：litellm 直连路径自读 `OPENAI_API_KEY`/`OPENAI_BASE_URL`（docs/73 实证）——BYOK 按租户传入时**不能靠 env**，须在调用点显式传 `api_key`/`base_url` 给 `litellm.completion`（现状 decision/condition_classifier 未传，落码批须补）。这是本批**最大的实现风险点**，验收 U1111 专门钉它。
 - **单副本约束不变**：不引入新进程/新依赖；配置 store 若 PG 化沿用既有 `PgStore` 模式。

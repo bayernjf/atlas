@@ -136,3 +136,8 @@
 - **不自动落码的理由**：属产品功能立项（新管理面＋per-tenant 语义＋消费点改造），按 AGENTS.md 须先记录决策再落码；且"内置模型 vs BYOK 的权限/租户语义、管理 UI 放哪（admin 页）"需用户拍板后写契约。
 - **待拍板两项已拍定（2026-10-04 用户回话「我不是给你Agnes的模型了吗，内置模型，产品模型分两种，一个是内置模型，需要admin UI来管理，还有一个是BYOK，用户自己配置」）**：① **内置模型**＝平台方内置 Agnes、admin UI 管理密钥/模型/开关，用户直接用、不需要自带 key；② **BYOK**＝用户自配置自己的 key、per-tenant 生效。已按此写死契约 [docs/93](93-模型配置管理面内置模型BYOK-v1契约设计.md)（2026-10-04 立项）：BYOK 权限＝租户级、administer/operator 可配；admin 落点＝Models.tsx 独立页；四消费点优先级＝节点显式 model > BYOK > 内置 > env。**落码与否仍待用户拍板**（docs/08 C 组候选行）。
 
+## 10bis. 打包 Y 落码收口注记（2026-10-04，docs/08 打包 Y）
+
+- **1.1 残余转「已实现」（管理面半边；B 档仍 🟡）**：docs/93 契约按用户口径全部落码——`src/atlas/llm/config.py`（ModelConfig＋InMemory/Pg 两档 store＋进程单例）、迁移 **040** `model_config`（`__builtin__` 行＝内置、per-tenant BYOK 行）、四消费点（decision/condition_classifier/nl_generate/reflection.adapter＋candidate summarizer）改读配置（`tenant_id` 形参＋`get_secret_provider()` 解信封＋显式 api_key/base_url）、REST 四端点（`GET /api/models`、`PUT /api/models/builtin`〔administer〕、`GET/PUT /api/models/byok`〔read/operate〕）、前端 Models.tsx（内置/BYOK 双卡片＋生效摘要）。验收 U1109–U1114（13 例全过）；全量 **2269 passed/139 skipped/1 failed**（唯一失败 `test_u1077`＝Windows 平台既有换行差异，stash 验证与本批无关）、守护门＋LLM 回归 61 passed、前端 lint 0/0＋vitest 772/2＋build 通过。
+- **B 档 1.1 判据（prod 真调用）仍 🟡**：管理面已落，但 prod 形态下真 LLM 调用尚未整链演练——凭据本体仍在本地 `.env`（`LITELLM_MODEL`＋`OPENAI_API_KEY`），未入 vault 文件注入形态；须与 4.1 prod 整链演练一起绿。1.2／1.3／4.1 不变。
+

@@ -1283,3 +1283,18 @@ OperationDescriptor = {
 > preview/import 请求体：`{content?: str, url?: str, credentials?: {scheme: str}}`（content/url 恰好其一，同时给/都不给 422；credentials key 须为 preview 方案名，否则 422 OPENAPI_INVALID_CREDENTIAL）。preview 响应：`{title, base_url, operations:[OperationDescriptor], imported_count, skipped_count, security_schemes:[SecurityScheme]}`（不落库，含 skipped 行，永不接收密钥）；import 201 响应＝ImportedSpec（仅成功 operations）；全 skipped → 422。`GET /api/openapi/imports` 返 `{items:[ImportedSpec]}`，单项返 ImportedSpec；`PUT /api/openapi/imports/{spec_id}/credentials`（operate）body `{credentials:{name:value}}`：apiKey/bearer 的 value 为 string、basic（docs/46）为 `{username,password}`（信封明文存 JSON）；空串/空对象/null 删除信封；basic 缺字段或类型不符 422 OPENAPI_INVALID_CREDENTIAL；返 `{configured:[name]}`；DELETE 200 `{deleted:true}`。进程内 per-tenant、**reset 不清**；上限 5 specs/租户、200 operations/spec。适配器 id `openapi:{spec_id}`、type `api`，合并进 `/api/adapters`；执行时逐次解密注入，缺密钥不发请求→失败结果 OPENAPI_CREDENTIAL_MISSING。错误码（422 除注明）：OPENAPI_INVALID_DOCUMENT / OPENAPI_UNSUPPORTED_VERSION / OPENAPI_FETCH_FAILED / OPENAPI_NO_IMPORTABLE_OPERATION / OPENAPI_LIMIT_EXCEEDED / OPENAPI_INVALID_CREDENTIAL；运行期 OPENAPI_INVALID_PARAMETER、OPENAPI_CREDENTIAL_MISSING（失败 Observation）。**docs/56（2026-09-24）增**：导入期 409 **OPENAPI_DUPLICATE**（同租户未删同内容指纹，响应体带 `existingSpecId`）；`DELETE .../imports/{spec_id}` 改软删除 200 `{deleted:true}`（释放名额、可重新导入同指纹）；新增 `POST /api/openapi/imports/{spec_id}/restore`（administer）恢复软删项，成功 `{restored:true}`、与未删同指纹冲突 409 OPENAPI_DUPLICATE 带 existingSpecId、不存在或本就未删 404。形状权威 docs/42 §1–§3、docs/44、docs/46、docs/56 §3。
 >
 > **include_deleted 列表＋硬删除注记（docs/60 G2，2026-09-24 落码收口 a853700/1df73e2/1ee7482，内存/PG 双档，部分取回 D22）**：`GET /api/openapi/imports?include_deleted=true`（administer）在列表中并入软删项、投影补删除标记；`DELETE /api/openapi/imports/{spec_id}?hard=true`（administer）**物理删除**——仅已软删项可硬删（未软删返 409 **OPENAPI_NOT_SOFT_DELETED**），不存在 404、viewer 403、跨租户 404；内存档 del、PG 档 DELETE 物理行。**落码偏差**：列表删除标记沿用 snake_case `deleted_at`（openapi 列表投影整体 model_dump snake_case，非契约字面 camelCase deletedAt；单项管理投影仍为 camelCase）。前端导入页「已删除导入」浏览（仅 admin）＋对已软删项显示「彻底删除」二次确认；**v1 不提供硬删后的恢复 UI**（restore 仍只针对软删项，未扩大）。YAML/oauth2/凭证轮换/真实联调仍缓做 D22。
+
+# model_config 表（LLM 模型配置管理面；docs/93 打包 Y，迁移 040，2026-10-03 落码）
+
+权威形状：docs/93 §2.1（ModelConfig dataclass＋两档 store）；实现 `src/atlas/llm/config.py`。
+
+| 列 | 类型 | 说明 |
+|---|---|---|
+| `tenant_id` | TEXT PK | 内置模型用保留键 `__builtin__`（平台级单一配置，admin 维护）；BYOK 按真实租户 id 一行一租户 |
+| `config` | JSONB | `ModelConfig` 全字段（mode/model/api_key_enc/base_url/enabled/updated_by/updated_at）；api_key_enc 为 AES-GCM 信封（enc$v1$…），落库零明文 |
+| `updated_at` | TEXT | UTC ISO-8601；写入即更新（ON CONFLICT upsert） |
+
+- 幂等：`CREATE TABLE IF NOT EXISTS`＋`ON CONFLICT (tenant_id) DO UPDATE`（upsert，无删除语义）。
+- 消费点优先级（docs/93 §1 语义约束 3）：节点显式 model > 租户 BYOK > 内置 > env（LITELLM_MODEL 兜底）；无租户上下文（loader 直跑/测试）回退 env，行为与现状一致。
+- 挂 `TenantServices.model_config`（照 connection_service 模式；reset 不清，PG 档持久化）。
+- REST：`GET /api/models`（read）、`PUT /api/models/builtin`（administer）、`GET/PUT /api/models/byok`（read/operate；docs/93 §1 语义约束 2：operator 可配自己的 key）；响应 api_key 一律脱敏（`***`＋明文尾 4 位，`_masked_view`）。
