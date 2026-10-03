@@ -4,12 +4,22 @@
 
 ## [Unreleased]
 
-### docs：LLM 模型配置管理面立项契约＝内置模型（admin 管理）＋BYOK（用户自配）（2026-10-04 docs-only；形状权威 docs/93，落码否待用户拍板）
+### feat(llm/api/frontend)＋test＋docs：LLM 模型配置管理面落码收口＝内置模型（admin 管理）＋BYOK（用户自配）（2026-10-04 立项并同日落码收口；用户「那你继续搞」批准；形状权威 docs/93；docs/13 U1109–U1114）
+
+- **一句话**：产品模型双模式落地——① 内置模型＝平台方内置（Agnes），admin UI 管理密钥/模型/开关，用户直接用；② BYOK＝用户自配置 key、per-tenant 生效。四消费点从全局 env 直读升级为配置解析（优先级：节点显式 model > BYOK > 内置 > env；无租户上下文回退 env，行为与现状一致）。
+- **后端**：`src/atlas/llm/config.py`（ModelConfig＋public_view 脱敏＋InMemory/Pg 两档 store＋进程单例装配）；迁移 **040** `model_config`（tenant_id PK、config JSONB、`__builtin__` 行＝内置、upsert 幂等）；四消费点（decision/condition_classifier/nl_generate/reflection.adapter＋candidate summarizer）加 `tenant_id` 形参并经 `get_secret_provider()` 解信封显式传 api_key/base_url（None→litellm 自读 env；本批最大风险点＝BYOK 显式传参，U1111 专测）；`iam/registry.py` 装配、`graph/loader.py` 透传、`api/main.py` 6 处接租户。
+- **REST 四端点**：`GET /api/models`（read）、`PUT /api/models/builtin`（administer）、`GET/PUT /api/models/byok`（read/operate）；api_key 写即 AES-GCM 信封（复用 docs/32 T26）、响应脱敏 `***`＋明文尾 4 位。
+- **前端**：Models.tsx（内置/BYOK 双卡片＋当前生效摘要）＋i18n models 命名空间＋路由/导航＋apiClient 类型。
+- **验收号段更正**：契约原 U1090–U1096 与 docs/13 已占号段（ZP U1082–U1091／ZQ U1092–U1096）全撞 ⇒ 改 **U1109–U1114**（`tests/test_model_config.py` 13 例全绿，docs/93 §4 已订正）。
+- **门（实跑）**：全量 pytest **2269 passed/139 skipped/1 failed**（唯一失败 `test_u1077`＝Windows 平台既有换行差异，stash 验证与本批无关、未改该测试）；守护门＋LLM 回归 **61 passed**；前端 lint 0/0＋vitest 772/2＋`pnpm build` 通过。**D14 其余余部不解除**（置信度阈值/多候选/每分支独立 prompt/字段脱敏/门禁 LLM 抖动仍缓做）。
+- 同步面：docs/93 §4 号段订正＋docs/03（model_config 契约索引）＋docs/08 收口块＋docs/13 U1109–U1114 段＋docs/73 §10bis＋docs/14 D14 注记＋docs/00 地图＋handoff。
+
+### docs：LLM 模型配置管理面立项契约＝内置模型（admin 管理）＋BYOK（用户自配）（2026-10-04 docs-only；形状权威 docs/93，**已随本日收口批落码**）
 
 - 口径：用户定义产品模型分两种＝① 内置模型（平台方内置 Agnes、admin UI 管理密钥/模型/开关）；② BYOK（用户自配置 key、per-tenant 生效）。
 - 现状：四消费点直读全局 env（LITELLM_MODEL+OPENAI_API_KEY/BASE_URL）、零管理 UI、零 per-tenant；litellm 直连自读 env 是最大风险点（BYOK 须显式传 key/base_url）。
-- 范围：配置模型＋两档 store（内存/PG）挂 TenantServices、四消费点优先级＝节点显式 model > BYOK > 内置 > env、三 REST 端点（administer/read）、Models.tsx 页；密钥 AES-GCM 信封（复用 T26）。非目标：用户级 BYOK/多模型路由/用量统计/RBAC 细分。验收 U1090–U1096。零迁移/零依赖/无 ADR；D14 其余余部不解除。
-- 同步面：docs/08 C 组候选行（立项注记）、docs/00 地图登记 93、docs/73 §10（待拍板点已在契约内拍定）、handoff Active #101。零代码/测试/迁移改动。
+- 范围：配置模型＋两档 store（内存/PG）挂 TenantServices、四消费点优先级＝节点显式 model > BYOK > 内置 > env、REST 四端点（administer/read/operate）、Models.tsx 页；密钥 AES-GCM 信封（复用 T26）。非目标：用户级 BYOK/多模型路由/用量统计/RBAC 细分。验收 U1109–U1114（号段更正）。零依赖/无 ADR；迁移 040 随收口批落。D14 其余余部不解除。
+- 同步面：docs/08 C 组候选行（立项注记）、docs/00 地图登记 93、docs/73 §10（待拍板点已在契约内拍定）、handoff Active #101。立项批零代码/测试/迁移改动。
 
 ### docs：LLM 模型配置管理面产品口径登记（内置模型＋BYOK）（2026-10-03，用户产品定义；docs/73 §10）
 

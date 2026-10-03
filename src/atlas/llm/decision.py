@@ -88,10 +88,14 @@ class LiteLLMDecisionClient:
 
     W5-5.1：`prompt` 非空时直接作为用户消息发出（运营 promptTemplate 真实生效）；
     `model` 非空时覆盖构造期默认模型，仅本次调用生效。
+    docs/93 打包 Y：api_key/base_url 为可选显式供应商凭据（BYOK/内置），
+    非空时传给 litellm.completion（不靠 env）；为空则 litellm 自读 env（Demo/dev 形态不变）。
     """
 
-    def __init__(self, model: str):
+    def __init__(self, model: str, *, api_key: str | None = None, base_url: str | None = None):
         self.model = model
+        self.api_key = api_key
+        self.base_url = base_url
 
     def _default_prompt(self, reason: str, amount: float, limit: float) -> str:
         """无运营 prompt 时的退款专用兜底文案（保留旧行为，供直接调用方使用）。"""
@@ -118,18 +122,24 @@ class LiteLLMDecisionClient:
         model_name = (model or "").strip() or self.model
         # 运营 prompt 优先（就是发给模型的内容）；为空才退回退款专用兜底文案。
         user_content = prompt.strip() or self._default_prompt(reason, amount, limit)
-        response = litellm.completion(
-            model=model_name,
-            messages=[
+        kwargs: dict[str, Any] = {
+            "model": model_name,
+            "messages": [
                 {"role": "system", "content": _STRUCTURED_SYSTEM_MESSAGE},
                 {"role": "user", "content": user_content},
             ],
-            response_format={"type": "json_object"},
-            temperature=0,
+            "response_format": {"type": "json_object"},
+            "temperature": 0,
             # J-3c：出向 LLM 必须带超时与输出上限，防挂死/超长回包拖垮编排
-            timeout=float(os.getenv("ATLAS_LLM_TIMEOUT_SECONDS", "60")),
-            max_tokens=512,
-        )
+            "timeout": float(os.getenv("ATLAS_LLM_TIMEOUT_SECONDS", "60")),
+            "max_tokens": 512,
+        }
+        # docs/93 打包 Y：BYOK/内置显式传 key/base_url；None 时不传，litellm 走 env。
+        if self.api_key:
+            kwargs["api_key"] = self.api_key
+        if self.base_url:
+            kwargs["base_url"] = self.base_url
+        response = litellm.completion(**kwargs)
         content = response["choices"][0]["message"]["content"]
         try:
             match = _DECISION_RE.search(content)
@@ -156,12 +166,42 @@ class LiteLLMDecisionClient:
 _decision_mode_logged = False
 
 
-def get_decision_client() -> DecisionClient:
-    """构建决策器；首次调用打印运行模式（docs/64 J-2a：不再静默降级）。"""
+def _resolve_llm_config(tenant_id: str | None) -> tuple[str, str | None, str | None] | None:
+    """按优先级解析构造期默认模型（docs/93 §1 语义约束 3）：租户 BYOK > 内置 > env。
+
+    返回 ``(model, api_key_plaintext, base_url)``；无租户上下文或未配置 → None（调用方落 env）。
+    密钥信封在此解密为明文，只在返回的内存对象里存活（不落库/日志/响应）。
+    """
+    if tenant_id is None:
+        return None
+    from atlas.connections.service import get_secret_provider
+    from atlas.llm.config import get_model_config_store, resolve_default_model
+
+    cfg = resolve_default_model(get_model_config_store(), tenant_id)
+    if cfg is None:
+        return None
+    api_key = get_secret_provider().decrypt(cfg.api_key_enc) if cfg.api_key_enc else None
+    return cfg.model, api_key, cfg.base_url
+
+
+def get_decision_client(tenant_id: str | None = None) -> DecisionClient:
+    """构建决策器；首次调用打印运行模式（docs/64 J-2a：不再静默降级）。
+
+    docs/93 打包 Y：可选 tenant_id 解析租户 BYOK/内置模型（显式传 key/base_url）；
+    无租户上下文或未配置时回退 env（LITELLM_MODEL），行为与现状完全一致。
+    """
     global _decision_mode_logged
+    resolved = _resolve_llm_config(tenant_id)
+    if resolved is not None:
+        model, api_key, base_url = resolved
+        client: DecisionClient = LiteLLMDecisionClient(model, api_key=api_key, base_url=base_url)
+        if not _decision_mode_logged:
+            logger.info("decision client: LiteLLM(model=%s, source=model_config)", model)
+            _decision_mode_logged = True
+        return client
     model = os.getenv("LITELLM_MODEL", "").strip()
     if model:
-        client: DecisionClient = LiteLLMDecisionClient(model)
+        client = LiteLLMDecisionClient(model)
         if not _decision_mode_logged:
             logger.info("decision client: LiteLLM(model=%s)", model)
             _decision_mode_logged = True

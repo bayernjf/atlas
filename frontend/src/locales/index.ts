@@ -29,6 +29,7 @@ import enRuntime from './en-US/runtime.json'
 import enSchedules from './en-US/schedules.json'
 import enValidation from './en-US/validation.json'
 import enWaits from './en-US/waits.json'
+import enModels from './en-US/models.json'
 import zhCommon from './zh-CN/common.json'
 import zhApprovals from './zh-CN/approvals.json'
 import zhAudit from './zh-CN/audit.json'
@@ -45,9 +46,10 @@ import zhRuntime from './zh-CN/runtime.json'
 import zhSchedules from './zh-CN/schedules.json'
 import zhValidation from './zh-CN/validation.json'
 import zhWaits from './zh-CN/waits.json'
+import zhModels from './zh-CN/models.json'
 
 export type Locale = 'zh-CN' | 'en-US'
-export type Namespace = 'common' | 'approvals' | 'audit' | 'editor' | 'dashboard' | 'demo' | 'monitoring' | 'memory' | 'connections' | 'channels' | 'openapi' | 'runtime' | 'schedules' | 'validation' | 'waits' | 'reflection'
+export type Namespace = 'common' | 'approvals' | 'audit' | 'editor' | 'dashboard' | 'demo' | 'monitoring' | 'memory' | 'connections' | 'channels' | 'openapi' | 'runtime' | 'schedules' | 'validation' | 'waits' | 'reflection' | 'models'
 
 type Dict = Record<string, unknown>
 export type TranslateOptions = {
@@ -57,7 +59,7 @@ export type TranslateOptions = {
   lng?: Locale
 } & Record<string, unknown>
 
-const NAMESPACES: Namespace[] = ['common', 'approvals', 'audit', 'editor', 'dashboard', 'demo', 'monitoring', 'memory', 'connections', 'channels', 'openapi', 'runtime', 'schedules', 'validation', 'waits', 'reflection']
+const NAMESPACES: Namespace[] = ['common', 'approvals', 'audit', 'editor', 'dashboard', 'demo', 'monitoring', 'memory', 'connections', 'channels', 'openapi', 'runtime', 'schedules', 'validation', 'waits', 'reflection', 'models']
 
 const resources: Record<Locale, Record<Namespace, Dict>> = {
   'zh-CN': {
@@ -77,6 +79,7 @@ const resources: Record<Locale, Record<Namespace, Dict>> = {
     schedules: zhSchedules as Dict,
     validation: zhValidation as Dict,
     waits: zhWaits as Dict,
+    models: zhModels as Dict,
   },
   'en-US': {
     common: enCommon as Dict,
@@ -95,6 +98,7 @@ const resources: Record<Locale, Record<Namespace, Dict>> = {
     schedules: enSchedules as Dict,
     validation: enValidation as Dict,
     waits: enWaits as Dict,
+    models: enModels as Dict,
   },
 }
 

@@ -215,7 +215,7 @@ def run_pass(
             )
         )
 
-    summarizer = summarizer or get_summarizer()
+    summarizer = summarizer or get_summarizer(tenant_id=tenant_id)
     raw_changes, suggestions = summarizer.summarize(evidence)
     changes = [to_change(row) for row in raw_changes]
 

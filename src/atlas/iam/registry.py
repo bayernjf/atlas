@@ -33,6 +33,7 @@ from atlas.reflection import ReflectionStore
 from atlas.routing import PgRoutingStore, RoutingStore
 from atlas.template.user_store import UserTemplateStore
 from atlas.security.bootstrap import read_storage_backend
+from atlas.llm.config import get_model_config_store
 from atlas.storage.base import (
     ApprovalRepository,
     DebugRepository,
@@ -86,6 +87,7 @@ class TenantServices:
     openapi_imports: ImportStore | PgImportStore  # OpenAPI 导入规格（docs/42/43；内存/PG 两档，reset 不清）
     user_templates: object  # 用户自建模板（docs/85 打包 X；内存/PG 两档，reset 同清）
     reflection_store: ReflectionStore  # 反思候选与收尾报告（docs/88 打包 ZH；v1 进程内 ring，两档同为内存实例）
+    model_config: object  # LLM 模型配置（docs/93 打包 Y；内存/PG 两档 store，reset 不清）
 
 
 class TenantRegistry:
@@ -161,6 +163,7 @@ class TenantRegistry:
                 openapi_imports=PgImportStore(backend.engine, tenant_id),
                 user_templates=PgUserTemplateStore(backend.engine, tenant_id),
                 reflection_store=ReflectionStore(),
+                model_config=get_model_config_store(),
             )
             TenantRegistry._wire_alert_notifier(services)
             return services
@@ -190,6 +193,7 @@ class TenantRegistry:
             openapi_imports=ImportStore(),
             user_templates=UserTemplateStore(),
             reflection_store=ReflectionStore(),
+            model_config=get_model_config_store(),
         )
         TenantRegistry._wire_alert_notifier(services)
         return services

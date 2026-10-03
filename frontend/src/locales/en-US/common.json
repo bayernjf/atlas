@@ -35,7 +35,8 @@
     "audit": "Audit log",
     "openapi": "API imports",
     "waits": "Waits & Tasks",
-    "schedules": "Scheduled triggers"
+    "schedules": "Scheduled triggers",
+    "models": "Model configuration"
   },
   "button": {
     "confirm": "OK",

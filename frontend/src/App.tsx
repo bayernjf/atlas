@@ -14,13 +14,14 @@ import { EmailApproval } from './pages/EmailApproval'
 import { Waits } from './pages/Waits'
 import { Schedules } from './pages/Schedules'
 import { Reflection } from './pages/Reflection'
+import { Models } from './pages/Models'
 import { logout as logoutApi } from './lib/apiClient'
 import { getStoredPrincipal, roleCan, UNAUTHORIZED_EVENT, type Principal } from './lib/auth'
 import { extractEmailToken } from './lib/approvals'
 import { antdTheme } from './theme/tokens'
 import { useAntdLocale } from './locales/antdLocale'
 
-type Page = 'dashboard' | 'editor' | 'monitoring' | 'memory' | 'connections' | 'users' | 'approvals' | 'audit' | 'openapi' | 'waits' | 'schedules' | 'reflection'
+type Page = 'dashboard' | 'editor' | 'monitoring' | 'memory' | 'connections' | 'users' | 'approvals' | 'audit' | 'openapi' | 'waits' | 'schedules' | 'reflection' | 'models'
 
 function App() {
   const antdLocale = useAntdLocale()
@@ -86,6 +87,7 @@ function App() {
           onOpenWaits={() => setPage('waits')}
           onOpenSchedules={() => setPage('schedules')}
           onOpenReflection={() => setPage('reflection')}
+          onOpenModels={() => setPage('models')}
         />
       ) : page === 'approvals' ? (
         <Approvals
@@ -137,6 +139,8 @@ function App() {
         />
       ) : page === 'openapi' ? (
         <OpenApiImports principal={principal} onLogout={handleLogout} onBack={() => setPage('dashboard')} />
+      ) : page === 'models' && roleCan(principal.role, 'read') ? (
+        <Models principal={principal} onLogout={handleLogout} onBack={() => setPage('dashboard')} />
       ) : (
         <Editor principal={principal} onLogout={handleLogout} initialGraphId={editorGraphId} />
       )}
