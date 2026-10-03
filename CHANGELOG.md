@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### docs：LLM 模型配置管理面产品口径登记（内置模型＋BYOK）（2026-10-03，用户产品定义；docs/73 §10）
+
+- 口径：产品模型分两种——① 内置模型＝平台方内置（Agnes 已给），由 admin UI 管理（密钥/模型/开关），用户直接用；② BYOK＝用户自己配置自己的 key（per-tenant 生效）。
+- 原因：1.1 残余由「凭据本体入 vault」更正为「模型配置管理面未实现」——现状 src/atlas/llm/ 四消费点直读全局 env（LITELLM_MODEL+OPENAI_API_KEY/BASE_URL），零管理 UI、零 per-tenant 概念。
+- 同步面：docs/73 §10（新增）＋docs/08 C 组候选池新增行（承接 D14 余部「按租户模型配置」）＋handoff 顶部流水。零代码/测试/迁移改动；待用户拍板权限/租户语义与 admin 页落点后写契约。
+
 ### feat(frontend)+docs：合 main 批＝PR #101（2026-10-03，用户「按你推荐来」；含 E 组选型收口决策＋ZS 落码＋CI 前端类型门修复）
 
 - 合并：dev→main 经 PR #101（merge commit `a36360a`）合入，head＝`6800ad1`，含 E 组三选型收口原子 `9294b8f`＋ZS 三原子＋CI 修复原子 `6800ad1`。
