@@ -488,21 +488,8 @@ def test_api_callback_page_is_public_and_side_effect_free():
 def _run_all_migrations(engine) -> None:
     from sqlalchemy import text
 
-    migrations_dir = Path(__file__).resolve().parents[1] / "db" / "migrations"
-    for path in sorted(migrations_dir.glob("*.sql")):
-        statements: list[str] = []
-        current: list[str] = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith("--"):
-                continue
-            current.append(line)
-            if stripped.endswith(";"):
-                statements.append("\n".join(current))
-                current = []
-        with engine.begin() as conn:
-            for statement in statements:
-                conn.execute(text(statement))
+    from atlas.storage.migrations import apply_pending
+    apply_pending(engine)
 
 
 @pytest.mark.integration

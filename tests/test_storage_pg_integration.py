@@ -28,21 +28,8 @@ TENANT = "pgtest"
 
 def _run_migration(engine) -> None:
     """按序号执行 db/migrations/*.sql（跳过注释行；语句以 ; 结尾）。"""
-    migrations_dir = Path(__file__).resolve().parents[1] / "db" / "migrations"
-    for path in sorted(migrations_dir.glob("*.sql")):
-        statements: list[str] = []
-        current: list[str] = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith("--"):
-                continue
-            current.append(line)
-            if stripped.endswith(";"):
-                statements.append("\n".join(current))
-                current = []
-        with engine.begin() as conn:
-            for statement in statements:
-                conn.execute(text(statement))
+    from atlas.storage.migrations import apply_pending
+    apply_pending(engine)
 
 
 def _cleanup(engine) -> None:

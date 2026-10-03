@@ -619,21 +619,8 @@ def test_u299_pg_silence_assignee_escalation_persisted():
     from atlas.storage.pg import PgMonitoringStore
 
     engine = create_engine(os.environ["DATABASE_URL"])
-    migrations_dir = Path(__file__).resolve().parents[1] / "db" / "migrations"
-    for path in sorted(migrations_dir.glob("*.sql")):
-        statements: list[str] = []
-        current: list[str] = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith("--"):
-                continue
-            current.append(line)
-            if stripped.endswith(";"):
-                statements.append("\n".join(current))
-                current = []
-        with engine.begin() as conn:
-            for statement in statements:
-                conn.execute(text(statement))
+    from atlas.storage.migrations import apply_pending
+    apply_pending(engine)
 
     tenant = f"pgops-{uuid.uuid4().hex[:8]}"
     store = PgMonitoringStore(engine, tenant)

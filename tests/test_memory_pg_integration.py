@@ -33,21 +33,8 @@ TENANT = "pgmemtest"
 
 def _run_migration(engine) -> None:
     """按序号执行 db/migrations/*.sql（跳过注释行；语句以 ; 结尾）。"""
-    migrations_dir = Path(__file__).resolve().parents[1] / "db" / "migrations"
-    for path in sorted(migrations_dir.glob("*.sql")):
-        statements: list[str] = []
-        current: list[str] = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith("--"):
-                continue
-            current.append(line)
-            if stripped.endswith(";"):
-                statements.append("\n".join(current))
-                current = []
-        with engine.begin() as conn:
-            for statement in statements:
-                conn.execute(text(statement))
+    from atlas.storage.migrations import apply_pending
+    apply_pending(engine)
 
 
 @pytest.fixture(scope="module")
@@ -96,7 +83,10 @@ def test_u93_migration_creates_table_vector_column_and_index(pg_store):
             )
         }
         assert "idx_memory_items_tenant_kind" in indexes
-        assert "idx_memory_items_embedding" in indexes
+        # 006 建的 idx_memory_items_embedding（IVFFlat）已由迁移 039 移除（U201 冷启动空集缺陷实证＋
+        # ANN 并列距离顺序不确定破坏两档对拍 U94；006 注释本就声明"降级为暂不建 ANN，精确余弦已够沙盘"）。
+        # 真实数据规模另立批建 HNSW 时同步反转本断言。
+        assert "idx_memory_items_embedding" not in indexes
         # CHECK 约束存在
         checks = conn.execute(
             text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = 'memory_items'::regclass")
