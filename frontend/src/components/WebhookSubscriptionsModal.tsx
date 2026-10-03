@@ -38,6 +38,7 @@ export function WebhookSubscriptionsModal({
   const publicUrl = `${window.location.origin}/api/channels/hooks/shopify/${binding.id}`
   const pinnedSuffix = `/api/channels/hooks/shopify/${binding.id}`
 
+  /* oxlint-disable react/set-state-in-effect */
   useEffect(() => {
     if (!open) return
     let active = true

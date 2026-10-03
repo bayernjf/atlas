@@ -75,9 +75,11 @@ export function AuditLog({ principal, onLogout, onBack }: AuditLogProps): ReactE
 
   const refresh = useCallback(() => load(null, false), [load])
 
+  /* oxlint-disable react/set-state-in-effect */
   useEffect(() => {
     void refresh()
   }, [refresh])
+  /* oxlint-enable react/set-state-in-effect */
 
   async function handleExport(): Promise<void> {
     setExporting(true)

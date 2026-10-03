@@ -52,9 +52,11 @@ export function Schedules({ principal, onLogout, onBack }: SchedulesPageProps) {
     }
   }, [])
 
+  /* oxlint-disable react/set-state-in-effect */
   useEffect(() => {
     void refresh()
   }, [refresh])
+  /* oxlint-enable react/set-state-in-effect */
 
   const onToggle = async (row: ScheduleItem, enabled: boolean) => {
     setBusyRow(rowId(row))
