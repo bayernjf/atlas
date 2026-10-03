@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+
+// U1108 机检读源码用 Vite `?raw` 导入（不依赖 node:fs/node:path/__dirname，
+// 前端 tsconfig types 只有 vite/client；`?raw` 由 vite/client 声明）
+import reflectionLibSource from '../reflection.ts?raw'
+import pageSource from '../../pages/Reflection.tsx?raw'
 
 // 数据面测试 mock apiClient（lib/reflection.ts 的数据函数不触真实网络）
 vi.mock('../apiClient')
@@ -150,20 +153,14 @@ describe('ZS U1107：reflection.json 双语目录奇偶（键全等＋en 零汉�
 })
 
 describe('ZS U1108：页内零写调用守护（机检，非口头承诺）', () => {
-  const reflectionLibSource = readFileSync(
-    join(__dirname, '..', 'reflection.ts'),
-    'utf-8',
-  )
-  const pageSource = readFileSync(join(__dirname, '..', '..', 'pages', 'Reflection.tsx'), 'utf-8')
-
   it('lib/reflection.ts 从 apiClient 的 import 面 ⊆ 只读白名单', () => {
     const importBlock = reflectionLibSource.match(/import \{([^}]*)\} from '\.\/apiClient'/)
     expect(importBlock, 'lib/reflection.ts 必须显式 import apiClient 成员').not.toBeNull()
     const imported = importBlock![1]
       .split(',')
-      .map((part) => part.trim())
-      .filter((part) => part && !part.startsWith('type ')) // type import 无运行时调用，不计入
-      .map((part) => part.split(' as ')[0].trim())
+      .map((part: string) => part.trim())
+      .filter((part: string) => part && !part.startsWith('type ')) // type import 无运行时调用，不计入
+      .map((part: string) => part.split(' as ')[0].trim())
       .filter(Boolean)
     for (const name of imported) {
       expect(READ_ONLY_WHITELIST, `import 了非白名单成员: ${name}`).toContain(name)

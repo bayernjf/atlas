@@ -14,6 +14,7 @@ import {
   listGraphs,
   listReflectionReports,
   type ReflectionCandidate,
+  type ReflectionChange,
   type ReflectionReportItem,
   type ReflectionStatus,
 } from './apiClient'
@@ -26,7 +27,7 @@ export const READ_ONLY_WHITELIST = [
   'listReflectionReports',
 ] as const
 
-export type { ReflectionCandidate, ReflectionReportItem, ReflectionStatus }
+export type { ReflectionCandidate, ReflectionChange, ReflectionReportItem, ReflectionStatus }
 
 /** `status` 四值 → AntD Tag 色（docs/92 E-5：仅用颜色区分处必须带文字，页面仍渲染文字标签）。 */
 export function statusTone(status: ReflectionStatus): 'success' | 'error' | 'default' {
@@ -101,7 +102,7 @@ export function filterReportsByGraph(
   return reports.filter((r) => r.graph_id === graphId)
 }
 
-export function isEmptyReports(reports: ReflectionReportItem[]): boolean {
+export function isEmptyReports(reports: readonly unknown[]): boolean {
   return reports.length === 0
 }
 
@@ -119,6 +120,6 @@ export function loadGraphOptions(): Promise<{ id: string }[]> {
   return listGraphs()
 }
 
-export function loadGraphForEditor(graphId: string): Promise<ReturnType<typeof getGraph>> {
+export function loadGraphForEditor(graphId: string): ReturnType<typeof getGraph> {
   return getGraph(graphId)
 }
