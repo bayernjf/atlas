@@ -2472,3 +2472,45 @@ export async function previewScheduleCron(
     body: JSON.stringify({ cron, timeZone }),
   })
 }
+
+// ===================== LLM 模型配置（docs/93 打包 Y；内置模型＋BYOK）=====================
+
+/** 模型配置对外投影：后端 public_view 已删全部信封，apiKey 仅回脱敏尾四位。 */
+export type ModelConfigView = {
+  mode: 'builtin' | 'byok'
+  model: string
+  apiKey: string // "***" + 尾 4 位（未配置时 ""）
+  baseUrl: string | null
+  enabled: boolean
+  updatedBy: string
+  updatedAt: string
+}
+
+export type ModelOverview = {
+  builtin: ModelConfigView | null
+  byok: ModelConfigView | null
+  effective: ModelConfigView & { source: 'builtin' | 'byok' | 'env' | 'none' }
+}
+
+export type ModelConfigInput = {
+  model?: string
+  apiKey?: string
+  baseUrl?: string
+  enabled?: boolean
+}
+
+export async function getModels(): Promise<ModelOverview> {
+  return request('/api/models')
+}
+
+export async function putBuiltinModel(input: ModelConfigInput): Promise<ModelConfigView> {
+  return request('/api/models/builtin', { method: 'PUT', body: JSON.stringify(input) })
+}
+
+export async function getByokModel(): Promise<ModelConfigView | { configured: false }> {
+  return request('/api/models/byok')
+}
+
+export async function putByokModel(input: ModelConfigInput): Promise<ModelConfigView> {
+  return request('/api/models/byok', { method: 'PUT', body: JSON.stringify(input) })
+}

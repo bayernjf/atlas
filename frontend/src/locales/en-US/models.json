@@ -1,0 +1,65 @@
+{
+  "title": "Model Configuration",
+  "header": {
+    "back": "Back",
+    "refresh": "Refresh"
+  },
+  "notice": {
+    "title": "LLM model configuration (built-in + BYOK)",
+    "description": "Two ways to connect models: the built-in model is maintained by the platform admin (key and available models are managed centrally, all tenants use it directly without bringing their own key); BYOK (Bring Your Own Key) lets each tenant's admin/operator configure their own model key, effective for that tenant only. When no model is configured, the system falls back to the LITELLM_MODEL environment variable (if set)."
+  },
+  "effective": {
+    "title": "Currently effective model",
+    "source": "Source",
+    "sourceBuiltin": "Built-in model",
+    "sourceByok": "Tenant BYOK",
+    "sourceEnv": "Environment variable",
+    "sourceNone": "Not configured (rule-based fallback)",
+    "model": "Model",
+    "enabled": "Enabled",
+    "notConfigured": "No model is configured; AI capabilities run in rule-based fallback mode."
+  },
+  "builtin": {
+    "title": "Built-in model (platform-wide)",
+    "description": "Maintained by the platform admin: configure once, all tenants use it directly. Keys are sealed with envelope encryption server-side; no list or detail view ever echoes them.",
+    "adminOnly": "Editable by platform admin only",
+    "notConfigured": "No built-in model configured yet"
+  },
+  "byok": {
+    "title": "My BYOK (this tenant)",
+    "description": "Configure your own model key, effective for this tenant only. Takes precedence over the built-in model; editable by tenant admin and operator.",
+    "notConfigured": "No tenant BYOK configured yet",
+    "configuredFalse": "Not configured"
+  },
+  "form": {
+    "model": "Model identifier (model)",
+    "modelPlaceholder": "e.g. anthropic/claude-sonnet-4 / openai/gpt-4o",
+    "apiKey": "API key (apiKey)",
+    "apiKeyPlaceholder": "Paste your API key",
+    "apiKeyKeepPlaceholder": "Leave empty to keep the existing key (configured: {{masked}})",
+    "apiKeyHint": "Keys are sealed with envelope encryption server-side; no list or detail view ever echoes them.",
+    "baseUrl": "Custom endpoint (baseUrl, optional)",
+    "baseUrlPlaceholder": "e.g. https://api.anthropic.com (defaults to the provider's standard endpoint)",
+    "enabled": "Enable this model"
+  },
+  "button": {
+    "save": "Save configuration",
+    "edit": "Edit",
+    "enable": "Enable",
+    "disable": "Disable"
+  },
+  "status": {
+    "enabled": "Enabled",
+    "disabled": "Disabled"
+  },
+  "message": {
+    "builtinSaved": "Built-in model saved",
+    "byokSaved": "Tenant BYOK saved"
+  },
+  "error": {
+    "load": "Failed to load model configuration",
+    "save": "Failed to save model configuration",
+    "modelRequired": "Please enter the model identifier",
+    "formInvalid": "Form validation failed"
+  }
+}

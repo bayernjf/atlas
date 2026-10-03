@@ -1,0 +1,65 @@
+{
+  "title": "模型配置",
+  "header": {
+    "back": "返回",
+    "refresh": "刷新"
+  },
+  "notice": {
+    "title": "LLM 模型配置（内置模型 ＋ BYOK）",
+    "description": "产品提供两种模型接入方式：内置模型由平台管理员统一维护密钥与可用模型，所有租户直接使用、无需自带 key；BYOK（Bring Your Own Key）由各租户管理员/运营配置自己的模型密钥，仅对本租户生效。未配置任何模型时系统回退到环境变量 LITELLM_MODEL（若存在）。"
+  },
+  "effective": {
+    "title": "当前生效模型",
+    "source": "来源",
+    "sourceBuiltin": "内置模型",
+    "sourceByok": "租户 BYOK",
+    "sourceEnv": "环境变量",
+    "sourceNone": "未配置（规则兜底）",
+    "model": "模型",
+    "enabled": "启用",
+    "notConfigured": "当前没有配置任何模型，AI 能力处于规则兜底模式。"
+  },
+  "builtin": {
+    "title": "内置模型（平台级）",
+    "description": "平台管理员维护：配置一次，所有租户直接使用。密钥经服务端信封加密存储，任何列表/详情都不会回显。",
+    "adminOnly": "仅平台管理员可编辑",
+    "notConfigured": "尚未配置内置模型"
+  },
+  "byok": {
+    "title": "我的 BYOK（本租户）",
+    "description": "配置你自己的模型密钥，仅对本租户生效。优先级高于内置模型；租户管理员与运营均可编辑。",
+    "notConfigured": "尚未配置本租户 BYOK",
+    "configuredFalse": "未配置"
+  },
+  "form": {
+    "model": "模型标识（model）",
+    "modelPlaceholder": "如 anthropic/claude-sonnet-4 / openai/gpt-4o",
+    "apiKey": "API 密钥（apiKey）",
+    "apiKeyPlaceholder": "粘贴你的 API 密钥",
+    "apiKeyKeepPlaceholder": "留空保持原密钥不变（已配置：{{masked}}）",
+    "apiKeyHint": "密钥经服务端信封加密存储，任何列表/详情都不会回显。",
+    "baseUrl": "自定义端点（baseUrl，可留空）",
+    "baseUrlPlaceholder": "如 https://api.anthropic.com（缺省走模型供应商默认）",
+    "enabled": "启用该模型"
+  },
+  "button": {
+    "save": "保存配置",
+    "edit": "编辑",
+    "enable": "启用",
+    "disable": "停用"
+  },
+  "status": {
+    "enabled": "启用",
+    "disabled": "已停用"
+  },
+  "message": {
+    "builtinSaved": "内置模型已保存",
+    "byokSaved": "本租户 BYOK 已保存"
+  },
+  "error": {
+    "load": "模型配置加载失败",
+    "save": "模型配置保存失败",
+    "modelRequired": "请填写模型标识",
+    "formInvalid": "表单校验未通过"
+  }
+}

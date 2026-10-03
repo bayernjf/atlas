@@ -35,7 +35,8 @@
     "audit": "审计日志",
     "openapi": "API 导入",
     "waits": "等待与任务",
-    "schedules": "定时调度"
+    "schedules": "定时调度",
+    "models": "模型配置"
   },
   "button": {
     "confirm": "确定",
