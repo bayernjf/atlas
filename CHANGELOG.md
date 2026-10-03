@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### fix(storage/collaboration)：P2 工程债三件（打包 ZR 落码，2026-10-03，docs/08 打包 ZR 立项块）
+
+- **一句话**：`interruptions.created_at` 从 TEXT 历史异类归队 TIMESTAMPTZ（写入侧本就走 DB 时钟 CURRENT_TIMESTAMP，排序与清理不再依赖字典序/强转），补 `(tenant_id, created_at)` 复合索引；retention 清理去 `::timestamptz` 强转（原生比较、索引可用）；审批 broker 的 `_pending` 不再无界增长（已决条目懒 prune ＋ 5000 硬上限 fail-closed）。
+- **落码**：`db/migrations/038_interruptions_created_at_timestamptz.sql`；`src/atlas/storage/pg.py`；`src/atlas/collaboration/approvals.py`。
+- **门（实跑）**：后端全量 2257 passed / 139 skipped / 0 failed；PG 集成 3 passed（迁移幂等/索引存在/混合格式旧数据转换后真时间序）。投影零影响（帧投影的 created_at 取自 payload，非列值）。
+
+
 ### feat(harness/auth/observability)：真实化与安全四件（打包 ZQ 落码，2026-10-03，docs/08 打包 ZQ 立项块）
 
 - **一句话**：web-playwright 适配器正式注册进图内工具表（`web-playwright/navigate·click·type·screenshot`）；prod 档 `run_graph` 未注入 registry 时显式拒绝、不再静默回退内置 SQLite 演示适配器；8 处静默 except 补 warning 日志；前端会话凭证从 localStorage 迁到后端 httpOnly Cookie（`atlas_session`，HttpOnly＋SameSite=strict，XSS 不可窃取），Bearer 保留兼容 A2A/MCP。

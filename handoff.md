@@ -1,5 +1,8 @@
 # Handoff — Atlas
 
+> **✅ 打包 ZR 落码收口＝P2 工程债三件（2026-10-03，用户「好的那你继续」；docs/13 U1097–U1102）**：R1 迁移 038（`interruptions.created_at` TEXT→TIMESTAMPTZ，DO 判型幂等＋USING 就地转换，002 冻结基线不改；同迁移 `idx_interruptions_tenant_created` 复合索引）；R2 pg.py retention interruptions 分支去 `::timestamptz` 强转（列已对型；graph_versions/webhook_deliveries 同族强转不在本批）；R3 approvals `_pending` 无界修复（request/list_pending 懒 prune 已决条目＋`_MAX_PENDING=5000` fail-closed；resolve 不动 dict 保邮件链路）。门（实跑）：后端全量 **2257 passed / 139 skipped / 0 failed**；PG 集成 **3 passed**（临时 pgvector 容器 5433，用完即删——迁移幂等＋索引存在＋混合格式旧数据真时间序）。落码四原子 `b0ff6bb`→`b79f749`，作者 bayernjf、无 AI co-author、**未 push**。已回填 docs/08 收口块＋docs/13 U1097–U1102＋CHANGELOG＋本文件。
+
+
 > **✅ 打包 ZQ 落码收口＝真实化与安全四件（2026-10-03，用户「那你搞」批准；docs/13 U1092–U1096；docs/14 D43 半边取回）**：Q1 web-playwright 注册接线（base+demo 两 registry，惰性加载；契约测试 2 文件随改：ghost-adapter 错误路径＋能力投影补 4 项）；Q2 database 静默回退诚实化（`_resolve_registry`：prod 无 registry 显式拒绝、demo 面照旧；prod gate 测试 5 处注入 `_demo_registry`）；Q3 静默 except 补日志 8 处（四模块）；Q4 会话 token 迁 httpOnly Cookie（登录 Set-Cookie HttpOnly+SameSite=strict、dev 不置 Secure；`get_principal` 头优先——显式带 Authorization 头即以头为准、未带头走 Cookie，A2A/MCP Bearer 兼容；前端 token 不落盘、getToken 恒 null、logout 无条件调）。门（实跑）：后端全量 **2251 passed / 136 skipped / 0 failed**；前端 vitest **757 passed / 2 skipped**／oxlint 0 error／tsc+build 过；API 冒烟全链路（未认证 401／登录 Set-Cookie／Cookie 鉴权 200／坏 Bearer 401／logout 清 Cookie 401）。零新端点/错误码/依赖/ADR。11 原子 `acc6333`→`cec07f7`，作者 bayernjf、无 AI co-author、**未 push**。已回填 docs/08 收口块＋docs/13 U1092–U1096＋CHANGELOG＋本文件。
 
 
