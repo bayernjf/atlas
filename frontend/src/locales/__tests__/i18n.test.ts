@@ -18,6 +18,7 @@ import zhEditor from '../zh-CN/editor.json'
 import zhMemory from '../zh-CN/memory.json'
 import zhMonitoring from '../zh-CN/monitoring.json'
 import zhOpenapi from '../zh-CN/openapi.json'
+import zhReflection from '../zh-CN/reflection.json'
 import zhRuntime from '../zh-CN/runtime.json'
 import zhSchedules from '../zh-CN/schedules.json'
 import zhValidation from '../zh-CN/validation.json'
@@ -33,6 +34,7 @@ import enEditor from '../en-US/editor.json'
 import enMemory from '../en-US/memory.json'
 import enMonitoring from '../en-US/monitoring.json'
 import enOpenapi from '../en-US/openapi.json'
+import enReflection from '../en-US/reflection.json'
 import enRuntime from '../en-US/runtime.json'
 import enSchedules from '../en-US/schedules.json'
 import enValidation from '../en-US/validation.json'
@@ -1086,6 +1088,8 @@ const PARITY_PAIRS: Array<{ ns: string; zh: unknown; en: unknown }> = [
   // 打包 Q（docs/76 D-6）：waits 此前有 bilingual 用例却不在奇偶守护里，
   // 于是"往一个没人核对的 namespace 加文案"这件事没有门。补上。
   { ns: 'waits', zh: zhWaits, en: enWaits },
+  // 打包 ZS（docs/92 §3）：反思进化页目录，同上守护。
+  { ns: 'reflection', zh: zhReflection, en: enReflection },
 ]
 
 describe('zh-CN / en-US catalog parity (docs/57 §5)', () => {
