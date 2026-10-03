@@ -42,9 +42,10 @@ export const ROLE_LABELS: Record<Role, string> = {
   admin: zhCommon.role.admin,
 }
 
-export function saveSession(token: string, principal: Principal): void {
+export function saveSession(_token: string, principal: Principal): void {
   // 打包 ZQ Q4：token 不再写入 localStorage——会话凭证由后端 httpOnly Cookie 持有，
-  // 前端代码与脚本都读不到它（XSS 无法窃取）。token 参数保留以兼容 LoginResponse 形状。
+  // 前端代码与脚本都读不到它（XSS 无法窃取）。_token 以下划线开头：签名保留以兼容
+  // LoginResponse 形状，值不使用（tsc noUnusedParameters 豁免）。
   localStorage.setItem(PRINCIPAL_KEY, JSON.stringify(principal))
 }
 
