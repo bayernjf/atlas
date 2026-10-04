@@ -184,9 +184,13 @@ export function ChannelBindingsCard({ principal, connections }: ChannelBindingsC
       width: 250,
       render: (_, record) => (
         <Space size={4} wrap>
-          <Button size="small" onClick={() => handleTest(record)}>
-            {t('button.test')}
-          </Button>
+          {/* 后端 /test 已收进 operate 档（真出向＋写状态，docs/89 §15 A-3）：
+              按钮同步只给可操作角色渲染，viewer 不再点了吃 403 */}
+          {canOperate && (
+            <Button size="small" onClick={() => handleTest(record)}>
+              {t('button.test')}
+            </Button>
+          )}
           {canAdmin && (
             <Button size="small" onClick={() => setWebhookBinding(record)}>
               {t('webhook.button')}

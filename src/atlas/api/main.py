@@ -1041,7 +1041,14 @@ def get_channel(binding_id: str, principal: Principal = Depends(require("read"))
 
 
 @app.post("/api/channels/{binding_id}/test")
-def test_channel(binding_id: str, principal: Principal = Depends(require("read"))) -> dict[str, Any]:
+def test_channel(
+    binding_id: str, principal: Principal = Depends(require("operate"))
+) -> dict[str, Any]:
+    """连通性测试：真出向＋写 binding.status，故与兄弟端点 `/api/connections/{id}/test` 同档（operate）。
+
+    docs/89 §15 A-3：此前挂在 `read` 档——一个只读角色既能让平台对外发起请求，又能把绑定
+    状态改成 connected/error，是与 RBAC 白名单相违的写面。
+    """
     # 上游错误不 5xx：200 体 ok=false（docs/38 §1C）
     return services_for(principal).channel_registry.test(binding_id)
 
