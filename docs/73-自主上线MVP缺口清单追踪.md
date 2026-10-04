@@ -141,3 +141,10 @@
 - **1.1 残余转「已实现」（管理面半边；B 档仍 🟡）**：docs/93 契约按用户口径全部落码——`src/atlas/llm/config.py`（ModelConfig＋InMemory/Pg 两档 store＋进程单例）、迁移 **040** `model_config`（`__builtin__` 行＝内置、per-tenant BYOK 行）、四消费点（decision/condition_classifier/nl_generate/reflection.adapter＋candidate summarizer）改读配置（`tenant_id` 形参＋`get_secret_provider()` 解信封＋显式 api_key/base_url）、REST 四端点（`GET /api/models`、`PUT /api/models/builtin`〔administer〕、`GET/PUT /api/models/byok`〔read/operate〕）、前端 Models.tsx（内置/BYOK 双卡片＋生效摘要）。验收 U1109–U1114（13 例全过）；全量 **2269 passed/139 skipped/1 failed**（唯一失败 `test_u1077`＝Windows 平台既有换行差异，stash 验证与本批无关）、守护门＋LLM 回归 61 passed、前端 lint 0/0＋vitest 772/2＋build 通过。
 - **B 档 1.1 判据（prod 真调用）仍 🟡**：管理面已落，但 prod 形态下真 LLM 调用尚未整链演练——凭据本体仍在本地 `.env`（`LITELLM_MODEL`＋`OPENAI_API_KEY`），未入 vault 文件注入形态；须与 4.1 prod 整链演练一起绿。1.2／1.3／4.1 不变。
 
+## 11. 代码审计增量（docs/89 §12，2026-10-04）
+
+本表仍是"能不能自主上线"的追踪器，**代码形状与功能点台账在 [docs/89 §12](89-项目级代码审计与功能全景.md)**（HEAD `e6de817` 全量重测）。本文**只接两条会影响 B 档判定的**，其余（结构债、契约卫生）留在 docs/89、不占用本表〔同日第二批＝[docs/89 §15](89-项目级代码审计与功能全景.md)：A 组四件里闭 3 改判 1（A-3 渠道 `/test` 收进 operate／A-2 告警写语句补租户作用域＋机检／A-6 `ATLAS_PUBLIC_URL` 唯一读取器＋prod 不给回环地址寄签名链接／A-8「REST 仍发 resumeToken」改判 by-design），**本表判定一律不动**；剩 A-4·A-5·A-7·A-11 按 §15 文末的理由各归其位〕：
+
+- **N-1 会改 2.1 的口径**：`web-playwright` 已无条件注册进运行期（`harness/runtime.py:73-78`，打包 ZQ），而它自己的 docstring 与 docs/14 D43 都把"`page.route()` 逐请求 egress"写成**接线前置**——现在前置被跳过。⇒ 本表 2.1「N3 不进 MVP」的表述已落后于代码；需在"补 route 级闸门"与"prod 不注册 web"之间二选一。选定前应把这条当已知风险读：**prod 形态下 `operate` 档的图可以把真浏览器开到内网，一次 302 就绕过只判初始 URL 的闸门**。〔**同日已定论＝两条都做，但收口靠 (b)**，全文见 docs/89 §14：route 级闸门已补（U1125–U1129·I21/I22），然而真 Chromium 实测**跳转后的请求不进 Playwright 的路由回调**（I23 把这条"已知的弱"钉成测试）⇒ 一次 302 那条路径**闸门挡不住**，于是 **prod 未开演示面不再注册 `web-playwright`**（U1130/U1131）。**2.1「N3 不进 MVP」由"被打包 ZQ 悄悄改成过去式"恢复为运行期事实**；网络层逐跳判定登记为 docs/14 **D52**（触发＝docs/63 §0A 的复开条件）。本表判定不因本批变动。〕
+- **N-2 会推翻一条守护自述**：A2A 的 4 条端点在真进程 `app.routes`（158 条）里**一条都查不到**（复现串见 docs/89 §12.5，已排除陈旧字节码）。无论成因，事实是 X.3 那句"整张 ASGI 匿名面由机器枚举守护"**对 router 挂载的端点是瞎的**——这是 R3 之后同一条断言第二次被自己的枚举方式打脸。诊断完成前，A2A 的鉴权与可达性**不计入本表判定**。〔**同日已定论**：面是活的（card 端点 200），查不到是因为 `include_router` 的路由藏在 `_IncludedRouter` 容器里、守护在平铺遍历——已修，见 docs/89 §13〕
+

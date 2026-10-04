@@ -57,6 +57,18 @@ ASGI_PUBLIC_BY_DESIGN: dict[str, str] = {
 # SPA 的 app.mount("/")：编辑器应用壳/登录页，匿名可载；仅当构建产物存在时注册。
 SPA_MOUNT = "MOUNT /"
 
+# docs/89 §12 N-2：`include_router` 挂进来的 A2A 端点（docs/90 ADR T32）以前对守护不可见。
+# 逐条写清"它凭什么可以没有平台登录态"，别把"没被看见"混进"设计如此"。
+A2A_PUBLIC_BY_DESIGN: dict[str, str] = {
+    "GET /api/a2a/agent-card": "A2A 发现面：仅 agent 名称/技能描述，无租户数据",
+    "GET /.well-known/agent-card.json": "同上，A2A 规范要求的 well-known 位置",
+    "GET /.well-known/agent.json": "同上，旧版 well-known 别名",
+    "POST /api/a2a/tasks": (
+        "非平台会话鉴权，但自带 Bearer（`ATLAS_A2A_TASK_TOKEN`）；"
+        "prod 未配即 fail-closed、非 prod 放行＋WARNING（`a2a/router.py:48-58`）"
+    ),
+}
+
 # 收口前一直在开门、且已由 J-3e 守住的三条：证明改共用函数没把老门的语义改坏。
 LEGACY_DEMO_SURFACE = [
     ("get", "/api/demo/mock/shopify-admin/webhooks.json", None),
@@ -77,15 +89,19 @@ def _endpoint_is_gated(endpoint) -> bool:
     return "_demo_mock_enabled" in source
 
 
-def anonymous_surface() -> set[str]:
-    """枚举"既无平台鉴权依赖、也无 demo 档位门"的**整张 ASGI 面**。
+def _walk_routes(routes, found: set[str]) -> None:
+    """递归走路由树：`include_router` 挂进来的端点不是平铺 APIRoute，必须钻进容器看。
 
-    docs/77 R3：打包 P 只遍历 `APIRoute`，把 `/docs`、`/redoc`、`/openapi.json` 与 SPA 的
-    `app.mount("/")` 漏在守护之外——"匿名可达面由机器枚举守护"在整张 ASGI 面上不成立。
-    这里把非 `APIRoute`（starlette `Route` / `Mount`）也纳入。
+    docs/89 §12 N-2：FastAPI 把 `app.include_router(r)` 表示成 `app.routes` 里的**一个**
+    `_IncludedRouter` 容器（真路由在它的 `original_router.routes` 里）。平铺遍历
+    `app.routes` 因此对 router 挂载的端点整体失明——A2A 那 4 条就是这样"在守护里不存在、
+    在活服务上 200"的。
     """
-    found: set[str] = set()
-    for route in app.routes:
+    for route in routes:
+        inner = getattr(route, "original_router", None)
+        if inner is not None:
+            _walk_routes(getattr(inner, "routes", []), found)
+            continue
         if isinstance(route, Mount):
             found.add(f"MOUNT {route.path or '/'}")  # Mount("/") 的 path 为空串
             continue
@@ -94,12 +110,25 @@ def anonymous_surface() -> set[str]:
             continue
         methods = getattr(route, "methods", None) or set()
         for method in sorted(m for m in methods if m != "HEAD"):
-            found.add(f"{method} {route.path}")
+            found.add(f"{method} {getattr(route, 'path', '')}")
+
+
+def anonymous_surface() -> set[str]:
+    """枚举"既无平台鉴权依赖、也无 demo 档位门"的**整张 ASGI 面**（含 router 挂载的端点）。
+
+    docs/77 R3：打包 P 只遍历 `APIRoute`，把 `/docs`、`/redoc`、`/openapi.json` 与 SPA 的
+    `app.mount("/")` 漏在守护之外——"匿名可达面由机器枚举守护"在整张 ASGI 面上不成立。
+    这里把非 `APIRoute`（starlette `Route` / `Mount`）也纳入。
+    docs/89 §12 N-2：同一句话又栽了一次——`include_router` 的端点在 `app.routes` 里是嵌套
+    容器，平铺遍历看不见；现由 `_walk_routes` 递归解决，并有正向对照测试钉住。
+    """
+    found: set[str] = set()
+    _walk_routes(app.routes, found)
     return found
 
 
 def expected_public_surface() -> set[str]:
-    expected = set(PUBLIC_BY_DESIGN) | set(ASGI_PUBLIC_BY_DESIGN)
+    expected = set(PUBLIC_BY_DESIGN) | set(ASGI_PUBLIC_BY_DESIGN) | set(A2A_PUBLIC_BY_DESIGN)
     if _frontend_dist() is not None:  # 与 import 期 app.mount 的判定同源
         expected.add(SPA_MOUNT)
     return expected
@@ -158,6 +187,25 @@ def test_r3_asgi_surface_beyond_apiroute_is_enumerated():
     )
 
 
+def test_n2_router_mounted_endpoints_are_enumerated():
+    """docs/89 §12 N-2 的正向对照：`include_router` 挂进来的端点必须被枚举到。
+
+    它们在 `app.routes` 里是**一个容器**（`original_router.routes` 才是那 4 条），所以平铺
+    遍历会把整块对外面藏起来——"多一条少一条都红"这句话在 router 挂载面上就假了。这条测试
+    守的是**枚举方式本身**：以后谁把 `_walk_routes` 的递归改回去，这里先红。
+    """
+    surface = anonymous_surface()
+    assert set(A2A_PUBLIC_BY_DESIGN) <= surface, (
+        f"router 挂载的端点没进枚举：{sorted(set(A2A_PUBLIC_BY_DESIGN) - surface)}"
+    )
+    # 平铺遍历应当看不见它们——若哪天 FastAPI 改成平铺，上面那条仍绿，这里给信号。
+    flat = {f"{m} {r.path}" for r in app.routes if isinstance(r, APIRoute)
+            for m in (getattr(r, "methods", None) or set()) if m != "HEAD"}
+    assert not (flat & set(A2A_PUBLIC_BY_DESIGN)), (
+        "FastAPI 已把 include_router 平铺进 app.routes：递归可保留，但本用例的第二断言需删"
+    )
+
+
 def test_r3_openapi_surface_is_closed_in_prod(monkeypatch):
     """R3 行为：prod 且未开 demo 面时，匿名者拿不到 OpenAPI 形状。"""
     monkeypatch.setenv("ATLAS_ENV", "prod")
@@ -196,7 +244,39 @@ def test_r2_prod_without_demo_flag_registers_no_demo_adapters(monkeypatch):
     assert "shop" not in ids, "prod 未开 demo 面却仍装配了进程内 DemoShopService"
     assert "database" not in ids
     assert {"http", "message", "memory"} <= ids, "非演示适配器不应被误摘"
-    assert "web-playwright" in ids, "打包 ZQ Q1：web 适配器不受演示面开关影响，照常注册"
+    assert "web-playwright" not in ids, (
+        "docs/89 §14 N-1：route 级闸门挡不住 3xx 跳转，真浏览器不得进 prod 运行期"
+    )
+
+
+def test_u1130_prod_with_demo_mock_on_registers_web(monkeypatch):
+    """U1130：真浏览器只由 `ATLAS_ENABLE_DEMO_MOCK` 这一把闸决定——prod 显式开演示面才有。
+
+    钉的是"没有第三条悄悄打开它的路"：既不是默认开、也不是按别的适配器在册与否猜。
+    """
+    monkeypatch.setenv("ATLAS_ENV", "prod")
+    monkeypatch.setenv("ATLAS_ENABLE_DEMO_MOCK", "1")
+    monkeypatch.delenv("ATLAS_DATABASE_URL", raising=False)
+    assert demo_surface_enabled() is True
+    registry = build_base_registry(True, resolve_database_client(True))
+    assert "web-playwright" in {item["id"] for item in registry.list_adapters()}
+
+
+def test_u1131_prod_registry_exposes_no_web_adapter(monkeypatch):
+    """U1131：prod 档的适配器发现投影里没有任何 web 型适配器、也取不到 web-playwright。
+
+    `list_adapters()` 是 `GET /api/adapters` 与 MCP `atlas_list_adapters` 共用的同一份装配
+    （docs/91 §3），所以"图里选不到浏览器工具"是装配层事实，不是前端藏起来。
+    """
+    monkeypatch.setenv("ATLAS_ENV", "prod")
+    monkeypatch.delenv("ATLAS_ENABLE_DEMO_MOCK", raising=False)
+    monkeypatch.delenv("ATLAS_DATABASE_URL", raising=False)
+    registry = build_base_registry(False, None)
+    listed = registry.list_adapters()
+    assert {item["id"] for item in listed} == {"http", "message", "memory"}
+    assert not [item for item in listed if item["type"] == "web"], listed
+    with pytest.raises(KeyError):
+        registry.get("web-playwright")
 
 
 def test_r2_demo_surface_registers_shop_and_database(monkeypatch):
@@ -211,7 +291,7 @@ def test_r2_demo_surface_registers_shop_and_database(monkeypatch):
         for item in build_base_registry(demo_surface_enabled(), db_client).list_adapters()
     }
     assert {"shop", "database"} <= ids
-    assert "web-playwright" in ids, "打包 ZQ Q1：web 适配器在 demo 档照常注册"
+    assert "web-playwright" in ids, "演示面（dev）真浏览器照常可用（docs/89 §14）"
 
 
 def test_r2_prod_with_real_database_url_keeps_database_without_shop(monkeypatch):
@@ -229,7 +309,9 @@ def test_r2_prod_with_real_database_url_keeps_database_without_shop(monkeypatch)
     }
     assert "database" in ids
     assert "shop" not in ids
-    assert "web-playwright" in ids, "打包 ZQ Q1：web 适配器与 database 真连接并存"
+    assert "web-playwright" not in ids, (
+        "真连接 database 不改变 web 的判定：它跟的是演示面开关，不是别的适配器在册"
+    )
 
 
 # --- 打包 ZQ Q2：prod 未注入 registry 拒绝静默 SQLite 兜底 --------------------

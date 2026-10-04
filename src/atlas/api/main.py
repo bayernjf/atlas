@@ -113,6 +113,7 @@ from atlas.security.bootstrap import (
     demo_surface_enabled,
     hydrate_file_secrets,
     read_env_profile,
+    read_public_url,
 )
 from atlas.security.egress import EgressDenied, EgressGuard
 from atlas.security.secrets import build_secret_provider_from_env
@@ -186,7 +187,20 @@ from atlas.versioning.upgrades import subgraph_upgrade_plan
 logger = logging.getLogger(__name__)
 
 # docs/35 §2（T2）：审批挂起邮件中的应用入口（前端地址）。
-_PUBLIC_URL = os.getenv("ATLAS_PUBLIC_URL", "http://localhost:5174")
+# 应用对外入口（审批深链基址）：唯一读取器在 security.bootstrap（docs/89 §15 A-6，
+# 此前这里与 channels/registry、notifications 各读一遍同一 env＋同一缺省）
+_PUBLIC_URL = read_public_url()
+
+
+def _token_ref(token: Any) -> str:
+    """日志里指代一枚令牌的可读引用（docs/89 §15 A-8b）。
+
+    `resume_token`／审批 `token` 都是能直接推进状态的凭证，全文进日志＝任何读得到日志的人
+    都能代替持有人续跑或决策；而运维排障又确实需要一个能对上表行的标识，所以留 8 位前缀：
+    够定位，不够使用。
+    """
+    text = str(token or "")
+    return text[:8] + "…" if len(text) > 8 else (text or "<空令牌>")
 
 MAX_WAIT_PAYLOAD_BYTES = 4096
 MAX_WAIT_PAYLOAD_KEYS = 50
@@ -228,7 +242,7 @@ def recover_pending() -> None:
         try:
             _resume_from_frame(engine, frame)
         except Exception as exc:
-            logger.warning("帧 %s 恢复失败、隔离跳过：%s", frame.get("resume_token"), exc)
+            logger.warning("帧 %s 恢复失败、隔离跳过：%s", _token_ref(frame.get("resume_token")), exc)
 
 
 def _resume_from_frame(engine, frame: dict) -> None:
@@ -305,9 +319,9 @@ def _resume_run(engine, services: TenantServices, frame: dict) -> None:
     except RunSuperseded as exc:
         # docs/62 §2 D-4：续跑输家——帧已被其它进程认领，本线程停止驱动。
         # 既不写 run 终态也不清帧（终态与清理都归赢家），否则会把赢家的执行结果覆盖掉。
-        logger.info("续跑让位 %s：%s", frame.get("resume_token"), exc)
+        logger.info("续跑让位 %s：%s", _token_ref(frame.get("resume_token")), exc)
     except Exception as exc:
-        logger.error("续跑 %s 失败：%s", frame.get("resume_token"), exc)
+        logger.error("续跑 %s 失败：%s", _token_ref(frame.get("resume_token")), exc)
         if run_id:
             services.run_store.finish(
                 run_id=run_id, status="failed", error=f"{type(exc).__name__}: {exc}"
@@ -1038,7 +1052,14 @@ def get_channel(binding_id: str, principal: Principal = Depends(require("read"))
 
 
 @app.post("/api/channels/{binding_id}/test")
-def test_channel(binding_id: str, principal: Principal = Depends(require("read"))) -> dict[str, Any]:
+def test_channel(
+    binding_id: str, principal: Principal = Depends(require("operate"))
+) -> dict[str, Any]:
+    """连通性测试：真出向＋写 binding.status，故与兄弟端点 `/api/connections/{id}/test` 同档（operate）。
+
+    docs/89 §15 A-3：此前挂在 `read` 档——一个只读角色既能让平台对外发起请求，又能把绑定
+    状态改成 connected/error，是与 RBAC 白名单相违的写面。
+    """
     # 上游错误不 5xx：200 体 ok=false（docs/38 §1C）
     return services_for(principal).channel_registry.test(binding_id)
 
@@ -4328,7 +4349,7 @@ def _apply_approval_decision(
                     recipients=recipients,
                 )
             except Exception as exc:  # noqa: BLE001 结果通知任何异常都不改变响应
-                logger.warning("审批结果通知失败 token=%s: %s", token, exc)
+                logger.warning("审批结果通知失败 token=%s: %s", _token_ref(token), exc)
     result: dict[str, Any] = {"token": token, "decision": decision, "resolvedBy": "human"}
     if resolved_action:
         result["actionId"] = resolved_action

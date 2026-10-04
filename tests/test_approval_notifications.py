@@ -443,3 +443,93 @@ def test_run_notifies_false_when_notifier_returns_false():
     # 没抛异常，但返回了 False → notified 应为 False
     assert approval["notified"] is False
     assert "notifyError" not in approval  # 没抛异常就不设 error
+
+
+# --- U1135/U1136：prod 的入口地址还是本地缺省时，签名深链不寄出（docs/89 §15 A-6）---
+
+
+def _notify(msgs, issuer, public_url):
+    EmailApprovalNotifier(msgs, public_url, tenant_id="t1", issuer=issuer).notify_pending(
+        graph_id="g1",
+        node_id="human-1",
+        token="tok-secret",
+        summary="订单 O-1 退款审批",
+        approver="客服主管",
+        timeout_seconds=120,
+        recipients=["a@example.com"],
+    )
+    return msgs.sent[0]["body"]
+
+
+def test_u1135_prod_with_loopback_public_url_sends_no_capability_link(monkeypatch):
+    """prod＋`ATLAS_PUBLIC_URL` 未配（回落到本地缺省）⇒ 邮件里既没有深链也没有签名 token。
+
+    发往 `http://localhost:…` 的链接对收件人不可达，却把一枚 capability token 交给
+    "本机任何监听者"——宁可不发链接，让正文把原委与修法写清楚。
+    """
+    monkeypatch.setenv("ATLAS_ENV", "prod")
+    monkeypatch.delenv("ATLAS_PUBLIC_URL", raising=False)
+    body = _notify(FakeMessages(), FakeIssuer(), "http://localhost:5174")
+    assert "SIGNED-TOKEN" not in body and "tok-secret" not in body
+    assert "ATLAS_PUBLIC_URL" in body and "一键处理链接本次未随邮件发出" in body
+
+
+def test_u1136_prod_with_real_public_url_still_sends_link(monkeypatch):
+    """判别对照：配了对外地址，prod 的一键深链行为逐字不变（上一条不是"prod 都不发链接"）。"""
+    monkeypatch.setenv("ATLAS_ENV", "prod")
+    body = _notify(FakeMessages(), FakeIssuer(), "https://atlas.example.com/")
+    assert "一键处理：https://atlas.example.com/approvals/SIGNED-TOKEN" in body
+    assert "或前往应用：https://atlas.example.com" in body
+
+
+def test_u1136_dev_with_local_public_url_keeps_the_link(monkeypatch):
+    """dev/test 形态零变化：本地深链本来就是给本机点的。"""
+    monkeypatch.setenv("ATLAS_ENV", "dev")
+    body = _notify(FakeMessages(), FakeIssuer(), "http://localhost:5174")
+    assert "一键处理：http://localhost:5174/approvals/SIGNED-TOKEN" in body
+
+
+# --- U1137：令牌进日志只留可读引用（docs/89 §15 A-8b）--------------------------
+
+
+def test_u1137_token_ref_keeps_correlation_without_the_credential():
+    from atlas.api.main import _token_ref
+
+    assert _token_ref("ap-" + "z" * 30) == "ap-zzzzz…"          # 前 8 位＋省略号：够定位，不够使用
+    assert _token_ref("short") == "short"                        # 短值不加长省略号
+    assert _token_ref(None) == "<空令牌>" and _token_ref("") == "<空令牌>"
+
+
+def test_u1137_notify_failure_logs_the_reference_not_the_token(caplog):
+    """决策结果通知失败时的告警行：全量 token 不得出现，8 位引用必须在。
+
+    正向对照是必要的——把整条日志删掉也能让这个断言成立，而排障恰恰需要那一行。
+    """
+    import logging
+
+    from atlas.api.main import _apply_approval_decision
+
+    class Broker:
+        def resolve(self, token, decision, *, comment=None, action_id=None):
+            return True
+
+        def get_notify_recipients(self, token):
+            return ["a@example.com"]
+
+    class BoomNotifier:
+        def notify_decided(self, **kwargs):
+            raise RuntimeError("smtp down")
+
+    token = "ap-" + "q" * 28
+    with caplog.at_level(logging.WARNING, logger="atlas.api.main"):
+        result = _apply_approval_decision(
+            Broker(), {"graph_id": "g1", "node_id": "human-1"}, token,
+            decision="approved", comment="同意", action_id=None, form=None,
+            notifier=BoomNotifier(),
+        )
+
+    assert result["decision"] == "approved"  # 通知失败不改决策事实（既有语义）
+    joined = "\n".join(record.getMessage() for record in caplog.records)
+    assert "smtp down" in joined, "没有走到那条告警，断言就是空转"
+    assert token not in joined
+    assert token[:8] in joined

@@ -142,6 +142,25 @@ def test_test_binding_without_token_returns_ok_false():
     assert client.get(f"/api/channels/{bid}", headers=admin).json()["status"] == "error"
 
 
+def test_u1132_channel_test_endpoint_requires_operate():
+    """A-3（docs/89 §15）：`/test` 真出向＋把 binding.status 写成 connected/error，
+    所以与兄弟端点 `/api/connections/{id}/test` 同档＝operate；只读角色 403。
+
+    判别对照＝operator 拿到与 admin 一样的 200 体形状，防止"谁都拒"被当成"收口了"。
+    """
+    admin = _login("admin")
+    cid = _create_connection(admin)
+    bid = _bind(admin, cid).json()["id"]
+
+    viewer = _login("viewer")
+    assert client.post(f"/api/channels/{bid}/test", headers=viewer).status_code == 403
+
+    operator = _login("operator")
+    out = client.post(f"/api/channels/{bid}/test", headers=operator)
+    assert out.status_code == 200, out.text
+    assert out.json()["status"] == "error"  # draft 连接测不通，但确实打了、也写了状态
+
+
 def test_delete_and_adapters_discovery():
     admin = _login("admin")
     cid = _create_connection(admin)

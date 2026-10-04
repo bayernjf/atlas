@@ -25,7 +25,7 @@ from atlas.connections.service import (
     ConnectionService,
     ConnectionServiceError,
 )
-from atlas.security.bootstrap import demo_surface_enabled
+from atlas.security.bootstrap import demo_surface_enabled, read_public_url
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +161,7 @@ class ChannelRegistry:
 
     @staticmethod
     def _hook_address(binding_id: str) -> str:
-        public_url = os.getenv("ATLAS_PUBLIC_URL", "http://localhost:5174").rstrip("/")
+        public_url = read_public_url()
         return f"{public_url}/api/channels/hooks/shopify/{binding_id}"
 
     def _fail_binding(self, binding: ChannelBinding, exc: ChannelError) -> None:

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -60,3 +61,38 @@ def test_no_bare_storage_backend_env_read_remains() -> None:
         if 'os.environ.get("ATLAS_STORAGE_BACKEND"' in path.read_text(encoding="utf-8")
     )
     assert not offenders, f"仍有裸档位读取（应走 read_storage_backend）：{offenders}"
+
+
+# --- U1134：ATLAS_PUBLIC_URL 收敛到唯一读取器（docs/89 §15 A-6，与 R4 同族）-----
+
+from atlas.security.bootstrap import DEFAULT_PUBLIC_URL, public_url_is_loopback, read_public_url
+
+
+def test_u1134_read_public_url_defaults_and_strips(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ATLAS_PUBLIC_URL", raising=False)
+    assert read_public_url() == DEFAULT_PUBLIC_URL
+    monkeypatch.setenv("ATLAS_PUBLIC_URL", "https://atlas.example.com/")
+    assert read_public_url() == "https://atlas.example.com"
+    monkeypatch.setenv("ATLAS_PUBLIC_URL", "   ")  # 空串＝没配，不能拼出 "/approvals/..." 这种相对链接
+    assert read_public_url() == DEFAULT_PUBLIC_URL
+
+
+def test_u1134_public_url_is_loopback_recognises_local_hosts() -> None:
+    assert public_url_is_loopback("http://localhost:5174")
+    assert public_url_is_loopback("http://127.0.0.1:8000")
+    assert not public_url_is_loopback("https://atlas.example.com")  # 判别对照
+
+
+def test_u1134_no_bare_public_url_env_read_remains() -> None:
+    """防复发：只有 `security/bootstrap.read_public_url()` 许读这个 env（此前散在三处）。
+
+    扫的是**读取式**而不是关键词——错误文案与邮件正文里提这个名字是正当的（R4 同族口径）。
+    """
+    root = Path(__file__).resolve().parents[1] / "src" / "atlas"
+    pattern = re.compile(r"""getenv\(\s*["']ATLAS_PUBLIC_URL["']""")
+    readers = sorted(
+        str(path.relative_to(root))
+        for path in root.rglob("*.py")
+        if pattern.search(path.read_text(encoding="utf-8"))
+    )
+    assert readers == ["security/bootstrap.py"], f"裸读点：{readers}"

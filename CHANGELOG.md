@@ -3,6 +3,44 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### fix(api/storage/security)＋test＋docs：A 组残余同日第二批＝闭 A-3／A-2／A-6／A-8b，A-8 改判 by-design（2026-10-04 用户「好的，搞你自己能做的」；定论 docs/89 §15；用例 docs/13 U1132–U1137）
+
+- **范围**：只做**不需要外部凭据、也不需要用户拍板**的五件。剩下 A-4／A-5／A-7／A-11 一条没动，每条在 docs/89 §15 文末写明为什么（A-5 调度缺省与 A-11 prod 缺 pg 拒启属**行为收紧，待拍板**；A-7 演示店铺本就是"共享演示店"口径，要分租户得连服务＋适配器＋端点＋测试一起改；A-4 是一整批 i18n 文案，该单开一批）。
+- **A-3 渠道连通性测试的权限档**：`POST /api/channels/{binding_id}/test` 从 `read` 收进 `operate`。判据不是我新立的：它**真出向打上游**＋把 `binding.status` 写成 connected/error，而同族兄弟端点 `POST /api/connections/{conn_id}/test` 一直是 operate——两处不一致本身就是缺陷。前端「测试」按钮同档收进已有的 `canOperate`（此前无条件渲染，viewer 点了只吃到 403）。**U1132** viewer 403 ＋ 判别对照 operator 得与 admin 相同的 200 体形状。
+- **A-2 告警写语句的租户作用域**：`storage/pg.py` 两条合并语句（规则命中 `:1012`、灰度门禁 `:1427`）补 `AND tenant_id`，同类四条本来就带。**定级如实**：告警 id 走全局序列 `storage_id_seq`、迁移 002 里 `monitoring_alerts.id` 就是主键，且两处 id 均来自租户作用域的 SELECT ⇒ **不是活体越权，是不变式不一致**；把它读成漏洞是加码，读成无事是反向加码，两种错都记进文档。守护 **U1133** 用 `ast` 取编译期字符串常量（相邻字面量已拼成整条 SQL，不必按行猜边界）扫所有 `monitoring_alerts` 的 `UPDATE`/`DELETE`，`WHERE` 段缺 `tenant_id` 即红；**反向门**真删一处条件必须被点名且断言变异落上。
+- **A-6 对外入口地址**：`ATLAS_PUBLIC_URL` 实测散布是**三处**（api 导入期、Shopify 回调地址、notifications 缺省常量）而不是两处，收敛为 `security/bootstrap.read_public_url()`＋`public_url_is_loopback()`（与 docs/77 R4 的 `read_storage_backend()` 同族同理由；空串/纯空白按"没配"回落，否则拼出 `/approvals/…` 这种相对深链更难查）。**内容侧真正的修法**：prod 且入口地址仍是回环时，审批邮件**不写一键决策深链**——那枚链接是签名 capability token，寄到 `http://localhost:5174` 等于既不可达、又把令牌交给收件人本机的任何监听者；正文改印原委与配置项（不靠注释让人自己判断）。**U1134** 机检只许 `getenv("ATLAS_PUBLIC_URL"` 出现在 bootstrap（扫**读取式**：第一版扫关键词被错误文案与邮件正文里的正当提及误报，跑红才收窄）；**U1135** 不发链接且体内零 token；**U1136** 两例对照（prod 配 https 照发／dev 用本地地址照发＝形态零变化）。
+- **A-8 改判＝by-design，不是"半修"**：§12.6 原记"只 MCP 剥了 resumeToken、REST 仍发"。取证后这条判断不成立——**全仓没有任何端点以 `resumeToken` 作续跑凭证**（`grep resume_token` 只命中恢复扫描/认领/清理与日志），REST 唯一消费者是 `GET /api/interruptions`，前端只把它当展示列与 `rowKey`（`Waits.tsx:247`/`:322`）；MCP 剥离的理由是信任域不同（docs/91 §3 的刻意收窄）。文档同时写明**判据作废条件**：哪天出现"拿 token 就能续跑"的端点，本条立刻重开并按 §14 口径收窄。
+- **A-8b 落日志的令牌（同号撞车的另一件事）＝真缺陷，已闭**：本文 09-30 台账的 A-8 指的是`resume_token`／审批 token 整串进日志，而 §12.6 对账时把同一个号用作"REST 投影仍发"——上一段改判的只是投影那半。日志那半是真问题：这两类串都持有推进状态的能力（替持有人续跑／决策），日志可读面比租户 UI 宽得多。`main.py` 四处改为 `_token_ref()` 只留 **8 位前缀＋省略号**，**不是整行删除**——运维排障恰恰需要能对上表行的标识。U1137 的集成例先断告警原文（`smtp down`）确实进了 caplog、再断全量串不在，否则"日志里没有"可以由"那条日志根本没打"空绿。
+- **门（实跑）**：后端全量 **2303 passed／147 skipped／0 failed**（270.25s，净增 11 条常跑＝U1132–U1137 展开，skip 不变）；前端 vitest **781／2**、oxlint **0/0**、`pnpm build` 过；真进程导入探测〔跑〕＝prod 档 `_PUBLIC_URL == 'https://atlas.demo.example'`（证明导入期走新读取器），dev unset 得本地缺省且判为回环。**探测顺带撞到的事实**：随手拼的 31 字节密钥与非法 Fernet 键被 `assert_prod_secrets` 直接拒启——那道 prod 密钥门在真进程里是活的。
+- 零迁移、零新依赖、无新 ADR、**不解除任何缓做、不动 docs/73 两档判定**。同步面＝docs/89 §15＋docs/13 U1132–U1137＋docs/08 §八③＋docs/73 §11 指针＋docs/00 地图＋CHANGELOG＋handoff（顶部指针／Active #105／Recently shipped 滚动一条进 `docs/handoff-archive-2026-10-04.md`／Quality gate）。
+
+### feat(web)＋fix(harness)＋test＋docs：代码审计 N-1 收口＝浏览器出向闸门补到「页面内请求」这一层，真浏览器退出 prod 运行期（2026-10-04；定论 docs/89 §14；缓做 docs/14 **D52**；用例 docs/13 U1125–U1131·I21–I23）
+
+- **一句话**：`web/adapter.py` 的 `navigate` 从此不只看初始 URL——页面内每个请求（子资源／XHR／iframe）都过**同一份** `EgressGuard`，被拦直接 `abort` 并把原因记进有界的 `egress_denials`（静默丢弃等于没有闸门）。但**它挡不住 3xx 跳转**，所以 `web-playwright` 在 **prod 且未开演示面时不再注册**。
+- **为什么"补了闸门"不等于"闸门足够"（本轮最该记住的一条）**：真 Chromium 实测——公开页回 302 指向 `http://[::1]:<port>/landed`，该请求**照发、照打到目标服务器**，而路由处理器**根本没被调用**。机制在 Playwright driver 的 `_onRequestWillBeSent`：只对 `!event.redirectResponse` 的事件登记进拦截队列。⇒ N-1 的原始绕过路径（一次 302 进内网／云元数据）**在浏览器进程内收不住**，只有 egress 代理（`--proxy-server` 逐条 CONNECT/GET 过守卫）这一层能，登记为 D52。这条边界由 **I23 钉成"断言已知的弱"的测试**：它红了才说明平台行为变了，而不是让我们继续以为挡住了。
+- **决策反转要讲明白**：**打包 ZQ Q1 的"web 适配器不受演示面开关影响，照常注册"作废**——那批把注册做在了 docs/63 §0A 复开顺序的第 2 步，而第 1 步当时还没做；docs/01 §4.3「图上不可达」与 docs/73 2.1「N3 不进 MVP」也是在那一批被改成过去式的。现在 `harness/runtime.py` 与 `shop`／`database` 共用同一条 `demo_surface_enabled()` 判定（U1130/U1131 钉两档形状：prod 未开演示面时 `list_adapters()` 恰为 `{http, message, memory}` 且 `type=="web"` 零命中——因 `list_adapters()` 是 `GET /api/adapters` 与 MCP 共用的同一份装配，"图里选不到"是**装配层事实**不是前端隐藏）。
+- **顺带纠的一处漂移**：docs/63 复开条件引用的反向锁 `test_graph_loader.py:79-80` 今天钉的是 `ghost-adapter`，web 的等价断言（`test_tracing_loader.py:186-194`）测的是"未 `start()` 时工具 FAILED"，**已经不是"未注册"的锁**——已在 docs/63 同日更正里点明，别再拿那两行当护栏。
+- **门（实跑）**：后端全量 **2292 passed／147 skipped／0 failed**（178.33s；净增 12 常跑＝本批 11 条＋同日 N-2 枚举对照 1 条，净增 3 skip＝I21–I23）；`test_demo_surface_prod_gate.py` 单文件 **21 passed**；`ATLAS_RUN_INTEGRATION=1` 真 Chromium 跑 `tests/test_web_egress_gate_integration.py` **3 passed**（I21 拦下＋I22 放开确实打得通的判别对照＋I23 边界）。零新依赖、零迁移、不解除任何缓做、不动 docs/73 两档判定。
+- **同步面**：docs/89 §14（定论全文）·docs/14 D52＋注记八·docs/13 I21–I23 表行＋U1125–U1131 收口段·docs/08 §八 N-1 改"已拍板"·docs/73 §11 N-1 bullet·docs/01 §4.3·docs/63 §0A N3（前置完成度改"半道闸"＋反向锁漂移）·CHANGELOG·handoff。
+
+### test(security)＋docs(audit)：代码审计 N-2 定论＝「匿名面由机器枚举守护」对 router 挂载端点整体失明（2026-10-04，守护修复已落码 `77922ff`，定论 docs/89 §13）
+
+- **面是活的**：真 `TestClient` 打 `GET /.well-known/agent-card.json` 与 `GET /api/a2a/agent-card` 都回 **200** 带 agent card。§12.5 那句"4 条端点在 `app.routes` 里一条都查不到"**不是服务没挂，而是遍历方式看不到**——`app.include_router(r)` 在 FastAPI 里表示成 `app.routes` 中的一个 `_IncludedRouter` 容器，真路由藏在它的 `original_router.routes`（实测 `type=APIRouter`／`len=4`）。`app.routes` 158 项＝`APIRoute` 152＋`Route` 4＋`_IncludedRouter` 1＋`Mount` 1。
+- **因此这条守护自打包 R3 起对所有 router 挂载端点是瞎的**：`anonymous_surface()` 平铺遍历 `app.routes`。修法＝改递归 `_walk_routes()`；A2A 四条如实登记进 `A2A_PUBLIC_BY_DESIGN`（三条 card GET＝无租户数据的发现面；`POST /api/a2a/tasks` 非平台会话鉴权但自带 Bearer，prod 未配 token 即 fail-closed、非 prod 放行＋WARNING）。**新增正向对照**既断这 4 条必须进枚举、又断"平铺遍历应当看不见它们"（将来 FastAPI 若改成平铺，第二条会响）——守的是**枚举方式本身**。修完枚举 17 条＝期望集 17 条，双向差集皆空（此前 13＝13，差的正是那 4 条）。
+- **连带定性**：A2A 的未捕获 `request.json()`／调用方给的 `tenant_id`／全局 task store（N-4）**确实位于一条活的 HTTP 路径上**，不再是"可能不可达"，按 N-4 原级评估即可。这是本仓第二次被"我以为遍历的是全表面"打脸（第一次是 R3 的 `Mount`／非 `APIRoute`）。
+
+
+
+### docs(audit)：代码审计做成了 docs/89 §12 的增量重测，并抓到一条 prod 安全前置被跳过（2026-10-04，纯 docs）
+
+- **先纠正一件事再谈发现**：我按推荐起草了一份独立的 `docs/95-项目级代码审计…`，落笔前查索引才发现 **docs/89「项目级代码审计与功能全景」才是该主题的单一事实源**，而且它已经把我 09-28 那份未提交的同名草稿合并进去了（其抬头明写了这件事）。⇒ **草稿删除，内容改写成 docs/89 §12**（§2–§11 正文按留痕惯例不改写，冲突处以 §12 为准）。教训：造"新文档"之前先查自己的索引，同主题两份就是本仓反复付费的那个漂移源。
+- **§12 是对 HEAD `e6de817` 的全量重测**，不沿用旧数：35 个后端包（新增 `a2a`／`mcp`／`reflection`）、`api/main.py` 5171 行、**152 条路由**（`read` 60／`operate` 47／`administer` 25／仅登录态 4／demo 门 8／设计公开 8）、197 个错误码、最大迁移 041。方法上补了两道护栏：路由正则必须吃**多行装饰器**（旧写法少数 25 条），匿名面用守护自己的枚举函数做**双向差集**（结果为空集）。
+- **🔴 N-1（本轮最值钱的一条）**：`web-playwright` 已被打包 ZQ **无条件注册进运行期**（`harness/runtime.py:73-78`），而它自己的 docstring（`web/adapter.py:8-11`）明写"这条只判**初始 URL**……真要接进运行期必须在 `page.route()` 层逐请求校验，否则一次 302 就绕过闸门"，且**全仓没有 `page.route(` 实现**。`navigate/click/type` 是 WRITE 且授 `FULL_PERMISSIONS`。⇒ 后果：**prod 形态下一个 `operate` 档的图可以把真浏览器开到内网／云元数据**。要么补 route 级 egress，要么 prod 且未开 demo 面时不注册 `web`（与 `shop`／`database` 同一条判定）——**"注释说不许这样、运行期已经这样"不是可维持的状态**。四处口径需同步：docs/01 §4.3、docs/63 §0A、docs/73 2.1、docs/14 D43。
+- **🟡 N-2（不给结论，只给事实）**：A2A 的 4 条端点在真进程 `app.routes`（158 条）里**一条都查不到**，而 `main.py:373` 是无条件 `include_router`。我逐条排除了五类解释（陈旧字节码＝换 `PYTHONPYCACHEPREFIX` 全新缓存复测、第二处 `app` 绑定、任何 `.routes` 改写、`include_router` monkeypatch、循环导入），**机制没定位**。但无论成因如何，有一条已经成立：**X.3 那句"整张 ASGI 匿名面由机器枚举守护"对 router 挂载的端点是瞎的**——这是 R3 之后同一条断言第二次被自己的枚举方式打脸。诊断动作只需起活进程 `curl /.well-known/agent-card.json`。
+- **两条正面结论**：① **R1 类缺陷全仓清零**——9 个节点 schema 声明的 73 个运营可填字段里 72 个有运行期读者，唯一仅校验的 `loop.itemName` 有 docs/45 第 66 行的明示依据（展示别名，不改运行时路径）；② **反思写面在后端确实收紧**——可持久化恰两字段、参数白名单恰四条标量且整份候选 fail-closed、`promptTemplate` 明确排除、`reflection/` 内无任何 publish/apply 路径 ⇒「LLM 无控制流写入权」不是只有前端守护。MCP 面也复核为**七个工具全只读**、stdio-only、租户 env 绑定 fail-closed、投影显式剥 `resumeToken`。
+- **旧 A 组 12 条逐条对账**：闭 2（首启竞态主干＝打包 S；`codes` 那条**是我自己口径写重了**，改成"覆盖面薄"）、半修 2（`resumeToken` 只 MCP 剥了、REST `main.py:4186` 仍发；入参上限只在新面做对）、**仍开 8**——其中 **prod 不强制 `ATLAS_STORAGE_BACKEND=pg`**（非 compose 手工部署可整档跑 RAM）、渠道 `POST /{id}/test` 仍在 `read` 档真出向＋写状态、22 个码无前端文案、两处 `UPDATE monitoring_alerts … WHERE id = :id` 缺 `tenant_id`。
+- **门**：`tests/test_handoff_integrity.py` 复跑绿（本批动了 handoff 编号与 Recently shipped 之外的顶部块）；其余文件为纯文字同步，**零代码／零迁移／零新 ADR／不解除任何缓做、不改 B 档判定**。
+
 
 ### fix(security)＋test：文件密钥尾换行 CRLF 跨平台修复，Windows 全量门首次 0 failed（2026-10-04 自主排查修复）
 
