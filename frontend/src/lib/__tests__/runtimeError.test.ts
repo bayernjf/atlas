@@ -119,15 +119,49 @@ describe('运行期错误码 i18n（docs/60 G1）', () => {
     expect(en).not.toMatch(/[一-鿿]/)
   })
 
-  it('无码、空码或未知前缀一律回退后端中文兜底，不泄漏 i18n key', () => {
+  it('成员判定＝"有没有译文"：无码、空码、目录外的码一律回退后端中文兜底', () => {
     expect(resolveRuntimeError(undefined, undefined, '后端中文')).toBe('后端中文')
     expect(resolveRuntimeError('', undefined, '后端中文')).toBe('后端中文')
     expect(resolveRuntimeError('SOME_OTHER_CODE', undefined, '后端中文')).toBe('后端中文')
-    expect(isRuntimeErrorCode('COND_FOO')).toBe(true)
-    expect(isRuntimeErrorCode('WAIT_X')).toBe(true)
+    // 打包 AW（docs/89 A-4）改判：识别从"前缀白名单"改成"目录成员"。所以一个编造的
+    // COND_FOO / WAIT_X 不再是"可翻译"——它们没有任何文案，判 true 只会让下一位以为
+    // 补了键就能出英文。真键才 true。
+    expect(isRuntimeErrorCode('COND_FOO')).toBe(false)
+    expect(isRuntimeErrorCode('WAIT_X')).toBe(false)
     expect(isRuntimeErrorCode('LLM_DECISION_UNAVAILABLE')).toBe(true)
     expect(isRuntimeErrorCode('AUTH_BAD')).toBe(false)
     expect(isRuntimeErrorCode(undefined)).toBe(false)
+  })
+
+  it('A-4：目录里新增的码在英文态出英文（旧前缀白名单让它们永远走中文兜底）', () => {
+    changeLanguage('zh-CN')
+    const enOnly: Array<[string, string]> = [
+      ['SUBGRAPH_SUSPEND_UNSUPPORTED', 'suspend point inside a subgraph'],
+      ['OPENAPI_DUPLICATE', 'duplicates an existing'],
+      ['OPENAPI_NO_IMPORTABLE_OPERATION', 'No importable operations'],
+      ['WAIT_ALREADY_SIGNALED', 'already been signalled'],
+      ['WAIT_TOKEN_NOT_FOUND', 'does not exist or has already been cleaned up'],
+    ]
+    for (const [code, needle] of enOnly) {
+      const zh = resolveRuntimeError(code, undefined, '后端中文兜底')
+      expect(zh, `${code} 中文态必须走目录键而不是兜底`).not.toBe('后端中文兜底')
+      changeLanguage('en-US')
+      const en = resolveRuntimeError(code, undefined, '后端中文兜底')
+      expect(en.toLowerCase(), `${code} 英文态`).toContain(needle.toLowerCase())
+      expect(en, `${code} 英文态不残留汉字`).not.toMatch(/[一-鿿]/)
+      expect(en, `${code} 不泄漏占位符`).not.toMatch(/\{\{|\}\}/)
+      changeLanguage('zh-CN')
+    }
+    // 模板带占位符的码要按它自己通道的真实形状喂 params——上面那些码的文案都不带占位符，
+    // 所以这一条单列：不带 params 时必须回退，带了才出英文。
+    changeLanguage('en-US')
+    expect(resolveRuntimeError('COND_INVALID_RANGE', undefined, 'backend fallback')).toBe(
+      'backend fallback',
+    )
+    expect(
+      resolveRuntimeError('COND_INVALID_RANGE', { func: 'randint', low: 9, high: 1 }, 'fb'),
+    ).toBe('Function "randint": the lower bound cannot exceed the upper bound (9 > 1)')
+    changeLanguage('zh-CN')
   })
 
   it('resolveRuntimeDetail 兼容字符串与 {code,message,params} 对象', () => {
