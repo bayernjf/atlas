@@ -49,6 +49,7 @@ export const loopSchema: NodeConfigSchema = {
       exitReason: { type: 'string' },
       expression_errors: { type: 'array' },
       expressionErrorCodes: { type: 'array' },
+      expressionErrorParams: { type: 'array' },
     },
   },
 }
