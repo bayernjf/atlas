@@ -1631,6 +1631,35 @@ def get_reflection_candidate(
     return candidate
 
 
+class ReflectionDecisionRequest(BaseModel):
+    # 打包 ZU（docs/94 E-4）：候选级人工处理标记；Literal 非法值 FastAPI 自动 422。
+    status: Literal["adopted", "dismissed"]
+
+
+@app.put("/api/reflection/candidates/{candidate_id}/decision")
+def put_reflection_decision(
+    http_request: Request,
+    candidate_id: str,
+    body: ReflectionDecisionRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """登记/改判候选的人工处理标记（adopted/dismissed；docs/94 E-1/E-2/E-4）。
+
+    **只记处理标记**：不触发任何 apply/publish/promote，采纳后的改图仍走既有人工流程
+    （守 T22 唯一放量路径）。允许覆盖改判；候选不存在/跨租户统一 404；read 角色 403。
+    """
+    services = services_for(principal)
+    store = services.reflection_store
+    if not store.record_decision(candidate_id, body.status):
+        raise HTTPException(status_code=404, detail=f"反思候选不存在：{candidate_id}")
+    candidate = store.get_candidate(candidate_id)
+    _record_audit(
+        services, principal, http_request,
+        f"reflection.decide.{body.status}", 200,
+    )
+    return candidate if candidate is not None else {}
+
+
 class CronPreviewRequest(BaseModel):
     cron: str = ""
     timeZone: str = "UTC"
