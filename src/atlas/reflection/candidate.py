@@ -233,16 +233,23 @@ def resolve_node_ids(changes: list[Change], graph_snapshot: dict[str, Any] | Non
     """就地补全 ``node.confidenceThreshold`` change 的 ``node_id``（docs/94 E-3，确定性）。
 
     规则：① change 已带 node_id（摘要器回包透传）时，仅当该 id 指向快照中存在的
-    ai_decision 节点才保留，否则置 None（不信 LLM 给的错 id）；② 仍为 None 时，快照中
+    ai_decision 节点才保留，否则置 None（不信未经图校验的 id）；② 仍为 None 时，快照中
     **恰好 1 个** ai_decision 节点则自动填入，**0 个或 ≥2 个**保持 None（照实不猜）；
-    ③ 其余三条白名单 key 的 change node_id 恒为 None；④ 快照缺失/形状异常不抛，
-    全部保持 None（定位是增强，不是 pass 主链路）。
+    ③ 其余三条白名单 key 的 change node_id 恒为 None；④ 快照缺失/形状异常时无法校验，
+    node-scoped 行也一律置 None 且不抛（定位是增强，不是 pass 主链路）。
     """
-    if not graph_snapshot:
-        return
-    raw_nodes = graph_snapshot.get("nodes")
+    scoped = [c for c in changes if c.param_key == _NODE_SCOPED_PARAM]
+    # 其余三条 key 恒无节点语义。
+    for change in changes:
+        if change.param_key != _NODE_SCOPED_PARAM:
+            change.node_id = None
+
+    raw_nodes = graph_snapshot.get("nodes") if graph_snapshot else None
     if not isinstance(raw_nodes, list):
+        for change in scoped:
+            change.node_id = None
         return
+
     ai_ids = [
         node.get("id")
         for node in raw_nodes
@@ -251,10 +258,7 @@ def resolve_node_ids(changes: list[Change], graph_snapshot: dict[str, Any] | Non
     ]
     valid_ids = set(ai_ids)
     sole_id = ai_ids[0] if len(ai_ids) == 1 else None
-    for change in changes:
-        if change.param_key != _NODE_SCOPED_PARAM:
-            change.node_id = None
-            continue
+    for change in scoped:
         node_id = change.node_id
         if node_id is not None and node_id not in valid_ids:
             node_id = None
