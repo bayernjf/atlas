@@ -3,6 +3,16 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### docs(audit)：代码审计做成了 docs/89 §12 的增量重测，并抓到一条 prod 安全前置被跳过（2026-10-04，纯 docs）
+
+- **先纠正一件事再谈发现**：我按推荐起草了一份独立的 `docs/95-项目级代码审计…`，落笔前查索引才发现 **docs/89「项目级代码审计与功能全景」才是该主题的单一事实源**，而且它已经把我 09-28 那份未提交的同名草稿合并进去了（其抬头明写了这件事）。⇒ **草稿删除，内容改写成 docs/89 §12**（§2–§11 正文按留痕惯例不改写，冲突处以 §12 为准）。教训：造"新文档"之前先查自己的索引，同主题两份就是本仓反复付费的那个漂移源。
+- **§12 是对 HEAD `e6de817` 的全量重测**，不沿用旧数：35 个后端包（新增 `a2a`／`mcp`／`reflection`）、`api/main.py` 5171 行、**152 条路由**（`read` 60／`operate` 47／`administer` 25／仅登录态 4／demo 门 8／设计公开 8）、197 个错误码、最大迁移 041。方法上补了两道护栏：路由正则必须吃**多行装饰器**（旧写法少数 25 条），匿名面用守护自己的枚举函数做**双向差集**（结果为空集）。
+- **🔴 N-1（本轮最值钱的一条）**：`web-playwright` 已被打包 ZQ **无条件注册进运行期**（`harness/runtime.py:73-78`），而它自己的 docstring（`web/adapter.py:8-11`）明写"这条只判**初始 URL**……真要接进运行期必须在 `page.route()` 层逐请求校验，否则一次 302 就绕过闸门"，且**全仓没有 `page.route(` 实现**。`navigate/click/type` 是 WRITE 且授 `FULL_PERMISSIONS`。⇒ 后果：**prod 形态下一个 `operate` 档的图可以把真浏览器开到内网／云元数据**。要么补 route 级 egress，要么 prod 且未开 demo 面时不注册 `web`（与 `shop`／`database` 同一条判定）——**"注释说不许这样、运行期已经这样"不是可维持的状态**。四处口径需同步：docs/01 §4.3、docs/63 §0A、docs/73 2.1、docs/14 D43。
+- **🟡 N-2（不给结论，只给事实）**：A2A 的 4 条端点在真进程 `app.routes`（158 条）里**一条都查不到**，而 `main.py:373` 是无条件 `include_router`。我逐条排除了五类解释（陈旧字节码＝换 `PYTHONPYCACHEPREFIX` 全新缓存复测、第二处 `app` 绑定、任何 `.routes` 改写、`include_router` monkeypatch、循环导入），**机制没定位**。但无论成因如何，有一条已经成立：**X.3 那句"整张 ASGI 匿名面由机器枚举守护"对 router 挂载的端点是瞎的**——这是 R3 之后同一条断言第二次被自己的枚举方式打脸。诊断动作只需起活进程 `curl /.well-known/agent-card.json`。
+- **两条正面结论**：① **R1 类缺陷全仓清零**——9 个节点 schema 声明的 73 个运营可填字段里 72 个有运行期读者，唯一仅校验的 `loop.itemName` 有 docs/45 第 66 行的明示依据（展示别名，不改运行时路径）；② **反思写面在后端确实收紧**——可持久化恰两字段、参数白名单恰四条标量且整份候选 fail-closed、`promptTemplate` 明确排除、`reflection/` 内无任何 publish/apply 路径 ⇒「LLM 无控制流写入权」不是只有前端守护。MCP 面也复核为**七个工具全只读**、stdio-only、租户 env 绑定 fail-closed、投影显式剥 `resumeToken`。
+- **旧 A 组 12 条逐条对账**：闭 2（首启竞态主干＝打包 S；`codes` 那条**是我自己口径写重了**，改成"覆盖面薄"）、半修 2（`resumeToken` 只 MCP 剥了、REST `main.py:4186` 仍发；入参上限只在新面做对）、**仍开 8**——其中 **prod 不强制 `ATLAS_STORAGE_BACKEND=pg`**（非 compose 手工部署可整档跑 RAM）、渠道 `POST /{id}/test` 仍在 `read` 档真出向＋写状态、22 个码无前端文案、两处 `UPDATE monitoring_alerts … WHERE id = :id` 缺 `tenant_id`。
+- **门**：`tests/test_handoff_integrity.py` 复跑绿（本批动了 handoff 编号与 Recently shipped 之外的顶部块）；其余文件为纯文字同步，**零代码／零迁移／零新 ADR／不解除任何缓做、不改 B 档判定**。
+
 
 ### fix(security)＋test：文件密钥尾换行 CRLF 跨平台修复，Windows 全量门首次 0 failed（2026-10-04 自主排查修复）
 
