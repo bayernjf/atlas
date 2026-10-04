@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react'
+import { useCallback, useEffect, useMemo } from 'react'
 import { ReactFlow, Background, Controls, MarkerType, ReactFlowProvider, useReactFlow } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { useEditorStore, type EditorNode } from '../../store/editorStore'
@@ -26,10 +26,33 @@ function FlowCanvasInner() {
   const onConnect = useEditorStore((state) => state.onConnect)
   const selectNode = useEditorStore((state) => state.selectNode)
   const addNodeAt = useEditorStore((state) => state.addNodeAt)
-  const { screenToFlowPosition } = useReactFlow()
+  // 打包 ZU（docs/94 E-6）：反思「去修改」节点级定位——provider 内消费 pending 节点并居中。
+  const pendingFocusNodeId = useEditorStore((state) => state.pendingFocusNodeId)
+  const clearFocusNode = useEditorStore((state) => state.clearFocusNode)
+  const { screenToFlowPosition, setCenter } = useReactFlow()
   const { t } = useTranslation('editor')
 
   const nodeTypes = useMemo(() => ({ atlasNode: AtlasNode }), [])
+
+  // 待聚焦节点：选中并居中（measured 缺省 180×80、zoom 1.1、duration 300，照 ProblemsPanel）。
+  // 图已加载但找不到节点时只打开图、清除请求、不报错（契约 E-6）；节点未就绪则随 nodes 变化重试。
+  useEffect(() => {
+    if (!pendingFocusNodeId) return
+    const current = useEditorStore.getState().nodes
+    const node = current.find((item) => item.id === pendingFocusNodeId)
+    if (node) {
+      selectNode(node.id)
+      const width = node.measured?.width ?? 180
+      const height = node.measured?.height ?? 80
+      void setCenter(node.position.x + width / 2, node.position.y + height / 2, {
+        zoom: 1.1,
+        duration: 300,
+      })
+      clearFocusNode()
+    } else if (current.length > 0) {
+      clearFocusNode()
+    }
+  }, [pendingFocusNodeId, nodes, selectNode, setCenter, clearFocusNode])
 
   const routingEdgeLabels = useMemo(() => {
     const labels = new Map<string, string>()

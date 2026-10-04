@@ -31,7 +31,17 @@
     "reason": "Reason",
     "suggestions": "Prompt suggestions",
     "digest": "Evidence",
-    "gotoEdit": "Edit"
+    "gotoEdit": "Edit",
+    "actions": "Action"
+  },
+  "decision": {
+    "pending": "Pending",
+    "adopted": "Adopted",
+    "dismissed": "Dismissed",
+    "markAdopted": "Mark adopted",
+    "markDismissed": "Dismiss",
+    "gotoNode": "Open editor and focus node {{nodeId}}",
+    "failed": "Failed to record the decision, please try again later"
   },
   "goto": {
     "graphVariable": "Open editor: graph variables",

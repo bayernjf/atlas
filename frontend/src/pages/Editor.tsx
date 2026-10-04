@@ -119,11 +119,14 @@ export function Editor({
   principal,
   onLogout,
   initialGraphId,
+  initialNodeId,
 }: {
   principal: Principal
   onLogout: () => void
   /** 打包 ZS（docs/92 E-3）：反思「去修改」跳转时待打开的图 id；App 状态导航传入，无 router。 */
   initialGraphId?: string | null
+  /** 打包 ZU（docs/94 E-6）：反思节点级定位，打开图后待选中并居中的 ai_decision 节点 id。 */
+  initialNodeId?: string | null
 }) {
   const { t } = useTranslation('editor')
   const canOperate = roleCan(principal.role, 'operate')
@@ -134,6 +137,7 @@ export function Editor({
   const edges = useEditorStore((state) => state.edges)
   const variables = useEditorStore((state) => state.variables)
   const loadGraph = useEditorStore((state) => state.loadGraph)
+  const requestFocusNode = useEditorStore((state) => state.requestFocusNode)
   const setNodeStatus = useEditorStore((state) => state.setNodeStatus)
   const resetRunStatuses = useEditorStore((state) => state.resetRunStatuses)
   const appendLog = useEditorStore((state) => state.appendLog)
@@ -144,6 +148,7 @@ export function Editor({
   useValidationEngine()
 
   // 打包 ZS（docs/92 E-3）：反思「去修改」跳转时按 id 打开对应图（latest 草稿，只读）。
+  // 打包 ZU（docs/94 E-6）：loadGraph 后若带节点 id，请求选中并居中（FlowCanvas 内消费）。
   useEffect(() => {
     if (!initialGraphId) return
     let cancelled = false
@@ -151,6 +156,7 @@ export function Editor({
       .then((graph) => {
         if (cancelled) return
         loadGraph(graph)
+        if (initialNodeId) requestFocusNode(initialNodeId)
         setDraftGraphId(initialGraphId)
         setPublishedRef(null)
         setRunTarget('draft')
@@ -161,7 +167,7 @@ export function Editor({
     return () => {
       cancelled = true
     }
-  }, [initialGraphId, loadGraph, appendLog])
+  }, [initialGraphId, initialNodeId, loadGraph, requestFocusNode, appendLog])
 
   // docs/61 §2.2：后端编译 422 的逐条诊断快照通道（Problems 面板消费）。
   const setServerIssues = useValidationStore((state) => state.setServerIssues)

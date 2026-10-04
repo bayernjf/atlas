@@ -32,6 +32,8 @@ function App() {
   const [page, setPage] = useState<Page>('dashboard')
   // 打包 ZS（docs/92 E-3）：反思「去修改」跳转编辑器时待打开的图 id（App 状态导航，无 router）。
   const [editorGraphId, setEditorGraphId] = useState<string | null>(null)
+  // 打包 ZU（docs/94 E-6）：节点级定位，与 editorGraphId 同置；无节点定位时为 null。
+  const [editorNodeId, setEditorNodeId] = useState<string | null>(null)
 
   useEffect(() => {
     const onUnauthorized = () => {
@@ -131,8 +133,9 @@ function App() {
           principal={principal}
           onLogout={handleLogout}
           onBack={() => setPage('dashboard')}
-          onOpenEditor={(graphId) => {
+          onOpenEditor={(graphId, nodeId) => {
             setEditorGraphId(graphId)
+            setEditorNodeId(nodeId ?? null)
             setPage('editor')
           }}
           onOpenMonitoring={() => setPage('monitoring')}
@@ -142,7 +145,12 @@ function App() {
       ) : page === 'models' && roleCan(principal.role, 'read') ? (
         <Models principal={principal} onLogout={handleLogout} onBack={() => setPage('dashboard')} />
       ) : (
-        <Editor principal={principal} onLogout={handleLogout} initialGraphId={editorGraphId} />
+        <Editor
+          principal={principal}
+          onLogout={handleLogout}
+          initialGraphId={editorGraphId}
+          initialNodeId={editorNodeId}
+        />
       )}
     </ConfigProvider>
   )

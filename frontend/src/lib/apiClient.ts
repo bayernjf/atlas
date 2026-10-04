@@ -515,13 +515,19 @@ export type ReflectionReportItem = {
   status: ReflectionStatus
   reasons: string[]
   generated_at: string
+  // 打包 ZU（docs/94 E-5）：候选级人工处理标记；候选被 ring 裁掉则为 null。
+  decision_status?: ReflectionDecisionStatus | null
 }
+
+export type ReflectionDecisionStatus = 'adopted' | 'dismissed'
 
 export type ReflectionChange = {
   param_key: string
   from: unknown
   to: unknown
   reason: string
+  // 打包 ZU（docs/94 E-3）：node.confidenceThreshold 建议定位到的 ai_decision 节点；无法定位为 null。
+  node_id?: string | null
 }
 
 export type ReflectionCandidate = {
@@ -532,6 +538,8 @@ export type ReflectionCandidate = {
   prompt_suggestions: string[]
   evidence_digest: string
   generated_at: string
+  decision_status?: ReflectionDecisionStatus | null
+  decided_at?: string | null
 }
 
 export async function listReflectionReports(
@@ -552,6 +560,20 @@ export async function getReflectionCandidate(
 ): Promise<ReflectionCandidate> {
   return request<ReflectionCandidate>(
     `/api/reflection/candidates/${encodeURIComponent(candidateId)}`,
+  )
+}
+
+/**
+ * 打包 ZU（docs/94 E-1/E-4）：登记/改判候选的人工处理标记（adopted/dismissed）。
+ * 只记处理标记，不改图、不发布、不碰路由（守 T22）；operate 权限，后端审计 reflection.decide。
+ */
+export async function putReflectionDecision(
+  candidateId: string,
+  status: ReflectionDecisionStatus,
+): Promise<ReflectionCandidate> {
+  return request<ReflectionCandidate>(
+    `/api/reflection/candidates/${encodeURIComponent(candidateId)}/decision`,
+    { method: 'PUT', body: JSON.stringify({ status }) },
   )
 }
 

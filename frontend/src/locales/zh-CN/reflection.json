@@ -31,7 +31,17 @@
     "reason": "理由",
     "suggestions": "提示词建议",
     "digest": "证据摘要",
-    "gotoEdit": "去修改"
+    "gotoEdit": "去修改",
+    "actions": "操作"
+  },
+  "decision": {
+    "pending": "待处理",
+    "adopted": "已采纳",
+    "dismissed": "已忽略",
+    "markAdopted": "标记已采纳",
+    "markDismissed": "忽略",
+    "gotoNode": "打开编辑器并定位到节点 {{nodeId}}",
+    "failed": "决策标记失败，请稍后重试"
   },
   "goto": {
     "graphVariable": "打开编辑器：图全局变量",
