@@ -1825,6 +1825,12 @@ def _execute_loop(
                 target = exit_target
                 exit_reason = "condition_false"
 
+    expression_errors, expression_error_codes, expression_error_params = (
+        _expression_error_channels(
+            expression_errors, expression_error_codes, expression_error_params
+        )
+    )
+
     return {
         "mode": "while",
         "iterations": iterations,
@@ -1835,6 +1841,22 @@ def _execute_loop(
         "expressionErrorCodes": expression_error_codes,
         "expressionErrorParams": expression_error_params,
     }
+
+
+def _expression_error_channels(
+    errors: list[str], codes: list[str], params: list[dict[str, Any]]
+) -> tuple[list[str], list[str], list[dict[str, Any]]]:
+    """表达式诊断的三组数组是**按下标对齐**的响应契约（docs/03）。
+
+    长度一旦错位，第 n 条明细就会读到第 n−1 条的 params——比崩更难发现的静默错误，
+    所以装配节点结果时直接拒绝，而不是等到前端渲染。
+    """
+    if not (len(errors) == len(codes) == len(params)):
+        raise ValueError(
+            f"表达式诊断三组数组长度不一致：errors={len(errors)} "
+            f"codes={len(codes)} params={len(params)}"
+        )
+    return errors, codes, params
 
 
 def _foreach_output(
@@ -1853,6 +1875,11 @@ def _foreach_output(
         expression_error_codes = [""] * len(expression_errors)
     if expression_error_params is None:
         expression_error_params = [{} for _ in expression_errors]
+    expression_errors, expression_error_codes, expression_error_params = (
+        _expression_error_channels(
+            expression_errors, expression_error_codes, expression_error_params
+        )
+    )
     return {
         "mode": "foreach",
         "items": items,
