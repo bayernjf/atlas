@@ -15,7 +15,7 @@
 - **落码中抓到并修掉的真实语义偏差**（独立 fix 原子 `7e4d379`）：首版 `resolve_node_ids` 在图快照缺失时早返回、保留了 LLM 给的未校验 node_id，违反契约⑥（快照缺失无法校验则全 None），重写为 fail-closed。
 - **门（实跑）**：后端全量 pytest **2280 passed / 144 skipped / 0 failed**（258.64s；较 A1 基线 2270/139 净增 10 常跑＝U1115–U1119，+5 skipped＝U1120 PG 集成）；U1120 五例 PG 集成在临时 pgvector:pg16 容器（5433，`ATLAS_RUN_INTEGRATION=1`）单独 **5 passed**（041 两表列齐、跨新 engine/store 可读＝重启模拟、两档投影逐键对拍、storage_id_seq 不复用、ring 裁 100、reset 隔离），容器用完即删；守护门 handoff＋migration **7 passed**；`test_reflection.py` 全文件 **28 passed**；前端 vitest **781 passed / 2 skipped**、oxlint **0 error / 0 warning**、`pnpm build`（tsc -b＋vite）通过。
 - **边界**：候选级非 change 级；0/多个 ai_decision 或快照缺失 node_id 留 None 不做假精确；零新依赖、无新 ADR、迁移不改 002；不解除 docs/14 其他缓做（change 级逐条状态、采纳率统计/长期归档、多 ai_decision 精确定位仍缓做，见 docs/94 §6）。
-- 同步面：docs/94（形状权威）＋docs/92 §6（闭合注记）＋docs/14 D51＋docs/09（reflection 包/前端行）＋docs/00 地图＋docs/08（立项＋收口块）＋docs/13（U1115–U1124 收口）＋docs/03/12（立项原子已同步）＋handoff。九原子（立项 `e3f4c51` 起），作者 bayernjf、无 AI co-author、**未 push、未合 main**。
+- 同步面：docs/94（形状权威）＋docs/92 §6（闭合注记）＋docs/14 D51＋docs/09（reflection 包/前端行）＋docs/00 地图＋docs/08（立项＋收口块）＋docs/13（U1115–U1124 收口）＋docs/03/12（立项原子已同步）＋handoff。九原子（立项 `e3f4c51` 起），作者 bayernjf、无 AI co-author、**未 push、未合 main**。**〔2026-10-04 勘误：已 push dev 并经 PR #108 合 main（origin/main=`07dddeb`），见 handoff 顶部流水条；本行「未 push、未合 main」过期〕**
 
 ### feat(llm/api/frontend)＋test＋docs：LLM 模型配置管理面落码收口＝内置模型（admin 管理）＋BYOK（用户自配）（2026-10-04 立项并同日落码收口；用户「那你继续搞」批准；形状权威 docs/93；docs/13 U1109–U1114）
 
