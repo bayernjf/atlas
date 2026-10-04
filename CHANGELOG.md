@@ -3,6 +3,23 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### feat(web)＋fix(harness)＋test＋docs：代码审计 N-1 收口＝浏览器出向闸门补到「页面内请求」这一层，真浏览器退出 prod 运行期（2026-10-04；定论 docs/89 §14；缓做 docs/14 **D52**；用例 docs/13 U1125–U1131·I21–I23）
+
+- **一句话**：`web/adapter.py` 的 `navigate` 从此不只看初始 URL——页面内每个请求（子资源／XHR／iframe）都过**同一份** `EgressGuard`，被拦直接 `abort` 并把原因记进有界的 `egress_denials`（静默丢弃等于没有闸门）。但**它挡不住 3xx 跳转**，所以 `web-playwright` 在 **prod 且未开演示面时不再注册**。
+- **为什么"补了闸门"不等于"闸门足够"（本轮最该记住的一条）**：真 Chromium 实测——公开页回 302 指向 `http://[::1]:<port>/landed`，该请求**照发、照打到目标服务器**，而路由处理器**根本没被调用**。机制在 Playwright driver 的 `_onRequestWillBeSent`：只对 `!event.redirectResponse` 的事件登记进拦截队列。⇒ N-1 的原始绕过路径（一次 302 进内网／云元数据）**在浏览器进程内收不住**，只有 egress 代理（`--proxy-server` 逐条 CONNECT/GET 过守卫）这一层能，登记为 D52。这条边界由 **I23 钉成"断言已知的弱"的测试**：它红了才说明平台行为变了，而不是让我们继续以为挡住了。
+- **决策反转要讲明白**：**打包 ZQ Q1 的"web 适配器不受演示面开关影响，照常注册"作废**——那批把注册做在了 docs/63 §0A 复开顺序的第 2 步，而第 1 步当时还没做；docs/01 §4.3「图上不可达」与 docs/73 2.1「N3 不进 MVP」也是在那一批被改成过去式的。现在 `harness/runtime.py` 与 `shop`／`database` 共用同一条 `demo_surface_enabled()` 判定（U1130/U1131 钉两档形状：prod 未开演示面时 `list_adapters()` 恰为 `{http, message, memory}` 且 `type=="web"` 零命中——因 `list_adapters()` 是 `GET /api/adapters` 与 MCP 共用的同一份装配，"图里选不到"是**装配层事实**不是前端隐藏）。
+- **顺带纠的一处漂移**：docs/63 复开条件引用的反向锁 `test_graph_loader.py:79-80` 今天钉的是 `ghost-adapter`，web 的等价断言（`test_tracing_loader.py:186-194`）测的是"未 `start()` 时工具 FAILED"，**已经不是"未注册"的锁**——已在 docs/63 同日更正里点明，别再拿那两行当护栏。
+- **门（实跑）**：后端全量 **2292 passed／147 skipped／0 failed**（178.33s；净增 12 常跑＝本批 11 条＋同日 N-2 枚举对照 1 条，净增 3 skip＝I21–I23）；`test_demo_surface_prod_gate.py` 单文件 **21 passed**；`ATLAS_RUN_INTEGRATION=1` 真 Chromium 跑 `tests/test_web_egress_gate_integration.py` **3 passed**（I21 拦下＋I22 放开确实打得通的判别对照＋I23 边界）。零新依赖、零迁移、不解除任何缓做、不动 docs/73 两档判定。
+- **同步面**：docs/89 §14（定论全文）·docs/14 D52＋注记八·docs/13 I21–I23 表行＋U1125–U1131 收口段·docs/08 §八 N-1 改"已拍板"·docs/73 §11 N-1 bullet·docs/01 §4.3·docs/63 §0A N3（前置完成度改"半道闸"＋反向锁漂移）·CHANGELOG·handoff。
+
+### test(security)＋docs(audit)：代码审计 N-2 定论＝「匿名面由机器枚举守护」对 router 挂载端点整体失明（2026-10-04，守护修复已落码 `77922ff`，定论 docs/89 §13）
+
+- **面是活的**：真 `TestClient` 打 `GET /.well-known/agent-card.json` 与 `GET /api/a2a/agent-card` 都回 **200** 带 agent card。§12.5 那句"4 条端点在 `app.routes` 里一条都查不到"**不是服务没挂，而是遍历方式看不到**——`app.include_router(r)` 在 FastAPI 里表示成 `app.routes` 中的一个 `_IncludedRouter` 容器，真路由藏在它的 `original_router.routes`（实测 `type=APIRouter`／`len=4`）。`app.routes` 158 项＝`APIRoute` 152＋`Route` 4＋`_IncludedRouter` 1＋`Mount` 1。
+- **因此这条守护自打包 R3 起对所有 router 挂载端点是瞎的**：`anonymous_surface()` 平铺遍历 `app.routes`。修法＝改递归 `_walk_routes()`；A2A 四条如实登记进 `A2A_PUBLIC_BY_DESIGN`（三条 card GET＝无租户数据的发现面；`POST /api/a2a/tasks` 非平台会话鉴权但自带 Bearer，prod 未配 token 即 fail-closed、非 prod 放行＋WARNING）。**新增正向对照**既断这 4 条必须进枚举、又断"平铺遍历应当看不见它们"（将来 FastAPI 若改成平铺，第二条会响）——守的是**枚举方式本身**。修完枚举 17 条＝期望集 17 条，双向差集皆空（此前 13＝13，差的正是那 4 条）。
+- **连带定性**：A2A 的未捕获 `request.json()`／调用方给的 `tenant_id`／全局 task store（N-4）**确实位于一条活的 HTTP 路径上**，不再是"可能不可达"，按 N-4 原级评估即可。这是本仓第二次被"我以为遍历的是全表面"打脸（第一次是 R3 的 `Mount`／非 `APIRoute`）。
+
+
+
 ### docs(audit)：代码审计做成了 docs/89 §12 的增量重测，并抓到一条 prod 安全前置被跳过（2026-10-04，纯 docs）
 
 - **先纠正一件事再谈发现**：我按推荐起草了一份独立的 `docs/95-项目级代码审计…`，落笔前查索引才发现 **docs/89「项目级代码审计与功能全景」才是该主题的单一事实源**，而且它已经把我 09-28 那份未提交的同名草稿合并进去了（其抬头明写了这件事）。⇒ **草稿删除，内容改写成 docs/89 §12**（§2–§11 正文按留痕惯例不改写，冲突处以 §12 为准）。教训：造"新文档"之前先查自己的索引，同主题两份就是本仓反复付费的那个漂移源。
