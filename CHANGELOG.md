@@ -3,6 +3,13 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### docs：立项「首登强制改密与口令轮换位」契约（docs/95，打包 AV，2026-10-04 docs-only 未落码）
+
+- **它不是增强，而是补一个已声明的要求**：prod 演练（`scripts/dev/prod_rehearsal.py` 第 4 段）实测「首登强改密」在服务端**没有任何强制位**——`/api/auth/me` 无相关字段、引导口令账号不改密也照样能用平台，而 docs/73 4.1 的验收原文写着这四个字。
+- **两个非平凡判断写进契约，免得下一个人重新踩**：① 判定"该改密"不能用 `verify_password(引导口令, stored_hash)` 现场比对（bcrypt ≈100ms，进每个请求不可接受）⇒ 走迁移 **042** `iam_users.password_rotated_at`，任何设置口令的路径盖章；② 标志不能只存内存会话——PG 档 `iam_sessions` 只持久化 `(tenant, username, role, expires_at)`，重建 `Principal` 时会**谎报"不需要改密"**，所以标志取自用户行，两档一致由 U1145 钉住。
+- **强制 breadth（D-2）留给用户**：(a) 只挡写操作／(b) 挡一切业务端点、只留 `auth` 与静态（推荐，代价是实现错误会把自己锁在门外，故演练第 8 段是必需证据）／(c) 只提示不挡——(c) 就是今天已经做到的事，不采纳。演示形态（prod＋`ATLAS_ENABLE_DEMO_MOCK=1`）与 dev 一律不强制，与同日 A-11 那三条出路同构。
+- 零代码改动、零迁移（042 属落码批）；同步面＝docs/95 新建＋docs/00 地图行＋docs/08 §八 立项条＋handoff Active #107。
+
 ### test(dev)＋docs：prod 演练在出厂镜像上跑穿七段，4.1 从此只剩凭据与一处强制位（2026-10-04 用户「那你继续推」；docs/73 4.1／4.2；docs/79 §7.3；docs/13 〔跑〕表新行）
 
 - **为什么再来一次**：docs/79 §7.1 的首启证据是**一次性手工命令**，而且没关掉 compose 的 `restart: unless-stopped`——首启若崩，policy 会救回来，`RestartCount=0` 只证明"这次没崩"。新增 `scripts/dev/prod_rehearsal.py` 把演练变成可重跑脚本，并在 override 里把 `atlas`／`db` 的 `restart` 设成 `"no"`：这一次崩了没人救。
