@@ -119,7 +119,7 @@ describe('运行期错误码 i18n（docs/60 G1）', () => {
     expect(en).not.toMatch(/[一-鿿]/)
   })
 
-  it('成员判定＝"有没有译文"：无码、空码、目录外的码一律回退后端中文兜底', () => {
+  it('U1152：成员判定＝"有没有译文"：无码、空码、目录外的码一律回退后端中文兜底', () => {
     expect(resolveRuntimeError(undefined, undefined, '后端中文')).toBe('后端中文')
     expect(resolveRuntimeError('', undefined, '后端中文')).toBe('后端中文')
     expect(resolveRuntimeError('SOME_OTHER_CODE', undefined, '后端中文')).toBe('后端中文')
@@ -133,7 +133,7 @@ describe('运行期错误码 i18n（docs/60 G1）', () => {
     expect(isRuntimeErrorCode(undefined)).toBe(false)
   })
 
-  it('A-4：目录里新增的码在英文态出英文（旧前缀白名单让它们永远走中文兜底）', () => {
+  it('U1152：A-4 目录里新增的码在英文态出英文（旧前缀白名单让它们永远走中文兜底）', () => {
     changeLanguage('zh-CN')
     const enOnly: Array<[string, string]> = [
       ['SUBGRAPH_SUSPEND_UNSUPPORTED', 'suspend point inside a subgraph'],
