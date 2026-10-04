@@ -1010,9 +1010,14 @@ class PgMonitoringStore:
             conn.execute(
                 text(
                     "UPDATE monitoring_alerts SET count = count + 1, last_seen = :last_seen, "
-                    "last_run_id = :last_run_id WHERE id = :id"
+                    "last_run_id = :last_run_id WHERE id = :id AND tenant_id = :tenant_id"
                 ),
-                {"last_seen": record.finished_at, "last_run_id": record.id, "id": row[0]},
+                {
+                    "last_seen": record.finished_at,
+                    "last_run_id": record.id,
+                    "id": row[0],
+                    "tenant_id": self._tenant_id,
+                },
             )
             # docs/55：merge 也走 lifecycle 通知（对齐内存档）；读回最新投影。
             merged_row = conn.execute(
@@ -1420,9 +1425,14 @@ class PgMonitoringStore:
                 conn.execute(
                     text(
                         "UPDATE monitoring_alerts SET count = count + 1, last_seen = :now, "
-                        "last_run_id = :last_run_id WHERE id = :id"
+                        "last_run_id = :last_run_id WHERE id = :id AND tenant_id = :tenant_id"
                     ),
-                    {"now": now, "last_run_id": last_run_id, "id": row[0]},
+                    {
+                        "now": now,
+                        "last_run_id": last_run_id,
+                        "id": row[0],
+                        "tenant_id": self._tenant_id,
+                    },
                 )
                 alert_id = row[0]
             else:
