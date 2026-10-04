@@ -198,10 +198,10 @@ describe('运行期错误码 i18n（docs/60 G1）', () => {
 
     changeLanguage('en-US')
     const en = resolveExpressionErrors(codes, messages, params)
-    expect(en[0]).toContain('boolean')
-    expect(en[0]).toContain('string')
-    expect(en[0]).not.toMatch(/[一-鿿]/)
-    expect(en[1]).toContain('/')
+    // 整句钉死（不是"包含 boolean"这种弱断言）：params→detail 的组装链路一旦错位，
+    // 弱断言照样绿，运营看见的却是别人的话。
+    expect(en[0]).toBe(`Type mismatch: operator '!' expects boolean, got string`)
+    expect(en[1]).toBe(`Arithmetic "/": the divisor must not be 0`)
     expect(en[2]).not.toMatch(/[一-鿿]/)
     for (const text of en) expect(text).not.toMatch(/\{\{|\}\}/)
 
