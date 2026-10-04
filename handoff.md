@@ -1,5 +1,7 @@
 # Handoff — Atlas
 
+> **🐛 fix(security)：文件密钥尾换行 CRLF 跨平台正确性＋Windows 全量门首次 0 failed（2026-10-04 用户「自己找出来一口气搞」授权；fix＋test 同原子，docs 另原子；自推 dev）**：自主排查发现长期标注「Windows 平台既有换行差异、与本批无关」而带病过门的 **1 failed（test_u1077）** 实为两个真实问题——① 测试 fixture `_write` 用 `Path.write_text`，Windows 文本模式把内容里的 `\n` 再翻成 os.linesep，致 `"…\r\n"` 落盘成 `\r\r\n`（双重转换）；② 产品代码 `read_secret` 用 `read_text`（默认 universal-newline）读取，CRLF 被折成 LF，令 `endswith("\r\n")` 的 CRLF 剥 2 分支**永不命中**（名义测 CRLF、实际走 LF 分支＝假覆盖）。实测复现：`write_text('g'*4+'\r\n')`→磁盘 `b'gggg\r\r\n'`、`read_text` 把 `b'ffff\r\n'` 读回 `'ffff\n'`（CR 被吞）。修法：fixture 改 `write_bytes(content.encode('utf-8'))` 精确落字面字节；`read_secret` 改 `read_bytes().decode('utf-8')` 字节级读取（不启用换行翻译、密钥本体不被隐式改写；OSError 仍兜缺失、UnicodeDecodeError 行为与旧 read_text 一致）。TDD：先在旧产品代码下补「双 CRLF 只剥一个、残留两字节＝34」断言，如预期红（旧 universal 折成 `\n\n` 剥 1 留 1 字节＝33），改产品代码后绿——钉死 CRLF 剥 2 分支真正承重。门（实跑）：`test_secret_file_injection.py` **7 passed**、后端全量 **2280 passed/144 skipped/0 failed**（1261.73s，Windows 全量门首次 0 failed）、守护门 **7 passed**；前端 lint 0/0、vitest 781/2（2 skipped＝`bench/validation.perf.test.ts` 性能基准，常规门故意不跑，非缺陷）。零新依赖/无迁移/无 ADR；调用方 oauth/email_token/secrets/hydrate 均复用 read_secret 剥离结果，全量门覆盖无回归。详见 Quality gate 本日 fix(security) 收口门。
+
 > **📝 docs(errata)：MCP 批 push 状态与 README 批链范围勘误（2026-10-04 用户「更新项目文档」；docs-only，零代码／测试／迁移／依赖改动；自推）**：git 实测 MCP 批三原子（`6a87531`/`d911964`/`513121a`）已在 origin/dev（`git merge-base --is-ancestor 513121a refs/remotes/origin/dev` exit 0），故两处过期表述按留痕惯例追加〔2026-10-04 勘误〕、原文不改写：① docs/91 收口注记末行「原子提交待 push」→ 已 push 入 origin/dev；② README「当前阶段」批链范围「docs/27–91、至 2026-10-01」→ 已延至 docs/94、至 2026-10-04（docs/92/93/94 均已立项并落码收口）。门：守护门复跑 `test_handoff_integrity`＋`test_migration_convention` 为证。
 
 > **📝 docs(errata)：打包 ZU「未 push、未合 main」过期表述勘误（2026-10-04 用户「开搞」授权；docs-only，零代码／测试／迁移／依赖改动；自推）**：git fetch 实测——本地 dev `e6de817`（ZU 收口 docs）与 origin/dev 完全同步（`git rev-list --count refs/remotes/origin/dev..dev`＝0）、origin/main `07dddeb`＝Merge pull request #108 from bayernjf/dev（**打包 ZU 已合 main**）、工作区干净；故五处「未 push、未合 main」表述已过时，按留痕惯例各追加〔2026-10-04 勘误〕、原文不改写：① handoff 顶部 ZU 收口块；② handoff Active work #102；③ handoff Recently shipped 首条；④ CHANGELOG 打包 ZU 条目末行；⑤ docs/08 打包 ZU 收口块。门：守护门复跑 `test_handoff_integrity`＋`test_migration_convention` 为证。
@@ -352,6 +354,16 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 
 ## Quality gate（质量门）
 
+### 2026-10-04 fix(security) 文件密钥 CRLF 跨平台修复＋Windows 全量门首次全绿收口门（先跑后写，数字取实跑）
+
+- **缺陷**：`test_u1077` 长期 1 failed，原标注「Windows 平台既有换行差异、与本批无关」（见下方打包 Y 门）。深查实为两处：① 测试 fixture `_write` 用 `Path.write_text`，Windows 文本模式把内容里的 `\n` 再翻 os.linesep，`"…\r\n"` 落盘成 `\r\r\n`（双重转换）；② `read_secret` 用 `read_text`（universal-newline）把 CRLF 折成 LF，`endswith("\r\n")` 的剥 2 分支永不命中（假覆盖）。
+- **实测证据**：`write_text('g'*4+'\r\n')` 落盘 `b'gggg\r\r\n'`、`read_text` 读回 `'gggg\n\n'`；`write_bytes` 落盘 `b'gggg\r\n'`；`read_text` 把字节 `b'ffff\r\n'` 读回 `'ffff\n'`（CR 被吞 universal 翻译）。
+- **修复**：fixture 改 `write_bytes(content.encode('utf-8'))`；`read_secret` 改 `Path(file_ref).read_bytes().decode('utf-8')`（字节级、不翻译换行；OSError 兜缺失不变、UnicodeDecodeError 与旧 read_text 一致）。
+- **TDD 钉死**：新增「双 CRLF 只剥一个、残留 `\r\n` 两字节 ⇒ len 34」断言；旧产品代码下红（universal 折 `\n\n`、剥 1 留 1 字节＝33），修复后绿，证明 CRLF 剥 2 分支真正承重。
+- 后端全量常跑 pytest：**2280 passed / 144 skipped / 0 failed**（1261.73s）——Windows 全量门**首次 0 failed**（此前长期 2269–2280 passed 伴随 test_u1077 1 failed）。`test_secret_file_injection.py` **7 passed**（函数数不变，断言加在 U1077 内，未新增测试号）。
+- 守护门：`test_handoff_integrity`＋`test_migration_convention` **7 passed**。前端：oxlint **0/0**（174 files）、vitest **781 passed / 2 skipped**（2 skipped＝`bench/validation.perf.test.ts` 性能基准，常规门故意不跑，非缺陷）。
+- 零新依赖/无迁移/无 ADR；调用方 `connections/oauth.py`、`collaboration/email_token.py`、`security/secrets.py`、`hydrate_file_secrets` 均复用 read_secret 剥离结果，全量门覆盖无回归。
+
 ### 2026-10-04 打包 ZU 反思 L2 v3（采纳状态持久化＋节点级定位）落码收口门（先跑后写，数字取实跑）
 
 - 后端全量常跑 pytest：**2280 passed / 144 skipped / 0 failed**（258.64s）。对照 A1 基线 2270 passed/139 skipped/0 failed（2026-10-04，550.87s）：净增 **10 passed**（U1115–U1119 共 10 个常跑新例）、**+5 skipped**（U1120 五个 PG 集成例在无 DATABASE_URL 时常跑 skip）。
@@ -365,7 +377,7 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 ### 2026-10-04 打包 Y LLM 模型配置管理面落码收口门（先跑后写，数字取实跑）
 
 - 新文件 `tests/test_model_config.py`：**13 passed**（U1109 内置 CRUD 脱敏＋enabled=false 回退 env；U1110 BYOK per-tenant 隔离；U1111 优先级——节点显式 model > BYOK > 内置 > env，**BYOK 显式传 api_key/base_url 给 litellm**（本批最大风险点）；U1112 无配置行为与现状一致（规则/Offline/Null 兜底）；U1113 prod fail-closed 门零回归（判据是客户端类型）；U1114 密钥信封零明文＋`_FILE` 补水兼容）。**号段更正**：契约原 U1090–U1096 与 ZP（U1082–U1091）/ZQ（U1092–U1096）已占号段全撞 ⇒ 改 **U1109–U1114**，docs/93 §4 已同步订正。
-- 全量常跑 pytest：**2269 passed / 139 skipped / 1 failed**（唯一失败 `test_u1077` 为 **Windows 平台既有换行差异**——`Path.write_text` 文本模式把 `\r\n` 写 `\r\r\n`、`read_secret` 剥一个换行后剩 `\r`；stash 本批四消费点文件后单独跑依旧失败、`write_bytes` 绕过即通过 ⇒ 与本批无关，不改该测试）。
+- 全量常跑 pytest：**2269 passed / 139 skipped / 1 failed**（唯一失败 `test_u1077` 为 **Windows 平台既有换行差异**——`Path.write_text` 文本模式把 `\r\n` 写 `\r\r\n`、`read_secret` 剥一个换行后剩 `\r`；stash 本批四消费点文件后单独跑依旧失败、`write_bytes` 绕过即通过 ⇒ 与本批无关，不改该测试）。**〔2026-10-04 勘误：该失败同日已修——根因不止 fixture 双重转换，还有 `read_secret` universal-newline 致 CRLF 剥 2 分支死代码；fixture 改 `write_bytes`＋`read_secret` 改字节级读取后，Windows 全量门转 0 failed，见上方本日 fix(security) 收口门〕**
 - 守护门＋LLM 回归：`test_handoff_integrity`/`test_migration_convention`/`test_ai_decision_prod_gate`/`test_condition_classifier_prod_gate`/`test_nl_generate`/`test_reflection`/`test_condition_model_override` **61 passed**。
 - 前端：lint 0/0、vitest **772 passed / 2 skipped**、`pnpm build` 通过（更早批验证）。
 - 环境注记：venv 曾缺 `mcp>=2,<3`（pyproject 既有依赖）致 `test_mcp_server.py` collection error，已补装后全量恢复。
