@@ -9,6 +9,7 @@
   "COND_TYPE_MISMATCH": "Type mismatch: {{detail}}",
   "COND_DIVIDE_BY_ZERO": "Arithmetic \"{{op}}\": the divisor must not be 0",
   "COND_INVALID_DATE": "Function \"{{func}}\" constructed an invalid date",
+  "COND_INVALID_RANGE": "Function \"{{func}}\": the lower bound cannot exceed the upper bound ({{low}} > {{high}})",
   "COND_NULL_COMPARISON": "Null (null/missing variable) can only use equality comparisons, not ordering comparisons",
   "COND_EVAL_FAILED": "Failed to evaluate the expression",
   "WAIT_ABSOLUTE_TIME_INVALID": "Wait node: invalid absolute time",
@@ -16,10 +17,15 @@
   "WAIT_EVENT_FRAME_INVALID": "Wait node: invalid event frame",
   "WAIT_EVENT_KEY_INVALID": "Wait node: invalid event key",
   "WAIT_TIMEOUT_FAILED": "Timed out waiting for the event",
+  "WAIT_ALREADY_SIGNALED": "This wait has already been signalled; the repeated submission had no effect",
+  "WAIT_TOKEN_NOT_FOUND": "The wait does not exist or has already been cleaned up",
   "LOOP_MAX_ITERATIONS": "Reached the maximum number of iterations; exiting the loop",
   "LOOP_ITEMS_TOO_LARGE": "The iterated array exceeds the maximum length",
   "FOREACH_COLLECT_MISSING": "The collect node produced no output; skipping collection for this iteration",
   "LLM_DECISION_UNAVAILABLE": "No LLM decision provider is configured in production; the AI decision node aborted this run instead of silently falling back to rules",
   "LLM_CLASSIFIER_UNAVAILABLE": "No LLM classifier is configured in production; the condition node aborted this run instead of silently taking the default branch",
+  "SUBGRAPH_SUSPEND_UNSUPPORTED": "A suspend point inside a subgraph cannot be resumed across processes in the persisted (PG) tier, so this run failed deliberately; move the node to the top level of the graph, or preset it for replay in test/gate scenarios",
+  "OPENAPI_DUPLICATE": "The imported specification duplicates an existing, not-deleted one",
+  "OPENAPI_NO_IMPORTABLE_OPERATION": "No importable operations (every operation in the document was skipped)",
   "RUNTIME_UNEXPECTED": "An unexpected runtime error occurred"
 }
