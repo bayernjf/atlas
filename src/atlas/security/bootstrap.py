@@ -50,7 +50,11 @@ def read_secret(name: str) -> str:
     if not file_ref:
         return os.getenv(name, "").strip()
     try:
-        raw = Path(file_ref).read_text(encoding="utf-8")
+        # 字节级读取后显式解码，**不**用 read_text：后者默认 universal-newline，
+        # 读取时把 CRLF/CR 统一折成 LF，会令下面 endswith("\r\n") 的 CRLF 剥 2 分支
+        # 永不命中（密钥本体里若含 CR 还会被隐式改写）。docker secret / vault 落盘
+        # 可能是 CRLF，必须原样读到字节、再按"恰好一个尾行终止符"精确剥除。
+        raw = Path(file_ref).read_bytes().decode("utf-8")
     except OSError:
         return ""
     if raw.endswith("\r\n"):
