@@ -57,6 +57,18 @@ ASGI_PUBLIC_BY_DESIGN: dict[str, str] = {
 # SPA 的 app.mount("/")：编辑器应用壳/登录页，匿名可载；仅当构建产物存在时注册。
 SPA_MOUNT = "MOUNT /"
 
+# docs/89 §12 N-2：`include_router` 挂进来的 A2A 端点（docs/90 ADR T32）以前对守护不可见。
+# 逐条写清"它凭什么可以没有平台登录态"，别把"没被看见"混进"设计如此"。
+A2A_PUBLIC_BY_DESIGN: dict[str, str] = {
+    "GET /api/a2a/agent-card": "A2A 发现面：仅 agent 名称/技能描述，无租户数据",
+    "GET /.well-known/agent-card.json": "同上，A2A 规范要求的 well-known 位置",
+    "GET /.well-known/agent.json": "同上，旧版 well-known 别名",
+    "POST /api/a2a/tasks": (
+        "非平台会话鉴权，但自带 Bearer（`ATLAS_A2A_TASK_TOKEN`）；"
+        "prod 未配即 fail-closed、非 prod 放行＋WARNING（`a2a/router.py:48-58`）"
+    ),
+}
+
 # 收口前一直在开门、且已由 J-3e 守住的三条：证明改共用函数没把老门的语义改坏。
 LEGACY_DEMO_SURFACE = [
     ("get", "/api/demo/mock/shopify-admin/webhooks.json", None),
@@ -77,15 +89,19 @@ def _endpoint_is_gated(endpoint) -> bool:
     return "_demo_mock_enabled" in source
 
 
-def anonymous_surface() -> set[str]:
-    """枚举"既无平台鉴权依赖、也无 demo 档位门"的**整张 ASGI 面**。
+def _walk_routes(routes, found: set[str]) -> None:
+    """递归走路由树：`include_router` 挂进来的端点不是平铺 APIRoute，必须钻进容器看。
 
-    docs/77 R3：打包 P 只遍历 `APIRoute`，把 `/docs`、`/redoc`、`/openapi.json` 与 SPA 的
-    `app.mount("/")` 漏在守护之外——"匿名可达面由机器枚举守护"在整张 ASGI 面上不成立。
-    这里把非 `APIRoute`（starlette `Route` / `Mount`）也纳入。
+    docs/89 §12 N-2：FastAPI 把 `app.include_router(r)` 表示成 `app.routes` 里的**一个**
+    `_IncludedRouter` 容器（真路由在它的 `original_router.routes` 里）。平铺遍历
+    `app.routes` 因此对 router 挂载的端点整体失明——A2A 那 4 条就是这样"在守护里不存在、
+    在活服务上 200"的。
     """
-    found: set[str] = set()
-    for route in app.routes:
+    for route in routes:
+        inner = getattr(route, "original_router", None)
+        if inner is not None:
+            _walk_routes(getattr(inner, "routes", []), found)
+            continue
         if isinstance(route, Mount):
             found.add(f"MOUNT {route.path or '/'}")  # Mount("/") 的 path 为空串
             continue
@@ -94,12 +110,25 @@ def anonymous_surface() -> set[str]:
             continue
         methods = getattr(route, "methods", None) or set()
         for method in sorted(m for m in methods if m != "HEAD"):
-            found.add(f"{method} {route.path}")
+            found.add(f"{method} {getattr(route, 'path', '')}")
+
+
+def anonymous_surface() -> set[str]:
+    """枚举"既无平台鉴权依赖、也无 demo 档位门"的**整张 ASGI 面**（含 router 挂载的端点）。
+
+    docs/77 R3：打包 P 只遍历 `APIRoute`，把 `/docs`、`/redoc`、`/openapi.json` 与 SPA 的
+    `app.mount("/")` 漏在守护之外——"匿名可达面由机器枚举守护"在整张 ASGI 面上不成立。
+    这里把非 `APIRoute`（starlette `Route` / `Mount`）也纳入。
+    docs/89 §12 N-2：同一句话又栽了一次——`include_router` 的端点在 `app.routes` 里是嵌套
+    容器，平铺遍历看不见；现由 `_walk_routes` 递归解决，并有正向对照测试钉住。
+    """
+    found: set[str] = set()
+    _walk_routes(app.routes, found)
     return found
 
 
 def expected_public_surface() -> set[str]:
-    expected = set(PUBLIC_BY_DESIGN) | set(ASGI_PUBLIC_BY_DESIGN)
+    expected = set(PUBLIC_BY_DESIGN) | set(ASGI_PUBLIC_BY_DESIGN) | set(A2A_PUBLIC_BY_DESIGN)
     if _frontend_dist() is not None:  # 与 import 期 app.mount 的判定同源
         expected.add(SPA_MOUNT)
     return expected
@@ -155,6 +184,25 @@ def test_r3_asgi_surface_beyond_apiroute_is_enumerated():
     surface = anonymous_surface()
     assert set(ASGI_PUBLIC_BY_DESIGN) <= surface, (
         f"文档面没进整张 ASGI 面枚举：{sorted(set(ASGI_PUBLIC_BY_DESIGN) - surface)}"
+    )
+
+
+def test_n2_router_mounted_endpoints_are_enumerated():
+    """docs/89 §12 N-2 的正向对照：`include_router` 挂进来的端点必须被枚举到。
+
+    它们在 `app.routes` 里是**一个容器**（`original_router.routes` 才是那 4 条），所以平铺
+    遍历会把整块对外面藏起来——"多一条少一条都红"这句话在 router 挂载面上就假了。这条测试
+    守的是**枚举方式本身**：以后谁把 `_walk_routes` 的递归改回去，这里先红。
+    """
+    surface = anonymous_surface()
+    assert set(A2A_PUBLIC_BY_DESIGN) <= surface, (
+        f"router 挂载的端点没进枚举：{sorted(set(A2A_PUBLIC_BY_DESIGN) - surface)}"
+    )
+    # 平铺遍历应当看不见它们——若哪天 FastAPI 改成平铺，上面那条仍绿，这里给信号。
+    flat = {f"{m} {r.path}" for r in app.routes if isinstance(r, APIRoute)
+            for m in (getattr(r, "methods", None) or set()) if m != "HEAD"}
+    assert not (flat & set(A2A_PUBLIC_BY_DESIGN)), (
+        "FastAPI 已把 include_router 平铺进 app.routes：递归可保留，但本用例的第二断言需删"
     )
 
 
