@@ -110,6 +110,7 @@ from atlas.openapi.parser import parse_document
 from atlas.openapi.store import ImportStoreError
 from atlas.security.bootstrap import (
     assert_prod_secrets,
+    assert_prod_storage_backend,
     demo_surface_enabled,
     hydrate_file_secrets,
     read_env_profile,
@@ -380,6 +381,9 @@ hydrate_file_secrets()
 
 # docs/64 J-1a：prod 缺必需密钥 fail-closed（拒绝启动），非 prod 静默。
 assert_prod_secrets()
+
+# docs/89 §16 A-11：prod 忘了配 pg 也 fail-closed（缺省内存档不再让进程带着假配置起来）。
+assert_prod_storage_backend()
 
 app = FastAPI(title="Atlas API", version="0.0.1", lifespan=lifespan)
 

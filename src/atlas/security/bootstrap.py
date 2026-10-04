@@ -187,3 +187,35 @@ def assert_prod_secrets() -> None:
         )
     # 引导口令单独一条消息：它缺的不是"密钥"而是"进门方式"，混在一起会误导排障。
     prod_bootstrap_password()
+
+
+#: 显式允许 prod 跑易失存储的逃生门（探针/演示形态）；缺省不放。
+VOLATILE_STORAGE_OPT_IN_ENV = "ATLAS_ALLOW_VOLATILE_STORAGE"
+
+
+def assert_prod_storage_backend() -> None:
+    """prod 且未显式 opt-in 时，`ATLAS_STORAGE_BACKEND=memory` 拒绝启动（docs/89 §16 A-11）。
+
+    这不是新规矩而是**执行已有规矩**：`.env.example:28` 早就写着"prod 必须 pg，否则全部状态
+    落在内存、重启即失"，但全仓没有任何地方 enforcement——写错/忘配时进程照常起来、
+    `/api/ready` 照常 200，图与审批与运行记录活到下一次重启为止。同族先例＝docs/77 R4
+    （非法档位值拒启）与 docs/66（prod 缺引导口令拒启）：**档位不能靠缺省兜出来**。
+
+    三条合法出路，全部要求"显式"：① 设 `pg`（出厂 docker-compose 即如此）；② 开演示面
+    （`ATLAS_ENABLE_DEMO_MOCK=1`，与 shop/database/web 同一处判定）；③ 明知要易失存储仍要
+    起——设 `ATLAS_ALLOW_VOLATILE_STORAGE=1`（探针与非持久用途走这条，写下来就是一次署名）。
+    """
+    if read_env_profile() != "prod":
+        return
+    if read_storage_backend() != "memory":
+        return
+    if demo_surface_enabled():
+        return
+    if os.getenv(VOLATILE_STORAGE_OPT_IN_ENV, "").strip() == "1":
+        return
+    raise RuntimeError(
+        "ATLAS_ENV=prod 拒绝启动：ATLAS_STORAGE_BACKEND=memory 会把全部业务状态（图／运行记录／"
+        "审批／调度认领）只留在进程内存里，重启即失，而 /api/ready 仍会返回 200。"
+        "请设 ATLAS_STORAGE_BACKEND=pg（见 .env.example:28）；确需易失形态时显式开演示面 "
+        f"ATLAS_ENABLE_DEMO_MOCK=1，或署名承担风险：{VOLATILE_STORAGE_OPT_IN_ENV}=1。"
+    )
