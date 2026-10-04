@@ -3,6 +3,16 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### fix(api/storage/security)＋test＋docs：A 组残余同日第二批＝闭 A-3／A-2／A-6，A-8 改判 by-design（2026-10-04 用户「好的，搞你自己能做的」；定论 docs/89 §15；用例 docs/13 U1132–U1136）
+
+- **范围**：只做**不需要外部凭据、也不需要用户拍板**的四件。剩下 A-4／A-5／A-7／A-11 一条没动，每条在 docs/89 §15 文末写明为什么（A-5 调度缺省与 A-11 prod 缺 pg 拒启属**行为收紧，待拍板**；A-7 演示店铺本就是"共享演示店"口径，要分租户得连服务＋适配器＋端点＋测试一起改；A-4 是一整批 i18n 文案，该单开一批）。
+- **A-3 渠道连通性测试的权限档**：`POST /api/channels/{binding_id}/test` 从 `read` 收进 `operate`。判据不是我新立的：它**真出向打上游**＋把 `binding.status` 写成 connected/error，而同族兄弟端点 `POST /api/connections/{conn_id}/test` 一直是 operate——两处不一致本身就是缺陷。前端「测试」按钮同档收进已有的 `canOperate`（此前无条件渲染，viewer 点了只吃到 403）。**U1132** viewer 403 ＋ 判别对照 operator 得与 admin 相同的 200 体形状。
+- **A-2 告警写语句的租户作用域**：`storage/pg.py` 两条合并语句（规则命中 `:1012`、灰度门禁 `:1427`）补 `AND tenant_id`，同类四条本来就带。**定级如实**：告警 id 走全局序列 `storage_id_seq`、迁移 002 里 `monitoring_alerts.id` 就是主键，且两处 id 均来自租户作用域的 SELECT ⇒ **不是活体越权，是不变式不一致**；把它读成漏洞是加码，读成无事是反向加码，两种错都记进文档。守护 **U1133** 用 `ast` 取编译期字符串常量（相邻字面量已拼成整条 SQL，不必按行猜边界）扫所有 `monitoring_alerts` 的 `UPDATE`/`DELETE`，`WHERE` 段缺 `tenant_id` 即红；**反向门**真删一处条件必须被点名且断言变异落上。
+- **A-6 对外入口地址**：`ATLAS_PUBLIC_URL` 实测散布是**三处**（api 导入期、Shopify 回调地址、notifications 缺省常量）而不是两处，收敛为 `security/bootstrap.read_public_url()`＋`public_url_is_loopback()`（与 docs/77 R4 的 `read_storage_backend()` 同族同理由；空串/纯空白按"没配"回落，否则拼出 `/approvals/…` 这种相对深链更难查）。**内容侧真正的修法**：prod 且入口地址仍是回环时，审批邮件**不写一键决策深链**——那枚链接是签名 capability token，寄到 `http://localhost:5174` 等于既不可达、又把令牌交给收件人本机的任何监听者；正文改印原委与配置项（不靠注释让人自己判断）。**U1134** 机检只许 `getenv("ATLAS_PUBLIC_URL"` 出现在 bootstrap（扫**读取式**：第一版扫关键词被错误文案与邮件正文里的正当提及误报，跑红才收窄）；**U1135** 不发链接且体内零 token；**U1136** 两例对照（prod 配 https 照发／dev 用本地地址照发＝形态零变化）。
+- **A-8 改判＝by-design，不是"半修"**：§12.6 原记"只 MCP 剥了 resumeToken、REST 仍发"。取证后这条判断不成立——**全仓没有任何端点以 `resumeToken` 作续跑凭证**（`grep resume_token` 只命中恢复扫描/认领/清理与日志），REST 唯一消费者是 `GET /api/interruptions`，前端只把它当展示列与 `rowKey`（`Waits.tsx:247`/`:322`）；MCP 剥离的理由是信任域不同（docs/91 §3 的刻意收窄）。文档同时写明**判据作废条件**：哪天出现"拿 token 就能续跑"的端点，本条立刻重开并按 §14 口径收窄。
+- **门（实跑）**：后端全量 **2301 passed／147 skipped／0 failed**（278.59s，净增 9 条常跑＝U1132–U1136 展开，skip 不变）；前端 vitest **781／2**、oxlint **0/0**、`pnpm build` 过；真进程导入探测〔跑〕＝prod 档 `_PUBLIC_URL == 'https://atlas.demo.example'`（证明导入期走新读取器），dev unset 得本地缺省且判为回环。**探测顺带撞到的事实**：随手拼的 31 字节密钥与非法 Fernet 键被 `assert_prod_secrets` 直接拒启——那道 prod 密钥门在真进程里是活的。
+- 零迁移、零新依赖、无新 ADR、**不解除任何缓做、不动 docs/73 两档判定**。同步面＝docs/89 §15＋docs/13 U1132–U1136＋docs/08 §八③＋docs/73 §11 指针＋docs/00 地图＋CHANGELOG＋handoff（顶部指针／Active #105／Recently shipped 滚动一条进 `docs/handoff-archive-2026-10-04.md`／Quality gate）。
+
 ### feat(web)＋fix(harness)＋test＋docs：代码审计 N-1 收口＝浏览器出向闸门补到「页面内请求」这一层，真浏览器退出 prod 运行期（2026-10-04；定论 docs/89 §14；缓做 docs/14 **D52**；用例 docs/13 U1125–U1131·I21–I23）
 
 - **一句话**：`web/adapter.py` 的 `navigate` 从此不只看初始 URL——页面内每个请求（子资源／XHR／iframe）都过**同一份** `EgressGuard`，被拦直接 `abort` 并把原因记进有界的 `egress_denials`（静默丢弃等于没有闸门）。但**它挡不住 3xx 跳转**，所以 `web-playwright` 在 **prod 且未开演示面时不再注册**。
