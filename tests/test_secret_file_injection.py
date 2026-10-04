@@ -41,7 +41,10 @@ def _neutral_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _write(path, content: str) -> str:
-    path.write_text(content, encoding="utf-8")
+    # 写字节而非 write_text：Windows 文本模式会把内容里的 "\n" 再翻成 os.linesep，
+    # 令含 "\r\n" 的用例落盘成 "\r\r\n"（双重转换），跨平台断言不一致；字节写入让
+    # 落盘内容就是用例声明的字面字节（docker secret / vault 渲染落盘的真实形态）。
+    path.write_bytes(content.encode("utf-8"))
     return str(path)
 
 
@@ -59,6 +62,12 @@ def test_u1077_file_value_wins_and_strips_one_trailing_newline(
     # 两个尾换行只剥一个：多余的空白是配置错误，不该被静默吞掉
     monkeypatch.setenv("ATLAS_MASTER_KEY_FILE", _write(tmp_path / "k3", "h" * 32 + "\n\n"))
     assert len(read_secret("ATLAS_MASTER_KEY")) == 33
+
+    # 两个 CRLF 同样只剥一个（残留 "\r\n" 两字节 ⇒ 34），且这一步钉死 read_secret
+    # 必须走 endswith("\r\n") 的剥 2 分支：若误用 universal-newline 读取，CRLF 会被
+    # 折成 "\n\n"、只剥一个 LF 留 1 字节（=33）——断言 34 即证明 CRLF 分支真正承重。
+    monkeypatch.setenv("ATLAS_MASTER_KEY_FILE", _write(tmp_path / "k4", "i" * 32 + "\r\n\r\n"))
+    assert len(read_secret("ATLAS_MASTER_KEY")) == 34
 
 
 def test_u1077_env_fallback_when_no_file_ref(

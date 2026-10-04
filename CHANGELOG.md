@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### fix(security)＋test：文件密钥尾换行 CRLF 跨平台修复，Windows 全量门首次 0 failed（2026-10-04 自主排查修复）
+
+- **一句话**：长期被标注「Windows 平台既有换行差异、与本批无关」而带病过门的 `test_u1077` 1 failed，根因是测试 fixture 双重转换＋产品代码 CRLF 剥除分支死代码，本批一并修掉，Windows 全量门首次全绿。
+- **产品代码**（`src/atlas/security/bootstrap.py` `read_secret`）：由 `Path.read_text(encoding="utf-8")`（默认 universal-newline，读取时把 CRLF/CR 折成 LF）改为 `read_bytes().decode("utf-8")` 字节级读取——CRLF 原样保留，`endswith("\r\n")` 的"剥一个 CRLF"分支真正承重，且不再隐式改写密钥本体中的 CR；`OSError`（文件不存在/不可读）仍兜缺失返回空串，`UnicodeDecodeError`（非 UTF-8）行为与旧 read_text 一致。
+- **测试**（`tests/test_secret_file_injection.py`）：fixture `_write` 由 `write_text` 改为 `write_bytes(content.encode("utf-8"))`，修掉 Windows 文本模式把内容 `\n` 再翻 os.linesep、致含 `\r\n` 用例落盘成 `\r\r\n` 的双重转换；U1077 内新增「双 CRLF 只剥一个、残留两字节 ⇒ len 34」断言（旧 universal 路径下为 33 会红），TDD 钉死 CRLF 剥 2 分支承重。
+- **门（实跑）**：`test_secret_file_injection.py` 7 passed；后端全量 **2280 passed / 144 skipped / 0 failed**（1261.73s，Windows 首次 0 failed）；守护门 7 passed；前端 oxlint 0/0、vitest 781 passed/2 skipped（2 skipped 为 bench 性能基准，常规门故意不跑）。零新依赖/无迁移/无 ADR；调用方 oauth/email_token/secrets/hydrate 均复用 read_secret 结果，无回归。
+
 ### feat(reflection/db/api/frontend)＋fix＋test＋docs：反思进化 L2 v3 落码收口＝候选采纳状态持久化＋节点级定位（打包 ZU，2026-10-04 立项并同日收口；用户「好的，都搞了，顺便落码」批准；形状权威 docs/94；docs/13 U1115–U1124；取回 docs/92 §6 两缓做＝docs/14 D51）
 
 - **一句话**：反思候选从「进程内只读、看完即走」升级为「采纳/忽略状态跨重启可查、node_config 建议可精确跳到对应 ai_decision 节点」；只是处理记录，**不触发任何 apply/publish/promote**（守 T22）。
