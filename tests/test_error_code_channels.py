@@ -1,14 +1,17 @@
 # -*- coding: utf-8 -*-
 """打包 AW（docs/89 A-4 的收口半）：错误码必须"到得了人"，不只是发得出来。
 
-两条判据：
+三条判据：
 - **U1148 通道**：`SubgraphSuspendUnsupported` 此前在同步 `/run` 上没有异常处理器——
   SSE 有 `event: error` 帧承载，HTTP 侧则是一个没有 code 的裸 500，运营看到的是
   "Internal Server Error"，而"把该节点移到图顶层"这个可执行下一步只在日志里。
-- **U1149/U1150 目录**：后端每一条结构化错误码，必须在前端三份目录之一里
+- **U1149 目录**：后端每一条结构化错误码，必须在前端三份目录之一里
   （`AUTH_ERROR_KEYS` / `runtime.json` / `validation.json` 的 `dsl`），否则必须出现在
-  带理由的豁免表上。豁免表**不是垃圾桶**：每条都写明为什么现在不能译，
-  其中"一个码承载多条不同答案"那几条已登记 docs/14 **D53**（先拆码或带 params）。
+  带理由的豁免表上。
+- **U1151 豁免表不腐烂**：豁免表**不是垃圾桶**——每条都得写明为什么现在不能译，条目不
+  许过期（码不再发出就必须删），三组理由之间不许重叠（一条码只允许一个理由），
+  且豁免中的码不能"顺手"又有文案。其中"一个码承载多条不同答案"那几条已登记
+  docs/14 **D53**（先拆码或带 params）。
 
 U1150 是这条守护的可信性证明：把缺陷植进**合成源码片段**（不动真文件），枚举器必须点名。
 """
@@ -31,7 +34,7 @@ LOCALES = REPO / "frontend" / "src" / "locales"
 
 client = TestClient(api_main.app)
 
-# --------------------------------------------------------------------------- U1149
+# ---------------------------------------------------------- U1149 / U1150 / U1151
 
 
 def _catalog_keys() -> tuple[set[str], set[str], set[str]]:
@@ -143,7 +146,7 @@ def test_u1149_every_structured_code_has_copy_or_a_reason():
     )
 
 
-def test_u1149_allowlist_is_not_quietly_stale():
+def test_u1151_allowlist_is_not_quietly_stale():
     """豁免表里的码必须**仍然**发得出来；码被删掉/改名后还留着＝白占一个免检位。"""
     where = set(structured_codes())
     stale = sorted(code for code in EXEMPT if code not in where)
@@ -239,8 +242,11 @@ def test_u1148_the_code_is_registered_in_the_runtime_catalog_so_the_copy_can_ren
     assert not re.match(r"^(COND_|WAIT_|LOOP_|FOREACH_|LLM_|RUNTIME_)", "SUBGRAPH_SUSPEND_UNSUPPORTED")
 
 
+# --------------------------------------------------------------------------- U1151
+
+
 @pytest.mark.parametrize("locale", ["zh-CN", "en-US"])
-def test_u1149_allowlisted_codes_have_a_written_reason(locale: str) -> None:
+def test_u1151_allowlisted_codes_have_a_written_reason(locale: str) -> None:
     """豁免不是沉默的：每条都要在测试里带上理由，且两档目录都不能"顺手"有它的键。"""
     runtime = json.loads((LOCALES / locale / "runtime.json").read_text(encoding="utf-8"))
     validation = json.loads((LOCALES / locale / "validation.json").read_text(encoding="utf-8"))["dsl"]
