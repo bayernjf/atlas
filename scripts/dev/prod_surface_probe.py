@@ -69,7 +69,13 @@ class Server:
         self.port = port
         self.proc: subprocess.Popen | None = None
 
-    def start(self, env_overrides: dict[str, str], *, expect_boot: bool = True) -> None:
+    def start(
+        self,
+        env_overrides: dict[str, str],
+        *,
+        expect_boot: bool = True,
+        expect_reason: str = "ATLAS_ENV 非法值",
+    ) -> None:
         env = dict(os.environ)
         env.pop("ATLAS_ENABLE_DEMO_MOCK", None)  # 先清继承，再让 overrides 说话
         env.update({
@@ -77,6 +83,9 @@ class Server:
             "ATLAS_APPROVAL_HMAC_SECRET": _key(),
             "ATLAS_ADMIN_BOOTSTRAP_PASSWORD": BOOTSTRAP_PASSWORD,
             "ATLAS_STORAGE_BACKEND": "memory",
+            # 本探针只查路由面，不需要持久库，所以用 memory 档——但 A-11 之后 prod 的 memory
+            # 档必须显式署名才让起（第 5 段就是验这条门）。署名在本探针里是正当用途。
+            "ATLAS_ALLOW_VOLATILE_STORAGE": "1",
             "ATLAS_SCHEDULE_ENABLED": "0",
             **env_overrides,
         })
@@ -96,9 +105,10 @@ class Server:
             if expect_boot:
                 # 只说"没起来"等于让下一个人重新猜一遍：把子进程的尾巴打出来。
                 raise RuntimeError(f"服务没起来，uvicorn 输出尾部：\n{tail}")
-            # 期望起不来：把原因抓出来证明是"非法档位"而不是别的崩法
-            ok("ATLAS_ENV 非法值" in tail or "production" in tail,
-               f"非法档位下的拒启原因不是档位校验：{tail[-200:]}")
+            # 期望起不来：把原因抓出来证明是"这一道门拒的"而不是别的崩法。
+            # 措辞在 OK/FAIL 两种输出里都会原样打印，所以写成中性陈述＋带上证据尾巴。
+            ok(expect_reason in tail,
+               f"拒启原因＝预期的那道门（{expect_reason}）｜输出尾部：{tail[-200:]}")
             return
         if not expect_boot:
             self.stop()
@@ -183,6 +193,14 @@ def main() -> int:
         print("4｜ATLAS_ENV=production（非法档位）")
         server.start({"ATLAS_ENV": "production"}, expect_boot=False)
         ok(True, "非法档位下进程没有起来（拒启而不是默认按 dev 放行）")
+
+        print("5｜ATLAS_ENV=prod ＋ memory 档且未署名（docs/89 §16 A-11 门）")
+        server.start(
+            {"ATLAS_ENV": "prod", "ATLAS_ALLOW_VOLATILE_STORAGE": ""},
+            expect_boot=False,
+            expect_reason="ATLAS_STORAGE_BACKEND=pg",
+        )
+        ok(True, "prod 忘配 pg 时进程没有起来——不再\"照常启动＋/api/ready 200＋重启清空一切\"")
 
         print("\n探测全过 ✅")
         return 0
