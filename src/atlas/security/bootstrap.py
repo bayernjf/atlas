@@ -12,6 +12,8 @@
 - read_secret() 是**所有**密钥读取的唯一入口：同名 `<NAME>_FILE` 指向文件时读文件
   （docker secret／vault 渲染落盘形态），否则回退同名环境变量（docs/08 打包 ZO，
   docs/73 1.1「凭据由 vault 注入、绝不明文 .env」的落点）。
+- read_public_url() 是 `ATLAS_PUBLIC_URL`（应用对外入口：审批深链／Shopify 回调）的**唯一**
+  读取器，缺省回退 `DEFAULT_PUBLIC_URL`（docs/89 §15 A-6：此前同一 env 与同一缺省散在三处）。
 
 非 prod 一律静默通过，本地/演示行为不变。
 """
@@ -20,6 +22,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
 _VALID_PROFILES = ("dev", "test", "prod")
 
@@ -92,9 +95,31 @@ def demo_surface_enabled() -> bool:
 
     非 prod（dev/test）恒开；prod 默认关（fail-closed），仅 `ATLAS_ENABLE_DEMO_MOCK=1`
     显式开。档位一律走 `read_env_profile()`（大小写不敏感、拒非法值）。HTTP mock 路由、
-    运行期演示适配器（shop/database）、FastAPI 文档面与渠道出向测试缝共用这一处。
+    运行期演示适配器（shop/database/web 真浏览器）、FastAPI 文档面与渠道出向测试缝共用这一处。
     """
     return read_env_profile() != "prod" or os.getenv("ATLAS_ENABLE_DEMO_MOCK") == "1"
+
+
+#: 应用对外入口的缺省地址（本地前端 dev server）。prod 用它＝深链不可达。
+DEFAULT_PUBLIC_URL = "http://localhost:5174"
+
+#: 只有本机听得见的主机名——签名深链发到这里等于把令牌投递给"任何本地监听者"。
+_LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "0.0.0.0", "::1")
+
+
+def read_public_url() -> str:
+    """`ATLAS_PUBLIC_URL` 的唯一读取器（docs/89 §15 A-6）：缺省回退、尾斜杠归一。
+
+    此前同一 env 加同一缺省散在三处（api 深链、Shopify 回调地址、通知器缺省常量），
+    改一处漏两处；收敛到这里，消费点只做一件事。空白值按"没配"处理——`ATLAS_PUBLIC_URL="  "`
+    拼出来的深链是 `/approvals/…` 这种相对形状，比回落缺省更难排查。
+    """
+    return ((os.getenv("ATLAS_PUBLIC_URL") or "").strip() or DEFAULT_PUBLIC_URL).rstrip("/")
+
+
+def public_url_is_loopback(url: str) -> bool:
+    """这个对外地址其实只有本机听得见吗（docs/89 §15 A-6）。"""
+    return (urlsplit(url).hostname or "").lower() in _LOOPBACK_HOSTS
 
 
 def prod_bootstrap_password() -> str | None:

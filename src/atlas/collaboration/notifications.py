@@ -14,9 +14,13 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from .email_token import TokenIssuer
+from atlas.security.bootstrap import (
+    DEFAULT_PUBLIC_URL,
+    public_url_is_loopback,
+    read_env_profile,
+)
 
-DEFAULT_PUBLIC_URL = "http://localhost:5174"
+from .email_token import TokenIssuer
 
 
 class ApprovalNotifier(Protocol):
@@ -94,8 +98,17 @@ class EmailApprovalNotifier:
             lines.append(f"指定审批人：{approver}")
         lines.append(f"超时时间：{timeout_seconds} 秒（超时后按图中配置自动处理）")
         lines.append("")
-        lines.append(f"一键处理：{decision_url}")
-        lines.append(f"或前往应用：{self._public_url}")
+        # prod 的入口地址若还是本地缺省，一键链接＝把一个签名 capability token 寄往
+        # "本机任何监听者"，而且收件人点了也到不了平台。令牌因此**留在进程内**，
+        # 正文改说看得见的原委与修法（docs/89 §15 A-6）。
+        if read_env_profile() == "prod" and public_url_is_loopback(self._public_url):
+            lines.append(
+                f"一键处理链接本次未随邮件发出：应用入口仍是本地地址（{self._public_url}）。"
+                "请设置 ATLAS_PUBLIC_URL 为对外 HTTPS 地址；在那之前请直接在应用内处理本审批。"
+            )
+        else:
+            lines.append(f"一键处理：{decision_url}")
+            lines.append(f"或前往应用：{self._public_url}")
         body = "\n".join(lines)
         # MessageService 负责真实 SMTP 投递或进程内记录（demo 回退）；
         # 投递失败会抛 MessageSendError，由 graph 调用方 fail-safe 捕获。

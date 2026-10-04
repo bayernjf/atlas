@@ -113,6 +113,7 @@ from atlas.security.bootstrap import (
     demo_surface_enabled,
     hydrate_file_secrets,
     read_env_profile,
+    read_public_url,
 )
 from atlas.security.egress import EgressDenied, EgressGuard
 from atlas.security.secrets import build_secret_provider_from_env
@@ -186,7 +187,9 @@ from atlas.versioning.upgrades import subgraph_upgrade_plan
 logger = logging.getLogger(__name__)
 
 # docs/35 §2（T2）：审批挂起邮件中的应用入口（前端地址）。
-_PUBLIC_URL = os.getenv("ATLAS_PUBLIC_URL", "http://localhost:5174")
+# 应用对外入口（审批深链基址）：唯一读取器在 security.bootstrap（docs/89 §15 A-6，
+# 此前这里与 channels/registry、notifications 各读一遍同一 env＋同一缺省）
+_PUBLIC_URL = read_public_url()
 
 MAX_WAIT_PAYLOAD_BYTES = 4096
 MAX_WAIT_PAYLOAD_KEYS = 50
