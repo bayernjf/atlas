@@ -12,9 +12,18 @@
  * 相互独立：那是编译期 DSL 诊断，本模块面向运行期终态/节点错误（runtime.* 命名空间）。
  */
 import { getLanguage, t } from '../locales'
+import runtimeCatalog from '../locales/zh-CN/runtime.json'
 
-/** 运行期错误码前缀（与后端 graph/conditions.py、graph/loader.py 码族对齐）。 */
-const RUNTIME_CODE_RE = /^(COND_|WAIT_|LOOP_|FOREACH_|LLM_|RUNTIME_)/
+/**
+ * 「这条码到底有没有文案」＝它是否在运行期文案目录里。
+ *
+ * 旧做法是一张前缀白名单 `^(COND_|WAIT_|LOOP_|FOREACH_|LLM_|RUNTIME_)`，那是**第二份真相**：
+ * 后端陆续发出 `SUBGRAPH_*`／`OPENAPI_*` 这类不带那些前缀的码，于是"补了 zh/en 文案也永远
+ * 不会生效"（docs/89 A-4 的根因之一）。目录才是唯一事实源，且 zh／en 键集合由
+ * `locales/__tests__/i18n.test.ts` 的奇偶守护钉住，所以拿 zh 的键集合做成员判定是安全的；
+ * 不成员的码一律回退后端中文 message，绝不泄漏 i18n key。
+ */
+const TRANSLATABLE_CODES = new Set(Object.keys(runtimeCatalog))
 
 const isEn = () => getLanguage().startsWith('en')
 
@@ -123,8 +132,9 @@ function localizeParams(
   return out
 }
 
+/** 成员判定＝"有没有译文"，见文件头 TRANSLATABLE_CODES 的注释（不再看前缀）。 */
 export function isRuntimeErrorCode(code: unknown): code is string {
-  return typeof code === 'string' && RUNTIME_CODE_RE.test(code)
+  return typeof code === 'string' && TRANSLATABLE_CODES.has(code)
 }
 
 /**
@@ -137,11 +147,16 @@ export function resolveRuntimeError(
   fallback: string,
 ): string {
   if (!isRuntimeErrorCode(code)) return fallback
-  return t(code, {
+  const resolved = t(code, {
     ns: 'runtime',
     defaultValue: fallback,
     ...localizeParams(code, params),
   })
+  // 目录里有键、但发射这条码的通道没带 params ⇒ 模板占位填不上。宁可回退后端中文原文，
+  // 也不要把 `{{low}}` 这种原始占位放上屏（docs/60 G1 的"绝不泄漏"含占位泄漏）。
+  // 同一守卫此前只写在 resolveExpressionErrors 里，那条通道的坑踩过一次，detail 通道没理由例外。
+  if (/\{\{|\}\}/.test(resolved)) return fallback
+  return resolved
 }
 
 /**

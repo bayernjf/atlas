@@ -3,6 +3,16 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### fix(api)＋feat(i18n)＋test：错误码要"到得了人"——A-4 的可译半边收口，识别从第二份真相改成查目录（docs/89 A-4／docs/17 §2.4，2026-10-05 打包 AW）
+
+- **先把题问对**：审计写的是"19 码无前端文案"。统一到**五种发射形状**的全仓枚举（`detail={"code":…}`／异常类属性 `code = "…"`／dsl 的 `code="…"`／`StructuredError("X", …)`／`{"error_code": "X"}`）之后，实测是 **211 条码字面量：185 条本来就有目录文案、26 条进带理由的豁免表、0 条无归属**。那 26 条里 **17＋4 属长期口径**（工具／适配器结果与 webhook 死信原因码，docs/57 §2.5 节点产出＝业务数据不译），**真正欠的只有 5 条**——它们一条码承载 2–5 条不同答案，按码出模板会把诊断压成一句甚至误导。"把 19 条一律补文案"这个原题就是错的。
+- **根因不是没人写文案，是判"能不能译"用的是前缀白名单**：`^(COND_|WAIT_|LOOP_|FOREACH_|LLM_|RUNTIME_)` 让 `SUBGRAPH_*`／`OPENAPI_*` 这类码**补了文案也永远不生效**。现在改成**目录成员＝可译**（读 `zh-CN/runtime.json` 键集，zh/en 一致由 i18n 奇偶守护钉住），第二份真相消失。代价是一条可见的行为改判：编造的 `COND_FOO` 不再算"可译"——它本来就没有文案，判 true 只会让下一位误以为补了键就有英文。
+- **补了 10 条 zh/en 文案**：运行期 `SUBGRAPH_SUSPEND_UNSUPPORTED`·`OPENAPI_DUPLICATE`·`OPENAPI_NO_IMPORTABLE_OPERATION`·`WAIT_ALREADY_SIGNALED`·`WAIT_TOKEN_NOT_FOUND`·`COND_INVALID_RANGE`；编译期 `COND_LLM_MODEL_NOT_STRING`·`COND_LLM_MODEL_TOO_LONG`·`LOOP_PARALLEL_IN_BODY`·`PAR_SUSPEND_IN_REGION`。
+- **契约外抓到的一个通道缺陷（U1148）**：`SubgraphSuspendUnsupported` 只有 SSE 承载，同步 `/run` **没有异常处理器** ⇒ 运营拿到的是没有 code 的裸 500，而"把该节点移到图顶层"这句可执行下一步只存在于日志里。现与 `LLM_DECISION_UNAVAILABLE` 同形返回结构化 500＋`nodeId`。
+- **占位符守卫收进唯一入口（U1152，被自己的新测试抓出来）**：节点结果的 `expressionErrorCodes` 通道只发码不发 params，含 `{{low}}` 的模板必然填不满；旧代码只在 `resolveExpressionErrors` 局部防，现在 `resolveRuntimeError` 里填不上就回退后端原文，绝不把 `{{low}}` 上屏。这条结构事实登记为 docs/14 **D53** 的 ②（要出英文得先给该通道补等长 params）。
+- **新守护的三条判据（U1149／U1150／U1151）**：每条结构化码必须有文案或在豁免表上；反向门在**合成源码片段**上把五种形状各植一条，证明枚举器不是只认最顺手那一种（工具族那 17 条正是加了第 4、5 种形状才被发现漏计）；豁免表**不许过期、不许重叠、不许既有豁免又有文案**——我第一次填表凭印象写进 6 条 `CHANNEL_*`／`EGRESS_*`，被这条当场打回。
+- **门（实跑）**：后端全量见 docs/13 本批条与 handoff Quality gate（同一棵树复跑，load 已记录）、前端 vitest **787 passed／2 skipped**（58 文件）＋ oxlint **0/0** ＋ `pnpm build` 过；两档目录键数实测一致（`runtime` 29／`validation.dsl` 177）。零迁移、零新依赖、无新 ADR；**A-4 转 ◐**，剩 5 条粗码走 D53（契约变更，需单开一批）。
+
 ### feat(iam)＋feat(web)＋test：首登强制改密从"流程约定"变成服务端强制位（docs/95 打包 AV，2026-10-05 落码收口）
 
 - **补的是已声明的要求，不是新增功能**：prod 演练实测引导口令账号**不改密也能用整个平台**，而 docs/73 4.1 的验收原文写着「首登强改密」。落码＝迁移 **042** `iam_users.password_rotated_at`（NULL＝口令从未经本人之手）＋ `iam/deps.require()` 内在角色门**之前**加一道轮换门（403 `AUTH_PASSWORD_CHANGE_REQUIRED`）＋ `LoginResponse.mustChangePassword` ＋ 前端一层关不掉的改密框（App 在强制态**不渲染页面壳**，否则满屏 403 toast 会被误读成"平台坏了"）。豁免只有一处判定＝既有 `demo_surface_enabled()`，所以 dev/test 与 prod＋演示面逐键零变化。
