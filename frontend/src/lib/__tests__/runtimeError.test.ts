@@ -190,4 +190,33 @@ describe('运行期错误码 i18n（docs/60 G1）', () => {
     // 缺 codes 时整体回退中文 messages
     expect(resolveExpressionErrors(undefined, ['a', 'b'])).toEqual(['a', 'b'])
   })
+
+  it('U1154：AX 给节点结果通道补了 params，参数化模板这才真填得满', () => {
+    const codes = ['COND_TYPE_MISMATCH', 'COND_DIVIDE_BY_ZERO', 'COND_NULL_COMPARISON']
+    const messages = ['中文类型不符', '中文除零', '中文空值']
+    const params = [{ op: '!', expected: 'boolean', actual: 'string' }, { op: '/' }, {}]
+
+    changeLanguage('en-US')
+    const en = resolveExpressionErrors(codes, messages, params)
+    expect(en[0]).toContain('boolean')
+    expect(en[0]).toContain('string')
+    expect(en[0]).not.toMatch(/[一-鿿]/)
+    expect(en[1]).toContain('/')
+    expect(en[2]).not.toMatch(/[一-鿿]/)
+    for (const text of en) expect(text).not.toMatch(/\{\{|\}\}/)
+
+    // 缺位／非对象条目一律按"无参"处理：填不满就回退后端原文，绝不把占位放上屏
+    expect(resolveExpressionErrors(['COND_DIVIDE_BY_ZERO'], ['中文除零'], [null])).toEqual([
+      '中文除零',
+    ])
+    expect(resolveExpressionErrors(['COND_DIVIDE_BY_ZERO'], ['中文除零'])).toEqual(['中文除零'])
+    expect(resolveExpressionErrors(['COND_DIVIDE_BY_ZERO'], ['中文除零'], 'not-an-array')).toEqual([
+      '中文除零',
+    ])
+
+    changeLanguage('zh-CN')
+    const zh = resolveExpressionErrors(codes, messages, params)
+    expect(zh[0]).toContain('布尔值')
+    expect(zh[1]).toContain('除数')
+  })
 })
