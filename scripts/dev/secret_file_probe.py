@@ -77,6 +77,9 @@ class Server:
             env.pop(f"{name}_FILE", None)
         env.update({
             "ATLAS_STORAGE_BACKEND": "memory",
+            # 本探针只验"`*_FILE` 指针能补水、prod 能起服"，不需要持久库。A-11 之后 prod 的
+            # memory 档必须显式署名才让起（docs/89 §16），这里正是那条门的合法逃生门用途。
+            "ATLAS_ALLOW_VOLATILE_STORAGE": "1",
             "ATLAS_SCHEDULE_ENABLED": "0",
             **env_overrides,
         })
