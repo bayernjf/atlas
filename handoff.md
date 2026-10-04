@@ -393,6 +393,7 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 
 - 后端全量 `.venv/bin/pytest` **2334 passed／150 skipped／0 failed**（177.66s，exit 0，量于本机 load 2.71（1 分钟）／7.04（5 分钟））。**对账**：AW 收口那棵树是 2332，本批在 `tests/test_graph_loader.py` 新增 **2 例**（U1153＋U1155）⇒ 2332＋2＝2334 ✓ 逐枚对上；skip 数不变（本批无新集成例）。
 - 前端：`pnpm vitest run` **788 passed／2 skipped**（58 文件；净增 1＝U1154）、`pnpm lint` **0 warnings／0 errors**、`pnpm build` 过。`nodeSchemas` 52 例同过——loop 的 `x-outputSchema` 已声明 `expressionErrorParams`，与测试里的逐字段清单一起改（拆开会留下一个中间红提交）。
+- **CI runner 自己的读数（与本机数分别标）**：`18e55a4` 上四个 job 全绿——gitleaks success／Backend pytest **2334 passed／150 skipped in 253.52s**（＝本机那趟 2334／150，耗时是机器差不是用例差）／Backend PG integration **2476 passed／8 skipped in 229.80s**（AW 那棵树 runner 报 2474／8 ⇒ 本批 2 例同样进 integration，2474＋2＝2476 ✓）／Frontend vitest+build **57 文件 passed＋1 skipped（58）、Tests 788 passed＋2 skipped、oxlint 0 warnings／0 errors、built in 472ms**。
 - **反向门是跑出来的，不是推定的**：把 `_expression_error_channels` 的长度检查临时改成 `if False`，U1155 立刻 FAILED；改回即绿。恢复走 `cp` 备份而不是 `git checkout`——当时 loader.py 仍有未提交内容。
 - **一处自打：例子按真实可达形状重写。** 最初拿 `randint(9, 1)`（`COND_INVALID_RANGE`）当"运行态带 params"的样本，实测它在 **dsl 校验期**就抛 `GraphValidationError`→422，节点结果根本收不到它；`!"abc"` 才是真形状（`COND_TYPE_MISMATCH` 携 `op/expected/actual`）。这件事写进了 U1153 的注释，免得下一位再按想象举例。
 - **未做**：condition 节点的表达式诊断仍只有中文原文（`_execute_condition` 收 `f"分支 {label}：{exc}"`，既无 code 也无 params）——要译先定"分支前缀＋内层明细"的组合文案形状＝契约设计 ⇒ 登记 docs/14 **D54**。
