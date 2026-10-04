@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import Depends, HTTPException, Request
 
-from atlas.security.bootstrap import read_env_profile, read_storage_backend
+from atlas.security.bootstrap import demo_surface_enabled, read_env_profile, read_storage_backend
 
 from .passwords import verify_password
 from .principals import (
@@ -58,6 +58,26 @@ CODE_SEED_CREDENTIAL = "AUTH_SEED_CREDENTIAL"
 _SEED_PASSWORD_BY_USERNAME = {u.username: u.password for u in SEED_USERS}
 CODE_UNAUTHENTICATED = "AUTH_UNAUTHENTICATED"
 CODE_FORBIDDEN = "AUTH_FORBIDDEN"
+CODE_PASSWORD_CHANGE_REQUIRED = "AUTH_PASSWORD_CHANGE_REQUIRED"
+
+_PASSWORD_CHANGE_REQUIRED = "该账号仍在使用部署时下发的引导口令，请先修改密码后再使用平台"
+
+
+def must_change_password(principal: Principal) -> bool:
+    """首登强制改密的**唯一**判定（docs/95 打包 AV §3）。
+
+    读用户行而不是会话里的 Principal：PG 档 `iam_sessions` 只持久化
+    `(tenant_id, username, role, expires_at)`，重建出的 Principal 带不了这个标志，
+    照内存档那样读就会在两档给出不同答案（docs/95 §1.2）。每请求一次主键 SELECT，
+    不做现场哈希比对——bcrypt ≈100ms 进不了请求路径（docs/95 §1.1）。
+
+    演示面豁免：`demo_surface_enabled()` 已含「非 prod 恒开」，所以 dev/test 与
+    prod＋`ATLAS_ENABLE_DEMO_MOCK=1` 的行为逐键不变（docs/95 §2 D-4）。
+    """
+    if demo_surface_enabled():
+        return False
+    account = user_store.get(principal.tenant_id, principal.username)
+    return account is not None and account.password_rotated_at is None
 
 
 def auth_error(status_code: int, code: str, message: str) -> HTTPException:
@@ -93,17 +113,24 @@ def authenticate_login(username: str, password: str) -> Principal:
     )
 
 
-def get_principal(request: Request) -> Principal:
-    # 打包 ZQ Q4：前端不再落盘 token，凭证由 httpOnly Cookie 自动携带（SameSite=Strict
-    # 收敛 CSRF 面）；Bearer 保留兼容 A2A/MCP 与旧调用方。取数规则：**请求显式带了
-    # Authorization 头（键存在，含空值）就以头为准**——空/坏头即无效凭证，不被 Cookie 掩盖；
-    # 完全未带 Authorization 键才读 Cookie——真实浏览器前端不带 Authorization 头，走 Cookie 路径。
+def presented_token(request: Request) -> str | None:
+    """本次请求**实际出示**的凭证，取数规则与 `get_principal` 同源（只有一份）。
+
+    打包 ZQ Q4 之后 SPA 不带 Authorization 头走 Cookie；A2A／MCP／旧调用方带 Bearer。
+    两种凭证同时出现时以头为准（键存在即认头）。这条规则以前在 `change_password`／
+    `logout`／`me` 里各抄一份且互相不一致：改密时用 `_bearer_token`、吊销时用
+    `_session_token`（Cookie 优先），于是"保留当前会话"保留的是**没被用来认证的那个会话**。
+    """
     if "authorization" in request.headers:
         header = request.headers["authorization"]
-        token = header[7:].strip() if header[:7].lower() == "bearer " else None
-    else:
-        token = request.cookies.get(SESSION_COOKIE)
-    principal = session_store.principal_for_token(token)
+        return header[7:].strip() if header[:7].lower() == "bearer " else None
+    return request.cookies.get(SESSION_COOKIE)
+
+
+def get_principal(request: Request) -> Principal:
+    # 打包 ZQ Q4：前端不再落盘 token，凭证由 httpOnly Cookie 自动携带（SameSite=Strict
+    # 收敛 CSRF 面）；Bearer 保留兼容 A2A/MCP 与旧调用方。取数规则见 presented_token。
+    principal = session_store.principal_for_token(presented_token(request))
     if principal is None:
         raise auth_error(401, CODE_UNAUTHENTICATED, _UNAUTHENTICATED)
     # T6 审计中间件在响应后读取 request.state.principal 记录写操作（docs/35 §6）。
@@ -113,6 +140,11 @@ def get_principal(request: Request) -> Principal:
 
 def require(*capabilities: Capability):
     def dependency(principal: Principal = Depends(get_principal)) -> Principal:
+        # docs/95 D-2 选 (b)：业务端点不分能力档，一律先过轮换门，所以不必维护路径白名单——
+        # /api/auth/* 本来就不经过 require()。轮换门排在角色门之前：先说"该改密"这个可执行
+        # 的下一步，而不是让运营对着"当前角色无权"猜。
+        if must_change_password(principal):
+            raise auth_error(403, CODE_PASSWORD_CHANGE_REQUIRED, _PASSWORD_CHANGE_REQUIRED)
         if not all(can(principal.role, capability) for capability in capabilities):
             raise auth_error(403, CODE_FORBIDDEN, _FORBIDDEN)
         return principal

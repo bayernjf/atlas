@@ -25,6 +25,8 @@ class UserAccount(BaseModel):
     status: Literal["active", "disabled"] = "active"
     created_at: str
     updated_at: str
+    # docs/95 打包 AV：NULL ＝ 口令从未经本人之手（引导播种/admin 建号/admin 重置）。
+    password_rotated_at: str | None = None
 
 
 class UserExists(Exception):
@@ -156,12 +158,19 @@ class UserStore:
         password: str,
         *,
         keep_token: str | None = None,
+        by_owner: bool = False,
     ) -> UserAccount | None:
+        """改口令并盖轮换位。
+
+        `by_owner` 为真（本人经 `/api/auth/change-password`）才盖章；admin 重置留 NULL——
+        口令由第三方设定就不算「本人选定的口令」，强制位因此重新生效（docs/95 §3）。
+        """
         with self._lock:
             account = self._users.get((tenant_id, username))
             if account is None:
                 return None
             account.password_hash = hash_password(password)
+            account.password_rotated_at = _now_iso() if by_owner else None
             account.updated_at = _now_iso()
             result = account.model_copy(deep=True)
         if self._session_store is not None:
