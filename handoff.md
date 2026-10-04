@@ -1,5 +1,7 @@
 # Handoff — Atlas
 
+> **📝 docs(errata)：MCP 批 push 状态与 README 批链范围勘误（2026-10-04 用户「更新项目文档」；docs-only，零代码／测试／迁移／依赖改动；自推）**：git 实测 MCP 批三原子（`6a87531`/`d911964`/`513121a`）已在 origin/dev（`git merge-base --is-ancestor 513121a refs/remotes/origin/dev` exit 0），故两处过期表述按留痕惯例追加〔2026-10-04 勘误〕、原文不改写：① docs/91 收口注记末行「原子提交待 push」→ 已 push 入 origin/dev；② README「当前阶段」批链范围「docs/27–91、至 2026-10-01」→ 已延至 docs/94、至 2026-10-04（docs/92/93/94 均已立项并落码收口）。门：守护门复跑 `test_handoff_integrity`＋`test_migration_convention` 为证。
+
 > **📝 docs(errata)：打包 ZU「未 push、未合 main」过期表述勘误（2026-10-04 用户「开搞」授权；docs-only，零代码／测试／迁移／依赖改动；自推）**：git fetch 实测——本地 dev `e6de817`（ZU 收口 docs）与 origin/dev 完全同步（`git rev-list --count refs/remotes/origin/dev..dev`＝0）、origin/main `07dddeb`＝Merge pull request #108 from bayernjf/dev（**打包 ZU 已合 main**）、工作区干净；故五处「未 push、未合 main」表述已过时，按留痕惯例各追加〔2026-10-04 勘误〕、原文不改写：① handoff 顶部 ZU 收口块；② handoff Active work #102；③ handoff Recently shipped 首条；④ CHANGELOG 打包 ZU 条目末行；⑤ docs/08 打包 ZU 收口块。门：守护门复跑 `test_handoff_integrity`＋`test_migration_convention` 为证。
 
 > **📌 用户产品口径：LLM 模型分两种（2026-10-03 用户明确；docs/73 §10 登记）**：① **内置模型**＝平台方内置（Agnes 已给），由 **admin UI 管理**（密钥/模型/开关），用户直接用；② **BYOK**＝用户自己配置自己的 key。**1.1 残余由此从「凭据本体入 vault」更正为「模型配置管理面未实现」**——凭据侧无欠账（Agnes 已调通），缺的是把 `src/atlas/llm/` 四消费点的全局 env 直读升级为两模式管理面（管理 UI＋per-tenant 配置解析＋消费点改造）。候选池登记：docs/08 C 组新候选（承接 D14 余部「按租户模型配置」）；待用户拍板权限/租户语义与 admin 页落点后写契约。**〔2026-10-04 打包 Y 已落码收口，见 Active work #101；docs/73 §10bis 1.1 管理面半边转「已实现」〕**

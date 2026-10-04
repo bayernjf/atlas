@@ -18,7 +18,7 @@ Atlas 是一个 **AI 运营体（Agent）编排平台**：以 **Harness / Graph 
 - **题二（多智能体端到端）M5–M10 全闭合**：M5 持久化 + 中断恢复（M5a 进程内 Repository 重构、M5b PG 实现 + 中断帧落库 + 恢复扫描器 + run 状态 + `GET /api/runs`）、M6 Graph 版本化（不可变 releaseVersion + subgraph 钉版）、M7 多 Bot 任务总线（任务信封状态机 + 幂等/CAS + 退货退款协同沙盘）、M8 交互模板系统（审批卡片双向 Schema + web/im/email 三渠道渲染降级）、M9 入站 Router + 灰度发布 + 指标门控自动回滚、M10 span 级链路追踪。
 - **缓做项提前取回**：D26 用例集报告 v1（通过率历史趋势/导出/定时回放 CI）、D30 余部（数据依赖环/类型 warning/作用域语义）、A+B 打包六项（D15 表达式函数库、D17 loop break·continue、D18 parallel any_success、parallel.result/subgraph.outputs 可见性、改节点 id quickFix 联动）。
 - **M11 已落码收口（2026-09-19）**：统一记忆条目（fact/preference）+ 本地确定性 256 维词法向量（纯 stdlib）+ memory/remember·recall 两适配器工具 + 进程内/PG(pgvector) 两档 + REST 浏览/语义搜索/删除 + 前端记忆页；后端 673/前端 449、两档 m11_smoke 全过、d26 零回归。形状权威 [docs/26](docs/26-M11记忆长期上下文契约设计.md)（ADR T23）；商业 embedding/working/summary/case/自动提取等产品化余部仍缓做 D35。
-- **M11 之后是「真实接入与交付」批链（docs/27–91，2026-09-20 → 2026-10-01）**，逐批立项与落码条见 [docs/08](docs/08-任务迭代计划.md)，能力面按组：
+- **M11 之后是「真实接入与交付」批链（docs/27–91，2026-09-20 → 2026-10-01）**，逐批立项与落码条见 [docs/08](docs/08-任务迭代计划.md)，能力面按组：**〔2026-10-04 勘误：批链已延至 docs/94、时间至 2026-10-04——docs/92（反思 L2 v2 前端候选呈现）／docs/93（LLM 模型配置管理面：内置 admin＋BYOK per-tenant）／docs/94（打包 ZU：候选采纳状态持久化＋节点级定位）均已立项并落码收口，能力面见 docs/08 对应收口块〕**
   - **真实接入**：Shopify 渠道适配与入站 Webhook（HMAC 验签/幂等环/订阅注册）、OpenAPI 导入自动生成工具（规格 PG 持久化、securitySchemes 静态密钥、HTTP Basic 子集、去重软删）、通用 HTTP 与数据库渠道、出向安全准入（SSRF 校验 + 凭证信封 AES-256-GCM 加密与脱敏）。
   - **审批与人机协同**：审批卡片三渠道渲染、邮件内一键决策（HMAC 签名 capability URL，免登录）、已决审批历史（打包 H 起 PG 落库）、审计日志页与写操作审计中间件。
   - **可靠性与运维**：告警中心、静默/值班（PG 化 + 惰性按日自动轮换）、告警外部通知与投递退避、外部通知 flapping 抑制、灰度门控自动回滚、影子运行（旁路决策比对，打包 H 起 PG 落库）。
