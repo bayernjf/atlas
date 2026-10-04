@@ -8,26 +8,28 @@ uvicorn 打真库"，那条路径证不到三件演练必须证的事——
   ② **空卷首启**（docs/73 4.2 的就绪竞态就发生在这一次启动上，重启过一次就不算数）；
   ③ **容器边界**（网络与端口是部署形态的一部分，host 进程测不到它）。
 
-七段：
+八段：
   1. build 当前 HEAD 的镜像 → 记录 image id（"我跑的到底是哪个产物"）。
   2. 只起 `db` ＋ `atlas` 两个服务，**全新项目卷**（先 `down -v` 只删本项目自己的卷）。
   3. 空卷首启：轮询 `/api/ready` 直到 200，记录用时与 `RestartCount`。
      判据＝**一次就到 ready**（不依赖 `restart: unless-stopped` 把首启救回来）。
-  4. 引导口令首登 → 改密 → 用新口令重登（`must_change_password` 那类"强制"是否存在，
-     本脚本只报观察到的形状，不假装它有）。
+  4. 引导口令首登 → **强制位为真、业务端点 403** → 改密 → 同会话立刻可用 → 重登强制位消失。
+     这一段是 docs/95 打包 AV 的真机判据：以前它只能"报观察到的形状"，因为没有强制位可验。
   5. 跑一条**内置模板**（`refund-auto`，不是手搓图）到终态；打印每个节点原文；
      并打印 `/api/adapters` 里 prod 的真实注册形状（`shop`／`database`／`web-playwright`
      应当都不在——docs/89 §14 的收口就在这条上第二次被机器看住）。
   6. 重启 `atlas` 容器（卷不动）：图与运行记录仍在、run 数不增（重启不自动重放）、
      `/api/interruptions` 可读。
-  7. 演示面与文档面在 prod 档 404；最后**只删本项目自己的卷**。
+  7. 演示面与文档面在 prod 档 404；
+  8. 强制位对**第二个账号**同样成立（首位 admin 建号→登录→403→改密→200→重登消失），
+     并验 admin 重置会把轮换章擦回去（docs/95 §2 的 D-1 订正）。最后**只删本项目自己的卷**。
 
 凭据边界：本脚本不碰任何真实凭据——没有真 LLM／真 Shopify／真 IM，因此第 5 段的
 `ai_decision` 会走规则兜底、退款节点会因适配器未注册而 FAILED，**这些是观察结果不是失败**。
 密钥与口令均为本机一次性随机值。
 
 用法：.venv/bin/python scripts/dev/prod_rehearsal.py [--host-port 8010] [--keep]
-退出码：演练自身完整性（构建失败／起不来／登不进／图没到终态／重启后数据丢了）非 0。
+退出码：演练自身完整性（构建失败／起不来／登不进／**强制位没生效**／图没到终态／重启后数据丢了）非 0。
 """
 
 from __future__ import annotations
@@ -141,10 +143,15 @@ def main() -> int:
     try:
         print("1｜构建出厂镜像（当前 HEAD）")
         sha = sh(["git", "rev-parse", "--short", "HEAD"]).strip()
+        dirty = sh(["git", "status", "--porcelain", "--untracked-files=no"]).strip()
         t0 = time.time()
         sh(["docker", "build", "-t", IMAGE, "."])
         image_id = sh(["docker", "images", "--format", "{{.ID}}", IMAGE]).strip().splitlines()[0]
         ok(bool(image_id), f"镜像已构建：{IMAGE} id={image_id}（源 HEAD `{sha}`，{time.time() - t0:.0f}s）")
+        if dirty:
+            # docker build 打的是**工作区**，不是 HEAD 的提交树。不写这一行，日志里的
+            # "源 HEAD" 就会让下一次复盘把未验证的字节当成已提交的字节。
+            note(f"工作区有 {len(dirty.splitlines())} 处未提交改动，镜像里含这些改动而非纯 `{sha}`")
 
         print("2｜清掉本项目的旧卷，用空卷起步")
         compose(env, *files, "down", "-v", "--remove-orphans", check=False)
@@ -170,21 +177,27 @@ def main() -> int:
         ok(count == "0", f"首启没有依赖容器重启（RestartCount={count}）——docs/73 4.2 要的正是这一条")
         ok(api(port, "get", "/api/health").status_code == 200, "/api/health 200")
 
-        print("4｜引导口令首登 → 改密 → 新口令重登")
+        print("4｜引导口令首登 → 强制位生效 → 改密 → 新口令重登")
         login = api(port, "post", "/api/auth/login", json_body={"username": ADMIN, "password": PASSWORD})
         ok(login.status_code == 200, f"prod 下 admin 可用引导口令登进（{login.status_code}）")
         token = login.json()["token"]
         me = api(port, "get", "/api/auth/me", token=token)
         ok(me.status_code == 200 and me.json()["principal"]["role"] == "admin", f"me 回显 admin：{me.json()}")
-        forced = "must_change_password" in json.dumps(me.json())
-        note(f"响应里{'有' if forced else '没有'} must_change_password 字段："
-             f"{'首登强改密有机制承载' if forced else '“首登强改密”目前只是流程约定，没有服务端强制位'}")
+        ok(me.json().get("mustChangePassword") is True,
+           "首登强制位为真（docs/95 打包 AV：这一位以前只存在于流程约定里）")
+        blocked = api(port, "get", "/api/graphs", token=token)
+        code = str(json.dumps(blocked.json().get("detail", {}), ensure_ascii=False))
+        ok(blocked.status_code == 403 and "AUTH_PASSWORD_CHANGE_REQUIRED" in code,
+           f"未改密时业务端点被挡并给出可执行下一步（{blocked.status_code}）：{code[:120]}")
         new_password = PASSWORD + "-rotated-1"
         chg = api(port, "post", "/api/auth/change-password", token=token,
                   json_body={"oldPassword": PASSWORD, "newPassword": new_password})
-        ok(chg.status_code == 200, f"改密端点在 prod 可用（{chg.status_code}）")
+        ok(chg.status_code == 200, f"改密端点在被挡时仍然可达（{chg.status_code}）——否则是自锁死锁")
+        after = api(port, "get", "/api/graphs", token=token)
+        ok(after.status_code == 200, f"改密后同一会话立刻可用（{after.status_code}）：保留当前会话是真的")
         again = api(port, "post", "/api/auth/login", json_body={"username": ADMIN, "password": new_password})
         ok(again.status_code == 200, "新口令可登（改密不是纸面动作）")
+        ok(again.json().get("mustChangePassword") is False, "重登后强制位消失（轮换位真的写进了行里）")
         stale = api(port, "post", "/api/auth/login", json_body={"username": ADMIN, "password": PASSWORD})
         ok(stale.status_code == 401, f"旧口令立刻失效（{stale.status_code}）")
         token = again.json()["token"]
@@ -319,6 +332,43 @@ def main() -> int:
         ok(msgs.status_code == 401, f"GET /api/demo/messages 匿名 → 401（受租户鉴权，不是 prod 该 404 的那批）")
         anon = api(port, "get", "/api/graphs")
         ok(anon.status_code == 401, f"未登录打业务端点是 401 不是 404（{anon.status_code}）")
+
+        print("8｜强制位对**第二个账号**同样成立（不是只认引导口令那一条路）")
+        # 第 4 段证的是"出厂那个 admin 必须改密"；这一段证的是 prod 里真正常见的形状：
+        # 首位 admin 建号、把口令发给别人。别人拿到的口令同样是第三方设的，也必须改。
+        second = "rehearsal-second"
+        created = api(port, "post", "/api/users", token=token2, json_body={
+            "username": second, "password": "Setbypa-1",
+            "displayName": "演练第二账号", "role": "admin"})
+        ok(created.status_code == 201, f"首位 admin 改密后能建号（{created.status_code}）")
+        s_login = api(port, "post", "/api/auth/login",
+                      json_body={"username": second, "password": "Setbypa-1"})
+        ok(s_login.status_code == 200 and s_login.json()["mustChangePassword"] is True,
+           "admin 代设口令的号一登出来就带强制位")
+        s_token = s_login.json()["token"]
+        s_blocked = api(port, "get", "/api/graphs", token=s_token)
+        ok(s_blocked.status_code == 403
+           and "AUTH_PASSWORD_CHANGE_REQUIRED" in json.dumps(s_blocked.json(), ensure_ascii=False),
+           f"第二个号也被挡在同一道门上（{s_blocked.status_code}）")
+        ok(api(port, "get", "/api/auth/me", token=s_token).status_code == 200,
+           "被挡时 self-service 面仍可达")
+        s_new = "Setbypa-2-rotated"
+        ok(api(port, "post", "/api/auth/change-password", token=s_token,
+               json_body={"oldPassword": "Setbypa-1", "newPassword": s_new}).status_code == 200,
+           "第二账号改密成功")
+        ok(api(port, "get", "/api/graphs", token=s_token).status_code == 200,
+           "改密后该会话立刻能打业务端点")
+        s_relogin = api(port, "post", "/api/auth/login",
+                        json_body={"username": second, "password": s_new})
+        ok(s_relogin.json().get("mustChangePassword") is False, "重登后强制位消失（轮换位过重启仍然在）")
+        # admin 重置会把章擦回去——这是 docs/95 §2 的 D-1 订正，值得在真部署形态下看一眼
+        ok(api(port, "post", f"/api/users/{second}/reset-password", token=token2,
+               json_body={"newPassword": "Setbypa-3"}).status_code == 200,
+           "首位 admin 重置第二账号口令")
+        s_again = api(port, "post", "/api/auth/login",
+                      json_body={"username": second, "password": "Setbypa-3"})
+        ok(s_again.json().get("mustChangePassword") is True,
+           "被第三方重置过的口令回到未满足态（只有本人改密才盖章）")
 
         print("\n演练全过 ✅")
         return 0
