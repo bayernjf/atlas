@@ -487,3 +487,49 @@ def test_u1136_dev_with_local_public_url_keeps_the_link(monkeypatch):
     monkeypatch.setenv("ATLAS_ENV", "dev")
     body = _notify(FakeMessages(), FakeIssuer(), "http://localhost:5174")
     assert "一键处理：http://localhost:5174/approvals/SIGNED-TOKEN" in body
+
+
+# --- U1137：令牌进日志只留可读引用（docs/89 §15 A-8b）--------------------------
+
+
+def test_u1137_token_ref_keeps_correlation_without_the_credential():
+    from atlas.api.main import _token_ref
+
+    assert _token_ref("ap-" + "z" * 30) == "ap-zzzzz…"          # 前 8 位＋省略号：够定位，不够使用
+    assert _token_ref("short") == "short"                        # 短值不加长省略号
+    assert _token_ref(None) == "<空令牌>" and _token_ref("") == "<空令牌>"
+
+
+def test_u1137_notify_failure_logs_the_reference_not_the_token(caplog):
+    """决策结果通知失败时的告警行：全量 token 不得出现，8 位引用必须在。
+
+    正向对照是必要的——把整条日志删掉也能让这个断言成立，而排障恰恰需要那一行。
+    """
+    import logging
+
+    from atlas.api.main import _apply_approval_decision
+
+    class Broker:
+        def resolve(self, token, decision, *, comment=None, action_id=None):
+            return True
+
+        def get_notify_recipients(self, token):
+            return ["a@example.com"]
+
+    class BoomNotifier:
+        def notify_decided(self, **kwargs):
+            raise RuntimeError("smtp down")
+
+    token = "ap-" + "q" * 28
+    with caplog.at_level(logging.WARNING, logger="atlas.api.main"):
+        result = _apply_approval_decision(
+            Broker(), {"graph_id": "g1", "node_id": "human-1"}, token,
+            decision="approved", comment="同意", action_id=None, form=None,
+            notifier=BoomNotifier(),
+        )
+
+    assert result["decision"] == "approved"  # 通知失败不改决策事实（既有语义）
+    joined = "\n".join(record.getMessage() for record in caplog.records)
+    assert "smtp down" in joined, "没有走到那条告警，断言就是空转"
+    assert token not in joined
+    assert token[:8] in joined
