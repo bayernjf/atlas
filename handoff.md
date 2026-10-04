@@ -388,6 +388,7 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 
 - 后端全量 `.venv/bin/pytest` **2332 passed／150 skipped／0 failed**（179.60s，exit 0，量于本机 load 6.17——这趟是 U1151 改名提交后**对最终提交树**的复跑；改名前那趟读数 2332／150／0、180.29s@load 6.95，用例数一致，只有耗时不同，两个数都留着以免看起来像编的）。**对账**：AV 收口那棵树是 2324，本批新增 `tests/test_error_code_channels.py` **8 例** ⇒ 2324＋8＝2332 ✓ 逐枚对上；豁免表与枚举器定稿过程中还有两次中间跑同为 2332（形状改动换断言、不换用例数）。
 - 前端：`pnpm vitest run` **787 passed／2 skipped**（58 文件；净增 1 例＝U1152 新增的 `it`（目录新码出英文＋带占位符的码缺参回退），另有 1 例被改写）、`pnpm lint` **0 warnings／0 errors**、`pnpm build` 过。两档目录键数实测一致：`runtime` 29／29、`validation.dsl` 177／177（奇偶＋零汉字＋插值三条守护自动覆盖新键）。
+- **CI runner 自己的读数（本机数与 runner 数分别标）**：`65c110c` 上四个 job 全绿——gitleaks success／Backend pytest **2332 passed／150 skipped in 182.27s**／Backend PG integration **2474 passed／8 skipped in 239.50s**／Frontend vitest+build **57 文件 passed＋1 skipped（58）、Tests 787 passed＋2 skipped、oxlint 0 warnings／0 errors、built in 580ms**。PG 档对账：AV 那棵树 runner 报 2466／8，本批 8 例同样进入 integration job ⇒ 2466＋8＝2474 ✓；本机常跑 179.60s 与 runner 182.27s 的差是机器差，不是用例差（两个数都是 2332／150）。
 - **码集合的实读数（这条门的"量"部分）**：五种发射形状枚举全仓 **211 条**结构化错误码字面量 ⇒ **185 有目录文案／26 在带理由的豁免表上（17 工具结果＋4 webhook 死信＋5 一码多话）／0 无归属**。守护本身带反向门：在合成源码片段上把五种形状各植一条（`AW_A_CLASS`…`AW_E_DICT`），枚举器必须逐条点名——只测最顺手的 `detail=` 一种时，工具族那 17 条是盲区，而它们恰恰是本文 §12 与 §16 两个不同数字（19／22）的来源。
 - **一处自打：豁免表不许凭印象填。** 我第一次填表写了 6 条 `CHANNEL_*`／`EGRESS_*`（它们不从这五种形状发出），`test_u1151_allowlist_is_not_quietly_stale` 当场打回 ⇒ 这条守护在我这边第二次证明"能红"（另一处是 U1146 的假端点）。
 - **未做**：D53 那 5 条一码多话的码要改契约（拆码或给 `expressionErrorCodes` 补等长 params），属响应契约变更＋docs/03/04/12 同步，单开一批，不塞进文案批。
