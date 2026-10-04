@@ -394,6 +394,7 @@ export function Editor({
             exitReason?: string | null
             expression_errors?: string[]
             expressionErrorCodes?: string[]
+            expressionErrorParams?: Array<Record<string, unknown>>
             target?: string
             status?: string
             durationSeconds?: number
@@ -514,10 +515,13 @@ export function Editor({
               )
               // docs/60 G1：表达式错误退出时，按 expressionErrorCodes 解析当前语言明细；
               // 无码条目回退后端中文 expression_errors（不泄漏 i18n key）。
+              // docs/14 D53 的 ②：等长的 expressionErrorParams 带上插值所需的 params
+              // （旧持久化结果没有这个键，缺位时 resolveRuntimeError 自己回退原文）。
               if (output.exitReason === 'expression_error') {
                 resolveExpressionErrors(
                   output.expressionErrorCodes,
                   output.expression_errors,
+                  output.expressionErrorParams,
                 ).forEach((detail) => {
                   if (detail) appendLog(`  ${detail}`)
                 })

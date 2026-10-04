@@ -3,6 +3,14 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### feat(graph)＋fix(web)＋test：节点结果的诊断通道把 params 送回来了（docs/14 D53 的 ②，2026-10-05 打包 AX）
+
+- **补的是 AW 自己登记的那条事实**：`ConditionEvalError` 从 docs/60 G1 起就带 `code`＋`params`，但节点结果只并行下发 `expressionErrorCodes`——**params 在 HTTP 边界被丢掉**。于是必须插值的模板（`COND_TYPE_MISMATCH` 的 `{{detail}}`、`COND_DIVIDE_BY_ZERO` 的 `{{op}}`）在英文态永远只能回退后端中文原文：码有了、文案有了，句子仍然出不来。
+- **等长是装配期保证的，不是约定**：新增 `_expression_error_channels()`，`errors/codes/params` 三组长度不一致直接 `ValueError`。错位不崩，它让第 n 条明细静默读到第 n−1 条的参数＝运营看见另一句话——这类"静默说谎"正是本项目反复付学费的地方。反向门 U1155 把错位植进 `_foreach_output` 并要求报错；**证明它能红的方式**＝把那条检查临时改成 `if False`，U1155 立刻 FAILED，改回即绿。
+- **写测试时纠正了自己的一个假设**：原以为 `randint(9, 1)`（`COND_INVALID_RANGE`）走这条通道，实测它在 **dsl 校验期**就变成 `GraphValidationError`→422，根本到不了运行结果。运行态真带 params 的是**依赖运行数据**那一类（`!"abc"` ⇒ `op/expected/actual`），U1153 因此按真实可达形状断言，而不是按我认为的形状。
+- **前端的降级路径同样钉住**：`resolveExpressionErrors(codes, messages, params)` 之外，条目为 `null`、整个数组缺失、参数不是数组三种情况一律按"无参"处理并回退后端原文——**旧的持久化运行结果没有这个键**，纯超集意味着历史数据不能变成一句带 `{{low}}` 的话。
+- **没有顺手做的那一件（登记 docs/14 D54）**：condition 节点的表达式诊断连 code 都没有——`_execute_condition` 收的是 `f"分支 {label}：{exc}"` 的纯中文拼接。要译必须先定"分支前缀＋内层明细"的组合文案形状，那是**契约设计**而不是补词条；在文案批里顺手定形状＝再造一处第二份真相，所以只登记不动手。
+- **门（实跑）**：后端全量 **2334 passed／150 skipped／0 failed**（177.66s，exit 0；对账＝AW 那棵树 2332 ＋ U1153＋U1155 共 2 例）、前端 vitest **788 passed／2 skipped**（58 文件；净增 1＝U1154）、`nodeSchemas` 52 例过（loop 的 `x-outputSchema` 同步声明新键）、oxlint **0/0**、`pnpm build` 过。零迁移、零新依赖、无新 ADR、既有响应字段一字未改。
 ### fix(api)＋feat(i18n)＋test：错误码要"到得了人"——A-4 的可译半边收口，识别从第二份真相改成查目录（docs/89 A-4／docs/17 §2.4，2026-10-05 打包 AW）
 
 - **先把题问对**：审计写的是"19 码无前端文案"。统一到**五种发射形状**的全仓枚举（`detail={"code":…}`／异常类属性 `code = "…"`／dsl 的 `code="…"`／`StructuredError("X", …)`／`{"error_code": "X"}`）之后，实测是 **211 条码字面量：185 条本来就有目录文案、26 条进带理由的豁免表、0 条无归属**。那 26 条里 **17＋4 属长期口径**（工具／适配器结果与 webhook 死信原因码，docs/57 §2.5 节点产出＝业务数据不译），**真正欠的只有 5 条**——它们一条码承载 2–5 条不同答案，按码出模板会把诊断压成一句甚至误导。"把 19 条一律补文案"这个原题就是错的。

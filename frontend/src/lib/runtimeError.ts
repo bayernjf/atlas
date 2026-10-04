@@ -175,19 +175,30 @@ export function resolveRuntimeDetail(detail: unknown): string {
 /**
  * 把节点结果中与 expression_errors 等长的 expressionErrorCodes 逐条解析为当前语言明细；
  * 无码或码不可识别的条目回退对应中文 expression_errors（fail-safe，不泄漏 key）。
+ *
+ * 第三个参数是 docs/14 D53 的 ②：打包 AX 起，后端在同一条通道上并行下发等长的
+ * expressionErrorParams，含占位符的模板（如 COND_TYPE_MISMATCH 的 {{detail}}）才填得满。
+ * 旧的持久化结果没有这个键，非对象条目一律按"无参"处理——填不满时由 resolveRuntimeError
+ * 自己回退后端原文，所以这里不再重复那道局部守卫。
  */
 export function resolveExpressionErrors(
   codes: unknown,
   messages: unknown,
+  params?: unknown,
 ): string[] {
   const msgs = Array.isArray(messages) ? messages.map((m) => String(m)) : []
   if (!Array.isArray(codes)) return msgs
+  const plist = Array.isArray(params) ? params : []
   return codes.map((code, index) => {
     const fallback = msgs[index] ?? ''
     if (!isRuntimeErrorCode(code)) return fallback
-    const resolved = resolveRuntimeError(code, undefined, fallback)
-    // 节点结果码通道不携带 params：模板若残留未插值占位，回退该条后端中文明细，
-    // 绝不把 {{op}} 之类的原始占位上屏。
-    return resolved.includes('{{') || resolved.includes('}}') ? fallback : resolved
+    const entry = plist[index]
+    return resolveRuntimeError(
+      code,
+      entry !== null && typeof entry === 'object'
+        ? (entry as Record<string, unknown>)
+        : undefined,
+      fallback,
+    )
   })
 }

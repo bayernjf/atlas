@@ -66,7 +66,7 @@ from atlas.tracing import (
     Span,
     Tracer,
 )
-from .conditions import ConditionEvalError, evaluate_expression
+from .conditions import ConditionEvalError, _type_code, evaluate_expression
 from .dsl import (
     MAX_LOOP_ITERATIONS,
     MAX_SUBGRAPH_DEPTH,
@@ -1787,6 +1787,7 @@ def _execute_loop(
 
     expression_errors: list[str] = []
     expression_error_codes: list[str] = []
+    expression_error_params: list[dict[str, Any]] = []
     exit_reason: str | None = None
 
     if iterations >= max_iterations:
@@ -1794,6 +1795,7 @@ def _execute_loop(
         exit_reason = "max_iterations"
         expression_errors.append(f"已达最大次数 {max_iterations}，强制退出循环")
         expression_error_codes.append("LOOP_MAX_ITERATIONS")
+        expression_error_params.append({})
     else:
         # 首轮自身产出尚不存在；播种 index 供 {{loop-x.index}} 求值
         loop_context = {**context, node.id: {"index": iterations, "iterations": iterations}}
@@ -1804,6 +1806,7 @@ def _execute_loop(
             exit_reason = "expression_error"
             expression_errors.append(str(exc))
             expression_error_codes.append(exc.code)
+            expression_error_params.append(dict(exc.params))
         else:
             if not isinstance(result, bool):
                 target = exit_target
@@ -1812,12 +1815,21 @@ def _execute_loop(
                     f"继续条件结果必须是布尔值，实际为 {type(result).__name__}"
                 )
                 expression_error_codes.append("COND_TYPE_MISMATCH")
+                expression_error_params.append(
+                    {"expected": "boolean", "actual": _type_code(result)}
+                )
             elif result:
                 iterations += 1
                 target = body_target
             else:
                 target = exit_target
                 exit_reason = "condition_false"
+
+    expression_errors, expression_error_codes, expression_error_params = (
+        _expression_error_channels(
+            expression_errors, expression_error_codes, expression_error_params
+        )
+    )
 
     return {
         "mode": "while",
@@ -1827,7 +1839,24 @@ def _execute_loop(
         "exitReason": exit_reason,
         "expression_errors": expression_errors,
         "expressionErrorCodes": expression_error_codes,
+        "expressionErrorParams": expression_error_params,
     }
+
+
+def _expression_error_channels(
+    errors: list[str], codes: list[str], params: list[dict[str, Any]]
+) -> tuple[list[str], list[str], list[dict[str, Any]]]:
+    """表达式诊断的三组数组是**按下标对齐**的响应契约（docs/03）。
+
+    长度一旦错位，第 n 条明细就会读到第 n−1 条的 params——比崩更难发现的静默错误，
+    所以装配节点结果时直接拒绝，而不是等到前端渲染。
+    """
+    if not (len(errors) == len(codes) == len(params)):
+        raise ValueError(
+            f"表达式诊断三组数组长度不一致：errors={len(errors)} "
+            f"codes={len(codes)} params={len(params)}"
+        )
+    return errors, codes, params
 
 
 def _foreach_output(
@@ -1840,9 +1869,17 @@ def _foreach_output(
     exit_reason: str | None,
     expression_errors: list[str],
     expression_error_codes: list[str] | None = None,
+    expression_error_params: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if expression_error_codes is None:
         expression_error_codes = [""] * len(expression_errors)
+    if expression_error_params is None:
+        expression_error_params = [{} for _ in expression_errors]
+    expression_errors, expression_error_codes, expression_error_params = (
+        _expression_error_channels(
+            expression_errors, expression_error_codes, expression_error_params
+        )
+    )
     return {
         "mode": "foreach",
         "items": items,
@@ -1854,6 +1891,7 @@ def _foreach_output(
         "exitReason": exit_reason,
         "expression_errors": expression_errors,
         "expressionErrorCodes": expression_error_codes,
+        "expressionErrorParams": expression_error_params,
     }
 
 
@@ -1870,7 +1908,9 @@ def _execute_foreach(
     if not isinstance(previous, dict):
         previous = {}
 
-    def fail_exit(message: str, exit_reason: str, code: str = "") -> dict[str, Any]:
+    def fail_exit(
+        message: str, exit_reason: str, code: str = "", params: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         return _foreach_output(
             items=[],
             index=0,
@@ -1880,6 +1920,7 @@ def _execute_foreach(
             exit_reason=exit_reason,
             expression_errors=[message],
             expression_error_codes=[code],
+            expression_error_params=[params or {}],
         )
 
     if "items" not in previous:
@@ -1887,12 +1928,13 @@ def _execute_foreach(
         try:
             items = evaluate_expression(config["itemsExpression"], seed_context, now=now, rng=expr_rng)
         except ConditionEvalError as exc:
-            return fail_exit(str(exc), "expression_error", exc.code)
+            return fail_exit(str(exc), "expression_error", exc.code, dict(exc.params))
         if not isinstance(items, list):
             return fail_exit(
                 f"遍历对象必须是数组，实际为 {type(items).__name__}",
                 "expression_error",
                 "COND_TYPE_MISMATCH",
+                {"expected": "array", "actual": _type_code(items)},
             )
         if len(items) > MAX_LOOP_ITERATIONS:
             return fail_exit(

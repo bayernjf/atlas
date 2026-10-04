@@ -69,6 +69,7 @@ class ConditionEvalError(Exception):
   - `errorParams: dict`（WaitNodeFailure 额外 `nodeId`；ConditionEvalError→`exc.params`）
   - `error` 中文 `str(exc)` **保留不变**（日志/兜底/旧断言零改动）。
 - **loop / foreach expression_error 通道**：节点结果在既有 `expression_errors: list[str]` 与 `exitReason` 之外，并行加 `expressionErrorCodes: list[str]`（与 expression_errors 等长、按序对应；非表达式错误的退出位补空串或等长对齐，落码取与编译 Issue 四元组一致的对齐纪律）。`fail_exit(message, reason, code=None)` 增加可选 code，itemsExpression 的 ConditionEvalError 透传 `exc.code`，「遍历对象必须是数组/超长」分别给 `COND_TYPE_MISMATCH`/`LOOP_ITEMS_TOO_LARGE`。
+> **〔2026-10-05 打包 AX 补口＝本通道欠的 params 送到了〕** 本节 §1.1 第 1 项写的是"并行下发 `errorCode`/`errorParams`"，落码时只有**运行失败总览**那一侧兑现（`graph/loader.runtime_error_meta` 返回两键），**节点结果的并行数组只发了码、把 params 丢了**——凡模板含占位的运行期码（`COND_TYPE_MISMATCH` 的 `{{detail}}`、`COND_DIVIDE_BY_ZERO` 的 `{{op}}`）在英文态必然回退后端中文原文。AX 起 `expressionErrorParams` 与 codes/messages 三组按下标等长，装配期由 `_expression_error_channels` 拒绝错位，前端 `resolveExpressionErrors` 第三参数接住；用例 U1153–U1155，响应形状现写于 docs/12 的 loop 输出行。AW 当时登记的这条结构事实＝docs/14 **D53 的 ②**，本日收口（① 那 5 条粗码仍缓做）。
 - SSE：run failed 终态帧在现有 `error` 字段外并行下发 `errorCode`/`errorParams`（帧超集，旧字段保留）；同步 500 handler（main.py:321）已带 code，不动。
 - 分支 condition（llm/rule 节点）fail-safe 的 evaluation 诊断**不在本批**（见 §1.2）。
 
