@@ -49,7 +49,9 @@ def build_base_registry(
 
     docs/77 R2：`shop`（进程内 `DemoShopService`）与 `database`（内置 SQLite demo）
     属**演示面**——prod 且未开 demo 面即不注册（与 HTTP mock 路由共用
-    `ATLAS_ENABLE_DEMO_MOCK` 一处判定）。`http`/`message`/`memory` 不依赖演示 fixture，照常注册。
+    `ATLAS_ENABLE_DEMO_MOCK` 一处判定）。`web`（真浏览器）同属演示面，但理由不是"演示 fixture"，
+    而是它的出向闸门挡不住 3xx 跳转（见下方注释）。`http`/`message`/`memory`
+    不依赖演示 fixture，照常注册。
     """
     from atlas.httpapi.service import HttpApiClient
 
@@ -67,12 +69,13 @@ def build_base_registry(
             granted_permissions=FULL_PERMISSIONS,
         )
     )
-    # 打包 ZQ Q1：web-playwright（docs/89 §9 此前未接线）——浏览器 sync API 惰性加载，
-    # 注册不触碰 playwright；Playwright 未安装时仅 execute 时报错（与 docs/32 的
-    # 运行期失败语义一致）。EGRESS 与 headless 取默认 env。
-    registry.register(
-        WebHarnessAdapter(granted_permissions=FULL_PERMISSIONS)
-    )
+    # 真浏览器只在演示面装配（docs/89 §14 N-1，反转打包 ZQ Q1 的「不受演示面开关影响」）：
+    # 出向闸门能挡页面内的子资源，挡不住 3xx 跳转后的请求（Playwright 的路由不为跳转回调，
+    # 实测 I23）⇒ prod 挂上它就等于给 `operate` 档图一条可达内网/云元数据的真出向路径。
+    # docs/73 2.1 的「N3（真浏览器出网）不进 MVP」由此重新成立；网络层彻底收口见 docs/14 D52。
+    # 浏览器 sync API 仍是惰性加载，注册不触碰 playwright；Playwright 缺失时 execute 才报错。
+    if demo_surface:
+        registry.register(WebHarnessAdapter(granted_permissions=FULL_PERMISSIONS))
     if db_client is not None:
         registry.register(
             DatabaseHarnessAdapter(
