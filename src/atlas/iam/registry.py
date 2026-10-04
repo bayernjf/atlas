@@ -30,6 +30,7 @@ from atlas.recording import ReportStore, ShadowStore
 from atlas.recording.pg_reports import PgReportStore
 from atlas.recording.pg_shadow import PgShadowStore
 from atlas.reflection import ReflectionStore
+from atlas.reflection.pg_store import PgReflectionStore
 from atlas.routing import PgRoutingStore, RoutingStore
 from atlas.template.user_store import UserTemplateStore
 from atlas.security.bootstrap import read_storage_backend
@@ -86,7 +87,7 @@ class TenantServices:
     webhook_deliveries: object  # 入站投递去重/死信（docs/40；内存/PG 两档，reset 不清）
     openapi_imports: ImportStore | PgImportStore  # OpenAPI 导入规格（docs/42/43；内存/PG 两档，reset 不清）
     user_templates: object  # 用户自建模板（docs/85 打包 X；内存/PG 两档，reset 同清）
-    reflection_store: ReflectionStore  # 反思候选与收尾报告（docs/88 打包 ZH；v1 进程内 ring，两档同为内存实例）
+    reflection_store: ReflectionStore | PgReflectionStore  # 反思候选与收尾报告（docs/88 打包 ZH／docs/94 打包 ZU：内存 ring 100 / PG reflection_*）
     model_config: object  # LLM 模型配置（docs/93 打包 Y；内存/PG 两档 store，reset 不清）
 
 
@@ -162,7 +163,7 @@ class TenantRegistry:
                 webhook_deliveries=PgDeliveryStore(backend.engine, tenant_id),
                 openapi_imports=PgImportStore(backend.engine, tenant_id),
                 user_templates=PgUserTemplateStore(backend.engine, tenant_id),
-                reflection_store=ReflectionStore(),
+                reflection_store=PgReflectionStore(backend.engine, tenant_id),
                 model_config=get_model_config_store(),
             )
             TenantRegistry._wire_alert_notifier(services)
