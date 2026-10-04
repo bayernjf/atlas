@@ -122,7 +122,17 @@ def _parse_payload(payload: object) -> tuple[list[dict[str, Any]], list[str]]:
         key = row.get("param_key")
         if not isinstance(key, str) or "to" not in row:
             continue
-        changes.append({"param_key": key, "to": row["to"], "reason": str(row.get("reason", ""))})
+        item: dict[str, Any] = {
+            "param_key": key,
+            "to": row["to"],
+            "reason": str(row.get("reason", "")),
+        }
+        # 打包 ZU（docs/94 E-3）：透传摘要器回包的可选 node_id；最终是否采信由
+        # resolve_node_ids 对照图快照校验，此处只做形状归一。
+        node_id = row.get("node_id")
+        if isinstance(node_id, str) and node_id.strip():
+            item["node_id"] = node_id.strip()
+        changes.append(item)
     raw_suggestions = payload.get("prompt_suggestions") or []
     suggestions = [row for row in raw_suggestions if isinstance(row, str) and row.strip()]
     return changes, suggestions

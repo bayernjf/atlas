@@ -277,13 +277,23 @@ def test_u1029_ok_path_stores_candidate_and_report():
     assert candidate is not None
     assert candidate["candidate_id"] == "refl-1"
     assert candidate["base_version"] == 2
-    # 对外用别名 from/to（docs/88 §4、docs/12 端点契约）。
+    # 对外用别名 from/to（docs/88 §4、docs/12 端点契约）；打包 ZU 起每条 change
+    # 显式带 node_id（无节点定位时为 null，docs/94 §3.2／U1118）。
     assert candidate["changes"] == [
-        {"param_key": "approval_limit", "from": "500", "to": 300, "reason": "超限额转人工偏多"}
+        {
+            "param_key": "approval_limit",
+            "from": "500",
+            "to": 300,
+            "reason": "超限额转人工偏多",
+            "node_id": None,
+        }
     ]
     assert candidate["prompt_suggestions"] == ["在 prompt 里补一句：金额超限必须转人工"]
     assert candidate["evidence_digest"].startswith(f"{GRAPH}@2")
     assert candidate["generated_at"] == "2026-10-01T00:00:00+00:00"
+    # 打包 ZU：候选级处理标记缺省为待处理（null）。
+    assert candidate["decision_status"] is None
+    assert candidate["decided_at"] is None
 
 
 def test_u1029_candidate_ids_increment_and_ring_is_bounded():
