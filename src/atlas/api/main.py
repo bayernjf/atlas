@@ -191,6 +191,17 @@ logger = logging.getLogger(__name__)
 # 此前这里与 channels/registry、notifications 各读一遍同一 env＋同一缺省）
 _PUBLIC_URL = read_public_url()
 
+
+def _token_ref(token: Any) -> str:
+    """日志里指代一枚令牌的可读引用（docs/89 §15 A-8b）。
+
+    `resume_token`／审批 `token` 都是能直接推进状态的凭证，全文进日志＝任何读得到日志的人
+    都能代替持有人续跑或决策；而运维排障又确实需要一个能对上表行的标识，所以留 8 位前缀：
+    够定位，不够使用。
+    """
+    text = str(token or "")
+    return text[:8] + "…" if len(text) > 8 else (text or "<空令牌>")
+
 MAX_WAIT_PAYLOAD_BYTES = 4096
 MAX_WAIT_PAYLOAD_KEYS = 50
 # docs/36 §3：邮件深链验签单例（密钥取 ATLAS_APPROVAL_HMAC_SECRET）。
@@ -231,7 +242,7 @@ def recover_pending() -> None:
         try:
             _resume_from_frame(engine, frame)
         except Exception as exc:
-            logger.warning("帧 %s 恢复失败、隔离跳过：%s", frame.get("resume_token"), exc)
+            logger.warning("帧 %s 恢复失败、隔离跳过：%s", _token_ref(frame.get("resume_token")), exc)
 
 
 def _resume_from_frame(engine, frame: dict) -> None:
@@ -308,9 +319,9 @@ def _resume_run(engine, services: TenantServices, frame: dict) -> None:
     except RunSuperseded as exc:
         # docs/62 §2 D-4：续跑输家——帧已被其它进程认领，本线程停止驱动。
         # 既不写 run 终态也不清帧（终态与清理都归赢家），否则会把赢家的执行结果覆盖掉。
-        logger.info("续跑让位 %s：%s", frame.get("resume_token"), exc)
+        logger.info("续跑让位 %s：%s", _token_ref(frame.get("resume_token")), exc)
     except Exception as exc:
-        logger.error("续跑 %s 失败：%s", frame.get("resume_token"), exc)
+        logger.error("续跑 %s 失败：%s", _token_ref(frame.get("resume_token")), exc)
         if run_id:
             services.run_store.finish(
                 run_id=run_id, status="failed", error=f"{type(exc).__name__}: {exc}"
@@ -4338,7 +4349,7 @@ def _apply_approval_decision(
                     recipients=recipients,
                 )
             except Exception as exc:  # noqa: BLE001 结果通知任何异常都不改变响应
-                logger.warning("审批结果通知失败 token=%s: %s", token, exc)
+                logger.warning("审批结果通知失败 token=%s: %s", _token_ref(token), exc)
     result: dict[str, Any] = {"token": token, "decision": decision, "resolvedBy": "human"}
     if resolved_action:
         result["actionId"] = resolved_action
