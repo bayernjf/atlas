@@ -22,12 +22,30 @@ export type Principal = {
 export type LoginResponse = {
   token: string
   principal: Principal
+  /**
+   * 打包 AV（docs/95）：prod 下该账号的口令仍等于部署时下发的引导口令。
+   * 不落盘——它是每次 auth 响应现算的服务器事实，localStorage 里留一份就会有一个过期版本。
+   */
+  mustChangePassword?: boolean
 }
 
 export const TOKEN_KEY = 'atlas.session_token'
 const PRINCIPAL_KEY = 'atlas.principal'
 
 export const UNAUTHORIZED_EVENT = 'atlas:unauthorized'
+/**
+ * 打包 AV（docs/95）：首登强制改密的信号，App 订阅后挂出不可关闭的改密框。
+ *
+ * 刻意**不用** `UNAUTHORIZED_EVENT` 那种 window 事件形状：本仓前端测试跑在 node 环境、
+ * 无 jsdom 依赖，DOM 事件在测试里观测不到，"信号发得出"就只剩人眼看真机。订阅表在 node
+ * 与浏览器里是同一份代码，U1147 才打得着它。
+ */
+const passwordChangeHandlers = new Set<() => void>()
+
+export function onPasswordChangeRequired(handler: () => void): () => void {
+  passwordChangeHandlers.add(handler)
+  return () => passwordChangeHandlers.delete(handler)
+}
 
 const ROLE_RANK: Record<Role, number> = { viewer: 1, operator: 2, admin: 3 }
 const CAPABILITY_RANK: Record<Capability, number> = { read: 1, operate: 2, administer: 3 }
@@ -81,4 +99,14 @@ export function handleUnauthorized(): void {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
   }
+}
+
+/**
+ * 打包 AV（docs/95）：首登强制改密的信号。App 订阅后挂出**不可关闭**的改密框。
+ *
+ * 会话不清、不跳转——挡住一个未改密的账号靠的是每个业务请求 403，登录态本身仍要留着，
+ * 否则人连改密端点都打不开（auth 路由不经 require()，U1143 钉着这件事）。
+ */
+export function handlePasswordChangeRequired(): void {
+  for (const handler of [...passwordChangeHandlers]) handler()
 }
