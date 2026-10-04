@@ -3,6 +3,13 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### test(dev)＋docs：prod 演练在出厂镜像上跑穿七段，4.1 从此只剩凭据与一处强制位（2026-10-04 用户「那你继续推」；docs/73 4.1／4.2；docs/79 §7.3；docs/13 〔跑〕表新行）
+
+- **为什么再来一次**：docs/79 §7.1 的首启证据是**一次性手工命令**，而且没关掉 compose 的 `restart: unless-stopped`——首启若崩，policy 会救回来，`RestartCount=0` 只证明"这次没崩"。新增 `scripts/dev/prod_rehearsal.py` 把演练变成可重跑脚本，并在 override 里把 `atlas`／`db` 的 `restart` 设成 `"no"`：这一次崩了没人救。
+- **跑穿的内容（全过，exit 0）**：`docker build` 当前 HEAD → 全新项目卷起 `db`＋`atlas`（只删本项目卷，开发库与别的 compose 项目未触碰）→ **`/api/ready` T+2.1s 一次到 200、`RestartCount=0`** → 引导口令首登→改密→旧口令 401 → **两张内置模板**跑到终态：`refund-auto` 用来验凭据边界（下条），`approval-timeout-reject` 走人工批准腿（后台线程阻塞同步 `/run`，主线程在挂起窗口内 `POST /api/approvals/{token}/decision` 批准，断言走的是 approved 分支而不是超时拒绝）→ prod 在册适配器恰 `{http, memory, message}`（**§14 的收口在出厂镜像里成立**）→ 重启容器：图清单逐字不变、运行数 3→3（**不自动重放**）→ 匿名模拟面与 `/docs`·`/openapi.json` 404、业务端点匿名 401 不是 404。
+- **量出来的三条（写清楚，不当成"演练过了"）**：① `ai_decision` 缺真 LLM 时**显式失败** `LLM_DECISION_UNAVAILABLE`，不静默降级——「4.1 欠的是真凭据」从此是机器事实；② **`首登强改密`没有服务端强制位**：`/api/auth/me` 无 `must_change_password`，改密端点在但登录不拦截未改密的引导口令账号，而 docs/73 4.1 验收原文要求它 ⇒ **4.1 保持 ⬜**，这条是本仓可落码的真缺口（标志位＋登录门＋测试），已排为下一步；③ 形状观察：缺配置回 500（带 code）而非 4xx、同步 `/run` 会占住请求线程直到审批超时——两条都只登记不改契约。
+- 零代码改动（新增的是 `scripts/dev/` 演练驱动与文档），零迁移、不解除缓做、不动两档判定。同步面＝docs/73 4.1 行＋docs/79 §7.3＋docs/13 〔跑〕表＋docs/08 §八＋CHANGELOG＋handoff（顶部指针／Active #107／Recently shipped 滚动一条／Quality gate）。
+
 ### feat(security)＋chore(config)＋test＋docs：同日第三批＝A-11 落地（prod 缺 pg 拒启）＋A-5 改判（调度缺省开是既定语义）（2026-10-04 用户「球？？？」；定论 docs/89 §16；用例 docs/13 U1138–U1139；〔跑〕prod_surface_probe 第 5 段）
 
 - **一句话**：`ATLAS_ENV=prod` 而 `ATLAS_STORAGE_BACKEND` 仍是缺省 memory 时，进程**拒绝启动**——执行的是 `.env.example:28` 早已写明（"prod 必须 pg，否则全部状态落在内存、重启即失"）、`docker-compose.yml:50` 出厂即守、而**全仓没有任何一处检查**的那条老规矩。改前忘配的形态是：进程照常起、`/api/ready` 照常 200、图／运行记录／审批／调度认领活到下一次重启为止。同族先例＝docs/77 R4（非法档位值拒启）与 docs/66（prod 缺引导口令拒启）：**写了规矩而没人执行，等于没写**。
