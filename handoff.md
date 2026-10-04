@@ -376,7 +376,8 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 - 新文件门：`tests/test_prod_storage_gate.py` **6 passed**——拒启一条＋三条合法出路（parametrize）＋dev 形态不变的判别对照＋"非法档位值仍是 `ValueError`、不被新门取代成 memory 放行"（R4 那条不能被这条吃掉）。
 - **〔跑〕探针＝这条门的主要证据**（monkeypatch 证不到"真进程导入期会不会起"）：`scripts/dev/prod_surface_probe.py` 五段全过——第 5 段 `ATLAS_ENV=prod`＋`memory`＋空署名，进程**没起来且拒启原因逐字是这道门**；1–4 段在署名后逐字不变。`scripts/dev/secret_file_probe.py` 五段全过（它本来就用 memory 档，现署名）。
 - `start()` 新增 `expect_reason`：老写法只断"没起来"，新写法断"**是哪道门拒的**"——否则任何崩法都能冒充拒启。顺带把 `ok()` 的负向措辞（"拒启原因不是预期的…"）改成中性陈述，因为该文案在 OK/FAIL 两种输出里原样打印，负向措辞会让绿跑读起来像红。
-- 后端全量（本地实跑）：**2309 passed / 147 skipped / 0 failed**（相对上一批 2303/147 净增 6＝U1138×1＋U1139×5，skip 不变）；前端本批零改动，vitest/oxlint/build 沿用上一批读数，push 后以 CI 自身读数为准。
+- 后端全量（本地实跑）：**2309 passed / 147 skipped / 0 failed**（相对上一批 2303/147 净增 6＝U1138×1＋U1139×5，skip 不变）。
+- **CI 自身读数（run `37217925950`，SHA `c15fff8`，四 job 全绿）**：Backend pytest **2309 passed／147 skipped**（246.11s，与本地逐字一致）、Backend PG integration **2448 passed／8 skipped**（193.01s）、gitleaks ✓、Frontend vitest＋build ✓（本批前端零改动）。**prod 档的门没有改变 CI 行为**——两条 job 都在 dev 档跑，`assert_prod_storage_backend()` 对非 prod 静默通过，这正是它该有的样子。
 - 未跑／不适用：无迁移、无 PG 新例（门在档位层，不触库）；A-5 只改文档判断，无代码变更可跑。
 
 ### 2026-10-04 A 组残余第二批（渠道权限档／告警写语句／对外入口地址／A-8 改判）落码门（先跑后写，数字取实跑）
