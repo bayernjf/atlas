@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from atlas.graph.dsl import GraphDSL, GraphValidationError, NodeDSL, parse_graph
 from atlas.graph.loader import (
     _execute_tool,
+    _foreach_output,
     build_demo_registry,
     compile_graph,
     interpolate,
@@ -1791,6 +1792,68 @@ def test_loop_foreach_expression_error_codes_align_with_messages_docs60():
     out = run_graph(_foreach_graph(), inputs={"order_ids": ["a"]})["outputs"]["loop-1"]
     assert out["exitReason"] == "completed"
     assert out["expressionErrorCodes"] == []
+
+
+def test_u1153_expression_error_params_are_parallel_and_real():
+    """打包 AX（docs/14 D53 的 ②）：码通道要带 params，否则含 `{{low}}` 的模板必然填不满。
+
+    docs/60 G1 在 `ConditionEvalError` 上就设计了 code＋params，但节点结果只下发了
+    `expressionErrorCodes`——参数在 HTTP 边界被丢掉了，英文态只能回退中文原文。
+    等长是三组数组的硬约束（前端按下标取 params），空出口也必须是空列表而不是缺键。
+    """
+    # ① 求值异常携带的 params 真的到位（逻辑非打在字符串上 ⇒ op/expected/actual 三件俱全）
+    #    注：`randint(9, 1)` 这类**纯字面量**错误在 dsl 校验期就变 GraphValidationError，
+    #    到不了本通道——能到这里的是依赖运行数据的表达式，正是要 params 才能出英文的那类。
+    out = run_graph(_loop_graph('!"abc"'))["outputs"]["loop-1"]
+    assert out["exitReason"] == "expression_error"
+    assert out["expressionErrorCodes"] == ["COND_TYPE_MISMATCH"]
+    assert len(out["expressionErrorParams"]) == len(out["expression_errors"]) == 1
+    assert out["expressionErrorParams"][0] == {"op": "!", "expected": "boolean", "actual": "string"}
+
+    # ② 引擎自己合成的类型不符同样带 params
+    out = run_graph(_foreach_graph(), inputs={"order_ids": "not-a-list"})["outputs"]["loop-1"]
+    assert out["expressionErrorCodes"] == ["COND_TYPE_MISMATCH"]
+    assert out["expressionErrorParams"] == [{"expected": "array", "actual": "string"}]
+
+    # ③ 本来无参的码发 {}，不许缺位
+    out = run_graph(_loop_graph("true", max_iterations=3))["outputs"]["loop-1"]
+    assert out["expressionErrorCodes"] == ["LOOP_MAX_ITERATIONS"]
+    assert out["expressionErrorParams"] == [{}]
+
+    # ④ 正常出口：三组都是空列表
+    out = run_graph(_foreach_graph(), inputs={"order_ids": ["a"]})["outputs"]["loop-1"]
+    for key in ("expression_errors", "expressionErrorCodes", "expressionErrorParams"):
+        assert out[key] == []
+
+
+def test_u1155_misaligned_diagnostic_arrays_are_refused_at_assembly():
+    """反向门（打包 AX）：三组诊断数组按下标对齐是契约，错位必须在**装配期**报错。
+
+    没有这道门，将来某个 site 只 append 了 errors/codes 就会让第 n 条明细静默读到
+    第 n−1 条的 params——运营看到的是另一句话，比崩难查得多（AW 那次占位符泄漏就是
+    同族：通道形状错了，但没有任何一层会喊）。
+    """
+    def _build(**kw):
+        base = dict(items=[], index=0, item=None, results=[], target="tool-exit",
+                    exit_reason=None)
+        base.update(kw)
+        return _foreach_output(**base)
+
+    with pytest.raises(ValueError, match="长度不一致"):
+        _build(
+            expression_errors=["a", "b"],
+            expression_error_codes=["X", "Y"],
+            expression_error_params=[{}],
+        )
+    with pytest.raises(ValueError, match="长度不一致"):
+        _build(
+            expression_errors=["a"],
+            expression_error_codes=["X", "Y"],
+        )
+    # 正例：只给 errors 时另两组自动补齐，长度恒等
+    out = _build(expression_errors=["a"])
+    assert out["expressionErrorCodes"] == [""]
+    assert out["expressionErrorParams"] == [{}]
 
 
 # ---------------------------------------------------------------------------
