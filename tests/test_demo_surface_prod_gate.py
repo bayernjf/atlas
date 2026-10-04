@@ -244,7 +244,39 @@ def test_r2_prod_without_demo_flag_registers_no_demo_adapters(monkeypatch):
     assert "shop" not in ids, "prod 未开 demo 面却仍装配了进程内 DemoShopService"
     assert "database" not in ids
     assert {"http", "message", "memory"} <= ids, "非演示适配器不应被误摘"
-    assert "web-playwright" in ids, "打包 ZQ Q1：web 适配器不受演示面开关影响，照常注册"
+    assert "web-playwright" not in ids, (
+        "docs/89 §14 N-1：route 级闸门挡不住 3xx 跳转，真浏览器不得进 prod 运行期"
+    )
+
+
+def test_u1130_prod_with_demo_mock_on_registers_web(monkeypatch):
+    """U1130：真浏览器只由 `ATLAS_ENABLE_DEMO_MOCK` 这一把闸决定——prod 显式开演示面才有。
+
+    钉的是"没有第三条悄悄打开它的路"：既不是默认开、也不是按别的适配器在册与否猜。
+    """
+    monkeypatch.setenv("ATLAS_ENV", "prod")
+    monkeypatch.setenv("ATLAS_ENABLE_DEMO_MOCK", "1")
+    monkeypatch.delenv("ATLAS_DATABASE_URL", raising=False)
+    assert demo_surface_enabled() is True
+    registry = build_base_registry(True, resolve_database_client(True))
+    assert "web-playwright" in {item["id"] for item in registry.list_adapters()}
+
+
+def test_u1131_prod_registry_exposes_no_web_adapter(monkeypatch):
+    """U1131：prod 档的适配器发现投影里没有任何 web 型适配器、也取不到 web-playwright。
+
+    `list_adapters()` 是 `GET /api/adapters` 与 MCP `atlas_list_adapters` 共用的同一份装配
+    （docs/91 §3），所以"图里选不到浏览器工具"是装配层事实，不是前端藏起来。
+    """
+    monkeypatch.setenv("ATLAS_ENV", "prod")
+    monkeypatch.delenv("ATLAS_ENABLE_DEMO_MOCK", raising=False)
+    monkeypatch.delenv("ATLAS_DATABASE_URL", raising=False)
+    registry = build_base_registry(False, None)
+    listed = registry.list_adapters()
+    assert {item["id"] for item in listed} == {"http", "message", "memory"}
+    assert not [item for item in listed if item["type"] == "web"], listed
+    with pytest.raises(KeyError):
+        registry.get("web-playwright")
 
 
 def test_r2_demo_surface_registers_shop_and_database(monkeypatch):
@@ -259,7 +291,7 @@ def test_r2_demo_surface_registers_shop_and_database(monkeypatch):
         for item in build_base_registry(demo_surface_enabled(), db_client).list_adapters()
     }
     assert {"shop", "database"} <= ids
-    assert "web-playwright" in ids, "打包 ZQ Q1：web 适配器在 demo 档照常注册"
+    assert "web-playwright" in ids, "演示面（dev）真浏览器照常可用（docs/89 §14）"
 
 
 def test_r2_prod_with_real_database_url_keeps_database_without_shop(monkeypatch):
@@ -277,7 +309,9 @@ def test_r2_prod_with_real_database_url_keeps_database_without_shop(monkeypatch)
     }
     assert "database" in ids
     assert "shop" not in ids
-    assert "web-playwright" in ids, "打包 ZQ Q1：web 适配器与 database 真连接并存"
+    assert "web-playwright" not in ids, (
+        "真连接 database 不改变 web 的判定：它跟的是演示面开关，不是别的适配器在册"
+    )
 
 
 # --- 打包 ZQ Q2：prod 未注入 registry 拒绝静默 SQLite 兜底 --------------------
