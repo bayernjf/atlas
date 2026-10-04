@@ -46,6 +46,7 @@ from atlas.graph.loader import (
     AiDecisionUnavailable,
     ConditionClassifierUnavailable,
     RunSuperseded,
+    SubgraphSuspendUnsupported,
     WaitNodeFailure,
     _tool_permissions,
     compile_graph,
@@ -481,6 +482,27 @@ def condition_classifier_unavailable_handler(
 ) -> JSONResponse:
     # prod 档 condition(llm) 拿不到 LLM 分类器（docs/73 W5-5.4）：同形结构化 500 携带
     # LLM_CLASSIFIER_UNAVAILABLE 与 nodeId，前端按 LLM_ 前缀渲染双语文案。
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": {
+                "code": exc.code,
+                "message": str(exc),
+                "nodeId": exc.node_id,
+            }
+        },
+    )
+
+
+@app.exception_handler(SubgraphSuspendUnsupported)
+def subgraph_suspend_unsupported_handler(
+    _request: Request, exc: SubgraphSuspendUnsupported
+) -> JSONResponse:
+    # 打包 ZK 让 SubgraphSuspendUnsupported 穿透子图 fail-safe、显式拒跑（被吞掉会变
+    # 「子图 failed、父 run completed」的假完成）。SSE 通道一直有 `event: error` 帧承载它，
+    # 但**同步 /run 此前没有异常处理器**：异常逃出端点 ⇒ Starlette 给一个没有 code 的裸 500，
+    # 运营看到的是一句 Internal Server Error，而"把审批/wait 节点移到图顶层"这个可执行
+    # 下一步只存在于日志里。补齐成与 LLM_DECISION_UNAVAILABLE 同形的结构化 500。
     return JSONResponse(
         status_code=500,
         content={
