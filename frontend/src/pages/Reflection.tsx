@@ -16,19 +16,24 @@ import type { ColumnsType } from 'antd/es/table'
 import { UserBadge } from '../components/UserBadge'
 import { useTranslation } from '../locales'
 import {
+  decisionLabelKey,
+  decisionTone,
   filterReportsByGraph,
   gotoTargetFor,
   isEmptyReports,
   loadCandidate,
   loadGraphOptions,
   loadReports,
+  markDecision,
   scopeForParamKey,
   statusTone,
   toReportView,
   type ReflectionCandidate,
   type ReflectionChange,
+  type ReflectionDecisionStatus,
   type ReflectionReportItem,
 } from '../lib/reflection'
+import { roleCan } from '../lib/auth'
 import type { Principal } from '../lib/auth'
 
 const { Header, Content } = Layout
@@ -37,16 +42,19 @@ type ReflectionPageProps = {
   principal: Principal
   onLogout: () => void
   onBack: () => void
-  onOpenEditor: (graphId: string) => void
+  /** 打包 ZU（docs/94 E-6）：node_config 建议可携带节点 id，打开编辑器后选中并居中。 */
+  onOpenEditor: (graphId: string, nodeId?: string | null) => void
   onOpenMonitoring: () => void
 }
 
 /**
- * 反思进化 L2 v2（打包 ZS，docs/92）：反思报告的只读呈现 + 人工采纳入口（跳转引导）。
+ * 反思进化 L2（打包 ZS docs/92；打包 ZU docs/94 增候选决策标记与节点级定位）：
+ * 反思报告呈现 + 人工采纳入口（跳转引导 + 候选级处理标记）。
  *
- * **页内零写调用（U1108）**：所有数据只经 lib/reflection.ts 的只读面获取；
- * 本文件不 import 任何写函数，不做任何 POST/PUT/DELETE。「去修改」只负责跳转，
- * 修改动作由人工在对应管理面走既有流程（docs/88 P-1(a) 候选+人工确认，守 T22）。
+ * **写调用面（U1124 机检）**：本文件不直接 import apiClient、无任何 method 字面；
+ * 读经 lib/reflection.ts 只读面，唯一写动作（采纳/忽略标记）经 lib 的 `markDecision`
+ * （=putReflectionDecision）。标记只记录人的处理决定，不改图、不发布、不碰路由（守 T22）；
+ * 真正改图仍由人点「去修改」跳转后在编辑器走既有写端点。
  */
 export function Reflection({
   principal,
@@ -57,11 +65,13 @@ export function Reflection({
 }: ReflectionPageProps) {
   const { t } = useTranslation('reflection')
   const { message } = App.useApp()
+  const canOperate = roleCan(principal.role, 'operate')
   const [reports, setReports] = useState<ReflectionReportItem[]>([])
   const [graphOptions, setGraphOptions] = useState<{ id: string }[]>([])
   const [graphFilter, setGraphFilter] = useState<string>('')
   const [candidates, setCandidates] = useState<Record<string, ReflectionCandidate>>({})
   const [loadingCandidateId, setLoadingCandidateId] = useState<string | null>(null)
+  const [decidingId, setDecidingId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
 
@@ -109,10 +119,34 @@ export function Reflection({
 
   function gotoChange(change: ReflectionChange, graphId: string) {
     const scope = scopeForParamKey(change.param_key)
-    const target = gotoTargetFor(scope, graphId)
-    if (target.kind === 'editor') onOpenEditor(target.graphId)
+    // 打包 ZU（docs/94 E-6）：node_config 建议携带节点 id，打开编辑器后选中并居中。
+    const nodeId = scope === 'node_config' ? change.node_id ?? null : null
+    const target = gotoTargetFor(scope, graphId, nodeId)
+    if (target.kind === 'editor') onOpenEditor(target.graphId, target.nodeId ?? undefined)
     else if (target.kind === 'monitoring') onOpenMonitoring()
     // disabled：按钮本身已禁用，这里不做事
+  }
+
+  // 打包 ZU（docs/94 E-1/E-4）：登记/改判候选处理标记；只记标记，不改图、不发布（守 T22）。
+  async function decide(candidateId: string, status: ReflectionDecisionStatus) {
+    if (decidingId) return
+    setDecidingId(candidateId)
+    try {
+      const updated = await markDecision(candidateId, status)
+      setCandidates((prev) => ({ ...prev, [candidateId]: updated }))
+      setReports((prev) =>
+        prev.map((row) =>
+          row.candidate_id === candidateId
+            ? { ...row, decision_status: updated.decision_status ?? null }
+            : row,
+        ),
+      )
+      message.success(t(decisionLabelKey(updated.decision_status)))
+    } catch {
+      message.error(t('decision.failed'))
+    } finally {
+      setDecidingId(null)
+    }
   }
 
   const changeColumns: ColumnsType<ReflectionChange> = [
@@ -130,7 +164,9 @@ export function Reflection({
       render: (value: unknown) => String(value),
     },
     { title: t('candidate.reason'), dataIndex: 'reason' },
-    // actions 列在候选面板内按 report.graphId 渲染（gotoChange 需要图级上下文）
+    // 打包 ZU（docs/94 E-7/U1124）：actions 列必须真实存在（ZS 曾只有 map 替换、列定义缺失，
+    // 致「去修改」从未渲染）；render 在下方按 report.graphId/change.node_id 上下文注入。
+    { key: 'actions', title: t('candidate.actions'), width: 120, render: () => null },
   ]
 
   const viewItems = filterReportsByGraph(reports, graphFilter || null).map(toReportView)
@@ -146,6 +182,11 @@ export function Reflection({
           <Tag color="blue">{t('candidate.changes')}</Tag>
         ) : (
           <Tag>{t('candidate.none')}</Tag>
+        )}
+        {report.hasCandidate && report.decisionStatus && (
+          <Tag color={decisionTone(report.decisionStatus)}>
+            {t(decisionLabelKey(report.decisionStatus))}
+          </Tag>
         )}
       </Space>
     )
@@ -171,12 +212,19 @@ export function Reflection({
                 col.key === 'actions'
                   ? (_, change) => {
                       const scope = scopeForParamKey(change.param_key)
-                      const target = gotoTargetFor(scope, report.graphId)
+                      const nodeId = scope === 'node_config' ? change.node_id ?? null : null
+                      const target = gotoTargetFor(scope, report.graphId, nodeId)
+                      const titleTip =
+                        target.kind === 'disabled'
+                          ? t('goto.disabled')
+                          : target.kind === 'editor' && target.nodeId
+                            ? t('decision.gotoNode', { nodeId: target.nodeId })
+                            : undefined
                       return (
                         <Button
                           size="small"
                           disabled={target.kind === 'disabled'}
-                          title={target.kind === 'disabled' ? t('goto.disabled') : undefined}
+                          title={titleTip}
                           onClick={() => gotoChange(change, report.graphId)}
                         >
                           {t('candidate.gotoEdit')}
@@ -204,6 +252,30 @@ export function Reflection({
           <Typography.Text type="secondary">
             {t('candidate.digest')}：{detail.evidence_digest}
           </Typography.Text>
+          <Space size="middle" wrap>
+            <Tag color={decisionTone(detail.decision_status)}>
+              {t(decisionLabelKey(detail.decision_status))}
+            </Tag>
+            {canOperate && (
+              <>
+                <Button
+                  size="small"
+                  type={detail.decision_status === 'adopted' ? 'primary' : 'default'}
+                  loading={decidingId === detail.candidate_id}
+                  onClick={() => decide(detail.candidate_id, 'adopted')}
+                >
+                  {t('decision.markAdopted')}
+                </Button>
+                <Button
+                  size="small"
+                  loading={decidingId === detail.candidate_id}
+                  onClick={() => decide(detail.candidate_id, 'dismissed')}
+                >
+                  {t('decision.markDismissed')}
+                </Button>
+              </>
+            )}
+          </Space>
         </Space>
       ) : (
         <Button

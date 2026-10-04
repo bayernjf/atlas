@@ -46,6 +46,14 @@ type EditorState = {
   edges: Edge[]
   variables: GraphVariable[]
   selectedNodeId: string | null
+  /**
+   * 打包 ZU（docs/94 E-6）：反思「去修改」节点级定位的待聚焦节点。
+   * Editor loadGraph 后 requestFocusNode 写入；FlowCanvasInner（ReactFlowProvider 内）
+   * 消费并 setCenter，消费后 clearFocusNode。节点不存在则只打开图、清除请求、不报错。
+   */
+  pendingFocusNodeId: string | null
+  requestFocusNode: (nodeId: string | null) => void
+  clearFocusNode: () => void
   logs: string[]
   breakpoints: Record<string, Breakpoint>
   /** NL 草稿的 paramWarnings（wire 仍是 string[]，见 04 §4.10）；加载新图/重新生成即刷新。 */
@@ -168,6 +176,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   edges: initialEdges,
   variables: initialVariables,
   selectedNodeId: null,
+  pendingFocusNodeId: null,
   logs: ['W9-W10 退款 Demo：选择退款单后「编译并运行」，节点实时高亮；也可用自然语言生成草稿'],
   breakpoints: {},
   nlWarnings: [],
@@ -199,6 +208,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   selectNode: (nodeId) => set({ selectedNodeId: nodeId }),
+  requestFocusNode: (nodeId) => set({ pendingFocusNodeId: nodeId }),
+  clearFocusNode: () => set({ pendingFocusNodeId: null }),
 
   updateSelectedNode: (patch) => {
     const selectedId = get().selectedNodeId

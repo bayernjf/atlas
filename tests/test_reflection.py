@@ -28,7 +28,12 @@ from atlas.reflection import (
     validate_changes,
 )
 from atlas.reflection.adapter import LiteLLMSummarizer, _parse_payload
-from atlas.reflection.candidate import to_change
+from atlas.reflection.candidate import (
+    ReflectionCandidate,
+    ReflectionReport,
+    resolve_node_ids,
+    to_change,
+)
 
 TENANT = "t1"
 GRAPH = "g-reflect"
@@ -53,10 +58,12 @@ class _StubMonitoring:
 
 
 class _StubServices:
-    def __init__(self, *, runs=(), alerts=(), reports=None, shadows=None) -> None:
+    def __init__(self, *, runs=(), alerts=(), reports=None, shadows=None, graph_store=None) -> None:
         self.monitoring = _StubMonitoring(list(runs), list(alerts))
         self.report_store = reports if reports is not None else ReportStore()
         self.shadow_store = shadows if shadows is not None else ShadowStore()
+        # 打包 ZU（docs/94 E-3）：节点定位读已发布图快照；缺省无 graph_store ⇒ 全 None。
+        self.graph_store = graph_store
 
 
 class _StubSummarizer:
@@ -277,13 +284,23 @@ def test_u1029_ok_path_stores_candidate_and_report():
     assert candidate is not None
     assert candidate["candidate_id"] == "refl-1"
     assert candidate["base_version"] == 2
-    # 对外用别名 from/to（docs/88 §4、docs/12 端点契约）。
+    # 对外用别名 from/to（docs/88 §4、docs/12 端点契约）；打包 ZU 起每条 change
+    # 显式带 node_id（无节点定位时为 null，docs/94 §3.2／U1118）。
     assert candidate["changes"] == [
-        {"param_key": "approval_limit", "from": "500", "to": 300, "reason": "超限额转人工偏多"}
+        {
+            "param_key": "approval_limit",
+            "from": "500",
+            "to": 300,
+            "reason": "超限额转人工偏多",
+            "node_id": None,
+        }
     ]
     assert candidate["prompt_suggestions"] == ["在 prompt 里补一句：金额超限必须转人工"]
     assert candidate["evidence_digest"].startswith(f"{GRAPH}@2")
     assert candidate["generated_at"] == "2026-10-01T00:00:00+00:00"
+    # 打包 ZU：候选级处理标记缺省为待处理（null）。
+    assert candidate["decision_status"] is None
+    assert candidate["decided_at"] is None
 
 
 def test_u1029_candidate_ids_increment_and_ring_is_bounded():
@@ -380,3 +397,310 @@ def test_p2a_placeholder_stays_placeholder():
 
     out = reflect_node({"variables": {"step": 2}})
     assert out == {"current_node": "reflect", "messages": ["reflect@2: loop finished"]}
+
+
+# --- 打包 ZU（docs/94）U1115–U1119：采纳状态持久化＋节点级定位 -----------------------
+
+
+def _seed_candidate(
+    store: ReflectionStore,
+    cid: str = "refl-1",
+    *,
+    param_key: str = "approval_limit",
+    to_value: int | float | str = 300,
+    node_id: str | None = None,
+) -> ReflectionCandidate:
+    candidate = ReflectionCandidate(
+        candidate_id=cid,
+        graph_id=GRAPH,
+        base_version=1,
+        changes=[Change(
+            param_key=param_key, from_value=0.6, to_value=to_value, node_id=node_id,
+        )],
+        prompt_suggestions=["建议"],
+        evidence_digest=f"{GRAPH}@1",
+        generated_at="2026-10-01T00:00:00+00:00",
+    )
+    return store.add_candidate(candidate)
+
+
+def test_u1115_inmemory_record_decision_lifecycle():
+    store = ReflectionStore()
+    _seed_candidate(store)
+
+    cand = store.get_candidate("refl-1")
+    assert cand["decision_status"] is None
+    assert cand["decided_at"] is None
+
+    # 登记 adopted。
+    assert store.record_decision("refl-1", "adopted", decided_at="2026-10-02T00:00:00+00:00") is True
+    cand = store.get_candidate("refl-1")
+    assert cand["decision_status"] == "adopted"
+    assert cand["decided_at"] == "2026-10-02T00:00:00+00:00"
+
+    # 允许改判覆盖并刷新 decided_at。
+    assert store.record_decision("refl-1", "dismissed", decided_at="2026-10-03T00:00:00+00:00") is True
+    cand = store.get_candidate("refl-1")
+    assert cand["decision_status"] == "dismissed"
+    assert cand["decided_at"] == "2026-10-03T00:00:00+00:00"
+
+    # 不存在返 False（API 层据此 404）。
+    assert store.record_decision("refl-999", "adopted") is False
+
+    # reset 清空候选与决策。
+    store.reset()
+    assert store.get_candidate("refl-1") is None
+
+
+def test_u1116_list_reports_carries_live_decision_status():
+    store = ReflectionStore()
+    # 一条无候选报告（no_evidence）：decision_status 键存在且为 None。
+    store.add_report(ReflectionReport(
+        graph_id=GRAPH, base_version=1, status="no_evidence",
+        reasons=["无证据"], generated_at="2026-10-01T00:00:00+00:00",
+    ))
+    # 一条带候选的 ok 报告。
+    services = _StubServices(runs=[_run("run-1", failed=("node-a",))])
+    summarizer = _StubSummarizer([{"param_key": "approval_limit", "to": 300}])
+    run_pass(
+        services, store, tenant_id=TENANT, graph_id=GRAPH, base_version=1,
+        summarizer=summarizer, now="2026-10-01T00:01:00+00:00",
+    )
+
+    reports = store.list_reports()
+    by_status = {row["status"]: row for row in reports}
+    assert "decision_status" in by_status["no_evidence"]
+    assert by_status["no_evidence"]["decision_status"] is None
+    ok_row = by_status["ok"]
+    assert ok_row["candidate_id"] == "refl-1"
+    assert ok_row["decision_status"] is None  # 初始待处理
+
+    # 登记后列表动态反映（不依赖落报告时的快照）。
+    store.record_decision("refl-1", "adopted", decided_at="2026-10-02T00:00:00+00:00")
+    ok_now = next(row for row in store.list_reports() if row["status"] == "ok")
+    assert ok_now["decision_status"] == "adopted"
+
+
+def _graph_snapshot(node_specs: list[tuple[str, str]]) -> dict:
+    return {
+        "version": 1,
+        "variables": [],
+        "nodes": [
+            {"id": nid, "type": ntype, "name": nid} for nid, ntype in node_specs
+        ],
+        "edges": [],
+    }
+
+
+def test_u1117_resolve_node_ids_rules():
+    threshold = lambda nid=None: Change(  # noqa: E731
+        param_key="node.confidenceThreshold", from_value=0.6, to_value=0.7, node_id=nid
+    )
+
+    # ① 恰好 1 个 ai_decision：无 node_id 自动填。
+    changes = [threshold()]
+    resolve_node_ids(changes, _graph_snapshot([("ai-1", "ai_decision"), ("tool-1", "tool_call")]))
+    assert changes[0].node_id == "ai-1"
+
+    # ② ≥2 个 ai_decision：无法确定，保持 None（不猜）。
+    changes = [threshold()]
+    resolve_node_ids(changes, _graph_snapshot([("ai-1", "ai_decision"), ("ai-2", "ai_decision")]))
+    assert changes[0].node_id is None
+
+    # ③ 0 个 ai_decision：None。
+    changes = [threshold()]
+    resolve_node_ids(changes, _graph_snapshot([("tool-1", "tool_call")]))
+    assert changes[0].node_id is None
+
+    # ④ LLM 给的 node_id 指向存在的 ai_decision：保留；指向不存在/非 ai_decision：丢弃后走补全。
+    keep = [threshold("ai-1")]
+    resolve_node_ids(keep, _graph_snapshot([("ai-1", "ai_decision")]))
+    assert keep[0].node_id == "ai-1"
+
+    drop_wrong_type = [threshold("tool-1")]  # 指向非 ai_decision，但图里恰有 1 个 ai_decision
+    resolve_node_ids(
+        drop_wrong_type,
+        _graph_snapshot([("tool-1", "tool_call"), ("ai-9", "ai_decision")]),
+    )
+    assert drop_wrong_type[0].node_id == "ai-9"  # 丢弃错误 id 后自动补唯一 ai_decision
+
+    drop_missing = [threshold("ghost")]  # 指向不存在节点，图里有 2 个 ai_decision ⇒ 补不了
+    resolve_node_ids(drop_missing, _graph_snapshot([("ai-1", "ai_decision"), ("ai-2", "ai_decision")]))
+    assert drop_missing[0].node_id is None
+
+    # ⑤ 其余三条 key 的 change node_id 恒为 None（即使误带也清空）。
+    others = [
+        Change(param_key=key, from_value=None, to_value=1, node_id="ai-1")
+        for key in ("approval_limit", "monitor.failure_rate.rate", "gate.run_error_rate")
+    ]
+    resolve_node_ids(others, _graph_snapshot([("ai-1", "ai_decision")]))
+    assert all(c.node_id is None for c in others)
+
+    # ⑥ 快照缺失/形状异常：全 None 且不抛。
+    none_changes = [threshold("ai-1")]
+    resolve_node_ids(none_changes, None)
+    assert none_changes[0].node_id is None
+    bad_changes = [threshold()]
+    resolve_node_ids(bad_changes, {"nodes": "not-a-list"})
+    assert bad_changes[0].node_id is None
+
+
+def test_u1117_run_pass_fills_node_id_from_snapshot():
+    """端到端：pass 时恰好 1 个 ai_decision，落库候选的 change 带 node_id。"""
+    snapshot = _graph_snapshot([("ai-decide", "ai_decision"), ("tool-1", "tool_call")])
+
+    class _GraphStore:
+        def get(self, graph_id, release_version=None):
+            return snapshot if graph_id == GRAPH and release_version == 1 else None
+
+    services = _StubServices(
+        runs=[_run("run-1", failed=("ai-decide",))], graph_store=_GraphStore()
+    )
+    summarizer = _StubSummarizer([{"param_key": "node.confidenceThreshold", "to": 0.7}])
+    store = ReflectionStore()
+    run_pass(
+        services, store, tenant_id=TENANT, graph_id=GRAPH, base_version=1,
+        summarizer=summarizer, now="2026-10-01T00:00:00+00:00",
+    )
+    candidate = store.get_candidate("refl-1")
+    assert candidate["changes"][0]["node_id"] == "ai-decide"
+
+
+def test_u1118_change_node_id_default_and_legacy_compat():
+    # 缺省序列化显式含 node_id=null（docs/94 §3.2／U1118）。
+    fresh = Change(param_key="node.confidenceThreshold", from_value=0.6, to_value=0.7)
+    assert fresh.model_dump(by_alias=True)["node_id"] is None
+
+    # 旧 JSONB（无 node_id 键）model_validate 不报错，node_id 缺省 None。
+    legacy = Change.model_validate(
+        {"param_key": "node.confidenceThreshold", "from": 0.6, "to": 0.7, "reason": ""}
+    )
+    assert legacy.node_id is None
+
+    # fail-closed 白名单/越界校验不因 node_id 改变：带 node_id 的越界值仍 rejected_bounds。
+    status, _ = validate_changes(
+        [Change(param_key="node.confidenceThreshold", to_value=9.9, node_id="ai-1")]
+    )
+    assert status == "rejected_bounds"
+
+
+def test_u1118_payload_parser_passes_through_node_id():
+    changes, _ = _parse_payload(
+        {"changes": [
+            {"param_key": "node.confidenceThreshold", "to": 0.7, "node_id": "ai-1"},
+            {"param_key": "approval_limit", "to": 300},  # 无 node_id ⇒ 不带该键
+            {"param_key": "gate.run_error_rate", "to": 0.2, "node_id": "  "},  # 空白丢弃
+        ]}
+    )
+    assert changes[0]["node_id"] == "ai-1"
+    assert "node_id" not in changes[1]
+    assert "node_id" not in changes[2]
+
+
+# --- U1119 写端点（权限/404/422/审计/无副作用）---------------------------------------
+
+def _api_client():
+    from fastapi.testclient import TestClient
+
+    from atlas.api.main import app
+
+    return TestClient(app)
+
+
+def _t1_services():
+    from atlas.api.main import tenant_registry
+
+    return tenant_registry.get("t1")
+
+
+def _login(client, username: str, password: str) -> dict[str, str]:
+    resp = client.post("/api/auth/login", json={"username": username, "password": password})
+    assert resp.status_code == 200, resp.text
+    return {"Authorization": f"Bearer {resp.json()['token']}"}
+
+
+def test_u1119_put_decision_operator_succeeds_and_returns_projection(monkeypatch):
+    client = _api_client()
+    services = _t1_services()
+    services.reflection_store.reset()
+    cid = services.reflection_store.next_candidate_id()
+    _seed_candidate(services.reflection_store, cid)
+
+    # T22 不变量：决策端点绝不能触达发布/放量。给 publish 装一个一调就失败的哨子。
+    def _forbid_publish(*args, **kwargs):
+        raise AssertionError("decision endpoint must not publish")
+
+    monkeypatch.setattr(services.graph_store, "publish", _forbid_publish)
+
+    headers = _login(client, "operator-a", "operator123")  # operate 角色
+    resp = client.put(
+        f"/api/reflection/candidates/{cid}/decision",
+        json={"status": "adopted"}, headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["candidate_id"] == cid
+    assert body["decision_status"] == "adopted"
+    assert body["decided_at"]  # 非空时间戳
+
+    # 审计落一条 reflection.decide.adopted。
+    events = services.audit_store.list(action_prefix="reflection.decide")
+    assert any(e["action"] == "reflection.decide.adopted" for e in events)
+    services.reflection_store.reset()
+
+
+def test_u1119_put_decision_viewer_forbidden():
+    client = _api_client()
+    services = _t1_services()
+    services.reflection_store.reset()
+    cid = services.reflection_store.next_candidate_id()
+    _seed_candidate(services.reflection_store, cid)
+
+    headers = _login(client, "viewer-a", "viewer123")  # 仅 read
+    resp = client.put(
+        f"/api/reflection/candidates/{cid}/decision",
+        json={"status": "adopted"}, headers=headers,
+    )
+    assert resp.status_code == 403
+    # 被拒后状态不变。
+    assert services.reflection_store.get_candidate(cid)["decision_status"] is None
+    services.reflection_store.reset()
+
+
+def test_u1119_put_decision_unknown_and_cross_tenant_404():
+    client = _api_client()
+    admin_t1 = _login(client, "admin-a", "admin123")
+    resp = client.put(
+        "/api/reflection/candidates/refl-does-not-exist/decision",
+        json={"status": "adopted"}, headers=admin_t1,
+    )
+    assert resp.status_code == 404
+
+    # 跨租户：候选在 t1，t2 管理员访问统一 404（不泄漏存在性）。
+    services_t1 = _t1_services()
+    services_t1.reflection_store.reset()
+    cid = services_t1.reflection_store.next_candidate_id()
+    _seed_candidate(services_t1.reflection_store, cid)
+    admin_t2 = _login(client, "admin-b", "admin123")
+    resp = client.put(
+        f"/api/reflection/candidates/{cid}/decision",
+        json={"status": "adopted"}, headers=admin_t2,
+    )
+    assert resp.status_code == 404
+    services_t1.reflection_store.reset()
+
+
+def test_u1119_put_decision_invalid_status_422():
+    client = _api_client()
+    services = _t1_services()
+    services.reflection_store.reset()
+    cid = services.reflection_store.next_candidate_id()
+    _seed_candidate(services.reflection_store, cid)
+
+    headers = _login(client, "admin-a", "admin123")
+    resp = client.put(
+        f"/api/reflection/candidates/{cid}/decision",
+        json={"status": "maybe"}, headers=headers,
+    )
+    assert resp.status_code == 422
+    services.reflection_store.reset()

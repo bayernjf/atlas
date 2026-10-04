@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+### feat(reflection/db/api/frontend)＋fix＋test＋docs：反思进化 L2 v3 落码收口＝候选采纳状态持久化＋节点级定位（打包 ZU，2026-10-04 立项并同日收口；用户「好的，都搞了，顺便落码」批准；形状权威 docs/94；docs/13 U1115–U1124；取回 docs/92 §6 两缓做＝docs/14 D51）
+
+- **一句话**：反思候选从「进程内只读、看完即走」升级为「采纳/忽略状态跨重启可查、node_config 建议可精确跳到对应 ai_decision 节点」；只是处理记录，**不触发任何 apply/publish/promote**（守 T22）。
+- **后端**：`candidate.py` 增 `Change.node_id`、候选 `decision_status/decided_at`、报告 `decision_status`（默认 None）、内存档 `record_decision`（允许改判覆盖、不存在返 False）、`list_reports` 动态附状态、纯函数 `resolve_node_ids`＋`_load_graph_snapshot`（确定性补节点 id）；`adapter._parse_payload` 透传可选非空 node_id。
+- **持久化**：迁移 **041** `reflection_reports`/`reflection_candidates` 两表（照 028 样板、IF NOT EXISTS 幂等、不改冻结的 002）；新建 `reflection/pg_store.py PgReflectionStore`（七方法与内存档一比一、id 走 storage_id_seq、ring 惰性裁 100、reset 租户隔离）；registry PG 档换型，内存档不变。
+- **REST**：新写端点 `PUT /api/reflection/candidates/{id}/decision`（请求体 `status ∈ adopted|dismissed`，非法 422；require operate，viewer 403；不存在/跨租户 404；返更新后候选投影；审计 `reflection.decide.adopted/dismissed`；不触达 graph_store/publish/routing）。
+- **节点定位**：`resolve_node_ids` fail-closed——非 node-scoped key 恒 None；图快照缺失/raw_nodes 非 list 时 scoped 行也置 None；其余按节点存在性＋type 校验，恰 1 个 ai_decision 自动补、0/多个不猜；LLM 回包 node_id 仅经存在性＋type 校验接受。前端经 editorStore `pendingFocusNodeId` 通道在 ReactFlowProvider 内 selectNode＋setCenter 居中。
+- **前端**：apiClient `putReflectionDecision`（唯一写面，白名单 READ_ONLY→`API_WHITELIST`）；lib `markDecision`/`decisionTone`/`decisionLabelKey`、`gotoTargetFor` editor 目标携带 nodeId（空白归一 null）；Reflection.tsx 采纳/忽略按钮与决策徽标（viewer 不渲染写按钮、已决可改判）、报告行已决徽标；**修复 ZS 遗留真实缺陷——changeColumns 缺 `key:'actions'` 列致「去修改」按钮从未渲染**；locales 两档增 candidate.actions＋decision.* 键（PARITY 守护）。
+- **落码中抓到并修掉的真实语义偏差**（独立 fix 原子 `7e4d379`）：首版 `resolve_node_ids` 在图快照缺失时早返回、保留了 LLM 给的未校验 node_id，违反契约⑥（快照缺失无法校验则全 None），重写为 fail-closed。
+- **门（实跑）**：后端全量 pytest **2280 passed / 144 skipped / 0 failed**（258.64s；较 A1 基线 2270/139 净增 10 常跑＝U1115–U1119，+5 skipped＝U1120 PG 集成）；U1120 五例 PG 集成在临时 pgvector:pg16 容器（5433，`ATLAS_RUN_INTEGRATION=1`）单独 **5 passed**（041 两表列齐、跨新 engine/store 可读＝重启模拟、两档投影逐键对拍、storage_id_seq 不复用、ring 裁 100、reset 隔离），容器用完即删；守护门 handoff＋migration **7 passed**；`test_reflection.py` 全文件 **28 passed**；前端 vitest **781 passed / 2 skipped**、oxlint **0 error / 0 warning**、`pnpm build`（tsc -b＋vite）通过。
+- **边界**：候选级非 change 级；0/多个 ai_decision 或快照缺失 node_id 留 None 不做假精确；零新依赖、无新 ADR、迁移不改 002；不解除 docs/14 其他缓做（change 级逐条状态、采纳率统计/长期归档、多 ai_decision 精确定位仍缓做，见 docs/94 §6）。
+- 同步面：docs/94（形状权威）＋docs/92 §6（闭合注记）＋docs/14 D51＋docs/09（reflection 包/前端行）＋docs/00 地图＋docs/08（立项＋收口块）＋docs/13（U1115–U1124 收口）＋docs/03/12（立项原子已同步）＋handoff。九原子（立项 `e3f4c51` 起），作者 bayernjf、无 AI co-author、**未 push、未合 main**。
+
 ### feat(llm/api/frontend)＋test＋docs：LLM 模型配置管理面落码收口＝内置模型（admin 管理）＋BYOK（用户自配）（2026-10-04 立项并同日落码收口；用户「那你继续搞」批准；形状权威 docs/93；docs/13 U1109–U1114）
 
 - **一句话**：产品模型双模式落地——① 内置模型＝平台方内置（Agnes），admin UI 管理密钥/模型/开关，用户直接用；② BYOK＝用户自配置 key、per-tenant 生效。四消费点从全局 env 直读升级为配置解析（优先级：节点显式 model > BYOK > 内置 > env；无租户上下文回退 env，行为与现状一致）。
@@ -32,6 +45,15 @@
 - 合并：dev→main 经 PR #101（merge commit `a36360a`）合入，head＝`6800ad1`，含 E 组三选型收口原子 `9294b8f`＋ZS 三原子＋CI 修复原子 `6800ad1`。
 - CI 修复（6 个真实 TS 错误）：本地裸 `tsc --noEmit` 在根 tsconfig `files:[]`＋references 下是空编译假绿；CI `pnpm build`（＝`tsc -b && vite build`）才是真门。修复：`loadGraphForEditor` 返回类型、`ReflectionChange` re-export、`isEmptyReports` 收 `readonly unknown[]`、U1108 机检改 Vite `?raw` 导入＋`part` 显式标注。经验：前端类型门必须用 `pnpm build`。
 - 同步面：handoff 顶部流水＋docs/08 E 组行注记。零后端/迁移改动。
+
+### fix(test/db)+docs：打包 ZT＝PR #100 CI 集成修复（测试 fixture 迁移 splitter 美元引用 bug＋迁移 039 撤小数据量 ANN 索引）（2026-10-03，用户「PR #100 有报错，更新标题和描述」；事实来源 docs/08 打包 ZT 落码块）
+
+- **CI 现象**：PR #100（dev→main）Backend PG integration ×2 fail（`4 failed, 2298 passed, 5 skipped, 89 errors`）。
+- **根因（堆栈实证）**：16 个测试文件自带的 module-scope engine fixture 用「按行、行尾 `;` 切分」的 naive splitter 重放全量迁移，不识别美元引用——038 的 `DO $$` 块在块内第一个 `;` 处被切开，前半截成未闭合美元引用串 ⇒ `psycopg.errors.SyntaxError: unterminated dollar-quoted string`；正式执行器 `storage/migrations.py` 的 `cursor.execute(整份 sql)` 成功，失败只在 pytest 内各 fixture。
+- **修复一（16 文件，−238 行）**：各 fixture 手写 splitter 循环统一替换为 `apply_pending(engine)`（与正式执行器单一事实源一致；`test_migrations_pg_integration.py` 为先例）；只跑单文件的 `_run_migration`（002/015/010 均无 DO 块）刻意不动以避免语义变更。
+- **修复二（新迁移 039）**：errors 归零后暴露既存真缺陷 `test_memory_pg_integration::test_u201` recall 空——006 建的 IVFFlat 索引（lists=100）在单行/少量行库上 `ORDER BY embedding <=> … LIMIT` 走索引扫描、probes=1 命中桶无候选即返空；且 ANN 在并列距离下返回顺序不确定，破坏两档对拍 U94。迁移 **039** 把 006 注释既有的降级口径正式化：`DROP INDEX idx_memory_items_embedding`、不建新 ANN（沙盘量级精确余弦足够、两档对拍精确可比；真实数据规模触发 D35/ANN 调参批时另立迁移建 HNSW＋ef_search）；u93 索引存在性断言同步反转并注明理由。
+- **门（本地临时 pgvector 容器 5433，`ATLAS_RUN_INTEGRATION=1`）**：全量集成由 `1 failed + 30 errors` 归零至 **2395 passed / 1 skipped / 0 failed**（含 u201 绿）；守护门 7 passed。PR 标题/描述按最新 commit 集合重写（Risk Notes 误导句订正为 ALTER TYPE USING 就地转换）。
+- 同步面（本次 A2 核对补登）：docs/08 打包 ZT 落码块（原有）＋本 CHANGELOG 条目＋docs/13 测试基础设施收口注记＋handoff。
 
 ### docs：E 组选型决策收口＝D5 NATS／D6 Go Harness／D11 OTel 三个"是否正式采纳"（2026-10-03，用户「按你推荐来」；docs/10 §4 T34）
 
