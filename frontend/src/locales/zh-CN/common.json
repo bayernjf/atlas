@@ -82,7 +82,8 @@
       "unauthenticated": "未登录或登录已过期，请重新登录",
       "forbidden": "没有权限执行该操作",
       "accountDisabled": "账号已停用，请联系管理员",
-      "notFound": "资源不存在或无权访问"
+      "notFound": "资源不存在或无权访问",
+      "passwordChangeRequired": "请先修改密码后再使用平台"
     },
     "requestFailed": "请求失败：{{status}}"
   },
@@ -94,6 +95,12 @@
     },
     "changePassword": {
       "title": "修改密码"
+    },
+    "forceChange": {
+      "title": "首次登录需要修改密码",
+      "body": "这个账号还在用部署时下发的引导口令。平台只允许你修改它，不允许跳过它。",
+      "submit": "修改密码并继续",
+      "signOut": "退出登录"
     },
     "column": {
       "username": "用户名",

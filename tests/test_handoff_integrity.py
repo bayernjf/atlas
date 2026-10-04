@@ -15,6 +15,10 @@ from pathlib import Path
 HANDOFF = Path(__file__).resolve().parents[1] / "handoff.md"
 ACTIVE_ITEM = re.compile(r"^(\d+)\. ")
 POINTER = re.compile(r"Active work #(\d+)")
+# Recently shipped 的行首是状态表情，不是 `N. ` —— 原来的守护按 `^\d+\. ` 数行，
+# 于是对真实文件**恒数到 0 行**，「只留最近 5 条」这条规矩其实一直没被守住过
+# （实测数行时该区已有 6 条而门是绿的）。两种形状都数，见下面的植行测试。
+SHIPPED_ROW = re.compile(r"^(?:\d+\. )?[✅🏁📋🐛📝📌🚀]")
 
 
 def _sections() -> tuple[list[str], list[str], list[str]]:
@@ -46,8 +50,46 @@ def test_every_active_work_pointer_resolves():
     )
 
 
+def _is_shipped_row(line: str) -> bool:
+    """Recently shipped 区里「一条收口」的判据。
+
+    写法演进本身是个缺陷记录：原来写成 `ACTIVE_ITEM.match(l)`（只认 `12. ` 这种编号行），
+    而该区实际用 `✅ **…**`／`📋 **…**` 表情行——于是守护对真实文件**恒数到 0 行**，
+    实测当时已有 6 条而门是绿的。一条永远不会红的守护比没有守护更糟：它让下一个人以为
+    这条规矩被守着。现在表情行与编号行都算，标题／归档指针／`↪` 说明行不算。
+    """
+    if not line.strip():
+        return False
+    if line.startswith(("## ", "> ")) or "↪" in line:
+        return False
+    return True
+
+
+def _shipped_rows(shipped: list[str]) -> list[str]:
+    return [l for l in shipped if _is_shipped_row(l)]
+
+
 def test_recently_shipped_keeps_at_most_five():
-    """上限只数真实条目；`↪` 那行是"旧的滚到哪去了"的指针，不算一条收口。"""
-    _, _, shipped = _sections()
-    rows = [l for l in shipped if ACTIVE_ITEM.match(l) and '↪' not in l]
-    assert len(rows) <= 5, f"Recently shipped 只留最近 5 条，现有 {len(rows)} 条（旧的滚入 handoff-archive-*.md）"
+    rows = _shipped_rows(_sections()[2])
+    assert len(rows) <= 5, (
+        f"Recently shipped 只留最近 5 条，现有 {len(rows)} 条（旧的逐字滚入手写 handoff-archive-*.md）"
+    )
+
+
+def test_recently_shipped_guard_can_actually_count_rows():
+    """植行测试：守护的判据自己也要被按住，否则"改对了判据"和"改错了"一样绿。"""
+    planted = [
+        "## Recently shipped（最近变更；只留最近 5 条）",
+        "✅ **表情行收口**",
+        "🏁 **另一种表情收口**",
+        "101. ✅ **旧编号形状也要继续算**",
+        "↪ 这条是滚动指针，不算一条收口",
+        "> 更早的完成项见 handoff-archive-*.md",
+        "",
+        "📋 **第三条**",
+    ]
+    assert len(_shipped_rows(planted)) == 4, _shipped_rows(planted)
+    # 判别对照：旧写法只数到那一条编号行——那正是它一直绿的原因。
+    assert [l for l in planted if ACTIVE_ITEM.match(l) and "↪" not in l] == [
+        "101. ✅ **旧编号形状也要继续算**"
+    ]

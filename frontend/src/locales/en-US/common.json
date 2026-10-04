@@ -82,7 +82,8 @@
       "unauthenticated": "You are not signed in or your session has expired; please sign in again",
       "forbidden": "You do not have permission to perform this action",
       "accountDisabled": "This account has been disabled; please contact an administrator",
-      "notFound": "The resource does not exist or you do not have access"
+      "notFound": "The resource does not exist or you do not have access",
+      "passwordChangeRequired": "Please change your password before using the platform"
     },
     "requestFailed": "Request failed: {{status}}"
   },
@@ -94,6 +95,12 @@
     },
     "changePassword": {
       "title": "Change password"
+    },
+    "forceChange": {
+      "title": "Change your password to continue",
+      "body": "This account is still using the bootstrap password issued at deployment. The platform lets you change it and nothing else.",
+      "submit": "Change password and continue",
+      "signOut": "Sign out"
     },
     "column": {
       "username": "Username",

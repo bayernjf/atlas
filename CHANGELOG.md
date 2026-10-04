@@ -3,6 +3,16 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### feat(iam)＋feat(web)＋test：首登强制改密从"流程约定"变成服务端强制位（docs/95 打包 AV，2026-10-05 落码收口）
+
+- **补的是已声明的要求，不是新增功能**：prod 演练实测引导口令账号**不改密也能用整个平台**，而 docs/73 4.1 的验收原文写着「首登强改密」。落码＝迁移 **042** `iam_users.password_rotated_at`（NULL＝口令从未经本人之手）＋ `iam/deps.require()` 内在角色门**之前**加一道轮换门（403 `AUTH_PASSWORD_CHANGE_REQUIRED`）＋ `LoginResponse.mustChangePassword` ＋ 前端一层关不掉的改密框（App 在强制态**不渲染页面壳**，否则满屏 403 toast 会被误读成"平台坏了"）。豁免只有一处判定＝既有 `demo_surface_enabled()`，所以 dev/test 与 prod＋演示面逐键零变化。
+- **三条决策里有一条被实测推翻**：立项 D-1 写"本人改密与管理员重置都盖章"，落码改成**只有本人改密盖章**——admin 建号与重置都留／擦回 `NULL`，否则管理员手里就多一个"替别人跳过强制改密"的按钮。D-2（breadth）**不再往外递**，按「球？？？」之后的口径定为 (b)，复开条件写明。D-3 被读码**证伪**：A2A 用 `ATLAS_A2A_TASK_TOKEN`、MCP 走 stdio＋租户绑定，两者都不 import `get_principal`，所以"旁路凭证同样受约束"这句当初是推断不是事实（订正记在 docs/95 §8.1，原文不删）。
+- **D-2 (b) 之所以敢挡得这么硬**，不是因为选了最严的一档，而是因为出口在结构上不可能被挡住：强制点只有 `require()` 一处，三条 auth 路由天然不经过它——所以既不需要路径白名单，也不会自锁。这是 docs/64 J-1c（把"弱口令能登"改成"没人能登"）留下的规矩在结构层的兑现，由 U1143 与演练第 4／8 段钉住。
+- **顺带修掉一个不在契约里的真缺陷**：改密的 `keep_token` 与认证取数曾有两条不同的"本次出示哪条凭证"规则（一条只认 `Authorization` 头、一条 Cookie 优先）。打包 ZQ Q4 之后 SPA 的凭证在 httpOnly Cookie 里，于是**改密会吊销正在用的那条会话、留下没在用的那条**——用户改完引导口令反而被登出。现 `get_principal`／`me`／`logout`／`change-password` 四处共用 `iam/deps.presented_token()`，只留一份规则，并加一条"同时出示两种凭证"的对拍用例。
+- **守护里最长寿的一条是 U1146**：它枚举装配后的整张 app（递归进 `include_router` 容器，docs/89 §12 N-2 的教训），把"认证却不经 `require()`"＝"强制位看不见的面"钉成四条白名单（三条 auth＋`/api/feedback`，后者刻意豁免：不读业务数据，而被门挡住的人正好用它报障），反向门真植一条绕过 `require()` 的端点验证守护会红。它同时回读 `apiClient.ts` 与两档 `common.json`——A-4 的教训是新码不带文案就英文态露中文。
+- **门（实跑）**：后端全量 **2324 passed／150 skipped／0 failed**（179.98s，load 6.27，exit 0；AV 代码态先测得 2323，+1 为 handoff 守护补的植行测试）、PG integration 全量 **83 passed／1 skipped**（新增 U1140／U1145 在真 PG 上跑迁移 042 幂等＋两档逐键一致＋新 engine 重启读回）、前端 **786 passed／2 skipped**（58 文件）＋ lint 0/0 ＋ build 过；〔跑〕`prod_rehearsal.py` **八段全过 exit 0**，镜像 `ab8169a02e7a` 构建自**干净工作区**的 `e995ff2`（脚本现在会自己声明脏树，因为 `docker build` 打的是工作区不是 HEAD）。
+- **结果面**：docs/73 4.1 的欠账由三件减为**两件**＝真凭据（1.1–1.3 live）＋网络边界（Caddy／TLS）；docs/14 **D7** 里的"首次登录强制改密"一项销账（D7 整体不解除）。同步面＝docs/95 §8 新建＋docs/00·03·04·06·08·09·12·13·14·15·17·31·73·79·README·`.env.example`·CHANGELOG·handoff。
+
 ### docs：立项「首登强制改密与口令轮换位」契约（docs/95，打包 AV，2026-10-04 docs-only 未落码）
 
 - **它不是增强，而是补一个已声明的要求**：prod 演练（`scripts/dev/prod_rehearsal.py` 第 4 段）实测「首登强改密」在服务端**没有任何强制位**——`/api/auth/me` 无相关字段、引导口令账号不改密也照样能用平台，而 docs/73 4.1 的验收原文写着这四个字。

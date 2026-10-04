@@ -432,9 +432,13 @@ class PgUserStore:
             status=row[5],
             created_at=row[6],
             updated_at=row[7],
+            password_rotated_at=row[8],
         )
 
-    _COLUMNS = "tenant_id, username, password_hash, display_name, role, status, created_at, updated_at"
+    _COLUMNS = (
+        "tenant_id, username, password_hash, display_name, role, status, "
+        "created_at, updated_at, password_rotated_at"
+    )
 
     def seed(self, users: list | None = None) -> int:
         from atlas.iam.accounts import SEED_USERS as _default
@@ -594,17 +598,21 @@ class PgUserStore:
         password: str,
         *,
         keep_token: str | None = None,
+        by_owner: bool = False,
     ) -> "UserAccount | None":
+        """与内存档同构（docs/95 §3）：`by_owner` 才盖轮换位，admin 重置把该列清回 NULL。"""
         from atlas.iam.passwords import hash_password
 
         with self._engine.begin() as conn:
             result = conn.execute(
                 text(
-                    "UPDATE iam_users SET password_hash = :password_hash, updated_at = :updated_at "
+                    "UPDATE iam_users SET password_hash = :password_hash, "
+                    "password_rotated_at = :password_rotated_at, updated_at = :updated_at "
                     "WHERE tenant_id = :t AND username = :u"
                 ),
                 {
                     "password_hash": hash_password(password),
+                    "password_rotated_at": _now_iso() if by_owner else None,
                     "updated_at": _now_iso(),
                     "t": tenant_id,
                     "u": username,

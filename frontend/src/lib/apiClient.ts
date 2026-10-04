@@ -4,6 +4,7 @@
 import {
   clearSession,
   getToken,
+  handlePasswordChangeRequired,
   handleUnauthorized,
   saveSession,
   type LoginResponse,
@@ -21,6 +22,21 @@ const AUTH_ERROR_KEYS: Record<string, string> = {
   AUTH_UNAUTHENTICATED: 'error.auth.unauthenticated',
   AUTH_FORBIDDEN: 'error.auth.forbidden',
   AUTH_NOT_FOUND: 'error.auth.notFound',
+  // 打包 AV（docs/95）：首登未改密的 403。文案与后端常量必须逐字同值，
+  // 由 tests/test_password_rotation_gate.py::test_u1146_code_string_is_shared_not_forked 机检。
+  AUTH_PASSWORD_CHANGE_REQUIRED: 'error.auth.passwordChangeRequired',
+}
+
+const PASSWORD_CHANGE_REQUIRED_CODE = 'AUTH_PASSWORD_CHANGE_REQUIRED'
+
+/** detail 是不是"该改密"那个 403（后端 detail 形状＝{code,message}）。 */
+function isPasswordChangeDetail(body: unknown): boolean {
+  const detail = (body as { detail?: unknown } | null)?.detail
+  return (
+    !!detail &&
+    typeof detail === 'object' &&
+    (detail as { code?: unknown }).code === PASSWORD_CHANGE_REQUIRED_CODE
+  )
 }
 
 /**
@@ -363,6 +379,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       // 登录端点的 401 是「用户名或密码错误」，不触发会话失效跳转
       if (path !== '/api/auth/login') handleUnauthorized()
     }
+    // 打包 AV：任何业务端点回"该改密"的 403，都说明这个会话还没满足强制位。
+    // 信号从这里发，所以 reload 之后（App 不查 /auth/me）也照样会弹。
+    if (response.status === 403 && isPasswordChangeDetail(body)) handlePasswordChangeRequired()
     throw requestError(body, response.status)
   }
   return body as T
@@ -382,6 +401,8 @@ export async function login(username: string, password: string): Promise<LoginRe
   }
   const session = body as LoginResponse
   saveSession(session.token, session.principal)
+  // 打包 AV：登录响应就带着服务器算好的强制位，不必等第一个业务请求撞 403。
+  if (session.mustChangePassword) handlePasswordChangeRequired()
   return session
 }
 

@@ -71,6 +71,8 @@ from atlas.iam.deps import (
     authenticate_login,
     get_principal,
     login_throttle,
+    must_change_password,
+    presented_token,
     require,
     services_for,
     session_store,
@@ -2025,19 +2027,10 @@ class LoginRequest(BaseModel):
 class LoginResponse(BaseModel):
     token: str
     principal: Principal
-
-
-def _bearer_token(request: Request) -> str | None:
-    header = request.headers.get("authorization", "")
-    return header[7:].strip() if header[:7].lower() == "bearer " else None
-
-
-def _session_token(request: Request) -> str | None:
-    """打包 ZQ Q4：会话凭证优先 httpOnly Cookie，Bearer 兜底（A2A/MCP/旧调用）。"""
-    token = request.cookies.get(SESSION_COOKIE)
-    if token is not None:
-        return token
-    return _bearer_token(request)
+    # docs/95 打包 AV：登录时读一次用户行，前端据此弹出不可关闭的改密框。
+    # 放在响应顶层而不是 Principal 里——Principal 会被 PG 档 iam_sessions 重建，
+    # 那张表只有四列，标志塞进去就等于在两档上给出不同答案。
+    mustChangePassword: bool = False
 
 
 def _cookie_secure() -> bool:
@@ -2089,12 +2082,20 @@ def login(request: LoginRequest, http_request: Request, response: Response) -> L
         secure=_cookie_secure(),
         path="/",
     )
-    return LoginResponse(token=token, principal=principal)
+    return LoginResponse(
+        token=token,
+        principal=principal,
+        mustChangePassword=must_change_password(principal),
+    )
 
 
 @app.get("/api/auth/me", response_model=LoginResponse)
 def me(request: Request, principal: Principal = Depends(get_principal)) -> LoginResponse:
-    return LoginResponse(token=_session_token(request) or "", principal=principal)
+    return LoginResponse(
+        token=presented_token(request) or "",
+        principal=principal,
+        mustChangePassword=must_change_password(principal),
+    )
 
 
 @app.post("/api/auth/logout")
@@ -2103,7 +2104,7 @@ def logout(
     response: Response,
     principal: Principal = Depends(get_principal),
 ) -> dict[str, bool]:
-    token = _session_token(request)
+    token = presented_token(request)
     if token:
         session_store.revoke(token)
     response.delete_cookie(SESSION_COOKIE, httponly=True, samesite="strict", path="/")
@@ -2165,7 +2166,13 @@ def change_password(
     request: Request,
     principal: Principal = Depends(get_principal),
 ) -> dict[str, bool]:
-    """登录用户改本人密码（docs/31 §3）：旧口令错 400；成功吊销本人其他会话、保留当前。"""
+    """登录用户改本人密码（docs/31 §3）：旧口令错 400；成功吊销本人其他会话、保留当前。
+
+    `by_owner=True` 盖轮换位（docs/95 打包 AV）——这是唯一能清掉强制改密门的写入路径。
+    keep_token 用 `presented_token`（与 `get_principal` 同一份取数规则）：以前这里是
+    `_bearer_token`，打包 ZQ Q4 之后 SPA 不带 Authorization 头，于是"保留当前"保留的是
+    另一个会话，改密的人反而被登出。
+    """
     account = user_store.get(principal.tenant_id, principal.username)
     if account is None or not verify_password(raw.oldPassword, account.password_hash):
         raise HTTPException(status_code=400, detail="原密码错误")
@@ -2176,7 +2183,8 @@ def change_password(
         principal.tenant_id,
         principal.username,
         raw.newPassword,
-        keep_token=_bearer_token(request),
+        keep_token=presented_token(request),
+        by_owner=True,
     )
     return {"changed": True}
 
@@ -2240,7 +2248,11 @@ def reset_password(
     raw: ResetPasswordRequest,
     principal: Principal = Depends(require("administer")),
 ) -> dict[str, bool]:
-    """admin 重置本租户用户密码（docs/31 §3）：404/422；成功吊销该用户全部会话。"""
+    """admin 重置本租户用户密码（docs/31 §3）：404/422；成功吊销该用户全部会话。
+
+    不盖轮换位＝**重新装填**强制改密门（docs/95 §2 订正）：重置后的口令只有操作它的 admin
+    与该系统账号知道，本人从未亲手套上过口令，强制位在 prod 因此回到未满足态。
+    """
     if user_store.get(principal.tenant_id, username) is None:
         raise HTTPException(status_code=404, detail="用户不存在")
     _validate_password_or_422(raw.newPassword)
@@ -5133,7 +5145,12 @@ def demo_reset(
 def submit_feedback(
     request: FeedbackRequest, principal: Principal = Depends(get_principal)
 ) -> dict[str, Any]:
-    """反馈入口对全部登录角色开放（viewer 可提交，04 §5.14）；按租户分区。"""
+    """反馈入口对全部登录角色开放（viewer 可提交，04 §5.14）；按租户分区。
+
+    首登强制改密**不**挡这一条（docs/95 U1146 的豁免面里唯一非 auth 路由）：它不读业务数据，
+    而被门挡住的人正好需要它报障。新增业务端点若也想用 `Depends(get_principal)` 直接过，
+    U1146 会红——要么改 `require()`，要么把理由加进那张表。
+    """
     return services_for(principal).feedback_store.add(request)
 
 

@@ -976,6 +976,9 @@ principal:
   username: string
   display_name: string
   role: "viewer" | "operator" | "admin"
+mustChangePassword: boolean   # 打包 AV（docs/95，2026-10-05 落码，迁移 042）：该账号的口令是否仍是别人（引导播种／admin 建号／admin 重置）替它设的那一条。
+                              # **在响应顶层，不在 principal 里**——PG 档 iam_sessions 只持久化四列，Principal 由会话重建，标志塞进对象就会让两档给出不同答案（docs/95 §1.2）。
+                              # 判定现读用户行的 password_rotated_at，不做 verify_password(引导口令, hash) 现场比对（bcrypt ≈100ms 进不了每请求路径）；非 prod 与演示面恒 false。
 # POST /api/auth/logout：吊销当前 token，无返回体
 ```
 
@@ -983,6 +986,9 @@ principal:
 
 ### `identity_user` — 字段概览（docs/31；2026-09-21 全部落码收口：哈希/账号/生命周期端点/会话绝对 TTL/登录节流；权威块 04 §5.17）
 > **打包 L 追加（2026-09-25，docs/66；形状权威＝docs/66 §2）**：本族的**播种规则按环境档位分叉**——dev/test 播 `SEED_USERS` 四条（行为与既往逐键相同）；**prod 只播各租户一条 ADMIN，口令取 `ATLAS_ADMIN_BOOTSTRAP_PASSWORD`**（必填、过 `validate_password`，缺失或不合规则**拒绝启动**，见 `security/bootstrap.py`），operator/viewer 由首位 admin 经 `POST /api/users` 建立。两条播种入口（`iam/deps.py` 模块级 seed 与 `scripts/ops/seed_accounts.py`）共用 `iam/principals.seed_plan_for_profile()`，不留第二套口径。**prod 永不播种仓库内明文口令**（既往那样做会造成 docs/63 §0A N1 的登录死锁）。表结构与迁移零改动。
+
+> **打包 AV 追加（2026-10-05 落码，形状权威＝[docs/95](docs/95-首登强制改密与口令轮换位-v1批契约设计.md) §3）**：prod（且未开演示面）下 `password_rotated_at IS NULL` 的账号，**任何经 `iam/deps.require()` 的端点**都回 403 `{code:"AUTH_PASSWORD_CHANGE_REQUIRED"}`，且该门排在角色门**之前**（先给可执行的下一步，不让运营对着"当前角色无权"猜）。强制点只有一处＝`require()` 内部，所以 `/api/auth/me`·`/api/auth/change-password`·`/api/auth/logout` 天然可达（不经 require()），**不需要路径白名单**——而"挡到连出口都打不开"是 docs/64 J-1c 犯过的错，U1143 专门钉这条。豁免面由 `tests/test_password_rotation_gate.py` U1146 机器枚举（装配后的整张 app，递归进 `include_router` 容器）：认证却不经 `require()` 的端点必须恰等于四条＝三条 auth ＋ `POST /api/feedback`（不读业务数据，且被门挡住的人正好用它报障）。
+> **两处与立项原文不同，以本节为准**（docs/95 §2 同日订正）：① D-1 原写"本人改密与管理员重置都盖章"，落码改为**只有本人改密盖章**——admin 代设的口令第三方同样知道，重置必须把强制位擦回未满足态，否则管理员手里就多一个"替别人跳过强制改密"的按钮；② D-2（强制 breadth）由 AI 选定 **(b) 挡一切业务端点、只留 auth 与静态**，复开条件＝真出现"被门挡住且 self-service 出口打不开"的运行事故，退到 (a) 只挡写操作是一行 capability 判断的事。
 
 ```yaml
 # iam_users 表（迁移 010）；(tenant_id, username) 复合 PK
@@ -993,6 +999,7 @@ display_name: string
 role: "viewer" | "operator" | "admin"
 status: "active" | "disabled"  # 缺省 active；不删用户、禁用替代
 created_at / updated_at: string
+password_rotated_at: string | null  # 迁移 042（docs/95 打包 AV，2026-10-05）：NULL＝口令从未经本人之手（引导播种／admin 建号／admin 重置都算）；非 NULL＝本人改密成功的 UTC ISO-8601 时刻。文本列照 002/010 主约定，不做现场哈希比对（bcrypt ≈100ms）
 
 # POST /api/auth/change-password（登录用户）：{oldPassword,newPassword}；旧错 400；吊销本人其他会话
 # GET /api/users（admin）/ POST /api/users（admin，重名 409、策略 422）
