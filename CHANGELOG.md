@@ -3,6 +3,14 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### chore(dev)＋test：真外发腿要有规划层，缺凭据时得说出缺哪一个（docs/73 1.1–1.3／4.1，2026-10-05 打包 AY）
+
+- **为什么这批不是"等凭据来了再说"**：B 档剩下的四条判据（1.1／1.2／1.3／4.1）卡的确实是凭据，不是工程。但"拿到 key 之后按什么顺序跑、每条腿的判据是什么"此前只活在 docs/73 的表格散文里——本仓已经为这种形状付过钱：2026-09-28 那次 4.1 演练的后半被主机 load 385–427 打成假红，靠人临场判断才没写进结论。把它变成脚本输出，缺什么就点名什么，届时不再需要推理。
+- **第 9 段的三种判定**：`RUN`（前置齐且有执行段）／`SKIP`（缺前置，reason 点名缺哪个变量）／`BLOCKED`（动款或打扰真人要显式授权，或**本批根本没有执行段**）。最后一种不许变成 `RUN`——规划层不许把没做的说成跑过。
+- **实测到的一个新缺口（已写进 docs/73 1.3）**：`docker-compose.yml` 只透传 `LITELLM_MODEL`／`OPENAI_API_KEY`／`OPENAI_BASE_URL`（52–57 行），**`ATLAS_SMTP_*` 一组根本没进容器**。所以 1.3 的第一件事不是找邮件供应商，是补透传。
+- **正反两面在同一段里**：第 5a 段证"prod 没配真 LLM 时显式 `LLM_DECISION_UNAVAILABLE` 失败、不静默降级"；第 9 段的 `llm` 腿在注入凭据重建容器后拿**同一张已发布图**再跑一次，断言 `ai_decision` 的 `source` 前缀是 `llm:`。缺凭据的一侧已经跑过并留下读数；有凭据的一侧等凭据，脚本不再变。
+- **U1156（9 例，全在常跑面、零 docker 零网络）**：缺列必须点名、部分凭据只点缺的那一个（正向对照）、拼错的腿名要报错、动款要 `--allow-refund`＋`--shopify-order`、只有 `EXECUTABLE_LEGS` 能进 `run`、**哨兵值绝不进输出**、`with_live_credentials` 只搬白名单键且不覆盖 base 的空值。
+- **门（实跑）**：后端全量 **2343 passed／150 skipped／0 failed**（241.77s，load 5.77；对账＝AX 那棵树 2334 ＋ 9 例），演练**九段全过**（出厂镜像 `0a1deecf4489`，源 HEAD `7454735`，构建 186s；空卷首启 `/api/ready` T+4.2s／`RestartCount=0`；第 9 段以 `--live-legs notify,refund` 打出 `SKIP notify…`＋`BLOCKED refund…`＋"没有发出任何真外发请求"）。顺带订正了脚本 docstring 里"第 5 段会走规则兜底"这句与 5a 断言相互矛盾的老文案（那是 docs/77 R1 之前的形状）。零新依赖、零迁移、无新 ADR。
 ### feat(graph)＋fix(web)＋test：节点结果的诊断通道把 params 送回来了（docs/14 D53 的 ②，2026-10-05 打包 AX）
 
 - **补的是 AW 自己登记的那条事实**：`ConditionEvalError` 从 docs/60 G1 起就带 `code`＋`params`，但节点结果只并行下发 `expressionErrorCodes`——**params 在 HTTP 边界被丢掉**。于是必须插值的模板（`COND_TYPE_MISMATCH` 的 `{{detail}}`、`COND_DIVIDE_BY_ZERO` 的 `{{op}}`）在英文态永远只能回退后端中文原文：码有了、文案有了，句子仍然出不来。
