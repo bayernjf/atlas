@@ -408,6 +408,7 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 
 - 后端全量 `.venv/bin/pytest` **2353 passed／150 skipped／0 failed**（252.95s，exit 0，量于本机 load 9.18（1 分钟）／9.65（5 分钟））。**对账**：AZ 收口那棵树是 2347，本批新增 `tests/test_env_surface_parity.py` **6 例** ⇒ 2347＋6＝2353 ✓；skip 不变。
 - **对账实测（这条门的「量」部分）**：`src/atlas` 读 **53** 个部署变量；打包 AZ 后 compose 覆盖 14 个；本批 atlas 服务补透传 **37** 条（`git diff` 计数为准）＋豁免 1 条（`ATLAS_MCP_TENANT_ID`）⇒ 53 全部落账：14＋37＋1＋`ATLAS_STORAGE_BACKEND`／`DATABASE_URL` 这类 compose 直接赋值的既有项（本就含在 14 里）。U1158 的集合相等断言是机检，不是这句散文。
+- **CI runner 自己的读数（与本机数分别标）**：`a447536` 四 job 全绿——gitleaks success／Backend pytest **2353 passed／150 skipped in 260.03s**（本机同棵树 252.95s，差是机器不是用例）／Backend PG integration **2495 passed／8 skipped in 199.47s**（AZ 那棵树 runner 报 2489／8 ⇒ U1158 的 6 例同样进 integration，2489＋6＝2495 ✓）／Frontend vitest+build **Tests 788 passed＋2 skipped、oxlint 0 warnings／0 errors**（前端零改动）。
 - **〔跑〕空卷九段演练重跑全过**：镜像 `atlas-demo:latest` id=`0b7654f569f0`（源 HEAD `e6618e7`，构建 1s＝层缓存全命中——compose 的 env 是运行期注入，不动镜像内容，这条也顺带证明了这一点）；空卷首启 `/api/ready` **T+2.2s／2 次轮询**、`RestartCount=0`、`FAIL` 行 0。39 条空缺省 env 进容器，第 3–8 段判据逐条照旧绿 ⇒ **空缺省没有改变任何启动行为**。
 - **两条例外缺省的机械理由**：`ATLAS_LLM_TIMEOUT_SECONDS` 四处读取都是 `float(os.getenv(..., "60"))`，透传成空串等于把 `float("")` 的 ValueError 送进启动路径 ⇒ 显式 `:-60`；`ATLAS_FRONTEND_DIST` 的空串会让静态目录解析成空路径 ⇒ `:-frontend/dist`。其余 35 条的读取点都被逐一读过（`.strip()` 回退／`or DEFAULT`／`getattr` 带默认等），空值安全。
 - **死配置也算缺陷**：U1158③ 的反向门把一条 src 不读的变量植进合成 compose，守护必须点名。理由：部署面讲一个代码已不认的故事，和缺透传同罪——下一个读 compose 的人会以为那个旋钮还活着。
