@@ -69,8 +69,9 @@ class PgImportStore:
     ) -> ImportedSpec:
         if len(spec.operations) > MAX_OPERATIONS_PER_SPEC:
             raise ImportStoreError(
-                "OPENAPI_LIMIT_EXCEEDED",
+                "OPENAPI_SPEC_OPERATIONS_LIMIT",
                 f"单份规格最多包含 {MAX_OPERATIONS_PER_SPEC} 个 operation",
+                params={"max": MAX_OPERATIONS_PER_SPEC},
             )
         operations = [op for op in spec.operations if not op.skipped]
         fingerprint = spec.content_fingerprint()
@@ -103,8 +104,9 @@ class PgImportStore:
             )
             if count >= MAX_SPECS_PER_TENANT:
                 raise ImportStoreError(
-                    "OPENAPI_LIMIT_EXCEEDED",
+                    "OPENAPI_TENANT_SPECS_LIMIT",
                     f"每租户最多导入 {MAX_SPECS_PER_TENANT} 份 API 规格",
+                    params={"max": MAX_SPECS_PER_TENANT},
                 )
             seq = int(db.execute(text("SELECT nextval('storage_id_seq')")).scalar_one())
             spec_id = f"openapi-{seq}"

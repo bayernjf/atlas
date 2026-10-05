@@ -162,9 +162,7 @@ FROZEN_FOR_TRIAGE = {
     "OAUTH_REFRESH_FAILED",
     "OAUTH_STATE_INVALID",
     "OAUTH_TOKEN_FAILED",
-    "OPENAPI_FETCH_FAILED",
     "OPENAPI_INVALID_PARAMETER",
-    "OPENAPI_LIMIT_EXCEEDED",
     "OPENAPI_NOT_SOFT_DELETED",
     "SMTP_SEND_FAILED",
     "WEBHOOK_MALFORMED",
@@ -435,13 +433,20 @@ def test_u1160_no_code_carries_two_different_messages():
     )
 
 
-def test_u1161_the_five_coarse_codes_are_gone():
-    """U1161：五条粗码在全仓零发射（拆码没拆一半）。"""
+def test_u1161_the_coarse_codes_are_gone():
+    """U1161：粗码在全仓零发射（拆码没拆一半）。
+
+    BC 拆了五条；打包 BF 再拆两条 OpenAPI 粗码（fetch／limit 各承载两个答案）。
+    """
     where = structured_codes()
-    leftovers = {c: where[c] for c in ("INVALID_PARAMETER", "NOT_FOUND",
-                                       "OPENAPI_INVALID_CREDENTIAL",
-                                       "OPENAPI_INVALID_DOCUMENT",
-                                       "WAIT_EVENT_PAYLOAD_INVALID") if c in where}
+    coarse = (
+        "INVALID_PARAMETER", "NOT_FOUND",
+        "OPENAPI_INVALID_CREDENTIAL", "OPENAPI_INVALID_DOCUMENT",
+        "WAIT_EVENT_PAYLOAD_INVALID",
+        # 打包 BF（docs/08）：拆成 FETCH_NETWORK/FETCH_HTTP 与 SPEC_OPERATIONS/TENANT_SPECS。
+        "OPENAPI_FETCH_FAILED", "OPENAPI_LIMIT_EXCEEDED",
+    )
+    leftovers = {c: where[c] for c in coarse if c in where}
     assert leftovers == {}, f"旧粗码仍在发射：{leftovers}"
 
 
@@ -456,6 +461,9 @@ def test_u1162_http_facing_new_codes_have_both_locales():
         # 补 zh/en 后纳入 HTTP 面双份校验。
         "DLQ_BODY_UNAVAILABLE", "DLQ_NOT_FAILED",  # POST /api/demo/deliveries/{seq}/replay
         "OPENAPI_UNSUPPORTED_VERSION",  # parser → _openapi_http_error → 422
+        # 打包 BF（docs/08）：两条一码多话粗码拆出的四个具体码，均经端点结构化出体。
+        "OPENAPI_FETCH_NETWORK_ERROR", "OPENAPI_FETCH_HTTP_ERROR",  # preview URL 抓取
+        "OPENAPI_SPEC_OPERATIONS_LIMIT", "OPENAPI_TENANT_SPECS_LIMIT",  # import 配额
         "OPENAPI_BODY_MISSING_SCHEMA", "OPENAPI_BODY_NOT_JSON",
         "OPENAPI_CREDENTIAL_BASIC_INCOMPLETE", "OPENAPI_CREDENTIAL_SCHEME_UNKNOWN",
         "OPENAPI_DOCUMENT_MISSING_SERVERS", "OPENAPI_DOCUMENT_NOT_OPENAPI3",

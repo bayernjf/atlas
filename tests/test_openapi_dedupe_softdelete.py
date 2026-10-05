@@ -82,7 +82,7 @@ def test_quota_counts_only_active():
     # 已满
     with pytest.raises(ImportStoreError) as exc:
         store.add(_spec(title="overflow", base_url="https://overflow.example.com"))
-    assert exc.value.code == "OPENAPI_LIMIT_EXCEEDED"
+    assert exc.value.code == "OPENAPI_TENANT_SPECS_LIMIT"
     # 删一条（软删）后名额释放，可再导
     store.delete(specs[0].spec_id)
     extra = store.add(_spec(title="overflow", base_url="https://overflow.example.com"))

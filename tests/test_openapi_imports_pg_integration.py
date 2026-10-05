@@ -158,7 +158,7 @@ def test_spec_limit_enforced(setup):
         store.add(_spec(title=f"Spec {i}"))
     with pytest.raises(ImportStoreError) as exc:
         store.add(_spec(title="Overflow"))
-    assert exc.value.code == "OPENAPI_LIMIT_EXCEEDED"
+    assert exc.value.code == "OPENAPI_TENANT_SPECS_LIMIT"
     assert exc.value.status_code == 422
     assert len(store.list()) == 5
 
@@ -177,7 +177,7 @@ def test_operations_limit_enforced(setup):
     )
     with pytest.raises(ImportStoreError) as exc:
         store.add(spec)
-    assert exc.value.code == "OPENAPI_LIMIT_EXCEEDED"
+    assert exc.value.code == "OPENAPI_SPEC_OPERATIONS_LIMIT"
     assert store.list() == []
 
 

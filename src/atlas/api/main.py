@@ -2305,16 +2305,24 @@ _TEMPLATE_IMPORT_MAX_BYTES = 256 * 1024
 
 def _fetch_openapi_spec(url: str) -> str:
     """API 层 URL 抓取（docs/42 §4）：出向过 EgressGuard，10s、不跟重定向；
-    任何取数失败统一折 OPENAPI_FETCH_FAILED。"""
+    网络/出向失败折 OPENAPI_FETCH_NETWORK_ERROR，上游 HTTP ≥400 折
+    OPENAPI_FETCH_HTTP_ERROR（docs/08 打包 BF：原 OPENAPI_FETCH_FAILED 一码承载两条
+    不同答案，已按答案拆开）。"""
     try:
         _openapi_egress.check(url)
         with httpx.Client(follow_redirects=False) as client:
             response = client.get(url, timeout=_OPENAPI_FETCH_TIMEOUT)
     except (EgressDenied, httpx.HTTPError, ValueError) as exc:
-        raise OpenApiError("OPENAPI_FETCH_FAILED", f"规格抓取失败：{exc}") from exc
+        raise OpenApiError(
+            "OPENAPI_FETCH_NETWORK_ERROR",
+            f"规格抓取失败：{exc}",
+            params={"detail": str(exc)},
+        ) from exc
     if response.status_code >= 400:
         raise OpenApiError(
-            "OPENAPI_FETCH_FAILED", f"规格抓取失败：HTTP {response.status_code}"
+            "OPENAPI_FETCH_HTTP_ERROR",
+            f"规格抓取失败：HTTP {response.status_code}",
+            params={"status": response.status_code},
         )
     return response.text
 
@@ -2435,6 +2443,8 @@ def import_openapi(
         detail: dict[str, Any] = {"code": exc.code, "message": str(exc)}
         if getattr(exc, "existing_spec_id", None):
             detail["existingSpecId"] = exc.existing_spec_id
+        if getattr(exc, "params", None):
+            detail["params"] = exc.params
         raise HTTPException(
             status_code=exc.status_code, detail=detail
         ) from exc

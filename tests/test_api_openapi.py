@@ -134,7 +134,11 @@ def test_preview_from_url(monkeypatch):
 
 def test_preview_fetch_failure_mapped(monkeypatch):
     def fail(url):
-        raise OpenApiError("OPENAPI_FETCH_FAILED", "规格抓取失败：x")
+        raise OpenApiError(
+            "OPENAPI_FETCH_NETWORK_ERROR",
+            "规格抓取失败：x",
+            params={"detail": "x"},
+        )
 
     monkeypatch.setattr(api_main, "_fetch_openapi_spec", fail)
 
@@ -145,7 +149,40 @@ def test_preview_fetch_failure_mapped(monkeypatch):
     )
 
     assert response.status_code == 422
-    assert response.json()["detail"]["code"] == "OPENAPI_FETCH_FAILED"
+    detail = response.json()["detail"]
+    assert detail["code"] == "OPENAPI_FETCH_NETWORK_ERROR"
+    assert detail["params"] == {"detail": "x"}
+
+
+def test_fetch_openapi_spec_maps_http_status_to_http_error(monkeypatch):
+    """打包 BF：上游 HTTP ≥400 折 OPENAPI_FETCH_HTTP_ERROR 并带 status 参数，
+    与网络/出向失败（NETWORK）是两条答案，不再共用 OPENAPI_FETCH_FAILED。"""
+
+    class _FakeResponse:
+        status_code = 503
+        text = "{}"
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, timeout=None):
+            return _FakeResponse()
+
+    # egress 放行
+    monkeypatch.setattr(api_main._openapi_egress, "check", lambda url: None)
+    monkeypatch.setattr(api_main.httpx, "Client", _FakeClient)
+
+    with pytest.raises(OpenApiError) as exc:
+        api_main._fetch_openapi_spec("https://petstore.example.com/openapi.json")
+    assert exc.value.code == "OPENAPI_FETCH_HTTP_ERROR"
+    assert exc.value.params == {"status": 503}
 
 
 def test_import_creates_spec_with_successful_operations_only():

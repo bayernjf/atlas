@@ -147,7 +147,7 @@ def test_spec_limit_enforced():
         store.add(_parsed_variant(i))
     with pytest.raises(ImportStoreError) as exc:
         store.add(_parsed_variant(99))
-    assert exc.value.code == "OPENAPI_LIMIT_EXCEEDED"
+    assert exc.value.code == "OPENAPI_TENANT_SPECS_LIMIT"
     assert exc.value.status_code == 422
 
 
@@ -163,7 +163,7 @@ def test_operation_limit_enforced():
     }
     with pytest.raises(ImportStoreError) as exc:
         ImportStore().add(parse_document(json.dumps(document)))
-    assert exc.value.code == "OPENAPI_LIMIT_EXCEEDED"
+    assert exc.value.code == "OPENAPI_SPEC_OPERATIONS_LIMIT"
 
 
 # --- adapter capabilities ---
