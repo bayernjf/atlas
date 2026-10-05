@@ -402,6 +402,7 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 ### 2026-10-05 打包 AZ SMTP 透传补齐（docs/73 1.3；docs/13 U1157）门（先跑后写，数字取实跑）
 
 - 后端全量 `.venv/bin/pytest` **2347 passed／150 skipped／0 failed**（262.70s，exit 0，量于本机 load 5.84（1 分钟）／5.97（5 分钟））。**对账**：AY 收口那棵树是 2343，本批新增 `tests/test_smtp_env_passthrough.py` **4 例** ⇒ 2343＋4＝2347 ✓；skip 不变。前端零改动（本批没碰 `frontend/`，工作区文件清单为证）。
+- **CI runner 自己的读数（与本机数分别标）**：`f7e3f76` 四 job 全绿——gitleaks success／Backend pytest **2347 passed／150 skipped in 262.75s**（本机同棵树 262.70s，两个数只差机器时间）／Backend PG integration **2489 passed／8 skipped in 254.33s**（AY 那棵树 runner 报 2485／8 ⇒ U1157 的 4 例同样进 integration，2485＋4＝2489 ✓）／Frontend vitest+build **57 文件 passed＋1 skipped（58）、Tests 788 passed＋2 skipped、oxlint 0 warnings／0 errors**（前端确实零改动，runner 也这么报）。
 - **〔跑〕compose 渲染实证**：`ATLAS_SMTP_HOST=smtp.invalid.test ATLAS_SMTP_USERNAME=ops@invalid.test ATLAS_SMTP_FROM=noreply@invalid.test ATLAS_SMTP_PASSWORD=dummy docker compose config` 渲染出的 atlas env 里六条都在（`ATLAS_SMTP_PORT: "587"`／`ATLAS_SMTP_USE_TLS: "true"` 是缺省）。用的是假主机名，**全程没有发信、没有真凭据参与**。
 - **〔跑〕产物内实证（正反对照）**：`docker run --rm --entrypoint python -e ATLAS_ENV=prod -e ATLAS_SMTP_HOST=… atlas-demo:latest -c "from atlas.message.smtp import SmtpConfig; print(SmtpConfig.from_env())"` ⇒ `('smtp.invalid.test', 587, 'ops@invalid.test', 'noreply@invalid.test', True)`；同一镜像不给 HOST ⇒ `None`。这两条一起才是"补的是通路"：解析代码在容器里真的被喂到了配置，且空值路径没被改动。
 - **反向门命中验证**：U1157③ 先断言 `doctored != COMPOSE_TEXT` 再要求点名——锚没命中就红，避免"替换其实没发生"的空跑绿（本仓栽过的那类）。
