@@ -2159,15 +2159,15 @@ def _execute_tool(
             parameters = json.loads(params_text) if params_text.strip() else {}
         except json.JSONDecodeError:
             return {
-                "result": {"status": "FAILED", "code": "INVALID_PARAMETER", "message": "params 不是合法 JSON"},
+                "result": {"status": "FAILED", "code": "TOOL_PARAMS_NOT_JSON", "message": "params 不是合法 JSON"},
                 "action_status": "FAILED",
             }
         if not isinstance(parameters, dict):
             return {
-                "result": {"status": "FAILED", "code": "INVALID_PARAMETER", "message": "params 必须是 JSON 对象"},
+                "result": {"status": "FAILED", "code": "TOOL_PARAMS_NOT_OBJECT", "message": "params 必须是 JSON 对象"},
                 "action_status": "FAILED",
             }
-        # 短路点在 JSON 解析之后：非法 params 仍返 INVALID_PARAMETER，不伪造 dry-run（docs/33 §10.1）。
+        # 短路点在 JSON 解析之后：非法 params 仍返 TOOL_PARAMS_NOT_JSON／TOOL_PARAMS_NOT_OBJECT，不伪造 dry-run（docs/33 §10.1）。
         if shadow_blocked:
             return _shadow_dry_run(tool_name, capability_name, permission, parameters)
         result = adapter.execute(ActionRequest(capability_name=capability_name, parameters=parameters))
@@ -2239,7 +2239,7 @@ def _tool_metric_event(
 
     - SIMULATED（无 ``adapter/capability`` 或 registry 缺失的本地构造）记 ``SIMULATED``、无 code；
     - 其余取外层 action_status（ActionResult 状态），回退 result.status 并大写归一为 SUCCESS/FAILED；
-    - error_code 取 result.code（INVALID_PARAMETER/UNKNOWN/适配器错误码），成功通常为空。
+    - error_code 取 result.code（TOOL_PARAMS_NOT_JSON/TOOL_PARAMS_NOT_OBJECT/UNKNOWN/适配器错误码），成功通常为空。
     """
     result = output.get("result") if isinstance(output, dict) else None
     if isinstance(result, dict) and result.get("status") == "SIMULATED":

@@ -222,7 +222,7 @@ def test_shadow_generic_read_passthrough_and_invalid_json_still_fails():
     )
     bad_output = bad["outputs"]["tool-1"]
     assert bad_output["action_status"] == "FAILED"
-    assert bad_output["result"]["code"] == "INVALID_PARAMETER"  # 非法 JSON 仍报错，不伪造 dry-run
+    assert bad_output["result"]["code"] == "TOOL_PARAMS_NOT_JSON"  # 非法 JSON 仍报错，不伪造 dry-run
 
 
 # ---------- U255 预置审批纯函数（API 层自动预置见 U267） ----------

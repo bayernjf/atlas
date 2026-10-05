@@ -54,7 +54,7 @@ def test_duplicate_import_rejected_with_existing_id():
     first = store.add(_spec())
     with pytest.raises(ImportStoreError) as exc:
         store.add(_spec())
-    assert exc.value.code == "OPENAPI_DUPLICATE"
+    assert exc.value.code == "OPENAPI_SPEC_ALREADY_IMPORTED"
     assert exc.value.status_code == 409
     assert exc.value.existing_spec_id == first.spec_id
     # 仅一条，名额未被重复占用
@@ -101,7 +101,7 @@ def test_restore_success_conflict_and_missing():
     assert store.delete(a.spec_id) is True
     b = store.add(_spec())
     ok, code, existing = store.restore(a.spec_id)
-    assert ok is False and code == "OPENAPI_DUPLICATE" and existing == b.spec_id
+    assert ok is False and code == "OPENAPI_RESTORE_CLASH" and existing == b.spec_id
     assert store.get(a.spec_id) is None  # 冲突未恢复
 
     # 不存在 / 对未删项恢复 → (False, None, None)

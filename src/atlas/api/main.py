@@ -2329,10 +2329,16 @@ class OpenApiCredentialsRequest(BaseModel):
     credentials: dict[str, str | dict[str, str] | None]
 
 
-def _credential_error(name: str, message: str = "未知鉴权方案") -> HTTPException:
+def _credential_error(
+    name: str,
+    message: str = "未知鉴权方案",
+    code: str = "OPENAPI_CREDENTIAL_SCHEME_UNKNOWN",
+) -> HTTPException:
+    """docs/08 打包 BC：一个码只承载一条答案——两种失败各有自己的码（旧码
+    `OPENAPI_INVALID_CREDENTIAL` 把「未知鉴权方案」与「Basic 缺用户名或密码」压成了一个）。"""
     return HTTPException(
         status_code=422,
-        detail={"code": "OPENAPI_INVALID_CREDENTIAL", "message": f"{message}：{name}"},
+        detail={"code": code, "message": f"{message}：{name}", "params": {"name": name}},
     )
 
 
@@ -2351,10 +2357,11 @@ def _encrypt_credentials(
 
 
 def _openapi_http_error(exc: OpenApiError) -> HTTPException:
-    return HTTPException(
-        status_code=422,
-        detail={"code": exc.code, "message": exc.message},
-    )
+    # 带 params 的码要把 params 一起下发，否则英文态模板填不满会回退中文原文。
+    detail: dict[str, object] = {"code": exc.code, "message": exc.message}
+    if getattr(exc, "params", None):
+        detail["params"] = exc.params
+    return HTTPException(status_code=422, detail=detail)
 
 
 def _parse_openapi_source(raw: OpenApiSourceRequest):
@@ -2362,7 +2369,7 @@ def _parse_openapi_source(raw: OpenApiSourceRequest):
         raise HTTPException(
             status_code=422,
             detail={
-                "code": "OPENAPI_INVALID_DOCUMENT",
+                "code": "OPENAPI_DOCUMENT_SOURCE_EXCLUSIVE",
                 "message": "content 与 url 必须二选一",
             },
         )
@@ -2492,11 +2499,11 @@ def restore_openapi_import(
     ok, code, existing = services_for(principal).openapi_imports.restore(spec_id)
     if ok:
         return {"restored": True}
-    if code == "OPENAPI_DUPLICATE":
+    if code == "OPENAPI_RESTORE_CLASH":
         raise HTTPException(
             status_code=409,
             detail={
-                "code": "OPENAPI_DUPLICATE",
+                "code": "OPENAPI_RESTORE_CLASH",
                 "message": "恢复后与现有未删规格内容重复",
                 "existingSpecId": existing,
             },
@@ -2531,7 +2538,8 @@ def put_openapi_credentials(
                 or not isinstance(password, str)
                 or not password.strip()
             ):
-                raise _credential_error(name, "Basic 鉴权需同时提供非空用户名与密码")
+                raise _credential_error(name, "Basic 鉴权需同时提供非空用户名与密码",
+                               code="OPENAPI_CREDENTIAL_BASIC_INCOMPLETE")
             plaintext = json.dumps(
                 {"username": username.strip(), "password": password.strip()},
                 ensure_ascii=False,
@@ -4196,21 +4204,23 @@ def _parse_wait_payload(body: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise HTTPException(
             status_code=422,
-            detail={"code": "WAIT_EVENT_PAYLOAD_INVALID",
+            detail={"code": "WAIT_EVENT_PAYLOAD_NOT_OBJECT",
                     "message": "payload 必须是 JSON 对象"},
         )
     if len(raw) > MAX_WAIT_PAYLOAD_KEYS:
         raise HTTPException(
             status_code=422,
-            detail={"code": "WAIT_EVENT_PAYLOAD_INVALID",
-                    "message": f"payload 顶层键不能超过 {MAX_WAIT_PAYLOAD_KEYS} 个"},
+            detail={"code": "WAIT_EVENT_PAYLOAD_TOO_MANY_KEYS",
+                    "message": f"payload 顶层键不能超过 {MAX_WAIT_PAYLOAD_KEYS} 个",
+                    "params": {"max": MAX_WAIT_PAYLOAD_KEYS}},
         )
     serialized = json.dumps(raw, ensure_ascii=False)
     if len(serialized.encode("utf-8")) > MAX_WAIT_PAYLOAD_BYTES:
         raise HTTPException(
             status_code=422,
-            detail={"code": "WAIT_EVENT_PAYLOAD_INVALID",
-                    "message": f"payload 序列化后不能超过 {MAX_WAIT_PAYLOAD_BYTES} 字节"},
+            detail={"code": "WAIT_EVENT_PAYLOAD_TOO_LARGE",
+                    "message": f"payload 序列化后不能超过 {MAX_WAIT_PAYLOAD_BYTES} 字节",
+                    "params": {"max": MAX_WAIT_PAYLOAD_BYTES}},
         )
     return raw
 
@@ -4995,7 +5005,7 @@ def demo_deliveries(
     if status is not None and status not in ("failed", "delivered"):
         raise HTTPException(
             status_code=422,
-            detail={"code": "INVALID_PARAMETER", "message": "status 只接受 failed 或 delivered"},
+            detail={"code": "DELIVERY_STATUS_INVALID", "message": "status 只接受 failed 或 delivered"},
         )
     bounded = max(1, min(limit, 200))
     return {
@@ -5022,7 +5032,7 @@ def demo_replay_delivery(
     if result is None:
         raise HTTPException(
             status_code=404,
-            detail={"code": "NOT_FOUND", "message": "投递记录不存在"},
+            detail={"code": "DELIVERY_NOT_FOUND", "message": "投递记录不存在"},
         )
     return result
 

@@ -292,7 +292,7 @@ def test_duplicate_import_rejected_pg(setup):
     first = store.add(_spec(title="Dup", base_url="https://dup.example.com"))
     with pytest.raises(ImportStoreError) as exc:
         store.add(_spec(title="Dup", base_url="https://dup.example.com"))
-    assert exc.value.code == "OPENAPI_DUPLICATE"
+    assert exc.value.code == "OPENAPI_SPEC_ALREADY_IMPORTED"
     assert exc.value.status_code == 409
     assert exc.value.existing_spec_id == first.spec_id
     # 改 base_url → 指纹变 → 允许导入
@@ -330,7 +330,7 @@ def test_restore_and_conflict_pg(setup):
     assert store.delete(a.spec_id) is True
     b = store.add(_spec(title="Rs", base_url="https://rs.example.com"))
     ok, code, existing = store.restore(a.spec_id)
-    assert ok is False and code == "OPENAPI_DUPLICATE" and existing == b.spec_id
+    assert ok is False and code == "OPENAPI_RESTORE_CLASH" and existing == b.spec_id
     # 冲突未恢复：A 仍隐藏
     assert store.get(a.spec_id) is None
     # 不存在 / 未删 → (False, None, None)

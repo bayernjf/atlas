@@ -139,19 +139,19 @@ class HttpApiClient:
     ) -> dict[str, object]:
         method = (method or "GET").upper()
         if method not in ALLOWED_METHODS:
-            raise HttpApiCallError("INVALID_PARAMETER", f"不支持的 HTTP 方法：{method}")
+            raise HttpApiCallError("HTTPAPI_METHOD_UNSUPPORTED", f"不支持的 HTTP 方法：{method}")
         if not isinstance(url, str) or not url.strip():
             raise HttpApiCallError("MISSING_PARAMETER", "缺少 url")
         if headers is not None and not isinstance(headers, dict):
-            raise HttpApiCallError("INVALID_PARAMETER", "headers 必须是 JSON 对象")
+            raise HttpApiCallError("HTTPAPI_HEADERS_INVALID", "headers 必须是 JSON 对象")
         try:
             timeout_value = float(timeout)
         except (TypeError, ValueError) as exc:
-            raise HttpApiCallError("INVALID_PARAMETER", "timeout 必须是正数秒") from exc
+            raise HttpApiCallError("HTTPAPI_TIMEOUT_INVALID", "timeout 必须是正数秒") from exc
         if timeout_value <= 0:
-            raise HttpApiCallError("INVALID_PARAMETER", "timeout 必须是正数秒")
+            raise HttpApiCallError("HTTPAPI_TIMEOUT_INVALID", "timeout 必须是正数秒")
         if body is not None and not isinstance(body, (dict, list, str)):
-            raise HttpApiCallError("INVALID_PARAMETER", "body 必须是 JSON 对象/数组或字符串")
+            raise HttpApiCallError("HTTPAPI_BODY_INVALID", "body 必须是 JSON 对象/数组或字符串")
 
         merged_headers = {
             **self.default_headers,

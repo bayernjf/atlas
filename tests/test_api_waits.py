@@ -117,7 +117,7 @@ def test_invalid_payload_returns_422():
         json={"eventKey": "k", "payload": "not-object"},
     )
     assert response.status_code == 422
-    assert response.json()["detail"]["code"] == "WAIT_EVENT_PAYLOAD_INVALID"
+    assert response.json()["detail"]["code"] == "WAIT_EVENT_PAYLOAD_NOT_OBJECT"
 
     too_many_keys = anon.post(
         "/api/waits/events",

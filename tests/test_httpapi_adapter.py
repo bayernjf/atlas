@@ -187,7 +187,10 @@ def test_invalid_parameters_rejected(kwargs):
     with pytest.raises(HttpApiCallError) as exc_info:
         client.request(**kwargs)
 
-    assert exc_info.value.code in {"INVALID_PARAMETER", "MISSING_PARAMETER"}
+    assert exc_info.value.code in {
+        "HTTPAPI_METHOD_UNSUPPORTED", "HTTPAPI_HEADERS_INVALID",
+        "HTTPAPI_TIMEOUT_INVALID", "HTTPAPI_BODY_INVALID", "MISSING_PARAMETER",
+    }
 
 
 def test_from_env_reads_base_headers_and_bearer_token(monkeypatch):

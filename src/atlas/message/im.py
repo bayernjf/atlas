@@ -39,7 +39,7 @@ def normalize_mentions(value: Any) -> dict[str, Any]:
     """归一化 mentions 为 {userIds:[...], mobiles:[...], atAll:bool}。
 
     元素去空白、去重保序；userIds/mobiles 各 ≤ MAX_MENTION_ITEMS。非法输入抛 ValueError
-    （service 层折算 INVALID_PARAMETER，fail-fast 不投递）。
+    （service 层折算 MESSAGE_MENTIONS_INVALID，fail-fast 不投递）。
     """
     if value is None:
         return {"userIds": [], "mobiles": [], "atAll": False}

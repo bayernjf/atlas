@@ -76,7 +76,7 @@ class ImportStore:
             )
             if duplicate is not None:
                 raise ImportStoreError(
-                    "OPENAPI_DUPLICATE",
+                    "OPENAPI_SPEC_ALREADY_IMPORTED",
                     f"该 API 规格已导入（{duplicate.spec_id}：{duplicate.title}）",
                     status_code=409,
                     existing_spec_id=duplicate.spec_id,
@@ -150,7 +150,7 @@ class ImportStore:
         返回 (ok, code, existing_spec_id)：
         - 成功恢复：(True, None, None)；
         - 不存在或本就未删（无可恢复项）：(False, None, None) → API 404；
-        - 恢复后与另一未删同指纹规格冲突：(False, "OPENAPI_DUPLICATE", 冲突 id) → API 409。
+        - 恢复后与另一未删同指纹规格冲突：(False, "OPENAPI_RESTORE_CLASH", 冲突 id) → API 409。
         """
         with self._lock:
             spec = self._specs.get(spec_id)
@@ -165,7 +165,7 @@ class ImportStore:
                 None,
             )
             if clash is not None:
-                return False, "OPENAPI_DUPLICATE", clash.spec_id
+                return False, "OPENAPI_RESTORE_CLASH", clash.spec_id
             spec.deleted_at = None
             return True, None, None
 

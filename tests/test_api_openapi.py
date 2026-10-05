@@ -103,7 +103,7 @@ def test_preview_invalid_document_returns_code():
 
     assert response.status_code == 422
     detail = response.json()["detail"]
-    assert detail["code"] == "OPENAPI_INVALID_DOCUMENT"
+    assert detail["code"] == "OPENAPI_DOCUMENT_NOT_OPENAPI3"
 
 
 def test_preview_requires_exactly_one_source():
@@ -114,7 +114,7 @@ def test_preview_requires_exactly_one_source():
     )
 
     assert response.status_code == 422
-    assert response.json()["detail"]["code"] == "OPENAPI_INVALID_DOCUMENT"
+    assert response.json()["detail"]["code"] == "OPENAPI_DOCUMENT_SOURCE_EXCLUSIVE"
 
 
 def test_preview_from_url(monkeypatch):
@@ -319,7 +319,7 @@ def test_import_unknown_scheme_rejected():
         headers=OPERATOR_A,
     )
     assert response.status_code == 422
-    assert response.json()["detail"]["code"] == "OPENAPI_INVALID_CREDENTIAL"
+    assert response.json()["detail"]["code"] == "OPENAPI_CREDENTIAL_SCHEME_UNKNOWN"
     assert client.get("/api/openapi/imports", headers=VIEWER_A).json()["items"] == []
 
 
@@ -364,7 +364,7 @@ def test_put_credentials_upsert_delete_and_404():
         headers=OPERATOR_A,
     )
     assert bad_scheme.status_code == 422
-    assert bad_scheme.json()["detail"]["code"] == "OPENAPI_INVALID_CREDENTIAL"
+    assert bad_scheme.json()["detail"]["code"] == "OPENAPI_CREDENTIAL_SCHEME_UNKNOWN"
 
 
 BASIC_DOC = {
@@ -415,7 +415,7 @@ def test_put_basic_credentials_requires_both_fields():
             headers=OPERATOR_A,
         )
         assert response.status_code == 422
-        assert response.json()["detail"]["code"] == "OPENAPI_INVALID_CREDENTIAL"
+        assert response.json()["detail"]["code"] == "OPENAPI_CREDENTIAL_BASIC_INCOMPLETE"
 
 
 def test_put_basic_null_or_string_deletes_envelope():
@@ -474,7 +474,8 @@ def test_duplicate_import_returns_409_with_existing_id():
     again = client.post("/api/openapi/imports", json=_content(), headers=OPERATOR_A)
     assert again.status_code == 409
     detail = again.json()["detail"]
-    assert detail["code"] == "OPENAPI_DUPLICATE"
+    # 打包 BC：导入重复＝SPEC_ALREADY_IMPORTED（恢复冲突才是 RESTORE_CLASH）
+    assert detail["code"] == "OPENAPI_SPEC_ALREADY_IMPORTED"
     assert detail["existingSpecId"] == "openapi-1"
 
 

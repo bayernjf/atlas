@@ -139,7 +139,7 @@ class ConnectionService:
 
         scopes = body.get("scopes") or []
         if not isinstance(scopes, list) or not all(isinstance(x, str) for x in scopes):
-            raise ConnectionServiceError("INVALID_PARAMETER", "scopes 必须是字符串数组", 422)
+            raise ConnectionServiceError("CONNECTION_SCOPES_INVALID", "scopes 必须是字符串数组", 422)
 
         redirect_uri = (body.get("redirectUri") or "").strip() or default_redirect_uri()
         client_secret = body.get("clientSecret")
@@ -187,7 +187,7 @@ class ConnectionService:
         if "scopes" in body:
             scopes = body["scopes"] or []
             if not isinstance(scopes, list) or not all(isinstance(x, str) for x in scopes):
-                raise ConnectionServiceError("INVALID_PARAMETER", "scopes 必须是字符串数组", 422)
+                raise ConnectionServiceError("CONNECTION_SCOPES_INVALID", "scopes 必须是字符串数组", 422)
             conn.scopes = list(scopes)
         if "redirectUri" in body and isinstance(body["redirectUri"], str) and body["redirectUri"].strip():
             conn.redirect_uri = body["redirectUri"].strip()

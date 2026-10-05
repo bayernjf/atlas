@@ -162,7 +162,7 @@ def test_channel_tool_bad_json_fails_before_any_http():
     )
     node = result["outputs"]["tool-1"]
     assert node["result"]["status"] == "FAILED"
-    assert node["result"]["code"] == "INVALID_PARAMETER"
+    assert node["result"]["code"] == "TOOL_PARAMS_NOT_JSON"
     assert transport.calls == [], "非法 params 不该打到外部 API"
 
 

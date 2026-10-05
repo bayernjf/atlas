@@ -87,7 +87,7 @@ class PgImportStore:
             ).first()
             if duplicate is not None:
                 raise ImportStoreError(
-                    "OPENAPI_DUPLICATE",
+                    "OPENAPI_SPEC_ALREADY_IMPORTED",
                     f"该 API 规格已导入（{duplicate[0]}：{duplicate[1]}）",
                     status_code=409,
                     existing_spec_id=duplicate[0],
@@ -239,7 +239,7 @@ class PgImportStore:
                 {"t": self._tenant_id, "h": target.content_hash, "id": spec_id},
             ).first()
             if clash is not None:
-                return False, "OPENAPI_DUPLICATE", clash[0]
+                return False, "OPENAPI_RESTORE_CLASH", clash[0]
             db.execute(
                 text(
                     "UPDATE openapi_imports SET deleted_at = NULL "

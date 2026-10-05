@@ -72,12 +72,12 @@ def _normalize_recipients(to: object) -> list[str]:
     elif isinstance(to, list) and all(isinstance(item, str) for item in to):
         recipients = to
     else:
-        raise MessageSendError("INVALID_PARAMETER", "to 必须是字符串或字符串数组")
+        raise MessageSendError("MESSAGE_TO_INVALID", "to 必须是字符串或字符串数组")
     recipients = [item.strip() for item in recipients if item.strip()]
     if not recipients:
         raise MessageSendError("MISSING_PARAMETER", "缺少 to")
     if len(recipients) > MAX_RECIPIENTS:
-        raise MessageSendError("INVALID_PARAMETER", f"群发收件人上限 {MAX_RECIPIENTS} 个")
+        raise MessageSendError("MESSAGE_RECIPIENT_LIMIT", f"群发收件人上限 {MAX_RECIPIENTS} 个")
     return recipients
 
 
@@ -131,15 +131,15 @@ class MessageService:
             elif isinstance(msg_format, str) and msg_format in ("text", "markdown"):
                 im_msg_format = msg_format
             else:
-                raise MessageSendError("INVALID_PARAMETER", "msgFormat 必须是 text 或 markdown")
+                raise MessageSendError("MESSAGE_FORMAT_INVALID", "msgFormat 必须是 text 或 markdown")
             try:
                 im_mentions = normalize_mentions(mentions)
             except ValueError as exc:
-                raise MessageSendError("INVALID_PARAMETER", str(exc)) from exc
+                raise MessageSendError("MESSAGE_MENTIONS_INVALID", str(exc)) from exc
         # docs/58：webhook 与 IM 渠道支持 1-20 个 URL 的数组（群发，逐目标投递）。
         recipients = _normalize_recipients(to)
         if channel_value == "email" and any("@" not in address for address in recipients):
-            raise MessageSendError("INVALID_PARAMETER", "email 渠道的收件地址必须包含 @")
+            raise MessageSendError("MESSAGE_EMAIL_ADDRESS_INVALID", "email 渠道的收件地址必须包含 @")
 
         message_id = str(uuid.uuid4())
         sent_at = datetime.now(timezone.utc).isoformat()
@@ -296,16 +296,16 @@ class MessageService:
         if secret is None or (isinstance(secret, str) and not secret.strip()):
             return None
         if not isinstance(secret, str):
-            raise MessageSendError("INVALID_PARAMETER", "secret 必须是字符串")
+            raise MessageSendError("MESSAGE_SECRET_TYPE_INVALID", "secret 必须是字符串")
         value = secret.strip()
         if channel not in ("dingtalk", "feishu", "webhook"):
             raise MessageSendError(
-                "INVALID_PARAMETER",
+                "MESSAGE_SECRET_CHANNEL_UNSUPPORTED",
                 f"{channel} 渠道不支持 secret（仅 dingtalk/feishu/webhook）",
             )
         if len(value) > MAX_SECRET_LENGTH:
             raise MessageSendError(
-                "INVALID_PARAMETER", f"secret 长度上限 {MAX_SECRET_LENGTH} 字符"
+                "MESSAGE_SECRET_TOO_LONG", f"secret 长度上限 {MAX_SECRET_LENGTH} 字符"
             )
         return value
 
