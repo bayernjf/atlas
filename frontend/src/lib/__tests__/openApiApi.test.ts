@@ -182,7 +182,7 @@ describe('OpenAPI apiClient（docs/42 §5）', () => {
     vi.stubGlobal(
       'fetch',
       mockFetch(
-        { detail: { code: 'OPENAPI_LIMIT_EXCEEDED', message: '每租户最多导入 5 份 API 规格' } },
+        { detail: { code: 'OPENAPI_TENANT_SPECS_LIMIT', message: '每租户最多导入 5 份 API 规格' } },
         422,
       ),
     )

@@ -96,14 +96,14 @@ def _validate_params(params: object) -> object:
         return params
     if isinstance(params, list) and all(isinstance(item, dict) for item in params):
         return params
-    raise DatabaseAdapterError("INVALID_PARAMETER", "params 必须是对象或对象数组（绑定参数）")
+    raise DatabaseAdapterError("DATABASE_PARAMS_INVALID", "params 必须是对象或对象数组（绑定参数）")
 
 
 def _validate_limit(limit: object) -> int:
     if isinstance(limit, bool) or not isinstance(limit, int):
-        raise DatabaseAdapterError("INVALID_PARAMETER", "limit 必须是 1-1000 的整数")
+        raise DatabaseAdapterError("DATABASE_LIMIT_TYPE_INVALID", "limit 必须是 1-1000 的整数")
     if limit < 1 or limit > MAX_LIMIT:
-        raise DatabaseAdapterError("INVALID_PARAMETER", "limit 必须在 1-1000 之间")
+        raise DatabaseAdapterError("DATABASE_LIMIT_RANGE_INVALID", "limit 必须在 1-1000 之间")
     return limit
 
 

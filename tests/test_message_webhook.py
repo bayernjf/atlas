@@ -213,7 +213,7 @@ def test_service_wecom_secret_still_rejected():
     svc = MessageService()
     with pytest.raises(MessageSendError) as ei:
         svc.send("wecom", "https://qyapi.weixin.qq.com/x", "s", "b", secret="k")
-    assert ei.value.code == "INVALID_PARAMETER"
+    assert ei.value.code == "MESSAGE_SECRET_CHANNEL_UNSUPPORTED"
 
 
 def test_service_webhook_multiple_urls_all_succeed_same_idempotency_id():

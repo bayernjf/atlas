@@ -54,7 +54,7 @@ def test_duplicate_import_rejected_with_existing_id():
     first = store.add(_spec())
     with pytest.raises(ImportStoreError) as exc:
         store.add(_spec())
-    assert exc.value.code == "OPENAPI_DUPLICATE"
+    assert exc.value.code == "OPENAPI_SPEC_ALREADY_IMPORTED"
     assert exc.value.status_code == 409
     assert exc.value.existing_spec_id == first.spec_id
     # 仅一条，名额未被重复占用
@@ -82,7 +82,7 @@ def test_quota_counts_only_active():
     # 已满
     with pytest.raises(ImportStoreError) as exc:
         store.add(_spec(title="overflow", base_url="https://overflow.example.com"))
-    assert exc.value.code == "OPENAPI_LIMIT_EXCEEDED"
+    assert exc.value.code == "OPENAPI_TENANT_SPECS_LIMIT"
     # 删一条（软删）后名额释放，可再导
     store.delete(specs[0].spec_id)
     extra = store.add(_spec(title="overflow", base_url="https://overflow.example.com"))
@@ -101,7 +101,7 @@ def test_restore_success_conflict_and_missing():
     assert store.delete(a.spec_id) is True
     b = store.add(_spec())
     ok, code, existing = store.restore(a.spec_id)
-    assert ok is False and code == "OPENAPI_DUPLICATE" and existing == b.spec_id
+    assert ok is False and code == "OPENAPI_RESTORE_CLASH" and existing == b.spec_id
     assert store.get(a.spec_id) is None  # 冲突未恢复
 
     # 不存在 / 对未删项恢复 → (False, None, None)
@@ -137,6 +137,8 @@ def test_purge_requires_soft_delete_then_physically_removes():
         store.purge(a.spec_id)
     assert exc.value.code == "OPENAPI_NOT_SOFT_DELETED"
     assert exc.value.status_code == 409
+    # 打包 BG：异常带 params（端点折算时透传进 409 体）
+    assert exc.value.params == {"specId": a.spec_id}
     # 未物理删除，仍在未删列表
     assert [s.spec_id for s in store.list()] == [a.spec_id]
 

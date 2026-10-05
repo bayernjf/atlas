@@ -57,11 +57,12 @@ _COMPONENTS_PREFIX = "#/components/"
 
 def _resolve_ref(ref: str, components: dict[str, Any]) -> Any:
     if not isinstance(ref, str) or not ref.startswith(_COMPONENTS_PREFIX):
-        raise UnsupportedSchema("不支持外部 $ref（仅解析本文档 #/components 内引用）")
+        raise UnsupportedSchema("OPENAPI_REF_EXTERNAL",
+                          "不支持外部 $ref（仅解析本文档 #/components 内引用）")
     target: Any = components
     for segment in ref[len(_COMPONENTS_PREFIX):].split("/"):
         if not isinstance(target, dict) or segment not in target:
-            raise UnsupportedSchema(f"$ref 目标不存在：{ref}")
+            raise UnsupportedSchema("OPENAPI_REF_MISSING", f"$ref 目标不存在：{ref}")
         target = target[segment]
     return target
 
@@ -73,10 +74,10 @@ def _convert_type(node: dict[str, Any]) -> str | None:
     if isinstance(raw, list):
         chosen = next((t for t in raw if t != "null"), None)
         if chosen is None:
-            raise UnsupportedSchema("不支持仅为 null 的类型")
+            raise UnsupportedSchema("OPENAPI_TYPE_NULL_ONLY", "不支持仅为 null 的类型")
         raw = chosen
     if raw not in ("string", "integer", "number", "boolean", "object", "array"):
-        raise UnsupportedSchema(f"不支持的类型：{raw}")
+        raise UnsupportedSchema("OPENAPI_TYPE_UNSUPPORTED", f"不支持的类型：{raw}")
     return raw
 
 
@@ -88,16 +89,17 @@ def convert_schema(
     depth: int = 0,
 ) -> dict[str, Any]:
     if not isinstance(node, dict):
-        raise UnsupportedSchema("schema 必须是对象")
+        raise UnsupportedSchema("OPENAPI_SCHEMA_NOT_OBJECT", "schema 必须是对象")
 
     if "$ref" in node:
         ref = node["$ref"]
         if not isinstance(ref, str) or not ref.startswith(_COMPONENTS_PREFIX):
-            raise UnsupportedSchema("不支持外部 $ref（仅解析本文档 #/components 内引用）")
+            raise UnsupportedSchema("OPENAPI_REF_EXTERNAL",
+                          "不支持外部 $ref（仅解析本文档 #/components 内引用）")
         if ref in seen:
-            raise UnsupportedSchema("$ref 引用环")
+            raise UnsupportedSchema("OPENAPI_REF_CYCLE", "$ref 引用环")
         if depth >= MAX_REF_DEPTH:
-            raise UnsupportedSchema("$ref 深度超限")
+            raise UnsupportedSchema("OPENAPI_REF_TOO_DEEP", "$ref 深度超限")
         return convert_schema(
             _resolve_ref(ref, components),
             components,
@@ -106,11 +108,12 @@ def convert_schema(
         )
 
     if "oneOf" in node:
-        raise UnsupportedSchema("不支持的关键字 oneOf")
+        raise UnsupportedSchema("OPENAPI_KEYWORD_ONEOF", "不支持的关键字 oneOf")
 
     unknown_hard = _HARD_UNSUPPORTED & set(node)
     if unknown_hard:
-        raise UnsupportedSchema(f"不支持的关键字：{sorted(unknown_hard)[0]}")
+        raise UnsupportedSchema("OPENAPI_KEYWORD_UNSUPPORTED",
+                          f"不支持的关键字：{sorted(unknown_hard)[0]}")
 
     if "allOf" in node:
         return _convert_all_of(node, components, seen, depth)

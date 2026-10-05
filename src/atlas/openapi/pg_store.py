@@ -69,8 +69,9 @@ class PgImportStore:
     ) -> ImportedSpec:
         if len(spec.operations) > MAX_OPERATIONS_PER_SPEC:
             raise ImportStoreError(
-                "OPENAPI_LIMIT_EXCEEDED",
+                "OPENAPI_SPEC_OPERATIONS_LIMIT",
                 f"单份规格最多包含 {MAX_OPERATIONS_PER_SPEC} 个 operation",
+                params={"max": MAX_OPERATIONS_PER_SPEC},
             )
         operations = [op for op in spec.operations if not op.skipped]
         fingerprint = spec.content_fingerprint()
@@ -87,7 +88,7 @@ class PgImportStore:
             ).first()
             if duplicate is not None:
                 raise ImportStoreError(
-                    "OPENAPI_DUPLICATE",
+                    "OPENAPI_SPEC_ALREADY_IMPORTED",
                     f"该 API 规格已导入（{duplicate[0]}：{duplicate[1]}）",
                     status_code=409,
                     existing_spec_id=duplicate[0],
@@ -103,8 +104,9 @@ class PgImportStore:
             )
             if count >= MAX_SPECS_PER_TENANT:
                 raise ImportStoreError(
-                    "OPENAPI_LIMIT_EXCEEDED",
+                    "OPENAPI_TENANT_SPECS_LIMIT",
                     f"每租户最多导入 {MAX_SPECS_PER_TENANT} 份 API 规格",
+                    params={"max": MAX_SPECS_PER_TENANT},
                 )
             seq = int(db.execute(text("SELECT nextval('storage_id_seq')")).scalar_one())
             spec_id = f"openapi-{seq}"
@@ -205,6 +207,7 @@ class PgImportStore:
                     "OPENAPI_NOT_SOFT_DELETED",
                     f"API 规格 {spec_id} 尚未软删除，请先删除再彻底删除",
                     status_code=409,
+                    params={"specId": spec_id},
                 )
             result = db.execute(
                 text(
@@ -239,7 +242,7 @@ class PgImportStore:
                 {"t": self._tenant_id, "h": target.content_hash, "id": spec_id},
             ).first()
             if clash is not None:
-                return False, "OPENAPI_DUPLICATE", clash[0]
+                return False, "OPENAPI_RESTORE_CLASH", clash[0]
             db.execute(
                 text(
                     "UPDATE openapi_imports SET deleted_at = NULL "

@@ -3,6 +3,60 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+
+### fix(openapi)：D55 冻结桶第四批＝NOT_SOFT_DELETED 补译出桶＋INVALID_PARAMETER 定性节点产出（2026-10-05 打包 BG；docs/08 打包 BG 块；docs/14 D55 17→15；docs/13 打包 BG 小节）
+
+- **收的是桶里工程内可闭的最后两条**，其余 15 条各有阻碍：`CHANNEL_*`／`OAUTH_*`／`CONNECTION_NOT_FOUND` 共 11 条是 `detail=str(exc)` 只发中文、code 不进体的第三态（补译前需契约决策）；发送三码 demo 进程内不重发；`WEBHOOK_MALFORMED` 待跟入站路由。
+- **`OPENAPI_NOT_SOFT_DELETED` 补 zh/en＋params 出桶**：内存/PG 两档 `purge` 的 raise 补 `params={"specId":…}`，hard-delete 端点的手写折算处透传进 409 体（BF 只透传了 import 端点，本批补齐 hard 分支）；`frontend/src/locales/{zh-CN,en-US}/runtime.json` 各 +1（64→65 键，zh 模板与后端中文原文逐字同句），加进 U1162 `http_facing`。状态码形状（409/404/204）不变。
+- **`OPENAPI_INVALID_PARAMETER` 定性＝仅节点产出**：唯一发射点 `openapi/adapter.py::_build_url`（`HttpApiCallError`，缺路径参数），适配器内部 catch 折 `ActionResult.failed`＝节点产出，api 层零引用——按 docs/57 §2.5 归 `TOOL_OUTPUT_ONLY`，并加进 `TRIAGED_NODE_OUTPUT_ONLY` 让 U1165 钉住"api 层零出体引用"（五条→六条）。取值集合不变。
+- **门**：错误码守护 **14 passed**；相关端点/解析/去重合计 **82 passed**；PG 集成（临时 pgvector 容器）**15 passed**；后端全量 **2365/150/0**（349.03s，未新增测试函数）；前端 vitest **788/2**、oxlint 0/0、tsc＋build 过、i18n/runtime 两文件 **71 passed**。**零新依赖／零迁移／无 ADR**。
+
+### fix(openapi)：D55 冻结桶第三批＝两条一码多话粗码拆成具体码（2026-10-05 打包 BF；docs/08 打包 BF 块；docs/14 D55 19→17；docs/13 打包 BF 小节）
+
+- **承接 BE 的"刻意不收"**：BE 补译 3 条结构化出体码时实测到 docs/14 D55 冻结桶里仍有 2 条**已在发、已结构化出体、却一码多话**的码——`OPENAPI_FETCH_FAILED`（HTTP 状态面与网络/出向面两字面量）与 `OPENAPI_LIMIT_EXCEEDED`（单份 operation 上限与每租户份数上限两字面量）。本批按打包 BC 已定的"一码一答案"纪律**拆码**而非补译。
+- **拆码结果**：`OPENAPI_FETCH_FAILED` → `OPENAPI_FETCH_NETWORK_ERROR`（egress 拒绝/`httpx.HTTPError`/`ValueError`，params `{detail}`）与 `OPENAPI_FETCH_HTTP_ERROR`（上游 HTTP ≥400，params `{status}`）；`OPENAPI_LIMIT_EXCEEDED` → `OPENAPI_SPEC_OPERATIONS_LIMIT`（params `{max}`）与 `OPENAPI_TENANT_SPECS_LIMIT`（params `{max}`）。旧两码全仓零发射、不给别名（U1161 钉住）。保持既有 egree 归并行为与 200/5 配额数值不变，HTTP 折算状态码仍 422。
+- **params 通道补齐**：`ImportStoreError` 补可选 `params` 字段并在 `POST /api/openapi/imports` 折算处透传（`detail={"code","message","params"}`），让 `{max}` 英文态模板能填得满，不再回退后端中文原文；`OpenApiError` 与 `_openapi_http_error` 的 params 透传在 BC 已落地，本批复用。
+- **守护与目录**：4 条新码补 zh/en（`frontend/src/locales/{zh-CN,en-US}/runtime.json` 各 +4，60→64 键，奇偶一致）并加进 `tests/test_error_code_channels.py` U1162 `http_facing`；两条旧粗码从 `FROZEN_FOR_TRIAGE` 删除（桶 **19→17**，U1164 硬编码 27 条快照仍是超集）。既有测试断言按"测哪个答案"改到具体码。
+- **门**：错误码守护 **14 passed**；相关端点/解析/去重 **82 passed**；PG 集成（临时 pgvector 容器）**15 passed**；后端全量 **2365/150/0**（305.86s，对账＝BE 2364＋新增 1 例）；前端 vitest **788/2**、oxlint 0/0、tsc＋build 过、i18n/runtime 两文件 **71 passed**。**零新依赖／零迁移／无 ADR**。
+
+### feat(i18n)：D55 冻结桶第二批定性——3 条结构化出体错误码补 zh/en（2026-10-05 打包 BE；docs/08 打包 BE 块；docs/14 D55 22→19；docs/13 打包 BE 小节）
+
+- **承接 BD**：BD 收"仅节点产出"族，本批改收 D55 冻结桶里**经真实端点结构化出体**一族中证据最干净的 3 条——`DLQ_NOT_FAILED`（`POST /api/demo/deliveries/{seq}/replay` 折 409）、`DLQ_BODY_UNAVAILABLE`（同端点折 422）、`OPENAPI_UNSUPPORTED_VERSION`（parser 抛 `OpenApiError`→`_openapi_http_error` 折 422；`UnsupportedSchema` 为其子类、except 捕获已实跑确认）。
+- **选条三判据同时满足**：① 有端点折结构化响应（`detail={"code","message"}`，code 到得了英文使用者）；② 全仓仅 1 条消息字面量（过 U1160 一码多话门）；③ 无插值（静态译文即可）。`frontend/src/locales/{zh-CN,en-US}/runtime.json` 各 +3（57→60 键，奇偶一致）；三码从 `FROZEN_FOR_TRIAGE` 删除（桶 22→19）并加进 U1162 `http_facing`，从此被"HTTP 面码 zh/en 双份＋不得多话"钉住。
+- **刻意不收（照实）**：`OPENAPI_FETCH_FAILED`／`OPENAPI_LIMIT_EXCEEDED` 各承载 2 条不同字面量（一码多话，须按 BC 纪律拆码而非补译）；`OPENAPI_NOT_SOFT_DELETED` 带 `{spec_id}` 插值（须先补 params 通道）；`OPENAPI_INVALID_PARAMETER` 在 `openapi/adapter.py` 折 `ActionResult.failed`＝节点产出；发送三码在 demo 进程内存储下重放不真实重发、非端点出体族。这 6 码连同 `CHANNEL_*`／`OAUTH_*`／`CONNECTION_NOT_FOUND`（`str(exc)` 只发中文第三态）、`WEBHOOK_MALFORMED` 共 19 条留桶续批。
+- **门**：错误码守护 14 passed、端点/解析相关 86 passed、后端全量 **2364/150/0**（332.85s，未新增测试函数）、前端 vitest **788/2**、oxlint 0/0、tsc＋build 过、i18n/runtime 两文件 71 passed。零新依赖／零迁移／无 ADR；docs/03／04／12 不动（码早已在发，只补译文目录）。
+
+### test(errors)＋ci：D55 冻结桶第一批定性（5 条适配器码确认为仅节点产出）＋修定时回放就绪探针（2026-10-05 打包 BD＋ci；docs/08 打包 BD 块；docs/14 D55；docs/13 打包 BD 小节）
+
+- **打包 BD（D55 逐条定性的第一批）**：把 docs/14 D55 冻结桶 27 条里**证据最干净**的 5 条逐条跟完发射路径后移出——`DB_NOT_CONFIGURED`／`DB_SQL_ERROR`／`DB_WRITE_FORBIDDEN`（database 适配器）、`HTTP_CONNECT_ERROR`／`HTTP_TIMEOUT`（httpapi 适配器，openapi 适配器同样内部 catch）只在适配器 `_execute` 内被接住折成 `ActionResult.failed(StructuredError)`（节点产出 `result.code`），api 层（只有 `main.py`）零引用、无端点折算出体；按 docs/57 §2.5 归 `TOOL_OUTPUT_ONLY`，桶 **27→22**。不改任何响应 code 取值集合，docs/03／04／12 不动。
+- **真产出＝U1165 机检（含反向门）**：把这 5 条（`TRIAGED_NODE_OUTPUT_ONLY`）钉成"`src/atlas/api/` 下零出体引用"，将来有人在端点折算它们（到得了英文使用者）即红，逼其补 zh/en 译文而非继续豁免；临时植 `DB_SQL_ERROR` 引用实跑转红、删除恢复绿。与 U1151（豁免表不腐烂）互补。顺手硬化 U1164：`FROZEN_SNAPSHOT` 由"从当前桶派生"改为**硬编码原始 27 条**——派生写法会让新增码同时进快照、"只许缩小"永远绿。
+- **刻意不收的 22 条**：发送三码＋`DLQ_*` 经 demo 重放端点结构化出体（要译）；`CHANNEL_*`／`OAUTH_*`／`CONNECTION_NOT_FOUND` 走 `detail=str(exc)` 只发中文、code 不进体（第三态，补译前需契约决策）；`OPENAPI_*` 多经 `_openapi_http_error` 结构化出体（要译）；`WEBHOOK_MALFORMED` 待跟入站路由。留桶续批。
+- **ci(replay)**：修 `.github/workflows/release-gate-cron.yml` 就绪探针在 GitHub 默认 `bash -e` 下首次 `curl`（uvicorn 冷启动连接被拒，exit 7）即被 `set -e` 判死、30 次重试只跑一次的问题（2026-10-05 main 定时 run 实测 29ms exit 7、从未打印 did-not-become-ready）；探针 curl 末尾加 `|| true`，连接失败时 `%{http_code}` 已归一为 `000`，循环继续直到 200。本地 `bash -e` 复刻验证第 4 秒就绪、exit 0（commit `36fdd5b`）。
+- **门**：`tests/test_error_code_channels.py` **14 passed**；后端全量 **2364 passed／150 skipped／0 failed**（318.46s，对账＝BC 2363＋U1165 净增 1）、前端本批零改动。零新依赖／零迁移／无 ADR。
+
+### fix(errors)：五条"一码多话"粗码拆成具体码＋把"一码多话"变成机检（2026-10-05 打包 BC；docs/14 D53 ① 收口；docs/08 打包 BC 立项/收口块）
+
+- **为什么不是"补翻译"而是"拆码"**：A-4 从"19/22 条无文案"被 AW 重测改成"211 条码里只有 5 条是**真欠**"，而欠的原因不是缺文案，是**一个码承载多条不同答案**——按码出模板会把诊断压成一句甚至误导。这 5 条此前躺在豁免表 `COARSE_CODE` 里，而豁免表是**手抄清单**：以后谁再加一条多话的码，守护不会红。所以本批的真产出是**把这条性质变成机检**。
+- **落码**：五条粗码（`INVALID_PARAMETER`／`NOT_FOUND`／`OPENAPI_INVALID_CREDENTIAL`／`OPENAPI_INVALID_DOCUMENT`／`WAIT_EVENT_PAYLOAD_INVALID`）**全仓零发射**，拆成 **46 条**具体码；`runtime.json` **29→57 键**（新增 29、删旧 `OPENAPI_DUPLICATE` 1），节点产出的 **17 条**进 `TOOL_OUTPUT_ONLY`（docs/57 §2.5 不译），带插值的 5 条补 params 通道（`OpenApiError.params`）。`COARSE_CODE` 清空为 `set()`。
+- **46 条怎么来的（照实）**：29 条是契约 D-1 列举的；**另 15 条是契约自己没数全的**——`OPENAPI_INVALID_DOCUMENT` 借 `UnsupportedSchema` 一直把 `OPENAPI_REF_*`／`PARAM_*`／`BODY_*`／`KEYWORD_*`／`TYPE_*` 族压在同一个码下；再有 2 条来自**机检一上就抓到**的 `OPENAPI_DUPLICATE`（已译文案却仍多话，手抄清单从来没有它）。
+- **U1160（真产出）**：按形状抓 `(码, 消息字面量)` 去重，同码 ≥2 条不同字面量即红；U1161 钉旧码零发射、U1162 钉 HTTP 面新码 zh/en 双份、U1163 反向门证明枚举器看得见、U1164 把枚举器新量出的 27 条盲区码钉成只许缩小的冻结桶（docs/14 **D55**）。
+- **枚举器盲区有三层，本批补到第三层**：`XxxError("CODE", …)`（浮出 27 条）之外，`UnsupportedSchema("CODE", …)`（类名不以 `Error` 结尾）与带类型标注的默认值 `code: str = "CODE"` 此前都看不见——不补后两层，本批自己拆出的 **16 条**码就在守护之外，"变成机检"是空话。
+- **门**：后端全量 **2363 passed／150 skipped／0 failed**（对账＝BB 的 2358＋本批净增 5）；前端 vitest **788 passed／2 skipped**、oxlint **0 error/0 warning**、tsc＋build 全过。零新依赖／零迁移／无新 ADR。
+- **不做（照实）**：不做 D53 ②③（工具结果 `error_code`、webhook 死信原因码，长期口径不译）；不改 HTTP 状态码；不给旧码留兼容别名；D54（condition 表达式诊断）另立批。
+- **登记**：docs/08（立项＋收口）／03／04／12（码取值集合与各处表）／13（U1160–U1164）／14（D53 ① 划掉、D55）／17 §2.4／89 §17／CHANGELOG／handoff。
+- **提交**：fix 拆码＋test 机检＋前端文案一原子、docs 收口一原子（docs 立项已先行入库），无 AI co-author、**未 push**。
+
+### feat(deploy)：网络边界 edge／Caddy 演练（打包 BB 落码，2026-10-05；docs/73 4.1 现欠第②件的工程半边；docs/08 打包 BB 立项块）
+
+- **一句话**：`prod_rehearsal.py` 的 override 把 caddy 的 profile 改成 `["skip"]`、所有请求走 http ⇒ TLS／反代／主机头路由三类判据**从没被演过**。本批把 edge 形态真跑一遍：应用端口**不映射**出宿主机，只让 Caddy 暴露 80/443。
+- **落码**：新增 `deploy/Caddyfile.rehearsal`（`atlas.internal.test` ＋ `tls internal`，与出厂样例逐条同形——**不改生产样例**，否则真部署方会抄到自签配置）与 `scripts/dev/edge_rehearsal.py`（九段）；机检 `tests/test_edge_rehearsal_config.py` U1159（5 例，含两向反向门）。
+- **〔跑〕九段全过 exit 0**：经 443 用 Caddy 内部 CA **根证书真校验**（非 `-k`）`/api/ready` 2.1s 到 200、`RestartCount=0`；80 ⇒ 308 跳 HTTPS；**宿主机连 127.0.0.1:8000 连不上而容器内 healthcheck 转绿**（＝Caddyfile 注释里"生产只让 Caddy 暴露 80/443"那条建议第一次被验）；登录/首登强制位 403/改密全经 443；**SSE 经反代收到 3 帧**（没被缓冲）；`/metrics` 与 demo 面经 443 仍 404。
+- **踩到并修掉的三条（都不是产品缺陷，但每条都能让"演练红了"骗过一次复盘）**：`ATLAS_MASTER_KEY` 须是解码后恰 32 字节（48 字节随机串会让容器启动即崩，症状却是"等不到 ready"）；`docker compose down` 不带 `--profile edge` 会残留 caddy 占住 80/443；`curl` 的退出码不是 HTTP 状态码。
+- **门**：后端全量 **2358 passed / 150 skipped / 0 failed**（对账＝BA 的 2353＋U1159 的 5）。
+- **不做（照实）**：证书是自签的 ⇒ **不证"真 CA 签发"**，docs/73 4.1 第②件仍剩真域名与证书；不改出厂 Caddyfile 与 compose 默认形态；不把 edge 加进 CI。
+- **登记**：docs/08（立项＋收口）／13（U1159）／34（P0-3 行）／73（4.1 行）／`deploy/README.md`／CHANGELOG／handoff。
+- **提交**：docs 立项＋feat 演练脚本＋test 机检＋docs 收口四原子，无 AI co-author、**未 push**。
+
 ### fix(deploy)＋test：部署面变量总账——53 个旋钮只有 14 个进得了容器的日子结束了（2026-10-05 打包 BA）
 
 - **把 AZ 那类缺口类化**：全量对账实测 `src/atlas` 读 **53** 个部署变量，AZ 之后的 compose 只覆盖 **14** 个。剩下 39 个"代码读 env、容器永远拿不到"的旋钮里，有一整套运维面：retention 8 键、审计环大小、会话时长、调度开关与轮询间隔、`/metrics` 令牌、egress allowlist、A2A 令牌、OAuth 回调基址、**数据库适配器的出站 DSN**（`ATLAS_DATABASE_URL`——不给它，图永远查不了真库）、HTTP 适配器四旋钮……SMTP 只是第一个被偶然发现的。

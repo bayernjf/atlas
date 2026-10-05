@@ -54,6 +54,8 @@
   - body `{"credentials": {name: value}}`；未知 scheme 名 422 `OPENAPI_INVALID_CREDENTIAL`；
   - 非空值加密后 upsert；空串删除该 scheme 既有信封；
   - 响应 `{"configured": [name, ...]}`（当前已配置信封的 scheme 名，按声明序；不回值）。
+
+> **〔2026-10-05 打包 BC 勘误〕`OPENAPI_INVALID_CREDENTIAL` 已按答案拆开，原文保留不改**：未知方案 → `OPENAPI_CREDENTIAL_SCHEME_UNKNOWN`；Basic 缺字段 → `OPENAPI_CREDENTIAL_BASIC_INCOMPLETE`（见 [docs/46](46-OpenAPI-HTTPBasic凭证子集批契约设计.md)）。当前取值集合以 [docs/03](03-数据模型与Schema-契约索引.md) 该节为准。
 - `GET /api/openapi/imports`、`GET .../{id}` 返回的 ImportedSpec 带 `security_schemes` 与 `credential_envelopes`——**信封字符串不属于秘密值**（AES-GCM 无密钥不可解），沿用 connections 投影口径；任何响应通道均不出现明文密钥。
 - 鉴权档位与既有端点一致（preview/import/credentials 需 operate，list/get read，delete administer）。
 

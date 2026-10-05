@@ -122,14 +122,14 @@ def test_name_synthesis_without_operation_id():
 def test_invalid_json_rejected():
     with pytest.raises(OpenApiError) as exc:
         parse_document("{not json")
-    assert exc.value.code == "OPENAPI_INVALID_DOCUMENT"
+    assert exc.value.code == "OPENAPI_DOCUMENT_NOT_OPENAPI3"
 
 
 def test_yaml_rejected_with_conversion_hint():
     yaml_doc = "openapi: 3.0.0\ninfo:\n  title: x\n"
     with pytest.raises(OpenApiError) as exc:
         parse_document(yaml_doc)
-    assert exc.value.code == "OPENAPI_INVALID_DOCUMENT"
+    assert exc.value.code == "OPENAPI_DOCUMENT_NOT_OPENAPI3"
     assert "YAML" in exc.value.message
 
 
@@ -144,7 +144,7 @@ def test_missing_servers_rejected():
     doc = {k: v for k, v in PETSTORE.items() if k != "servers"}
     with pytest.raises(OpenApiError) as exc:
         _parse(doc)
-    assert exc.value.code == "OPENAPI_INVALID_DOCUMENT"
+    assert exc.value.code == "OPENAPI_DOCUMENT_MISSING_SERVERS"
     assert "servers" in exc.value.message
 
 

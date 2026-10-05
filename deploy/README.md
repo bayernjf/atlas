@@ -9,7 +9,8 @@ docs/14 D10b 的进程内子集。**不是**完整的多实例/CD 方案（NATS�
 
 | 文件/端点 | 作用 |
 |---|---|
-| `Caddyfile` | Caddy 2 反代：自动 TLS（Let's Encrypt）、gzip、`/metrics` 网段白名单 |
+| `Caddyfile` | **生产样例**：Caddy 2 反代，自动 TLS（Let's Encrypt）、gzip、`/metrics` 网段白名单 |
+| `Caddyfile.rehearsal` | **演练专用**（docs/08 打包 BB）：与上一份逐条同形，只把站点换成 `atlas.internal.test` ＋ `tls internal`（Caddy 内部 CA）。真域名到位前，出厂那份永远跑不起来，所以要有一份能跑的形状；**别把自签那行抄进生产样例** |
 | `/api/health` | 存活探针：进程在跑即 200（不检查依赖） |
 | `/api/ready` | 就绪探针：PG 档执行 `SELECT 1`，失败 503，供编排摘流 |
 | `/metrics` | Prometheus 文本指标（0.0.4），无鉴权，靠网络层/反代白名单隔离 |
@@ -37,6 +38,13 @@ docker compose --profile edge up -d --build
 
 Caddy 首次启动会自动向 Let's Encrypt 申请证书并在到期前自动续期，
 证书数据持久化在 `caddy-data` 卷。
+
+**这套形态在 2026-10-05 被真跑过一次**（`scripts/dev/edge_rehearsal.py`，九段全过）：
+自签证书＋`--resolve` 指路，验到 TLS 真校验可达、80 ⇒ 308 跳 HTTPS、
+**应用端口不映射出宿主机时 Caddy 反代仍通且容器内 healthcheck 仍绿**（即上面那句
+"生产只让 Caddy 暴露 80/443"的建议成立）、SSE 帧经反代**增量**到达（没被缓冲）、
+`/metrics` 与 demo 面经 443 仍 404。**没验的是"证书由真 CA 签发"**——那需要真域名，
+是 docs/73 4.1 剩下的半件。本地跑：`--http-port`／`--https-port` 可避开被占用的 80/443。
 
 4. （生产）确认对外只暴露 80/443：把 `docker-compose.yml` 中 atlas 服务的
    `"8000:8000"` 端口映射删除或改为绑定 `127.0.0.1:8000:8000`。

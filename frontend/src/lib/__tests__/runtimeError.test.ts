@@ -137,7 +137,9 @@ describe('运行期错误码 i18n（docs/60 G1）', () => {
     changeLanguage('zh-CN')
     const enOnly: Array<[string, string]> = [
       ['SUBGRAPH_SUSPEND_UNSUPPORTED', 'suspend point inside a subgraph'],
-      ['OPENAPI_DUPLICATE', 'duplicates an existing'],
+      // 打包 BC：`OPENAPI_DUPLICATE` 拆成两条具体码（一码只许一条答案），对照跟着改
+      ['OPENAPI_SPEC_ALREADY_IMPORTED', 'already been imported'],
+      ['OPENAPI_RESTORE_CLASH', 'duplicates an existing'],
       ['OPENAPI_NO_IMPORTABLE_OPERATION', 'No importable operations'],
       ['WAIT_ALREADY_SIGNALED', 'already been signalled'],
       ['WAIT_TOKEN_NOT_FOUND', 'does not exist or has already been cleaned up'],

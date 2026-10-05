@@ -426,7 +426,7 @@ def test_service_im_bad_msg_format_invalid(bad_fmt):
     service = MessageService(im_sender=fake)
     with pytest.raises(MessageSendError) as exc:
         service.send("dingtalk", "https://example.com/hook", "s", "b", msg_format=bad_fmt)
-    assert exc.value.code == "INVALID_PARAMETER"
+    assert exc.value.code == "MESSAGE_FORMAT_INVALID"
     assert fake.calls == []
 
 
@@ -439,7 +439,7 @@ def test_service_im_bad_mentions_invalid(bad_mentions):
     service = MessageService(im_sender=fake)
     with pytest.raises(MessageSendError) as exc:
         service.send("feishu", "https://example.com/hook", "s", "b", mentions=bad_mentions)
-    assert exc.value.code == "INVALID_PARAMETER"
+    assert exc.value.code == "MESSAGE_MENTIONS_INVALID"
     assert fake.calls == []
 
 
@@ -524,14 +524,14 @@ def test_service_secret_unsupported_channel_invalid(channel):
     to = "https://example.com/hook" if channel != "email" else "ops@example.com"
     with pytest.raises(MessageSendError) as exc:
         service.send(channel, to, "s", "b", secret="SEC")
-    assert exc.value.code == "INVALID_PARAMETER"
+    assert exc.value.code == "MESSAGE_SECRET_CHANNEL_UNSUPPORTED"
 
 
 def test_service_secret_non_string_invalid():
     service = MessageService(im_sender=FakeImSender())
     with pytest.raises(MessageSendError) as exc:
         service.send("dingtalk", "https://example.com/hook", "s", "b", secret=123)
-    assert exc.value.code == "INVALID_PARAMETER"
+    assert exc.value.code == "MESSAGE_SECRET_TYPE_INVALID"
 
 
 def test_service_secret_too_long_invalid():
@@ -540,7 +540,7 @@ def test_service_secret_too_long_invalid():
         service.send(
             "dingtalk", "https://example.com/hook", "s", "b", secret="x" * (MAX_SECRET_LENGTH + 1)
         )
-    assert exc.value.code == "INVALID_PARAMETER"
+    assert exc.value.code == "MESSAGE_SECRET_TOO_LONG"
 
 
 def test_service_im_failure_no_record():

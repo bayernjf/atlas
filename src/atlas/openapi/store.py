@@ -20,11 +20,13 @@ class ImportStoreError(Exception):
         message: str,
         status_code: int = 422,
         existing_spec_id: str | None = None,
+        params: dict[str, object] | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.status_code = status_code
         self.existing_spec_id = existing_spec_id
+        self.params = params
 
 
 class ImportedSpec(BaseModel):
@@ -64,8 +66,9 @@ class ImportStore:
     ) -> ImportedSpec:
         if len(spec.operations) > MAX_OPERATIONS_PER_SPEC:
             raise ImportStoreError(
-                "OPENAPI_LIMIT_EXCEEDED",
+                "OPENAPI_SPEC_OPERATIONS_LIMIT",
                 f"单份规格最多包含 {MAX_OPERATIONS_PER_SPEC} 个 operation",
+                params={"max": MAX_OPERATIONS_PER_SPEC},
             )
         fingerprint = spec.content_fingerprint()
         with self._lock:
@@ -76,15 +79,16 @@ class ImportStore:
             )
             if duplicate is not None:
                 raise ImportStoreError(
-                    "OPENAPI_DUPLICATE",
+                    "OPENAPI_SPEC_ALREADY_IMPORTED",
                     f"该 API 规格已导入（{duplicate.spec_id}：{duplicate.title}）",
                     status_code=409,
                     existing_spec_id=duplicate.spec_id,
                 )
             if len(self._active()) >= MAX_SPECS_PER_TENANT:
                 raise ImportStoreError(
-                    "OPENAPI_LIMIT_EXCEEDED",
+                    "OPENAPI_TENANT_SPECS_LIMIT",
                     f"每租户最多导入 {MAX_SPECS_PER_TENANT} 份 API 规格",
+                    params={"max": MAX_SPECS_PER_TENANT},
                 )
             self._counter += 1
             spec_id = f"openapi-{self._counter}"
@@ -138,6 +142,7 @@ class ImportStore:
                     "OPENAPI_NOT_SOFT_DELETED",
                     f"API 规格 {spec_id} 尚未软删除，请先删除再彻底删除",
                     status_code=409,
+                    params={"specId": spec_id},
                 )
             del self._specs[spec_id]
             return True
@@ -150,7 +155,7 @@ class ImportStore:
         返回 (ok, code, existing_spec_id)：
         - 成功恢复：(True, None, None)；
         - 不存在或本就未删（无可恢复项）：(False, None, None) → API 404；
-        - 恢复后与另一未删同指纹规格冲突：(False, "OPENAPI_DUPLICATE", 冲突 id) → API 409。
+        - 恢复后与另一未删同指纹规格冲突：(False, "OPENAPI_RESTORE_CLASH", 冲突 id) → API 409。
         """
         with self._lock:
             spec = self._specs.get(spec_id)
@@ -165,7 +170,7 @@ class ImportStore:
                 None,
             )
             if clash is not None:
-                return False, "OPENAPI_DUPLICATE", clash.spec_id
+                return False, "OPENAPI_RESTORE_CLASH", clash.spec_id
             spec.deleted_at = None
             return True, None, None
 

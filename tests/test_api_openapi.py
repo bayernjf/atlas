@@ -103,7 +103,7 @@ def test_preview_invalid_document_returns_code():
 
     assert response.status_code == 422
     detail = response.json()["detail"]
-    assert detail["code"] == "OPENAPI_INVALID_DOCUMENT"
+    assert detail["code"] == "OPENAPI_DOCUMENT_NOT_OPENAPI3"
 
 
 def test_preview_requires_exactly_one_source():
@@ -114,7 +114,7 @@ def test_preview_requires_exactly_one_source():
     )
 
     assert response.status_code == 422
-    assert response.json()["detail"]["code"] == "OPENAPI_INVALID_DOCUMENT"
+    assert response.json()["detail"]["code"] == "OPENAPI_DOCUMENT_SOURCE_EXCLUSIVE"
 
 
 def test_preview_from_url(monkeypatch):
@@ -134,7 +134,11 @@ def test_preview_from_url(monkeypatch):
 
 def test_preview_fetch_failure_mapped(monkeypatch):
     def fail(url):
-        raise OpenApiError("OPENAPI_FETCH_FAILED", "规格抓取失败：x")
+        raise OpenApiError(
+            "OPENAPI_FETCH_NETWORK_ERROR",
+            "规格抓取失败：x",
+            params={"detail": "x"},
+        )
 
     monkeypatch.setattr(api_main, "_fetch_openapi_spec", fail)
 
@@ -145,7 +149,40 @@ def test_preview_fetch_failure_mapped(monkeypatch):
     )
 
     assert response.status_code == 422
-    assert response.json()["detail"]["code"] == "OPENAPI_FETCH_FAILED"
+    detail = response.json()["detail"]
+    assert detail["code"] == "OPENAPI_FETCH_NETWORK_ERROR"
+    assert detail["params"] == {"detail": "x"}
+
+
+def test_fetch_openapi_spec_maps_http_status_to_http_error(monkeypatch):
+    """打包 BF：上游 HTTP ≥400 折 OPENAPI_FETCH_HTTP_ERROR 并带 status 参数，
+    与网络/出向失败（NETWORK）是两条答案，不再共用 OPENAPI_FETCH_FAILED。"""
+
+    class _FakeResponse:
+        status_code = 503
+        text = "{}"
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, timeout=None):
+            return _FakeResponse()
+
+    # egress 放行
+    monkeypatch.setattr(api_main._openapi_egress, "check", lambda url: None)
+    monkeypatch.setattr(api_main.httpx, "Client", _FakeClient)
+
+    with pytest.raises(OpenApiError) as exc:
+        api_main._fetch_openapi_spec("https://petstore.example.com/openapi.json")
+    assert exc.value.code == "OPENAPI_FETCH_HTTP_ERROR"
+    assert exc.value.params == {"status": 503}
 
 
 def test_import_creates_spec_with_successful_operations_only():
@@ -319,7 +356,7 @@ def test_import_unknown_scheme_rejected():
         headers=OPERATOR_A,
     )
     assert response.status_code == 422
-    assert response.json()["detail"]["code"] == "OPENAPI_INVALID_CREDENTIAL"
+    assert response.json()["detail"]["code"] == "OPENAPI_CREDENTIAL_SCHEME_UNKNOWN"
     assert client.get("/api/openapi/imports", headers=VIEWER_A).json()["items"] == []
 
 
@@ -364,7 +401,7 @@ def test_put_credentials_upsert_delete_and_404():
         headers=OPERATOR_A,
     )
     assert bad_scheme.status_code == 422
-    assert bad_scheme.json()["detail"]["code"] == "OPENAPI_INVALID_CREDENTIAL"
+    assert bad_scheme.json()["detail"]["code"] == "OPENAPI_CREDENTIAL_SCHEME_UNKNOWN"
 
 
 BASIC_DOC = {
@@ -415,7 +452,7 @@ def test_put_basic_credentials_requires_both_fields():
             headers=OPERATOR_A,
         )
         assert response.status_code == 422
-        assert response.json()["detail"]["code"] == "OPENAPI_INVALID_CREDENTIAL"
+        assert response.json()["detail"]["code"] == "OPENAPI_CREDENTIAL_BASIC_INCOMPLETE"
 
 
 def test_put_basic_null_or_string_deletes_envelope():
@@ -474,7 +511,8 @@ def test_duplicate_import_returns_409_with_existing_id():
     again = client.post("/api/openapi/imports", json=_content(), headers=OPERATOR_A)
     assert again.status_code == 409
     detail = again.json()["detail"]
-    assert detail["code"] == "OPENAPI_DUPLICATE"
+    # 打包 BC：导入重复＝SPEC_ALREADY_IMPORTED（恢复冲突才是 RESTORE_CLASH）
+    assert detail["code"] == "OPENAPI_SPEC_ALREADY_IMPORTED"
     assert detail["existingSpecId"] == "openapi-1"
 
 
@@ -546,6 +584,8 @@ def test_hard_purge_409_when_active_404_when_missing_204_after_soft_delete():
     active = client.delete("/api/openapi/imports/openapi-1?hard=true", headers=ADMIN_A)
     assert active.status_code == 409
     assert active.json()["detail"]["code"] == "OPENAPI_NOT_SOFT_DELETED"
+    # 打包 BG：409 体带 params，英文态模板 {{specId}} 填得满
+    assert active.json()["detail"]["params"] == {"specId": "openapi-1"}
 
     # hard 不存在 → 404
     missing = client.delete("/api/openapi/imports/openapi-9?hard=true", headers=ADMIN_A)

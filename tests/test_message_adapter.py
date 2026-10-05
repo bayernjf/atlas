@@ -47,14 +47,14 @@ def test_send_over_group_limit_rejected():
     with pytest.raises(MessageSendError) as exc_info:
         MessageService().send("sms", [f"u{i}" for i in range(MAX_RECIPIENTS + 1)], "s", "b")
 
-    assert exc_info.value.code == "INVALID_PARAMETER"
+    assert exc_info.value.code == "MESSAGE_RECIPIENT_LIMIT"
 
 
 def test_email_channel_requires_at_shape():
     with pytest.raises(MessageSendError) as exc_info:
         MessageService().send("email", "not-an-address", "s", "b")
 
-    assert exc_info.value.code == "INVALID_PARAMETER"
+    assert exc_info.value.code == "MESSAGE_EMAIL_ADDRESS_INVALID"
 
 
 def test_non_email_channel_skips_at_check():
@@ -79,7 +79,7 @@ def test_invalid_parameters_rejected(kwargs):
     with pytest.raises(MessageSendError) as exc_info:
         MessageService().send(**kwargs)
 
-    assert exc_info.value.code in {"MISSING_PARAMETER", "INVALID_PARAMETER"}
+    assert exc_info.value.code in {"MISSING_PARAMETER", "MESSAGE_TO_INVALID"}
 
 
 def test_reset_clears_records():
@@ -129,7 +129,7 @@ def test_adapter_send_validation_error():
     )
 
     assert result.status is ActionStatus.FAILED
-    assert result.error.code in {"MISSING_PARAMETER", "INVALID_PARAMETER"}
+    assert result.error.code in {"MISSING_PARAMETER", "MESSAGE_TO_INVALID"}
 
 
 def test_adapter_send_bad_email_shape():
@@ -141,7 +141,7 @@ def test_adapter_send_bad_email_shape():
     )
 
     assert result.status is ActionStatus.FAILED
-    assert result.error.code == "INVALID_PARAMETER"
+    assert result.error.code == "MESSAGE_EMAIL_ADDRESS_INVALID"
 
 
 def test_adapter_requires_write_permission_with_audit():

@@ -88,7 +88,7 @@ def test_query_invalid_params(bad_params):
     with pytest.raises(DatabaseAdapterError) as exc_info:
         make_client().query("SELECT 1", bad_params)
 
-    assert exc_info.value.code == "INVALID_PARAMETER"
+    assert exc_info.value.code == "DATABASE_PARAMS_INVALID"
 
 
 @pytest.mark.parametrize("bad_limit", [0, 1001, "5", 1.5, True, None])
@@ -96,7 +96,8 @@ def test_query_invalid_limit(bad_limit):
     with pytest.raises(DatabaseAdapterError) as exc_info:
         make_client().query("SELECT 1", {}, limit=bad_limit)
 
-    assert exc_info.value.code == "INVALID_PARAMETER"
+    # 打包 BC：类型错（"5"/1.5/True/None）与越界（0/1001）现在是两条码
+    assert exc_info.value.code in {"DATABASE_LIMIT_TYPE_INVALID", "DATABASE_LIMIT_RANGE_INVALID"}
 
 
 # --- service: execute ---

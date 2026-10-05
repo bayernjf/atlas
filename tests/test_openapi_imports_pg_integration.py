@@ -158,7 +158,7 @@ def test_spec_limit_enforced(setup):
         store.add(_spec(title=f"Spec {i}"))
     with pytest.raises(ImportStoreError) as exc:
         store.add(_spec(title="Overflow"))
-    assert exc.value.code == "OPENAPI_LIMIT_EXCEEDED"
+    assert exc.value.code == "OPENAPI_TENANT_SPECS_LIMIT"
     assert exc.value.status_code == 422
     assert len(store.list()) == 5
 
@@ -177,7 +177,7 @@ def test_operations_limit_enforced(setup):
     )
     with pytest.raises(ImportStoreError) as exc:
         store.add(spec)
-    assert exc.value.code == "OPENAPI_LIMIT_EXCEEDED"
+    assert exc.value.code == "OPENAPI_SPEC_OPERATIONS_LIMIT"
     assert store.list() == []
 
 
@@ -292,7 +292,7 @@ def test_duplicate_import_rejected_pg(setup):
     first = store.add(_spec(title="Dup", base_url="https://dup.example.com"))
     with pytest.raises(ImportStoreError) as exc:
         store.add(_spec(title="Dup", base_url="https://dup.example.com"))
-    assert exc.value.code == "OPENAPI_DUPLICATE"
+    assert exc.value.code == "OPENAPI_SPEC_ALREADY_IMPORTED"
     assert exc.value.status_code == 409
     assert exc.value.existing_spec_id == first.spec_id
     # 改 base_url → 指纹变 → 允许导入
@@ -330,7 +330,7 @@ def test_restore_and_conflict_pg(setup):
     assert store.delete(a.spec_id) is True
     b = store.add(_spec(title="Rs", base_url="https://rs.example.com"))
     ok, code, existing = store.restore(a.spec_id)
-    assert ok is False and code == "OPENAPI_DUPLICATE" and existing == b.spec_id
+    assert ok is False and code == "OPENAPI_RESTORE_CLASH" and existing == b.spec_id
     # 冲突未恢复：A 仍隐藏
     assert store.get(a.spec_id) is None
     # 不存在 / 未删 → (False, None, None)
@@ -359,6 +359,8 @@ def test_list_include_deleted_and_purge_pg(setup):
     with pytest.raises(ImportStoreError) as exc:
         store.purge(b.spec_id)
     assert exc.value.code == "OPENAPI_NOT_SOFT_DELETED"
+    # 打包 BG：异常带 params（端点折算时透传进 409 体）
+    assert exc.value.params == {"specId": b.spec_id}
     assert store.purge("openapi-nope") is False
 
     # purge 已软删 → 物理移除，b 仍在

@@ -1361,7 +1361,7 @@ def test_http_tool_bad_json_params_is_failed_invalid_parameter():
     output = _execute_tool(node, {}, _http_registry(lambda r: httpx.Response(200)))
 
     assert output["action_status"] == "FAILED"
-    assert output["result"]["code"] == "INVALID_PARAMETER"
+    assert output["result"]["code"] == "TOOL_PARAMS_NOT_JSON"
 
 
 def test_http_tool_non_object_params_is_failed_invalid_parameter():
@@ -1375,7 +1375,7 @@ def test_http_tool_non_object_params_is_failed_invalid_parameter():
     output = _execute_tool(node, {}, _http_registry(lambda r: httpx.Response(200)))
 
     assert output["action_status"] == "FAILED"
-    assert output["result"]["code"] == "INVALID_PARAMETER"
+    assert output["result"]["code"] == "TOOL_PARAMS_NOT_OBJECT"
 
 
 def test_shop_dispatch_and_simulated_path_not_regressed():
@@ -1438,7 +1438,7 @@ def test_database_tool_bad_json_is_failed_invalid_parameter():
     output = _execute_tool(node, {}, build_demo_registry())
 
     assert output["action_status"] == "FAILED"
-    assert output["result"]["code"] == "INVALID_PARAMETER"
+    assert output["result"]["code"] == "TOOL_PARAMS_NOT_JSON"
 
 
 def test_message_tool_json_passthrough_records_message():

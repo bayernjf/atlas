@@ -18,9 +18,9 @@ def parse_document(raw_text: str) -> ParsedSpec:
     try:
         document = json.loads(raw_text)
     except (TypeError, json.JSONDecodeError) as exc:
-        raise OpenApiError("OPENAPI_INVALID_DOCUMENT", _INVALID_MESSAGE) from exc
+        raise OpenApiError("OPENAPI_DOCUMENT_NOT_OPENAPI3", _INVALID_MESSAGE) from exc
     if not isinstance(document, dict):
-        raise OpenApiError("OPENAPI_INVALID_DOCUMENT", _INVALID_MESSAGE)
+        raise OpenApiError("OPENAPI_DOCUMENT_NOT_OPENAPI3", _INVALID_MESSAGE)
 
     version_field = document.get("openapi")
     if not isinstance(version_field, str) or not version_field.startswith("3."):
@@ -158,26 +158,26 @@ def _effective_security(
 def _base_url(document: dict[str, Any]) -> str:
     servers = document.get("servers")
     if not isinstance(servers, list) or not servers:
-        raise OpenApiError("OPENAPI_INVALID_DOCUMENT", "文档缺少 servers，无法确定服务地址")
+        raise OpenApiError("OPENAPI_DOCUMENT_MISSING_SERVERS", "文档缺少 servers，无法确定服务地址")
     first = servers[0]
     url = first.get("url") if isinstance(first, dict) else None
     if not isinstance(url, str) or not url.strip():
-        raise OpenApiError("OPENAPI_INVALID_DOCUMENT", "文档缺少 servers，无法确定服务地址")
+        raise OpenApiError("OPENAPI_DOCUMENT_MISSING_SERVERS", "文档缺少 servers，无法确定服务地址")
     parsed = urlparse(url.strip())
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         raise OpenApiError(
-            "OPENAPI_INVALID_DOCUMENT", "servers[0].url 必须是包含 Host 的绝对地址"
+            "OPENAPI_DOCUMENT_SERVER_URL_NOT_ABSOLUTE", "servers[0].url 必须是包含 Host 的绝对地址"
         )
     return url.strip().rstrip("/")
 
 
 def _resolve_parameter(raw: Any, components: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(raw, dict):
-        raise UnsupportedSchema("参数必须是对象")
+        raise UnsupportedSchema("OPENAPI_PARAM_NOT_OBJECT", "参数必须是对象")
     if "$ref" in raw:
         target = _resolve_ref(raw["$ref"], components)
         if not isinstance(target, dict):
-            raise UnsupportedSchema("参数 $ref 目标必须是对象")
+            raise UnsupportedSchema("OPENAPI_PARAM_REF_NOT_OBJECT", "参数 $ref 目标必须是对象")
         return target
     return raw
 
@@ -232,10 +232,11 @@ def _build_operation(
             name = param.get("name")
             location = param.get("in")
             if not isinstance(name, str) or location not in ("path", "query", "header"):
-                raise UnsupportedSchema("参数缺少合法 name/in")
+                raise UnsupportedSchema("OPENAPI_PARAM_MISSING_NAME_IN", "参数缺少合法 name/in")
             schema = param.get("schema")
             if not isinstance(schema, dict):
-                raise UnsupportedSchema(f"参数 {name} 缺少 JSON schema")
+                raise UnsupportedSchema("OPENAPI_PARAM_MISSING_SCHEMA",
+                            f"参数 {name} 缺少 JSON schema", {"name": name})
             converted = convert_schema(schema, components)
             if param.get("description") and "description" not in converted:
                 converted["description"] = param["description"]
@@ -252,11 +253,11 @@ def _build_operation(
                 request_body = _resolve_ref(request_body["$ref"], components)
             content = request_body.get("content") if isinstance(request_body, dict) else None
             if not isinstance(content, dict) or "application/json" not in content:
-                raise UnsupportedSchema("请求体仅支持 application/json")
+                raise UnsupportedSchema("OPENAPI_BODY_NOT_JSON", "请求体仅支持 application/json")
             media = content["application/json"]
             raw_schema = media.get("schema") if isinstance(media, dict) else None
             if not isinstance(raw_schema, dict):
-                raise UnsupportedSchema("请求体缺少 JSON schema")
+                raise UnsupportedSchema("OPENAPI_BODY_MISSING_SCHEMA", "请求体缺少 JSON schema")
             body_schema = convert_schema(raw_schema, components)
             body_required = request_body.get("required") is True
 

@@ -24,6 +24,8 @@
 - 信封明文：basic 为 `json.dumps({"username": ..., "password": ...}, ensure_ascii=False)`；api_key/bearer 仍为裸串。统一经 `_secret_provider.encrypt` 写入 `credential_envelopes[name]`（列形状不变：dict[str,str]，值为密文）。
 - 未知 scheme 名仍 422 `OPENAPI_INVALID_CREDENTIAL`；200 响应 `{configured:[name]}` 不变（configured 仅表示该 scheme 有信封，不回显字段）。
 
+> **〔2026-10-05 打包 BC 勘误〕本文的 `OPENAPI_INVALID_CREDENTIAL` 已按答案拆开，原文保留不改**：Basic 缺字段 → `OPENAPI_CREDENTIAL_BASIC_INCOMPLETE`；未知 scheme 名 → `OPENAPI_CREDENTIAL_SCHEME_UNKNOWN`。当前取值集合以 [docs/03](03-数据模型与Schema-契约索引.md) 该节为准。
+
 ### D. 适配器执行（`src/atlas/openapi/adapter.py` `_resolve_credentials`）
 
 - 解密后按 kind 渲染：

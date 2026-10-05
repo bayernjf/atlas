@@ -39,10 +39,14 @@ jobs:
           nohup python -m uvicorn atlas.api.main:app --host 127.0.0.1 --port 8000 \
             > /tmp/uvicorn.log 2>&1 &
           for attempt in $(seq 1 30); do
+            # `|| true`：GitHub 的 step 默认以 `bash -e` 运行，uvicorn 冷启动尚未监听时
+            # curl 首次连接被拒（exit 7）；命令替换里的非零退出会被 set -e 当场判死，
+            # 30 次重试一轮都跑不完（2026-10-05 定时 run 实测：29ms 即 exit 7）。
+            # 连接失败时 %{http_code} 已归一为 "000"，吞掉退出码即可让循环继续等到 ready。
             code=$(curl -s -o /dev/null -w "%{http_code}" \
               -X POST http://127.0.0.1:8000/api/auth/login \
               -H 'Content-Type: application/json' \
-              -d '{"username":"admin-a","password":"admin123"}')
+              -d '{"username":"admin-a","password":"admin123"}' || true)
             if [ "$code" = "200" ]; then
               echo "API is ready after ${attempt}s"
               exit 0

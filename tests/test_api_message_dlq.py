@@ -84,7 +84,7 @@ def test_viewer_cannot_replay(t1_service):
 def test_invalid_status_422():
     resp = client.get("/api/demo/deliveries?status=bogus", headers=VIEWER_A)
     assert resp.status_code == 422
-    assert resp.json()["detail"]["code"] == "INVALID_PARAMETER"
+    assert resp.json()["detail"]["code"] == "DELIVERY_STATUS_INVALID"
 
 
 def test_operator_replays_successfully(t1_service):
