@@ -5036,10 +5036,11 @@ def demo_replay_delivery(
         result = services_for(principal).message_service.replay_failed(seq)
     except MessageSendError as exc:
         status_code = 422 if exc.code == "DLQ_BODY_UNAVAILABLE" else 409
-        raise HTTPException(
-            status_code=status_code,
-            detail={"code": exc.code, "message": str(exc)},
-        ) from exc
+        # 带 params 的码要把 params 一起下发，否则英文态模板填不满回退中文原文。
+        detail: dict[str, object] = {"code": exc.code, "message": str(exc)}
+        if getattr(exc, "params", None):
+            detail["params"] = exc.params
+        raise HTTPException(status_code=status_code, detail=detail) from exc
     if result is None:
         raise HTTPException(
             status_code=404,

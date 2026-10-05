@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### fix(message)：D55 冻结桶第五批＝发送三码补译出桶＋WEBHOOK_MALFORMED 路由跟完（2026-10-05 打包 BH；docs/08 打包 BH 块；docs/14 D55 15→12；docs/13 打包 BH 小节）
+
+- **修正打包 BE 的一处误判**：三码留桶理由"demo 进程内不重发"被调用链证伪——`replay_failed` 调**真 `self.send(...)` 全路径**，渠道真配时（SMTP host、真 webhook URL）send 抛投递失败码、`POST /api/demo/deliveries/{seq}/replay` 的 `except MessageSendError`（409 结构化体）无条件在场。三码是 HTTP 面码（BD 的原始判断），按"到得了英文使用者"判据补译出桶（桶 **15→12**）。
+- **出面消息形状（落码修正）**：`SMTP_SEND_FAILED` 直抛 `邮件投递失败：{detail}`；webhook/IM 经 `_fan_out` 聚合出面 `{channel} 群发部分失败：{failed}/{total} 个目标投递失败`——inner per-target 字面量只落投递日志（已入库历史记录，不译）。`MessageSendError` 补可选 `params`（SMTP `{detail}`、聚合 `{channel,failed,total}`），replay 端点折算处透传进 409 体；`frontend/src/locales/{zh-CN,en-US}/runtime.json` 各 +3（65→68 键，模板与出面消息逐字同句），三码进 U1162 `http_facing`。
+- **守护面**：webhook/IM 各 2 条字面量会撞 U1160——新增 `LOG_ONLY_LITERALS` 登记归一化 inner 形状（U1160 计数扣除，DEAD_LETTER_REASON 同口径），**新增 U1166** 反向钉登记不漂移（守护 14→15 例）。
+- **WEBHOOK_MALFORMED"待跟入站路由"跟完（docs-only）**：入站端点折 `ChannelError` 走 `detail=str(exc)`（400）＝第三态，与 `CHANNEL_*` 11 码同族；D55 余 12 条统一等"第三态错误是否结构化出体"契约决策。
+- **门**：错误码守护 **15 passed**；相关（守护＋dlq）**32 passed**；其余 message 族 **103 passed**；PG 集成（临时 pgvector 容器）**9 passed**；后端全量 **2367/150/0**（348.49s，对账＝BG 2365＋U1166 新增 1＋replay params 断言例 1）；前端 vitest **788/2**、oxlint 0/0、tsc＋build 过、i18n/runtime 两文件 **71 passed**。**零新依赖／零迁移／无 ADR**。
+
 ### fix(openapi)：D55 冻结桶第四批＝NOT_SOFT_DELETED 补译出桶＋INVALID_PARAMETER 定性节点产出（2026-10-05 打包 BG；docs/08 打包 BG 块；docs/14 D55 17→15；docs/13 打包 BG 小节）
 
 - **收的是桶里工程内可闭的最后两条**，其余 15 条各有阻碍：`CHANNEL_*`／`OAUTH_*`／`CONNECTION_NOT_FOUND` 共 11 条是 `detail=str(exc)` 只发中文、code 不进体的第三态（补译前需契约决策）；发送三码 demo 进程内不重发；`WEBHOOK_MALFORMED` 待跟入站路由。

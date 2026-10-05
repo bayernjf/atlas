@@ -162,14 +162,11 @@ FROZEN_FOR_TRIAGE = {
     "CHANNEL_UNAUTHORIZED",
     "CHANNEL_UPSTREAM_FAILED",
     "CONNECTION_NOT_FOUND",
-    "IM_SEND_FAILED",
     "OAUTH_NO_REFRESH_TOKEN",
     "OAUTH_REFRESH_FAILED",
     "OAUTH_STATE_INVALID",
     "OAUTH_TOKEN_FAILED",
-    "SMTP_SEND_FAILED",
     "WEBHOOK_MALFORMED",
-    "WEBHOOK_SEND_FAILED",
 }
 #: 2026-10-05 打包 BC 量出的**原始 27 条**快照，刻意**硬编码**而非 `set(FROZEN_FOR_TRIAGE)`：
 #: 若从当前集合派生，将来有人往桶里加新码会同时进快照，"只许缩小"的门永远绿、形同虚设。
@@ -423,17 +420,46 @@ def test_u1160_no_code_carries_two_different_messages():
     这就是 docs/14 D53 ① 的正身：`INVALID_PARAMETER` 那五条之所以不能译，是因为按码
     出模板会把几条不同答案压成一句。拆完之后，**将来谁再写一条多话的码，这里会红**，
     而不是等某天有人发现英文态的诊断信息被压没了。
+
+    打包 BH：`LOG_ONLY_LITERALS` 登记的"只进投递日志"字面量不计入本门——它们是
+    已入库的历史记录（DEAD_LETTER_REASON 同口径），不是码对当次请求的回答；
+    但登记本身被 U1166 钉住（字面量漂移即红），所以这不放水、只挂账。
     """
     pairs = code_messages()
     bad = {
         code: sorted(msgs)
         for code, msgs in pairs.items()
-        if len(msgs) > 1 and code not in EXEMPT
+        if len(msgs - LOG_ONLY_LITERALS.get(code, set())) > 1 and code not in EXEMPT
     }
     assert bad == {}, (
         f"这些码承载了多条不同消息，按码出文案会压掉诊断：{sorted(bad)}；"
         "拆成具体码（一条答案一个码），或给它补 params 让模板能区分"
     )
+
+
+#: 2026-10-05 打包 BH：发送三码出桶进目录（U1162 钉 zh/en）后，webhook/IM 的 inner
+#: per-target raise（`_fan_out` 聚合层之前的那次抛）各带一条**只进投递日志**的字面量
+#: ——聚合层把 str(error) 落 `_log` 的历史记录、不以它出面，出体/节点产出的答案是
+#: 聚合消息（已译、带 params {channel,failed,total}）。按 docs/57 §2.5 属历史记录
+#: 不译，故在此登记其归一化形状、U1160 不计多话；SMTP 直抛无 inner、不在此表。
+LOG_ONLY_LITERALS: dict[str, set[str]] = {
+    "WEBHOOK_SEND_FAILED": {'f"webhook 投递失败：{}"'},
+    "IM_SEND_FAILED": {'f"IM 投递失败：{}"'},
+}
+
+
+def test_u1166_log_only_literals_are_pinned():
+    """U1166（打包 BH）：LOG_ONLY_LITERALS 登记的 inner 字面量必须仍以该码在发。
+
+    这条登记不是白名单放水：inner raise 改文案/删码后登记即过期，守护当场红，
+    逼着下一个人重新核对"它是不是仍然只进日志、不出面"。"""
+    pairs = code_messages()
+    stale = {
+        code: sorted(log_only - pairs.get(code, set()))
+        for code, log_only in LOG_ONLY_LITERALS.items()
+        if not (log_only & pairs.get(code, set()))
+    }
+    assert stale == {}, f"log-only 字面量已不在发射，清掉或改准登记：{stale}"
 
 
 def test_u1161_the_coarse_codes_are_gone():
@@ -469,6 +495,9 @@ def test_u1162_http_facing_new_codes_have_both_locales():
         "OPENAPI_SPEC_OPERATIONS_LIMIT", "OPENAPI_TENANT_SPECS_LIMIT",  # import 配额
         # 打包 BG（docs/08）：purge 端点 409 结构化出体，补 zh/en＋params {specId} 后纳入。
         "OPENAPI_NOT_SOFT_DELETED",  # DELETE /api/openapi/imports/{spec_id}?hard=true
+        # 打包 BH（docs/08）：发送三码经 replay 端点结构化出体（replay_failed 走真 send
+        # 全路径，渠道真配时可达），补 zh/en＋params {detail} 后纳入。
+        "SMTP_SEND_FAILED", "WEBHOOK_SEND_FAILED", "IM_SEND_FAILED",  # 重放 409
         "OPENAPI_BODY_MISSING_SCHEMA", "OPENAPI_BODY_NOT_JSON",
         "OPENAPI_CREDENTIAL_BASIC_INCOMPLETE", "OPENAPI_CREDENTIAL_SCHEME_UNKNOWN",
         "OPENAPI_DOCUMENT_MISSING_SERVERS", "OPENAPI_DOCUMENT_NOT_OPENAPI3",

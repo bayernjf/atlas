@@ -130,6 +130,18 @@ def test_replay_non_failed_409(t1_service):
     assert second.json()["detail"]["code"] == "DLQ_NOT_FAILED"
 
 
+def test_replay_send_failure_409_carries_params(t1_service):
+    """打包 BH：replay_failed 走真 send 全路径，渠道真配时 send 抛出投递失败码——
+    409 结构化体带 params，英文态模板 {{failed}}/{{total}} 填得满（不回退中文原文）。"""
+    row = _failed_row(t1_service)
+    t1_service._webhook_sender = _FailingWebhook()
+    resp = client.post(f"/api/demo/deliveries/{row['seq']}/replay", headers=OPERATOR_A)
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert detail["code"] == "WEBHOOK_SEND_FAILED"
+    assert detail["params"] == {"channel": "webhook", "failed": 1, "total": 1}
+
+
 def test_replay_null_body_422(t1_service):
     store = t1_service._delivery_store
     store.record(

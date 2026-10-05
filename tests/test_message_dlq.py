@@ -99,6 +99,8 @@ def test_replay_failed_success_keeps_original_row():
     with pytest.raises(MessageSendError) as exc:
         failing.send("webhook", "https://example.com/hook", "subject-原", "body-原")
     assert exc.value.code == "WEBHOOK_SEND_FAILED"
+    # 打包 BH：出面的是 _fan_out 聚合异常，params 随之（replay 端点折算时透传进 409 体）
+    assert exc.value.params == {"channel": "webhook", "failed": 1, "total": 1}
 
     failed_row = store.list(100, status="failed")[0]
     assert failed_row["body"] == "body-原"
