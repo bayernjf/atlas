@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+### fix(errors)：五条"一码多话"粗码拆成具体码＋把"一码多话"变成机检（2026-10-05 打包 BC；docs/14 D53 ① 收口；docs/08 打包 BC 立项/收口块）
+
+- **为什么不是"补翻译"而是"拆码"**：A-4 从"19/22 条无文案"被 AW 重测改成"211 条码里只有 5 条是**真欠**"，而欠的原因不是缺文案，是**一个码承载多条不同答案**——按码出模板会把诊断压成一句甚至误导。这 5 条此前躺在豁免表 `COARSE_CODE` 里，而豁免表是**手抄清单**：以后谁再加一条多话的码，守护不会红。所以本批的真产出是**把这条性质变成机检**。
+- **落码**：五条粗码（`INVALID_PARAMETER`／`NOT_FOUND`／`OPENAPI_INVALID_CREDENTIAL`／`OPENAPI_INVALID_DOCUMENT`／`WAIT_EVENT_PAYLOAD_INVALID`）**全仓零发射**，拆成 **46 条**具体码；`runtime.json` **29→57 键**（新增 29、删旧 `OPENAPI_DUPLICATE` 1），节点产出的 **17 条**进 `TOOL_OUTPUT_ONLY`（docs/57 §2.5 不译），带插值的 5 条补 params 通道（`OpenApiError.params`）。`COARSE_CODE` 清空为 `set()`。
+- **46 条怎么来的（照实）**：29 条是契约 D-1 列举的；**另 15 条是契约自己没数全的**——`OPENAPI_INVALID_DOCUMENT` 借 `UnsupportedSchema` 一直把 `OPENAPI_REF_*`／`PARAM_*`／`BODY_*`／`KEYWORD_*`／`TYPE_*` 族压在同一个码下；再有 2 条来自**机检一上就抓到**的 `OPENAPI_DUPLICATE`（已译文案却仍多话，手抄清单从来没有它）。
+- **U1160（真产出）**：按形状抓 `(码, 消息字面量)` 去重，同码 ≥2 条不同字面量即红；U1161 钉旧码零发射、U1162 钉 HTTP 面新码 zh/en 双份、U1163 反向门证明枚举器看得见、U1164 把枚举器新量出的 27 条盲区码钉成只许缩小的冻结桶（docs/14 **D55**）。
+- **枚举器盲区有三层，本批补到第三层**：`XxxError("CODE", …)`（浮出 27 条）之外，`UnsupportedSchema("CODE", …)`（类名不以 `Error` 结尾）与带类型标注的默认值 `code: str = "CODE"` 此前都看不见——不补后两层，本批自己拆出的 **16 条**码就在守护之外，"变成机检"是空话。
+- **门**：后端全量 **2363 passed／150 skipped／0 failed**（对账＝BB 的 2358＋本批净增 5）；前端 vitest **788 passed／2 skipped**、oxlint **0 error/0 warning**、tsc＋build 全过。零新依赖／零迁移／无新 ADR。
+- **不做（照实）**：不做 D53 ②③（工具结果 `error_code`、webhook 死信原因码，长期口径不译）；不改 HTTP 状态码；不给旧码留兼容别名；D54（condition 表达式诊断）另立批。
+- **登记**：docs/08（立项＋收口）／03／04／12（码取值集合与各处表）／13（U1160–U1164）／14（D53 ① 划掉、D55）／17 §2.4／89 §17／CHANGELOG／handoff。
+- **提交**：fix 拆码＋test 机检＋前端文案一原子、docs 收口一原子（docs 立项已先行入库），无 AI co-author、**未 push**。
+
 ### feat(deploy)：网络边界 edge／Caddy 演练（打包 BB 落码，2026-10-05；docs/73 4.1 现欠第②件的工程半边；docs/08 打包 BB 立项块）
 
 - **一句话**：`prod_rehearsal.py` 的 override 把 caddy 的 profile 改成 `["skip"]`、所有请求走 http ⇒ TLS／反代／主机头路由三类判据**从没被演过**。本批把 edge 形态真跑一遍：应用端口**不映射**出宿主机，只让 Caddy 暴露 80/443。

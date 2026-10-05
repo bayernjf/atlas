@@ -127,14 +127,14 @@ class HttpApiClient:
 # adapter.py：HttpApiHarnessAdapter(HarnessAdapter)
 #   单能力 request（permission=write, is_idempotent=false）
 #   节点 config.params 插值后为 JSON：{method,url,headers,body,timeout}
-#   缺 url/坏 method/坏 headers/坏 timeout → MISSING_PARAMETER/INVALID_PARAMETER
+#   缺 url → MISSING_PARAMETER；坏 method → HTTPAPI_METHOD_UNSUPPORTED；坏 headers → HTTPAPI_HEADERS_INVALID；坏 timeout → HTTPAPI_TIMEOUT_INVALID（2026-10-05 打包 BC 拆码）
 ```
 
 ### 3.5 数据适配器 / 消息适配器（04 §4.7/§4.8，06 §6.7）
 
 ```python
 # src/atlas/database/service.py（进程内，channel 包 database，adapter_id="database"）
-class DatabaseAdapterError(Exception):  # .code: DB_NOT_CONFIGURED / DB_SQL_ERROR / MISSING_PARAMETER / INVALID_PARAMETER
+class DatabaseAdapterError(Exception):  # .code: DB_NOT_CONFIGURED / DB_SQL_ERROR / MISSING_PARAMETER / DATABASE_PARAMS_INVALID / DATABASE_LIMIT_TYPE_INVALID / DATABASE_LIMIT_RANGE_INVALID
                                             #         DB_SQL_NOT_READ_ONLY（query 非单条只读 SELECT）/ DB_WRITE_FORBIDDEN（外部只读连接 execute）
 
 class DatabaseClient:
@@ -158,7 +158,7 @@ class DatabaseClient:
 #   节点 config.params 插值后为 JSON：query {sql,params?,limit?} / execute {sql,params?}
 
 # src/atlas/message/service.py（channel 包 message，adapter_id="message"）
-class MessageSendError(Exception):  # .code: MISSING_PARAMETER / INVALID_PARAMETER
+class MessageSendError(Exception):  # .code: MISSING_PARAMETER / MESSAGE_TO_INVALID / MESSAGE_RECIPIENT_LIMIT / MESSAGE_FORMAT_INVALID / MESSAGE_MENTIONS_INVALID / MESSAGE_EMAIL_ADDRESS_INVALID / MESSAGE_SECRET_TYPE_INVALID / MESSAGE_SECRET_CHANNEL_UNSUPPORTED / MESSAGE_SECRET_TOO_LONG（2026-10-05 打包 BC 拆码）
 
 class MessageService:
     def send(self, channel: str, to, subject: str, body: str) -> dict
@@ -736,7 +736,7 @@ class EventWaitBroker:
 # per-tenant 挂 TenantServices.event_wait_broker；内存/PG 两档均内存实例
 ```
 
-错误码：WAIT_EVENT_KEY_INVALID / WAIT_EVENT_PAYLOAD_INVALID / WAIT_TOKEN_NOT_FOUND / WAIT_ALREADY_SIGNALED / WAIT_TIMEOUT_FAILED。
+错误码：WAIT_EVENT_KEY_INVALID / WAIT_EVENT_PAYLOAD_NOT_OBJECT / WAIT_EVENT_PAYLOAD_TOO_MANY_KEYS / WAIT_EVENT_PAYLOAD_TOO_LARGE / WAIT_TOKEN_NOT_FOUND / WAIT_ALREADY_SIGNALED / WAIT_TIMEOUT_FAILED。（`WAIT_EVENT_PAYLOAD_INVALID` 于 2026-10-05 打包 BC 拆成前三条：非 JSON 对象／顶层键超限／序列化超字节。）
 
 ### 3.18 LLM 语义分支内部接口（conditionMode=llm 进程内 v1；docs/48，2026-09-23 落码收口）
 
@@ -808,7 +808,7 @@ class ImSender(Protocol):
 #   否则 ImDeliveryError -> MessageService 折算 IM_SEND_FAILED，不写记录
 ```
 
-`MessageService.send` 增可选 `secret` 透传：to 为单 URL（数组 INVALID_PARAMETER）；secret 仅 dingtalk/feishu 允许（非空 str ≤200，其他渠道 INVALID_PARAMETER）；成功 delivered 标渠道名；未注入 IM 投递器三渠道回退进程内记录。新增错误码 **IM_SEND_FAILED**（EGRESS_DENIED 照透传）；无新增 REST。
+`MessageService.send` 增可选 `secret` 透传：to 为单 URL（数组 `MESSAGE_RECIPIENT_LIMIT`）；secret 仅 dingtalk/feishu 允许（非空 str ≤200，其他渠道 `MESSAGE_SECRET_CHANNEL_UNSUPPORTED`）；成功 delivered 标渠道名；未注入 IM 投递器三渠道回退进程内记录。新增错误码 **IM_SEND_FAILED**（EGRESS_DENIED 照透传）；无新增 REST。
 
 > **docs/58 立项中（2026-09-24，未落码）**：`WebhookSender.send(url, payload, secret=None)`（增 clock 注入；显式 `json.dumps(ensure_ascii=False, separators=(',',':'))` 序列化后 `content=` 发送，附 `X-Atlas-Timestamp`/`X-Atlas-Signature: sha256=<hmac-sha256(secret, f"{ts}\n{raw}").hexdigest()>`，无 secret 不发）；`ImSender.send(channel, url, subject, body, secret=None, msg_format="text", mentions=None)`（替换原 text 形参，builder 内部构造三家 text/markdown/@人 消息体）；`MessageService.send` 增 `msg_format=None, mentions=None`（默认值保证旧调用零改动），webhook/IM 的 to 放开数组（1-20，逐目标投递、EGRESS fail-fast、投递错误 best-effort、per-URL DeliveryRecord、全成才写 _messages）；adapter input_schema 增 msgFormat（enum text/markdown）与 mentions（object，additionalProperties false，userIds/mobiles ≤20、atAll bool），secret 描述增 webhook HMAC、to 描述改多 URL；output_schema 与 REST 不变。权威契约 docs/58。
 
@@ -996,7 +996,7 @@ class MemoryRepository(Protocol):
 | GET | /api/adapters | 适配器列表（注册发现；W9-W10 已落码，返回 shop 适配器及其能力/权限/幂等标记；Phase 2 起增加 http（单能力 http/request）、database（database/query 只读幂等 + database/execute 写）、message（单能力 message/send 写）三个适配器。**2026-09-16 起 tools[] 增列 `input_schema`/`output_schema`**：JSON Schema 子集（权威形状 04 §4.9），未声明投影为 `{}`，供前端拓扑作用域/变量插入与 NL 参数填充使用；**M3（2026-09-16 立项）起 input_schema 作为 SchemaRegistry 第二来源驱动 tool_call 的 params 表单（04 §4.10），本响应 wire 形状不变**） | adapter_schema |
 | GET | /api/demo/messages | 消息适配器演示查看（Phase 2 第三项）：返回进程内 MessageService 已记录消息 `{items:[{id,channel,to,subject,body,sent_at}]}`，重启/reset 清空，不产生真实投递 | message_send_params |
 | GET | /api/demo/deliveries | 【**read**，docs/56 已落码 2026-09-24，`1237a2e`】投递日志：query `limit`（默认 100、clamp 1-200），返 `{items:[DeliveryRecord]}` 倒序；DeliveryRecord＝`{id,channel,to,subject,sentAt,status(in_process|delivered:smtp|delivered:webhook|delivered:im|failed),attempts,elapsedMs,errorCode?,errorMessage?}`（ring 200/租户、subject≤100/errorMessage≤300，失败也记但仍抛且不写 messages）；webhook/IM 网络类失败按 0.5/1.5s 退避重试共 3 次，EGRESS_*/参数类/SMTP 立即失败；reset 清空。AlertNotifier 经同一 MessageService 透明获得重试。**docs/60 G5（2026-09-24 落码 `532a3fe`/`5714db9`，迁移 025）**：投递日志抽为 `message/deliveries.py` `DeliveryStore`（record/list/clear），内存档 ring 200 不变、PG 档落 `message_deliveries` 表（PK `(tenant_id,seq)`、跨重启保留、reset 删本租户、REST 形状零改动），registry PG 档注入；record 异常 fail-safe 不阻断发送 | message_send_params |
-| POST | /api/demo/deliveries/{seq}/replay | 【**operate**，打包 U（2026-09-29 立项，契约 docs/82）】出站死信人工重放：按 get_failed 行存储的 channel/to/subject/**body**（迁移 032 加列；存量行 NULL）走现有 send 全路径，产新 message_id/新投递行，原 failed 行不可变；返 `{replay_of:seq, deliveries:[...]}`。无行/跨租户 → **404**、非 failed → **409**（DLQ_NOT_FAILED）、body NULL → **422**（DLQ_BODY_UNAVAILABLE）；**无重放幂等键**，重复按＝重复发。GET deliveries 同批增 query `status=failed|delivered`（其他值 422；read） | message_send_params |
+| POST | /api/demo/deliveries/{seq}/replay | 【**operate**，打包 U（2026-09-29 立项，契约 docs/82）】出站死信人工重放：按 get_failed 行存储的 channel/to/subject/**body**（迁移 032 加列；存量行 NULL）走现有 send 全路径，产新 message_id/新投递行，原 failed 行不可变；返 `{replay_of:seq, deliveries:[...]}`。无行/跨租户 → **404**（`DELIVERY_NOT_FOUND`）、非 failed → **409**（DLQ_NOT_FAILED）、body NULL → **422**（DLQ_BODY_UNAVAILABLE）；**无重放幂等键**，重复按＝重复发。GET deliveries 同批增 query `status=failed|delivered`（其他值 422 `DELIVERY_STATUS_INVALID`；read） | message_send_params |
 | GET | /api/demo/mock/orders | API 适配器演示目标（Phase 2 API 适配器）：要求请求头 `X-Demo-Token: demo-token`，缺失/错误 401 JSON；成功返回演示订单数组。进程内无状态 | http_request_params |
 | POST | /api/demo/mock/orders/{id}/receipt | API 适配器演示目标：回显 JSON 请求体并返回 `{"received": true}`，供 POST/body/插值端到端验证 | http_request_params |
 | POST | /api/adapters/{id}/tools | 工具查询 | tool |
@@ -1051,12 +1051,12 @@ class MemoryRepository(Protocol):
 | POST | /api/channels/{binding_id}/remote-webhooks | 【**operate**】body `{topic}`；201 `{remoteId,topic,address}`；409 已注册、422 topic 非法/非 https、404 绑定；写审计 | shopify_remote_webhook |
 | DELETE | /api/channels/{binding_id}/remote-webhooks/{topic} | 【**operate**】200 `{deleted:bool}` 幂等（未注册 false）；404 绑定；写审计 | shopify_remote_webhook |
 | POST | /api/openapi/preview | 【**operate**】body `{content?:str, url?:str}`（恰好其一）；`{title, base_url, operations:[...], imported_count, skipped_count}`；url 经 egress 抓取，EGRESS_DENIED/取数失败 422 OPENAPI_FETCH_FAILED；不落库 | openapi_import |
-| POST | /api/openapi/imports | 【**operate**】同上入参；201 ImportedSpec（仅成功 ops）；全 skipped 422 OPENAPI_NO_IMPORTABLE_OPERATION；超 5 specs/200 ops 422 OPENAPI_LIMIT_EXCEEDED（名额只数未删）；同租户未删同内容指纹 409 **OPENAPI_DUPLICATE**（体带 `existingSpecId`，docs/56）；写审计（不记文档内容） | openapi_import |
+| POST | /api/openapi/imports | 【**operate**】同上入参；201 ImportedSpec（仅成功 ops）；全 skipped 422 OPENAPI_NO_IMPORTABLE_OPERATION；超 5 specs/200 ops 422 OPENAPI_LIMIT_EXCEEDED（名额只数未删）；同租户未删同内容指纹 409 **OPENAPI_SPEC_ALREADY_IMPORTED**（体带 `existingSpecId`，docs/56；2026-10-05 打包 BC 由 `OPENAPI_DUPLICATE` 更名——恢复路径的冲突另有其码，见下一行）；写审计（不记文档内容） | openapi_import |
 | GET | /api/openapi/imports | 【**read**】`{items:[ImportedSpec]}`（本租户，默认排除软删项）；**docs/60 G2（`a853700`）** `?include_deleted=true` 需 **administer**（非管理员 403），并入软删项、投影补删除标记（snake_case `deleted_at`） | openapi_import |
 | GET | /api/openapi/imports/{spec_id} | 【**read**】ImportedSpec；不存在/他租户 404 | openapi_import |
 | DELETE | /api/openapi/imports/{spec_id} | 【**administer**】默认**软删除** 200 `{deleted:true}`，运行时注册表同步摘除；404；写审计。**docs/60 G2（`a853700`）** 加 `?hard=true` **物理删除**（内存 del/PG DELETE）：仅已软删项可硬删，未软删 409 OPENAPI_NOT_SOFT_DELETED、不存在/跨租户 404、viewer 403；v1 无硬删恢复 UI | openapi_import |
-| POST | /api/openapi/imports/{spec_id}/restore | 【**administer**，docs/56 已落码 2026-09-24，`6cb1803`】恢复软删除规格：成功 200 `{restored:true}`；与另一**未删除**规格指纹冲突 409 OPENAPI_DUPLICATE（体带 `existingSpecId`）；规格不存在或本就未删（无可恢复项）404；写审计。内存/PG 双档（PG 迁移 023） | openapi_import |
-| PUT | /api/openapi/imports/{spec_id}/credentials | 【**operate**】body `{credentials:{name:value}}`（docs/44/46；name 须为该 spec 的 security scheme，未知 422 OPENAPI_INVALID_CREDENTIAL）；apiKey/bearer value＝string、basic（docs/46）＝`{username,password}`（信封明文 JSON）；非空值加密 upsert、空串/空对象/null 删除，basic 缺字段 422；200 `{configured:[name]}`（不回密钥）；404 | openapi_import |
+| POST | /api/openapi/imports/{spec_id}/restore | 【**administer**，docs/56 已落码 2026-09-24，`6cb1803`】恢复软删除规格：成功 200 `{restored:true}`；与另一**未删除**规格指纹冲突 409 **OPENAPI_RESTORE_CLASH**（体带 `existingSpecId`；2026-10-05 打包 BC 由 `OPENAPI_DUPLICATE` 更名，与导入路径的 `OPENAPI_SPEC_ALREADY_IMPORTED` 分开——两条路径的冲突不是同一件事）；规格不存在或本就未删（无可恢复项）404；写审计。内存/PG 双档（PG 迁移 023） | openapi_import |
+| PUT | /api/openapi/imports/{spec_id}/credentials | 【**operate**】body `{credentials:{name:value}}`（docs/44/46；name 须为该 spec 的 security scheme，未知 422 `OPENAPI_CREDENTIAL_SCHEME_UNKNOWN`）；apiKey/bearer value＝string、basic（docs/46）＝`{username,password}`（信封明文 JSON）；非空值加密 upsert、空串/空对象/null 删除，basic 缺字段 422 `OPENAPI_CREDENTIAL_BASIC_INCOMPLETE`（2026-10-05 打包 BC：两个 422 原共用 `OPENAPI_INVALID_CREDENTIAL`）；200 `{configured:[name]}`（不回密钥）；404 | openapi_import |
 
 > **M11 记忆端点口径订正（2026-09-19，docs/26；批 4⑩ 2026-09-20 修订）**：上表取代原愿景 `GET/PUT /api/memories/{operator_id}`（memory_config 配置读写，05 §2.4）——五层策略配置随 D35 缓做，operator 维度降为记忆条目 `scope.user_id`，租户由会话 Principal 定。**初版 M11 写入只走图工具 `memory/remember`（手动造数走 `scripts/dev/m11_seed.py`）；docs/28 批 4⑩（`ec0fd81`）起补开 `POST/PUT /api/memories`（operate，source 固定 manual）承担运营手动新建/编辑**——图工具仍是运行时自动写入主路径，REST 为手动补录/纠错通道，删除仍仅 admin。
 
