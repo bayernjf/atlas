@@ -157,8 +157,6 @@ FROZEN_FOR_TRIAGE = {
     "CHANNEL_UNAUTHORIZED",
     "CHANNEL_UPSTREAM_FAILED",
     "CONNECTION_NOT_FOUND",
-    "DLQ_BODY_UNAVAILABLE",
-    "DLQ_NOT_FAILED",
     "IM_SEND_FAILED",
     "OAUTH_NO_REFRESH_TOKEN",
     "OAUTH_REFRESH_FAILED",
@@ -168,7 +166,6 @@ FROZEN_FOR_TRIAGE = {
     "OPENAPI_INVALID_PARAMETER",
     "OPENAPI_LIMIT_EXCEEDED",
     "OPENAPI_NOT_SOFT_DELETED",
-    "OPENAPI_UNSUPPORTED_VERSION",
     "SMTP_SEND_FAILED",
     "WEBHOOK_MALFORMED",
     "WEBHOOK_SEND_FAILED",
@@ -455,6 +452,10 @@ def test_u1162_http_facing_new_codes_have_both_locales():
     en = set(json.loads((LOCALES / "en-US" / "runtime.json").read_text(encoding="utf-8")))
     http_facing = {
         "DELIVERY_NOT_FOUND", "DELIVERY_STATUS_INVALID", "CONNECTION_SCOPES_INVALID",
+        # 打包 BE（docs/14 D55 第二批）：从冻结桶定性为"经真实端点结构化出体"的码，
+        # 补 zh/en 后纳入 HTTP 面双份校验。
+        "DLQ_BODY_UNAVAILABLE", "DLQ_NOT_FAILED",  # POST /api/demo/deliveries/{seq}/replay
+        "OPENAPI_UNSUPPORTED_VERSION",  # parser → _openapi_http_error → 422
         "OPENAPI_BODY_MISSING_SCHEMA", "OPENAPI_BODY_NOT_JSON",
         "OPENAPI_CREDENTIAL_BASIC_INCOMPLETE", "OPENAPI_CREDENTIAL_SCHEME_UNKNOWN",
         "OPENAPI_DOCUMENT_MISSING_SERVERS", "OPENAPI_DOCUMENT_NOT_OPENAPI3",
