@@ -82,12 +82,13 @@ def test_u1156_money_and_humans_need_explicit_authorisation():
     assert "执行段未实现" in authorised.reason
 
 
-def test_u1156_notify_leg_reports_the_relay_gap_it_found():
+def test_u1156_notify_leg_names_only_the_missing_credential():
     no_creds = verdict(rh.plan_live_legs(["notify"], {}), "notify")
     assert no_creds.verdict == "skip"
     assert "ATLAS_SMTP_HOST" in no_creds.reason
-    # 实测过的部署面缺口：compose 只透传 LITELLM_*/OPENAI_*，SMTP 根本没进容器
-    assert "docker-compose.yml" in no_creds.reason
+    # 打包 AZ 补了 compose 的 ATLAS_SMTP_* 透传（U1157 机检）。SKIP 文案里那句"compose 没透传"
+    # 当时是真缺陷，修完必须跟着撤——留着就是谎报现状。
+    assert "docker-compose.yml 只透传" not in no_creds.reason
 
     needs_recipient = verdict(rh.plan_live_legs(["notify"], SMTP_OK), "notify")
     assert needs_recipient.verdict == "blocked" and "--notify-to" in needs_recipient.reason
