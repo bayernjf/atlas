@@ -18,6 +18,7 @@
   "DLQ_BODY_UNAVAILABLE": "This failed record did not save the message body, so it cannot be replayed",
   "DLQ_NOT_FAILED": "This delivery record is not in a failed state; nothing to replay",
   "FOREACH_COLLECT_MISSING": "The collect node produced no output; skipping collection for this iteration",
+  "IM_SEND_FAILED": "{{channel}} fan-out partially failed: {{failed}}/{{total}} deliveries failed",
   "LLM_CLASSIFIER_UNAVAILABLE": "No LLM classifier is configured in production; the condition node aborted this run instead of silently taking the default branch",
   "LLM_DECISION_UNAVAILABLE": "No LLM decision provider is configured in production; the AI decision node aborted this run instead of silently falling back to rules",
   "LOOP_ITEMS_TOO_LARGE": "The iterated array exceeds the maximum length",
@@ -53,6 +54,7 @@
   "OPENAPI_TYPE_UNSUPPORTED": "Unsupported type",
   "OPENAPI_UNSUPPORTED_VERSION": "Only OpenAPI 3.0/3.1 documents are supported (Swagger 2.0 is not supported yet)",
   "RUNTIME_UNEXPECTED": "An unexpected runtime error occurred",
+  "SMTP_SEND_FAILED": "Email delivery failed: {{detail}}",
   "SUBGRAPH_SUSPEND_UNSUPPORTED": "A suspend point inside a subgraph cannot be resumed across processes in the persisted (PG) tier, so this run failed deliberately; move the node to the top level of the graph, or preset it for replay in test/gate scenarios",
   "WAIT_ABSOLUTE_TIME_INVALID": "Wait node: invalid absolute time",
   "WAIT_ALREADY_SIGNALED": "This wait has already been signalled; the repeated submission had no effect",
@@ -63,5 +65,6 @@
   "WAIT_EVENT_PAYLOAD_TOO_LARGE": "payload must not exceed {{max}} bytes after serialization",
   "WAIT_EVENT_PAYLOAD_TOO_MANY_KEYS": "payload must not have more than {{max}} top-level keys",
   "WAIT_TIMEOUT_FAILED": "Timed out waiting for the event",
-  "WAIT_TOKEN_NOT_FOUND": "The wait does not exist or has already been cleaned up"
+  "WAIT_TOKEN_NOT_FOUND": "The wait does not exist or has already been cleaned up",
+  "WEBHOOK_SEND_FAILED": "Webhook fan-out partially failed: {{failed}}/{{total}} deliveries failed"
 }

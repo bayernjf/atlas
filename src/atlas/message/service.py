@@ -53,11 +53,18 @@ class DeliveryRecord:
 
 
 class MessageSendError(Exception):
-    """参数校验失败，code 对应 StructuredError.code。"""
+    """参数校验失败，code 对应 StructuredError.code。
 
-    def __init__(self, code: str, message: str) -> None:
+    `params` 用于让文案模板（含 `{{detail}}` 这类占位）填得满——打包 BH：带插值的三条
+    投递失败码经 replay 端点结构化出体，英文态模板填不满会回退后端中文原文。
+    """
+
+    def __init__(
+        self, code: str, message: str, params: dict[str, object] | None = None
+    ) -> None:
         super().__init__(message)
         self.code = code
+        self.params = params
 
 
 def _require_non_empty(value: object, field: str) -> str:
@@ -198,6 +205,11 @@ class MessageService:
                 raise MessageSendError(
                     failures[0][1].code,
                     f"{channel_value} 群发部分失败：{len(failures)}/{len(recipients)} 个目标投递失败",
+                    params={
+                        "channel": channel_value,
+                        "failed": len(failures),
+                        "total": len(recipients),
+                    },
                 )
             record["delivered"] = delivered_label
 
@@ -225,7 +237,11 @@ class MessageService:
                     self._email_sender.send(recipients, subject_value, body_value)
                 except Exception as exc:
                     # SMTP 不重试：失败折算统一错误码
-                    raise MessageSendError("SMTP_SEND_FAILED", f"邮件投递失败：{exc}") from exc
+                    raise MessageSendError(
+                        "SMTP_SEND_FAILED",
+                        f"邮件投递失败：{exc}",
+                        params={"detail": str(exc)},
+                    ) from exc
 
             attempts, error = _transmit(_email)
             if error is not None:
@@ -250,7 +266,8 @@ class MessageService:
                     # SSRF/非法 URL：透传安全码（EGRESS_DENIED/EGRESS_INVALID_URL），不重试
                     raise MessageSendError(exc.code, f"webhook 出向被拦截：{exc}") from exc
                 except Exception as exc:
-                    # 网络/超时/非 2xx：WEBHOOK_SEND_FAILED，可退避重试
+                    # 网络/超时/非 2xx：WEBHOOK_SEND_FAILED，可退避重试。
+                    # 该字面量只进投递日志（_fan_out 聚合层才出面），params 挂在聚合 raise 上。
                     raise MessageSendError("WEBHOOK_SEND_FAILED", f"webhook 投递失败：{exc}") from exc
 
             _fan_out(_webhook_one, "webhook")
@@ -272,6 +289,7 @@ class MessageService:
                 except EgressDenied as exc:
                     raise MessageSendError(exc.code, f"{channel_value} 出向被拦截：{exc}") from exc
                 except Exception as exc:
+                    # 同上：inner 字面量只进投递日志，出面的是 _fan_out 聚合消息。
                     raise MessageSendError("IM_SEND_FAILED", f"IM 投递失败：{exc}") from exc
 
             _fan_out(_im_one, channel_value)
