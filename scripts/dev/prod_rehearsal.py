@@ -8,7 +8,7 @@ uvicorn 打真库"，那条路径证不到三件演练必须证的事——
   ② **空卷首启**（docs/73 4.2 的就绪竞态就发生在这一次启动上，重启过一次就不算数）；
   ③ **容器边界**（网络与端口是部署形态的一部分，host 进程测不到它）。
 
-八段：
+九段：
   1. build 当前 HEAD 的镜像 → 记录 image id（"我跑的到底是哪个产物"）。
   2. 只起 `db` ＋ `atlas` 两个服务，**全新项目卷**（先 `down -v` 只删本项目自己的卷）。
   3. 空卷首启：轮询 `/api/ready` 直到 200，记录用时与 `RestartCount`。
@@ -22,13 +22,24 @@ uvicorn 打真库"，那条路径证不到三件演练必须证的事——
      `/api/interruptions` 可读。
   7. 演示面与文档面在 prod 档 404；
   8. 强制位对**第二个账号**同样成立（首位 admin 建号→登录→403→改密→200→重登消失），
-     并验 admin 重置会把轮换章擦回去（docs/95 §2 的 D-1 订正）。最后**只删本项目自己的卷**。
+     并验 admin 重置会把轮换章擦回去（docs/95 §2 的 D-1 订正）。
+  9. **真外发腿**（docs/73 1.1–1.3）：默认一条都不跑；`--live-legs llm,shopify` 点名后
+     才把凭据注进容器重建 atlas，并拿第 5a 段那张**同一个已发布图**再跑一次——
+     第 5a 段证的是"没凭据时显式失败"，这一段证的是"配了凭据真的发得出去"，
+     两者是同一判据的正反两面。缺前置的腿打印 SKIP 并点名缺哪个变量；动款／给真人
+     发信的腿打印 BLOCKED 并要求显式授权。**最后**才删本项目自己的卷。
 
-凭据边界：本脚本不碰任何真实凭据——没有真 LLM／真 Shopify／真 IM，因此第 5 段的
-`ai_decision` 会走规则兜底、退款节点会因适配器未注册而 FAILED，**这些是观察结果不是失败**。
+凭据边界：默认路径**一个真凭据都不读**（第 118–120 行显式把 `LITELLM_MODEL`／
+`OPENAI_API_KEY`／`OPENAI_BASE_URL` 置空），因此第 5a 段的 `ai_decision` 是**显式
+`LLM_DECISION_UNAVAILABLE` 失败而不是静默走规则兜底**（〔订正：本 docstring 原文写的是
+"会走规则兜底"，那是 docs/77 R1 之前的形状，与 5a 的断言相互矛盾——5a 恰恰在证"不兜底"〕），
+退款腿则因适配器未注册而 FAILED；**这些都是观察结果不是演练失败**。
+只有 `--live-legs` 点名时才从宿主环境搬凭据，且**只搬白名单键、只打印键名，绝不打印值**。
 密钥与口令均为本机一次性随机值。
 
 用法：.venv/bin/python scripts/dev/prod_rehearsal.py [--host-port 8010] [--keep]
+      真外发（可选，默认完全不跑）：[--live-legs llm,shopify]
+      动款／发真信还要 [--allow-refund --shopify-order <测试订单>]／[--notify-to <真人地址>]
 退出码：演练自身完整性（构建失败／起不来／登不进／**强制位没生效**／图没到终态／重启后数据丢了）非 0。
 """
 
@@ -44,6 +55,7 @@ import sys
 import threading
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
@@ -98,10 +110,152 @@ def api(port: int, method: str, path: str, *, token: str | None = None,
                          json=json_body, headers=headers, timeout=30.0)
 
 
+# ------------------------------------------------------------------- 真外发腿（docs/73 1.1–1.3）
+
+LEG_CRITERIA: dict[str, str] = {
+    "llm": "prod 下 `ai_decision` 发出一次真实 LiteLLM 调用（节点输出 `source` 前缀 `llm:`，不是 `rule:`）",
+    "shopify": "真实／沙箱店的 channel binding 经 `POST /api/channels/{id}/test` 真出向并回 ok=true",
+    "refund": "带测试订单的真退款打到真 Shopify 并返回 2xx（**这一步动款**）",
+    "notify": "一条通知经 prod 配置真正投递到指定收件人（非 dev mock，**这一步打扰真人**）",
+}
+
+#: 每条腿的前置变量名。只读"键在不在、值非空"，**值绝不进任何输出**。
+LEG_ENV: dict[str, tuple[str, ...]] = {
+    "llm": ("LITELLM_MODEL", "OPENAI_API_KEY"),
+    "notify": ("ATLAS_SMTP_HOST", "ATLAS_SMTP_USERNAME", "ATLAS_SMTP_FROM"),
+}
+
+#: 只有这些键允许从宿主搬进容器 env（缺的不覆盖，保持默认路径的空值边界）。
+CREDENTIAL_KEYS = (
+    "LITELLM_MODEL", "OPENAI_API_KEY", "OPENAI_BASE_URL",
+    "ATLAS_SMTP_HOST", "ATLAS_SMTP_PORT", "ATLAS_SMTP_USERNAME", "ATLAS_SMTP_PASSWORD",
+    "ATLAS_SMTP_FROM", "ATLAS_SMTP_USE_TLS",
+)
+
+#: 本批落了执行段的腿。其余一律 BLOCKED 并写明"执行段未实现"，而不是假装跑过。
+EXECUTABLE_LEGS = ("llm", "shopify")
+
+
+@dataclass(frozen=True)
+class LegPlan:
+    name: str
+    verdict: str
+    reason: str
+
+
+def plan_live_legs(requested, source_env, *, allow_refund=False,
+                   shopify_order_id=None, notify_to=None) -> list[LegPlan]:
+    """把"要不要真外发"变成**点名可执行**的判断，而不是运行时沉默跳过。
+
+    verdict 三种：
+      run     ＝前置齐、执行段存在，可以按判据真跑；
+      skip    ＝前置缺，reason 点名缺哪个变量（或哪个配置面根本没透传）；
+      blocked＝前置齐但这一步动别人的钱／打扰真人（要显式授权），或本批还没有执行段。
+    """
+    unknown = [name for name in requested if name not in LEG_CRITERIA]
+    if unknown:
+        raise ValueError(f"未知外发腿 {unknown}；可选项＝{sorted(LEG_CRITERIA)}")
+
+    plans: list[LegPlan] = []
+    for name in requested:
+        criterion = LEG_CRITERIA[name]
+        missing = [key for key in LEG_ENV.get(name, ()) if not (source_env.get(key) or "").strip()]
+        if missing:
+            reason = f"缺前置 {'、'.join(missing)}｜判据＝{criterion}"
+            if "OPENAI_API_KEY" in missing:
+                reason += ("（litellm 直连路径读 `OPENAI_API_KEY`/`OPENAI_BASE_URL`，"
+                           "`LITELLM_API_KEY` 不被读取——docs/73 1.1 那次就栽在这里")
+            if name == "notify":
+                reason += "；且 docker-compose.yml 只透传 LITELLM_*/OPENAI_*（52–57 行），ATLAS_SMTP_* 还没进容器"
+            plans.append(LegPlan(name, "skip", reason))
+            continue
+        if name == "refund":
+            if not allow_refund:
+                plans.append(LegPlan(name, "blocked", "动款必须显式 --allow-refund｜判据＝" + criterion))
+            elif not shopify_order_id:
+                plans.append(LegPlan(name, "blocked", "还缺 --shopify-order 指向测试订单｜判据＝" + criterion))
+            else:
+                plans.append(LegPlan(name, "blocked", "本批执行段未实现（先落 llm／shopify 两条）｜判据＝" + criterion))
+            continue
+        if name == "notify":
+            if not notify_to:
+                plans.append(LegPlan(name, "blocked", "给真人发信要 --notify-to｜判据＝" + criterion))
+            else:
+                plans.append(LegPlan(name, "blocked", "本批执行段未实现（且要先补 compose 的 ATLAS_SMTP_* 透传）｜判据＝" + criterion))
+            continue
+        if name not in EXECUTABLE_LEGS:
+            plans.append(LegPlan(name, "blocked", "本批执行段未实现｜判据＝" + criterion))
+            continue
+        plans.append(LegPlan(name, "run", criterion))
+    return plans
+
+
+def with_live_credentials(base, source_env) -> tuple[dict, list[str]]:
+    """把白名单凭据从宿主搬进 compose env；缺的**不覆盖**，返回键名列表而不返回任何值。"""
+    merged = dict(base)
+    copied: list[str] = []
+    for key in CREDENTIAL_KEYS:
+        value = source_env.get(key)
+        if value:
+            merged[key] = value
+            copied.append(key)
+    return merged, copied
+
+
+def wait_ready(port: int, limit: int = 240) -> float:
+    """容器重建后等一次 ready；与第 3 段同判据但不许靠重启救（这里 restart 仍是 "no"）。"""
+    t0 = time.time()
+    while time.time() - t0 < limit:
+        try:
+            if api(port, "get", "/api/ready").status_code == 200:
+                return time.time() - t0
+        except Exception:
+            pass
+        time.sleep(2)
+    raise AssertionError(f"重建后 {limit}s 内 /api/ready 没到 200")
+
+
+def leg_llm(port: int, token: str, gid: str, release) -> None:
+    """第 5a 段的反面：同一张已发布图，配上真凭据之后必须真的调出去。"""
+    run = api(port, "post", f"/api/graphs/{gid}/run", token=token,
+              json_body={"releaseVersion": release,
+                         "inputs": {"order_id": "R-1", "amount": 12.5, "reason": "演练"}})
+    detail = json.dumps(run.json().get("detail", {}), ensure_ascii=False)
+    ok(run.status_code == 200,
+       f"配了真凭据后同一张图不再 500（{run.status_code}{'，' + detail[:120] if run.status_code != 200 else ''}）")
+    outputs = run.json().get("outputs") or {}
+    sources = {k: str(v.get("source")) for k, v in outputs.items() if isinstance(v, dict) and v.get("source")}
+    ok(any(s.startswith("llm:") for s in sources.values()),
+       f"至少一个 `ai_decision` 节点走的是真 LLM（节点 source＝{sources}；规则兜底长成 `rule:`）")
+    say("     ", f"外发结论：{json.dumps({k: v for k, v in outputs.items() if isinstance(v, dict)}, ensure_ascii=False)[:240]}")
+
+
+def leg_shopify(port: int, token: str) -> None:
+    """只读连通探针：有 shopify binding 才打 `/test`，没有就点名 SKIP（不动款、不建店）。"""
+    listed = api(port, "get", "/api/channels", token=token).json()
+    items = listed.get("items", listed if isinstance(listed, list) else [])
+    shop = [c for c in items if str(c.get("provider", "")).lower().startswith("shopify")]
+    if not shop:
+        note("shopify 腿 SKIP：prod 库里没有任何 shopify binding（先绑一家真店或沙箱店才能演 1.2）")
+        return
+    binding_id = shop[0].get("id") or shop[0].get("bindingId")
+    res = api(port, "post", f"/api/channels/{binding_id}/test", token=token)
+    body = res.json()
+    ok(res.status_code == 200, f"POST /api/channels/{binding_id}/test → {res.status_code}")
+    ok(body.get("ok") is True,
+       f"真店连通返回 ok=true（实际＝{json.dumps(body, ensure_ascii=False)[:200]}）——"
+       f"docs/67 那层『真适配器＋假 HTTP』在这里换成真 2xx")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="prod rehearsal on the shipped artifact")
     ap.add_argument("--host-port", type=int, default=8010)
     ap.add_argument("--keep", action="store_true", help="演练后不清卷（排障用）")
+    ap.add_argument("--live-legs", default="",
+                    help="逗号分隔的真外发腿（llm,shopify,refund,notify）；默认一条都不跑＝凭据边界不变")
+    ap.add_argument("--allow-refund", action="store_true", help="授权 refund 腿动款（还需 --shopify-order）")
+    ap.add_argument("--shopify-order", default=None, help="refund 腿使用的测试订单 id")
+    ap.add_argument("--notify-to", default=None, help="notify 腿的真实收件人（打扰真人，要显式给）")
     args = ap.parse_args()
     port = args.host_port
 
@@ -369,6 +523,32 @@ def main() -> int:
                       json_body={"username": second, "password": "Setbypa-3"})
         ok(s_again.json().get("mustChangePassword") is True,
            "被第三方重置过的口令回到未满足态（只有本人改密才盖章）")
+
+        requested = [x.strip() for x in args.live_legs.split(",") if x.strip()]
+        print("9｜真外发腿（docs/73 1.1–1.3）：默认一条不跑；点名的才注入凭据、重建容器后真发")
+        plans = plan_live_legs(requested, os.environ, allow_refund=args.allow_refund,
+                               shopify_order_id=args.shopify_order, notify_to=args.notify_to)
+        if not requested:
+            note("未点名任何外发腿＝本次只演**出厂产物**，一个真凭据都不读（凭据边界不变）")
+        for leg in plans:
+            say(f"{leg.verdict.upper():<7}", f"{leg.name}｜{leg.reason}")
+        runnable = [leg.name for leg in plans if leg.verdict == "run"]
+        if runnable:
+            env_live, copied = with_live_credentials(env, os.environ)
+            note(f"重建 atlas 容器以注入凭据键：{'、'.join(copied) or '（无）'}（只报键名，值一律不打印）")
+            compose(env_live, *files, "up", "-d", "atlas")
+            waited = wait_ready(port)
+            note(f"带凭据重建后 /api/ready {waited:.1f}s 到 200")
+            live_login = api(port, "post", "/api/auth/login",
+                             json_body={"username": ADMIN, "password": new_password})
+            ok(live_login.status_code == 200, "重建后仍可登进（卷没动、轮换位还在）")
+            live_token = live_login.json()["token"]
+            if "llm" in runnable:
+                leg_llm(port, live_token, gid, pub.json().get("releaseVersion"))
+            if "shopify" in runnable:
+                leg_shopify(port, live_token)
+        elif requested:
+            note("点名的外发腿全部前置不足＝本次没有发出任何真外发请求")
 
         print("\n演练全过 ✅")
         return 0
