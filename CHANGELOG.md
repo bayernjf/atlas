@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### feat(i18n)：D55 冻结桶第二批定性——3 条结构化出体错误码补 zh/en（2026-10-05 打包 BE；docs/08 打包 BE 块；docs/14 D55 22→19；docs/13 打包 BE 小节）
+
+- **承接 BD**：BD 收"仅节点产出"族，本批改收 D55 冻结桶里**经真实端点结构化出体**一族中证据最干净的 3 条——`DLQ_NOT_FAILED`（`POST /api/demo/deliveries/{seq}/replay` 折 409）、`DLQ_BODY_UNAVAILABLE`（同端点折 422）、`OPENAPI_UNSUPPORTED_VERSION`（parser 抛 `OpenApiError`→`_openapi_http_error` 折 422；`UnsupportedSchema` 为其子类、except 捕获已实跑确认）。
+- **选条三判据同时满足**：① 有端点折结构化响应（`detail={"code","message"}`，code 到得了英文使用者）；② 全仓仅 1 条消息字面量（过 U1160 一码多话门）；③ 无插值（静态译文即可）。`frontend/src/locales/{zh-CN,en-US}/runtime.json` 各 +3（57→60 键，奇偶一致）；三码从 `FROZEN_FOR_TRIAGE` 删除（桶 22→19）并加进 U1162 `http_facing`，从此被"HTTP 面码 zh/en 双份＋不得多话"钉住。
+- **刻意不收（照实）**：`OPENAPI_FETCH_FAILED`／`OPENAPI_LIMIT_EXCEEDED` 各承载 2 条不同字面量（一码多话，须按 BC 纪律拆码而非补译）；`OPENAPI_NOT_SOFT_DELETED` 带 `{spec_id}` 插值（须先补 params 通道）；`OPENAPI_INVALID_PARAMETER` 在 `openapi/adapter.py` 折 `ActionResult.failed`＝节点产出；发送三码在 demo 进程内存储下重放不真实重发、非端点出体族。这 6 码连同 `CHANNEL_*`／`OAUTH_*`／`CONNECTION_NOT_FOUND`（`str(exc)` 只发中文第三态）、`WEBHOOK_MALFORMED` 共 19 条留桶续批。
+- **门**：错误码守护 14 passed、端点/解析相关 86 passed、后端全量 **2364/150/0**（332.85s，未新增测试函数）、前端 vitest **788/2**、oxlint 0/0、tsc＋build 过、i18n/runtime 两文件 71 passed。零新依赖／零迁移／无 ADR；docs/03／04／12 不动（码早已在发，只补译文目录）。
+
 ### test(errors)＋ci：D55 冻结桶第一批定性（5 条适配器码确认为仅节点产出）＋修定时回放就绪探针（2026-10-05 打包 BD＋ci；docs/08 打包 BD 块；docs/14 D55；docs/13 打包 BD 小节）
 
 - **打包 BD（D55 逐条定性的第一批）**：把 docs/14 D55 冻结桶 27 条里**证据最干净**的 5 条逐条跟完发射路径后移出——`DB_NOT_CONFIGURED`／`DB_SQL_ERROR`／`DB_WRITE_FORBIDDEN`（database 适配器）、`HTTP_CONNECT_ERROR`／`HTTP_TIMEOUT`（httpapi 适配器，openapi 适配器同样内部 catch）只在适配器 `_execute` 内被接住折成 `ActionResult.failed(StructuredError)`（节点产出 `result.code`），api 层（只有 `main.py`）零引用、无端点折算出体；按 docs/57 §2.5 归 `TOOL_OUTPUT_ONLY`，桶 **27→22**。不改任何响应 code 取值集合，docs/03／04／12 不动。
