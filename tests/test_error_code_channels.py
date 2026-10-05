@@ -80,6 +80,19 @@ _SHAPES = (
     re.compile(r"""\bcode\s*:\s*[A-Za-z_]\w*\s*=\s*["']([A-Z][A-Z0-9_]{3,})["']"""),
 )
 
+# 打包 BD（docs/14 D55 第一批定性，2026-10-05）从 FROZEN_FOR_TRIAGE 移出的五条：只在
+# 适配器内部被 catch 后折成 ActionResult.failed(StructuredError(...))，作为节点产出的
+# result.code 出现；api 层（只有 main.py）零引用，没有任何端点把它们折成 HTTP 4xx/5xx
+# 出体。故按 docs/57 §2.5「节点产出＝业务数据不译」归 TOOL_OUTPUT_ONLY。U1165 钉住这个
+# 前提：一旦 api 层开始折算它们（出现出体路径），就得补 zh/en 译文而不是继续豁免。
+TRIAGED_NODE_OUTPUT_ONLY = {
+    "DB_NOT_CONFIGURED",  # database/adapter.py::_get_client，_execute catch
+    "DB_SQL_ERROR",  # database/service.py，adapter._execute catch
+    "DB_WRITE_FORBIDDEN",  # database/service.py 只读 fail-closed，adapter._execute catch
+    "HTTP_CONNECT_ERROR",  # httpapi/service.py；httpapi 与 openapi 两适配器均内部 catch
+    "HTTP_TIMEOUT",  # 同上
+}
+
 # 豁免表：每条都要写"为什么现在不能译"。加了新码而进这张表，等于把 A-4 重新欠一次。
 TOOL_OUTPUT_ONLY = {
     # 只出现在工具/适配器结果的 error_code 里，UI 以机器码呈现（Monitoring 的 error_codes
@@ -96,6 +109,7 @@ TOOL_OUTPUT_ONLY = {
     "HTTPAPI_HEADERS_INVALID",
     "HTTPAPI_METHOD_UNSUPPORTED",
     "HTTPAPI_TIMEOUT_INVALID",
+    *TRIAGED_NODE_OUTPUT_ONLY,  # 打包 BD 从冻结桶定性移出的五条（见上）
     "MESSAGE_EMAIL_ADDRESS_INVALID",  # message/service.py
     "MESSAGE_FORMAT_INVALID",
     "MESSAGE_MENTIONS_INVALID",
@@ -143,6 +157,35 @@ FROZEN_FOR_TRIAGE = {
     "CHANNEL_UNAUTHORIZED",
     "CHANNEL_UPSTREAM_FAILED",
     "CONNECTION_NOT_FOUND",
+    "DLQ_BODY_UNAVAILABLE",
+    "DLQ_NOT_FAILED",
+    "IM_SEND_FAILED",
+    "OAUTH_NO_REFRESH_TOKEN",
+    "OAUTH_REFRESH_FAILED",
+    "OAUTH_STATE_INVALID",
+    "OAUTH_TOKEN_FAILED",
+    "OPENAPI_FETCH_FAILED",
+    "OPENAPI_INVALID_PARAMETER",
+    "OPENAPI_LIMIT_EXCEEDED",
+    "OPENAPI_NOT_SOFT_DELETED",
+    "OPENAPI_UNSUPPORTED_VERSION",
+    "SMTP_SEND_FAILED",
+    "WEBHOOK_MALFORMED",
+    "WEBHOOK_SEND_FAILED",
+}
+#: 2026-10-05 打包 BC 量出的**原始 27 条**快照，刻意**硬编码**而非 `set(FROZEN_FOR_TRIAGE)`：
+#: 若从当前集合派生，将来有人往桶里加新码会同时进快照，"只许缩小"的门永远绿、形同虚设。
+#: U1164 断言 `FROZEN_FOR_TRIAGE <= FROZEN_SNAPSHOT`——每定性一条就从上面桶里删一条，
+#: 快照本身（这份 27 条历史基线）不再改动。打包 BD 已移出 5 条纯节点产出码
+#: （DB_NOT_CONFIGURED／DB_SQL_ERROR／DB_WRITE_FORBIDDEN／HTTP_CONNECT_ERROR／HTTP_TIMEOUT）。
+FROZEN_SNAPSHOT = {
+    "CHANNEL_ALREADY_BOUND",
+    "CHANNEL_ALREADY_REGISTERED",
+    "CHANNEL_INVALID_RESPONSE",
+    "CHANNEL_NOT_BOUND",
+    "CHANNEL_UNAUTHORIZED",
+    "CHANNEL_UPSTREAM_FAILED",
+    "CONNECTION_NOT_FOUND",
     "DB_NOT_CONFIGURED",
     "DB_SQL_ERROR",
     "DB_WRITE_FORBIDDEN",
@@ -164,8 +207,6 @@ FROZEN_FOR_TRIAGE = {
     "WEBHOOK_MALFORMED",
     "WEBHOOK_SEND_FAILED",
 }
-#: 2026-10-05 快照：U1164 只允许它是这个集合的**子集**（只许缩小）。
-FROZEN_SNAPSHOT = set(FROZEN_FOR_TRIAGE)
 
 DEAD_LETTER_REASON = {
     # webhook 死信台账的逐条原因码（`channels/webhooks.py` 落库成
@@ -463,4 +504,27 @@ def test_u1164_frozen_triage_bucket_only_shrinks():
     assert extra == [], (
         f"待分类桶变大了：{extra}；新码必须当场判明是『走 HTTP 要译』还是『只出现在节点产出』，"
         "不许挂进这里——分类旧的那些请从桶里删掉"
+    )
+
+
+def test_u1165_triaged_node_output_codes_never_reach_an_http_response():
+    """U1165（打包 BD，docs/14 D55 定性前提）：TRIAGED_NODE_OUTPUT_ONLY 这五条被判为
+    「仅节点产出、不译」，前提是 **api 层零出体路径**——没有任何端点把它们折算成 HTTP
+    4xx/5xx 响应。若哪天有人在 api/ 引用/下发这些码（它们因此到得了英文使用者），
+    这条守护必须变红：那时就该补 zh/en 译文、移出 TOOL_OUTPUT_ONLY，而不是继续豁免。
+
+    与 U1151（豁免表不得腐烂）互补：U1151 只验"码还发得出来"，验不了"它从哪条路出去"。
+    """
+    api_dir = SRC / "api"
+    leaked: dict[str, list[str]] = {}
+    for path in sorted(api_dir.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for code in TRIAGED_NODE_OUTPUT_ONLY:
+            if re.search(rf"\b{re.escape(code)}\b", text):
+                leaked.setdefault(code, []).append(str(path.relative_to(REPO)))
+    assert leaked == {}, (
+        "这些码被归为『仅节点产出不译』，却在 api 层出体路径上出现了："
+        f"{leaked}；既然到得了 HTTP 使用者，就补 zh/en 译文并移出 TRIAGED_NODE_OUTPUT_ONLY。"
     )
