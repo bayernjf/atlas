@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### test(errors)＋ci：D55 冻结桶第一批定性（5 条适配器码确认为仅节点产出）＋修定时回放就绪探针（2026-10-05 打包 BD＋ci；docs/08 打包 BD 块；docs/14 D55；docs/13 打包 BD 小节）
+
+- **打包 BD（D55 逐条定性的第一批）**：把 docs/14 D55 冻结桶 27 条里**证据最干净**的 5 条逐条跟完发射路径后移出——`DB_NOT_CONFIGURED`／`DB_SQL_ERROR`／`DB_WRITE_FORBIDDEN`（database 适配器）、`HTTP_CONNECT_ERROR`／`HTTP_TIMEOUT`（httpapi 适配器，openapi 适配器同样内部 catch）只在适配器 `_execute` 内被接住折成 `ActionResult.failed(StructuredError)`（节点产出 `result.code`），api 层（只有 `main.py`）零引用、无端点折算出体；按 docs/57 §2.5 归 `TOOL_OUTPUT_ONLY`，桶 **27→22**。不改任何响应 code 取值集合，docs/03／04／12 不动。
+- **真产出＝U1165 机检（含反向门）**：把这 5 条（`TRIAGED_NODE_OUTPUT_ONLY`）钉成"`src/atlas/api/` 下零出体引用"，将来有人在端点折算它们（到得了英文使用者）即红，逼其补 zh/en 译文而非继续豁免；临时植 `DB_SQL_ERROR` 引用实跑转红、删除恢复绿。与 U1151（豁免表不腐烂）互补。顺手硬化 U1164：`FROZEN_SNAPSHOT` 由"从当前桶派生"改为**硬编码原始 27 条**——派生写法会让新增码同时进快照、"只许缩小"永远绿。
+- **刻意不收的 22 条**：发送三码＋`DLQ_*` 经 demo 重放端点结构化出体（要译）；`CHANNEL_*`／`OAUTH_*`／`CONNECTION_NOT_FOUND` 走 `detail=str(exc)` 只发中文、code 不进体（第三态，补译前需契约决策）；`OPENAPI_*` 多经 `_openapi_http_error` 结构化出体（要译）；`WEBHOOK_MALFORMED` 待跟入站路由。留桶续批。
+- **ci(replay)**：修 `.github/workflows/release-gate-cron.yml` 就绪探针在 GitHub 默认 `bash -e` 下首次 `curl`（uvicorn 冷启动连接被拒，exit 7）即被 `set -e` 判死、30 次重试只跑一次的问题（2026-10-05 main 定时 run 实测 29ms exit 7、从未打印 did-not-become-ready）；探针 curl 末尾加 `|| true`，连接失败时 `%{http_code}` 已归一为 `000`，循环继续直到 200。本地 `bash -e` 复刻验证第 4 秒就绪、exit 0（commit `36fdd5b`）。
+- **门**：`tests/test_error_code_channels.py` **14 passed**；后端全量 **2364 passed／150 skipped／0 failed**（318.46s，对账＝BC 2363＋U1165 净增 1）、前端本批零改动。零新依赖／零迁移／无 ADR。
+
 ### fix(errors)：五条"一码多话"粗码拆成具体码＋把"一码多话"变成机检（2026-10-05 打包 BC；docs/14 D53 ① 收口；docs/08 打包 BC 立项/收口块）
 
 - **为什么不是"补翻译"而是"拆码"**：A-4 从"19/22 条无文案"被 AW 重测改成"211 条码里只有 5 条是**真欠**"，而欠的原因不是缺文案，是**一个码承载多条不同答案**——按码出模板会把诊断压成一句甚至误导。这 5 条此前躺在豁免表 `COARSE_CODE` 里，而豁免表是**手抄清单**：以后谁再加一条多话的码，守护不会红。所以本批的真产出是**把这条性质变成机检**。
