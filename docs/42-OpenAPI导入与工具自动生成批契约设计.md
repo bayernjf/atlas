@@ -82,6 +82,8 @@
 
 > **〔2026-10-05 打包 BC 勘误〕本文正文的旧码已拆，原文保留不改**：`OPENAPI_INVALID_DOCUMENT` 按答案拆成 `OPENAPI_DOCUMENT_NOT_OPENAPI3`／`OPENAPI_DOCUMENT_MISSING_SERVERS`／`OPENAPI_DOCUMENT_SERVER_URL_NOT_ABSOLUTE`／`OPENAPI_DOCUMENT_SOURCE_EXCLUSIVE`，`UnsupportedSchema` 一族另拆出 `OPENAPI_PARAM_*`／`OPENAPI_BODY_*`／`OPENAPI_REF_*`／`OPENAPI_TYPE_*`／`OPENAPI_SCHEMA_*`／`OPENAPI_KEYWORD_*`；`OPENAPI_INVALID_PARAMETER`（运行期）不变。当前取值集合以 [docs/03](03-数据模型与Schema-契约索引.md) 该节为准。
 
+> **〔2026-10-05 打包 BF 勘误〕本文正文的旧码已拆，原文保留不改**：`OPENAPI_FETCH_FAILED` 按答案拆成 `OPENAPI_FETCH_NETWORK_ERROR`（网络/出向失败，params `{detail}`）与 `OPENAPI_FETCH_HTTP_ERROR`（上游 HTTP ≥400，params `{status}`）；`OPENAPI_LIMIT_EXCEEDED` 按配额拆成 `OPENAPI_SPEC_OPERATIONS_LIMIT`（单份 operation 上限，params `{max}`）与 `OPENAPI_TENANT_SPECS_LIMIT`（每租户份数上限，params `{max}`）。当前取值集合以 [docs/03](03-数据模型与Schema-契约索引.md) 该节为准。
+
 ## 4. 运行时语义
 
 - parser 为纯函数：同输入恒定输出，不读环境、不发请求；URL 抓取在 API 层（preview/import 端点）完成后把文本喂给 parser。

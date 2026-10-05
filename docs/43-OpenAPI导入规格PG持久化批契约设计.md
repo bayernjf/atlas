@@ -25,6 +25,9 @@
 - 与 `ImportStore`（docs/42 §1 B）**同方法形状**：`add(spec, *, now=None) -> ImportedSpec`、`list() -> list[ImportedSpec]`、`get(spec_id) -> ImportedSpec | None`、`delete(spec_id) -> bool`。
 - 构造 `PgImportStore(engine, tenant_id)`：行级 `tenant_id` 过滤；跨租户访问天然返回不存在（404 口径同内存档）。
 - `add` 在单事务内：`nextval('storage_id_seq')` → 规格上限校验（`COUNT(*) >= 5` → `OPENAPI_LIMIT_EXCEEDED`「每租户最多导入 5 份 API 规格」）、单 spec 200 operations 上限（`OPENAPI_LIMIT_EXCEEDED`）→ INSERT。上限错误码/文案与 docs/42 内存档完全一致（HTTP 层折算 422 不变）。
+
+> **〔2026-10-05 打包 BF 勘误〕上文两条上限各已拆成具体码，原文保留不改**：单 spec 200 operations 上限 → `OPENAPI_SPEC_OPERATIONS_LIMIT`（params `{max}`）；每租户 5 份上限 → `OPENAPI_TENANT_SPECS_LIMIT`（params `{max}`）；`ImportStoreError` 补可选 `params` 字段并在 import 端点折算处透传（否则 `{max}` 英文态填不满回退中文原文）。HTTP 折算状态码不变（仍 422）。当前取值集合以 [docs/03](03-数据模型与Schema-契约索引.md) 该节为准。
+
 - `operations` JSONB 以 `ImportedSpec.model_dump()` JSON 写入；读取经 pydantic 反序列化，返回的 ImportedSpec 与内存档逐字段一致（含 created_at ISO 字符串）。
 - `delete` 返回 `rowcount > 0`（幂等；不存在 false → HTTP 404 语义不变）。
 - **reset 不清**：照 connections/channel 绑定/审计先例，demo reset 不清除本表（docs/42 §1 B 既定语义；reset_tenant 不触此 store）。

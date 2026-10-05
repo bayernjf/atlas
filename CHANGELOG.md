@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### fix(openapi)：D55 冻结桶第三批＝两条一码多话粗码拆成具体码（2026-10-05 打包 BF；docs/08 打包 BF 块；docs/14 D55 19→17；docs/13 打包 BF 小节）
+
+- **承接 BE 的"刻意不收"**：BE 补译 3 条结构化出体码时实测到 docs/14 D55 冻结桶里仍有 2 条**已在发、已结构化出体、却一码多话**的码——`OPENAPI_FETCH_FAILED`（HTTP 状态面与网络/出向面两字面量）与 `OPENAPI_LIMIT_EXCEEDED`（单份 operation 上限与每租户份数上限两字面量）。本批按打包 BC 已定的"一码一答案"纪律**拆码**而非补译。
+- **拆码结果**：`OPENAPI_FETCH_FAILED` → `OPENAPI_FETCH_NETWORK_ERROR`（egress 拒绝/`httpx.HTTPError`/`ValueError`，params `{detail}`）与 `OPENAPI_FETCH_HTTP_ERROR`（上游 HTTP ≥400，params `{status}`）；`OPENAPI_LIMIT_EXCEEDED` → `OPENAPI_SPEC_OPERATIONS_LIMIT`（params `{max}`）与 `OPENAPI_TENANT_SPECS_LIMIT`（params `{max}`）。旧两码全仓零发射、不给别名（U1161 钉住）。保持既有 egree 归并行为与 200/5 配额数值不变，HTTP 折算状态码仍 422。
+- **params 通道补齐**：`ImportStoreError` 补可选 `params` 字段并在 `POST /api/openapi/imports` 折算处透传（`detail={"code","message","params"}`），让 `{max}` 英文态模板能填得满，不再回退后端中文原文；`OpenApiError` 与 `_openapi_http_error` 的 params 透传在 BC 已落地，本批复用。
+- **守护与目录**：4 条新码补 zh/en（`frontend/src/locales/{zh-CN,en-US}/runtime.json` 各 +4，60→64 键，奇偶一致）并加进 `tests/test_error_code_channels.py` U1162 `http_facing`；两条旧粗码从 `FROZEN_FOR_TRIAGE` 删除（桶 **19→17**，U1164 硬编码 27 条快照仍是超集）。既有测试断言按"测哪个答案"改到具体码。
+- **门**：错误码守护 **14 passed**；相关端点/解析/去重 **82 passed**；PG 集成（临时 pgvector 容器）**15 passed**；后端全量 **2365/150/0**（305.86s，对账＝BE 2364＋新增 1 例）；前端 vitest **788/2**、oxlint 0/0、tsc＋build 过、i18n/runtime 两文件 **71 passed**。**零新依赖／零迁移／无 ADR**。
+
 ### feat(i18n)：D55 冻结桶第二批定性——3 条结构化出体错误码补 zh/en（2026-10-05 打包 BE；docs/08 打包 BE 块；docs/14 D55 22→19；docs/13 打包 BE 小节）
 
 - **承接 BD**：BD 收"仅节点产出"族，本批改收 D55 冻结桶里**经真实端点结构化出体**一族中证据最干净的 3 条——`DLQ_NOT_FAILED`（`POST /api/demo/deliveries/{seq}/replay` 折 409）、`DLQ_BODY_UNAVAILABLE`（同端点折 422）、`OPENAPI_UNSUPPORTED_VERSION`（parser 抛 `OpenApiError`→`_openapi_http_error` 折 422；`UnsupportedSchema` 为其子类、except 捕获已实跑确认）。
