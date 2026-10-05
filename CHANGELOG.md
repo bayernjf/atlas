@@ -3,6 +3,14 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### fix(deploy)＋test：部署面变量总账——53 个旋钮只有 14 个进得了容器的日子结束了（2026-10-05 打包 BA）
+
+- **把 AZ 那类缺口类化**：全量对账实测 `src/atlas` 读 **53** 个部署变量，AZ 之后的 compose 只覆盖 **14** 个。剩下 39 个"代码读 env、容器永远拿不到"的旋钮里，有一整套运维面：retention 8 键、审计环大小、会话时长、调度开关与轮询间隔、`/metrics` 令牌、egress allowlist、A2A 令牌、OAuth 回调基址、**数据库适配器的出站 DSN**（`ATLAS_DATABASE_URL`——不给它，图永远查不了真库）、HTTP 适配器四旋钮……SMTP 只是第一个被偶然发现的。
+- **透传前逐个读默认值**：37 条新增全部 `:-` 空缺省（空＝用代码自己的默认，行为逐字不变）。两条例外都有实测依据——`ATLAS_LLM_TIMEOUT_SECONDS` 显式给 60（四处 `float(os.getenv(...))`，空串直接崩），`ATLAS_FRONTEND_DIST` 给 `frontend/dist`（空串让静态目录解析成空路径）。唯一豁免＝`ATLAS_MCP_TENANT_ID`（stdio MCP server 跑在操作员宿主机，不在容器里），豁免表带理由且不许腐烂。
+- **U1158（6 例）：判据是集合相等，两个方向都能红**。名单从源码正则抽出（正向对照先证明正则不瞎）；compose 少一条 ⇒ 点名；**compose 多一条 src 不读的死配置 ⇒ 也点名**——死配置是部署面在讲一个代码已经不认的故事，和缺透传同罪。两个反向门都先断言替换锚真的命中。
+- **〔跑〕空卷九段演练重跑全过**（镜像 `0b7654f569f0`／源 `e6618e7`）：`/api/ready` **T+2.2s**、`RestartCount=0`、FAIL 0——39 条空缺省进容器，启动行为逐字不变，第 3–8 段判据照旧绿。这是本批最重要的证据：总账不是"能跑就行"，是"跑起来和以前一个样"。
+- **`.env.example` 补 16 个此前没进示例的旋钮**（retention 8、log、session、audit ring、metrics token、egress allowlist、适配器出站 DSN、LLM 超时、嵌入提供方、frontend dist、migrations dir、db ready×2），每条标注模块出处与"留空＝默认"。
+- **门（实跑）**：后端全量 **2353 passed／150 skipped／0 failed**（252.95s，load 9.18；对账＝AZ 那棵树 2347＋U1158 的 6 例）；九段演练全过。零新依赖／零迁移／无新 ADR／不改任何响应字段。**仍未做**：`ATLAS_DATABASE_URL` 只是把旋钮送进容器，"图查真库返回真行"仍属真凭据链（1.2／4.1）。
 ### fix(deploy)＋test：SMTP 配置以前根本进不了容器（docs/73 1.3 的部署面，2026-10-05 打包 AZ）
 
 - **缺口是读 compose 读出来的，不是猜的**：`SmtpConfig.from_env()` 读 `ATLAS_SMTP_HOST/PORT/USERNAME/PASSWORD/FROM/USE_TLS`，而 `docker-compose.yml` 的 atlas 服务只透传 `LITELLM_MODEL`／`OPENAI_API_KEY`／`OPENAI_BASE_URL`。后果是**部署层就发不出真信**：宿主 `.env` 配得再全，容器里 HOST 仍是空 ⇒ 走"回退进程内记录"。docs/73 1.3 那条判据此前根本到不了可执行状态，而原因不在供应商。
