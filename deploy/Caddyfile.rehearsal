@@ -1,0 +1,34 @@
+# Atlas TLS 反向代理——**演练专用**（docs/08 打包 BB；生产请看 ./Caddyfile）
+#
+# 与出厂样例 `./Caddyfile` 逐条同形，唯一差别是站点地址与证书来源：
+#   atlas.example.com（ACME 自动申请）  →  atlas.internal.test ＋ `tls internal`
+# 为什么要单独一份而不是把生产样例改成自签：真部署的人会照抄 Caddyfile，
+# 抄到一份永远拿不到真证书的自签配置，比没有样例更坏。
+#
+# `tls internal` 用 Caddy 自带的内部 CA 签站点证书；演练脚本从 caddy-data 卷里
+# 取出该 CA 的根证书做**真校验**（不是 `-k`），所以验的是证书链通路本身。
+#
+# 结构由 `tests/test_edge_rehearsal_config.py` 的 U1159 机检钉住：gzip／metrics
+# 网段白名单／`reverse_proxy atlas:8000` 三条缺一即红，防止演练跑的是走形的配置。
+
+{
+	# 关闭管理 API（默认监听本机 2019，容器内不需要）
+	admin off
+}
+
+atlas.internal.test {
+	encode gzip
+
+	# /metrics 仅允许监控网段与回环，其余来源 404
+	@metrics_blocked {
+		path /metrics
+		not remote_ip 10.0.0.0/8 127.0.0.1/32
+	}
+	respond @metrics_blocked "Not Found" 404
+
+	# 其余所有请求（含 /api/health、/api/ready、编辑器、SSE）透传
+	reverse_proxy atlas:8000
+
+	# 演练没有真域名：用 Caddy 内部 CA 自签，客户端凭该 CA 的根证书校验
+	tls internal
+}
