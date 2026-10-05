@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### feat(graph)：D54 闭合＝condition 节点表达式诊断补机器可读通道（2026-10-05 打包 BI；docs/08 打包 BI 块；docs/13 打包 BI 小节 U1167；docs/14 D54 闭合）
+
+- **D54 的两个拦路问题裁决**：① **零新码**——`ConditionEvalError` 自 docs/60 G1 带 code/params（COND_* 族目录文案齐全），非布尔分支复用 loop 同款 `COND_TYPE_MISMATCH`；② **分支前缀由前端组装**——`branch: label` 进 params，per-code 模板一字不动，不造第二套带前缀的模板族。
+- **后端**：`graph/loader.py::_execute_condition` 补 `expressionErrorCodes`／`expressionErrorParams` 平行数组（与 `expression_errors` 等长，经 `_expression_error_channels` 守卫），求值异常下发 `exc.code`＋`{branch, **exc.params}`、非布尔下发 `COND_TYPE_MISMATCH`＋`{branch, expected, actual}`。
+- **前端**：Editor 的 condition 分支补表达式诊断本地化落日志（**此前 condition 的 expression_errors 在任何 UI 都不可见**）；新 i18n 键 `log.conditionBranchError`（zh/en）；`condition.schema.ts` 的 `x-outputSchema` 补三键（nodeSchemas 守卫同步）。
+- **U1167**：condition 结果三数组按下标对齐、码来自 `ConditionEvalError`／`COND_TYPE_MISMATCH`、params 含 `branch`（`tests/test_graph_loader.py` 新增 1 例＋既有断言扩展）。
+- **门**：`test_graph_loader.py`＋`test_tracing_loader.py` **109 passed**；后端全量 **2368/150/0**（282.56s，对账＝BH 2367＋U1167 新增 1）；前端 vitest **788/2**、oxlint 0/0、tsc＋build 过。零新依赖／零迁移／无 ADR。
+- **收口补记（2026-10-06 复核）**：BI 行进 Recently shipped 时漏删最旧的 BD 行（BD 已滚入 `docs/handoff-archive-2026-10-04.md`，主文件仍留一份）⇒ 该区 6 条超限、`test_handoff_integrity` 转红；删重后该守护与错误码守护合计 **19 passed**，全量即上记 2368／150／0（本机实跑口径 2367 passed ＋ 1 failed 即那条超限／150 skipped）。
+
 ### fix(message)：D55 冻结桶第五批＝发送三码补译出桶＋WEBHOOK_MALFORMED 路由跟完（2026-10-05 打包 BH；docs/08 打包 BH 块；docs/14 D55 15→12；docs/13 打包 BH 小节）
 
 - **修正打包 BE 的一处误判**：三码留桶理由"demo 进程内不重发"被调用链证伪——`replay_failed` 调**真 `self.send(...)` 全路径**，渠道真配时（SMTP host、真 webhook URL）send 抛投递失败码、`POST /api/demo/deliveries/{seq}/replay` 的 `except MessageSendError`（409 结构化体）无条件在场。三码是 HTTP 面码（BD 的原始判断），按"到得了英文使用者"判据补译出桶（桶 **15→12**）。
