@@ -35,6 +35,7 @@
   "OPENAPI_KEYWORD_ONEOF": "The keyword oneOf is not supported",
   "OPENAPI_KEYWORD_UNSUPPORTED": "Unsupported keyword",
   "OPENAPI_NO_IMPORTABLE_OPERATION": "No importable operations (every operation in the document was skipped)",
+  "OPENAPI_NOT_SOFT_DELETED": "API spec {{specId}} is not soft-deleted; delete it before purging",
   "OPENAPI_PARAM_MISSING_NAME_IN": "The parameter is missing a valid name/in",
   "OPENAPI_PARAM_MISSING_SCHEMA": "Parameter {{name}} is missing a JSON schema",
   "OPENAPI_PARAM_NOT_OBJECT": "The parameter must be an object",

@@ -35,6 +35,7 @@
   "OPENAPI_KEYWORD_ONEOF": "不支持的关键字 oneOf",
   "OPENAPI_KEYWORD_UNSUPPORTED": "不支持的关键字",
   "OPENAPI_NO_IMPORTABLE_OPERATION": "没有可导入的 operation（文档内操作全部被跳过）",
+  "OPENAPI_NOT_SOFT_DELETED": "API 规格 {{specId}} 尚未软删除，请先删除再彻底删除",
   "OPENAPI_PARAM_MISSING_NAME_IN": "参数缺少合法 name/in",
   "OPENAPI_PARAM_MISSING_SCHEMA": "参数 {{name}} 缺少 JSON schema",
   "OPENAPI_PARAM_NOT_OBJECT": "参数必须是对象",

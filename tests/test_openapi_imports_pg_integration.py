@@ -359,6 +359,8 @@ def test_list_include_deleted_and_purge_pg(setup):
     with pytest.raises(ImportStoreError) as exc:
         store.purge(b.spec_id)
     assert exc.value.code == "OPENAPI_NOT_SOFT_DELETED"
+    # 打包 BG：异常带 params（端点折算时透传进 409 体）
+    assert exc.value.params == {"specId": b.spec_id}
     assert store.purge("openapi-nope") is False
 
     # purge 已软删 → 物理移除，b 仍在

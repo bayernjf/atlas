@@ -584,6 +584,8 @@ def test_hard_purge_409_when_active_404_when_missing_204_after_soft_delete():
     active = client.delete("/api/openapi/imports/openapi-1?hard=true", headers=ADMIN_A)
     assert active.status_code == 409
     assert active.json()["detail"]["code"] == "OPENAPI_NOT_SOFT_DELETED"
+    # 打包 BG：409 体带 params，英文态模板 {{specId}} 填得满
+    assert active.json()["detail"]["params"] == {"specId": "openapi-1"}
 
     # hard 不存在 → 404
     missing = client.delete("/api/openapi/imports/openapi-9?hard=true", headers=ADMIN_A)

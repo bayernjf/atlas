@@ -80,8 +80,9 @@ _SHAPES = (
     re.compile(r"""\bcode\s*:\s*[A-Za-z_]\w*\s*=\s*["']([A-Z][A-Z0-9_]{3,})["']"""),
 )
 
-# 打包 BD（docs/14 D55 第一批定性，2026-10-05）从 FROZEN_FOR_TRIAGE 移出的五条：只在
-# 适配器内部被 catch 后折成 ActionResult.failed(StructuredError(...))，作为节点产出的
+# 打包 BD（docs/14 D55 第一批定性，2026-10-05）从 FROZEN_FOR_TRIAGE 移出的节点产出码（BD 五条，
+# 打包 BG 补入 OPENAPI_INVALID_PARAMETER）：只在适配器内部被 catch 后折成
+# ActionResult.failed(StructuredError(...))，作为节点产出的
 # result.code 出现；api 层（只有 main.py）零引用，没有任何端点把它们折成 HTTP 4xx/5xx
 # 出体。故按 docs/57 §2.5「节点产出＝业务数据不译」归 TOOL_OUTPUT_ONLY。U1165 钉住这个
 # 前提：一旦 api 层开始折算它们（出现出体路径），就得补 zh/en 译文而不是继续豁免。
@@ -91,6 +92,10 @@ TRIAGED_NODE_OUTPUT_ONLY = {
     "DB_WRITE_FORBIDDEN",  # database/service.py 只读 fail-closed，adapter._execute catch
     "HTTP_CONNECT_ERROR",  # httpapi/service.py；httpapi 与 openapi 两适配器均内部 catch
     "HTTP_TIMEOUT",  # 同上
+    # 打包 BG（docs/08 打包 BG 块）：唯一发射点 openapi/adapter.py::_build_url
+    # （HttpApiCallError，缺路径参数时抛），适配器内部 catch 折 ActionResult.failed
+    # ＝节点产出，api 层零引用——与 BD 五条同族。
+    "OPENAPI_INVALID_PARAMETER",
 }
 
 # 豁免表：每条都要写"为什么现在不能译"。加了新码而进这张表，等于把 A-4 重新欠一次。
@@ -109,7 +114,7 @@ TOOL_OUTPUT_ONLY = {
     "HTTPAPI_HEADERS_INVALID",
     "HTTPAPI_METHOD_UNSUPPORTED",
     "HTTPAPI_TIMEOUT_INVALID",
-    *TRIAGED_NODE_OUTPUT_ONLY,  # 打包 BD 从冻结桶定性移出的五条（见上）
+    *TRIAGED_NODE_OUTPUT_ONLY,  # 打包 BD 五条＋打包 BG 一条，从冻结桶定性移出（见上）
     "MESSAGE_EMAIL_ADDRESS_INVALID",  # message/service.py
     "MESSAGE_FORMAT_INVALID",
     "MESSAGE_MENTIONS_INVALID",
@@ -162,8 +167,6 @@ FROZEN_FOR_TRIAGE = {
     "OAUTH_REFRESH_FAILED",
     "OAUTH_STATE_INVALID",
     "OAUTH_TOKEN_FAILED",
-    "OPENAPI_INVALID_PARAMETER",
-    "OPENAPI_NOT_SOFT_DELETED",
     "SMTP_SEND_FAILED",
     "WEBHOOK_MALFORMED",
     "WEBHOOK_SEND_FAILED",
@@ -464,6 +467,8 @@ def test_u1162_http_facing_new_codes_have_both_locales():
         # 打包 BF（docs/08）：两条一码多话粗码拆出的四个具体码，均经端点结构化出体。
         "OPENAPI_FETCH_NETWORK_ERROR", "OPENAPI_FETCH_HTTP_ERROR",  # preview URL 抓取
         "OPENAPI_SPEC_OPERATIONS_LIMIT", "OPENAPI_TENANT_SPECS_LIMIT",  # import 配额
+        # 打包 BG（docs/08）：purge 端点 409 结构化出体，补 zh/en＋params {specId} 后纳入。
+        "OPENAPI_NOT_SOFT_DELETED",  # DELETE /api/openapi/imports/{spec_id}?hard=true
         "OPENAPI_BODY_MISSING_SCHEMA", "OPENAPI_BODY_NOT_JSON",
         "OPENAPI_CREDENTIAL_BASIC_INCOMPLETE", "OPENAPI_CREDENTIAL_SCHEME_UNKNOWN",
         "OPENAPI_DOCUMENT_MISSING_SERVERS", "OPENAPI_DOCUMENT_NOT_OPENAPI3",
@@ -517,7 +522,7 @@ def test_u1164_frozen_triage_bucket_only_shrinks():
 
 
 def test_u1165_triaged_node_output_codes_never_reach_an_http_response():
-    """U1165（打包 BD，docs/14 D55 定性前提）：TRIAGED_NODE_OUTPUT_ONLY 这五条被判为
+    """U1165（打包 BD，docs/14 D55 定性前提）：TRIAGED_NODE_OUTPUT_ONLY 这六条被判为
     「仅节点产出、不译」，前提是 **api 层零出体路径**——没有任何端点把它们折算成 HTTP
     4xx/5xx 响应。若哪天有人在 api/ 引用/下发这些码（它们因此到得了英文使用者），
     这条守护必须变红：那时就该补 zh/en 译文、移出 TOOL_OUTPUT_ONLY，而不是继续豁免。

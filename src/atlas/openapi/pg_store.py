@@ -207,6 +207,7 @@ class PgImportStore:
                     "OPENAPI_NOT_SOFT_DELETED",
                     f"API 规格 {spec_id} 尚未软删除，请先删除再彻底删除",
                     status_code=409,
+                    params={"specId": spec_id},
                 )
             result = db.execute(
                 text(

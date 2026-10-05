@@ -137,6 +137,8 @@ def test_purge_requires_soft_delete_then_physically_removes():
         store.purge(a.spec_id)
     assert exc.value.code == "OPENAPI_NOT_SOFT_DELETED"
     assert exc.value.status_code == 409
+    # 打包 BG：异常带 params（端点折算时透传进 409 体）
+    assert exc.value.params == {"specId": a.spec_id}
     # 未物理删除，仍在未删列表
     assert [s.spec_id for s in store.list()] == [a.spec_id]
 

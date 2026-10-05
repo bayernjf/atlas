@@ -2488,10 +2488,11 @@ def delete_openapi_import(
         try:
             purged = store.purge(spec_id)
         except ImportStoreError as exc:
-            raise HTTPException(
-                status_code=exc.status_code,
-                detail={"code": exc.code, "message": str(exc)},
-            ) from exc
+            # 带 params 的码要把 params 一起下发，否则英文态模板填不满回退中文原文。
+            detail: dict[str, object] = {"code": exc.code, "message": str(exc)}
+            if getattr(exc, "params", None):
+                detail["params"] = exc.params
+            raise HTTPException(status_code=exc.status_code, detail=detail) from exc
         if not purged:
             raise HTTPException(status_code=404, detail="导入规格不存在")
         return Response(status_code=204)
