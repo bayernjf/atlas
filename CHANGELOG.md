@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### fix(openapi)：D55 冻结桶第四批＝NOT_SOFT_DELETED 补译出桶＋INVALID_PARAMETER 定性节点产出（2026-10-05 打包 BG；docs/08 打包 BG 块；docs/14 D55 17→15；docs/13 打包 BG 小节）
+
+- **收的是桶里工程内可闭的最后两条**，其余 15 条各有阻碍：`CHANNEL_*`／`OAUTH_*`／`CONNECTION_NOT_FOUND` 共 11 条是 `detail=str(exc)` 只发中文、code 不进体的第三态（补译前需契约决策）；发送三码 demo 进程内不重发；`WEBHOOK_MALFORMED` 待跟入站路由。
+- **`OPENAPI_NOT_SOFT_DELETED` 补 zh/en＋params 出桶**：内存/PG 两档 `purge` 的 raise 补 `params={"specId":…}`，hard-delete 端点的手写折算处透传进 409 体（BF 只透传了 import 端点，本批补齐 hard 分支）；`frontend/src/locales/{zh-CN,en-US}/runtime.json` 各 +1（64→65 键，zh 模板与后端中文原文逐字同句），加进 U1162 `http_facing`。状态码形状（409/404/204）不变。
+- **`OPENAPI_INVALID_PARAMETER` 定性＝仅节点产出**：唯一发射点 `openapi/adapter.py::_build_url`（`HttpApiCallError`，缺路径参数），适配器内部 catch 折 `ActionResult.failed`＝节点产出，api 层零引用——按 docs/57 §2.5 归 `TOOL_OUTPUT_ONLY`，并加进 `TRIAGED_NODE_OUTPUT_ONLY` 让 U1165 钉住"api 层零出体引用"（五条→六条）。取值集合不变。
+- **门**：错误码守护 **14 passed**；相关端点/解析/去重合计 **82 passed**；PG 集成（临时 pgvector 容器）**15 passed**；后端全量 **2365/150/0**（349.03s，未新增测试函数）；前端 vitest **788/2**、oxlint 0/0、tsc＋build 过、i18n/runtime 两文件 **71 passed**。**零新依赖／零迁移／无 ADR**。
+
 ### fix(openapi)：D55 冻结桶第三批＝两条一码多话粗码拆成具体码（2026-10-05 打包 BF；docs/08 打包 BF 块；docs/14 D55 19→17；docs/13 打包 BF 小节）
 
 - **承接 BE 的"刻意不收"**：BE 补译 3 条结构化出体码时实测到 docs/14 D55 冻结桶里仍有 2 条**已在发、已结构化出体、却一码多话**的码——`OPENAPI_FETCH_FAILED`（HTTP 状态面与网络/出向面两字面量）与 `OPENAPI_LIMIT_EXCEEDED`（单份 operation 上限与每租户份数上限两字面量）。本批按打包 BC 已定的"一码一答案"纪律**拆码**而非补译。

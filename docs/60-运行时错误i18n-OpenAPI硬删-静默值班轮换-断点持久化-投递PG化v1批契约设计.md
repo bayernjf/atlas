@@ -99,6 +99,8 @@ class ConditionEvalError(Exception):
 - 名额（limit）统计仍只计未删（docs/56 已立），硬删除不影响名额。
 - 审计中间件自动覆盖写方法，无需额外处理。
 
+> **〔2026-10-05 打包 BG 勘误〕409 响应体增列 params，原文保留不改**：`OPENAPI_NOT_SOFT_DELETED` 的 409 体由 `{"code","message"}` 增列为 `{"code","message","params":{"specId":…}}`（内存/PG 两档 purge 同步补 params，hard-delete 端点折算处透传），并补 zh/en 文案（`runtime.json` 64→65 键，加进 U1162 `http_facing`）。状态码形状（409/404/204）不变。当前契约以 [docs/03](03-数据模型与Schema-契约索引.md) 该节为准。
+
 ### 3.3 前端
 
 OpenAPI 管理面板（编辑后台导入列表）：administer 角色可见「显示已删除」开关与已删条目上的「彻底删除」按钮（Popconfirm 二次确认，明确不可恢复）；软删/恢复入口维持。落码以现有 OpenAPI 管理组件为准。
