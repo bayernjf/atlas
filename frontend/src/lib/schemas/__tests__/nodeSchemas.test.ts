@@ -8,7 +8,7 @@ const EXPECTED_OUTPUT_KEYS: Record<string, string[] | Record<string, string[]>> 
   trigger: { context: ['triggerType', 'cron', 'timezone', 'webhookUrl', 'payload'] },
   tool_call: ['result'],
   ai_decision: ['decision', 'prompt_rendered'],
-  condition: ['branch', 'mode', 'target'],
+  condition: ['branch', 'mode', 'target', 'expression_errors', 'expressionErrorCodes', 'expressionErrorParams'],
   loop: ['mode', 'index', 'iterations', 'items', 'item', 'results', 'target', 'exitReason', 'expression_errors', 'expressionErrorCodes', 'expressionErrorParams'],
   parallel: ['status', 'branches', 'joinStrategy', 'joinTarget'],
   wait: ['mode', 'waitType', 'durationMode', 'durationExpression', 'durationSeconds', 'plannedDurationSeconds', 'jitterSeconds', 'absoluteTime', 'eventKey', 'eventKeys', 'eventWaitMode', 'matchedEventKey', 'matchedEventKeys', 'matchedPayloads', 'receivedKeys', 'signaled', 'payload', 'waitedSeconds', 'resolvedBy', 'token'],
