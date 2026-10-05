@@ -166,7 +166,7 @@ def plan_live_legs(requested, source_env, *, allow_refund=False,
                 reason += ("（litellm 直连路径读 `OPENAI_API_KEY`/`OPENAI_BASE_URL`，"
                            "`LITELLM_API_KEY` 不被读取——docs/73 1.1 那次就栽在这里")
             if name == "notify":
-                reason += "；且 docker-compose.yml 只透传 LITELLM_*/OPENAI_*（52–57 行），ATLAS_SMTP_* 还没进容器"
+                reason += "（compose 的 ATLAS_SMTP_* 透传已于打包 AZ 补齐并由 U1157 机检）"
             plans.append(LegPlan(name, "skip", reason))
             continue
         if name == "refund":
@@ -181,7 +181,7 @@ def plan_live_legs(requested, source_env, *, allow_refund=False,
             if not notify_to:
                 plans.append(LegPlan(name, "blocked", "给真人发信要 --notify-to｜判据＝" + criterion))
             else:
-                plans.append(LegPlan(name, "blocked", "本批执行段未实现（且要先补 compose 的 ATLAS_SMTP_* 透传）｜判据＝" + criterion))
+                plans.append(LegPlan(name, "blocked", "本批执行段未实现｜判据＝" + criterion))
             continue
         if name not in EXECUTABLE_LEGS:
             plans.append(LegPlan(name, "blocked", "本批执行段未实现｜判据＝" + criterion))
