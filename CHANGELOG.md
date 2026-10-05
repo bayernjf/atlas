@@ -3,6 +3,18 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+
+### feat(deploy)：网络边界 edge／Caddy 演练（打包 BB 落码，2026-10-05；docs/73 4.1 现欠第②件的工程半边；docs/08 打包 BB 立项块）
+
+- **一句话**：`prod_rehearsal.py` 的 override 把 caddy 的 profile 改成 `["skip"]`、所有请求走 http ⇒ TLS／反代／主机头路由三类判据**从没被演过**。本批把 edge 形态真跑一遍：应用端口**不映射**出宿主机，只让 Caddy 暴露 80/443。
+- **落码**：新增 `deploy/Caddyfile.rehearsal`（`atlas.internal.test` ＋ `tls internal`，与出厂样例逐条同形——**不改生产样例**，否则真部署方会抄到自签配置）与 `scripts/dev/edge_rehearsal.py`（九段）；机检 `tests/test_edge_rehearsal_config.py` U1159（5 例，含两向反向门）。
+- **〔跑〕九段全过 exit 0**：经 443 用 Caddy 内部 CA **根证书真校验**（非 `-k`）`/api/ready` 2.1s 到 200、`RestartCount=0`；80 ⇒ 308 跳 HTTPS；**宿主机连 127.0.0.1:8000 连不上而容器内 healthcheck 转绿**（＝Caddyfile 注释里"生产只让 Caddy 暴露 80/443"那条建议第一次被验）；登录/首登强制位 403/改密全经 443；**SSE 经反代收到 3 帧**（没被缓冲）；`/metrics` 与 demo 面经 443 仍 404。
+- **踩到并修掉的三条（都不是产品缺陷，但每条都能让"演练红了"骗过一次复盘）**：`ATLAS_MASTER_KEY` 须是解码后恰 32 字节（48 字节随机串会让容器启动即崩，症状却是"等不到 ready"）；`docker compose down` 不带 `--profile edge` 会残留 caddy 占住 80/443；`curl` 的退出码不是 HTTP 状态码。
+- **门**：后端全量 **2358 passed / 150 skipped / 0 failed**（对账＝BA 的 2353＋U1159 的 5）。
+- **不做（照实）**：证书是自签的 ⇒ **不证"真 CA 签发"**，docs/73 4.1 第②件仍剩真域名与证书；不改出厂 Caddyfile 与 compose 默认形态；不把 edge 加进 CI。
+- **登记**：docs/08（立项＋收口）／13（U1159）／34（P0-3 行）／73（4.1 行）／`deploy/README.md`／CHANGELOG／handoff。
+- **提交**：docs 立项＋feat 演练脚本＋test 机检＋docs 收口四原子，无 AI co-author、**未 push**。
+
 ### fix(deploy)＋test：部署面变量总账——53 个旋钮只有 14 个进得了容器的日子结束了（2026-10-05 打包 BA）
 
 - **把 AZ 那类缺口类化**：全量对账实测 `src/atlas` 读 **53** 个部署变量，AZ 之后的 compose 只覆盖 **14** 个。剩下 39 个"代码读 env、容器永远拿不到"的旋钮里，有一整套运维面：retention 8 键、审计环大小、会话时长、调度开关与轮询间隔、`/metrics` 令牌、egress allowlist、A2A 令牌、OAuth 回调基址、**数据库适配器的出站 DSN**（`ATLAS_DATABASE_URL`——不给它，图永远查不了真库）、HTTP 适配器四旋钮……SMTP 只是第一个被偶然发现的。
