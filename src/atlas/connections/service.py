@@ -46,10 +46,17 @@ STATE_TTL = oauth.STATE_TTL_SECONDS
 class ConnectionServiceError(Exception):
     """业务错误；status_code 供 HTTP 层折算，code 为稳定错误码。"""
 
-    def __init__(self, code: str, message: str, status_code: int = 400) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        status_code: int = 400,
+        params: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.status_code = status_code
+        self.params = params
 
 
 def default_redirect_uri() -> str:
@@ -243,7 +250,12 @@ class ConnectionService:
             )
         except OAuthStateError as exc:
             # state 问题不改变连接状态（CSRF/过期，属客户端请求错误）
-            raise ConnectionServiceError("OAUTH_STATE_INVALID", f"授权 state 校验失败：{exc}", 400) from exc
+            raise ConnectionServiceError(
+                "OAUTH_STATE_INVALID",
+                f"授权 state 校验失败：{exc}",
+                400,
+                params={"detail": str(exc)},
+            ) from exc
         if not isinstance(code, str) or not code.strip():
             raise ConnectionServiceError("MISSING_PARAMETER", "缺少授权码 code", 422)
         client_secret = self._decrypt(conn.client_secret_envelope)
@@ -260,7 +272,12 @@ class ConnectionService:
             conn.status = STATUS_ERROR
             conn.last_error = str(exc)
             self._store.save(conn)
-            raise ConnectionServiceError("OAUTH_TOKEN_FAILED", f"换取令牌失败：{exc}", 502) from exc
+            raise ConnectionServiceError(
+                "OAUTH_TOKEN_FAILED",
+                f"换取令牌失败：{exc}",
+                502,
+                params={"detail": str(exc)},
+            ) from exc
         self._apply_token_bundle(conn, bundle, keep_refresh=False)
         self._store.save(conn)
         return conn.public_view()
@@ -286,7 +303,12 @@ class ConnectionService:
             conn.status = STATUS_ERROR
             conn.last_error = str(exc)
             self._store.save(conn)
-            raise ConnectionServiceError("OAUTH_REFRESH_FAILED", f"刷新令牌失败：{exc}", 502) from exc
+            raise ConnectionServiceError(
+                "OAUTH_REFRESH_FAILED",
+                f"刷新令牌失败：{exc}",
+                502,
+                params={"detail": str(exc)},
+            ) from exc
         self._apply_token_bundle(conn, bundle, keep_refresh=True)
         self._store.save(conn)
         return conn.public_view()

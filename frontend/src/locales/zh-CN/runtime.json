@@ -66,5 +66,13 @@
   "WAIT_EVENT_PAYLOAD_TOO_MANY_KEYS": "payload 顶层键不能超过 {{max}} 个",
   "WAIT_TIMEOUT_FAILED": "等待事件超时",
   "WAIT_TOKEN_NOT_FOUND": "等待不存在或已被清理",
-  "WEBHOOK_SEND_FAILED": "webhook 群发部分失败：{{failed}}/{{total}} 个目标投递失败"
+  "WEBHOOK_SEND_FAILED": "webhook 群发部分失败：{{failed}}/{{total}} 个目标投递失败",
+  "CHANNEL_ALREADY_BOUND": "该连接已绑定渠道，请勿重复绑定",
+  "CHANNEL_ALREADY_REGISTERED": "店铺侧已存在该回调注册（HTTP 422）",
+  "CONNECTION_NOT_FOUND": "连接不存在或不属于当前租户",
+  "OAUTH_NO_REFRESH_TOKEN": "该连接没有 refresh_token，请重新走授权流程",
+  "OAUTH_STATE_INVALID": "授权 state 校验失败：{{detail}}",
+  "OAUTH_TOKEN_FAILED": "换取令牌失败：{{detail}}",
+  "OAUTH_REFRESH_FAILED": "刷新令牌失败：{{detail}}",
+  "WEBHOOK_MALFORMED": "缺少必需的 Webhook 请求头：{{headers}}"
 }

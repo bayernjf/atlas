@@ -455,7 +455,10 @@ def test_api_admin_crud_list_does_not_leak_and_operator_actions():
 
     detail = client.get(f"/api/connections/{cid}", headers=admin)
     assert detail.status_code == 200 and detail.json()["displayName"] == "测试平台"
-    assert client.get("/api/connections/conn-9999", headers=admin).status_code == 404
+    unknown = client.get("/api/connections/conn-9999", headers=admin)
+    assert unknown.status_code == 404
+    # 打包 BJ（U1168）：折叠点结构化——code 进响应体，前端可按码本地化（不再中文裸串）。
+    assert unknown.json()["detail"]["code"] == "CONNECTION_NOT_FOUND"
 
     # operator 可授权（不触网，仅构造 URL）
     operator = _login("operator")

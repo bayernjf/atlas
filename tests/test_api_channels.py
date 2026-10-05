@@ -184,3 +184,36 @@ def test_bind_writes_audit_and_survives_reset():
     assert client.post("/api/demo/reset", headers=admin).status_code == 200
     items = client.get("/api/channels", headers=admin).json()["items"]
     assert len(items) == 1  # 绑定 reset 不清除
+
+
+# ----------------------------------------------------------- 打包 BJ：U1168 / U1170
+
+_REPO = __import__("pathlib").Path(__file__).resolve().parents[1]
+
+
+def _runtime_keys() -> set[str]:
+    import json
+    return set(json.loads((_REPO / "frontend/src/locales/zh-CN/runtime.json").read_text()))
+
+
+def test_u1168_bind_twice_409_detail_carries_code_and_is_cataloged():
+    admin = _login("admin")
+    cid = _create_connection(admin)
+    assert _bind(admin, cid).status_code == 201
+    r = _bind(admin, cid)
+    assert r.status_code == 409
+    detail = r.json()["detail"]
+    assert isinstance(detail, dict) and detail["code"] == "CHANNEL_ALREADY_BOUND"
+    # 折叠点结构化后，码进得了响应体、且在目录里 → 前端可本地化（不再是中文裸串）。
+    assert "CHANNEL_ALREADY_BOUND" in _runtime_keys()
+
+
+def test_u1170_unknown_binding_404_code_in_body_but_no_catalog_key():
+    admin = _login("admin")
+    r = client.get("/api/channels/ch-nope", headers=admin)
+    assert r.status_code == 404
+    detail = r.json()["detail"]
+    # CHANNEL_NOT_BOUND 是 B 堆粗码（一码两答案）：本批结构化让 code 出体，但目录
+    # 无键、前端按既有守卫回退中文 message。钉住这个中间态，防"假绿说已译"。
+    assert detail["code"] == "CHANNEL_NOT_BOUND"
+    assert "CHANNEL_NOT_BOUND" not in _runtime_keys()
