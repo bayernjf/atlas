@@ -55,6 +55,18 @@ services:
       # 两者缺任一个，LITELLM_MODEL 配了也发不出真实调用（docs/73 §1.1 W1）。
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      # 邮件真实投递（docs/73 §1.3）：`message/send` 在 channel=email 时按这组变量真发信，
+      # HOST 留空＝回退进程内记录（demo 语义，与 `SmtpConfig.from_env()` 一致）。
+      # 2026-10-05 打包 AZ 之前 compose **不透传这组**——宿主 .env 配了 SMTP，出厂容器里
+      # 读到的仍是空 HOST，所以 1.3 的判据卡在部署层而不是供应商。由 U1157 机检：
+      # 代码新增 ATLAS_SMTP_* 而 compose 没跟着透传 ⇒ 红。
+      # 值一律由 vault／部署环境注入，绝不要把真凭据写进仓库里的 .env。
+      ATLAS_SMTP_HOST: ${ATLAS_SMTP_HOST:-}
+      ATLAS_SMTP_PORT: ${ATLAS_SMTP_PORT:-587}
+      ATLAS_SMTP_USERNAME: ${ATLAS_SMTP_USERNAME:-}
+      ATLAS_SMTP_PASSWORD: ${ATLAS_SMTP_PASSWORD:-}
+      ATLAS_SMTP_FROM: ${ATLAS_SMTP_FROM:-}
+      ATLAS_SMTP_USE_TLS: ${ATLAS_SMTP_USE_TLS:-true}
       # 缺省仍是 dev 语义（种子账号照播）。要按 prod 起：ATLAS_ENV=prod 并同时给出
       # ATLAS_MASTER_KEY／ATLAS_APPROVAL_HMAC_SECRET／ATLAS_ADMIN_BOOTSTRAP_PASSWORD，
       # 任一缺失或过短都会**拒绝启动**（docs/64 J-1a、docs/66 打包 L）。
