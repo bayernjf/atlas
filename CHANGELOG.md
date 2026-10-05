@@ -3,6 +3,14 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### fix(deploy)＋test：SMTP 配置以前根本进不了容器（docs/73 1.3 的部署面，2026-10-05 打包 AZ）
+
+- **缺口是读 compose 读出来的，不是猜的**：`SmtpConfig.from_env()` 读 `ATLAS_SMTP_HOST/PORT/USERNAME/PASSWORD/FROM/USE_TLS`，而 `docker-compose.yml` 的 atlas 服务只透传 `LITELLM_MODEL`／`OPENAI_API_KEY`／`OPENAI_BASE_URL`。后果是**部署层就发不出真信**：宿主 `.env` 配得再全，容器里 HOST 仍是空 ⇒ 走"回退进程内记录"。docs/73 1.3 那条判据此前根本到不了可执行状态，而原因不在供应商。
+- **补透传时守住两条缺省语义**：HOST／USERNAME／PASSWORD／FROM 缺省留空（空 HOST 才是 demo 回退的既有语义，塞个默认值就等于改了行为）；PORT／USE_TLS 的缺省按代码给 587／true——写成 `:-` 空串看着无害，实际是顺手改了默认。
+- **机检 U1157（4 例）**：判据是**代码读了几个、compose 就得透传几个**，名单从 `smtp.py` 正则抽出（并断言它是 6 条、含 `ATLAS_SMTP_HOST`，防止正则本身是瞎的）。反向门把 `ATLAS_SMTP_PASSWORD` 从**合成**的 compose 文本里抽掉并要求点名，替换前先断言锚命中，避免空跑的绿。
+- **〔跑〕取证用产物本身，不靠推理**：`docker compose config` 渲染的 atlas env 里六条都在（假主机名，全程没发信、没动用任何真凭据）；出厂镜像内 `SmtpConfig.from_env()` 带 HOST 返回 `('smtp.invalid.test', 587, 'ops@invalid.test', 'noreply@invalid.test', True)`，不带 HOST 返回 `None`。两面都在同一个产物里成立。
+- **顺带撤掉一句现在会说谎的输出**：演练第 9 段 notify 的 SKIP 文案原本带着"compose 只透传 LITELLM_*/OPENAI_*"，缺陷修完它就成了假陈述；U1156 对应用例改为断言"SKIP 只许说缺凭据这一件事"。**修完缺陷必须回头改文案**，否则文档与脚本会一起把过期状态讲下去。
+- **1.3 仍未达成**：真供应商凭据、`--notify-to` 腿的执行段、"真投到收件箱"的取证。零新依赖／零迁移／无新 ADR／不改任何响应字段。
 ### chore(dev)＋test：真外发腿要有规划层，缺凭据时得说出缺哪一个（docs/73 1.1–1.3／4.1，2026-10-05 打包 AY）
 
 - **为什么这批不是"等凭据来了再说"**：B 档剩下的四条判据（1.1／1.2／1.3／4.1）卡的确实是凭据，不是工程。但"拿到 key 之后按什么顺序跑、每条腿的判据是什么"此前只活在 docs/73 的表格散文里——本仓已经为这种形状付过钱：2026-09-28 那次 4.1 演练的后半被主机 load 385–427 打成假红，靠人临场判断才没写进结论。把它变成脚本输出，缺什么就点名什么，届时不再需要推理。
