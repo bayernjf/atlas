@@ -3,6 +3,15 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### fix(errors)：D55 冻结桶第六批＝渠道/连接错误结构化出体（2026-10-06 打包 BJ；docs/08 打包 BJ 块；docs/14 D55 12→4）
+
+- **为什么不是"补翻译"而是"改响应形状"**：D55 剩 12 条，逐条跟完发射路径，全经三个折叠点（`_conn_http_error`／`_channel_http_error`／入站 webhook 直捕）写成 `detail=str(exc)`——结构化异常上的 `code` 进不了响应体，前端拿到中文裸串无法按码本地化，是 A-4 初衷的反面。
+- **三个折叠点统一改结构化**：`detail` 由字符串改 `{code,message[,params]}`（与 openapi 面同形）；`ChannelError`／`ConnectionServiceError` 加可选 `params`（照 openapi `OpenApiError` 先例），4 条动态消息在发射点填 params 供模板插值。
+- **8 条单答案码补 zh/en 出桶**：CHANNEL_ALREADY_BOUND／CHANNEL_ALREADY_REGISTERED／CONNECTION_NOT_FOUND／OAUTH_NO_REFRESH_TOKEN／OAUTH_STATE_INVALID／OAUTH_TOKEN_FAILED／OAUTH_REFRESH_FAILED＋入站 WEBHOOK_MALFORMED。
+- **4 条一码多话粗码仍留桶（D55 收紧为「须拆码」）**：CHANNEL_NOT_BOUND 2／UNAUTHORIZED 3／UPSTREAM_FAILED 2／INVALID_RESPONSE 8，共 15 条答案——code 已出体但目录无键、前端回退中文，拆码＝**打包 BK**。
+- **U1168–U1170（净增 3）**：U1168 钉结构化码在体且进目录、U1169 钉桶恰 4 条、U1170 钉中间态防假绿；2 条既有断言改判（非放宽）。
+- **门**：后端全量 **2371 passed／150 skipped／0 failed**（217.20s，对账＝BI 2368＋3）；前端 vitest **788/2**、oxlint 0/0、`tsc -b && vite build` 过。零新依赖／零迁移／无 ADR；HTTP 状态码不变（409/404/400/502）；不给旧字符串留兼容。
+
 
 ### feat(graph)：D54 闭合＝condition 节点表达式诊断补机器可读通道（2026-10-05 打包 BI；docs/08 打包 BI 块；docs/13 打包 BI 小节 U1167；docs/14 D54 闭合）
 
