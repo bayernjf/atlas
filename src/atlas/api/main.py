@@ -92,7 +92,12 @@ from atlas.memory.models import MemoryValidationError
 from atlas.message.service import MessageSendError
 from atlas.monitoring import RUN_RING_SIZE, extract_business, extract_node_results
 from atlas.observability.audit import AUDITED_METHODS, LOGIN_PATH
-from atlas.channels.base import ChannelBinding, ChannelError
+from atlas.channels.base import (
+    CHANNEL_AUTHORIZATION_ERROR_CODES,
+    CHANNEL_UPSTREAM_UNAUTHORIZED,
+    ChannelBinding,
+    ChannelError,
+)
 from atlas.channels.webhooks import (
     HMAC_HEADER,
     SUPPORTED_TOPICS,
@@ -1921,8 +1926,8 @@ def list_remote_webhooks(
     try:
         items = registry.remote_webhooks(binding_id)
     except ChannelError as exc:
-        if exc.code == "CHANNEL_UNAUTHORIZED":
-            return {"items": [], "error": "CHANNEL_UNAUTHORIZED"}
+        if exc.code in CHANNEL_AUTHORIZATION_ERROR_CODES:
+            return {"items": [], "error": CHANNEL_UPSTREAM_UNAUTHORIZED}
         raise _channel_http_error(exc)
     return {"items": items}
 

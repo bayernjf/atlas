@@ -126,6 +126,14 @@ TOOL_OUTPUT_ONLY = {
     "TOOL_PARAMS_NOT_JSON",  # graph/loader.py
     "TOOL_PARAMS_NOT_OBJECT",
     "CHANNEL_INVALID_PARAMETER",
+    # 打包 BK（docs/08）：INVALID_RESPONSE 粗码按答案拆出 8 码，其中这 5 条只经
+    # channels/adapter.py::_execute catch 折成节点产出（get_shop 两答案还被 registry.test()
+    # 内部 catch 成 200 {ok:false}），api 层零具名出体路径——按 §2.5 不译。
+    "CHANNEL_SHOP_SHAPE_INVALID",  # shopify.get_shop
+    "CHANNEL_ORDERS_SHAPE_INVALID",  # shopify.list_orders
+    "CHANNEL_ORDER_SHAPE_INVALID",  # shopify._get_raw_order
+    "CHANNEL_ORDER_TOTAL_PRICE_INVALID",  # shopify.create_refund
+    "CHANNEL_REFUND_SHAPE_INVALID",  # shopify.create_refund
     "DB_SQL_NOT_READ_ONLY",
     "ELEMENT_NOT_FOUND",
     "HTTP_CIRCUIT_OPEN",
@@ -154,16 +162,11 @@ COARSE_CODE: set[str] = set()
 #: 响应要译、哪些只是节点产出按 §2.5 不译，得逐条读发射点才知道，塞进本批等于把 A-4
 #: 重新欠一次。故单列一桶并登记 docs/14 **D55**，由 U1164 钉住它**只许缩小不许变大**：
 #: 下批逐条分类（译或进该去的那一族），每分类一条就从这个冻结清单里删一条。
-#: docs/08 打包 BJ（2026-10-06）：D55 冻结桶 12→4。7 条单答案码经结构化折叠点
-#: （`_conn_http_error`／`_channel_http_error`／入站 webhook）把 code 送进响应体、补
-#: zh/en 出桶；剩这 4 条**本身就是一码多话粗码**，结构化后 code 出体但仍留桶——
-#: 按答案拆码＝打包 BK（同族 BC 先例，共 15 条答案）。docs/14 D55 理由收紧为「须拆码」。
-FROZEN_FOR_TRIAGE = {
-    "CHANNEL_NOT_BOUND",
-    "CHANNEL_UNAUTHORIZED",
-    "CHANNEL_UPSTREAM_FAILED",
-    "CHANNEL_INVALID_RESPONSE",
-}
+#: docs/08 打包 BK（2026-10-06）：D55 冻结桶 **4→0，D55 闭合**。最后 4 条一码多话
+#: 粗码（NOT_BOUND／UNAUTHORIZED／UPSTREAM_FAILED／INVALID_RESPONSE，共 15 个答案）
+#: 按答案拆成 14 个具体码：9 条会经 `_channel_http_error` 结构化出体（补 zh/en），
+#: 5 条纯节点产出进 TOOL_OUTPUT_ONLY。旧 4 粗码由 U1161 钉全仓零发射、不给别名。
+FROZEN_FOR_TRIAGE: set[str] = set()
 #: 2026-10-05 打包 BC 量出的**原始 27 条**快照，刻意**硬编码**而非 `set(FROZEN_FOR_TRIAGE)`：
 #: 若从当前集合派生，将来有人往桶里加新码会同时进快照，"只许缩小"的门永远绿、形同虚设。
 #: U1164 断言 `FROZEN_FOR_TRIAGE <= FROZEN_SNAPSHOT`——每定性一条就从上面桶里删一条，
@@ -470,6 +473,10 @@ def test_u1161_the_coarse_codes_are_gone():
         "WAIT_EVENT_PAYLOAD_INVALID",
         # 打包 BF（docs/08）：拆成 FETCH_NETWORK/FETCH_HTTP 与 SPEC_OPERATIONS/TENANT_SPECS。
         "OPENAPI_FETCH_FAILED", "OPENAPI_LIMIT_EXCEEDED",
+        # 打包 BK（docs/08）：渠道最后 4 条一码多话粗码按 15 个答案拆成 14 码，
+        # 旧码不给别名、全仓零发射。
+        "CHANNEL_NOT_BOUND", "CHANNEL_UNAUTHORIZED",
+        "CHANNEL_UPSTREAM_FAILED", "CHANNEL_INVALID_RESPONSE",
     )
     leftovers = {c: where[c] for c in coarse if c in where}
     assert leftovers == {}, f"旧粗码仍在发射：{leftovers}"
@@ -494,6 +501,15 @@ def test_u1162_http_facing_new_codes_have_both_locales():
         # 打包 BH（docs/08）：发送三码经 replay 端点结构化出体（replay_failed 走真 send
         # 全路径，渠道真配时可达），补 zh/en＋params {detail} 后纳入。
         "SMTP_SEND_FAILED", "WEBHOOK_SEND_FAILED", "IM_SEND_FAILED",  # 重放 409
+        # 打包 BK（docs/08）：渠道 4 粗码拆出的 9 条 HTTP 面码——绑定/连接 2 条、
+        # 授权族 2 条（UPSTREAM_UNAUTHORIZED 同时走 remote-webhooks 的 200 error，
+        # 但在 register/unregister 等管理端点经 _channel_http_error 结构化出体），
+        # 上游传输/状态 2 条、JSON 与 webhooks 响应 3 条（remote-webhooks 端点触达 _request）。
+        "CHANNEL_BINDING_NOT_FOUND", "CHANNEL_BOUND_CONNECTION_NOT_FOUND",
+        "CHANNEL_TOKEN_UNAVAILABLE", "CHANNEL_UPSTREAM_UNAUTHORIZED",
+        "CHANNEL_REQUEST_FAILED", "CHANNEL_UPSTREAM_STATUS_ERROR",
+        "CHANNEL_SHOP_JSON_INVALID",
+        "CHANNEL_WEBHOOKS_SHAPE_INVALID", "CHANNEL_WEBHOOK_SHAPE_INVALID",
         "OPENAPI_BODY_MISSING_SCHEMA", "OPENAPI_BODY_NOT_JSON",
         "OPENAPI_CREDENTIAL_BASIC_INCOMPLETE", "OPENAPI_CREDENTIAL_SCHEME_UNKNOWN",
         "OPENAPI_DOCUMENT_MISSING_SERVERS", "OPENAPI_DOCUMENT_NOT_OPENAPI3",
@@ -569,11 +585,6 @@ def test_u1165_triaged_node_output_codes_never_reach_an_http_response():
     )
 
 
-def test_u1169_frozen_bucket_is_exactly_the_four_coarse_channel_codes():
-    """打包 BJ：D55 冻结桶 12→4，剩恰 B 堆 4 条一码多话粗码（多一条少一条都红）。"""
-    assert FROZEN_FOR_TRIAGE == {
-        "CHANNEL_NOT_BOUND",
-        "CHANNEL_UNAUTHORIZED",
-        "CHANNEL_UPSTREAM_FAILED",
-        "CHANNEL_INVALID_RESPONSE",
-    }
+def test_u1169_frozen_bucket_is_empty_d55_closed():
+    """打包 BK：D55 冻结桶 4→0——渠道最后 4 条粗码按答案拆完，桶恰为空（多一条即红）。"""
+    assert FROZEN_FOR_TRIAGE == set()

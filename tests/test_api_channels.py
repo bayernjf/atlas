@@ -208,12 +208,12 @@ def test_u1168_bind_twice_409_detail_carries_code_and_is_cataloged():
     assert "CHANNEL_ALREADY_BOUND" in _runtime_keys()
 
 
-def test_u1170_unknown_binding_404_code_in_body_but_no_catalog_key():
+def test_u1170_unknown_binding_404_code_in_body_and_cataloged_after_pack_bk():
     admin = _login("admin")
     r = client.get("/api/channels/ch-nope", headers=admin)
     assert r.status_code == 404
     detail = r.json()["detail"]
-    # CHANNEL_NOT_BOUND 是 B 堆粗码（一码两答案）：本批结构化让 code 出体，但目录
-    # 无键、前端按既有守卫回退中文 message。钉住这个中间态，防"假绿说已译"。
-    assert detail["code"] == "CHANNEL_NOT_BOUND"
-    assert "CHANNEL_NOT_BOUND" not in _runtime_keys()
+    # 打包 BK：NOT_BOUND 粗码按答案拆成 BINDING_NOT_FOUND／BOUND_CONNECTION_NOT_FOUND，
+    # 未知绑定 id 这条答案补 zh/en 进目录，不再是"出体但无键"的中间态。
+    assert detail["code"] == "CHANNEL_BINDING_NOT_FOUND"
+    assert "CHANNEL_BINDING_NOT_FOUND" in _runtime_keys()

@@ -82,7 +82,7 @@
     "unregister": "Unregister",
     "loadError": "Failed to load shop-side registration status",
     "error": {
-      "CHANNEL_UNAUTHORIZED": "The shop access token has expired; please re-authorize in Connections"
+      "CHANNEL_UPSTREAM_UNAUTHORIZED": "The shop access token has expired; please re-authorize in Connections"
     }
   }
 }

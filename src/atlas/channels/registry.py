@@ -8,6 +8,7 @@ import os
 from typing import Any, Callable
 
 from atlas.channels.base import (
+    CHANNEL_AUTHORIZATION_ERROR_CODES,
     ChannelBinding,
     ChannelError,
     ChannelTransport,
@@ -61,7 +62,9 @@ class ChannelRegistry:
     def _require(self, binding_id: str) -> ChannelBinding:
         binding = self._store.get(binding_id)
         if binding is None or binding.tenant_id != self._tenant_id:
-            raise ChannelError("CHANNEL_NOT_BOUND", "渠道绑定不存在", status_code=404)
+            raise ChannelError(
+                "CHANNEL_BINDING_NOT_FOUND", "渠道绑定不存在", status_code=404
+            )
         return binding
 
     def get(self, binding_id: str) -> dict[str, Any]:
@@ -87,7 +90,9 @@ class ChannelRegistry:
             self._connections.get(connection_id)
         except ConnectionServiceError as exc:
             raise ChannelError(
-                "CHANNEL_NOT_BOUND", "绑定的连接不存在", status_code=404
+                "CHANNEL_BOUND_CONNECTION_NOT_FOUND",
+                "绑定的连接不存在",
+                status_code=404,
             ) from exc
         for existing in self._store.list():
             if existing.connection_id == connection_id:
@@ -121,7 +126,7 @@ class ChannelRegistry:
             binding.last_error = "绑定连接未完成授权或令牌不可用"
             self._store.save(binding)
             raise ChannelError(
-                "CHANNEL_UNAUTHORIZED", "绑定连接未完成授权或令牌不可用"
+                "CHANNEL_TOKEN_UNAVAILABLE", "绑定连接未完成授权或令牌不可用"
             )
         return ShopifyChannelClient(
             binding.config["shop"],
@@ -175,7 +180,7 @@ class ChannelRegistry:
         try:
             return client.list_registered_webhooks()
         except ChannelError as exc:
-            if exc.code == "CHANNEL_UNAUTHORIZED":
+            if exc.code in CHANNEL_AUTHORIZATION_ERROR_CODES:
                 self._fail_binding(binding, exc)
             raise
 
@@ -197,7 +202,7 @@ class ChannelRegistry:
         try:
             return client.register_webhook(topic=topic, address=address)
         except ChannelError as exc:
-            if exc.code == "CHANNEL_UNAUTHORIZED":
+            if exc.code in CHANNEL_AUTHORIZATION_ERROR_CODES:
                 self._fail_binding(binding, exc)
             raise
 
@@ -213,7 +218,7 @@ class ChannelRegistry:
         try:
             registered = client.list_registered_webhooks()
         except ChannelError as exc:
-            if exc.code == "CHANNEL_UNAUTHORIZED":
+            if exc.code in CHANNEL_AUTHORIZATION_ERROR_CODES:
                 self._fail_binding(binding, exc)
             raise
         for item in registered:

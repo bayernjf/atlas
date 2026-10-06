@@ -17,11 +17,24 @@ logger = logging.getLogger(__name__)
 DEFAULT_TIMEOUT_SECONDS = 10.0
 
 
+#: 授权族错误码（docs/08 打包 BK）：拆码后"令牌缺失/未授权"与"上游 401/403"是两个具体码，
+#: 但 registry/api 有四处需要统一识别"这是授权问题"（把绑定置 error、remote-webhooks 走
+#: 200+error 特殊分支）。散落的等值判断会在拆码后漏判，故收敛为模块级单一集合。
+CHANNEL_TOKEN_UNAVAILABLE = "CHANNEL_TOKEN_UNAVAILABLE"
+CHANNEL_UPSTREAM_UNAUTHORIZED = "CHANNEL_UPSTREAM_UNAUTHORIZED"
+CHANNEL_AUTHORIZATION_ERROR_CODES = frozenset(
+    {CHANNEL_TOKEN_UNAVAILABLE, CHANNEL_UPSTREAM_UNAUTHORIZED}
+)
+
+
 class ChannelError(Exception):
     """渠道层结构化错误。
 
-    codes: CHANNEL_NOT_BOUND / CHANNEL_UNAUTHORIZED / CHANNEL_UPSTREAM_FAILED /
-    CHANNEL_INVALID_RESPONSE / CHANNEL_INVALID_PARAMETER / CHANNEL_ALREADY_BOUND
+    docs/08 打包 BK 后按"一码一答案"拆开：绑定/连接缺失（BINDING_NOT_FOUND／
+    BOUND_CONNECTION_NOT_FOUND）、授权族（TOKEN_UNAVAILABLE／UPSTREAM_UNAUTHORIZED）、
+    上游失败（REQUEST_FAILED／UPSTREAM_STATUS_ERROR）、shopify 响应结构（SHOP/ORDERS/
+    ORDER/REFUND/WEBHOOK(S) 各具体码）；另有 INVALID_PARAMETER／ALREADY_BOUND／
+    ALREADY_REGISTERED。
     """
 
     def __init__(
@@ -86,7 +99,11 @@ class HttpChannelTransport:
                 follow_redirects=False,
             )
         except httpx.HTTPError as exc:
-            raise ChannelError("CHANNEL_UPSTREAM_FAILED", f"渠道请求失败：{exc}") from exc
+            raise ChannelError(
+                "CHANNEL_REQUEST_FAILED",
+                f"渠道请求失败：{exc}",
+                params={"detail": str(exc)},
+            ) from exc
         return TransportResponse(
             status=resp.status_code,
             headers={k: v for k, v in resp.headers.items()},
