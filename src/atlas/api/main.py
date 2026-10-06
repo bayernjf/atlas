@@ -162,6 +162,11 @@ from atlas.storage.memory import ApprovalBroker, FeedbackRequest
 from atlas.storage.pg import get_pg_backend
 from atlas.storage.retention import run_retention_once
 from atlas.storage.recovery import (
+    RESOLVE_FRAME_NOT_CLAIMED,
+    RESOLVE_FRAME_NOT_FOUND,
+    RESOLVE_OK,
+    RESOLVE_RUN_NOT_SUSPENDED,
+    abandon_claimed_suspended_frame,
     clear_frame,
     clear_tenant_frames,
     interruption_view,
@@ -4276,6 +4281,71 @@ def list_interruptions(
         run_status_of=lambda run_id: (run_store.get(run_id) or {}).get("status"),
         include_resume_token=True,
     )
+
+
+class InterruptionResolveRequest(BaseModel):
+    action: str
+    reason: str = Field(default="", max_length=500)
+
+
+@app.post("/api/interruptions/{resume_token}/resolve")
+def resolve_interruption(
+    resume_token: str,
+    body: InterruptionResolveRequest,
+    http_request: Request,
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, Any]:
+    """人工认领后崩溃帧的收敛（docs/96 打包 BL，解 docs/14 D36 人工收敛半边）。
+
+    唯一动作 abandon：把「帧已认领、run 却永久停在 suspended」的卡死运行在一个
+    PG 事务内置 `interrupted` 终态并删帧。**不重放**——下游 create_refund 等非
+    幂等，安全重放要幂等键＋逐节点检查点（docs/14 D56）。承重的是事务谓词，
+    下面的折算只读状态给错误码，不承担互斥。
+    """
+    if body.action != "abandon":
+        _record_audit(services_for(principal), principal, http_request,
+                      "interruption.resolve", 422)
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "INTERRUPTION_ACTION_UNSUPPORTED",
+                    "message": f"不支持的收敛动作：{body.action}（v1 仅支持 abandon）",
+                    "params": {"action": body.action}},
+        )
+    if STORAGE_BACKEND != "pg":
+        _record_audit(services_for(principal), principal, http_request,
+                      "interruption.resolve", 409)
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "INTERRUPTIONS_NOT_PERSISTED",
+                    "message": "内存档挂起帧不跨进程持久化，无人工收敛能力"},
+        )
+    code, info = abandon_claimed_suspended_frame(
+        get_pg_backend().engine,
+        tenant_id=principal.tenant_id,
+        token=resume_token,
+    )
+    status_code = 200
+    if code == RESOLVE_OK:
+        payload = {"resumeToken": resume_token, "runId": info.get("run_id"),
+                   "resolved": "interrupted", "frameDeleted": True}
+    elif code == RESOLVE_FRAME_NOT_FOUND:
+        status_code = 404
+        payload = {"code": "INTERRUPTION_FRAME_NOT_FOUND",
+                   "message": f"挂起帧不存在或不属于当前租户：{resume_token}"}
+    elif code == RESOLVE_FRAME_NOT_CLAIMED:
+        status_code = 409
+        payload = {"code": "INTERRUPTION_FRAME_NOT_CLAIMED",
+                   "message": "该帧尚未被认领，重启恢复仍可能驱动它，不能人工了结"}
+    else:
+        status_code = 409
+        payload = {"code": "INTERRUPTION_RUN_NOT_SUSPENDED",
+                   "message": "该帧已认领但其运行不处于 suspended 状态",
+                   "params": {"status": info.get("status")}}
+    _record_audit(services_for(principal), principal, http_request,
+                  "interruption.resolve", status_code)
+    if code != RESOLVE_OK:
+        raise HTTPException(status_code=status_code, detail=payload)
+    return payload
 
 
 @app.post("/api/waits/events")

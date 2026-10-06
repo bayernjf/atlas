@@ -18,6 +18,7 @@ import {
   broadcastWaitEvent,
   listTasks,
   listInterruptions,
+  resolveInterruption,
   listWaits,
   signalWait,
   type InterruptionItem,
@@ -88,6 +89,8 @@ export function Waits({ principal, onLogout, onBack }: WaitsPageProps) {
   const [broadcastOpen, setBroadcastOpen] = useState(false)
   const [signalTarget, setSignalTarget] = useState<PendingWaitItem | null>(null)
   const [signalPayload, setSignalPayload] = useState('')
+  const [resolveTarget, setResolveTarget] = useState<InterruptionItem | null>(null)
+  const [resolveReason, setResolveReason] = useState('')
   const [busy, setBusy] = useState(false)
 
   const refresh = useCallback(async () => {
@@ -153,6 +156,25 @@ export function Waits({ principal, onLogout, onBack }: WaitsPageProps) {
         setSignalPayload('')
         await refresh()
       }
+    } catch (error) {
+      message.error(String(error))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function submitResolve() {
+    if (!resolveTarget) return
+    setBusy(true)
+    try {
+      await resolveInterruption(resolveTarget.resumeToken, {
+        action: 'abandon',
+        reason: resolveReason.trim() || undefined,
+      })
+      message.success(t('resolved'))
+      setResolveTarget(null)
+      setResolveReason('')
+      await refresh()
     } catch (error) {
       message.error(String(error))
     } finally {
@@ -245,6 +267,24 @@ export function Waits({ principal, onLogout, onBack }: WaitsPageProps) {
       render: (v: number | null) => (v === null ? '—' : `${v}s`),
     },
     { title: t('token'), dataIndex: 'resumeToken', ellipsis: true },
+    {
+      title: '',
+      key: 'actions',
+      width: 100,
+      render: (_, item) =>
+        item.state === 'claimed_suspended' && roleCan(principal.role, 'administer') ? (
+          <Button
+            size="small"
+            danger
+            onClick={() => {
+              setResolveTarget(item)
+              setResolveReason('')
+            }}
+          >
+            {t('resolve')}
+          </Button>
+        ) : null,
+    },
   ]
 
   return (
@@ -370,6 +410,31 @@ export function Waits({ principal, onLogout, onBack }: WaitsPageProps) {
             value={signalPayload}
             onChange={(event) => setSignalPayload(event.target.value)}
           />
+        </Modal>
+
+        <Modal
+          open={resolveTarget !== null}
+          title={t('resolveTitle')}
+          okText={t('resolveConfirm')}
+          okButtonProps={{ danger: true, loading: busy }}
+          cancelButtonProps={{ disabled: busy }}
+          onCancel={() => setResolveTarget(null)}
+          onOk={submitResolve}
+          destroyOnClose
+        >
+          <Space orientation="vertical" style={{ width: '100%' }}>
+            <Alert type="warning" showIcon message={t('resolveWarn')} />
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {t('resolveRunLabel')}: {resolveTarget?.runId ?? '—'}
+            </Typography.Text>
+            <Input.TextArea
+              rows={3}
+              maxLength={500}
+              placeholder={t('resolveReasonPlaceholder')}
+              value={resolveReason}
+              onChange={(event) => setResolveReason(event.target.value)}
+            />
+          </Space>
         </Modal>
       </Content>
     </Layout>

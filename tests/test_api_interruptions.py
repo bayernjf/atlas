@@ -235,3 +235,95 @@ def test_u924_control_the_global_loader_really_has_no_filter() -> None:
     assert "WHERE" not in sql, f"全局读函数不知何时被加了过滤，对照失效：{sql}"
     assert params in (None, {}), f"全局读函数不该绑租户参数：{params}"
     assert "tenant_id" not in sql.split("FROM", 1)[-1], "SELECT 之后出现了租户条件＝对照不再成立"
+
+
+# --- 打包 BL（docs/96，U1171+）：认领后崩溃帧的人工 abandon ---------------------
+
+ADMIN_A = _auth("admin-a", "admin123")  # t1 administer
+OPERATOR_A = _auth("operator-a", "operator123")  # t1 operate
+
+
+def _patch_resolve(monkeypatch, code, info=None):
+    monkeypatch.setattr(api_main, "STORAGE_BACKEND", "pg")
+    monkeypatch.setattr(api_main, "get_pg_backend",
+                        lambda: SimpleNamespace(engine=object()))
+    monkeypatch.setattr(
+        api_main,
+        "abandon_claimed_suspended_frame",
+        lambda engine, *, tenant_id, token: (code, info or {}),
+    )
+
+
+def test_u1171_abandon_resolves_claimed_suspended_frame(monkeypatch) -> None:
+    from atlas.storage.recovery import RESOLVE_OK
+
+    _patch_resolve(monkeypatch, RESOLVE_OK, {"run_id": "r-susp", "kind": None})
+    r = client.post(
+        "/api/interruptions/t-susp/resolve",
+        json={"action": "abandon", "reason": "已在店铺后台确认未退款"},
+        headers=ADMIN_A,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json() == {
+        "resumeToken": "t-susp", "runId": "r-susp",
+        "resolved": "interrupted", "frameDeleted": True,
+    }
+    # docs/96 §4.1／§5：处置必须留审计（token 在 path 里，谁做的、结果如何）。
+    events = client.get("/api/audit/events", headers=ADMIN_A).json()["items"]
+    row = next(e for e in events if e["action"] == "interruption.resolve")
+    assert row["statusCode"] == 200 and row["actor"] == "admin-a"
+    assert row["path"] == "/api/interruptions/t-susp/resolve"
+
+
+def test_u1172_abandon_requires_administer() -> None:
+    assert client.post("/api/interruptions/t/resolve",
+                       json={"action": "abandon"}, headers=VIEWER_A).status_code == 403
+    assert client.post("/api/interruptions/t/resolve",
+                       json={"action": "abandon"}, headers=OPERATOR_A).status_code == 403
+    assert client.post("/api/interruptions/t/resolve",
+                       json={"action": "abandon"}).status_code == 401
+
+
+def test_u1173_abandon_unsupported_action_is_422(monkeypatch) -> None:
+    _patch_resolve(monkeypatch, "never")  # 必须在调用存储前拒绝
+    r = client.post(
+        "/api/interruptions/t/resolve",
+        json={"action": "resume"}, headers=ADMIN_A,
+    )
+    assert r.status_code == 422
+    detail = r.json()["detail"]
+    assert detail["code"] == "INTERRUPTION_ACTION_UNSUPPORTED"
+    assert detail["params"] == {"action": "resume"}
+
+
+def test_u1174_abandon_memory_backend_refuses(monkeypatch) -> None:
+    monkeypatch.setattr(api_main, "STORAGE_BACKEND", "memory")
+    r = client.post("/api/interruptions/t/resolve",
+                    json={"action": "abandon"}, headers=ADMIN_A)
+    assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "INTERRUPTIONS_NOT_PERSISTED"
+
+
+@pytest.mark.parametrize(
+    "code,http_code,error_code",
+    [
+        ("frame_not_found", 404, "INTERRUPTION_FRAME_NOT_FOUND"),
+        ("frame_not_claimed", 409, "INTERRUPTION_FRAME_NOT_CLAIMED"),
+        ("run_not_suspended", 409, "INTERRUPTION_RUN_NOT_SUSPENDED"),
+    ],
+)
+def test_u1175_abandon_storage_codes_map_to_http(monkeypatch, code, http_code, error_code) -> None:
+    from atlas.storage import recovery as recovery_mod
+
+    info = {"status": "running"} if code == "run_not_suspended" else {}
+    constant = {"frame_not_found": "frame_not_found",
+                "frame_not_claimed": "frame_not_claimed",
+                "run_not_suspended": "run_not_suspended"}[code]
+    _patch_resolve(monkeypatch, constant, info)
+    r = client.post("/api/interruptions/t/resolve",
+                    json={"action": "abandon"}, headers=ADMIN_A)
+    assert r.status_code == http_code, r.text
+    detail = r.json()["detail"]
+    assert detail["code"] == error_code
+    if code == "run_not_suspended":
+        assert detail["params"] == {"status": "running"}

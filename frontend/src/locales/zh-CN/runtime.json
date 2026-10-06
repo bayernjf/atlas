@@ -83,5 +83,10 @@
   "OAUTH_STATE_INVALID": "授权 state 校验失败：{{detail}}",
   "OAUTH_TOKEN_FAILED": "换取令牌失败：{{detail}}",
   "OAUTH_REFRESH_FAILED": "刷新令牌失败：{{detail}}",
-  "WEBHOOK_MALFORMED": "缺少必需的 Webhook 请求头：{{headers}}"
+  "WEBHOOK_MALFORMED": "缺少必需的 Webhook 请求头：{{headers}}",
+  "INTERRUPTION_FRAME_NOT_FOUND": "挂起帧不存在或不属于当前租户",
+  "INTERRUPTION_FRAME_NOT_CLAIMED": "该帧尚未被认领，重启恢复仍可能驱动它，不能人工了结",
+  "INTERRUPTION_RUN_NOT_SUSPENDED": "该帧已认领但其运行不处于挂起态（当前：{{status}}）",
+  "INTERRUPTIONS_NOT_PERSISTED": "内存档挂起帧不跨进程持久化，无人工收敛能力",
+  "INTERRUPTION_ACTION_UNSUPPORTED": "不支持的收敛动作：{{action}}（当前仅支持 abandon）"
 }

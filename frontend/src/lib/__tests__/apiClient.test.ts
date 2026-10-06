@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   broadcastWaitEvent,
   listTasks,
+  resolveInterruption,
   listWaits,
   signalWait,
   DebugRunStoppedError,
@@ -443,6 +444,28 @@ describe('真实渠道绑定 /api/channels（docs/38 §1C/§1E）', () => {
       eventKey: 'order.created',
       payload: { order_id: '12345' },
     })
+  })
+
+  it('resolveInterruption POSTs abandon action to /api/interruptions/{token}/resolve (pack BL, docs/96)', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+      jsonResponse({
+        resumeToken: 'tok/1',
+        runId: 'r1',
+        resolved: 'interrupted',
+        frameDeleted: true,
+      }))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await resolveInterruption('tok/1', { action: 'abandon', reason: '未退款' })
+    expect(result).toEqual({
+      resumeToken: 'tok/1',
+      runId: 'r1',
+      resolved: 'interrupted',
+      frameDeleted: true,
+    })
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/interruptions/tok%2F1/resolve')
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(String(init?.body))).toEqual({ action: 'abandon', reason: '未退款' })
   })
 })
 

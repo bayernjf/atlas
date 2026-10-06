@@ -40,5 +40,12 @@
   "stateClaimedSuspended": "Claimed · still suspended (needs a human)",
   "stateFrameLingering": "Claimed · run terminal, frame left behind",
   "stateClaimedUnknownRun": "Claimed · run not found",
-  "stateClaimedOtherState": "Claimed · other status"
+  "stateClaimedOtherState": "Claimed · other status",
+  "resolve": "Resolve",
+  "resolveTitle": "Manually resolve suspension frame",
+  "resolveConfirm": "Confirm resolve",
+  "resolveWarn": "Resolving marks the run interrupted and deletes the frame without any replay. First verify external side effects (refunds, fulfillment, messages) and confirm nobody is handling it manually.",
+  "resolveRunLabel": "Run",
+  "resolveReasonPlaceholder": "Reason (optional, up to 500 chars), e.g. refund verified absent in storefront, customer confirmed by phone",
+  "resolved": "Resolved; run marked interrupted"
 }

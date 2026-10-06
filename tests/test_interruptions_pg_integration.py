@@ -250,3 +250,175 @@ def test_u923_crashed_run_keeps_the_frame_and_the_mine_visible(engine) -> None:
     with engine.begin() as conn:
         conn.execute(text("DELETE FROM interruptions WHERE tenant_id = :t"), {"t": tenant})
         conn.execute(text("DELETE FROM runs WHERE tenant_id = :t"), {"t": tenant})
+
+
+# --- 打包 BL（docs/96，U1176+）：认领后崩溃帧的人工 abandon，真库承重语义 ------
+
+
+def _bl_seed(engine, tenant: str, *, claimed: bool, run_status: str | None):
+    """造一条帧＋其 run；claimed 控制 resumed_at，run_status 控制 runs 行状态。
+
+    run 状态用裸 SQL 造（begin/suspend/finish 覆盖不到 interrupted 与 running 的任意组合）。
+    返回 (token, run_id)；数据按 tenant 前缀自清理。
+    """
+    token = f"{tenant}-tok"
+    run_id = f"{tenant}-run"
+    _write_frame(engine, tenant, run_id, token)
+    if claimed:
+        assert claim_frame_for_resume(engine, token, "u-bl-crashed") is True
+    with engine.begin() as conn:
+        if run_status is not None:
+            conn.execute(
+                text(
+                    "INSERT INTO runs (id, tenant_id, graph_id, status, started_at) "
+                    "VALUES (:id, :tenant, 'g-bl', :status, :now)"
+                ),
+                {"id": run_id, "tenant": tenant, "status": run_status,
+                 "now": datetime.now(timezone.utc).isoformat()},
+            )
+    return token, run_id
+
+
+def _bl_seed_t1(engine, suffix: str, *, claimed: bool, run_status: str | None):
+    """帧写在 t1（admin-a 所属租户），id 用 suffix 保证唯一。"""
+    token = f"u-bl-{suffix}-tok"
+    run_id = f"u-bl-{suffix}-run"
+    _write_frame(engine, "t1", run_id, token)
+    if claimed:
+        assert claim_frame_for_resume(engine, token, "u-bl-crashed") is True
+    if run_status is not None:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO runs (id, tenant_id, graph_id, status, started_at) "
+                    "VALUES (:id, 't1', 'g-bl', :status, :now)"
+                ),
+                {"id": run_id, "status": run_status,
+                 "now": datetime.now(timezone.utc).isoformat()},
+            )
+    return token, run_id
+
+
+def _bl_cleanup(engine, suffix: str) -> None:
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM interruptions WHERE resume_token LIKE :p"),
+                     {"p": f"u-bl-{suffix}-%"})
+        conn.execute(text("DELETE FROM runs WHERE id LIKE :p"),
+                     {"p": f"u-bl-{suffix}-%"})
+
+
+def test_u1176_abandon_marks_run_interrupted_and_deletes_frame(engine, monkeypatch) -> None:
+    """claimed_suspended ⇒ run 置 interrupted、帧删除（同一真事务）。"""
+    from atlas.storage.recovery import RESOLVE_OK, abandon_claimed_suspended_frame
+
+    suffix = f"ok-{uuid.uuid4().hex[:8]}"
+    token, run_id = _bl_seed_t1(engine, suffix, claimed=True, run_status="suspended")
+    monkeypatch.setattr(api_main, "STORAGE_BACKEND", "pg")
+    monkeypatch.setattr(api_main, "get_pg_backend", lambda: SimpleEngineBox(engine))
+    try:
+        r = client.post(
+            f"/api/interruptions/{token}/resolve",
+            json={"action": "abandon", "reason": "外部店铺核实未退款"},
+            headers=_auth("admin-a", "admin123"),
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["runId"] == run_id
+        assert r.json()["resolved"] == "interrupted"
+
+        with engine.connect() as conn:
+            status = conn.execute(
+                text("SELECT status FROM runs WHERE id=:id"), {"id": run_id}
+            ).scalar()
+            frames = conn.execute(
+                text("SELECT count(*) FROM interruptions WHERE resume_token=:t"),
+                {"t": token},
+            ).scalar()
+        assert status == "interrupted"
+        assert frames == 0
+        assert RESOLVE_OK == "ok"
+        # 再调一次：帧已删 ⇒ 404（幂等判读，不重复改写）
+        r2 = client.post(f"/api/interruptions/{token}/resolve",
+                         json={"action": "abandon"}, headers=_auth("admin-a", "admin123"))
+        assert r2.status_code == 404
+    finally:
+        _bl_cleanup(engine, suffix)
+
+
+def test_u1177_unclaimed_and_running_and_terminal_are_refused(engine, monkeypatch) -> None:
+    """承重谓词不放行：awaiting 409(NOT_CLAIMED)、running 409(NOT_SUSPENDED)、
+    completed(frame_lingering) 409(NOT_SUSPENDED) 且帧与 run 都不变。"""
+    base = f"refuse-{uuid.uuid4().hex[:8]}"
+    admin = _auth("admin-a", "admin123")
+    monkeypatch.setattr(api_main, "STORAGE_BACKEND", "pg")
+    monkeypatch.setattr(api_main, "get_pg_backend", lambda: SimpleEngineBox(engine))
+    cases = [
+        (f"{base}-await", False, "suspended", 409, "INTERRUPTION_FRAME_NOT_CLAIMED"),
+        (f"{base}-run", True, "running", 409, "INTERRUPTION_RUN_NOT_SUSPENDED"),
+        (f"{base}-done", True, "completed", 409, "INTERRUPTION_RUN_NOT_SUSPENDED"),
+    ]
+    try:
+        for tenant, claimed, status, http_code, error_code in cases:
+            token, run_id = _bl_seed_t1(engine, tenant, claimed=claimed, run_status=status)
+            r = client.post(f"/api/interruptions/{token}/resolve",
+                            json={"action": "abandon"}, headers=admin)
+            assert r.status_code == http_code, (token, r.text)
+            assert r.json()["detail"]["code"] == error_code
+            with engine.connect() as conn:
+                assert conn.execute(
+                    text("SELECT status FROM runs WHERE id=:id"), {"id": run_id}
+                ).scalar() == status
+                assert conn.execute(
+                    text("SELECT count(*) FROM interruptions WHERE resume_token=:t"),
+                    {"t": token},
+                ).scalar() == 1
+    finally:
+        for tenant, *_ in cases:
+            _bl_cleanup(engine, tenant)
+
+
+def test_u1178_cross_tenant_token_is_404(engine, monkeypatch) -> None:
+    """t2 的 admin 拿 t1 的帧 token ⇒ 404（WHERE tenant_id 承重，不泄漏）。"""
+    suffix = f"tenant-{uuid.uuid4().hex[:8]}"
+    token, run_id = _bl_seed_t1(engine, suffix, claimed=True, run_status="suspended")
+    monkeypatch.setattr(api_main, "STORAGE_BACKEND", "pg")
+    monkeypatch.setattr(api_main, "get_pg_backend", lambda: SimpleEngineBox(engine))
+    try:
+        r = client.post(f"/api/interruptions/{token}/resolve",
+                        json={"action": "abandon"}, headers=ADMIN_B)
+        assert r.status_code == 404
+        with engine.connect() as conn:
+            assert conn.execute(
+                text("SELECT status FROM runs WHERE id=:id"), {"id": run_id}
+            ).scalar() == "suspended"
+    finally:
+        _bl_cleanup(engine, suffix)
+
+
+def test_u1179_concurrent_abandon_exactly_one_wins(engine) -> None:
+    """并发反向门：两个连接同时 abandon 同一 claimed_suspended 帧，恰一个 ok。
+
+    承重的必须是 UPDATE/DELETE 谓词而不是"先查后改"——真库两线程并发才证得了。
+    """
+    import threading
+    from atlas.storage.recovery import abandon_claimed_suspended_frame
+
+    tenant = f"u_bl_conc_{uuid.uuid4().hex[:8]}"
+    token, run_id = _bl_seed(engine, tenant, claimed=True, run_status="suspended")
+    outcomes: list[str] = []
+    barrier = threading.Barrier(2)
+
+    def worker() -> None:
+        barrier.wait()
+        code, _ = abandon_claimed_suspended_frame(engine, tenant_id=tenant, token=token)
+        outcomes.append(code)
+
+    t1 = threading.Thread(target=worker)
+    t2 = threading.Thread(target=worker)
+    t1.start(); t2.start(); t1.join(); t2.join()
+    try:
+        assert sorted(outcomes).count("ok") == 1, outcomes
+        assert "frame_not_found" in outcomes, outcomes
+    finally:
+        with engine.begin() as conn:
+            conn.execute(text("DELETE FROM interruptions WHERE resume_token=:t"), {"t": token})
+            conn.execute(text("DELETE FROM runs WHERE id=:id"), {"id": run_id})
