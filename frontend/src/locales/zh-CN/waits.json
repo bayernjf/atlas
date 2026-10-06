@@ -40,5 +40,12 @@
   "stateClaimedSuspended": "已认领·仍挂起（需人工看）",
   "stateFrameLingering": "已认领·运行已终态而帧未清",
   "stateClaimedUnknownRun": "已认领·查不到该运行",
-  "stateClaimedOtherState": "已认领·其它状态"
+  "stateClaimedOtherState": "已认领·其它状态",
+  "resolve": "了结",
+  "resolveTitle": "人工了结挂起帧",
+  "resolveConfirm": "确认了结",
+  "resolveWarn": "了结会把该运行置为 interrupted 并删除挂起帧，且不会重放。执行前请先在外部系统核实退款、发货、消息等副作用状态，确认没有正在人工处理。",
+  "resolveRunLabel": "运行",
+  "resolveReasonPlaceholder": "处理依据（可选，≤500 字），如：外部店铺核实未退款、客户已电话确认",
+  "resolved": "已了结，运行置为 interrupted"
 }

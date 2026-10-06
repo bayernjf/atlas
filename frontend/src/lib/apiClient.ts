@@ -2415,6 +2415,22 @@ export async function listInterruptions(): Promise<InterruptionSurface> {
   return request<InterruptionSurface>('/api/interruptions')
 }
 
+/** 打包 BL（docs/96）：人工了结认领后崩溃的挂起帧。v1 仅支持 abandon。 */
+export async function resolveInterruption(
+  resumeToken: string,
+  body: { action: 'abandon'; reason?: string },
+): Promise<{
+  resumeToken: string
+  runId: string
+  resolved: 'interrupted'
+  frameDeleted: boolean
+}> {
+  return request(`/api/interruptions/${encodeURIComponent(resumeToken)}/resolve`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
 export async function signalWait(
   token: string,
   payload: Record<string, unknown>,

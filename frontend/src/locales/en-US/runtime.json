@@ -83,5 +83,10 @@
   "OAUTH_STATE_INVALID": "Authorization state validation failed: {{detail}}",
   "OAUTH_TOKEN_FAILED": "Failed to exchange the code for a token: {{detail}}",
   "OAUTH_REFRESH_FAILED": "Failed to refresh the token: {{detail}}",
-  "WEBHOOK_MALFORMED": "Missing required webhook headers: {{headers}}"
+  "WEBHOOK_MALFORMED": "Missing required webhook headers: {{headers}}",
+  "INTERRUPTION_FRAME_NOT_FOUND": "Suspension frame not found or it does not belong to the current tenant",
+  "INTERRUPTION_FRAME_NOT_CLAIMED": "This frame has not been claimed yet; restart recovery may still drive it, so it cannot be abandoned",
+  "INTERRUPTION_RUN_NOT_SUSPENDED": "The frame is claimed but its run is not suspended (current state: {{status}})",
+  "INTERRUPTIONS_NOT_PERSISTED": "In-memory frames do not persist across processes; manual reconcile is unavailable",
+  "INTERRUPTION_ACTION_UNSUPPORTED": "Unsupported resolve action: {{action}} (only \"abandon\" is supported)"
 }

@@ -21,6 +21,12 @@ from sqlalchemy import Engine, text
 
 from atlas.scheduling.models import to_utc_iso
 
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
+
 #: 进程身份（仅落 `resumed_by` 供排障，不参与判定，不做注册中心）。
 PROCESS_IDENTITY = f"{socket.gethostname()}:{os.getpid()}"
 
@@ -147,6 +153,95 @@ def clear_frame(engine: Engine, token: str) -> None:
             text("DELETE FROM interruptions WHERE resume_token = :token"),
             {"token": token},
         )
+
+
+#: 人工收敛（docs/96 打包 BL D-4）的事务结果码。
+RESOLVE_OK = "ok"
+RESOLVE_FRAME_NOT_FOUND = "frame_not_found"
+RESOLVE_FRAME_NOT_CLAIMED = "frame_not_claimed"
+RESOLVE_RUN_NOT_SUSPENDED = "run_not_suspended"
+
+
+def abandon_claimed_suspended_frame(
+    engine: Engine, *, tenant_id: str, token: str
+) -> tuple[str, dict]:
+    """把「已认领、run 仍 suspended」的卡死帧人工了结：run 置 interrupted、删帧。
+
+    docs/96 打包 BL（docs/14 D36 人工收敛半边）。**承重的是这一个事务的谓词**，
+    调用方的只读预查只为折算给人看的错误码，不承担互斥：
+
+    - 帧行带 `resumed_at IS NOT NULL`（已认领）谓词才删——未认领帧重启恢复扫描器
+      仍会驱动它，人工了结会抢跑，绝不删；
+    - run 带 `status = 'suspended'` 谓词才置终态——running（可能只是续跑进行中的
+      瞬时态）或已终态都不动，也不静默删帧（frame_lingering 说明另有 bug，只观测）。
+
+    承重的是 UPDATE/DELETE 的 WHERE 谓词，调用方的只读预查只用于折算给人看的
+    错误码、不承担互斥。两步同一事务提交，任一谓词不命中显式回滚（不依赖
+    "with begin 出异常才回滚"的隐式行为）。返回 ``(code, info)``：``info`` 在
+    ok 时为 ``{"run_id","kind"}``，在 run_not_suspended 时带 ``{"status"}``。
+    """
+    with engine.begin() as conn:
+        # 承重 UPDATE：CTE 先把「本租户 + 本 token + 已认领」的帧行锁出来，
+        # 只更新其名下且恰为 suspended 的 run。谓词不放行 ⇒ rowcount 0。
+        result = conn.execute(
+            text(
+                "WITH target AS ("
+                "  SELECT run_id FROM interruptions "
+                "  WHERE resume_token = :token AND tenant_id = :tenant_id "
+                "  AND resumed_at IS NOT NULL"
+                "  FOR UPDATE"
+                ") "
+                "UPDATE runs SET status = 'interrupted', finished_at = :now, "
+                "kind = NULL, node_id = NULL, deadline_at = NULL, resume_token = NULL "
+                "WHERE id = (SELECT run_id FROM target) "
+                "AND tenant_id = :tenant_id AND status = 'suspended' "
+                "RETURNING id"
+            ),
+            {"now": _now_iso(), "token": token, "tenant_id": tenant_id},
+        ).first()
+        if result is None:
+            # 承重谓词没放行（UPDATE 0 行、本事务零写入，无需回滚）：只读折算
+            # 具体码（帧不存在 / 未认领 / run 非 suspended），折算不承担互斥。
+            row = conn.execute(
+                text(
+                    "SELECT run_id FROM interruptions "
+                    "WHERE resume_token = :token AND tenant_id = :tenant_id"
+                ),
+                {"token": token, "tenant_id": tenant_id},
+            ).first()
+            if row is None:
+                return RESOLVE_FRAME_NOT_FOUND, {}
+            run_id = row[0]
+            claimed = conn.execute(
+                text(
+                    "SELECT 1 FROM interruptions "
+                    "WHERE resume_token = :token AND tenant_id = :tenant_id "
+                    "AND resumed_at IS NOT NULL"
+                ),
+                {"token": token, "tenant_id": tenant_id},
+            ).first()
+            if claimed is None:
+                return RESOLVE_FRAME_NOT_CLAIMED, {}
+            current = conn.execute(
+                text("SELECT status FROM runs WHERE id = :run_id AND tenant_id = :tenant_id"),
+                {"run_id": run_id, "tenant_id": tenant_id},
+            ).first()
+            return RESOLVE_RUN_NOT_SUSPENDED, {"status": current[0] if current else None}
+
+        deleted = conn.execute(
+            text(
+                "DELETE FROM interruptions "
+                "WHERE resume_token = :token AND tenant_id = :tenant_id "
+                "AND resumed_at IS NOT NULL"
+            ),
+            {"token": token, "tenant_id": tenant_id},
+        )
+        if (deleted.rowcount or 0) != 1:
+            # CTE 已锁到帧行、同事务内不可能消失；走到这里是真不一致，让 begin
+            # 回滚（run 的 UPDATE 一并撤销），交调用方按 500 看见而不是静默放过。
+            raise RuntimeError(f"abandon frame deleted {deleted.rowcount} rows: {token}")
+        # 承重谓词已放行：run_id 由 RETURNING 取回，帧随后随本事务删除。
+        return RESOLVE_OK, {"run_id": result[0], "kind": None}
 
 
 def clear_tenant_frames(engine: Engine, tenant_id: str) -> None:
