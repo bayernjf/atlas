@@ -154,19 +154,15 @@ COARSE_CODE: set[str] = set()
 #: 响应要译、哪些只是节点产出按 §2.5 不译，得逐条读发射点才知道，塞进本批等于把 A-4
 #: 重新欠一次。故单列一桶并登记 docs/14 **D55**，由 U1164 钉住它**只许缩小不许变大**：
 #: 下批逐条分类（译或进该去的那一族），每分类一条就从这个冻结清单里删一条。
+#: docs/08 打包 BJ（2026-10-06）：D55 冻结桶 12→4。7 条单答案码经结构化折叠点
+#: （`_conn_http_error`／`_channel_http_error`／入站 webhook）把 code 送进响应体、补
+#: zh/en 出桶；剩这 4 条**本身就是一码多话粗码**，结构化后 code 出体但仍留桶——
+#: 按答案拆码＝打包 BK（同族 BC 先例，共 15 条答案）。docs/14 D55 理由收紧为「须拆码」。
 FROZEN_FOR_TRIAGE = {
-    "CHANNEL_ALREADY_BOUND",
-    "CHANNEL_ALREADY_REGISTERED",
-    "CHANNEL_INVALID_RESPONSE",
     "CHANNEL_NOT_BOUND",
     "CHANNEL_UNAUTHORIZED",
     "CHANNEL_UPSTREAM_FAILED",
-    "CONNECTION_NOT_FOUND",
-    "OAUTH_NO_REFRESH_TOKEN",
-    "OAUTH_REFRESH_FAILED",
-    "OAUTH_STATE_INVALID",
-    "OAUTH_TOKEN_FAILED",
-    "WEBHOOK_MALFORMED",
+    "CHANNEL_INVALID_RESPONSE",
 }
 #: 2026-10-05 打包 BC 量出的**原始 27 条**快照，刻意**硬编码**而非 `set(FROZEN_FOR_TRIAGE)`：
 #: 若从当前集合派生，将来有人往桶里加新码会同时进快照，"只许缩小"的门永远绿、形同虚设。
@@ -571,3 +567,13 @@ def test_u1165_triaged_node_output_codes_never_reach_an_http_response():
         "这些码被归为『仅节点产出不译』，却在 api 层出体路径上出现了："
         f"{leaked}；既然到得了 HTTP 使用者，就补 zh/en 译文并移出 TRIAGED_NODE_OUTPUT_ONLY。"
     )
+
+
+def test_u1169_frozen_bucket_is_exactly_the_four_coarse_channel_codes():
+    """打包 BJ：D55 冻结桶 12→4，剩恰 B 堆 4 条一码多话粗码（多一条少一条都红）。"""
+    assert FROZEN_FOR_TRIAGE == {
+        "CHANNEL_NOT_BOUND",
+        "CHANNEL_UNAUTHORIZED",
+        "CHANNEL_UPSTREAM_FAILED",
+        "CHANNEL_INVALID_RESPONSE",
+    }

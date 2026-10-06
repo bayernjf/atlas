@@ -799,7 +799,10 @@ class ConnectionExchangeRequest(BaseModel):
 
 
 def _conn_http_error(exc: ConnectionServiceError) -> "HTTPException":
-    return HTTPException(status_code=exc.status_code, detail=str(exc))
+    detail: dict[str, Any] = {"code": exc.code, "message": str(exc)}
+    if getattr(exc, "params", None):
+        detail["params"] = exc.params
+    return HTTPException(status_code=exc.status_code, detail=detail)
 
 
 @app.post("/api/connections", status_code=201)
@@ -1024,7 +1027,10 @@ class ChannelBindRequest(BaseModel):
 
 
 def _channel_http_error(exc: ChannelError) -> "HTTPException":
-    return HTTPException(status_code=exc.status_code, detail=str(exc))
+    detail: dict[str, Any] = {"code": exc.code, "message": str(exc)}
+    if getattr(exc, "params", None):
+        detail["params"] = exc.params
+    return HTTPException(status_code=exc.status_code, detail=detail)
 
 
 def _record_audit(
@@ -1776,7 +1782,7 @@ async def shopify_webhook_ingress(binding_id: str, http_request: Request) -> dic
     try:
         envelope = build_envelope(http_request.headers, data)
     except ChannelError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+        raise _channel_http_error(exc)
     return _webhook_deliverer.deliver(
         tenant_id,
         {"id": binding.id, "webhook_subscriptions": binding.webhook_subscriptions},

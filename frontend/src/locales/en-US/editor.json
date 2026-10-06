@@ -187,6 +187,7 @@
     "decision": "✓ {{node}} decision: {{action}}",
     "branch": "✓ {{node}} branch: {{branch}} → {{target}}",
     "branchDefault": "Default",
+    "conditionBranchError": "⚠ {{node}} expression diagnostics — branch {{branch}}: {{detail}}",
     "parallelStarted": "✓ {{node}} started {{count}} branches in parallel",
     "parallelFailed": "✓ {{node}} parallel join: {{count}} branches failed: {{detail}} (the join node still runs)",
     "parallelAllOk": "✓ {{node}} parallel join: all succeeded",

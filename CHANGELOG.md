@@ -3,6 +3,24 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### fix(errors)：D55 冻结桶第六批＝渠道/连接错误结构化出体（2026-10-06 打包 BJ；docs/08 打包 BJ 块；docs/14 D55 12→4）
+
+- **为什么不是"补翻译"而是"改响应形状"**：D55 剩 12 条，逐条跟完发射路径，全经三个折叠点（`_conn_http_error`／`_channel_http_error`／入站 webhook 直捕）写成 `detail=str(exc)`——结构化异常上的 `code` 进不了响应体，前端拿到中文裸串无法按码本地化，是 A-4 初衷的反面。
+- **三个折叠点统一改结构化**：`detail` 由字符串改 `{code,message[,params]}`（与 openapi 面同形）；`ChannelError`／`ConnectionServiceError` 加可选 `params`（照 openapi `OpenApiError` 先例），4 条动态消息在发射点填 params 供模板插值。
+- **8 条单答案码补 zh/en 出桶**：CHANNEL_ALREADY_BOUND／CHANNEL_ALREADY_REGISTERED／CONNECTION_NOT_FOUND／OAUTH_NO_REFRESH_TOKEN／OAUTH_STATE_INVALID／OAUTH_TOKEN_FAILED／OAUTH_REFRESH_FAILED＋入站 WEBHOOK_MALFORMED。
+- **4 条一码多话粗码仍留桶（D55 收紧为「须拆码」）**：CHANNEL_NOT_BOUND 2／UNAUTHORIZED 3／UPSTREAM_FAILED 2／INVALID_RESPONSE 8，共 15 条答案——code 已出体但目录无键、前端回退中文，拆码＝**打包 BK**。
+- **U1168–U1170（净增 3）**：U1168 钉结构化码在体且进目录、U1169 钉桶恰 4 条、U1170 钉中间态防假绿；2 条既有断言改判（非放宽）。
+- **门**：后端全量 **2371 passed／150 skipped／0 failed**（217.20s，对账＝BI 2368＋3）；前端 vitest **788/2**、oxlint 0/0、`tsc -b && vite build` 过。零新依赖／零迁移／无 ADR；HTTP 状态码不变（409/404/400/502）；不给旧字符串留兼容。
+
+
+### feat(graph)：D54 闭合＝condition 节点表达式诊断补机器可读通道（2026-10-05 打包 BI；docs/08 打包 BI 块；docs/13 打包 BI 小节 U1167；docs/14 D54 闭合）
+
+- **D54 的两个拦路问题裁决**：① **零新码**——`ConditionEvalError` 自 docs/60 G1 带 code/params（COND_* 族目录文案齐全），非布尔分支复用 loop 同款 `COND_TYPE_MISMATCH`；② **分支前缀由前端组装**——`branch: label` 进 params，per-code 模板一字不动，不造第二套带前缀的模板族。
+- **后端**：`graph/loader.py::_execute_condition` 补 `expressionErrorCodes`／`expressionErrorParams` 平行数组（与 `expression_errors` 等长，经 `_expression_error_channels` 守卫），求值异常下发 `exc.code`＋`{branch, **exc.params}`、非布尔下发 `COND_TYPE_MISMATCH`＋`{branch, expected, actual}`。
+- **前端**：Editor 的 condition 分支补表达式诊断本地化落日志（**此前 condition 的 expression_errors 在任何 UI 都不可见**）；新 i18n 键 `log.conditionBranchError`（zh/en）；`condition.schema.ts` 的 `x-outputSchema` 补三键（nodeSchemas 守卫同步）。
+- **U1167**：condition 结果三数组按下标对齐、码来自 `ConditionEvalError`／`COND_TYPE_MISMATCH`、params 含 `branch`（`tests/test_graph_loader.py` 新增 1 例＋既有断言扩展）。
+- **门**：`test_graph_loader.py`＋`test_tracing_loader.py` **109 passed**；后端全量 **2368/150/0**（282.56s，对账＝BH 2367＋U1167 新增 1）；前端 vitest **788/2**、oxlint 0/0、tsc＋build 过。零新依赖／零迁移／无 ADR。
+- **收口补记（2026-10-06 复核）**：BI 行进 Recently shipped 时漏删最旧的 BD 行（BD 已滚入 `docs/handoff-archive-2026-10-04.md`，主文件仍留一份）⇒ 该区 6 条超限、`test_handoff_integrity` 转红；删重后该守护与错误码守护合计 **19 passed**，全量即上记 2368／150／0（本机实跑口径 2367 passed ＋ 1 failed 即那条超限／150 skipped）。
 
 ### fix(message)：D55 冻结桶第五批＝发送三码补译出桶＋WEBHOOK_MALFORMED 路由跟完（2026-10-05 打包 BH；docs/08 打包 BH 块；docs/14 D55 15→12；docs/13 打包 BH 小节）
 

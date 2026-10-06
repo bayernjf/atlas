@@ -66,5 +66,13 @@
   "WAIT_EVENT_PAYLOAD_TOO_MANY_KEYS": "payload must not have more than {{max}} top-level keys",
   "WAIT_TIMEOUT_FAILED": "Timed out waiting for the event",
   "WAIT_TOKEN_NOT_FOUND": "The wait does not exist or has already been cleaned up",
-  "WEBHOOK_SEND_FAILED": "Webhook fan-out partially failed: {{failed}}/{{total}} deliveries failed"
+  "WEBHOOK_SEND_FAILED": "Webhook fan-out partially failed: {{failed}}/{{total}} deliveries failed",
+  "CHANNEL_ALREADY_BOUND": "This connection is already bound to a channel; do not bind it twice",
+  "CHANNEL_ALREADY_REGISTERED": "This callback is already registered on the shop (HTTP 422)",
+  "CONNECTION_NOT_FOUND": "Connection not found or does not belong to the current tenant",
+  "OAUTH_NO_REFRESH_TOKEN": "This connection has no refresh_token; run the authorization flow again",
+  "OAUTH_STATE_INVALID": "Authorization state validation failed: {{detail}}",
+  "OAUTH_TOKEN_FAILED": "Failed to exchange the code for a token: {{detail}}",
+  "OAUTH_REFRESH_FAILED": "Failed to refresh the token: {{detail}}",
+  "WEBHOOK_MALFORMED": "Missing required webhook headers: {{headers}}"
 }

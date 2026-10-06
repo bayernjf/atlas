@@ -215,7 +215,10 @@ def test_register_remote_webhook_422_public_url_not_https(_setup, monkeypatch):
         json={"topic": "orders/create"}, headers=_login("admin"),
     )
     assert r.status_code == 422
-    assert "HTTPS" in r.json()["detail"]
+    detail = r.json()["detail"]
+    # 打包 BJ：detail 由中文字符串改成结构化 {code,message}，code 进得了响应体。
+    assert isinstance(detail, dict) and detail["code"] == "CHANNEL_INVALID_PARAMETER"
+    assert "HTTPS" in detail["message"]
 
 
 def test_register_remote_webhook_404_unknown_binding(_setup):

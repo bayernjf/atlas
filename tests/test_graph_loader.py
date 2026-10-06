@@ -162,6 +162,51 @@ def test_condition_runtime_error_fails_safe_to_default():
     assert routed["branch"] == "__default__"
     assert routed["evaluation"][0]["result"] is None
     assert routed["expression_errors"]
+    # 打包 BI（U1167，docs/14 D54 闭合）：三组平行数组按下标对齐，码/params 来自
+    # ConditionEvalError（docs/60 G1），分支 label 并入 params 供前端组装前缀。
+    assert routed["expressionErrorCodes"] == ["COND_NULL_COMPARISON"]
+    assert routed["expressionErrorParams"] == [{"branch": "大额"}]
+
+
+def test_condition_non_bool_result_carries_type_mismatch_channel():
+    """打包 BI（U1167）：非布尔分支复用 COND_TYPE_MISMATCH（loop 同款 params），
+    与 loop 的继续条件路径共用同一目录模板，不造第二套码。"""
+    graph = parse_graph(
+        {
+            "version": 1,
+            "variables": [],
+            "nodes": [
+                {"id": "trigger-1", "type": "trigger", "name": "t",
+                 "config": {"triggerType": "webhook", "webhookUrl": "/hooks/refund"}},
+                {"id": "condition-1", "type": "condition", "name": "c",
+                 "config": {
+                     "branches": [
+                         {"label": "裸值",
+                          "expression": "{{trigger-1.context.payload.amount}}",
+                          "target": "b1"},
+                     ],
+                     "defaultTarget": "b2",
+                 }},
+                {"id": "b1", "type": "tool_call", "name": "b1",
+                 "config": {"tool": "auto-refund"}},
+                {"id": "b2", "type": "tool_call", "name": "b2",
+                 "config": {"tool": "auto-refund"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger-1", "target": "condition-1"},
+                {"id": "e2", "source": "condition-1", "target": "b1"},
+                {"id": "e3", "source": "condition-1", "target": "b2"},
+            ],
+        }
+    )
+    result = run_graph(graph, inputs={"amount": 1500})
+    routed = result["outputs"]["condition-1"]
+    assert routed["branch"] == "__default__"
+    assert routed["expression_errors"] == ["分支 裸值：表达式结果必须是布尔值，实际为 int"]
+    assert routed["expressionErrorCodes"] == ["COND_TYPE_MISMATCH"]
+    assert routed["expressionErrorParams"] == [
+        {"branch": "裸值", "expected": "boolean", "actual": "number"}
+    ]
 
 
 def test_condition_stops_at_first_true_branch():

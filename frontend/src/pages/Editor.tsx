@@ -468,6 +468,28 @@ export function Editor({
             appendLog(
               t('log.branch', { node: event.node_id, branch: branchText, target: output.target }),
             )
+            // 打包 BI（docs/14 D54 闭合）：condition 的表达式诊断按三数组本地化落日志
+            // （此前 condition 的 expression_errors 在任何 UI 都不可见）；分支前缀由
+            // 前端组装（params.branch 是数据不是错误答案的一部分），per-code 模板不动。
+            if (output.expression_errors?.length) {
+              const branchParams = Array.isArray(output.expressionErrorParams)
+                ? output.expressionErrorParams
+                : []
+              resolveExpressionErrors(
+                output.expressionErrorCodes,
+                output.expression_errors,
+                output.expressionErrorParams,
+              ).forEach((detail, index) => {
+                const label = branchParams[index]?.branch
+                appendLog(
+                  t('log.conditionBranchError', {
+                    node: event.node_id,
+                    branch: typeof label === 'string' && label ? label : '—',
+                    detail,
+                  }),
+                )
+              })
+            }
           } else if (output?.mode === 'parallel') {
             if (output.status === 'running') {
               appendLog(

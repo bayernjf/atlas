@@ -50,6 +50,10 @@ export const conditionSchema: NodeConfigSchema = {
       mode: {},
       branch: {},
       target: {},
+      // 打包 BI（docs/14 D54 闭合）：与 loop.schema.ts 同款三数组（按下标对齐）。
+      expression_errors: { type: 'array' },
+      expressionErrorCodes: { type: 'array' },
+      expressionErrorParams: { type: 'array' },
     },
   },
 }

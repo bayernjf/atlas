@@ -1657,6 +1657,8 @@ def _execute_condition(
 
     evaluation: list[dict[str, Any]] = []
     errors: list[str] = []
+    error_codes: list[str] = []
+    error_params: list[dict[str, Any]] = []
     target: str | None = None
     branch = "__default__"
     for item in config.get("branches", []):
@@ -1664,11 +1666,23 @@ def _execute_condition(
         try:
             result = evaluate_expression(expression, context, now=now, rng=expr_rng)
         except ConditionEvalError as exc:
+            # 打包 BI（docs/14 D54 闭合）：与 loop/foreach 同款三数组——码/params 来自
+            # ConditionEvalError（docs/60 G1），分支 label 并入 params 供前端组装前缀。
             errors.append(f"分支 {label}：{exc}")
+            error_codes.append(exc.code)
+            error_params.append({"branch": label, **dict(exc.params)})
             evaluation.append({"label": label, "expression": expression, "result": None})
             continue
         if not isinstance(result, bool):
             errors.append(f"分支 {label}：表达式结果必须是布尔值，实际为 {type(result).__name__}")
+            error_codes.append("COND_TYPE_MISMATCH")
+            error_params.append(
+                {
+                    "branch": label,
+                    "expected": "boolean",
+                    "actual": _type_code(result),
+                }
+            )
             evaluation.append({"label": label, "expression": expression, "result": None})
             continue
         evaluation.append({"label": label, "expression": expression, "result": result})
@@ -1677,11 +1691,16 @@ def _execute_condition(
             break
     if target is None:
         target = config["defaultTarget"]
+    errors, error_codes, error_params = _expression_error_channels(
+        errors, error_codes, error_params
+    )
     return {
         "branch": branch,
         "target": target,
         "evaluation": evaluation,
         "expression_errors": errors,
+        "expressionErrorCodes": error_codes,
+        "expressionErrorParams": error_params,
     }
 
 

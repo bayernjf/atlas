@@ -88,6 +88,7 @@ def build_envelope(headers: Mapping[str, str], data: dict) -> WebhookEnvelope:
             "WEBHOOK_MALFORMED",
             f"缺少必需的 Webhook 请求头：{', '.join(missing)}",
             status_code=400,
+            params={"headers": ", ".join(missing)},
         )
     return WebhookEnvelope(
         shop_domain=shop_domain,

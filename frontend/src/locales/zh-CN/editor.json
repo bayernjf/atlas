@@ -187,6 +187,7 @@
     "decision": "✓ {{node}} 决策：{{action}}",
     "branch": "✓ {{node}} 分支：{{branch}} → {{target}}",
     "branchDefault": "默认",
+    "conditionBranchError": "⚠ {{node}} 表达式诊断 — 分支 {{branch}}：{{detail}}",
     "parallelStarted": "✓ {{node}} 并行启动 {{count}} 个分支",
     "parallelFailed": "✓ {{node}} 并行汇聚：{{count}} 个分支失败：{{detail}}（汇聚节点仍执行）",
     "parallelAllOk": "✓ {{node}} 并行汇聚：全部成功",
