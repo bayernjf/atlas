@@ -1,4 +1,5 @@
 # Handoff — Atlas
+> **📋 打包 BL 立项（docs-only，未 push；docs/96，docs/08 BL 块；docs/14 D36 拆条＋新登 D56）**：给 docs/62 at-most-once 代价条款（认领后崩溃 ⇒ run 永久 suspended）一条安全人工出口——`POST /api/interruptions/{token}/resolve`（administer，仅 action=abandon）把卡死运行单事务置 `interrupted` 并删帧；严格限定 claimed_suspended，不做重放/定时/自动扫描，零迁移零依赖。落码另立批。
 > **✅ 打包 BK 落码收口＝D55 闭合，渠道 4 粗码按 15 答案拆成 14 码（2026-10-06 承接 BK docs-only 立项自推；docs/08 打包 BK 收口块；docs/13 打包 BK 小节；docs/14 D55 4→0 闭合；dev）**：NOT_BOUND／UNAUTHORIZED／UPSTREAM_FAILED／INVALID_RESPONSE 全仓零发射、无别名；9 码经 `_channel_http_error` 结构化出体补 zh/en（runtime.json 76→85 键），5 条纯节点产出进 TOOL_OUTPUT_ONLY；授权族四分支收敛 `CHANNEL_AUTHORIZATION_ERROR_CODES`，channels.json 键随码更名。净增 6 例，U1169 改判桶空、U1170 改判新码在体且进目录。门：后端 **2377／150／0**（沙箱 4 条 socket 用例提权复跑全绿）、前端 **788/2**、oxlint 0/0、build 过。零新依赖／零迁移／无 ADR；HTTP 状态码不变。详见 Active #123。
 > **✅ 打包 BJ 落码收口＝D55 冻结桶第六批，渠道/连接错误结构化出体（2026-10-06 用户「继续」自推；docs/08 打包 BJ 块；docs/13 U1168–U1170；docs/14 D55 12→4；dev）**：三个折叠点 detail 由中文字符串改 `{code,message[,params]}`，8 条单答案码补 zh/en 出桶、4 条一码多话粗码 code 出体仍留桶（拆码＝打包 BK）。门：后端 **2371／150／0**、前端 **788/2**、oxlint 0/0、build 过。零新依赖／零迁移／无 ADR。详见 Active #122。
 >
