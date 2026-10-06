@@ -6,7 +6,10 @@ on:
   pull_request:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # push 与 pull_request 事件在 PR 分支上 github.ref 相同（refs/heads/dev），
+  # 不加 event 维度时两者互相 cancel：先启动的 push run 会取消 pull_request run，
+  # GitHub 对 PR 只计 pull_request 的 check run，导致 PR 永远 UNSTABLE（2026-10-06 #128 实测）。
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
