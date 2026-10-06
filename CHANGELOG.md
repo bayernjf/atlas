@@ -3,6 +3,16 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### feat(recovery)：认领后崩溃挂起帧的人工收敛（2026-10-06 打包 BL；docs/96 形状权威；docs/14 D36 人工收敛半边收口）
+
+- **一句话**：docs/62 选了 at-most-once ⇒ 进程在"认领之后、下游执行完之前"崩溃时，该 run 永久停在 `suspended`。docs/76 让这颗雷**看得见**（`claimed_suspended` 档位）却**无从处理**（端点只读）。本批给一条**安全的人工出口**：确认下游状态后把该 run 了结为 `interrupted` 并删帧——**不重放**（下游 `create_refund` 等非幂等，安全重放＝docs/14 D56）。
+- **后端**：`storage/recovery.py::abandon_claimed_suspended_frame`——互斥由**同一 `engine.begin()` 事务**的两条谓词承担（帧侧 `resumed_at IS NOT NULL`、run 侧 `status='suspended'`），不命中即整体回滚并按 404/409 折算；run 置 `interrupted` 时同句清 `kind/node_id/deadline_at/resume_token`。端点 `POST /api/interruptions/{resume_token}/resolve`（`administer`）；内存档 409 `INTERRUPTIONS_NOT_PERSISTED`；`action≠abandon` 422。**零迁移**（`runs.status` 终态枚举已含 `interrupted`）。
+- **前端**：Waits frames tab 仅 `claimed_suspended` ＋ `administer` 渲染「了结」按钮，确认框明示"不会重新执行下游、请先核实退款/消息"＋ reason（≤500）；`waits.json` zh/en 过 PARITY，5 个错误码进 `runtime.json`。
+- **U1171–U1179（净增 9：5 常跑＋4 PG 集成）**：成功路径／权限／非法 action／内存档／码映射；PG 侧真库断言 run 终态＋帧删除＋**审计行**；未认领·running·终态一律 409 且不变；跨租户 404；**并发反向门**（两个并发 abandon 恰一个 200）。前端 +1 例。
+- **一处与契约的偏差（照实）**：`audit_events`（迁移 013）无 detail 列，契约 §4.1 要记的 runId／reason／claimedBy／claimedAt **不入审计行**（token 在 `path`）；补全须加列＝迁移，留后续决策。
+- **门**：后端全量 **2384 passed／150+4 skipped／0 failed**（194.10s）；前端 vitest **789 passed／2 skipped**、oxlint 0/0、`tsc -b && vite build` 过。零新依赖／零迁移／无 ADR。
+- **不做（照实）**：resume/retry、后台 reconciler 与阈值计时、`frame_lingering` 残留处置、不动 at-most-once 认领协议、不解锁多副本。
+
 ### fix(errors)：D55 冻结桶清零＝渠道 4 粗码按答案拆码（2026-10-06 打包 BK；docs/08 打包 BK 块；docs/13 打包 BK 小节；docs/14 **D55 闭合**）
 
 - **14 个新码、旧 4 粗码零发射**：CHANNEL_NOT_BOUND／UNAUTHORIZED／UPSTREAM_FAILED／INVALID_RESPONSE（共 15 个答案）按 BC 同构纪律拆码，不给别名；U1161 粗码集合 +4 钉全仓零发射。
