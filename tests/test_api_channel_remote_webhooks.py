@@ -164,7 +164,7 @@ def test_get_remote_webhooks_unauthorized_folded(_setup):
     services.channel_registry._transport = _Raise401()
     r = client.get(f"/api/channels/{bid}/remote-webhooks", headers=_login("admin"))
     assert r.status_code == 200
-    assert r.json() == {"items": [], "error": "CHANNEL_UNAUTHORIZED"}
+    assert r.json() == {"items": [], "error": "CHANNEL_UPSTREAM_UNAUTHORIZED"}
     assert services.channel_registry.get(bid)["status"] == "error"
 
 

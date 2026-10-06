@@ -9,8 +9,11 @@ from typing import Any
 import pytest
 
 from atlas.channels.base import TransportResponse
+from atlas.channels.base import HttpChannelTransport
 from atlas.channels.shopify import ShopifyChannelClient, normalize_shop
 from atlas.channels.base import ChannelError
+
+import httpx
 
 
 class FakeTransport:
@@ -69,7 +72,7 @@ def test_invalid_api_version_and_token():
     assert info.value.code == "CHANNEL_INVALID_PARAMETER"
     with pytest.raises(ChannelError) as info:
         ShopifyChannelClient("acme", "")
-    assert info.value.code == "CHANNEL_UNAUTHORIZED"
+    assert info.value.code == "CHANNEL_TOKEN_UNAVAILABLE"
 
 
 def test_list_orders_request_shape_and_projection():
@@ -116,23 +119,27 @@ def test_missing_order_structure():
     client, _ = make_client(lambda *a: resp({}))
     with pytest.raises(ChannelError) as info:
         client.get_order("1")
-    assert info.value.code == "CHANNEL_INVALID_RESPONSE"
+    assert info.value.code == "CHANNEL_ORDER_SHAPE_INVALID"
 
 
 def test_status_error_mapping():
     client, _ = make_client(lambda *a: resp({}, status=401))
     with pytest.raises(ChannelError) as info:
         client.list_orders()
-    assert info.value.code == "CHANNEL_UNAUTHORIZED"
+    assert info.value.code == "CHANNEL_UPSTREAM_UNAUTHORIZED"
+    assert info.value.params == {"status": 401}
 
     client, _ = make_client(lambda *a: resp({}, status=403))
-    with pytest.raises(ChannelError):
+    with pytest.raises(ChannelError) as info:
         client.list_orders()
+    assert info.value.code == "CHANNEL_UPSTREAM_UNAUTHORIZED"
+    assert info.value.params == {"status": 403}
 
     client, _ = make_client(lambda *a: resp({}, status=500))
     with pytest.raises(ChannelError) as info:
         client.list_orders()
-    assert info.value.code == "CHANNEL_UPSTREAM_FAILED"
+    assert info.value.code == "CHANNEL_UPSTREAM_STATUS_ERROR"
+    assert info.value.params == {"status": 500}
 
 
 def test_bad_json_response():
@@ -142,7 +149,7 @@ def test_bad_json_response():
     client = ShopifyChannelClient("acme", "t", transport=transport)
     with pytest.raises(ChannelError) as info:
         client.list_orders()
-    assert info.value.code == "CHANNEL_INVALID_RESPONSE"
+    assert info.value.code == "CHANNEL_SHOP_JSON_INVALID"
 
 
 def test_create_refund_full_payload():
@@ -228,7 +235,7 @@ def test_list_registered_webhooks_missing_structure():
     client, _ = make_client(lambda *a: resp({}))
     with pytest.raises(ChannelError) as info:
         client.list_registered_webhooks()
-    assert info.value.code == "CHANNEL_INVALID_RESPONSE"
+    assert info.value.code == "CHANNEL_WEBHOOKS_SHAPE_INVALID"
 
 
 def test_register_webhook_body_and_projection():
@@ -262,6 +269,74 @@ def test_register_webhook_422_maps_to_already_registered():
     with pytest.raises(ChannelError) as info:
         client.register_webhook(topic="orders/create", address="https://x.io/hook")
     assert info.value.code == "CHANNEL_ALREADY_REGISTERED"
+
+
+def test_pack_bk_shape_and_transport_codes_are_specific():
+    """打包 BK：INVALID_RESPONSE/UPSTREAM_FAILED 粗码按答案拆开，每个触达点一个具体码。"""
+    with pytest.raises(ChannelError) as info:
+        make_client(lambda *a: resp({}))[0].get_shop()
+    assert info.value.code == "CHANNEL_SHOP_SHAPE_INVALID"
+
+    with pytest.raises(ChannelError) as info:
+        make_client(lambda *a: resp({}))[0].list_orders()
+    assert info.value.code == "CHANNEL_ORDERS_SHAPE_INVALID"
+
+    def order_handler(method, url, headers, json_body):
+        if method == "GET":
+            return resp({})
+        if url.endswith("/refunds.json"):
+            return resp({"refund": {}})
+        return resp({"order": ORDER})
+
+    client, _ = make_client(order_handler)
+    with pytest.raises(ChannelError) as info:
+        client.get_order("1")
+    assert info.value.code == "CHANNEL_ORDER_SHAPE_INVALID"
+
+    bad_total = {**ORDER, "total_price": "not-a-number"}
+    client, _ = make_client(lambda *a: resp({"order": bad_total}))
+    with pytest.raises(ChannelError) as info:
+        client.create_refund("1", 10)
+    assert info.value.code == "CHANNEL_ORDER_TOTAL_PRICE_INVALID"
+
+    def refund_handler(method, url, headers, json_body):
+        if method == "GET":
+            return resp({"order": ORDER})
+        return resp({})
+
+    client, _ = make_client(refund_handler)
+    with pytest.raises(ChannelError) as info:
+        client.create_refund("1", 10)
+    assert info.value.code == "CHANNEL_REFUND_SHAPE_INVALID"
+
+    def webhook_register_handler(method, url, headers, json_body):
+        return resp({})
+
+    client, _ = make_client(webhook_register_handler)
+    with pytest.raises(ChannelError) as info:
+        client.register_webhook(topic="orders/create", address="https://x.io/hook")
+    assert info.value.code == "CHANNEL_WEBHOOK_SHAPE_INVALID"
+
+
+def test_request_transport_failure_maps_to_request_failed(monkeypatch):
+    """打包 BK：传输层异常（非 HTTP 状态）折 REQUEST_FAILED，params 带底层原因。"""
+    from atlas.channels import base as channels_base
+
+    class _AllowAll:
+        def check(self, url):
+            return None
+
+    transport = HttpChannelTransport(egress=_AllowAll())
+
+    def _boom(*a, **k):
+        raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr(channels_base.httpx, "request", _boom)
+    client = ShopifyChannelClient("acme", "t", transport=transport)
+    with pytest.raises(ChannelError) as info:
+        client.list_orders()
+    assert info.value.code == "CHANNEL_REQUEST_FAILED"
+    assert info.value.params == {"detail": "connection refused"}
 
 
 def test_delete_registered_webhook():

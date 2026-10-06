@@ -96,7 +96,7 @@ def test_bind_missing_connection():
     reg = make_registry(tokens={})
     with pytest.raises(ChannelError) as info:
         reg.bind("shopify", "conn-9", {"shop": "acme"})
-    assert info.value.code == "CHANNEL_NOT_BOUND"
+    assert info.value.code == "CHANNEL_BOUND_CONNECTION_NOT_FOUND"
     assert info.value.status_code == 404
 
 
@@ -131,7 +131,7 @@ def test_client_for_without_token_marks_binding_error():
     binding = reg._require(view["id"])
     with pytest.raises(ChannelError) as info:
         reg.client_for(binding)
-    assert info.value.code == "CHANNEL_UNAUTHORIZED"
+    assert info.value.code == "CHANNEL_TOKEN_UNAVAILABLE"
     assert reg.get(view["id"])["status"] == "error"
     assert reg.get(view["id"])["lastError"]
 
@@ -216,5 +216,60 @@ def test_get_list_require_and_delete():
     assert reg.list() == []
     with pytest.raises(ChannelError) as info:
         reg.get(view["id"])
-    assert info.value.code == "CHANNEL_NOT_BOUND"
+    assert info.value.code == "CHANNEL_BINDING_NOT_FOUND"
     assert info.value.status_code == 404
+
+
+# --- 打包 BK（docs/08）：授权族集合四分支统一识别 --------------------------
+
+class _AuthFailTransport:
+    """所有店铺侧请求统一返 401（折 CHANNEL_UPSTREAM_UNAUTHORIZED）。"""
+
+    def __init__(self, status: int = 401) -> None:
+        self.status = status
+
+    def request(self, method, url, *, headers, json_body, timeout):
+        return TransportResponse(self.status, {}, json.dumps({}))
+
+
+def _bound_registry(transport):
+    reg = make_registry(transport=transport)
+    view = reg.bind("shopify", "conn-1", {"shop": "acme"})
+    return reg, view["id"]
+
+
+def test_pack_bk_upstream_401_marks_binding_error_on_remote_webhooks(monkeypatch):
+    monkeypatch.setenv("ATLAS_PUBLIC_URL", "https://atlas.example.com")
+    reg, bid = _bound_registry(_AuthFailTransport(401))
+    with pytest.raises(ChannelError) as info:
+        reg.remote_webhooks(bid)
+    assert info.value.code == "CHANNEL_UPSTREAM_UNAUTHORIZED"
+    assert reg.get(bid)["status"] == "error"
+
+
+def test_pack_bk_upstream_401_marks_binding_error_on_register_remote(monkeypatch):
+    monkeypatch.setenv("ATLAS_PUBLIC_URL", "https://atlas.example.com")
+    reg, bid = _bound_registry(_AuthFailTransport(401))
+    with pytest.raises(ChannelError) as info:
+        reg.register_remote(bid, "orders/create")
+    assert info.value.code == "CHANNEL_UPSTREAM_UNAUTHORIZED"
+    assert reg.get(bid)["status"] == "error"
+
+
+def test_pack_bk_upstream_401_marks_binding_error_on_unregister_remote(monkeypatch):
+    monkeypatch.setenv("ATLAS_PUBLIC_URL", "https://atlas.example.com")
+    reg, bid = _bound_registry(_AuthFailTransport(401))
+    with pytest.raises(ChannelError) as info:
+        reg.unregister_remote(bid, "orders/create")
+    assert info.value.code == "CHANNEL_UPSTREAM_UNAUTHORIZED"
+    assert reg.get(bid)["status"] == "error"
+
+
+def test_pack_bk_token_unavailable_belongs_to_auth_family_in_client_for():
+    """授权族第二码 TOKEN_UNAVAILABLE：client_for 抛出后绑定置 error（与 401 同待遇）。"""
+    reg = make_registry(tokens={"conn-1": None})
+    view = reg.bind("shopify", "conn-1", {"shop": "acme"})
+    with pytest.raises(ChannelError) as info:
+        reg.client_for(reg._require(view["id"]))
+    assert info.value.code == "CHANNEL_TOKEN_UNAVAILABLE"
+    assert reg.get(view["id"])["status"] == "error"

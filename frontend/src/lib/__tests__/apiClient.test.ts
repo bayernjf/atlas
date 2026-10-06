@@ -288,11 +288,11 @@ describe('真实渠道绑定 /api/channels（docs/38 §1C/§1E）', () => {
   })
 
   it('testChannelBinding POSTs to the test subpath', async () => {
-    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => jsonResponse({ ok: false, status: 'error', reason: 'CHANNEL_UNAUTHORIZED' }))
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => jsonResponse({ ok: false, status: 'error', reason: 'CHANNEL_TOKEN_UNAVAILABLE' }))
     vi.stubGlobal('fetch', fetchMock)
     const result = await testChannelBinding('ch-1')
     expect(result.ok).toBe(false)
-    expect(result.reason).toBe('CHANNEL_UNAUTHORIZED')
+    expect(result.reason).toBe('CHANNEL_TOKEN_UNAVAILABLE')
     const [url, init] = fetchMock.mock.calls[0]
     expect(url).toBe('/api/channels/ch-1/test')
     expect(init?.method).toBe('POST')
@@ -331,7 +331,7 @@ describe('真实渠道绑定 /api/channels（docs/38 §1C/§1E）', () => {
   })
 
   it('listRemoteWebhooks GETs remote-webhooks keeping items and error', async () => {
-    const payload = { items: [], error: 'CHANNEL_UNAUTHORIZED' }
+    const payload = { items: [], error: 'CHANNEL_UPSTREAM_UNAUTHORIZED' }
     const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => jsonResponse(payload))
     vi.stubGlobal('fetch', fetchMock)
     const result = await listRemoteWebhooks('ch-1')

@@ -80,7 +80,7 @@
     "unregister": "取消注册",
     "loadError": "店铺侧注册状态加载失败",
     "error": {
-      "CHANNEL_UNAUTHORIZED": "店铺访问令牌已失效，请在连接管理中重新授权"
+      "CHANNEL_UPSTREAM_UNAUTHORIZED": "店铺访问令牌已失效，请在连接管理中重新授权"
     }
   }
 }

@@ -72,7 +72,9 @@ class ShopifyChannelClient:
     ) -> None:
         self.shop = normalize_shop(shop)
         if not isinstance(access_token, str) or not access_token:
-            raise ChannelError("CHANNEL_UNAUTHORIZED", "缺少渠道访问令牌")
+            raise ChannelError(
+                "CHANNEL_TOKEN_UNAVAILABLE", "绑定连接未完成授权或令牌不可用"
+            )
         if not API_VERSION_RE.match(api_version or ""):
             raise ChannelError(
                 "CHANNEL_INVALID_PARAMETER", f"非法 API 版本：{api_version}（应为 YYYY-MM）"
@@ -112,22 +114,26 @@ class ShopifyChannelClient:
             )
         if resp.status in (401, 403):
             raise ChannelError(
-                "CHANNEL_UNAUTHORIZED", f"渠道鉴权失败（HTTP {resp.status}）"
+                "CHANNEL_UPSTREAM_UNAUTHORIZED",
+                f"渠道鉴权失败（HTTP {resp.status}）",
+                params={"status": resp.status},
             )
         if resp.status >= 400:
             raise ChannelError(
-                "CHANNEL_UPSTREAM_FAILED", f"渠道上游错误 HTTP {resp.status}"
+                "CHANNEL_UPSTREAM_STATUS_ERROR",
+                f"渠道上游错误 HTTP {resp.status}",
+                params={"status": resp.status},
             )
         try:
             return json.loads(resp.text) if resp.text else {}
         except (ValueError, TypeError) as exc:
-            raise ChannelError("CHANNEL_INVALID_RESPONSE", "渠道响应不是合法 JSON") from exc
+            raise ChannelError("CHANNEL_SHOP_JSON_INVALID", "渠道响应不是合法 JSON") from exc
 
     def get_shop(self) -> dict[str, Any]:
         body = self._request("GET", "/shop.json")
         shop = body.get("shop")
         if not isinstance(shop, dict):
-            raise ChannelError("CHANNEL_INVALID_RESPONSE", "shop 响应结构缺失")
+            raise ChannelError("CHANNEL_SHOP_SHAPE_INVALID", "shop 响应结构缺失")
         return {"id": shop.get("id"), "name": shop.get("name"), "domain": shop.get("domain")}
 
     def list_orders(self, status: str = "open", limit: int = 50) -> list[dict[str, Any]]:
@@ -142,7 +148,7 @@ class ShopifyChannelClient:
         )
         orders = body.get("orders")
         if not isinstance(orders, list):
-            raise ChannelError("CHANNEL_INVALID_RESPONSE", "orders 响应结构缺失")
+            raise ChannelError("CHANNEL_ORDERS_SHAPE_INVALID", "orders 响应结构缺失")
         return [_project_order(o) for o in orders if isinstance(o, dict)]
 
     def _get_raw_order(self, order_id: str) -> dict[str, Any]:
@@ -151,7 +157,7 @@ class ShopifyChannelClient:
         body = self._request("GET", f"/orders/{order_id.strip()}.json")
         order = body.get("order")
         if not isinstance(order, dict):
-            raise ChannelError("CHANNEL_INVALID_RESPONSE", "order 响应结构缺失")
+            raise ChannelError("CHANNEL_ORDER_SHAPE_INVALID", "order 响应结构缺失")
         return order
 
     def get_order(self, order_id: str) -> dict[str, Any]:
@@ -187,7 +193,7 @@ class ShopifyChannelClient:
         try:
             total = float(order.get("total_price"))
         except (TypeError, ValueError) as exc:
-            raise ChannelError("CHANNEL_INVALID_RESPONSE", "订单 total_price 非法") from exc
+            raise ChannelError("CHANNEL_ORDER_TOTAL_PRICE_INVALID", "订单 total_price 非法") from exc
         if value > total:
             raise ChannelError(
                 "CHANNEL_INVALID_PARAMETER", "退款金额不能超过订单总额"
@@ -206,7 +212,7 @@ class ShopifyChannelClient:
         )
         refund = body.get("refund")
         if not isinstance(refund, dict):
-            raise ChannelError("CHANNEL_INVALID_RESPONSE", "refund 响应结构缺失")
+            raise ChannelError("CHANNEL_REFUND_SHAPE_INVALID", "refund 响应结构缺失")
         return {"refundId": refund.get("id"), "status": refund.get("status"), "amount": value}
 
     def list_registered_webhooks(self, limit: int = 250) -> list[dict[str, Any]]:
@@ -214,7 +220,7 @@ class ShopifyChannelClient:
         body = self._request("GET", "/webhooks.json", params={"limit": bounded})
         webhooks = body.get("webhooks")
         if not isinstance(webhooks, list):
-            raise ChannelError("CHANNEL_INVALID_RESPONSE", "webhooks 响应结构缺失")
+            raise ChannelError("CHANNEL_WEBHOOKS_SHAPE_INVALID", "webhooks 响应结构缺失")
         return [
             {"remoteId": str(w.get("id")), "topic": w.get("topic"), "address": w.get("address")}
             for w in webhooks
@@ -234,7 +240,7 @@ class ShopifyChannelClient:
         body = self._request("POST", "/webhooks.json", json_body=payload)
         webhook = body.get("webhook")
         if not isinstance(webhook, dict):
-            raise ChannelError("CHANNEL_INVALID_RESPONSE", "webhook 响应结构缺失")
+            raise ChannelError("CHANNEL_WEBHOOK_SHAPE_INVALID", "webhook 响应结构缺失")
         return {
             "remoteId": str(webhook.get("id")),
             "topic": webhook.get("topic"),
