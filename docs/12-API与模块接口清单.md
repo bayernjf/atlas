@@ -610,8 +610,20 @@ def evaluate_after_run(services: TenantServices, record: RunRecord) -> None: ...
 ```python
 # src/atlas/channels/base.py
 class ChannelError(Exception):
-    code: str  # CHANNEL_NOT_BOUND | CHANNEL_UNAUTHORIZED | CHANNEL_UPSTREAM_FAILED
-               # | CHANNEL_INVALID_RESPONSE | CHANNEL_INVALID_PARAMETER
+    # 〔2026-10-06 打包 BK 勘误〕旧 4 粗码已按 15 个答案拆成 14 个具体码（全仓零别名）：
+    # code: str  # HTTP 面 9 码（_channel_http_error 结构化出体）：
+               #   CHANNEL_BINDING_NOT_FOUND | CHANNEL_BOUND_CONNECTION_NOT_FOUND
+               #   | CHANNEL_TOKEN_UNAVAILABLE | CHANNEL_UPSTREAM_UNAUTHORIZED
+               #   | CHANNEL_REQUEST_FAILED | CHANNEL_UPSTREAM_STATUS_ERROR
+               #   | CHANNEL_SHOP_JSON_INVALID
+               #   | CHANNEL_WEBHOOKS_SHAPE_INVALID | CHANNEL_WEBHOOK_SHAPE_INVALID
+               # 节点产出 5 码（adapter._execute catch，不译）：
+               #   CHANNEL_SHOP_SHAPE_INVALID | CHANNEL_ORDERS_SHAPE_INVALID
+               #   | CHANNEL_ORDER_SHAPE_INVALID | CHANNEL_ORDER_TOTAL_PRICE_INVALID
+               #   | CHANNEL_REFUND_SHAPE_INVALID
+               # 另有 CHANNEL_INVALID_PARAMETER | CHANNEL_ALREADY_BOUND
+               #   | CHANNEL_ALREADY_REGISTERED（不拆）
+    params: dict | None  # {status} / {detail} 等，随 code 透传
 
 class ChannelTransport(Protocol):
     def request(self, method: str, url: str, headers: dict,
@@ -631,7 +643,7 @@ class ChannelRegistry:
         # provider 仅 "shopify"；connection 须同租户存在（不存在/跨租户 → 404 不泄漏）；
         # 同 connection_id 唯一绑定（重复 → 409）
     def client_for(self, binding: dict): ...
-        # 每次从 connection service 现解密 access_token（未完成授权 → CHANNEL_UNAUTHORIZED），
+        # 每次从 connection service 现解密 access_token（未完成授权 → CHANNEL_TOKEN_UNAVAILABLE），
         # 构造 ShopifyChannelClient；token 不缓存明文、不记日志
     def test(self, binding_id: str) -> dict: ...        # {ok, status, reason}；GET /shop.json 探活
     def adapters_for_tenant(self) -> list: ...
@@ -1052,6 +1064,8 @@ class MemoryRepository(Protocol):
 | DELETE | /api/channels/{binding_id}/remote-webhooks/{topic} | 【**operate**】200 `{deleted:bool}` 幂等（未注册 false）；404 绑定；写审计 | shopify_remote_webhook
 
 > **〔2026-10-06 打包 BJ 订正〕上表 `/api/connections/**` 与 `/api/channels/**`（含公开入站 `hooks/shopify/**`）的 4xx `detail` 形状已由「中文字符串」改为结构化对象 `{code, message[, params]}`——与 openapi 面同形。此前三个折叠点（`_conn_http_error`／`_channel_http_error`／入站直捕）写 `detail=str(exc)`，结构化异常上的 `code` 进不了响应体、前端无法按码本地化。改后 8 条单答案码（`CHANNEL_ALREADY_BOUND`／`CHANNEL_ALREADY_REGISTERED`／`CONNECTION_NOT_FOUND`／`OAUTH_NO_REFRESH_TOKEN`／`OAUTH_STATE_INVALID`／`OAUTH_TOKEN_FAILED`／`OAUTH_REFRESH_FAILED`＋入站 `WEBHOOK_MALFORMED`）补 zh/en；4 条一码多话粗码（`CHANNEL_NOT_BOUND`／`CHANNEL_UNAUTHORIZED`／`CHANNEL_UPSTREAM_FAILED`／`CHANNEL_INVALID_RESPONSE`）code 出体但仍随 docs/14 **D55** 留桶、拆码＝打包 BK。HTTP 状态码不变。 |
+>
+> **〔2026-10-06 打包 BK 订正〕BJ 留下的 4 条粗码已按 15 个答案拆成 14 个具体码、旧码全仓零发射且不留别名（拆码表与去向矩阵见 docs/08 打包 BK 块、docs/03 channel_binding 行）。**HTTP 面 9 码**经本折叠点结构化出体、补 zh/en 进 runtime.json：`CHANNEL_BINDING_NOT_FOUND`(404，绑定 id 不存在)／`CHANNEL_BOUND_CONNECTION_NOT_FOUND`(404，绑定引用的连接已删)／`CHANNEL_TOKEN_UNAVAILABLE`（client_for 缺令牌/未授权）／`CHANNEL_UPSTREAM_UNAUTHORIZED`（上游 401/403，params `{status}`）／`CHANNEL_REQUEST_FAILED`（httpx 传输异常，params `{detail}`）／`CHANNEL_UPSTREAM_STATUS_ERROR`（非鉴权 ≥400，params `{status}`）／`CHANNEL_SHOP_JSON_INVALID`（非合法 JSON）／`CHANNEL_WEBHOOKS_SHAPE_INVALID`／`CHANNEL_WEBHOOK_SHAPE_INVALID`（remote-webhooks list/register/unregister 触达 `_request`）。**节点产出 5 码**只在 `channels/adapter.py::_execute` catch 折 StructuredError（get_shop 两答案另被 `registry.test()` 内部 catch 成 200 `{ok:false}`），api 层零具名出体路径，按 docs/57 §2.5 不译、登记 `TOOL_OUTPUT_ONLY`：`CHANNEL_SHOP_SHAPE_INVALID`／`CHANNEL_ORDERS_SHAPE_INVALID`／`CHANNEL_ORDER_SHAPE_INVALID`／`CHANNEL_ORDER_TOTAL_PRICE_INVALID`／`CHANNEL_REFUND_SHAPE_INVALID`。**remote-webhooks 列表端点特殊分支不变**：授权族失败仍返 200 `{items:[],error:"CHANNEL_UPSTREAM_UNAUTHORIZED"}`（前端键在 channels.json 命名空间，已随码更名）；授权族识别由散落等值改为 `CHANNEL_AUTHORIZATION_ERROR_CODES` 单一集合（registry 三处置 error＋api 200-error 共四分支）。HTTP 状态码全部不变。 |
 | POST | /api/openapi/preview | 【**operate**】body `{content?:str, url?:str}`（恰好其一）；`{title, base_url, operations:[...], imported_count, skipped_count}`；url 经 egress 抓取，EGRESS_DENIED/网络·出向失败 422 OPENAPI_FETCH_NETWORK_ERROR（体带 params `{detail}`）、上游 HTTP ≥400 422 OPENAPI_FETCH_HTTP_ERROR（体带 params `{status}`）——2026-10-05 打包 BF：两条答案由原 `OPENAPI_FETCH_FAILED` 拆出；不落库 | openapi_import |
 | POST | /api/openapi/imports | 【**operate**】同上入参；201 ImportedSpec（仅成功 ops）；全 skipped 422 OPENAPI_NO_IMPORTABLE_OPERATION；超 200 ops/份 422 OPENAPI_SPEC_OPERATIONS_LIMIT、超 5 specs/租户 422 OPENAPI_TENANT_SPECS_LIMIT（均体带 params `{max}`，名额只数未删；2026-10-05 打包 BF：两条配额由原 `OPENAPI_LIMIT_EXCEEDED` 拆出）；同租户未删同内容指纹 409 **OPENAPI_SPEC_ALREADY_IMPORTED**（体带 `existingSpecId`，docs/56；2026-10-05 打包 BC 由 `OPENAPI_DUPLICATE` 更名——恢复路径的冲突另有其码，见下一行）；写审计（不记文档内容） | openapi_import |
 | GET | /api/openapi/imports | 【**read**】`{items:[ImportedSpec]}`（本租户，默认排除软删项）；**docs/60 G2（`a853700`）** `?include_deleted=true` 需 **administer**（非管理员 403），并入软删项、投影补删除标记（snake_case `deleted_at`） | openapi_import |

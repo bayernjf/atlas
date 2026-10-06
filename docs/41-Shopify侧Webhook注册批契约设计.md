@@ -1,5 +1,7 @@
 # Shopify 侧 Webhook 注册批契约设计
 
+> **〔2026-10-06 打包 BK 勘误，原文保留〕** 本文出现的 `CHANNEL_INVALID_RESPONSE`（webhooks/webhook 结构缺失）、`CHANNEL_UPSTREAM_FAILED`（≥400）、`CHANNEL_UNAUTHORIZED`（401/403 与令牌缺失）已按答案拆成具体码：店铺侧注册链路上分别为 `CHANNEL_WEBHOOKS_SHAPE_INVALID`／`CHANNEL_WEBHOOK_SHAPE_INVALID`／`CHANNEL_SHOP_JSON_INVALID`（HTTP 面，补 zh/en）、`CHANNEL_UPSTREAM_STATUS_ERROR`／`CHANNEL_UPSTREAM_UNAUTHORIZED`（params `{status}`），令牌缺失为 `CHANNEL_TOKEN_UNAVAILABLE`；GET remote-webhooks 的 200 `{items:[],error}` 折成 `CHANNEL_UPSTREAM_UNAUTHORIZED`（前端键已在 channels.json 随码更名）。授权族识别经 `CHANNEL_AUTHORIZATION_ERROR_CODES` 单一集合，仍照本文先例落 binding error 态。拆码全表与通道归类见 docs/08 打包 BK 块、docs/03、docs/12 BK 订正。
+>
 > **立项**：2026-09-23（承接「不用管 git，你推任务」总授权；批选由 AI 判断）。
 >
 > **定位**：[docs/39](39-入站Webhook批契约设计.md) 落了公开入站触发口，[docs/40](40-入站可靠性补强批契约设计.md) 补了可靠性，但 Shopify **店铺侧**的 webhook 注册仍靠人工复制 URL 到 Shopify 后台——docs/39/40 明确登记的缓做项。本批复用既有 `ShopifyChannelClient`（Admin API）与绑定访问令牌，补「注册 / 查询 / 取消注册」三个动作，用户在订阅弹窗内一键把回调地址注册到 Shopify。**零新依赖、零迁移、零外部资源、无选型变更（不新增 ADR）**；D22 再次部分取回、不解除（Amazon/通用渠道、OpenAPI 导入、真实店铺联调仍缓做）。

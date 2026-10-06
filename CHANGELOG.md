@@ -3,6 +3,15 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### fix(errors)：D55 冻结桶清零＝渠道 4 粗码按答案拆码（2026-10-06 打包 BK；docs/08 打包 BK 块；docs/13 打包 BK 小节；docs/14 **D55 闭合**）
+
+- **14 个新码、旧 4 粗码零发射**：CHANNEL_NOT_BOUND／UNAUTHORIZED／UPSTREAM_FAILED／INVALID_RESPONSE（共 15 个答案）按 BC 同构纪律拆码，不给别名；U1161 粗码集合 +4 钉全仓零发射。
+- **去向按实证分两通道（不凭模块名猜）**：9 条经 `_channel_http_error` 结构化出体补 zh/en（runtime.json 76→85 键）——BINDING_NOT_FOUND／BOUND_CONNECTION_NOT_FOUND／TOKEN_UNAVAILABLE／UPSTREAM_UNAUTHORIZED／REQUEST_FAILED／UPSTREAM_STATUS_ERROR／SHOP_JSON_INVALID／WEBHOOKS_SHAPE_INVALID／WEBHOOK_SHAPE_INVALID；5 条纯节点产出（SHOP_SHAPE／ORDERS_SHAPE／ORDER_SHAPE／ORDER_TOTAL_PRICE／REFUND_SHAPE，get_shop 另被 registry.test() 内部 catch 成 200 `{ok:false}`）进 TOOL_OUTPUT_ONLY 不译。
+- **授权族收敛单一集合**：`CHANNEL_AUTHORIZATION_ERROR_CODES = {TOKEN_UNAVAILABLE, UPSTREAM_UNAUTHORIZED}`，registry 三处置 error＋api remote-webhooks 200-error 共四分支统一判定；200 体 error 与前端 channels.json zh/en 键随码更名（runtime.json 与 channels.json 两个命名空间边界见 docs/17 §2.4）。
+- **一处立项与落码的实证修正**：remote-webhooks list/register/unregister 都触达 `_request`，故 REQUEST_FAILED 等 6 码实为 HTTP 面（9 码补译），纯节点产出恰 5 条而非立项的 11 条；TOKEN_UNAVAILABLE 两触达点按"同一答案"合并为一句字面量（否则 U1160 判一码多话）。
+- **机检与测试（净增 6 例）**：U1162 http_facing +9、U1169 改判冻结桶恰为空（D55 4→0）、U1170 改判新码在体且进目录；shopify 7 触达点＋REQUEST_FAILED monkeypatch、registry 授权族四分支 4 例；既有断言随答案改码（shopify 7、registry 3、API 2、前端 2）。
+- **门**：后端全量 **2377 passed／150 skipped／0 failed**（沙箱内 4 条真实 socket 用例 PermissionError，提权单跑全绿；对账＝BJ 2371＋6）；前端 vitest **788/2**、oxlint 0/0、tsc＋build 过。零新依赖／零迁移／无 ADR；HTTP 状态码全部不变。
+
 ### fix(errors)：D55 冻结桶第六批＝渠道/连接错误结构化出体（2026-10-06 打包 BJ；docs/08 打包 BJ 块；docs/14 D55 12→4）
 
 - **为什么不是"补翻译"而是"改响应形状"**：D55 剩 12 条，逐条跟完发射路径，全经三个折叠点（`_conn_http_error`／`_channel_http_error`／入站 webhook 直捕）写成 `detail=str(exc)`——结构化异常上的 `code` 进不了响应体，前端拿到中文裸串无法按码本地化，是 A-4 初衷的反面。
