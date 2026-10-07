@@ -49,12 +49,12 @@ class PgUserTemplateStore:
         with self._engine.begin() as conn:
             row = conn.execute(
                 text(
-                    "SELECT COALESCE(MAX(seq), 0) AS next_seq "
-                    "FROM user_templates WHERE tenant_id = :tenant_id FOR UPDATE"
+                    "SELECT seq FROM user_templates WHERE tenant_id = :tenant_id "
+                    "ORDER BY seq DESC LIMIT 1 FOR UPDATE"
                 ),
                 {"tenant_id": self._tenant_id},
-            ).one()
-            seq = int(row.next_seq) + 1
+            ).first()
+            seq = (int(row.seq) if row is not None else 0) + 1
             template_id = f"utpl-{seq}"
             conn.execute(
                 text(
