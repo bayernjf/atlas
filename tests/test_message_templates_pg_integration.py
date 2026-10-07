@@ -192,9 +192,9 @@ def test_U1193_variables_roundtrip_and_memory_parity(engine):
     assert pg_item.subject == mem_item.subject
     assert pg_item.body == mem_item.body
     assert pg_item.variables == mem_item.variables
-    # kind 过滤。
-    assert [t.id for t in pg_store.list("alert")] == [created.id]
-    assert pg_store.list("approval") == []
+    # kind 过滤（注意：name_unique 测试在本文件先跑，遗留同 kind 模板，故用包含断言）。
+    assert created.id in [t.id for t in pg_store.list("alert")]
+    assert created.id not in [t.id for t in pg_store.list("approval")]
 
 
 def test_U1193_tenant_isolation(engine):
