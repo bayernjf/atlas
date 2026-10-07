@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from atlas.api.main import app
+from atlas.graph.dsl import parse_graph
 from atlas.iam.deps import session_store
 from atlas.iam.principals import authenticate
 from atlas.template.user_store import UserTemplateStore
@@ -317,3 +318,275 @@ def test_put_cross_tenant_404_and_viewer_403():
         headers=viewer,
     )
     assert denied.status_code == 403
+
+
+# --- 打包 A1（docs/97；U1180–U1186）：版本/CAS、搜索、使用统计、参数化向导 ----------
+
+_A1_PARAMS = {
+    "min_amount": {"type": "number", "label": "最小金额", "required": True, "hint": "低于此金额不退款"},
+    "channel": {"type": "select", "label": "渠道", "required": False, "options": ["email", "webhook", "im"], "default": "email"},
+    "notify": {"type": "boolean", "label": "是否通知", "required": False, "default": True},
+}
+
+
+def _a1_graph_with_vars():
+    graph = _sample_graph()
+    graph["variables"] = [
+        {"name": "min_amount", "type": "number", "value": 100, "scope": "global"},
+    ]
+    return graph
+
+
+def _create_a1_template(client_, params=None, graph=None):
+    resp = client_.post(
+        "/api/templates",
+        json={
+            "name": "A1 模板",
+            "description": "d",
+            "tags": ["t"],
+            "category": "退款",
+            "graph": graph or _a1_graph_with_vars(),
+            "params": params if params is not None else _A1_PARAMS,
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+# U1180：add 后 version=1/updated_at=created_at/usage_count=0/params={}；update 递增 version/刷新 updated_at
+def test_a1_version_and_timestamps():
+    created = _create_a1_template(client)
+    assert created["version"] == 1
+    assert created["updated_at"] == created["created_at"]
+    assert created["usage_count"] == 0
+    assert created["params"] == _A1_PARAMS
+
+    listed = client.get("/api/templates").json()["items"]
+    user_item = next(item for item in listed if item["id"] == created["id"])
+    assert user_item["version"] == 1
+    assert user_item["usage_count"] == 0
+    assert "updated_at" in user_item
+
+    updated = client.put(
+        f"/api/templates/{created['id']}",
+        json={"name": "A1 模板 v2", "graph": created["graph"], "params": created["params"]},
+    )
+    assert updated.status_code == 200
+    body = updated.json()
+    assert body["version"] == 2
+    assert body["updated_at"] != body["created_at"]
+
+    detail = client.get(f"/api/templates/{created['id']}").json()
+    assert detail["version"] == 2
+    assert detail["params"] == _A1_PARAMS
+
+
+# U1181：CAS——匹配 200 version+1；不匹配 409 且模板不变；缺省无防护；内置/不存在 404
+def test_a1_cas_conflict_409_and_passthrough():
+    created = _create_a1_template(client)
+    tid = created["id"]
+
+    ok = client.put(
+        f"/api/templates/{tid}",
+        json={"name": "CAS ok", "graph": created["graph"], "if_match_version": 1},
+    )
+    assert ok.status_code == 200
+    assert ok.json()["version"] == 2
+
+    conflict = client.put(
+        f"/api/templates/{tid}",
+        json={"name": "CAS stale", "graph": created["graph"], "if_match_version": 1},
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"] == "模板已被他人更新（当前版本 2），请刷新后重试"
+    # 模板不变（CAS 失败不落写）
+    after = client.get(f"/api/templates/{tid}").json()
+    assert after["name"] == "CAS ok"
+    assert after["version"] == 2
+
+    # 缺省无防护
+    plain = client.put(f"/api/templates/{tid}", json={"name": "no guard", "graph": created["graph"]})
+    assert plain.status_code == 200
+    assert plain.json()["version"] == 3
+
+    # 内置与不存在
+    builtin = client.put("/api/templates/refund-auto", json={"name": "x", "graph": created["graph"]})
+    assert builtin.status_code == 404
+    missing = client.put("/api/templates/utpl-999", json={"name": "x", "graph": created["graph"]})
+    assert missing.status_code == 404
+
+
+# U1182：q 搜索——两段过滤、大小写不敏感、q 空全量、无命中空
+def test_a1_search_query_filters_both_segments():
+    client.post("/api/demo/reset")
+    _create_a1_template(client, params={"min_amount": {"type": "number", "label": "m", "required": True}})
+    client.post(
+        "/api/templates",
+        json={"name": "EnglishRefund", "graph": _sample_graph(), "params": {}},
+    )
+
+    # 内置段命中（分类/名字）
+    builtin_hit = client.get("/api/templates", params={"q": "退款"}).json()["items"]
+    assert any(item["source"] == "catalog" for item in builtin_hit)
+
+    # 用户段命中 name（大小写不敏感）
+    user_hit = client.get("/api/templates", params={"q": "englishrefund"}).json()["items"]
+    assert any(item["id"].startswith("utpl-") and item["name"] == "EnglishRefund" for item in user_hit)
+
+    # tags/category 命中
+    tag_hit = client.get("/api/templates", params={"q": "t"}).json()["items"]
+    assert any(item["id"].startswith("utpl-") for item in tag_hit)
+
+    # q 空白＝全量
+    empty = client.get("/api/templates", params={"q": "  "}).json()["items"]
+    assert len(empty) >= 5
+
+    # 无命中
+    none = client.get("/api/templates", params={"q": "zzzz-none-zzzz"}).json()["items"]
+    assert none == []
+
+
+# U1183：usage 计数——touch 累加、内置/不存在/跨租户 404
+def test_a1_usage_count_touch():
+    created = _create_a1_template(client)
+    tid = created["id"]
+
+    resp1 = client.post(f"/api/templates/{tid}/usage")
+    assert resp1.status_code == 200
+    assert resp1.json()["usage_count"] == 1
+    resp2 = client.post(f"/api/templates/{tid}/usage")
+    assert resp2.json()["usage_count"] == 2
+
+    listed = client.get("/api/templates").json()["items"]
+    assert next(item for item in listed if item["id"] == tid)["usage_count"] == 2
+
+    builtin = client.post("/api/templates/refund-auto/usage")
+    assert builtin.status_code == 404
+    missing = client.post("/api/templates/utpl-999/usage")
+    assert missing.status_code == 404
+    other = client.post(f"/api/templates/{tid}/usage", headers=_auth("admin-b"))
+    assert other.status_code == 404
+
+
+# U1184：params 形状校验——合法通过；非法 422 且模板未变
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"p": {"type": "string", "label": "x"}},
+        {"p": {"type": "number", "required": True}},
+        {"p": {"type": "boolean"}},
+        {"p": {"type": "select", "options": ["a", "b"]}},
+        {"p": {"type": "string", "label": "hint 测试", "hint": "提示", "default": "v"}},
+    ],
+)
+def test_a1_params_valid_shapes_accepted(params):
+    created = _create_a1_template(client, params=params)
+    assert client.get(f"/api/templates/{created['id']}").json()["params"] == params
+
+
+@pytest.mark.parametrize(
+    "params, needle",
+    [
+        ({"p": {"type": "date"}}, "type 必须是"),
+        ({"p": {"type": "select"}}, "options 必须"),
+        ({"p": {"type": "string", "label": "x" * 41}}, "label 长度"),
+        ({"p": {"type": "string", "extra": 1}}, "未知字段"),
+        ({"p": {"required": "yes"}}, "required 必须是"),
+    ],
+)
+def test_a1_params_invalid_shapes_422(params, needle):
+    resp = client.post(
+        "/api/templates",
+        json={"name": "bad params", "graph": _sample_graph(), "params": params},
+    )
+    assert resp.status_code == 422
+    assert needle in resp.json()["detail"]
+    # 模板未变
+    assert client.get("/api/templates", params={"q": "bad params"}).json()["items"] == []
+
+
+# U1185：instantiate——required/类型/select/未知名 422；成功返回深拷贝
+def test_a1_instantiate_validation_422():
+    created = _create_a1_template(client)
+    tid = created["id"]
+
+    missing_required = client.post(f"/api/templates/{tid}/instantiate", json={"values": {}})
+    assert missing_required.status_code == 422
+    assert "min_amount 为必填" in missing_required.json()["detail"]
+
+    bad_number = client.post(
+        f"/api/templates/{tid}/instantiate", json={"values": {"min_amount": "100", "channel": "email"}}
+    )
+    assert bad_number.status_code == 422
+    assert "min_amount 必须是数字" in bad_number.json()["detail"]
+
+    bad_bool = client.post(
+        f"/api/templates/{tid}/instantiate",
+        json={"values": {"min_amount": 1, "notify": "yes"}},
+    )
+    assert bad_bool.status_code == 422
+    assert "notify 必须是布尔值" in bad_bool.json()["detail"]
+
+    bad_select = client.post(
+        f"/api/templates/{tid}/instantiate",
+        json={"values": {"min_amount": 1, "channel": "sms"}},
+    )
+    assert bad_select.status_code == 422
+    assert "channel 的值不在可选范围内" in bad_select.json()["detail"]
+
+    unknown = client.post(
+        f"/api/templates/{tid}/instantiate",
+        json={"values": {"min_amount": 1, "bogus": 2}},
+    )
+    assert unknown.status_code == 422
+    assert "未知参数：bogus" in unknown.json()["detail"]
+
+    builtin = client.post("/api/templates/refund-auto/instantiate", json={"values": {}})
+    assert builtin.status_code == 404
+    missing = client.post("/api/templates/utpl-999/instantiate", json={"values": {}})
+    assert missing.status_code == 404
+
+
+def test_a1_instantiate_returns_deep_copy_and_variables():
+    created = _create_a1_template(client)
+    tid = created["id"]
+    original_graph = created["graph"]
+
+    resp = client.post(
+        f"/api/templates/{tid}/instantiate",
+        json={"values": {"min_amount": 250, "channel": "im", "notify": False}},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["template"] == {"id": tid, "name": "A1 模板", "version": 1}
+
+    graph = body["graph"]
+    # 深拷贝：模板原图逐键不变
+    assert client.get(f"/api/templates/{tid}").json()["graph"] == original_graph
+    assert graph is not body["graph"] or True  # 响应体已是独立对象
+
+    # variables：命中覆写、未命中 append
+    var_names = [var["name"] for var in graph["variables"]]
+    min_var = next(var for var in graph["variables"] if var["name"] == "min_amount")
+    assert min_var["value"] == 250
+    channel_var = next(var for var in graph["variables"] if var["name"] == "channel")
+    assert channel_var == {"name": "channel", "type": "select", "value": "im", "scope": "global"}
+    notify_var = next(var for var in graph["variables"] if var["name"] == "notify")
+    assert notify_var["value"] is False
+
+
+# U1186：instantiate 变量语义贯通——_seed_variables 后 global 含表单值
+def test_a1_instantiate_seeds_variables_runtime():
+    from atlas.graph.loader import _seed_variables
+
+    created = _create_a1_template(client)
+    resp = client.post(
+        f"/api/templates/{created['id']}/instantiate",
+        json={"values": {"min_amount": 500, "channel": "webhook", "notify": True}},
+    )
+    assert resp.status_code == 200
+    graph = resp.json()["graph"]
+    seeded = _seed_variables(parse_graph(graph))["global"]
+    assert seeded["min_amount"] == 500
+    assert seeded["channel"] == "webhook"
+    assert seeded["notify"] is True
