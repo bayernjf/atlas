@@ -635,12 +635,13 @@ def test_template_list_returns_projection_without_graph():
     items = client.get("/api/templates").json()["items"]
     assert len(items) == 5
     for item in items:
-        assert set(item) == {"id", "name", "description", "tags", "category", "node_count", "source", "deletable"}
+        assert set(item) == {"id", "name", "description", "tags", "category", "node_count", "source", "deletable", "version"}
         assert isinstance(item["category"], str)
         assert "graph" not in item
         assert item["source"] == "catalog"
         assert item["deletable"] is False
         assert item["tags"]
+        assert item["version"] == 1
         assert item["node_count"] >= 1
     assert [item["id"] for item in items] == [
         "refund-auto",

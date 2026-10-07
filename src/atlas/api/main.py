@@ -9,6 +9,7 @@ NL 生成草稿、适配器发现、模拟商家售后控制台。
 from __future__ import annotations
 
 import json
+import copy
 import hmac
 import logging
 import os
@@ -194,6 +195,7 @@ from atlas.scheduling.pg_store import PgScheduleStore
 from atlas.scheduling.store import InMemoryScheduleStore, ScheduleStore
 from atlas.reflection import run_pass as run_reflection_pass
 from atlas.template import get_template, list_templates
+from atlas.template.user_store import TemplateVersionConflict
 from atlas.web.i18n import localize_template, localize_tool_desc, resolve_locale
 from atlas.versioning.publish import publish as publish_graph_version
 from atlas.versioning.upgrades import subgraph_upgrade_plan
@@ -3042,10 +3044,14 @@ def rollback_rollout(
 def list_catalog_templates(
     principal: Principal = Depends(require("read")),
     accept_language: str | None = Header(default=None),
+    q: str | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """列出模板（内置目录 04 §5.10 在前、租户自建模板 docs/85 在后；列表投影不含 graph）；
-    内置 name/description 按 Accept-Language 本地化（docs/70）。"""
+    内置 name/description 按 Accept-Language 本地化（docs/70）。
+    打包 A1（docs/97）：可选 q 过滤（两段各自按 name/description/tags/category casefold 子串任一命中），
+    q 缺失/空白＝全量；用户段投影增 version/updated_at/usage_count，内置段 version 恒 1。"""
     locale = resolve_locale(accept_language)
+    query = (q or "").strip().casefold()
     items = [
         localize_template(
             {
@@ -3057,10 +3063,12 @@ def list_catalog_templates(
                 "node_count": len(template.graph["nodes"]),
                 "source": "catalog",
                 "deletable": False,
+                "version": 1,
             },
             locale,
         )
         for template in list_templates()
+        if not query or _template_matches_query(template.model_dump(), query)
     ]
     items.extend(
         {
@@ -3073,10 +3081,94 @@ def list_catalog_templates(
             "source": "user",
             "deletable": True,
             "created_at": template.created_at,
+            "version": template.version,
+            "updated_at": template.updated_at,
+            "usage_count": template.usage_count,
         }
         for template in services_for(principal).user_templates.list()
+        if not query or _template_matches_query(template.model_dump(), query)
     )
     return {"items": items}
+
+
+def _template_matches_query(template: dict[str, Any], query: str) -> bool:
+    """A1 搜索：name/description/tags/category 任一 casefold 子串命中（docs/97 E-3）。"""
+    haystacks = [
+        str(template.get("name") or ""),
+        str(template.get("description") or ""),
+        " ".join(template.get("tags") or []),
+        str(template.get("category") or ""),
+    ]
+    return any(query in (part.casefold()) for part in haystacks)
+
+
+_TEMPLATE_PARAM_TYPES = {"string", "number", "boolean", "select"}
+_TEMPLATE_PARAM_KEYS = {"type", "label", "required", "default", "hint", "options"}
+
+
+def validate_template_params(params: dict[str, Any]) -> list[str]:
+    """A1 参数化向导声明形状校验（docs/97 E-5）：type 枚举、label≤40、required 布尔、
+    select 须 options 非空字符串列表 ≤20、未知键拒绝；返回中文错误列表（空＝通过）。"""
+    errors: list[str] = []
+    if not isinstance(params, dict):
+        return ["参数声明必须是对象"]
+    for pname, pdecl in params.items():
+        if not isinstance(pdecl, dict):
+            errors.append(f"参数 {pname} 的声明必须是对象")
+            continue
+        unknown = set(pdecl) - _TEMPLATE_PARAM_KEYS
+        if unknown:
+            errors.append(f"参数 {pname} 含未知字段：{', '.join(sorted(unknown))}")
+        ptype = pdecl.get("type", "string")
+        if ptype not in _TEMPLATE_PARAM_TYPES:
+            errors.append(f"参数 {pname} 的 type 必须是 string/number/boolean/select 之一")
+        label = pdecl.get("label")
+        if label is not None and not isinstance(label, str):
+            errors.append(f"参数 {pname} 的 label 必须是字符串")
+        elif isinstance(label, str) and len(label) > 40:
+            errors.append(f"参数 {pname} 的 label 长度须在 40 字符以内")
+        if "required" in pdecl and not isinstance(pdecl["required"], bool):
+            errors.append(f"参数 {pname} 的 required 必须是布尔值")
+        if ptype == "select":
+            options = pdecl.get("options")
+            if (
+                not isinstance(options, list)
+                or not options
+                or len(options) > 20
+                or not all(isinstance(o, str) for o in options)
+            ):
+                errors.append(f"参数 {pname} 的 options 必须是非空字符串列表（≤20 项）")
+    return errors
+
+
+def _validate_instantiate_values(
+    params: dict[str, Any], values: dict[str, Any]
+) -> list[str]:
+    """A1 instantiate 值校验（docs/97 E-6）：required 缺失/类型不符/select 范围/未知参数名。"""
+    errors: list[str] = []
+    for pname, pdecl in params.items():
+        present = pname in values
+        if pdecl.get("required") and not present:
+            errors.append(f"参数 {pname} 为必填")
+            continue
+        if not present:
+            continue
+        value = values[pname]
+        ptype = pdecl.get("type", "string")
+        if ptype == "number":
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                errors.append(f"参数 {pname} 必须是数字")
+        elif ptype == "boolean":
+            if not isinstance(value, bool):
+                errors.append(f"参数 {pname} 必须是布尔值")
+        elif ptype == "select":
+            options = pdecl.get("options") or []
+            if value not in options:
+                errors.append(f"参数 {pname} 的值不在可选范围内")
+    for pname in values:
+        if pname not in params:
+            errors.append(f"未知参数：{pname}")
+    return errors
 
 
 class UserTemplateCreateRequest(BaseModel):
@@ -3085,6 +3177,7 @@ class UserTemplateCreateRequest(BaseModel):
     tags: list[str] = Field(default_factory=list, max_length=8)
     category: str = Field(default="", max_length=30)
     graph: dict[str, Any]
+    params: dict[str, Any] = Field(default_factory=dict)
 
 
 @app.post("/api/templates", status_code=201)
@@ -3092,7 +3185,8 @@ def create_user_template(
     body: UserTemplateCreateRequest,
     principal: Principal = Depends(require("operate")),
 ) -> dict[str, Any]:
-    """画布另存为租户私有模板（docs/85 D-2）：parse_graph 仅校验可编译，图原样存。"""
+    """画布另存为租户私有模板（docs/85 D-2）：parse_graph 仅校验可编译，图原样存。
+    A1（docs/97）：body 可带 params（参数化声明，形状校验失败 422 且模板未变）。"""
     name = body.name.strip()
     if not name:
         raise HTTPException(status_code=422, detail="模板名称不能为空")
@@ -3105,9 +3199,17 @@ def create_user_template(
         category = ""
     elif len(category) > 30:
         raise HTTPException(status_code=422, detail="分类长度须在 30 字符以内")
+    params_errors = validate_template_params(body.params)
+    if params_errors:
+        raise HTTPException(status_code=422, detail="；".join(params_errors))
     parse_graph(body.graph)
     template = services_for(principal).user_templates.add(
-        name=name, description=body.description, tags=tags, category=category, graph=body.graph
+        name=name,
+        description=body.description,
+        tags=tags,
+        category=category,
+        graph=body.graph,
+        params=body.params,
     )
     return {**template.model_dump(), "source": "user", "deletable": True}
 
@@ -3118,6 +3220,8 @@ class UserTemplateUpdateRequest(BaseModel):
     tags: list[str] | None = Field(default=None, max_length=8)
     category: str | None = Field(default=None, max_length=30)
     graph: dict[str, Any]
+    params: dict[str, Any] | None = Field(default=None)
+    if_match_version: int | None = Field(default=None, ge=1)
 
 
 @app.put("/api/templates/{template_id}")
@@ -3127,7 +3231,9 @@ def update_user_template(
     principal: Principal = Depends(require("operate")),
 ) -> dict[str, Any]:
     """整体更新租户私有模板（docs/86 D-1）：id/seq/created_at 不变；
-    tags 字段缺省＝保留旧值（D-5 唯一例外），内置 id 与不存在统一 404。"""
+    tags 字段缺省＝保留旧值（D-5 唯一例外），内置 id 与不存在统一 404。
+    A1（docs/97）：可选 `if_match_version` CAS——不匹配 409 `TEMPLATE_VERSION_CONFLICT`（缺省无防护）；
+    `params` 缺省＝保留旧值（照 tags 先例）。"""
     store = services_for(principal).user_templates
     if get_template(template_id) is not None:
         raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
@@ -3144,15 +3250,27 @@ def update_user_template(
     category = current.category if body.category is None else body.category.strip()
     if len(category) > 30:
         raise HTTPException(status_code=422, detail="分类长度须在 30 字符以内")
+    if body.params is not None:
+        params_errors = validate_template_params(body.params)
+        if params_errors:
+            raise HTTPException(status_code=422, detail="；".join(params_errors))
     parse_graph(body.graph)
-    updated = store.update(
-        template_id,
-        name=name,
-        description=body.description,
-        tags=tags,
-        category=category,
-        graph=body.graph,
-    )
+    try:
+        updated = store.update(
+            template_id,
+            name=name,
+            description=body.description,
+            tags=tags,
+            category=category,
+            graph=body.graph,
+            params=body.params,
+            if_match_version=body.if_match_version,
+        )
+    except TemplateVersionConflict:
+        raise HTTPException(
+            status_code=409,
+            detail=f"模板已被他人更新（当前版本 {current.version}），请刷新后重试",
+        ) from None
     return {**updated.model_dump(), "source": "user", "deletable": True}
 
 
@@ -3166,6 +3284,71 @@ def delete_user_template(
     if not services_for(principal).user_templates.delete(template_id):
         raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
     return {"deleted": True}
+
+
+@app.post("/api/templates/{template_id}/usage")
+def touch_template_usage(
+    template_id: str, principal: Principal = Depends(require("operate"))
+) -> dict[str, int]:
+    """A1 使用统计（docs/97 E-4）：显式 touch 计数 +1，返回新值；
+    内置/不存在/跨租户统一 404（内置 v1 不计数）。"""
+    if get_template(template_id) is not None:
+        raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
+    store = services_for(principal).user_templates
+    if not store.touch(template_id):
+        raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
+    updated = store.get(template_id)
+    return {"usage_count": updated.usage_count}
+
+
+class TemplateInstantiateRequest(BaseModel):
+    values: dict[str, Any] = Field(default_factory=dict)
+
+
+@app.post("/api/templates/{template_id}/instantiate")
+def instantiate_user_template(
+    template_id: str,
+    body: TemplateInstantiateRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """A1 参数化实例化（docs/97 E-6）：校验 required/类型/options/未知参数名后返回
+    模板图深拷贝，values 覆写进 graph.variables（命中 name 覆写 value、未命中 append
+    {name,type,value,scope:"global"}）；模板原图逐键不变；内置/不存在/跨租户 404。"""
+    if get_template(template_id) is not None:
+        raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
+    store = services_for(principal).user_templates
+    template = store.get(template_id)
+    if template is None:
+        raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
+    value_errors = _validate_instantiate_values(template.params, body.values)
+    if value_errors:
+        raise HTTPException(status_code=422, detail="；".join(value_errors))
+    graph = copy.deepcopy(template.graph)
+    variables = list(graph.get("variables", []))
+    for pname, pdecl in template.params.items():
+        if pname not in body.values:
+            continue
+        value = body.values[pname]
+        found = False
+        for var in variables:
+            if isinstance(var, dict) and var.get("name") == pname:
+                var["value"] = value
+                found = True
+                break
+        if not found:
+            variables.append(
+                {
+                    "name": pname,
+                    "type": pdecl.get("type", "string"),
+                    "value": value,
+                    "scope": "global",
+                }
+            )
+    graph["variables"] = variables
+    return {
+        "graph": graph,
+        "template": {"id": template.id, "name": template.name, "version": template.version},
+    }
 
 
 @app.get("/api/templates/{template_id}")
