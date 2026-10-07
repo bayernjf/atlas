@@ -3,6 +3,15 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### feat(template)：打包 A2 消息模板系统落码收口（2026-10-07；docs/98 §6；U1189–U1195 转正式；dev，未 push）
+
+- **模板实体 CRUD**（`MessageTemplate`，第六类实体）：name 租户内唯一（LOWER 唯一索引）、kind∈{approval,alert}、subject/body `{{var}}` 占位、variables≤20 白名单；占位⊆声明否则 422 `MESSAGE_TEMPLATE_UNDECLARED_VAR`；重名 409 `MESSAGE_TEMPLATE_NAME_CONFLICT`；迁移 044＋进程内/PG 两档 store。
+- **消费接线**：`EmailApprovalNotifier`（审批通知）与 `notify.py`（告警通知）取对应 kind 模板渲染（复用 `interpolation.interpolate`），未配置回退默认正文逐字不变（纯超集）。
+- **前端**：Dashboard 导航新增「消息模板」页（列表/新建/编辑/删除确认＋kind 过滤＋zh/en i18n PARITY）。
+- **存量缺陷顺带修复**：`alert_rule_label` rule_id 兜底（残缺 alert 桩 fail-safe）；send-failure 测试桩补字段。
+- **门**：后端全量 2412 passed／166 skipped／0 failed；PG 集成 6 passed（临时容器）；前端 vitest 814 passed／2 skipped；oxlint 0/0；build 过；守护门 8 passed。
+- 落码偏差（前端入口按 Dashboard 导航、context 七键上限）见 docs/98 §6。
+
 ### docs(template)：A 档余下三打包立项（A2/A3/A4，2026-10-07；docs/98/99/100 形状权威；docs-only 原子，落码另立批）
 
 - **打包 A2＝D24 消息模板系统最小切片（docs/98，U1189–U1195）**：`MessageTemplate` 实体 CRUD（name 租户内唯一/kind∈{approval,alert}/subject/body `{{var}}` 占位/variables 声明校验；占位⊆声明否则 422 `MESSAGE_TEMPLATE_UNDECLARED_VAR`；重名 409 `MESSAGE_TEMPLATE_NAME_CONFLICT`；迁移 044 `message_templates`）；消费接线＝`EmailApprovalNotifier`（审批）＋`notify.py`（告警）取对应 kind 模板渲染（复用 `interpolation.interpolate`），未配置回退默认正文逐字不变；前端设置页模板 Tab＋i18n。多语言/市场/共享/版本历史不取（D13/D3/D25）。
