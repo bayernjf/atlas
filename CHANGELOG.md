@@ -3,6 +3,13 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### docs(template)：A 档余下三打包立项（A2/A3/A4，2026-10-07；docs/98/99/100 形状权威；docs-only 原子，落码另立批）
+
+- **打包 A2＝D24 消息模板系统最小切片（docs/98，U1189–U1195）**：`MessageTemplate` 实体 CRUD（name 租户内唯一/kind∈{approval,alert}/subject/body `{{var}}` 占位/variables 声明校验；占位⊆声明否则 422 `MESSAGE_TEMPLATE_UNDECLARED_VAR`；重名 409 `MESSAGE_TEMPLATE_NAME_CONFLICT`；迁移 044 `message_templates`）；消费接线＝`EmailApprovalNotifier`（审批）＋`notify.py`（告警）取对应 kind 模板渲染（复用 `interpolation.interpolate`），未配置回退默认正文逐字不变；前端设置页模板 Tab＋i18n。多语言/市场/共享/版本历史不取（D13/D3/D25）。
+- **打包 A3＝D30 受限来源最小切片（docs/99，U1196–U1200）**：`graph.variables[]` 纯超集加 `source:"env"|"secret"`（value 变引用名、secret 复用 docs/32 SecretProvider、session 不取）；编译期四码校验；运行期 fail-closed（`ENV_VARIABLE_UNAVAILABLE` 新码／复用 `SECRET_UNAVAILABLE`）；字段级可见＝敏感展开值五通道脱敏 `<redacted:{source}:{name}>`、比对用引用形态；前端变量面板来源徽标＋`••••` 占位。`x-secret-allowed` 节点参数级受限与 D20 节点级角色同批评估。
+- **打包 A4＝D20 动态审批人最小切片（docs/100，U1201–U1205）**：`human_approval.config.approver` 支持 `{{变量}}` 插值（运行期求值；空串→任何人；静态未定义占位编译 422 `APPROVER_REF_UNRESOLVED`；零迁移）；决策端点新增指派校验（approver 非空须按 `user:<id>`/邮箱匹配 principal，否则 **403 `APPROVAL_NOT_ASSIGNED`**；approver 空＝现状不变）；前端 approver 表单插值提示＋错误码 i18n。节点级角色体系/多实例/评论流/KMS 不取。
+- **同步面**：docs/08 立项块×3、docs/14 D24/D30/D20 行注记、docs/13 打包 A2/A3/A4 小节、docs/00 地图×3、docs/03（message_template 行＋错误码/来源注记）、handoff。零新依赖／无 ADR。
+
 ### feat(template)：打包 A1 落码收口＝D25 模板库产品化收尾（2026-10-07；docs/97 形状权威＋§7 收口注记；docs/08 打包 A1 收口块；六个原子，dev 未 push）
 
 - **版本与 CAS 防覆盖**：`UserTemplate` 增 `version/updated_at/usage_count/params`；PUT 可带 `if_match_version`，不匹配 409 `TEMPLATE_VERSION_CONFLICT`（detail 带当前版本号）、匹配则 version+1；缺省无防护照旧。迁移 **043**（四列 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`＋存量回填＋COMMENT；params 列系落码期修正补入）。
