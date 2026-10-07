@@ -749,6 +749,52 @@ export async function instantiateTemplate(
   })
 }
 
+export type MessageTemplateKind = 'approval' | 'alert'
+
+export type MessageTemplateSummary = {
+  id: string
+  name: string
+  kind: MessageTemplateKind
+  subject: string
+  variables: string[]
+  updated_at: string
+}
+
+export type MessageTemplateDetail = MessageTemplateSummary & {
+  body: string
+}
+
+export type MessageTemplateInput = {
+  name: string
+  kind: MessageTemplateKind
+  subject: string
+  body: string
+  variables: string[]
+}
+
+// 打包 A2（docs/98）：消息通知模板 CRUD（列表投影不含 body；kind 过滤）。
+export async function listMessageTemplates(kind?: MessageTemplateKind): Promise<MessageTemplateSummary[]> {
+  const query = kind ? `?kind=${encodeURIComponent(kind)}` : ''
+  const body = await request<{ items: MessageTemplateSummary[] }>(`/api/message-templates${query}`)
+  return body.items
+}
+
+export async function getMessageTemplate(id: string): Promise<MessageTemplateDetail> {
+  return request(`/api/message-templates/${id}`)
+}
+
+export async function createMessageTemplate(input: MessageTemplateInput): Promise<MessageTemplateDetail> {
+  return request('/api/message-templates', { method: 'POST', body: JSON.stringify(input) })
+}
+
+export async function updateMessageTemplate(id: string, input: MessageTemplateInput): Promise<MessageTemplateDetail> {
+  return request(`/api/message-templates/${id}`, { method: 'PUT', body: JSON.stringify(input) })
+}
+
+export async function deleteMessageTemplate(id: string): Promise<void> {
+  await request(`/api/message-templates/${id}`, { method: 'DELETE' })
+}
+
 export async function exportTemplate(
   id: string,
 ): Promise<{ filename: string; packageText: string }> {

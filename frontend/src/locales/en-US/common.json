@@ -36,7 +36,8 @@
     "openapi": "API imports",
     "waits": "Waits & Tasks",
     "schedules": "Scheduled triggers",
-    "models": "Model configuration"
+    "models": "Model configuration",
+    "templates": "Message templates"
   },
   "button": {
     "confirm": "OK",
