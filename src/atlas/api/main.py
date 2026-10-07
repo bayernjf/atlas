@@ -86,7 +86,7 @@ from atlas.iam.passwords import validate_password, validate_username, verify_pas
 from atlas.iam.principals import Principal, Role, can
 from atlas.iam.registry import STORAGE_BACKEND, TenantServices
 from atlas.llm.config import ModelConfig
-from atlas.llm.decision import get_decision_client
+from atlas.llm.decision import get_decision_client, warm_litellm
 from atlas.llm.nl_generate import generate_graph, validate_param_fills
 from atlas.memory.database import ping, wait_for_database
 from atlas.memory.models import MemoryValidationError
@@ -384,6 +384,10 @@ async def lifespan(_app: FastAPI):
     recover_pending()
     # docs/64 J-2a：启动即打印决策器运行模式（含降级警告），不再静默。
     get_decision_client()
+    # 试用干跑实测（2026-10-08）：进程内首次 `import litellm` 若发生在 worker 线程，
+    # 会和事件循环线程上被 litellm 自己挂进 root logger 的懒导入过滤器抢同一把
+    # _ModuleLock → _DeadlockError → 之后整个进程不再响应。导在起服务之前＝主线程串行导完。
+    warm_litellm()
     # docs/65 K-A：启动跑一次 retention 清扫（PG 档；失败只 warning 不阻断启动）。
     run_retention_once()
     # docs/68 §2.3：调度线程在恢复扫描**之后**起——先让挂起帧归位，再派发新运行。
