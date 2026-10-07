@@ -87,9 +87,11 @@ export function MessageTemplates({ principal, onBack }: MessageTemplatesPageProp
     }
   }, [kindFilter, t])
 
+  /* oxlint-disable react/set-state-in-effect */
   useEffect(() => {
     void load()
   }, [load])
+  /* oxlint-enable react/set-state-in-effect */
 
   const variables = useMemo(
     () => (editor ? parseVariablesInput(editor.variablesText) : []),
