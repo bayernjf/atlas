@@ -54,6 +54,25 @@ class DemoShopService:
             if order.status == PENDING
         ]
 
+    def list_processed_refunds(self) -> list[dict]:
+        """AI 已经处置过的单（退款或转人工），带状态与最后一笔处置说明。
+
+        存在的理由是一条试用现场的观察：控制台只列 pending，于是「AI 退了款」和
+        「AI 判定要找人」在页面上是同一个结果——都从表里消失——而后者正是场景 B
+        要给试用客户看的那条边界。这里把两类分开摆出来，让边界可观察。
+        """
+        return [
+            {
+                "order_id": order.order_id,
+                "reason": order.reason,
+                "amount": order.amount,
+                "status": order.status,
+                "note": order.history[-1] if order.history else "",
+            }
+            for order in self.orders.values()
+            if order.status != PENDING
+        ]
+
     def get_order(self, order_id: str) -> RefundOrder:
         if order_id not in self.orders:
             raise KeyError(f"订单不存在：{order_id}")

@@ -5300,7 +5300,12 @@ def demo_shop_orders() -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Not Found")
     if not _demo_shop.logged_in:
         raise HTTPException(status_code=401, detail="未登录")
-    return {"orders": _demo_shop.list_pending_refunds()}
+    # orders 仍是"待处理"（老消费方与图里的 shop/list_pending_refunds 语义不变）；
+    # processed 是新增的第二段，控制台用它把「已退款」和「转人工」分开显示。
+    return {
+        "orders": _demo_shop.list_pending_refunds(),
+        "processed": _demo_shop.list_processed_refunds(),
+    }
 
 
 _MOCK_ORDERS = [
@@ -5620,27 +5625,53 @@ _CONSOLE_HTML = """<!doctype html>
 <head><meta charset="utf-8"><title>Demo 商家售后控制台</title>
 <style>body{font-family:sans-serif;max-width:720px;margin:40px auto;padding:0 16px}
 table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:8px}
-input,button{padding:6px;margin:4px 0}</style></head>
+input,button{padding:6px;margin:4px 0}.refunded{color:#389e0d}.human_review{color:#d46b08}
+</style></head>
 <body>
 <h1>Demo 商家售后控制台</h1>
 <p>Atlas 自动登录的目标系统（W9-W10 模拟平台，账号 demo/demo）。</p>
 <div id="loginBox"><input id="u" value="demo" placeholder="用户名">
 <input id="p" type="password" value="demo" placeholder="密码">
 <button onclick="doLogin()">登录</button></div>
-<div id="panel" hidden><h2>待处理退款单</h2><table><thead>
-<tr><th>订单号</th><th>退款原因</th><th>金额</th></tr></thead><tbody id="rows"></tbody></table></div>
+<div id="panel" hidden>
+<h2>待处理退款单 <button onclick="loadOrders()">刷新</button></h2>
+<table><thead>
+<tr><th>订单号</th><th>退款原因</th><th>金额</th></tr></thead><tbody id="rows"></tbody></table>
+<h2>AI 已处置</h2>
+<table><thead>
+<tr><th>订单号</th><th>退款原因</th><th>金额</th><th>处置结果</th></tr></thead>
+<tbody id="done"></tbody></table>
+<p id="hint" hidden>还没有单子被处置过。在编辑器里运行一笔退款单，再点上面的「刷新」。</p>
+</div>
 <script>
+const STATUS_LABEL = {refunded:'AI 已自动退款', human_review:'AI 转人工（仅标记，队列里无人被叫到）'};
+function money(n){return '¥' + n;}
+function render(data){
+  document.getElementById('rows').innerHTML = (data.orders||[]).map(o=>
+    `<tr><td>${o.order_id}</td><td>${o.reason}</td><td>${money(o.amount)}</td></tr>`).join('')
+    || '<tr><td colspan="3">全部处理完了</td></tr>';
+  const done = data.processed||[];
+  document.getElementById('done').innerHTML = done.map(o=>
+    `<tr><td>${o.order_id}</td><td>${o.reason}</td><td>${money(o.amount)
+    }</td><td class="${o.status}">${STATUS_LABEL[o.status]||o.status}${
+    o.note?'（'+o.note+'）':''}</td></tr>`).join('');
+  document.getElementById('hint').hidden = done.length>0;
+}
+async function loadOrders(){
+  const r = await fetch('/api/demo/shop/orders');
+  if(!r.ok){ loginBox.hidden = false; panel.hidden = true; return false; }
+  render(await r.json());
+  loginBox.hidden = true; panel.hidden = false;
+  return true;
+}
 async function doLogin(){
   const r = await fetch('/api/demo/shop/login',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({username:u.value,password:p.value})});
   if(!r.ok){alert((await r.json()).detail);return;}
-  loginBox.hidden = true; panel.hidden = false; loadOrders();
+  await loadOrders();
 }
-async function loadOrders(){
-  const r = await fetch('/api/demo/shop/orders');
-  const data = await r.json();
-  rows.innerHTML = data.orders.map(o=>`<tr><td>${o.order_id}</td><td>${o.reason}</td><td>${o.amount}</td></tr>`).join('');
-}
+// 刷新不该回到登录框：登录态在服务端，进页面先直接要一次数据，要不到才亮出登录框。
+loadOrders();
 </script></body></html>
 """
 
