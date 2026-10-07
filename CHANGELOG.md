@@ -8,7 +8,7 @@
 - **动态审批人**：`human_approval.config.approver` 支持 `{{变量}}` 插值——编译期静态校验（`{{global.X}}` 未定义 → 422 `APPROVER_REF_UNRESOLVED`），运行期残留占位 → 空串＋告警（模板笔误不永久挂起，空＝任何人可决）；展开值随挂起帧持久化（零迁移）。
 - **审批指派校验**：决策端点 approver 非空时操作者须匹配——`user:<id>` 与 `principal.username` 精确匹配（iam v1 无独立 user_id）；邮箱形态因 iam 无 email 字段恒 403（待真实用户模型引入后自然生效）；空 approver 任何人可决（现状不变）；未知 token 404 不变；挂起帧恢复重建后校验同样生效。**行为收紧**：已配置静态 approver 的图从此只认指定人（契约预期）。
 - **前端**：approver 表单插值/形态提示＋runtime `APPROVAL_NOT_ASSIGNED`／validation dsl `APPROVER_REF_UNRESOLVED` i18n zh/en。
-- **门**：后端全量 2433 passed／166 skipped／0 failed；前端 vitest 819 passed／2 skipped；oxlint 0/0；build 过。
+- **门**：后端全量 2436 passed／166 skipped／0 failed；前端 vitest 820 passed／2 skipped；oxlint 0/0；build 过。
 
 ### feat(engine)：打包 A3 受限变量来源与字段级可见落码收口（2026-10-07；docs/99 §7；U1196–U1200 转正式；dev，未 push）
 
