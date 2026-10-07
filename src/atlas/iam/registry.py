@@ -20,6 +20,8 @@ from atlas.coordination import TaskStore
 from atlas.observability.audit import AuditRepository, AuditStore
 from atlas.message.service import MessageService
 from atlas.message.deliveries import PgDeliveryStore as PgMessageDeliveryStore
+from atlas.message.template_store import MessageTemplateStore
+from atlas.message.pg_template_store import PgMessageTemplateStore
 from atlas.collaboration.history import PgApprovalHistoryStore
 from atlas.message.smtp import get_smtp_sender
 from atlas.message.im import get_im_sender
@@ -87,6 +89,7 @@ class TenantServices:
     webhook_deliveries: object  # 入站投递去重/死信（docs/40；内存/PG 两档，reset 不清）
     openapi_imports: ImportStore | PgImportStore  # OpenAPI 导入规格（docs/42/43；内存/PG 两档，reset 不清）
     user_templates: object  # 用户自建模板（docs/85 打包 X；内存/PG 两档，reset 同清）
+    message_template_store: object  # 消息通知模板（docs/98 打包 A2；内存/PG 两档，reset 同清）
     reflection_store: ReflectionStore | PgReflectionStore  # 反思候选与收尾报告（docs/88 打包 ZH／docs/94 打包 ZU：内存 ring 100 / PG reflection_*）
     model_config: object  # LLM 模型配置（docs/93 打包 Y；内存/PG 两档 store，reset 不清）
 
@@ -163,6 +166,7 @@ class TenantRegistry:
                 webhook_deliveries=PgDeliveryStore(backend.engine, tenant_id),
                 openapi_imports=PgImportStore(backend.engine, tenant_id),
                 user_templates=PgUserTemplateStore(backend.engine, tenant_id),
+                message_template_store=PgMessageTemplateStore(backend.engine, tenant_id),
                 reflection_store=PgReflectionStore(backend.engine, tenant_id),
                 model_config=get_model_config_store(),
             )
@@ -193,6 +197,7 @@ class TenantRegistry:
             webhook_deliveries=InMemoryDeliveryStore(),
             openapi_imports=ImportStore(),
             user_templates=UserTemplateStore(),
+            message_template_store=MessageTemplateStore(),
             reflection_store=ReflectionStore(),
             model_config=get_model_config_store(),
         )
@@ -204,7 +209,10 @@ class TenantRegistry:
         from atlas.monitoring.notify import AlertNotifier
 
         services.monitoring.set_notifier(
-            AlertNotifier(services.message_service)
+            AlertNotifier(
+                services.message_service,
+                template_store=services.message_template_store,
+            )
         )
 
     def reset_tenant(self, tenant_id: str) -> None:
@@ -224,4 +232,5 @@ class TenantRegistry:
         services.shadow_store.reset()
         services.memory_store.clear()
         services.user_templates.clear()
+        services.message_template_store.clear()
         services.reflection_store.reset()
