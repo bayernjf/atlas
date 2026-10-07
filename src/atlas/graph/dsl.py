@@ -138,6 +138,10 @@ class GraphVariable(BaseModel):
     type: str = "string"
     value: Any = None
     scope: Literal["global"] = "global"
+    # 打包 A3（docs/99）：受限来源。缺省＝无（照旧字面量语义）；存在时 value 为引用名
+    # （env＝环境变量名；secret＝secret://<name> 或裸名），运行期 _seed_variables 解析展开，
+    # 展开值带敏感标记，投影通道一律脱敏。
+    source: Literal["env", "secret"] | None = None
 
 
 class GraphDSL(BaseModel):
@@ -304,6 +308,35 @@ def validate_graph_report(
                 params={"name": variable.name},
             )
         var_names.add(variable.name)
+        # 打包 A3（docs/99 §2.2）：受限来源声明校验（编译期 422，模板不变）
+        if variable.source is not None and variable.source not in ("env", "secret"):
+            issues.add(
+                f"变量 {variable.name} 的来源非法：{variable.source}",
+                code="VAR_SOURCE_INVALID",
+                params={"name": variable.name, "source": variable.source},
+            )
+        if variable.source is not None and (not isinstance(variable.value, str) or not variable.value):
+            issues.add(
+                f"变量 {variable.name} 声明受限来源但引用名为空",
+                code="VAR_SOURCE_REF_EMPTY",
+                params={"name": variable.name},
+            )
+        if (
+            variable.source == "env"
+            and isinstance(variable.value, str)
+            and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", variable.value)
+        ):
+            issues.add(
+                f"变量 {variable.name} 的 env 引用名非法：{variable.value}",
+                code="VAR_SOURCE_REF_INVALID",
+                params={"name": variable.name, "ref": variable.value},
+            )
+        if variable.source is not None and variable.scope != "global":
+            issues.add(
+                f"变量 {variable.name} 声明受限来源但作用域非 global",
+                code="VAR_SOURCE_SCOPE_MISMATCH",
+                params={"name": variable.name},
+            )
 
     outgoing: dict[str, set[str]] = {}
     incoming: dict[str, set[str]] = {}
