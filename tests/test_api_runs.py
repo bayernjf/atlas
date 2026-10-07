@@ -24,7 +24,7 @@ def _human_approval_graph() -> dict:
             {"id": "human-1", "type": "human_approval", "name": "人工审批",
              "config": {
                  "summary": "订单 {{trigger-1.context.payload.order_id}} 退款审批",
-                 "approver": "客服主管",
+                 "approver": "",
                  "timeoutSeconds": 10,
                  "onTimeout": "reject",
                  "approvedTarget": "tool-approve",

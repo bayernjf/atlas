@@ -54,7 +54,7 @@ def _card_graph(card_id: str | None = CARD_ID) -> dict:
     """trigger → ai_decision → human_approval（挂卡）→ 两侧 tool；卡片 bindings 均可解析。"""
     human_config = {
         "summary": "订单 {{trigger-1.context.payload.order_id}} 退款审批",
-        "approver": "客服主管",
+        "approver": "",
         "timeoutSeconds": 30,
         "onTimeout": "reject",
         "approvedTarget": "tool-approve",
@@ -103,7 +103,7 @@ def _plain_graph() -> dict:
                 "name": "人工审批",
                 "config": {
                     "summary": "订单 {{trigger-1.context.payload.order_id}} 退款审批",
-                    "approver": "客服主管",
+                    "approver": "",
                     "timeoutSeconds": 30,
                     "onTimeout": "reject",
                     "approvedTarget": "tool-approve",
@@ -224,7 +224,7 @@ def test_card_rendered_for_three_channels_without_side_effects():
     actions = {item["id"]: item for item in web_body["actions"]}
     assert actions["approve"]["style"] == "primary"
     assert actions["reject"]["style"] == "danger"
-    assert web_body["token"] == token and web_body["approver"] == "客服主管"
+    assert web_body["token"] == token and web_body["approver"] == ""
     assert web_body["timeoutSeconds"] == 30
 
     im = client.get(f"/api/approvals/{token}/card", params={"channel": "im"}).json()

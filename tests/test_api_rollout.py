@@ -37,7 +37,7 @@ def _human_graph(name_mark: str = "人工审批") -> dict:
             {"id": "human-1", "type": "human_approval", "name": name_mark,
              "config": {
                  "summary": "订单 {{trigger-1.context.payload.order_id}} 退款审批",
-                 "approver": "客服主管",
+                 "approver": "",
                  "timeoutSeconds": 300,
                  "onTimeout": "reject",
                  "approvedTarget": "tool-approve",

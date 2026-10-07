@@ -153,7 +153,7 @@ def test_cross_tenant_approval_token_is_404():
         node_id="human-i19",
         graph_id="graph-i19",
         summary="I19 审批",
-        approver="tester",
+        approver="",
         timeout_seconds=30,
     )
     # t2 管理员看不到 t1 的审批 token

@@ -163,7 +163,7 @@ def _human_approval_graph() -> dict:
              "position": {"x": 0, "y": 0},
              "config": {
                  "summary": "订单 {{trigger-1.context.payload.order_id}} 退款审批",
-                 "approver": "客服主管",
+                 "approver": "",
                  "timeoutSeconds": 10,
                  "onTimeout": "reject",
                  "approvedTarget": "tool-approve",
@@ -263,7 +263,7 @@ def test_approval_decision_endpoint_404_409_422_and_reset():
         node_id="human-x",
         graph_id="graph-x",
         summary="测试审批",
-        approver="tester",
+        approver="",
         timeout_seconds=30,
     )
     pending = client.get("/api/approvals").json()["items"]
