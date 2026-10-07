@@ -5642,8 +5642,8 @@ input,button{padding:6px;margin:4px 0}.refunded{color:#389e0d}.human_review{colo
 <table><thead>
 <tr><th>订单号</th><th>退款原因</th><th>金额</th></tr></thead><tbody id="rows"></tbody></table>
 <h2>AI 已处置</h2>
-<table><thead>
-<tr><th>订单号</th><th>退款原因</th><th>金额</th><th>处置结果</th></tr></thead>
+<table><colgroup><col style="width:96px"><col style="width:150px"><col style="width:90px"><col></colgroup>
+<thead><tr><th>订单号</th><th>退款原因</th><th>金额</th><th>处置结果</th></tr></thead>
 <tbody id="done"></tbody></table>
 <p id="hint" hidden>还没有单子被处置过。在编辑器里运行一笔退款单，再点上面的「刷新」。</p>
 </div>
