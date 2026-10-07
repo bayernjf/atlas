@@ -85,7 +85,9 @@ def alert_rule_label(alert: object) -> str:
     rule_name = getattr(alert, "rule_name", None)
     if isinstance(rule_name, str) and rule_name.strip():
         return rule_name.strip()
-    return str(getattr(alert, "rule_id"))
+    # rule_id 兜底 getattr：对字段残缺的 alert（如仅 severity 的测试桩）fail-safe，
+    # 返回空串而非 AttributeError（打包 A2 存量缺口修复）。
+    return str(getattr(alert, "rule_id", ""))
 
 
 def build_alert_subject(alert: object) -> str:
