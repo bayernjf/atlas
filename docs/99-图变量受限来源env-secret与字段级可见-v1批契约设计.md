@@ -68,3 +68,10 @@
 ## 6. 落码顺序（docs-only 立项后另立批）
 
 DSL 校验 → `_seed_variables` 分支＋错误码 → 脱敏 helper＋投影出口接线 → 录制/比对适配 → 后端测试 → 前端变量面板 → 前端测试 → 文档收口。
+
+## 7. 收口注记（2026-10-07 落码完成）
+
+七原子：`aae9fa8` feat(engine)（dsl.py/loader.py/redact.py）→ `c7346ea` feat(api)（六处 run_graph 注入 `secret_provider`）→ `c93d090` test(engine)（U1196–U1199，15 passed）→ `e12e4ba` feat(frontend)（来源 Select＋`••••` 占位＋i18n）→ `1703a45` test(frontend)（U1200）→ `fe5a146` fix(test)＋`d7a5809` fix(frontend)（错误码通道守护修正）。门：后端全量 **2424 passed／166 skipped／0 failed**（195s）、前端 vitest **816 passed／2 skipped**、oxlint 0/0、build 过、守护门（`test_error_code_channels` 等）16 passed。零新依赖／零迁移／无 ADR。
+
+- **四处落码偏差/细化（照实）**：① `VAR_SOURCE_INVALID` 是防御码——pydantic `Literal` 会在模型层先拦非法 `source`（422 literal_error），该码实际只对**程序化构造**（`GraphVariable.model_construct`）可达，测试已注明；② **泄漏断言陷阱**：condition 输出 `expressionResults.expr` 含**表达式手写字面量**（操作期望值，非展开值），泄漏断言须用「≠手写字面量的独特展开值」（如 `sk-live-9f3a-unique`）；③ `SECRET_UNAVAILABLE` 此前在错误码豁免表（粗码组、无前端文案），本次补前端 runtime 文案后**移出豁免表**（`test_error_code_channels.py`）；④ U1200 覆盖 lib 类型面（`source` 字段/`VARIABLE_SOURCES` 枚举），组件渲染面（徽标/占位）由 tsc＋oxlint＋手动冒烟守护——项目无组件渲染测试基建，照 U1199 的 `tests/test_variable_sources.py` 后端 15 测为功能主证。
+- **运行语义**：env 未命中 `EnvVariableUnavailable`（`ENV_VARIABLE_UNAVAILABLE`，fail-closed）；secret 走 SecretProvider（docs/32），未命中/未注入 `SecretUnavailable` 复用；`source` 存在时 `value` 为引用名，图投影/run 输出/录制/观察/日志五通道脱敏 `<redacted:{source}:{引用名}>`。

@@ -3,6 +3,12 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### feat(engine)：打包 A3 受限变量来源与字段级可见落码收口（2026-10-07；docs/99 §7；U1196–U1200 转正式；dev，未 push）
+
+- **图变量受限来源**：`graph.variables[]` 纯超集加 `source: "env"|"secret"`（value＝引用名）；编译期四码 `VAR_SOURCE_INVALID`/`VAR_SOURCE_REF_EMPTY`/`VAR_SOURCE_REF_INVALID`/`VAR_SOURCE_SCOPE_MISMATCH`；运行期 fail-closed——env 未命中 `ENV_VARIABLE_UNAVAILABLE`、secret 复用 `SECRET_UNAVAILABLE`（SecretProvider，docs/32）。
+- **字段级可见**：敏感展开值在投影/输出/录制/观察/日志五通道一律 `<redacted:{source}:{引用名}>`；前端变量面板来源 Select＋Secret `••••` 占位＋i18n zh/en（`SECRET_UNAVAILABLE` 补文案并移出错误码豁免表）。
+- **门**：后端全量 2424 passed／166 skipped／0 failed；前端 vitest 816 passed／2 skipped；oxlint 0/0；build 过；守护门 16 passed。
+
 ### feat(template)：打包 A2 消息模板系统落码收口（2026-10-07；docs/98 §6；U1189–U1195 转正式；dev，未 push）
 
 - **模板实体 CRUD**（`MessageTemplate`，第六类实体）：name 租户内唯一（LOWER 唯一索引）、kind∈{approval,alert}、subject/body `{{var}}` 占位、variables≤20 白名单；占位⊆声明否则 422 `MESSAGE_TEMPLATE_UNDECLARED_VAR`；重名 409 `MESSAGE_TEMPLATE_NAME_CONFLICT`；迁移 044＋进程内/PG 两档 store。
