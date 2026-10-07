@@ -23,7 +23,7 @@ from itertools import count
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, NoReturn
 
 import httpx
 
@@ -91,6 +91,10 @@ from atlas.llm.nl_generate import generate_graph, validate_param_fills
 from atlas.memory.database import ping, wait_for_database
 from atlas.memory.models import MemoryValidationError
 from atlas.message.service import MessageSendError
+from atlas.message.template_store import (
+    MessageTemplateNameConflict,
+    validate_message_template,
+)
 from atlas.monitoring import RUN_RING_SIZE, extract_business, extract_node_results
 from atlas.observability.audit import AUDITED_METHODS, LOGIN_PATH
 from atlas.channels.base import (
@@ -3479,6 +3483,122 @@ def import_template_package(
         name=name, description=description, tags=tags, category=category, graph=graph
     )
     return {**template.model_dump(), "source": "user", "deletable": True}
+
+
+class MessageTemplateCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    kind: str = "approval"
+    subject: str = Field(min_length=1, max_length=200)
+    body: str = Field(min_length=1, max_length=4000)
+    variables: list[str] = Field(default_factory=list, max_length=20)
+
+
+def _message_template_422(errors: list[str]) -> NoReturn:
+    """消息模板形状校验失败统一 422（docs/98 §2.3：中文 detail，码名登记于 docs/03
+    与 docs/98——`MESSAGE_TEMPLATE_UNDECLARED_VAR` 等仅在契约层识别，响应体沿用中文惯例）。"""
+    raise HTTPException(status_code=422, detail="；".join(errors))
+
+
+def _message_template_payload(body: MessageTemplateCreateRequest) -> dict[str, Any]:
+    name = body.name.strip()
+    if not name:
+        _message_template_422(["模板名称不能为空"])
+    errors = validate_message_template(
+        name=name,
+        kind=body.kind,
+        subject=body.subject,
+        body=body.body,
+        variables=body.variables,
+    )
+    if errors:
+        _message_template_422(errors)
+    return {
+        "name": name,
+        "kind": body.kind,
+        "subject": body.subject,
+        "body": body.body,
+        "variables": list(dict.fromkeys(body.variables)),
+    }
+
+
+@app.get("/api/message-templates")
+def list_message_templates(
+    principal: Principal = Depends(require("read")),
+    kind: str | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """消息通知模板列表（打包 A2，docs/98 §2.3）：投影 id/name/kind/subject/variables/updated_at，
+    **不含 body**；可选 `?kind=` 过滤（approval/alert）。"""
+    items = [
+        {
+            "id": template.id,
+            "name": template.name,
+            "kind": template.kind,
+            "subject": template.subject,
+            "variables": template.variables,
+            "updated_at": template.updated_at,
+        }
+        for template in services_for(principal).message_template_store.list(kind=kind)
+    ]
+    return {"items": items}
+
+
+@app.get("/api/message-templates/{template_id}")
+def get_message_template(
+    template_id: str, principal: Principal = Depends(require("read"))
+) -> dict[str, Any]:
+    """消息模板详情（含 body）；未知/跨租户 404。"""
+    template = services_for(principal).message_template_store.get(template_id)
+    if template is None:
+        raise HTTPException(status_code=404, detail=f"消息模板不存在：{template_id}")
+    return template.model_dump()
+
+
+@app.post("/api/message-templates", status_code=201)
+def create_message_template(
+    body: MessageTemplateCreateRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """创建消息通知模板（docs/98 §2.3）：形状校验 422（含正文占位 ⊆ variables 声明）、
+    租户内重名 409 `MESSAGE_TEMPLATE_NAME_CONFLICT`。"""
+    payload = _message_template_payload(body)
+    try:
+        template = services_for(principal).message_template_store.add(**payload)
+    except MessageTemplateNameConflict:
+        raise HTTPException(
+            status_code=409, detail=f"消息模板名称已存在：{payload['name']}"
+        ) from None
+    return template.model_dump()
+
+
+@app.put("/api/message-templates/{template_id}")
+def update_message_template(
+    template_id: str,
+    body: MessageTemplateCreateRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """全量更新消息模板（docs/98 §2.3）：id/created_at 不变；未知 404；撞名 409。"""
+    payload = _message_template_payload(body)
+    try:
+        updated = services_for(principal).message_template_store.update(
+            template_id, **payload
+        )
+    except MessageTemplateNameConflict:
+        raise HTTPException(
+            status_code=409, detail=f"消息模板名称已存在：{payload['name']}"
+        ) from None
+    if updated is None:
+        raise HTTPException(status_code=404, detail=f"消息模板不存在：{template_id}")
+    return updated.model_dump()
+
+
+@app.delete("/api/message-templates/{template_id}")
+def delete_message_template(
+    template_id: str, principal: Principal = Depends(require("operate"))
+) -> dict[str, bool]:
+    """删除消息模板（docs/98 §2.3）：引用侧不阻断——消费点下次发送回退默认正文。"""
+    if not services_for(principal).message_template_store.delete(template_id):
+        raise HTTPException(status_code=404, detail=f"消息模板不存在：{template_id}")
+    return {"deleted": True}
 
 
 @app.get("/api/alert-rule-templates")
