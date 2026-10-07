@@ -389,7 +389,7 @@ describe('嵌套路径通配装饰（M4 批 2 ⑨：parallel branches / subgraph
 
 describe('打包 A4（docs/100 U1205）：approver 表单插值/形态提示', () => {
   it('approver label 提示 {{变量}} 插值、user:/邮箱形态与留空语义', () => {
-    const label = humanApprovalUiSchema.labels.approver
+    const label = humanApprovalUiSchema.labels!.approver
     expect(label).toContain('{{变量}}')
     expect(label).toContain('user:<id>')
     expect(label).toMatch(/邮箱/)
