@@ -1161,7 +1161,16 @@ def _register_approval(
     """登记 pending 审批请求并返回随 node_start 下发的 approval 载荷（04 §5.6）。"""
     config = node.config
     summary = interpolate(str(config.get("summary", "")), context)
+    # 打包 A4（docs/100 §2）：approver 支持 {{变量}} 插值；求值后仍残留占位（运行期
+    # 才可判定的引用未命中，如 node 输出键）→ 按空串处理并告警——审批可决不因模板
+    # 笔误永久挂起，语义与「无指定审批人=任何人」一致（编译期已拦 {{global.X}} 未定义）。
     approver = interpolate(str(config.get("approver", "")), context) if config.get("approver") else ""
+    if "{{" in approver:
+        logger.warning(
+            "approver 插值后仍含未解析占位，按空审批人处理（任何人可决）node=%s approver=%r",
+            node.id, approver,
+        )
+        approver = ""
     timeout_seconds = int(config["timeoutSeconds"])
     # M8：可选内置卡片；编译期已校验目录命中，运行时防御未命中即按无卡（旧 summary 路径）。
     card_template_id = config.get("cardTemplateId") or None

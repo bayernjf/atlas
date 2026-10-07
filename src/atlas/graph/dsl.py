@@ -371,7 +371,9 @@ def validate_graph_report(
 
     for node in graph.nodes:
         if node.type == "human_approval":
-            issues.extend(_validate_human_approval_config(node, node_ids, outgoing))
+            issues.extend(
+                _validate_human_approval_config(node, node_ids, outgoing, var_names)
+            )
 
     for node in graph.nodes:
         if node.type == "subgraph":
@@ -1233,9 +1235,10 @@ def _validate_subgraph_config(
 
 
 def _validate_human_approval_config(
-    node: NodeDSL, node_ids: set[str], outgoing: dict[str, set[str]]
+    node: NodeDSL, node_ids: set[str], outgoing: dict[str, set[str]],
+    var_names: set[str],
 ) -> list[Issue]:
-    """human_approval config 与双出边拓扑校验（契约 04 §5.6）。"""
+    """human_approval config 与双出边拓扑校验（契约 04 §5.6；打包 A4 增 approver 插值校验）。"""
     issues: list[Issue] = []
     prefix = f"人机协作节点 {node.id}"
     config = node.config
@@ -1256,6 +1259,20 @@ def _validate_human_approval_config(
     if approver != "" and not isinstance(approver, str):
         add(f"{prefix} 审批人（approver）必须是文本", "/approver",
             code="APR_APPROVER_NOT_STRING")
+
+    # 打包 A4（docs/100 §2）：approver 支持 {{变量}} 插值（复用 interpolation 同规则）。
+    # 编译期只校验**可静态判定**的引用：形如 {{global.X}} 且 X 不在图变量 → 422
+    # APPROVER_REF_UNRESOLVED（模板笔误提前暴露）；node 输出等运行期路径不判（求值残留→空串）。
+    if isinstance(approver, str) and approver:
+        for ref in _REF_RE.findall(approver):
+            path = ref.strip()
+            if path.startswith("global.") and path[len("global."):] not in var_names:
+                add(
+                    f"{prefix} 审批人（approver）引用的变量未定义：{path}",
+                    "/approver",
+                    code="APPROVER_REF_UNRESOLVED",
+                    params={"ref": path},
+                )
 
     # docs/35 §2.1：可选通知邮箱 notifyEmails（string[]，≤5；支持 {{路径}} 插值）。
     notify_emails = config.get("notifyEmails", [])
