@@ -280,10 +280,10 @@
     "WAIT_TIMEOUT_SECONDS_RANGE": "节点 {{owner}}：超时时间需在 {{min}}-{{max}} 秒之间（当前 {{value}}）",
     "WAIT_TYPE_INVALID": "节点 {{owner}}：等待类型（waitType）必须是 duration 或 event",
     "_branch_approved": "通过",
-    "_branch_rejected": "拒绝"
-  },
-  "VAR_SOURCE_INVALID": "Variable {{name}} has an invalid source: {{source}}",
-  "VAR_SOURCE_REF_EMPTY": "Variable {{name}} declares a restricted source but the reference name is empty",
-  "VAR_SOURCE_REF_INVALID": "Variable {{name}} has an invalid env reference name: {{ref}}",
-  "VAR_SOURCE_SCOPE_MISMATCH": "Variable {{name}} declares a restricted source but its scope is not global"
+    "_branch_rejected": "拒绝",
+    "VAR_SOURCE_INVALID": "Variable {{name}} has an invalid source: {{source}}",
+    "VAR_SOURCE_REF_EMPTY": "Variable {{name}} declares a restricted source but the reference name is empty",
+    "VAR_SOURCE_REF_INVALID": "Variable {{name}} has an invalid env reference name: {{ref}}",
+    "VAR_SOURCE_SCOPE_MISMATCH": "Variable {{name}} declares a restricted source but its scope is not global"
+  }
 }
