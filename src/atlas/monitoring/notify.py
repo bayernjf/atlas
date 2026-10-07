@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import Callable, Literal
 
 from pydantic import BaseModel
+from atlas.graph.interpolation import interpolate
 
 AlertChannelKind = Literal["dingtalk", "wecom", "feishu", "webhook", "email"]
 
@@ -141,8 +142,12 @@ class AlertNotifier:
         clock: Callable[[], str] | None = None,
         lifecycle_min_interval_seconds: float = 60.0,
         time_func: Callable[[], float] | None = None,
+        template_store: object | None = None,
     ) -> None:
         self._messages = message_service
+        # 打包 A2（docs/98 §2.4）：kind="alert" 模板渲染告警通知正文；
+        # 缺省 None＝回退 build_* 默认正文逐字不变（纯超集）。
+        self._template_store = template_store
         self._clock = clock or (
             lambda: datetime.now(timezone.utc).isoformat()
         )
@@ -151,6 +156,15 @@ class AlertNotifier:
         self._lifecycle_interval = max(0.0, float(lifecycle_min_interval_seconds))
         self._time_func = time_func or time.monotonic
         self._last_lifecycle: dict[tuple[str, str], float] = {}
+
+    def _pick_template(self) -> object | None:
+        if self._template_store is None:
+            return None
+        try:
+            items = self._template_store.list("alert")
+        except Exception:
+            return None
+        return items[0] if items else None
 
     def should_notify(self, cfg: AlertChannel, alert: object) -> bool:
         if not cfg.enabled or not cfg.to.strip():
@@ -162,12 +176,27 @@ class AlertNotifier:
     def notify(self, alert: object, cfg: AlertChannel) -> AlertChannelDelivery:
         if not self.should_notify(cfg, alert):
             return AlertChannelDelivery()
+        template = self._pick_template()
+        if template is not None:
+            context = {
+                "title": alert_rule_label(alert),
+                "severity": str(getattr(alert, "severity")),
+                "graph_id": str(getattr(alert, "graph_id")),
+                "run_id": str(getattr(alert, "last_run_id") or ""),
+                "message": str(getattr(alert, "message")),
+                "transition": "",
+            }
+            subject = interpolate(template.subject, context)
+            body = interpolate(template.body, context)
+        else:
+            subject = build_alert_subject(alert)
+            body = build_alert_body(alert)
         try:
             self._messages.send(
                 cfg.channel,
                 cfg.to,
-                build_alert_subject(alert),
-                build_alert_body(alert),
+                subject,
+                body,
                 secret=cfg.secret or None,
             )
         except Exception as exc:
@@ -192,12 +221,27 @@ class AlertNotifier:
         last = self._last_lifecycle.get(key)
         if last is not None and (now_mono - last) < self._lifecycle_interval:
             return AlertChannelDelivery()
+        template = self._pick_template()
+        if template is not None:
+            context = {
+                "title": LIFECYCLE_TITLES.get(transition, transition),
+                "severity": str(getattr(alert, "severity")),
+                "graph_id": str(getattr(alert, "graph_id")),
+                "run_id": str(getattr(alert, "last_run_id") or ""),
+                "message": str(getattr(alert, "message")),
+                "transition": transition,
+            }
+            subject = interpolate(template.subject, context)
+            body = interpolate(template.body, context)
+        else:
+            subject = build_lifecycle_subject(alert, transition)
+            body = build_lifecycle_body(alert, transition)
         try:
             self._messages.send(
                 cfg.channel,
                 cfg.to,
-                build_lifecycle_subject(alert, transition),
-                build_lifecycle_body(alert, transition),
+                subject,
+                body,
                 secret=cfg.secret or None,
             )
         except Exception as exc:
