@@ -3,6 +3,13 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### docs(template)：打包 A1 立项＝D25 模板库产品化收尾（2026-10-07；docs/97 形状权威；docs-only 原子，落码另立批）
+
+- **承接**：用户「那你推进」A 档修正清单（D32 灰度/D20 审批持久化/D30 主体/D24 渠道大半均已被历史打包取回，见 docs/14 状态列），A 档四打包建任务 #99–#102；本批先推 A1。
+- **取回 D25 剩余三件**：① 模板版本/CAS 防覆盖（`UserTemplate` 增 `version=1`/`updated_at`；PUT 可带 `if_match_version`→不匹配 409 `TEMPLATE_VERSION_CONFLICT`，缺省无防护照旧）；② 搜索＋使用统计（`GET /api/templates?q=` 内置＋用户两段 `casefold` 子串过滤；新 `POST /api/templates/{id}/usage` operate 显式计数）；③ 参数化向导（`params` JSON Schema 子集声明＋服务端形状校验；新 `POST /api/templates/{id}/instantiate`：body `{values}` 校验后返回**深拷贝图**、values 覆写 `graph.variables`，模板原图逐键不变）。
+- **迁移 043**：user_templates 加 version/updated_at/usage_count 三列＋存量回填（照 034/036 样板）；两档 store（内存＋PG）方法面逐字同步；前端列表搜索框/使用次数列/从模板新建参数表单＋i18n zh/en。
+- **非目标（保持缓做）**：模板市场/评分/一键升级引用侧（D21 同批）、版本历史/回滚、内置模板 params/计数、搜索排序分页。零新依赖／无 ADR。验收 U1180–U1188。
+
 ### feat(recovery)：认领后崩溃挂起帧的人工收敛（2026-10-06 打包 BL；docs/96 形状权威；docs/14 D36 人工收敛半边收口）
 
 - **一句话**：docs/62 选了 at-most-once ⇒ 进程在"认领之后、下游执行完之前"崩溃时，该 run 永久停在 `suspended`。docs/76 让这颗雷**看得见**（`claimed_suspended` 档位）却**无从处理**（端点只读）。本批给一条**安全的人工出口**：确认下游状态后把该 run 了结为 `interrupted` 并删帧——**不重放**（下游 `create_refund` 等非幂等，安全重放＝docs/14 D56）。
