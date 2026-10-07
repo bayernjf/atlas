@@ -284,6 +284,7 @@
     "VAR_SOURCE_INVALID": "Variable {{name}} has an invalid source: {{source}}",
     "VAR_SOURCE_REF_EMPTY": "Variable {{name}} declares a restricted source but the reference name is empty",
     "VAR_SOURCE_REF_INVALID": "Variable {{name}} has an invalid env reference name: {{ref}}",
-    "VAR_SOURCE_SCOPE_MISMATCH": "Variable {{name}} declares a restricted source but its scope is not global"
+    "VAR_SOURCE_SCOPE_MISMATCH": "Variable {{name}} declares a restricted source but its scope is not global",
+    "APPROVER_REF_UNRESOLVED": "Approver references an undefined variable: {{ref}}"
   }
 }

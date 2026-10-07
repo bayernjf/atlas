@@ -13,7 +13,7 @@ import type { MetaSchema } from '../../schemas/metaSchema'
 import { parallelSchema } from '../../schemas/nodes/parallel.schema'
 import { conditionSchema } from '../../schemas/nodes/condition.schema'
 import { subgraphSchema } from '../../schemas/nodes/subgraph.schema'
-import { conditionUiSchema, parallelUiSchema, subgraphUiSchema } from '../nodeUiSchemas'
+import { conditionUiSchema, humanApprovalUiSchema, parallelUiSchema, subgraphUiSchema } from '../nodeUiSchemas'
 
 /** 取 group 根的直接子项标签序列（视觉组以 `[a,b]` 表示）。 */
 function childOutline(node: FormNode): Array<string | string[]> {
@@ -383,5 +383,18 @@ describe('嵌套路径通配装饰（M4 批 2 ⑨：parallel branches / subgraph
       expect(decoratedValue.rows).toBe(1)
       expect(decoratedValue.placeholder).toBe('{{trigger-1.context.payload.order_id}}')
     }
+  })
+})
+
+
+describe('打包 A4（docs/100 U1205）：approver 表单插值/形态提示', () => {
+  it('approver label 提示 {{变量}} 插值、user:/邮箱形态与留空语义', () => {
+    const label = humanApprovalUiSchema.labels.approver
+    expect(label).toContain('{{变量}}')
+    expect(label).toContain('user:<id>')
+    expect(label).toMatch(/邮箱/)
+    expect(label).toMatch(/留空=任何人可决/)
+    // 不再声称"仅展示、不鉴权"（打包 A4 起非空即鉴权）
+    expect(label).not.toMatch(/不鉴权/)
   })
 })
