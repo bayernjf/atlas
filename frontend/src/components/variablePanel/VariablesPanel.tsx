@@ -1,13 +1,20 @@
 import { useState } from 'react'
-import { Button, Card, Input, Select, Space, Table, Typography } from 'antd'
+import { Button, Card, Input, Select, Space, Table, Tag, Typography } from 'antd'
 import { useEditorStore } from '../../store/editorStore'
 import {
   isValidVariableName,
   VARIABLE_TYPES,
   type GraphVariable,
+  type VariableSource,
   type VariableType,
 } from '../../lib/variables'
 import { useTranslation } from '../../locales'
+
+const SOURCE_OPTIONS = [
+  { value: '', label: '' },
+  { value: 'env', label: 'Env' },
+  { value: 'secret', label: 'Secret' },
+]
 
 export function VariablesPanel() {
   const { t } = useTranslation('editor')
@@ -18,6 +25,7 @@ export function VariablesPanel() {
   const [name, setName] = useState('')
   const [type, setType] = useState<VariableType>('string')
   const [value, setValue] = useState('')
+  const [source, setSource] = useState<VariableSource | ''>('')
   const [error, setError] = useState('')
 
   const submit = () => {
@@ -30,18 +38,46 @@ export function VariablesPanel() {
       setError(t('variables.duplicateName'))
       return
     }
-    const variable: GraphVariable = { name: trimmed, type, value, scope: 'global' }
+    // 打包 A3（docs/99 §2.1）：受限来源时 value 只存引用名（Secret 型输入框不显示明文）。
+    const variable: GraphVariable = {
+      name: trimmed,
+      type,
+      value,
+      scope: 'global',
+      ...(source ? { source } : {}),
+    }
     addVariable(variable)
     setName('')
     setValue('')
+    setSource('')
     setError('')
+  }
+
+  const sourceLabel = (row: GraphVariable) => {
+    if (!row.source) return t('variables.sourcePlain')
+    return row.source === 'env' ? t('variables.sourceEnv') : t('variables.sourceSecret')
   }
 
   const columns = [
     { title: t('variables.column.ref'), dataIndex: 'ref', render: (_: string, row: GraphVariable) => `{{global.${row.name}}}` },
     { title: t('variables.column.name'), dataIndex: 'name' },
+    {
+      title: t('variables.column.source'),
+      dataIndex: 'source',
+      render: (_: unknown, row: GraphVariable) => (
+        <Tag color={row.source === 'secret' ? 'red' : row.source === 'env' ? 'blue' : 'default'}>
+          {sourceLabel(row)}
+        </Tag>
+      ),
+    },
     { title: t('variables.column.type'), dataIndex: 'type' },
-    { title: t('variables.column.value'), dataIndex: 'value', ellipsis: true },
+    {
+      title: t('variables.column.value'),
+      dataIndex: 'value',
+      ellipsis: true,
+      render: (raw: string, row: GraphVariable) =>
+        row.source === 'secret' ? '••••' : raw,
+    },
     {
       title: t('variables.column.actions'),
       render: (_: unknown, row: GraphVariable) => (
@@ -70,8 +106,20 @@ export function VariablesPanel() {
             style={{ width: 110 }}
             options={VARIABLE_TYPES.map((value) => ({ value, label: value }))}
           />
+          <Select
+            value={source}
+            onChange={setSource}
+            style={{ width: 100 }}
+            placeholder={t('variables.sourcePlaceholder')}
+            options={SOURCE_OPTIONS.map((option) => ({
+              value: option.value,
+              label: option.value === 'env' ? t('variables.sourceEnv') : option.value === 'secret' ? t('variables.sourceSecret') : t('variables.sourcePlain'),
+            }))}
+          />
           <Input
-            placeholder={t('variables.valuePlaceholder')}
+            placeholder={
+              source === 'secret' ? t('variables.secretValueHint') : t('variables.valuePlaceholder')
+            }
             value={value}
             onChange={(event) => setValue(event.target.value)}
           />

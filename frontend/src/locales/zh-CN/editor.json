@@ -35,8 +35,15 @@
       "name": "名称",
       "type": "类型",
       "value": "值",
-      "actions": "操作"
-    }
+      "actions": "操作",
+      "source": "Source"
+    },
+    "sourcePlaceholder": "Source (default: plain)",
+    "sourceLabel": "Source",
+    "sourcePlain": "普通",
+    "sourceEnv": "环境变量",
+    "sourceSecret": "Secret",
+    "secretValueHint": "Reference name (secret://name or bare), no plaintext"
   },
   "canvas": {
     "branchDefault": "默认",
@@ -433,15 +440,42 @@
     "wait": "等待设置（挂起后沿唯一出边继续，04 §5.5）"
   },
   "nodeCatalog": {
-    "trigger": { "label": "触发器", "description": "流程入口：定时 / Webhook / 手动" },
-    "ai_decision": { "label": "AI 决策", "description": "LLM 基于上下文判断下一步" },
-    "tool_call": { "label": "工具调用", "description": "经 Harness 执行外部平台操作" },
-    "condition": { "label": "条件分支", "description": "按规则表达式选择执行路径，默认分支必填" },
-    "loop": { "label": "循环", "description": "条件为真时重复执行循环体，达最大次数自动退出" },
-    "parallel": { "label": "并行", "description": "同时执行多个分支，汇聚后继续（全部成功/全部完成）" },
-    "wait": { "label": "等待", "description": "定时等待（1-3600 秒，可加抖动）或等待一个/多个外部事件信号（最长 24 小时）" },
-    "subgraph": { "label": "子图", "description": "引用一张已保存的图作为子流程执行，可映射入参并引用其产出" },
-    "human_approval": { "label": "人机协作", "description": "暂停并请求人工审批，超时自动通过/拒绝（10-3600 秒）" }
+    "trigger": {
+      "label": "触发器",
+      "description": "流程入口：定时 / Webhook / 手动"
+    },
+    "ai_decision": {
+      "label": "AI 决策",
+      "description": "LLM 基于上下文判断下一步"
+    },
+    "tool_call": {
+      "label": "工具调用",
+      "description": "经 Harness 执行外部平台操作"
+    },
+    "condition": {
+      "label": "条件分支",
+      "description": "按规则表达式选择执行路径，默认分支必填"
+    },
+    "loop": {
+      "label": "循环",
+      "description": "条件为真时重复执行循环体，达最大次数自动退出"
+    },
+    "parallel": {
+      "label": "并行",
+      "description": "同时执行多个分支，汇聚后继续（全部成功/全部完成）"
+    },
+    "wait": {
+      "label": "等待",
+      "description": "定时等待（1-3600 秒，可加抖动）或等待一个/多个外部事件信号（最长 24 小时）"
+    },
+    "subgraph": {
+      "label": "子图",
+      "description": "引用一张已保存的图作为子流程执行，可映射入参并引用其产出"
+    },
+    "human_approval": {
+      "label": "人机协作",
+      "description": "暂停并请求人工审批，超时自动通过/拒绝（10-3600 秒）"
+    }
   },
   "tool": {
     "currentValue": "当前值（未在已注册列表）",

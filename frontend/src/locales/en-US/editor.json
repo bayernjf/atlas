@@ -35,8 +35,15 @@
       "name": "Name",
       "type": "Type",
       "value": "Value",
-      "actions": "Actions"
-    }
+      "actions": "Actions",
+      "source": "Source"
+    },
+    "sourcePlaceholder": "Source (default: plain)",
+    "sourceLabel": "Source",
+    "sourcePlain": "Plain",
+    "sourceEnv": "Env",
+    "sourceSecret": "Secret",
+    "secretValueHint": "Reference name (secret://name or bare), no plaintext"
   },
   "canvas": {
     "branchDefault": "Default",
@@ -433,15 +440,42 @@
     "wait": "Wait settings (suspends, then continues along the single outgoing edge, 04 §5.5)"
   },
   "nodeCatalog": {
-    "trigger": { "label": "Trigger", "description": "Flow entry: scheduled, webhook, or manual" },
-    "ai_decision": { "label": "AI Decision", "description": "LLM decides the next step based on context" },
-    "tool_call": { "label": "Tool Call", "description": "Execute external platform operations via the harness" },
-    "condition": { "label": "Condition", "description": "Choose a path by rule expression; a default branch is required" },
-    "loop": { "label": "Loop", "description": "Repeat the loop body while the condition holds; exits at max iterations" },
-    "parallel": { "label": "Parallel", "description": "Run branches concurrently, then continue (all succeed / all completed)" },
-    "wait": { "label": "Wait", "description": "Wait for a duration (1-3600s, jitter optional) or one or more external event signals (up to 24h)" },
-    "subgraph": { "label": "Subgraph", "description": "Reference a saved graph as a sub-flow; map inputs and use its outputs" },
-    "human_approval": { "label": "Human Approval", "description": "Pause for manual approval; auto-approve/reject on timeout (10-3600s)" }
+    "trigger": {
+      "label": "Trigger",
+      "description": "Flow entry: scheduled, webhook, or manual"
+    },
+    "ai_decision": {
+      "label": "AI Decision",
+      "description": "LLM decides the next step based on context"
+    },
+    "tool_call": {
+      "label": "Tool Call",
+      "description": "Execute external platform operations via the harness"
+    },
+    "condition": {
+      "label": "Condition",
+      "description": "Choose a path by rule expression; a default branch is required"
+    },
+    "loop": {
+      "label": "Loop",
+      "description": "Repeat the loop body while the condition holds; exits at max iterations"
+    },
+    "parallel": {
+      "label": "Parallel",
+      "description": "Run branches concurrently, then continue (all succeed / all completed)"
+    },
+    "wait": {
+      "label": "Wait",
+      "description": "Wait for a duration (1-3600s, jitter optional) or one or more external event signals (up to 24h)"
+    },
+    "subgraph": {
+      "label": "Subgraph",
+      "description": "Reference a saved graph as a sub-flow; map inputs and use its outputs"
+    },
+    "human_approval": {
+      "label": "Human Approval",
+      "description": "Pause for manual approval; auto-approve/reject on timeout (10-3600s)"
+    }
   },
   "tool": {
     "currentValue": "Current value (not in the registered list)",

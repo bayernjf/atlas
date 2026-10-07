@@ -88,5 +88,7 @@
   "INTERRUPTION_FRAME_NOT_CLAIMED": "该帧尚未被认领，重启恢复仍可能驱动它，不能人工了结",
   "INTERRUPTION_RUN_NOT_SUSPENDED": "该帧已认领但其运行不处于挂起态（当前：{{status}}）",
   "INTERRUPTIONS_NOT_PERSISTED": "内存档挂起帧不跨进程持久化，无人工收敛能力",
-  "INTERRUPTION_ACTION_UNSUPPORTED": "不支持的收敛动作：{{action}}（当前仅支持 abandon）"
+  "INTERRUPTION_ACTION_UNSUPPORTED": "不支持的收敛动作：{{action}}（当前仅支持 abandon）",
+  "ENV_VARIABLE_UNAVAILABLE": "Environment variable {{name}} is not configured",
+  "SECRET_UNAVAILABLE": "Secret {{name}} is unavailable (missing or cannot be decrypted)"
 }
