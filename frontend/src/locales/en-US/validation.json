@@ -280,6 +280,11 @@
     "WAIT_TIMEOUT_SECONDS_RANGE": "Node {{owner}}: the timeout must be {{min}}-{{max}} seconds (got {{value}})",
     "WAIT_TYPE_INVALID": "Node {{owner}}: the wait type must be \"duration\" or \"event\"",
     "_branch_approved": "approved",
-    "_branch_rejected": "rejected"
+    "_branch_rejected": "rejected",
+    "VAR_SOURCE_INVALID": "Variable {{name}} has an invalid source: {{source}}",
+    "VAR_SOURCE_REF_EMPTY": "Variable {{name}} declares a restricted source but the reference name is empty",
+    "VAR_SOURCE_REF_INVALID": "Variable {{name}} has an invalid env reference name: {{ref}}",
+    "VAR_SOURCE_SCOPE_MISMATCH": "Variable {{name}} declares a restricted source but its scope is not global",
+    "APPROVER_REF_UNRESOLVED": "Approver references an undefined variable: {{ref}}"
   }
 }

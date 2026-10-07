@@ -44,7 +44,7 @@ def _request(tenant: str, *, node_id: str = "human-1",
         node_id=node_id,
         graph_id="g1",
         summary="订单 C-1 退款审批",
-        approver="客服主管",
+        approver="",  # 打包 A4：指派校验后静态展示值不再可决；指派 200/403 由 test_approval_assignee 专责
         timeout_seconds=300,
         notify_recipients=notify_recipients,
     )

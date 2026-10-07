@@ -222,3 +222,23 @@ describe('运行期错误码 i18n（docs/60 G1）', () => {
     expect(zh[1]).toContain('除数')
   })
 })
+
+describe('打包 A4（docs/100 U1205）：APPROVAL_NOT_ASSIGNED 错误码映射', () => {
+  it('中文态映射为指定审批人文案', () => {
+    changeLanguage('zh-CN')
+    expect(resolveRuntimeError('APPROVAL_NOT_ASSIGNED', undefined, '兜底')).toBe(
+      '该审批仅限指定审批人处理',
+    )
+  })
+  it('英文态映射英文文案且不含占位', () => {
+    changeLanguage('en-US')
+    const text = resolveRuntimeError('APPROVAL_NOT_ASSIGNED', undefined, 'fallback')
+    expect(text).toBe('This approval is restricted to the assigned approver')
+    expect(text).not.toMatch(/\{\{|\}\}/)
+    expect(text).not.toMatch(/[一-鿿]/)
+  })
+  it('未知码回退 fallback（不泄漏后端原文）', () => {
+    changeLanguage('zh-CN')
+    expect(resolveRuntimeError('SOME_UNKNOWN_CODE', undefined, '兜底')).toBe('兜底')
+  })
+})

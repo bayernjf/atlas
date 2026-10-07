@@ -3,6 +3,52 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### feat(engine)：打包 A4 动态审批人与指派校验落码收口（2026-10-08；docs/100 §7；U1201–U1205 转正式；dev，未 push）
+
+- **动态审批人**：`human_approval.config.approver` 支持 `{{变量}}` 插值——编译期静态校验（`{{global.X}}` 未定义 → 422 `APPROVER_REF_UNRESOLVED`），运行期残留占位 → 空串＋告警（模板笔误不永久挂起，空＝任何人可决）；展开值随挂起帧持久化（零迁移）。
+- **审批指派校验**：决策端点 approver 非空时操作者须匹配——`user:<id>` 与 `principal.username` 精确匹配（iam v1 无独立 user_id）；邮箱形态因 iam 无 email 字段恒 403（待真实用户模型引入后自然生效）；空 approver 任何人可决（现状不变）；未知 token 404 不变；挂起帧恢复重建后校验同样生效。**行为收紧**：已配置静态 approver 的图从此只认指定人（契约预期）。
+- **前端**：approver 表单插值/形态提示＋runtime `APPROVAL_NOT_ASSIGNED`／validation dsl `APPROVER_REF_UNRESOLVED` i18n zh/en。
+- **门**：后端全量 2436 passed／166 skipped／0 failed；前端 vitest 820 passed／2 skipped；oxlint 0/0；build 过。
+
+### feat(engine)：打包 A3 受限变量来源与字段级可见落码收口（2026-10-07；docs/99 §7；U1196–U1200 转正式；dev，未 push）
+
+- **图变量受限来源**：`graph.variables[]` 纯超集加 `source: "env"|"secret"`（value＝引用名）；编译期四码 `VAR_SOURCE_INVALID`/`VAR_SOURCE_REF_EMPTY`/`VAR_SOURCE_REF_INVALID`/`VAR_SOURCE_SCOPE_MISMATCH`；运行期 fail-closed——env 未命中 `ENV_VARIABLE_UNAVAILABLE`、secret 复用 `SECRET_UNAVAILABLE`（SecretProvider，docs/32）。
+- **字段级可见**：敏感展开值在投影/输出/录制/观察/日志五通道一律 `<redacted:{source}:{引用名}>`；前端变量面板来源 Select＋Secret `••••` 占位＋i18n zh/en（`SECRET_UNAVAILABLE` 补文案并移出错误码豁免表）。
+- **门**：后端全量 2424 passed／166 skipped／0 failed；前端 vitest 816 passed／2 skipped；oxlint 0/0；build 过；守护门 16 passed。
+
+### feat(template)：打包 A2 消息模板系统落码收口（2026-10-07；docs/98 §6；U1189–U1195 转正式；dev，未 push）
+
+- **模板实体 CRUD**（`MessageTemplate`，第六类实体）：name 租户内唯一（LOWER 唯一索引）、kind∈{approval,alert}、subject/body `{{var}}` 占位、variables≤20 白名单；占位⊆声明否则 422 `MESSAGE_TEMPLATE_UNDECLARED_VAR`；重名 409 `MESSAGE_TEMPLATE_NAME_CONFLICT`；迁移 044＋进程内/PG 两档 store。
+- **消费接线**：`EmailApprovalNotifier`（审批通知）与 `notify.py`（告警通知）取对应 kind 模板渲染（复用 `interpolation.interpolate`），未配置回退默认正文逐字不变（纯超集）。
+- **前端**：Dashboard 导航新增「消息模板」页（列表/新建/编辑/删除确认＋kind 过滤＋zh/en i18n PARITY）。
+- **存量缺陷顺带修复**：`alert_rule_label` rule_id 兜底（残缺 alert 桩 fail-safe）；send-failure 测试桩补字段。
+- **门**：后端全量 2412 passed／166 skipped／0 failed；PG 集成 6 passed（临时容器）；前端 vitest 814 passed／2 skipped；oxlint 0/0；build 过；守护门 8 passed。
+- 落码偏差（前端入口按 Dashboard 导航、context 七键上限）见 docs/98 §6。
+
+### docs(template)：A 档余下三打包立项（A2/A3/A4，2026-10-07；docs/98/99/100 形状权威；docs-only 原子，落码另立批）
+
+- **打包 A2＝D24 消息模板系统最小切片（docs/98，U1189–U1195）**：`MessageTemplate` 实体 CRUD（name 租户内唯一/kind∈{approval,alert}/subject/body `{{var}}` 占位/variables 声明校验；占位⊆声明否则 422 `MESSAGE_TEMPLATE_UNDECLARED_VAR`；重名 409 `MESSAGE_TEMPLATE_NAME_CONFLICT`；迁移 044 `message_templates`）；消费接线＝`EmailApprovalNotifier`（审批）＋`notify.py`（告警）取对应 kind 模板渲染（复用 `interpolation.interpolate`），未配置回退默认正文逐字不变；前端设置页模板 Tab＋i18n。多语言/市场/共享/版本历史不取（D13/D3/D25）。
+- **打包 A3＝D30 受限来源最小切片（docs/99，U1196–U1200）**：`graph.variables[]` 纯超集加 `source:"env"|"secret"`（value 变引用名、secret 复用 docs/32 SecretProvider、session 不取）；编译期四码校验；运行期 fail-closed（`ENV_VARIABLE_UNAVAILABLE` 新码／复用 `SECRET_UNAVAILABLE`）；字段级可见＝敏感展开值五通道脱敏 `<redacted:{source}:{name}>`、比对用引用形态；前端变量面板来源徽标＋`••••` 占位。`x-secret-allowed` 节点参数级受限与 D20 节点级角色同批评估。
+- **打包 A4＝D20 动态审批人最小切片（docs/100，U1201–U1205）**：`human_approval.config.approver` 支持 `{{变量}}` 插值（运行期求值；空串→任何人；静态未定义占位编译 422 `APPROVER_REF_UNRESOLVED`；零迁移）；决策端点新增指派校验（approver 非空须按 `user:<id>`/邮箱匹配 principal，否则 **403 `APPROVAL_NOT_ASSIGNED`**；approver 空＝现状不变）；前端 approver 表单插值提示＋错误码 i18n。节点级角色体系/多实例/评论流/KMS 不取。
+- **同步面**：docs/08 立项块×3、docs/14 D24/D30/D20 行注记、docs/13 打包 A2/A3/A4 小节、docs/00 地图×3、docs/03（message_template 行＋错误码/来源注记）、handoff。零新依赖／无 ADR。
+
+### feat(template)：打包 A1 落码收口＝D25 模板库产品化收尾（2026-10-07；docs/97 形状权威＋§7 收口注记；docs/08 打包 A1 收口块；六个原子，dev 未 push）
+
+- **版本与 CAS 防覆盖**：`UserTemplate` 增 `version/updated_at/usage_count/params`；PUT 可带 `if_match_version`，不匹配 409 `TEMPLATE_VERSION_CONFLICT`（detail 带当前版本号）、匹配则 version+1；缺省无防护照旧。迁移 **043**（四列 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`＋存量回填＋COMMENT；params 列系落码期修正补入）。
+- **搜索＋使用统计**：`GET /api/templates?q=` 内置＋用户两段各自按 name/description/tags/category `casefold` 子串过滤（q 空白＝全量）；新 `POST /api/templates/{id}/usage`（operate）显式 touch 计数、返回 `{"usage_count": N}`，内置/不存在/跨租户 404。
+- **参数化向导**：`params` JSON Schema 子集声明（type∈{string,number,boolean,select}＋label/required/default/hint/options，服务端白名单校验 422 且模板不变）；新 `POST /api/templates/{id}/instantiate`（operate）：body `{values}` required/类型/options 校验后返回**深拷贝图**，values 覆写 `graph.variables`（命中覆写 value、未命中 append `{name,type,value,scope:"global"}`），模板原图逐键不变。
+- **前端**：apiClient 新类型与四函数（listTemplates q 透传／touchTemplateUsage／instantiateTemplate／create/update 透传 params）；纯逻辑 `templateParams.ts`（字段映射/初始值/校验）；Editor 从模板新建分流——params 非空先弹参数表单（type→控件、default 预填、required/options 校验），提交→instantiate→loadGraph→touch→刷新列表计数；i18n zh/en 5 键。
+- **存量 bug 修复（PG 路径首次真跑暴露）**：`PgUserTemplateStore.add` 原 `SELECT COALESCE(MAX(seq),0) ... FOR UPDATE` 是 Postgres 不支持的聚合＋行锁组合（`NotSupportedError`，打包 X 遗留）；改为 `SELECT seq ... ORDER BY seq DESC LIMIT 1 FOR UPDATE`。新增 PG 集成测试 6 例（临时 pgvector 容器 5433）真库验证跨重启累加。
+- **验收**：U1180–U1186 常跑 7 例＋PG 集成 6 例＋前端 U1187–U1188 vitest（45 passed，前端全量 804/2）。门：后端全量 **2401 passed／160 skipped／0 failed**（190.68s）、oxlint 0/0、build 过、守护门 8 passed。
+- **产品价值**：防多人互相覆盖（409 而非静默覆盖）；模板搜索＋热度可见；填空式实例化、原图不变。**仍缓做**：模板市场/共享/商业化（D3）、评分、一键升级引用侧（D21）、版本历史/回滚/PATCH、内置模板 params/计数、搜索排序分页、多语言描述（D13）。
+
+### docs(template)：打包 A1 立项＝D25 模板库产品化收尾（2026-10-07；docs/97 形状权威；docs-only 原子，落码另立批）
+
+- **承接**：用户「那你推进」A 档修正清单（D32 灰度/D20 审批持久化/D30 主体/D24 渠道大半均已被历史打包取回，见 docs/14 状态列），A 档四打包建任务 #99–#102；本批先推 A1。
+- **取回 D25 剩余三件**：① 模板版本/CAS 防覆盖（`UserTemplate` 增 `version=1`/`updated_at`；PUT 可带 `if_match_version`→不匹配 409 `TEMPLATE_VERSION_CONFLICT`，缺省无防护照旧）；② 搜索＋使用统计（`GET /api/templates?q=` 内置＋用户两段 `casefold` 子串过滤；新 `POST /api/templates/{id}/usage` operate 显式计数）；③ 参数化向导（`params` JSON Schema 子集声明＋服务端形状校验；新 `POST /api/templates/{id}/instantiate`：body `{values}` 校验后返回**深拷贝图**、values 覆写 `graph.variables`，模板原图逐键不变）。
+- **迁移 043**：user_templates 加 version/updated_at/usage_count 三列＋存量回填（照 034/036 样板）；两档 store（内存＋PG）方法面逐字同步；前端列表搜索框/使用次数列/从模板新建参数表单＋i18n zh/en。
+- **非目标（保持缓做）**：模板市场/评分/一键升级引用侧（D21 同批）、版本历史/回滚、内置模板 params/计数、搜索排序分页。零新依赖／无 ADR。验收 U1180–U1188。
+
 ### feat(recovery)：认领后崩溃挂起帧的人工收敛（2026-10-06 打包 BL；docs/96 形状权威；docs/14 D36 人工收敛半边收口）
 
 - **一句话**：docs/62 选了 at-most-once ⇒ 进程在"认领之后、下游执行完之前"崩溃时，该 run 永久停在 `suspended`。docs/76 让这颗雷**看得见**（`claimed_suspended` 档位）却**无从处理**（端点只读）。本批给一条**安全的人工出口**：确认下游状态后把该 run 了结为 `interrupted` 并删帧——**不重放**（下游 `create_refund` 等非幂等，安全重放＝docs/14 D56）。

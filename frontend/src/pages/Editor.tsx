@@ -6,6 +6,7 @@ import {
   Checkbox,
   Collapse,
   Layout,
+  InputNumber,
   Modal,
   Popconfirm,
   Select,
@@ -43,6 +44,12 @@ import {
   type ParamField,
 } from '../lib/paramWizard'
 import {
+  buildInitialValues,
+  buildParamFields,
+  validateParamValues,
+  type ParamField as TemplateParamField,
+} from '../lib/templateParams'
+import {
   compileGraph,
   CompileValidationError,
   decideApproval,
@@ -56,11 +63,13 @@ import {
   getGraph,
   getRecording,
   getTemplate,
+  instantiateTemplate,
   listRecordings,
   listTemplates,
   listVersions,
   nlGenerate,
   replayRecording,
+  touchTemplateUsage,
   updateRecording,
   saveGraph,
   saveGraphDraft,
@@ -82,6 +91,7 @@ import {
   type RunEvent,
   type RunInputs,
   type RunResult,
+  type TemplateDetail,
   type TemplateSummary,
 } from '../lib/apiClient'
 
@@ -195,6 +205,13 @@ export function Editor({
   const [templateImportBusy, setTemplateImportBusy] = useState(false)
   const [templateImportError, setTemplateImportError] = useState<string | null>(null)
   const [exportingTemplateId, setExportingTemplateId] = useState<string | null>(null)
+  const [templateParamOpen, setTemplateParamOpen] = useState(false)
+  const [templateParamFields, setTemplateParamFields] = useState<TemplateParamField[]>([])
+  const [templateParamValues, setTemplateParamValues] = useState<
+    Record<string, string | number | boolean>
+  >({})
+  const [templateParamTemplate, setTemplateParamTemplate] = useState<TemplateDetail | null>(null)
+  const [templateParamBusy, setTemplateParamBusy] = useState(false)
   const [runError, setRunError] = useState<string | null>(null)
   const [nlError, setNlError] = useState<string | null>(null)
   const [compileResult, setCompileResult] = useState<CompileResult | null>(null)
@@ -859,16 +876,74 @@ export function Editor({
     setTemplateError(null)
     try {
       const detail = await getTemplate(templateId)
-      loadGraph(detail.graph)
-      setDraftGraphId(null)
-      setPublishedRef(null)
-      setRunTarget('draft')
-      appendLog(t('template.loaded', { name: detail.name, id: detail.id }))
-      setTemplateOpen(false)
+      const paramEntries = Object.entries(detail.params ?? {})
+      if (paramEntries.length > 0) {
+        // 参数化向导（docs/97 §3.4）：先弹参数表单，instantiate 后整画布替换
+        const fields = buildParamFields(detail.params ?? {})
+        setTemplateParamFields(fields)
+        setTemplateParamValues(buildInitialValues(fields))
+        setTemplateParamTemplate(detail)
+        setTemplateParamOpen(true)
+      } else {
+        await finishApplyTemplate(detail)
+      }
     } catch (error) {
       setTemplateError(error instanceof Error ? error.message : String(error))
     } finally {
       setApplyingTemplateId(null)
+    }
+  }
+
+  async function finishApplyTemplate(detail: TemplateDetail) {
+    loadGraph(detail.graph)
+    setDraftGraphId(null)
+    setPublishedRef(null)
+    setRunTarget('draft')
+    appendLog(t('template.loaded', { name: detail.name, id: detail.id }))
+    setTemplateOpen(false)
+    if (detail.source === 'user') {
+      try {
+        await touchTemplateUsage(detail.id)
+        setTemplates(await listTemplates())
+      } catch {
+        // 计数失败不阻断加载
+      }
+    }
+  }
+
+  async function submitTemplateParams() {
+    if (!templateParamTemplate) return
+    const errors = validateParamValues(templateParamFields, templateParamValues)
+    if (errors.length > 0) {
+      setTemplateError(errors.join('；'))
+      return
+    }
+    setTemplateParamBusy(true)
+    setTemplateError(null)
+    try {
+      const result = await instantiateTemplate(templateParamTemplate.id, templateParamValues)
+      loadGraph(result.graph)
+      setDraftGraphId(null)
+      setPublishedRef(null)
+      setRunTarget('draft')
+      appendLog(
+        t('template.paramsApplied', {
+          name: templateParamTemplate.name,
+          version: result.template.version,
+        }),
+      )
+      setTemplateParamOpen(false)
+      setTemplateOpen(false)
+      try {
+        await touchTemplateUsage(templateParamTemplate.id)
+        setTemplates(await listTemplates())
+      } catch {
+        // 计数失败不阻断
+      }
+    } catch (error) {
+      setTemplateError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setTemplateParamBusy(false)
     }
   }
 
@@ -1377,6 +1452,79 @@ export function Editor({
           ))}
         </Space>
         {templateError && <Alert type="error" showIcon title={templateError} style={{ marginTop: 12 }} />}
+      </Modal>
+      <Modal
+        title={t('template.paramsTitle', { name: templateParamTemplate?.name ?? '' })}
+        open={templateParamOpen}
+        onCancel={() => setTemplateParamOpen(false)}
+        onOk={submitTemplateParams}
+        confirmLoading={templateParamBusy}
+        okText={t('template.paramsApply')}
+        cancelText={t('template.paramsCancel')}
+        width={520}
+      >
+        <Alert
+          type="info"
+          showIcon
+          title={t('template.paramsHint', { count: templateParamFields.length })}
+          style={{ marginBottom: 12 }}
+        />
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          {templateParamFields.map((field) => (
+            <div key={field.name}>
+              <div style={{ marginBottom: 4 }}>
+                <Typography.Text strong>
+                  {field.label}
+                  {field.required && (
+                    <Typography.Text type="danger" style={{ marginLeft: 4 }}>
+                      *
+                    </Typography.Text>
+                  )}
+                </Typography.Text>
+              </div>
+              {field.type === 'boolean' ? (
+                <Switch
+                  checked={Boolean(templateParamValues[field.name])}
+                  onChange={(checked) =>
+                    setTemplateParamValues((prev) => ({ ...prev, [field.name]: checked }))
+                  }
+                />
+              ) : field.type === 'select' ? (
+                <Select
+                  value={templateParamValues[field.name] as string}
+                  options={(field.options ?? []).map((o) => ({ value: o, label: o }))}
+                  onChange={(value) =>
+                    setTemplateParamValues((prev) => ({ ...prev, [field.name]: value }))
+                  }
+                  style={{ width: '100%' }}
+                />
+              ) : field.type === 'number' ? (
+                <InputNumber
+                  value={templateParamValues[field.name] as number}
+                  onChange={(value) =>
+                    setTemplateParamValues((prev) => ({ ...prev, [field.name]: value ?? 0 }))
+                  }
+                  style={{ width: '100%' }}
+                />
+              ) : (
+                <Input
+                  value={templateParamValues[field.name] as string}
+                  onChange={(event) =>
+                    setTemplateParamValues((prev) => ({
+                      ...prev,
+                      [field.name]: event.target.value,
+                    }))
+                  }
+                />
+              )}
+              {field.hint && (
+                <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
+                  {field.hint}
+                </Typography.Text>
+              )}
+            </div>
+          ))}
+        </Space>
       </Modal>
       <Modal
         title={t('template.importTitle')}

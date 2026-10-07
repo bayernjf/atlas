@@ -10,11 +10,18 @@ export type VariableType = (typeof VARIABLE_TYPES)[number]
 
 export type VariableScope = 'global' | 'session' | 'environment' | 'secret'
 
+/** 打包 A3（docs/99）：受限来源——存在时 value 为引用名（env＝环境变量名、secret＝secret 名），
+ * 展开值不落图/投影（前端只编辑引用名、不显示明文）。 */
+export type VariableSource = 'env' | 'secret'
+
+export const VARIABLE_SOURCES = ['env', 'secret'] as const
+
 export type GraphVariable = {
   name: string
   type: VariableType
   value: string
   scope: Extract<VariableScope, 'global'>
+  source?: VariableSource
 }
 
 const TEMPLATE_RE = /\{\{\s*([^{}]+?)\s*\}\}/g

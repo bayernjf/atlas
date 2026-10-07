@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  VARIABLE_SOURCES,
   extractRefs,
   interpolate,
   isValidVariableName,
@@ -88,5 +89,28 @@ describe('listVariablePaths', () => {
       'subgraph-1.outputs',
       'human-1.decision',
     ])
+  })
+})
+
+describe('打包 A3 (docs/99): variable sources (U1200)', () => {
+  it('GraphVariable type carries optional source field with env/secret literals', () => {
+    const envVar: GraphVariable = { name: 'env_key', type: 'string', value: 'MY_ENV', scope: 'global', source: 'env' }
+    const secretVar: GraphVariable = { name: 'api_key', type: 'string', value: 'secret://api_key', scope: 'global', source: 'secret' }
+    const plainVar: GraphVariable = { name: 'title', type: 'string', value: 'Atlas', scope: 'global' }
+    // 受限来源：value 为引用名（前端只传引用名、不传明文）
+    expect(envVar.source).toBe('env')
+    expect(envVar.value).toBe('MY_ENV')
+    expect(secretVar.source).toBe('secret')
+    expect(secretVar.value).toBe('secret://api_key')
+    // 缺省＝无 source（普通字面量，旧行为不变）
+    expect(plainVar.source).toBeUndefined()
+    expect(plainVar.value).toBe('Atlas')
+    // 类型收窄：source 可参与分支
+    const labels: Record<string, string> = { env: 'Env', secret: 'Secret' }
+    expect(labels[secretVar.source!]).toBe('Secret')
+  })
+
+  it('VARIABLE_SOURCES enumerates the two restricted sources', () => {
+    expect(VARIABLE_SOURCES).toEqual(['env', 'secret'])
   })
 })

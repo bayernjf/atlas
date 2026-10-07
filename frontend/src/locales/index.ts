@@ -30,6 +30,7 @@ import enSchedules from './en-US/schedules.json'
 import enValidation from './en-US/validation.json'
 import enWaits from './en-US/waits.json'
 import enModels from './en-US/models.json'
+import enTemplates from './en-US/templates.json'
 import zhCommon from './zh-CN/common.json'
 import zhApprovals from './zh-CN/approvals.json'
 import zhAudit from './zh-CN/audit.json'
@@ -47,9 +48,10 @@ import zhSchedules from './zh-CN/schedules.json'
 import zhValidation from './zh-CN/validation.json'
 import zhWaits from './zh-CN/waits.json'
 import zhModels from './zh-CN/models.json'
+import zhTemplates from './zh-CN/templates.json'
 
 export type Locale = 'zh-CN' | 'en-US'
-export type Namespace = 'common' | 'approvals' | 'audit' | 'editor' | 'dashboard' | 'demo' | 'monitoring' | 'memory' | 'connections' | 'channels' | 'openapi' | 'runtime' | 'schedules' | 'validation' | 'waits' | 'reflection' | 'models'
+export type Namespace = 'common' | 'approvals' | 'audit' | 'editor' | 'dashboard' | 'demo' | 'monitoring' | 'memory' | 'connections' | 'channels' | 'openapi' | 'runtime' | 'schedules' | 'validation' | 'waits' | 'reflection' | 'models' | 'templates'
 
 type Dict = Record<string, unknown>
 export type TranslateOptions = {
@@ -80,6 +82,7 @@ const resources: Record<Locale, Record<Namespace, Dict>> = {
     validation: zhValidation as Dict,
     waits: zhWaits as Dict,
     models: zhModels as Dict,
+    templates: zhTemplates as Dict,
   },
   'en-US': {
     common: enCommon as Dict,
@@ -99,6 +102,7 @@ const resources: Record<Locale, Record<Namespace, Dict>> = {
     validation: enValidation as Dict,
     waits: enWaits as Dict,
     models: enModels as Dict,
+    templates: enTemplates as Dict,
   },
 }
 

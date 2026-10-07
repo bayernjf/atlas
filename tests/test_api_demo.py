@@ -163,7 +163,7 @@ def _human_approval_graph() -> dict:
              "position": {"x": 0, "y": 0},
              "config": {
                  "summary": "订单 {{trigger-1.context.payload.order_id}} 退款审批",
-                 "approver": "客服主管",
+                 "approver": "",
                  "timeoutSeconds": 10,
                  "onTimeout": "reject",
                  "approvedTarget": "tool-approve",
@@ -263,7 +263,7 @@ def test_approval_decision_endpoint_404_409_422_and_reset():
         node_id="human-x",
         graph_id="graph-x",
         summary="测试审批",
-        approver="tester",
+        approver="",
         timeout_seconds=30,
     )
     pending = client.get("/api/approvals").json()["items"]
@@ -635,12 +635,13 @@ def test_template_list_returns_projection_without_graph():
     items = client.get("/api/templates").json()["items"]
     assert len(items) == 5
     for item in items:
-        assert set(item) == {"id", "name", "description", "tags", "category", "node_count", "source", "deletable"}
+        assert set(item) == {"id", "name", "description", "tags", "category", "node_count", "source", "deletable", "version"}
         assert isinstance(item["category"], str)
         assert "graph" not in item
         assert item["source"] == "catalog"
         assert item["deletable"] is False
         assert item["tags"]
+        assert item["version"] == 1
         assert item["node_count"] >= 1
     assert [item["id"] for item in items] == [
         "refund-auto",

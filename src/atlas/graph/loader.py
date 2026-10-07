@@ -20,6 +20,7 @@ import json
 import logging
 import math
 import operator
+import os
 import random
 import re
 import secrets
@@ -301,6 +302,8 @@ class GraphState(TypedDict):
     outputs: Annotated[dict[str, dict[str, Any]], _merge_outputs]
     messages: Annotated[list[str], operator.add]
     status: Annotated[str, _last_write]
+    # 打包 A3（docs/99 §3）：敏感表 {变量名: (source, 引用名)}，仅初始化、不参与 reducer。
+    sensitive: dict
 
 
 # params 插值后为 JSON 对象、整体透传给适配器的通用通道（04 §4.6-4.8）；
@@ -347,8 +350,82 @@ def _resolve_registry(registry: AdapterRegistry | None) -> AdapterRegistry:
     return build_demo_registry()
 
 
-def _seed_variables(graph: GraphDSL) -> dict[str, Any]:
-    return {"global": {variable.name: variable.value for variable in graph.variables}}
+class EnvVariableUnavailable(Exception):
+    """打包 A3（docs/99 §2.3）：env 来源变量未命中 → run 显式 FAILED（fail-closed，
+    不静默空串；与 SECRET_UNAVAILABLE 同族）。码与 params 供 run 记录/前端定位。
+    """
+
+    code = "ENV_VARIABLE_UNAVAILABLE"
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        super().__init__(f"环境变量未配置：{name}")
+
+
+def _secret_ref(value: str) -> str:
+    """secret 来源引用归一：secret://<name> 或裸 <name> → SecretProvider 引用名。"""
+    return value.removeprefix("secret://") if value.startswith("secret://") else value
+
+
+def _seed_variables(
+    graph: GraphDSL, *, secret_provider: Any = None
+) -> dict[str, Any]:
+    """打包 A3（docs/99 §2.3）：受限来源变量运行期解析。
+
+    - 无 source → 照旧字面量；
+    - source="env" → os.environ.get，未命中抛 EnvVariableUnavailable（fail-closed）；
+    - source="secret" → secret_provider.get_secret，未命中/未注入抛 SecretUnavailable。
+    展开值在运行期与普通字面量同权；敏感标记由 _sensitive_vars 派生、投影出口脱敏。
+    """
+    global_vars: dict[str, Any] = {}
+    for variable in graph.variables:
+        if variable.source is None:
+            global_vars[variable.name] = variable.value
+        elif variable.source == "env":
+            raw = os.environ.get(variable.value)
+            if raw is None:
+                raise EnvVariableUnavailable(variable.value)
+            global_vars[variable.name] = raw
+        else:  # secret
+            if secret_provider is None:
+                from atlas.security.secrets import SecretUnavailable
+
+                raise SecretUnavailable(
+                    f"未注入 secret provider，无法解析 secret 来源变量：{variable.value}"
+                )
+            global_vars[variable.name] = secret_provider.get_secret(
+                _secret_ref(variable.value)
+            )
+    return {"global": global_vars}
+
+
+def _sensitive_vars(graph: GraphDSL) -> dict[str, tuple[str, str]]:
+    """打包 A3：敏感表 = {变量名: (source, 引用名)}；由声明派生（引用形态，无明文）。"""
+    return {
+        variable.name: (variable.source, variable.value)
+        for variable in graph.variables
+        if variable.source is not None
+    }
+
+
+def _redact_outputs(final_state: GraphState) -> dict[str, dict[str, Any]]:
+    """打包 A3（docs/99 §3）：run 结果 outputs 投影脱敏——敏感变量展开值替换为占位。
+
+    明文绝不落 run_end 帧 / GET /api/runs / 录制 / 比对（比对以引用形态进行，
+    敏感值差异不误报＝脱敏后自然无明文可比）。图投影只含声明（引用形态），无需处理。
+    """
+    from atlas.graph.redact import redact_sensitive
+
+    global_vars = final_state["variables"].get("global", {})
+    sensitive = final_state.get("sensitive", {})
+    mapping = {
+        global_vars[name]: f"<redacted:{source}:{ref}>"
+        for name, (source, ref) in sensitive.items()
+        if name in global_vars and isinstance(global_vars[name], str)
+    }
+    if not mapping:
+        return final_state["outputs"]
+    return redact_sensitive(final_state["outputs"], mapping)
 
 
 def _find_trigger(graph: GraphDSL) -> NodeDSL | None:
@@ -394,6 +471,7 @@ def _make_executor(
     jitter_rng: random.Random | None = None,
     expr_rng: random.Random | None = None,
     block_subgraph_suspend: bool = False,
+    secret_provider: Any = None,  # 打包 A3（docs/99）：透传子图重入的 secret 来源变量解析
 ):
     # 续跑只对挂起节点的**第一次**重入生效（每次编译=一次运行，闭包即运行级状态）：
     # 挂起点在循环体内时该节点每轮都会重入，若每轮都走帧内 token，则第二项起的审批
@@ -952,6 +1030,7 @@ def _make_executor(
                         jitter_rng=jitter_rng,
                         expr_rng=expr_rng,
                         block_subgraph_suspend=block_subgraph_suspend,
+                        secret_provider=secret_provider,
                     )
                 elif tool_mocks is not None and node.id in tool_mocks:
                     # Mock 回放（docs/28 §2.2）：以录制桩 output 替代真实适配器调用，
@@ -1082,7 +1161,16 @@ def _register_approval(
     """登记 pending 审批请求并返回随 node_start 下发的 approval 载荷（04 §5.6）。"""
     config = node.config
     summary = interpolate(str(config.get("summary", "")), context)
+    # 打包 A4（docs/100 §2）：approver 支持 {{变量}} 插值；求值后仍残留占位（运行期
+    # 才可判定的引用未命中，如 node 输出键）→ 按空串处理并告警——审批可决不因模板
+    # 笔误永久挂起，语义与「无指定审批人=任何人」一致（编译期已拦 {{global.X}} 未定义）。
     approver = interpolate(str(config.get("approver", "")), context) if config.get("approver") else ""
+    if "{{" in approver:
+        logger.warning(
+            "approver 插值后仍含未解析占位，按空审批人处理（任何人可决）node=%s approver=%r",
+            node.id, approver,
+        )
+        approver = ""
     timeout_seconds = int(config["timeoutSeconds"])
     # M8：可选内置卡片；编译期已校验目录命中，运行时防御未命中即按无卡（旧 summary 路径）。
     card_template_id = config.get("cardTemplateId") or None
@@ -1391,6 +1479,7 @@ def _execute_subgraph(
     jitter_rng: random.Random | None = None,
     expr_rng: random.Random | None = None,
     block_subgraph_suspend: bool = False,
+    secret_provider: Any = None,
 ) -> tuple[dict[str, Any], str]:
     """进程内重入执行被引用子图（04 §5.7）；任何异常 fail-safe 为 failed，父 run 仍 completed。
 
@@ -1468,6 +1557,7 @@ def _execute_subgraph(
                 # 打包 ZK：顶层已 resolve 的 bool 显式传入，子图 run_graph 不再按
                 # frame_sink 自动判断（子图 frame_sink 恒为 None，自动判断必得 False）。
                 _block_subgraph_suspend=block_subgraph_suspend,
+                secret_provider=secret_provider,
             )
     except (RunCancelled, DebugStopped, RunSuperseded, SubgraphSuspendUnsupported):
         # 取消与调试急停/异常断点 stop 均须穿透子图 fail-safe 兜底，冒泡终止整图
@@ -2605,6 +2695,7 @@ def compile_graph(
     expr_rng: random.Random | None = None,
     _block_subgraph_suspend: bool = False,
     tenant_id: str | None = None,  # docs/93 打包 Y：LLM 模型配置按租户解析（None＝回退 env）
+    secret_provider: Any = None,  # 打包 A3（docs/99）：透传子图重入的 secret 来源变量解析
 ):
     decision_client = decision_client or get_decision_client(tenant_id=tenant_id)
     condition_classifier = condition_classifier or get_condition_classifier(tenant_id=tenant_id)
@@ -2724,6 +2815,7 @@ def compile_graph(
             jitter_rng=jitter_rng,
             expr_rng=expr_rng,
             block_subgraph_suspend=block_subgraph_suspend,
+            secret_provider=secret_provider,
         )
         if node.id in skip_guards:
             parallel_id, safe_target = skip_guards[node.id]
@@ -2914,15 +3006,26 @@ def compile_graph(
     return builder.compile()
 
 
-def initial_state(graph: GraphDSL, *, inputs: dict[str, Any] | None = None) -> GraphState:
+def initial_state(
+    graph: GraphDSL,
+    *,
+    inputs: dict[str, Any] | None = None,
+    secret_provider: Any = None,
+) -> GraphState:
     # inputs 同时承担两个角色（W9-W10）：同名键覆盖全局变量（W7-W8 语义），
     # 且整体作为 webhook 载荷进入 trigger 节点 context.payload。
-    variables = _seed_variables(graph)
+    variables = _seed_variables(graph, secret_provider=secret_provider)
     if inputs:
         # approvals 是运行控制键（human_approval 预置决策），不进入全局变量。
         overrides = {key: value for key, value in inputs.items() if key != "approvals"}
         variables["global"] = {**variables.get("global", {}), **overrides}
-    return {"variables": variables, "outputs": {}, "messages": [], "status": "running"}
+    return {
+        "variables": variables,
+        "outputs": {},
+        "messages": [],
+        "status": "running",
+        "sensitive": _sensitive_vars(graph),
+    }
 
 
 def _recursion_limit(graph: GraphDSL) -> int:
@@ -3048,6 +3151,7 @@ def run_graph(
     _expr_rng: random.Random | None = None,
     _block_subgraph_suspend: bool | None = None,
     tenant_id: str | None = None,  # docs/93 打包 Y：LLM 模型配置按租户解析（None＝回退 env）
+    secret_provider: Any = None,  # 打包 A3（docs/99）：secret 来源变量解析（None＝连接面语义 fail-closed）
 ) -> dict[str, Any]:
     """编译并执行，返回状态/节点产出/轨迹。
 
@@ -3154,15 +3258,16 @@ def run_graph(
             expr_rng=expr_rng,
             _block_subgraph_suspend=block_subgraph_suspend,
             tenant_id=tenant_id,
+            secret_provider=secret_provider,
         )
-        state = initial_state(tail, inputs=resume_inputs)
+        state = initial_state(tail, inputs=resume_inputs, secret_provider=secret_provider)
         state["outputs"] = resume_state.get("outputs", {})
         final_state = compiled.invoke(
             state, config={"recursion_limit": _recursion_limit(tail)}
         )
         result = {
             "status": "completed",
-            "outputs": final_state["outputs"],
+            "outputs": _redact_outputs(final_state),
             "trace": final_state["messages"],
             "rng_seed": rng_seed,
         }
@@ -3196,14 +3301,15 @@ def run_graph(
         expr_rng=expr_rng,
         _block_subgraph_suspend=block_subgraph_suspend,
         tenant_id=tenant_id,
+        secret_provider=secret_provider,
     )
     final_state = compiled.invoke(
-        initial_state(graph, inputs=inputs),
+        initial_state(graph, inputs=inputs, secret_provider=secret_provider),
         config={"recursion_limit": _recursion_limit(graph)},
     )
     result = {
         "status": "completed",
-        "outputs": final_state["outputs"],
+        "outputs": _redact_outputs(final_state),
         "trace": final_state["messages"],
         "rng_seed": rng_seed,
     }

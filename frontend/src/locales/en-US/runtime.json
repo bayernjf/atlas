@@ -88,5 +88,8 @@
   "INTERRUPTION_FRAME_NOT_CLAIMED": "This frame has not been claimed yet; restart recovery may still drive it, so it cannot be abandoned",
   "INTERRUPTION_RUN_NOT_SUSPENDED": "The frame is claimed but its run is not suspended (current state: {{status}})",
   "INTERRUPTIONS_NOT_PERSISTED": "In-memory frames do not persist across processes; manual reconcile is unavailable",
-  "INTERRUPTION_ACTION_UNSUPPORTED": "Unsupported resolve action: {{action}} (only \"abandon\" is supported)"
+  "INTERRUPTION_ACTION_UNSUPPORTED": "Unsupported resolve action: {{action}} (only \"abandon\" is supported)",
+  "ENV_VARIABLE_UNAVAILABLE": "Environment variable {{name}} is not configured",
+  "SECRET_UNAVAILABLE": "Secret {{name}} is unavailable (missing or cannot be decrypted)",
+  "APPROVAL_NOT_ASSIGNED": "This approval is restricted to the assigned approver"
 }

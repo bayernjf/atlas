@@ -231,7 +231,10 @@ def test_generic_send_failure_gets_fallback_error_code():
             raise RuntimeError("network down")
 
     cfg = AlertChannel(enabled=True, to="https://robot.example.com")
-    alert = type("A", (), {"severity": "critical"})()
+    alert = type("A", (), {
+        "severity": "critical", "rule_id": "r-1", "rule_name": "", "message": "m",
+        "graph_id": "g-1", "last_run_id": "run-1", "first_seen": "t0",
+    })()
     delivery = AlertNotifier(_Raising()).notify(alert, cfg)
     assert delivery.errorCode == "ALERT_NOTIFY_FAILED"
 
@@ -309,7 +312,11 @@ def test_lifecycle_send_failure_is_fail_safe():
             raise RuntimeError("network down")
 
     cfg = AlertChannel(enabled=True, to="https://robot.example.com")
-    alert = type("A", (), {"severity": "critical"})()
+    alert = type("A", (), {
+        "severity": "critical", "rule_id": "r-1", "rule_name": "", "message": "m",
+        "graph_id": "g-1", "last_run_id": "run-1", "first_seen": "t0",
+        "id": "a-1", "status": "firing", "last_seen": "t1", "count": 1,
+    })()
     delivery = AlertNotifier(_Raising()).notify_lifecycle(
         alert, cfg, transition="resolved"
     )

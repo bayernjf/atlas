@@ -138,6 +138,10 @@ class GraphVariable(BaseModel):
     type: str = "string"
     value: Any = None
     scope: Literal["global"] = "global"
+    # 打包 A3（docs/99）：受限来源。缺省＝无（照旧字面量语义）；存在时 value 为引用名
+    # （env＝环境变量名；secret＝secret://<name> 或裸名），运行期 _seed_variables 解析展开，
+    # 展开值带敏感标记，投影通道一律脱敏。
+    source: Literal["env", "secret"] | None = None
 
 
 class GraphDSL(BaseModel):
@@ -304,6 +308,35 @@ def validate_graph_report(
                 params={"name": variable.name},
             )
         var_names.add(variable.name)
+        # 打包 A3（docs/99 §2.2）：受限来源声明校验（编译期 422，模板不变）
+        if variable.source is not None and variable.source not in ("env", "secret"):
+            issues.add(
+                f"变量 {variable.name} 的来源非法：{variable.source}",
+                code="VAR_SOURCE_INVALID",
+                params={"name": variable.name, "source": variable.source},
+            )
+        if variable.source is not None and (not isinstance(variable.value, str) or not variable.value):
+            issues.add(
+                f"变量 {variable.name} 声明受限来源但引用名为空",
+                code="VAR_SOURCE_REF_EMPTY",
+                params={"name": variable.name},
+            )
+        if (
+            variable.source == "env"
+            and isinstance(variable.value, str)
+            and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", variable.value)
+        ):
+            issues.add(
+                f"变量 {variable.name} 的 env 引用名非法：{variable.value}",
+                code="VAR_SOURCE_REF_INVALID",
+                params={"name": variable.name, "ref": variable.value},
+            )
+        if variable.source is not None and variable.scope != "global":
+            issues.add(
+                f"变量 {variable.name} 声明受限来源但作用域非 global",
+                code="VAR_SOURCE_SCOPE_MISMATCH",
+                params={"name": variable.name},
+            )
 
     outgoing: dict[str, set[str]] = {}
     incoming: dict[str, set[str]] = {}
@@ -338,7 +371,9 @@ def validate_graph_report(
 
     for node in graph.nodes:
         if node.type == "human_approval":
-            issues.extend(_validate_human_approval_config(node, node_ids, outgoing))
+            issues.extend(
+                _validate_human_approval_config(node, node_ids, outgoing, var_names)
+            )
 
     for node in graph.nodes:
         if node.type == "subgraph":
@@ -1200,9 +1235,10 @@ def _validate_subgraph_config(
 
 
 def _validate_human_approval_config(
-    node: NodeDSL, node_ids: set[str], outgoing: dict[str, set[str]]
+    node: NodeDSL, node_ids: set[str], outgoing: dict[str, set[str]],
+    var_names: set[str],
 ) -> list[Issue]:
-    """human_approval config 与双出边拓扑校验（契约 04 §5.6）。"""
+    """human_approval config 与双出边拓扑校验（契约 04 §5.6；打包 A4 增 approver 插值校验）。"""
     issues: list[Issue] = []
     prefix = f"人机协作节点 {node.id}"
     config = node.config
@@ -1223,6 +1259,20 @@ def _validate_human_approval_config(
     if approver != "" and not isinstance(approver, str):
         add(f"{prefix} 审批人（approver）必须是文本", "/approver",
             code="APR_APPROVER_NOT_STRING")
+
+    # 打包 A4（docs/100 §2）：approver 支持 {{变量}} 插值（复用 interpolation 同规则）。
+    # 编译期只校验**可静态判定**的引用：形如 {{global.X}} 且 X 不在图变量 → 422
+    # APPROVER_REF_UNRESOLVED（模板笔误提前暴露）；node 输出等运行期路径不判（求值残留→空串）。
+    if isinstance(approver, str) and approver:
+        for ref in _REF_RE.findall(approver):
+            path = ref.strip()
+            if path.startswith("global.") and path[len("global."):] not in var_names:
+                add(
+                    f"{prefix} 审批人（approver）引用的变量未定义：{path}",
+                    "/approver",
+                    code="APPROVER_REF_UNRESOLVED",
+                    params={"ref": path},
+                )
 
     # docs/35 §2.1：可选通知邮箱 notifyEmails（string[]，≤5；支持 {{路径}} 插值）。
     notify_emails = config.get("notifyEmails", [])

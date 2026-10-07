@@ -19,6 +19,7 @@ from atlas.security.bootstrap import (
     public_url_is_loopback,
     read_env_profile,
 )
+from atlas.graph.interpolation import interpolate
 
 from .email_token import TokenIssuer
 
@@ -64,11 +65,24 @@ class EmailApprovalNotifier:
         public_url: str = DEFAULT_PUBLIC_URL,
         tenant_id: str = "",
         issuer: TokenIssuer | None = None,
+        template_store: Any | None = None,
     ) -> None:
         self._messages = message_service
         self._public_url = (public_url or DEFAULT_PUBLIC_URL).rstrip("/")
         self._tenant_id = tenant_id
         self._issuer = issuer or TokenIssuer()
+        # 打包 A2（docs/98 §2.4）：kind="approval" 模板渲染挂起通知正文；
+        # 缺省 None＝回退默认正文逐字不变（纯超集）。
+        self._template_store = template_store
+
+    def _pick_template(self, kind: str):
+        if self._template_store is None:
+            return None
+        try:
+            items = self._template_store.list(kind)
+        except Exception:
+            return None
+        return items[0] if items else None
 
     def notify_pending(
         self,
@@ -82,34 +96,49 @@ class EmailApprovalNotifier:
         recipients: list[str],
     ) -> bool:
         title = summary or node_id
-        subject = f"[Atlas] 审批待处理：{title}"
+        template = self._pick_template("approval")
         first_recipient = recipients[0] if recipients else None
         signed = self._issuer.issue(
             self._tenant_id, token, timeout_seconds, recipient=first_recipient
         )
         decision_url = f"{self._public_url}/approvals/{signed}"
-        lines = [
-            "有一笔人机审批正在等待处理。",
-            "",
-            f"审批节点：{node_id}（图 {graph_id}）",
-            f"审批说明：{summary or '（无）'}",
-        ]
-        if approver:
-            lines.append(f"指定审批人：{approver}")
-        lines.append(f"超时时间：{timeout_seconds} 秒（超时后按图中配置自动处理）")
-        lines.append("")
-        # prod 的入口地址若还是本地缺省，一键链接＝把一个签名 capability token 寄往
-        # "本机任何监听者"，而且收件人点了也到不了平台。令牌因此**留在进程内**，
-        # 正文改说看得见的原委与修法（docs/89 §15 A-6）。
-        if read_env_profile() == "prod" and public_url_is_loopback(self._public_url):
-            lines.append(
-                f"一键处理链接本次未随邮件发出：应用入口仍是本地地址（{self._public_url}）。"
-                "请设置 ATLAS_PUBLIC_URL 为对外 HTTPS 地址；在那之前请直接在应用内处理本审批。"
-            )
+        if template is not None:
+            # 模板正文：subject/body 各经 interpolate（缺失键 fail-soft 原样保留，
+            # 声明一致性由创建/更新校验保证）；未配置模板走默认正文逐字不变。
+            context = {
+                "title": title,
+                "graph_id": graph_id,
+                "node_id": node_id,
+                "summary": summary or "",
+                "approver": approver,
+                "decision_url": decision_url,
+            }
+            subject = interpolate(template.subject, context)
+            body = interpolate(template.body, context)
         else:
-            lines.append(f"一键处理：{decision_url}")
-            lines.append(f"或前往应用：{self._public_url}")
-        body = "\n".join(lines)
+            subject = f"[Atlas] 审批待处理：{title}"
+            lines = [
+                "有一笔人机审批正在等待处理。",
+                "",
+                f"审批节点：{node_id}（图 {graph_id}）",
+                f"审批说明：{summary or '（无）'}",
+            ]
+            if approver:
+                lines.append(f"指定审批人：{approver}")
+            lines.append(f"超时时间：{timeout_seconds} 秒（超时后按图中配置自动处理）")
+            lines.append("")
+            # prod 的入口地址若还是本地缺省，一键链接＝把一个签名 capability token 寄往
+            # "本机任何监听者"，而且收件人点了也到不了平台。令牌因此**留在进程内**，
+            # 正文改说看得见的原委与修法（docs/89 §15 A-6）。
+            if read_env_profile() == "prod" and public_url_is_loopback(self._public_url):
+                lines.append(
+                    f"一键处理链接本次未随邮件发出：应用入口仍是本地地址（{self._public_url}）。"
+                    "请设置 ATLAS_PUBLIC_URL 为对外 HTTPS 地址；在那之前请直接在应用内处理本审批。"
+                )
+            else:
+                lines.append(f"一键处理：{decision_url}")
+                lines.append(f"或前往应用：{self._public_url}")
+            body = "\n".join(lines)
         # MessageService 负责真实 SMTP 投递或进程内记录（demo 回退）；
         # 投递失败会抛 MessageSendError，由 graph 调用方 fail-safe 捕获。
         record = self._messages.send("email", list(recipients), subject, body)

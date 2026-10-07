@@ -10,8 +10,10 @@ import {
   RunSupersededError,
   cancelActiveRun,
   createChannelBinding,
+  createUserTemplate,
   deleteChannelBinding,
   exportTemplate,
+  instantiateTemplate,
   getWebhookSubscriptions,
   importTemplate,
   listTemplates,
@@ -24,7 +26,14 @@ import {
   resumeDebug,
   streamRun,
   testChannelBinding,
+  touchTemplateUsage,
   unregisterRemoteWebhook,
+  updateUserTemplate,
+  createMessageTemplate,
+  deleteMessageTemplate,
+  getMessageTemplate,
+  listMessageTemplates,
+  updateMessageTemplate,
   type ChannelBindingView,
   type RunEvent,
 } from '../apiClient'
@@ -530,5 +539,139 @@ describe('template category + URL import/export (pack ZM, docs/08)', () => {
     const [url, init] = fetchMock.mock.calls[0]
     expect(url).toBe('/api/templates/import')
     expect(JSON.parse(String(init?.body))).toEqual({ url: 'https://example.com/share/t.json' })
+  })
+})
+
+describe('A1 template productization client (U1187)', () => {
+  it('listTemplates passes q through when provided, plain URL otherwise', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+      jsonResponse({ items: [{ id: 'utpl-1', name: 'u', description: '', tags: [], category: '', node_count: 1, source: 'user', deletable: true, version: 1, updated_at: 'x', usage_count: 2 }] }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    await listTemplates()
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/templates')
+    await listTemplates('  退款  ')
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/templates?q=%E9%80%80%E6%AC%BE')
+  })
+
+  it('touchTemplateUsage POSTs usage and returns count', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => jsonResponse({ usage_count: 3 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await touchTemplateUsage('utpl-1')
+    expect(result.usage_count).toBe(3)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/templates/utpl-1/usage')
+    expect(init?.method).toBe('POST')
+  })
+
+  it('instantiateTemplate POSTs values and returns graph + template meta', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+      jsonResponse({ graph: { nodes: [], edges: [] }, template: { id: 'utpl-1', name: 'n', version: 1 } }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await instantiateTemplate('utpl-1', { min_amount: 250, channel: 'im' })
+    expect(result.template.version).toBe(1)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/templates/utpl-1/instantiate')
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(String(init?.body))).toEqual({ values: { min_amount: 250, channel: 'im' } })
+  })
+
+  it('createUserTemplate forwards params declaration', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+      jsonResponse({ id: 'utpl-2', name: 'n', description: '', tags: [], category: '', graph: { version: 1, variables: [], nodes: [], edges: [] }, source: 'user', deletable: true, params: { p: { type: 'number', required: true } } }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    await createUserTemplate({ name: 'n', graph: { version: 1, variables: [], nodes: [], edges: [] }, params: { p: { type: 'number', required: true } } })
+    const [, init] = fetchMock.mock.calls[0]
+    expect(JSON.parse(String(init?.body))).toEqual({
+      name: 'n', description: '', category: '', graph: { version: 1, variables: [], nodes: [], edges: [] },
+      params: { p: { type: 'number', required: true } },
+    })
+  })
+
+  it('updateUserTemplate omits params when not provided', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+      jsonResponse({ id: 'utpl-2', name: 'n', description: '', tags: [], category: '', graph: { version: 1, variables: [], nodes: [], edges: [] }, source: 'user', deletable: true }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    await updateUserTemplate('utpl-2', { name: 'n', graph: { version: 1, variables: [], nodes: [], edges: [] } })
+    const [, init] = fetchMock.mock.calls[0]
+    const body = JSON.parse(String(init?.body))
+    expect(body).not.toHaveProperty('params')
+    expect(body).not.toHaveProperty('if_match_version')
+  })
+})
+
+
+describe('message templates API (pack A2, docs/98; U1194)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('listMessageTemplates GETs without kind and with kind filter', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+      jsonResponse({
+        items: [
+          { id: 'mtpl-1', name: '审批提醒', kind: 'approval', subject: '[Atlas] {{title}}', variables: ['title'], updated_at: 'x' },
+        ],
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const items = await listMessageTemplates()
+    expect(items).toHaveLength(1)
+    expect(items[0].kind).toBe('approval')
+    let [url] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/message-templates')
+
+    await listMessageTemplates('alert')
+    url = fetchMock.mock.calls[1][0]
+    expect(url).toBe('/api/message-templates?kind=alert')
+  })
+
+  it('getMessageTemplate GETs detail with body', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+      jsonResponse({ id: 'mtpl-1', name: 'n', kind: 'approval', subject: 's', body: 'b {{title}}', variables: ['title'], updated_at: 'x' }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const detail = await getMessageTemplate('mtpl-1')
+    expect(detail.body).toContain('{{title}}')
+    const [url] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/message-templates/mtpl-1')
+  })
+
+  it('createMessageTemplate POSTs full payload', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+      jsonResponse({ id: 'mtpl-1', name: '审批提醒', kind: 'approval', subject: 's', body: 'b', variables: ['title'], updated_at: 'x' }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const input = { name: '审批提醒', kind: 'approval' as const, subject: 's', body: 'b', variables: ['title'] }
+    await createMessageTemplate(input)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/message-templates')
+    expect((init as RequestInit).method).toBe('POST')
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual(input)
+  })
+
+  it('updateMessageTemplate PUTs to the item path', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+      jsonResponse({ id: 'mtpl-2', name: '告警提醒', kind: 'alert', subject: 's2', body: 'b2', variables: ['title', 'graph_id'], updated_at: 'x' }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const input = { name: '告警提醒', kind: 'alert' as const, subject: 's2', body: 'b2', variables: ['title', 'graph_id'] }
+    await updateMessageTemplate('mtpl-2', input)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/message-templates/mtpl-2')
+    expect((init as RequestInit).method).toBe('PUT')
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual(input)
+  })
+
+  it('deleteMessageTemplate DELETEs the item path', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => jsonResponse({ deleted: true }))
+    vi.stubGlobal('fetch', fetchMock)
+    await deleteMessageTemplate('mtpl-3')
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/message-templates/mtpl-3')
+    expect((init as RequestInit).method).toBe('DELETE')
   })
 })

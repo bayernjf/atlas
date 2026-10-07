@@ -9,6 +9,7 @@ NL 生成草稿、适配器发现、模拟商家售后控制台。
 from __future__ import annotations
 
 import json
+import copy
 import hmac
 import logging
 import os
@@ -22,7 +23,7 @@ from itertools import count
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, NoReturn
 
 import httpx
 
@@ -90,6 +91,10 @@ from atlas.llm.nl_generate import generate_graph, validate_param_fills
 from atlas.memory.database import ping, wait_for_database
 from atlas.memory.models import MemoryValidationError
 from atlas.message.service import MessageSendError
+from atlas.message.template_store import (
+    MessageTemplateNameConflict,
+    validate_message_template,
+)
 from atlas.monitoring import RUN_RING_SIZE, extract_business, extract_node_results
 from atlas.observability.audit import AUDITED_METHODS, LOGIN_PATH
 from atlas.channels.base import (
@@ -194,6 +199,7 @@ from atlas.scheduling.pg_store import PgScheduleStore
 from atlas.scheduling.store import InMemoryScheduleStore, ScheduleStore
 from atlas.reflection import run_pass as run_reflection_pass
 from atlas.template import get_template, list_templates
+from atlas.template.user_store import TemplateVersionConflict
 from atlas.web.i18n import localize_template, localize_tool_desc, resolve_locale
 from atlas.versioning.publish import publish as publish_graph_version
 from atlas.versioning.upgrades import subgraph_upgrade_plan
@@ -323,6 +329,7 @@ def _resume_run(engine, services: TenantServices, frame: dict) -> None:
             resume_claim=make_resume_claim(engine),
             resume=frame,
             tenant_id=frame["tenant_id"],
+            secret_provider=_secret_provider,
         )
         if run_id:
             services.run_store.finish(
@@ -1235,6 +1242,7 @@ def _background_run_worker(
             _block_subgraph_suspend=(STORAGE_BACKEND == "pg"),
             graph_version=version,
             tenant_id=tenant_id,
+            secret_provider=_secret_provider,
         )
         run_store.finish(
             run_id=run_id, status="completed",
@@ -2815,6 +2823,7 @@ def create_shadow_run(
             tracer=tracer,
             shadow=True,
             tenant_id=principal.tenant_id,
+            secret_provider=_secret_provider,
         )
     except Exception as exc:  # 影子异常也沉淀记录，绝不影响生产链路
         status = "error"
@@ -3042,10 +3051,14 @@ def rollback_rollout(
 def list_catalog_templates(
     principal: Principal = Depends(require("read")),
     accept_language: str | None = Header(default=None),
+    q: str | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """列出模板（内置目录 04 §5.10 在前、租户自建模板 docs/85 在后；列表投影不含 graph）；
-    内置 name/description 按 Accept-Language 本地化（docs/70）。"""
+    内置 name/description 按 Accept-Language 本地化（docs/70）。
+    打包 A1（docs/97）：可选 q 过滤（两段各自按 name/description/tags/category casefold 子串任一命中），
+    q 缺失/空白＝全量；用户段投影增 version/updated_at/usage_count，内置段 version 恒 1。"""
     locale = resolve_locale(accept_language)
+    query = (q or "").strip().casefold()
     items = [
         localize_template(
             {
@@ -3057,10 +3070,12 @@ def list_catalog_templates(
                 "node_count": len(template.graph["nodes"]),
                 "source": "catalog",
                 "deletable": False,
+                "version": 1,
             },
             locale,
         )
         for template in list_templates()
+        if not query or _template_matches_query(template.model_dump(), query)
     ]
     items.extend(
         {
@@ -3073,10 +3088,94 @@ def list_catalog_templates(
             "source": "user",
             "deletable": True,
             "created_at": template.created_at,
+            "version": template.version,
+            "updated_at": template.updated_at,
+            "usage_count": template.usage_count,
         }
         for template in services_for(principal).user_templates.list()
+        if not query or _template_matches_query(template.model_dump(), query)
     )
     return {"items": items}
+
+
+def _template_matches_query(template: dict[str, Any], query: str) -> bool:
+    """A1 搜索：name/description/tags/category 任一 casefold 子串命中（docs/97 E-3）。"""
+    haystacks = [
+        str(template.get("name") or ""),
+        str(template.get("description") or ""),
+        " ".join(template.get("tags") or []),
+        str(template.get("category") or ""),
+    ]
+    return any(query in (part.casefold()) for part in haystacks)
+
+
+_TEMPLATE_PARAM_TYPES = {"string", "number", "boolean", "select"}
+_TEMPLATE_PARAM_KEYS = {"type", "label", "required", "default", "hint", "options"}
+
+
+def validate_template_params(params: dict[str, Any]) -> list[str]:
+    """A1 参数化向导声明形状校验（docs/97 E-5）：type 枚举、label≤40、required 布尔、
+    select 须 options 非空字符串列表 ≤20、未知键拒绝；返回中文错误列表（空＝通过）。"""
+    errors: list[str] = []
+    if not isinstance(params, dict):
+        return ["参数声明必须是对象"]
+    for pname, pdecl in params.items():
+        if not isinstance(pdecl, dict):
+            errors.append(f"参数 {pname} 的声明必须是对象")
+            continue
+        unknown = set(pdecl) - _TEMPLATE_PARAM_KEYS
+        if unknown:
+            errors.append(f"参数 {pname} 含未知字段：{', '.join(sorted(unknown))}")
+        ptype = pdecl.get("type", "string")
+        if ptype not in _TEMPLATE_PARAM_TYPES:
+            errors.append(f"参数 {pname} 的 type 必须是 string/number/boolean/select 之一")
+        label = pdecl.get("label")
+        if label is not None and not isinstance(label, str):
+            errors.append(f"参数 {pname} 的 label 必须是字符串")
+        elif isinstance(label, str) and len(label) > 40:
+            errors.append(f"参数 {pname} 的 label 长度须在 40 字符以内")
+        if "required" in pdecl and not isinstance(pdecl["required"], bool):
+            errors.append(f"参数 {pname} 的 required 必须是布尔值")
+        if ptype == "select":
+            options = pdecl.get("options")
+            if (
+                not isinstance(options, list)
+                or not options
+                or len(options) > 20
+                or not all(isinstance(o, str) for o in options)
+            ):
+                errors.append(f"参数 {pname} 的 options 必须是非空字符串列表（≤20 项）")
+    return errors
+
+
+def _validate_instantiate_values(
+    params: dict[str, Any], values: dict[str, Any]
+) -> list[str]:
+    """A1 instantiate 值校验（docs/97 E-6）：required 缺失/类型不符/select 范围/未知参数名。"""
+    errors: list[str] = []
+    for pname, pdecl in params.items():
+        present = pname in values
+        if pdecl.get("required") and not present:
+            errors.append(f"参数 {pname} 为必填")
+            continue
+        if not present:
+            continue
+        value = values[pname]
+        ptype = pdecl.get("type", "string")
+        if ptype == "number":
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                errors.append(f"参数 {pname} 必须是数字")
+        elif ptype == "boolean":
+            if not isinstance(value, bool):
+                errors.append(f"参数 {pname} 必须是布尔值")
+        elif ptype == "select":
+            options = pdecl.get("options") or []
+            if value not in options:
+                errors.append(f"参数 {pname} 的值不在可选范围内")
+    for pname in values:
+        if pname not in params:
+            errors.append(f"未知参数：{pname}")
+    return errors
 
 
 class UserTemplateCreateRequest(BaseModel):
@@ -3085,6 +3184,7 @@ class UserTemplateCreateRequest(BaseModel):
     tags: list[str] = Field(default_factory=list, max_length=8)
     category: str = Field(default="", max_length=30)
     graph: dict[str, Any]
+    params: dict[str, Any] = Field(default_factory=dict)
 
 
 @app.post("/api/templates", status_code=201)
@@ -3092,7 +3192,8 @@ def create_user_template(
     body: UserTemplateCreateRequest,
     principal: Principal = Depends(require("operate")),
 ) -> dict[str, Any]:
-    """画布另存为租户私有模板（docs/85 D-2）：parse_graph 仅校验可编译，图原样存。"""
+    """画布另存为租户私有模板（docs/85 D-2）：parse_graph 仅校验可编译，图原样存。
+    A1（docs/97）：body 可带 params（参数化声明，形状校验失败 422 且模板未变）。"""
     name = body.name.strip()
     if not name:
         raise HTTPException(status_code=422, detail="模板名称不能为空")
@@ -3105,9 +3206,17 @@ def create_user_template(
         category = ""
     elif len(category) > 30:
         raise HTTPException(status_code=422, detail="分类长度须在 30 字符以内")
+    params_errors = validate_template_params(body.params)
+    if params_errors:
+        raise HTTPException(status_code=422, detail="；".join(params_errors))
     parse_graph(body.graph)
     template = services_for(principal).user_templates.add(
-        name=name, description=body.description, tags=tags, category=category, graph=body.graph
+        name=name,
+        description=body.description,
+        tags=tags,
+        category=category,
+        graph=body.graph,
+        params=body.params,
     )
     return {**template.model_dump(), "source": "user", "deletable": True}
 
@@ -3118,6 +3227,8 @@ class UserTemplateUpdateRequest(BaseModel):
     tags: list[str] | None = Field(default=None, max_length=8)
     category: str | None = Field(default=None, max_length=30)
     graph: dict[str, Any]
+    params: dict[str, Any] | None = Field(default=None)
+    if_match_version: int | None = Field(default=None, ge=1)
 
 
 @app.put("/api/templates/{template_id}")
@@ -3127,7 +3238,9 @@ def update_user_template(
     principal: Principal = Depends(require("operate")),
 ) -> dict[str, Any]:
     """整体更新租户私有模板（docs/86 D-1）：id/seq/created_at 不变；
-    tags 字段缺省＝保留旧值（D-5 唯一例外），内置 id 与不存在统一 404。"""
+    tags 字段缺省＝保留旧值（D-5 唯一例外），内置 id 与不存在统一 404。
+    A1（docs/97）：可选 `if_match_version` CAS——不匹配 409 `TEMPLATE_VERSION_CONFLICT`（缺省无防护）；
+    `params` 缺省＝保留旧值（照 tags 先例）。"""
     store = services_for(principal).user_templates
     if get_template(template_id) is not None:
         raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
@@ -3144,15 +3257,27 @@ def update_user_template(
     category = current.category if body.category is None else body.category.strip()
     if len(category) > 30:
         raise HTTPException(status_code=422, detail="分类长度须在 30 字符以内")
+    if body.params is not None:
+        params_errors = validate_template_params(body.params)
+        if params_errors:
+            raise HTTPException(status_code=422, detail="；".join(params_errors))
     parse_graph(body.graph)
-    updated = store.update(
-        template_id,
-        name=name,
-        description=body.description,
-        tags=tags,
-        category=category,
-        graph=body.graph,
-    )
+    try:
+        updated = store.update(
+            template_id,
+            name=name,
+            description=body.description,
+            tags=tags,
+            category=category,
+            graph=body.graph,
+            params=body.params,
+            if_match_version=body.if_match_version,
+        )
+    except TemplateVersionConflict:
+        raise HTTPException(
+            status_code=409,
+            detail=f"模板已被他人更新（当前版本 {current.version}），请刷新后重试",
+        ) from None
     return {**updated.model_dump(), "source": "user", "deletable": True}
 
 
@@ -3166,6 +3291,71 @@ def delete_user_template(
     if not services_for(principal).user_templates.delete(template_id):
         raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
     return {"deleted": True}
+
+
+@app.post("/api/templates/{template_id}/usage")
+def touch_template_usage(
+    template_id: str, principal: Principal = Depends(require("operate"))
+) -> dict[str, int]:
+    """A1 使用统计（docs/97 E-4）：显式 touch 计数 +1，返回新值；
+    内置/不存在/跨租户统一 404（内置 v1 不计数）。"""
+    if get_template(template_id) is not None:
+        raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
+    store = services_for(principal).user_templates
+    if not store.touch(template_id):
+        raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
+    updated = store.get(template_id)
+    return {"usage_count": updated.usage_count}
+
+
+class TemplateInstantiateRequest(BaseModel):
+    values: dict[str, Any] = Field(default_factory=dict)
+
+
+@app.post("/api/templates/{template_id}/instantiate")
+def instantiate_user_template(
+    template_id: str,
+    body: TemplateInstantiateRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """A1 参数化实例化（docs/97 E-6）：校验 required/类型/options/未知参数名后返回
+    模板图深拷贝，values 覆写进 graph.variables（命中 name 覆写 value、未命中 append
+    {name,type,value,scope:"global"}）；模板原图逐键不变；内置/不存在/跨租户 404。"""
+    if get_template(template_id) is not None:
+        raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
+    store = services_for(principal).user_templates
+    template = store.get(template_id)
+    if template is None:
+        raise HTTPException(status_code=404, detail=f"模板不存在：{template_id}")
+    value_errors = _validate_instantiate_values(template.params, body.values)
+    if value_errors:
+        raise HTTPException(status_code=422, detail="；".join(value_errors))
+    graph = copy.deepcopy(template.graph)
+    variables = list(graph.get("variables", []))
+    for pname, pdecl in template.params.items():
+        if pname not in body.values:
+            continue
+        value = body.values[pname]
+        found = False
+        for var in variables:
+            if isinstance(var, dict) and var.get("name") == pname:
+                var["value"] = value
+                found = True
+                break
+        if not found:
+            variables.append(
+                {
+                    "name": pname,
+                    "type": pdecl.get("type", "string"),
+                    "value": value,
+                    "scope": "global",
+                }
+            )
+    graph["variables"] = variables
+    return {
+        "graph": graph,
+        "template": {"id": template.id, "name": template.name, "version": template.version},
+    }
 
 
 @app.get("/api/templates/{template_id}")
@@ -3296,6 +3486,122 @@ def import_template_package(
         name=name, description=description, tags=tags, category=category, graph=graph
     )
     return {**template.model_dump(), "source": "user", "deletable": True}
+
+
+class MessageTemplateCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    kind: str = "approval"
+    subject: str = Field(min_length=1, max_length=200)
+    body: str = Field(min_length=1, max_length=4000)
+    variables: list[str] = Field(default_factory=list, max_length=20)
+
+
+def _message_template_422(errors: list[str]) -> NoReturn:
+    """消息模板形状校验失败统一 422（docs/98 §2.3：中文 detail，码名登记于 docs/03
+    与 docs/98——`MESSAGE_TEMPLATE_UNDECLARED_VAR` 等仅在契约层识别，响应体沿用中文惯例）。"""
+    raise HTTPException(status_code=422, detail="；".join(errors))
+
+
+def _message_template_payload(body: MessageTemplateCreateRequest) -> dict[str, Any]:
+    name = body.name.strip()
+    if not name:
+        _message_template_422(["模板名称不能为空"])
+    errors = validate_message_template(
+        name=name,
+        kind=body.kind,
+        subject=body.subject,
+        body=body.body,
+        variables=body.variables,
+    )
+    if errors:
+        _message_template_422(errors)
+    return {
+        "name": name,
+        "kind": body.kind,
+        "subject": body.subject,
+        "body": body.body,
+        "variables": list(dict.fromkeys(body.variables)),
+    }
+
+
+@app.get("/api/message-templates")
+def list_message_templates(
+    principal: Principal = Depends(require("read")),
+    kind: str | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """消息通知模板列表（打包 A2，docs/98 §2.3）：投影 id/name/kind/subject/variables/updated_at，
+    **不含 body**；可选 `?kind=` 过滤（approval/alert）。"""
+    items = [
+        {
+            "id": template.id,
+            "name": template.name,
+            "kind": template.kind,
+            "subject": template.subject,
+            "variables": template.variables,
+            "updated_at": template.updated_at,
+        }
+        for template in services_for(principal).message_template_store.list(kind=kind)
+    ]
+    return {"items": items}
+
+
+@app.get("/api/message-templates/{template_id}")
+def get_message_template(
+    template_id: str, principal: Principal = Depends(require("read"))
+) -> dict[str, Any]:
+    """消息模板详情（含 body）；未知/跨租户 404。"""
+    template = services_for(principal).message_template_store.get(template_id)
+    if template is None:
+        raise HTTPException(status_code=404, detail=f"消息模板不存在：{template_id}")
+    return template.model_dump()
+
+
+@app.post("/api/message-templates", status_code=201)
+def create_message_template(
+    body: MessageTemplateCreateRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """创建消息通知模板（docs/98 §2.3）：形状校验 422（含正文占位 ⊆ variables 声明）、
+    租户内重名 409 `MESSAGE_TEMPLATE_NAME_CONFLICT`。"""
+    payload = _message_template_payload(body)
+    try:
+        template = services_for(principal).message_template_store.add(**payload)
+    except MessageTemplateNameConflict:
+        raise HTTPException(
+            status_code=409, detail=f"消息模板名称已存在：{payload['name']}"
+        ) from None
+    return template.model_dump()
+
+
+@app.put("/api/message-templates/{template_id}")
+def update_message_template(
+    template_id: str,
+    body: MessageTemplateCreateRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """全量更新消息模板（docs/98 §2.3）：id/created_at 不变；未知 404；撞名 409。"""
+    payload = _message_template_payload(body)
+    try:
+        updated = services_for(principal).message_template_store.update(
+            template_id, **payload
+        )
+    except MessageTemplateNameConflict:
+        raise HTTPException(
+            status_code=409, detail=f"消息模板名称已存在：{payload['name']}"
+        ) from None
+    if updated is None:
+        raise HTTPException(status_code=404, detail=f"消息模板不存在：{template_id}")
+    return updated.model_dump()
+
+
+@app.delete("/api/message-templates/{template_id}")
+def delete_message_template(
+    template_id: str, principal: Principal = Depends(require("operate"))
+) -> dict[str, bool]:
+    """删除消息模板（docs/98 §2.3）：引用侧不阻断——消费点下次发送回退默认正文。"""
+    if not services_for(principal).message_template_store.delete(template_id):
+        raise HTTPException(status_code=404, detail=f"消息模板不存在：{template_id}")
+    return {"deleted": True}
 
 
 @app.get("/api/alert-rule-templates")
@@ -3523,6 +3829,7 @@ def replay_recording(
             tool_mocks=tool_mocks,
             condition_classifier=condition_script,
             tenant_id=principal.tenant_id,
+            secret_provider=_secret_provider,
         )
         replay_steps = take_steps()
         tools_by_node = {
@@ -3786,6 +4093,7 @@ def run_saved_graph(
             is_cancelled=cancel_event.is_set,
             _block_subgraph_suspend=(STORAGE_BACKEND == "pg"),
             tenant_id=principal.tenant_id,
+            secret_provider=_secret_provider,
         )
     except RunSuperseded as exc:
         # docs/62 §2 D-4：输家停止驱动——不写 run 终态、不记监控、不进门控评估，
@@ -3967,6 +4275,7 @@ def run_saved_graph_stream(
                     is_cancelled=cancel_event.is_set,
                     _block_subgraph_suspend=(STORAGE_BACKEND == "pg"),
                     tenant_id=principal.tenant_id,
+                    secret_provider=_secret_provider,
                 )
                 if monitored:
                     run_store.finish(
@@ -4420,6 +4729,25 @@ def decide_approval(
     if pending is None:
         # 跨租户 token 同样 404，不泄漏存在性（04 §5.14）
         raise HTTPException(status_code=404, detail=f"审批请求不存在或已清理：{token}")
+    # 打包 A4（docs/100 §3）：指派校验——approver 非空时决策者必须匹配。
+    # user:<id> → 与 principal.username 精确匹配（iam v1 用户标识即 username，无独立 user_id）；
+    # 邮箱形态（含 @）→ 与 principal 邮箱匹配（iam 现状无 email 字段 → 恒不匹配 403，
+    # 待真实用户模型引入 email 后自然生效）；其他形态 → 403（不泄漏存在性差异）。
+    # 空 approver → 任何人可决（现状逐字不变）。邮件深链端点（email-decision）无 principal，不走本校验。
+    pending_approver = str(pending.get("approver") or "")
+    if pending_approver:
+        if pending_approver.startswith("user:"):
+            assigned = principal.username == pending_approver[len("user:"):]
+        elif "@" in pending_approver:
+            assigned = False  # iam 无 email 字段（docs/100 §7 注记照实）
+        else:
+            assigned = False
+        if not assigned:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "APPROVAL_NOT_ASSIGNED",
+                        "message": "该审批仅限指定审批人处理"},
+            )
     notifier = EmailApprovalNotifier(
         services_for(principal).message_service, _PUBLIC_URL, principal.tenant_id
     )

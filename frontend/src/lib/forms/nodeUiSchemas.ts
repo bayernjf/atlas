@@ -20,7 +20,7 @@ import type { UiSchema } from './uiSchema'
 export const humanApprovalUiSchema: UiSchema = {
   labels: {
     summary: '审批说明（必填，支持 {{路径}} 引用）',
-    approver: '审批人（可选，仅展示与审计，v1 不鉴权）',
+    approver: '审批人（可选；支持 {{变量}} 插值与 user:<id>/邮箱，留空=任何人可决；非空时决策须匹配）',
     timeoutSeconds: `超时时长（${MIN_APPROVAL_TIMEOUT}-${MAX_APPROVAL_TIMEOUT} 秒）`,
     onTimeout: '超时策略（默认自动拒绝；超时后 run 仍完成）',
     approvedTarget: '通过目标（人工同意 / 超时自动通过时进入）',

@@ -644,6 +644,17 @@ export async function nlGenerate(prompt: string): Promise<{ graph: SerializedGra
 
 export type TemplateSource = 'catalog' | 'user'
 
+export type TemplateParam = {
+  type: 'string' | 'number' | 'boolean' | 'select'
+  label?: string
+  required?: boolean
+  default?: string | number | boolean
+  hint?: string
+  options?: string[]
+}
+
+export type TemplateParams = Record<string, TemplateParam>
+
 export type TemplateSummary = {
   id: string
   name: string
@@ -654,6 +665,9 @@ export type TemplateSummary = {
   source: TemplateSource
   deletable: boolean
   created_at?: string
+  version?: number
+  updated_at?: string
+  usage_count?: number
 }
 
 export type TemplateDetail = {
@@ -666,10 +680,15 @@ export type TemplateDetail = {
   source: TemplateSource
   deletable: boolean
   created_at?: string
+  version?: number
+  updated_at?: string
+  usage_count?: number
+  params?: TemplateParams
 }
 
-export async function listTemplates(): Promise<TemplateSummary[]> {
-  const body = await request<{ items: TemplateSummary[] }>('/api/templates')
+export async function listTemplates(q?: string): Promise<TemplateSummary[]> {
+  const query = q && q.trim() ? `?q=${encodeURIComponent(q.trim())}` : ''
+  const body = await request<{ items: TemplateSummary[] }>(`/api/templates${query}`)
   return body.items
 }
 
@@ -682,6 +701,7 @@ export async function createUserTemplate(input: {
   description?: string
   category?: string
   graph: SerializedGraph
+  params?: TemplateParams
 }): Promise<TemplateDetail> {
   return request('/api/templates', {
     method: 'POST',
@@ -690,13 +710,14 @@ export async function createUserTemplate(input: {
       description: input.description ?? '',
       category: input.category ?? '',
       graph: input.graph,
+      params: input.params ?? {},
     }),
   })
 }
 
 export async function updateUserTemplate(
   id: string,
-  input: { name: string; description?: string; category?: string; graph: SerializedGraph },
+  input: { name: string; description?: string; category?: string; graph: SerializedGraph; params?: TemplateParams },
 ): Promise<TemplateDetail> {
   return request(`/api/templates/${id}`, {
     method: 'PUT',
@@ -705,12 +726,73 @@ export async function updateUserTemplate(
       description: input.description ?? '',
       ...(input.category === undefined ? {} : { category: input.category }),
       graph: input.graph,
+      ...(input.params === undefined ? {} : { params: input.params }),
     }),
   })
 }
 
 export async function deleteUserTemplate(id: string): Promise<void> {
   await request(`/api/templates/${id}`, { method: 'DELETE' })
+}
+
+export async function touchTemplateUsage(id: string): Promise<{ usage_count: number }> {
+  return request(`/api/templates/${id}/usage`, { method: 'POST' })
+}
+
+export async function instantiateTemplate(
+  id: string,
+  values: Record<string, string | number | boolean>,
+): Promise<{ graph: SerializedGraph; template: { id: string; name: string; version: number } }> {
+  return request(`/api/templates/${id}/instantiate`, {
+    method: 'POST',
+    body: JSON.stringify({ values }),
+  })
+}
+
+export type MessageTemplateKind = 'approval' | 'alert'
+
+export type MessageTemplateSummary = {
+  id: string
+  name: string
+  kind: MessageTemplateKind
+  subject: string
+  variables: string[]
+  updated_at: string
+}
+
+export type MessageTemplateDetail = MessageTemplateSummary & {
+  body: string
+}
+
+export type MessageTemplateInput = {
+  name: string
+  kind: MessageTemplateKind
+  subject: string
+  body: string
+  variables: string[]
+}
+
+// 打包 A2（docs/98）：消息通知模板 CRUD（列表投影不含 body；kind 过滤）。
+export async function listMessageTemplates(kind?: MessageTemplateKind): Promise<MessageTemplateSummary[]> {
+  const query = kind ? `?kind=${encodeURIComponent(kind)}` : ''
+  const body = await request<{ items: MessageTemplateSummary[] }>(`/api/message-templates${query}`)
+  return body.items
+}
+
+export async function getMessageTemplate(id: string): Promise<MessageTemplateDetail> {
+  return request(`/api/message-templates/${id}`)
+}
+
+export async function createMessageTemplate(input: MessageTemplateInput): Promise<MessageTemplateDetail> {
+  return request('/api/message-templates', { method: 'POST', body: JSON.stringify(input) })
+}
+
+export async function updateMessageTemplate(id: string, input: MessageTemplateInput): Promise<MessageTemplateDetail> {
+  return request(`/api/message-templates/${id}`, { method: 'PUT', body: JSON.stringify(input) })
+}
+
+export async function deleteMessageTemplate(id: string): Promise<void> {
+  await request(`/api/message-templates/${id}`, { method: 'DELETE' })
 }
 
 export async function exportTemplate(
