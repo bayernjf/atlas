@@ -4729,6 +4729,25 @@ def decide_approval(
     if pending is None:
         # 跨租户 token 同样 404，不泄漏存在性（04 §5.14）
         raise HTTPException(status_code=404, detail=f"审批请求不存在或已清理：{token}")
+    # 打包 A4（docs/100 §3）：指派校验——approver 非空时决策者必须匹配。
+    # user:<id> → 与 principal.username 精确匹配（iam v1 用户标识即 username，无独立 user_id）；
+    # 邮箱形态（含 @）→ 与 principal 邮箱匹配（iam 现状无 email 字段 → 恒不匹配 403，
+    # 待真实用户模型引入 email 后自然生效）；其他形态 → 403（不泄漏存在性差异）。
+    # 空 approver → 任何人可决（现状逐字不变）。邮件深链端点（email-decision）无 principal，不走本校验。
+    pending_approver = str(pending.get("approver") or "")
+    if pending_approver:
+        if pending_approver.startswith("user:"):
+            assigned = principal.username == pending_approver[len("user:"):]
+        elif "@" in pending_approver:
+            assigned = False  # iam 无 email 字段（docs/100 §7 注记照实）
+        else:
+            assigned = False
+        if not assigned:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "APPROVAL_NOT_ASSIGNED",
+                        "message": "该审批仅限指定审批人处理"},
+            )
     notifier = EmailApprovalNotifier(
         services_for(principal).message_service, _PUBLIC_URL, principal.tenant_id
     )
