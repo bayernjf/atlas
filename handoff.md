@@ -463,7 +463,7 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 
 ### 2026-10-08 打包 BM＝docs/18 第一次被执行（TRIAL.md 逐字干跑）＋演示后台处置可见＋litellm 首次导入死锁修复（docs/18 §6.2；docs/13 U1206–U1212；docs/14 D57/D58/D59）门（先跑后写，数字取实跑）
 
-- 后端全量 `.venv/bin/pytest`：**2443 passed／166 skipped／0 failed**（341.16s，退出 0；**对账**＝A4 收口那棵树 2436 ＋ U1206/U1207 两条 ＝ 2438（本批加预热前的第一次全量实测）＋ U1208–U1212 五条 ＝ **2443** ✓ 逐枚对上；skip 不变＝本批无新集成例以外的变化。**本机 load 未采样**，故只公布时长，不补一个看起来像数的数）。
+- 后端全量 `.venv/bin/pytest`：**2443 passed／166 skipped／0 failed**（341.16s，退出 0；**在收口提交 `4a638a4` 上复跑同树＝2443／166／0、237.50s**，两次读数一致＝本批最后两个提交只动过一段演示 HTML 字符串与文档，没动用例数；**对账**＝A4 收口那棵树 2436 ＋ U1206/U1207 两条 ＝ 2438（本批加预热前的第一次全量实测）＋ U1208–U1212 五条 ＝ **2443** ✓ 逐枚对上；skip 不变＝本批无新集成例以外的变化。**本机 load 未采样**，故只公布时长，不补一个看起来像数的数）。
 - PG 集成（一次性 pgvector 容器 `atlas-bm-pg` 端口 **5445**——本机 5432 被别的项目的 `infra-postgres-1` 占着，不动它；命令与 CI 逐字同 `ATLAS_RUN_INTEGRATION=1` ＋ `apply_migrations` ＋ `pytest -m integration`）：**99 passed／1 skipped／0 failed**（18.96s）。
 - `tests/test_api_demo.py`：**57 passed**（含 U1206 正控＝两条单都已从 pending 消失，U1207 钉刷新路径）；`tests/test_litellm_import_warm.py`：**5 passed**，且**改坏了会红**——临时删掉 `_restore_env(before)` 一行后 U1208 立刻 FAILED、还原后 5 例复绿（本次实跑，不是推定）。
 - **前端零改动**（本批没动 `frontend/src`），故未跑 vitest/build；真 Chromium 驱动的是镜像里已构建的前端，不构成前端回归证据。
