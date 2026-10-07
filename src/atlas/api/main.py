@@ -329,6 +329,7 @@ def _resume_run(engine, services: TenantServices, frame: dict) -> None:
             resume_claim=make_resume_claim(engine),
             resume=frame,
             tenant_id=frame["tenant_id"],
+            secret_provider=_secret_provider,
         )
         if run_id:
             services.run_store.finish(
@@ -1241,6 +1242,7 @@ def _background_run_worker(
             _block_subgraph_suspend=(STORAGE_BACKEND == "pg"),
             graph_version=version,
             tenant_id=tenant_id,
+            secret_provider=_secret_provider,
         )
         run_store.finish(
             run_id=run_id, status="completed",
@@ -2821,6 +2823,7 @@ def create_shadow_run(
             tracer=tracer,
             shadow=True,
             tenant_id=principal.tenant_id,
+            secret_provider=_secret_provider,
         )
     except Exception as exc:  # 影子异常也沉淀记录，绝不影响生产链路
         status = "error"
@@ -3826,6 +3829,7 @@ def replay_recording(
             tool_mocks=tool_mocks,
             condition_classifier=condition_script,
             tenant_id=principal.tenant_id,
+            secret_provider=_secret_provider,
         )
         replay_steps = take_steps()
         tools_by_node = {
@@ -4089,6 +4093,7 @@ def run_saved_graph(
             is_cancelled=cancel_event.is_set,
             _block_subgraph_suspend=(STORAGE_BACKEND == "pg"),
             tenant_id=principal.tenant_id,
+            secret_provider=_secret_provider,
         )
     except RunSuperseded as exc:
         # docs/62 §2 D-4：输家停止驱动——不写 run 终态、不记监控、不进门控评估，
@@ -4270,6 +4275,7 @@ def run_saved_graph_stream(
                     is_cancelled=cancel_event.is_set,
                     _block_subgraph_suspend=(STORAGE_BACKEND == "pg"),
                     tenant_id=principal.tenant_id,
+                    secret_provider=_secret_provider,
                 )
                 if monitored:
                     run_store.finish(
