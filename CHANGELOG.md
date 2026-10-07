@@ -3,6 +3,16 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### feat(template)：打包 A1 落码收口＝D25 模板库产品化收尾（2026-10-07；docs/97 形状权威＋§7 收口注记；docs/08 打包 A1 收口块；六个原子，dev 未 push）
+
+- **版本与 CAS 防覆盖**：`UserTemplate` 增 `version/updated_at/usage_count/params`；PUT 可带 `if_match_version`，不匹配 409 `TEMPLATE_VERSION_CONFLICT`（detail 带当前版本号）、匹配则 version+1；缺省无防护照旧。迁移 **043**（四列 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`＋存量回填＋COMMENT；params 列系落码期修正补入）。
+- **搜索＋使用统计**：`GET /api/templates?q=` 内置＋用户两段各自按 name/description/tags/category `casefold` 子串过滤（q 空白＝全量）；新 `POST /api/templates/{id}/usage`（operate）显式 touch 计数、返回 `{"usage_count": N}`，内置/不存在/跨租户 404。
+- **参数化向导**：`params` JSON Schema 子集声明（type∈{string,number,boolean,select}＋label/required/default/hint/options，服务端白名单校验 422 且模板不变）；新 `POST /api/templates/{id}/instantiate`（operate）：body `{values}` required/类型/options 校验后返回**深拷贝图**，values 覆写 `graph.variables`（命中覆写 value、未命中 append `{name,type,value,scope:"global"}`），模板原图逐键不变。
+- **前端**：apiClient 新类型与四函数（listTemplates q 透传／touchTemplateUsage／instantiateTemplate／create/update 透传 params）；纯逻辑 `templateParams.ts`（字段映射/初始值/校验）；Editor 从模板新建分流——params 非空先弹参数表单（type→控件、default 预填、required/options 校验），提交→instantiate→loadGraph→touch→刷新列表计数；i18n zh/en 5 键。
+- **存量 bug 修复（PG 路径首次真跑暴露）**：`PgUserTemplateStore.add` 原 `SELECT COALESCE(MAX(seq),0) ... FOR UPDATE` 是 Postgres 不支持的聚合＋行锁组合（`NotSupportedError`，打包 X 遗留）；改为 `SELECT seq ... ORDER BY seq DESC LIMIT 1 FOR UPDATE`。新增 PG 集成测试 6 例（临时 pgvector 容器 5433）真库验证跨重启累加。
+- **验收**：U1180–U1186 常跑 7 例＋PG 集成 6 例＋前端 U1187–U1188 vitest（45 passed，前端全量 804/2）。门：后端全量 **2401 passed／160 skipped／0 failed**（190.68s）、oxlint 0/0、build 过、守护门 8 passed。
+- **产品价值**：防多人互相覆盖（409 而非静默覆盖）；模板搜索＋热度可见；填空式实例化、原图不变。**仍缓做**：模板市场/共享/商业化（D3）、评分、一键升级引用侧（D21）、版本历史/回滚/PATCH、内置模板 params/计数、搜索排序分页、多语言描述（D13）。
+
 ### docs(template)：打包 A1 立项＝D25 模板库产品化收尾（2026-10-07；docs/97 形状权威；docs-only 原子，落码另立批）
 
 - **承接**：用户「那你推进」A 档修正清单（D32 灰度/D20 审批持久化/D30 主体/D24 渠道大半均已被历史打包取回，见 docs/14 状态列），A 档四打包建任务 #99–#102；本批先推 A1。

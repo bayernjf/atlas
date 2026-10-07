@@ -105,3 +105,13 @@ docs/97（本文，形状权威）＋docs/00 地图（登记 97）＋docs/08（�
 - 评分/使用统计自动埋点（图运行→模板归因）：触发＝真实使用反馈；v1 用显式 touch。
 - 一键升级回归的引用侧（D21 子图治理同批）：触发条件不变。
 - 内置模板 params 声明/计数、搜索排序分页、多语言描述（D13）：随需另立。
+
+## 7. 收口注记（2026-10-07 落码完成）
+
+- **一处契约修正（落码期照实）**：§3.1 初始只写 version/updated_at/usage_count 三列，落码时发现 **params 声明必须持久化**（内存档重启即失、PG 档缺列存不下）⇒ 迁移 043 与 §3.1 SQL 同步补第四列 `params JSONB DEFAULT '{}'`，两档 store 均持久化 params。
+- **一处存量 bug（PG 路径首次真跑暴露）**：`PgUserTemplateStore.add` 原用 `SELECT COALESCE(MAX(seq),0) ... FOR UPDATE`——Postgres 禁止聚合＋FOR UPDATE（`NotSupportedError`，打包 X 遗留、此前从未真跑 PG 路径）；修复为 `SELECT seq ... ORDER BY seq DESC LIMIT 1 FOR UPDATE`。新增 PG 集成测试 6 例（U1183 的 PG 半边）真库验证。
+- **落码顺序全过**：迁移＋两档 store（`c584be0`）→ REST＋校验（`9b16ec0`）→ 后端测试（`4dd3ae4`）→ PG 集成＋修复（`3e8ea22`）→ 前端（`780e0da`）→ 前端测试（`3be93e9`）。
+- **验收**：后端 U1180–U1186 常跑 7 例＋PG 集成 6 例（临时 pgvector 容器 5433）；前端 U1187–U1188 vitest。门：后端全量 **2401 passed／160 skipped／0 failed**、前端 vitest **804 passed／2 skipped**、oxlint 0/0、`tsc -b && vite build` 过、守护门 8 passed。
+- **产品价值（用户视角）**：① 版本/CAS＝多人编辑防互相覆盖（改前拿当前版本号，冲突 409 而非静默覆盖）；② 搜索＋使用统计＝模板多了找得到、用得多知道热不热；③ 参数化向导＝模板可填空式实例化（声明 params 后，从模板新建先弹参数表单、按声明校验、实例化只改变量覆写、原图不变）。
+- **仍缓做（docs/14 D25 行注记已同步）**：模板市场/组织内共享/商业化抽成（D3 同源）、评分、一键升级引用侧（D21）、版本历史/回滚/PATCH、内置模板 params/计数、搜索排序分页、多语言描述（D13）。
+
