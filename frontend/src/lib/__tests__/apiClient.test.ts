@@ -29,6 +29,11 @@ import {
   touchTemplateUsage,
   unregisterRemoteWebhook,
   updateUserTemplate,
+  createMessageTemplate,
+  deleteMessageTemplate,
+  getMessageTemplate,
+  listMessageTemplates,
+  updateMessageTemplate,
   type ChannelBindingView,
   type RunEvent,
 } from '../apiClient'
@@ -595,5 +600,78 @@ describe('A1 template productization client (U1187)', () => {
     const body = JSON.parse(String(init?.body))
     expect(body).not.toHaveProperty('params')
     expect(body).not.toHaveProperty('if_match_version')
+  })
+})
+
+
+describe('message templates API (pack A2, docs/98; U1194)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('listMessageTemplates GETs without kind and with kind filter', async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({
+        items: [
+          { id: 'mtpl-1', name: '审批提醒', kind: 'approval', subject: '[Atlas] {{title}}', variables: ['title'], updated_at: 'x' },
+        ],
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const items = await listMessageTemplates()
+    expect(items).toHaveLength(1)
+    expect(items[0].kind).toBe('approval')
+    let [url] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/message-templates')
+
+    await listMessageTemplates('alert')
+    url = fetchMock.mock.calls[1][0]
+    expect(url).toBe('/api/message-templates?kind=alert')
+  })
+
+  it('getMessageTemplate GETs detail with body', async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ id: 'mtpl-1', name: 'n', kind: 'approval', subject: 's', body: 'b {{title}}', variables: ['title'], updated_at: 'x' }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const detail = await getMessageTemplate('mtpl-1')
+    expect(detail.body).toContain('{{title}}')
+    const [url] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/message-templates/mtpl-1')
+  })
+
+  it('createMessageTemplate POSTs full payload', async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ id: 'mtpl-1', name: '审批提醒', kind: 'approval', subject: 's', body: 'b', variables: ['title'], updated_at: 'x' }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const input = { name: '审批提醒', kind: 'approval', subject: 's', body: 'b', variables: ['title'] }
+    await createMessageTemplate(input)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/message-templates')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual(input)
+  })
+
+  it('updateMessageTemplate PUTs to the item path', async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ id: 'mtpl-2', name: '告警提醒', kind: 'alert', subject: 's2', body: 'b2', variables: ['title', 'graph_id'], updated_at: 'x' }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const input = { name: '告警提醒', kind: 'alert', subject: 's2', body: 'b2', variables: ['title', 'graph_id'] }
+    await updateMessageTemplate('mtpl-2', input)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/message-templates/mtpl-2')
+    expect(init.method).toBe('PUT')
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual(input)
+  })
+
+  it('deleteMessageTemplate DELETEs the item path', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ deleted: true }))
+    vi.stubGlobal('fetch', fetchMock)
+    await deleteMessageTemplate('mtpl-3')
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/message-templates/mtpl-3')
+    expect(init.method).toBe('DELETE')
   })
 })
