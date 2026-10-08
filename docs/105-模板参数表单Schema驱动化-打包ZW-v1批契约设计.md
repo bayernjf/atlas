@@ -99,3 +99,17 @@ hints?: Record<string, string>
 - **U1248**：Editor 参数 Modal——`detail.params` 非空时 FormRenderer 挂载、字段数=声明字段数、初值=buildInitialValues（契约）。
 - **U1249**：提交路径不变——`validateParamValues` 四档校验（required/数字/布尔/select 范围）行为与 A1 一致（回归）。
 - **U1250**：回归——无 params 的模板应用路径不受影响（`applyTemplate` 空 params 直走 `finishApplyTemplate`）。
+
+## 6. 收口注记（2026-10-08）
+
+**执行**：docs 立项原子 `335be79` → 落码三原子 `dc15186`（桥接纯函数＋UiSchema.hints 槽位＋FormRenderer hint 渲染）→ `7250dc0`（Editor 参数 Modal 改挂 FormRenderer）→ `d850c44`（测试 U1245–U1249 9 例）。全链在本地 dev、**未 push**（用户偏好）。
+
+**两处落码期偏差（照实）**：
+1. **string 字段按 tool 来源语义升级为 variable-input**——`buildFormTree(..., { source: 'tool' })` 对 string 字段返回 `variable-input`（formTree.ts:167-168：工具表单 string 默认支持 `{{变量}}` 插入，M0 既有语义），而非契约预期字面 `text`。模板参数与工具 params 同为「实例化期注入值」，支持变量插入语义一致；无 scope 时退化为普通 TextArea（placeholder「可插入 {{节点输出.字段}} 变量」）不崩。U1248 断言按实测改为 `variable-input`。
+2. **`TemplateParamValues` 类型名不存在**——Editor onChange 改回内联 `Record<string, string | number | boolean>`（build 期 tsc 暴露，修正后并入对应原子）。
+
+**U1250 覆盖方式**：Editor 无组件测试框架，`applyTemplate` 空 params 直走 `finishApplyTemplate` 分支逻辑本批零改动；空 params → 空 object schema 已由 U1245 第二条覆盖。冒烟实测"审批超时默认拒绝演示"等无 params 模板应用路径不受影响。
+
+**门（实跑 2026-10-08）**：前端 vitest 全量 **858 passed／2 skipped**（基线 849/2 ＋ 本批 9 例）、oxlint **0/0**（189 文件）、`npx tsc --noEmit` 0、`npm run build` 过（仅既有 chunk >500kB 警告）。后端零改动（ZW 纯前端批）。
+
+**真实浏览器冒烟（admin-a，内存档，:8000 后端＋:5174 前端）**：造带 params 的用户模板 `utpl-1`（4 参数：number required＋hint／select＋default／boolean／string＋hint，节点引用 `{{global.xxx}}` 变量）。参数 Modal 实测：标题「参数化新建」＋「该模板声明了 4 个参数」计数 Alert、必填星号（最小金额 *）、hint 文案（低于此金额不退款／补充说明）在控件下方 secondary 行、select 默认值 webhook、switch、string 显示 variable-input 占位。提交路径：空值提交 → 「最小金额（min_amount）为必填」拦截（A1 validateParamValues 文案）；填 500 提交 → `POST /api/templates/utpl-1/instantiate` 200 → 画布整体替换（v4）→ 问题面板「无问题」。无 params 模板（审批超时等内置模板）应用路径不受影响。

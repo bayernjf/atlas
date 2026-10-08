@@ -3,6 +3,15 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔前端〕打包 ZW 收口：模板参数表单 Schema 驱动化（docs/105，2026-10-08 立项+同日收口）
+
+- **D29「Schema 驱动配置内核」首个切片取回（D29 整体不解除）**：A1 模板参数化向导（docs/97 §3.4，第四套手写表单范式）迁入 forms 内核成第三实体，与节点 config、工具 params 并列。
+- 新增纯函数 `frontend/src/lib/forms/templateParamSchema.ts`：`templateParamsToMetaSchema`（TemplateParam 声明→MetaSchema，select→enum 走 resolveWidget 现成通道、required 收集、default 透传）＋`templateParamsToUiSchema`（labels/hints 承接 label/hint）。
+- `UiSchema` 新增 `hints` 槽位：Field 控件下方 secondary 说明文字，decorateField/decorateNodeForRender 同步烘焙，缺省 undefined 三路零影响。
+- Editor 参数 Modal 渲染区改挂 `FormRenderer source="tool"`，删手写 Switch/Select/InputNumber/Input 四分支；弹窗宽高/提交/校验（validateParamValues 与后端 422 对齐）不变。
+- 落码期偏差照实（docs/105 §6）：source='tool' 下 string 字段按 M0 工具表单语义升级为 variable-input（支持变量插入，无 scope 退化 TextArea 不崩）。
+- 零迁移／零新依赖／无 ADR；四原子 `335be79`→`d850c44`；用例 U1245–U1250（docs/13）；**门**：前端 vitest 858/2、oxlint 0/0、tsc 0、build 过；真实浏览器冒烟全链路通过（参数 Modal 渲染/必填拦截/instantiate 画布替换）。**D29 整体不解除**。
+
 ### 〔治理〕打包 ZV 闭合：A-9 demo 面固有共享定性（docs/89，2026-10-08）
 
 - **A-9（docs/89 台账低危：租户 scoped `/api/demo/reset` 清全局 `_MOCK_SHOPIFY_WEBHOOKS`）文档化闭合**：按权威规格 **docs/04 §9.4**「demo 店铺与 mock 端点、demo SQLite 种子为全局基础设施，不分区」＋「demo 店铺订单与 demo SQLite 种子是共享模拟基础设施，仍随之重建」——该行为是 by-design，非缺陷。
