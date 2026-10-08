@@ -7,6 +7,7 @@ import {
   formatScore,
   kindColor,
   kindLabel,
+  KNOWLEDGE_CATEGORIES,
   MEMORY_KIND_COLORS,
   MEMORY_KIND_LABELS,
   parseStringMapText,
@@ -120,3 +121,16 @@ describe('记忆手动新建/编辑表单纯函数（⑩）', () => {
   })
 })
 
+
+describe('AA knowledge 标签与分类（docs/108，U1267 纯函数腿）', () => {
+  it('knowledge kind 映射到 i18n key 与青色标签', () => {
+    expect(kindLabel('knowledge')).toBe('kind.knowledge')
+    expect(kindColor('knowledge')).toBe('cyan')
+    expect(MEMORY_KIND_LABELS.knowledge).toBe('kind.knowledge')
+    expect(MEMORY_KIND_COLORS.knowledge).toBe('cyan')
+  })
+
+  it('知识子类白名单与后端同构（faq/sop/manual/rule/case）', () => {
+    expect(KNOWLEDGE_CATEGORIES).toEqual(['faq', 'sop', 'manual', 'rule', 'case'])
+  })
+})

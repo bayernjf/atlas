@@ -701,3 +701,55 @@ describe('message templates API (pack A2, docs/98; U1194)', () => {
     expect((init as RequestInit).method).toBe('POST')
   })
 })
+// --- docs/108 打包 AA：知识库前端契约（U1267 前端腿：import 请求形状 / search category 参数） ---
+
+describe('AA knowledge import/search 契约（docs/108，U1267）', () => {
+  it('importKnowledge 发 POST /api/knowledge/import 且携带 category/text/scope', async () => {
+    const fetchMock = vi.fn(async () => new Response(
+      JSON.stringify({ imported: 2, truncated: false, items: [{ id: 'mem-1' }] }),
+      { status: 201, headers: { 'content-type': 'application/json' } },
+    ))
+    vi.stubGlobal('fetch', fetchMock)
+    const { importKnowledge } = await import('../apiClient')
+    const result = await importKnowledge({ category: 'rule', text: '规则一。\n\n规则二。', scope: { user_id: 'u-1' } })
+    expect(result.imported).toBe(2)
+    const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/knowledge/import')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(init.body as string)).toEqual({
+      category: 'rule',
+      text: '规则一。\n\n规则二。',
+      scope: { user_id: 'u-1' },
+    })
+  })
+
+  it('searchMemories 携带 category 查询参数（仅 kind=knowledge 时）', async () => {
+    const fetchMock = vi.fn(async () => new Response(
+      JSON.stringify({ results: [{ id: 'mem-1', score: 0.5 }] }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ))
+    vi.stubGlobal('fetch', fetchMock)
+    const { searchMemories } = await import('../apiClient')
+    await searchMemories('退款', { kind: 'knowledge', category: 'faq', topK: 5 })
+    const [url] = vi.mocked(fetch).mock.calls[0] as [string]
+    expect(url).toContain('/api/memories/search?')
+    expect(url).toContain('q=%E9%80%80%E6%AC%BE')
+    expect(url).toContain('kind=knowledge')
+    expect(url).toContain('category=faq')
+    expect(url).toContain('top_k=5')
+  })
+
+  it('knowledge kind 进 listMemories 筛选参数', async () => {
+    const fetchMock = vi.fn(async () => new Response(
+      JSON.stringify({ items: [] }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ))
+    vi.stubGlobal('fetch', fetchMock)
+    const { listMemories } = await import('../apiClient')
+    await listMemories('knowledge', 200)
+    const [url] = vi.mocked(fetch).mock.calls[0] as [string]
+    expect(url).toContain('/api/memories?')
+    expect(url).toContain('kind=knowledge')
+    expect(url).toContain('limit=200')
+  })
+})
