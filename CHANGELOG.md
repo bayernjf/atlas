@@ -3,6 +3,14 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔工程〕打包 ZU2 收口：子图引用手动升级动作侧（docs/104，2026-10-08 立项+同日收口）
+
+- **D21「手动升级+回归测试」动作侧取回（D21 整体不解除）**：升级体检（docs/28 批4⑪）只读不写草稿；本批补「显式升级引用」动作。
+- 后端 `apply_subgraph_upgrades`：把草稿顶层 subgraph 引用 `config.graphId` 显式改写为 `sub_id@to_version` 并经 `update_draft` 存回草稿（不产新版本、不动已发布版本）；指定不在升级清单的 node_id → 422；草稿不存在 → 404；空清单幂等。
+- 端点 `POST /api/graphs/{graph_id}/subgraph-upgrades`（operate）；升级体检基线改为优先读草稿显式钉版（升级后 from==to 不再列出，U1242 语义）。
+- 前端 ReleaseModal 升级体检区「全部应用/逐行应用」按钮，应用后刷新体检区；i18n apply/applyAll/applyFailed 两档。
+- 零迁移／零新依赖／无 ADR；四原子 `cb5a1c7`→`2255ead`；用例 U1237–U1244（docs/13）；**门**：后端 2464/147/0、前端 849/2、oxlint 0/0、tsc 0、build 过。**D21 整体不解除**（子图市场/共享/跨运营体/嵌套编辑触发条件不变）。
+
 ### 〔前端〕打包 ZT 收口：规则模板配置表单化（RuleConfigEditor 共享，docs/103，2026-10-08）
 
 - **规则模板新建/编辑改为可视化表单**：Monitoring 生效规则表单抽成纯受控共享组件 `RuleConfigEditor`（内置 4 规则开关/阈值、升级/恢复三组、custom 增删改），模板市场 Modal 不再要求手写 JSON；默认值与结构化校验收敛到 `lib/ruleConfig.ts`，提交前拦截非法配置。
