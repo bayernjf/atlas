@@ -53,6 +53,12 @@ from atlas.llm.condition_classifier import (
     OfflineConditionClassifier,
     get_condition_classifier,
 )
+from atlas.llm.structured import (
+    LLMStructuredUnavailable,
+    classify_intent,
+    extract_fields,
+    generate_content,
+)
 from atlas.message.adapter import MessageHarnessAdapter
 from atlas.message.service import MessageService
 from atlas.security.bootstrap import demo_surface_enabled
@@ -190,7 +196,8 @@ def runtime_error_meta(exc: Exception) -> dict[str, Any]:
 
     WaitNodeFailure 携带既有 WAIT_* 5 码与 nodeId；ConditionEvalError 携带 COND_* 码族与
     params；AiDecisionUnavailable 携带 LLM_DECISION_UNAVAILABLE 与 nodeId；
-    ConditionClassifierUnavailable 携带 LLM_CLASSIFIER_UNAVAILABLE 与 nodeId；其余未预期异常
+    ConditionClassifierUnavailable 携带 LLM_CLASSIFIER_UNAVAILABLE 与 nodeId；
+    LLMStructuredUnavailable 携带 LLM_STRUCTURED_UNAVAILABLE 与 nodeId；其余未预期异常
     统一 RUNTIME_UNEXPECTED。返回 errorCode/errorParams 两键，供 run failed 结果与 SSE error
     帧并行下发（纯超集，旧 error 字段不变）。
     """
@@ -201,6 +208,8 @@ def runtime_error_meta(exc: Exception) -> dict[str, Any]:
     if isinstance(exc, AiDecisionUnavailable):
         return {"errorCode": exc.code, "errorParams": {"nodeId": exc.node_id}}
     if isinstance(exc, ConditionClassifierUnavailable):
+        return {"errorCode": exc.code, "errorParams": {"nodeId": exc.node_id}}
+    if isinstance(exc, LLMStructuredUnavailable):
         return {"errorCode": exc.code, "errorParams": {"nodeId": exc.node_id}}
     if isinstance(exc, SubgraphSuspendUnsupported):
         return {"errorCode": exc.code, "errorParams": {"nodeId": exc.node_id}}
@@ -472,6 +481,7 @@ def _make_executor(
     expr_rng: random.Random | None = None,
     block_subgraph_suspend: bool = False,
     secret_provider: Any = None,  # 打包 A3（docs/99）：透传子图重入的 secret 来源变量解析
+    tenant_id: str | None = None,  # 打包 AB（docs/109）：三 LLM 节点模型按租户解析
 ):
     # 续跑只对挂起节点的**第一次**重入生效（每次编译=一次运行，闭包即运行级状态）：
     # 挂起点在循环体内时该节点每轮都会重入，若每轮都走帧内 token，则第二项起的审批
@@ -657,6 +667,46 @@ def _make_executor(
                     else:
                         message = f"{node.id}({node.type}): executed"
                     output = {"decision": result, "prompt_rendered": prompt}
+                elif node.type in ("intent_recognition", "info_extraction", "content_generation"):
+                    # docs/109 打包 AB：三 LLM 结构化节点。无模型显式 FAILED（demo 面
+                    # 不豁免——三节点无规则兜底，静默给空结果会伪造下游行为）。
+                    payload_text = ""
+                    source_path = (node.config.get("textSource") or "").strip()
+                    if source_path:
+                        # textSource 是 {{...}} 模板（如 {{global.raw_text}}），走 interpolate 解析
+                        payload_text = str(interpolate(source_path, context))
+                    else:
+                        # trigger_payload 是 execute 入参（payload 局部赋值晚于本分支）
+                        payload_text = str((trigger_payload or {}).get("text", ""))
+                    if node.type == "intent_recognition":
+                        result = classify_intent(
+                            text=payload_text,
+                            intents=node.config.get("intents") or [],
+                            examples=node.config.get("examples"),
+                            tenant_id=tenant_id,
+                            model=(str(node.config.get("model") or "").strip() or None),
+                            node_id=node.id,
+                        )
+                    elif node.type == "info_extraction":
+                        result = extract_fields(
+                            text=payload_text,
+                            fields=node.config.get("fields") or [],
+                            tenant_id=tenant_id,
+                            model=(str(node.config.get("model") or "").strip() or None),
+                            node_id=node.id,
+                        )
+                    else:
+                        result = generate_content(
+                            context=payload_text,
+                            template=str(node.config.get("template") or ""),
+                            style=str(node.config.get("style") or "").strip() or None,
+                            max_length=int(node.config.get("maxLength") or 800),
+                            tenant_id=tenant_id,
+                            model=(str(node.config.get("model") or "").strip() or None),
+                            node_id=node.id,
+                        )
+                    output = {"result": result, "prompt_rendered": result.get("prompt_rendered", "")}
+                    message = f"{node.id}({node.type}): executed"
                 elif node.type == "condition":
                     output = _execute_condition(
                         node,
@@ -2816,6 +2866,7 @@ def compile_graph(
             expr_rng=expr_rng,
             block_subgraph_suspend=block_subgraph_suspend,
             secret_provider=secret_provider,
+            tenant_id=tenant_id,
         )
         if node.id in skip_guards:
             parallel_id, safe_target = skip_guards[node.id]

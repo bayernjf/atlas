@@ -34,6 +34,10 @@ SUPPORTED_NODE_TYPES = (
     "wait",
     "subgraph",
     "human_approval",
+    # docs/109 打包 AB：三 LLM 结构化节点（编辑后台组件设计 §3.1 12 类补齐）
+    "intent_recognition",
+    "info_extraction",
+    "content_generation",
 )
 
 MAX_LOOP_ITERATIONS = 100
@@ -1540,6 +1544,41 @@ def _validate_node_config(node: NodeDSL) -> list[Issue]:
     elif node.type == "ai_decision":
         if not (config.get("promptTemplate") or "").strip():
             return [add("AI 决策必须填写提示词模板", "/promptTemplate", "NODE_AI_PROMPT_REQUIRED")]
+    elif node.type == "intent_recognition":
+        intents = config.get("intents")
+        if not isinstance(intents, list) or not intents:
+            return [add("意图识别必须至少配置一个意图", "/intents", "NODE_INTENTS_REQUIRED")]
+        if len(intents) > 20:
+            return [add("意图最多 20 个", "/intents", "NODE_INTENTS_LIMIT")]
+        for index, intent in enumerate(intents):
+            if not isinstance(intent, dict) or not (str(intent.get("name") or "").strip()):
+                return [add("每个意图必须填写名称", f"/intents/{index}/name", "NODE_INTENT_NAME_REQUIRED")]
+            if len(str(intent.get("name") or "")) > 40:
+                return [add("意图名称最长 40 字", f"/intents/{index}/name", "NODE_INTENT_NAME_LENGTH")]
+    elif node.type == "info_extraction":
+        fields = config.get("fields")
+        if not isinstance(fields, list) or not fields:
+            return [add("信息抽取必须至少配置一个字段", "/fields", "NODE_FIELDS_REQUIRED")]
+        if len(fields) > 30:
+            return [add("字段最多 30 个", "/fields", "NODE_FIELDS_LIMIT")]
+        allowed_types = ("string", "number", "boolean", "object")
+        for index, field in enumerate(fields):
+            if not isinstance(field, dict) or not (str(field.get("name") or "").strip()):
+                return [add("每个字段必须填写名称", f"/fields/{index}/name", "NODE_FIELD_NAME_REQUIRED")]
+            ftype = str(field.get("type") or "string")
+            if ftype not in allowed_types:
+                return [add("字段类型必须是 string/number/boolean/object", f"/fields/{index}/type", "NODE_FIELD_TYPE_INVALID")]
+    elif node.type == "content_generation":
+        if not (config.get("template") or "").strip():
+            return [add("内容生成必须填写模板", "/template", "NODE_TEMPLATE_REQUIRED")]
+        if len(str(config.get("template") or "")) > 2000:
+            return [add("模板最长 2000 字", "/template", "NODE_TEMPLATE_LENGTH")]
+        max_length = config.get("maxLength")
+        if max_length is not None and (
+            not isinstance(max_length, int) or isinstance(max_length, bool)
+            or not 1 <= max_length <= 4000
+        ):
+            return [add("maxLength 必须是 1-4000 的整数", "/maxLength", "NODE_MAX_LENGTH_INVALID")]
     elif node.type == "tool_call":
         if not (config.get("tool") or "").strip():
             return [add("工具调用必须选择工具", "/tool", "NODE_TOOL_REQUIRED")]
@@ -1558,6 +1597,10 @@ _STATIC_OUTPUT_KEYS: dict[str, tuple[str, ...]] = {
     "wait": ("mode", "waitType", "durationSeconds", "eventKey", "timeoutSeconds", "onTimeout"),
     "subgraph": ("status", "outputs"),
     "human_approval": ("decision", "target", "summary", "approver", "resolvedBy", "comment", "card"),
+    # docs/109 打包 AB：三节点输出形状（与 ai_decision 同族）
+    "intent_recognition": ("result", "prompt_rendered"),
+    "info_extraction": ("result", "prompt_rendered"),
+    "content_generation": ("result", "prompt_rendered"),
 }
 
 _TRIGGER_CONTEXT_KEYS = ("triggerType", "cron", "webhookUrl", "payload")
@@ -1574,6 +1617,11 @@ def _template_fields(node: NodeDSL) -> list[tuple[str, str]]:
 
     if node.type == "ai_decision":
         push("/promptTemplate", config.get("promptTemplate"))
+    elif node.type in ("intent_recognition", "info_extraction"):
+        # docs/109：textSource 可为变量路径（缺省取 trigger 上下文文本）
+        push("/textSource", config.get("textSource"))
+    elif node.type == "content_generation":
+        push("/template", config.get("template"))
     elif node.type == "tool_call":
         push("/params", config.get("params"))
     elif node.type == "condition":
