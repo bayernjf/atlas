@@ -231,9 +231,7 @@ export function Editor({
   const [exportingTemplateId, setExportingTemplateId] = useState<string | null>(null)
   const [templateParamOpen, setTemplateParamOpen] = useState(false)
   const [templateParamFields, setTemplateParamFields] = useState<TemplateParamField[]>([])
-  const [templateParamValues, setTemplateParamValues] = useState<
-    Record<string, string | number | boolean>
-  >({})
+  const [templateParamValues, setTemplateParamValues] = useState<Record<string, unknown>>({})
   const [templateParamTemplate, setTemplateParamTemplate] = useState<TemplateDetail | null>(null)
   const [templateParamBusy, setTemplateParamBusy] = useState(false)
   // 打包 ZW：模板参数表单 Schema 驱动化（docs/105 §2.3）——schema/uiSchema 由声明派生，渲染走 FormRenderer。
@@ -1508,9 +1506,7 @@ export function Editor({
             schema={templateParamSchema}
             uiSchema={templateParamUiSchema}
             value={templateParamValues}
-            onChange={(next) =>
-              setTemplateParamValues(next as Record<string, string | number | boolean>)
-            }
+            onChange={(next) => setTemplateParamValues(next as Record<string, unknown>)}
             source="tool"
           />
         </Space>

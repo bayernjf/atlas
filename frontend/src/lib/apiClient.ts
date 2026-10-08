@@ -659,12 +659,18 @@ export async function nlGenerate(prompt: string): Promise<{ graph: SerializedGra
 export type TemplateSource = 'catalog' | 'user'
 
 export type TemplateParam = {
-  type: 'string' | 'number' | 'boolean' | 'select'
+  type: 'string' | 'number' | 'boolean' | 'select' | 'object' | 'array'
   label?: string
   required?: boolean
-  default?: string | number | boolean
+  default?: unknown
   hint?: string
   options?: string[]
+  // 打包 ZX（docs/106）：结构化声明面——嵌套 object / 数组 / 条件显隐
+  properties?: TemplateParams
+  items?: TemplateParam
+  minItems?: number
+  maxItems?: number
+  visibleWhen?: { field: string; equals: unknown }
 }
 
 export type TemplateParams = Record<string, TemplateParam>
@@ -755,7 +761,7 @@ export async function touchTemplateUsage(id: string): Promise<{ usage_count: num
 
 export async function instantiateTemplate(
   id: string,
-  values: Record<string, string | number | boolean>,
+  values: Record<string, unknown>,
 ): Promise<{ graph: SerializedGraph; template: { id: string; name: string; version: number } }> {
   return request(`/api/templates/${id}/instantiate`, {
     method: 'POST',
