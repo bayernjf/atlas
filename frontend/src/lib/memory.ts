@@ -2,19 +2,30 @@
  * M11 长期记忆前端纯函数（docs/26 §7）：kind 标签/颜色、score 与字段格式化。
  * 抽离为无副作用纯函数便于 vitest 对拍。
  */
-import type { MemoryKind, MemoryWritePayload } from './apiClient'
+import type { KnowledgeCategory, MemoryKind, MemoryWritePayload } from './apiClient'
 
 // kind 展示标签映射到 memory namespace 的 i18n key（纯函数不引 hook，由组件 t() 解析）。
 export const MEMORY_KIND_LABELS: Record<MemoryKind, string> = {
   fact: 'kind.fact',
   preference: 'kind.preference',
+  knowledge: 'kind.knowledge',
 }
 
-/** fact 蓝 / preference 紫（docs/26 §7）。 */
+/** fact 蓝 / preference 紫 / knowledge 青（docs/26 §7；docs/108 §2.5 知识标签）。 */
 export const MEMORY_KIND_COLORS: Record<MemoryKind, string> = {
   fact: 'blue',
   preference: 'purple',
+  knowledge: 'cyan',
 }
+
+/** 知识子类白名单（docs/108 §2.1，与后端 models.KNOWLEDGE_CATEGORIES 同构）。 */
+export const KNOWLEDGE_CATEGORIES: KnowledgeCategory[] = [
+  'faq',
+  'sop',
+  'manual',
+  'rule',
+  'case',
+]
 
 export function kindLabel(kind: MemoryKind): string {
   return MEMORY_KIND_LABELS[kind] ?? kind

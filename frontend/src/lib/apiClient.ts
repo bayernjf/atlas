@@ -1993,7 +1993,9 @@ export async function rollbackRollout(graphId: string): Promise<RolloutSnapshot>
 
 // --- M11 长期记忆（docs/26 §6；只读浏览 + admin 删除，写入只走图工具） --------
 
-export type MemoryKind = 'fact' | 'preference'
+export type MemoryKind = 'fact' | 'preference' | 'knowledge'
+
+export type KnowledgeCategory = 'faq' | 'sop' | 'manual' | 'rule' | 'case'
 
 export type MemoryItem = {
   id: string
@@ -2020,10 +2022,11 @@ export async function listMemories(
 
 export async function searchMemories(
   q: string,
-  opts: { kind?: MemoryKind; topK?: number; minScore?: number } = {},
+  opts: { kind?: MemoryKind; category?: KnowledgeCategory; topK?: number; minScore?: number } = {},
 ): Promise<MemorySearchResult[]> {
   const params = new URLSearchParams({ q })
   if (opts.kind) params.set('kind', opts.kind)
+  if (opts.category) params.set('category', opts.category)
   if (opts.topK !== undefined) params.set('top_k', String(opts.topK))
   if (opts.minScore !== undefined) params.set('min_score', String(opts.minScore))
   const body = await request<{ results: MemorySearchResult[] }>(
@@ -2054,6 +2057,26 @@ export async function updateMemory(
   payload: Partial<MemoryWritePayload>,
 ): Promise<MemoryItem> {
   return request(`/api/memories/${id}`, { method: 'PUT', body: JSON.stringify(payload) })
+}
+
+/** docs/108 打包 AA：知识库文档导入（operate；纯文本分段入库，返回条目与截断标记）。 */
+export type KnowledgeImportRequest = {
+  category: KnowledgeCategory
+  text: string
+  scope?: Record<string, string>
+}
+
+export type KnowledgeImportResult = {
+  imported: number
+  truncated: boolean
+  items: MemoryItem[]
+}
+
+export async function importKnowledge(payload: KnowledgeImportRequest): Promise<KnowledgeImportResult> {
+  return request('/api/knowledge/import', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
 }
 
 // --- D26 影子模式（docs/33 §3；线上旁路录制，sync、无 SSE） ---
