@@ -66,7 +66,20 @@ export function AlertRuleTemplateMarket({
 
   useEffect(() => {
     if (!open) return
-    void refresh(true)
+    let cancelled = false
+    getAlertRuleTemplates()
+      .then((data) => {
+        if (!cancelled) setItems(data)
+      })
+      .catch((err) => {
+        if (!cancelled) setLoadError(err instanceof Error ? err.message : String(err))
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [open])
 
   const apply = async (id: string, name: string) => {
