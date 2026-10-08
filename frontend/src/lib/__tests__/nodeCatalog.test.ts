@@ -24,6 +24,15 @@ describe('defaultConfig', () => {
     expect(defaultConfig('ai_decision').confidenceThreshold).toBe(0.6)
     expect(defaultConfig('tool_call').tool).toBe('')
   })
+
+  it('seeds the three structured nodes with an editable slot (docs/109 打包 AB, U1275)', () => {
+    expect(defaultConfig('intent_recognition').intents).toEqual([{ name: '', description: '' }])
+    expect(defaultConfig('info_extraction').fields).toEqual([{ name: '', type: 'string', description: '' }])
+    const gen = defaultConfig('content_generation')
+    expect(gen.template).toBe('')
+    expect(gen.maxLength).toBe(800)
+    expect(gen.style).toBe('')
+  })
 })
 
 describe('validateNode', () => {
