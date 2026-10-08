@@ -11,12 +11,15 @@ import {
   type AlertRuleTemplateSummary,
   type RuleConfig,
 } from '../../lib/apiClient'
+import { RuleConfigEditor } from './RuleConfigEditor'
+import { defaultRuleConfig, validateRuleConfig } from '../../lib/ruleConfig'
 
 /**
  * docs/59 F-1 + 打包 ZS（docs/102）：告警规则模板市场。
  * 列表＝内置只读目录＋用户自建合并（source 区分）；「一键应用」取模板完整 config
  * 复用 PUT /api/monitoring/rules 全量替换（administer），两类模板同样适用；
- * admin 可新建/编辑/删除用户模板（config 以 JSON 文本录入，提交前 JSON.parse 就地报错）。
+ * admin 可新建/编辑/删除用户模板（config 走共享 RuleConfigEditor 可视化表单，
+ * 提交前 validateRuleConfig 拦截；docs/103 打包 ZT 替换原裸 JSON 文本框）。
  */
 export function AlertRuleTemplateMarket({
   canAdmin,
@@ -42,6 +45,8 @@ export function AlertRuleTemplateMarket({
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState('')
   const [form] = Form.useForm()
+  // docs/103：config 不进 antd Form，由共享编辑器纯受控管理
+  const [config, setConfig] = useState<RuleConfig | null>(null)
 
   const refresh = async (silent = false) => {
     if (!silent) setLoading(true)
@@ -104,7 +109,7 @@ export function AlertRuleTemplateMarket({
     setFormError('')
     setFormSuccess('')
     form.resetFields()
-    form.setFieldsValue({ config: JSON.stringify(defaultConfig(), null, 2) })
+    setConfig(defaultRuleConfig())
     setFormOpen(true)
   }
 
@@ -118,8 +123,9 @@ export function AlertRuleTemplateMarket({
         name: detail.name,
         description: detail.description,
         tags: detail.tags.join(', '),
-        config: JSON.stringify(detail.config, null, 2),
       })
+      // 结构拷贝，避免编辑态污染列表/详情对象
+      setConfig(structuredClone(detail.config))
       setFormOpen(true)
     } catch (err) {
       setFormError(err instanceof Error ? err.message : String(err))
@@ -133,10 +139,8 @@ export function AlertRuleTemplateMarket({
       setFormError(t('templates.nameRequired'))
       return
     }
-    let config: RuleConfig
-    try {
-      config = JSON.parse(String(values.config ?? '')) as RuleConfig
-    } catch {
+    const ruleConfig = config
+    if (!ruleConfig || validateRuleConfig(ruleConfig).length > 0) {
       setFormError(t('templates.configInvalid'))
       return
     }
@@ -148,7 +152,7 @@ export function AlertRuleTemplateMarket({
     setFormError('')
     setFormSuccess('')
     try {
-      const payload = { name, description: String(values.description ?? '').trim(), tags, config }
+      const payload = { name, description: String(values.description ?? '').trim(), tags, config: ruleConfig }
       if (editingId) {
         await updateAlertRuleTemplate(editingId, payload)
         setFormSuccess(t('templates.updateSuccess'))
@@ -274,7 +278,7 @@ export function AlertRuleTemplateMarket({
         okText={t('templates.save')}
         cancelText={t('templates.cancel')}
         confirmLoading={formSaving}
-        width={680}
+        width={760}
       >
         {formError && (
           <Alert type="error" showIcon message={formError} style={{ marginBottom: 12 }} />
@@ -283,20 +287,21 @@ export function AlertRuleTemplateMarket({
           <Alert type="success" showIcon message={formSuccess} style={{ marginBottom: 12 }} />
         )}
         <Form form={form} layout="vertical" requiredMark={false}>
-          <Form.Item label={t('templates.nameLabel')} required>
+          <Form.Item label={t('templates.nameLabel')} name="name" rules={[{ required: true }]}>
             <Input maxLength={64} />
           </Form.Item>
-          <Form.Item label={t('templates.descLabel')}>
+          <Form.Item label={t('templates.descLabel')} name="description">
             <Input.TextArea maxLength={500} autoSize={{ minRows: 1, maxRows: 3 }} />
           </Form.Item>
-          <Form.Item label={t('templates.tagsLabel')}>
+          <Form.Item label={t('templates.tagsLabel')} name="tags">
             <Input />
           </Form.Item>
           <Form.Item label={t('templates.configLabel')} required>
-            <Input.TextArea
-              autoSize={{ minRows: 10, maxRows: 20 }}
-              style={{ fontFamily: 'var(--mono-font, ui-monospace, SFMono-Regular, Menlo, monospace)' }}
-            />
+            {config && (
+              <div style={{ maxHeight: 420, overflowY: 'auto', paddingRight: 8 }}>
+                <RuleConfigEditor value={config} onChange={setConfig} />
+              </div>
+            )}
           </Form.Item>
         </Form>
       </Modal>
@@ -304,15 +309,3 @@ export function AlertRuleTemplateMarket({
   )
 }
 
-function defaultConfig(): RuleConfig {
-  return {
-    run_error: { enabled: true },
-    node_failed: { enabled: true },
-    consecutive_failures: { enabled: true, threshold: 3 },
-    failure_rate: { enabled: true, window: 20, min_samples: 5, rate: 0.5 },
-    custom: [],
-    escalation_ack_minutes: null,
-    recovery_healthy_streak: 1,
-    recovery_cooldown_minutes: null,
-  }
-}
