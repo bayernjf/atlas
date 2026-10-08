@@ -82,3 +82,100 @@ describe('validateParamValues (U1188)', () => {
     expect(errors.join('；')).toContain('不在可选范围内')
   })
 })
+
+// =============================================================================
+// 打包 ZX（docs/106 §2.5）：结构化参数纯逻辑——初值/递归校验
+// U1251：object/array 初值、递归校验、向后兼容
+// =============================================================================
+describe('pack ZX structured params logic', () => {
+  const structured = buildParamFields({
+    webhook: {
+      type: 'object',
+      required: true,
+      properties: {
+        url: { type: 'string', required: true },
+        secret: { type: 'string' },
+      },
+    },
+    channels: {
+      type: 'array',
+      minItems: 1,
+      items: { type: 'select', options: ['email', 'webhook'] },
+    },
+  })
+
+  it('builds initial values with empty containers for object/array', () => {
+    const values = buildInitialValues(structured)
+    expect(values.webhook).toEqual({})
+    expect(values.channels).toEqual([])
+  })
+
+  it('builds structured default values when declared', () => {
+    const values = buildInitialValues(
+      buildParamFields({
+        cfg: { type: 'object', default: { level: 'info' }, properties: { level: { type: 'string' } } },
+        tags: { type: 'array', default: ['a'], items: { type: 'string' } },
+      }),
+    )
+    expect(values.cfg).toEqual({ level: 'info' })
+    expect(values.tags).toEqual(['a'])
+  })
+
+  it('flags non-object value', () => {
+    const errors = validateParamValues(structured, { webhook: 'nope', channels: ['email'] })
+    expect(errors.join('；')).toContain('必须是对象')
+  })
+
+  it('flags missing nested required subfield', () => {
+    const errors = validateParamValues(structured, { webhook: { secret: 's' }, channels: ['email'] })
+    expect(errors.join('；')).toContain('webhook.url 为必填')
+  })
+
+  it('flags non-array value', () => {
+    const errors = validateParamValues(structured, { webhook: { url: 'u' }, channels: 'im' })
+    expect(errors.join('；')).toContain('必须是数组')
+  })
+
+  it('flags out-of-range array element', () => {
+    const errors = validateParamValues(structured, { webhook: { url: 'u' }, channels: ['sms'] })
+    expect(errors.join('；')).toContain('不在可选范围内')
+  })
+
+  it('flags insufficient minItems', () => {
+    const errors = validateParamValues(structured, { webhook: { url: 'u' }, channels: [] })
+    expect(errors.join('；')).toContain('至少需要 1 项')
+  })
+
+  it('accepts complete structured values', () => {
+    const errors = validateParamValues(structured, {
+      webhook: { url: 'https://x', secret: 's' },
+      channels: ['email', 'webhook'],
+    })
+    expect(errors).toEqual([])
+  })
+
+  it('validates array-of-object elements recursively', () => {
+    const fields = buildParamFields({
+      rules: {
+        type: 'array',
+        items: { type: 'object', properties: { min: { type: 'number', required: true } } },
+      },
+    })
+    const bad = validateParamValues(fields, { rules: [{ min: 'x' }, {}] })
+    expect(bad.join('；')).toContain('rules[0].min')
+    expect(bad.join('；')).toContain('rules[1].min 为必填')
+    const ok = validateParamValues(fields, { rules: [{ min: 1 }, { min: 2 }] })
+    expect(ok).toEqual([])
+  })
+
+  it('keeps scalar validation unchanged (regression)', () => {
+    const fields = buildParamFields({
+      p: { type: 'string' },
+      n: { type: 'number', required: true },
+      b: { type: 'boolean' },
+      s: { type: 'select', options: ['a', 'b'] },
+    })
+    expect(validateParamValues(fields, { n: 1, b: true, s: 'a' })).toEqual([])
+    expect(validateParamValues(fields, {}).join('；')).toContain('为必填')
+  })
+})

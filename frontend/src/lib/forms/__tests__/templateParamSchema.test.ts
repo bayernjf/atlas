@@ -109,3 +109,134 @@ describe('template param wizard schema-driven contract (U1248)', () => {
     expect(widgetNames).toContain('variable-input')
   })
 })
+
+// =============================================================================
+// 打包 ZX（docs/106 §2.3）：模板参数声明面结构化——嵌套 object / 数组 / 条件显隐
+// U1251：MetaSchema 递归——object → group、array → items+min/max
+// =============================================================================
+describe('pack ZX structured declarations', () => {
+  it('maps nested object to recursive properties with local required', () => {
+    const schema = templateParamsToMetaSchema({
+      webhook: {
+        type: 'object',
+        required: true,
+        properties: {
+          url: { type: 'string', required: true },
+          secret: { type: 'string' },
+        },
+      },
+    })
+    expect(schema.type).toBe('object')
+    expect(schema.required).toEqual(['webhook'])
+    const webhook = schema.properties!['webhook']
+    expect(webhook.type).toBe('object')
+    expect(webhook.required).toEqual(['url'])
+    expect(webhook.properties!['url'].type).toBe('string')
+    expect(webhook.properties!['secret'].type).toBe('string')
+  })
+
+  it('maps array to items with min/max passthrough', () => {
+    const schema = templateParamsToMetaSchema({
+      channels: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 3,
+        items: { type: 'select', options: ['email', 'webhook'] },
+      },
+    })
+    const channels = schema.properties!['channels']
+    expect(channels.type).toBe('array')
+    expect(channels.minItems).toBe(1)
+    expect(channels.maxItems).toBe(3)
+    expect(channels.items!.type).toBe('string')
+    expect(channels.items!.enum).toEqual(['email', 'webhook'])
+  })
+
+  it('maps array of object to nested items group', () => {
+    const schema = templateParamsToMetaSchema({
+      rules: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: { min: { type: 'number', required: true }, max: { type: 'number' } },
+        },
+      },
+    })
+    const rules = schema.properties!['rules']
+    expect(rules.items!.type).toBe('object')
+    expect(rules.items!.required).toEqual(['min'])
+    expect(rules.items!.properties!['max'].type).toBe('number')
+  })
+
+  it('passes structured defaults through untouched', () => {
+    const schema = templateParamsToMetaSchema({
+      cfg: { type: 'object', default: { level: 'info' }, properties: { level: { type: 'string' } } },
+      tags: { type: 'array', default: ['a'], items: { type: 'string' } },
+    })
+    expect(schema.properties!['cfg'].default).toEqual({ level: 'info' })
+    expect(schema.properties!['tags'].default).toEqual(['a'])
+  })
+
+  it('maps visibleWhen to hiddenWhen (root field)', () => {
+    const uiSchema = templateParamsToUiSchema({
+      mode: { type: 'select', options: ['auto', 'manual'] },
+      manual_reason: {
+        type: 'string',
+        visibleWhen: { field: 'mode', equals: 'manual' },
+      },
+    })
+    expect(uiSchema.hiddenWhen).toEqual([
+      { field: 'mode', equals: 'manual', show: ['manual_reason'] },
+    ])
+  })
+
+  it('maps nested object visibleWhen to rootScoped hiddenWhen', () => {
+    const uiSchema = templateParamsToUiSchema({
+      webhook: {
+        type: 'object',
+        properties: {
+          enabled: { type: 'boolean' },
+          url: { type: 'string', visibleWhen: { field: 'enabled', equals: true } },
+        },
+      },
+    })
+    expect(uiSchema.hiddenWhen).toEqual([
+      { field: 'enabled', equals: true, show: ['url'], rootScoped: true },
+    ])
+  })
+
+  it('recursively collects nested labels and hints with pointer-style keys', () => {
+    const uiSchema = templateParamsToUiSchema({
+      webhook: {
+        type: 'object',
+        label: 'Webhook 配置',
+        properties: {
+          url: { type: 'string', label: 'URL', hint: '回调地址' },
+          secret: { type: 'string' },
+        },
+      },
+      channels: {
+        type: 'array',
+        items: { type: 'object', properties: { name: { type: 'string', label: '渠道名' } } },
+      },
+    })
+    expect(uiSchema.labels!['webhook']).toBe('Webhook 配置')
+    expect(uiSchema.labels!['webhook.url']).toBe('URL')
+    expect(uiSchema.hints!['webhook.url']).toBe('回调地址')
+    expect(uiSchema.labels!['channels[].name']).toBe('渠道名')
+  })
+
+  it('keeps scalar mapping unchanged (regression)', () => {
+    const schema = templateParamsToMetaSchema({
+      p: { type: 'string', default: 'v' },
+      n: { type: 'number', required: true },
+      b: { type: 'boolean' },
+      s: { type: 'select', options: ['a', 'b'] },
+    })
+    expect(schema.properties!['p']).toEqual({ type: 'string', default: 'v' })
+    expect(schema.properties!['n']).toEqual({ type: 'number' })
+    expect(schema.properties!['b']).toEqual({ type: 'boolean' })
+    expect(schema.properties!['s']).toEqual({ type: 'string', enum: ['a', 'b'] })
+    expect(schema.required).toEqual(['n'])
+  })
+})
