@@ -3,6 +3,15 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔工程〕打包 AB 收口：意图识别/信息抽取/内容生成三节点（docs/109，2026-10-09 立项+同日收口）
+
+- **D61 取回闭合（docs/109 §6）**：`SUPPORTED_NODE_TYPES` 加 intent_recognition/info_extraction/content_generation；新 `llm/structured.py` 三客户端（classify_intent/extract_fields/generate_content）走 model_config per-tenant（第 5 消费点）、节点 model 覆盖、response_format json_object；无模型显式 FAILED（`LLM_STRUCTURED_UNAVAILABLE`+node_id，U1149 通道补 runtime.json zh/en）；LLM 非法形状本地兜底；DSL 校验（intents/fields/template/maxLength 全量约束，parse_graph 即抛）；textSource 走 interpolate 解析 {{路径}}；前端 nodeCatalog 三节点入册+i18n zh/en+属性面板走 forms 内核（SchemaRegistry 三 schema+UISchema+StructuredConfig）。
+- **门（实跑 2026-10-09）**：后端全量 2500 passed/171 skipped（+12）；前端 vitest 896/2、oxlint 0、tsc 0、build 过。零迁移/零新依赖/无 ADR。
+
+### 〔工程〕打包 AA 收口：知识库/RAG MVP（docs/108，2026-10-09 立项+同日收口）
+
+- **D60 取回闭合（docs/108 §6）**：迁移 046 `memory_items.kind` CHECK 收敛三值（memory/knowledge/tool_result）＋kind=knowledge 全链路＋`meta.category` 白名单（faq/sop/manual/rule/case）＋`POST /api/knowledge/import`（段落优先分段/1200 硬切/超 200 截断，空段 422）＋`memory/recall` category 过滤＋前端记忆页双标签（KnowledgePanel 导入/列表，canOperate/canAdmin 门控）。
+- **门（实跑 2026-10-09）**：后端全量 2488 passed/171 skipped；前端 vitest 896/2、oxlint 0、tsc 0、build 过。PG 腿以容器内 docker exec 手动验证为准（宿主 5432 未映射）。零新依赖/无 ADR。
 ### 〔前端〕打包 ZX 收口：模板参数声明面结构化（docs/106，2026-10-08 立项+同日收口）
 
 - **D29 第二切片取回（D29 整体不解除）**：ZW 后 forms 内核渲染层已支持 group/array/hiddenWhen，真实缺口在声明面——TemplateParam 仍为 A1 标量四型。本批扩展为 object（properties 递归）/array（items 递归+minItems/maxItems）/visibleWhen（条件显隐→hiddenWhen 现成机制），声明面与渲染面闭合。

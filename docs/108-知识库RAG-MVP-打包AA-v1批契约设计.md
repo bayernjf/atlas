@@ -85,3 +85,13 @@ docs 立项（本文件 + docs/14 D60 行 + docs/08 立项块）
 - 知识/记忆混表：跨运营体共享触发时需拆表（预留 meta 无拆表钩子，届时立迁移）
 - 本地词法向量召回精度有限：商业 embedding 触发（D35）时统一换 provider，本批零迁移
 - 导入无幂等键：重复导入产生重复条目（MVP 接受；删除走既有 DELETE）
+
+
+## 六、收口注记（2026-10-09 落码收口）
+
+- **已交付**：迁移 046（kind CHECK 三值收敛）＋`memory_items.kind=knowledge` 全链路（models/items/storage pg/adapter/api）＋`meta.category` 白名单 faq/sop/manual/rule/case＋`POST /api/knowledge/import`（段落优先分段/1200 硬切/超 200 截断）＋`memory/recall` category 过滤＋前端记忆页双标签（KnowledgePanel 导入/列表，canOperate 控制导入、canAdmin 控制删除）。
+- **验收**：U1259–U1268 全过（docs/13 打包 AA 小节）。
+- **门（实跑 2026-10-09）**：后端全量 2488 passed/171 skipped；前端 vitest 896/2、oxlint 0、tsc 0、build 过。
+- **PG 腿**：宿主直连三种方式均不通（5432 未映射宿主），迁移 046 与 knowledge 写读删以容器内 `docker exec atlas-db-1 psql -U atlas -d atlas` 手动验证为准。
+- **契约偏差修正**：首版空段/全空格文本导入返回 201（契约要求 422），已按契约修复为空段 422。
+- **D35 不解除**：知识产品化余部（商业 embedding 换 provider、导入幂等键、记忆/知识拆表触发条件）仍缓做。
