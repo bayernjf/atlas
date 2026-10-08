@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Edge } from '@xyflow/react'
-import { deserializeGraph, serializeGraph, type EditorNode } from '../graphSerializer'
+import { deserializeGraph, serializeGraph, type EditorNode, type SerializedGraph } from '../graphSerializer'
 import { defaultConfig, defaultRetry } from '../nodeCatalog'
 import type { GraphVariable } from '../variables'
 
@@ -78,15 +78,16 @@ describe('deserializeGraph', () => {
 
   it('fills fallback waterfall positions when backend nodes lack position (ZX smoke)', () => {
     // 模板 instantiate 返回的图节点可能无 position（GraphDSL 默认值不落库），此前会导致画布序列化崩溃。
-    const graph: SerializedGraph = {
+    // 类型标 position/retry 必填（serializeGraph 输出形状），此处模拟后端脏数据，显式断言。
+    const graph = {
       version: 1,
       variables: [],
       nodes: [
-        { id: 'trigger-1', type: 'trigger', name: '触发', description: '', config: { triggerType: 'manual' }, retry: undefined },
-        { id: 'tool_call-1', type: 'tool_call', name: '发消息', description: '', config: {}, retry: undefined },
+        { id: 'trigger-1', type: 'trigger', name: '触发', description: '', config: { triggerType: 'manual' } },
+        { id: 'tool_call-1', type: 'tool_call', name: '发消息', description: '', config: {} },
       ],
       edges: [],
-    }
+    } as unknown as SerializedGraph
     const { nodes: restored } = deserializeGraph(graph)
     expect(restored[0].position).toEqual({ x: 40, y: 40 })
     expect(restored[1].position).toEqual({ x: 40, y: 120 })
@@ -98,10 +99,10 @@ describe('deserializeGraph', () => {
       version: 1,
       variables: [],
       nodes: [
-        { id: 'n1', type: 'trigger', name: 'n', description: '', position: { x: 500, y: 300 }, config: {}, retry: undefined },
+        { id: 'n1', type: 'trigger', name: 'n', description: '', position: { x: 500, y: 300 }, config: {} },
       ],
       edges: [],
-    }
+    } as unknown as SerializedGraph
     const { nodes: restored } = deserializeGraph(graph)
     expect(restored[0].position).toEqual({ x: 500, y: 300 })
   })
