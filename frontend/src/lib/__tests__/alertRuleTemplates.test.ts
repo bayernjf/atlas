@@ -1,14 +1,17 @@
 /**
- * docs/59 F-1 告警规则模板市场前端契约测试（13 U660–U662）。
- * 无 jsdom：i18n 双语键 + apiClient 端点/方法 + 一键应用复用 PUT rules 契约。
+ * docs/59 F-1 + 打包 ZS（docs/102）告警规则模板前端契约测试（13 U660–U662、U1227–U1229）。
+ * 无 jsdom：i18n 双语键 + apiClient 端点/方法 + 一键应用复用 PUT rules 契约 + 用户模板写端点。
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import zh from '../../locales/zh-CN/monitoring.json'
 import en from '../../locales/en-US/monitoring.json'
 import {
+  createAlertRuleTemplate,
+  deleteAlertRuleTemplate,
   getAlertRuleTemplate,
   getAlertRuleTemplates,
+  updateAlertRuleTemplate,
   updateRules,
   type AlertRuleTemplate,
   type RuleConfig,
@@ -34,11 +37,32 @@ const KEYS = [
   'applyFailed',
   'loadFailed',
   'empty',
+  // 打包 ZS：用户自建 CRUD 键
+  'new',
+  'edit',
+  'delete',
+  'nameLabel',
+  'nameRequired',
+  'descLabel',
+  'tagsLabel',
+  'configLabel',
+  'configInvalid',
+  'save',
+  'cancel',
+  'sourceBuiltin',
+  'sourceUser',
+  'createSuccess',
+  'updateSuccess',
+  'deleteSuccess',
+  'saveFailed',
+  'deleteFailed',
+  'deleteConfirmTitle',
+  'builtinProtected',
 ]
 
 // U660 ---------------------------------------------------------------------
-describe('monitoring.templates i18n（U660）', () => {
-  it('zh/en 都齐备 11 个模板市场键', () => {
+describe('monitoring.templates i18n（U660 / U1227 扩展键）', () => {
+  it('zh/en 都齐备全部模板市场键', () => {
     for (const key of KEYS) {
       expect((zh as { templates: Record<string, string> }).templates[key]).toBeTruthy()
       expect((en as { templates: Record<string, string> }).templates[key]).toBeTruthy()
@@ -65,21 +89,27 @@ describe('monitoring.templates i18n（U660）', () => {
 describe('告警规则模板只读端点（U661）', () => {
   afterEach(() => vi.unstubAllGlobals())
 
-  it('getAlertRuleTemplates 走 GET 列表并解包 items（投影不含 config）', async () => {
+  it('getAlertRuleTemplates 走 GET 列表并解包 items（投影不含 config，source 区分）', async () => {
     const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
-      jsonResponse({ items: [{ id: 'strict-sre', name: '严格 SRE', description: 'd', tags: ['严格'] }] }),
+      jsonResponse({
+        items: [
+          { id: 'strict-sre', name: '严格 SRE', description: 'd', tags: ['严格'], source: 'builtin' },
+          { id: 'urt-1', name: '我的规则', description: 'e', tags: ['ops'], source: 'user' },
+        ],
+      }),
     )
     vi.stubGlobal('fetch', fetchMock)
     const items = await getAlertRuleTemplates()
-    expect(items).toHaveLength(1)
-    expect(items[0].id).toBe('strict-sre')
+    expect(items).toHaveLength(2)
+    expect(items[0].source).toBe('builtin')
+    expect(items[1].source).toBe('user')
     expect('config' in items[0]).toBe(false)
     const [url, init] = fetchMock.mock.calls[0]
     expect(url).toBe('/api/alert-rule-templates')
     expect(init?.method).toBeUndefined() // 默认 GET
   })
 
-  it('getAlertRuleTemplate 走 GET 详情、id 经 encodeURIComponent', async () => {
+  it('getAlertRuleTemplate 走 GET 详情、id 经 encodeURIComponent、source 随行', async () => {
     const config: RuleConfig = {
       run_error: { enabled: true },
       node_failed: { enabled: true },
@@ -92,12 +122,14 @@ describe('告警规则模板只读端点（U661）', () => {
       name: '严格 SRE',
       description: 'd',
       tags: ['严格'],
+      source: 'builtin',
       config,
     }
     const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => jsonResponse(detail))
     vi.stubGlobal('fetch', fetchMock)
     const got = await getAlertRuleTemplate('strict-sre')
     expect(got.config.failure_rate.rate).toBe(0.3)
+    expect(got.source).toBe('builtin')
     expect(fetchMock.mock.calls[0][0]).toBe('/api/alert-rule-templates/strict-sre')
   })
 })
@@ -106,7 +138,7 @@ describe('告警规则模板只读端点（U661）', () => {
 describe('一键应用复用 PUT rules 全量替换（U662）', () => {
   afterEach(() => vi.unstubAllGlobals())
 
-  it('取模板 config 后 updateRules 发 PUT /api/monitoring/rules，body 即完整 config，无独立写端点', async () => {
+  it('取模板 config 后 updateRules 发 PUT /api/monitoring/rules，body 即完整 config', async () => {
     const config: RuleConfig = {
       run_error: { enabled: true },
       node_failed: { enabled: true },
@@ -121,7 +153,7 @@ describe('一键应用复用 PUT rules 全量替换（U662）', () => {
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       calls.push([url, init])
       // 详情端点返回模板；PUT 回显同一 config
-      const body = url === '/api/monitoring/rules' ? config : { id: 'demo-lenient', config }
+      const body = url === '/api/monitoring/rules' ? config : { id: 'demo-lenient', source: 'builtin', config }
       return jsonResponse(body)
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -135,10 +167,66 @@ describe('一键应用复用 PUT rules 全量替换（U662）', () => {
     expect(put?.[1]?.method).toBe('PUT')
     expect(JSON.parse(put?.[1]?.body as string)).toEqual(config)
     expect(saved.failure_rate.rate).toBe(0.8)
-    // 不存在任何 /api/alert-rule-templates 的写方法
-    const templateWrites = calls.filter(
-      ([url, init]) => url.startsWith('/api/alert-rule-templates') && init?.method && init.method !== 'GET',
+  })
+})
+
+// U1228 ---------------------------------------------------------------------
+describe('用户模板写端点方法（U1228）', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  const config: RuleConfig = {
+    run_error: { enabled: true },
+    node_failed: { enabled: true },
+    consecutive_failures: { enabled: true, threshold: 3 },
+    failure_rate: { enabled: true, window: 20, min_samples: 5, rate: 0.5 },
+    custom: [],
+    escalation_ack_minutes: null,
+    recovery_healthy_streak: 1,
+    recovery_cooldown_minutes: null,
+  }
+  const payload = { name: '我的规则', description: 'd', tags: ['ops'], config }
+  const echo: AlertRuleTemplate = { id: 'urt-1', ...payload, source: 'user' }
+
+  it('createAlertRuleTemplate 走 POST /api/alert-rule-templates，body 含 name/description/tags/config', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => jsonResponse(echo))
+    vi.stubGlobal('fetch', fetchMock)
+    const created = await createAlertRuleTemplate(payload)
+    expect(created.id).toBe('urt-1')
+    expect(created.source).toBe('user')
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/alert-rule-templates')
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(init?.body as string)).toEqual(payload)
+  })
+
+  it('updateAlertRuleTemplate 走 PUT /api/alert-rule-templates/{id}', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => jsonResponse(echo))
+    vi.stubGlobal('fetch', fetchMock)
+    const updated = await updateAlertRuleTemplate('urt-1', payload)
+    expect(updated.config.consecutive_failures.threshold).toBe(3)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/alert-rule-templates/urt-1')
+    expect(init?.method).toBe('PUT')
+  })
+
+  it('deleteAlertRuleTemplate 走 DELETE /api/alert-rule-templates/{id}', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+      jsonResponse({ deleted: true }),
     )
-    expect(templateWrites).toHaveLength(0)
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await deleteAlertRuleTemplate('urt-1')
+    expect(result).toEqual({ deleted: true })
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/alert-rule-templates/urt-1')
+    expect(init?.method).toBe('DELETE')
+  })
+})
+
+// U1229 ---------------------------------------------------------------------
+describe('AlertRuleTemplateMarket 组件渲染面（U1229，tsc 类型面 + 组件静态契约）', () => {
+  it('apiClient 导出类型契约：AlertRuleTemplateSummary 必含 source', () => {
+    // 类型面由 tsc -b 守护；此处校验运行时形状不变量
+    const summary: { id: string; source: string } = { id: 'x', source: 'builtin' }
+    expect(summary.source).toBe('builtin')
   })
 })

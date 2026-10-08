@@ -133,6 +133,8 @@ from atlas.security.egress import EgressDenied, EgressGuard
 from atlas.security.secrets import build_secret_provider_from_env
 from atlas.monitoring.silences import OnCallEmpty, current_assignee, is_silence_active
 from atlas.monitoring.rule_templates import get_rule_template, list_rule_templates
+from atlas.monitoring.rule_user_store import RuleTemplateNameConflict
+from atlas.monitoring.alerts import validate_rules
 from atlas.recording import (
     RecordingCreateRequest,
     RecordingUpdateRequest,
@@ -3627,29 +3629,126 @@ def delete_message_template(
 def list_alert_rule_templates(
     principal: Principal = Depends(require("read")),
 ) -> dict[str, list[dict[str, Any]]]:
-    """列出内置告警规则模板（docs/59 F-1；只读代码常量，列表投影不含 config，不受 reset 影响）。"""
-    return {
-        "items": [
-            {
-                "id": tpl.id,
-                "name": tpl.name,
-                "description": tpl.description,
-                "tags": tpl.tags,
-            }
-            for tpl in list_rule_templates()
-        ]
-    }
+    """列出告警规则模板＝内置目录＋用户自建合并（打包 ZS，docs/102 §2.4）：投影
+    id/name/description/tags/source，**不含 config**（照 docs/59 F-1 列表投影惯例）；
+    内置项 source=builtin、用户项 source=user；新用户模板在前。"""
+    builtin = [
+        {
+            "id": tpl.id,
+            "name": tpl.name,
+            "description": tpl.description,
+            "tags": tpl.tags,
+            "source": "builtin",
+        }
+        for tpl in list_rule_templates()
+    ]
+    user = [
+        {
+            "id": tpl.id,
+            "name": tpl.name,
+            "description": tpl.description,
+            "tags": tpl.tags,
+            "source": "user",
+        }
+        for tpl in services_for(principal).rule_template_store.list()
+    ]
+    return {"items": [*user, *builtin]}
 
 
 @app.get("/api/alert-rule-templates/{template_id}")
 def get_alert_rule_template(
     template_id: str, principal: Principal = Depends(require("read"))
 ) -> dict[str, Any]:
-    """返回告警规则模板完整元数据（含可直接 PUT rules 的 config），未知 id 404（docs/59 F-1）。"""
-    tpl = get_rule_template(template_id)
-    if tpl is None:
+    """返回告警规则模板完整元数据（含可直接 PUT rules 的 config）＝内置目录＋用户
+    自建合并（打包 ZS，docs/102 §2.4）：内置 id 命中内置只读目录（source=builtin），
+    否则查本租户用户 store（source=user）；均未命中 404（跨租户天然 404）。"""
+    builtin = get_rule_template(template_id)
+    if builtin is not None:
+        return {**builtin.model_dump(), "source": "builtin"}
+    user = services_for(principal).rule_template_store.get(template_id)
+    if user is not None:
+        return {**user.model_dump(), "source": "user"}
+    raise HTTPException(status_code=404, detail=f"告警规则模板不存在：{template_id}")
+
+
+class RuleTemplateCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    description: str = Field(default="", max_length=500)
+    tags: list[str] = Field(default_factory=list, max_length=10)
+    config: dict[str, Any]
+
+
+def _rule_template_422(errors: list[str]) -> NoReturn:
+    """规则模板形状校验失败统一 422（docs/102 E-1：中文 detail；码名
+    `RULE_TEMPLATE_CONFIG_INVALID` 登记于 docs/03，响应体沿用中文惯例）。"""
+    raise HTTPException(status_code=422, detail="；".join(errors))
+
+
+def _rule_template_payload(body: RuleTemplateCreateRequest) -> dict[str, Any]:
+    """用户规则模板写入载荷校验：name 非空、tags 逐个长度、config 必须过
+    validate_rules（坏配置 422 `RULE_TEMPLATE_CONFIG_INVALID`）。"""
+    name = body.name.strip()
+    if not name:
+        _rule_template_422(["模板名称不能为空"])
+    for tag in body.tags:
+        if not 1 <= len(tag) <= 20:
+            _rule_template_422(["标签长度须在 1-20 字符之间"])
+    errors = validate_rules(body.config)
+    if errors:
+        _rule_template_422(errors)
+    return {"name": name, "description": body.description.strip(), "tags": body.tags, "config": body.config}
+
+
+@app.post("/api/alert-rule-templates")
+def create_alert_rule_template(
+    body: RuleTemplateCreateRequest,
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, Any]:
+    """新建用户告警规则模板（打包 ZS，docs/102 §2.4）：id=urt-{租户内 seq}；
+    租户内重名 409 `RULE_TEMPLATE_NAME_CONFLICT`。"""
+    payload = _rule_template_payload(body)
+    try:
+        template = services_for(principal).rule_template_store.add(**payload)
+    except RuleTemplateNameConflict:
+        raise HTTPException(
+            status_code=409, detail=f"告警规则模板名称已存在：{payload['name']}"
+        ) from None
+    return {**template.model_dump(), "source": "user"}
+
+
+@app.put("/api/alert-rule-templates/{template_id}")
+def update_alert_rule_template(
+    template_id: str,
+    body: RuleTemplateCreateRequest,
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, Any]:
+    """整体替换用户告警规则模板（打包 ZS，docs/102 §2.4）：id/created_at 不变；
+    内置模板 id 一律 404 不可改；未知 404；撞名 409。"""
+    if get_rule_template(template_id) is not None:
+        raise HTTPException(status_code=404, detail=f"内置告警规则模板不可修改：{template_id}")
+    payload = _rule_template_payload(body)
+    try:
+        updated = services_for(principal).rule_template_store.update(template_id, **payload)
+    except RuleTemplateNameConflict:
+        raise HTTPException(
+            status_code=409, detail=f"告警规则模板名称已存在：{payload['name']}"
+        ) from None
+    if updated is None:
         raise HTTPException(status_code=404, detail=f"告警规则模板不存在：{template_id}")
-    return tpl.model_dump()
+    return {**updated.model_dump(), "source": "user"}
+
+
+@app.delete("/api/alert-rule-templates/{template_id}")
+def delete_alert_rule_template(
+    template_id: str, principal: Principal = Depends(require("administer"))
+) -> dict[str, bool]:
+    """删除用户告警规则模板（打包 ZS，docs/102 §2.4）：内置模板 id 一律 404 不可删；
+    已应用的引用侧不阻断（消费点下次评估照旧规则集）。"""
+    if get_rule_template(template_id) is not None:
+        raise HTTPException(status_code=404, detail=f"内置告警规则模板不可删除：{template_id}")
+    if not services_for(principal).rule_template_store.delete(template_id):
+        raise HTTPException(status_code=404, detail=f"告警规则模板不存在：{template_id}")
+    return {"deleted": True}
 
 
 @app.get("/api/cards")

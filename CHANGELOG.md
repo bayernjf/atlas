@@ -3,6 +3,13 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔工程〕打包 ZS 落码收口：D28 告警规则模板用户自建 CRUD（docs/102，2026-10-08 立项+同日收口）
+
+- **D28 余部「模板 CRUD/市场上传」半边取回收口**：用户自建/编辑/删除私有告警规则模板，列表与内置目录合并（source 区分）、一键应用对两类模板同样生效。
+- 迁移 045 `user_rule_templates`＋`monitoring/rule_user_store.py`＋`pg_rule_user_store.py` 两档 store＋五端点（GET 扩展合并＋POST/PUT/DELETE 写 administer、内置 id 404 保护）；重名校验落 store 层（内存/PG 两档 `RuleTemplateNameConflict`）。
+- config 过 `alerts.validate_rules`（422 `RULE_TEMPLATE_CONFIG_INVALID`）、租户内重名 409 `RULE_TEMPLATE_NAME_CONFLICT`（照 MESSAGE_TEMPLATE_* 先例契约层识别、中文 detail、不进 locale）；前端 AlertRuleTemplateMarket 新建/编辑/删除 Modal＋source Tag＋i18n 两档 20 键。
+- 零新依赖／无 ADR；八原子 `ba6fa2e`→`2a36a5c`＋`ef32be1` fix；用例 U1220–U1230（docs/13）；**门**：后端 2456/166/0、前端 828/2、oxlint 0/0、build 过、守护门 24 passed、PG 集成 20+3 零回归。**D28 整体不解除**（跨租户市场/抽成、版本历史、OTel、静默编辑、多值班组、多实例锁、长保留时序触发条件不变）。
+
 ### 〔工程〕打包 BM 缺陷批立项：D57/D58/D59 三缺陷复开（docs/101，2026-10-08）
 
 - **D57 演示图真转人工**：refund-auto 模板加 condition 分流＋human_approval 真挂起节点（不再「只说了句要找」）。

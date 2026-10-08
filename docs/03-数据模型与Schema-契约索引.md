@@ -1314,3 +1314,8 @@ OperationDescriptor = {
 - **新错误码（落码批另立后进 docs/03 取值集合与 docs/17 文案目录）**：`MESSAGE_TEMPLATE_NAME_CONFLICT`（409）、`MESSAGE_TEMPLATE_UNDECLARED_VAR`（422）、`ENV_VARIABLE_UNAVAILABLE`（运行期 FAILED）、`APPROVAL_NOT_ASSIGNED`（403）、编译期四码 `VAR_SOURCE_INVALID`/`VAR_SOURCE_REF_EMPTY`/`VAR_SOURCE_REF_INVALID`/`VAR_SOURCE_SCOPE_MISMATCH`、`APPROVER_REF_UNRESOLVED`（422）。
 - **`graph.variables[]` 纯超集 `source` 字段（打包 A3）**：`source: "env"|"secret"` 缺省＝字面量；source 非空时 `value` 为引用名、必须 `scope="global"`；运行期展开值带敏感标记、五通道脱敏 `<redacted:{source}:{name}>`；形状权威 docs/99。
 - **`human_approval.config.approver` 动态化（打包 A4）**：支持 `{{变量}}` 插值（运行期求值），展开值随挂起帧/已决历史持久化（零迁移）；决策端点新增指派校验（approver 非空须匹配，否则 403）；形状权威 docs/100。
+
+## 错误码注记（打包 ZS 立项，2026-10-08）
+
+- **新错误码（落码批另立后进 docs/03 取值集合与 docs/17 文案目录）**：`RULE_TEMPLATE_CONFIG_INVALID`（422，config 未过 `alerts.validate_rules`）、`RULE_TEMPLATE_NAME_CONFLICT`（409，租户内重名）。
+- **`user_rule_templates` 表（迁移 045，打包 ZS）**：PK `(tenant_id, id)`、id＝`urt-{seq}`（seq 取 `storage_id_seq`）、unique `(tenant_id, seq)`、tags/config JSONB（config NOT NULL）；挂 `TenantServices.rule_template_store`（内存/PG 两档，reset 清本租户）；形状权威 docs/102。

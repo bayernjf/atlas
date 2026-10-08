@@ -132,3 +132,155 @@ def test_auth_and_one_click_apply_via_put_rules():
     assert applied["consecutive_failures"]["threshold"] == 2
     assert applied["failure_rate"]["rate"] == 0.3
     assert applied["escalation_ack_minutes"] == 15
+
+
+# 打包 ZS（docs/102；13 U1220–U1226）：用户自建规则模板 CRUD + 列表/详情合并 source
+
+VALID_CONFIG = {
+    "run_error": {"enabled": True},
+    "node_failed": {"enabled": True},
+    "consecutive_failures": {"enabled": True, "threshold": 3},
+    "failure_rate": {"enabled": True, "window": 20, "min_samples": 5, "rate": 0.5},
+    "custom": [],
+    "escalation_ack_minutes": None,
+    "recovery_healthy_streak": 1,
+    "recovery_cooldown_minutes": None,
+}
+
+
+def _create(name: str, admin: dict | None = None, **overrides) -> dict:
+    admin = admin or _headers()
+    payload = {"name": name, "description": "d", "tags": ["ops"], "config": VALID_CONFIG}
+    payload.update(overrides)
+    return client.post("/api/alert-rule-templates", json=payload, headers=admin)
+
+
+# U1220 ---------------------------------------------------------------------
+def test_user_template_appears_in_merged_list_with_source():
+    admin = _headers()
+    created = _create("my-rule", admin)
+    assert created.status_code == 200
+    assert created.json()["id"] == "urt-1"
+    assert created.json()["source"] == "user"
+
+    resp = client.get("/api/alert-rule-templates", headers=admin)
+    assert resp.status_code == 200
+    items = resp.json()["items"]
+    assert items[0]["id"] == "urt-1" and items[0]["source"] == "user"
+    assert {item["id"] for item in items} == EXPECTED_IDS | {"urt-1"}
+    for item in items:
+        assert "config" not in item
+        assert item["source"] in ("builtin", "user")
+    assert {item["source"] for item in items} == {"builtin", "user"}
+
+
+# U1221 ---------------------------------------------------------------------
+def test_detail_merges_user_and_builtin_with_source():
+    admin = _headers()
+    assert _create("detail-rule", admin).status_code == 200
+    user_detail = client.get("/api/alert-rule-templates/urt-1", headers=admin).json()
+    assert user_detail["source"] == "user"
+    assert user_detail["config"] == VALID_CONFIG
+    assert user_detail["id"] == "urt-1" and user_detail["created_at"]
+    builtin_detail = client.get(
+        "/api/alert-rule-templates/strict-sre", headers=admin
+    ).json()
+    assert builtin_detail["source"] == "builtin"
+    assert builtin_detail["config"]["failure_rate"]["rate"] == 0.3
+
+
+# U1222 ---------------------------------------------------------------------
+def test_create_validation_and_name_conflict():
+    admin = _headers()
+    # 坏 config → 422（RULE_TEMPLATE_CONFIG_INVALID）
+    bad = _create("bad-rule", admin, config={"run_error": {"enabled": True}})
+    assert bad.status_code == 422
+    assert "缺少规则段" in bad.json()["detail"]
+    # name 空 → 422
+    empty = _create("  ", admin)
+    assert empty.status_code == 422
+    assert "模板名称不能为空" in empty.json()["detail"]
+    # 合法创建后重名 → 409（RULE_TEMPLATE_NAME_CONFLICT）
+    assert _create("dup-rule", admin).status_code == 200
+    dup = _create("dup-rule", admin)
+    assert dup.status_code == 409
+    assert "dup-rule" in dup.json()["detail"]
+
+
+# U1223 ---------------------------------------------------------------------
+def test_update_replaces_fields_preserving_id_and_created_at():
+    admin = _headers()
+    assert _create("upd-rule", admin).status_code == 200
+    original = client.get("/api/alert-rule-templates/urt-1", headers=admin).json()
+    new_config = {**VALID_CONFIG, "consecutive_failures": {"enabled": True, "threshold": 5}}
+    updated = client.put(
+        "/api/alert-rule-templates/urt-1",
+        json={"name": "upd-rule-2", "description": "e", "tags": ["sre"], "config": new_config},
+        headers=admin,
+    )
+    assert updated.status_code == 200
+    body = updated.json()
+    assert body["id"] == original["id"] and body["created_at"] == original["created_at"]
+    assert body["name"] == "upd-rule-2" and body["config"]["consecutive_failures"]["threshold"] == 5
+    assert body["source"] == "user"
+    # 内置 id 不可改 → 404
+    assert (
+        client.put(
+            "/api/alert-rule-templates/strict-sre",
+            json={"name": "x", "description": "", "tags": [], "config": VALID_CONFIG},
+            headers=admin,
+        ).status_code
+        == 404
+    )
+    # 未知 id → 404
+    assert (
+        client.put(
+            "/api/alert-rule-templates/urt-99",
+            json={"name": "x", "description": "", "tags": [], "config": VALID_CONFIG},
+            headers=admin,
+        ).status_code
+        == 404
+    )
+    # 撞名 → 409
+    assert _create("upd-rival", admin).status_code == 200
+    conflict = client.put(
+        "/api/alert-rule-templates/urt-1",
+        json={"name": "upd-rival", "description": "", "tags": [], "config": VALID_CONFIG},
+        headers=admin,
+    )
+    assert conflict.status_code == 409
+
+
+# U1224 ---------------------------------------------------------------------
+def test_delete_user_template_and_protect_builtin():
+    admin = _headers()
+    assert _create("del-rule", admin).status_code == 200
+    deleted = client.delete("/api/alert-rule-templates/urt-1", headers=admin)
+    assert deleted.status_code == 200 and deleted.json() == {"deleted": True}
+    assert client.get("/api/alert-rule-templates/urt-1", headers=admin).status_code == 404
+    # 再删 → 404
+    assert client.delete("/api/alert-rule-templates/urt-1", headers=admin).status_code == 404
+    # 内置 id 不可删 → 404
+    assert client.delete("/api/alert-rule-templates/strict-sre", headers=admin).status_code == 404
+
+
+# U1225 ---------------------------------------------------------------------
+def test_cross_tenant_isolation():
+    tenant_registry.reset_tenant("t1")
+    admin_t1 = _headers()
+    assert _create("t1-rule", admin_t1).status_code == 200
+    admin_t2 = _headers("admin-b", "admin123")
+    # t2 读不到 t1 的用户模板（跨租户 404）；列表只有内置
+    assert client.get("/api/alert-rule-templates/urt-1", headers=admin_t2).status_code == 404
+    items = client.get("/api/alert-rule-templates", headers=admin_t2).json()["items"]
+    assert {item["id"] for item in items} == EXPECTED_IDS
+
+
+# U1226 ---------------------------------------------------------------------
+def test_write_endpoints_require_administer():
+    client.cookies.clear()  # 打包 ZQ Q4：httpOnly Cookie 由前序测试残留
+    viewer = _headers("viewer-a", "viewer123")
+    payload = {"name": "v", "description": "", "tags": [], "config": VALID_CONFIG}
+    assert client.post("/api/alert-rule-templates", json=payload, headers=viewer).status_code == 403
+    assert client.put("/api/alert-rule-templates/urt-1", json=payload, headers=viewer).status_code == 403
+    assert client.delete("/api/alert-rule-templates/urt-1", headers=viewer).status_code == 403

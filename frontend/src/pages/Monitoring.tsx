@@ -617,6 +617,7 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
             title={t('rules.cardTitle')}
             extra={
               <AlertRuleTemplateMarket
+                canAdmin={canAdmin}
                 onApplied={async () => {
                   try {
                     setRules(await getRules())
