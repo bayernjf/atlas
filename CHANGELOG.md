@@ -3,6 +3,25 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔前端〕打包 ZT 收口：规则模板配置表单化（RuleConfigEditor 共享，docs/103，2026-10-08）
+
+- **规则模板新建/编辑改为可视化表单**：Monitoring 生效规则表单抽成纯受控共享组件 `RuleConfigEditor`（内置 4 规则开关/阈值、升级/恢复三组、custom 增删改），模板市场 Modal 不再要求手写 JSON；默认值与结构化校验收敛到 `lib/ruleConfig.ts`，提交前拦截非法配置。
+- **修复**：模板表单 name/description/tags 三个 Form.Item 缺 name 属性，antd Form 双向绑定不生效（输入不进 values、编辑回填不显示）。
+- Monitoring 规则编辑/保存行为不变；后端零改动、零迁移、零新依赖；U1231–U1236 共 20 例（纯函数＋SSR＋源码机检）；前端 vitest 848/2、oxlint 0/0、build 过。
+
+### 〔工程〕打包 ZT 立项：规则模板配置表单化（RuleConfigEditor 共享，docs/103，2026-10-08）
+
+- **D28 余部「规则配置 UI 表单化」取回**：ZS 让用户能自建模板但 config 靠裸 JSON 文本；本批把 Monitoring 规则表单抽成纯受控共享组件 `RuleConfigEditor`，模板新建/编辑 Modal 改为可视化表单。
+- 纯前端批：后端零改动／零迁移／零新依赖／无 ADR／无新错误码；i18n 零新增键（仅 configInvalid 两档语义微调）；用例 U1231–U1236（docs/13）。
+- 非目标：DSL 专用表达式编辑器、按图绑定、发布门禁、跨租户市场、版本历史、JSON 导入导出。
+
+### 〔治理〕docs/14 状态订正与裂列修复、ZS push CI 读数回填（2026-10-08）
+
+- D53 状态栏从过时的「缓做（剩①待改契约）」订正为「无待办」（①已闭于打包 BC：五条粗码拆 46 条具体码；②③为 docs/57 §2.5 长期口径）。
+- 修复 docs/14 表格 7 行裸竖线裂列：D19（`any／all`）、D22（行尾多余分隔）、D24（`{smtp\|webhook\|im}` 转义）、D30（`"env"\|"secret"` 转义）、D57/D58/D59（状态栏状态演进分隔改 `→`）；全表 57 行列数校验通过。
+- docs/08 §八 追加 2026-10-08 候选池复筛注记（31 条未闭合触发条件全外部化、T34 E 组维持现状、新识别 D28 表单化→打包 ZT）。
+- 打包 ZS 已 push（`c5078c20`），CI 四 job 全绿读数回填 handoff：Backend pytest 2456/169、PG integration 2617/8、Frontend 828/2、oxlint 0/0、gitleaks success。
+
 ### 〔工程〕打包 ZS 落码收口：D28 告警规则模板用户自建 CRUD（docs/102，2026-10-08 立项+同日收口）
 
 - **D28 余部「模板 CRUD/市场上传」半边取回收口**：用户自建/编辑/删除私有告警规则模板，列表与内置目录合并（source 区分）、一键应用对两类模板同样生效。

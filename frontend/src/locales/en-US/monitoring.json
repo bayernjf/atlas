@@ -272,7 +272,7 @@
     "descLabel": "Description",
     "tagsLabel": "Tags (comma separated)",
     "configLabel": "Rules config (JSON)",
-    "configInvalid": "Rules config must be valid JSON",
+    "configInvalid": "Rule config validation failed, please check the highlighted fields",
     "save": "Save",
     "cancel": "Cancel",
     "sourceBuiltin": "Built-in",

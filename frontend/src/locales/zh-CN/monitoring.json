@@ -272,7 +272,7 @@
     "descLabel": "描述",
     "tagsLabel": "标签（逗号分隔）",
     "configLabel": "规则配置（JSON）",
-    "configInvalid": "规则配置必须是合法 JSON",
+    "configInvalid": "规则配置校验未通过，请检查标红项",
     "save": "保存",
     "cancel": "取消",
     "sourceBuiltin": "内置",
