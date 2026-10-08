@@ -91,5 +91,6 @@
   "INTERRUPTION_ACTION_UNSUPPORTED": "不支持的收敛动作：{{action}}（当前仅支持 abandon）",
   "ENV_VARIABLE_UNAVAILABLE": "Environment variable {{name}} is not configured",
   "SECRET_UNAVAILABLE": "Secret {{name}} is unavailable (missing or cannot be decrypted)",
-  "APPROVAL_NOT_ASSIGNED": "该审批仅限指定审批人处理"
+  "APPROVAL_NOT_ASSIGNED": "该审批仅限指定审批人处理",
+  "LLM_STRUCTURED_UNAVAILABLE": "LLM 结构化节点暂不可用：未配置可用模型（LITELLM_MODEL/OPENAI_API_KEY）或供应商不可达，节点已失败"
 }

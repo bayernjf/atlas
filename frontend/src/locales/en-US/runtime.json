@@ -91,5 +91,6 @@
   "INTERRUPTION_ACTION_UNSUPPORTED": "Unsupported resolve action: {{action}} (only \"abandon\" is supported)",
   "ENV_VARIABLE_UNAVAILABLE": "Environment variable {{name}} is not configured",
   "SECRET_UNAVAILABLE": "Secret {{name}} is unavailable (missing or cannot be decrypted)",
-  "APPROVAL_NOT_ASSIGNED": "This approval is restricted to the assigned approver"
+  "APPROVAL_NOT_ASSIGNED": "This approval is restricted to the assigned approver",
+  "LLM_STRUCTURED_UNAVAILABLE": "LLM structured node unavailable: no usable model configured (LITELLM_MODEL/OPENAI_API_KEY) or provider unreachable; node failed"
 }

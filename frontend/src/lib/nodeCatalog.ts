@@ -29,7 +29,7 @@ export {
 } from './validation/l1'
 export type { ApprovalTimeoutAction, WaitTimeoutPolicy } from './validation/l1'
 
-export const NODE_KINDS = ['trigger', 'ai_decision', 'tool_call', 'condition', 'loop', 'parallel', 'wait', 'subgraph', 'human_approval'] as const
+export const NODE_KINDS = ['trigger', 'ai_decision', 'tool_call', 'condition', 'loop', 'parallel', 'wait', 'subgraph', 'human_approval', 'intent_recognition', 'info_extraction', 'content_generation'] as const
 export type NodeKind = (typeof NODE_KINDS)[number]
 
 export const PARALLEL_JOIN_STRATEGIES = ['all_success', 'all_completed', 'any_success'] as const
@@ -55,6 +55,20 @@ export type ConditionBranch = {
 export type ParallelBranch = {
   label: string
   target: string
+}
+
+/** docs/109 打包 AB：意图识别节点意图项（name 1-40 字，description ≤200 字，examples 可选）。 */
+export type IntentItem = {
+  name: string
+  description?: string
+  examples?: string[]
+}
+
+/** docs/109 打包 AB：信息抽取节点字段项（type 限 string/number/boolean/object）。 */
+export type ExtractionField = {
+  name: string
+  type: 'string' | 'number' | 'boolean' | 'object'
+  description?: string
 }
 
 export type NodeConfig = {
@@ -112,6 +126,13 @@ export type NodeConfig = {
   rejectedTarget?: string
   /** M8：可选内置交互卡片 id；留空走 summary 旧路径。 */
   cardTemplateId?: string
+  // docs/109 打包 AB：三 LLM 结构化节点（意图识别/信息抽取/内容生成）
+  intents?: IntentItem[]
+  fields?: ExtractionField[]
+  textSource?: string
+  template?: string
+  style?: string
+  maxLength?: number
 }
 
 export type EditorNodeData = {
@@ -140,6 +161,21 @@ export const NODE_CATALOG: Record<NodeKind, { label: string; description: string
     label: '人机协作',
     description: '暂停并请求人工审批，超时自动通过/拒绝（10-3600 秒）',
     color: token('color-node-human'),
+  },
+  intent_recognition: {
+    label: '意图识别',
+    description: 'LLM 从输入文本识别意图与槽位（需配置至少一个意图）',
+    color: token('color-node-ai'),
+  },
+  info_extraction: {
+    label: '信息抽取',
+    description: 'LLM 从输入文本抽取结构化字段（需配置至少一个字段）',
+    color: token('color-node-ai'),
+  },
+  content_generation: {
+    label: '内容生成',
+    description: 'LLM 按模板与风格生成内容（需填写模板）',
+    color: token('color-node-ai'),
   },
 }
 
@@ -172,6 +208,12 @@ export function defaultConfig(kind: NodeKind): NodeConfig {
       }
     case 'wait':
       return { waitType: 'duration', durationSeconds: 5 }
+    case 'intent_recognition':
+      return { intents: [{ name: '', description: '' }], textSource: '', model: '' }
+    case 'info_extraction':
+      return { fields: [{ name: '', type: 'string', description: '' }], textSource: '', model: '' }
+    case 'content_generation':
+      return { template: '', style: '', maxLength: 800, model: '' }
     case 'subgraph':
       return { graphId: '', inputs: {} }
     case 'human_approval':

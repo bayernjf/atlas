@@ -14,6 +14,9 @@ import { loopSchema } from './nodes/loop.schema'
 import { parallelSchema } from './nodes/parallel.schema'
 import { subgraphSchema } from './nodes/subgraph.schema'
 import { humanApprovalSchema } from './nodes/human_approval.schema'
+import { intentRecognitionSchema } from './nodes/intent_recognition.schema'
+import { infoExtractionSchema } from './nodes/info_extraction.schema'
+import { contentGenerationSchema } from './nodes/content_generation.schema'
 
 export const SCHEMA_VERSION = 'v1'
 
@@ -27,6 +30,9 @@ const SCHEMAS: Record<string, Record<string, NodeConfigSchema>> = {
   wait: { [SCHEMA_VERSION]: waitSchema },
   subgraph: { [SCHEMA_VERSION]: subgraphSchema },
   human_approval: { [SCHEMA_VERSION]: humanApprovalSchema },
+  intent_recognition: { [SCHEMA_VERSION]: intentRecognitionSchema },
+  info_extraction: { [SCHEMA_VERSION]: infoExtractionSchema },
+  content_generation: { [SCHEMA_VERSION]: contentGenerationSchema },
 }
 
 for (const versions of Object.values(SCHEMAS)) {

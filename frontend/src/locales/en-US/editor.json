@@ -443,7 +443,10 @@
     "loopWhile": "While loop (enters the body while the expression is truthy, 04 §5.3)",
     "parallel": "Parallel fan-out (runs all branches concurrently, then joins, 04 §5.4)",
     "subgraph": "Subgraph settings (references a saved graph and continues along the single outgoing edge, 04 §5.7)",
-    "wait": "Wait settings (suspends, then continues along the single outgoing edge, 04 §5.5)"
+    "wait": "Wait settings (suspends, then continues along the single outgoing edge, 04 §5.5)",
+    "intent_recognition": "Intent recognition",
+    "info_extraction": "Info extraction",
+    "content_generation": "Content generation"
   },
   "nodeCatalog": {
     "trigger": {
@@ -481,6 +484,18 @@
     "human_approval": {
       "label": "Human Approval",
       "description": "Pause for manual approval; auto-approve/reject on timeout (10-3600s)"
+    },
+    "intent_recognition": {
+      "label": "Intent recognition",
+      "description": "LLM classifies intent and slots from input text (at least one intent required)"
+    },
+    "info_extraction": {
+      "label": "Info extraction",
+      "description": "LLM extracts structured fields from input text (at least one field required)"
+    },
+    "content_generation": {
+      "label": "Content generation",
+      "description": "LLM generates content from a template and style (template required)"
     }
   },
   "tool": {
