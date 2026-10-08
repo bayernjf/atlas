@@ -14,8 +14,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ConfigDict
 
-MemoryKind = Literal["fact", "preference"]
+MemoryKind = Literal["fact", "preference", "knowledge"]
 MemorySource = Literal["tool", "manual", "run"]
+
+# 知识子类（docs/108 §2.1，照编辑后台组件设计 §7.2 存储方式）：FAQ / SOP / 产品手册 / 业务规则 / 历史案例。
+# 只作用于 kind=knowledge 条目的 meta.category；其余 kind 忽略该键。
+KNOWLEDGE_CATEGORIES = ("faq", "sop", "manual", "rule", "case")
 
 CONTENT_MIN_LENGTH = 1
 CONTENT_MAX_LENGTH = 2000
@@ -70,6 +74,22 @@ def _validate_metadata(metadata: Any) -> dict[str, str]:
     return dict(metadata)
 
 
+def validate_category(metadata: dict[str, str], *, kind: str) -> dict[str, str]:
+    """知识子类白名单（docs/108 §2.1）：kind=knowledge 时 meta.category 若存在须在白名单。
+
+    契约：category 仅作用于 kind=knowledge；其余 kind 即便携带也忽略（返回原样，
+    不误伤既有 fact/preference 条目——它们可能已有任意 metadata 键）。
+    """
+    if kind != "knowledge":
+        return metadata
+    category = metadata.get("category")
+    if category is not None and category not in KNOWLEDGE_CATEGORIES:
+        raise MemoryValidationError(
+            f"category 必须是 {'/'.join(KNOWLEDGE_CATEGORIES)} 之一"
+        )
+    return metadata
+
+
 def validate_remember_params(
     *,
     kind: Any,
@@ -80,8 +100,8 @@ def validate_remember_params(
     metadata: Any = None,
 ) -> dict[str, Any]:
     """校验 remember 入参，返回归一化后的 kwargs（docs/26 §4.1/§5.2）。"""
-    if kind not in ("fact", "preference"):
-        raise MemoryValidationError("kind 必须是 fact 或 preference")
+    if kind not in ("fact", "preference", "knowledge"):
+        raise MemoryValidationError("kind 必须是 fact/preference/knowledge 之一")
     if not isinstance(content, str) or not content.strip():
         raise MemoryValidationError("content 必须是非空字符串")
     content = content.strip()
@@ -94,13 +114,14 @@ def validate_remember_params(
         raise MemoryValidationError("confidence 必须在 0-1 之间")
     if source not in ("tool", "manual", "run"):
         raise MemoryValidationError("source 必须是 tool/manual/run")
+    metadata_value = validate_category(_validate_metadata(metadata), kind=kind)
     return {
         "kind": kind,
         "content": content,
         "scope": _validate_scope(scope),
         "confidence": confidence_value,
         "source": source,
-        "metadata": _validate_metadata(metadata),
+        "metadata": metadata_value,
     }
 
 
@@ -138,16 +159,26 @@ def validate_recall_params(
     *,
     query: Any,
     kind: Any = None,
+    category: Any = None,
     scope: Any = None,
     top_k: Any = 5,
     min_score: Any = 0.0,
 ) -> dict[str, Any]:
-    """校验 recall 入参，返回归一化后的 kwargs（docs/26 §4.1/§5.2）。"""
+    """校验 recall 入参，返回归一化后的 kwargs（docs/26 §4.1/§5.2）。
+
+    ``category`` 为 docs/108 新增：仅 kind=knowledge 时参与过滤；kind 非 knowledge
+    时传入 category 按无意义忽略（与 remember 侧 metadata.category 同口径，不误伤
+    既有调用方）。
+    """
     if not isinstance(query, str) or not query.strip():
         raise MemoryValidationError("query 必须是非空字符串")
     query_value = query.strip()
-    if kind is not None and kind not in ("fact", "preference"):
-        raise MemoryValidationError("kind 必须是 fact 或 preference")
+    if kind is not None and kind not in ("fact", "preference", "knowledge"):
+        raise MemoryValidationError("kind 必须是 fact/preference/knowledge 之一")
+    if category is not None and category not in KNOWLEDGE_CATEGORIES:
+        raise MemoryValidationError(
+            f"category 必须是 {'/'.join(KNOWLEDGE_CATEGORIES)} 之一"
+        )
     if not isinstance(top_k, int) or isinstance(top_k, bool):
         # bool 是 int 子类，显式拒绝
         raise MemoryValidationError("top_k 必须是整数")
@@ -161,6 +192,7 @@ def validate_recall_params(
     return {
         "query": query_value,
         "kind": kind,
+        "category": category,
         "scope": _validate_scope(scope),
         "top_k": top_k,
         "min_score": min_score_value,

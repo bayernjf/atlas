@@ -89,7 +89,7 @@ from atlas.llm.config import ModelConfig
 from atlas.llm.decision import get_decision_client, warm_litellm
 from atlas.llm.nl_generate import generate_graph, validate_param_fills
 from atlas.memory.database import ping, wait_for_database
-from atlas.memory.models import MemoryValidationError
+from atlas.memory.models import KNOWLEDGE_CATEGORIES, MemoryValidationError
 from atlas.message.service import MessageSendError
 from atlas.message.template_store import (
     MessageTemplateNameConflict,
@@ -5726,7 +5726,7 @@ class MemoryCreateRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["fact", "preference"]
+    kind: Literal["fact", "preference", "knowledge"]
     content: str = Field(min_length=1, max_length=2000)
     scope: dict[str, str] | None = None
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -5738,7 +5738,7 @@ class MemoryUpdateRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["fact", "preference"] | None = None
+    kind: Literal["fact", "preference", "knowledge"] | None = None
     content: str | None = Field(default=None, min_length=1, max_length=2000)
     scope: dict[str, str] | None = None
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -5792,8 +5792,8 @@ def list_memories(
     principal: Principal = Depends(require("read")),
 ) -> dict[str, Any]:
     """当前租户记忆倒序列表（不含 embedding）；kind 可选过滤，limit 缺省 50、上限 200。"""
-    if kind is not None and kind not in ("fact", "preference"):
-        raise HTTPException(status_code=422, detail="kind 必须是 fact 或 preference")
+    if kind is not None and kind not in ("fact", "preference", "knowledge"):
+        raise HTTPException(status_code=422, detail="kind 必须是 fact/preference/knowledge 之一")
     limit = max(1, min(limit, 200))
     return {"items": services_for(principal).memory_store.list(kind=kind, limit=limit)}
 
@@ -5802,19 +5802,26 @@ def list_memories(
 def search_memories(
     q: str = "",
     kind: str | None = None,
+    category: str | None = None,
     top_k: int = 5,
     min_score: float = 0.0,
     principal: Principal = Depends(require("read")),
 ) -> dict[str, Any]:
-    """语义检索当前租户记忆；q 空白返 422，无命中返空数组（成功不报错）。"""
+    """语义检索当前租户记忆；q 空白返 422，无命中返空数组（成功不报错）。
+
+    ``category`` 为 docs/108 知识库扩展：仅 kind=knowledge 时参与过滤（非 knowledge
+    时由校验层忽略，不误伤既有调用方）。
+    """
     if not q or not q.strip():
         raise HTTPException(status_code=422, detail="q 必须是非空检索词")
-    if kind is not None and kind not in ("fact", "preference"):
-        raise HTTPException(status_code=422, detail="kind 必须是 fact 或 preference")
+    if kind is not None and kind not in ("fact", "preference", "knowledge"):
+        raise HTTPException(status_code=422, detail="kind 必须是 fact/preference/knowledge 之一")
+    if category is not None and category not in KNOWLEDGE_CATEGORIES:
+        raise HTTPException(status_code=422, detail="category 必须是 faq/sop/manual/rule/case 之一")
     top_k = max(1, min(top_k, 20))
     min_score = max(0.0, min(min_score, 1.0))
     results = services_for(principal).memory_store.recall(
-        q.strip(), kind=kind, top_k=top_k, min_score=min_score
+        q.strip(), kind=kind, category=category, top_k=top_k, min_score=min_score
     )
     return {"results": results}
 
@@ -5829,6 +5836,79 @@ def delete_memory(
     if not deleted:
         raise HTTPException(status_code=404, detail="记忆不存在")
     return {"deleted": True}
+
+
+class KnowledgeImportRequest(BaseModel):
+    """知识库文档导入（docs/108 §2.2）：纯文本按段落分段入库，MVP 不做多格式解析。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    category: Literal["faq", "sop", "manual", "rule", "case"]
+    text: str = Field(min_length=1, max_length=200000)
+    scope: dict[str, str] | None = None
+
+
+_KNOWLEDGE_SEGMENT_MAX = 1200
+_KNOWLEDGE_IMPORT_LIMIT = 200
+
+
+def _split_knowledge_segments(text: str) -> list[str]:
+    """按段落切分，单段超长硬切（docs/108 §2.4）。
+
+    段落优先（``\\n\\n``）；段内超 ``_KNOWLEDGE_SEGMENT_MAX`` 字符按字符边界硬切；
+    空段跳过。返回裁剪后的文本段列表。
+    """
+    segments: list[str] = []
+    for paragraph in text.split("\n\n"):
+        paragraph = paragraph.strip()
+        if not paragraph:
+            continue
+        if len(paragraph) <= _KNOWLEDGE_SEGMENT_MAX:
+            segments.append(paragraph)
+            continue
+        start = 0
+        while start < len(paragraph):
+            end = min(start + _KNOWLEDGE_SEGMENT_MAX, len(paragraph))
+            segment = paragraph[start:end].strip()
+            if segment:
+                segments.append(segment)
+            start = end
+    return segments
+
+
+@app.post("/api/knowledge/import", status_code=201)
+def knowledge_import(
+    body: KnowledgeImportRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """知识库文档导入（operate；docs/108 §2.2）：纯文本分段向量化入库。
+
+    返回 ``{imported, truncated, items}``；超 ``_KNOWLEDGE_IMPORT_LIMIT`` 条截断并置
+    ``truncated: true``（按 docs/108 §2.4，先序段优先）。失败 422 中文（MemoryValidationError
+    统一折叠，与 create_memory 同口径）。
+    """
+    segments = _split_knowledge_segments(body.text)
+    if not segments:
+        raise HTTPException(status_code=422, detail="text 无可导入的有效内容（全为空段）")
+    truncated = len(segments) > _KNOWLEDGE_IMPORT_LIMIT
+    if truncated:
+        segments = segments[:_KNOWLEDGE_IMPORT_LIMIT]
+    repo = services_for(principal).memory_store
+    items: list[dict[str, Any]] = []
+    try:
+        for segment in segments:
+            item = repo.remember(
+                kind="knowledge",
+                content=segment,
+                scope=body.scope,
+                confidence=1.0,
+                source="manual",
+                metadata={"category": body.category},
+            )
+            items.append(item)
+    except MemoryValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return {"imported": len(items), "truncated": truncated, "items": items}
 
 
 @app.post("/api/demo/reset")

@@ -2,7 +2,7 @@
 
 两能力（零新节点 / 零 DSL 改动，走现有 tool_call/harness，params 由 M3 FormRenderer
 按 input_schema 自动生成）：
-- ``remember``（write，非幂等）：写 fact/preference；
+- ``remember``（write，非幂等）：写 fact/preference/knowledge（knowledge 带 meta.category 子类）；
 - ``recall``（read，幂等）：语义检索，无命中返空结果（成功，不报错）。
 
 repo 缺省（全局发现注册实例）时执行期不可用；执行期由 ``_runtime_registry`` 注入
@@ -30,8 +30,8 @@ _REMEMBER_INPUT_SCHEMA = {
     "properties": {
         "kind": {
             "type": "string",
-            "enum": ["fact", "preference"],
-            "description": "记忆类型：事实 fact / 用户偏好 preference",
+            "enum": ["fact", "preference", "knowledge"],
+            "description": "记忆类型：事实 fact / 用户偏好 preference / 知识 knowledge（知识条目的 meta.category 用 faq/sop/manual/rule/case）",
         },
         "content": {
             "type": "string",
@@ -63,7 +63,7 @@ _REMEMBER_OUTPUT_SCHEMA = {
     "required": ["id", "kind", "content", "created_at"],
     "properties": {
         "id": {"type": "string"},
-        "kind": {"type": "string", "enum": ["fact", "preference"]},
+        "kind": {"type": "string", "enum": ["fact", "preference", "knowledge"]},
         "content": {"type": "string"},
         "scope": {"type": "object", "additionalProperties": {"type": "string"}},
         "confidence": {"type": "number"},
@@ -83,7 +83,8 @@ _RECALL_INPUT_SCHEMA = {
             "maxLength": 2000,
             "description": "检索语义的自然语言/关键词（支持 {{变量}} 插值）",
         },
-        "kind": {"type": "string", "enum": ["fact", "preference"], "description": "仅检索该类型"},
+        "kind": {"type": "string", "enum": ["fact", "preference", "knowledge"], "description": "仅检索该类型（知识条目选 knowledge）"},
+        "category": {"type": "string", "enum": ["faq", "sop", "manual", "rule", "case"], "description": "知识子类过滤（仅 kind=knowledge 时生效）：FAQ/SOP/手册/规则/案例"},
         "scope": {
             "type": "object",
             "additionalProperties": {"type": "string"},
@@ -105,7 +106,7 @@ _RECALL_OUTPUT_SCHEMA = {
                 "required": ["id", "content", "score"],
                 "properties": {
                     "id": {"type": "string"},
-                    "kind": {"type": "string", "enum": ["fact", "preference"]},
+                    "kind": {"type": "string", "enum": ["fact", "preference", "knowledge"]},
                     "content": {"type": "string"},
                     "score": {"type": "number"},
                     "confidence": {"type": "number"},
@@ -191,6 +192,7 @@ class MemoryHarnessAdapter(HarnessAdapter):
                 results = self.repo.recall(
                     params.get("query"),
                     kind=params.get("kind"),
+                    category=params.get("category"),
                     scope=params.get("scope"),
                     top_k=top_k,
                     min_score=min_score,

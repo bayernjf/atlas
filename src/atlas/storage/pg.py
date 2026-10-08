@@ -1998,6 +1998,7 @@ class PgMemoryStore:
         query: str,
         *,
         kind: str | None = None,
+        category: str | None = None,
         scope: dict[str, str] | None = None,
         top_k: int = 5,
         min_score: float = 0.0,
@@ -2005,7 +2006,7 @@ class PgMemoryStore:
         from atlas.memory.models import validate_recall_params
 
         params = validate_recall_params(
-            query=query, kind=kind, scope=scope, top_k=top_k, min_score=min_score
+            query=query, kind=kind, category=category, scope=scope, top_k=top_k, min_score=min_score
         )
         query_vector = self._provider.embed([params["query"]])[0]
         clauses = ["tenant_id = :tenant_id", "scope @> CAST(:scope AS jsonb)"]
@@ -2019,6 +2020,9 @@ class PgMemoryStore:
         if params["kind"] is not None:
             clauses.append("kind = :kind")
             args["kind"] = params["kind"]
+        if params["category"] is not None:
+            clauses.append("meta ->> 'category' = :category")
+            args["category"] = params["category"]
         where = " AND ".join(clauses)
         sql = (
             f"SELECT {self._PUBLIC_COLS}, 1.0 - (embedding <=> CAST(:q AS vector(256))) AS score "
@@ -2038,8 +2042,8 @@ class PgMemoryStore:
     def list(self, *, kind: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
         if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
             raise ValueError("limit 必须是正整数")
-        if kind is not None and kind not in ("fact", "preference"):
-            raise ValueError("kind 必须是 fact 或 preference")
+        if kind is not None and kind not in ("fact", "preference", "knowledge"):
+            raise ValueError("kind 必须是 fact/preference/knowledge 之一")
         sql = (
             f"SELECT {self._PUBLIC_COLS} FROM memory_items WHERE tenant_id = :tenant_id "
             "{kind_clause} ORDER BY created_at DESC LIMIT :limit"
