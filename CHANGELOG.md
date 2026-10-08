@@ -3,6 +3,12 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔前端〕打包 ZT 收口：规则模板配置表单化（RuleConfigEditor 共享，docs/103，2026-10-08）
+
+- **规则模板新建/编辑改为可视化表单**：Monitoring 生效规则表单抽成纯受控共享组件 `RuleConfigEditor`（内置 4 规则开关/阈值、升级/恢复三组、custom 增删改），模板市场 Modal 不再要求手写 JSON；默认值与结构化校验收敛到 `lib/ruleConfig.ts`，提交前拦截非法配置。
+- **修复**：模板表单 name/description/tags 三个 Form.Item 缺 name 属性，antd Form 双向绑定不生效（输入不进 values、编辑回填不显示）。
+- Monitoring 规则编辑/保存行为不变；后端零改动、零迁移、零新依赖；U1231–U1236 共 20 例（纯函数＋SSR＋源码机检）；前端 vitest 848/2、oxlint 0/0、build 过。
+
 ### 〔工程〕打包 ZT 立项：规则模板配置表单化（RuleConfigEditor 共享，docs/103，2026-10-08）
 
 - **D28 余部「规则配置 UI 表单化」取回**：ZS 让用户能自建模板但 config 靠裸 JSON 文本；本批把 Monitoring 规则表单抽成纯受控共享组件 `RuleConfigEditor`，模板新建/编辑 Modal 改为可视化表单。

@@ -144,4 +144,27 @@ export function validateRuleConfig(config: RuleConfig): RuleConfigError[]
 
 ## §6 收口注记（落码后回填）
 
-（待填）
+**收口：2026-10-08，四原子（docs 立项 → refactor → feat → test）＋本收口原子。**
+
+原子链（dev，未 push）：
+
+1. `de2a73f` docs(plan): add batch ZT contract for shared rule config editor（立项，docs/103＋08/14/00/13/CHANGELOG/handoff）
+2. `5f2f1f0` refactor(frontend): extract shared rule config editor from monitoring page
+3. `5add6a2` feat(frontend): replace template JSON textarea with rule config editor
+4. `b38af24` test(frontend): cover shared rule config editor and template form (U1231–U1236)
+
+**与契约的偏差（均为实施中收敛，不改变外部行为契约）**：
+
+1. **纯函数拆到 `lib/ruleConfig.ts`**：§3.1 原定 defaultRuleConfig/validateRuleConfig/RuleConfigError 从组件文件导出；oxlint `react/only-export-components`（warn 级，项目基线 0 warning）要求组件文件只导出组件，故默认值/校验/错误类型移至 `src/lib/ruleConfig.ts`，组件文件只导出 `RuleConfigEditor`（与 docs/88 反思批 U1103–U1108「页面行为逻辑抽纯函数」同构）。组件行内红框与宿主提交校验共用同一个 validateRuleConfig，同源不漂移。
+2. **顺带修正 ZS 遗留缺陷**：落 ZT-3 时发现 AlertRuleTemplateMarket 表单 Modal 的 name/description/tags 三个 `Form.Item` 均**缺 `name` 属性**——antd Form 双向绑定不生效，新建/编辑弹窗里这三个字段的用户输入实际不会进入 form values、编辑回填也不显示（ZS 测试为纯函数/apiClient/i18n 面，未覆盖组件交互，故漏网）。ZT-3 补 `name`（name 项加 required rule）后修正；config 改独立受控 state 后整条录入链路可用。
+3. **测试形态**：前端无 jsdom/testing-library（仅 react-dom/server，先例 DemoResetButton.test.tsx），U1231–U1236 落为「lib 纯函数 9 例（ruleConfig.test.ts）＋SSR 静态渲染 9 例＋`?raw` 源码机检 2 例（RuleConfigEditor.test.tsx，共 11 例）」；开关切换/增删行/点击提交等事件面由 tsc＋build 兜底（与 U1103–U1108 同形态）。
+
+**门（实跑 2026-10-08）**：
+
+- 前端 vitest 全量 **848 passed／2 skipped**（基线 828/2 ＋ U1231–U1236 新增 20 例）；62 文件 passed／1 skipped。
+- oxlint 全量 **0 warnings／0 errors**（187 文件）。
+- `pnpm build` 通过（tsc 0；仅既有 chunk>500kB 警告，与本批无关）。
+- 后端零改动，守护门三件套 **24 passed**（handoff_integrity／migration_convention／error_code_channels）。
+- 后端全量/PG 集成本批不涉及（无后端、无迁移、无依赖变更）。
+
+**范围确认**：DSL 专用编辑器、按图绑定、发布门禁、跨租户市场、版本历史、JSON 导入导出均未做（§5）；JSON TextArea 路径已删除、未保留高级模式；D28 整体仍不解除。
