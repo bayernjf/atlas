@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Alert,
   Button,
@@ -6,7 +6,6 @@ import {
   Checkbox,
   Collapse,
   Layout,
-  InputNumber,
   Modal,
   Popconfirm,
   Select,
@@ -50,6 +49,11 @@ import {
   validateParamValues,
   type ParamField as TemplateParamField,
 } from '../lib/templateParams'
+import { FormRenderer } from '../lib/forms/FormRenderer'
+import {
+  templateParamsToMetaSchema,
+  templateParamsToUiSchema,
+} from '../lib/forms/templateParamSchema'
 import {
   compileGraph,
   CompileValidationError,
@@ -232,6 +236,15 @@ export function Editor({
   >({})
   const [templateParamTemplate, setTemplateParamTemplate] = useState<TemplateDetail | null>(null)
   const [templateParamBusy, setTemplateParamBusy] = useState(false)
+  // 打包 ZW：模板参数表单 Schema 驱动化（docs/105 §2.3）——schema/uiSchema 由声明派生，渲染走 FormRenderer。
+  const templateParamSchema = useMemo(
+    () => templateParamsToMetaSchema(templateParamTemplate?.params),
+    [templateParamTemplate],
+  )
+  const templateParamUiSchema = useMemo(
+    () => templateParamsToUiSchema(templateParamTemplate?.params),
+    [templateParamTemplate],
+  )
   const [runError, setRunError] = useState<string | null>(null)
   const [nlError, setNlError] = useState<string | null>(null)
   const [compileResult, setCompileResult] = useState<CompileResult | null>(null)
@@ -1491,60 +1504,15 @@ export function Editor({
           style={{ marginBottom: 12 }}
         />
         <Space direction="vertical" size={12} style={{ width: '100%' }}>
-          {templateParamFields.map((field) => (
-            <div key={field.name}>
-              <div style={{ marginBottom: 4 }}>
-                <Typography.Text strong>
-                  {field.label}
-                  {field.required && (
-                    <Typography.Text type="danger" style={{ marginLeft: 4 }}>
-                      *
-                    </Typography.Text>
-                  )}
-                </Typography.Text>
-              </div>
-              {field.type === 'boolean' ? (
-                <Switch
-                  checked={Boolean(templateParamValues[field.name])}
-                  onChange={(checked) =>
-                    setTemplateParamValues((prev) => ({ ...prev, [field.name]: checked }))
-                  }
-                />
-              ) : field.type === 'select' ? (
-                <Select
-                  value={templateParamValues[field.name] as string}
-                  options={(field.options ?? []).map((o) => ({ value: o, label: o }))}
-                  onChange={(value) =>
-                    setTemplateParamValues((prev) => ({ ...prev, [field.name]: value }))
-                  }
-                  style={{ width: '100%' }}
-                />
-              ) : field.type === 'number' ? (
-                <InputNumber
-                  value={templateParamValues[field.name] as number}
-                  onChange={(value) =>
-                    setTemplateParamValues((prev) => ({ ...prev, [field.name]: value ?? 0 }))
-                  }
-                  style={{ width: '100%' }}
-                />
-              ) : (
-                <Input
-                  value={templateParamValues[field.name] as string}
-                  onChange={(event) =>
-                    setTemplateParamValues((prev) => ({
-                      ...prev,
-                      [field.name]: event.target.value,
-                    }))
-                  }
-                />
-              )}
-              {field.hint && (
-                <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
-                  {field.hint}
-                </Typography.Text>
-              )}
-            </div>
-          ))}
+          <FormRenderer
+            schema={templateParamSchema}
+            uiSchema={templateParamUiSchema}
+            value={templateParamValues}
+            onChange={(next) =>
+              setTemplateParamValues(next as Record<string, string | number | boolean>)
+            }
+            source="tool"
+          />
         </Space>
       </Modal>
       <Modal
