@@ -42,7 +42,7 @@ def test_adapters_lists_shop_capabilities():
     body = client.get("/api/adapters").json()
     shop = next(item for item in body if item["id"] == "shop")
     tools = {tool["name"] for tool in shop["tools"]}
-    assert {"login", "list_pending_refunds", "execute_refund", "request_human_approval", "process_refund"} <= tools
+    assert {"login", "list_pending_refunds", "execute_refund", "request_human_approval", "process_refund", "reject_refund"} <= tools
 
 
 def test_nl_generate_refund_intent_returns_draft():
@@ -50,7 +50,10 @@ def test_nl_generate_refund_intent_returns_draft():
     assert response.status_code == 200
     graph = response.json()["graph"]
     assert graph["version"] == 1
-    assert len(graph["nodes"]) == 3
+    # docs/101 D57：refund 模板自三节点升级为「分流＋真挂起」七节点（condition/human_approval/双出口）。
+    assert len(graph["nodes"]) == 7
+    node_ids = {node["id"] for node in graph["nodes"]}
+    assert {"condition-1", "human_approval-1", "tool_call-approve", "tool_call-reject"} <= node_ids
     # 草稿必须能直接保存（通过 DSL 校验）
     saved = client.post("/api/graphs", json=graph)
     assert saved.status_code == 200
@@ -1360,12 +1363,15 @@ def test_i18_sync_and_stream_error_runs_record_run_error(monkeypatch):
     error_detail = frames[-1]["detail"]
     assert error_detail["code"] == "RUNTIME_UNEXPECTED"
     assert error_detail["params"] == {}
-    assert "RuntimeError" in error_detail["message"]
+    # docs/101 D58：未知异常 message 收口为安全文案，内部串（类型名/repr）不再进客户界面。
+    assert error_detail["message"] == "运行时发生未预期错误"
+    assert "RuntimeError" not in error_detail["message"]
 
     runs = client.get("/api/monitoring/runs").json()["items"]
     assert {run["status"] for run in runs} == {"error"}
     assert {run["mode"] for run in runs} == {"sync", "stream"}
-    assert all("RuntimeError: 监控异常用例 boom" in run["error"] for run in runs)
+    # 持久化 error 同样不带内部串（运行历史/详情也是客户可见面）。
+    assert all(run["error"] == "运行时发生未预期错误" for run in runs)
     alerts = _alerts_by_rule()
     assert "run_error" in alerts and alerts["run_error"]["severity"] == "critical"
 

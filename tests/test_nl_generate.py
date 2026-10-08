@@ -12,8 +12,13 @@ def test_refund_intent_returns_valid_refund_template():
     graph = generate_graph("帮我做一个电商退款自动审批流程")
     parsed = parse_graph(graph)
     assert validate_graph(parsed) == []
-    assert [node.type for node in parsed.nodes] == ["trigger", "ai_decision", "tool_call"]
-    assert parsed.nodes[2].config["tool"] == "shop/process_refund"
+    assert [node.type for node in parsed.nodes] == [
+        "trigger", "ai_decision", "condition", "human_approval",
+        "tool_call", "tool_call", "tool_call",
+    ]
+    assert parsed.nodes[4].config["tool"] == "shop/process_refund"
+    assert parsed.nodes[5].config["tool"] == "shop/execute_refund"
+    assert parsed.nodes[6].config["tool"] == "shop/reject_refund"
 
 
 def test_unknown_intent_without_llm_raises(monkeypatch):

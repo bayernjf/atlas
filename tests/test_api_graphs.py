@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from atlas.api.main import app
+from atlas.security.bootstrap import demo_surface_enabled
 
 client = TestClient(app)
 
@@ -29,7 +30,10 @@ def _sample_graph():
 
 
 def test_health():
-    assert client.get("/api/health").json() == {"status": "ok"}
+    assert client.get("/api/health").json() == {
+        "status": "ok",
+        "demo_surface": demo_surface_enabled(),
+    }
 
 
 def test_save_get_compile_run_lifecycle():

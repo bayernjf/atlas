@@ -16,6 +16,7 @@ DEMO_TOOLS = {
     "shop/execute_refund",
     "shop/request_human_approval",
     "shop/process_refund",
+    "shop/reject_refund",
     "http/request",
     "database/query",
     "database/execute",

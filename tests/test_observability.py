@@ -13,6 +13,7 @@ from atlas.api.main import app
 from atlas.iam.registry import STORAGE_BACKEND
 from atlas.observability.health import check_ready
 from atlas.observability.metrics_export import render_prometheus
+from atlas.security.bootstrap import demo_surface_enabled
 
 client = TestClient(app)
 
@@ -22,7 +23,7 @@ client = TestClient(app)
 def test_health_is_public_and_ok() -> None:
     resp = client.get("/api/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+    assert resp.json() == {"status": "ok", "demo_surface": demo_surface_enabled()}
 
 
 # ---------- /api/ready 就绪探针 ----------
