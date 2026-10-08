@@ -192,3 +192,54 @@ def test_u201_pg_update_merges_reindexes_and_404(pg_store):
         pg_store.update(created["id"], confidence=9)
     pg_store.clear()
     _seed(pg_store)
+
+
+# ---- docs/108 打包 AA：知识库 / RAG（U1259 PG 腿 + U1265 两档对拍） ----
+
+
+def test_aa_u1259_pg_migration_knowledge_kind_writable_and_others_untouched(pg_store, pg_engine):
+    """迁移 046 后 kind=knowledge 可写可读；fact/preference 不受影响（PG 直连）。"""
+    with pg_engine.begin() as conn:
+        cols = [row[0] for row in conn.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'memory_items'"
+        )).all()]
+    assert "kind" in cols and "meta" in cols and "embedding" in cols
+    item = pg_store.remember(
+        kind="knowledge",
+        content="PG 知识：SOP 演示环境重置流程",
+        metadata={"category": "sop"},
+    )
+    assert item["kind"] == "knowledge"
+    assert item["metadata"]["category"] == "sop"
+    fact = pg_store.remember(kind="fact", content="PG 既有事实")
+    assert fact["kind"] == "fact"
+    pref = pg_store.remember(kind="preference", content="PG 既有偏好")
+    assert pref["kind"] == "preference"
+    assert len(pg_store.list(kind="knowledge")) == 1
+    assert len(pg_store.list(kind="fact")) == 1
+    assert len(pg_store.list(kind="preference")) == 1
+    pg_store.clear()
+
+
+def test_aa_u1265_pg_and_inmemory_parity_for_knowledge(pg_store):
+    """两档对拍（docs/108 U1265）：同一文本 import 后，PG 与进程内 search 结果一致。"""
+    from atlas.memory.items import MemoryStore
+
+    inmem = MemoryStore()
+    text = "FAQ：登录失败如何排查。\n\nSOP：发货流程三步。"
+    # PG 档 import（模拟端点分段逻辑：段落优先，两段各一条）
+    for paragraph in (p.strip() for p in text.split("\n\n") if p.strip()):
+        pg_store.remember(kind="knowledge", content=paragraph, metadata={"category": "faq"})
+        inmem.remember(kind="knowledge", content=paragraph, metadata={"category": "faq"})
+    pg_hits = pg_store.recall("登录失败排查", kind="knowledge", category="faq", top_k=3)
+    mem_hits = inmem.recall("登录失败排查", kind="knowledge", category="faq", top_k=3)
+    assert pg_hits and mem_hits
+    assert [h["content"] for h in pg_hits] == [h["content"] for h in mem_hits]
+    assert all(h["kind"] == "knowledge" for h in pg_hits)
+    assert all(h["metadata"].get("category") == "faq" for h in pg_hits)
+    # category 过滤在 PG 侧同样收敛（rule 只回 rule）
+    pg_store.remember(kind="knowledge", content="退款规则：保留包装", metadata={"category": "rule"})
+    rules = pg_store.recall("退款", kind="knowledge", category="rule", top_k=3)
+    assert all(h["metadata"].get("category") == "rule" for h in rules)
+    pg_store.clear()
