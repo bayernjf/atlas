@@ -3,7 +3,14 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
-### 〔产品〕docs/18 第一次被执行：照 TRIAL.md 逐字跑一遍试用，修掉它抓到的两件事（打包 BM，docs/18 §6.2／docs/13 打包 BM，2026-10-08）
+### 〔工程〕打包 BM 缺陷批立项：D57/D58/D59 三缺陷复开（docs/101，2026-10-08）
+
+- **D57 演示图真转人工**：refund-auto 模板加 condition 分流＋human_approval 真挂起节点（不再「只说了句要找」）。
+- **D58 SSE error 帧 message 收口**：未知异常（RUNTIME_UNEXPECTED）帧 message 改安全文案、细节只进日志，第三方库内部串不再进客户界面。
+- **D59 演示面自助重置**：/api/health 加 demo_surface 能力位（公开 allowlist 不变），前端演示面开启＋admin 时显示重置按钮。
+- 零新依赖／零迁移／无 ADR；docs-only 立项原子，落码另立批（用例 U1213 起，登记 docs/13）。
+
+：照 TRIAL.md 逐字跑一遍试用，修掉它抓到的两件事（打包 BM，docs/18 §6.2／docs/13 打包 BM，2026-10-08）
 
 - **题目不是"还欠什么工程"，是"客户跑起来什么样"**：25 天里"能不能上线"证了六遍，客户向的 [TRIAL.md](TRIAL.md) 却一次都没被执行过（docs/18 §6.1 表 C1–C5 全空）。这次用一次性卷的独占 compose 项目（空库首启）＋真 Chromium＋真 LLM 把三个场景逐字走完；脚本 `scripts/dev/trial_dryrun.py` 是**摩擦采集器**不是断言脚本——每一步失败记一条 FINDING 然后继续，因为真人卡住时不抛异常，他只是放弃。终局 **13 PASS／3 FINDING**，"打开浏览器→12345 从待处理消失"实测 19 秒。
 - **指南三条不实，当场改**（都是"文档写错"，不是"产品做错"）：① §0 说根路径就是流程编辑器，实际先到登录页，而全文没给平台账号（登录页面上印着种子账号，页面兜住了文档）；② 让试用者敲的 `curl -X POST /api/demo/reset` 实测 **401**——该端点本来就是 admin only（docs/12 档位表写着，是指南错），带凭证 200，于是改成"换单号即可、重置归陪同人员"；③ "数据存在内存里、重启即恢复初始状态"与 `docker-compose.yml` 写死 `ATLAS_STORAGE_BACKEND: pg` ＋ named volume 冲突——**重启不清零**，要清空得 `down -v`。
