@@ -75,6 +75,36 @@ describe('deserializeGraph', () => {
     expect(restored[0].data.kind).toBe('condition')
     expect(restored[0].data.config).toEqual(conditionNode.data.config)
   })
+
+  it('fills fallback waterfall positions when backend nodes lack position (ZX smoke)', () => {
+    // 模板 instantiate 返回的图节点可能无 position（GraphDSL 默认值不落库），此前会导致画布序列化崩溃。
+    const graph: SerializedGraph = {
+      version: 1,
+      variables: [],
+      nodes: [
+        { id: 'trigger-1', type: 'trigger', name: '触发', description: '', config: { triggerType: 'manual' }, retry: undefined },
+        { id: 'tool_call-1', type: 'tool_call', name: '发消息', description: '', config: {}, retry: undefined },
+      ],
+      edges: [],
+    }
+    const { nodes: restored } = deserializeGraph(graph)
+    expect(restored[0].position).toEqual({ x: 40, y: 40 })
+    expect(restored[1].position).toEqual({ x: 40, y: 120 })
+    expect(restored[1].data.kind).toBe('tool_call')
+  })
+
+  it('keeps explicit positions unchanged', () => {
+    const graph: SerializedGraph = {
+      version: 1,
+      variables: [],
+      nodes: [
+        { id: 'n1', type: 'trigger', name: 'n', description: '', position: { x: 500, y: 300 }, config: {}, retry: undefined },
+      ],
+      edges: [],
+    }
+    const { nodes: restored } = deserializeGraph(graph)
+    expect(restored[0].position).toEqual({ x: 500, y: 300 })
+  })
 })
 
 describe('serializeGraph debugSettings (docs/60 §5)', () => {
