@@ -15,3 +15,5 @@
 ## 打包 BL 落码收口
 
 > ✅ **打包 BL 落码收口＝认领后崩溃挂起帧的人工收敛（2026-10-06 承接 docs/14 D36；形状权威 docs/96；docs/13 U1171–U1179；docs/14 D36 人工收敛半边收口＋D56 留）**：`POST /api/interruptions/{resume_token}/resolve`（`administer`，v1 仅 `abandon`）**单事务**把「帧已认领 ∧ run 仍 `suspended`」的卡死 run 置 `interrupted` 并删帧，**不重放**（下游非幂等）。互斥由两条谓词承担（帧侧 `resumed_at IS NOT NULL`、run 侧 `status='suspended'`），内存档 409、非法 action 422；前端 Waits 仅 `claimed_suspended`＋admin 渲染「了结」。U1171–U1179（含并发反向门）＋前端 1 例。**偏差照实**：`audit_events` 无 detail 列，runId/reason/claimedBy/claimedAt 不入审计行（token 在 path）。门：后端 **2384／154／0**、前端 **789/2**、oxlint 0/0、build 过。零新依赖／零迁移／无 ADR。详见 Active #124。
+
+> ✅ **打包 A1 落码收口＝D25 模板库产品化收尾三件（2026-10-07 承接用户「那你推进」A 档修正清单；形状权威 docs/97；docs/13 打包 A1 小节；docs/14 D25 部分取回、整体不解除；从 handoff Recently shipped 滚出，2026-10-08）**
