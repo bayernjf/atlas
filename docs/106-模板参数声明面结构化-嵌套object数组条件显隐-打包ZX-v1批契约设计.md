@@ -87,3 +87,15 @@ export type TemplateParam = {
 ## 5. 非目标（D29 整体不解除）
 
 - 枚举/if-then 表达式（非 equals 判别、多分支）、自定义控件扩展契约、增量调度/Web Worker、SchemaRegistry 六类实体通用化、嵌套数组（array of array）——触发条件不变
+
+## 6. 收口注记（2026-10-08 实跑）
+
+**状态**：本批落码+测试+冒烟+门全部通过，收口完成。原子链 `03a266f`（feat(api)）→ `31df0c7`（test(api)）→ `d8f0da9`（feat(frontend)）→ `4a3ab29`（test(frontend)），docs 立项 `985e001`（docs 批，含 docs/08/14/handoff 立项注记与契约）。dev，未 push。
+
+**落码形状**：后端 `_TEMPLATE_PARAM_TYPES` 加 object/array、`_TEMPLATE_PARAM_KEYS` 加 properties/items/minItems/maxItems/visibleWhen、`_TEMPLATE_PARAM_MAX_DEPTH=4`、`_validate_param_decl` 递归校验（深度上限、visibleWhen 形状）、`_validate_param_value` 递归值校验（object properties 递归+未知子字段拒绝、array min/max 门控+items 递归）；前端 TemplateParam 类型六值扩展、templateParamSchema.ts 递归桥接（object→properties+局部 required、array→items+min/max、visibleWhen→hiddenWhen 根层/nested rootScoped）、templateParams.ts 递归纯逻辑（初值空容器、validateFieldValue 带路径错误、buildParamFields 顶层展开不递归进数组）。
+
+**测试**：U1251–U1255（后端 17 例：合法结构化声明 5 组 parametrize、非法声明 422 十组、instantiate 递归校验 422 七分支、合法结构化值 variables 原样注入、标量回归）；前端 ZX describe 18 例（templateParamSchema 8＋templateParams 10）。**门（实跑 2026-10-08）**：后端全量 **2481 passed／169 skipped**（基线 2464/147 ＋ U1251–U1255 17 例）；前端 vitest 全量 **878 passed／2 skipped**（基线 876/2 ＋ 本批 2 例 graphSerializer position 兜底，见下）；oxlint **0/0**（189 文件）；`npx tsc --noEmit` 0；build 过（仅既有 chunk 警告）；守护门 test_handoff_integrity/test_migration_convention **8 passed**。
+
+**浏览器冒烟（admin-a，内存档 utpl-1）**：真实浏览器全链路——模板市场打开 zx-structured-smoke 参数 Modal，验证①嵌套 object group 渲染（Webhook 配置：URL* 必填/secret 子字段）②数组增删行（通知渠道「添加 0/3→1/3」+ minItems 门控：0 行提交被「至少需要 1 项」拦截、1 行时删除禁用）③条件显隐（mode=auto 时 manual_reason 隐藏，切 manual 后 textarea 出现）④填全值提交 instantiate 200、画布替换无问题。
+
+**冒烟暴露并修复的真实缺陷（新增 `feat(frontend)` 前置修复，独立原子提交）**：模板 instantiate 返回的图节点缺 position（GraphDSL 默认值不落库），`deserializeGraph` 不兜底 → React Flow 节点 position=undefined → 生成画布后 Editor 序列化崩溃白屏（`graphSerializer.ts:24` `Cannot read properties of undefined (reading 'x')`）。修复：`deserializeGraph` 对缺 position 节点按序生成瀑布默认位置（x=40, y=40+index×80），保留显式 position。补 2 例前端测试（无 position 兜底 + 显式 position 保留）。此修复同时惠及所有无 position 图来源（NL 草稿等），属正确性缺口闭合而非 ZX 引入缺陷。

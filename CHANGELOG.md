@@ -3,6 +3,14 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔前端〕打包 ZX 收口：模板参数声明面结构化（docs/106，2026-10-08 立项+同日收口）
+
+- **D29 第二切片取回（D29 整体不解除）**：ZW 后 forms 内核渲染层已支持 group/array/hiddenWhen，真实缺口在声明面——TemplateParam 仍为 A1 标量四型。本批扩展为 object（properties 递归）/array（items 递归+minItems/maxItems）/visibleWhen（条件显隐→hiddenWhen 现成机制），声明面与渲染面闭合。
+- **后端**（`src/atlas/api/main.py`）：`_TEMPLATE_PARAM_TYPES` 加 object/array、`_TEMPLATE_PARAM_KEYS` 加 properties/items/minItems/maxItems/visibleWhen、`_TEMPLATE_PARAM_MAX_DEPTH=4`；`validate_template_params` 走递归 `_validate_param_decl`（深度上限、visibleWhen 形状），`_validate_instantiate_values` 走递归 `_validate_param_value`（object 按 properties 递归+未知子字段拒绝、array min/max 门控+按 items 递归元素）；既有标量四型逻辑逐字保留。
+- **前端**：`TemplateParam` 类型六值扩展（apiClient.ts）；`templateParamSchema.ts` 递归桥接（object→properties+局部 required、array→items+min/max、default 透传、visibleWhen→hiddenWhen 根层/嵌套 rootScoped:true——判别字段相对根 record，与 condition branches[] 语义一致）；`templateParams.ts` 递归纯逻辑（初值空容器、validateFieldValue 带完整路径错误如 `rules[0].min`、buildParamFields 顶层展开不递归进数组）；Editor 类型放宽。
+- **冒烟暴露的前置修复**（独立原子）：模板 instantiate 返回图节点无 position（GraphDSL 默认值不落库），`deserializeGraph` 不兜底导致生成画布后 Editor 序列化白屏（`graphSerializer.ts:24`）；修复为对缺 position 节点按序生成瀑布默认位置（x=40, y=40+index×80）、保留显式 position。此修复惠及所有无 position 图来源（NL 草稿等）。
+- 零迁移／零新依赖／无 ADR；五原子 `985e001`→`4a3ab29`＋position 修复原子；用例 U1251–U1258（docs/13）；**门**：后端全量 2481/169、前端 vitest 878/2、oxlint 0/0、tsc 0、build 过、守护门 8 passed；真实浏览器冒烟四验证全过（嵌套 group/数组增删行 minItems 门控/条件显隐/instantiate 200 画布替换）。**D29 整体不解除**。
+
 ### 〔前端〕打包 ZW 收口：模板参数表单 Schema 驱动化（docs/105，2026-10-08 立项+同日收口）
 
 - **D29「Schema 驱动配置内核」首个切片取回（D29 整体不解除）**：A1 模板参数化向导（docs/97 §3.4，第四套手写表单范式）迁入 forms 内核成第三实体，与节点 config、工具 params 并列。
