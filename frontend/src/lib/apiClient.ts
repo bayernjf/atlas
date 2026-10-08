@@ -1509,16 +1509,25 @@ export async function updateRules(rules: RuleConfig): Promise<RuleConfig> {
   return request('/api/monitoring/rules', { method: 'PUT', body: JSON.stringify(rules) })
 }
 
-/** docs/59 F-1：内置只读告警规则模板（列表投影不含 config）。 */
+/** docs/59 F-1 + 打包 ZS（docs/102）：告警规则模板＝内置只读目录＋用户自建合并
+ * （列表投影不含 config）；source 区分 builtin/user。 */
 export type AlertRuleTemplateSummary = {
   id: string
   name: string
   description: string
   tags: string[]
+  source: 'builtin' | 'user'
 }
 
 export type AlertRuleTemplate = AlertRuleTemplateSummary & {
   /** 完整 RuleConfig，可直接交给 updateRules 全量替换（一键应用）。 */
+  config: RuleConfig
+}
+
+export type RuleTemplatePayload = {
+  name: string
+  description: string
+  tags: string[]
   config: RuleConfig
 }
 
@@ -1529,6 +1538,25 @@ export async function getAlertRuleTemplates(): Promise<AlertRuleTemplateSummary[
 
 export async function getAlertRuleTemplate(id: string): Promise<AlertRuleTemplate> {
   return request(`/api/alert-rule-templates/${encodeURIComponent(id)}`)
+}
+
+/** 打包 ZS：用户自建规则模板写通道（administer；内置模板 id 不可改删）。 */
+export async function createAlertRuleTemplate(payload: RuleTemplatePayload): Promise<AlertRuleTemplate> {
+  return request('/api/alert-rule-templates', { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export async function updateAlertRuleTemplate(
+  id: string,
+  payload: RuleTemplatePayload,
+): Promise<AlertRuleTemplate> {
+  return request(`/api/alert-rule-templates/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function deleteAlertRuleTemplate(id: string): Promise<{ deleted: boolean }> {
+  return request(`/api/alert-rule-templates/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
 export type AlertChannelKind = 'dingtalk' | 'wecom' | 'feishu' | 'webhook' | 'email'
