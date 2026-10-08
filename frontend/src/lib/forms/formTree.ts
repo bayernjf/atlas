@@ -45,6 +45,8 @@ export type FormWidgetNode = FormNodeBase & {
   optionLabels?: Record<string, string>
   /** M4 批 2：多行控件行数覆盖（UISchema rows，如 keyvalue 内 variable-input 压成单行）。 */
   rows?: number
+  /** 打包 ZW：字段下方说明文字（UISchema hints，模板参数 hint 与既有字段说明共用）。 */
+  hint?: string
 }
 
 export type FormGroupNode = FormNodeBase & {
