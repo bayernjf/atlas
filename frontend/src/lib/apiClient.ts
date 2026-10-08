@@ -1860,6 +1860,18 @@ export async function getSubgraphUpgrades(graphId: string): Promise<SubgraphUpgr
   return body.items
 }
 
+/** 打包 ZU2（D21 动作侧）：把草稿顶层 subgraph 引用显式升级到体检目标版本并存回草稿。 */
+export async function applySubgraphUpgrades(
+  graphId: string,
+  nodeIds?: string[],
+): Promise<SubgraphUpgrade[]> {
+  const body = await request<{ applied: SubgraphUpgrade[] }>(
+    `/api/graphs/${graphId}/subgraph-upgrades`,
+    { method: 'POST', body: JSON.stringify(nodeIds ? { node_ids: nodeIds } : {}) },
+  )
+  return body.applied
+}
+
 /** D26 报告 v1：本图批量回放报告历史（倒序摘要，不含逐例 cases） */
 export async function listReleaseReports(graphId: string): Promise<ReleaseReportSummary[]> {
   const body = await request<{ items: ReleaseReportSummary[] }>(

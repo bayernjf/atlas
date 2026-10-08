@@ -314,6 +314,9 @@
       "hint": "Publishing pins subgraph references to their corresponding versions; after an upgrade, run the gate for regression before publishing (read-only; subgraph draft changes are not checked)",
       "empty": "No subgraph version changes in this release",
       "firstPin": "First pin @{{version}}",
+      "apply": "Apply",
+      "applyAll": "Apply all",
+      "applyFailed": "Failed to apply upgrade, please retry later",
       "col": {
         "node": "Node",
         "subgraph": "Subgraph",
