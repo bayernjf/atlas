@@ -3,6 +3,13 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔工程〕打包 ZS 立项：告警规则模板用户自建 CRUD 与租户市场（docs/102，2026-10-08）
+
+- **D28 余部「模板 CRUD/市场上传」取回**：用户自建/编辑/删除私有告警规则模板，列表与内置目录合并（source 区分）、一键应用对两类模板同样生效。
+- 迁移 045 `user_rule_templates`＋`monitoring/rule_user_store.py`＋`pg_rule_user_store.py` 两档 store＋五端点（GET 扩展合并＋POST/PUT/DELETE 写 administer、内置 id 404 保护）。
+- config 过 `alerts.validate_rules`（422 `RULE_TEMPLATE_CONFIG_INVALID`）、租户内重名 409 `RULE_TEMPLATE_NAME_CONFLICT`；前端 AlertRuleTemplateMarket 新建/编辑/删除 Modal＋source Tag＋i18n 两档。
+- 零新依赖／无 ADR；docs-only 立项原子，落码另立批（用例 U1220 起，登记 docs/13）。
+
 ### 〔工程〕打包 BM 缺陷批立项：D57/D58/D59 三缺陷复开（docs/101，2026-10-08）
 
 - **D57 演示图真转人工**：refund-auto 模板加 condition 分流＋human_approval 真挂起节点（不再「只说了句要找」）。
