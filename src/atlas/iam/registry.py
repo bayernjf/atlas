@@ -35,6 +35,7 @@ from atlas.reflection import ReflectionStore
 from atlas.reflection.pg_store import PgReflectionStore
 from atlas.routing import PgRoutingStore, RoutingStore
 from atlas.template.user_store import UserTemplateStore
+from atlas.monitoring.rule_user_store import UserRuleTemplateStore
 from atlas.security.bootstrap import read_storage_backend
 from atlas.llm.config import get_model_config_store
 from atlas.storage.base import (
@@ -90,6 +91,7 @@ class TenantServices:
     openapi_imports: ImportStore | PgImportStore  # OpenAPI 导入规格（docs/42/43；内存/PG 两档，reset 不清）
     user_templates: object  # 用户自建模板（docs/85 打包 X；内存/PG 两档，reset 同清）
     message_template_store: object  # 消息通知模板（docs/98 打包 A2；内存/PG 两档，reset 同清）
+    rule_template_store: object  # 用户自建告警规则模板（docs/102 打包 ZS；内存/PG 两档，reset 同清）
     reflection_store: ReflectionStore | PgReflectionStore  # 反思候选与收尾报告（docs/88 打包 ZH／docs/94 打包 ZU：内存 ring 100 / PG reflection_*）
     model_config: object  # LLM 模型配置（docs/93 打包 Y；内存/PG 两档 store，reset 不清）
 
@@ -126,6 +128,7 @@ class TenantRegistry:
         if STORAGE_BACKEND == "pg":
             from atlas.storage.pg import get_pg_backend
             from atlas.template.pg_store import PgUserTemplateStore
+            from atlas.monitoring.pg_rule_user_store import PgUserRuleTemplateStore
 
             backend = get_pg_backend()
             connection_service = build_connection_service(
@@ -167,6 +170,7 @@ class TenantRegistry:
                 openapi_imports=PgImportStore(backend.engine, tenant_id),
                 user_templates=PgUserTemplateStore(backend.engine, tenant_id),
                 message_template_store=PgMessageTemplateStore(backend.engine, tenant_id),
+                rule_template_store=PgUserRuleTemplateStore(backend.engine, tenant_id),
                 reflection_store=PgReflectionStore(backend.engine, tenant_id),
                 model_config=get_model_config_store(),
             )
@@ -198,6 +202,7 @@ class TenantRegistry:
             openapi_imports=ImportStore(),
             user_templates=UserTemplateStore(),
             message_template_store=MessageTemplateStore(),
+            rule_template_store=UserRuleTemplateStore(),
             reflection_store=ReflectionStore(),
             model_config=get_model_config_store(),
         )
@@ -233,4 +238,5 @@ class TenantRegistry:
         services.memory_store.clear()
         services.user_templates.clear()
         services.message_template_store.clear()
+        services.rule_template_store.clear()
         services.reflection_store.reset()
