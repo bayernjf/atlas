@@ -13,7 +13,10 @@
     "emergencyStop": "Emergency stop",
     "draftRun": "Draft run",
     "publishedRun": "Published v{{version}}",
-    "shadowRun": "Shadow run"
+    "shadowRun": "Shadow run",
+    "resetDemo": "Reset demo data",
+    "resetDemoConfirm": "This will clear and reset all demo data (orders, run history, template samples). Continue?",
+    "resetDemoSuccess": "Demo data reset"
   },
   "tabs": {
     "nodes": "Nodes",
