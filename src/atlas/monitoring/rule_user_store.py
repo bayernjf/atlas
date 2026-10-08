@@ -19,6 +19,10 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+class RuleTemplateNameConflict(Exception):
+    """name 租户内重复：创建/更新撞名（docs/102 E-2：409 RULE_TEMPLATE_NAME_CONFLICT）。"""
+
+
 class UserRuleTemplate(BaseModel):
     id: str
     name: str
@@ -72,6 +76,8 @@ class UserRuleTemplateStore:
         config: dict[str, Any],
     ) -> UserRuleTemplate:
         with self._lock:
+            if any(item.name == name for item in self._items.values()):
+                raise RuleTemplateNameConflict(name)
             self._seq += 1
             template = UserRuleTemplate(
                 id=f"urt-{self._seq}",
@@ -100,6 +106,8 @@ class UserRuleTemplateStore:
             current = self._items.get(template_id)
             if current is None:
                 return None
+            if any(item.name == name and item.id != template_id for item in self._items.values()):
+                raise RuleTemplateNameConflict(name)
             updated = UserRuleTemplate(
                 id=current.id,
                 name=name,

@@ -13,7 +13,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from .rule_user_store import UserRuleTemplate
+from .rule_user_store import RuleTemplateNameConflict, UserRuleTemplate
 
 
 def _now_iso() -> str:
@@ -38,6 +38,13 @@ class PgUserRuleTemplateStore:
     ) -> UserRuleTemplate:
         created_at = _now_iso()
         with self._engine.begin() as conn:
+            if conn.execute(
+                text(
+                    "SELECT 1 FROM user_rule_templates WHERE tenant_id = :tenant_id AND name = :name"
+                ),
+                {"tenant_id": self._tenant_id, "name": name},
+            ).first() is not None:
+                raise RuleTemplateNameConflict(name)
             row = conn.execute(
                 text(
                     "SELECT seq FROM user_rule_templates WHERE tenant_id = :tenant_id "
@@ -95,6 +102,14 @@ class PgUserRuleTemplateStore:
         config: dict[str, Any],
     ) -> UserRuleTemplate | None:
         with self._engine.begin() as conn:
+            if conn.execute(
+                text(
+                    "SELECT 1 FROM user_rule_templates WHERE tenant_id = :tenant_id "
+                    "AND name = :name AND id <> :id"
+                ),
+                {"tenant_id": self._tenant_id, "name": name, "id": template_id},
+            ).first() is not None:
+                raise RuleTemplateNameConflict(name)
             result = conn.execute(
                 text(
                     "UPDATE user_rule_templates SET name = :name, description = :description, "
