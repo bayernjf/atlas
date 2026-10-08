@@ -5,14 +5,11 @@ import {
   Button,
   Card,
   Col,
-  Input,
-  InputNumber,
   Layout,
   Row,
   Select,
   Space,
   Statistic,
-  Switch,
   Table,
   Tabs,
   Tag,
@@ -31,14 +28,12 @@ import {
   updateRules,
   type AlertItem,
   type AlertStatus,
-  type CustomRuleConfig,
   type MetricsSummary,
   type ReleaseReportSummary,
   type RuleConfig,
   type RunRecord,
   type ToolMetricsRow,
 } from '../lib/apiClient'
-import { validateExpression } from '../lib/conditions'
 import { roleCan, type Principal } from '../lib/auth'
 import { UserBadge } from '../components/UserBadge'
 import { ShadowRunsCard } from '../components/shadow/ShadowRunsCard'
@@ -48,6 +43,8 @@ import { WebhookReliabilityCard } from '../components/monitoring/WebhookReliabil
 import { AlertChannelCard } from '../components/monitoring/AlertChannelCard'
 import { SilenceManager, SilencePopButton } from '../components/monitoring/SilenceManager'
 import { AlertRuleTemplateMarket } from '../components/monitoring/AlertRuleTemplateMarket'
+import { RuleConfigEditor } from '../components/monitoring/RuleConfigEditor'
+import { validateRuleConfig } from '../lib/ruleConfig'
 import {
   ALERT_STATUS_COLORS,
   ALERT_STATUS_LABELS,
@@ -148,60 +145,20 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
     }
   }
 
-  const updateCustom = (idx: number, patch: Partial<CustomRuleConfig>) => {
-    setRules((current) =>
-      !current
-        ? current
-        : {
-            ...current,
-            custom: (current.custom ?? []).map((rule, i) =>
-              i === idx ? { ...rule, ...patch } : rule,
-            ),
-          },
-    )
-  }
-  const addCustom = () => {
-    setRules((current) =>
-      !current
-        ? current
-        : {
-            ...current,
-            custom: [
-              ...(current.custom ?? []),
-              {
-                cid: crypto.randomUUID(),
-                name: '',
-                enabled: true,
-                expression: '{{hasError}}',
-                severity: 'warning',
-              },
-            ],
-          },
-    )
-  }
-  const removeCustom = (idx: number) => {
-    setRules((current) =>
-      !current
-        ? current
-        : { ...current, custom: (current.custom ?? []).filter((_, i) => i !== idx) },
-    )
-  }
-
   const saveRules = async () => {
     if (!rules) return
     setRuleError('')
     setRuleSaved(false)
     // docs/28 §4.2：保存前逐行前端校验（与后端 validate_rules 同构，禁 eval 引擎）
-    for (const rule of rules.custom ?? []) {
-      if (!rule.name.trim()) {
-        setRuleError(t('rules.nameEmpty', { cid: rule.cid }))
+    // docs/103：校验逻辑收敛到共享 RuleConfigEditor.validateRuleConfig
+    for (const error of validateRuleConfig(rules)) {
+      const rule = rules.custom?.[error.index]
+      if (error.kind === 'custom-name-empty') {
+        setRuleError(t('rules.nameEmpty', { cid: rule?.cid ?? '' }))
         return
       }
-      const exprErrors = validateExpression(rule.expression)
-      if (exprErrors.length > 0) {
-        setRuleError(t('rules.exprInvalid', { name: rule.name, errors: exprErrors.join('；') }))
-        return
-      }
+      setRuleError(t('rules.exprInvalid', { name: rule?.name ?? '', errors: error.messages.join('；') }))
+      return
     }
     try {
       const saved = await updateRules(rules)
@@ -635,226 +592,10 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
               {ruleSaved && !ruleError && (
                 <Alert type="success" showIcon message={t('rules.saved')} style={{ marginBottom: 12 }} />
               )}
-              <Space wrap size="large">
-                <Space>
-                  <span>{t('builtinRule.runError')}</span>
-                  <Switch
-                    checked={rules.run_error.enabled}
-                    onChange={(enabled) =>
-                      setRules({ ...rules, run_error: { enabled } })
-                    }
-                  />
-                </Space>
-                <Space>
-                  <span>{t('builtinRule.nodeFailed')}</span>
-                  <Switch
-                    checked={rules.node_failed.enabled}
-                    onChange={(enabled) =>
-                      setRules({ ...rules, node_failed: { enabled } })
-                    }
-                  />
-                </Space>
-                <Space>
-                  <span>{t('builtinRule.consecutiveFailures')}</span>
-                  <Switch
-                    checked={rules.consecutive_failures.enabled}
-                    onChange={(enabled) =>
-                      setRules({
-                        ...rules,
-                        consecutive_failures: { ...rules.consecutive_failures, enabled },
-                      })
-                    }
-                  />
-                  <span>{t('ruleForm.threshold')}</span>
-                  <InputNumber
-                    min={1}
-                    max={200}
-                    value={rules.consecutive_failures.threshold}
-                    onChange={(value) =>
-                      value !== null &&
-                      setRules({
-                        ...rules,
-                        consecutive_failures: { ...rules.consecutive_failures, threshold: value },
-                      })
-                    }
-                    suffix={t('ruleForm.unitTimes')}
-                  />
-                </Space>
-                <Space>
-                  <span>{t('ruleForm.failureRate')}</span>
-                  <Switch
-                    checked={rules.failure_rate.enabled}
-                    onChange={(enabled) =>
-                      setRules({
-                        ...rules,
-                        failure_rate: { ...rules.failure_rate, enabled },
-                      })
-                    }
-                  />
-                  <span>{t('ruleForm.window')}</span>
-                  <InputNumber
-                    min={1}
-                    max={200}
-                    value={rules.failure_rate.window}
-                    onChange={(value) =>
-                      value !== null &&
-                      setRules({
-                        ...rules,
-                        failure_rate: { ...rules.failure_rate, window: value },
-                      })
-                    }
-                    suffix={t('ruleForm.unitTimes')}
-                  />
-                  <span>{t('ruleForm.minSamples')}</span>
-                  <InputNumber
-                    min={1}
-                    max={200}
-                    value={rules.failure_rate.min_samples}
-                    onChange={(value) =>
-                      value !== null &&
-                      setRules({
-                        ...rules,
-                        failure_rate: { ...rules.failure_rate, min_samples: value },
-                      })
-                    }
-                  />
-                  <span>{t('ruleForm.rate')}</span>
-                  <InputNumber
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={rules.failure_rate.rate}
-                    onChange={(value) =>
-                      value !== null &&
-                      setRules({
-                        ...rules,
-                        failure_rate: { ...rules.failure_rate, rate: value },
-                      })
-                    }
-                  />
-                </Space>
-                <Space wrap style={{ marginTop: 12 }}>
-                  <span>{t('ruleForm.escalationLabel')}</span>
-                  <Switch
-                    checked={rules.escalation_ack_minutes != null}
-                    onChange={(enabled) =>
-                      setRules({ ...rules, escalation_ack_minutes: enabled ? 30 : null })
-                    }
-                  />
-                  {rules.escalation_ack_minutes != null && (
-                    <>
-                      <InputNumber
-                        min={1}
-                        max={10080}
-                        value={rules.escalation_ack_minutes}
-                        onChange={(value) =>
-                          value !== null &&
-                          setRules({ ...rules, escalation_ack_minutes: value })
-                        }
-                      />
-                      <span>{t('ruleForm.escalationUnit')}</span>
-                    </>
-                  )}
-                </Space>
-                <Space wrap style={{ marginTop: 12 }}>
-                  <span>{t('ruleForm.recoveryStreakLabel')}</span>
-                  <InputNumber
-                    min={1}
-                    max={20}
-                    value={rules.recovery_healthy_streak ?? 1}
-                    onChange={(value) =>
-                      value !== null && setRules({ ...rules, recovery_healthy_streak: value })
-                    }
-                  />
-                  <span>{t('ruleForm.recoveryStreakUnit')}</span>
-                </Space>
-                <Space wrap style={{ marginTop: 12 }}>
-                  <span>{t('ruleForm.cooldownLabel')}</span>
-                  <Switch
-                    checked={rules.recovery_cooldown_minutes != null}
-                    onChange={(enabled) =>
-                      setRules({ ...rules, recovery_cooldown_minutes: enabled ? 30 : null })
-                    }
-                  />
-                  {rules.recovery_cooldown_minutes != null && (
-                    <>
-                      <InputNumber
-                        min={1}
-                        max={10080}
-                        value={rules.recovery_cooldown_minutes}
-                        onChange={(value) =>
-                          value !== null &&
-                          setRules({ ...rules, recovery_cooldown_minutes: value })
-                        }
-                      />
-                      <span>{t('ruleForm.cooldownUnit')}</span>
-                    </>
-                  )}
-                </Space>
+              <RuleConfigEditor value={rules} onChange={setRules} />
+              <div style={{ marginTop: 16 }}>
                 <Button type="primary" onClick={saveRules}>
                   {t('rules.save')}
-                </Button>
-              </Space>
-
-              <div style={{ marginTop: 16 }}>
-                <Typography.Text strong>{t('custom.title')}</Typography.Text>
-                <Typography.Paragraph type="secondary" style={{ marginBottom: 8, marginTop: 4 }}>
-                  {/* custom.hint 内含教学用字面 {{status}}/{{hasError}}，t() 不传这两个变量故原样保留 */}
-                  {t('custom.hint')}
-                </Typography.Paragraph>
-                {(rules.custom ?? []).map((rule, idx) => {
-                  const exprErrors = validateExpression(rule.expression)
-                  const nameEmpty = !rule.name.trim()
-                  return (
-                    <Space
-                      key={rule.cid}
-                      wrap
-                      align="start"
-                      style={{ display: 'flex', marginBottom: 8 }}
-                    >
-                      <Input
-                        placeholder={t('custom.namePlaceholder')}
-                        value={rule.name}
-                        style={{ width: 150 }}
-                        status={nameEmpty ? 'error' : undefined}
-                        onChange={(event) => updateCustom(idx, { name: event.target.value })}
-                      />
-                      <Input
-                        placeholder="{{status}} == 'error' || {{hasError}}"
-                        value={rule.expression}
-                        style={{ width: 340, fontFamily: 'monospace' }}
-                        status={exprErrors.length > 0 ? 'error' : undefined}
-                        onChange={(event) => updateCustom(idx, { expression: event.target.value })}
-                      />
-                      <Select
-                        value={rule.severity}
-                        style={{ width: 100 }}
-                        onChange={(severity) => updateCustom(idx, { severity })}
-                        options={[
-                          { value: 'warning', label: t('severity.warning') },
-                          { value: 'critical', label: t('severity.critical') },
-                        ]}
-                      />
-                      <Space style={{ marginTop: 4 }}>
-                        <span>{t('custom.enabled')}</span>
-                        <Switch
-                          checked={rule.enabled}
-                          onChange={(enabled) => updateCustom(idx, { enabled })}
-                        />
-                      </Space>
-                      <Button danger size="small" style={{ marginTop: 2 }} onClick={() => removeCustom(idx)}>
-                        {t('common:button.delete')}
-                      </Button>
-                      {(nameEmpty || exprErrors.length > 0) && (
-                        <Typography.Text type="danger" style={{ marginTop: 6 }}>
-                          {nameEmpty ? t('custom.nameEmpty') : exprErrors.join('；')}
-                        </Typography.Text>
-                      )}
-                    </Space>
-                  )
-                })}
-                <Button size="small" onClick={addCustom}>
-                  {t('custom.add')}
                 </Button>
               </div>
             </Card>
