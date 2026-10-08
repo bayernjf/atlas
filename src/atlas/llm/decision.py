@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import re
+import sys
 from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,47 @@ class DecisionClient(Protocol):
         prompt: str = "",
         model: str | None = None,
     ) -> dict[str, Any]: ...
+
+
+def warm_litellm() -> None:
+    """开始服务之前、在主线程里把 litellm 导完一次；幂等，之后调用近乎零成本。
+
+    为什么需要这一步（2026-10-08 试用干跑实测，不是推想）：四个调用点都在函数体内
+    `import litellm`（为了不污染测试环境），于是**进程内首次导入发生在 worker 线程**
+    ——决策/生成是同步跑在线程池里的。而 litellm 在导入过程中就往 root logger 挂了
+    自己的过滤器，过滤器里还有一段懒导入（`litellm.types.secret_managers.main`）：
+    事件循环线程只要打一条日志，就会和那个还没导完的包互相等对方的 `_ModuleLock`。
+    实测现象：真 LLM 端点不可达时，第一次运行抛
+    `_DeadlockError: deadlock detected by _ModuleLock('litellm...')`，随后**整个进程
+    不再响应任何请求**（连未鉴权的 /api/health 都读超时），试用现场看到的就是
+    "平台卡死，只能重启容器"。启动时先把包导完，就删掉了这条并发首导入的边。
+
+    为什么导了还不污染环境：litellm 在 import 期自己调 `load_dotenv()`
+    （`litellm/__init__.py:27`），会把仓库 `.env` 里的真凭证灌进 `os.environ`——
+    这正是 `tests/conftest.py::_no_real_llm_provider` 注释里那个"套件看起来是卡死"的
+    来源。这里按导入前后的**键集合差**还原：导入前没有、导入后出现的键一律删掉，
+    导入前有的键原样写回。比列名单可靠（它加什么变量都不用改这里），也让本函数
+    可以在没配模型的进程里无条件调用。
+    """
+    if "litellm" in sys.modules:
+        return
+    before = dict(os.environ)
+    try:
+        import litellm  # noqa: F401  故意函数内导入：模块顶层导入会把污染挪到 import 期
+    except Exception as exc:  # 导不起来不能连带炸启动——"没模型也能跑"是既有行为
+        logger.warning("litellm 预热失败（%s）；决策/生成首次调用时仍会自行懒导入", exc)
+        _restore_env(before)
+        return
+    _restore_env(before)
+    logger.info("litellm provider import warmed（首次导入已串行在主线程）")
+
+
+def _restore_env(before: dict[str, str]) -> None:
+    """把 `load_dotenv()` 注入的键删掉、被改写的键原样写回（按导入前后的键集合差）。"""
+    for name, value in before.items():
+        os.environ[name] = value
+    for name in [k for k in os.environ if k not in before]:
+        del os.environ[name]
 
 
 class RuleBasedDecisionClient:

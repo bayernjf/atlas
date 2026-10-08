@@ -125,6 +125,14 @@ class ShopHarnessAdapter(HarnessAdapter):
                 permission=Permission.WRITE,
             ),
             Capability(
+                name="reject_refund",
+                description="对指定订单拒绝退款（人工审批拒绝后的落定动作）",
+                action="reject_refund",
+                input_schema=_ORDER_REF_INPUT_SCHEMA,
+                output_schema=_REFUND_RESULT_OUTPUT_SCHEMA,
+                permission=Permission.WRITE,
+            ),
+            Capability(
                 name="process_refund",
                 description="按上游 AI 决策动作执行退款或转人工审批",
                 action="process_refund",
@@ -154,6 +162,8 @@ class ShopHarnessAdapter(HarnessAdapter):
                 return ActionResult.success(self.service.execute_refund(order_id, note))
             if request.capability_name == "request_human_approval":
                 return ActionResult.success(self.service.request_human_approval(order_id, note))
+            if request.capability_name == "reject_refund":
+                return ActionResult.success(self.service.reject_refund(order_id, note))
             if request.capability_name == "process_refund":
                 action = params.get("action")
                 if action == "approve_refund":

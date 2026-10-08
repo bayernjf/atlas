@@ -23,6 +23,7 @@ import { VariablesPanel } from '../components/variablePanel/VariablesPanel'
 import { PropertyPanel } from '../components/propertyPanel/PropertyPanel'
 import { DebugConsole } from '../components/debugConsole/DebugConsole'
 import { FeedbackButton } from '../components/feedback/FeedbackButton'
+import { DemoResetButton } from '../components/demo/DemoResetButton'
 import { UserBadge } from '../components/UserBadge'
 import { ApprovalCardGate } from '../components/approval/CardRenderer'
 import { ReleaseModal } from '../components/release/ReleaseModal'
@@ -93,6 +94,7 @@ import {
   type RunResult,
   type TemplateDetail,
   type TemplateSummary,
+  getHealth,
 } from '../lib/apiClient'
 
 const { Header, Sider, Content, Footer } = Layout
@@ -140,6 +142,9 @@ export function Editor({
 }) {
   const { t } = useTranslation('editor')
   const canOperate = roleCan(principal.role, 'operate')
+  const canAdmin = roleCan(principal.role, 'administer')
+  // docs/101 D59：演示面能力位——admin 且 demo_surface 开启时显示自助重置入口。
+  const [demoSurface, setDemoSurface] = useState<boolean>(false)
   // docs/28 §3：调试暂停原因中文映射（含批 2 异常断点）；未知 reason 回退原值（后端枚举数据不译）。
   const reasonLabel = (reason: string): string =>
     t(`debug.reason.${reason}`, { defaultValue: reason })
@@ -156,6 +161,21 @@ export function Editor({
 
   // M4 批 2 ⑦：分层校验调度（L1 同步 / L2 防抖 / L3 idle），结果入 validationStore。
   useValidationEngine()
+
+  // docs/101 D59：挂载时读 health 能力位，决定是否暴露「重置演示数据」入口。
+  useEffect(() => {
+    let cancelled = false
+    getHealth()
+      .then((health) => {
+        if (!cancelled) setDemoSurface(health.demo_surface)
+      })
+      .catch(() => {
+        // health 失败不阻塞编辑页；prod 档该端点可能 404，按钮自然不显示。
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   // 打包 ZS（docs/92 E-3）：反思「去修改」跳转时按 id 打开对应图（latest 草稿，只读）。
   // 打包 ZU（docs/94 E-6）：loadGraph 后若带节点 id，请求选中并居中（FlowCanvas 内消费）。
@@ -1240,6 +1260,7 @@ export function Editor({
           {canOperate && <Button onClick={openRecordings}>{t('header.recordings')}</Button>}
           <Button onClick={() => setExportOpen(true)}>{t('header.exportJson')}</Button>
           <FeedbackButton />
+          <DemoResetButton visible={canAdmin && demoSurface} />
           {canOperate && (
             <>
               <Select

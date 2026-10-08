@@ -36,7 +36,13 @@ def _edge(edge_id: str, source: str, target: str) -> dict[str, str]:
 
 
 def refund_template_graph() -> dict[str, Any]:
-    """电商退款审批三节点模板（与 01 §4.2 场景 A、06 §9.2 用例一致）。"""
+    """电商退款审批模板（与 01 §4.2 场景 A、06 §9.2 用例一致）。
+
+    docs/101 D57：AI 判「转人工」（action=request_human_approval）时经 condition 分流到
+    human_approval 节点**真挂起**——不再是 shop 把单子标成 human_review 就结束、队列里
+    无人被叫到。审批通过 → 执行退款；拒绝/超时 → 拒绝落定（订单进 processed 的 rejected 态）。
+    自动退款路径（action=approve_refund）行为不变。
+    """
     return {
         "version": 1,
         "variables": [
@@ -74,18 +80,75 @@ def refund_template_graph() -> dict[str, Any]:
                 "retry": {"max_retries": 0, "backoff": "1s", "timeout": 30, "on_error": "stop"},
             },
             {
+                "id": "condition-1",
+                "type": "condition",
+                "name": "分流：自动退款还是转人工",
+                "description": "",
+                "position": {"x": 640, "y": 180},
+                "config": {
+                    "conditionMode": "rule",
+                    "branches": [
+                        {
+                            "label": "转人工",
+                            "expression": "{{ai_decision-1.decision.action}} == 'request_human_approval'",
+                            "target": "human_approval-1",
+                        }
+                    ],
+                    "defaultTarget": "tool_call-1",
+                },
+                "retry": {"max_retries": 0, "backoff": "1s", "timeout": 30, "on_error": "stop"},
+            },
+            {
+                "id": "human_approval-1",
+                "type": "human_approval",
+                "name": "人工审批：超额或主观原因退款",
+                "description": "",
+                "position": {"x": 940, "y": 80},
+                "config": {
+                    "summary": "退款单 {{trigger-1.context.payload.order_id}}（{{trigger-1.context.payload.amount}} 元）：{{trigger-1.context.payload.reason}}",
+                    "approver": "",
+                    "timeoutSeconds": 3600,
+                    "onTimeout": "reject",
+                    "approvedTarget": "tool_call-approve",
+                    "rejectedTarget": "tool_call-reject",
+                },
+                "retry": {"max_retries": 0, "backoff": "1s", "timeout": 30, "on_error": "stop"},
+            },
+            {
                 "id": "tool_call-1",
                 "type": "tool_call",
-                "name": "工具：执行退款或转人工",
+                "name": "工具：执行自动退款",
                 "description": "",
-                "position": {"x": 660, "y": 180},
+                "position": {"x": 940, "y": 300},
                 "config": {"tool": "shop/process_refund", "params": ""},
+                "retry": {"max_retries": 0, "backoff": "1s", "timeout": 30, "on_error": "stop"},
+            },
+            {
+                "id": "tool_call-approve",
+                "type": "tool_call",
+                "name": "工具：审批通过后退款",
+                "description": "",
+                "position": {"x": 1240, "y": 40},
+                "config": {"tool": "shop/execute_refund", "params": "人工审批通过"},
+                "retry": {"max_retries": 0, "backoff": "1s", "timeout": 30, "on_error": "stop"},
+            },
+            {
+                "id": "tool_call-reject",
+                "type": "tool_call",
+                "name": "工具：拒绝退款",
+                "description": "",
+                "position": {"x": 1240, "y": 140},
+                "config": {"tool": "shop/reject_refund", "params": "人工拒绝退款"},
                 "retry": {"max_retries": 0, "backoff": "1s", "timeout": 30, "on_error": "stop"},
             },
         ],
         "edges": [
             {"id": "e-trigger-decision", "source": "trigger-1", "target": "ai_decision-1"},
-            {"id": "e-decision-action", "source": "ai_decision-1", "target": "tool_call-1"},
+            {"id": "e-decision-branch", "source": "ai_decision-1", "target": "condition-1"},
+            {"id": "e-branch-approve", "source": "condition-1", "target": "tool_call-1"},
+            {"id": "e-branch-human", "source": "condition-1", "target": "human_approval-1"},
+            {"id": "e-human-approve", "source": "human_approval-1", "target": "tool_call-approve"},
+            {"id": "e-human-reject", "source": "human_approval-1", "target": "tool_call-reject"},
         ],
     }
 

@@ -86,7 +86,7 @@ from atlas.iam.passwords import validate_password, validate_username, verify_pas
 from atlas.iam.principals import Principal, Role, can
 from atlas.iam.registry import STORAGE_BACKEND, TenantServices
 from atlas.llm.config import ModelConfig
-from atlas.llm.decision import get_decision_client
+from atlas.llm.decision import get_decision_client, warm_litellm
 from atlas.llm.nl_generate import generate_graph, validate_param_fills
 from atlas.memory.database import ping, wait_for_database
 from atlas.memory.models import MemoryValidationError
@@ -210,6 +210,17 @@ logger = logging.getLogger(__name__)
 # 应用对外入口（审批深链基址）：唯一读取器在 security.bootstrap（docs/89 §15 A-6，
 # 此前这里与 channels/registry、notifications 各读一遍同一 env＋同一缺省）
 _PUBLIC_URL = read_public_url()
+
+
+def _safe_run_error(exc: Exception) -> str:
+    """docs/101 D58：运行失败 message 收口（SSE error 帧与持久化 error 共用）。
+
+    未知异常（RUNTIME_UNEXPECTED）→ 安全文案，内部串（类型名/repr）只进服务端日志；
+    已知业务异常 → 保留中文业务文案（去掉类型名前缀），code/params 已另行结构化。
+    """
+    if runtime_error_meta(exc)["errorCode"] == "RUNTIME_UNEXPECTED":
+        return "运行时发生未预期错误"
+    return str(exc)
 
 
 def _token_ref(token: Any) -> str:
@@ -345,7 +356,7 @@ def _resume_run(engine, services: TenantServices, frame: dict) -> None:
         logger.error("续跑 %s 失败：%s", _token_ref(frame.get("resume_token")), exc)
         if run_id:
             services.run_store.finish(
-                run_id=run_id, status="failed", error=f"{type(exc).__name__}: {exc}"
+                run_id=run_id, status="failed", error=_safe_run_error(exc)
             )
 
 
@@ -384,6 +395,10 @@ async def lifespan(_app: FastAPI):
     recover_pending()
     # docs/64 J-2a：启动即打印决策器运行模式（含降级警告），不再静默。
     get_decision_client()
+    # 试用干跑实测（2026-10-08）：进程内首次 `import litellm` 若发生在 worker 线程，
+    # 会和事件循环线程上被 litellm 自己挂进 root logger 的懒导入过滤器抢同一把
+    # _ModuleLock → _DeadlockError → 之后整个进程不再响应。导在起服务之前＝主线程串行导完。
+    warm_litellm()
     # docs/65 K-A：启动跑一次 retention 清扫（PG 档；失败只 warning 不阻断启动）。
     run_retention_once()
     # docs/68 §2.3：调度线程在恢复扫描**之后**起——先让挂起帧归位，再派发新运行。
@@ -640,9 +655,13 @@ class DemoLoginRequest(BaseModel):
 
 
 @app.get("/api/health")
-def health() -> dict[str, str]:
-    """存活探针：进程在跑即 200（不检查依赖）。"""
-    return {"status": "ok"}
+def health() -> dict[str, object]:
+    """存活探针：进程在跑即 200（不检查依赖）。
+
+    demo_surface：演示面是否开启（docs/75 单一档位，prod 档 false）。
+    供前端决定是否暴露演示专用入口（如「重置演示数据」，docs/101 D59）。
+    """
+    return {"status": "ok", "demo_surface": demo_surface_enabled()}
 
 
 @app.get("/api/ready")
@@ -1256,7 +1275,7 @@ def _background_run_worker(
         logger.error("%s 触发图运行失败 graph=%s@%s", mode, graph_id, version, exc_info=True)
         run_store.finish(
             run_id=run_id, status="failed",
-            error=f"{type(exc).__name__}: {exc}",
+            error=_safe_run_error(exc),
         )
 
 
@@ -4130,7 +4149,7 @@ def run_saved_graph(
         )
     except Exception as exc:
         services.run_store.finish(
-            run_id=run_id, status="failed", error=f"{type(exc).__name__}: {exc}"
+            run_id=run_id, status="failed", error=_safe_run_error(exc)
         )
         record = monitoring.record_run(
             graph_id=graph_id,
@@ -4139,7 +4158,7 @@ def run_saved_graph(
             started_at=started_at,
             duration_ms=(time.monotonic() - started) * 1000,
             nodes=[],
-            error=f"{type(exc).__name__}: {exc}",
+            error=_safe_run_error(exc),
             trace_id=tracer.trace_id,
             resolved_version=resolved_version,
             tool_calls=tool_calls,
@@ -4325,10 +4344,15 @@ def run_saved_graph_stream(
                     )
                 events.put({"__cancelled__": exc.node_id})
             except Exception as exc:  # 运行期异常经 SSE error 帧下发，不静默吞线程
+                err_meta = runtime_error_meta(exc)
+                if err_meta["errorCode"] == "RUNTIME_UNEXPECTED":
+                    # 未知异常：细节只进服务端日志，任何面向客户的面都不带内部串（docs/101 D58）。
+                    logger.exception("run %s failed with unexpected error", run_id, exc_info=exc)
+                safe_error = _safe_run_error(exc)
                 if monitored:
                     run_store.finish(
                         run_id=run_id, status="failed",
-                        error=f"{type(exc).__name__}: {exc}",
+                        error=safe_error,
                     )
                     record = monitoring.record_run(
                         graph_id=graph_id,
@@ -4337,18 +4361,17 @@ def run_saved_graph_stream(
                         started_at=started_at,
                         duration_ms=(time.monotonic() - started) * 1000,
                         nodes=extract_node_results(graph_view, collected),
-                        error=f"{type(exc).__name__}: {exc}",
+                        error=safe_error,
                         trace_id=tracer.trace_id if tracer is not None else "",
                         resolved_version=resolved_version,
                         tool_calls=tool_calls,
                         spans=tracer.to_tree() if tracer is not None else None,
                     )
                     evaluate_after_run(services, record)
-                err_meta = runtime_error_meta(exc)
                 events.put(
                     {
                         "__error__": {
-                            "message": f"{type(exc).__name__}: {exc}",
+                            "message": safe_error,
                             "code": err_meta["errorCode"],
                             "params": err_meta["errorParams"],
                         }
@@ -5300,7 +5323,12 @@ def demo_shop_orders() -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Not Found")
     if not _demo_shop.logged_in:
         raise HTTPException(status_code=401, detail="未登录")
-    return {"orders": _demo_shop.list_pending_refunds()}
+    # orders 仍是"待处理"（老消费方与图里的 shop/list_pending_refunds 语义不变）；
+    # processed 是新增的第二段，控制台用它把「已退款」和「转人工」分开显示。
+    return {
+        "orders": _demo_shop.list_pending_refunds(),
+        "processed": _demo_shop.list_processed_refunds(),
+    }
 
 
 _MOCK_ORDERS = [
@@ -5620,27 +5648,53 @@ _CONSOLE_HTML = """<!doctype html>
 <head><meta charset="utf-8"><title>Demo 商家售后控制台</title>
 <style>body{font-family:sans-serif;max-width:720px;margin:40px auto;padding:0 16px}
 table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:8px}
-input,button{padding:6px;margin:4px 0}</style></head>
+input,button{padding:6px;margin:4px 0}.refunded{color:#389e0d}.human_review{color:#d46b08}.rejected{color:#a8071a}
+</style></head>
 <body>
 <h1>Demo 商家售后控制台</h1>
 <p>Atlas 自动登录的目标系统（W9-W10 模拟平台，账号 demo/demo）。</p>
 <div id="loginBox"><input id="u" value="demo" placeholder="用户名">
 <input id="p" type="password" value="demo" placeholder="密码">
 <button onclick="doLogin()">登录</button></div>
-<div id="panel" hidden><h2>待处理退款单</h2><table><thead>
-<tr><th>订单号</th><th>退款原因</th><th>金额</th></tr></thead><tbody id="rows"></tbody></table></div>
+<div id="panel" hidden>
+<h2>待处理退款单 <button onclick="loadOrders()">刷新</button></h2>
+<table><thead>
+<tr><th>订单号</th><th>退款原因</th><th>金额</th></tr></thead><tbody id="rows"></tbody></table>
+<h2>AI 已处置</h2>
+<table><colgroup><col style="width:96px"><col style="width:150px"><col style="width:90px"><col></colgroup>
+<thead><tr><th>订单号</th><th>退款原因</th><th>金额</th><th>处置结果</th></tr></thead>
+<tbody id="done"></tbody></table>
+<p id="hint" hidden>还没有单子被处置过。在编辑器里运行一笔退款单，再点上面的「刷新」。</p>
+</div>
 <script>
+const STATUS_LABEL = {refunded:'AI 已自动退款', human_review:'AI 转人工（历史标记）', rejected:'人工拒绝退款'};
+function money(n){return '¥' + n;}
+function render(data){
+  document.getElementById('rows').innerHTML = (data.orders||[]).map(o=>
+    `<tr><td>${o.order_id}</td><td>${o.reason}</td><td>${money(o.amount)}</td></tr>`).join('')
+    || '<tr><td colspan="3">全部处理完了</td></tr>';
+  const done = data.processed||[];
+  document.getElementById('done').innerHTML = done.map(o=>
+    `<tr><td>${o.order_id}</td><td>${o.reason}</td><td>${money(o.amount)
+    }</td><td class="${o.status}">${STATUS_LABEL[o.status]||o.status}${
+    o.note?'（'+o.note+'）':''}</td></tr>`).join('');
+  document.getElementById('hint').hidden = done.length>0;
+}
+async function loadOrders(){
+  const r = await fetch('/api/demo/shop/orders');
+  if(!r.ok){ loginBox.hidden = false; panel.hidden = true; return false; }
+  render(await r.json());
+  loginBox.hidden = true; panel.hidden = false;
+  return true;
+}
 async function doLogin(){
   const r = await fetch('/api/demo/shop/login',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({username:u.value,password:p.value})});
   if(!r.ok){alert((await r.json()).detail);return;}
-  loginBox.hidden = true; panel.hidden = false; loadOrders();
+  await loadOrders();
 }
-async function loadOrders(){
-  const r = await fetch('/api/demo/shop/orders');
-  const data = await r.json();
-  rows.innerHTML = data.orders.map(o=>`<tr><td>${o.order_id}</td><td>${o.reason}</td><td>${o.amount}</td></tr>`).join('');
-}
+// 刷新不该回到登录框：登录态在服务端，进页面先直接要一次数据，要不到才亮出登录框。
+loadOrders();
 </script></body></html>
 """
 

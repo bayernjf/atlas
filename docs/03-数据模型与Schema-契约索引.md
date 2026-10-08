@@ -645,7 +645,7 @@ contact: string              # 联系方式，选填，最长 200；默认 ""
 id: string                   # feedback-{自增}
 created_at: string           # UTC ISO-8601
 ```
-> 进程内存储（重启清空，与 Demo 存储同假设）；`POST /api/demo/reset` 不清除反馈。
+> 存储档位随 `ATLAS_STORAGE_BACKEND`：pg 档＝`PgFeedbackStore`（`storage/pg.py:629`，**按租户分区、重启不丢**），memory 档＝进程内 `FeedbackStore()`（`iam/registry.py:179`，重启清空）。〔2026-10-08 订正：本行原文写"进程内存储（重启清空，与 Demo 存储同假设）"是 M6 期的旧状态——出厂 compose 已钉 pg，试用现场的反馈**不会**因重启丢失。〕`POST /api/demo/reset` 不清除反馈（两档一致）。
 >
 > **租户注记（2026-09-16，§5.14）**：反馈按租户分区（feedback-N 计数各租户从 1 起），reset 不清除但跨租户不可见；POST 对全部登录角色开放，GET 仅 admin（且只列本租户）。
 

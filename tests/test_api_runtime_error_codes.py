@@ -51,6 +51,8 @@ def test_stream_run_failure_emits_structured_sse_error_frame():
     assert detail["code"] == "WAIT_TIMEOUT_FAILED"
     assert detail["params"]["nodeId"] == "wait-1"
     assert detail["message"]  # 中文兜底 message 保留
+    # docs/101 D58：已知业务异常 message 保留中文业务文案、不带类型名前缀。
+    assert not detail["message"].startswith("WaitNodeFailure:")
     # 终帧不是 result（运行失败）
     assert "event: result" not in lines
 
@@ -85,3 +87,21 @@ def test_runtime_error_meta_normalizes_known_and_unexpected():
 
     fallback = runtime_error_meta(RuntimeError("boom"))
     assert fallback == {"errorCode": "RUNTIME_UNEXPECTED", "errorParams": {}}
+
+
+# ------------------------------------------------------------------ docs/101 D59
+
+
+def test_health_reports_demo_surface_capability():
+    """/api/health 带 demo_surface 能力位（前端据此决定是否暴露演示专用入口）。
+
+    非 prod 档恒开；prod 档默认关（fail-closed）、ATLAS_ENABLE_DEMO_MOCK=1 才开。
+    """
+    from atlas.security.bootstrap import demo_surface_enabled
+
+    resp = client.get("/api/health")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["demo_surface"] is demo_surface_enabled()
+    assert isinstance(body["demo_surface"], bool)

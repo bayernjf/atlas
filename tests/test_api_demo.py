@@ -42,7 +42,7 @@ def test_adapters_lists_shop_capabilities():
     body = client.get("/api/adapters").json()
     shop = next(item for item in body if item["id"] == "shop")
     tools = {tool["name"] for tool in shop["tools"]}
-    assert {"login", "list_pending_refunds", "execute_refund", "request_human_approval", "process_refund"} <= tools
+    assert {"login", "list_pending_refunds", "execute_refund", "request_human_approval", "process_refund", "reject_refund"} <= tools
 
 
 def test_nl_generate_refund_intent_returns_draft():
@@ -50,7 +50,10 @@ def test_nl_generate_refund_intent_returns_draft():
     assert response.status_code == 200
     graph = response.json()["graph"]
     assert graph["version"] == 1
-    assert len(graph["nodes"]) == 3
+    # docs/101 D57：refund 模板自三节点升级为「分流＋真挂起」七节点（condition/human_approval/双出口）。
+    assert len(graph["nodes"]) == 7
+    node_ids = {node["id"] for node in graph["nodes"]}
+    assert {"condition-1", "human_approval-1", "tool_call-approve", "tool_call-reject"} <= node_ids
     # 草稿必须能直接保存（通过 DSL 校验）
     saved = client.post("/api/graphs", json=graph)
     assert saved.status_code == 200
@@ -96,6 +99,41 @@ def test_demo_shop_console_login_and_orders():
     page = client.get("/demo/shop")
     assert page.status_code == 200
     assert "Demo 商家售后控制台" in page.text
+
+
+def test_u1206_processed_orders_show_refund_and_human_review_apart():
+    """试用现场的实测缺陷：控制台只列 pending，于是「AI 退了款」和「AI 转人工」在页面上
+    是同一个结果——单号都消失——而后者正是 TRIAL.md 场景 B 要演示的那条边界。
+    """
+    client.post("/api/demo/reset")
+    graph_id = client.post("/api/graphs", json=_refund_graph()).json()["id"]
+    # 两条都跑：限额内的质量问题自动退，超限额的主观原因转人工。
+    for order_id, reason, amount in (("12348", "商家错发商品", 460), ("12349", "尺寸不合适", 899)):
+        run = client.post(
+            f"/api/graphs/{graph_id}/run",
+            json={"inputs": {"order_id": order_id, "reason": reason, "amount": amount}},
+        )
+        assert run.status_code == 200, run.text
+    client.post("/api/demo/shop/login", json={"username": "demo", "password": "demo"})
+    body = client.get("/api/demo/shop/orders").json()
+    pending = {order["order_id"] for order in body["orders"]}
+    # 正控：只看待处理列表时，两条单确实无法区分（都从列表里消失了）。
+    assert {"12348", "12349"}.isdisjoint(pending)
+    processed = {item["order_id"]: item for item in body["processed"]}
+    assert processed["12348"]["status"] == "refunded"
+    assert processed["12349"]["status"] == "human_review"
+    # 处置说明必须带出来：试用客户要看的是"AI 为什么这么判"，不是一个状态字。
+    assert processed["12348"]["note"].startswith("自动退款：")
+    assert processed["12349"]["note"].startswith("转人工审批：")
+
+
+def test_u1207_shop_console_refreshes_without_relogin():
+    """指南 §A 第 4 步写「刷新」；旧页面刷新后掉回登录框，试用者要点第二次登录才看到列表。"""
+    page = client.get("/demo/shop").text
+    assert 'loadOrders();' in page  # 进页面先按服务端已有的登录态直接要数据
+    assert ">刷新<" in page
+    assert "AI 已处置" in page
+    assert "STATUS_LABEL" in page and "human_review" in page
 
 
 def test_demo_reset_restores_seed_orders_and_clears_graphs():
@@ -1325,12 +1363,15 @@ def test_i18_sync_and_stream_error_runs_record_run_error(monkeypatch):
     error_detail = frames[-1]["detail"]
     assert error_detail["code"] == "RUNTIME_UNEXPECTED"
     assert error_detail["params"] == {}
-    assert "RuntimeError" in error_detail["message"]
+    # docs/101 D58：未知异常 message 收口为安全文案，内部串（类型名/repr）不再进客户界面。
+    assert error_detail["message"] == "运行时发生未预期错误"
+    assert "RuntimeError" not in error_detail["message"]
 
     runs = client.get("/api/monitoring/runs").json()["items"]
     assert {run["status"] for run in runs} == {"error"}
     assert {run["mode"] for run in runs} == {"sync", "stream"}
-    assert all("RuntimeError: 监控异常用例 boom" in run["error"] for run in runs)
+    # 持久化 error 同样不带内部串（运行历史/详情也是客户可见面）。
+    assert all(run["error"] == "运行时发生未预期错误" for run in runs)
     alerts = _alerts_by_rule()
     assert "run_error" in alerts and alerts["run_error"]["severity"] == "critical"
 

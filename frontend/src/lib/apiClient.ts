@@ -511,6 +511,20 @@ export async function listAdapters(): Promise<AdapterInfo[]> {
   return request<AdapterInfo[]>('/api/adapters')
 }
 
+// docs/101 D59：health 带 demo_surface 能力位（非 prod 恒开；prod 默认关）。
+export type HealthResponse = {
+  status: string
+  demo_surface: boolean
+}
+
+export async function getHealth(): Promise<HealthResponse> {
+  return request<HealthResponse>('/api/health')
+}
+
+export async function resetDemo(): Promise<{ ok: boolean }> {
+  return request('/api/demo/reset', { method: 'POST' })
+}
+
 export async function saveGraph(graph: SerializedGraph): Promise<{ id: string; version: number }> {
   return request('/api/graphs', { method: 'POST', body: JSON.stringify(graph) })
 }

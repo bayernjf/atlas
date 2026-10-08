@@ -34,6 +34,8 @@ import {
   getMessageTemplate,
   listMessageTemplates,
   updateMessageTemplate,
+  getHealth,
+  resetDemo,
   type ChannelBindingView,
   type RunEvent,
 } from '../apiClient'
@@ -673,5 +675,29 @@ describe('message templates API (pack A2, docs/98; U1194)', () => {
     const [url, init] = fetchMock.mock.calls[0]
     expect(url).toBe('/api/message-templates/mtpl-3')
     expect((init as RequestInit).method).toBe('DELETE')
+  })
+
+  // docs/101 D59：演示面能力位 + 自助重置。
+  it('getHealth GETs /api/health with demo_surface', async () => {
+    const fetchMock = vi.fn(async (_url?: string, _init?: RequestInit) =>
+      jsonResponse({ status: 'ok', demo_surface: true }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const health = await getHealth()
+    expect(health).toEqual({ status: 'ok', demo_surface: true })
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/health')
+    // GET 不带 method（fetch 默认）；无 body。
+    expect((init as RequestInit).method ?? 'GET').toBe('GET')
+    expect((init as RequestInit).body).toBeUndefined()
+  })
+
+  it('resetDemo POSTs /api/demo/reset', async () => {
+    const fetchMock = vi.fn(async (_url?: string, _init?: RequestInit) => jsonResponse({ ok: true }))
+    vi.stubGlobal('fetch', fetchMock)
+    await resetDemo()
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/demo/reset')
+    expect((init as RequestInit).method).toBe('POST')
   })
 })
