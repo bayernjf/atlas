@@ -16,7 +16,11 @@ from atlas.iam.deps import services_for
 from atlas.iam.principals import Principal, Role
 from atlas.storage.memory import GraphStore
 from atlas.versioning.publish import publish as publish_version
-from atlas.versioning.upgrades import split_graph_ref, subgraph_upgrade_plan
+from atlas.versioning.upgrades import (
+    apply_subgraph_upgrades,
+    split_graph_ref,
+    subgraph_upgrade_plan,
+)
 
 client = TestClient(app)
 
@@ -157,6 +161,74 @@ def test_u209_plan_is_read_only_and_does_not_create_versions():
     assert store.list_versions(parent) == parent_versions_before
 
 
+# ---- 打包 ZU2（D21 动作侧）：U1237–U1241 纯函数 ----
+
+def test_u1237_apply_all_targets_pins_refs_to_to_version():
+    store = GraphStore()
+    sub = store.save({"nodes": [_tool("s1")]})
+    _publish(store, sub)  # v1
+    store.update_draft(sub, {"nodes": [_tool("s2")]})
+    _publish(store, sub)  # v2
+    parent = store.save({"nodes": [_sub("n1", sub), _tool("t1")]})
+    applied = apply_subgraph_upgrades(store, parent)
+    assert applied == [
+        {"node_id": "n1", "sub_id": sub, "from_version": None,
+         "to_version": 2, "first_pin": True}
+    ]
+    draft = store.get(parent)
+    refs = [n["config"]["graphId"] for n in draft["nodes"] if n["type"] == "subgraph"]
+    assert refs == [f"{sub}@2"]
+    # 不产新版本
+    assert store.list_versions(parent) == []
+    assert store.list_versions(sub) == [1, 2]
+
+
+def test_u1238_apply_node_ids_subset_only_upgrades_selected():
+    store = GraphStore()
+    sub_a = store.save({"nodes": [_tool("a")]})
+    _publish(store, sub_a)
+    store.update_draft(sub_a, {"nodes": [_tool("a2")]})
+    _publish(store, sub_a)  # A v2
+    sub_b = store.save({"nodes": [_tool("b")]})
+    _publish(store, sub_b)  # B v1
+    parent = store.save({"nodes": [_sub("n1", sub_a), _sub("n2", sub_b)]})
+    applied = apply_subgraph_upgrades(store, parent, node_ids=["n2"])
+    assert applied == [
+        {"node_id": "n2", "sub_id": sub_b, "from_version": None,
+         "to_version": 1, "first_pin": True}
+    ]
+    draft = store.get(parent)
+    by_id = {n["id"]: n["config"]["graphId"] for n in draft["nodes"]}
+    assert by_id["n1"] == sub_a          # 未指定 → 不动
+    assert by_id["n2"] == f"{sub_b}@1"   # 指定 → 升级
+
+
+def test_u1239_apply_unknown_node_id_raises_value_error():
+    store = GraphStore()
+    sub = store.save({"nodes": [_tool("s")]})
+    _publish(store, sub)
+    parent = store.save({"nodes": [_sub("n1", sub)]})
+    with pytest.raises(ValueError, match="nope"):
+        apply_subgraph_upgrades(store, parent, node_ids=["nope"])
+
+
+def test_u1240_apply_empty_plan_is_idempotent_and_keeps_draft():
+    store = GraphStore()
+    sub = store.save({"nodes": [_tool("s1")]})
+    _publish(store, sub)
+    store.update_draft(sub, {"nodes": [_tool("s2")]})
+    _publish(store, sub)  # sub v2
+    parent = store.save({"nodes": [_sub("n1", sub)]})
+    _publish(store, parent)  # 已钉 sub@2 → plan 空
+    before = store.get(parent)
+    assert apply_subgraph_upgrades(store, parent) == []
+    assert store.get(parent) == before  # 草稿不变
+
+
+def test_u1241_apply_missing_draft_returns_none():
+    assert apply_subgraph_upgrades(GraphStore(), "graph-404") is None
+
+
 # ---- REST：U210 ----
 
 
@@ -193,3 +265,72 @@ def test_u210_endpoint_read_role_404_and_payload_shape():
     assert client.get(
         f"/api/graphs/{parent}/subgraph-upgrades", headers={"Authorization": ""}
     ).status_code == 401
+
+
+# ---- 打包 ZU2 REST：U1242–U1244 ----
+
+
+def test_u1242_apply_endpoint_requires_operate_and_applies():
+    store = services_for(T1_ADMIN).graph_store
+    sub = store.save({"nodes": [_tool("s1")]})
+    _publish(store, sub)
+    store.update_draft(sub, {"nodes": [_tool("s2")]})
+    _publish(store, sub)  # sub v2
+    parent = store.save({"nodes": [_sub("n1", sub)]})
+
+    # viewer（read）→ 403；operate 角色可写
+    viewer_login = client.post(
+        "/api/auth/login", json={"username": "viewer-a", "password": "viewer123"}
+    )
+    viewer = {"Authorization": f"Bearer {viewer_login.json()['token']}"}
+    assert client.post(
+        f"/api/graphs/{parent}/subgraph-upgrades", headers=viewer, json={}
+    ).status_code == 403
+
+    resp = client.post(f"/api/graphs/{parent}/subgraph-upgrades", json={})
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {
+        "applied": [
+            {"node_id": "n1", "sub_id": sub, "from_version": None,
+             "to_version": 2, "first_pin": True}
+        ]
+    }
+    # 应用后 GET 体检 → 该引用已钉最新版，不再列出
+    items = client.get(f"/api/graphs/{parent}/subgraph-upgrades").json()["items"]
+    assert items == []
+
+
+def test_u1243_apply_endpoint_422_for_unknown_node_and_404_for_missing_graph():
+    store = services_for(T1_ADMIN).graph_store
+    sub = store.save({"nodes": [_tool("s")]})
+    _publish(store, sub)
+    parent = store.save({"nodes": [_sub("n1", sub)]})
+    resp = client.post(
+        f"/api/graphs/{parent}/subgraph-upgrades", json={"node_ids": ["nope"]}
+    )
+    assert resp.status_code == 422, resp.text
+    assert "nope" in resp.json()["detail"]
+    assert client.post(
+        "/api/graphs/graph-404/subgraph-upgrades", json={}
+    ).status_code == 404
+
+
+def test_u1244_apply_endpoint_node_ids_subset():
+    store = services_for(T1_ADMIN).graph_store
+    sub_a = store.save({"nodes": [_tool("a")]})
+    _publish(store, sub_a)
+    store.update_draft(sub_a, {"nodes": [_tool("a2")]})
+    _publish(store, sub_a)  # A v2
+    sub_b = store.save({"nodes": [_tool("b")]})
+    _publish(store, sub_b)  # B v1
+    parent = store.save({"nodes": [_sub("n1", sub_a), _sub("n2", sub_b)]})
+    resp = client.post(
+        f"/api/graphs/{parent}/subgraph-upgrades", json={"node_ids": ["n2"]}
+    )
+    assert resp.status_code == 200, resp.text
+    applied = resp.json()["applied"]
+    assert [item["node_id"] for item in applied] == ["n2"]
+    draft = store.get(parent)
+    by_id = {n["id"]: n["config"]["graphId"] for n in draft["nodes"]}
+    assert by_id["n1"] == sub_a
+    assert by_id["n2"] == f"{sub_b}@1"
