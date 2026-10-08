@@ -590,3 +590,227 @@ def test_a1_instantiate_seeds_variables_runtime():
     assert seeded["min_amount"] == 500
     assert seeded["channel"] == "webhook"
     assert seeded["notify"] is True
+
+
+# =============================================================================
+# 打包 ZX（docs/106）：模板参数声明面结构化——嵌套 object / 数组 / 条件显隐
+# U1251：合法结构化声明通过（object/array/visibleWhen 组合）
+# =============================================================================
+@pytest.mark.parametrize(
+    "params",
+    [
+        # object：properties 递归
+        {
+            "webhook": {
+                "type": "object",
+                "label": "Webhook 配置",
+                "required": True,
+                "properties": {
+                    "url": {"type": "string", "required": True, "label": "URL"},
+                    "secret": {"type": "string"},
+                },
+            }
+        },
+        # array：items 递归 + min/max
+        {
+            "channels": {
+                "type": "array",
+                "label": "通知渠道",
+                "minItems": 1,
+                "maxItems": 3,
+                "items": {"type": "select", "options": ["email", "webhook", "im"]},
+            }
+        },
+        # array of object：数组行内嵌套 group
+        {
+            "rules": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "min": {"type": "number", "required": True},
+                        "max": {"type": "number"},
+                    },
+                },
+            }
+        },
+        # visibleWhen：条件显隐
+        {
+            "mode": {"type": "select", "options": ["auto", "manual"]},
+            "manual_reason": {"type": "string", "visibleWhen": {"field": "mode", "equals": "manual"}},
+        },
+        # 结构化 default 透传
+        {
+            "cfg": {
+                "type": "object",
+                "default": {"level": "info"},
+                "properties": {"level": {"type": "string"}},
+            },
+            "tags": {"type": "array", "default": ["a"], "items": {"type": "string"}},
+        },
+    ],
+)
+def test_zx_params_structured_valid_shapes_accepted(params):
+    created = _create_a1_template(client, params=params)
+    assert client.get(f"/api/templates/{created['id']}").json()["params"] == params
+
+
+# U1252：非法结构化声明 422（且模板未变）
+@pytest.mark.parametrize(
+    "params, needle",
+    [
+        # object properties 必须是对象
+        ({"cfg": {"type": "object", "properties": "nope"}}, "properties 必须是对象"),
+        # object 递归子字段非法（嵌套 select 无 options）
+        (
+            {"cfg": {"type": "object", "properties": {"mode": {"type": "select"}}}},
+            "options 必须",
+        ),
+        # array items 必须是对象
+        ({"tags": {"type": "array", "items": "nope"}}, "items 必须是对象"),
+        # array items 递归非法（元素 type 不存在）
+        ({"tags": {"type": "array", "items": {"type": "date"}}}, "type 必须是"),
+        # minItems 负数
+        ({"tags": {"type": "array", "minItems": -1, "items": {"type": "string"}}}, "minItems 必须"),
+        # minItems > maxItems
+        (
+            {"tags": {"type": "array", "minItems": 3, "maxItems": 1, "items": {"type": "string"}}},
+            "minItems 不能大于 maxItems",
+        ),
+        # visibleWhen 形状
+        ({"x": {"type": "string", "visibleWhen": {"equals": "v"}}}, "visibleWhen 必须是"),
+        ({"x": {"type": "string", "visibleWhen": {"field": ""}}}, "visibleWhen.field 不能为空"),
+        # 嵌套深度超限（5 层）
+        (
+            {
+                "d0": {
+                    "type": "object",
+                    "properties": {
+                        "d1": {
+                            "type": "object",
+                            "properties": {
+                                "d2": {
+                                    "type": "object",
+                                    "properties": {
+                                        "d3": {
+                                            "type": "object",
+                                            "properties": {"d4": {"type": "object", "properties": {}}},
+                                        }
+                                    },
+                                }
+                            },
+                        }
+                    },
+                }
+            },
+            "嵌套深度超过上限",
+        ),
+    ],
+)
+def test_zx_params_structured_invalid_shapes_422(params, needle):
+    resp = client.post(
+        "/api/templates",
+        json={"name": "bad structured params", "graph": _sample_graph(), "params": params},
+    )
+    assert resp.status_code == 422
+    assert needle in resp.json()["detail"]
+    assert client.get("/api/templates", params={"q": "bad structured params"}).json()["items"] == []
+
+
+# U1253：instantiate——object/array 值递归校验
+def test_zx_instantiate_structured_validation_422():
+    created = _create_a1_template(
+        client,
+        params={
+            "webhook": {
+                "type": "object",
+                "required": True,
+                "properties": {
+                    "url": {"type": "string", "required": True},
+                    "secret": {"type": "string"},
+                },
+            },
+            "channels": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "select", "options": ["email", "webhook"]},
+            },
+        },
+    )
+    tid = created["id"]
+    endpoint = f"/api/templates/{tid}/instantiate"
+
+    # object 传标量 → 422
+    resp = client.post(endpoint, json={"values": {"webhook": "nope", "channels": ["email"]}})
+    assert resp.status_code == 422
+    assert "webhook 必须是对象" in resp.json()["detail"]
+
+    # object 子字段 required 缺失 → 422
+    resp = client.post(endpoint, json={"values": {"webhook": {"secret": "s"}, "channels": ["email"]}})
+    assert resp.status_code == 422
+    assert "webhook.url 为必填" in resp.json()["detail"]
+
+    # object 未知子字段 → 422
+    resp = client.post(
+        endpoint, json={"values": {"webhook": {"url": "u", "extra": 1}, "channels": ["email"]}}
+    )
+    assert resp.status_code == 422
+    assert "未知子字段：extra" in resp.json()["detail"]
+
+    # array 传标量 → 422
+    resp = client.post(endpoint, json={"values": {"webhook": {"url": "u"}, "channels": "im"}})
+    assert resp.status_code == 422
+    assert "channels 必须是数组" in resp.json()["detail"]
+
+    # array 元素非法 → 422
+    resp = client.post(
+        endpoint, json={"values": {"webhook": {"url": "u"}, "channels": ["sms"]}}
+    )
+    assert resp.status_code == 422
+    assert "channels[0] 的值不在可选范围内" in resp.json()["detail"]
+
+    # array minItems 不足 → 422
+    resp = client.post(endpoint, json={"values": {"webhook": {"url": "u"}, "channels": []}})
+    assert resp.status_code == 422
+    assert "channels 至少需要 1 项" in resp.json()["detail"]
+
+
+# U1254：instantiate——合法结构化值 200，variables 覆写为原值（object/array 原样注入）
+def test_zx_instantiate_structured_valid_seeds_variables():
+    created = _create_a1_template(
+        client,
+        params={
+            "webhook": {
+                "type": "object",
+                "properties": {"url": {"type": "string"}, "secret": {"type": "string"}},
+            },
+            "channels": {"type": "array", "items": {"type": "string"}},
+        },
+    )
+    resp = client.post(
+        f"/api/templates/{created['id']}/instantiate",
+        json={"values": {"webhook": {"url": "https://x", "secret": "s"}, "channels": ["email", "im"]}},
+    )
+    assert resp.status_code == 200
+    graph = resp.json()["graph"]
+    webhook_var = next(var for var in graph["variables"] if var["name"] == "webhook")
+    assert webhook_var["value"] == {"url": "https://x", "secret": "s"}
+    channels_var = next(var for var in graph["variables"] if var["name"] == "channels")
+    assert channels_var["value"] == ["email", "im"]
+
+
+# U1255：向后兼容——既有标量四型声明逐字不变（回归）
+def test_zx_scalar_params_regression():
+    params = {
+        "p": {"type": "string", "label": "x"},
+        "n": {"type": "number", "required": True},
+        "b": {"type": "boolean"},
+        "s": {"type": "select", "options": ["a", "b"]},
+    }
+    created = _create_a1_template(client, params=params)
+    assert client.get(f"/api/templates/{created['id']}").json()["params"] == params
+    resp = client.post(
+        f"/api/templates/{created['id']}/instantiate",
+        json={"values": {"p": "v", "n": 1, "b": True, "s": "a"}},
+    )
+    assert resp.status_code == 200
