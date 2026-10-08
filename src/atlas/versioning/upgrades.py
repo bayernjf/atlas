@@ -94,7 +94,7 @@ def subgraph_upgrade_plan(
         if not isinstance(node_id, str):
             continue
         config = node.get("config") if isinstance(node.get("config"), dict) else {}
-        sub_id, _draft_pinned = split_graph_ref(config.get("graphId"))
+        sub_id, draft_pinned = split_graph_ref(config.get("graphId"))
         if sub_id is None:
             continue
 
@@ -106,8 +106,14 @@ def subgraph_upgrade_plan(
             to_version = 1
             sub_never_published = True
 
-        from_version = None if parent_first_release else released_pins.get(node_id)
-        first_pin = parent_first_release or sub_never_published or from_version is None
+        # 基线优先取草稿自身显式钉版（打包 ZU2 升级动作后草稿已钉 @N）：
+        # 已钉 → 不再是首次钉版、from=该钉版；裸 id/@draft → 回退父图最新发布快照所钉。
+        if draft_pinned is not None:
+            from_version = draft_pinned
+            first_pin = False
+        else:
+            from_version = None if parent_first_release else released_pins.get(node_id)
+            first_pin = parent_first_release or sub_never_published or from_version is None
         if first_pin or from_version != to_version:
             plan.append(
                 {
@@ -119,3 +125,50 @@ def subgraph_upgrade_plan(
                 }
             )
     return plan
+
+
+def apply_subgraph_upgrades(
+    graph_store: GraphRepository,
+    graph_id: str,
+    node_ids: list[str] | None = None,
+) -> list[dict[str, Any]] | None:
+    """把草稿顶层 subgraph 引用显式升级到体检目标版本并存回草稿（打包 ZU2，D21 动作侧）。
+
+    - 取 latest 草稿；草稿不存在返 None（端点据此 404）。
+    - 目标＝plan 全部项；``node_ids`` 给定则只升级指定项；**指定但不在 plan** 的
+      node_id（非 subgraph 节点 / 无版本变化）抛 ValueError（端点据此 422）。
+    - 对每个目标项把 ``config["graphId"]`` 改写为 ``sub_id@to_version``（显式钉版，
+      与发布期 ``_pin_subgraphs`` 钉同一目标）；经 ``update_draft`` 存回草稿，
+      不产新版本、不动已发布版本。
+    - 返回应用成功的项（from_version 为改写前钉版/None，语义与 plan 一致）。
+    """
+    draft = graph_store.get(graph_id)
+    if draft is None:
+        return None
+    plan = subgraph_upgrade_plan(graph_store, graph_id)
+    if plan is None:
+        return None
+
+    by_node = {item["node_id"]: item for item in plan}
+    if node_ids is not None:
+        missing = [nid for nid in node_ids if nid not in by_node]
+        if missing:
+            raise ValueError(missing[0])
+        targets = [by_node[nid] for nid in node_ids]
+    else:
+        targets = plan
+    if not targets:
+        return []
+
+    nodes = draft.get("nodes", [])
+    applied: list[dict[str, Any]] = []
+    for item in targets:
+        for node in nodes:
+            if not isinstance(node, dict) or node.get("id") != item["node_id"]:
+                continue
+            config = node.setdefault("config", {})
+            config["graphId"] = f"{item['sub_id']}@{item['to_version']}"
+            applied.append(dict(item))
+            break
+    graph_store.update_draft(graph_id, draft)
+    return applied

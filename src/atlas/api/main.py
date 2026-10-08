@@ -204,7 +204,7 @@ from atlas.template import get_template, list_templates
 from atlas.template.user_store import TemplateVersionConflict
 from atlas.web.i18n import localize_template, localize_tool_desc, resolve_locale
 from atlas.versioning.publish import publish as publish_graph_version
-from atlas.versioning.upgrades import subgraph_upgrade_plan
+from atlas.versioning.upgrades import apply_subgraph_upgrades, subgraph_upgrade_plan
 
 logger = logging.getLogger(__name__)
 
@@ -2950,6 +2950,39 @@ def subgraph_upgrades(
     if plan is None:
         raise HTTPException(status_code=404, detail=f"Graph 不存在：{graph_id}")
     return {"items": plan}
+
+
+class SubgraphUpgradesApplyRequest(BaseModel):
+    """手动升级动作（打包 ZU2）：可选指定 node_ids 子集，缺省=全部升级项。"""
+
+    node_ids: list[str] | None = None
+
+
+@app.post("/api/graphs/{graph_id}/subgraph-upgrades")
+def apply_subgraph_upgrades_endpoint(
+    graph_id: str,
+    request: SubgraphUpgradesApplyRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """把草稿顶层 subgraph 引用显式升级到体检目标版本并存回草稿（打包 ZU2，D21 动作侧）。
+
+    升级 = 把 ``config.graphId`` 改写为 ``sub_id@to_version``（与发布期钉版同一目标），
+    不产新版本、不动已发布版本；升级后建议重跑发布门禁回归再发布。草稿不存在 404；
+    指定 node_id 不在升级清单（非 subgraph / 无版本变化）→ 422。空清单幂等返空。
+    """
+    services = services_for(principal)
+    try:
+        applied = apply_subgraph_upgrades(
+            services.graph_store, graph_id, request.node_ids
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"节点 {exc.args[0]} 不在子图升级清单中（非子图节点或无版本变化）",
+        ) from exc
+    if applied is None:
+        raise HTTPException(status_code=404, detail=f"Graph 不存在：{graph_id}")
+    return {"applied": applied}
 
 
 @app.get("/api/graphs/{graph_id}/versions")
