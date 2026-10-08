@@ -5629,7 +5629,7 @@ _CONSOLE_HTML = """<!doctype html>
 <head><meta charset="utf-8"><title>Demo 商家售后控制台</title>
 <style>body{font-family:sans-serif;max-width:720px;margin:40px auto;padding:0 16px}
 table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:8px}
-input,button{padding:6px;margin:4px 0}.refunded{color:#389e0d}.human_review{color:#d46b08}
+input,button{padding:6px;margin:4px 0}.refunded{color:#389e0d}.human_review{color:#d46b08}.rejected{color:#a8071a}
 </style></head>
 <body>
 <h1>Demo 商家售后控制台</h1>
@@ -5648,7 +5648,7 @@ input,button{padding:6px;margin:4px 0}.refunded{color:#389e0d}.human_review{colo
 <p id="hint" hidden>还没有单子被处置过。在编辑器里运行一笔退款单，再点上面的「刷新」。</p>
 </div>
 <script>
-const STATUS_LABEL = {refunded:'AI 已自动退款', human_review:'AI 转人工（仅标记，队列里无人被叫到）'};
+const STATUS_LABEL = {refunded:'AI 已自动退款', human_review:'AI 转人工（历史标记）', rejected:'人工拒绝退款'};
 function money(n){return '¥' + n;}
 function render(data){
   document.getElementById('rows').innerHTML = (data.orders||[]).map(o=>

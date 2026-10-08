@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 PENDING = "pending"
 REFUNDED = "refunded"
 HUMAN_REVIEW = "human_review"
+REJECTED = "rejected"
 
 
 @dataclass
@@ -89,6 +90,12 @@ class DemoShopService:
         order.status = HUMAN_REVIEW
         order.history.append(f"转人工审批：{note}")
         return {"order_id": order_id, "status": HUMAN_REVIEW}
+
+    def reject_refund(self, order_id: str, note: str = "") -> dict:
+        order = self.get_order(order_id)
+        order.status = REJECTED
+        order.history.append(f"人工拒绝退款：{note}")
+        return {"order_id": order_id, "status": REJECTED}
 
     def compare_and_set(
         self,
