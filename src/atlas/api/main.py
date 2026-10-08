@@ -212,6 +212,17 @@ logger = logging.getLogger(__name__)
 _PUBLIC_URL = read_public_url()
 
 
+def _safe_run_error(exc: Exception) -> str:
+    """docs/101 D58：运行失败 message 收口（SSE error 帧与持久化 error 共用）。
+
+    未知异常（RUNTIME_UNEXPECTED）→ 安全文案，内部串（类型名/repr）只进服务端日志；
+    已知业务异常 → 保留中文业务文案（去掉类型名前缀），code/params 已另行结构化。
+    """
+    if runtime_error_meta(exc)["errorCode"] == "RUNTIME_UNEXPECTED":
+        return "运行时发生未预期错误"
+    return str(exc)
+
+
 def _token_ref(token: Any) -> str:
     """日志里指代一枚令牌的可读引用（docs/89 §15 A-8b）。
 
@@ -345,7 +356,7 @@ def _resume_run(engine, services: TenantServices, frame: dict) -> None:
         logger.error("续跑 %s 失败：%s", _token_ref(frame.get("resume_token")), exc)
         if run_id:
             services.run_store.finish(
-                run_id=run_id, status="failed", error=f"{type(exc).__name__}: {exc}"
+                run_id=run_id, status="failed", error=_safe_run_error(exc)
             )
 
 
@@ -644,9 +655,13 @@ class DemoLoginRequest(BaseModel):
 
 
 @app.get("/api/health")
-def health() -> dict[str, str]:
-    """存活探针：进程在跑即 200（不检查依赖）。"""
-    return {"status": "ok"}
+def health() -> dict[str, object]:
+    """存活探针：进程在跑即 200（不检查依赖）。
+
+    demo_surface：演示面是否开启（docs/75 单一档位，prod 档 false）。
+    供前端决定是否暴露演示专用入口（如「重置演示数据」，docs/101 D59）。
+    """
+    return {"status": "ok", "demo_surface": demo_surface_enabled()}
 
 
 @app.get("/api/ready")
@@ -1260,7 +1275,7 @@ def _background_run_worker(
         logger.error("%s 触发图运行失败 graph=%s@%s", mode, graph_id, version, exc_info=True)
         run_store.finish(
             run_id=run_id, status="failed",
-            error=f"{type(exc).__name__}: {exc}",
+            error=_safe_run_error(exc),
         )
 
 
@@ -4134,7 +4149,7 @@ def run_saved_graph(
         )
     except Exception as exc:
         services.run_store.finish(
-            run_id=run_id, status="failed", error=f"{type(exc).__name__}: {exc}"
+            run_id=run_id, status="failed", error=_safe_run_error(exc)
         )
         record = monitoring.record_run(
             graph_id=graph_id,
@@ -4143,7 +4158,7 @@ def run_saved_graph(
             started_at=started_at,
             duration_ms=(time.monotonic() - started) * 1000,
             nodes=[],
-            error=f"{type(exc).__name__}: {exc}",
+            error=_safe_run_error(exc),
             trace_id=tracer.trace_id,
             resolved_version=resolved_version,
             tool_calls=tool_calls,
@@ -4329,10 +4344,15 @@ def run_saved_graph_stream(
                     )
                 events.put({"__cancelled__": exc.node_id})
             except Exception as exc:  # 运行期异常经 SSE error 帧下发，不静默吞线程
+                err_meta = runtime_error_meta(exc)
+                if err_meta["errorCode"] == "RUNTIME_UNEXPECTED":
+                    # 未知异常：细节只进服务端日志，任何面向客户的面都不带内部串（docs/101 D58）。
+                    logger.exception("run %s failed with unexpected error", run_id, exc_info=exc)
+                safe_error = _safe_run_error(exc)
                 if monitored:
                     run_store.finish(
                         run_id=run_id, status="failed",
-                        error=f"{type(exc).__name__}: {exc}",
+                        error=safe_error,
                     )
                     record = monitoring.record_run(
                         graph_id=graph_id,
@@ -4341,18 +4361,17 @@ def run_saved_graph_stream(
                         started_at=started_at,
                         duration_ms=(time.monotonic() - started) * 1000,
                         nodes=extract_node_results(graph_view, collected),
-                        error=f"{type(exc).__name__}: {exc}",
+                        error=safe_error,
                         trace_id=tracer.trace_id if tracer is not None else "",
                         resolved_version=resolved_version,
                         tool_calls=tool_calls,
                         spans=tracer.to_tree() if tracer is not None else None,
                     )
                     evaluate_after_run(services, record)
-                err_meta = runtime_error_meta(exc)
                 events.put(
                     {
                         "__error__": {
-                            "message": f"{type(exc).__name__}: {exc}",
+                            "message": safe_error,
                             "code": err_meta["errorCode"],
                             "params": err_meta["errorParams"],
                         }
