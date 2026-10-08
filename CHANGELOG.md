@@ -10,6 +10,13 @@
 - **D59 演示面自助重置**：/api/health 加 demo_surface 能力位（公开 allowlist 不变），前端演示面开启＋admin 时显示重置按钮。
 - 零新依赖／零迁移／无 ADR；docs-only 立项原子，落码另立批（用例 U1213 起，登记 docs/13）。
 
+### 〔工程〕打包 BM 缺陷批落码收口：D57/D58/D59 三缺陷同日闭合（docs/101 §7，2026-10-08）
+
+- **D57 演示图真转人工**：refund-auto 模板重写为 7 节点（condition 分流＋human_approval-1 真挂起＋双出口 execute_refund/reject_refund），高置信 request_human_approval 不再「只说句要找」；新增 shop/reject_refund capability 与 REJECTED 状态；U1213–U1217 五测（含 resolve 前线程不结束的真挂起断言）。
+- **D58 SSE error 帧 message 收口**：未知异常 message 收口为「运行时发生未预期错误」，内部串只进服务端日志；收口面统一 SSE 帧／同步 run／续跑恢复／trigger 触发四处（_safe_run_error）；已知业务异常保留中文文案去类型前缀。
+- **D59 演示面自助重置**：/api/health 加 demo_surface 能力位；前端 DemoResetButton（admin×demo_surface 双条件、Popconfirm 二次确认、成功后整页刷新）＋i18n zh/en 各 3 键；组件测试＋apiClient 契约测试。
+- 零新依赖／零迁移／无 ADR；docs/14 D57/D58/D59 三行同日翻 ✅、docs/13 U1213 起登记。
+
 ：照 TRIAL.md 逐字跑一遍试用，修掉它抓到的两件事（打包 BM，docs/18 §6.2／docs/13 打包 BM，2026-10-08）
 
 - **题目不是"还欠什么工程"，是"客户跑起来什么样"**：25 天里"能不能上线"证了六遍，客户向的 [TRIAL.md](TRIAL.md) 却一次都没被执行过（docs/18 §6.1 表 C1–C5 全空）。这次用一次性卷的独占 compose 项目（空库首启）＋真 Chromium＋真 LLM 把三个场景逐字走完；脚本 `scripts/dev/trial_dryrun.py` 是**摩擦采集器**不是断言脚本——每一步失败记一条 FINDING 然后继续，因为真人卡住时不抛异常，他只是放弃。终局 **13 PASS／3 FINDING**，"打开浏览器→12345 从待处理消失"实测 19 秒。
