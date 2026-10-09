@@ -15,3 +15,7 @@
 ## 打包 ZS 落码收口＝D28 告警规则模板用户自建 CRUD
 
 ✅ **打包 ZS 落码收口＝D28 告警规则模板用户自建 CRUD（2026-10-08 立项+同日收口；docs/102 §6；docs/13 U1220–U1230；docs/14 D28 半边取回、整体不解除）**：用户自建/编辑/删除私有告警规则模板——迁移 045＋`monitoring/rule_user_store.py`＋`pg_rule_user_store.py` 两档 store＋registry 装配/reset＋租户内重名 409；五端点（GET 列表/详情合并内置＋用户 source 区分、POST/PUT/DELETE 写 administer、内置 id 404 保护）；前端 AlertRuleTemplateMarket 新建/编辑/删除 Modal＋source Tag＋i18n 两档 20 键。八原子 `ba6fa2e`→`2a36a5c`＋`ef32be1` fix；门＝后端 2456/166/0、前端 828/2、oxlint 0/0、build 过、守护门 24 passed、PG 集成 20+3 零回归；零新依赖/无 ADR。详见 Active #130、Quality gate。
+
+## 打包 ZT 落码收口＝规则模板配置表单化（RuleConfigEditor 共享）
+
+✅ **打包 ZT 落码收口＝规则模板配置表单化（RuleConfigEditor 共享）（2026-10-08 立项+同日收口；docs/103 §6；docs/13 U1231–U1236；docs/14 D28「规则配置 UI 表单化」闭合、D28 整体不解除）**：Monitoring 生效规则表单抽成纯受控共享组件 `RuleConfigEditor`＋`lib/ruleConfig.ts`（默认值/结构化校验），模板市场新建/编辑 Modal 以表单替换裸 JSON、提交前拦截非法配置；顺带修复 ZS 表单三个 Form.Item 缺 name 的绑定缺陷。四原子 de2a73f→5f2f1f0→5add6a2→b38af24；前端 848/2（+20）、oxlint 0/0、build 过、后端零改动（守护门 24）。

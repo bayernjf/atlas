@@ -1,7 +1,7 @@
 # 打包 AH：影子运行 SSE 流式化 — v1 批契约设计
 
 > 号段：U1317–U1323｜承接 docs/14 D26 剩余「影子 SSE（实时影子）」｜形状权威：本文｜2026-10-09
-> 状态：📝 已立项（落码另立批）
+> 状态：✅ 已落码收口（2026-10-09，见 §6）
 
 ## 1. 背景与现状（落码前实证）
 
@@ -67,4 +67,12 @@ D26 录制回放产品化已多批取回。影子方向现状（读码确认）�
 
 ## 6. 收口注记
 
-（落码收口后填写）
+✅ 已于 2026-10-09 落码收口（5 原子，U1317–U1323 转正式；D26 整体不解除）：
+
+- **后端端点** `POST /api/graphs/{graph_id}/shadow-runs/stream`（`operate`，`StreamingResponse`）：后台 daemon 线程跑 `run_graph(shadow=True)`，节点事件经 `queue.Queue` 实时 SSE 下发；终帧 `event: result` 携带完整 ShadowRun（`shadow_store.add` 返回 `model_dump` dict）。**影子纪律逐字不变**（预置审批/wait 秒过、独立 broker/tracer、不写 run_store/RunRecord、不触发告警灰度、不产 tool_metric）；异常也沉淀 `status="error"`、HTTP 不报错（不设 event:error）。
+- **前端** `apiClient.streamShadowRun`（POST ＋ ReadableStream 分帧；节点事件转 onEvent、终帧 resolve ShadowRun、!ok 处理照 streamRun）；`ShadowRunModal` 发起改流式、新增「实时进度」区（顶层节点 running→done Tag），终帧复用现有结果渲染；i18n zh/en。
+- **门（实跑）**：后端全量 **2582 passed / 173 skipped / 0 failed**（基线 2578 ＋ 流式端点 4）；前端 vitest **915 passed / 2 skipped**（基线 909 ＋ apiClient 3 ＋ Modal 3）、oxlint 0/0、tsc 0、build 过（仅 chunk>500kB 既有 warning）。
+- **浏览器冒烟（localhost:8000 挂载最新 dist）**：发起后实时进度显示 trigger-1 / ai_decision-1 / tool_call-1 三节点已完成，系统自动动作＝自动退款，shop/process_refund（financial）SHADOW_DRY_RUN。
+- **零新依赖 / 零迁移 / 无 ADR。**
+
+**仍缓做（D26 余部，触发条件不变）**：影子自动旁路（需真实线上流量/生产部署）、趋势报表/定时批量对比/自动回滚联动、用例/报告跨租户共享、长保留归档。

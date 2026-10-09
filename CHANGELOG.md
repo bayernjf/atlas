@@ -3,6 +3,11 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔工程〕打包 AH 收口：影子运行 SSE 流式化（docs/114，2026-10-09 立项+同日收口）
+
+- **D26 再取回「影子 SSE」最小片（docs/114 §6；D26 不解除余部）**：新增 `POST /api/graphs/{graph_id}/shadow-runs/stream`（operate，StreamingResponse；后台 daemon 线程跑 `run_graph(shadow=True)`，节点事件经 queue 实时 SSE 下发、终帧 `event: result` 携带完整 ShadowRun；异常沉淀 status=error、HTTP 不报错、不设 event:error），影子纪律逐字不变（预置审批/wait 秒过、独立 broker/tracer、不写 run_store/RunRecord、不触发告警灰度、不产 tool_metric）；前端 `apiClient.streamShadowRun`（POST＋ReadableStream 分帧、节点事件转 onEvent、终帧 resolve、!ok 照 streamRun）＋`ShadowRunModal` 发起改流式、「实时进度」顶层节点 running→done Tag＋i18n zh/en。
+- **门（实跑 2026-10-09）**：后端全量 2582 passed/173 skipped/0 failed（基线 2578/173 ＋ 流式端点 4）；前端 vitest 915 passed/2 skipped（基线 909 ＋ apiClient 3 ＋ Modal 3）、oxlint 0/0、tsc 0、build 过。浏览器冒烟（localhost:8000 挂载最新 dist）：实时进度 trigger-1/ai_decision-1/tool_call-1 三绿、自动退款、shop/process_refund SHADOW_DRY_RUN。零新依赖/零迁移/无 ADR。
+
 ### 〔工程〕打包 AG 收口：监控运行报表聚合与版本对比（docs/113，2026-10-09 立项+同日收口）
 
 - **D28 再取回「长保留报表＋版本对比」最小片（docs/113 §6；D28 不解除余部）**：聚合纯函数 `aggregate_runs`（按天 UTC `YYYY-MM-DD`／按版本 `v<int>`、None→`manual-draft`，total/成败计数/成功率/avg·p50·p95 nearest-rank，空列表→空列表）；两档 store `list_runs_for_report`（窗口 `[since,until)`，内存过滤 ring、PG 参数绑定 started_at TEXT 字典序）；端点 `GET /api/monitoring/report`（days 1–90、group_by day|version）与 `/report/export`（csv 中文表头＋UTF-8 BOM／json）；前端 `RunReportCard`（Segmented/Select/聚合表/导出，httpOnly Cookie 自动带凭证）＋i18n zh/en。版本口径＝以 resolved_version 为准、None 归 manual-draft、不新增字段不回填。
