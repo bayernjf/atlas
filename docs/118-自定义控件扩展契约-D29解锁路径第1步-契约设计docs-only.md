@@ -1,7 +1,7 @@
 # 自定义控件扩展契约（D29 解锁路径第 1 步）— 契约设计（docs-only）
 
 > 号段：无新增用例（本件为契约设计，不落码）｜承接 docs/14 D29「自定义控件扩展契约」余部与 docs/115 §5 解锁路径第 1 步｜2026-10-10
-> 状态：⬜ **契约已立，未授权落码**；本文是「自定义控件扩展契约」的**形状权威**——定义注册形状、`x-widget` 声明与消费范围、props/校验/降级契约。落码（types.ts 拓宽 WidgetName、resolveWidget 降级语义、注册静态校验）另立批，须在本契约通过后按 AGENTS.md 原子落码。
+> 状态：✅ **契约已立且已落码收口（2026-10-10，同日落码）**；本文是「自定义控件扩展契约」的**形状权威**——定义注册形状、`x-widget` 声明与消费范围、props/校验/降级契约。落码详情与偏差见 §5 落码执行注记与 §7 收口注记；§3 契约定义本身不变，作为后续第 2/3 步与新增业务控件的形状基准。
 
 ## 1. 背景与目的
 
@@ -89,6 +89,16 @@ docs/115（D29 第四实体接入可行性评估）结论：**部署（RolloutMo
 
 三道门（vitest/oxlint/tsc/build）＋守护门（handoff/migration）在收口前复跑。
 
+### 5.1 落码执行注记（2026-10-10，同日落码）
+
+已按上述原子序执行，两原子提交（`5f2bac5` feat、`1a09875` test；docs 收口原子随后）。
+
+- **3.2 取向**：选 (a) 常量表——`types.ts` 增 `BUSINESS_WIDGETS`（由既有五个业务控件名常量派生）与 `BusinessWidgetName`，`WidgetName = BUILTIN ∪ BUSINESS`；nodeRegistry 改为经 `NODE_WIDGET_COMPONENTS` 组件表遍历 `BUSINESS_WIDGETS` 注册（注册与声明同源、编译期强制覆盖）。`isWidgetName` 运行时守卫导出，resolveWidget 与测试共用。
+- **FormRenderer `has()` 降级分发**：落码实证发现 `widgetComponent()`（defaultRegistry 现有降级通道）已具 `has?get:get('json')` 降级，仅缺 warn——本批在 `widgetComponent` 补 `console.warn`（未注册名且非 json 时），FormRenderer 分发处零改动；`registry.get()` 对未注册名 throw 语义保留。
+- **既有测试适配**：`widgets.test.ts`「模块级默认表与扩展点注册到同一实例」原以覆盖内置名 `text` 验证，与新契约「禁内置名」冲突——改为业务名 `widgets-ext-same-instance` 注册、断言模块级单例持有且全新默认表不含（意图不变）。
+- **契约测试**：新增 `customWidgetContract.test.ts` 17 例，覆盖 §3.4 清单全部四件＋§3.2 守卫与同源守护。
+- **门（实跑）**：前端全量 **932 passed／2 skipped**（基线 915 → +17）、oxlint 0/0、tsc 0、build 过；守护门 8 passed。零新依赖/零迁移/无 ADR。
+
 ## 6. 重开判据（何时真做第 2/3 步）
 
 - 第 2 步（异构数组）：第 3 步立项前必须完成——部署迁移的规则数组需要 `oneOf`/discriminator 表达；或出现其他异构数组配置需求。
@@ -99,3 +109,10 @@ docs/115（D29 第四实体接入可行性评估）结论：**部署（RolloutMo
 
 - 本件为纯契约设计：**无代码改动、无测试、无迁移、无依赖变更**。
 - 关联：docs/115（第四实体评估＝本契约的来源）；docs/14 D29（本契约登记为"契约已立、落码待批"）；docs/110（打包 AC，评估面先例）；docs/106（打包 ZX，声明面结构化先例）。
+
+### 7.1 落码收口注记（2026-10-10）
+
+- **落码已完成**：§3 契约全部落地（§5.1），D29 解锁路径第 1 步闭环；第 2/3 步（异构数组、部署迁移）仍缓做，重开判据见 §6。
+- **落码偏差登记**：无契约级偏差——三处实现细节按 §3 授权范围内取舍并记于 §5.1（取向 (a)、降级落地在 `widgetComponent` 而非 FormRenderer 新增分支、既有测试适配）。
+- **门**：前端 vitest 932/2（+17）、oxlint 0/0、tsc 0、build 过；守护门 8 passed。docs 收口原子＝本文件状态更新＋docs/14 D29 行＋docs/08 收口块＋CHANGELOG＋handoff（Active #142 ✅）。
+- 关联补记：docs/13 打包批小节（若按批记）未新增——本批按契约批登记，不重复记 docs/13。
