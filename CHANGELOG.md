@@ -3,6 +3,11 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔工程〕打包 AF 收口：条件表达式 choice/加权采样 ＋ 命名时区（docs/112，2026-10-09 立项+同日收口）
+
+- **D15 再取回两片（docs/112 §8；D15 不解除余部）**：`choice(*items)` 均匀随机、`weightedChoice(item,weight,…)` 按权重随机（可变/交替位置参数、候选项同类型、权重非负且总和>0、0 权重项不选），随机性只来注入 RNG、经 rng_seed 回放；命名时区 `dateOfInZone/hourOfInZone`（确定性折叠）与 `todayInZone/hourInZone`（非确定），后端 stdlib zoneinfo、前端 Intl，仅取 date/hour 分量、不扩展 DateTimeValue；新增码 COND_INVALID_TIMEZONE（zh/en）。三处落码偏差（契约表 UTC 03:00 勘误、新增 export evaluateConstantExpression、Intl 构造期非法时区转译）见 docs/112 §8。
+- **门（实跑 2026-10-09）**：后端新增 32 例（choice 18/时区 14）；前端 vitest 906 passed/2 skipped（+9）、oxlint 0/0、tsc 0、build 过。零新依赖/零迁移/无 ADR。
+
 ### 〔工程〕打包 AE 收口：condition LLM 置信度阈值＋上下文字段级脱敏（docs/111，2026-10-09 立项+同日收口）
 
 - **D14 再取回两半（docs/111 §7；D14 不解除余部）**：condition context_text 序列化前脱敏（抽 `_sensitive_redaction_mapping` 与 `_redact_outputs` 同源复用，补上发往 condition LLM 上下文这条漏网出向通道，env/secret 展开值不再明文给模型供应商）；LLM 增返 `confidence`，节点可选 `confidenceThreshold`（0–1，缺省不启用），低置信度、或缺/非数值/越界置信度 fail-closed 抛 ConditionClassifyError 走 defaultTarget 并记 llm_errors，未配阈值向后兼容，Scripted 回放忽略阈值；新编译期码 `COND_LLM_THRESHOLD_INVALID`（frontend validation.json zh/en）；前端 condition.schema 加 0–1 number、nodeUiSchemas label/placeholder 仅 LLM 模式显示。两处落码偏差（节点表单 label 硬编码中文未单独立 i18n 键、错误码走 validation.json 而非 docs/03）见 docs/111 §7。

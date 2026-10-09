@@ -1,6 +1,6 @@
 # 打包 AF（D15 余部）：choice/加权采样 ＋ 命名时区 — v1 批契约设计
 
-> 状态：📝 立项（docs-only，落码另立批）｜号段 U1293–U1305｜形状权威：本文｜承接 docs/14 D15 剩余「choice/采样、命名时区」｜2026-10-09
+> 状态：✅ 落码收口（2026-10-09 立项＋同日收口）｜号段 U1293–U1305｜形状权威：本文｜承接 docs/14 D15 剩余「choice/采样、命名时区」｜2026-10-09
 >
 > 前置：[docs/84](84-随机函数种子化与回放契约-打包W.md)（打包 W＝random/randint/uuid 种子化）；[docs/27](27-可注入回放时钟与非确定日期函数-C包契约.md)（now/today 可注入时钟）。
 >
@@ -175,3 +175,12 @@ D15 整体在本批后**仍不解除**（客户端钉种子、断点续跑帧携
 8. `docs: close out package AF for weighted choice and named timezones`（CHANGELOG/handoff/docs 13/14/08/112）。
 
 门：后端全量、前端 vitest/oxlint/tsc/build、守护门；数字先跑后写。零新依赖（stdlib `zoneinfo`、JS `Intl`）/零迁移/无 ADR。
+
+## 8. 落码收口注记（2026-10-09）
+
+- 已按 §7 原子序落码收口：docs 立项 `fe9be73` → feat(engine) choice/weightedChoice `213eda1` → test(engine) choice `17ff9ce` → feat(engine) 时区 `0b59c94` → test(engine) 时区 `219fa14` → feat(frontend) `e708ba9` → test(frontend) `86bb367`。
+- **门（实跑）**：后端新增 U1293–U1304 共 32 例（choice 18 ＋ 时区 14）；前端 vitest **906 passed／2 skipped**（基线 897/2 ＋ 9）、oxlint 0/0、tsc 0、build 过（仅 chunk>500kB 非错误 warning）。
+- **落码偏差 1（§2.2 表勘误）**：表第二行原写「UTC 04:00 → NewYork 06-14 前一日」有误——UTC 04:00 − 4(EDT) = 06-15 00:00 **同日**；已改为 UTC 03:00 → NewYork 06-14 23:00（前一日），经代码实证。
+- **落码偏差 2（前端可测接口）**：为锁定确定性时区函数折叠值，新增 export `evaluateConstantExpression`（拒绝变量/非确定函数），供工具与测试。
+- **落码偏差 3（前端非法时区转译）**：Intl 对非法时区在 formatter **构造期**即抛 RangeError（早于 formatToParts），已把构造移入 try/catch 统一转中文错误。
+- **D15 整体不解除**：客户端钉种子、断点续跑帧携种子仍缓做（见 §5）。
