@@ -417,6 +417,21 @@ def _sensitive_vars(graph: GraphDSL) -> dict[str, tuple[str, str]]:
     }
 
 
+def _sensitive_redaction_mapping(state: GraphState) -> dict[str, str]:
+    """打包 AE（docs/111 §2.1）：从运行态构造敏感展开值→占位 mapping。
+
+    与脱敏五通道（docs/99）同源：``state["sensitive"]``＝{变量名:(source,ref)}，
+    ``state["variables"]["global"]``＝{变量名:展开值}。供 ``_redact_outputs`` 与
+    condition LLM 的 context_text 共用，避免两处各拼一份。
+    """
+    global_vars = state["variables"].get("global", {})
+    return {
+        global_vars[name]: f"<redacted:{source}:{ref}>"
+        for name, (source, ref) in state.get("sensitive", {}).items()
+        if name in global_vars and isinstance(global_vars[name], str)
+    }
+
+
 def _redact_outputs(final_state: GraphState) -> dict[str, dict[str, Any]]:
     """打包 A3（docs/99 §3）：run 结果 outputs 投影脱敏——敏感变量展开值替换为占位。
 
@@ -425,13 +440,7 @@ def _redact_outputs(final_state: GraphState) -> dict[str, dict[str, Any]]:
     """
     from atlas.graph.redact import redact_sensitive
 
-    global_vars = final_state["variables"].get("global", {})
-    sensitive = final_state.get("sensitive", {})
-    mapping = {
-        global_vars[name]: f"<redacted:{source}:{ref}>"
-        for name, (source, ref) in sensitive.items()
-        if name in global_vars and isinstance(global_vars[name], str)
-    }
+    mapping = _sensitive_redaction_mapping(final_state)
     if not mapping:
         return final_state["outputs"]
     return redact_sensitive(final_state["outputs"], mapping)
