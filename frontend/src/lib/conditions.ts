@@ -57,10 +57,21 @@ const FUNCTIONS: Record<string, [number, number | null, string]> = {
   random: [0, 0, 'number'],
   randint: [2, 2, 'number'],
   uuid: [0, 0, 'string'],
+  // 打包 AF（docs/112，D15 余部）：随机选择（候选项同类型）。
+  choice: [1, null, 'any'],
+  weightedChoice: [2, null, 'any'],
+  // 打包 AF（docs/112，D15 余部）：命名时区，取 date/hour 分量（不扩展 DateTimeValue）。
+  dateOfInZone: [2, 2, 'date'],
+  hourOfInZone: [2, 2, 'number'],
+  todayInZone: [1, 1, 'date'],
+  hourInZone: [1, 1, 'number'],
 }
 const FN_NAMES = Object.keys(FUNCTIONS).join(', ')
 // 非确定函数：静态校验期不做常量折叠（其值依赖运行时钟/运行 RNG）。
-const NONDETERMINISTIC = new Set(['today', 'now', 'random', 'randint', 'uuid'])
+const NONDETERMINISTIC = new Set([
+  'today', 'now', 'random', 'randint', 'uuid',
+  'choice', 'weightedChoice', 'todayInZone', 'hourInZone',
+])
 
 function tokenize(expression: string): Token[] {
   const tokens: Token[] = []
@@ -322,6 +333,46 @@ function temporalTicks(value: DateValue | DateTimeValue): number {
   return isDateTime(value) ? daySeconds + value.H * 3600 + value.M * 60 + value.S : daySeconds
 }
 
+function partValue(parts: Intl.DateTimeFormatPart[], type: string): string {
+  return parts.find((p) => p.type === type)?.value ?? '0'
+}
+
+// UTC Date/DateTime 值 → IANA 命名时区的墙上分量（Intl，无第三方依赖）。
+function zoneParts(value: DateValue | DateTimeValue, zone: unknown): Intl.DateTimeFormatPart[] {
+  if (typeof zone !== 'string' || !zone) {
+    throw new Error('时区名必须是非空 IANA 字符串（如 "Asia/Shanghai"）')
+  }
+  const jsDate = isDateTime(value)
+    ? new Date(Date.UTC(value.y, value.m - 1, value.d, value.H, value.M, value.S))
+    : new Date(Date.UTC(value.y, value.m - 1, value.d))
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: zone, hour12: false,
+    year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric',
+  })
+  try {
+    return formatter.formatToParts(jsDate)
+  } catch {
+    throw new Error(`未知/非法 IANA 时区名："${zone}"`)
+  }
+}
+
+function typeCode(value: unknown): string {
+  if (value === null) return 'null'
+  if (typeof value === 'boolean') return 'boolean'
+  if (typeof value === 'number') return 'number'
+  if (typeof value === 'string') return 'string'
+  if (isDateTime(value)) return 'datetime'
+  if (isDate(value)) return 'date'
+  return typeof value
+}
+
+function requireSameType(name: string, values: unknown[]): void {
+  const codes = [...new Set(values.map(typeCode))].sort()
+  if (codes.length > 1) {
+    throw new Error(`函数 "${name}" 的候选项必须为同一类型，实际混合类型：${codes}`)
+  }
+}
+
 // 与 Python date.toordinal 同构（Howard Hinnant 公式），供天数差与日期有序比较。
 function toOrdinal(date: { y: number; m: number; d: number }): number {
   const a = Math.trunc((14 - date.m) / 12)
@@ -431,6 +482,68 @@ function evalFunction(name: string, args: unknown[]): unknown {
     }
     case 'uuid':
       return crypto.randomUUID()
+    case 'choice': {
+      requireSameType(name, args)
+      return args[Math.floor(Math.random() * args.length)]
+    }
+    case 'weightedChoice': {
+      if (args.length % 2 === 1) {
+        throw new Error('函数 "weightedChoice" 参数必须按 (项, 权重) 成对、即偶数个')
+      }
+      const items = args.filter((_, i) => i % 2 === 0)
+      const weights = args.filter((_, i) => i % 2 === 1)
+      requireSameType(name, items)
+      let total = 0
+      for (const w of weights) {
+        if (typeof w === 'boolean' || !isNum(w)) {
+          throw new Error(`函数 "weightedChoice" 的权重必须是非负数值，实际为 ${typeName(w)}`)
+        }
+        if (w < 0) throw new Error('函数 "weightedChoice" 的权重不能为负数')
+        total += w
+      }
+      if (total <= 0) throw new Error('函数 "weightedChoice" 的权重总和必须大于 0')
+      const pick = Math.random() * total
+      let upto = 0
+      for (let i = 0; i < items.length; i++) {
+        upto += weights[i] as number
+        if (pick < upto) return items[i]
+      }
+      for (let i = items.length - 1; i >= 0; i--) {
+        if ((weights[i] as number) > 0) return items[i]
+      }
+      return items[items.length - 1]
+    }
+    case 'dateOfInZone':
+    case 'hourOfInZone': {
+      const [dt, zone] = args
+      if (!isTemporal(dt)) {
+        throw new Error(`函数 "${name}" 要求日期时间值，实际为 ${typeName(dt)}`)
+      }
+      const parts = zoneParts(dt as DateValue | DateTimeValue, zone)
+      if (name === 'hourOfInZone') return Number(partValue(parts, 'hour')) % 24
+      return makeDate(
+        Number(partValue(parts, 'year')),
+        Number(partValue(parts, 'month')),
+        Number(partValue(parts, 'day')),
+      )
+    }
+    case 'todayInZone':
+    case 'hourInZone': {
+      const [zone] = args
+      const n = new Date()
+      const nowDt: DateTimeValue = {
+        __datetime: true,
+        y: n.getUTCFullYear(), m: n.getUTCMonth() + 1, d: n.getUTCDate(),
+        H: n.getUTCHours(), M: n.getUTCMinutes(), S: n.getUTCSeconds(),
+      }
+      const parts = zoneParts(nowDt, zone)
+      if (name === 'hourInZone') return Number(partValue(parts, 'hour')) % 24
+      return makeDate(
+        Number(partValue(parts, 'year')),
+        Number(partValue(parts, 'month')),
+        Number(partValue(parts, 'day')),
+      )
+    }
     default:
       throw new Error(`未知函数 "${name}"`)
   }
@@ -620,8 +733,8 @@ export function validateExpression(expression: string): string[] {
   }
   const errors = staticTypeErrors(ast)
   const topType = inferType(ast)
-  if (topType === 'number' || topType === 'string' || topType === 'date' || topType === 'datetime') {
-    errors.push('条件表达式必须产出布尔值（比较或逻辑运算），不能直接使用算术结果/数值/字符串/日期')
+  if (['number', 'string', 'date', 'datetime', 'any'].includes(topType)) {
+    errors.push('条件表达式必须产出布尔值（比较或逻辑运算），不能直接使用算术结果/数值/字符串/日期/随机选择结果')
   }
   return errors
 }

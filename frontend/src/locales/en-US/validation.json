@@ -139,6 +139,7 @@
     "COND_EDGE_UNCONFIGURED": "Node {{owner}}: the edge to node {{nodeId}} is not assigned to any branch",
     "COND_EXPRESSION_EMPTY": "Node {{owner}}: branch {{branch}} must have an expression",
     "COND_EXPRESSION_INVALID": "Node {{owner}}: invalid expression on branch {{branch}}: {{detail}}",
+    "COND_INVALID_TIMEZONE": "Timezone must be a valid IANA timezone (e.g. Asia/Shanghai)",
     "COND_LLM_DESCRIPTION_EMPTY": "Node {{owner}}: branch {{branch}} must have a semantic description",
     "COND_LLM_DESCRIPTION_TOO_LONG": "Node {{owner}}: the description of branch {{branch}} must be at most {{max}} characters",
     "COND_LLM_EXPRESSION_FORBIDDEN": "Node {{owner}}: LLM branch {{branch}} must not contain a rule expression",
