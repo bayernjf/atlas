@@ -39,3 +39,7 @@
 ## 打包 AH 落码收口＝影子运行 SSE 流式化
 
 ✅ **打包 AH 落码收口＝影子运行 SSE 流式化（docs/114；2026-10-09）**：新端点 `POST /api/graphs/{graph_id}/shadow-runs/stream`（operate，StreamingResponse；后台 daemon 线程跑 run_graph(shadow=True)，节点事件经 queue 实时 SSE、终帧 event:result 携带完整 ShadowRun；异常沉淀 status=error、HTTP 不报错、不设 event:error），影子纪律逐字不变；前端 apiClient.streamShadowRun＋ShadowRunModal「实时进度」顶层节点 running→done Tag＋i18n。门：后端 2582/173/0（基线 2578 ＋流式 4）、前端 915/2（基线 909 ＋apiClient 3 ＋Modal 3）、oxlint/tsc/build 过；浏览器冒烟三节点三绿、自动退款、SHADOW_DRY_RUN。零新依赖/零迁移/无 ADR。D26 不解除（自动旁路/趋势对比/跨租户共享/长保留归档仍缓做）。
+
+## 打包 AI 落码收口＝D29 SchemaRegistry 第四实体接入
+
+✅ **打包 AI ＋ 第二批 docs-only 收口＝D29 第四实体评估 / D21·D32 整体评估 / D49 MCP 加面预备契约（docs/115–117；2026-10-09）**：纯文档、无代码/迁移/依赖。D29 第四实体（部署 RolloutModal）经实证阻断于「自定义控件契约＋oneOf/discriminator 异构数组」、暂不落码（技能/记忆无配置面、触发未到）；D21/D32「钉版＋体检＋手动升级＋升级后回归」已闭环、工程侧收尽，剩余外部化；D49 三加面方向（HTTP 远端/写能力/resources·prompts·扩展）已预契化、触发未到，真做先记 ADR。**工程内干净候选再次清空，剩余未闭合项触发全部外部化。**

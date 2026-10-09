@@ -3,6 +3,12 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔前端〕Dashboard 首页与页头布局响应式修复（2026-10-10）
+
+- **修复**：Dashboard 功能按钮行 `<Space wrap>`（11 个按钮横向硬排溢出 231px、触发页面级横向滚动条）；`.page-header/.editor-header` 加 `flex-wrap: wrap` 兜底。
+- **验证**：浏览器实测修复后按钮自动换行、页面无横向滚动；antd Modal 固定宽依赖 v5 自带 `max-width: calc(100vw - 32px)` 自动收缩。
+- **门**：前端 vitest **956 passed／2 skipped**、oxlint 0/0、tsc 0、build 过。
+
 ### 〔前端〕异构数组判别渲染落码收口：D29 解锁路径第 2 步（docs/119，2026-10-10）
 
 - **渲染层判别异构数组最小子集落地**：`oneOfDiscriminant` 纯函数（const 判别键提取，MetaSchema 封闭四 x-* 不新增）＋formTree array 分支逐元素判别（命中分支递归构建、未知判别值/非 object 元素降级 json）＋`defaultValueFor` 首个分支默认对象（判别键=const＋字段递归默认）；resolveWidget 注释同步（array 通道语义不变）。
