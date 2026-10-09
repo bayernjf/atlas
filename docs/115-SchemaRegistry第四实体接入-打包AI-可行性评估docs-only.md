@@ -81,7 +81,7 @@ type GateConfig = {
 **推荐的最小解锁顺序（每步独立立项）：**
 
 1. **docs-only 先立「自定义控件扩展契约」**：明确 `registerWidget` 的注册形状、`x-widget` 声明与消费范围、props/校验/降级契约；✅ **2026-10-10 已立并落码收口（docs/118，第 1 步闭环）**。
-2. 同批或下一批补「异构数组（oneOf/discriminator 最小子集）」的 MetaSchema 与 formTree 支持；⬜ **仍缓做**（触发未到，gate 片不依赖它）。
+2. ✅ **2026-10-10 已落码收口（docs/119，`071aecc` feat→`b1c74a0` test＋docs 收口）**：oneOf/discriminator 渲染最小子集——const 判别键匹配分支子树（`oneOfDiscriminant`＋formTree array 分支逐元素判别、未知判别值降级 json）、新增行取首个分支默认对象（`defaultValueFor` 判别键=const 组装）、判别键只读（SelectWidget const 单选项 disabled）；MetaSchema 封闭四 x-* 不新增；object 级顶层 oneOf／嵌套 oneOf／判别键切换／L1 动态诊断仍非目标。
 3. 契约稳定后，再把 `RolloutModal` 的规则区与门禁指标表分两片迁入（先 gate 标量与指标表，再异构规则数组），每片一原子。✅ **2026-10-10 第一片（gate 标量与指标表）已落码收口**（两原子 `95041d4` feat→`ee928ac` test＋本 docs 收口）：gate 配置面迁入 forms 内核——`buildGateSchema()`（四字段：observeMinutes/minSamples/autoRollback 走内置 number/switch、metrics 数组声明 `x-widget: deploy-gate-metrics`）＋部署业务控件 `GateMetricsWidget`（固定三行 `GATE_METRIC_SPECS` 可空阈值编辑，复用自 `setGateMetric` 提炼的 `upsertGateMetric` 纯函数）＋独立 `buildDeployRegistry()`（内置九件＋部署组，与工具/节点表单隔离、互不污染）；RolloutModal gate 区改挂 `FormRenderer source="node"`，后端 `GateConfig` 形状不变、纯前端渲染层替换。门：前端 vitest **943 passed／2 skipped**、oxlint 0/0、tsc 0、build 过；真实浏览器冒烟（admin-a）确认观察窗 60／最少样本 3／自动回滚开关／三行指标阈值 0.02·0.10＋included Tag／metricsHint 全部渲染。**两处 UI 微差照实**：观察窗字段不再带「分钟」后缀（NumberWidget 无 suffix 槽，单位改放 label 文案）、指标表上方新增「门控指标」字段 label（原手写 UI 无）。⬜ **第二片（异构规则数组＝internal/lowValueBucket/canary 手写区）仍缓做**，依赖第 2 步 oneOf/discriminator，触发未到。
 
 **重开判据（满足其一即应重评本件）：**

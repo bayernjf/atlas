@@ -73,3 +73,10 @@ MetaSchema 封闭四 x-*（x-variable/x-widget/x-ref/x-outputSchema，docs/118 �
 
 - 本件为纯契约设计：**无代码改动、无测试、无迁移、无依赖变更**。
 - 关联：docs/118（第 1 步契约）；docs/115（第 2/3 步解锁路径）；docs/14 D29 行；docs/106（ZX 声明面结构化先例——递归桥接同族）。
+
+### 7.1 落码收口注记（2026-10-10）
+
+- **落码已完成**：§3 全部落地（`071aecc` feat→`b1c74a0` test＋docs 收口）——`oneOfDiscriminant` 纯函数（const 判别键提取）、formTree array 分支逐元素判别（命中分支 buildFormTree、未知判别值/非 object 元素降级 json）、`defaultValueFor` oneOf 首个分支默认对象（判别键=const＋字段递归默认）、resolveWidget 仅注释同步（array 通道语义不变）。测试 `oneOfContract.test.tsx` 13 例（判别提取 5＋分支匹配 4＋默认值 3＋渲染 1）。
+- **落码偏差登记**：无契约级偏差——测试数据 BucketRule 分支的 `op` 字段按 §2.1「恰好一个键带 const」去掉 const（`op` 形状不变、渲染为 text 而非 select）；判别键只读展示由 SelectWidget const 单选项 disabled 现成行为承担，未新增代码路径。
+- **门（实跑）**：前端 vitest **956 passed／2 skipped**（基线 943 → +13）、oxlint 0/0（204 files）、tsc 0、build 过、守护门 8 passed。零新依赖/零迁移/无 ADR。
+- **后续**：第 3 步第二片（RolloutModal 规则区迁移）依赖本批渲染能力，另立批（判别键切换交互按 docs/119 §4 非目标另设计）。

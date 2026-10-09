@@ -3,6 +3,13 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔前端〕异构数组判别渲染落码收口：D29 解锁路径第 2 步（docs/119，2026-10-10）
+
+- **渲染层判别异构数组最小子集落地**：`oneOfDiscriminant` 纯函数（const 判别键提取，MetaSchema 封闭四 x-* 不新增）＋formTree array 分支逐元素判别（命中分支递归构建、未知判别值/非 object 元素降级 json）＋`defaultValueFor` 首个分支默认对象（判别键=const＋字段递归默认）；resolveWidget 注释同步（array 通道语义不变）。
+- **原子**：`071aecc` feat(frontend) → `b1c74a0` test(frontend) → docs 收口。
+- **门**：前端 vitest **956 passed／2 skipped**（基线 943 → +13）、oxlint 0/0、tsc 0、build 过；守护门 8 passed。
+- **非目标维持**：object 级顶层 oneOf、嵌套 oneOf、判别键切换交互、L1 动态诊断、RolloutModal 规则区迁移（第 3 步第二片另立批）。零新依赖/零迁移/无 ADR。
+
 ### 〔前端〕异构数组判别渲染契约立项：D29 解锁路径第 2 步（docs/119，2026-10-10，docs-only）
 
 - 契约设计：forms 内核补「判别异构数组渲染最小子集」——`items.oneOf` 各分支以标准 keyword `const` 为判别键（MetaSchema 封闭四 x-* 不新增），元素按实际值匹配分支子树渲染、新增行取首个分支默认对象、判别键只读展示（SelectWidget const 单选项 disabled）。
