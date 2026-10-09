@@ -7,7 +7,7 @@
  * （未注册控件名降级 json）。任何变更都产出「下一整个根对象」，不改入参。
  */
 import { createElement, type ReactElement, type ReactNode } from 'react'
-import { Button, Empty, Input, Typography } from 'antd'
+import { Button, Empty, Input, Select, Typography } from 'antd'
 import type { MetaSchema } from '../schemas/metaSchema'
 import type { Diagnostic } from '../validation/diagnostics'
 import { renderMarkers } from '../validation/markers'
@@ -17,7 +17,10 @@ import {
   buildFormTree,
   defaultValueFor,
   diagnosticsAt,
+  getAtPath,
   nextKeyName,
+  oneOfBranchDefault,
+  oneOfDiscriminant,
   removeAtPath,
   renameKeyAtPath,
   setAtPath,
@@ -50,6 +53,10 @@ export type FormRendererProps = {
   registry?: WidgetRegistry
   /** M4：UISchema 最小子集（ui:group 视觉分组 + hiddenWhen 条件显隐），仅作用于根 object。 */
   uiSchema?: UiSchema
+  /** docs/120 §2.4：整表单禁用（rulesLocked 等运行态锁）。实现＝FormNodeView 输出包
+   * `<fieldset disabled>`（浏览器原生禁用行内全部控件，含数组/键值行增删按钮）；
+   * 缺省 false 输出不变，零 widgets 改动。 */
+  disabled?: boolean
 }
 
 type ViewContext = {
@@ -61,6 +68,7 @@ type ViewContext = {
   nodeId?: string
   diagnostics?: Diagnostic[]
   uiSchema?: UiSchema
+  disabled: boolean
 }
 
 export function FormRenderer({
@@ -73,6 +81,7 @@ export function FormRenderer({
   diagnostics,
   registry = widgetRegistry,
   uiSchema,
+  disabled = false,
 }: FormRendererProps): ReactElement {
   const tree = applyUiSchema(buildFormTree(schema, value, { source }), value, uiSchema)
   const ctx: ViewContext = {
@@ -84,6 +93,7 @@ export function FormRenderer({
     nodeId,
     diagnostics,
     uiSchema,
+    disabled,
   }
   const unmapped = diagnosticsAt(diagnostics, tree.pointer)
 
@@ -110,10 +120,18 @@ export function FormRenderer({
 function FormNodeView({ node: rawNode, ctx }: { node: FormNode; ctx: ViewContext }): ReactElement {
   // 渲染期装饰：数组行/键值行等懒建子树也在此统一烘焙嵌套 UISchema 文案。
   const node = decorateNodeForRender(rawNode, ctx.uiSchema)
-  if (node.kind === 'group') return <GroupView node={node} ctx={ctx} />
-  if (node.kind === 'array') return <ArrayView node={node} ctx={ctx} />
-  if (node.kind === 'keyvalue') return <KeyValueView node={node} ctx={ctx} />
-  return <WidgetView node={node} ctx={ctx} />
+  let inner: ReactElement
+  if (node.kind === 'group') inner = <GroupView node={node} ctx={ctx} />
+  else if (node.kind === 'array') inner = <ArrayView node={node} ctx={ctx} />
+  else if (node.kind === 'keyvalue') inner = <KeyValueView node={node} ctx={ctx} />
+  else inner = <WidgetView node={node} ctx={ctx} />
+  // docs/120 §2.4：disabled 时包 fieldset（浏览器原生禁用行内全部表单控件）。
+  if (!ctx.disabled) return inner
+  return (
+    <fieldset disabled style={{ border: 'none', margin: 0, padding: 0 }}>
+      {inner}
+    </fieldset>
+  )
 }
 
 function Field({
@@ -199,6 +217,10 @@ function ArrayView({ node, ctx }: { node: FormArrayNode; ctx: ViewContext }): Re
     maxItems === undefined
       ? t('form.add')
       : t('form.addCount', { count: node.items.length, max: maxItems })
+  // docs/120 §2.3：判别异构数组行头段切换——items.oneOf 判别成立时，行内 const 判别键
+  // 字段不再渲染（原只读 Select），改由行头 Select 承担：选项=全部分支 const 值，
+  // 当前值=该行判别值；切换→行值替换为目标分支默认对象（oneOfBranchDefault）。
+  const discriminant = itemSchema.oneOf ? oneOfDiscriminant(itemSchema.oneOf) : null
   return (
     <div className="property-field form-array" style={{ marginBottom: 8 }} data-pointer={node.pointer}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -219,34 +241,70 @@ function ArrayView({ node, ctx }: { node: FormArrayNode; ctx: ViewContext }): Re
       {node.items.length === 0 && (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('form.empty')} />
       )}
-      {node.items.map((item, index) => (
-        <div
-          key={item.pointer}
-          className="form-array-item"
-          data-pointer={item.pointer}
-          style={{
-            display: 'flex',
-            gap: 8,
-            alignItems: 'flex-start',
-            border: '1px solid var(--atlas-color-border, #d9d9d9)',
-            borderRadius: 6,
-            padding: 8,
-            marginTop: 8,
-          }}
-        >
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <FormNodeView node={item} ctx={ctx} />
-          </div>
-          <Button
-            size="small"
-            danger
-            disabled={!canRemove}
-            onClick={() => ctx.onChange(removeAtPath(ctx.root, [...node.path, index]))}
+      {node.items.map((item, index) => {
+        const rowValue = getAtPath(ctx.root, item.path)
+        const rowDiscriminant =
+          discriminant &&
+          rowValue !== null &&
+          typeof rowValue === 'object' &&
+          !Array.isArray(rowValue)
+            ? String((rowValue as Record<string, unknown>)[discriminant.key])
+            : undefined
+        // 判别数组行：隐藏行内 const 判别键字段（行头 Select 承担展示与切换）。
+        const hiddenDiscKey =
+          discriminant && item.kind === 'group' && discriminant.key
+            ? discriminant.key
+            : null
+        const rowNode =
+          hiddenDiscKey && item.kind === 'group'
+            ? {
+                ...item,
+                children: (item as FormGroupNode).children.filter(
+                  (child) => child.path[child.path.length - 1] !== hiddenDiscKey,
+                ),
+              }
+            : item
+        return (
+          <div
+            key={item.pointer}
+            className="form-array-item"
+            data-pointer={item.pointer}
+            style={{
+              display: 'flex',
+              gap: 8,
+              alignItems: 'flex-start',
+              border: '1px solid var(--atlas-color-border, #d9d9d9)',
+              borderRadius: 6,
+              padding: 8,
+              marginTop: 8,
+            }}
           >
-            {t('common:button.delete')}
-          </Button>
-        </div>
-      ))}
+            {discriminant && (
+              <Select
+                style={{ width: 150, flex: 'none' }}
+                size="small"
+                value={rowDiscriminant}
+                options={[...discriminant.branches.keys()].map((value) => ({ value, label: value }))}
+                onChange={(nextValue) => {
+                  const nextRow = oneOfBranchDefault(discriminant, nextValue)
+                  if (nextRow) ctx.onChange(setAtPath(ctx.root, [...node.path, index], nextRow))
+                }}
+              />
+            )}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <FormNodeView node={rowNode as FormNode} ctx={ctx} />
+            </div>
+            <Button
+              size="small"
+              danger
+              disabled={!canRemove}
+              onClick={() => ctx.onChange(removeAtPath(ctx.root, [...node.path, index]))}
+            >
+              {t('common:button.delete')}
+            </Button>
+          </div>
+        )
+      })}
     </div>
   )
 }

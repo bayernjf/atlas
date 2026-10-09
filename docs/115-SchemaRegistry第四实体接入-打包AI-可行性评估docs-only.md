@@ -100,4 +100,4 @@ type GateConfig = {
 
 - 本件为纯文档评估，**无新增用例、无代码改动、无迁移、无依赖变更**。
 - 关联：D29 形状脉络见 docs/105（ZW）、docs/106（ZX）、docs/103（ZT）；MCP 加面（D49）的 docs-only 预备契约另见 docs/117；D21/D32 版本钉版整体评估见 docs/116。
-- **2026-10-10 追加（部署 gate 片落码收口）**：docs/115 §5 解锁路径第 3 步第一片「gate 标量与指标表迁 forms」已落码收口（`95041d4`＋`ee928ac`＋本 docs 收口原子；前端 vitest 943/2、oxlint 0/0、tsc 0、build 过、冒烟通过），部署配置面自 node/tool/card 之后成为第四实体接入 forms 的**第一片实际落地**；第 2 步异构数组与第 3 步第二片仍缓做、D29 整体不解除。
+- **2026-10-10 追加（部署 gate 片落码收口）**：docs/115 §5 解锁路径第 3 步第一片「gate 标量与指标表迁 forms」已落码收口（`95041d4`＋`ee928ac`＋本 docs 收口原子；前端 vitest 943/2、oxlint 0/0、tsc 0、build 过、冒烟通过），部署配置面自 node/tool/card 之后成为第四实体接入 forms 的**第一片实际落地**；第 2 步异构数组已落码收口（docs/119）；**第 3 步第二片（RolloutModal 规则区迁移）2026-10-10 落码收口（docs/120 §8，`197e02e`→`179bd3f`→`b29f1cf`→docs 收口）**：规则区三行手写迁 forms 判别异构数组（三分支判别键 to）＋`normalizeRolloutRules` 段唯一/固定序/bucket 注入 field-op＋FormRenderer `disabled` prop＋判别键切换交互（docs/119 §4 交付项：ArrayView 判别数组行头段切换 Select、`oneOfBranchDefault` 目标分支默认对象、行内 const 判别键隐藏）；前端 vitest 972/2、守护门 8 passed、真实浏览器冒烟段切换全链路通过。**D29 解锁路径第 3 步两片全部闭环**，SchemaRegistry 六类实体通用化等 D29 整体仍缓做。
