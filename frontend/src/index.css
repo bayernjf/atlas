@@ -47,6 +47,16 @@ body,
   margin: 0 auto;
 }
 
+/* 卡片统一 hover 反馈（2026-10-10 主题打磨） */
+.ant-card {
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.ant-card-hoverable:hover,
+.page-content .ant-card:hover {
+  box-shadow: var(--atlas-shadow-card-hover);
+}
+
 .editor-sider {
   padding: 12px;
   overflow: auto;
@@ -58,10 +68,43 @@ body,
   background: var(--atlas-color-bg-canvas);
 }
 
+/* 画布高度链修复（2026-10-10）：外层 Layout 撑开内层，Content flex 占满，canvas-panel 100% 才生效 */
+.editor-layout > .ant-layout {
+  flex: 1;
+  min-height: 0;
+}
+
+.editor-content .canvas-panel {
+  height: 100%;
+}
+
 .canvas-panel {
   width: 100%;
   height: 100%;
   position: relative;
+}
+
+.canvas-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  pointer-events: none;
+  color: var(--atlas-color-text-primary);
+  opacity: 0.45;
+  z-index: 5;
+}
+
+.canvas-empty-icon {
+  font-size: 28px;
+  line-height: 1;
+}
+
+.canvas-empty-hint {
+  font-size: 13px;
 }
 
 .editor-footer {
@@ -116,27 +159,41 @@ body,
   background: var(--atlas-color-bg-container);
   border: 1px solid var(--atlas-color-border);
   border-left: 4px solid var(--atlas-color-primary);
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: grab;
   user-select: none;
+  transition: box-shadow 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
+}
+
+.node-palette-item:hover {
+  box-shadow: 0 2px 8px var(--atlas-shadow-node-hover);
+  border-color: var(--atlas-color-primary);
+  transform: translateY(-1px);
 }
 
 .node-palette-item:active {
   cursor: grabbing;
+  transform: none;
 }
 
 .atlas-node {
   min-width: 150px;
   background: var(--atlas-color-bg-container);
   border: 2px solid var(--atlas-color-primary);
-  border-radius: 8px;
+  border-radius: 10px;
   font-size: 12px;
-  box-shadow: 0 1px 4px var(--atlas-shadow-node);
+  box-shadow: 0 1px 3px var(--atlas-shadow-node), 0 4px 12px rgba(0, 0, 0, 0.06);
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.atlas-node:hover {
+  box-shadow: 0 2px 6px var(--atlas-shadow-node-hover), 0 8px 24px rgba(0, 0, 0, 0.1);
 }
 
 .atlas-node-selected {
   outline: 2px solid var(--atlas-color-primary);
   outline-offset: 1px;
+  border-radius: 10px;
 }
 
 .atlas-node-running {
@@ -206,7 +263,7 @@ body,
   justify-content: space-between;
   padding: 3px 8px;
   color: var(--atlas-color-text-inverse);
-  border-radius: 5px 5px 0 0;
+  border-radius: 7px 7px 0 0;
   font-weight: 600;
 }
 
