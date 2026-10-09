@@ -1108,6 +1108,33 @@ class PgMonitoringStore:
             ).first()
         return self._run_from_row(row) if row else None
 
+    def list_runs_for_report(
+        self,
+        graph_id: str | None,
+        since_iso: str,
+        until_iso: str,
+    ) -> list[RunRecord]:
+        """docs/113：窗口 ``[since, until)`` 内运行（started_at 升序）；PG 全量持久化即长保留。
+
+        started_at 为 TEXT（UTC ISO 同格式），字符串比较等价时间序。
+        """
+        sql = (
+            f"SELECT {self._RUN_LIST_COLS} FROM monitoring_runs "
+            "WHERE tenant_id = :tenant_id AND started_at >= :since AND started_at < :until"
+        )
+        params: dict[str, Any] = {
+            "tenant_id": self._tenant_id,
+            "since": since_iso,
+            "until": until_iso,
+        }
+        if graph_id:
+            sql += " AND graph_id = :graph_id"
+            params["graph_id"] = graph_id
+        sql += " ORDER BY started_at ASC"
+        with self._engine.connect() as conn:
+            rows = conn.execute(text(sql), params).all()
+        return [self._run_list_from_row(r) for r in rows]
+
     @staticmethod
     def _run_from_row(r: Any) -> RunRecord:
         return RunRecord(

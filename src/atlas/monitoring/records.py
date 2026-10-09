@@ -292,6 +292,20 @@ class MonitoringStore:
         with self._lock:
             return next((run for run in self._runs if run.id == run_id), None)
 
+    def list_runs_for_report(
+        self,
+        graph_id: str | None,
+        since_iso: str,
+        until_iso: str,
+    ) -> list[RunRecord]:
+        """docs/113：取窗口 ``[since, until)`` 内运行（升序）；内存档仅覆盖 ring 数据。"""
+        with self._lock:
+            runs = list(self._runs)
+        if graph_id:
+            runs = [run for run in runs if run.graph_id == graph_id]
+        runs = [run for run in runs if since_iso <= run.started_at < until_iso]
+        return sorted(runs, key=lambda run: run.started_at)
+
     def _apply_escalations_locked(self) -> list[Alert]:
         """docs/33 §5.2：读时惰性把超时 open warning 升级为 critical（回写进程内告警）；
         返回本次真正升级的告警，供锁外发 escalated 通知（升级幂等、只触发一次）。"""
