@@ -3,6 +3,13 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔文档〕打包 AI ＋ 第二批 docs-only：D29 第四实体评估、D21/D32 整体评估、D49 MCP 加面预备契约（docs/115–117，2026-10-09）
+
+- **纯文档、无代码/迁移/依赖**：第一批 6 项至此全部处理完（D29 经实证评估转 docs-only），第二批 D21/D49 以评估/预备契约落地。
+- **docs/115 D29 第四实体接入可行性评估＝暂不落码**：node/tool/card 三类来源已接入 forms；技能/记忆无现存配置面、触发未到；部署（RolloutModal）为异构规则数组（discriminator `to`）＋固定行门禁指标阈值表，当前 forms 内核表达不了，阻断于「自定义控件扩展契约＋oneOf/discriminator 异构数组」（D29 明确缓做余部），硬迁会撑大内核或留半成品；解锁路径与重开判据见文档。
+- **docs/116 D21/D32 整体评估＝工程内可闭环部分已全部收尽**：docs/04 §14「钉版（M6）＋升级体检（docs/28）＋手动升级（ZU2）＋升级后回归（复用发布门禁 run_release_gate）」已完整闭环、不欠工程动作；剩余（子图市场/组织共享/跨运营体引用、多实例生产发布、配置中心热同步/独立网关/真实 ingress/自动放量）触发条件全部外部化。
+- **docs/117 D49 MCP 加面预备契约＝触发未到、不授权落码**：②HTTP 远端（单 POST/无会话、Origin 校验 MUST、Bearer→principal→租户分区，弃用 env 单租户作 HTTP 默认）、③写能力（不绕 docs/62 三道闸、对齐人工 Gate/审批、权限位映射，按 起run→消息→资金 分级）、resources/prompts/Tasks/elicitation（sampling/roots/logging 已弃、①自研子集 T33 已弃）；推荐顺序 HTTP(只读)→resources/prompts→写能力，真做先记 docs/10 §4 ADR。
+
 ### 〔工程〕打包 AH 收口：影子运行 SSE 流式化（docs/114，2026-10-09 立项+同日收口）
 
 - **D26 再取回「影子 SSE」最小片（docs/114 §6；D26 不解除余部）**：新增 `POST /api/graphs/{graph_id}/shadow-runs/stream`（operate，StreamingResponse；后台 daemon 线程跑 `run_graph(shadow=True)`，节点事件经 queue 实时 SSE 下发、终帧 `event: result` 携带完整 ShadowRun；异常沉淀 status=error、HTTP 不报错、不设 event:error），影子纪律逐字不变（预置审批/wait 秒过、独立 broker/tracer、不写 run_store/RunRecord、不触发告警灰度、不产 tool_metric）；前端 `apiClient.streamShadowRun`（POST＋ReadableStream 分帧、节点事件转 onEvent、终帧 resolve、!ok 照 streamRun）＋`ShadowRunModal` 发起改流式、「实时进度」顶层节点 running→done Tag＋i18n zh/en。

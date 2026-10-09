@@ -19,3 +19,7 @@
 ## 打包 ZT 落码收口＝规则模板配置表单化（RuleConfigEditor 共享）
 
 ✅ **打包 ZT 落码收口＝规则模板配置表单化（RuleConfigEditor 共享）（2026-10-08 立项+同日收口；docs/103 §6；docs/13 U1231–U1236；docs/14 D28「规则配置 UI 表单化」闭合、D28 整体不解除）**：Monitoring 生效规则表单抽成纯受控共享组件 `RuleConfigEditor`＋`lib/ruleConfig.ts`（默认值/结构化校验），模板市场新建/编辑 Modal 以表单替换裸 JSON、提交前拦截非法配置；顺带修复 ZS 表单三个 Form.Item 缺 name 的绑定缺陷。四原子 de2a73f→5f2f1f0→5add6a2→b38af24；前端 848/2（+20）、oxlint 0/0、build 过、后端零改动（守护门 24）。
+
+## 打包 AC 落码收口＝AI 评估 Harness v1（离线批评估）
+
+✅ **打包 AC 落码收口＝AI 评估 Harness v1（离线批评估）（2026-10-09 立项+同日收口，承接用户「那你搞」对 docs/107 §六 B 档的批复；docs/110 §一；docs/13 打包 AC 小节 U1278–U1284；docs/14 D62 翻 ✅、D62 不解除）**：`evaluation_task` 契约（docs/06 §9.2）从纸面落成可执行离线批评估——新 `evaluation/` 包（models 六模型＋runner 离线批评估：决策客户端可注入确定性实现做无模型回归、approval 帧收集 `request_human_approval`、verify 复用 condition 白名单表达式＋`{outputs, **inputs}` 上下文、case 级异常不毁批）＋迁移 047 `evaluations`（PK (tenant_id,id)、summary/cases JSONB、复合索引）＋两档 store（内存 capacity 200、PG 档 UPSERT/最新在前/clear 同清）＋registry `evaluation_store` 装配＋`POST /api/evaluations`（admin，同步跑批，404/422/403）＋`GET /api/evaluations`（admin，limit clamp 1..200）＋docs/03 三错误码登记。**落码期两处契约细化**（docs/110 顶部）：审批/等待预置（`preset_all_approvals`＋`preset_all_wait_events`，影子惯例、loader 零改动，离线批量不被真挂起拖死）与 verify 上下文（`{{outputs.<node>.<field>}}`/`{{<input键>}}`、缺失 → False）。黄金 5 例对账 `task_success_rate=0.8`/`decision_accuracy=0.75`。**门（实跑）**：后端全量 **2517 passed／172 skipped**（基线 2500/171＋17）、守护门 8 passed、PG 集成 1 passed（5433 临时库：迁移 047 幂等＋两档写读对账＋跨租户隔离）。前端零改动／零新依赖／无 ADR。
