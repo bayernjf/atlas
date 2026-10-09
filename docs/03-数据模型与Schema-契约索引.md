@@ -1319,3 +1319,8 @@ OperationDescriptor = {
 
 - **新错误码（落码批另立后进 docs/03 取值集合与 docs/17 文案目录）**：`RULE_TEMPLATE_CONFIG_INVALID`（422，config 未过 `alerts.validate_rules`）、`RULE_TEMPLATE_NAME_CONFLICT`（409，租户内重名）。
 - **`user_rule_templates` 表（迁移 045，打包 ZS）**：PK `(tenant_id, id)`、id＝`urt-{seq}`（seq 取 `storage_id_seq`）、unique `(tenant_id, seq)`、tags/config JSONB（config NOT NULL）；挂 `TenantServices.rule_template_store`（内存/PG 两档，reset 清本租户）；形状权威 docs/102。
+
+## 错误码注记（打包 AC 立项，2026-10-09）
+
+- **新错误码（docs/110 §一.6；契约层识别、中文 detail、不进 docs/17 文案目录，照 MESSAGE_TEMPLATE_* 惯例）**：`EVALUATION_TASK_INVALID`（422，evaluation_task 形状非法——pydantic ValidationError 折叠：test_cases 越界/metrics 枚举外/expected 未声明）、`EVALUATION_GRAPH_NOT_FOUND`（404，目标图不存在，含跨租户）、`EVALUATION_VERIFY_INVALID`（verify 表达式非法：端点校验层归 EVALUATION_TASK_INVALID，运行期非法记 case 级 error 不使整批失败，本码为语义标识不单独出 HTTP 体）。
+- **`evaluations` 表（迁移 047，打包 AC）**：PK `(tenant_id, id)`、id＝`ev-{uuid4[:12]}`、summary/cases JSONB（EvaluationRun 形状，docs/110 §2.1）；两档 store（进程内 EvaluationStore capacity 200 / PgEvaluationStore），**reset 同清**。

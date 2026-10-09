@@ -1112,7 +1112,7 @@ evaluation_task:
 - [x] 适配器类型枚举：web/api/mobile/desktop/database/iot/message（W3-W4 已用于 `adapter_type` 字段；web 类型已实现；api 类型 2026-09-15 随 `httpapi/` 通用 HTTP 适配器落地，契约 04 §4.6；**database 与 message 类型 2026-09-15 随 `database/`（query/execute 双能力）、`message/`（message/send 进程内 sink）落地，契约 04 §4.7/§4.8**）
 - [ ] 记忆检索分层与 memory_config 阈值（05 2.3）——**愿景，M11 不实现、缓做 D35**（working/summary/case/决策隐式注入）
 - [x] **M11（2026-09-19 四批落码收口 `5441902`/`58d936c`/`73e53bd`/`75c4150`，docs/26/ADR T23；U72–U99 转正式）**：MemoryItem fact/preference 字段与 EMBED_DIM=256 迁移严格一致；EmbeddingProvider 本地确定性（纯 stdlib、录制回放确定）；MemoryRepository 第九个两档（进程内 / pgvector）remember/recall/list/**update**/delete/clear；memory/remember(write)·memory/recall(read) 两能力 schema 过 Capability 白名单；REST `GET /api/memories`、`GET /api/memories/search`（viewer+）+ `DELETE /api/memories/{id}`（admin）+ docs/28 批 4⑩ `POST/PUT /api/memories`（operate，source=manual，U192–U201）；批 4⑪ `GET /api/graphs/{id}/subgraph-upgrades`（read，U202–U211）；reset 清空、跨租户 404
-- [ ] 评估指标三元组（06 9.2 metrics）
+- [x] 评估指标三元组（06 9.2 metrics）——**2026-10-09 打包 AC 立项（docs/110，D62）**：`evaluation_task` 模型＋离线批评估 runner＋`POST /api/evaluations`＋`GET /api/evaluations`＋迁移 047，验收 U1278 起（docs/12 本条此前未勾＝无实现）
 
 ---
 

@@ -3,6 +3,11 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔工程〕打包 AC 收口：AI 评估 Harness v1（离线批评估）（docs/110，2026-10-09 立项+同日收口）
+
+- **D62 取回闭合（docs/110 §六；D62 不解除后续面）**：`evaluation_task` 契约（docs/06 §9.2）落成可执行离线批评估——新 `evaluation/` 包（models 六模型＋runner：确定性决策客户端注入做无模型回归、approval 帧收集 `request_human_approval`、verify 复用 condition 白名单表达式＋`{outputs, **inputs}` 上下文、case 级异常记 error 不毁批）；迁移 047 `evaluations`（PK (tenant_id,id)、summary/cases JSONB、复合索引）；两档 store（内存 capacity 200／PG UPSERT 最新在前 clear 同清）；`POST /api/evaluations`＋`GET /api/evaluations`（admin，404/422/403）；docs/03 错误码登记（EVALUATION_TASK_INVALID/EVALUATION_GRAPH_NOT_FOUND/EVALUATION_VERIFY_INVALID）。落码期两处契约细化（审批/等待预置、verify 上下文）回填 docs/110 顶部。
+- **门（实跑 2026-10-09）**：后端全量 2517 passed/172 skipped（+17）；守护门 8 passed；PG 集成 1 passed（5433 临时库：迁移 047 幂等＋两档对账＋跨租户隔离）。前端零改动。零新依赖/无 ADR。
+
 ### 〔工程〕打包 AB 收口：意图识别/信息抽取/内容生成三节点（docs/109，2026-10-09 立项+同日收口）
 
 - **D61 取回闭合（docs/109 §6）**：`SUPPORTED_NODE_TYPES` 加 intent_recognition/info_extraction/content_generation；新 `llm/structured.py` 三客户端（classify_intent/extract_fields/generate_content）走 model_config per-tenant（第 5 消费点）、节点 model 覆盖、response_format json_object；无模型显式 FAILED（`LLM_STRUCTURED_UNAVAILABLE`+node_id，U1149 通道补 runtime.json zh/en）；LLM 非法形状本地兜底；DSL 校验（intents/fields/template/maxLength 全量约束，parse_graph 即抛）；textSource 走 interpolate 解析 {{路径}}；前端 nodeCatalog 三节点入册+i18n zh/en+属性面板走 forms 内核（SchemaRegistry 三 schema+UISchema+StructuredConfig）。
@@ -92,6 +97,8 @@
 - **两条只登记不擅自动**：演示图要不要接真「人机协作」节点＝产品方向（**14 D57**，含建议与复开条件；改的是内置模板形状，挂着 docs/03 契约与一批 e2e）；试用者自助重置按钮需要一个"演示面能力位"端点＝新契约（**14 D59**）。另把"SSE `error` 事件不带 code、第三方库内部字符串原样进客户界面"登成 **14 D58**。
 - **一次度量自省（写进 docs/13 防复发）**：第一版报了 6 条 FINDING，其中**两条是脚本自己的错**——拿"运行状态必须是 suspended"判场景 B（演示图没有审批节点，`human_review` 也算正常跑完）、拿**节点数**判"草稿载入没有"（NL 生成的退款草稿恰好也是 3 个节点、连标题都一样）。改成比对「导出 Graph JSON」的字节内容（1904B→1890B，14s）才拿到真结论：**"没变化"这类断言，先证明你的探针看得见变化**。
 - **门（实跑）**：后端全量 **2443 passed／166 skipped／0 failed**（341.16s，exit 0；对账＝A4 树 2436 ＋ U1206/U1207 ＝ 2438 ＋ U1208–U1212 ＝ 2443 ✓ 逐枚对上）、PG 集成 **99 passed／1 skipped／0 failed**（18.96s，一次性 pgvector；本机 5432 被 `infra-postgres-1` 占，走 5445，命令与 CI 逐字同）、前端**零改动**故未跑 vitest/build（真 Chromium 驱动的是镜像里已构建的前端）；〔跑〕镜像 `atlas-bm-trial:latest` 构建自**干净工作区**的 `9d310e9`。零迁移、零新依赖、无新 ADR。**B 档阻断不变**（真凭据 1.2/1.3＋真机整链 4.1），变的是"能不能陪客户跑"从此有脚本、有截图、有耗时数字。
+
+> **〔2026-10-09 PR #136 合 main 权威更正〕**：本文件下方多条"dev，未 push"（A1–A4、BM、ZS/ZT/ZW/ZX、AA/AB 等）为**落码时点**的边界陈述——dev 全部提交已于 2026-10-09 经 PR #136 合入 main（`8712193`），CI 四 job 全绿（后端 2500/171、PG 集成 2662/8、前端 896/2、oxlint 0/0、tsc 0、build 过）。原文保留不改写。
 
 ### feat(engine)：打包 A4 动态审批人与指派校验落码收口（2026-10-08；docs/100 §7；U1201–U1205 转正式；dev，未 push）
 
