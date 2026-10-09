@@ -3,6 +3,11 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔文档〕自定义控件扩展契约立项：D29 解锁路径第 1 步（docs/118，2026-10-10）
+
+- **docs-only、无代码/迁移/依赖**：承接 docs/115 §5 解锁路径第 1 步，把 `registerWidget` 从「M3 预留」升级为正式契约——注册形状与名称规则（禁内置九件冲突、`<domain>-<semantic>` 命名空间、同名覆盖）、组件签名静态校验、`x-widget` 声明与消费范围（node/card 认、tool 忽略；WidgetName 拓宽为「内置∪已注册业务名」、resolveWidget 不再断言绕过）、props 契约（WidgetProps 基线＋schema `x-*` 自读、无新增注入通道、受控单一）、运行期降级（未注册名→json＋warn、开发期 throw 保留）、契约测试清单。
+- **非目标**：oneOf/discriminator 异构数组（第 2 步）、RolloutModal 迁移（第 3 步）、新业务控件、解除 D29。落码批待契约通过后另立批。
+
 ### 〔文档〕打包 AI ＋ 第二批 docs-only：D29 第四实体评估、D21/D32 整体评估、D49 MCP 加面预备契约（docs/115–117，2026-10-09）
 
 - **纯文档、无代码/迁移/依赖**：第一批 6 项至此全部处理完（D29 经实证评估转 docs-only），第二批 D21/D49 以评估/预备契约落地。
