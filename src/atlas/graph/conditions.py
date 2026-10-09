@@ -30,6 +30,7 @@ import math
 import random
 import re
 import uuid
+import zoneinfo
 from dataclasses import dataclass
 from typing import Any
 
@@ -134,10 +135,17 @@ _FUNCTIONS: dict[str, tuple[int, int | None, str]] = {
     # 打包 AF（docs/112，D15 余部）：随机选择，候选项同类型，随机字节取自注入 RNG。
     "choice": (1, None, "any"),
     "weightedChoice": (2, None, "any"),
+    # 打包 AF（docs/112，D15 余部）：命名时区，取 date/hour 分量（不扩展 DateTimeValue）。
+    "dateOfInZone": (2, 2, "date"),
+    "hourOfInZone": (2, 2, "number"),
+    "todayInZone": (1, 1, "date"),
+    "hourInZone": (1, 1, "number"),
 }
 
 # 非确定函数：静态校验期不做常量折叠（其值依赖运行时钟或随机种子），其余纯函数仍折叠暴露错误。
-_NONDETERMINISTIC = frozenset({"today", "now", "random", "randint", "uuid", "choice", "weightedChoice"})
+_NONDETERMINISTIC = frozenset(
+    {"today", "now", "random", "randint", "uuid", "choice", "weightedChoice", "todayInZone", "hourInZone"}
+)
 
 
 def _default_now() -> datetime.datetime:
@@ -622,11 +630,20 @@ def _evaluate_function(
             if float(weight) > 0:
                 return item
         return items[-1]
+    if name in ("dateOfInZone", "hourOfInZone"):
+        dt, zone_name = args
+        zoned = _coerce_datetime(dt, func=name).astimezone(_load_zone(zone_name))
+        return zoned.date() if name == "dateOfInZone" else zoned.hour
+    if name in ("todayInZone", "hourInZone"):
+        (zone_name,) = args
+        clock = now if now is not None else _default_now()
+        zoned = _ensure_utc(clock).astimezone(_load_zone(zone_name))
+        return zoned.date() if name == "todayInZone" else zoned.hour
     raise ConditionEvalError(f'未知函数 "{name}"', code="COND_UNKNOWN_FUNC", params={"func": name})  # 理论不可达（parse 已拦）
 
 
-def _coerce_datetime(value: Any) -> datetime.datetime:
-    """hoursBetween 入参归一化：datetime 转 UTC；date 按当日 00:00 UTC；其余报错。"""
+def _coerce_datetime(value: Any, func: str = "hoursBetween") -> datetime.datetime:
+    """入参归一化：datetime 转 UTC；date 按当日 00:00 UTC；其余报错。"""
     if isinstance(value, datetime.datetime):
         return _ensure_utc(value)
     if isinstance(value, datetime.date):
@@ -634,11 +651,29 @@ def _coerce_datetime(value: Any) -> datetime.datetime:
             value.year, value.month, value.day, tzinfo=datetime.timezone.utc
         )
     raise ConditionEvalError(
-        '函数 "hoursBetween" 要求日期时间值（用 datetime(...) 或 now() 构造，日期按当日 00:00 UTC），'
+        f'函数 "{func}" 要求日期时间值（用 datetime(...) 或 now() 构造，日期按当日 00:00 UTC），'
         f"实际为 {_type_name(value)}",
         code="COND_TYPE_MISMATCH",
-        params={"func": "hoursBetween", "expected": "datetime", "actual": _type_code(value)},
+        params={"func": func, "expected": "datetime", "actual": _type_code(value)},
     )
+
+
+def _load_zone(zone_name: Any) -> zoneinfo.ZoneInfo:
+    """解析 IANA 时区名；空/非字符串/未知一律 COND_INVALID_TIMEZONE。"""
+    if not isinstance(zone_name, str) or not zone_name:
+        raise ConditionEvalError(
+            '时区名必须是非空 IANA 字符串（如 "Asia/Shanghai"）',
+            code="COND_INVALID_TIMEZONE",
+            params={"actual": _type_code(zone_name)},
+        )
+    try:
+        return zoneinfo.ZoneInfo(zone_name)
+    except zoneinfo.ZoneInfoNotFoundError:
+        raise ConditionEvalError(
+            f'未知/非法 IANA 时区名："{zone_name}"',
+            code="COND_INVALID_TIMEZONE",
+            params={"zone": zone_name},
+        ) from None
 
 
 def _require_number(name: str, value: Any) -> None:

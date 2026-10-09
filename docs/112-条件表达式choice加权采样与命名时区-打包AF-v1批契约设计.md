@@ -80,8 +80,8 @@ IANA 时区名（如 `Asia/Shanghai`、`America/New_York`、`UTC`）。后端 st
 
 | UTC 时刻 | Asia/Shanghai (+8) | America/New_York (UTC−4，夏令时) |
 | --- | --- | --- |
-| 2026-06-15 16:00 | 06-16 00:00（date 次日、hour 0） | 06-15 12:00 |
-| 2026-06-15 04:00 | 06-15 12:00 | 06-14 24:00→06-14 00:00（date 前一日、hour 0） |
+| 2026-06-15 16:00 | 06-16 00:00（date 次日、hour 0） | 06-15 12:00（同日） |
+| 2026-06-15 03:00 | 06-15 11:00（同日） | 06-14 23:00（date 前一日、hour 23） |
 
 > 仅取 date/hour 分量即可覆盖工作时间窗、SLA 日界等绝大多数场景（如 `hourOfInZone(now(), "Asia/Shanghai") >= 9 && hourOfInZone(now(), "Asia/Shanghai") < 18`）。分钟/秒分量列为非目标，需要时以同构方式补 `minuteOfInZone` 等，成本极低。
 
