@@ -427,7 +427,10 @@
     },
     "sim": {
       "sendEvent": "Send one event"
-    }
+    },
+    "tenantsLabel": "Tenant IDs",
+    "bucketValueLabel": "Amount threshold",
+    "percentLabel": "Release percent (%)"
   },
   "problems": {
     "title": "Problems",

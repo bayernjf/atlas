@@ -234,6 +234,26 @@ export function oneOfDiscriminant(oneOf: MetaSchema[]): OneOfDiscriminant | null
   }
 }
 
+/**
+ * 判别数组行「段切换」目标分支的默认对象（docs/120 §2.3，docs/119 §2.3 首分支组装的
+ * 任意分支推广）：判别键=该分支 const 值＋其余 properties 逐字段递归 defaultValueFor；
+ * 未登记 constValue／分支非 object／组装不出判别键 → null（调用方忽略，行值不动）。
+ */
+export function oneOfBranchDefault(
+  discriminant: OneOfDiscriminant,
+  constValue: string,
+): Record<string, unknown> | null {
+  const branch = discriminant.branches.get(constValue)
+  if (!branch || !isPlainObject(branch.properties)) return null
+  const seed: Record<string, unknown> = {}
+  for (const [key, sub] of Object.entries(branch.properties)) {
+    if (key === discriminant.key) seed[key] = discriminant.constOf(branch)
+    else seed[key] = defaultValueFor(sub)
+  }
+  if (seed[discriminant.key] !== undefined) return seed
+  return null
+}
+
 export function getAtPath(root: unknown, path: FormPath): unknown {
   let current = root
   for (const segment of path) {

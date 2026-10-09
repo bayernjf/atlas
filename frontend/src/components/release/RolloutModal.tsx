@@ -5,12 +5,10 @@ import {
   Descriptions,
   Divider,
   Input,
-  InputNumber,
   Modal,
   Select,
   Space,
   Statistic,
-  Switch,
   Tag,
   Typography,
 } from 'antd'
@@ -25,6 +23,7 @@ import {
   updateRollout,
   type GateConfig,
   type RolloutConfig,
+  type RolloutRule,
   type RolloutSnapshot,
   type RunInputs,
 } from '../../lib/apiClient'
@@ -32,11 +31,13 @@ import { FormRenderer } from '../../lib/forms/FormRenderer'
 import { buildDeployRegistry } from '../../lib/forms/deployRegistry'
 import { buildGateSchema } from '../../lib/release/gateSchema'
 import {
+  buildRolloutRulesSchema,
+  normalizeRolloutRules,
+} from '../../lib/release/rolloutRulesSchema'
+import {
   ROLLOUT_STATUS_META,
   defaultRolloutConfig,
-  findRule,
   rolloutActions,
-  withRule,
 } from '../../lib/release'
 import { useTranslation } from '../../locales'
 
@@ -45,6 +46,7 @@ const { TextArea } = Input
 
 /** gate 配置面迁 forms（docs/115 §5 第 3 步第一片）：模块级 schema 与注册表，避免每次渲染重建。 */
 const gateSchema = buildGateSchema()
+const rulesSchema = buildRolloutRulesSchema()
 const deployRegistry = buildDeployRegistry()
 
 type Props = {
@@ -129,9 +131,6 @@ export function RolloutModal({ open, graphId, tenant, onClose }: Props) {
   const status = snapshot?.status ?? 'idle'
   const actions = rolloutActions(status, versions.length)
   const rulesLocked = status !== 'idle'
-  const internal = findRule(draft, 'internal')
-  const bucket = findRule(draft, 'lowValueBucket')
-  const canary = findRule(draft, 'canary')
 
   const runAction = async (key: string, fn: () => Promise<RolloutSnapshot>) => {
     setBusy(key)
@@ -263,111 +262,26 @@ export function RolloutModal({ open, graphId, tenant, onClose }: Props) {
           {rulesLocked && (
             <Text type="secondary">{t('rollout.rulesLocked')}</Text>
           )}
-          <Space orientation="vertical" size={8} style={{ width: '100%', marginTop: 8 }}>
-            <Space wrap>
-              <Switch
-                checked={!!internal}
-                disabled={rulesLocked}
-                onChange={(checked) =>
-                  setDraft(
-                    withRule(
-                      draft,
-                      'internal',
-                      checked ? { to: 'internal', tenants: internal?.tenants ?? [tenant] } : null,
-                    ),
-                  )
-                }
-              />
-              <Text>{t('rollout.internalRule')}</Text>
-              <Input
-                style={{ width: 220 }}
-                disabled={rulesLocked || !internal}
-                value={(internal?.tenants ?? []).join(',')}
-                placeholder={t('rollout.tenantsPlaceholder')}
-                onChange={(event) =>
-                  internal &&
-                  setDraft(
-                    withRule(
-                      draft,
-                      'internal',
-                      {
-                        to: 'internal',
-                        tenants: event.target.value.split(',').map((value) => value.trim()).filter(Boolean),
-                      },
-                    ),
-                  )
-                }
-              />
-            </Space>
-
-            <Space wrap>
-              <Switch
-                checked={!!bucket}
-                disabled={rulesLocked}
-                onChange={(checked) =>
-                  setDraft(
-                    withRule(
-                      draft,
-                      'lowValueBucket',
-                      checked
-                        ? { to: 'lowValueBucket', field: 'payload.amount', op: '<=', value: bucket?.value ?? 200, percent: bucket?.percent ?? 100 }
-                        : null,
-                    ),
-                  )
-                }
-              />
-              <Text>{t('rollout.bucketRule')}</Text>
-              <InputNumber
-                style={{ width: 110 }}
-                min={0}
-                disabled={rulesLocked || !bucket}
-                value={bucket?.value}
-                onChange={(value) =>
-                  bucket && value !== null &&
-                  setDraft(withRule(draft, 'lowValueBucket', { ...bucket, value }))
-                }
-              />
-              <Text>{t('rollout.bucketHash')}</Text>
-              <InputNumber
-                style={{ width: 90 }}
-                min={1}
-                max={100}
-                suffix="%"
-                disabled={rulesLocked || !bucket}
-                value={bucket?.percent}
-                onChange={(value) =>
-                  bucket && value !== null &&
-                  setDraft(withRule(draft, 'lowValueBucket', { ...bucket, percent: value }))
-                }
-              />
-            </Space>
-
-            <Space wrap>
-              <Switch
-                checked={!!canary}
-                disabled={rulesLocked}
-                onChange={(checked) =>
-                  setDraft(
-                    withRule(draft, 'canary', checked ? { to: 'canary', percent: canary?.percent ?? 5 } : null),
-                  )
-                }
-              />
-              <Text>{t('rollout.canaryRule')}</Text>
-              <InputNumber
-                style={{ width: 90 }}
-                min={1}
-                max={100}
-                suffix="%"
-                disabled={rulesLocked || !canary}
-                value={canary?.percent}
-                onChange={(value) =>
-                  canary && value !== null &&
-                  setDraft(withRule(draft, 'canary', { ...canary, percent: value }))
-                }
-              />
-            </Space>
-            <Text type="secondary">{t('rollout.restHint')}</Text>
-          </Space>
+          <div style={{ marginTop: 8 }}>
+            <FormRenderer
+              schema={rulesSchema}
+              value={draft.rules}
+              source="node"
+              registry={deployRegistry}
+              disabled={rulesLocked}
+              uiSchema={{
+                labels: {
+                  tenants: t('rollout.tenantsLabel'),
+                  value: t('rollout.bucketValueLabel'),
+                  percent: t('rollout.percentLabel'),
+                },
+              }}
+              onChange={(next) =>
+                setDraft({ ...draft, rules: normalizeRolloutRules(next as RolloutRule[]) })
+              }
+            />
+          </div>
+          <Text type="secondary">{t('rollout.restHint')}</Text>
         </div>
 
         <Divider style={{ margin: '8px 0' }} />

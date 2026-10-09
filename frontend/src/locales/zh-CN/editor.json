@@ -427,7 +427,10 @@
     },
     "sim": {
       "sendEvent": "发送一次事件"
-    }
+    },
+    "tenantsLabel": "租户 id",
+    "bucketValueLabel": "金额阈值（元）",
+    "percentLabel": "放行比例（%）"
   },
   "problems": {
     "title": "问题",
