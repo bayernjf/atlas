@@ -2867,6 +2867,106 @@ def create_shadow_run(
     )
 
 
+@app.post("/api/graphs/{graph_id}/shadow-runs/stream")
+def create_shadow_run_stream(
+    graph_id: str,
+    payload: dict[str, Any] | None = None,
+    principal: Principal = Depends(require("operate")),
+) -> StreamingResponse:
+    """影子运行 SSE：实时下发 node_start/node_end，终帧携带完整 ShadowRun（docs/114）。
+
+    影子纪律与沉淀形状同同步版 /shadow-runs：READ 透传/写短路、预置审批与 wait 秒过、
+    独立 broker/tracer、不写 run_store/RunRecord、不触发告警灰度、不产 tool_metric；
+    异常也沉淀 status=error 记录（HTTP 不报错），统一在终帧表达，不设 event:error。
+    """
+    services = services_for(principal)
+    graph = _load_graph_or_404(services, graph_id, None)
+    body = payload or {}
+    raw_inputs = body.get("inputs") if isinstance(body.get("inputs"), dict) else {}
+    inputs = dict(raw_inputs)
+    presets = preset_all_approvals(graph, resolver=_tenant_graph_resolver(services))
+    if presets:
+        inputs["approvals"] = {**presets, **(inputs.get("approvals") or {})}
+    event_presets = preset_all_wait_events(graph, resolver=_tenant_graph_resolver(services))
+    if event_presets:
+        inputs["waitEvents"] = {**event_presets, **(inputs.get("waitEvents") or {})}
+    outcome = _parse_human_outcome(body.get("human_outcome"))
+
+    registry = _runtime_registry(services)
+    tool_permissions = _tool_permissions(registry)
+    node_index = {node.id: node for node in graph.nodes}
+    shadow_store = services.shadow_store
+    tenant_id = principal.tenant_id
+    graph_resolver = _tenant_graph_resolver(services)
+
+    def event_stream():
+        events: queue.Queue[dict[str, Any] | None] = queue.Queue()
+        top_events: list[tuple[str, dict[str, Any]]] = []
+
+        def shadow_emit(event: dict[str, Any]) -> None:
+            events.put(event)
+            if event.get("type") == "node_end" and not event.get("subgraphPath"):
+                output = event.get("output")
+                if isinstance(output, dict):
+                    top_events.append((event["node_id"], output))
+
+        tracer = Tracer(graph_id=graph_id)
+        shadow_broker = ApprovalBroker()
+        status = "completed"
+        error: str | None = None
+
+        def worker() -> None:
+            nonlocal status, error
+            try:
+                run_graph(
+                    graph,
+                    inputs=inputs,
+                    registry=registry,
+                    approval_broker=shadow_broker,
+                    graph_id=graph_id,
+                    graph_resolver=graph_resolver,
+                    emit=shadow_emit,
+                    tracer=tracer,
+                    shadow=True,
+                    tenant_id=tenant_id,
+                    secret_provider=_secret_provider,
+                )
+            except Exception as exc:  # 影子异常沉淀 error 记录，不影响生产链路
+                status = "error"
+                error = f"{type(exc).__name__}: {exc}"
+            decisions, intents = extract_shadow_events(
+                top_events, node_index, tool_permissions
+            )
+            record = shadow_store.add(
+                graph_id=graph_id,
+                trace_id=tracer.trace_id,
+                decisions=decisions,
+                tool_intents=intents,
+                inputs=raw_inputs or None,
+                status=status,
+                error=error,
+                human_outcome=outcome,
+            )
+            events.put({"__result__": record})
+
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+        while True:
+            event = events.get()
+            if event is None:
+                continue
+            if "__result__" in event:
+                yield (
+                    "event: result\ndata: "
+                    + json.dumps(event["__result__"], ensure_ascii=False)
+                    + "\n\n"
+                )
+                break
+            yield f"event: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
 @app.get("/api/shadow-runs")
 def list_shadow_runs(
     graph_id: str | None = None,
