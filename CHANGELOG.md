@@ -3,6 +3,13 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔前端〕RolloutModal 规则区迁 forms 落码收口：D29 解锁路径第 3 步第二片（docs/120，2026-10-10）
+
+- **规则区三行手写表单迁 forms 判别异构数组**：`buildRolloutRulesSchema()`（items.oneOf 三分支、判别键 `to`、编辑面不含 full）＋`normalizeRolloutRules()`（段唯一＋固定序规约、bucket 注入 `field='payload.amount'`/`op='<='` 固定形状）＋FormRenderer `disabled` prop（fieldset 原生禁用，rulesLocked 语义）＋判别键切换交互（ArrayView 判别数组行头段切换 Select、`oneOfBranchDefault` 目标分支默认对象、行内 const 判别键隐藏）；RolloutModal 删 `withRule`/`findRule` 手写三行改挂 FormRenderer；i18n 三字段 label 键（tenantsLabel/bucketValueLabel/percentLabel）。
+- **UI 行为变化照实**：三行开关→数组行增删＋段切换、tenants 逗号输入→嵌套 string 数组、rulesLocked 行内灰化→整区 fieldset 灰化、段 label 显示 const 原样未本地化。
+- **原子**：`197e02e` docs(立项) → `179bd3f` feat(frontend) → `b29f1cf` test(frontend) → 本 docs 收口。
+- **门**：前端 vitest **972 passed／2 skipped**（基线 956/2 净增 16）、oxlint 0/0、tsc 0、build 过（仅既有 chunk>500kB 警告）；守护门 8 passed；真实浏览器冒烟段切换全链路通过（internal→lowValueBucket 行值替换＋段唯一规约收敛）。零新依赖/零迁移/无 ADR。D29 第 3 步两片闭环，六类实体通用化等整体仍缓做。
+
 ### 〔前端〕Dashboard 首页与页头布局响应式修复（2026-10-10）
 
 - **修复**：Dashboard 功能按钮行 `<Space wrap>`（11 个按钮横向硬排溢出 231px、触发页面级横向滚动条）；`.page-header/.editor-header` 加 `flex-wrap: wrap` 兜底。

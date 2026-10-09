@@ -98,6 +98,15 @@ normalizeRolloutRules(rules: RolloutRule[]): RolloutRule[]
 - 判别数组行头：行内不再渲染只读 to Select（判别键字段过滤）；行头 Select 选项=三分支 const 值；
 - SSR 渲染不崩；既有 release.test（withRule/findRule）、gateContract、oneOfContract 零回归。
 
-## 8. 收口注记（落码后回填）
+## 8. 收口注记（2026-10-10 落码批已收口）
 
-（预留：落码收口事实、偏差登记、门实跑数字。）
+- **原子**：`197e02e` docs(立项) → `179bd3f` feat(frontend) → `b29f1cf` test(frontend) → 本 docs 收口原子。
+- **实现偏差（无契约级，均为细化照实）**：
+  1. `field/op` 未放编辑面——按 §2.1「保留形状不编辑」，由 `normalizeRolloutRules` 对 bucket 行注入 `field='payload.amount'`/`op='<='`（已含则保留），判别协议（三分支、唯一 const）因此保持稳定；§2.1 契约原文未指明注入位置，此处定为规约层。
+  2. bucket `value/percent` 默认 200/100、canary `percent` 默认 5——schema `default` 承担（对齐原手写 UI withRule 初值 `?? 200/100/5`），§2.1 未写默认值，补默认并登记。
+  3. 段 label 未本地化：行头段切换 Select 选项显示 const 值原样（internal/lowValueBucket/canary），未走 `rollout.segment.*` 键——判别数组为通用内核组件，不引入业务 label 映射；登记为 UI 微差（与 gate 片「分钟后缀」同口径）。
+  4. `rulesLocked` 交互（fieldset 禁用）在真实浏览器未复现启动 canary 验证（demo 无 2 个发布版无法启动，按钮禁用态本身可见）；禁用语义由 SSR 断言（`<fieldset disabled>` 存在、缺省无）与 gate 区既有禁用交互覆盖。
+- **门实跑**：前端 vitest **972 passed / 2 skipped**（基线 956/2 净增 16＝rolloutRulesContract 16 例）、oxlint **0/0**（206 files）、tsc **0**、`npm run build` 过（仅既有 chunk>500kB 警告）；守护门 8 passed。
+- **真实浏览器冒烟（admin-a，1112×915）**：编辑器 → 灰度发布 Modal——规则区判别数组渲染（demo 三行 internal/bucket/canary 均正确分支显示、行头段切换 Select、行内 const 判别键隐藏、tenants 嵌套数组增删、bucket value/percent 与 canary percent 数字输入、restHint 与 rulesLocked 提示正常、gate 区零回归）；**段切换交互全链路通过**：internal 行切换 lowValueBucket → 行值替换为目标分支默认对象（tenants 消失、value/percent 出现）、段唯一规约收敛（两行 lowValueBucket 合并保留一条、行编号重排 #1/#2）。截图见冒烟记录。
+- **收口同步**：docs/115 §5 第 3 步第二片翻 ✅、docs/14 D29 行、docs/08 收口块、CHANGELOG、handoff（Active #146 ✅＋Recently shipped＋Quality gate）随本原子。
+- **剩余仍缓做**：D29 整体不解除——SchemaRegistry 六类实体通用化、L1 对 oneOf 动态诊断、判别数组其他业务场景、RolloutModal full 规则编辑面（后端 promote 运行态语义，非编辑面）。
