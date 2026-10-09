@@ -48,11 +48,12 @@ export const CRON_INPUT_WIDGET = 'cron-input'
 export const TIMEZONE_INPUT_WIDGET = 'timezone-input'
 
 /**
- * 业务控件名表（自定义控件扩展契约 docs/118 §3.2，2026-10-10）。
+ * 节点业务控件名表（自定义控件扩展契约 docs/118 §3.2，2026-10-10）。
  *
- * WidgetName = 内置九件 ∪ 业务控件名；业务控件名在此登记、nodeRegistry 注册
- * 与 resolveWidget 消费同源（杜绝漂移）。新增业务控件须同时：①在本表加名；
- * ②nodeRegistry 注册对应组件；③resolveWidget.test 补 x-widget 消费用例。
+ * WidgetName = 内置九件 ∪ 业务控件名（节点组 ∪ 部署组）；业务控件名在此登记、
+ * 对应注册表（nodeRegistry/deployRegistry）与 resolveWidget 消费同源（杜绝漂移）。
+ * 新增业务控件须同时：①在本组表加名；②对应注册表注册组件；③resolveWidget.test
+ * 补 x-widget 消费用例。
  */
 export const BUSINESS_WIDGETS = [
   TARGET_SELECT_WIDGET,
@@ -62,7 +63,20 @@ export const BUSINESS_WIDGETS = [
   TIMEZONE_INPUT_WIDGET,
 ] as const
 
-export type BusinessWidgetName = (typeof BUSINESS_WIDGETS)[number]
+export type NodeBusinessWidgetName = (typeof BUSINESS_WIDGETS)[number]
+
+/** 门禁指标表控件（docs/115 §5 第 3 步第一片）：部署 gate.metrics 固定集合成员的可空阈值编辑。 */
+export const DEPLOY_GATE_METRICS_WIDGET = 'deploy-gate-metrics'
+
+/**
+ * 部署面业务控件名表（docs/115 §5 第 3 步第一片，2026-10-10）：部署配置 schema
+ * 的 x-widget 可引用的业务控件；deployRegistry 注册与 resolveWidget 消费同源。
+ */
+export const DEPLOY_WIDGETS = [DEPLOY_GATE_METRICS_WIDGET] as const
+
+export type DeployWidgetName = (typeof DEPLOY_WIDGETS)[number]
+
+export type BusinessWidgetName = NodeBusinessWidgetName | DeployWidgetName
 
 /** WidgetName 拓宽：内置九件 ∪ 已登记业务控件名（docs/118 §3.2，消除 resolveWidget 断言绕过）。 */
 export type WidgetName = (typeof BUILTIN_WIDGETS)[number] | BusinessWidgetName
@@ -72,7 +86,8 @@ export function isWidgetName(name: unknown): name is WidgetName {
   return (
     typeof name === 'string' &&
     (BUILTIN_WIDGETS.includes(name as (typeof BUILTIN_WIDGETS)[number]) ||
-      BUSINESS_WIDGETS.includes(name as BusinessWidgetName))
+      BUSINESS_WIDGETS.includes(name as NodeBusinessWidgetName) ||
+      DEPLOY_WIDGETS.includes(name as DeployWidgetName))
   )
 }
 

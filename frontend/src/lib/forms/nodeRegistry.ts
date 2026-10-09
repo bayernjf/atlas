@@ -9,7 +9,7 @@
 import { buildDefaultRegistry } from './defaultRegistry'
 import { CardSelectWidget, CronInputWidget, SavedGraphSelectWidget, TargetSelectWidget, TimezoneInputWidget } from './nodeWidgets'
 import type { WidgetRegistry } from './registry'
-import { BUSINESS_WIDGETS, CARD_SELECT_WIDGET, CRON_INPUT_WIDGET, TIMEZONE_INPUT_WIDGET, SAVED_GRAPH_SELECT_WIDGET, TARGET_SELECT_WIDGET, type BusinessWidgetName, type WidgetComponent } from './types'
+import { BUSINESS_WIDGETS, CARD_SELECT_WIDGET, CRON_INPUT_WIDGET, TIMEZONE_INPUT_WIDGET, SAVED_GRAPH_SELECT_WIDGET, TARGET_SELECT_WIDGET, type NodeBusinessWidgetName, type WidgetComponent } from './types'
 
 export {
   CARD_SELECT_WIDGET,
@@ -18,8 +18,8 @@ export {
   TARGET_SELECT_WIDGET,
 } from './types'
 
-/** 节点业务控件组件表：键集与 BUSINESS_WIDGETS 逐一对应（同源注册，编译期强制覆盖）。 */
-const NODE_WIDGET_COMPONENTS: Record<BusinessWidgetName, WidgetComponent> = {
+/** 节点业务控件组件表：键集与 BUSINESS_WIDGETS（节点组）逐一对应（同源注册，编译期强制覆盖）。 */
+const NODE_WIDGET_COMPONENTS: Record<NodeBusinessWidgetName, WidgetComponent> = {
   [TARGET_SELECT_WIDGET]: TargetSelectWidget,
   [SAVED_GRAPH_SELECT_WIDGET]: SavedGraphSelectWidget,
   [CARD_SELECT_WIDGET]: CardSelectWidget,

@@ -121,13 +121,19 @@ export function findRule<T extends RolloutRule['to']>(
   return config.rules.find((rule) => rule.to === to) as Extract<RolloutRule, { to: T }> | undefined
 }
 
+/** 新增/更新一条门控指标到 metrics 数组（同 id 替换、按 GATE_METRIC_SPECS 固定序重排）；
+ * 部署面 gate 控件（deploy-gate-metrics）与既有 setGateMetric 共用（docs/115 §5 第 3 步第一片）。 */
+export function upsertGateMetric(metrics: GateMetric[], metric: GateMetric): GateMetric[] {
+  const next = metrics.filter((item) => item.id !== metric.id)
+  next.push(metric)
+  const order = GATE_METRIC_SPECS.map((spec) => spec.id)
+  next.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id))
+  return next
+}
+
 /** 新增/更新一条门控指标（同 id 替换） */
 export function setGateMetric(config: RolloutConfig, metric: GateMetric): RolloutConfig {
-  const metrics = config.gate.metrics.filter((item) => item.id !== metric.id)
-  metrics.push(metric)
-  const order = GATE_METRIC_SPECS.map((spec) => spec.id)
-  metrics.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id))
-  return { ...config, gate: { ...config.gate, metrics } }
+  return { ...config, gate: { ...config.gate, metrics: upsertGateMetric(config.gate.metrics, metric) } }
 }
 
 export type RolloutActions = { canStart: boolean; canPromote: boolean; canRollback: boolean }

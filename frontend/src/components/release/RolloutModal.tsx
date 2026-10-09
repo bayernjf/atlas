@@ -11,7 +11,6 @@ import {
   Space,
   Statistic,
   Switch,
-  Table,
   Tag,
   Typography,
 } from 'antd'
@@ -24,23 +23,29 @@ import {
   runGraph,
   startRollout,
   updateRollout,
+  type GateConfig,
   type RolloutConfig,
   type RolloutSnapshot,
   type RunInputs,
 } from '../../lib/apiClient'
+import { FormRenderer } from '../../lib/forms/FormRenderer'
+import { buildDeployRegistry } from '../../lib/forms/deployRegistry'
+import { buildGateSchema } from '../../lib/release/gateSchema'
 import {
-  GATE_METRIC_SPECS,
   ROLLOUT_STATUS_META,
   defaultRolloutConfig,
   findRule,
   rolloutActions,
-  setGateMetric,
   withRule,
 } from '../../lib/release'
 import { useTranslation } from '../../locales'
 
 const { Text } = Typography
 const { TextArea } = Input
+
+/** gate 配置面迁 forms（docs/115 §5 第 3 步第一片）：模块级 schema 与注册表，避免每次渲染重建。 */
+const gateSchema = buildGateSchema()
+const deployRegistry = buildDeployRegistry()
 
 type Props = {
   open: boolean
@@ -369,81 +374,23 @@ export function RolloutModal({ open, graphId, tenant, onClose }: Props) {
 
         <div>
           <Text strong>{t('rollout.gateTitle')}</Text>
-          <Space wrap size="large" style={{ marginTop: 8 }}>
-            <Space>
-              <Text>{t('rollout.gate.observeWindow')}</Text>
-              <InputNumber
-                style={{ width: 90 }}
-                min={1}
-                suffix={t('rollout.gate.minutes')}
-                value={draft.gate.observeMinutes}
-                onChange={(value) =>
-                  value !== null && setDraft({ ...draft, gate: { ...draft.gate, observeMinutes: value } })
-                }
-              />
-            </Space>
-            <Space>
-              <Text>{t('rollout.gate.minSamples')}</Text>
-              <InputNumber
-                style={{ width: 80 }}
-                min={1}
-                value={draft.gate.minSamples}
-                onChange={(value) =>
-                  value !== null && setDraft({ ...draft, gate: { ...draft.gate, minSamples: value } })
-                }
-              />
-            </Space>
-            <Space>
-              <Text>{t('rollout.gate.autoRollback')}</Text>
-              <Switch
-                checked={draft.gate.autoRollback}
-                onChange={(checked) =>
-                  setDraft({ ...draft, gate: { ...draft.gate, autoRollback: checked } })
-                }
-              />
-            </Space>
-          </Space>
-          <Table
-            style={{ marginTop: 8 }}
-            size="small"
-            pagination={false}
-            rowKey="id"
-            dataSource={GATE_METRIC_SPECS.map((spec) => ({
-              ...spec,
-              metric: draft.gate.metrics.find((item) => item.id === spec.id),
-            }))}
-            columns={[
-              { title: t('rollout.gate.colMetric'), dataIndex: 'label', render: (label: string) => t(label) },
-              {
-                title: t('rollout.gate.colThreshold'),
-                dataIndex: 'metric',
-                render: (metric, row) => (
-                  <InputNumber
-                    style={{ width: 120 }}
-                    min={0}
-                    max={1}
-                    step={row.step}
-                    value={metric?.threshold ?? row.defaultThreshold}
-                    onChange={(value) =>
-                      value !== null &&
-                      setDraft(
-                        setGateMetric(draft, {
-                          id: row.id,
-                          threshold: value,
-                          compareWith: metric?.compareWith ?? null,
-                        }),
-                      )
-                    }
-                  />
-                ),
-              },
-              {
-                title: t('rollout.gate.colEnabled'),
-                dataIndex: 'metric',
-                render: (metric) => <Tag color={metric ? 'green' : 'default'}>{metric ? t('rollout.included') : t('rollout.excluded')}</Tag>,
-              },
-            ]}
-          />
+          <div style={{ marginTop: 8 }}>
+            <FormRenderer
+              schema={gateSchema}
+              value={draft.gate}
+              source="node"
+              registry={deployRegistry}
+              uiSchema={{
+                labels: {
+                  observeMinutes: t('rollout.gate.observeWindow'),
+                  minSamples: t('rollout.gate.minSamples'),
+                  autoRollback: t('rollout.gate.autoRollback'),
+                  metrics: t('rollout.gate.metricsLabel'),
+                },
+              }}
+              onChange={(next) => setDraft({ ...draft, gate: next as GateConfig })}
+            />
+          </div>
           <Space style={{ marginTop: 8 }}>
             <Button type="primary" ghost loading={busy === 'save'} onClick={saveConfig}>
               {t('rollout.save')}
