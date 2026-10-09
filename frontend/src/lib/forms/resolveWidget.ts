@@ -40,6 +40,8 @@ export function resolveWidget(schema: MetaSchema, source: SchemaSource = 'node')
   // 有统一 properties 的 object 即便带顶层 oneOf 判别联合（如 trigger：按 triggerType
   // 三分支条件必填）也按 properties 展开成 group；oneOf 只承载条件必填，结构由 L1 解释。
   // 无统一 properties 的 oneOf 联合（如 to: string|array）无法生成稳定字段，才降级 json。
+  // 判别异构数组（docs/119 §2.4）不在此列：array items 带 oneOf 时走下方 type:'array'
+  // 通道返回 { kind:'array' }，分支选择全部落在 formTree（oneOfDiscriminant）。
   if (isObjectSchema(schema) && schema.properties && Object.keys(schema.properties).length > 0) {
     return { kind: 'group' }
   }
