@@ -14,6 +14,8 @@ from atlas.channels.deliveries import InMemoryDeliveryStore
 from atlas.channels.pg_deliveries import PgDeliveryStore
 from atlas.connections.service import build_connection_service
 from atlas.connections.store import ConnectionStore
+from atlas.evaluation.pg_store import PgEvaluationStore
+from atlas.evaluation.store import EvaluationStore
 from atlas.collaboration.cancellations import RunCancellationBroker
 from atlas.collaboration.event_waits import EventWaitBroker
 from atlas.coordination import TaskStore
@@ -94,6 +96,7 @@ class TenantServices:
     rule_template_store: object  # 用户自建告警规则模板（docs/102 打包 ZS；内存/PG 两档，reset 同清）
     reflection_store: ReflectionStore | PgReflectionStore  # 反思候选与收尾报告（docs/88 打包 ZH／docs/94 打包 ZU：内存 ring 100 / PG reflection_*）
     model_config: object  # LLM 模型配置（docs/93 打包 Y；内存/PG 两档 store，reset 不清）
+    evaluation_store: object  # AI 评估 Harness v1（docs/110 打包 AC；内存/PG 两档，reset 同清）
 
 
 class TenantRegistry:
@@ -173,6 +176,7 @@ class TenantRegistry:
                 rule_template_store=PgUserRuleTemplateStore(backend.engine, tenant_id),
                 reflection_store=PgReflectionStore(backend.engine, tenant_id),
                 model_config=get_model_config_store(),
+                evaluation_store=PgEvaluationStore(backend.engine, tenant_id),
             )
             TenantRegistry._wire_alert_notifier(services)
             return services
@@ -205,6 +209,7 @@ class TenantRegistry:
             rule_template_store=UserRuleTemplateStore(),
             reflection_store=ReflectionStore(),
             model_config=get_model_config_store(),
+            evaluation_store=EvaluationStore(),
         )
         TenantRegistry._wire_alert_notifier(services)
         return services
@@ -240,3 +245,4 @@ class TenantRegistry:
         services.message_template_store.clear()
         services.rule_template_store.clear()
         services.reflection_store.reset()
+        services.evaluation_store.clear()

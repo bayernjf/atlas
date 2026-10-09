@@ -40,6 +40,7 @@ from atlas.cards import (
     render_card,
 )
 from atlas.debug import DebugController, DebugStopped
+from atlas.evaluation import EvaluationGraphNotFound, EvaluationTask, run_task
 from atlas.graph.conditions import ConditionEvalError, validate_expression
 from atlas.graph.dsl import GraphDSL, GraphValidationError, parse_graph, valid_event_key
 from atlas.graph.diff import diff_graph, diff_summary
@@ -5909,6 +5910,44 @@ def knowledge_import(
     except MemoryValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     return {"imported": len(items), "truncated": truncated, "items": items}
+
+
+class EvaluationRunRequest(BaseModel):
+    """评估请求体：目标图 + evaluation_task（docs/110 §2.1）。"""
+
+    graph_id: str
+    task: EvaluationTask
+
+
+@app.post("/api/evaluations", status_code=201)
+def run_evaluation(
+    body: EvaluationRunRequest,
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, Any]:
+    """AI 评估 Harness 离线批评估（administer；docs/110 §2）。
+
+    对 graph_id 批量跑 task.test_cases，产出逐 case 结果与 metrics 三元组并持久化。
+    任务形状非法 422 ``EVALUATION_TASK_INVALID``（pydantic ValidationError 折叠）；
+    图不存在 404 ``EVALUATION_GRAPH_NOT_FOUND``；运行期 case 级异常记 error 不使整批失败。
+    """
+    services = services_for(principal)
+    try:
+        run = run_task(services.graph_store, body.graph_id, body.task)
+    except EvaluationGraphNotFound as exc:
+        raise HTTPException(status_code=404, detail=f"Graph 不存在：{exc.args[0]}") from exc
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=f"评估任务形状非法（{exc.errors()[0].get('msg', '')}）") from exc
+    services.evaluation_store.save(run)
+    return run.model_dump(mode="json")
+
+
+@app.get("/api/evaluations")
+def list_evaluations(
+    principal: Principal = Depends(require("administer")),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict[str, Any]:
+    """评估历史列表（administer；docs/110 §2.5）：最新在前，跨租户不可见。"""
+    return {"items": services_for(principal).evaluation_store.list(limit=limit)}
 
 
 @app.post("/api/demo/reset")
