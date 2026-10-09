@@ -3,6 +3,15 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+
+### 〔前端〕主题打磨与画布自适应修复（2026-10-10）
+
+- **主题 token 一次到位**：`tokens.ts` antdTheme token 层补全（colorBgLayout/colorBgContainer/colorBorder/colorText/colorLink）＋borderRadius 6/10、fontSize 14、controlHeight 32/40/24；components 层 Card.boxShadowTertiary、Modal.borderRadiusLG 12、Button.fontWeight 500；新增 semantic token shadow-node-hover/shadow-card/shadow-card-hover。主色 #1677ff 不变（避免节点光晕/全仓涟漪）。原子 `71f0164` feat(theme)。
+- **核心面打磨**：节点面板项圆角 8＋hover 阴影/位移/描边；atlas-node 圆角 10＋分层阴影＋hover 提升；ant-card transition＋hover 阴影；画布空态（nodes.length===0 时 ⊕＋i18n `editor.canvas.emptyHint` zh/en）。原子 `23353ed` feat(frontend)。
+- **顺带修复两个真实既有缺陷**（「UI 随窗口自适应」同族，浏览器实测确认）：① 编辑器内层 antd Layout 未被撑开，`.react-flow` 容器塌陷 65px→补 `flex:1/min-height:0`＋`canvas-panel height:100%`，画布实测 65→1165px；② 空图挂载后 loadGraph 填充节点不 refit（viewport transform 留 none、节点在容器外被裁剪）→ 节点首次出现时显式 `fitView`（rAF＋200ms 双保险），NODE_IN_VIEW 0→1。
+- **门**：前端 vitest **972/2**（基线零回归）、oxlint 0/0、tsc 0、build 过；守护门 8 passed；浏览器冒烟节点圆角 10px/阴影计算样式确认。零新依赖/零迁移/无 ADR。docs 收口：docs/17 §3.7。
+
+
 ### 〔文档〕docs/107 需求功能点比对报告收口同步（2026-10-10）
 
 - **回写已收口项**：知识组件（AA/D60）、三节点（AB/D61）四处过时描述（「整块缺失·无 D 号」「≈85% ⚡」）更新为已落码收口＋仍缓做余部；A 档建议加批复注记。
