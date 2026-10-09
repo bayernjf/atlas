@@ -28,6 +28,7 @@ body,
 .page-header,
 .editor-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   background: var(--atlas-color-bg-header);
   padding-inline: 24px;
