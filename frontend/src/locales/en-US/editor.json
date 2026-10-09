@@ -410,7 +410,9 @@
       "autoRollback": "Auto-rollback on breach",
       "colMetric": "Metric",
       "colThreshold": "Threshold (strictly greater means breach)",
-      "colEnabled": "Enabled"
+      "colEnabled": "Enabled",
+      "metricsHint": "Fixed three metrics; editing a threshold includes it in the gate (excluded ones do not affect judgement).",
+      "metricsLabel": "Gate metrics"
     },
     "status": {
       "idle": "Not started",

@@ -37,7 +37,7 @@ export function Dashboard({ principal, onLogout, onOpenEditor, onOpenMonitoring,
           <Card>
             <Typography.Title level={4}>{t('demo.title')}</Typography.Title>
             <Typography.Paragraph>{t('demo.description')}</Typography.Paragraph>
-            <Space>
+            <Space wrap>
               <Button type="primary" onClick={onOpenEditor}>
                 {t('common:nav.openEditor')}
               </Button>

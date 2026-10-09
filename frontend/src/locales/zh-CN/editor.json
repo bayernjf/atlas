@@ -410,7 +410,9 @@
       "autoRollback": "越阈自动回滚",
       "colMetric": "指标",
       "colThreshold": "阈值（严格大于即越阈）",
-      "colEnabled": "启用"
+      "colEnabled": "启用",
+      "metricsHint": "固定三指标；改阈值即纳入门控（excluded 不参与判定）。",
+      "metricsLabel": "门控指标"
     },
     "status": {
       "idle": "未开始",

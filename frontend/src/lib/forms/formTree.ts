@@ -125,17 +125,24 @@ export function buildFormTree(
   if (resolution.kind === 'array') {
     const list = Array.isArray(value) ? value : []
     const itemSchema = schema.items ?? {}
+    // 判别异构数组（docs/119 §2.1）：items.oneOf 各分支以 const 判别键区分，
+    // 元素按实际值匹配分支子树；判别不成立或判别值未登记 → 整行降级 json。
+    const discriminant = itemSchema.oneOf ? oneOfDiscriminant(itemSchema.oneOf) : null
     return {
       ...base,
       kind: 'array',
-      items: list.map((item, index) =>
-        buildFormTree(itemSchema, item, {
+      items: list.map((item, index) => {
+        const branch =
+          discriminant && isPlainObject(item)
+            ? (discriminant.branches.get(String(item[discriminant.key])) ?? {})
+            : itemSchema
+        return buildFormTree(branch, item, {
           path: [...path, index],
           label: `#${index + 1}`,
           source,
           depth: depth + 1,
-        }),
-      ),
+        })
+      }),
     }
   }
 
@@ -181,6 +188,50 @@ export function pathToPointer(path: FormPath): string {
 
 export function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * 判别联合提取（docs/119 §2.1）：oneOf 各分支为 object、且恰好一个键带 const；
+ * 所有分支判别键同名、const 值互不相同 → 判别成立。任一分支缺 const／键不一致／
+ * 值重复 → 返回 null（调用方按现状降级 json）。不新增 MetaSchema keyword，
+ * 判别完全由标准 keyword `const` 推导。
+ */
+export type OneOfDiscriminant = {
+  /** 判别键名（各分支 properties 中带 const 的同一键）。 */
+  key: string
+  /** const 值 → 分支 schema。 */
+  branches: Map<string, MetaSchema>
+  /** 取某分支的判别 const 值（defaultValueFor 组装默认行用）。 */
+  constOf(branch: MetaSchema): unknown
+}
+
+export function oneOfDiscriminant(oneOf: MetaSchema[]): OneOfDiscriminant | null {
+  const constKeys: Array<{ branch: MetaSchema; key: string; value: unknown }> = []
+  for (const branch of oneOf) {
+    if (!isPlainObject(branch.properties)) return null
+    const candidates = Object.entries(branch.properties).filter(
+      ([, sub]) => isPlainObject(sub) && sub.const !== undefined,
+    )
+    if (candidates.length !== 1) return null
+    constKeys.push({ branch, key: candidates[0][0], value: (candidates[0][1] as MetaSchema).const })
+  }
+  const key = constKeys[0].key
+  if (!constKeys.every((entry) => entry.key === key)) return null
+  const branches = new Map<string, MetaSchema>()
+  for (const entry of constKeys) {
+    const id = String(entry.value)
+    if (branches.has(id)) return null
+    branches.set(id, entry.branch)
+  }
+  return {
+    key,
+    branches,
+    constOf(branch: MetaSchema): unknown {
+      return isPlainObject(branch.properties) && isPlainObject(branch.properties[key])
+        ? branch.properties[key].const
+        : undefined
+    },
+  }
 }
 
 export function getAtPath(root: unknown, path: FormPath): unknown {
@@ -258,6 +309,22 @@ export function defaultValueFor(schema: MetaSchema): unknown {
   if (schema.default !== undefined) return schema.default
   if (schema.const !== undefined) return schema.const
   if (Array.isArray(schema.enum) && schema.enum.length > 0) return schema.enum[0]
+  // 判别联合（docs/119 §2.3）：新增行取首个分支默认对象——判别键=该分支 const 值
+  // ＋其余 properties 逐字段递归默认；分支缺判别键/非 object 时回退类型零值。
+  if (Array.isArray(schema.oneOf) && schema.oneOf.length > 0) {
+    const branch = schema.oneOf[0]
+    if (isPlainObject(branch)) {
+      const discriminant = oneOfDiscriminant(schema.oneOf)
+      if (discriminant && isPlainObject(branch.properties)) {
+        const seed: Record<string, unknown> = {}
+        for (const [key, sub] of Object.entries(branch.properties)) {
+          if (key === discriminant.key) seed[key] = discriminant.constOf(branch)
+          else seed[key] = defaultValueFor(sub)
+        }
+        if (seed[discriminant.key] !== undefined) return seed
+      }
+    }
+  }
   switch (schema.type) {
     case 'string':
       return ''

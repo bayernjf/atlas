@@ -3,6 +3,42 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔前端〕Dashboard 首页与页头布局响应式修复（2026-10-10）
+
+- **修复**：Dashboard 功能按钮行 `<Space wrap>`（11 个按钮横向硬排溢出 231px、触发页面级横向滚动条）；`.page-header/.editor-header` 加 `flex-wrap: wrap` 兜底。
+- **验证**：浏览器实测修复后按钮自动换行、页面无横向滚动；antd Modal 固定宽依赖 v5 自带 `max-width: calc(100vw - 32px)` 自动收缩。
+- **门**：前端 vitest **956 passed／2 skipped**、oxlint 0/0、tsc 0、build 过。
+
+### 〔前端〕异构数组判别渲染落码收口：D29 解锁路径第 2 步（docs/119，2026-10-10）
+
+- **渲染层判别异构数组最小子集落地**：`oneOfDiscriminant` 纯函数（const 判别键提取，MetaSchema 封闭四 x-* 不新增）＋formTree array 分支逐元素判别（命中分支递归构建、未知判别值/非 object 元素降级 json）＋`defaultValueFor` 首个分支默认对象（判别键=const＋字段递归默认）；resolveWidget 注释同步（array 通道语义不变）。
+- **原子**：`071aecc` feat(frontend) → `b1c74a0` test(frontend) → docs 收口。
+- **门**：前端 vitest **956 passed／2 skipped**（基线 943 → +13）、oxlint 0/0、tsc 0、build 过；守护门 8 passed。
+- **非目标维持**：object 级顶层 oneOf、嵌套 oneOf、判别键切换交互、L1 动态诊断、RolloutModal 规则区迁移（第 3 步第二片另立批）。零新依赖/零迁移/无 ADR。
+
+### 〔前端〕异构数组判别渲染契约立项：D29 解锁路径第 2 步（docs/119，2026-10-10，docs-only）
+
+- 契约设计：forms 内核补「判别异构数组渲染最小子集」——`items.oneOf` 各分支以标准 keyword `const` 为判别键（MetaSchema 封闭四 x-* 不新增），元素按实际值匹配分支子树渲染、新增行取首个分支默认对象、判别键只读展示（SelectWidget const 单选项 disabled）。
+- **非目标**：object 级顶层 oneOf、嵌套 oneOf、判别键切换交互、L1 动态诊断、RolloutModal 规则区迁移（第 3 步第二片，另立批）。
+- 满足 docs/118 §6 第 1 条重开判据（第 3 步立项前必须完成）。落码待批。
+
+### 〔前端〕部署 gate 配置面迁 forms：D29 解锁路径第 3 步第一片（docs/115，2026-10-10）
+
+- **部署配置面作为第四实体接入 forms 的第一片实际落地**（docs/118 契约后的第一个消费方）：`types.ts` 业务控件名分组为节点组（BUSINESS_WIDGETS）∪部署组（DEPLOY_WIDGETS），`isWidgetName` 同步识别；新 `release/gateSchema.ts` `buildGateSchema()`（标量×3 走内置 number/switch，metrics 数组声明 `x-widget: deploy-gate-metrics`）；新 `forms/deployWidgets.tsx` `GateMetricsWidget`（固定三行 GATE_METRIC_SPECS 可空阈值编辑）；新 `forms/deployRegistry.ts` `buildDeployRegistry()`（内置九件＋部署组，独立实例）；`release.ts` 提炼 `upsertGateMetric`（`setGateMetric` 改委托）；RolloutModal gate 区删手写 InputNumber×2＋Switch＋Table 改挂 FormRenderer。后端 GateConfig 形状不变。
+- **原子**：`95041d4` feat(frontend) → `ee928ac` test(frontend) → docs 收口。
+- **门**：前端 vitest **943 passed／2 skipped**（基线 932 → +11）、oxlint 0/0、tsc 0、build 过；守护门 8 passed；真实浏览器冒烟 gate 区全量渲染确认。
+- **两处 UI 微差照实**：观察窗无「分钟」后缀（单位并入 label）、新增「门控指标」字段 label。零新依赖/零迁移/无 ADR。
+- **非目标**：oneOf/discriminator 异构数组（第 2 步）、RolloutModal 规则区迁移（第 3 步第二片）、解除 D29。
+
+### 〔前端〕自定义控件扩展契约落码收口：D29 解锁路径第 1 步（docs/118，2026-10-10）
+
+- **契约已立并同日落码收口**（承接 docs/115 §5 解锁路径第 1 步）：`registerWidget` 从「M3 预留」升级为正式契约并落地——名称规则（禁内置九件冲突、`<domain>-<semantic>` 命名空间、同名覆盖）＋组件签名静态校验；`x-widget` 声明与消费范围（node/card 认、tool 忽略）；`WidgetName` 拓宽为「内置九件∪已登记业务控件名」（`BUSINESS_WIDGETS` 常量表，取向 (a)），`resolveWidget` 不再断言绕过、未登记名按类型默认走；props 契约（WidgetProps 基线＋schema `x-*` 自读、无新增注入通道、受控单一）；运行期降级（未注册名→json＋`console.warn`、开发期 `get()` throw 保留）；契约测试 17 例。
+- **原子**：`5f2bac5` feat(frontend) → `1a09875` test(frontend) → docs 收口。
+- **门**：前端 vitest **932 passed／2 skipped**（基线 915 → +17）、oxlint 0/0、tsc 0、build 过；守护门 8 passed。零新依赖/零迁移/无 ADR。
+- **非目标**：oneOf/discriminator 异构数组（第 2 步）、RolloutModal 迁移（第 3 步）、新业务控件、解除 D29。
+
+### 〔文档〕自定义控件扩展契约立项：D29 解锁路径第 1 步（docs/118，2026-10-10）
+
 ### 〔文档〕打包 AI ＋ 第二批 docs-only：D29 第四实体评估、D21/D32 整体评估、D49 MCP 加面预备契约（docs/115–117，2026-10-09）
 
 - **纯文档、无代码/迁移/依赖**：第一批 6 项至此全部处理完（D29 经实证评估转 docs-only），第二批 D21/D49 以评估/预备契约落地。

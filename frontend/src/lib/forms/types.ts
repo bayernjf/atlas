@@ -20,8 +20,6 @@ export const BUILTIN_WIDGETS = [
   'variable-input',
 ] as const
 
-export type WidgetName = (typeof BUILTIN_WIDGETS)[number]
-
 /**
  * 节点业务控件名（M4）：连线目标选择，由 nodeWidgets.tsx 提供、nodeRegistry
  * 注册（不在内置九件内）；节点 schema 以 x-widget 引用，工具表单不注册、遇之降级 json。
@@ -48,6 +46,50 @@ export const CRON_INPUT_WIDGET = 'cron-input'
 
 /** 时区输入控件（打包 ZL）：trigger.schedule 的 timezone 字段（IANA 常用区下拉＋自由输入）。 */
 export const TIMEZONE_INPUT_WIDGET = 'timezone-input'
+
+/**
+ * 节点业务控件名表（自定义控件扩展契约 docs/118 §3.2，2026-10-10）。
+ *
+ * WidgetName = 内置九件 ∪ 业务控件名（节点组 ∪ 部署组）；业务控件名在此登记、
+ * 对应注册表（nodeRegistry/deployRegistry）与 resolveWidget 消费同源（杜绝漂移）。
+ * 新增业务控件须同时：①在本组表加名；②对应注册表注册组件；③resolveWidget.test
+ * 补 x-widget 消费用例。
+ */
+export const BUSINESS_WIDGETS = [
+  TARGET_SELECT_WIDGET,
+  SAVED_GRAPH_SELECT_WIDGET,
+  CARD_SELECT_WIDGET,
+  CRON_INPUT_WIDGET,
+  TIMEZONE_INPUT_WIDGET,
+] as const
+
+export type NodeBusinessWidgetName = (typeof BUSINESS_WIDGETS)[number]
+
+/** 门禁指标表控件（docs/115 §5 第 3 步第一片）：部署 gate.metrics 固定集合成员的可空阈值编辑。 */
+export const DEPLOY_GATE_METRICS_WIDGET = 'deploy-gate-metrics'
+
+/**
+ * 部署面业务控件名表（docs/115 §5 第 3 步第一片，2026-10-10）：部署配置 schema
+ * 的 x-widget 可引用的业务控件；deployRegistry 注册与 resolveWidget 消费同源。
+ */
+export const DEPLOY_WIDGETS = [DEPLOY_GATE_METRICS_WIDGET] as const
+
+export type DeployWidgetName = (typeof DEPLOY_WIDGETS)[number]
+
+export type BusinessWidgetName = NodeBusinessWidgetName | DeployWidgetName
+
+/** WidgetName 拓宽：内置九件 ∪ 已登记业务控件名（docs/118 §3.2，消除 resolveWidget 断言绕过）。 */
+export type WidgetName = (typeof BUILTIN_WIDGETS)[number] | BusinessWidgetName
+
+/** 运行时守卫：name 是否内置九件或已登记业务控件名（resolveWidget x-widget 分支与测试共用）。 */
+export function isWidgetName(name: unknown): name is WidgetName {
+  return (
+    typeof name === 'string' &&
+    (BUILTIN_WIDGETS.includes(name as (typeof BUILTIN_WIDGETS)[number]) ||
+      BUSINESS_WIDGETS.includes(name as NodeBusinessWidgetName) ||
+      DEPLOY_WIDGETS.includes(name as DeployWidgetName))
+  )
+}
 
 /** 目标节点候选项（target-select 节点业务控件消费）。 */
 export type WidgetTargetOption = { value: string; label: string }
