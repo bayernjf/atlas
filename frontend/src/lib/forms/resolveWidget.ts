@@ -4,9 +4,12 @@
  * 选择序：① 节点 schema 的 x-widget（工具 Capability schema 拒绝一切 x-*，
  * source='tool' 时忽略）；② 类型结构默认；③ 白名单外结构一律降级 json。
  * object/array 不是注册控件，返回结构容器由 FormRenderer 递归/增删行承接。
+ * 自定义控件扩展契约（docs/118 §3.2）：x-widget 名须经 isWidgetName 守卫
+ * （内置九件 ∪ 已登记业务控件名），未登记名不再强制进控件分支、按类型结构
+ * 继续走；类型层面不再断言绕过。
  */
 import type { MetaSchema } from '../schemas/metaSchema'
-import type { WidgetName } from './types'
+import { isWidgetName, type WidgetName } from './types'
 
 /**
  * node：节点 config 表单，认 x-widget 业务控件（target-select 等）；
@@ -28,8 +31,10 @@ function isObjectSchema(schema: MetaSchema): boolean {
 
 export function resolveWidget(schema: MetaSchema, source: SchemaSource = 'node'): WidgetResolution {
   // node 与 card 都认 x-widget；tool 忽略一切 x-*（card 仅用内置控件，注册表不含业务控件）。
-  if (source !== 'tool' && typeof schema['x-widget'] === 'string' && schema['x-widget']) {
-    return { kind: 'widget', widget: schema['x-widget'] as WidgetName }
+  // 未登记名（不在 WidgetName union）不进入控件分支——按类型结构默认继续，
+  // 结构表达不了自然降级 json；已登记名但运行期未命中注册表由 widgetComponent 降级 json＋warn。
+  if (source !== 'tool' && isWidgetName(schema['x-widget'])) {
+    return { kind: 'widget', widget: schema['x-widget'] }
   }
 
   // 有统一 properties 的 object 即便带顶层 oneOf 判别联合（如 trigger：按 triggerType
