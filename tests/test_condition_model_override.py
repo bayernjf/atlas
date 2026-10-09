@@ -142,7 +142,7 @@ class _RecordingClassifier:
         self.label = label
         self.seen: dict = {}
 
-    def classify(self, *, branches, context_text, instruction, node_id=None, model=None):
+    def classify(self, *, branches, context_text, instruction, node_id=None, model=None, confidence_threshold=None):
         self.seen = {"model": model}
         return self.label
 
