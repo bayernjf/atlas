@@ -146,6 +146,7 @@
     "COND_LLM_PROMPT_TOO_LONG": "Node {{owner}}: the LLM classifier prompt must be at most {{max}} characters",
     "COND_LLM_MODEL_NOT_STRING": "Node {{owner}}: model must be a string",
     "COND_LLM_MODEL_TOO_LONG": "Node {{owner}}: model must be at most {{max}} characters",
+    "COND_LLM_THRESHOLD_INVALID": "Node {{owner}}: the confidence threshold must be a number between 0 and 1",
     "COND_MISSING_EDGE": "Node {{owner}}: missing an edge to target node {{target}}",
     "COND_MODE_INVALID": "Node {{owner}}: condition mode must be \"rule\" or \"llm\"",
     "COND_NO_DIRECT_END": "Node {{owner}}: cannot connect directly to the end; every branch needs an outgoing edge",
