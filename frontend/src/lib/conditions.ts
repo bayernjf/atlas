@@ -345,12 +345,11 @@ function zoneParts(value: DateValue | DateTimeValue, zone: unknown): Intl.DateTi
   const jsDate = isDateTime(value)
     ? new Date(Date.UTC(value.y, value.m - 1, value.d, value.H, value.M, value.S))
     : new Date(Date.UTC(value.y, value.m - 1, value.d))
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: zone, hour12: false,
-    year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric',
-  })
   try {
-    return formatter.formatToParts(jsDate)
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: zone, hour12: false,
+      year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric',
+    }).formatToParts(jsDate)
   } catch {
     throw new Error(`未知/非法 IANA 时区名："${zone}"`)
   }
@@ -710,6 +709,25 @@ function staticTypeErrors(node: AstNode): string[] {
     }
   }
   return errors
+}
+
+function hasNondeterministic(node: AstNode): boolean {
+  if (node[0] === 'call') {
+    return NONDETERMINISTIC.has(node[1]) || node[2].some(hasNondeterministic)
+  }
+  if (node[0] === 'lit' || node[0] === 'var') return false
+  if (node[0] === 'unary') return hasNondeterministic(node[2])
+  return hasNondeterministic(node[2]) || hasNondeterministic(node[3])
+}
+
+/** 纯常量表达式求值（不含变量/非确定函数）；供工具与测试，非法即抛。 */
+export function evaluateConstantExpression(expression: string): unknown {
+  const ast = new Parser(tokenize(expression)).parse()
+  if (hasVar(ast)) throw new Error('常量求值不支持变量')
+  if (hasNondeterministic(ast)) {
+    throw new Error('常量求值不支持非确定函数（today/now/random/choice 等）')
+  }
+  return evaluateConst(ast)
 }
 
 /** 语法检查：仅解析，不做静态类型/顶层布尔约束（foreach itemsExpression 用）；错误或 null。 */
