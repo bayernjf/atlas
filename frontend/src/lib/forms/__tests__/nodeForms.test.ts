@@ -14,7 +14,7 @@ import {
   subgraphUiSchema,
 } from '../nodeUiSchemas'
 import { BUILTIN_WIDGETS } from '../types'
-import { hiddenFields, pointerMatches } from '../uiSchema'
+import { hiddenFields, nestedHiddenFields, pointerMatches } from '../uiSchema'
 
 describe('节点控件表 buildNodeRegistry（M4）', () => {
   it('含全部内置控件（九件）+ target-select 业务控件', () => {
@@ -189,6 +189,19 @@ describe('condition 迁移对齐（M4 批 3 ⑬）', () => {
     expect(conditionUiSchema.placeholders?.['branches[].target']).toContain('目标节点')
     expect(conditionUiSchema.rows?.['branches[].expression']).toBe(2)
     expect(conditionUiSchema.labels?.defaultTarget).toContain('默认分支')
+  })
+
+  it('打包 AE：confidenceThreshold 为 0–1 number，UI 有 label/placeholder 且仅 llm 模式显示', () => {
+    const threshold = properties.confidenceThreshold
+    expect(threshold.type).toBe('number')
+    expect(threshold.minimum).toBe(0)
+    expect(threshold.maximum).toBe(1)
+    expect(conditionUiSchema.labels?.confidenceThreshold).toContain('置信度阈值')
+    expect(conditionUiSchema.placeholders?.confidenceThreshold).toContain('0.6')
+    const ruleHidden = nestedHiddenFields(conditionUiSchema, { conditionMode: 'rule' })
+    const llmHidden = nestedHiddenFields(conditionUiSchema, { conditionMode: 'llm' })
+    expect(ruleHidden.has('confidenceThreshold')).toBe(true)
+    expect(llmHidden.has('confidenceThreshold')).toBe(false)
   })
 
   it('已登记到 NODE_UI_SCHEMAS', () => {

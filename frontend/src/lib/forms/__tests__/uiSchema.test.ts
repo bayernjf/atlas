@@ -85,15 +85,23 @@ describe('nestedHiddenFields（D14 rootScoped）', () => {
     expect(ruleHidden.has('description')).toBe(true)
     // ZP：model 为 llm 专属字段——rule 模式隐、llm 模式显。
     expect(ruleHidden.has('model')).toBe(true)
+    // 打包 AE：confidenceThreshold 同为 llm 专属字段。
+    expect(ruleHidden.has('confidenceThreshold')).toBe(true)
     const llmHidden = nestedHiddenFields(conditionUiSchema, { conditionMode: 'llm' })
     expect(llmHidden.has('expression')).toBe(true)
     expect(llmHidden.has('description')).toBe(false)
     expect(llmHidden.has('model')).toBe(false)
+    expect(llmHidden.has('confidenceThreshold')).toBe(false)
   })
 
   it('判别字段缺失时受控行内字段全隐（fail-safe）', () => {
     const hidden = nestedHiddenFields(conditionUiSchema, {})
-    expect([...hidden].sort()).toEqual(['description', 'expression', 'model'])
+    expect([...hidden].sort()).toEqual([
+      'confidenceThreshold',
+      'description',
+      'expression',
+      'model',
+    ])
   })
 
   it('rootScoped 规则不影响根层 hiddenFields', () => {
