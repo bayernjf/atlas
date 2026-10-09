@@ -314,6 +314,9 @@
       "hint": "发布将把子图引用钉到对应版本；升级后建议先跑门禁回归再发布（只读，不检测子图草稿改动）",
       "empty": "本次发布无子图版本变化",
       "firstPin": "首次钉版 @{{version}}",
+      "apply": "应用升级",
+      "applyAll": "全部应用",
+      "applyFailed": "应用升级失败，请稍后重试",
       "col": {
         "node": "节点",
         "subgraph": "子图",
@@ -440,7 +443,10 @@
     "loopWhile": "条件循环（表达式为真时进入循环体，04 §5.3）",
     "parallel": "并行扇出（同时执行各分支后汇聚，04 §5.4）",
     "subgraph": "子图设置（引用已保存图，沿唯一出边继续，04 §5.7）",
-    "wait": "等待设置（挂起后沿唯一出边继续，04 §5.5）"
+    "wait": "等待设置（挂起后沿唯一出边继续，04 §5.5）",
+    "intent_recognition": "意图识别",
+    "info_extraction": "信息抽取",
+    "content_generation": "内容生成"
   },
   "nodeCatalog": {
     "trigger": {
@@ -478,6 +484,18 @@
     "human_approval": {
       "label": "人机协作",
       "description": "暂停并请求人工审批，超时自动通过/拒绝（10-3600 秒）"
+    },
+    "intent_recognition": {
+      "label": "意图识别",
+      "description": "LLM 从输入文本识别意图与槽位（需配置至少一个意图）"
+    },
+    "info_extraction": {
+      "label": "信息抽取",
+      "description": "LLM 从输入文本抽取结构化字段（需配置至少一个字段）"
+    },
+    "content_generation": {
+      "label": "内容生成",
+      "description": "LLM 按模板与风格生成内容（需填写模板）"
     }
   },
   "tool": {

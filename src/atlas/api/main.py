@@ -89,7 +89,7 @@ from atlas.llm.config import ModelConfig
 from atlas.llm.decision import get_decision_client, warm_litellm
 from atlas.llm.nl_generate import generate_graph, validate_param_fills
 from atlas.memory.database import ping, wait_for_database
-from atlas.memory.models import MemoryValidationError
+from atlas.memory.models import KNOWLEDGE_CATEGORIES, MemoryValidationError
 from atlas.message.service import MessageSendError
 from atlas.message.template_store import (
     MessageTemplateNameConflict,
@@ -204,7 +204,7 @@ from atlas.template import get_template, list_templates
 from atlas.template.user_store import TemplateVersionConflict
 from atlas.web.i18n import localize_template, localize_tool_desc, resolve_locale
 from atlas.versioning.publish import publish as publish_graph_version
-from atlas.versioning.upgrades import subgraph_upgrade_plan
+from atlas.versioning.upgrades import apply_subgraph_upgrades, subgraph_upgrade_plan
 
 logger = logging.getLogger(__name__)
 
@@ -2952,6 +2952,39 @@ def subgraph_upgrades(
     return {"items": plan}
 
 
+class SubgraphUpgradesApplyRequest(BaseModel):
+    """手动升级动作（打包 ZU2）：可选指定 node_ids 子集，缺省=全部升级项。"""
+
+    node_ids: list[str] | None = None
+
+
+@app.post("/api/graphs/{graph_id}/subgraph-upgrades")
+def apply_subgraph_upgrades_endpoint(
+    graph_id: str,
+    request: SubgraphUpgradesApplyRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """把草稿顶层 subgraph 引用显式升级到体检目标版本并存回草稿（打包 ZU2，D21 动作侧）。
+
+    升级 = 把 ``config.graphId`` 改写为 ``sub_id@to_version``（与发布期钉版同一目标），
+    不产新版本、不动已发布版本；升级后建议重跑发布门禁回归再发布。草稿不存在 404；
+    指定 node_id 不在升级清单（非 subgraph / 无版本变化）→ 422。空清单幂等返空。
+    """
+    services = services_for(principal)
+    try:
+        applied = apply_subgraph_upgrades(
+            services.graph_store, graph_id, request.node_ids
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"节点 {exc.args[0]} 不在子图升级清单中（非子图节点或无版本变化）",
+        ) from exc
+    if applied is None:
+        raise HTTPException(status_code=404, detail=f"Graph 不存在：{graph_id}")
+    return {"applied": applied}
+
+
 @app.get("/api/graphs/{graph_id}/versions")
 def list_graph_versions(
     graph_id: str, principal: Principal = Depends(require("read"))
@@ -3130,49 +3163,160 @@ def _template_matches_query(template: dict[str, Any], query: str) -> bool:
     return any(query in (part.casefold()) for part in haystacks)
 
 
-_TEMPLATE_PARAM_TYPES = {"string", "number", "boolean", "select"}
-_TEMPLATE_PARAM_KEYS = {"type", "label", "required", "default", "hint", "options"}
+_TEMPLATE_PARAM_TYPES = {"string", "number", "boolean", "select", "object", "array"}
+_TEMPLATE_PARAM_KEYS = {
+    "type",
+    "label",
+    "required",
+    "default",
+    "hint",
+    "options",
+    # 打包 ZX（docs/106）：结构化声明面——嵌套 object / 数组 / 条件显隐
+    "properties",
+    "items",
+    "minItems",
+    "maxItems",
+    "visibleWhen",
+}
+_TEMPLATE_PARAM_MAX_DEPTH = 4
+
+
+def _validate_param_decl(name: str, pdecl: Any, errors: list[str], depth: int = 0) -> None:
+    """打包 ZX（docs/106 §2.2）：TemplateParam 声明形状校验（含递归）。
+
+    与 A1 E-5 同构的标量四型校验逐字保留；object 递归 properties、array 递归 items、
+    visibleWhen 校验判别字段形状；深度上限 _TEMPLATE_PARAM_MAX_DEPTH 防病态嵌套。
+    """
+    if not isinstance(pdecl, dict):
+        errors.append(f"参数 {name} 的声明必须是对象")
+        return
+    unknown = set(pdecl) - _TEMPLATE_PARAM_KEYS
+    if unknown:
+        errors.append(f"参数 {name} 含未知字段：{', '.join(sorted(unknown))}")
+    ptype = pdecl.get("type", "string")
+    if ptype not in _TEMPLATE_PARAM_TYPES:
+        errors.append(
+            f"参数 {name} 的 type 必须是 string/number/boolean/select/object/array 之一"
+        )
+    label = pdecl.get("label")
+    if label is not None and not isinstance(label, str):
+        errors.append(f"参数 {name} 的 label 必须是字符串")
+    elif isinstance(label, str) and len(label) > 40:
+        errors.append(f"参数 {name} 的 label 长度须在 40 字符以内")
+    if "required" in pdecl and not isinstance(pdecl["required"], bool):
+        errors.append(f"参数 {name} 的 required 必须是布尔值")
+    if ptype == "select":
+        options = pdecl.get("options")
+        if (
+            not isinstance(options, list)
+            or not options
+            or len(options) > 20
+            or not all(isinstance(o, str) for o in options)
+        ):
+            errors.append(f"参数 {name} 的 options 必须是非空字符串列表（≤20 项）")
+    if ptype == "object":
+        properties = pdecl.get("properties")
+        if not isinstance(properties, dict):
+            errors.append(f"参数 {name} 的 properties 必须是对象")
+        elif depth + 1 > _TEMPLATE_PARAM_MAX_DEPTH:
+            errors.append(f"参数 {name} 的嵌套深度超过上限（{_TEMPLATE_PARAM_MAX_DEPTH}）")
+        else:
+            for subname, subdecl in properties.items():
+                _validate_param_decl(f"{name}.{subname}", subdecl, errors, depth + 1)
+    if ptype == "array":
+        items = pdecl.get("items")
+        if not isinstance(items, dict):
+            errors.append(f"参数 {name} 的 items 必须是对象")
+        elif depth + 1 > _TEMPLATE_PARAM_MAX_DEPTH:
+            errors.append(f"参数 {name} 的嵌套深度超过上限（{_TEMPLATE_PARAM_MAX_DEPTH}）")
+        else:
+            _validate_param_decl(f"{name}[]", items, errors, depth + 1)
+        for key in ("minItems", "maxItems"):
+            value = pdecl.get(key)
+            if value is not None and (
+                not isinstance(value, int) or isinstance(value, bool) or value < 0
+            ):
+                errors.append(f"参数 {name} 的 {key} 必须是非负整数")
+        min_items, max_items = pdecl.get("minItems"), pdecl.get("maxItems")
+        if (
+            isinstance(min_items, int)
+            and isinstance(max_items, int)
+            and min_items > max_items
+        ):
+            errors.append(f"参数 {name} 的 minItems 不能大于 maxItems")
+    visible_when = pdecl.get("visibleWhen")
+    if visible_when is not None:
+        if not isinstance(visible_when, dict) or not isinstance(
+            visible_when.get("field"), str
+        ):
+            errors.append(f"参数 {name} 的 visibleWhen 必须是 {{field, equals}} 对象")
+        elif not visible_when["field"]:
+            errors.append(f"参数 {name} 的 visibleWhen.field 不能为空")
 
 
 def validate_template_params(params: dict[str, Any]) -> list[str]:
-    """A1 参数化向导声明形状校验（docs/97 E-5）：type 枚举、label≤40、required 布尔、
-    select 须 options 非空字符串列表 ≤20、未知键拒绝；返回中文错误列表（空＝通过）。"""
+    """A1 参数化向导声明形状校验（docs/97 E-5）+ 打包 ZX（docs/106 §2.2）结构化递归：
+    type 枚举、label≤40、required 布尔、select 须 options 非空字符串列表 ≤20、未知键拒绝、
+    object/array 递归、visibleWhen 形状；返回中文错误列表（空＝通过）。"""
     errors: list[str] = []
     if not isinstance(params, dict):
         return ["参数声明必须是对象"]
     for pname, pdecl in params.items():
-        if not isinstance(pdecl, dict):
-            errors.append(f"参数 {pname} 的声明必须是对象")
-            continue
-        unknown = set(pdecl) - _TEMPLATE_PARAM_KEYS
-        if unknown:
-            errors.append(f"参数 {pname} 含未知字段：{', '.join(sorted(unknown))}")
-        ptype = pdecl.get("type", "string")
-        if ptype not in _TEMPLATE_PARAM_TYPES:
-            errors.append(f"参数 {pname} 的 type 必须是 string/number/boolean/select 之一")
-        label = pdecl.get("label")
-        if label is not None and not isinstance(label, str):
-            errors.append(f"参数 {pname} 的 label 必须是字符串")
-        elif isinstance(label, str) and len(label) > 40:
-            errors.append(f"参数 {pname} 的 label 长度须在 40 字符以内")
-        if "required" in pdecl and not isinstance(pdecl["required"], bool):
-            errors.append(f"参数 {pname} 的 required 必须是布尔值")
-        if ptype == "select":
-            options = pdecl.get("options")
-            if (
-                not isinstance(options, list)
-                or not options
-                or len(options) > 20
-                or not all(isinstance(o, str) for o in options)
-            ):
-                errors.append(f"参数 {pname} 的 options 必须是非空字符串列表（≤20 项）")
+        _validate_param_decl(pname, pdecl, errors)
     return errors
+
+
+def _validate_param_value(pname: str, pdecl: dict[str, Any], value: Any, errors: list[str]) -> None:
+    """打包 ZX（docs/106 §2.2）：instantiate 值校验递归核心。
+
+    标量四型与 A1 E-6 逐字保留；object 须 dict 且按 properties 递归子字段、
+    array 须 list 且按 items 递归元素、minItems/maxItems 门控、visibleWhen 不参与值校验。
+    """
+    ptype = pdecl.get("type", "string")
+    if ptype == "number":
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            errors.append(f"参数 {pname} 必须是数字")
+    elif ptype == "boolean":
+        if not isinstance(value, bool):
+            errors.append(f"参数 {pname} 必须是布尔值")
+    elif ptype == "select":
+        options = pdecl.get("options") or []
+        if value not in options:
+            errors.append(f"参数 {pname} 的值不在可选范围内")
+    elif ptype == "object":
+        if not isinstance(value, dict):
+            errors.append(f"参数 {pname} 必须是对象")
+            return
+        sub_params = pdecl.get("properties") or {}
+        for sub_name, sub_decl in sub_params.items():
+            if sub_name not in value:
+                if sub_decl.get("required"):
+                    errors.append(f"参数 {pname}.{sub_name} 为必填")
+                continue
+            _validate_param_value(f"{pname}.{sub_name}", sub_decl, value[sub_name], errors)
+        for sub_name in value:
+            if sub_name not in sub_params:
+                errors.append(f"参数 {pname} 含未知子字段：{sub_name}")
+    elif ptype == "array":
+        if not isinstance(value, list):
+            errors.append(f"参数 {pname} 必须是数组")
+            return
+        items = pdecl.get("items") or {}
+        min_items = pdecl.get("minItems")
+        max_items = pdecl.get("maxItems")
+        if isinstance(min_items, int) and len(value) < min_items:
+            errors.append(f"参数 {pname} 至少需要 {min_items} 项")
+        if isinstance(max_items, int) and len(value) > max_items:
+            errors.append(f"参数 {pname} 最多允许 {max_items} 项")
+        for index, item in enumerate(value):
+            _validate_param_value(f"{pname}[{index}]", items, item, errors)
 
 
 def _validate_instantiate_values(
     params: dict[str, Any], values: dict[str, Any]
 ) -> list[str]:
-    """A1 instantiate 值校验（docs/97 E-6）：required 缺失/类型不符/select 范围/未知参数名。"""
+    """A1 instantiate 值校验（docs/97 E-6）+ 打包 ZX（docs/106 §2.2）递归：
+    required 缺失/类型不符/select 范围/object 子字段/array 元素/未知参数名。"""
     errors: list[str] = []
     for pname, pdecl in params.items():
         present = pname in values
@@ -3181,18 +3325,7 @@ def _validate_instantiate_values(
             continue
         if not present:
             continue
-        value = values[pname]
-        ptype = pdecl.get("type", "string")
-        if ptype == "number":
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
-                errors.append(f"参数 {pname} 必须是数字")
-        elif ptype == "boolean":
-            if not isinstance(value, bool):
-                errors.append(f"参数 {pname} 必须是布尔值")
-        elif ptype == "select":
-            options = pdecl.get("options") or []
-            if value not in options:
-                errors.append(f"参数 {pname} 的值不在可选范围内")
+        _validate_param_value(pname, pdecl, values[pname], errors)
     for pname in values:
         if pname not in params:
             errors.append(f"未知参数：{pname}")
@@ -5593,7 +5726,7 @@ class MemoryCreateRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["fact", "preference"]
+    kind: Literal["fact", "preference", "knowledge"]
     content: str = Field(min_length=1, max_length=2000)
     scope: dict[str, str] | None = None
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -5605,7 +5738,7 @@ class MemoryUpdateRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["fact", "preference"] | None = None
+    kind: Literal["fact", "preference", "knowledge"] | None = None
     content: str | None = Field(default=None, min_length=1, max_length=2000)
     scope: dict[str, str] | None = None
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -5659,8 +5792,8 @@ def list_memories(
     principal: Principal = Depends(require("read")),
 ) -> dict[str, Any]:
     """当前租户记忆倒序列表（不含 embedding）；kind 可选过滤，limit 缺省 50、上限 200。"""
-    if kind is not None and kind not in ("fact", "preference"):
-        raise HTTPException(status_code=422, detail="kind 必须是 fact 或 preference")
+    if kind is not None and kind not in ("fact", "preference", "knowledge"):
+        raise HTTPException(status_code=422, detail="kind 必须是 fact/preference/knowledge 之一")
     limit = max(1, min(limit, 200))
     return {"items": services_for(principal).memory_store.list(kind=kind, limit=limit)}
 
@@ -5669,19 +5802,26 @@ def list_memories(
 def search_memories(
     q: str = "",
     kind: str | None = None,
+    category: str | None = None,
     top_k: int = 5,
     min_score: float = 0.0,
     principal: Principal = Depends(require("read")),
 ) -> dict[str, Any]:
-    """语义检索当前租户记忆；q 空白返 422，无命中返空数组（成功不报错）。"""
+    """语义检索当前租户记忆；q 空白返 422，无命中返空数组（成功不报错）。
+
+    ``category`` 为 docs/108 知识库扩展：仅 kind=knowledge 时参与过滤（非 knowledge
+    时由校验层忽略，不误伤既有调用方）。
+    """
     if not q or not q.strip():
         raise HTTPException(status_code=422, detail="q 必须是非空检索词")
-    if kind is not None and kind not in ("fact", "preference"):
-        raise HTTPException(status_code=422, detail="kind 必须是 fact 或 preference")
+    if kind is not None and kind not in ("fact", "preference", "knowledge"):
+        raise HTTPException(status_code=422, detail="kind 必须是 fact/preference/knowledge 之一")
+    if category is not None and category not in KNOWLEDGE_CATEGORIES:
+        raise HTTPException(status_code=422, detail="category 必须是 faq/sop/manual/rule/case 之一")
     top_k = max(1, min(top_k, 20))
     min_score = max(0.0, min(min_score, 1.0))
     results = services_for(principal).memory_store.recall(
-        q.strip(), kind=kind, top_k=top_k, min_score=min_score
+        q.strip(), kind=kind, category=category, top_k=top_k, min_score=min_score
     )
     return {"results": results}
 
@@ -5696,6 +5836,79 @@ def delete_memory(
     if not deleted:
         raise HTTPException(status_code=404, detail="记忆不存在")
     return {"deleted": True}
+
+
+class KnowledgeImportRequest(BaseModel):
+    """知识库文档导入（docs/108 §2.2）：纯文本按段落分段入库，MVP 不做多格式解析。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    category: Literal["faq", "sop", "manual", "rule", "case"]
+    text: str = Field(min_length=1, max_length=200000)
+    scope: dict[str, str] | None = None
+
+
+_KNOWLEDGE_SEGMENT_MAX = 1200
+_KNOWLEDGE_IMPORT_LIMIT = 200
+
+
+def _split_knowledge_segments(text: str) -> list[str]:
+    """按段落切分，单段超长硬切（docs/108 §2.4）。
+
+    段落优先（``\\n\\n``）；段内超 ``_KNOWLEDGE_SEGMENT_MAX`` 字符按字符边界硬切；
+    空段跳过。返回裁剪后的文本段列表。
+    """
+    segments: list[str] = []
+    for paragraph in text.split("\n\n"):
+        paragraph = paragraph.strip()
+        if not paragraph:
+            continue
+        if len(paragraph) <= _KNOWLEDGE_SEGMENT_MAX:
+            segments.append(paragraph)
+            continue
+        start = 0
+        while start < len(paragraph):
+            end = min(start + _KNOWLEDGE_SEGMENT_MAX, len(paragraph))
+            segment = paragraph[start:end].strip()
+            if segment:
+                segments.append(segment)
+            start = end
+    return segments
+
+
+@app.post("/api/knowledge/import", status_code=201)
+def knowledge_import(
+    body: KnowledgeImportRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """知识库文档导入（operate；docs/108 §2.2）：纯文本分段向量化入库。
+
+    返回 ``{imported, truncated, items}``；超 ``_KNOWLEDGE_IMPORT_LIMIT`` 条截断并置
+    ``truncated: true``（按 docs/108 §2.4，先序段优先）。失败 422 中文（MemoryValidationError
+    统一折叠，与 create_memory 同口径）。
+    """
+    segments = _split_knowledge_segments(body.text)
+    if not segments:
+        raise HTTPException(status_code=422, detail="text 无可导入的有效内容（全为空段）")
+    truncated = len(segments) > _KNOWLEDGE_IMPORT_LIMIT
+    if truncated:
+        segments = segments[:_KNOWLEDGE_IMPORT_LIMIT]
+    repo = services_for(principal).memory_store
+    items: list[dict[str, Any]] = []
+    try:
+        for segment in segments:
+            item = repo.remember(
+                kind="knowledge",
+                content=segment,
+                scope=body.scope,
+                confidence=1.0,
+                source="manual",
+                metadata={"category": body.category},
+            )
+            items.append(item)
+    except MemoryValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return {"imported": len(items), "truncated": truncated, "items": items}
 
 
 @app.post("/api/demo/reset")

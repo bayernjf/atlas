@@ -120,12 +120,15 @@ function Field({
   label,
   required,
   pointer,
+  hint,
   children,
 }: {
   label: string
   required?: boolean
   /** RFC6901 指针：挂 data-pointer 供 Problems 面板点击定位（M4 批 2 ⑧）。 */
   pointer?: string
+  /** 打包 ZW：字段下方说明文字（UISchema hints，模板参数 hint 用；缺省不渲染）。 */
+  hint?: string
   children: ReactNode
 }): ReactElement {
   if (!label) return <>{children}</>
@@ -136,6 +139,11 @@ function Field({
         {required && <Typography.Text type="danger"> *</Typography.Text>}
       </Typography.Text>
       {children}
+      {hint && (
+        <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+          {hint}
+        </Typography.Text>
+      )}
     </label>
   )
 }
@@ -306,7 +314,12 @@ function WidgetView({ node, ctx }: { node: FormWidgetNode; ctx: ViewContext }): 
       ? String((ctx.root as Record<string, unknown>).timezone ?? 'UTC')
       : undefined
   return (
-    <Field label={node.label} required={node.required} pointer={node.pointer}>
+    <Field
+      label={node.label}
+      required={node.required}
+      pointer={node.pointer}
+      hint={node.hint}
+    >
       {createElement(component, {
         value: node.value,
         onChange: (next: unknown) => ctx.onChange(setAtPath(ctx.root, node.path, next)),

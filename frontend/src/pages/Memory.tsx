@@ -13,6 +13,7 @@ import {
   Select,
   Space,
   Table,
+  Tabs,
   Tag,
   Typography,
 } from 'antd'
@@ -40,6 +41,7 @@ import {
   type MemoryDraft,
 } from '../lib/memory'
 import { useTranslation } from '../locales'
+import { KnowledgePanel } from './KnowledgePanel'
 
 const { TextArea } = Input
 const { Content, Header } = Layout
@@ -312,13 +314,20 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
         </Space>
       </Header>
       <Content className="page-content">
-        <Space orientation="vertical" size="large" style={{ width: '100%' }}>
-          <Alert
-            type="info"
-            showIcon
-            message={t('notice.message')}
-            description={t('notice.description')}
-          />
+        <Tabs
+          defaultActiveKey="memory"
+          items={[
+            {
+              key: 'memory',
+              label: t('memoryTab'),
+              children: (
+                <Space orientation="vertical" size="large" style={{ width: '100%' }}>
+                  <Alert
+                    type="info"
+                    showIcon
+                    message={t('notice.message')}
+                    description={t('notice.description')}
+                  />
 
           <Card
             title={t('search.cardTitle')}
@@ -331,6 +340,7 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
                   { value: 'all', label: t('filter.allKinds') },
                   { value: 'fact', label: t('kind.fact') },
                   { value: 'preference', label: t('kind.preference') },
+                  { value: 'knowledge', label: t('kind.knowledge') },
                 ]}
               />
             }
@@ -384,6 +394,7 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
                     { value: 'all', label: t('filter.allKinds') },
                     { value: 'fact', label: t('kind.fact') },
                     { value: 'preference', label: t('kind.preference') },
+                    { value: 'knowledge', label: t('kind.knowledge') },
                   ]}
                 />
               </Space>
@@ -400,7 +411,22 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
               locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('list.empty')} /> }}
             />
           </Card>
-        </Space>
+                </Space>
+              ),
+            },
+            {
+              key: 'knowledge',
+              label: t('knowledge.tab'),
+              children: (
+                <KnowledgePanel
+                  canOperate={canOperate}
+                  canAdmin={canAdmin}
+                  onMutated={handleManualRefresh}
+                />
+              ),
+            },
+          ]}
+        />
       </Content>
 
       <Modal
@@ -426,6 +452,7 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
               options={[
                 { value: 'fact', label: t('kind.fact') },
                 { value: 'preference', label: t('kind.preference') },
+                { value: 'knowledge', label: t('kind.knowledge') },
               ]}
             />
           </div>

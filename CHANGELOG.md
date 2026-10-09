@@ -3,6 +3,46 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔工程〕打包 AB 收口：意图识别/信息抽取/内容生成三节点（docs/109，2026-10-09 立项+同日收口）
+
+- **D61 取回闭合（docs/109 §6）**：`SUPPORTED_NODE_TYPES` 加 intent_recognition/info_extraction/content_generation；新 `llm/structured.py` 三客户端（classify_intent/extract_fields/generate_content）走 model_config per-tenant（第 5 消费点）、节点 model 覆盖、response_format json_object；无模型显式 FAILED（`LLM_STRUCTURED_UNAVAILABLE`+node_id，U1149 通道补 runtime.json zh/en）；LLM 非法形状本地兜底；DSL 校验（intents/fields/template/maxLength 全量约束，parse_graph 即抛）；textSource 走 interpolate 解析 {{路径}}；前端 nodeCatalog 三节点入册+i18n zh/en+属性面板走 forms 内核（SchemaRegistry 三 schema+UISchema+StructuredConfig）。
+- **门（实跑 2026-10-09）**：后端全量 2500 passed/171 skipped（+12）；前端 vitest 896/2、oxlint 0、tsc 0、build 过。零迁移/零新依赖/无 ADR。
+
+### 〔工程〕打包 AA 收口：知识库/RAG MVP（docs/108，2026-10-09 立项+同日收口）
+
+- **D60 取回闭合（docs/108 §6）**：迁移 046 `memory_items.kind` CHECK 收敛三值（memory/knowledge/tool_result）＋kind=knowledge 全链路＋`meta.category` 白名单（faq/sop/manual/rule/case）＋`POST /api/knowledge/import`（段落优先分段/1200 硬切/超 200 截断，空段 422）＋`memory/recall` category 过滤＋前端记忆页双标签（KnowledgePanel 导入/列表，canOperate/canAdmin 门控）。
+- **门（实跑 2026-10-09）**：后端全量 2488 passed/171 skipped；前端 vitest 896/2、oxlint 0、tsc 0、build 过。PG 腿以容器内 docker exec 手动验证为准（宿主 5432 未映射）。零新依赖/无 ADR。
+### 〔前端〕打包 ZX 收口：模板参数声明面结构化（docs/106，2026-10-08 立项+同日收口）
+
+- **D29 第二切片取回（D29 整体不解除）**：ZW 后 forms 内核渲染层已支持 group/array/hiddenWhen，真实缺口在声明面——TemplateParam 仍为 A1 标量四型。本批扩展为 object（properties 递归）/array（items 递归+minItems/maxItems）/visibleWhen（条件显隐→hiddenWhen 现成机制），声明面与渲染面闭合。
+- **后端**（`src/atlas/api/main.py`）：`_TEMPLATE_PARAM_TYPES` 加 object/array、`_TEMPLATE_PARAM_KEYS` 加 properties/items/minItems/maxItems/visibleWhen、`_TEMPLATE_PARAM_MAX_DEPTH=4`；`validate_template_params` 走递归 `_validate_param_decl`（深度上限、visibleWhen 形状），`_validate_instantiate_values` 走递归 `_validate_param_value`（object 按 properties 递归+未知子字段拒绝、array min/max 门控+按 items 递归元素）；既有标量四型逻辑逐字保留。
+- **前端**：`TemplateParam` 类型六值扩展（apiClient.ts）；`templateParamSchema.ts` 递归桥接（object→properties+局部 required、array→items+min/max、default 透传、visibleWhen→hiddenWhen 根层/嵌套 rootScoped:true——判别字段相对根 record，与 condition branches[] 语义一致）；`templateParams.ts` 递归纯逻辑（初值空容器、validateFieldValue 带完整路径错误如 `rules[0].min`、buildParamFields 顶层展开不递归进数组）；Editor 类型放宽。
+- **冒烟暴露的前置修复**（独立原子）：模板 instantiate 返回图节点无 position（GraphDSL 默认值不落库），`deserializeGraph` 不兜底导致生成画布后 Editor 序列化白屏（`graphSerializer.ts:24`）；修复为对缺 position 节点按序生成瀑布默认位置（x=40, y=40+index×80）、保留显式 position。此修复惠及所有无 position 图来源（NL 草稿等）。
+- 零迁移／零新依赖／无 ADR；五原子 `985e001`→`4a3ab29`＋position 修复原子；用例 U1251–U1258（docs/13）；**门**：后端全量 2481/169、前端 vitest 878/2、oxlint 0/0、tsc 0、build 过、守护门 8 passed；真实浏览器冒烟四验证全过（嵌套 group/数组增删行 minItems 门控/条件显隐/instantiate 200 画布替换）。**D29 整体不解除**。
+
+### 〔前端〕打包 ZW 收口：模板参数表单 Schema 驱动化（docs/105，2026-10-08 立项+同日收口）
+
+- **D29「Schema 驱动配置内核」首个切片取回（D29 整体不解除）**：A1 模板参数化向导（docs/97 §3.4，第四套手写表单范式）迁入 forms 内核成第三实体，与节点 config、工具 params 并列。
+- 新增纯函数 `frontend/src/lib/forms/templateParamSchema.ts`：`templateParamsToMetaSchema`（TemplateParam 声明→MetaSchema，select→enum 走 resolveWidget 现成通道、required 收集、default 透传）＋`templateParamsToUiSchema`（labels/hints 承接 label/hint）。
+- `UiSchema` 新增 `hints` 槽位：Field 控件下方 secondary 说明文字，decorateField/decorateNodeForRender 同步烘焙，缺省 undefined 三路零影响。
+- Editor 参数 Modal 渲染区改挂 `FormRenderer source="tool"`，删手写 Switch/Select/InputNumber/Input 四分支；弹窗宽高/提交/校验（validateParamValues 与后端 422 对齐）不变。
+- 落码期偏差照实（docs/105 §6）：source='tool' 下 string 字段按 M0 工具表单语义升级为 variable-input（支持变量插入，无 scope 退化 TextArea 不崩）。
+- 零迁移／零新依赖／无 ADR；四原子 `335be79`→`d850c44`；用例 U1245–U1250（docs/13）；**门**：前端 vitest 858/2、oxlint 0/0、tsc 0、build 过；真实浏览器冒烟全链路通过（参数 Modal 渲染/必填拦截/instantiate 画布替换）。**D29 整体不解除**。
+
+### 〔治理〕打包 ZV 闭合：A-9 demo 面固有共享定性（docs/89，2026-10-08）
+
+- **A-9（docs/89 台账低危：租户 scoped `/api/demo/reset` 清全局 `_MOCK_SHOPIFY_WEBHOOKS`）文档化闭合**：按权威规格 **docs/04 §9.4**「demo 店铺与 mock 端点、demo SQLite 种子为全局基础设施，不分区」＋「demo 店铺订单与 demo SQLite 种子是共享模拟基础设施，仍随之重建」——该行为是 by-design，非缺陷。
+- 推进前发现规格冲突（per-tenant 重构＝改 04 §9.4 契约级变更 vs 文档化闭合），用户拍板**文档化闭合**；docs/89 台账行/§5 正文/§16 三处加闭合注记，docs/08 记录结论。零代码。
+- 「每租户独立演示店」若日后成为产品需求，须先改 04 §9.4 再重构，本批不擅动。
+
+### 〔工程〕打包 ZU2 收口：子图引用手动升级动作侧（docs/104，2026-10-08 立项+同日收口）
+
+- **D21「手动升级+回归测试」动作侧取回（D21 整体不解除）**：升级体检（docs/28 批4⑪）只读不写草稿；本批补「显式升级引用」动作。
+- 后端 `apply_subgraph_upgrades`：把草稿顶层 subgraph 引用 `config.graphId` 显式改写为 `sub_id@to_version` 并经 `update_draft` 存回草稿（不产新版本、不动已发布版本）；指定不在升级清单的 node_id → 422；草稿不存在 → 404；空清单幂等。
+- 端点 `POST /api/graphs/{graph_id}/subgraph-upgrades`（operate）；升级体检基线改为优先读草稿显式钉版（升级后 from==to 不再列出，U1242 语义）。
+- 前端 ReleaseModal 升级体检区「全部应用/逐行应用」按钮，应用后刷新体检区；i18n apply/applyAll/applyFailed 两档。
+- 零迁移／零新依赖／无 ADR；四原子 `cb5a1c7`→`2255ead`；用例 U1237–U1244（docs/13）；**门**：后端 2464/147/0、前端 849/2、oxlint 0/0、tsc 0、build 过。**D21 整体不解除**（子图市场/共享/跨运营体/嵌套编辑触发条件不变）。
+
 ### 〔前端〕打包 ZT 收口：规则模板配置表单化（RuleConfigEditor 共享，docs/103，2026-10-08）
 
 - **规则模板新建/编辑改为可视化表单**：Monitoring 生效规则表单抽成纯受控共享组件 `RuleConfigEditor`（内置 4 规则开关/阈值、升级/恢复三组、custom 增删改），模板市场 Modal 不再要求手写 JSON；默认值与结构化校验收敛到 `lib/ruleConfig.ts`，提交前拦截非法配置。

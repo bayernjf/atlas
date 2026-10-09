@@ -61,6 +61,8 @@ export type UiSchema = {
   labels?: Record<string, string>
   /** 字段占位提示（键规则同 labels），透传给叶子控件。 */
   placeholders?: Record<string, string>
+  /** 字段下方说明文字（键规则同 labels；打包 ZW 起模板参数 hint 与既有字段说明共用）。 */
+  hints?: Record<string, string>
   /** enum/radio 选项中文文案（键规则同 labels，值为选项值 → 文案）；缺省显示原始枚举值。 */
   optionLabels?: Record<string, Record<string, string>>
   /** 多行控件行数（键规则同 labels），如把 keyvalue 内 variable-input 压成单行。 */
@@ -253,6 +255,7 @@ export function decorateNodeForRender(node: FormNode, uiSchema?: UiSchema): Form
       placeholder: lookupByPointer(uiSchema.placeholders, node.pointer) ?? node.placeholder,
       optionLabels: lookupByPointer(uiSchema.optionLabels, node.pointer) ?? node.optionLabels,
       rows: lookupByPointer(uiSchema.rows, node.pointer) ?? node.rows,
+      hint: lookupByPointer(uiSchema.hints, node.pointer) ?? node.hint,
     }
   }
   if (node.kind === 'keyvalue') {
@@ -284,6 +287,7 @@ function decorateField(node: FormNode, uiSchema: UiSchema): FormNode {
       label: label ?? node.label,
       placeholder: uiSchema.placeholders?.[key] ?? node.placeholder,
       optionLabels: uiSchema.optionLabels?.[key] ?? node.optionLabels,
+      hint: uiSchema.hints?.[key] ?? node.hint,
     }
   }
   return label ? { ...node, label } : node

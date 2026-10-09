@@ -3,6 +3,7 @@ import { Alert, Button, Collapse, Modal, Progress, Space, Spin, Table, Tag, Typo
 import type { ColumnsType } from 'antd/es/table'
 import {
   GateBlockedError,
+  applySubgraphUpgrades,
   exportReleaseReport,
   getReleaseReport,
   listReleaseReports,
@@ -79,6 +80,24 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
       setUpgrades([])
     }
   }, [graphId])
+
+  // 打包 ZU2（D21 动作侧）：手动应用升级（显式把草稿引用钉到目标版本，再刷新体检）
+  const [applying, setApplying] = useState<Set<string> | null>(null)
+  const applyUpgrade = useCallback(
+    async (nodeIds?: string[]) => {
+      if (!graphId) return
+      setApplying(new Set(nodeIds ?? ['__all__']))
+      try {
+        await applySubgraphUpgrades(graphId, nodeIds)
+        await loadUpgrades()
+      } catch {
+        setError(t('release.upgrade.applyFailed'))
+      } finally {
+        setApplying(null)
+      }
+    },
+    [graphId, loadUpgrades, t],
+  )
 
   const loadDiff = useCallback(async () => {
     if (!graphId) return
@@ -177,6 +196,21 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
             </Tag>
           </Space>
         ),
+    },
+    {
+      title: '',
+      key: 'action',
+      width: 110,
+      render: (_, row) => (
+        <Button
+          size="small"
+          loading={applying !== null && applying.has(row.node_id)}
+          disabled={applying !== null}
+          onClick={() => applyUpgrade([row.node_id])}
+        >
+          {t('release.upgrade.apply')}
+        </Button>
+      ),
     },
   ]
 
@@ -323,9 +357,22 @@ export function ReleaseModal({ open, graphId, onClose, onPublished }: Props) {
           <div>
             <Space style={{ justifyContent: 'space-between', width: '100%' }}>
               <Text strong>{t('release.upgrade.title')}</Text>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {t('release.upgrade.hint')}
-              </Text>
+              <Space size={8}>
+                {upgrades.length > 0 && (
+                  <Button
+                    size="small"
+                    type="primary"
+                    loading={applying !== null && applying.has('__all__')}
+                    disabled={applying !== null}
+                    onClick={() => applyUpgrade()}
+                  >
+                    {t('release.upgrade.applyAll')}
+                  </Button>
+                )}
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {t('release.upgrade.hint')}
+                </Text>
+              </Space>
             </Space>
             {upgrades.length === 0 ? (
               <Text type="secondary">{t('release.upgrade.empty')}</Text>

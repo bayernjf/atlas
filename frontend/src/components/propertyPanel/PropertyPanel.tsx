@@ -27,6 +27,7 @@ import { WaitConfig } from './WaitConfig'
 import { SubgraphConfig } from './SubgraphConfig'
 import { HumanApprovalConfig } from './HumanApprovalConfig'
 import { ToolCallConfig } from './ToolCallConfig'
+import { StructuredConfig } from './StructuredConfig'
 import { NodeConfigForm } from '../../lib/forms/NodeConfigForm'
 import { useTranslation } from '../../locales'
 
@@ -173,6 +174,16 @@ export function PropertyPanel() {
             update={updateSelectedConfig}
             variablePaths={[]}
             targetOptions={[]}
+            diagnostics={diagnostics}
+          />
+        )}
+        {(data.kind === 'intent_recognition' || data.kind === 'info_extraction' || data.kind === 'content_generation') && (
+          <StructuredConfig
+            kind={data.kind}
+            config={config}
+            update={updateSelectedConfig}
+            variablePaths={variablePaths}
+            targetOptions={targetOptions}
             diagnostics={diagnostics}
           />
         )}

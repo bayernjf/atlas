@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   GateBlockedError,
+  applySubgraphUpgrades,
   exportReleaseReport,
   getReleaseReport,
   getSubgraphUpgrades,
@@ -247,6 +248,32 @@ describe('子图版本升级体检 apiClient（⑪）', () => {
       '/api/graphs/graph-1/subgraph-upgrades',
     )
     expect(vi.mocked(fetch).mock.calls[0][1]?.method).toBeUndefined() // GET
+  })
+
+  it('applySubgraphUpgrades 发 POST（可带 node_ids 子集）并解包 applied', async () => {
+    const applied = [
+      { node_id: 'n2', sub_id: 'graph-3', from_version: 1, to_version: 2, first_pin: false },
+    ]
+    stubFetch({ applied })
+    const result = await applySubgraphUpgrades('graph-1', ['n2'])
+    expect(result).toEqual(applied)
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toBe(
+      '/api/graphs/graph-1/subgraph-upgrades',
+    )
+    expect(vi.mocked(fetch).mock.calls[0][1]?.method).toBe('POST')
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body))).toEqual({
+      node_ids: ['n2'],
+    })
+
+    // 缺省全部 → 空 body {}
+    const appliedAll = [
+      { node_id: 'n1', sub_id: 'graph-2', from_version: null, to_version: 1, first_pin: true },
+    ]
+    stubFetch({ applied: appliedAll })
+    const all = await applySubgraphUpgrades('graph-1')
+    expect(all).toEqual(appliedAll)
+    const lastCall = vi.mocked(fetch).mock.calls.at(-1)
+    expect(JSON.parse(String(lastCall?.[1]?.body))).toEqual({})
   })
 })
 

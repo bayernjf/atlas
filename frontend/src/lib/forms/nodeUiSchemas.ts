@@ -216,6 +216,56 @@ export const waitUiSchema: UiSchema = {
 }
 
 /** 节点 kind → UISchema；未迁移节点缺省（FormRenderer 无 uiSchema 时退化为字段名直出）。 */
+/**
+ * intent_recognition（docs/109 打包 AB）：intents 数组编辑器（name/description/examples）、
+ * textSource 变量模板、model 覆盖。示例字段可选（examples 逐项添加）。
+ */
+export const intentRecognitionUiSchema: UiSchema = {
+  labels: {
+    intents: '意图清单（至少 1 个，最多 20 个）',
+    textSource: '输入文本来源（{{路径}} 模板；留空取触发器上下文 text）',
+    model: '模型覆盖（可选）',
+  },
+  placeholders: {
+    textSource: '{{trigger-1.context.payload.text}}',
+    model: '留空使用默认模型',
+  },
+}
+
+/**
+ * info_extraction（docs/109 打包 AB）：fields 数组编辑器（name/type/description）、
+ * textSource 变量模板、model 覆盖。
+ */
+export const infoExtractionUiSchema: UiSchema = {
+  labels: {
+    fields: '字段清单（至少 1 个，最多 30 个）',
+    textSource: '输入文本来源（{{路径}} 模板；留空取触发器上下文 text）',
+    model: '模型覆盖（可选）',
+  },
+  placeholders: {
+    textSource: '{{trigger-1.context.payload.text}}',
+    model: '留空使用默认模型',
+  },
+}
+
+/**
+ * content_generation（docs/109 打包 AB）：template 必填（可含 {{路径}}）、style 可选、
+ * maxLength 1-4000 整数、model 覆盖。
+ */
+export const contentGenerationUiSchema: UiSchema = {
+  labels: {
+    template: '生成模板（必填，可含 {{路径}} 引用）',
+    style: '风格（可选）',
+    maxLength: '最大长度（1-4000 字）',
+    model: '模型覆盖（可选）',
+  },
+  placeholders: {
+    template: '您的订单 {{extract-1.result.fields.order_id}} 处理中',
+    style: '正式 / 亲切 / 简短',
+    model: '留空使用默认模型',
+  },
+}
+
 export const NODE_UI_SCHEMAS: Partial<Record<NodeKind, UiSchema>> = {
   trigger: triggerUiSchema,
   condition: conditionUiSchema,
@@ -224,4 +274,7 @@ export const NODE_UI_SCHEMAS: Partial<Record<NodeKind, UiSchema>> = {
   parallel: parallelUiSchema,
   subgraph: subgraphUiSchema,
   wait: waitUiSchema,
+  intent_recognition: intentRecognitionUiSchema,
+  info_extraction: infoExtractionUiSchema,
+  content_generation: contentGenerationUiSchema,
 }

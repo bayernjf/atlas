@@ -19,7 +19,8 @@
   },
   "kind": {
     "fact": "事实",
-    "preference": "偏好"
+    "preference": "偏好",
+    "knowledge": "知识"
   },
   "button": {
     "edit": "编辑",
@@ -36,7 +37,8 @@
     "cardTitle": "语义搜索",
     "placeholder": "输入自然语言，如：客户的配送偏好",
     "empty": "无匹配记忆",
-    "queryRequired": "请输入检索内容"
+    "queryRequired": "请输入检索内容",
+    "knowledgePlaceholder": "输入检索词，可限定知识分类"
   },
   "list": {
     "cardTitle": "记忆列表",
@@ -58,6 +60,33 @@
     "contentPlaceholder": "记忆内容（必填，最长 2000 字）",
     "confidenceLabel": "置信度（0-1）",
     "scopeLabel": "作用域（JSON 对象，键值均为字符串，可空）",
-    "metadataLabel": "元数据（JSON 对象，键值均为字符串，可空）"
-  }
+    "metadataLabel": "元数据（JSON 对象，键值均为字符串，可空）",
+    "knowledgeHint": "知识条目需在「知识」标签页导入或手动新建（metadata.category 为分类）。"
+  },
+  "category": {
+    "faq": "FAQ",
+    "sop": "SOP",
+    "manual": "产品手册",
+    "rule": "业务规则",
+    "case": "历史案例",
+    "all": "全部分类"
+  },
+  "knowledge": {
+    "tab": "知识",
+    "importCardTitle": "知识文档导入",
+    "importHint": "按段落自动分段向量化入库（段落优先，单段超 1200 字硬切）；最多 200 条，超出部分截断。仅支持纯文本。",
+    "importCategoryLabel": "知识分类",
+    "importTextPlaceholder": "粘贴知识文本，空行分段（FAQ / SOP / 产品手册 / 业务规则 / 历史案例）",
+    "importButton": "导入",
+    "importing": "导入中…",
+    "importSuccess": "已导入 {imported} 条知识",
+    "importTruncated": "（超过 200 条，已截断）",
+    "importError": "导入失败",
+    "importTextRequired": "请输入要导入的知识文本",
+    "listTitle": "知识列表",
+    "listEmpty": "暂无知识条目",
+    "categoryColumn": "分类",
+    "filterLabel": "分类筛选"
+  },
+  "memoryTab": "记忆"
 }

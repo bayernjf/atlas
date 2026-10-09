@@ -104,10 +104,13 @@ export function deserializeGraph(graph: SerializedGraph): {
   variables: GraphVariable[]
   debugSettings?: { breakpoints: PersistedBreakpoint[] }
 } {
+  // 模板 instantiate/NL 草稿等来源的图可能缺 position（GraphDSL 默认值不落库）。
+  // 兜底按序生成瀑布位置，避免画布节点 position=undefined 导致序列化崩溃（ZX 冒烟暴露）。
+  const DEFAULT_NODE_GAP = 80
   return {
-    nodes: graph.nodes.map((node) => ({
+    nodes: graph.nodes.map((node, index) => ({
       id: node.id,
-      position: node.position,
+      position: node.position ?? { x: 40, y: 40 + index * DEFAULT_NODE_GAP },
       data: {
         label: node.name,
         kind: node.type,

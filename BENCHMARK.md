@@ -51,14 +51,31 @@ cd frontend && pnpm bench    # 等价 RUN_BENCH=1 vitest run bench/validation.pe
 | 2026-09-17 | 875922b | 前端 L3 冷启动（N=500 链式） | validateL3 不可达/环 p50/p95 (ms) | 0.726 / 1.308 ms | 近线性 |
 | 2026-09-17 | 875922b | 前端 L3 热态（N=500 链式） | 结构签名命中 p50/p95 (ms) | 0.189 / 0.357 ms | 编辑模板文本不触发重算 |
 | 2026-09-17 | 875922b | 前端全量聚合 L1+L2+L3（N=500 链式） | validateGraph 无缓存一次 p50/p95 (ms) | 45.266 / 69.828 ms | 换图/首挂一次性；稳态编辑走增量不在此路径 |
-| 2026-09-18 | 9e1d43c | M9 Router 三段分桶
 | 2026-10-02 | babb40a | OODA loop throughput | loop latency p50/p99 (ms)；吞吐 loops/s（取 p50 倒数） | 5.70 / 11.75 ms；175.3 loops/s | 确定性占位节点，无 LLM/IO；CPython 3.11.15, macOS-27.0-arm64, 300 次/场景 |
 | 2026-10-02 | babb40a | Graph compile latency | 3 节点退款图单次编译 p50/p99 (ms) | 51.69 / 173.77 ms | DSL→LangGraph StateGraph 装配，进程内 |
 | 2026-10-02 | babb40a | Refund e2e latency（12345 auto-refund） | 触发→规则决策→shop 执行 p50/p99 (ms) | 51.18 / 124.42 ms | 规则决策路径，不含 LLM 网络时延；service.reset 在计时外 |
 | 2026-10-02 | babb40a | Parallel fan-out/fan-in latency（N=4 branches） | trigger→parallel→4 只读分支→join 单次运行 p50/p99 (ms) | 132.74 / 279.58 ms | 合成 __join__ 屏障 + 就绪等待超步；分支均为 list_pending_refunds 只读 |
 | 2026-10-02 | babb40a | Harness call overhead | shop/list_pending_refunds 单次调用 p50/p99 (ms) | 0.034 / 0.125 ms | 权限校验+审计+进程内分发，不含外部平台耗时 |
-| 2026-10-02 | babb40a | M9 Router 三段分桶 | 单次 resolve_version（internal→低金额桶→canary 哈希）p50/p99 (ms)；吞吐 resolves/s | 0.0037 / 0.0228 ms；272714 resolves/s | 纯函数字典/稳定哈希、零 IO；混合 10% internal、40% 低金额桶、其余 canary 哈希；固定 10000 次采样 | | 单次 resolve_version（internal→低金额桶→canary 哈希）p50/p99 (ms)；吞吐 resolves/s | 0.0041 / 0.0450 ms；约 242000 resolves/s | 纯函数字典/稳定哈希、零 IO；混合 10% internal、40% 低金额桶、其余 canary 哈希；CPython 3.11，macOS arm64，固定 10000 次采样（warmup 1000） |
+| 2026-10-02 | babb40a | M9 Router 三段分桶 | 单次 resolve_version（internal→低金额桶→canary 哈希）p50/p99 (ms)；吞吐 resolves/s | 0.0037 / 0.0228 ms；272714 resolves/s | 纯函数字典/稳定哈希、零 IO；混合 10% internal、40% 低金额桶、其余 canary 哈希；固定 10000 次采样 |
 
+| 2026-10-08 | 5b91eaf | OODA loop throughput | loop latency p50/p99 (ms)；吞吐 loops/s（取 p50 倒数） | 2.39 / 3.68 ms；419.0 loops/s | 确定性占位节点，无 LLM/IO；CPython 3.11.15, macOS-27.0-arm64 |
+| 2026-10-08 | 5b91eaf | Graph compile latency | 3 节点退款图单次编译 p50/p99 (ms) | 35.20 / 80.76 ms | DSL→LangGraph StateGraph 装配，进程内 |
+| 2026-10-08 | 5b91eaf | Refund e2e latency (12345 auto-refund) | 触发→规则决策→shop 执行 p50/p99 (ms) | 32.85 / 73.97 ms | 规则决策路径，不含 LLM 网络时延；service.reset 在计时外 |
+| 2026-10-08 | 5b91eaf | Parallel fan-out/fan-in latency (N=4 branches) | trigger→parallel→4 只读分支→join 单次运行 p50/p99 (ms) | 96.23 / 349.40 ms | 合成 __join__ 屏障 + 就绪等待超步；分支均为 list_pending_refunds 只读 |
+| 2026-10-08 | 5b91eaf | Harness call overhead | shop/list_pending_refunds 单次调用 p50/p99 (ms) | 0.045 / 0.295 ms | 权限校验+审计+进程内分发，不含外部平台耗时 |
+| 2026-10-08 | 5b91eaf | M9 Router 三段分桶 | 单次 resolve_version（internal→低金额桶→canary 哈希）p50/p99 (ms)；吞吐 resolves/s | 0.0030 / 0.0516 ms；328738 resolves/s | 纯函数字典/稳定哈希、零 IO；混合 10% internal、40% 低金额桶、其余 canary 哈希；固定 10000 次采样 |
+| 2026-10-08 | 5b91eaf | 前端 L1 全量字段校验（N=200 链式） | 全节点 validateNodeL1 p50/p95 (ms) | 0.429 / 1.254 ms | Node v22，macOS arm64，vitest 5，warmup 10 + 采样 50；较 09-17 基线略降（0.648→0.429） |
+| 2026-10-08 | 5b91eaf | 前端 L2 冷启动全量（N=200 链式） | 新引擎 runL2 全节点（含 ScopeIndex 构建）p50/p95 (ms) | 2.865 / 4.163 ms | 换图/首挂一次性成本；较 09-17（4.837）明显下降 |
+| 2026-10-08 | 5b91eaf | 前端 L2 热态单节点增量（N=200 链式） | ScopeIndex 缓存命中、1 节点到期 p50/p95 (ms) | 0.504 / 1.026 ms | 编辑防抖层稳态 |
+| 2026-10-08 | 5b91eaf | 前端 L3 冷启动（N=200 链式） | validateL3 不可达/环 p50/p95 (ms) | 3.666 / 6.452 ms | 较 09-17（0.439）升高：L3 自 D30 outputSchema 类型级校验扩充后负载增加（不可达/环+输出形状联合校验） |
+| 2026-10-08 | 5b91eaf | 前端 L3 热态（N=200 链式） | 结构签名命中 p50/p95 (ms) | 0.189 / 0.252 ms | 记忆化命中≈直接返回缓存 |
+| 2026-10-08 | 5b91eaf | 前端全量聚合 L1+L2+L3（N=200 链式） | validateGraph 无缓存一次 p50/p95 (ms) | 6.323 / 8.419 ms | 仅换图/首挂发生 |
+| 2026-10-08 | 5b91eaf | 前端 L1 全量字段校验（N=500 链式） | 全节点 validateNodeL1 p50/p95 (ms) | 0.350 / 0.615 ms | 与 N=200 同量级 |
+| 2026-10-08 | 5b91eaf | 前端 L2 冷启动全量（N=500 链式） | 新引擎 runL2 全节点（含 ScopeIndex 构建）p50/p95 (ms) | 20.525 / 30.463 ms | 链式图可见性 BFS 总和 O(n²)，随 n 非线性；仅换图一次性；较 09-17（37.665）下降 |
+| 2026-10-08 | 5b91eaf | 前端 L2 热态单节点增量（N=500 链式） | ScopeIndex 缓存命中、1 节点到期 p50/p95 (ms) | 4.687 / 7.405 ms | 每轮 O(n) configSignature 遍历；低于一帧 16.7ms |
+| 2026-10-08 | 5b91eaf | 前端 L3 冷启动（N=500 链式） | validateL3 不可达/环 p50/p95 (ms) | 19.223 / 25.583 ms | 较 09-17（0.726）升高：L3 扩充后负载增加（见 N=200 同列注记） |
+| 2026-10-08 | 5b91eaf | 前端 L3 热态（N=500 链式） | 结构签名命中 p50/p95 (ms) | 0.348 / 0.486 ms | 编辑模板文本不触发重算 |
+| 2026-10-08 | 5b91eaf | 前端全量聚合 L1+L2+L3（N=500 链式） | validateGraph 无缓存一次 p50/p95 (ms) | 60.347 / 238.756 ms | 换图/首挂一次性；p95 受本机调度抖动影响（多次采样波动大），稳态编辑走增量不在此路径 |
 数值为单机单次基线，仅作后续回归对比锚点，不代表生产容量；跨环境对比需在同一硬件/负载下重跑脚本并追加行。
 
 ## Known limits

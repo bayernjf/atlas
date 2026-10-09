@@ -659,12 +659,18 @@ export async function nlGenerate(prompt: string): Promise<{ graph: SerializedGra
 export type TemplateSource = 'catalog' | 'user'
 
 export type TemplateParam = {
-  type: 'string' | 'number' | 'boolean' | 'select'
+  type: 'string' | 'number' | 'boolean' | 'select' | 'object' | 'array'
   label?: string
   required?: boolean
-  default?: string | number | boolean
+  default?: unknown
   hint?: string
   options?: string[]
+  // 打包 ZX（docs/106）：结构化声明面——嵌套 object / 数组 / 条件显隐
+  properties?: TemplateParams
+  items?: TemplateParam
+  minItems?: number
+  maxItems?: number
+  visibleWhen?: { field: string; equals: unknown }
 }
 
 export type TemplateParams = Record<string, TemplateParam>
@@ -755,7 +761,7 @@ export async function touchTemplateUsage(id: string): Promise<{ usage_count: num
 
 export async function instantiateTemplate(
   id: string,
-  values: Record<string, string | number | boolean>,
+  values: Record<string, unknown>,
 ): Promise<{ graph: SerializedGraph; template: { id: string; name: string; version: number } }> {
   return request(`/api/templates/${id}/instantiate`, {
     method: 'POST',
@@ -1860,6 +1866,18 @@ export async function getSubgraphUpgrades(graphId: string): Promise<SubgraphUpgr
   return body.items
 }
 
+/** 打包 ZU2（D21 动作侧）：把草稿顶层 subgraph 引用显式升级到体检目标版本并存回草稿。 */
+export async function applySubgraphUpgrades(
+  graphId: string,
+  nodeIds?: string[],
+): Promise<SubgraphUpgrade[]> {
+  const body = await request<{ applied: SubgraphUpgrade[] }>(
+    `/api/graphs/${graphId}/subgraph-upgrades`,
+    { method: 'POST', body: JSON.stringify(nodeIds ? { node_ids: nodeIds } : {}) },
+  )
+  return body.applied
+}
+
 /** D26 报告 v1：本图批量回放报告历史（倒序摘要，不含逐例 cases） */
 export async function listReleaseReports(graphId: string): Promise<ReleaseReportSummary[]> {
   const body = await request<{ items: ReleaseReportSummary[] }>(
@@ -1975,7 +1993,9 @@ export async function rollbackRollout(graphId: string): Promise<RolloutSnapshot>
 
 // --- M11 长期记忆（docs/26 §6；只读浏览 + admin 删除，写入只走图工具） --------
 
-export type MemoryKind = 'fact' | 'preference'
+export type MemoryKind = 'fact' | 'preference' | 'knowledge'
+
+export type KnowledgeCategory = 'faq' | 'sop' | 'manual' | 'rule' | 'case'
 
 export type MemoryItem = {
   id: string
@@ -2002,10 +2022,11 @@ export async function listMemories(
 
 export async function searchMemories(
   q: string,
-  opts: { kind?: MemoryKind; topK?: number; minScore?: number } = {},
+  opts: { kind?: MemoryKind; category?: KnowledgeCategory; topK?: number; minScore?: number } = {},
 ): Promise<MemorySearchResult[]> {
   const params = new URLSearchParams({ q })
   if (opts.kind) params.set('kind', opts.kind)
+  if (opts.category) params.set('category', opts.category)
   if (opts.topK !== undefined) params.set('top_k', String(opts.topK))
   if (opts.minScore !== undefined) params.set('min_score', String(opts.minScore))
   const body = await request<{ results: MemorySearchResult[] }>(
@@ -2036,6 +2057,26 @@ export async function updateMemory(
   payload: Partial<MemoryWritePayload>,
 ): Promise<MemoryItem> {
   return request(`/api/memories/${id}`, { method: 'PUT', body: JSON.stringify(payload) })
+}
+
+/** docs/108 打包 AA：知识库文档导入（operate；纯文本分段入库，返回条目与截断标记）。 */
+export type KnowledgeImportRequest = {
+  category: KnowledgeCategory
+  text: string
+  scope?: Record<string, string>
+}
+
+export type KnowledgeImportResult = {
+  imported: number
+  truncated: boolean
+  items: MemoryItem[]
+}
+
+export async function importKnowledge(payload: KnowledgeImportRequest): Promise<KnowledgeImportResult> {
+  return request('/api/knowledge/import', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
 }
 
 // --- D26 影子模式（docs/33 §3；线上旁路录制，sync、无 SSE） ---

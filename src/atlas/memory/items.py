@@ -91,12 +91,13 @@ class MemoryStore:
         query: str,
         *,
         kind: str | None = None,
+        category: str | None = None,
         scope: dict[str, str] | None = None,
         top_k: int = 5,
         min_score: float = 0.0,
     ) -> list[dict[str, Any]]:
         params = validate_recall_params(
-            query=query, kind=kind, scope=scope, top_k=top_k, min_score=min_score
+            query=query, kind=kind, category=category, scope=scope, top_k=top_k, min_score=min_score
         )
         query_vector = self._provider.embed([params["query"]])[0]
         with self._lock:
@@ -104,6 +105,11 @@ class MemoryStore:
         scored: list[tuple[float, dict[str, Any]]] = []
         for record in candidates:
             if params["kind"] is not None and record["kind"] != params["kind"]:
+                continue
+            if (
+                params["category"] is not None
+                and record.get("metadata", {}).get("category") != params["category"]
+            ):
                 continue
             if not scope_contains(record["scope"], params["scope"]):
                 continue
@@ -126,8 +132,8 @@ class MemoryStore:
         with self._lock:
             items = list(self._items)
         if kind is not None:
-            if kind not in ("fact", "preference"):
-                raise ValueError("kind 必须是 fact 或 preference")
+            if kind not in ("fact", "preference", "knowledge"):
+                raise ValueError("kind 必须是 fact/preference/knowledge 之一")
             items = [item for item in items if item["kind"] == kind]
         return [public_memory(item) for item in reversed(items[-limit:])]
 
