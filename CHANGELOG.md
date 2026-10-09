@@ -3,6 +3,11 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔工程〕打包 AE 收口：condition LLM 置信度阈值＋上下文字段级脱敏（docs/111，2026-10-09 立项+同日收口）
+
+- **D14 再取回两半（docs/111 §7；D14 不解除余部）**：condition context_text 序列化前脱敏（抽 `_sensitive_redaction_mapping` 与 `_redact_outputs` 同源复用，补上发往 condition LLM 上下文这条漏网出向通道，env/secret 展开值不再明文给模型供应商）；LLM 增返 `confidence`，节点可选 `confidenceThreshold`（0–1，缺省不启用），低置信度、或缺/非数值/越界置信度 fail-closed 抛 ConditionClassifyError 走 defaultTarget 并记 llm_errors，未配阈值向后兼容，Scripted 回放忽略阈值；新编译期码 `COND_LLM_THRESHOLD_INVALID`（frontend validation.json zh/en）；前端 condition.schema 加 0–1 number、nodeUiSchemas label/placeholder 仅 LLM 模式显示。两处落码偏差（节点表单 label 硬编码中文未单独立 i18n 键、错误码走 validation.json 而非 docs/03）见 docs/111 §7。
+- **门（实跑 2026-10-09）**：后端全量 2533 passed/172 skipped/0 failed（+16；首次全量 1 例 `test_api_demo` live-stream 偶发、单跑通过、复跑 0 failed 证实非回归）；前端 vitest 897 passed/2 skipped、oxlint 0/0、tsc 0、build 过；既有 classifier 替身 4 文件签名适配。零新依赖/零迁移/无 ADR。
+
 ### 〔工程〕打包 AC 收口：AI 评估 Harness v1（离线批评估）（docs/110，2026-10-09 立项+同日收口）
 
 - **D62 取回闭合（docs/110 §六；D62 不解除后续面）**：`evaluation_task` 契约（docs/06 §9.2）落成可执行离线批评估——新 `evaluation/` 包（models 六模型＋runner：确定性决策客户端注入做无模型回归、approval 帧收集 `request_human_approval`、verify 复用 condition 白名单表达式＋`{outputs, **inputs}` 上下文、case 级异常记 error 不毁批）；迁移 047 `evaluations`（PK (tenant_id,id)、summary/cases JSONB、复合索引）；两档 store（内存 capacity 200／PG UPSERT 最新在前 clear 同清）；`POST /api/evaluations`＋`GET /api/evaluations`（admin，404/422/403）；docs/03 错误码登记（EVALUATION_TASK_INVALID/EVALUATION_GRAPH_NOT_FOUND/EVALUATION_VERIFY_INVALID）。落码期两处契约细化（审批/等待预置、verify 上下文）回填 docs/110 顶部。

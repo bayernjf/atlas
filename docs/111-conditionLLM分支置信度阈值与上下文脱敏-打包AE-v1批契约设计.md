@@ -1,6 +1,6 @@
 # condition LLM 分支：置信度阈值＋上下文字段级脱敏 v1 批契约设计（打包 AE）
 
-> 状态：📝 立项（docs-only，落码另立批）｜号段 U1285–U1292｜形状权威：本文｜承接 docs/14 D14 剩余「置信度阈值、字段级脱敏」｜2026-10-09
+> 状态：✅ 落码收口（2026-10-09 立项＋同日收口）｜号段 U1285–U1292｜形状权威：本文｜承接 docs/14 D14 剩余「置信度阈值、字段级脱敏」｜2026-10-09
 
 ## 1. 背景与边界裁定
 
@@ -72,3 +72,11 @@
 7. `docs`：docs/14 D14 注记、docs/13 U1285–U1292、docs/08、CHANGELOG、handoff 收口（含 docs/14 D30 行落码收口注记补登——打包 A3 早已落码、行注记漏回填）。
 
 零新依赖／零迁移／无新 ADR（纯既有机制内闭环）；D14 整体不解除（多候选/每分支 prompt/门禁抖动仍缓做）。
+
+## 7. 落码收口注记（2026-10-09）
+
+- 已按 §6 原子序落码收口：docs 立项 `3c9f55d` → refactor(engine) `c057389` → feat(engine) `3091341` → test(engine) `8617a97` → feat(frontend) `d3f8582` → test(frontend) `a65061b` → 既有 classifier 替身签名适配 `0cba03a`。
+- **门（实跑）**：后端全量 **2533 passed／172 skipped／0 failed**（+16；首次全量门 1 例 `test_api_demo` live-stream 失败，单跑通过、第二次全量 0 failed，证实为高负载偶发、非本批回归）；前端 vitest **897 passed／2 skipped**、oxlint **0/0**、tsc 0、build 过。
+- **落码偏差 1（§3 i18n 一条）**：节点配置表单 label 现状在 nodeUiSchemas 中硬编码中文、FormRenderer 不经过 `t()`（全族节点表单 label 均未 i18n）。故 `confidenceThreshold` 照同族 `model`/`classifierPrompt` 加中文 label/placeholder，**未单独立 `condition.confidenceThreshold*` i18n 键**。节点表单 label 整体 i18n 化是独立议题，不在本批。
+- **落码偏差 2（§3 错误码一条）**：落码时确无合适既有 condition config 校验码可复用，新增编译期错误码 `COND_LLM_THRESHOLD_INVALID`，文案登记于 frontend `locales/{zh-CN,en-US}/validation.json`（照同族 `COND_LLM_MODEL_*` 先例，不走 docs/03）。
+- **D14 整体不解除**：多候选/澄清重问、每分支独立 prompt 或多次调用、门禁 LLM 抖动、`x-secret-allowed` 参数级权限仍缓做，触发条件见 §5。
