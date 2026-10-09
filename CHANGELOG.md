@@ -3,6 +3,12 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔前端〕异构数组判别渲染契约立项：D29 解锁路径第 2 步（docs/119，2026-10-10，docs-only）
+
+- 契约设计：forms 内核补「判别异构数组渲染最小子集」——`items.oneOf` 各分支以标准 keyword `const` 为判别键（MetaSchema 封闭四 x-* 不新增），元素按实际值匹配分支子树渲染、新增行取首个分支默认对象、判别键只读展示（SelectWidget const 单选项 disabled）。
+- **非目标**：object 级顶层 oneOf、嵌套 oneOf、判别键切换交互、L1 动态诊断、RolloutModal 规则区迁移（第 3 步第二片，另立批）。
+- 满足 docs/118 §6 第 1 条重开判据（第 3 步立项前必须完成）。落码待批。
+
 ### 〔前端〕部署 gate 配置面迁 forms：D29 解锁路径第 3 步第一片（docs/115，2026-10-10）
 
 - **部署配置面作为第四实体接入 forms 的第一片实际落地**（docs/118 契约后的第一个消费方）：`types.ts` 业务控件名分组为节点组（BUSINESS_WIDGETS）∪部署组（DEPLOY_WIDGETS），`isWidgetName` 同步识别；新 `release/gateSchema.ts` `buildGateSchema()`（标量×3 走内置 number/switch，metrics 数组声明 `x-widget: deploy-gate-metrics`）；新 `forms/deployWidgets.tsx` `GateMetricsWidget`（固定三行 GATE_METRIC_SPECS 可空阈值编辑）；新 `forms/deployRegistry.ts` `buildDeployRegistry()`（内置九件＋部署组，独立实例）；`release.ts` 提炼 `upsertGateMetric`（`setGateMetric` 改委托）；RolloutModal gate 区删手写 InputNumber×2＋Switch＋Table 改挂 FormRenderer。后端 GateConfig 形状不变。
