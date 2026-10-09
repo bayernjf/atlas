@@ -3,6 +3,14 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔前端〕部署 gate 配置面迁 forms：D29 解锁路径第 3 步第一片（docs/115，2026-10-10）
+
+- **部署配置面作为第四实体接入 forms 的第一片实际落地**（docs/118 契约后的第一个消费方）：`types.ts` 业务控件名分组为节点组（BUSINESS_WIDGETS）∪部署组（DEPLOY_WIDGETS），`isWidgetName` 同步识别；新 `release/gateSchema.ts` `buildGateSchema()`（标量×3 走内置 number/switch，metrics 数组声明 `x-widget: deploy-gate-metrics`）；新 `forms/deployWidgets.tsx` `GateMetricsWidget`（固定三行 GATE_METRIC_SPECS 可空阈值编辑）；新 `forms/deployRegistry.ts` `buildDeployRegistry()`（内置九件＋部署组，独立实例）；`release.ts` 提炼 `upsertGateMetric`（`setGateMetric` 改委托）；RolloutModal gate 区删手写 InputNumber×2＋Switch＋Table 改挂 FormRenderer。后端 GateConfig 形状不变。
+- **原子**：`95041d4` feat(frontend) → `ee928ac` test(frontend) → docs 收口。
+- **门**：前端 vitest **943 passed／2 skipped**（基线 932 → +11）、oxlint 0/0、tsc 0、build 过；守护门 8 passed；真实浏览器冒烟 gate 区全量渲染确认。
+- **两处 UI 微差照实**：观察窗无「分钟」后缀（单位并入 label）、新增「门控指标」字段 label。零新依赖/零迁移/无 ADR。
+- **非目标**：oneOf/discriminator 异构数组（第 2 步）、RolloutModal 规则区迁移（第 3 步第二片）、解除 D29。
+
 ### 〔前端〕自定义控件扩展契约落码收口：D29 解锁路径第 1 步（docs/118，2026-10-10）
 
 - **契约已立并同日落码收口**（承接 docs/115 §5 解锁路径第 1 步）：`registerWidget` 从「M3 预留」升级为正式契约并落地——名称规则（禁内置九件冲突、`<domain>-<semantic>` 命名空间、同名覆盖）＋组件签名静态校验；`x-widget` 声明与消费范围（node/card 认、tool 忽略）；`WidgetName` 拓宽为「内置九件∪已登记业务控件名」（`BUSINESS_WIDGETS` 常量表，取向 (a)），`resolveWidget` 不再断言绕过、未登记名按类型默认走；props 契约（WidgetProps 基线＋schema `x-*` 自读、无新增注入通道、受控单一）；运行期降级（未注册名→json＋`console.warn`、开发期 `get()` throw 保留）；契约测试 17 例。
