@@ -12,6 +12,7 @@ import {
   reportTimeLabel,
   rolloutActions,
   setGateMetric,
+  upsertGateMetric,
   withRule,
   type GateConclusion,
 } from '../release'
@@ -104,6 +105,28 @@ describe('setGateMetric', () => {
     const next = setGateMetric(config, { id: 'run_error_rate', threshold: 0.05 })
     expect(next.gate.metrics.find((metric) => metric.id === 'run_error_rate')?.threshold).toBe(0.05)
     expect(next.gate.metrics).toHaveLength(3)
+  })
+})
+
+describe('upsertGateMetric（docs/115 §5 第 3 步第一片：gate 控件复用）', () => {
+  it('数组级新增/替换/排序与 setGateMetric 一致', () => {
+    const base = defaultRolloutConfig('t1').gate.metrics
+    const withError = upsertGateMetric(base, { id: 'run_error_rate', threshold: 0.01 })
+    expect(withError.map((metric) => metric.id)).toEqual([
+      'run_error_rate',
+      'manual_escalation_rate',
+      'refund_amount_diff_rate',
+    ])
+    const replaced = upsertGateMetric(withError, { id: 'manual_escalation_rate', threshold: 0.2 })
+    expect(replaced.find((metric) => metric.id === 'manual_escalation_rate')?.threshold).toBe(0.2)
+    expect(replaced).toHaveLength(3)
+    expect(replaced.map((metric) => metric.id)).toEqual(withError.map((metric) => metric.id))
+  })
+
+  it('空数组新增仍按规格顺序', () => {
+    expect(upsertGateMetric([], { id: 'refund_amount_diff_rate', threshold: 0.01 }).map((m) => m.id)).toEqual([
+      'refund_amount_diff_rate',
+    ])
   })
 })
 
