@@ -205,6 +205,8 @@ def test_u201_pg_update_merges_reindexes_and_404(pg_store):
 
 def test_aa_u1259_pg_migration_knowledge_kind_writable_and_others_untouched(pg_store, pg_engine):
     """迁移 046 后 kind=knowledge 可写可读；fact/preference 不受影响（PG 直连）。"""
+    # pg_store 为 module scope 共享，先清空以免前序测试种子数据污染计数
+    pg_store.clear()
     with pg_engine.begin() as conn:
         cols = [row[0] for row in conn.execute(text(
             "SELECT column_name FROM information_schema.columns "
@@ -225,7 +227,9 @@ def test_aa_u1259_pg_migration_knowledge_kind_writable_and_others_untouched(pg_s
     assert len(pg_store.list(kind="knowledge")) == 1
     assert len(pg_store.list(kind="fact")) == 1
     assert len(pg_store.list(kind="preference")) == 1
+    # 恢复标准种子，保持后序测试前提
     pg_store.clear()
+    _seed(pg_store)
 
 
 def test_aa_u1265_pg_and_inmemory_parity_for_knowledge(pg_store):
