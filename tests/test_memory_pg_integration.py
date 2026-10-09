@@ -38,19 +38,25 @@ def _run_migration(engine) -> None:
 
 
 @pytest.fixture(scope="module")
-def pg_store():
+def pg_engine():
     from atlas.memory.database import create_database_engine
-    from atlas.storage.pg import PgBackend
 
     engine = create_database_engine(DATABASE_URL, pool_size=2)
     _run_migration(engine)
-    with engine.begin() as conn:
-        conn.execute(text("DELETE FROM memory_items WHERE tenant_id = :t"), {"t": TENANT})
-    store = PgBackend(engine).memory_store(TENANT)
-    yield store
-    with engine.begin() as conn:
-        conn.execute(text("DELETE FROM memory_items WHERE tenant_id = :t"), {"t": TENANT})
+    yield engine
     engine.dispose()
+
+
+@pytest.fixture(scope="module")
+def pg_store(pg_engine):
+    from atlas.storage.pg import PgBackend
+
+    with pg_engine.begin() as conn:
+        conn.execute(text("DELETE FROM memory_items WHERE tenant_id = :t"), {"t": TENANT})
+    store = PgBackend(pg_engine).memory_store(TENANT)
+    yield store
+    with pg_engine.begin() as conn:
+        conn.execute(text("DELETE FROM memory_items WHERE tenant_id = :t"), {"t": TENANT})
 
 
 def _seed(store) -> None:
