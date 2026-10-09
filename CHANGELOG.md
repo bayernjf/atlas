@@ -3,6 +3,11 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔工程〕打包 AC 收口：AI 评估 Harness v1（离线批评估）（docs/110，2026-10-09 立项+同日收口）
+
+- **D62 取回闭合（docs/110 §六；D62 不解除后续面）**：`evaluation_task` 契约（docs/06 §9.2）落成可执行离线批评估——新 `evaluation/` 包（models 六模型＋runner：确定性决策客户端注入做无模型回归、approval 帧收集 `request_human_approval`、verify 复用 condition 白名单表达式＋`{outputs, **inputs}` 上下文、case 级异常记 error 不毁批）；迁移 047 `evaluations`（PK (tenant_id,id)、summary/cases JSONB、复合索引）；两档 store（内存 capacity 200／PG UPSERT 最新在前 clear 同清）；`POST /api/evaluations`＋`GET /api/evaluations`（admin，404/422/403）；docs/03 错误码登记（EVALUATION_TASK_INVALID/EVALUATION_GRAPH_NOT_FOUND/EVALUATION_VERIFY_INVALID）。落码期两处契约细化（审批/等待预置、verify 上下文）回填 docs/110 顶部。
+- **门（实跑 2026-10-09）**：后端全量 2517 passed/172 skipped（+17）；守护门 8 passed；PG 集成 1 passed（5433 临时库：迁移 047 幂等＋两档对账＋跨租户隔离）。前端零改动。零新依赖/无 ADR。
+
 ### 〔工程〕打包 AB 收口：意图识别/信息抽取/内容生成三节点（docs/109，2026-10-09 立项+同日收口）
 
 - **D61 取回闭合（docs/109 §6）**：`SUPPORTED_NODE_TYPES` 加 intent_recognition/info_extraction/content_generation；新 `llm/structured.py` 三客户端（classify_intent/extract_fields/generate_content）走 model_config per-tenant（第 5 消费点）、节点 model 覆盖、response_format json_object；无模型显式 FAILED（`LLM_STRUCTURED_UNAVAILABLE`+node_id，U1149 通道补 runtime.json zh/en）；LLM 非法形状本地兜底；DSL 校验（intents/fields/template/maxLength 全量约束，parse_graph 即抛）；textSource 走 interpolate 解析 {{路径}}；前端 nodeCatalog 三节点入册+i18n zh/en+属性面板走 forms 内核（SchemaRegistry 三 schema+UISchema+StructuredConfig）。

@@ -7,6 +7,8 @@
 > - docs/14 新 D 号：**D62**（本条不解除：影子评估、在线评估、评估任务调度、决策质量 LLM 评分、租户配额仍缓做）
 > - 形状权威：本文件；docs/14 D62 行注记；docs/13 打包 AC 小节
 > - 验收：U1278 起
+>
+> **〔2026-10-09 落码收口注记〕**：本批已闭环。落码期两处契约细化（均实现为权威）——① **审批/等待预置**：离线批评估默认注入 `preset_all_approvals`（全部 human_approval 节点 `approved` 秒过）＋`preset_all_wait_events`（event wait 空 payload，打包 ZJ 机制）到 case inputs（影子惯例 docs/33 §3.1，loader 零改动），避免离线批量被真实挂起拖死；case.inputs 自带 approvals/waitEvents 以 case 为准覆盖；approval 帧照发，`request_human_approval` 语义动作收集不受预置影响。② **verify 上下文**：`expected.verify` 上下文＝`{"outputs": <run 终态节点输出>, **case.inputs}`（契约 §2.3 的「终态 global 变量」在 run 返回中不单独暴露，节点输出与输入注入为其等价物），路径用 `{{outputs.<node>.<field>}}`/`{{<input键>}}`（条件引擎惯例）；取值路径缺失 → False（不抛，与契约一致）；表达式非法 → case 级 error 不使整批失败。
 
 ## 一、范围（MVP 切片）
 
