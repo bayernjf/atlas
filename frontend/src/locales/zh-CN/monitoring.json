@@ -191,7 +191,12 @@
       "humanLabel": "人工实际处理（可选）",
       "humanPlaceholder": "不补录，仅看系统决策",
       "noteLabel": "人工备注",
-      "notePlaceholder": "可选备注，随人工结果记录"
+      "notePlaceholder": "可选备注，随人工结果记录",
+      "liveProgress": "实时进度"
+    },
+    "progress": {
+      "running": "进行中",
+      "done": "已完成"
     },
     "result": {
       "error": "影子运行执行异常",

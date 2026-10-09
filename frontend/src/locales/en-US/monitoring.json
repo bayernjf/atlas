@@ -191,7 +191,12 @@
       "humanLabel": "Actual human handling (optional)",
       "humanPlaceholder": "Do not record; only inspect the system decision",
       "noteLabel": "Human note",
-      "notePlaceholder": "Optional note, recorded with the human result"
+      "notePlaceholder": "Optional note, recorded with the human result",
+      "liveProgress": "Live progress"
+    },
+    "progress": {
+      "running": "Running",
+      "done": "Done"
     },
     "result": {
       "error": "Shadow run execution error",
