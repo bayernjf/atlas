@@ -3,6 +3,12 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔文档〕docs/107 需求功能点比对报告收口同步（2026-10-10）
+
+- **回写已收口项**：知识组件（AA/D60）、三节点（AB/D61）四处过时描述（「整块缺失·无 D 号」「≈85% ⚡」）更新为已落码收口＋仍缓做余部；A 档建议加批复注记。
+- **核对**：docs/29 无过时；docs/14 未闭合项触发条件全部外部化，B 档不另开新功能批。
+- **原子**：docs-only 提交（dev，未 push）。
+
 ### 〔前端〕RolloutModal 规则区迁 forms 落码收口：D29 解锁路径第 3 步第二片（docs/120，2026-10-10）
 
 - **规则区三行手写表单迁 forms 判别异构数组**：`buildRolloutRulesSchema()`（items.oneOf 三分支、判别键 `to`、编辑面不含 full）＋`normalizeRolloutRules()`（段唯一＋固定序规约、bucket 注入 `field='payload.amount'`/`op='<='` 固定形状）＋FormRenderer `disabled` prop（fieldset 原生禁用，rulesLocked 语义）＋判别键切换交互（ArrayView 判别数组行头段切换 Select、`oneOfBranchDefault` 目标分支默认对象、行内 const 判别键隐藏）；RolloutModal 删 `withRule`/`findRule` 手写三行改挂 FormRenderer；i18n 三字段 label 键（tenantsLabel/bucketValueLabel/percentLabel）。
