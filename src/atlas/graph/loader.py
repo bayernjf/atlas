@@ -1878,8 +1878,19 @@ def _execute_llm_condition(
         )
 
     try:
+        # 打包 AE（docs/111 §2.1）：发给 LLM 的上下文同走脱敏——env/secret 展开值
+        # 替换为占位，明文不出向给模型供应商；mapping 与 _redact_outputs 同源。
+        from atlas.graph.redact import redact_sensitive
+
+        context_payload = redact_sensitive(
+            {
+                "global": context.get("global", {}),
+                "nodes": _node_outputs_projection(context),
+            },
+            _sensitive_redaction_mapping(state),
+        )
         context_text = json.dumps(
-            {"global": context.get("global", {}), "nodes": _node_outputs_projection(context)},
+            context_payload,
             ensure_ascii=False,
             default=str,
         )
@@ -1892,6 +1903,16 @@ def _execute_llm_condition(
     instruction = str(config.get("classifierPrompt") or "").strip()
     # ZP：节点级 model 覆盖（docs/08 打包 ZP 立项块）——非空覆盖环境默认，仅本次调用生效。
     node_model = str(config.get("model") or "").strip() or None
+    # 打包 AE（docs/111 §2.2）：置信度阈值，仅接受 0–1 数值；缺失/类型错/越界 → None
+    # （不启用、不阻断运行）。bool 虽是 int 子类但不作为阈值，显式排除。
+    raw_threshold = config.get("confidenceThreshold")
+    confidence_threshold: float | None = None
+    if (
+        isinstance(raw_threshold, (int, float))
+        and not isinstance(raw_threshold, bool)
+        and 0.0 <= float(raw_threshold) <= 1.0
+    ):
+        confidence_threshold = float(raw_threshold)
     label: str
     try:
         label = classifier.classify(
@@ -1900,6 +1921,7 @@ def _execute_llm_condition(
             instruction=instruction,
             node_id=node.id,
             model=node_model,
+            confidence_threshold=confidence_threshold,
         )
     except Exception as exc:  # noqa: BLE001 - 供应商错误/解析错误统一 fail-safe
         label = "__default__"

@@ -20,8 +20,9 @@ _BRANCH_RE = re.compile(r"\{.*\}", re.DOTALL)
 _SYSTEM_PROMPT = (
     "你是流程分流判断器。根据运行上下文与下列分支描述，选择唯一最匹配的分支。"
     "只能从给定的分支标签中选择；如果没有任何分支匹配，选择 "
-    f"{DEFAULT_BRANCH}。只输出 JSON，不要输出其他内容："
-    '{"branch": "<分支标签>"}'
+    f"{DEFAULT_BRANCH}。同时给出你对所选分支把握程度的置信度（0.0 到 1.0 之间的数值）。"
+    "只输出 JSON，不要输出其他内容："
+    '{"branch": "<分支标签>", "confidence": 0.0}'
 )
 
 
@@ -38,6 +39,7 @@ class ConditionClassifier(Protocol):
         instruction: str,
         node_id: str | None = None,
         model: str | None = None,
+        confidence_threshold: float | None = None,
     ) -> str: ...
 
 
@@ -52,6 +54,7 @@ class OfflineConditionClassifier:
         instruction: str,
         node_id: str | None = None,
         model: str | None = None,
+        confidence_threshold: float | None = None,
     ) -> str:
         raise ConditionClassifyError("LLM 未配置，语义分支无法求值")
 
@@ -76,6 +79,7 @@ class LiteLLMConditionClassifier:
         instruction: str,
         node_id: str | None = None,
         model: str | None = None,
+        confidence_threshold: float | None = None,
     ) -> str:
         import litellm
 
@@ -117,6 +121,29 @@ class LiteLLMConditionClassifier:
             label = payload["branch"]
         except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
             raise ConditionClassifyError(f"LLM 返回无法解析：{exc}") from exc
+
+        # 打包 AE（docs/111 §2.2）：置信度阈值。未启用（None）→ 不判定，向后兼容；
+        # 启用后置信度缺失/非数值/越界或严格低于阈值 → fail-closed 抛错，由 loader
+        # 走 defaultTarget（condition 的 fail-safe 本就是默认分支，不引入人工挂起）。
+        if confidence_threshold is not None:
+            raw_conf = payload.get("confidence") if isinstance(payload, dict) else None
+            try:
+                conf = float(raw_conf)
+            except (TypeError, ValueError):
+                raise ConditionClassifyError(
+                    f"已配置置信度阈值 {confidence_threshold}，"
+                    f"但模型未返回合法置信度：{raw_conf!r}"
+                ) from None
+            if not 0.0 <= conf <= 1.0:
+                raise ConditionClassifyError(
+                    f"已配置置信度阈值 {confidence_threshold}，"
+                    f"但模型返回越界置信度：{conf}"
+                )
+            if conf < confidence_threshold:
+                raise ConditionClassifyError(
+                    f"置信度 {conf} 低于阈值 {confidence_threshold}，路由默认分支"
+                )
+
         if label == DEFAULT_BRANCH:
             return label
         if label not in labels:
@@ -142,7 +169,9 @@ class ScriptedConditionClassifier:
         instruction: str,
         node_id: str | None = None,
         model: str | None = None,
+        confidence_threshold: float | None = None,
     ) -> str:
+        # 打包 AE：回放标签是录制事实，忽略 confidence_threshold，不因阈值改写。
         if node_id is None or node_id not in self._branches:
             raise ConditionClassifyError(f"回放脚本中无节点 {node_id!r} 的分支记录")
         return self._branches[node_id]
