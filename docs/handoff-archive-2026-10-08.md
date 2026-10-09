@@ -11,3 +11,7 @@
 ✅ **打包 A4 落码收口＝D20 动态审批人与审批指派校验（2026-10-08，五原子 `d2d5e2a`→`7ebd2c9`；docs/100 §7 注记；后端 2436/166/0、前端 820/2、oxlint 0/0、build 过；A 档四打包 A1–A4 全部收口）**：approver `{{变量}}` 插值两翼（编译 422 `APPROVER_REF_UNRESOLVED`＋运行期残留→空串＋告警）＋决策端点指派校验（`user:<username>` 匹配 principal、邮箱恒 403 因 iam 无 email、空 approver 任何人可决）＋前端表单提示与错误码 i18n（U1205）；两处偏差照实见 docs/100 §7；零迁移、无 ADR。〔**2026-10-08 接力追加**：本批自报缺的**浏览器冒烟已补**——一次性卷的独占 compose 项目＋真 Chromium，拖入「人机协作」后节点数 3→4、属性面板渲染出 A4 新提示，10 项全 PASS；脚本 `scripts/dev/approver_hint_smoke.py`＋截图 `docs/screenshots/a4-approver-hint.png`，证据细节见 docs/100 §7 追加段〕
 
 ✅ **打包 BM 缺陷批落码收口＝D57/D58/D59 三缺陷同日闭合（2026-10-08；docs/101 §7 注记；docs/13 U1213–U1217；docs/14 D57/D58/D59 翻 ✅）**：D57 refund-auto 模板 7 节点真转人工（condition 分流＋human_approval-1 真挂起＋execute_refund/reject_refund 双出口，U1214 断言 resolve 前线程不结束）；D58 未知异常 message 收口四处（SSE/同步/续跑/trigger）；D59 health 能力位＋前端 DemoResetButton＋i18n 3 键。定向 74 passed＋前端 103 passed、build 过；零新依赖／零迁移／无 ADR。详见 Active #129。
+
+## 打包 ZS 落码收口＝D28 告警规则模板用户自建 CRUD
+
+✅ **打包 ZS 落码收口＝D28 告警规则模板用户自建 CRUD（2026-10-08 立项+同日收口；docs/102 §6；docs/13 U1220–U1230；docs/14 D28 半边取回、整体不解除）**：用户自建/编辑/删除私有告警规则模板——迁移 045＋`monitoring/rule_user_store.py`＋`pg_rule_user_store.py` 两档 store＋registry 装配/reset＋租户内重名 409；五端点（GET 列表/详情合并内置＋用户 source 区分、POST/PUT/DELETE 写 administer、内置 id 404 保护）；前端 AlertRuleTemplateMarket 新建/编辑/删除 Modal＋source Tag＋i18n 两档 20 键。八原子 `ba6fa2e`→`2a36a5c`＋`ef32be1` fix；门＝后端 2456/166/0、前端 828/2、oxlint 0/0、build 过、守护门 24 passed、PG 集成 20+3 零回归；零新依赖/无 ADR。详见 Active #130、Quality gate。

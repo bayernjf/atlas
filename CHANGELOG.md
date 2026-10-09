@@ -3,6 +3,11 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔工程〕打包 AG 收口：监控运行报表聚合与版本对比（docs/113，2026-10-09 立项+同日收口）
+
+- **D28 再取回「长保留报表＋版本对比」最小片（docs/113 §6；D28 不解除余部）**：聚合纯函数 `aggregate_runs`（按天 UTC `YYYY-MM-DD`／按版本 `v<int>`、None→`manual-draft`，total/成败计数/成功率/avg·p50·p95 nearest-rank，空列表→空列表）；两档 store `list_runs_for_report`（窗口 `[since,until)`，内存过滤 ring、PG 参数绑定 started_at TEXT 字典序）；端点 `GET /api/monitoring/report`（days 1–90、group_by day|version）与 `/report/export`（csv 中文表头＋UTF-8 BOM／json）；前端 `RunReportCard`（Segmented/Select/聚合表/导出，httpOnly Cookie 自动带凭证）＋i18n zh/en。版本口径＝以 resolved_version 为准、None 归 manual-draft、不新增字段不回填。
+- **门（实跑 2026-10-09）**：后端全量 2578 passed/173 skipped/0 failed（基线 2565/172 ＋ 聚合 5 ＋ 端点 8；PG 集成 U1312 通过 5433）；前端 vitest 909 passed/2 skipped（+3）、oxlint 0/0、tsc 0、build 过。零新依赖/零迁移/无 ADR。
+
 ### 〔工程〕打包 AF 收口：条件表达式 choice/加权采样 ＋ 命名时区（docs/112，2026-10-09 立项+同日收口）
 
 - **D15 再取回两片（docs/112 §8；D15 不解除余部）**：`choice(*items)` 均匀随机、`weightedChoice(item,weight,…)` 按权重随机（可变/交替位置参数、候选项同类型、权重非负且总和>0、0 权重项不选），随机性只来注入 RNG、经 rng_seed 回放；命名时区 `dateOfInZone/hourOfInZone`（确定性折叠）与 `todayInZone/hourInZone`（非确定），后端 stdlib zoneinfo、前端 Intl，仅取 date/hour 分量、不扩展 DateTimeValue；新增码 COND_INVALID_TIMEZONE（zh/en）。三处落码偏差（契约表 UTC 03:00 勘误、新增 export evaluateConstantExpression、Intl 构造期非法时区转译）见 docs/112 §8。
