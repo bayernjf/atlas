@@ -1507,6 +1507,51 @@ export async function getRunTrace(runId: string): Promise<RunTrace> {
   return request(`/api/monitoring/runs/${encodeURIComponent(runId)}/trace`)
 }
 
+// docs/113 打包 AG：运行报表聚合桶（按天/按版本）。
+export type RunReportBucket = {
+  key: string
+  total: number
+  completed: number
+  error: number
+  cancelled: number
+  success_rate: number
+  duration_avg_ms: number
+  duration_p50_ms: number
+  duration_p95_ms: number
+}
+
+export type RunReport = {
+  since: string
+  until: string
+  group_by: 'day' | 'version'
+  buckets: RunReportBucket[]
+}
+
+export type RunReportParams = {
+  graphId?: string
+  days?: number
+  groupBy?: 'day' | 'version'
+}
+
+export async function getRunReport(input: RunReportParams): Promise<RunReport> {
+  const params = new URLSearchParams({
+    days: String(input.days ?? 7),
+    group_by: input.groupBy ?? 'day',
+  })
+  if (input.graphId) params.set('graph_id', input.graphId)
+  return request(`/api/monitoring/report?${params}`)
+}
+
+export function runReportExportUrl(input: RunReportParams & { format: 'csv' | 'json' }): string {
+  const params = new URLSearchParams({
+    days: String(input.days ?? 7),
+    group_by: input.groupBy ?? 'day',
+    format: input.format,
+  })
+  if (input.graphId) params.set('graph_id', input.graphId)
+  return `/api/monitoring/report/export?${params}`
+}
+
 export async function getRules(): Promise<RuleConfig> {
   return request('/api/monitoring/rules')
 }

@@ -5,6 +5,23 @@
     "back": "返回 Dashboard",
     "unresolvedBadge": "未关闭告警"
   },
+  "runReport": {
+    "card": { "title": "运行报表" },
+    "group": { "day": "按天", "version": "按版本" },
+    "days": "最近 {{value}} 天",
+    "col": {
+      "key": "分组",
+      "total": "运行总数",
+      "completed": "成功",
+      "error": "失败",
+      "cancelled": "取消",
+      "successRate": "成功率",
+      "avg": "平均耗时(ms)",
+      "p50": "P50(ms)",
+      "p95": "P95(ms)"
+    },
+    "export": { "csv": "导出 CSV", "json": "导出 JSON" }
+  },
   "col": {
     "rule": "规则",
     "graph": "图",
