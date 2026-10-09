@@ -17,6 +17,8 @@ export const conditionSchema: NodeConfigSchema = {
     },
     classifierPrompt: { type: 'string' },
     model: { type: 'string' },
+    // 打包 AE（docs/111 §2.2）：LLM 分支置信度阈值，0–1；缺省不启用。
+    confidenceThreshold: { type: 'number', minimum: 0, maximum: 1 },
     branches: {
       type: 'array',
       minItems: 1,

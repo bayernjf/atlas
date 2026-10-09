@@ -5,6 +5,23 @@
     "back": "Back to Dashboard",
     "unresolvedBadge": "Open alerts"
   },
+  "runReport": {
+    "card": { "title": "Run Report" },
+    "group": { "day": "By day", "version": "By version" },
+    "days": "Last {{value}} days",
+    "col": {
+      "key": "Group",
+      "total": "Total",
+      "completed": "Completed",
+      "error": "Errors",
+      "cancelled": "Cancelled",
+      "successRate": "Success rate",
+      "avg": "Avg (ms)",
+      "p50": "P50 (ms)",
+      "p95": "P95 (ms)"
+    },
+    "export": { "csv": "Export CSV", "json": "Export JSON" }
+  },
   "col": {
     "rule": "Rule",
     "graph": "Graph",
@@ -174,7 +191,12 @@
       "humanLabel": "Actual human handling (optional)",
       "humanPlaceholder": "Do not record; only inspect the system decision",
       "noteLabel": "Human note",
-      "notePlaceholder": "Optional note, recorded with the human result"
+      "notePlaceholder": "Optional note, recorded with the human result",
+      "liveProgress": "Live progress"
+    },
+    "progress": {
+      "running": "Running",
+      "done": "Done"
     },
     "result": {
       "error": "Shadow run execution error",

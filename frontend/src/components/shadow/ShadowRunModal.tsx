@@ -15,7 +15,7 @@ import {
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import {
-  createShadowRun,
+  streamShadowRun,
   type ShadowDecision,
   type ShadowRun,
   type ToolIntent,
@@ -59,6 +59,8 @@ export function ShadowRunModal({ open, graphId, onClose }: Props) {
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const [run, setRun] = useState<ShadowRun | null>(null)
+  // 流式实时进度：顶层节点 id → 进行中/完成（子图内事件带 subgraphPath，不进顶层列表）。
+  const [progress, setProgress] = useState<Record<string, 'running' | 'done'>>({})
 
   // 关闭动画结束后重置（事件回调，非 effect；首次挂载即初始值），保证每次打开是干净表单。
   const resetForm = () => {
@@ -68,6 +70,7 @@ export function ShadowRunModal({ open, graphId, onClose }: Props) {
     setSubmitting(false)
     setFormError(null)
     setRun(null)
+    setProgress({})
   }
 
   const inputsHelp = useMemo(() => {
@@ -83,6 +86,7 @@ export function ShadowRunModal({ open, graphId, onClose }: Props) {
       return
     }
     setFormError(null)
+    setProgress({})
     setSubmitting(true)
     try {
       const body: { inputs?: Record<string, unknown>; human_outcome?: { action: string; note?: string } } = {
@@ -92,7 +96,17 @@ export function ShadowRunModal({ open, graphId, onClose }: Props) {
         body.human_outcome = { action: humanAction }
         if (humanNote.trim()) body.human_outcome.note = humanNote.trim()
       }
-      setRun(await createShadowRun(graphId, body))
+      setRun(
+        await streamShadowRun(graphId, body, (event) => {
+          // 只收顶层节点（子图内事件带 subgraphPath），实时刷新进行中/完成。
+          if ((event as { subgraphPath?: unknown }).subgraphPath) return
+          if (event.type === 'node_start') {
+            setProgress((p) => ({ ...p, [event.node_id]: 'running' }))
+          } else if (event.type === 'node_end') {
+            setProgress((p) => ({ ...p, [event.node_id]: 'done' }))
+          }
+        }),
+      )
     } catch (error) {
       setFormError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -225,6 +239,19 @@ export function ShadowRunModal({ open, graphId, onClose }: Props) {
       </Form>
 
       {formError && <Alert type="error" showIcon message={formError} style={{ marginBottom: 16 }} />}
+
+      {Object.keys(progress).length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <Text strong>{t('shadow.modal.liveProgress')}</Text>
+          <Space wrap style={{ marginTop: 8 }}>
+            {Object.entries(progress).map(([nodeId, nodeStatus]) => (
+              <Tag key={nodeId} color={nodeStatus === 'done' ? 'green' : 'processing'}>
+                {nodeId} · {t(`shadow.progress.${nodeStatus}`)}
+              </Tag>
+            ))}
+          </Space>
+        </div>
+      )}
 
       {run && (
         <>

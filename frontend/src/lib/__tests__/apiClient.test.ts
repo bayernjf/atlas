@@ -25,6 +25,7 @@ import {
   replayWebhookDeadLetter,
   resumeDebug,
   streamRun,
+  streamShadowRun,
   testChannelBinding,
   touchTemplateUsage,
   unregisterRemoteWebhook,
@@ -751,5 +752,70 @@ describe('AA knowledge import/search 契约（docs/108，U1267）', () => {
     expect(url).toContain('/api/memories?')
     expect(url).toContain('kind=knowledge')
     expect(url).toContain('limit=200')
+  })
+})
+
+describe('streamShadowRun framing (docs/114, package AH)', () => {
+  const shadowResult = {
+    id: 'sr-1',
+    graph_id: 'graph-1',
+    status: 'completed',
+    decisions: [],
+    tool_intents: [],
+    auto_action: null,
+    comparison: { match: null },
+  }
+
+  function streamResponse(body: string) {
+    return {
+      ok: true,
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(body))
+          controller.close()
+        },
+      }),
+    } as Response
+  }
+
+  it('forwards node events and resolves the final shadow run (U1321)', async () => {
+    const nodeStart = { type: 'node_start', node_id: 'trigger-1', node_type: 'trigger' }
+    const nodeEnd = { type: 'node_end', node_id: 'trigger-1', output: {} }
+    const body =
+      `event: node_start\ndata: ${JSON.stringify(nodeStart)}\n\n` +
+      `event: node_end\ndata: ${JSON.stringify(nodeEnd)}\n\n` +
+      `event: result\ndata: ${JSON.stringify(shadowResult)}\n\n`
+    vi.stubGlobal('fetch', vi.fn(async () => streamResponse(body)))
+    const events: RunEvent[] = []
+    const result = await streamShadowRun('graph-1', {}, (event) => events.push(event))
+    expect(events).toHaveLength(2)
+    expect(events[0].type).toBe('node_start')
+    expect(result.id).toBe('sr-1')
+
+    const fetchMock = vi.mocked(fetch)
+    const [url] = fetchMock.mock.calls[0] as [string]
+    const init = fetchMock.mock.calls[0][1] as RequestInit
+    expect(url).toContain('shadow-runs/stream')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(init.body as string)).toEqual({})
+  })
+
+  it('rejects when the stream ends without a result frame', async () => {
+    const nodeStart = { type: 'node_start', node_id: 'trigger-1' }
+    const body = `event: node_start\ndata: ${JSON.stringify(nodeStart)}\n\n`
+    vi.stubGlobal('fetch', vi.fn(async () => streamResponse(body)))
+    await expect(streamShadowRun('g', {}, () => undefined)).rejects.toBeInstanceOf(Error)
+  })
+
+  it('rejects on !ok response', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: false,
+        status: 403,
+        json: async () => ({ detail: { code: 'FORBIDDEN', message: 'forbidden' } }),
+      })),
+    )
+    await expect(streamShadowRun('g', {}, () => undefined)).rejects.toBeInstanceOf(Error)
   })
 })

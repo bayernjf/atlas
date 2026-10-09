@@ -1507,6 +1507,51 @@ export async function getRunTrace(runId: string): Promise<RunTrace> {
   return request(`/api/monitoring/runs/${encodeURIComponent(runId)}/trace`)
 }
 
+// docs/113 打包 AG：运行报表聚合桶（按天/按版本）。
+export type RunReportBucket = {
+  key: string
+  total: number
+  completed: number
+  error: number
+  cancelled: number
+  success_rate: number
+  duration_avg_ms: number
+  duration_p50_ms: number
+  duration_p95_ms: number
+}
+
+export type RunReport = {
+  since: string
+  until: string
+  group_by: 'day' | 'version'
+  buckets: RunReportBucket[]
+}
+
+export type RunReportParams = {
+  graphId?: string
+  days?: number
+  groupBy?: 'day' | 'version'
+}
+
+export async function getRunReport(input: RunReportParams): Promise<RunReport> {
+  const params = new URLSearchParams({
+    days: String(input.days ?? 7),
+    group_by: input.groupBy ?? 'day',
+  })
+  if (input.graphId) params.set('graph_id', input.graphId)
+  return request(`/api/monitoring/report?${params}`)
+}
+
+export function runReportExportUrl(input: RunReportParams & { format: 'csv' | 'json' }): string {
+  const params = new URLSearchParams({
+    days: String(input.days ?? 7),
+    group_by: input.groupBy ?? 'day',
+    format: input.format,
+  })
+  if (input.graphId) params.set('graph_id', input.graphId)
+  return `/api/monitoring/report/export?${params}`
+}
+
 export async function getRules(): Promise<RuleConfig> {
   return request('/api/monitoring/rules')
 }
@@ -2136,6 +2181,67 @@ export async function createShadowRun(
     method: 'POST',
     body: JSON.stringify(body),
   })
+}
+
+/**
+ * 流式发起影子运行（docs/114，operate）：实时回调 node_start/node_end，
+ * 终帧 event:result resolve 完整 ShadowRun；影子纪律与同步版一致，不设 error 终帧
+ * （异常沉淀为 status=error 的 record）。!ok（401/403/404/422）处理照 streamRun。
+ */
+export async function streamShadowRun(
+  graphId: string,
+  body: { inputs?: Record<string, unknown>; human_outcome?: HumanOutcome },
+  onEvent: (event: RunEvent) => void,
+): Promise<ShadowRun> {
+  const headers = new Headers({ 'Content-Type': 'application/json' })
+  const token = getToken()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  const response = await fetch(`/api/graphs/${graphId}/shadow-runs/stream`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+  })
+  if (!response.ok || !response.body) {
+    const errBody = await response.json().catch(() => null)
+    if (response.status === 401) handleUnauthorized()
+    const rawDetail = errBody?.detail
+    const streamError =
+      rawDetail && typeof rawDetail === 'object'
+        ? resolveRuntimeDetail(rawDetail)
+        : (typeof rawDetail === 'string' && rawDetail) || `影子运行失败：${response.status}`
+    throw new Error(streamError)
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let result: ShadowRun | null = null
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const chunks = buffer.split('\n\n')
+    buffer = chunks.pop() ?? ''
+    for (const chunk of chunks) {
+      const lines = chunk.split('\n')
+      const eventLine = lines.find((line) => line.startsWith('event: '))
+      const dataLine = lines.find((line) => line.startsWith('data: '))
+      if (!dataLine) continue
+      const eventName = eventLine?.slice(7)
+      const payload = JSON.parse(dataLine.slice(6))
+      if (eventName === 'error') {
+        throw new Error(resolveRuntimeDetail(payload.detail))
+      }
+      if (eventName === 'result') {
+        result = payload as ShadowRun
+      } else {
+        onEvent(payload as RunEvent)
+      }
+    }
+  }
+  if (!result) throw new Error('SSE 流缺少最终影子运行结果')
+  return result
 }
 
 /** 列出影子运行（read；倒序，可按图过滤，limit 1–200 默认 50）。 */

@@ -446,6 +446,14 @@ def _validate_condition_config(
         elif node_model is not None and len(node_model.strip()) > 200:
             add(f"{prefix} 的 model 长度不能超过 200 字符", "/model",
                 code="COND_LLM_MODEL_TOO_LONG", params={"max": 200})
+        confidence_threshold = config.get("confidenceThreshold")
+        if confidence_threshold is not None and (
+            not isinstance(confidence_threshold, (int, float))
+            or isinstance(confidence_threshold, bool)
+            or not 0.0 <= float(confidence_threshold) <= 1.0
+        ):
+            add(f"{prefix} 的 confidenceThreshold 必须是 0 到 1 之间的数值",
+                "/confidenceThreshold", code="COND_LLM_THRESHOLD_INVALID")
     elif classifier_prompt is not None and not isinstance(classifier_prompt, str):
         add(f"{prefix} 的 classifierPrompt 必须是字符串", "/classifierPrompt",
             code="COND_LLM_PROMPT_NOT_STRING")

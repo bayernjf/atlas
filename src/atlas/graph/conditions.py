@@ -30,6 +30,7 @@ import math
 import random
 import re
 import uuid
+import zoneinfo
 from dataclasses import dataclass
 from typing import Any
 
@@ -131,10 +132,20 @@ _FUNCTIONS: dict[str, tuple[int, int | None, str]] = {
     "random": (0, 0, "number"),
     "randint": (2, 2, "number"),
     "uuid": (0, 0, "string"),
+    # 打包 AF（docs/112，D15 余部）：随机选择，候选项同类型，随机字节取自注入 RNG。
+    "choice": (1, None, "any"),
+    "weightedChoice": (2, None, "any"),
+    # 打包 AF（docs/112，D15 余部）：命名时区，取 date/hour 分量（不扩展 DateTimeValue）。
+    "dateOfInZone": (2, 2, "date"),
+    "hourOfInZone": (2, 2, "number"),
+    "todayInZone": (1, 1, "date"),
+    "hourInZone": (1, 1, "number"),
 }
 
 # 非确定函数：静态校验期不做常量折叠（其值依赖运行时钟或随机种子），其余纯函数仍折叠暴露错误。
-_NONDETERMINISTIC = frozenset({"today", "now", "random", "randint", "uuid"})
+_NONDETERMINISTIC = frozenset(
+    {"today", "now", "random", "randint", "uuid", "choice", "weightedChoice", "todayInZone", "hourInZone"}
+)
 
 
 def _default_now() -> datetime.datetime:
@@ -576,11 +587,63 @@ def _evaluate_function(
             bytes=source.getrandbits(128).to_bytes(16, "big"), version=4
         )
         return str(value)
+    if name == "choice":
+        _require_same_type(name, args)
+        source = rng or random.Random()
+        return source.choice(list(args))
+    if name == "weightedChoice":
+        if len(args) % 2 == 1:
+            raise ConditionEvalError(
+                '函数 "weightedChoice" 参数必须按 (项, 权重) 成对、即偶数个',
+                code="COND_TYPE_MISMATCH", params={"func": name, "reason": "pairs"},
+            )
+        items = list(args[0::2])
+        weights = list(args[1::2])
+        _require_same_type(name, items)
+        for weight in weights:
+            if isinstance(weight, bool) or not isinstance(weight, (int, float)):
+                raise ConditionEvalError(
+                    f'函数 "weightedChoice" 的权重必须是非负数值，实际为 {_type_name(weight)}',
+                    code="COND_TYPE_MISMATCH",
+                    params={"func": name, "expected": "number", "actual": _type_code(weight)},
+                )
+            if weight < 0:
+                raise ConditionEvalError(
+                    '函数 "weightedChoice" 的权重不能为负数',
+                    code="COND_TYPE_MISMATCH", params={"func": name, "reason": "negative_weight"},
+                )
+        total = float(sum(weights))
+        if total <= 0:
+            raise ConditionEvalError(
+                '函数 "weightedChoice" 的权重总和必须大于 0',
+                code="COND_INVALID_RANGE", params={"func": name},
+            )
+        source = rng or random.Random()
+        pick = source.random() * total
+        upto = 0.0
+        for item, weight in zip(items, weights):
+            upto += float(weight)
+            if pick < upto:
+                return item
+        # 浮点边界兜底：返回最后一个正权重项。
+        for item, weight in reversed(list(zip(items, weights))):
+            if float(weight) > 0:
+                return item
+        return items[-1]
+    if name in ("dateOfInZone", "hourOfInZone"):
+        dt, zone_name = args
+        zoned = _coerce_datetime(dt, func=name).astimezone(_load_zone(zone_name))
+        return zoned.date() if name == "dateOfInZone" else zoned.hour
+    if name in ("todayInZone", "hourInZone"):
+        (zone_name,) = args
+        clock = now if now is not None else _default_now()
+        zoned = _ensure_utc(clock).astimezone(_load_zone(zone_name))
+        return zoned.date() if name == "todayInZone" else zoned.hour
     raise ConditionEvalError(f'未知函数 "{name}"', code="COND_UNKNOWN_FUNC", params={"func": name})  # 理论不可达（parse 已拦）
 
 
-def _coerce_datetime(value: Any) -> datetime.datetime:
-    """hoursBetween 入参归一化：datetime 转 UTC；date 按当日 00:00 UTC；其余报错。"""
+def _coerce_datetime(value: Any, func: str = "hoursBetween") -> datetime.datetime:
+    """入参归一化：datetime 转 UTC；date 按当日 00:00 UTC；其余报错。"""
     if isinstance(value, datetime.datetime):
         return _ensure_utc(value)
     if isinstance(value, datetime.date):
@@ -588,16 +651,45 @@ def _coerce_datetime(value: Any) -> datetime.datetime:
             value.year, value.month, value.day, tzinfo=datetime.timezone.utc
         )
     raise ConditionEvalError(
-        '函数 "hoursBetween" 要求日期时间值（用 datetime(...) 或 now() 构造，日期按当日 00:00 UTC），'
+        f'函数 "{func}" 要求日期时间值（用 datetime(...) 或 now() 构造，日期按当日 00:00 UTC），'
         f"实际为 {_type_name(value)}",
         code="COND_TYPE_MISMATCH",
-        params={"func": "hoursBetween", "expected": "datetime", "actual": _type_code(value)},
+        params={"func": func, "expected": "datetime", "actual": _type_code(value)},
     )
+
+
+def _load_zone(zone_name: Any) -> zoneinfo.ZoneInfo:
+    """解析 IANA 时区名；空/非字符串/未知一律 COND_INVALID_TIMEZONE。"""
+    if not isinstance(zone_name, str) or not zone_name:
+        raise ConditionEvalError(
+            '时区名必须是非空 IANA 字符串（如 "Asia/Shanghai"）',
+            code="COND_INVALID_TIMEZONE",
+            params={"actual": _type_code(zone_name)},
+        )
+    try:
+        return zoneinfo.ZoneInfo(zone_name)
+    except zoneinfo.ZoneInfoNotFoundError:
+        raise ConditionEvalError(
+            f'未知/非法 IANA 时区名："{zone_name}"',
+            code="COND_INVALID_TIMEZONE",
+            params={"zone": zone_name},
+        ) from None
 
 
 def _require_number(name: str, value: Any) -> None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ConditionEvalError(f'函数 "{name}" 要求数值参数，实际为 {_type_name(value)}', code="COND_TYPE_MISMATCH", params={"func": name, "expected": "number", "actual": _type_code(value)})
+
+
+def _require_same_type(name: str, values: list[Any]) -> None:
+    """choice/weightedChoice 候选项必须为同一类型（bool 与 number 亦区分）。"""
+    types = sorted({_type_code(value) for value in values})
+    if len(types) > 1:
+        raise ConditionEvalError(
+            f'函数 "{name}" 的候选项必须为同一类型，实际混合类型：{types}',
+            code="COND_TYPE_MISMATCH",
+            params={"func": name, "expected": "same type", "types": types},
+        )
 
 
 def _compare(op: str, left: Any, right: Any) -> bool:

@@ -3,6 +3,33 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔文档〕打包 AI ＋ 第二批 docs-only：D29 第四实体评估、D21/D32 整体评估、D49 MCP 加面预备契约（docs/115–117，2026-10-09）
+
+- **纯文档、无代码/迁移/依赖**：第一批 6 项至此全部处理完（D29 经实证评估转 docs-only），第二批 D21/D49 以评估/预备契约落地。
+- **docs/115 D29 第四实体接入可行性评估＝暂不落码**：node/tool/card 三类来源已接入 forms；技能/记忆无现存配置面、触发未到；部署（RolloutModal）为异构规则数组（discriminator `to`）＋固定行门禁指标阈值表，当前 forms 内核表达不了，阻断于「自定义控件扩展契约＋oneOf/discriminator 异构数组」（D29 明确缓做余部），硬迁会撑大内核或留半成品；解锁路径与重开判据见文档。
+- **docs/116 D21/D32 整体评估＝工程内可闭环部分已全部收尽**：docs/04 §14「钉版（M6）＋升级体检（docs/28）＋手动升级（ZU2）＋升级后回归（复用发布门禁 run_release_gate）」已完整闭环、不欠工程动作；剩余（子图市场/组织共享/跨运营体引用、多实例生产发布、配置中心热同步/独立网关/真实 ingress/自动放量）触发条件全部外部化。
+- **docs/117 D49 MCP 加面预备契约＝触发未到、不授权落码**：②HTTP 远端（单 POST/无会话、Origin 校验 MUST、Bearer→principal→租户分区，弃用 env 单租户作 HTTP 默认）、③写能力（不绕 docs/62 三道闸、对齐人工 Gate/审批、权限位映射，按 起run→消息→资金 分级）、resources/prompts/Tasks/elicitation（sampling/roots/logging 已弃、①自研子集 T33 已弃）；推荐顺序 HTTP(只读)→resources/prompts→写能力，真做先记 docs/10 §4 ADR。
+
+### 〔工程〕打包 AH 收口：影子运行 SSE 流式化（docs/114，2026-10-09 立项+同日收口）
+
+- **D26 再取回「影子 SSE」最小片（docs/114 §6；D26 不解除余部）**：新增 `POST /api/graphs/{graph_id}/shadow-runs/stream`（operate，StreamingResponse；后台 daemon 线程跑 `run_graph(shadow=True)`，节点事件经 queue 实时 SSE 下发、终帧 `event: result` 携带完整 ShadowRun；异常沉淀 status=error、HTTP 不报错、不设 event:error），影子纪律逐字不变（预置审批/wait 秒过、独立 broker/tracer、不写 run_store/RunRecord、不触发告警灰度、不产 tool_metric）；前端 `apiClient.streamShadowRun`（POST＋ReadableStream 分帧、节点事件转 onEvent、终帧 resolve、!ok 照 streamRun）＋`ShadowRunModal` 发起改流式、「实时进度」顶层节点 running→done Tag＋i18n zh/en。
+- **门（实跑 2026-10-09）**：后端全量 2582 passed/173 skipped/0 failed（基线 2578/173 ＋ 流式端点 4）；前端 vitest 915 passed/2 skipped（基线 909 ＋ apiClient 3 ＋ Modal 3）、oxlint 0/0、tsc 0、build 过。浏览器冒烟（localhost:8000 挂载最新 dist）：实时进度 trigger-1/ai_decision-1/tool_call-1 三绿、自动退款、shop/process_refund SHADOW_DRY_RUN。零新依赖/零迁移/无 ADR。
+
+### 〔工程〕打包 AG 收口：监控运行报表聚合与版本对比（docs/113，2026-10-09 立项+同日收口）
+
+- **D28 再取回「长保留报表＋版本对比」最小片（docs/113 §6；D28 不解除余部）**：聚合纯函数 `aggregate_runs`（按天 UTC `YYYY-MM-DD`／按版本 `v<int>`、None→`manual-draft`，total/成败计数/成功率/avg·p50·p95 nearest-rank，空列表→空列表）；两档 store `list_runs_for_report`（窗口 `[since,until)`，内存过滤 ring、PG 参数绑定 started_at TEXT 字典序）；端点 `GET /api/monitoring/report`（days 1–90、group_by day|version）与 `/report/export`（csv 中文表头＋UTF-8 BOM／json）；前端 `RunReportCard`（Segmented/Select/聚合表/导出，httpOnly Cookie 自动带凭证）＋i18n zh/en。版本口径＝以 resolved_version 为准、None 归 manual-draft、不新增字段不回填。
+- **门（实跑 2026-10-09）**：后端全量 2578 passed/173 skipped/0 failed（基线 2565/172 ＋ 聚合 5 ＋ 端点 8；PG 集成 U1312 通过 5433）；前端 vitest 909 passed/2 skipped（+3）、oxlint 0/0、tsc 0、build 过。零新依赖/零迁移/无 ADR。
+
+### 〔工程〕打包 AF 收口：条件表达式 choice/加权采样 ＋ 命名时区（docs/112，2026-10-09 立项+同日收口）
+
+- **D15 再取回两片（docs/112 §8；D15 不解除余部）**：`choice(*items)` 均匀随机、`weightedChoice(item,weight,…)` 按权重随机（可变/交替位置参数、候选项同类型、权重非负且总和>0、0 权重项不选），随机性只来注入 RNG、经 rng_seed 回放；命名时区 `dateOfInZone/hourOfInZone`（确定性折叠）与 `todayInZone/hourInZone`（非确定），后端 stdlib zoneinfo、前端 Intl，仅取 date/hour 分量、不扩展 DateTimeValue；新增码 COND_INVALID_TIMEZONE（zh/en）。三处落码偏差（契约表 UTC 03:00 勘误、新增 export evaluateConstantExpression、Intl 构造期非法时区转译）见 docs/112 §8。
+- **门（实跑 2026-10-09）**：后端新增 32 例（choice 18/时区 14）；前端 vitest 906 passed/2 skipped（+9）、oxlint 0/0、tsc 0、build 过。零新依赖/零迁移/无 ADR。
+
+### 〔工程〕打包 AE 收口：condition LLM 置信度阈值＋上下文字段级脱敏（docs/111，2026-10-09 立项+同日收口）
+
+- **D14 再取回两半（docs/111 §7；D14 不解除余部）**：condition context_text 序列化前脱敏（抽 `_sensitive_redaction_mapping` 与 `_redact_outputs` 同源复用，补上发往 condition LLM 上下文这条漏网出向通道，env/secret 展开值不再明文给模型供应商）；LLM 增返 `confidence`，节点可选 `confidenceThreshold`（0–1，缺省不启用），低置信度、或缺/非数值/越界置信度 fail-closed 抛 ConditionClassifyError 走 defaultTarget 并记 llm_errors，未配阈值向后兼容，Scripted 回放忽略阈值；新编译期码 `COND_LLM_THRESHOLD_INVALID`（frontend validation.json zh/en）；前端 condition.schema 加 0–1 number、nodeUiSchemas label/placeholder 仅 LLM 模式显示。两处落码偏差（节点表单 label 硬编码中文未单独立 i18n 键、错误码走 validation.json 而非 docs/03）见 docs/111 §7。
+- **门（实跑 2026-10-09）**：后端全量 2533 passed/172 skipped/0 failed（+16；首次全量 1 例 `test_api_demo` live-stream 偶发、单跑通过、复跑 0 failed 证实非回归）；前端 vitest 897 passed/2 skipped、oxlint 0/0、tsc 0、build 过；既有 classifier 替身 4 文件签名适配。零新依赖/零迁移/无 ADR。
+
 ### 〔工程〕打包 AC 收口：AI 评估 Harness v1（离线批评估）（docs/110，2026-10-09 立项+同日收口）
 
 - **D62 取回闭合（docs/110 §六；D62 不解除后续面）**：`evaluation_task` 契约（docs/06 §9.2）落成可执行离线批评估——新 `evaluation/` 包（models 六模型＋runner：确定性决策客户端注入做无模型回归、approval 帧收集 `request_human_approval`、verify 复用 condition 白名单表达式＋`{outputs, **inputs}` 上下文、case 级异常记 error 不毁批）；迁移 047 `evaluations`（PK (tenant_id,id)、summary/cases JSONB、复合索引）；两档 store（内存 capacity 200／PG UPSERT 最新在前 clear 同清）；`POST /api/evaluations`＋`GET /api/evaluations`（admin，404/422/403）；docs/03 错误码登记（EVALUATION_TASK_INVALID/EVALUATION_GRAPH_NOT_FOUND/EVALUATION_VERIFY_INVALID）。落码期两处契约细化（审批/等待预置、verify 上下文）回填 docs/110 顶部。

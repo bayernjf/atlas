@@ -417,6 +417,21 @@ def _sensitive_vars(graph: GraphDSL) -> dict[str, tuple[str, str]]:
     }
 
 
+def _sensitive_redaction_mapping(state: GraphState) -> dict[str, str]:
+    """打包 AE（docs/111 §2.1）：从运行态构造敏感展开值→占位 mapping。
+
+    与脱敏五通道（docs/99）同源：``state["sensitive"]``＝{变量名:(source,ref)}，
+    ``state["variables"]["global"]``＝{变量名:展开值}。供 ``_redact_outputs`` 与
+    condition LLM 的 context_text 共用，避免两处各拼一份。
+    """
+    global_vars = state["variables"].get("global", {})
+    return {
+        global_vars[name]: f"<redacted:{source}:{ref}>"
+        for name, (source, ref) in state.get("sensitive", {}).items()
+        if name in global_vars and isinstance(global_vars[name], str)
+    }
+
+
 def _redact_outputs(final_state: GraphState) -> dict[str, dict[str, Any]]:
     """打包 A3（docs/99 §3）：run 结果 outputs 投影脱敏——敏感变量展开值替换为占位。
 
@@ -425,13 +440,7 @@ def _redact_outputs(final_state: GraphState) -> dict[str, dict[str, Any]]:
     """
     from atlas.graph.redact import redact_sensitive
 
-    global_vars = final_state["variables"].get("global", {})
-    sensitive = final_state.get("sensitive", {})
-    mapping = {
-        global_vars[name]: f"<redacted:{source}:{ref}>"
-        for name, (source, ref) in sensitive.items()
-        if name in global_vars and isinstance(global_vars[name], str)
-    }
+    mapping = _sensitive_redaction_mapping(final_state)
     if not mapping:
         return final_state["outputs"]
     return redact_sensitive(final_state["outputs"], mapping)
@@ -1869,8 +1878,19 @@ def _execute_llm_condition(
         )
 
     try:
+        # 打包 AE（docs/111 §2.1）：发给 LLM 的上下文同走脱敏——env/secret 展开值
+        # 替换为占位，明文不出向给模型供应商；mapping 与 _redact_outputs 同源。
+        from atlas.graph.redact import redact_sensitive
+
+        context_payload = redact_sensitive(
+            {
+                "global": context.get("global", {}),
+                "nodes": _node_outputs_projection(context),
+            },
+            _sensitive_redaction_mapping(state),
+        )
         context_text = json.dumps(
-            {"global": context.get("global", {}), "nodes": _node_outputs_projection(context)},
+            context_payload,
             ensure_ascii=False,
             default=str,
         )
@@ -1883,6 +1903,16 @@ def _execute_llm_condition(
     instruction = str(config.get("classifierPrompt") or "").strip()
     # ZP：节点级 model 覆盖（docs/08 打包 ZP 立项块）——非空覆盖环境默认，仅本次调用生效。
     node_model = str(config.get("model") or "").strip() or None
+    # 打包 AE（docs/111 §2.2）：置信度阈值，仅接受 0–1 数值；缺失/类型错/越界 → None
+    # （不启用、不阻断运行）。bool 虽是 int 子类但不作为阈值，显式排除。
+    raw_threshold = config.get("confidenceThreshold")
+    confidence_threshold: float | None = None
+    if (
+        isinstance(raw_threshold, (int, float))
+        and not isinstance(raw_threshold, bool)
+        and 0.0 <= float(raw_threshold) <= 1.0
+    ):
+        confidence_threshold = float(raw_threshold)
     label: str
     try:
         label = classifier.classify(
@@ -1891,6 +1921,7 @@ def _execute_llm_condition(
             instruction=instruction,
             node_id=node.id,
             model=node_model,
+            confidence_threshold=confidence_threshold,
         )
     except Exception as exc:  # noqa: BLE001 - 供应商错误/解析错误统一 fail-safe
         label = "__default__"

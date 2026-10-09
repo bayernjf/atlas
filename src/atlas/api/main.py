@@ -17,11 +17,13 @@ import queue
 import asyncio
 import threading
 from concurrent.futures import ThreadPoolExecutor
+import csv
+import io
 import time
 import uuid
 from itertools import count
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Literal, NoReturn
 
@@ -136,6 +138,7 @@ from atlas.monitoring.silences import OnCallEmpty, current_assignee, is_silence_
 from atlas.monitoring.rule_templates import get_rule_template, list_rule_templates
 from atlas.monitoring.rule_user_store import RuleTemplateNameConflict
 from atlas.monitoring.alerts import validate_rules
+from atlas.monitoring.reports import aggregate_runs
 from atlas.recording import (
     RecordingCreateRequest,
     RecordingUpdateRequest,
@@ -2864,6 +2867,106 @@ def create_shadow_run(
     )
 
 
+@app.post("/api/graphs/{graph_id}/shadow-runs/stream")
+def create_shadow_run_stream(
+    graph_id: str,
+    payload: dict[str, Any] | None = None,
+    principal: Principal = Depends(require("operate")),
+) -> StreamingResponse:
+    """影子运行 SSE：实时下发 node_start/node_end，终帧携带完整 ShadowRun（docs/114）。
+
+    影子纪律与沉淀形状同同步版 /shadow-runs：READ 透传/写短路、预置审批与 wait 秒过、
+    独立 broker/tracer、不写 run_store/RunRecord、不触发告警灰度、不产 tool_metric；
+    异常也沉淀 status=error 记录（HTTP 不报错），统一在终帧表达，不设 event:error。
+    """
+    services = services_for(principal)
+    graph = _load_graph_or_404(services, graph_id, None)
+    body = payload or {}
+    raw_inputs = body.get("inputs") if isinstance(body.get("inputs"), dict) else {}
+    inputs = dict(raw_inputs)
+    presets = preset_all_approvals(graph, resolver=_tenant_graph_resolver(services))
+    if presets:
+        inputs["approvals"] = {**presets, **(inputs.get("approvals") or {})}
+    event_presets = preset_all_wait_events(graph, resolver=_tenant_graph_resolver(services))
+    if event_presets:
+        inputs["waitEvents"] = {**event_presets, **(inputs.get("waitEvents") or {})}
+    outcome = _parse_human_outcome(body.get("human_outcome"))
+
+    registry = _runtime_registry(services)
+    tool_permissions = _tool_permissions(registry)
+    node_index = {node.id: node for node in graph.nodes}
+    shadow_store = services.shadow_store
+    tenant_id = principal.tenant_id
+    graph_resolver = _tenant_graph_resolver(services)
+
+    def event_stream():
+        events: queue.Queue[dict[str, Any] | None] = queue.Queue()
+        top_events: list[tuple[str, dict[str, Any]]] = []
+
+        def shadow_emit(event: dict[str, Any]) -> None:
+            events.put(event)
+            if event.get("type") == "node_end" and not event.get("subgraphPath"):
+                output = event.get("output")
+                if isinstance(output, dict):
+                    top_events.append((event["node_id"], output))
+
+        tracer = Tracer(graph_id=graph_id)
+        shadow_broker = ApprovalBroker()
+        status = "completed"
+        error: str | None = None
+
+        def worker() -> None:
+            nonlocal status, error
+            try:
+                run_graph(
+                    graph,
+                    inputs=inputs,
+                    registry=registry,
+                    approval_broker=shadow_broker,
+                    graph_id=graph_id,
+                    graph_resolver=graph_resolver,
+                    emit=shadow_emit,
+                    tracer=tracer,
+                    shadow=True,
+                    tenant_id=tenant_id,
+                    secret_provider=_secret_provider,
+                )
+            except Exception as exc:  # 影子异常沉淀 error 记录，不影响生产链路
+                status = "error"
+                error = f"{type(exc).__name__}: {exc}"
+            decisions, intents = extract_shadow_events(
+                top_events, node_index, tool_permissions
+            )
+            record = shadow_store.add(
+                graph_id=graph_id,
+                trace_id=tracer.trace_id,
+                decisions=decisions,
+                tool_intents=intents,
+                inputs=raw_inputs or None,
+                status=status,
+                error=error,
+                human_outcome=outcome,
+            )
+            events.put({"__result__": record})
+
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+        while True:
+            event = events.get()
+            if event is None:
+                continue
+            if "__result__" in event:
+                yield (
+                    "event: result\ndata: "
+                    + json.dumps(event["__result__"], ensure_ascii=False)
+                    + "\n\n"
+                )
+                break
+            yield f"event: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
 @app.get("/api/shadow-runs")
 def list_shadow_runs(
     graph_id: str | None = None,
@@ -5278,6 +5381,93 @@ def monitoring_run_trace(
     if run is None:
         raise HTTPException(status_code=404, detail="运行记录不存在")
     return {"id": run.id, "trace_id": run.trace_id, "spans": run.spans}
+
+
+def _report_window(days: int) -> tuple[str, str]:
+    """docs/113：窗口 [now-days, now)（UTC ISO）。"""
+    now = datetime.now(timezone.utc)
+    return (now - timedelta(days=days)).isoformat(), now.isoformat()
+
+
+@app.get("/api/monitoring/report")
+def monitoring_report(
+    graph_id: str | None = None,
+    days: int = 7,
+    group_by: Literal["day", "version"] = "day",
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """docs/113：窗口内运行按天/版本聚合；read、按租户。"""
+    if days < 1 or days > 90:
+        raise HTTPException(status_code=422, detail="days 必须是 1-90 之间的整数")
+    since, until = _report_window(days)
+    runs = services_for(principal).monitoring.list_runs_for_report(graph_id, since, until)
+    return {
+        "since": since,
+        "until": until,
+        "group_by": group_by,
+        "buckets": aggregate_runs(runs, group_by),
+    }
+
+
+@app.get("/api/monitoring/report/export")
+def monitoring_report_export(
+    graph_id: str | None = None,
+    days: int = 7,
+    group_by: Literal["day", "version"] = "day",
+    format: Literal["csv", "json"] = "csv",
+    principal: Principal = Depends(require("read")),
+):
+    """docs/113：报表导出 CSV（UTF-8 BOM，中文表头）/JSON；read。"""
+    if days < 1 or days > 90:
+        raise HTTPException(status_code=422, detail="days 必须是 1-90 之间的整数")
+    since, until = _report_window(days)
+    runs = services_for(principal).monitoring.list_runs_for_report(graph_id, since, until)
+    buckets = aggregate_runs(runs, group_by)
+    scope = graph_id or "all"
+    if format == "json":
+        return JSONResponse(
+            {"since": since, "until": until, "group_by": group_by, "buckets": buckets},
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f'attachment; filename="run-report-{scope}.json"'
+            },
+        )
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(
+        [
+            "分组",
+            "运行总数",
+            "成功",
+            "失败",
+            "取消",
+            "成功率",
+            "平均耗时(ms)",
+            "P50耗时(ms)",
+            "P95耗时(ms)",
+        ]
+    )
+    for bucket in buckets:
+        writer.writerow(
+            [
+                bucket["key"],
+                bucket["total"],
+                bucket["completed"],
+                bucket["error"],
+                bucket["cancelled"],
+                bucket["success_rate"],
+                bucket["duration_avg_ms"],
+                bucket["duration_p50_ms"],
+                bucket["duration_p95_ms"],
+            ]
+        )
+    return Response(
+        content="\ufeff" + output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="run-report-{scope}.csv"'
+        },
+    )
 
 
 @app.get("/api/monitoring/rules")

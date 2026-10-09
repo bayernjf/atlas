@@ -118,6 +118,7 @@ export const conditionUiSchema: UiSchema = {
     conditionMode: '判断模式（规则表达式 / LLM 语义判断，04 §5.2）',
     classifierPrompt: '附加判定要求（可选，≤500 字符）',
     model: '模型标识（可选，非空时覆盖默认模型、仅本次调用生效）',
+    confidenceThreshold: '置信度阈值（可选，0–1；模型置信度低于此值时走默认分支）',
     // 旧手写表单数组与行内字段无标题（顶部标题在瘦包装组件），显式置空盖掉字段名直出。
     branches: '',
     'branches[].label': '',
@@ -133,6 +134,7 @@ export const conditionUiSchema: UiSchema = {
     'branches[].target': '目标节点（需先在画布连线）',
     defaultTarget: '选择默认目标节点',
     model: '如：openai/agnes-2.5-flash（留空走环境默认 LITELLM_MODEL）',
+    confidenceThreshold: '如：0.6（留空＝不启用阈值）',
   },
   rows: {
     'branches[].expression': 2,
@@ -146,7 +148,7 @@ export const conditionUiSchema: UiSchema = {
   },
   hiddenWhen: [
     { field: 'conditionMode', equals: 'rule', show: ['expression'], rootScoped: true },
-    { field: 'conditionMode', equals: 'llm', show: ['description', 'model'], rootScoped: true },
+    { field: 'conditionMode', equals: 'llm', show: ['description', 'model', 'confidenceThreshold'], rootScoped: true },
   ],
 }
 

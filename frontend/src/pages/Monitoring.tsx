@@ -44,6 +44,7 @@ import { AlertChannelCard } from '../components/monitoring/AlertChannelCard'
 import { SilenceManager, SilencePopButton } from '../components/monitoring/SilenceManager'
 import { AlertRuleTemplateMarket } from '../components/monitoring/AlertRuleTemplateMarket'
 import { RuleConfigEditor } from '../components/monitoring/RuleConfigEditor'
+import { RunReportCard } from '../components/monitoring/RunReportCard'
 import { validateRuleConfig } from '../lib/ruleConfig'
 import {
   ALERT_STATUS_COLORS,
@@ -444,6 +445,8 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
               locale={{ emptyText: t('empty.reports') }}
             />
           </Card>
+
+          <RunReportCard />
 
           <Row gutter={16}>
             <Col span={8}>
