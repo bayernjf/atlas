@@ -16,7 +16,11 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, ConfigDict
 
 MemoryKind = Literal["fact", "preference", "knowledge"]
-MemorySource = Literal["tool", "manual", "run"]
+# 来源四态（打包 AK 加 auto_extract）：tool 图内显式写入 / manual 人在界面上写 /
+# run 运行期状态快照（state_machine，docs/123）/ auto_extract LLM 从内容里提炼（docs/122 D-2）。
+# run 与 auto_extract 的分工：前者是"系统知道现在是什么状态"，后者是"从一段文本里读出来的结论"，
+# 混用会让 recall 与衰减策略跨来源误伤（例如提炼出的偏好被状态快照覆盖）。
+MemorySource = Literal["tool", "manual", "run", "auto_extract"]
 
 # 知识子类（docs/108 §2.1，照编辑后台组件设计 §7.2 存储方式）：FAQ / SOP / 产品手册 / 业务规则 / 历史案例。
 # 只作用于 kind=knowledge 条目的 meta.category；其余 kind 忽略该键。
@@ -113,8 +117,8 @@ def validate_remember_params(
     confidence_value = float(confidence)
     if not 0.0 <= confidence_value <= 1.0:
         raise MemoryValidationError("confidence 必须在 0-1 之间")
-    if source not in ("tool", "manual", "run"):
-        raise MemoryValidationError("source 必须是 tool/manual/run")
+    if source not in ("tool", "manual", "run", "auto_extract"):
+        raise MemoryValidationError("source 必须是 tool/manual/run/auto_extract")
     metadata_value = validate_category(_validate_metadata(metadata), kind=kind)
     return {
         "kind": kind,

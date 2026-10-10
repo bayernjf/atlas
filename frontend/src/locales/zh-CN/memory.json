@@ -11,11 +11,18 @@
   "col": {
     "content": "内容",
     "kind": "类型",
+    "source": "来源",
     "confidence": "置信度",
     "scope": "作用域",
     "createdAt": "创建时间",
     "actions": "操作",
     "score": "相似度"
+  },
+  "source": {
+    "tool": "工具写入",
+    "manual": "人工录入",
+    "run": "运行状态",
+    "autoExtract": "自动提炼"
   },
   "kind": {
     "fact": "事实",

@@ -48,17 +48,26 @@ def _adapter(repo=None, granted=None) -> MemoryHarnessAdapter:
 # ---- 适配器 U84–U88 ----
 
 
-def test_u84_discovers_two_capabilities_with_allowed_schema():
+def test_u84_discovers_three_capabilities_with_allowed_schema():
+    """打包 AK 加第三能力 auto_extract（docs/122 D-2）：写权限、幂等、schema 过白名单。"""
     adapter = _adapter()
     caps = {c.name: c for c in adapter.list_capabilities()}
-    assert set(caps) == {"remember", "recall"}
+    assert set(caps) == {"remember", "recall", "auto_extract"}
     assert caps["remember"].permission == Permission.WRITE
     assert caps["remember"].is_idempotent is False
     assert caps["recall"].permission == Permission.READ
     assert caps["recall"].is_idempotent is True
+    # 幂等声明有承重判据：落库走缺省 overwrite，同一段文本重跑不堆条目（见 auto_extract 测试）
+    assert caps["auto_extract"].permission == Permission.WRITE
+    assert caps["auto_extract"].is_idempotent is True
     # Capability 构造期已按白名单校验 schema（未抛 ValueError 即过）
     assert "kind" in caps["remember"].input_schema["properties"]
     assert caps["recall"].output_schema["properties"]["results"]["type"] == "array"
+    assert caps["remember"].input_schema["properties"]["update_policy"]["enum"] == [
+        "overwrite", "version", "ask"
+    ]
+    assert "decay" in caps["recall"].input_schema["properties"]
+    assert caps["auto_extract"].input_schema["required"] == ["text"]
 
 
 def test_u85_remember_requires_write_permission():

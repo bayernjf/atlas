@@ -1,9 +1,12 @@
 """长期记忆 Harness 适配器（adapter_id="memory", adapter_type="memory"，docs/26 §5）。
 
-两能力（零新节点 / 零 DSL 改动，走现有 tool_call/harness，params 由 M3 FormRenderer
+三能力（零新节点 / 零 DSL 改动，走现有 tool_call/harness，params 由 M3 FormRenderer
 按 input_schema 自动生成）：
 - ``remember``（write，非幂等）：写 fact/preference/knowledge（knowledge 带 meta.category 子类）；
-- ``recall``（read，幂等）：语义检索，无命中返空结果（成功，不报错）。
+- ``recall``（read，幂等）：语义检索，无命中返空结果（成功，不报错）；
+- ``auto_extract``（write，幂等，打包 AK docs/122 D-2）：LLM 从文本里提炼事实/偏好并按
+  置信度门槛落库；没接模型时返回 `skipped="llm_unavailable"` 而不是让 run 失败——
+  记忆是增强项，但"没接线"必须被说出来而不是伪装成"没提取到"。
 
 repo 缺省（全局发现注册实例）时执行期不可用；执行期由 ``_runtime_registry`` 注入
 当前租户的 MemoryRepository（照 message 两段式，docs/26 §5.1）。
@@ -11,6 +14,7 @@ repo 缺省（全局发现注册实例）时执行期不可用；执行期由 ``
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from atlas.harness.base import (
@@ -22,7 +26,13 @@ from atlas.harness.base import (
     Permission,
     StructuredError,
 )
+from atlas.llm.structured import LLMStructuredUnavailable, extract_memories
 from atlas.memory.models import MemoryValidationError
+
+logger = logging.getLogger(__name__)
+
+# docs/26 §1.2 的 0.85 是缺省门槛、不是真理：真实语料校准前它就是一个可调参数。
+_DEFAULT_EXTRACT_MIN_CONFIDENCE = 0.85
 
 _REMEMBER_INPUT_SCHEMA = {
     "type": "object",
@@ -131,6 +141,47 @@ _RECALL_INPUT_SCHEMA = {
     },
 }
 
+_AUTO_EXTRACT_INPUT_SCHEMA = {
+    "type": "object",
+    "required": ["text"],
+    "properties": {
+        "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000,
+            "description": "要从中提炼事实/偏好的文本（支持 {{变量}} 插值，如客服对话）",
+        },
+        "min_confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.85,
+            "description": "置信度门槛（docs/26 §1.2 的 0.85 是缺省值，不是真理；按业务校准）",
+        },
+        "scope": {
+            "type": "object",
+            "additionalProperties": {"type": "string"},
+            "description": "提炼出的条目挂到哪个业务作用域，如 {user_id}；缺省不挂",
+        },
+    },
+}
+
+_AUTO_EXTRACT_OUTPUT_SCHEMA = {
+    "type": "object",
+    "required": ["extracted", "facts", "preferences", "min_confidence"],
+    "properties": {
+        "extracted": {"type": "integer"},
+        "facts": {"type": "array"},
+        "preferences": {"type": "array"},
+        "dropped_below_threshold": {"type": "integer"},
+        "min_confidence": {"type": "number"},
+        # "没接模型"与"这次没提取到"必须是两个答案（docs/122 复核块第 2 条）：
+        # 前者 skipped=llm_unavailable，后者 skipped 为空而 extracted=0。
+        "skipped": {"type": "string"},
+        "reason": {"type": "string"},
+    },
+}
+
 _RECALL_OUTPUT_SCHEMA = {
     "type": "object",
     "required": ["results"],
@@ -186,6 +237,19 @@ class MemoryHarnessAdapter(HarnessAdapter):
                 timeout=10.0,
                 is_idempotent=True,
             ),
+            Capability(
+                name="auto_extract",
+                description=(
+                    "用 LLM 从一段文本（客服对话、工单、备注）里提炼可长期保留的事实与偏好并写库；"
+                    "低于置信度门槛的丢弃，没接模型时在产出里明说而不是静默返回空"
+                ),
+                action="memory_auto_extract",
+                input_schema=_AUTO_EXTRACT_INPUT_SCHEMA,
+                output_schema=_AUTO_EXTRACT_OUTPUT_SCHEMA,
+                permission=Permission.WRITE,
+                timeout=30.0,
+                is_idempotent=True,
+            ),
         ]
 
     def observe(self) -> Observation:
@@ -237,6 +301,8 @@ class MemoryHarnessAdapter(HarnessAdapter):
                     decay=params.get("decay"),
                 )
                 return ActionResult.success({"results": results})
+            if request.capability_name == "auto_extract":
+                return self._auto_extract(params)
         except MemoryValidationError as exc:
             return ActionResult.failed(StructuredError("MEMORY_INVALID_INPUT", str(exc)))
         except Exception as exc:  # noqa: BLE001 - 存储故障统一折 STORAGE_ERROR，不炸运行
@@ -244,3 +310,64 @@ class MemoryHarnessAdapter(HarnessAdapter):
         return ActionResult.failed(
             StructuredError("UNKNOWN_CAPABILITY", f"未知能力：{request.capability_name}")
         )
+
+    def _auto_extract(self, params: dict[str, Any]) -> ActionResult:
+        """LLM 提炼 → 置信度门槛 → 落库（docs/122 D-2）。
+
+        落库走缺省 `overwrite`（同 scope 同内容不堆叠），所以"对同一段对话重跑一次"
+        是幂等的——这也是该能力声明 `is_idempotent=True` 的依据，不是随手写的标签。
+        """
+        text = str(params.get("text") or "").strip()
+        if not text:
+            return ActionResult.failed(StructuredError("MEMORY_INVALID_INPUT", "text 不能为空"))
+        raw_threshold = params.get("min_confidence", _DEFAULT_EXTRACT_MIN_CONFIDENCE)
+        if (
+            isinstance(raw_threshold, bool)
+            or not isinstance(raw_threshold, (int, float))
+            or not 0.0 <= float(raw_threshold) <= 1.0
+        ):
+            return ActionResult.failed(
+                StructuredError("MEMORY_INVALID_INPUT", "min_confidence 必须是 0-1 的数")
+            )
+        threshold = float(raw_threshold)
+        scope = params.get("scope") if isinstance(params.get("scope"), dict) else None
+        try:
+            extracted = extract_memories(text=text)
+        except LLMStructuredUnavailable as exc:
+            # 不炸 run（记忆是增强项），但把原因写进产出——"没接线"不等于"没提取到"。
+            return ActionResult.success({
+                "extracted": 0, "facts": [], "preferences": [], "dropped_below_threshold": 0,
+                "min_confidence": threshold, "skipped": "llm_unavailable", "reason": str(exc),
+            })
+        kept: dict[str, list[dict[str, Any]]] = {"fact": [], "preference": []}
+        dropped = 0
+        for kind, candidates in (
+            ("fact", extracted.get("facts") or []),
+            ("preference", extracted.get("preferences") or []),
+        ):
+            for candidate in candidates:
+                if float(candidate["confidence"]) < threshold:
+                    dropped += 1
+                    continue
+                saved = self.repo.remember(
+                    kind=kind,
+                    content=candidate["content"],
+                    scope=scope,
+                    confidence=candidate["confidence"],
+                    source="auto_extract",
+                )
+                kept[kind].append({
+                    "id": saved.get("id"),
+                    "content": saved.get("content"),
+                    "confidence": candidate["confidence"],
+                })
+        if dropped:
+            logger.info("auto_extract 丢弃 %d 条低于门槛 %.2f 的候选", dropped, threshold)
+        return ActionResult.success({
+            "extracted": len(kept["fact"]) + len(kept["preference"]),
+            "facts": kept["fact"],
+            "preferences": kept["preference"],
+            "dropped_below_threshold": dropped,
+            "min_confidence": threshold,
+            "skipped": "",
+        })
