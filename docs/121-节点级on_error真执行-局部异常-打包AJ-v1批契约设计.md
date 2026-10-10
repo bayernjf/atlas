@@ -83,7 +83,15 @@
 
 ## 6. 收口注记（落码后回填）
 
-（待落码后填写：提交序列、门读数、偏差照实。）
+**已收口（2026-10-10，dev，未 push）。**
+
+- **提交序列**：`d24c72c` feat(graph) 三值真执行＋max_retries＋编译期三码＋API 500 映射；fix(evaluation) runner 执行副本 tool_call 降级 continue；test(graph) U1324–U1331 ＋ 既有断言按 D-7 改判；feat(frontend) errorTarget 面板＋snake_case 序列化打通。
+- **门读数**：后端 **2596 passed／173 skipped／0 failed**（基线 2582/173 ＋ 新套件 14）；前端 vitest **972 passed／2 skipped**、oxlint 0/0、tsc 0、build 过。
+- **偏差照实**：
+  1. **parallel 区域不装配 on_error 包装**——区域内节点失败归汇聚网关按 joinStrategy 裁决（04 §5.4），stop 穿透会绕过 join 语义让整 run 假死；D-3 的 stop 语义仅作用于非区域节点。
+  2. **调试会话不包 retry**——docs/28 §3.2 要求节点异常原样重抛（异常断点观测），RunNodeFailed 包装会破坏 paused 帧的原始异常形状。
+  3. **evaluation runner 执行副本**把 tool_call 降级为 continue（评估语义＝遍历全图比对决策，工具失败不截断），决策类节点异常仍穿透为 case 级 error；不改写 graph_store。
+  4. **前端键名鸿沟修复照实**：序列化层此前把 camelCase retry 直发后端被 pydantic 静默丢弃（前端面板配置从未到达运行期）——本批在 graphSerializer 做显式 camelCase↔snake_case 互转，链路首次真正打通。
 
 ## 7. 登记与联动
 
