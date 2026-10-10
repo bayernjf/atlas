@@ -1831,6 +1831,38 @@ def _validate_reachability(
     ]
 
 
+# 打包 AK（docs/122 D-3）：ai_decision 可选记忆注入的形状。
+# 一条诊断模板配 (field, expect) 参数，而不是每个字段一条码——`expect` 取的是语言中立的
+# 技术词（boolean/integer/string/object/"0-1"），两档目录都能直译，不会把中文塞进参数里。
+_MEMORY_INJECTION_RULES: tuple[tuple[str, str], ...] = (
+    ("enabled", "boolean"),
+    ("query", "string"),
+    ("topK", "1-20"),
+    ("minScore", "0-1"),
+    ("scope", "object"),
+)
+
+
+def _memory_injection_value_ok(field: str, value: Any) -> bool:
+    if field == "enabled":
+        return isinstance(value, bool)
+    if field == "query":
+        return isinstance(value, str)
+    if field == "topK":
+        return isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 20
+    if field == "minScore":
+        return (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and 0.0 <= float(value) <= 1.0
+        )
+    if field == "scope":
+        return isinstance(value, dict) and all(
+            isinstance(key, str) and isinstance(item, str) for key, item in value.items()
+        )
+    return True
+
+
 def _validate_node_config(node: NodeDSL) -> list[Issue]:
     config = node.config
 
@@ -1866,6 +1898,26 @@ def _validate_node_config(node: NodeDSL) -> list[Issue]:
     elif node.type == "ai_decision":
         if not (config.get("promptTemplate") or "").strip():
             return [add("AI 决策必须填写提示词模板", "/promptTemplate", "NODE_AI_PROMPT_REQUIRED")]
+        # 打包 AK（docs/122 D-3）：记忆注入是可选对象，缺省＝不注入（运行路径与接入前逐字一致）。
+        injection = config.get("memoryInjection")
+        if injection is not None:
+            if not isinstance(injection, dict):
+                return [add("memoryInjection 必须是一个对象", "/memoryInjection",
+                            "NODE_AI_MEMORY_INJECTION_INVALID")]
+            problems: list[Issue] = []
+            for field, expect in _MEMORY_INJECTION_RULES:
+                value = injection.get(field)
+                if value is None:
+                    continue  # 缺省即默认值（enabled 缺省＝不注入），不要求显式写全
+                if not _memory_injection_value_ok(field, value):
+                    problems.append(add(
+                        f"memoryInjection.{field} 必须是 {expect}",
+                        f"/memoryInjection/{field}",
+                        "NODE_AI_MEMORY_INJECTION_PARAM_INVALID",
+                        {"field": field, "expect": expect},
+                    ))
+            if problems:
+                return problems
     elif node.type == "intent_recognition":
         intents = config.get("intents")
         if not isinstance(intents, list) or not intents:

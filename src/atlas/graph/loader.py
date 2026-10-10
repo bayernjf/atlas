@@ -702,6 +702,10 @@ def _make_executor(
                         )
                     payload = trigger_payload or {}
                     prompt = interpolate(node.config.get("promptTemplate", ""), context)
+                    # 打包 AK（docs/122 D-3）：缺省关闭＝这一行原样返回，节点零改动。
+                    prompt, injection = _memory_injection(
+                        node, prompt=prompt, context=context, memory_repo=memory_repo
+                    )
                     try:
                         limit = float(context["global"].get("approval_limit", 500))
                     except (TypeError, ValueError):
@@ -730,6 +734,9 @@ def _make_executor(
                     else:
                         message = f"{node.id}({node.type}): executed"
                     output = {"decision": result, "prompt_rendered": prompt}
+                    if injection is not None:
+                        # 注入是可选能力，元数据只在开启时出现——缺省关闭时节点产出逐字不变。
+                        output["memory_injected"] = injection
                 elif node.type in ("intent_recognition", "info_extraction", "content_generation"):
                     # docs/109 打包 AB：三 LLM 结构化节点。无模型显式 FAILED（demo 面
                     # 不豁免——三节点无规则兜底，静默给空结果会伪造下游行为）。
@@ -1735,6 +1742,59 @@ def _decision_confidence(result: Any) -> float:
         return float(result.get("confidence", 0.0))
     except (TypeError, ValueError):
         return 0.0
+
+
+# --- 打包 AK（docs/122 D-3）ai_decision 可选记忆注入 ------------------------
+
+_MEMORY_INJECTION_HEADER = "【相关记忆】"
+_DEFAULT_INJECTION_TOP_K = 5
+
+
+def _memory_injection(
+    node: NodeDSL, *, prompt: str, context: dict[str, Any], memory_repo: Any
+) -> tuple[str, dict[str, Any] | None]:
+    """按节点 `memoryInjection` 配置给决策 prompt 追加一段召回记忆；返回 (prompt, 注入元数据)。
+
+    缺省关闭：不配置或 `enabled` 非真时**原样返回 prompt、元数据为 None**，节点执行路径与
+    接入前逐字一致（黄金用例/回放/影子零回归，docs/122 §2 D-1）。开启后召回到 0 条也原样返回
+    prompt，但元数据仍在——"没查到"与"没接线"都要能被运行结果分辨（docs/63 静默降级族）。
+
+    `scope` 取显式配置（缺省 None＝不按 scope 过滤），**不从 globals 猜业务键**：本仓库没有
+    "哪些 global 是对象标识"的白名单，自动派生会静默改变召回集合（复开条件见 docs/122 §6）。
+    """
+    cfg = node.config.get("memoryInjection")
+    if not isinstance(cfg, dict) or not cfg.get("enabled"):
+        return prompt, None
+    # query 与 promptTemplate 同规：先插值，缺省用插值后的运营 prompt。
+    query = interpolate(str(cfg.get("query") or "").strip(), context) or prompt
+    try:
+        top_k = int(cfg.get("topK", _DEFAULT_INJECTION_TOP_K))
+    except (TypeError, ValueError):
+        top_k = _DEFAULT_INJECTION_TOP_K
+    top_k = max(1, min(20, top_k))
+    try:
+        min_score = float(cfg.get("minScore", 0.0))
+    except (TypeError, ValueError):
+        min_score = 0.0
+    scope = cfg.get("scope") if isinstance(cfg.get("scope"), dict) else None
+    meta: dict[str, Any] = {"query": query, "topK": top_k, "minScore": min_score}
+    if memory_repo is None:
+        # fail-safe：没装记忆档不阻断决策，只把"没接线"标在运行结果里。
+        logger.warning("ai_decision %s 开了记忆注入，但当前租户没有记忆存储，按无记忆继续决策", node.id)
+        return prompt, {**meta, "count": 0, "status": "unavailable"}
+    try:
+        hits = memory_repo.recall(query, scope=scope, top_k=top_k, min_score=min_score)
+    except Exception as exc:  # noqa: BLE001 存储故障不能连带打断决策
+        logger.warning("ai_decision %s 记忆召回失败，按无记忆继续决策：%s", node.id, exc)
+        return prompt, {**meta, "count": 0, "status": "error"}
+    contents = [str(hit.get("content") or "").strip() for hit in hits if hit.get("content")]
+    meta["ids"] = [hit.get("id") for hit in hits]
+    if not contents:
+        return prompt, {**meta, "count": 0, "status": "ok"}
+    injected = f"{prompt}\n\n{_MEMORY_INJECTION_HEADER}\n" + "\n".join(
+        f"- {content}" for content in contents
+    )
+    return injected, {**meta, "count": len(contents), "status": "ok"}
 
 
 def _escalate_low_confidence(

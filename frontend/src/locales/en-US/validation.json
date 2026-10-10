@@ -189,6 +189,8 @@
     "LOOP_STRANDED_NODE": "Node {{owner}}: body node {{member}} has no path back to the loop node and would loop forever",
     "LOOP_TRIGGER_IN_BODY": "Node {{owner}}: the loop body cannot contain a trigger node: {{member}}",
     "LOOP_PARALLEL_IN_BODY": "Node {{owner}}: a loop body cannot contain a parallel node in v1: {{member}} (the join gate releases once per pass, so fan-out across iterations deadlocks silently)",
+    "NODE_AI_MEMORY_INJECTION_INVALID": "Node {{owner}}: the memory injection setting must be an object",
+    "NODE_AI_MEMORY_INJECTION_PARAM_INVALID": "Node {{owner}}: memory injection {{field}} must be {{expect}}",
     "NODE_AI_PROMPT_REQUIRED": "Node {{owner}}: an AI decision requires a prompt template",
     "NODE_ERROR_TARGET_INVALID": "Node {{owner}}: invalid error_target: {{errorTarget}} (cannot point to itself, a missing node, or a condition/loop/approval/parallel node)",
     "NODE_ERROR_TARGET_REQUIRED": "Node {{owner}}: on_error is jump_to but no error_target is set",
