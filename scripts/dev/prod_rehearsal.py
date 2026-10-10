@@ -216,15 +216,55 @@ def wait_ready(port: int, limit: int = 240) -> float:
 
 
 def leg_llm(port: int, token: str, gid: str, release) -> None:
-    """第 5a 段的反面：同一张已发布图，配上真凭据之后必须真的调出去。"""
-    run = api(port, "post", f"/api/graphs/{gid}/run", token=token,
-              json_body={"releaseVersion": release,
-                         "inputs": {"order_id": "R-1", "amount": 12.5, "reason": "演练"}})
+    """第 5a 段的反面：同一张已发布图，配上真凭据之后必须真的调出去。
+
+    真 LLM 可能判「转人工」（refund-auto 的 human_approval-1 挂起 3600s），
+    而同步 /run 会占住请求线程等终态——所以按第 5c 段同款：后台线程发 run，
+    主线程在挂起窗口内批准，否则 httpx 30s 读超时必现（两次实跑均踩中）。
+    """
+    holder: dict[str, object] = {}
+
+    def _run() -> None:
+        holder["resp"] = api(port, "post", f"/api/graphs/{gid}/run", token=token,
+                             json_body={"releaseVersion": release,
+                                        "inputs": {"order_id": "R-1", "amount": 12.5,
+                                                   "reason": "演练"}})
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    atoken = None
+    for _ in range(120):  # 给 LLM 决策最多 30s；判自动退款时无审批项，直接跳出
+        resp_now = holder.get("resp")
+        if isinstance(resp_now, httpx.Response):
+            break
+        pending = api(port, "get", "/api/approvals", token=token).json()
+        items = pending.get("items", pending if isinstance(pending, list) else [])
+        if items:
+            atoken = items[0]["token"]
+            break
+        time.sleep(0.25)
+    if atoken is not None:
+        decided = api(port, "post", f"/api/approvals/{atoken}/decision", token=token,
+                      json_body={"decision": "approved", "comment": "演练批准（llm 腿）"})
+        ok(decided.status_code == 200,
+           f"LLM 判了转人工，挂起的审批已被批准（{decided.status_code}）")
+    thread.join(timeout=90)
+    run = holder.get("resp")
+    ok(isinstance(run, httpx.Response), "同步 /run 在 90s 内返回（未返回＝图挂起且无人可批）")
     detail = json.dumps(run.json().get("detail", {}), ensure_ascii=False)
     ok(run.status_code == 200,
        f"配了真凭据后同一张图不再 500（{run.status_code}{'，' + detail[:120] if run.status_code != 200 else ''}）")
     outputs = run.json().get("outputs") or {}
-    sources = {k: str(v.get("source")) for k, v in outputs.items() if isinstance(v, dict) and v.get("source")}
+    # ai_decision 的输出形状是 {"decision": {..., "source": ...}, "prompt_rendered": ...}，
+    # source 嵌在 decision 里而不是顶层（loader.py 的 output 赋值）。
+    sources = {}
+    for key, value in outputs.items():
+        if not isinstance(value, dict):
+            continue
+        if value.get("source"):
+            sources[key] = str(value["source"])
+        elif isinstance(value.get("decision"), dict) and value["decision"].get("source"):
+            sources[key] = str(value["decision"]["source"])
     ok(any(s.startswith("llm:") for s in sources.values()),
        f"至少一个 `ai_decision` 节点走的是真 LLM（节点 source＝{sources}；规则兜底长成 `rule:`）")
     say("     ", f"外发结论：{json.dumps({k: v for k, v in outputs.items() if isinstance(v, dict)}, ensure_ascii=False)[:240]}")
