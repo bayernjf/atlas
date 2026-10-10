@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+### 打包 AK：D35 记忆机制四切片立项（2026-10-10，docs-only）
+
+- **auto_extract**：LLM 结构化提取＋置信度阈值 0.85＋`source=auto_extract`，新图工具 `memory/auto_extract`（显式可观测可回放）；无 LLM 配置 fail-closed 空结果、不阻塞图。1 新错误码 `MEMORY_EXTRACT_FAILED`。
+- **ai_decision 注入开关**：节点可选 `memoryInjection`（enabled/query/topK/minScore，缺省关闭＝现状逐字不变）；开启时节点构造 LLM 请求前经注入的 MemoryRepository 检索并追加【相关记忆】段。
+- **update_policy**：`remember` 可选 overwrite（缺省，兼容现状）/version（metadata.version 递增）/ask（返 `{conflict, existing_id}`，不引审批），配 dedup_keys，两档同构。
+- **recall decay**：可选半衰期加权（`score' = score·0.5^(age/half)`，`now_override` 确定，缺省关闭）。
+- **验收**：U1332–U1344 预留（docs/13 打包 AK 小节）。零新端点／无 ADR。**D35 整体不解除**。形状权威 docs/122。
+
+### 打包 AL：D63 全局异常/自愈/状态机立项（2026-10-10，docs-only）
+
+- **全局异常处理器**：`globalErrorHandler`（onUncaughtError＝mark_only/route_to_subgraph/escalate_to_human，捕获所有未被节点级 on_error 捕获的异常；自身异常 mark_only 兜底）。
+- **自愈机制**：`selfHealing`（triggerOn/diagnoseSubgraphId/maxAttempts/continueWhen，复用 jump_to 路由骨架；与 D56 安全重放不同族）。
+- **状态机子图**：新节点类型 `state_machine`（states/transitions 事件驱动、编译期校验、SSE state_changed 帧）。
+- **待用户拍板**：P-1 降级策略形态三选一（建议 escalate_to_human）；P-2 对象状态存哪（建议 memory 档）。4 新错误码。验收 U1345–U1356 预留。
+- **D63 不解除**（落码后才可取回）。形状权威 docs/123。
+
 ### 打包 AJ：节点级 on_error 真执行（2026-10-10）
 
 - **三值语义落地**：`retry.on_error` 自 W7 起仅 DSL 声明、loader 从未读取；本批真执行——stop＝抛 `RunNodeFailed` 穿透、run failed、同步 /run 500 `NODE_EXECUTION_FAILED`＋nodeId；continue＝旧默认行为的显式化（失败放行、下游照跑）；jump_to＝编译期把普通出边改 conditional edges、失败路由到新字段 `retry.error_target`（内部键 `__on_error_target` 路由消费后剔除）。
