@@ -65,6 +65,9 @@ export const semanticTokens = {
   'color-status-pill-bg': 'rgba(255, 255, 255, 0.25)',
   // 阴影
   'shadow-node': 'rgba(0, 0, 0, 0.1)',
+  'shadow-node-hover': 'rgba(0, 0, 0, 0.16)',
+  'shadow-card': '0 1px 2px rgba(0, 0, 0, 0.04), 0 2px 8px rgba(0, 0, 0, 0.05)',
+  'shadow-card-hover': '0 2px 4px rgba(0, 0, 0, 0.05), 0 8px 24px rgba(0, 0, 0, 0.1)',
 } as const
 
 export type SemanticTokenName = keyof typeof semanticTokens
@@ -76,5 +79,32 @@ export function token(name: SemanticTokenName): string {
 export const cssVarName = (name: SemanticTokenName): string => `--atlas-${name}`
 
 export const antdTheme: ThemeConfig = {
-  token: { colorPrimary: semanticTokens['color-primary'] },
+  token: {
+    // 品牌主色保持现值（2026-10-10 主题打磨不换色，避免节点光晕/全仓涟漪）
+    colorPrimary: semanticTokens['color-primary'],
+    // 对齐语义 token：页面底色/容器/边框/正文用同一事实源
+    colorBgLayout: semanticTokens['color-bg-page'],
+    colorBgContainer: semanticTokens['color-bg-container'],
+    colorBorder: semanticTokens['color-border'],
+    colorText: semanticTokens['color-text-primary'],
+    colorLink: semanticTokens['color-primary'],
+    // 工具型密度：统一圆角/控件高度/字号
+    borderRadius: 6,
+    borderRadiusLG: 10,
+    fontSize: 14,
+    controlHeight: 32,
+    controlHeightLG: 40,
+    controlHeightSM: 24,
+  },
+  components: {
+    Card: {
+      boxShadowTertiary: '0 1px 2px rgba(0, 0, 0, 0.04), 0 2px 8px rgba(0, 0, 0, 0.05)',
+    },
+    Modal: {
+      borderRadiusLG: 12,
+    },
+    Button: {
+      fontWeight: 500,
+    },
+  },
 }

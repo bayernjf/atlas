@@ -3,6 +3,31 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+
+### 〔前端〕UX 走查与微改进（2026-10-10）
+
+- **全流程 UX 走查**（登录→Dashboard→各功能页→编辑器→运行→错误校验，浏览器实测）：缺陷级硬伤基本没有（loading/空态/错误校验分层/引导文案均到位）；检出并闭合 5 项。
+- **等待页返回按钮**：`←` → `← 返回`（`t('common:button.back')`；common 顶层 button 补齐 `back` 键 zh/en——此前 `back` 仅存在于 audit/users 各自字典）。原子 feat(frontend)。
+- **Dashboard 三卡片可跳转**：Graph/Loop/Harness `hoverable`＋onClick（→编辑器/反思进化/API 导入）＋extra「进入 →」`demo.cards.enter` zh/en。同上原子。
+- **运行完成 toast**：`message.success(t('log.runComplete'))`（App 主分支包 antd `<App>`，Editor 走 `App.useApp()`，复用既有键）。同上原子。
+- **编辑器返回工作台入口**（走查新发现，原只能刷新页面）：header「← 返回」`onBack` prop（App 传 `setPage('dashboard')`）。同上原子。
+- **审计筛选空态**实测确认（既有 `audit.empty`＋`locale.emptyText`，无需改码）。
+- **门**：前端 vitest **972/2**（零回归）、oxlint 0/0、tsc 0、build 过；守护门 8 passed；浏览器实测 5 项全过。docs 收口：docs/17 §3.8。
+
+### 〔前端〕主题打磨与画布自适应修复（2026-10-10）
+
+- **主题 token 一次到位**：`tokens.ts` antdTheme token 层补全（colorBgLayout/colorBgContainer/colorBorder/colorText/colorLink）＋borderRadius 6/10、fontSize 14、controlHeight 32/40/24；components 层 Card.boxShadowTertiary、Modal.borderRadiusLG 12、Button.fontWeight 500；新增 semantic token shadow-node-hover/shadow-card/shadow-card-hover。主色 #1677ff 不变（避免节点光晕/全仓涟漪）。原子 `71f0164` feat(theme)。
+- **核心面打磨**：节点面板项圆角 8＋hover 阴影/位移/描边；atlas-node 圆角 10＋分层阴影＋hover 提升；ant-card transition＋hover 阴影；画布空态（nodes.length===0 时 ⊕＋i18n `editor.canvas.emptyHint` zh/en）。原子 `23353ed` feat(frontend)。
+- **顺带修复两个真实既有缺陷**（「UI 随窗口自适应」同族，浏览器实测确认）：① 编辑器内层 antd Layout 未被撑开，`.react-flow` 容器塌陷 65px→补 `flex:1/min-height:0`＋`canvas-panel height:100%`，画布实测 65→1165px；② 空图挂载后 loadGraph 填充节点不 refit（viewport transform 留 none、节点在容器外被裁剪）→ 节点首次出现时显式 `fitView`（rAF＋200ms 双保险），NODE_IN_VIEW 0→1。
+- **门**：前端 vitest **972/2**（基线零回归）、oxlint 0/0、tsc 0、build 过；守护门 8 passed；浏览器冒烟节点圆角 10px/阴影计算样式确认。零新依赖/零迁移/无 ADR。docs 收口：docs/17 §3.7。
+
+
+### 〔文档〕docs/107 需求功能点比对报告收口同步（2026-10-10）
+
+- **回写已收口项**：知识组件（AA/D60）、三节点（AB/D61）四处过时描述（「整块缺失·无 D 号」「≈85% ⚡」）更新为已落码收口＋仍缓做余部；A 档建议加批复注记。
+- **核对**：docs/29 无过时；docs/14 未闭合项触发条件全部外部化，B 档不另开新功能批。
+- **原子**：docs-only 提交（dev，未 push）。
+
 ### 〔前端〕RolloutModal 规则区迁 forms 落码收口：D29 解锁路径第 3 步第二片（docs/120，2026-10-10）
 
 - **规则区三行手写表单迁 forms 判别异构数组**：`buildRolloutRulesSchema()`（items.oneOf 三分支、判别键 `to`、编辑面不含 full）＋`normalizeRolloutRules()`（段唯一＋固定序规约、bucket 注入 `field='payload.amount'`/`op='<='` 固定形状）＋FormRenderer `disabled` prop（fieldset 原生禁用，rulesLocked 语义）＋判别键切换交互（ArrayView 判别数组行头段切换 Select、`oneOfBranchDefault` 目标分支默认对象、行内 const 判别键隐藏）；RolloutModal 删 `withRule`/`findRule` 手写三行改挂 FormRenderer；i18n 三字段 label 键（tenantsLabel/bucketValueLabel/percentLabel）。

@@ -62,7 +62,8 @@
     },
     "statusRunning": "运行中…",
     "statusPaused": "已暂停",
-    "diagSep": "；"
+    "diagSep": "；",
+    "emptyHint": "从左侧节点面板拖入节点开始编排"
   },
   "export": {
     "title": "Graph 定义 JSON（W7-W8 DSL 编译输入）"

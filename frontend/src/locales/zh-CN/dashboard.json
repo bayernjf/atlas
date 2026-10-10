@@ -5,7 +5,8 @@
     "cards": {
       "graph": "退款流程经 DSL → LangGraph 编译运行，节点事件 SSE 实时上屏",
       "loop": "OODA 最小循环已跑通",
-      "harness": "契约/注册层 + Playwright Web 适配器（三层定位）已跑通"
+      "harness": "契约/注册层 + Playwright Web 适配器（三层定位）已跑通",
+      "enter": "进入 →"
     }
   }
 }

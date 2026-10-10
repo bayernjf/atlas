@@ -2,6 +2,8 @@
 
 > **来源**：工程推导文档。需求依据为 [04-组件设计-编辑后台.md](04-组件设计-编辑后台.md) 十、补充项 28「多语言支持」三条（界面多语言中/英切换可扩展、自然语言多语言、组件描述多语言）；01-08 正文为冻结的唯一事实源，本文只做工程化方案，不改写需求。
 > **状态**：方案已定（2026-09-13，2026-09-16 补 D7 多租户认证界面契约）。**设计 Token 等价替换已于 2026-09-13 落码**（`theme/tokens.ts` + `setup.ts`，三页面主体零视觉差异；2026-09-16 §3.5 收尾清单五项已全部清零，`src` 下仅 tokens.ts primitive 定义含 hex）；i18n 库按触发条件引入（见 §4 落地节奏与 [14-缓做事项登记表](14-缓做事项登记表.md) D12/D13）。**2026-09-20 M12 先行落地零依赖文案抽取骨架**（`frontend/src/locales/` 自写 t()/useTranslation 对齐 i18next 签名 + zh-CN/common 样板 + 登录页/UserBadge 接线，不装 i18next、不做切换 UI、不翻译 en-US；触发时零返工替换为 i18next，见 §4）。**2026-09-24 docs/57 完成 en-US 首批全量翻译与语言切换**（10 个非空 namespace 全译、localStorage 持久化切换、UserBadge/Login 两入口、antd locale 联动、发布/灰度/反馈/审批/属性面板/表单/画布全接线；决策继续不引入 i18next、不做 navigator 探测；i18next 与元数据多语言仍缓做于 14 D12/D13，详见 docs/57 与本文 §4）。**2026-09-24 取回 i18n 第一批债**：后端认证端点结构化错误码（AUTH_*，detail 为 {code,message}）+ 前端 L1 校验诊断全量 i18n（validation namespace 82 键、语言切换全量重算）；剩余 Graph DSL 422 列表与元数据 D13 仍缓做。**〔2026-09-25 收口更正〕"剩余 Graph DSL 422 列表"已不成立**：该批码化实际已覆盖全量——`src/atlas/graph/` 可抛码 197 个，前端 `locales/*` 有 191 个键，余 6 个是 `SUCCESS`/`FAILED`/`SIMULATED`/`SHADOW_DRY_RUN`/`INVALID_PARAMETER`/`UNKNOWN` 动作与参数枚举、非用户可读消息不必译；解析承载在 `frontend/src/lib/apiClient.ts:53` 的 `t('dsl.<CODE>', { ns: 'validation' })`（本仓从未有过 `graphErrors.ts`）。**同次测量新暴露的缺口才是本条余部**：13 个 namespace 里唯独 `validation` 未纳入 `i18n.test.ts` 的 `PARITY_PAIRS`（现 12 项），"新增 422 码漏配英文键"无门可挡；直接纳入会当场红一处真漂移（`dsl.SUB_INPUT_VALUE_REQUIRED` 的 zh `{{路径}}` vs en `{{path}}` 插值标识不一致），两步收口见 14 D12 的 2026-09-25 注记与 08 §八「下一批候选」B 组首行。**〔已收口 2026-09-25：`776b62c` 文案＋`1a07582` 守护〕**`776b62c` 改文案、`1a07582` 扩守护，13 个 namespace 至此全覆盖——**新增 422 码却漏配英文键，从此会当场红在 i18n 门上**。
+> **〔2026-10-10 主题打磨批〕** 在 §3.5 等价替换完成的基础上做**有意视觉打磨**（非零视觉变化）：antdTheme 补全 token 层（colorBgLayout/colorBgContainer/colorBorder/colorText/colorLink，对齐 semanticTokens 现状）＋ borderRadius 6/borderRadiusLG 10/fontSize 14/controlHeight 32/40/24；components 层 Card.boxShadowTertiary、Modal.borderRadiusLG 12、Button.fontWeight 500。新增 semantic token：`shadow-node-hover`、`shadow-card`、`shadow-card-hover`（index.css 节点/卡片 hover 阴影消费）。主色 `#1677ff` 不变（避免节点光晕/全仓涟漪）。消费方：仅 App.tsx 引用 antdTheme，无测试依赖。原子 `71f0164` feat(theme)。
+> **〔2026-10-10 画布自适应修复〕** 同批顺带修复两个真实既有缺陷（与「UI 随窗口自适应」同族）：① 编辑器内层 antd Layout 未被外层撑开，`.react-flow` 容器塌陷至 65px，演示图节点被压缩不可见——`index.css` 补 `.editor-layout > .ant-layout { flex:1; min-height:0 }` ＋ `.editor-content .canvas-panel { height:100% }`；② 编辑器先挂载空图、loadGraph 异步填充后节点停在原始坐标（viewport transform 留 none、位于容器外被裁剪）——`FlowCanvas.tsx` 在节点首次出现时显式 `fitView({padding:0.2,duration:150})`（rAF＋200ms 双保险）。原子 `23353ed` feat(frontend)。浏览器实测：画布 65→1165px、3 节点适配可见、节点圆角 10px 计算样式确认。
 > **AI 使用提示**：前端新增界面文案、颜色/间距/圆角值时必须按本文契约预留（不裸写硬编码、不自创 key 规则）；落码 i18n/token 时以本文为方案依据。
 
 ## 1. 背景与现状
@@ -157,6 +159,38 @@ frontend/src/theme/setup.ts    # main.tsx 引入一次，把 semantic 注入 :ro
 - `cd frontend && pnpm build` 通过、`pnpm test` 全绿。
 - 浏览器对比替换前后三个页面：编辑器（含节点运行中/完成态）、Dashboard、`/demo/shop` 模拟控制台，无视觉差异。
 - `grep -R "#[0-9a-fA-F]\{3,6\}" frontend/src` 仅剩 `tokens.ts` 内的 primitive 定义。
+
+### 3.7 主题打磨批（2026-10-10，落码完成）
+
+在 §3.5「零视觉变化等价替换」之后的有意打磨，**允许**视觉差异（目标：核心面质感提升，非改版）：
+
+| 层 | 变更 | 落点 |
+|---|---|---|
+| token | antdTheme token 层补全（colorBgLayout/colorBgContainer/colorBorder/colorText/colorLink）、radius 6/10、fontSize 14、controlHeight 32/40/24 | `tokens.ts` |
+| component | Card.boxShadowTertiary、Modal.borderRadiusLG 12、Button.fontWeight 500 | `tokens.ts` antdTheme.components |
+| semantic | `shadow-node-hover`、`shadow-card`、`shadow-card-hover`（RGBA 黑阴影） | `tokens.ts` primitive/semantic |
+| CSS | 节点面板项圆角 8＋hover 阴影/位移/描边；atlas-node 圆角 10＋分层阴影＋hover 提升；header 圆角 7 7 0 0；ant-card transition＋hover 阴影 | `index.css` |
+| 空态 | 画布 `nodes.length===0` 居中提示（⊕＋i18n `editor.canvas.emptyHint`，zh/en） | `FlowCanvas.tsx`＋locales |
+
+**保持不变的硬约束**：主色 `#1677ff`；不引入暗色模式；零新依赖；不改 primitive 数值（仅新增）。验证：vitest 972/2 零回归、oxlint 0/0、tsc 0、build 过、浏览器冒烟（节点圆角/阴影计算样式、画布撑满、节点适配可见）。
+
+- `cd frontend && pnpm build` 通过、`pnpm test` 全绿。
+- 浏览器对比替换前后三个页面：编辑器（含节点运行中/完成态）、Dashboard、`/demo/shop` 模拟控制台，无视觉差异。
+- `grep -R "#[0-9a-fA-F]\{3,6\}" frontend/src` 仅剩 `tokens.ts` 内的 primitive 定义。
+
+### 3.8 UX 走查与微改进批（2026-10-10，落码完成）
+
+全流程 UX 走查（登录→Dashboard→各功能页→编辑器→运行→错误校验，浏览器实测）结论：**缺陷级硬伤基本没有**（页面切换 loading、空态文案、错误校验分层、引导说明均到位）；检出并闭合 5 项可做项：
+
+| # | 项 | 类型 | 落点 |
+|---|---|---|---|
+| 1 | 等待页返回按钮只有「←」图标无文字 → 「← 返回」（`t('common:button.back')`，common 顶层 button 补齐 `back` 键 zh/en——此前 `back` 仅存在于 audit/users 各自字典，顶层无此键） | 缺陷级·可访问性 | `Waits.tsx`＋`common.json` |
+| 2 | 审计日志筛选空态「当前没有符合条件的审计事件」实测确认（既有 `audit.empty`＋`locale.emptyText`，无需改码） | 缺陷级·验证 | — |
+| 3 | 运行完成后无轻提示 → `message.success(t('log.runComplete', {status}))`（App.tsx 主分支包 antd `<App>`，Editor 经 `App.useApp()`；复用既有 `log.runComplete` 键 zh/en） | 品味级·反馈 | `App.tsx`＋`Editor.tsx` |
+| 4 | Dashboard Graph/Loop/Harness 三卡片静态 → `hoverable`＋`onClick` 跳转（Graph→编辑器、Loop→反思进化、Harness→API 导入）＋extra「进入 →」`demo.cards.enter` zh/en | 品味级·可发现性 | `Dashboard.tsx`＋`dashboard.json` |
+| 5 | **走查新发现**：编辑器无返回工作台入口（只能刷新页面）→ header 左加「← 返回」（`onBack` prop，App 传 `setPage('dashboard')`） | 缺陷级·路径断裂 | `Editor.tsx`＋`App.tsx` |
+
+**验证**（浏览器实测，admin-a）：等待页「← 返回」、审计筛选空态文案、运行完成 toast「运行结束：refunded」、三卡片 hover/跳转（Graph→编辑器实测）、编辑器「← 返回」回 Dashboard。门：前端 vitest **972/2**（零回归）、oxlint **0/0**、tsc **0**、build 过（仅既有 chunk>500kB warning）；守护门 8 passed。零新依赖/零迁移/无 ADR。
 
 ## 4. 落地节奏
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { ReactFlow, Background, Controls, MarkerType, ReactFlowProvider, useReactFlow } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { useEditorStore, type EditorNode } from '../../store/editorStore'
@@ -29,7 +29,26 @@ function FlowCanvasInner() {
   // 打包 ZU（docs/94 E-6）：反思「去修改」节点级定位——provider 内消费 pending 节点并居中。
   const pendingFocusNodeId = useEditorStore((state) => state.pendingFocusNodeId)
   const clearFocusNode = useEditorStore((state) => state.clearFocusNode)
-  const { screenToFlowPosition, setCenter } = useReactFlow()
+  const { screenToFlowPosition, setCenter, fitView } = useReactFlow()
+
+  // 画布首次出现节点时适配视图（2026-10-10 布局修复）：编辑器先挂载空图、loadGraph 异步填充，
+  // ReactFlow 的 fitView prop 只在挂载时执行（空图无节点可适配、transform 留 none），
+  // 节点加载后必须显式 refit，否则节点停在原始坐标、位于容器外被裁剪。
+  const hasNodes = nodes.length > 0
+  const prevHadNodes = useRef(false)
+  useEffect(() => {
+    if (hasNodes && !prevHadNodes.current) {
+      // rAF + 延时双保险：等 ReactFlow 完成节点测量后再 fit（单次 rAF 可能早于测量）
+      requestAnimationFrame(() => {
+        void fitView({ padding: 0.2, duration: 150 })
+      })
+      const timer = window.setTimeout(() => {
+        void fitView({ padding: 0.2, duration: 150 })
+      }, 200)
+      return () => window.clearTimeout(timer)
+    }
+    prevHadNodes.current = hasNodes
+  }, [hasNodes, fitView])
   const { t } = useTranslation('editor')
 
   const nodeTypes = useMemo(() => ({ atlasNode: AtlasNode }), [])
@@ -130,6 +149,12 @@ function FlowCanvasInner() {
         <Controls />
       </ReactFlow>
       <ProblemsPanel />
+      {nodes.length === 0 && (
+        <div className="canvas-empty">
+          <div className="canvas-empty-icon">⊕</div>
+          <div className="canvas-empty-hint">{t('canvas.emptyHint')}</div>
+        </div>
+      )}
     </div>
   )
 }

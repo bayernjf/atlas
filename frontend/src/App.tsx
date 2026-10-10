@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ConfigProvider } from 'antd'
+import { ConfigProvider, App as AntdApp } from 'antd'
 import { Dashboard } from './pages/Dashboard'
 import { Editor } from './pages/Editor'
 import { Login } from './pages/Login'
@@ -108,7 +108,8 @@ function App() {
 
   return (
     <ConfigProvider theme={antdTheme} locale={antdLocale}>
-      {page === 'dashboard' ? (
+      <AntdApp>
+        {page === 'dashboard' ? (
         <Dashboard
           principal={principal}
           onLogout={handleLogout}
@@ -185,10 +186,12 @@ function App() {
         <Editor
           principal={principal}
           onLogout={handleLogout}
+          onBack={() => setPage('dashboard')}
           initialGraphId={editorGraphId}
           initialNodeId={editorNodeId}
         />
       )}
+      </AntdApp>
     </ConfigProvider>
   )
 }

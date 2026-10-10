@@ -62,7 +62,8 @@
     },
     "statusRunning": "Running...",
     "statusPaused": "Paused",
-    "diagSep": "; "
+    "diagSep": "; ",
+    "emptyHint": "Drag nodes from the left palette to start building"
   },
   "export": {
     "title": "Graph definition JSON (W7-W8 DSL compilation input)"

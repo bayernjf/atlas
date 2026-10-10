@@ -67,13 +67,34 @@ export function Dashboard({ principal, onLogout, onOpenEditor, onOpenMonitoring,
           </Card>
           <Row gutter={16}>
             <Col span={8}>
-              <Card title="Graph"><Typography.Text>{t('demo.cards.graph')}</Typography.Text></Card>
+              <Card
+                title="Graph"
+                hoverable
+                onClick={onOpenEditor}
+                extra={<Typography.Text type="secondary">{t('demo.cards.enter')}</Typography.Text>}
+              >
+                <Typography.Text>{t('demo.cards.graph')}</Typography.Text>
+              </Card>
             </Col>
             <Col span={8}>
-              <Card title="Loop"><Typography.Text>{t('demo.cards.loop')}</Typography.Text></Card>
+              <Card
+                title="Loop"
+                hoverable
+                onClick={onOpenReflection}
+                extra={<Typography.Text type="secondary">{t('demo.cards.enter')}</Typography.Text>}
+              >
+                <Typography.Text>{t('demo.cards.loop')}</Typography.Text>
+              </Card>
             </Col>
             <Col span={8}>
-              <Card title="Harness"><Typography.Text>{t('demo.cards.harness')}</Typography.Text></Card>
+              <Card
+                title="Harness"
+                hoverable
+                onClick={onOpenOpenApi}
+                extra={<Typography.Text type="secondary">{t('demo.cards.enter')}</Typography.Text>}
+              >
+                <Typography.Text>{t('demo.cards.harness')}</Typography.Text>
+              </Card>
             </Col>
           </Row>
         </Space>

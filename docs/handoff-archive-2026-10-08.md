@@ -45,3 +45,7 @@
 ✅ **打包 AI ＋ 第二批 docs-only 收口＝D29 第四实体评估 / D21·D32 整体评估 / D49 MCP 加面预备契约（docs/115–117；2026-10-09）**：纯文档、无代码/迁移/依赖。D29 第四实体（部署 RolloutModal）经实证阻断于「自定义控件契约＋oneOf/discriminator 异构数组」、暂不落码（技能/记忆无配置面、触发未到）；D21/D32「钉版＋体检＋手动升级＋升级后回归」已闭环、工程侧收尽，剩余外部化；D49 三加面方向（HTTP 远端/写能力/resources·prompts·扩展）已预契化、触发未到，真做先记 ADR。**工程内干净候选再次清空，剩余未闭合项触发全部外部化。**
 
 ✅ **自定义控件扩展契约立项＝D29 解锁路径第 1 步（docs/118；2026-10-10，docs-only）**：把 `registerWidget` 从「M3 预留」升级为正式契约——注册形状与名称规则（禁内置九件冲突、`<domain>-<semantic>` 命名空间、同名覆盖）、组件签名静态校验、`x-widget` 声明与消费范围（node/card 认、tool 忽略；WidgetName 拓宽为「内置∪已注册业务名」、resolveWidget 不再断言绕过）、props 契约（WidgetProps 基线＋schema `x-*` 自读、无新增注入通道、受控单一）、运行期降级（未注册名→json＋warn、开发期 throw 保留）、契约测试清单。**非目标**：异构数组（第 2 步）、RolloutModal 迁移（第 3 步）、新业务控件、解除 D29。落码批待契约通过后另立批（当日已落码收口，见上条）。
+
+## 自定义控件扩展契约落码收口＝D29 解锁路径第 1 步
+
+✅ **自定义控件扩展契约落码收口＝D29 解锁路径第 1 步（docs/118；2026-10-10，同日契约通过/落码/收口）**：`registerWidget` 升级为正式契约并落地——名称规则（禁内置九件冲突、`<domain>-<semantic>`、同名覆盖）＋组件签名静态校验；`WidgetName` 拓宽为「内置九件∪已登记业务控件名」（`BUSINESS_WIDGETS` 常量表、nodeRegistry 注册与声明同源）、`resolveWidget` 去断言、未登记名按类型默认走；运行期降级 json＋`console.warn`（get() throw 保留）；契约测试 17 例。门：前端 vitest 932/2（+17）、oxlint/tsc/build 过、守护门 8 passed。零新依赖/零迁移/无 ADR。第 2/3 步（异构数组、RolloutModal 迁移）仍缓做，D29 不解除。
