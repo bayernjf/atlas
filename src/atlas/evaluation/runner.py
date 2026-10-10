@@ -77,6 +77,13 @@ def run_task(
     if raw is None:
         raise EvaluationGraphNotFound(graph_id)
     graph = parse_graph(raw)
+    # 打包 AJ（docs/121 §5）：评估语义是「遍历全图比对决策与产出」——
+    # tool_call 节点降级为 continue（工具失败如「订单不存在」不应截断后续比对），
+    # 决策类节点保持原样：异常（如 amount 非数字）仍穿透为 case 级 error。
+    # 仅作用于本次评估执行的内存副本，不改写 graph_store 里的图。
+    for node in graph.nodes:
+        if node.type == "tool_call":
+            node.retry.on_error = "continue"
     resolver = None
     if hasattr(graph_store, "get"):
         # subgraph 引用解析（同 API run 路径：graph_resolver 走 graph_store.get）
