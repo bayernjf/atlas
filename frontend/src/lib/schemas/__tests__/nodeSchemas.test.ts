@@ -7,13 +7,18 @@ import { validateSchemaFields } from '../../validation/l1'
 const EXPECTED_OUTPUT_KEYS: Record<string, string[] | Record<string, string[]>> = {
   trigger: { context: ['triggerType', 'cron', 'timezone', 'webhookUrl', 'payload'] },
   tool_call: ['result'],
-  ai_decision: ['decision', 'prompt_rendered'],
+  ai_decision: ['decision', 'prompt_rendered', 'memory_injected'],
   condition: ['branch', 'mode', 'target', 'expression_errors', 'expressionErrorCodes', 'expressionErrorParams'],
   loop: ['mode', 'index', 'iterations', 'items', 'item', 'results', 'target', 'exitReason', 'expression_errors', 'expressionErrorCodes', 'expressionErrorParams'],
   parallel: ['status', 'branches', 'joinStrategy', 'joinTarget'],
   wait: ['mode', 'waitType', 'durationMode', 'durationExpression', 'durationSeconds', 'plannedDurationSeconds', 'jitterSeconds', 'absoluteTime', 'eventKey', 'eventKeys', 'eventWaitMode', 'matchedEventKey', 'matchedEventKeys', 'matchedPayloads', 'receivedKeys', 'signaled', 'payload', 'waitedSeconds', 'resolvedBy', 'token'],
   subgraph: ['status', 'outputs'],
   human_approval: ['decision', 'target', 'summary', 'approver', 'resolvedBy', 'comment', 'card'],
+  // 打包 AL 落地时只加了 state_machine.schema.ts、没登记这条，参数化用例于是掉进
+  // "非数组＝trigger 的 context 嵌套"分支而恒红。这里按 schema 已发布的形状钉住；
+  // 它与后端真实产出（mode/objectRef/from/to/event/state/states/action）不一致＝另一件事，
+  // 已登 docs/14 D60，别把这一行读成"两边已对齐"。
+  state_machine: ['object_ref', 'from_state', 'to_state', 'event'],
   intent_recognition: ['result', 'prompt_rendered'],
   info_extraction: ['result', 'prompt_rendered'],
   content_generation: ['result', 'prompt_rendered'],
