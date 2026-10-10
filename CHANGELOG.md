@@ -3,6 +3,16 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔产品＋能力〕打包 AK＝D35 记忆机制四切片落地：决策节点自己带记忆、记忆有来源、写入有策略、检索会衰减（docs/122 §6／docs/13 U1332–U1344，2026-10-10 立项与落码同日）
+
+- **为什么这批值得单独记**：这是 D35 里**客户看得见**的那部分。以前图要用长期记忆，运营必须自己拖一个 `memory/recall` 工具、再把结果用 `{{路径}}` 接进提示词——等于把检索管道摊给非技术用户看。现在 `ai_decision` 有一个可选的「记忆注入」开关，打开就自动把召回段拼进**真正发给模型的那份 prompt**。
+- **缺省关闭不是"应该没影响"，是被断言的**：关闭时发给模型的 prompt、`prompt_rendered`、节点产出键集合三件事逐字不变，且假记忆库**一次都没被调用**（只断言"结果没变"会漏掉"其实查了但没用上"这种浪费与污染）。黄金用例、回放、影子比对因此零回归。
+- **三种"没拿到记忆"从此是三个答案**（本批真正的改判，来自落码前复核）：`status="unavailable"`（这个租户根本没装记忆档）、`"error"`（存储故障）、`"ok"`＋`count=0`（确实没查到）。立项原文写的是"没 LLM 就静默返回空"，而 `llm/structured.py` 的既定政策是"没模型必须显式失败，静默空结果＝伪造下游行为"——两边都对一半，取第三条路：**不打断主流程，但把原因说出来**。同理 `memory/auto_extract` 用 `skipped="llm_unavailable"` 与"接了模型但没提炼到"分开，**本批零新运行时错误码**（撤销原计划的 `MEMORY_EXTRACT_FAILED`：一个永不发射的码会混进 U1149 的可译集合，制造假覆盖）。
+- **写入策略与衰减**：`remember(update_policy=overwrite|version|ask, dedup_keys=[...])`——overwrite 原地更新且 **id/created_at 不变**（"这条被更新了"≠"又记了一遍"），version 新建并递增 `meta.version`，ask 只返回冲突不静默替运营做决定；命中判据两档共用 `dedup_match` **一份实现**（两份实现就是"什么算同一条事实"的第二份真相）。`recall(decay={enabled, half_life_days}, now_override)` 按 `score×0.5^(age/半衰期)` 重排，注入时钟保证回放确定；PG 档不能"先 SQL LIMIT 再衰减"（会把很旧但相关的条目挡在窗口外），改为先取有界候选集再重排，真正的解 ANN 仍在 D35。
+- **来源可见**：记忆列表加「来源」徽标（工具写入／人工录入／运行状态／自动提炼），四态在 `MemorySource` 与前端标签表之间做集合对拍。理由很直白：**自动提炼出的结论不能长得像人工确认过的**。
+- **顺手收编 AL 的手搓去重**：`_state_memory_write` 原来靠"扫 `list(kind=fact, limit=200)`＋按 scope 删＋写新"避免堆叠，有两个静默面（200 条之外的旧条目会留下＝同一对象两条状态并存；清旧失败被 `except` 吞掉照样写新），现在直接交给 `update_policy="overwrite"`——顺带给 U1337 一个真实现场做正控。模型解析也从三处重复收成一个 `_resolve_model`。
+- **一条已知限制（写进 docs/12，不藏在脚注）**：`auto_extract` 只解析 env 模型，**租户 BYOK 不生效**——`ActionRequest` 不带租户，harness 全链路没有可取的租户上下文，补它是 harness 级契约变更，另批做。
+- **门（实跑）**：后端全量 **2668 passed／179 skipped／0 failed**（178.96s，exit 0；**对账**＝AK 复核基线 2613/173 ＋ 本批常跑 55 例 ＋ 本批被 skip 的 PG 例 6 ＝ 2668／179 ✓ 逐枚对上）、PG 集成一次性 pgvector **111 passed／1 skipped／0 failed**（18.20s，端口 5445——本机 5432 被别的项目占着，不动它）、前端 vitest **980 passed／2 skipped**（71 文件）＋ oxlint **0/0** ＋ `pnpm build` 过。新增 61 例后端（55 常跑＋6 集成）＋2 例前端。零迁移、零新依赖、无新 ADR；**D35 整体不解除**（保留期裁剪、商业 embedding、summary/case、PII、策略表单、跨运营体共享、ANN 仍缓做）。
 
 ### 打包 AK：D35 记忆机制四切片立项（2026-10-10，docs-only）
 

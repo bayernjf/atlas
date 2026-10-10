@@ -1218,7 +1218,7 @@ kind: "fact" | "preference"     # 必填：长期事实 / 用户偏好
 content: string                 # 记忆文本，1-2000 字；remember 时据此算 embedding
 scope: {string: string}         # 业务绑定（如 user_id/order_id），缺省 {}；recall 子集匹配
 confidence: number              # 0-1，缺省 1.0（自动提取 <1 随 D35 缓做）
-source: "tool" | "manual" | "run"   # 缺省 tool；图工具通道写 tool/run，REST 手动新建/编辑固定 manual（docs/28 批 4⑩）
+source: "tool" | "manual" | "run" | "auto_extract"   # 缺省 tool；图工具通道写 tool/run，REST 手动新建/编辑固定 manual（docs/28 批 4⑩）；auto_extract＝LLM 从文本里提炼（打包 AK docs/122 D-2，四态来源在记忆页各有徽标）
 metadata: object                # 附加信息，缺省 {}（PG 列名 meta，JSONB）
 created_at: string              # UTC ISO-8601；两档均 TEXT 存 Python ISO 字符串（对齐迁移 002）；创建后不变。白名单字段（kind/content/scope/confidence/metadata）可经 PUT 手动改（source 归 manual、content 变重算 embedding），id/created_at 不变（docs/28 批 4⑩，原「v1 不可变无 update」口径已订正）
 # embedding: number[256]        # 内部字段，LocalDeterministicEmbedder 产出，不进 API 响应
@@ -1230,14 +1230,26 @@ created_at: string              # UTC ISO-8601；两档均 TEXT 存 Python ISO �
 ```yaml
 # 能力 memory/remember（action=memory_remember，permission=write，非幂等）
 input:  {kind: enum[fact,preference]（必填）, content: string 1-2000（必填，支持 {{变量}}）,
-         scope?: {string:string}, confidence?: number 0-1, metadata?: {string:string}}
+         scope?: {string:string}, confidence?: number 0-1, metadata?: {string:string},
+         update_policy?: enum[overwrite,version,ask]=overwrite, dedup_keys?: [string]}   # 打包 AK
 output: {id, kind, content, confidence, source, scope, created_at}
+        # update_policy=ask 且命中时返回 {conflict: true, existing_id, existing}（不写库）
 # 能力 memory/recall（action=memory_recall，permission=read，幂等）
 input:  {query: string（必填，支持 {{变量}}）, kind?: enum[fact,preference],
-         scope?: {string:string}, top_k?: int 1-20=5, min_score?: number 0-1=0}
+         scope?: {string:string}, top_k?: int 1-20=5, min_score?: number 0-1=0,
+         decay?: {enabled: bool=false, half_life_days: int 1-3650=30}}                   # 打包 AK
 output: {results: [{id, kind, content, score: number, confidence, scope, created_at}]}  # 无命中 results=[]
+# 能力 memory/auto_extract（action=memory_auto_extract，permission=write，幂等）打包 AK docs/122 D-2
+input:  {text: string 1-4000（必填，支持 {{变量}}）, min_confidence?: number 0-1=0.85, scope?: {string:string}}
+output: {extracted: int, facts: [{id,content,confidence}], preferences: [...],
+         dropped_below_threshold: int, min_confidence: number, skipped: string, reason?: string}
+        # skipped="llm_unavailable"＝根本没接模型；skipped="" 且 extracted=0＝这次确实没提炼到。
+        # 两者必须是不同答案——静默把前者写成后者就是伪造下游行为（docs/63 静默降级族）。
 ```
-> 走现有 tool_call/harness 链路（params 由 M3 FormRenderer 按 input_schema 自动生成、M2 变量补全零额外）；schema 守 Capability keyword 白名单（无 x- 扩展）。装配照 message 两段式：全局注册仅供发现，`_runtime_registry` 按租户克隆注入 `services.memory_store`。REST：`GET /api/memories`（viewer+，kind 过滤）、`GET /api/memories/search?q=`（viewer+，q 空 422）、`DELETE /api/memories/{id}`（**admin**，跨租户 404）；docs/28 批 4⑩（2026-09-20 `ec0fd81`）起**开 `POST /api/memories` 与 `PUT /api/memories/{id}`（均 operate，source 固定 manual，白名单字段、extra forbid、空体 PUT 422、不存在/他租户 404）**——图工具仍是运行时自动写入主路径，REST 仅手动新建/编辑，删除仍仅 admin。docs/12 原 `GET/PUT /api/memories/{operator_id}` 据此订正为按租户、operator 降为 `scope.user_id`。错误码：repo 缺省的发现实例执行期返 `MEMORY_NOT_CONFIGURED`、入参校验失败折 `MEMORY_INVALID_INPUT`；tool_call 成功后节点输出包一层 `{"result": <工具 output>, "action_status": "SUCCESS"}`。working/summary/case 层、自动提取、决策隐式注入、PII/更新策略均缓做（D35）。
+> 走现有 tool_call/harness 链路（params 由 M3 FormRenderer 按 input_schema 自动生成、M2 变量补全零额外）；schema 守 Capability keyword 白名单（无 x- 扩展）。装配照 message 两段式：全局注册仅供发现，`_runtime_registry` 按租户克隆注入 `services.memory_store`。REST：`GET /api/memories`（viewer+，kind 过滤）、`GET /api/memories/search?q=`（viewer+，q 空 422）、`DELETE /api/memories/{id}`（**admin**，跨租户 404）；docs/28 批 4⑩（2026-09-20 `ec0fd81`）起**开 `POST /api/memories` 与 `PUT /api/memories/{id}`（均 operate，source 固定 manual，白名单字段、extra forbid、空体 PUT 422、不存在/他租户 404）**——图工具仍是运行时自动写入主路径，REST 仅手动新建/编辑，删除仍仅 admin。docs/12 原 `GET/PUT /api/memories/{operator_id}` 据此订正为按租户、operator 降为 `scope.user_id`。错误码：repo 缺省的发现实例执行期返 `MEMORY_NOT_CONFIGURED`、入参校验失败折 `MEMORY_INVALID_INPUT`；tool_call 成功后节点输出包一层 `{"result": <工具 output>, "action_status": "SUCCESS"}`。
+>
+> **打包 AK 取回三件（2026-10-10，docs/122；D35 整体不解除）**：① `update_policy`＋`dedup_keys`（命中判据两档共用 `memory/models.dedup_match` 一份实现；缺省 overwrite＝旧语义兼容；AL 的状态机手搓去重已收编到它）；② `decay`（`score×0.5^(age/half_life)`，注入时钟 `now_override` 保回放确定；PG 档衰减路径先取有界候选集再重排，因为"SQL 里先 LIMIT 再衰减"会把很旧但相关的条目挡在窗口外，ANN 仍缓做＝D35）；③ `memory/auto_extract` 工具（LLM 结构化提取走 `llm/structured.extract_memories`，门槛是参数不是常数）。**决策节点的隐式注入**同批取回，形状见上方 `ai_decision` 的 `memoryInjection`（缺省关闭＝执行路径逐字不变）。**仍缓做（D35）**：working/summary/case 层、PII 脱敏、商业 embedding、记忆策略表单与跨运营体共享。
+
 
 ### `channel_binding` — 字段概览（真实渠道适配批，docs/38；2026-09-22 docs-only 立项、ADR T28；落码承载 `src/atlas/channels/`；docs/39/ADR T29 增 webhook_subscriptions、迁移 016）
 
