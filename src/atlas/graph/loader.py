@@ -213,6 +213,26 @@ class RunNodeFailed(Exception):
         self.output = output
 
 
+class StateTransitionRejected(Exception):
+    """state_machine 运行期非法迁移（打包 AL，docs/123 §2.3/§4）。
+
+    事件与当前状态无匹配 transition（或 from 不匹配）时抛出，携带 objectRef/from/to，
+    走节点级 on_error（同其它确定性失败，不重试、不穿透为控制流）。
+    """
+
+    code = "STATE_TRANSITION_REJECTED"
+
+    def __init__(self, node_id: str, object_ref: str, from_state: str, event: str) -> None:
+        super().__init__(
+            f"{self.code}: 状态机节点 {node_id} 非法迁移：{from_state} --{event}--> ?"
+            f"（对象 {object_ref}）"
+        )
+        self.node_id = node_id
+        self.object_ref = object_ref
+        self.from_state = from_state
+        self.event = event
+
+
 def runtime_error_meta(exc: Exception) -> dict[str, Any]:
     """docs/60 G1：运行期终态异常归一化为机器可读码（中文 error 字符串仍由调用方原样保留）。
 
@@ -237,6 +257,16 @@ def runtime_error_meta(exc: Exception) -> dict[str, Any]:
         return {"errorCode": exc.code, "errorParams": {"nodeId": exc.node_id}}
     if isinstance(exc, RunNodeFailed):
         return {"errorCode": exc.code, "errorParams": {"nodeId": exc.node_id}}
+    if isinstance(exc, StateTransitionRejected):
+        return {
+            "errorCode": exc.code,
+            "errorParams": {
+                "nodeId": exc.node_id,
+                "objectRef": exc.object_ref,
+                "from": exc.from_state,
+                "event": exc.event,
+            },
+        }
     return {"errorCode": "RUNTIME_UNEXPECTED", "errorParams": {}}
 
 
@@ -487,8 +517,7 @@ def _make_executor(
     *,
     trigger_payload: dict[str, Any],
     decision_client: Any,
-    condition_classifier: Any,
-    registry: AdapterRegistry | None,
+    condition_classifier: Any,    registry: AdapterRegistry | None,
     approval_broker: ApprovalBroker,
     event_wait_broker: EventWaitBroker,
     graph_id: str,
@@ -515,6 +544,7 @@ def _make_executor(
     block_subgraph_suspend: bool = False,
     secret_provider: Any = None,  # 打包 A3（docs/99）：透传子图重入的 secret 来源变量解析
     tenant_id: str | None = None,  # 打包 AB（docs/109）：三 LLM 节点模型按租户解析
+    memory_repo: Any = None,  # 打包 AL（docs/123 §2.3，P-2=B）：state_machine store=memory 的对象状态存储
 ):
     # 续跑只对挂起节点的**第一次**重入生效（每次编译=一次运行，闭包即运行级状态）：
     # 挂起点在循环体内时该节点每轮都会重入，若每轮都走帧内 token，则第二项起的审批
@@ -1115,6 +1145,25 @@ def _make_executor(
                         block_subgraph_suspend=block_subgraph_suspend,
                         secret_provider=secret_provider,
                     )
+                elif node.type == "state_machine":
+                    # 打包 AL（docs/123 §2.3，P-2=B）：业务对象状态机节点。执行＝对
+                    # objectRef 指向的对象按事件迁移；store=memory 时经 memory_repo
+                    # 持久化（kind=fact、scope 绑对象 id），跨 run 持续。
+                    output, message = _execute_state_machine(
+                        node,
+                        context=context,
+                        trigger_payload=trigger_payload,
+                        registry=registry,
+                        approval_broker=approval_broker,
+                        approval_notifier=approval_notifier,
+                        graph_id=graph_id,
+                        emit=emit,
+                        start_event=start_event,
+                        now=now,
+                        shadow=shadow,
+                        tool_permissions=tool_permissions,
+                        memory_repo=memory_repo,
+                    )
                 elif tool_mocks is not None and node.id in tool_mocks:
                     # Mock 回放（docs/28 §2.2）：以录制桩 output 替代真实适配器调用，
                     # 隔离外部系统；不触达 registry/harness、不发 tool span、不发 tool_metric。
@@ -1231,6 +1280,7 @@ def _wrap_retry(
         ConditionClassifierUnavailable,
         LLMStructuredUnavailable,
         ConditionEvalError,
+        StateTransitionRejected,
     )
 
     def wrapped(state: GraphState) -> dict:
@@ -1275,6 +1325,196 @@ def _wrap_retry(
             if retry.on_error == "jump_to":
                 last_output["__on_error_target"] = retry.error_target
             return result
+
+    return wrapped
+
+
+def _extract_verdict(subgraph_output: dict[str, Any]) -> Any:
+    """从诊断子图执行产出提取 verdict（docs/123 §2.2）。
+
+    契约：诊断子图产出 ``outputs[id]["verdict"]``——遍历子图 outputs 值取首个带
+    verdict 键的标量；工具产出的 verdict 通常嵌在 ``result.verdict`` 里，两层都查；
+    无任何命中返回 None（判定为假，走全局 handler）。
+    """
+    outputs = subgraph_output.get("outputs", {})
+    if not isinstance(outputs, dict):
+        return None
+    for value in outputs.values():
+        if isinstance(value, dict):
+            if "verdict" in value and not isinstance(value.get("verdict"), dict):
+                return value["verdict"]
+            result = value.get("result")
+            if isinstance(result, dict) and "verdict" in result:
+                return result["verdict"]
+    return None
+
+
+def _wrap_self_healing(
+    executor: Callable[[GraphState], dict],
+    node: NodeDSL,
+    graph: GraphDSL,
+    *,
+    graph_by_node: dict[str, NodeDSL],
+    trigger_payload: dict[str, Any] | None,
+    registry: AdapterRegistry | None,
+    decision_client: Any,
+    condition_classifier: Any,
+    approval_broker: ApprovalBroker,
+    event_wait_broker: EventWaitBroker,
+    approval_notifier: ApprovalNotifier | None,
+    graph_id: str,
+    emit: EventCallback,
+    graph_resolver: Callable[[str], GraphDSL] | None,
+    subgraph_depth: int,
+    tracer: Tracer | None,
+    now: datetime | None,
+    subgraph_path: tuple[str, ...],
+    is_cancelled: Callable[[], bool] | None,
+    debug_controller: Any,
+    shadow: bool,
+    jitter_rng: random.Random | None,
+    expr_rng: random.Random | None,
+    block_subgraph_suspend: bool,
+    secret_provider: Any,
+    tenant_id: str | None,
+    memory_repo: Any,
+) -> Callable[[GraphState], dict]:
+    """图级 selfHealing 包装（打包 AL，docs/123 §2.2）。
+
+    节点/子图失败（RunNodeFailed 或 FAILED 产出，且节点级 on_error 已耗尽）→
+    执行诊断子图（图内 diagnoseSubgraphId 指向的 subgraph 节点）→ 提取 verdict →
+    continueWhen 为真→分支继续（产出标记 healed_by、诊断产出并入 outputs）；
+    为假/异常→重新抛 RunNodeFailed（走全局异常处理器或节点级 on_error）。
+    maxAttempts 耗尽仍失败→不再自愈、按块 1 降级。控制流异常仍穿透。
+    """
+    healing = graph.selfHealing or {}
+    diagnose_id = str(healing.get("diagnoseSubgraphId") or "")
+    max_attempts = int(healing.get("maxAttempts") or 1)
+    continue_when = str(healing.get("continueWhen") or "")
+    triggers = healing.get("triggerOn") or ["node_failed", "subgraph_failed"]
+    diagnose_node = graph_by_node.get(diagnose_id)
+
+    def run_diagnose(state: GraphState) -> dict[str, Any]:
+        """执行诊断子图节点（复用 _execute_subgraph），异常 fail-safe 为 failed。"""
+        if diagnose_node is None:
+            return {"mode": "subgraph", "status": "failed", "outputs": {}, "trace": []}
+        output, _message = _execute_subgraph(
+            diagnose_node,
+            context={"global": state["variables"].get("global", {}), **state["outputs"]},
+            trigger_payload=trigger_payload,
+            registry=registry,
+            decision_client=decision_client,
+            condition_classifier=condition_classifier,
+            approval_broker=approval_broker,
+            event_wait_broker=event_wait_broker,
+            approval_notifier=approval_notifier,
+            resolver=graph_resolver,
+            depth=subgraph_depth,
+            tracer=tracer,
+            now=now,
+            emit=emit,
+            subgraph_path=subgraph_path,
+            is_cancelled=is_cancelled,
+            debug_controller=debug_controller,
+            shadow=shadow,
+            jitter_rng=jitter_rng,
+            expr_rng=expr_rng,
+            block_subgraph_suspend=block_subgraph_suspend,
+            secret_provider=secret_provider,
+        )
+        return output
+
+    def should_heal(failure_output: dict[str, Any] | None) -> bool:
+        """触发判定：triggerOn 匹配 + 诊断节点可执行。"""
+        if diagnose_node is None:
+            return False
+        status = failure_output.get("result", {}).get("status") if failure_output else "failed"
+        kind = "node_failed"
+        # subgraph 节点失败（status=failed 且 mode=subgraph）归 subgraph_failed。
+        if failure_output and failure_output.get("mode") == "subgraph":
+            kind = "subgraph_failed"
+        if status != "FAILED" and status != "failed" and failure_output is not None:
+            return False
+        return kind in triggers
+
+    def wrapped(state: GraphState) -> dict:
+        try:
+            result = executor(state)
+        except (RunCancelled, DebugStopped, RunSuperseded, SubgraphSuspendUnsupported):
+            raise
+        except RunNodeFailed as exc:
+            if not should_heal(exc.output):
+                raise
+            healed = _attempt_heal(state, exc.output)
+            if healed is not None:
+                return healed
+            raise
+        except Exception as exc:
+            # 未包进节点级 retry 的意外异常：自愈可兜，不兜则穿透。
+            if not should_heal(None):
+                raise
+            healed = _attempt_heal(state, None)
+            if healed is not None:
+                return healed
+            raise
+        # FAILED 产出（continue/jump_to 已耗尽）同样可触发自愈。
+        node_output = result["outputs"].get(node.id)
+        if isinstance(node_output, dict) and _node_failure(node_output):
+            if not should_heal(node_output):
+                return result
+            healed = _attempt_heal(state, node_output)
+            if healed is not None:
+                return healed
+        return result
+
+    def _attempt_heal(state: GraphState, failure_output: dict[str, Any] | None) -> dict | None:
+        """尝试自愈：至多 maxAttempts 次，成功返回"继续"产出，否则 None。"""
+        for attempt in range(1, max_attempts + 1):
+            diag = run_diagnose(state)
+            verdict = _extract_verdict(diag)
+            healed_ok = False
+            if verdict is not None and continue_when:
+                ctx = {"global": state["variables"].get("global", {}), **state["outputs"]}
+                try:
+                    healed_ok = bool(evaluate_expression(continue_when, ctx, now=now, rng=expr_rng))
+                except ConditionEvalError:
+                    healed_ok = False
+            else:
+                healed_ok = bool(verdict)
+            if emit is not None:
+                emit(
+                    {
+                        "type": "healing",
+                        "node_id": node.id,
+                        "diagnoseSubgraphId": diagnose_id,
+                        "attempt": attempt,
+                        "verdict": verdict,
+                        "continue": healed_ok,
+                    }
+                )
+            if not healed_ok:
+                continue
+            # 诊断产出并入 outputs（契约 §2.2）；原失败节点产出标记 healed_by。
+            diag_outputs = diag.get("outputs", {})
+            if isinstance(diag_outputs, dict):
+                for key, value in diag_outputs.items():
+                    state["outputs"][f"{node.id}:healed:{key}"] = value
+            healed_node_output: dict[str, Any] = {
+                "result": {"status": "HEALED", "healed_by": diagnose_id},
+                "healed_by": diagnose_id,
+                "attempts": attempt,
+            }
+            if failure_output is not None:
+                healed_node_output["healed_from"] = failure_output
+            return {
+                "outputs": {node.id: healed_node_output},
+                "status": "running",
+                "messages": [
+                    f"{node.id}({node.type}): healed by {diagnose_id} "
+                    f"(attempt {attempt}, verdict={verdict!r})"
+                ],
+            }
+        return None
 
     return wrapped
 
@@ -1627,6 +1867,184 @@ def _scope_approvals(approvals: Any, node_id: str) -> dict[str, str]:
         for key, value in approvals.items()
         if isinstance(key, str) and key.startswith(prefix)
     }
+
+
+def _execute_state_machine(
+    node: NodeDSL,
+    *,
+    context: dict[str, Any],
+    trigger_payload: dict[str, Any] | None = None,
+    registry: AdapterRegistry | None,
+    approval_broker: ApprovalBroker,
+    approval_notifier: ApprovalNotifier | None = None,
+    graph_id: str,
+    emit: EventCallback,
+    start_event: dict[str, Any],
+    now: datetime | None = None,
+    shadow: bool = False,
+    tool_permissions: dict[str, str] | None = None,
+    memory_repo: Any = None,
+) -> tuple[dict[str, Any], str]:
+    """state_machine 节点执行（打包 AL，docs/123 §2.3/§4，P-2=B memory 档）。
+
+    语义：对 ``objectRef`` 指向的业务对象做一次状态迁移。当前状态按 store 读取——
+    memory＝kind=fact 记忆条目（scope 绑对象 id，跨 run 持续）；run_globals＝
+    ``globals.<状态键>``（随 run 生命周期）。事件来自节点 ``event`` 配置（插值后）。
+    非法迁移（无匹配 transition）→ 抛 StateTransitionRejected，走节点级 on_error。
+    迁移成功：写回状态、发 SSE ``state_changed`` 帧；可选 ``action``（adapter/tool）
+    经工具通道执行（shadow 短路）。
+    """
+    config = node.config
+    store = config.get("store", "memory")
+    object_ref = str(interpolate(str(config.get("objectRef", "")), context) or "").strip()
+    event = str(interpolate(str(config.get("event", "")), context) or "").strip()
+    if not object_ref:
+        raise StateTransitionRejected(node.id, object_ref, "?", event)
+    states: list[str] = [str(s) for s in config.get("states", [])]
+    initial = str(config.get("initial", ""))
+    transitions: list[dict[str, Any]] = config.get("transitions") or []
+
+    # 当前状态读取（P-2=B：memory 档；A=run_globals 留作扩展、缺省走 memory）。
+    state_key = config.get("stateKey") or f"{object_ref}.status"
+    if store == "run_globals":
+        current = str(context["global"].get(state_key, initial))
+    elif store == "memory":
+        current = _state_memory_read(memory_repo, object_ref, initial, node.id)
+    else:
+        # pg_table 留作未来扩展（docs/123 §2.3 非目标：历史与审计随 D20）；显式失败。
+        raise RuntimeError(
+            f"state_machine store={store} 未实现（v1 支持 run_globals/memory）"
+        )
+
+    # 事件驱动迁移：事件名匹配 + from 匹配（* 仅 to 端；from 精确匹配当前状态）。
+    to_state: str | None = None
+    matched: dict[str, Any] | None = None
+    for transition in transitions:
+        if transition.get("event") != event:
+            continue
+        from_state = transition.get("from")
+        if from_state == current or from_state == "*":
+            matched = transition
+            to_state = str(transition.get("to", ""))
+            break
+    if matched is None or not to_state:
+        raise StateTransitionRejected(node.id, object_ref, current, event)
+
+    # 迁移动作（可选）：复用工具通道（shadow 短路，同 tool_call 语义）。
+    action_output: dict[str, Any] | None = None
+    action = str(matched.get("action", "") or "").strip()
+    if action:
+        action_node = NodeDSL(
+            id=node.id,
+            type="tool_call",
+            name=node.name,
+            config={"tool": action, **(matched.get("actionParams") or {})},
+        )
+        if shadow:
+            action_output = {"status": "skipped", "reason": "shadow"}
+        else:
+            action_output = _execute_tool(
+                action_node,
+                context,
+                registry,
+                shadow=False,
+                tool_permissions=tool_permissions,
+            )
+
+    # 写回状态（P-2=B：memory 档跨 run 持续；globals 档写全局变量）。
+    if store == "run_globals":
+        context["global"][state_key] = to_state
+    else:
+        _state_memory_write(memory_repo, object_ref, to_state, node.id)
+
+    if emit is not None:
+        emit(
+            {
+                "type": "state_changed",
+                "node_id": node.id,
+                "objectRef": object_ref,
+                "from": current,
+                "to": to_state,
+                "event": event,
+            }
+        )
+
+    output: dict[str, Any] = {
+        "mode": "state_machine",
+        "objectRef": object_ref,
+        "from": current,
+        "to": to_state,
+        "event": event,
+        "state": to_state,
+        "states": states,
+        "action": action_output,
+    }
+    message = (
+        f"{node.id}(state_machine): {object_ref} {current} --{event}--> {to_state}"
+    )
+    return output, message
+
+
+def _state_memory_read(
+    repo: Any, object_ref: str, initial: str, node_id: str
+) -> str:
+    """memory 档读当前状态：kind=fact、scope={object_id}（docs/123 §2.3，P-2=B）。
+
+    无命中回退 initial；repo 缺失 fail-closed（显式失败，不静默用 initial 假完成）。
+    """
+    if repo is None:
+        raise RuntimeError(
+            f"state_machine 节点 {node_id} 配置了 store=memory 但当前运行未装配记忆存储"
+        )
+    scope = {"object_id": object_ref}
+    try:
+        results = repo.recall(
+            query=f"对象 {object_ref} 当前状态",
+            kind="fact",
+            scope=scope,
+            top_k=1,
+            min_score=0.0,
+        )
+    except TypeError:
+        # 进程内 MemoryStore 与 PG 档签名一致；个别 stub 无 recall 时回退 list。
+        results = []
+        for item in repo.list(kind="fact", limit=200):
+            if item.get("scope", {}).get("object_id") == object_ref:
+                results = [item]
+                break
+    if results:
+        metadata = results[0].get("metadata", {}) or {}
+        state = metadata.get("state")
+        if isinstance(state, str) and state:
+            return state
+    return initial
+
+
+def _state_memory_write(repo: Any, object_ref: str, state: str, node_id: str) -> None:
+    """memory 档写状态：kind=fact、scope={object_id}、content 与 metadata.state。
+
+    重复写同对象（再次迁移）时以 scope 定位更新而非堆叠——先清旧再写新（两档同构）。
+    """
+    if repo is None:
+        raise RuntimeError(
+            f"state_machine 节点 {node_id} 配置了 store=memory 但当前运行未装配记忆存储"
+        )
+    scope = {"object_id": object_ref}
+    # 进程内 MemoryStore.update 无 scope 删除通道；用 list+delete 清旧同对象条目。
+    try:
+        for item in repo.list(kind="fact", limit=200):
+            if item.get("scope", {}).get("object_id") == object_ref:
+                repo.delete(item["id"])
+    except Exception:  # noqa: BLE001 清旧失败不阻断写新（幂等覆盖语义）
+        pass
+    repo.remember(
+        kind="fact",
+        content=f"对象 {object_ref} 当前状态：{state}",
+        scope=scope,
+        confidence=1.0,
+        source="run",
+        metadata={"state": state, "object_ref": object_ref},
+    )
 
 
 def _execute_subgraph(
@@ -2891,6 +3309,7 @@ def compile_graph(
     _block_subgraph_suspend: bool = False,
     tenant_id: str | None = None,  # docs/93 打包 Y：LLM 模型配置按租户解析（None＝回退 env）
     secret_provider: Any = None,  # 打包 A3（docs/99）：透传子图重入的 secret 来源变量解析
+    memory_repo: Any = None,  # 打包 AL（docs/123 §2.3，P-2=B）：state_machine store=memory 的对象状态存储
 ):
     decision_client = decision_client or get_decision_client(tenant_id=tenant_id)
     condition_classifier = condition_classifier or get_condition_classifier(tenant_id=tenant_id)
@@ -3017,6 +3436,7 @@ def compile_graph(
             block_subgraph_suspend=block_subgraph_suspend,
             secret_provider=secret_provider,
             tenant_id=tenant_id,
+            memory_repo=memory_repo,
         )
         if node.id in skip_guards:
             parallel_id, safe_target = skip_guards[node.id]
@@ -3027,6 +3447,44 @@ def compile_graph(
         # RunNodeFailed 包装会破坏 paused 帧携带的原始异常形状。
         if node.id not in parallel_region_members and debug_controller is None:
             executor = _wrap_retry(executor, node)
+        # 打包 AL（docs/123 §2.2）：图级 selfHealing 包装——节点/子图失败（且节点级
+        # on_error 已耗尽）时执行诊断子图尝试修复。诊断节点自身不再被自愈（防自指），
+        # parallel 区域内节点不装配（失败归 join 网关）；调试会话不包（异常原样重抛）。
+        if (
+            graph.selfHealing
+            and node.id not in parallel_region_members
+            and debug_controller is None
+            and node.id != (graph.selfHealing.get("diagnoseSubgraphId") or "")
+        ):
+            executor = _wrap_self_healing(
+                executor,
+                node,
+                graph,
+                graph_by_node={n.id: n for n in graph.nodes},
+                trigger_payload=payload,
+                registry=registry,
+                decision_client=decision_client,
+                condition_classifier=condition_classifier,
+                approval_broker=approval_broker,
+                event_wait_broker=event_wait_broker,
+                approval_notifier=approval_notifier,
+                graph_id=graph_id,
+                emit=emit,
+                graph_resolver=graph_resolver,
+                subgraph_depth=_subgraph_depth,
+                tracer=tracer,
+                now=now,
+                subgraph_path=_subgraph_path,
+                is_cancelled=is_cancelled,
+                debug_controller=debug_controller,
+                shadow=shadow,
+                jitter_rng=jitter_rng,
+                expr_rng=expr_rng,
+                block_subgraph_suspend=block_subgraph_suspend,
+                secret_provider=secret_provider,
+                tenant_id=tenant_id,
+                memory_repo=memory_repo,
+            )
         builder.add_node(node.id, executor)
 
     # parallel 区域推导：区域内节点指向 joinTarget 的边在编译期改指向汇聚网关，
@@ -3352,6 +3810,185 @@ def _tail_subgraph(graph: GraphDSL, resume_node_id: str) -> GraphDSL:
     )
 
 
+def _global_error_mark(node_id: str, exc: Exception) -> dict[str, Any]:
+    """globalErrorHandler 结构化标记（docs/123 §2.1，mark_only/escalate 共用）。"""
+    return {
+        "code": runtime_error_meta(exc)["errorCode"],
+        "nodeId": node_id,
+        "detail": str(exc),
+    }
+
+
+def _apply_global_error_handler(
+    graph: GraphDSL,
+    exc: Exception,
+    *,
+    node_id: str,
+    state: GraphState,
+    rng_seed: int,
+    registry: AdapterRegistry | None,
+    approval_broker: ApprovalBroker,
+    approval_notifier: ApprovalNotifier | None,
+    graph_id: str,
+    emit: EventCallback | None,
+    graph_resolver: Callable[[str], GraphDSL] | None,
+    subgraph_depth: int,
+    tracer: Tracer | None,
+    now: datetime | None,
+    is_cancelled: Callable[[], bool] | None,
+    shadow: bool,
+    jitter_rng: random.Random | None,
+    expr_rng: random.Random | None,
+    block_subgraph_suspend: bool,
+    secret_provider: Any,
+    tenant_id: str | None,
+    memory_repo: Any,
+) -> dict[str, Any]:
+    """run 终态判定前的图级统一降级（打包 AL，docs/123 §2.1，P-1=C escalate_to_human）。
+
+    捕获所有未被节点级 on_error 捕获的异常（含 RunNodeFailed 穿透、子图 fail-safe
+    折叠后的 failed）。控制流异常（RunCancelled/DebugStopped/RunSuperseded）由调用方
+    先行拦截、不进入本函数。三形态：
+    - mark_only：run failed＋产出带 global_error 结构化标记；
+    - route_to_subgraph：执行 errorSubgraphId 子图→verdict 真→completed＋healed_by；
+      verdict 假/异常→failed；
+    - escalate_to_human（P-1 拍板 C）：创建人工审批/通知→run 挂起等人工决策后
+      恢复（approved→completed＋escalated 标记）或终止（rejected/超时→failed）。
+    fail-closed：handler 自身异常→mark_only 兜底、绝不让降级动作再失败。
+    """
+    handler = graph.globalErrorHandler or {}
+    strategy = handler.get("onUncaughtError", "mark_only")
+    mark = _global_error_mark(node_id, exc)
+
+    def fail_result(status: str = "failed", extra: dict[str, Any] | None = None) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "status": status,
+            "outputs": _redact_outputs(state),
+            "trace": state["messages"],
+            "rng_seed": rng_seed,
+            "global_error": mark,
+        }
+        if extra:
+            result.update(extra)
+        return result
+
+    # 无 handler（graph.globalErrorHandler 未配置）：历史语义原样穿透——
+    # RunNodeFailed 与意外异常照旧抛出，不吞不标（U1349 回退保障）。
+    if graph.globalErrorHandler is None:
+        raise exc
+
+    try:
+        if strategy == "mark_only":
+            return fail_result()
+        if strategy == "route_to_subgraph":
+            error_subgraph = str(handler.get("errorSubgraphId") or "")
+            subgraph_node = next(
+                (n for n in graph.nodes if n.id == error_subgraph and n.type == "subgraph"),
+                None,
+            )
+            if subgraph_node is None:
+                return fail_result()
+            output, _msg = _execute_subgraph(
+                subgraph_node,
+                context={"global": state["variables"].get("global", {}), **state["outputs"]},
+                trigger_payload=None,
+                registry=registry,
+                decision_client=get_decision_client(tenant_id=tenant_id),
+                condition_classifier=get_condition_classifier(tenant_id=tenant_id),
+                approval_broker=approval_broker,
+                event_wait_broker=_default_event_wait_broker,
+                approval_notifier=approval_notifier,
+                resolver=graph_resolver,
+                depth=subgraph_depth,
+                tracer=tracer,
+                now=now,
+                emit=emit,
+                subgraph_path=(),
+                is_cancelled=is_cancelled,
+                shadow=shadow,
+                jitter_rng=jitter_rng,
+                expr_rng=expr_rng,
+                block_subgraph_suspend=block_subgraph_suspend,
+                secret_provider=secret_provider,
+            )
+            verdict = _extract_verdict(output)
+            if verdict:
+                return fail_result(
+                    status="completed",
+                    extra={"healed_by": error_subgraph, "verdict": verdict},
+                )
+            return fail_result()
+        # escalate_to_human（P-1 拍板 C）：创建人工审批/通知，run 挂起等人工决策。
+        escalation = handler.get("escalation") or {}
+        channel = escalation.get("channel", "approval")
+        recipients = escalation.get("recipients")
+        summary = (
+            f"全局异常降级：节点 {node_id} 未捕获异常（{mark['code']}）。"
+            f"详情：{mark['detail'][:200]}。请批准恢复或拒绝终止本次运行。"
+        )
+        if approval_broker is None:
+            return fail_result()
+        recipients_list = list(recipients or [])
+        token = approval_broker.request(
+            node_id=node_id,
+            graph_id=graph_id,
+            summary=summary,
+            approver="",
+            timeout_seconds=_DECISION_ESCALATION_TIMEOUT_SECONDS,
+            notify_recipients=recipients_list,
+        )
+        approval_payload = {
+            "token": token,
+            "summary": summary,
+            "approver": "",
+            "timeoutSeconds": _DECISION_ESCALATION_TIMEOUT_SECONDS,
+            "notified": False,
+        }
+        if emit is not None:
+            emit(
+                {
+                    "type": "node_start",
+                    "node_id": node_id,
+                    "node_type": "__global_error__",
+                    "approval": approval_payload,
+                }
+            )
+            emit(
+                {
+                    "type": "global_error",
+                    "node_id": node_id,
+                    "code": mark["code"],
+                    "detail": mark["detail"],
+                    "approval": approval_payload,
+                }
+            )
+        if channel == "email" and approval_notifier is not None and recipients_list:
+            try:
+                approval_notifier.notify_pending(
+                    graph_id=graph_id,
+                    node_id=node_id,
+                    token=token,
+                    summary=summary,
+                    approver="",
+                    timeout_seconds=_DECISION_ESCALATION_TIMEOUT_SECONDS,
+                    recipients=recipients_list,
+                )
+                approval_payload["notified"] = True
+            except Exception:  # noqa: BLE001 通知失败不阻断挂起
+                pass
+        decision = approval_broker.wait(token)
+        if decision is None:
+            decision, _resolved_by = approval_broker.complete_timeout(token, "rejected")
+        if decision == "approved":
+            return fail_result(
+                status="completed",
+                extra={"escalated": True, "resolvedBy": "human", "approvalToken": token},
+            )
+        return fail_result(extra={"escalated": True, "resolvedBy": "human", "approvalToken": token})
+    except Exception as handler_exc:  # noqa: BLE001 fail-closed：handler 自身异常→mark_only
+        return fail_result(extra={"handler_error": str(handler_exc)})
+
+
 def run_graph(
     graph: GraphDSL,
     *,
@@ -3384,6 +4021,7 @@ def run_graph(
     _block_subgraph_suspend: bool | None = None,
     tenant_id: str | None = None,  # docs/93 打包 Y：LLM 模型配置按租户解析（None＝回退 env）
     secret_provider: Any = None,  # 打包 A3（docs/99）：secret 来源变量解析（None＝连接面语义 fail-closed）
+    memory_repo: Any = None,  # 打包 AL（docs/123 §2.3，P-2=B）：state_machine store=memory 的对象状态存储
 ) -> dict[str, Any]:
     """编译并执行，返回状态/节点产出/轨迹。
 
@@ -3491,12 +4129,44 @@ def run_graph(
             _block_subgraph_suspend=block_subgraph_suspend,
             tenant_id=tenant_id,
             secret_provider=secret_provider,
+            memory_repo=memory_repo,
         )
         state = initial_state(tail, inputs=resume_inputs, secret_provider=secret_provider)
         state["outputs"] = resume_state.get("outputs", {})
-        final_state = compiled.invoke(
-            state, config={"recursion_limit": _recursion_limit(tail)}
-        )
+        try:
+            final_state = compiled.invoke(
+                state, config={"recursion_limit": _recursion_limit(tail)}
+            )
+        except (RunCancelled, DebugStopped, RunSuperseded):
+            # 打包 AL（docs/123 §2.1）：控制流异常穿透（U1349），RunNodeFailed 与
+            # 其余意外异常进入图级统一降级。
+            raise
+        except Exception as exc:
+            # 打包 AL（docs/123 §2.1）：续跑分支同样走图级统一降级。
+            return _apply_global_error_handler(
+                resume_graph,
+                exc,
+                node_id=getattr(exc, "node_id", "") or "__global__",
+                state=state,
+                rng_seed=rng_seed,
+                registry=registry,
+                approval_broker=approval_broker or _default_approval_broker,
+                approval_notifier=approval_notifier,
+                graph_id=resume_graph_id,
+                emit=emit,
+                graph_resolver=graph_resolver,
+                subgraph_depth=_subgraph_depth,
+                tracer=tracer,
+                now=now_override,
+                is_cancelled=is_cancelled,
+                shadow=shadow,
+                jitter_rng=jitter_rng,
+                expr_rng=expr_rng,
+                block_subgraph_suspend=block_subgraph_suspend,
+                secret_provider=secret_provider,
+                tenant_id=tenant_id,
+                memory_repo=memory_repo,
+            )
         result = {
             "status": "completed",
             "outputs": _redact_outputs(final_state),
@@ -3534,11 +4204,44 @@ def run_graph(
         _block_subgraph_suspend=block_subgraph_suspend,
         tenant_id=tenant_id,
         secret_provider=secret_provider,
+        memory_repo=memory_repo,
     )
-    final_state = compiled.invoke(
-        initial_state(graph, inputs=inputs, secret_provider=secret_provider),
-        config={"recursion_limit": _recursion_limit(graph)},
-    )
+    try:
+        final_state = compiled.invoke(
+            initial_state(graph, inputs=inputs, secret_provider=secret_provider),
+            config={"recursion_limit": _recursion_limit(graph)},
+        )
+    except (RunCancelled, DebugStopped, RunSuperseded):
+        # 打包 AL（docs/123 §2.1）：控制流异常穿透（U1349），不触发图级 handler；
+        # RunNodeFailed（节点级 stop 显式失败）与其余意外异常均进入图级统一降级。
+        raise
+    except Exception as exc:
+        # 打包 AL（docs/123 §2.1）：未被节点级 on_error 捕获的异常→图级统一降级。
+        state = initial_state(graph, inputs=inputs, secret_provider=secret_provider)
+        return _apply_global_error_handler(
+            graph,
+            exc,
+            node_id=getattr(exc, "node_id", "") or "__global__",
+            state=state,
+            rng_seed=rng_seed,
+            registry=registry,
+            approval_broker=approval_broker or _default_approval_broker,
+            approval_notifier=approval_notifier,
+            graph_id=graph_id,
+            emit=emit,
+            graph_resolver=graph_resolver,
+            subgraph_depth=_subgraph_depth,
+            tracer=tracer,
+            now=now_override,
+            is_cancelled=is_cancelled,
+            shadow=shadow,
+            jitter_rng=jitter_rng,
+            expr_rng=expr_rng,
+            block_subgraph_suspend=block_subgraph_suspend,
+            secret_provider=secret_provider,
+            tenant_id=tenant_id,
+            memory_repo=memory_repo,
+        )
     result = {
         "status": "completed",
         "outputs": _redact_outputs(final_state),
