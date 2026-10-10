@@ -20,6 +20,14 @@
 - **待用户拍板**：P-1 降级策略形态三选一（建议 escalate_to_human）；P-2 对象状态存哪（建议 memory 档）。4 新错误码。验收 U1345–U1356 预留。
 - **D63 不解除**（落码后才可取回）。形状权威 docs/123。
 
+### 打包 AL 落码收口（2026-10-09）
+
+- **拍板**：P-1＝C（escalate_to_human 复用审批/通知闭环）；P-2＝B（store=memory 跨 run 持续）。
+- **后端**：`loader.py` 图级 `_apply_global_error_handler`（三形态）＋`_wrap_self_healing`（诊断子图 verdict 裁决）＋`_execute_state_machine`（事件驱动迁移、memory 持久化、SSE state_changed）；`dsl.py` 顶层字段与三编译期校验；`api/main.py` 7 处 run_graph 补 memory_repo。新运行期异常 `StateTransitionRejected`。
+- **前端**：state_machine 节点目录＋schema＋图设置面板（globalErrorHandler/selfHealing）＋序列化 snake_case 透传 roundtrip＋4 错误码 i18n zh/en＋SSE 三新帧（state_changed/healing/global_error）日志。
+- **验收**：U1345–U1354 后端 17 用例；U1355 前端（serializer 13 用例含 AL roundtrip）；U1356 三道门——后端 pytest **2610 passed/173 skipped/0 failed**，前端 build（tsc+vite）/vitest/oxlint（0/0）全过。**D63 解除**。
+- **遗留**：pg_table 档运行期未接线、审批持久化中断（docs/14 D20/D21 族）。
+
 ### 打包 AJ：节点级 on_error 真执行（2026-10-10）
 
 - **三值语义落地**：`retry.on_error` 自 W7 起仅 DSL 声明、loader 从未读取；本批真执行——stop＝抛 `RunNodeFailed` 穿透、run failed、同步 /run 500 `NODE_EXECUTION_FAILED`＋nodeId；continue＝旧默认行为的显式化（失败放行、下游照跑）；jump_to＝编译期把普通出边改 conditional edges、失败路由到新字段 `retry.error_target`（内部键 `__on_error_target` 路由消费后剔除）。

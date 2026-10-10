@@ -53,3 +53,9 @@
 ## 部署 gate 配置面迁 forms＝D29 解锁路径第 3 步第一片
 
 ✅ **部署 gate 配置面迁 forms＝D29 解锁路径第 3 步第一片落码收口（docs/115；2026-10-10，同日落码/收口）**：部署配置面作为第四实体接入 forms 的第一片实际落地（docs/118 契约后的第一个消费方）——`types.ts` 业务控件名分组节点组∪部署组、`isWidgetName` 同步识别；`buildGateSchema()`（标量×3 走内置 number/switch、metrics 数组 `x-widget: deploy-gate-metrics`）＋`GateMetricsWidget`（固定三行 GATE_METRIC_SPECS 可空阈值编辑）＋`buildDeployRegistry()`（独立实例）；`release.ts` 提炼 `upsertGateMetric`（`setGateMetric` 改委托）；RolloutModal gate 区删手写 InputNumber×2＋Switch＋Table 改挂 FormRenderer，后端 GateConfig 形状不变；两处 UI 微差照实（观察窗无「分钟」后缀、新增「门控指标」label）。门：前端 vitest 943/2（+11）、oxlint/tsc/build 过、守护门 8 passed、冒烟 gate 区全量渲染确认。零新依赖/零迁移/无 ADR。第 2 步异构数组与规则区第二片仍缓做，D29 不解除。
+
+## 2026-10-10 十四滚出（打包 AL 收口时，Recently shipped 5 条上限）
+
+✅ **Dashboard 首页与页头布局响应式修复（2026-10-10；`37ba02f`）**：功能按钮行 `<Space wrap>`＋`.page-header/.editor-header` flex-wrap 兜底；修复前按钮行溢出 231px、页面级横向滚动条，修复后按钮自动换行、overflowX=false。门：前端 vitest 956/2、oxlint/tsc/build 过。
+
+✅ **异构数组判别渲染落码收口＝D29 解锁路径第 2 步（docs/119；2026-10-10，同日契约通过/落码/收口）**：渲染层判别异构数组最小子集——`oneOfDiscriminant` 纯函数（oneOf 各分支 object 且恰好一个键带 const、判别键同名、const 值唯一→判别成立）＋formTree array 分支逐元素判别（命中分支递归构建、未知判别值/非 object 元素降级 json）＋`defaultValueFor` 首个分支默认对象（判别键=const＋字段递归默认）；判别完全由标准 keyword const 推导、MetaSchema 封闭四 x-* 不新增；判别键只读＝SelectWidget const 单选项 disabled 现成行为；resolveWidget 注释同步。门：前端 vitest 956/2（+13）、oxlint/tsc/build 过、守护门 8 passed。零新依赖/零迁移/无 ADR。object 级顶层 oneOf／嵌套 oneOf／判别键切换／L1 动态诊断仍非目标；第 3 步第二片（RolloutModal 规则区迁移）依赖本批能力另立批。
