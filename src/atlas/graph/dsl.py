@@ -46,6 +46,7 @@ MAX_PARALLEL_BRANCHES = 10
 PARALLEL_JOIN_STRATEGIES = ("all_success", "all_completed", "any_success")
 #: 挂起点（执行时写中断帧并阻塞等待）：parallel 分支区域内不得出现，见 _validate_parallel_config。
 SUSPEND_NODE_TYPES = ("human_approval", "wait")
+ERROR_TARGET_FORBIDDEN_NODE_TYPES = ("condition", "loop", "human_approval", "parallel")
 MIN_WAIT_SECONDS = 1
 MAX_WAIT_SECONDS = 3600  # docs/54：duration 同步 sleep 上限 600→3600（更长改用可中断 event）
 MIN_EVENT_WAIT_SECONDS = 1
@@ -119,6 +120,8 @@ class RetryConfig(BaseModel):
     backoff: str = "1s"
     timeout: int = 30
     on_error: Literal["stop", "continue", "jump_to"] = "stop"
+    # 打包 AJ（docs/121 §2 D-5）：jump_to 的落点节点 id；纯超集，非 jump_to 时允许存在但运行期不读。
+    error_target: str | None = None
 
 
 class NodeDSL(BaseModel):
@@ -382,6 +385,9 @@ def validate_graph_report(
     for node in graph.nodes:
         if node.type == "subgraph":
             issues.extend(_validate_subgraph_config(node, node_ids, outgoing))
+
+    for node in graph.nodes:
+        issues.extend(_validate_retry_config(node, node_ids, node_types))
 
     for message, code, prm in _validate_illegal_cycles(graph, loop_backedges):
         issues.add(message, code=code, params=prm)
@@ -1185,6 +1191,46 @@ def _validate_wait_config(
             add_graph(f"{prefix} 后继节点不存在：{target}",
                       code="WAIT_SUCCESSOR_MISSING", params={"target": target})
 
+    return issues
+
+
+_RETRY_BACKOFF_PATTERN = re.compile(r"^\d+(?:\.\d+)?(?:ms|s)$")
+
+
+def _validate_retry_config(
+    node: NodeDSL, node_ids: set[str], node_types: dict[str, str]
+) -> list[Issue]:
+    """retry.on_error / error_target / backoff 编译期校验（打包 AJ，docs/121 §2 D-5）。"""
+    issues: list[Issue] = []
+    retry = node.retry
+    if not _RETRY_BACKOFF_PATTERN.fullmatch(retry.backoff):
+        issues.append((
+            f"节点 {node.id} 的 backoff 格式非法：{retry.backoff}（只接受 <数字>ms / <数字>s）",
+            _loc(node.id, "/backoff"),
+            "NODE_RETRY_BACKOFF_INVALID",
+            {"owner": node.id, "nodeId": node.id, "backoff": retry.backoff},
+        ))
+    if retry.on_error == "jump_to":
+        target = retry.error_target
+        if not target:
+            issues.append((
+                f"节点 {node.id} 配置了 jump_to 但未指定 error_target",
+                _loc(node.id, "/errorTarget"),
+                "NODE_ERROR_TARGET_REQUIRED",
+                {"owner": node.id, "nodeId": node.id},
+            ))
+        elif (
+            target == node.id
+            or target not in node_ids
+            or node_types.get(target) in ERROR_TARGET_FORBIDDEN_NODE_TYPES
+            or node.type in ERROR_TARGET_FORBIDDEN_NODE_TYPES
+        ):
+            issues.append((
+                f"节点 {node.id} 的 error_target 非法：{target}",
+                _loc(node.id, "/errorTarget"),
+                "NODE_ERROR_TARGET_INVALID",
+                {"owner": node.id, "nodeId": node.id, "errorTarget": target},
+            ))
     return issues
 
 

@@ -191,6 +191,28 @@ class SubgraphSuspendUnsupported(Exception):
         self.node_id = node_id
 
 
+class RunNodeFailed(Exception):
+    """节点级 on_error="stop" 的显式失败（打包 AJ，docs/121 §2 D-3）。
+
+    节点执行抛异常或产出 FAILED 且重试耗尽后，按 on_error=stop 语义穿透执行循环，
+    run 标记 failed、不再调度下游节点。四个控制流异常（RunCancelled/DebugStopped/
+    RunSuperseded/SubgraphSuspendUnsupported）永不经此路径。
+    """
+
+    code = "NODE_EXECUTION_FAILED"
+
+    def __init__(
+        self,
+        node_id: str,
+        output: dict[str, Any] | None = None,
+        detail: str = "",
+    ) -> None:
+        suffix = f"：{detail}" if detail else ""
+        super().__init__(f"{self.code}: 节点 {node_id} 执行失败（on_error=stop）{suffix}")
+        self.node_id = node_id
+        self.output = output
+
+
 def runtime_error_meta(exc: Exception) -> dict[str, Any]:
     """docs/60 G1：运行期终态异常归一化为机器可读码（中文 error 字符串仍由调用方原样保留）。
 
@@ -212,6 +234,8 @@ def runtime_error_meta(exc: Exception) -> dict[str, Any]:
     if isinstance(exc, LLMStructuredUnavailable):
         return {"errorCode": exc.code, "errorParams": {"nodeId": exc.node_id}}
     if isinstance(exc, SubgraphSuspendUnsupported):
+        return {"errorCode": exc.code, "errorParams": {"nodeId": exc.node_id}}
+    if isinstance(exc, RunNodeFailed):
         return {"errorCode": exc.code, "errorParams": {"nodeId": exc.node_id}}
     return {"errorCode": "RUNTIME_UNEXPECTED", "errorParams": {}}
 
@@ -1163,6 +1187,96 @@ def _make_executor(
             }
 
     return execute
+
+
+_BACKOFF_RE = re.compile(r"^(\d+(?:\.\d+)?)(ms|s)$")
+
+
+def _parse_backoff_seconds(backoff: str) -> float:
+    """`<数>ms` / `<数>s` → 秒（docs/121 §2 D-4；编译期已校验格式，这里兜底非法按 0）。"""
+    match = _BACKOFF_RE.fullmatch(backoff or "")
+    if not match:
+        return 0.0
+    value = float(match.group(1))
+    return value / 1000 if match.group(2) == "ms" else value
+
+
+def _wrap_retry(
+    executor: Callable[[GraphState], dict],
+    node: NodeDSL,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+) -> Callable[[GraphState], dict]:
+    """节点级 on_error/max_retries 真执行（打包 AJ，docs/121 §2 D-3/D-4）。
+
+    - 异常与 FAILED 产出都计入失败；总尝试 1+max_retries 次，间隔固定 backoff；
+    - stop：耗尽后抛 RunNodeFailed 穿透，run failed、不调度下游；
+    - continue：耗尽后放行失败产出（旧默认行为的显式化），下游照跑；
+    - jump_to：耗尽后在产出写内部键 __on_error_target，由编译期装配的 conditional
+      edges 路由到 error_target；产出键在路由消费后剔除（见 compile_graph）；
+    - 四个控制流异常（RunCancelled/DebugStopped/RunSuperseded/SubgraphSuspendUnsupported）
+      与挂起类信号永远穿透，不重试、不计失败。
+    """
+    # 穿透两类：①四个控制流异常；②已携带机器码的确定性失败（AiDecisionUnavailable/
+    # WaitNodeFailure/LLM 类 fail-closed）——它们自身就是「run failed + code」，
+    # 包成 RunNodeFailed 会丢掉原码、且这类失败重试无意义（配置缺失不会自愈）。
+    retry = node.retry
+    passthrough = (
+        RunCancelled,
+        DebugStopped,
+        RunSuperseded,
+        SubgraphSuspendUnsupported,
+        WaitNodeFailure,
+        AiDecisionUnavailable,
+        ConditionClassifierUnavailable,
+        LLMStructuredUnavailable,
+        ConditionEvalError,
+    )
+
+    def wrapped(state: GraphState) -> dict:
+        attempts = 0
+        last_output: dict[str, Any] | None = None
+        while True:
+            attempts += 1
+            try:
+                result = executor(state)
+            except passthrough:
+                raise
+            except Exception as exc:
+                if attempts <= retry.max_retries:
+                    sleep(_parse_backoff_seconds(retry.backoff))
+                    continue
+                if retry.on_error == "stop":
+                    raise RunNodeFailed(node.id, detail=str(exc)) from exc
+                output = {
+                    "result": {"status": "FAILED", "error": str(exc)},
+                    "attempts": attempts,
+                }
+                if retry.on_error == "jump_to":
+                    output["__on_error_target"] = retry.error_target
+                return {
+                    "outputs": {node.id: output},
+                    "status": "running",
+                    "messages": [f"{node.id}({node.type}): failed after {attempts} attempts"],
+                }
+            last_output = result["outputs"].get(node.id)
+            if not (isinstance(last_output, dict) and _node_failure(last_output)):
+                if attempts > 1 and isinstance(last_output, dict):
+                    last_output["attempts"] = attempts
+                return result
+            if attempts <= retry.max_retries:
+                sleep(_parse_backoff_seconds(retry.backoff))
+                continue
+            if retry.on_error == "stop":
+                raise RunNodeFailed(
+                    node.id, last_output, detail=_node_failure(last_output) or ""
+                )
+            last_output["attempts"] = attempts
+            if retry.on_error == "jump_to":
+                last_output["__on_error_target"] = retry.error_target
+            return result
+
+    return wrapped
 
 
 def _emit_frame(
@@ -2847,6 +2961,11 @@ def compile_graph(
         outgoing.setdefault(edge.source, []).append(edge.target)
     parallels = [node for node in graph.nodes if node.type == "parallel"]
     metas = {node.id: _parallel_meta(node, outgoing) for node in parallels}
+    # 打包 AJ：parallel 区域内节点的失败归汇聚网关按 joinStrategy 裁决（04 §5.4），
+    # 区域内不装配 on_error 重试/穿透，避免 stop 绕过 join 语义（docs/121 §2 D-3 边界）。
+    parallel_region_members: set[str] = set()
+    for pmeta in metas.values():
+        parallel_region_members |= pmeta["region"]
 
     # D18/A1 any_success：region 内节点 -> (parallel_id, 条件路由节点的安全 target)。
     routing_kinds = {"condition", "human_approval", "loop"}
@@ -2904,6 +3023,10 @@ def compile_graph(
             executor = _guard_any_success(
                 executor, parallel_id, node.id, node.type, safe_target, emit
             )
+        # 调试会话不包 retry：docs/28 §3.2 要求节点异常原样重抛（异常断点观测语义），
+        # RunNodeFailed 包装会破坏 paused 帧携带的原始异常形状。
+        if node.id not in parallel_region_members and debug_controller is None:
+            executor = _wrap_retry(executor, node)
         builder.add_node(node.id, executor)
 
     # parallel 区域推导：区域内节点指向 joinTarget 的边在编译期改指向汇聚网关，
@@ -3006,13 +3129,40 @@ def compile_graph(
     human_ids = {node.id for node in graph.nodes if node.type == "human_approval"}
     parallel_ids = set(metas)
     conditional_ids = condition_ids | loop_ids | human_ids | parallel_ids
+    # 打包 AJ（docs/121 §2 D-6）：on_error="jump_to" 的节点普通出边改 conditional edges，
+    # 失败时路由到 retry.error_target，成功走原后继（route 返回 list 保持扇出）。
+    jump_to_nodes = {
+        node.id: node.retry.error_target
+        for node in graph.nodes
+        if node.retry.on_error == "jump_to" and node.retry.error_target
+    }
 
     for edge in graph.edges:
-        if edge.source in conditional_ids:
+        if edge.source in conditional_ids or edge.source in jump_to_nodes:
             # condition/loop/parallel 出边全部走 conditional edges，混用会导致双路激活。
             continue
         # 循环回边 source 在循环体内，作为普通边装配。
         builder.add_edge(edge.source, retarget.get((edge.source, edge.target), edge.target))
+
+    for jump_id, error_target in jump_to_nodes.items():
+        targets = outgoing.get(jump_id, [])
+
+        def route_on_error(
+            state: GraphState,
+            cid: str = jump_id,
+            normal_targets: list[str] = targets,
+            fallback: str = error_target,
+        ) -> list[str]:
+            output = state["outputs"].get(cid) or {}
+            routed = output.pop("__on_error_target", None)
+            if routed:
+                return [routed]
+            return [retarget.get((cid, t), t) for t in normal_targets]
+
+        destinations = {retarget.get((jump_id, t), t) for t in targets} | {error_target}
+        builder.add_conditional_edges(
+            jump_id, route_on_error, {dest: dest for dest in destinations}
+        )
 
     for condition_id in condition_ids | human_ids:
         # condition/human_approval 同构：执行器写 outputs[id].target，双（多）出口全部 conditional。

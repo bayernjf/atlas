@@ -49,6 +49,7 @@ from atlas.graph.diff import diff_graph, diff_summary
 from atlas.graph.loader import (
     AiDecisionUnavailable,
     ConditionClassifierUnavailable,
+    RunNodeFailed,
     RunSuperseded,
     SubgraphSuspendUnsupported,
     WaitNodeFailure,
@@ -541,6 +542,22 @@ def subgraph_suspend_unsupported_handler(
     # 但**同步 /run 此前没有异常处理器**：异常逃出端点 ⇒ Starlette 给一个没有 code 的裸 500，
     # 运营看到的是一句 Internal Server Error，而"把审批/wait 节点移到图顶层"这个可执行
     # 下一步只存在于日志里。补齐成与 LLM_DECISION_UNAVAILABLE 同形的结构化 500。
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": {
+                "code": exc.code,
+                "message": str(exc),
+                "nodeId": exc.node_id,
+            }
+        },
+    )
+
+
+@app.exception_handler(RunNodeFailed)
+def run_node_failed_handler(_request: Request, exc: RunNodeFailed) -> JSONResponse:
+    # 打包 AJ（docs/121 §2 D-3）：on_error=stop 的节点失败穿透到同步 /run 时，
+    # 与 WaitNodeFailure 等同形结构化 500，携带 NODE_EXECUTION_FAILED 与 nodeId。
     return JSONResponse(
         status_code=500,
         content={
