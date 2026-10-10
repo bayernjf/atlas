@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### 〔前端〕UX 走查与微改进（2026-10-10）
+
+- **全流程 UX 走查**（登录→Dashboard→各功能页→编辑器→运行→错误校验，浏览器实测）：缺陷级硬伤基本没有（loading/空态/错误校验分层/引导文案均到位）；检出并闭合 5 项。
+- **等待页返回按钮**：`←` → `← 返回`（`t('common:button.back')`；common 顶层 button 补齐 `back` 键 zh/en——此前 `back` 仅存在于 audit/users 各自字典）。原子 feat(frontend)。
+- **Dashboard 三卡片可跳转**：Graph/Loop/Harness `hoverable`＋onClick（→编辑器/反思进化/API 导入）＋extra「进入 →」`demo.cards.enter` zh/en。同上原子。
+- **运行完成 toast**：`message.success(t('log.runComplete'))`（App 主分支包 antd `<App>`，Editor 走 `App.useApp()`，复用既有键）。同上原子。
+- **编辑器返回工作台入口**（走查新发现，原只能刷新页面）：header「← 返回」`onBack` prop（App 传 `setPage('dashboard')`）。同上原子。
+- **审计筛选空态**实测确认（既有 `audit.empty`＋`locale.emptyText`，无需改码）。
+- **门**：前端 vitest **972/2**（零回归）、oxlint 0/0、tsc 0、build 过；守护门 8 passed；浏览器实测 5 项全过。docs 收口：docs/17 §3.8。
+
 ### 〔前端〕主题打磨与画布自适应修复（2026-10-10）
 
 - **主题 token 一次到位**：`tokens.ts` antdTheme token 层补全（colorBgLayout/colorBgContainer/colorBorder/colorText/colorLink）＋borderRadius 6/10、fontSize 14、controlHeight 32/40/24；components 层 Card.boxShadowTertiary、Modal.borderRadiusLG 12、Button.fontWeight 500；新增 semantic token shadow-node-hover/shadow-card/shadow-card-hover。主色 #1677ff 不变（避免节点光晕/全仓涟漪）。原子 `71f0164` feat(theme)。

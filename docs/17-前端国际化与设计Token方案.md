@@ -178,6 +178,20 @@ frontend/src/theme/setup.ts    # main.tsx 引入一次，把 semantic 注入 :ro
 - 浏览器对比替换前后三个页面：编辑器（含节点运行中/完成态）、Dashboard、`/demo/shop` 模拟控制台，无视觉差异。
 - `grep -R "#[0-9a-fA-F]\{3,6\}" frontend/src` 仅剩 `tokens.ts` 内的 primitive 定义。
 
+### 3.8 UX 走查与微改进批（2026-10-10，落码完成）
+
+全流程 UX 走查（登录→Dashboard→各功能页→编辑器→运行→错误校验，浏览器实测）结论：**缺陷级硬伤基本没有**（页面切换 loading、空态文案、错误校验分层、引导说明均到位）；检出并闭合 5 项可做项：
+
+| # | 项 | 类型 | 落点 |
+|---|---|---|---|
+| 1 | 等待页返回按钮只有「←」图标无文字 → 「← 返回」（`t('common:button.back')`，common 顶层 button 补齐 `back` 键 zh/en——此前 `back` 仅存在于 audit/users 各自字典，顶层无此键） | 缺陷级·可访问性 | `Waits.tsx`＋`common.json` |
+| 2 | 审计日志筛选空态「当前没有符合条件的审计事件」实测确认（既有 `audit.empty`＋`locale.emptyText`，无需改码） | 缺陷级·验证 | — |
+| 3 | 运行完成后无轻提示 → `message.success(t('log.runComplete', {status}))`（App.tsx 主分支包 antd `<App>`，Editor 经 `App.useApp()`；复用既有 `log.runComplete` 键 zh/en） | 品味级·反馈 | `App.tsx`＋`Editor.tsx` |
+| 4 | Dashboard Graph/Loop/Harness 三卡片静态 → `hoverable`＋`onClick` 跳转（Graph→编辑器、Loop→反思进化、Harness→API 导入）＋extra「进入 →」`demo.cards.enter` zh/en | 品味级·可发现性 | `Dashboard.tsx`＋`dashboard.json` |
+| 5 | **走查新发现**：编辑器无返回工作台入口（只能刷新页面）→ header 左加「← 返回」（`onBack` prop，App 传 `setPage('dashboard')`） | 缺陷级·路径断裂 | `Editor.tsx`＋`App.tsx` |
+
+**验证**（浏览器实测，admin-a）：等待页「← 返回」、审计筛选空态文案、运行完成 toast「运行结束：refunded」、三卡片 hover/跳转（Graph→编辑器实测）、编辑器「← 返回」回 Dashboard。门：前端 vitest **972/2**（零回归）、oxlint **0/0**、tsc **0**、build 过（仅既有 chunk>500kB warning）；守护门 8 passed。零新依赖/零迁移/无 ADR。
+
 ## 4. 落地节奏
 
 | 事项 | 时机 | 依据 |
