@@ -290,6 +290,10 @@
     "VAR_SOURCE_REF_EMPTY": "Variable {{name}} declares a restricted source but the reference name is empty",
     "VAR_SOURCE_REF_INVALID": "Variable {{name}} has an invalid env reference name: {{ref}}",
     "VAR_SOURCE_SCOPE_MISMATCH": "Variable {{name}} declares a restricted source but its scope is not global",
-    "APPROVER_REF_UNRESOLVED": "审批人（approver）引用的变量未定义：{{ref}}"
+    "APPROVER_REF_UNRESOLVED": "审批人（approver）引用的变量未定义：{{ref}}",
+    "GLOBAL_ERROR_HANDLER_INVALID": "图级异常处理配置无效：{{message}}",
+    "SELF_HEALING_INVALID": "自愈配置无效：{{message}}",
+    "STATE_MACHINE_INVALID": "状态机节点 {{owner}} 配置无效：{{message}}",
+    "STATE_TRANSITION_REJECTED": "状态机节点 {{owner}} 非法迁移：{{from}} --{{event}}--> 无匹配转换（对象 {{objectRef}}）"
   }
 }

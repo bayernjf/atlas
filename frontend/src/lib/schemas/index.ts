@@ -17,6 +17,7 @@ import { humanApprovalSchema } from './nodes/human_approval.schema'
 import { intentRecognitionSchema } from './nodes/intent_recognition.schema'
 import { infoExtractionSchema } from './nodes/info_extraction.schema'
 import { contentGenerationSchema } from './nodes/content_generation.schema'
+import { stateMachineSchema } from './nodes/state_machine.schema'
 
 export const SCHEMA_VERSION = 'v1'
 
@@ -33,6 +34,7 @@ const SCHEMAS: Record<string, Record<string, NodeConfigSchema>> = {
   intent_recognition: { [SCHEMA_VERSION]: intentRecognitionSchema },
   info_extraction: { [SCHEMA_VERSION]: infoExtractionSchema },
   content_generation: { [SCHEMA_VERSION]: contentGenerationSchema },
+  state_machine: { [SCHEMA_VERSION]: stateMachineSchema },
 }
 
 for (const versions of Object.values(SCHEMAS)) {

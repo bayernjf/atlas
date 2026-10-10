@@ -21,6 +21,7 @@ import { FlowCanvas } from '../components/canvas/FlowCanvas'
 import { NodePanel } from '../components/nodePanel/NodePanel'
 import { VariablesPanel } from '../components/variablePanel/VariablesPanel'
 import { PropertyPanel } from '../components/propertyPanel/PropertyPanel'
+import { GraphSettingsPanel } from '../components/graphSettings/GraphSettingsPanel'
 import { DebugConsole } from '../components/debugConsole/DebugConsole'
 import { FeedbackButton } from '../components/feedback/FeedbackButton'
 import { DemoResetButton } from '../components/demo/DemoResetButton'
@@ -167,6 +168,7 @@ export function Editor({
   const appendLog = useEditorStore((state) => state.appendLog)
   const setNlWarnings = useEditorStore((state) => state.setNlWarnings)
   const breakpoints = useEditorStore((state) => state.breakpoints)
+  const graphSettings = useEditorStore((state) => state.graphSettings)
 
   // M4 批 2 ⑦：分层校验调度（L1 同步 / L2 防抖 / L3 idle），结果入 validationStore。
   useValidationEngine()
@@ -314,7 +316,7 @@ export function Editor({
   const [runTarget, setRunTarget] = useState<'draft' | number>('draft')
   const [releaseBusy, setReleaseBusy] = useState(false)
 
-  const graphJson = JSON.stringify(serializeGraph(nodes, edges, variables, breakpoints), null, 2)
+  const graphJson = JSON.stringify(serializeGraph(nodes, edges, variables, breakpoints, graphSettings), null, 2)
 
   async function compileAndRun(shouldRecord = false, debugMode = false) {
     const order = DEMO_ORDERS.find((item) => item.order_id === selectedOrderId)
@@ -354,7 +356,7 @@ export function Editor({
     resetRunStatuses()
     const collected: RunEvent[] = []
     try {
-      const serialized = serializeGraph(nodes, edges, variables, breakpoints)
+      const serialized = serializeGraph(nodes, edges, variables, breakpoints, graphSettings)
       const pinnedVersion = runTarget === 'draft' ? undefined : runTarget
       let graphId: string
       if (pinnedVersion !== undefined && publishedRef) {
@@ -639,6 +641,49 @@ export function Editor({
           } else {
             appendLog(t('log.rootComplete', { node: event.node_id }))
           }
+        } else if (event.type === 'state_changed') {
+          // 打包 AL（docs/123 §2.3）：状态机迁移日志。
+          appendLog(
+            t('log.stateChanged', {
+              node: event.node_id,
+              objectRef: event.objectRef,
+              from: event.from,
+              to: event.to,
+              event: event.event,
+            }),
+          )
+        } else if (event.type === 'healing') {
+          // 打包 AL（docs/123 §2.2）：自愈尝试日志。
+          appendLog(
+            t('log.healing', {
+              node: event.node_id,
+              attempt: event.attempt,
+              verdict: String(event.verdict),
+              continue: String(event.continue),
+            }),
+          )
+        } else if (event.type === 'global_error') {
+          // 打包 AL（docs/123 §2.1）：图级异常降级日志；escalate 附带审批请求。
+          appendLog(
+            t('log.globalError', {
+              node: event.node_id,
+              code: event.code,
+              detail: event.detail,
+            }),
+          )
+          if (event.approval) {
+            setPendingApprovals((items) => [
+              ...items,
+              { ...event.approval!, nodeId: event.node_id, subgraphPath: [] },
+            ])
+            appendLog(
+              t('approval.waitingLog', {
+                prefix: '',
+                node: event.node_id,
+                summary: event.approval.summary,
+              }),
+            )
+          }
         }
       },
         debugRequest,
@@ -696,7 +741,7 @@ export function Editor({
   }
 
   async function ensureGraphId(): Promise<string> {
-    const current = serializeGraph(nodes, edges, variables, breakpoints)
+    const current = serializeGraph(nodes, edges, variables, breakpoints, graphSettings)
     if (draftGraphId) {
       await saveGraphDraft(draftGraphId, current)
       appendLog(t('log.draftUpdated', { graphId: draftGraphId }))
@@ -882,7 +927,7 @@ export function Editor({
     }
     setSaveTemplateBusy(true)
     setSaveTemplateError(null)
-    const graph = serializeGraph(nodes, edges, variables, breakpoints)
+    const graph = serializeGraph(nodes, edges, variables, breakpoints, graphSettings)
     try {
       if (editingTemplateId) {
         await updateUserTemplate(editingTemplateId, {
@@ -1331,6 +1376,7 @@ export function Editor({
             items={[
               { key: 'nodes', label: t('tabs.nodes'), children: <NodePanel /> },
               { key: 'variables', label: t('tabs.variables'), children: <VariablesPanel /> },
+              { key: 'graph', label: t('tabs.graphSettings'), children: <GraphSettingsPanel /> },
             ]}
           />
         </Sider>

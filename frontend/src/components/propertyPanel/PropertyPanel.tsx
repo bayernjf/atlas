@@ -240,6 +240,16 @@ export function PropertyPanel() {
             diagnostics={diagnostics}
           />
         )}
+        {data.kind === 'state_machine' && (
+          <NodeConfigForm
+            kind="state_machine"
+            config={config}
+            update={updateSelectedConfig}
+            variablePaths={variablePaths}
+            targetOptions={targetOptions}
+            diagnostics={diagnostics}
+          />
+        )}
         {data.kind === 'tool_call' && (
           <ToolCallConfig
             config={config}

@@ -268,6 +268,31 @@ export const contentGenerationUiSchema: UiSchema = {
   },
 }
 
+/**
+ * state_machine（docs/123 §2.3，打包 AL）：objectRef 变量模板、states 状态清单、
+ * store 两档（memory 跨 run / run_globals 单 run）、transitions 事件迁移表。
+ * initial 需在 states 中、非法迁移等由后端校验兜底（前端手写 L1 覆盖最小必填）。
+ */
+export const stateMachineUiSchema: UiSchema = {
+  labels: {
+    objectRef: '对象引用（{{路径}} 模板，如 {{trigger-1.context.payload.order_id}}）',
+    event: '触发事件（如 approve / reject / refund）',
+    states: '状态清单（至少 1 个；首项常为初态）',
+    initial: '初始状态（需在状态清单内）',
+    store: '状态存储档',
+    transitions: '事件迁移表（from 支持 * 通配到 to）',
+  },
+  placeholders: {
+    objectRef: '{{trigger-1.context.payload.order_id}}',
+    event: 'approve',
+    initial: 'pending',
+    'transitions.*.event': 'approve',
+    'transitions.*.from': 'pending',
+    'transitions.*.to': 'active',
+    'transitions.*.action': '可选：工具/adapter 形态，随迁移执行',
+  },
+}
+
 export const NODE_UI_SCHEMAS: Partial<Record<NodeKind, UiSchema>> = {
   trigger: triggerUiSchema,
   condition: conditionUiSchema,
@@ -279,4 +304,5 @@ export const NODE_UI_SCHEMAS: Partial<Record<NodeKind, UiSchema>> = {
   intent_recognition: intentRecognitionUiSchema,
   info_extraction: infoExtractionUiSchema,
   content_generation: contentGenerationUiSchema,
+  state_machine: stateMachineUiSchema,
 }

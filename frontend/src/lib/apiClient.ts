@@ -358,6 +358,32 @@ export type RunEvent =
       error_code: string | null
       subgraphPath?: string[]
     }
+  | {
+      /** 打包 AL（docs/123 §2.3）：state_machine 节点迁移成功帧。 */
+      type: 'state_changed'
+      node_id: string
+      objectRef: string
+      from: string
+      to: string
+      event: string
+    }
+  | {
+      /** 打包 AL（docs/123 §2.2）：selfHealing 自愈尝试帧。 */
+      type: 'healing'
+      node_id: string
+      diagnoseSubgraphId: string
+      attempt: number
+      verdict: unknown
+      continue: boolean
+    }
+  | {
+      /** 打包 AL（docs/123 §2.1）：图级全局异常降级帧。 */
+      type: 'global_error'
+      node_id: string
+      code: string
+      detail: string
+      approval?: ApprovalRequest
+    }
   | ({ type: 'run_end' } & Partial<RunResult>)
   | PausedFrame
   | StoppedFrame

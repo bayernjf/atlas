@@ -290,6 +290,10 @@
     "VAR_SOURCE_REF_EMPTY": "Variable {{name}} declares a restricted source but the reference name is empty",
     "VAR_SOURCE_REF_INVALID": "Variable {{name}} has an invalid env reference name: {{ref}}",
     "VAR_SOURCE_SCOPE_MISMATCH": "Variable {{name}} declares a restricted source but its scope is not global",
-    "APPROVER_REF_UNRESOLVED": "Approver references an undefined variable: {{ref}}"
+    "APPROVER_REF_UNRESOLVED": "Approver references an undefined variable: {{ref}}",
+    "GLOBAL_ERROR_HANDLER_INVALID": "Invalid graph-level error handler config: {{message}}",
+    "SELF_HEALING_INVALID": "Invalid self-healing config: {{message}}",
+    "STATE_MACHINE_INVALID": "State machine node {{owner}} invalid config: {{message}}",
+    "STATE_TRANSITION_REJECTED": "State machine node {{owner}} rejected transition: {{from}} --{{event}}--> no matching transition (object {{objectRef}})"
   }
 }

@@ -143,3 +143,44 @@ describe('serializeGraph debugSettings (docs/60 §5)', () => {
     })
   })
 })
+
+describe('serializeGraph graphSettings (docs/123, 打包 AL)', () => {
+  const settings = {
+    globalErrorHandler: {
+      onUncaughtError: 'escalate_to_human' as const,
+      escalation: { channel: 'email', recipients: ['ops@example.com'] },
+    },
+    selfHealing: {
+      triggerOn: ['NODE_EXECUTION_FAILED'],
+      diagnoseSubgraphId: 's-1',
+      maxAttempts: 2,
+      continueWhen: '{{verdict}} == true',
+    },
+  }
+
+  it('omits top-level fields when graphSettings empty (legacy shape)', () => {
+    const graph = serializeGraph(nodes, edges, variables)
+    expect(graph.global_error_handler).toBeUndefined()
+    expect(graph.self_healing).toBeUndefined()
+  })
+
+  it('serializes camelCase editor settings into snake_case backend shape', () => {
+    const graph = serializeGraph(nodes, edges, variables, undefined, settings)
+    expect(graph.global_error_handler).toEqual({
+      on_uncaught_error: 'escalate_to_human',
+      escalation: { channel: 'email', recipients: ['ops@example.com'] },
+    })
+    expect(graph.self_healing).toEqual({
+      trigger_on: ['NODE_EXECUTION_FAILED'],
+      diagnose_subgraph_id: 's-1',
+      max_attempts: 2,
+      continue_when: '{{verdict}} == true',
+    })
+  })
+
+  it('round-trips graph settings through deserializeGraph', () => {
+    const graph = serializeGraph(nodes, edges, variables, undefined, settings)
+    const { graphSettings } = deserializeGraph(graph)
+    expect(graphSettings).toEqual(settings)
+  })
+})

@@ -20,7 +20,8 @@
   },
   "tabs": {
     "nodes": "节点",
-    "variables": "变量"
+    "variables": "变量",
+    "graphSettings": "图设置"
   },
   "nodePanel": {
     "title": "节点面板（拖入画布）"
@@ -229,7 +230,10 @@
     "noActiveRunMaybeEnded": "当前没有在途运行可取消（可能已结束）",
     "stopRequested": "⏹ 已请求急停 {{runId}}（下一节点边界生效）",
     "stopFailed": "✗ 急停失败：{{message}}",
-    "unknownError": "未知错误"
+    "unknownError": "未知错误",
+    "stateChanged": "⚙ {{node}} 状态迁移：{{objectRef}} {{from}} --{{event}}--> {{to}}",
+    "healing": "🛠 {{node}} 自愈尝试 #{{attempt}}：verdict={{verdict}}，continue={{continue}}",
+    "globalError": "⚠ {{node}} 图级异常降级：{{code}}（{{detail}}）"
   },
   "error": {
     "compileRunFailed": "编译/运行失败",
@@ -454,7 +458,8 @@
     "wait": "等待设置（挂起后沿唯一出边继续，04 §5.5）",
     "intent_recognition": "意图识别",
     "info_extraction": "信息抽取",
-    "content_generation": "内容生成"
+    "content_generation": "内容生成",
+    "state_machine": "状态机设置（对象按事件迁移，store=memory 跨 run 持续，docs/123 §2.3）"
   },
   "nodeCatalog": {
     "trigger": {
@@ -504,6 +509,10 @@
     "content_generation": {
       "label": "内容生成",
       "description": "LLM 按模板与风格生成内容（需填写模板）"
+    },
+    "state_machine": {
+      "label": "状态机",
+      "description": "业务对象按事件迁移状态，跨 run 持续（store=memory）"
     }
   },
   "tool": {
@@ -576,5 +585,22 @@
     "pathExpr": "{{...}} 表达式",
     "insertableVar": "可插入 {{节点输出.字段}} 变量",
     "insertVar": "插入变量引用"
+  },
+  "graphSettings": {
+    "globalErrorTitle": "图级异常降级（globalErrorHandler）",
+    "strategyPlaceholder": "选择未捕获异常策略（缺省=保持现状 fail-fast）",
+    "strategyMark": "mark_only：标记后失败",
+    "strategyRoute": "route_to_subgraph：诊断子图裁决",
+    "strategyEscalate": "escalate_to_human：人工审批闭环（P-1=C）",
+    "errorSubgraphPlaceholder": "选择诊断/错误处理子图节点",
+    "noSubgraph": "当前画布无 subgraph 节点——先添加子图节点或手填已保存图",
+    "escalationChannel": "审批渠道（如 email / im）",
+    "escalationRecipients": "审批收件人（逗号分隔）",
+    "selfHealingTitle": "自愈（selfHealing）",
+    "triggerOnPlaceholder": "触发错误码（逗号分隔，如 NODE_EXECUTION_FAILED）",
+    "diagnoseSubgraphPlaceholder": "选择诊断子图节点",
+    "maxAttempts": "最大尝试次数",
+    "continueWhenPlaceholder": "继续条件表达式（为真则视为自愈成功）",
+    "emptyHint": "未配置图级降级/自愈——运行期异常保持现状 fail-fast 语义"
   }
 }
