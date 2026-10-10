@@ -28,8 +28,10 @@ def _refund_graph() -> dict:
              "config": {"triggerType": "webhook", "webhookUrl": "/hooks/refund"}},
             {"id": "ai_decision-1", "type": "ai_decision", "name": "决策",
              "position": {"x": 0, "y": 0}, "config": {"promptTemplate": "{{trigger-1.context.payload.reason}}"}},
+            # 打包 AJ（docs/121 §5 D-7）：本文件用例依赖「FAILED 也 completed」旧语义，显式 continue
             {"id": "tool_call-1", "type": "tool_call", "name": "处理",
-             "position": {"x": 0, "y": 0}, "config": {"tool": "shop/process_refund"}},
+             "position": {"x": 0, "y": 0}, "config": {"tool": "shop/process_refund"},
+             "retry": {"on_error": "continue"}},
         ],
         "edges": [
             {"id": "e1", "source": "trigger-1", "target": "ai_decision-1"},
@@ -846,8 +848,10 @@ def _record_mockable_tool_case():
         "nodes": [
             {"id": "trigger-1", "type": "trigger", "name": "t",
              "config": {"triggerType": "webhook", "webhookUrl": "/hooks/x"}},
+            # 打包 AJ（docs/121 §5 D-7）：回放比对依赖「FAILED 也 completed」旧语义，显式 continue
             {"id": "msg-1", "type": "tool_call", "name": "幽灵工具",
-             "config": {"tool": "ghost/ping", "params": "{}"}},
+             "config": {"tool": "ghost/ping", "params": "{}"},
+             "retry": {"on_error": "continue"}},
         ],
         "edges": [{"id": "e1", "source": "trigger-1", "target": "msg-1"}],
     }
@@ -1273,7 +1277,12 @@ _monitoring = tenant_registry.get("t1").monitoring
 
 
 def _sql_template_graph() -> dict:
-    return client.get("/api/templates/sql-query-notify").json()["graph"]
+    graph = client.get("/api/templates/sql-query-notify").json()["graph"]
+    # 打包 AJ（docs/121 §5 D-7）：内置模板默认 on_error=stop（失败即终止），
+    # 本文件用例依赖「FAILED 也 completed」旧语义观察告警/回放，显式改 continue。
+    for node in graph["nodes"]:
+        node.setdefault("retry", {})["on_error"] = "continue"
+    return graph
 
 
 def _stream_run(graph_id: str, payload: dict | None = None):

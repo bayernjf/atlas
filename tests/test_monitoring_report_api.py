@@ -24,8 +24,9 @@ def _simple_graph() -> dict:
         "nodes": [
             {"id": "trigger-1", "type": "trigger", "name": "新退款",
              "config": {"triggerType": "webhook", "webhookUrl": "/hooks/refund"}},
+            # 打包 AJ（docs/121 §5 D-7）：本套件依赖「FAILED 也 completed」旧语义，显式 continue
             {"id": "tool_call-1", "type": "tool_call", "name": "处理",
-             "config": {"tool": "shop/process_refund"}},
+             "config": {"tool": "shop/process_refund"}, "retry": {"on_error": "continue"}},
         ],
         "edges": [{"id": "e1", "source": "trigger-1", "target": "tool_call-1"}],
     }

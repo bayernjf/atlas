@@ -41,9 +41,10 @@ def _minimal_graph() -> dict:
             {"id": "trigger-1", "type": "trigger", "name": "触发",
              "position": {"x": 0, "y": 0},
              "config": {"triggerType": "webhook", "webhookUrl": "/hooks/x"}},
+            # 打包 AJ（docs/121 §5 D-7）：本用例只验证权限不验证失败语义，显式 continue
             {"id": "tool-1", "type": "tool_call", "name": "工具",
              "position": {"x": 0, "y": 0},
-             "config": {"tool": "message/send"}},
+             "config": {"tool": "message/send"}, "retry": {"on_error": "continue"}},
         ],
         "edges": [
             {"id": "e1", "source": "trigger-1", "target": "tool-1"},
