@@ -43,6 +43,8 @@ export type RetryConfig = {
   backoff: string
   timeout: number
   onError: OnErrorStrategy
+  /** 打包 AJ（docs/121）：onError='jump_to' 时的失败路由目标节点 id */
+  errorTarget?: string
 }
 
 export type ConditionBranch = {

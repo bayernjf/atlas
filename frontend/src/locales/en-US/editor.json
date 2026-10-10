@@ -262,7 +262,9 @@
     "section": "Retry and failure handling (04 §3.2 retry)",
     "maxRetries": "Maximum retries",
     "timeoutSeconds": "Timeout (seconds)",
-    "onError": "Failure handling"
+    "onError": "Failure handling",
+    "errorTarget": "Failure jump target",
+    "errorTargetPlaceholder": "Select the node to jump to on failure"
   },
   "decision": {
     "promptTemplateLabel": "Prompt template (supports {{path}} references)",

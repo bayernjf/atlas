@@ -262,7 +262,9 @@
     "section": "重试与失败处理（04 §3.2 retry）",
     "maxRetries": "最大重试次数",
     "timeoutSeconds": "超时（秒）",
-    "onError": "失败处理"
+    "onError": "失败处理",
+    "errorTarget": "失败跳转节点",
+    "errorTargetPlaceholder": "选择失败后跳转到的节点"
   },
   "decision": {
     "promptTemplateLabel": "提示词模板（支持 {{路径}} 引用）",
