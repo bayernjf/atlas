@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Alert,
+  App,
   Button,
   Card,
   Checkbox,
@@ -134,17 +135,21 @@ const DEMO_ORDERS: Array<{ order_id: string; reason: string; amount: number }> =
 export function Editor({
   principal,
   onLogout,
+  onBack,
   initialGraphId,
   initialNodeId,
 }: {
   principal: Principal
   onLogout: () => void
+  /** UX 走查（2026-10-10）：编辑器此前无返回工作台入口，只能刷新页面。 */
+  onBack: () => void
   /** 打包 ZS（docs/92 E-3）：反思「去修改」跳转时待打开的图 id；App 状态导航传入，无 router。 */
   initialGraphId?: string | null
   /** 打包 ZU（docs/94 E-6）：反思节点级定位，打开图后待选中并居中的 ai_decision 节点 id。 */
   initialNodeId?: string | null
 }) {
   const { t } = useTranslation('editor')
+  const { message } = App.useApp()
   const canOperate = roleCan(principal.role, 'operate')
   const canAdmin = roleCan(principal.role, 'administer')
   // docs/101 D59：演示面能力位——admin 且 demo_surface 开启时显示自助重置入口。
@@ -645,6 +650,7 @@ export function Editor({
       )
       const finalStatus = toolOutputs.find((output) => output.result?.status)?.result?.status
       appendLog(t('log.runComplete', { status: finalStatus ?? executed.status }))
+      message.success(t('log.runComplete', { status: finalStatus ?? executed.status }))
       setRunResult(executed)
       setPausedFrame(null)
       setRunOpen(true)
@@ -1250,6 +1256,7 @@ export function Editor({
     <Layout className="editor-layout">
       <Header className="editor-header">
         <Space align="center">
+          <Button onClick={onBack}>← {t('common:button.back')}</Button>
           <Typography.Title level={3} style={{ margin: 0 }}>
             {t('header.title')}
           </Typography.Title>

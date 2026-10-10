@@ -291,7 +291,7 @@ export function Waits({ principal, onLogout, onBack }: WaitsPageProps) {
     <Layout className="page-layout">
       <Header className="page-header" style={{ justifyContent: 'space-between' }}>
         <Space>
-          <Button onClick={onBack}>←</Button>
+          <Button onClick={onBack}>← {t('common:button.back')}</Button>
           <Typography.Title level={3} style={{ margin: 0 }}>
             {t('title')}
           </Typography.Title>

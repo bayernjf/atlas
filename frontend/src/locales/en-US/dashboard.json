@@ -5,7 +5,8 @@
     "cards": {
       "graph": "The refund flow is compiled from DSL to LangGraph and run; node events stream to the UI over SSE",
       "loop": "Minimal OODA loop is up and running",
-      "harness": "Contract/registry layer plus the Playwright web adapter (three-layer targeting) are up and running"
+      "harness": "Contract/registry layer plus the Playwright web adapter (three-layer targeting) are up and running",
+      "enter": "Enter →"
     }
   }
 }
