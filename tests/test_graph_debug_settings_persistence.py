@@ -22,8 +22,9 @@ def _graph_with_debug_settings():
              "config": {"triggerType": "webhook", "webhookUrl": "/hooks/approval"}},
             {"id": "ai_decision-1", "type": "ai_decision", "name": "决策",
              "config": {"promptTemplate": "限额 {{global.approval_limit}} 内自动通过"}},
+            # 打包 AJ（docs/121 §5 D-7）：本用例验证 debug 设置不泄漏到普通 run，显式 continue
             {"id": "tool_call-1", "type": "tool_call", "name": "工具",
-             "config": {"tool": "web-playwright/click"}},
+             "config": {"tool": "web-playwright/click"}, "retry": {"on_error": "continue"}},
         ],
         "edges": [
             {"id": "e1", "source": "trigger-1", "target": "ai_decision-1"},

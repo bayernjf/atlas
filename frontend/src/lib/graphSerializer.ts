@@ -39,11 +39,51 @@ export type SerializedGraph = {
     description: string
     position: { x: number; y: number }
     config: EditorNodeData['config']
-    retry: EditorNodeData['retry']
+    retry: SerializedRetry
   }>
   edges: Array<{ id: string; source: string; target: string }>
   /** docs/60 §5.1：可选顶层；仅当存在至少一个启用断点时输出。 */
   debugSettings?: { breakpoints: PersistedBreakpoint[] }
+}
+
+/**
+ * 打包 AJ（docs/121）：编辑器 retry 用 camelCase（maxRetries/onError/errorTarget），
+ * 后端 RetryConfig 是 snake_case（max_retries/on_error/error_target）——pydantic 对未知键
+ * 静默丢弃，序列化/反序列化必须显式互转，否则面板配置永远到不了运行期。
+ */
+type SerializedRetry = {
+  max_retries: number
+  backoff: string
+  timeout: number
+  on_error: EditorNodeData['retry']['onError']
+  error_target?: string
+}
+
+function serializeRetry(retry: EditorNodeData['retry']): SerializedRetry {
+  const out: SerializedRetry = {
+    max_retries: retry.maxRetries,
+    backoff: retry.backoff,
+    timeout: retry.timeout,
+    on_error: retry.onError,
+  }
+  if (retry.onError === 'jump_to' && retry.errorTarget) {
+    out.error_target = retry.errorTarget
+  }
+  return out
+}
+
+function deserializeRetry(raw: unknown): EditorNodeData['retry'] {
+  const record = (raw ?? {}) as Record<string, unknown>
+  return {
+    maxRetries: typeof record.max_retries === 'number' ? record.max_retries : 0,
+    backoff: typeof record.backoff === 'string' ? record.backoff : '1s',
+    timeout: typeof record.timeout === 'number' ? record.timeout : 30,
+    onError:
+      record.on_error === 'continue' || record.on_error === 'jump_to'
+        ? record.on_error
+        : 'stop',
+    errorTarget: typeof record.error_target === 'string' ? record.error_target : undefined,
+  }
 }
 
 /** 裁剪 undefined/默认值；空断点（普通行断点）输出为 { nodeId }。 */
@@ -80,7 +120,7 @@ export function serializeGraph(
       description: node.data.description ?? '',
       position: { x: Math.round(node.position.x), y: Math.round(node.position.y) },
       config: node.data.config,
-      retry: node.data.retry,
+      retry: serializeRetry(node.data.retry),
     })),
     edges: edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target })),
   }
@@ -117,7 +157,7 @@ export function deserializeGraph(graph: SerializedGraph): {
         status: 'idle' as const,
         description: node.description ?? '',
         config: node.config,
-        retry: node.retry,
+        retry: deserializeRetry(node.retry),
       },
     })),
     edges: graph.edges.map((edge) => ({

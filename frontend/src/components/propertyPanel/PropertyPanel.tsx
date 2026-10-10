@@ -344,6 +344,27 @@ export function PropertyPanel() {
             options={ON_ERROR_STRATEGIES.map((value) => ({ value, label: value }))}
           />
         </Field>
+        {data.retry.onError === 'jump_to' && (
+          <Field label={t('retry.errorTarget')}>
+            <Select
+              value={data.retry.errorTarget}
+              style={{ width: '100%' }}
+              placeholder={t('retry.errorTargetPlaceholder')}
+              onChange={(value) =>
+                updateSelectedNode({ retry: { ...data.retry, errorTarget: value } })
+              }
+              options={nodes
+                .filter(
+                  (node) =>
+                    node.id !== selectedNodeId &&
+                    !['condition', 'loop', 'human_approval', 'parallel'].includes(
+                      node.data.kind as string,
+                    ),
+                )
+                .map((node) => ({ value: node.id, label: node.id }))}
+            />
+          </Field>
+        )}
 
         {diagnostics.length > 0 ? (
           <div className="property-errors">

@@ -33,7 +33,8 @@ describe('serializeGraph', () => {
       type: 'trigger',
       name: '触发',
       config: { triggerType: 'manual' },
-      retry: { onError: 'stop' },
+      // 打包 AJ（docs/121）：序列化输出 snake_case，与后端 RetryConfig 对齐
+      retry: { on_error: 'stop' },
     })
   })
 

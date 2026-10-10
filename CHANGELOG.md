@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+### 打包 AJ：节点级 on_error 真执行（2026-10-10）
+
+- **三值语义落地**：`retry.on_error` 自 W7 起仅 DSL 声明、loader 从未读取；本批真执行——stop＝抛 `RunNodeFailed` 穿透、run failed、同步 /run 500 `NODE_EXECUTION_FAILED`＋nodeId；continue＝旧默认行为的显式化（失败放行、下游照跑）；jump_to＝编译期把普通出边改 conditional edges、失败路由到新字段 `retry.error_target`（内部键 `__on_error_target` 路由消费后剔除）。
+- **max_retries 真重试**：异常与 FAILED 产出都触发，总 1+N 次；`backoff` 只收 `<数>ms`/`<数>s`（编译期 422 `NODE_RETRY_BACKOFF_INVALID`），固定间隔 sleep，产出加 `attempts`。
+- **编译期三码**：jump_to 缺 target → `NODE_ERROR_TARGET_REQUIRED`；target 不存在/自身/配在 condition/loop/human/parallel → `NODE_ERROR_TARGET_INVALID`（DSL 422，validation.json zh/en）。
+- **穿透纪律**：四个控制流异常（RunCancelled/DebugStopped/RunSuperseded/SubgraphSuspendUnsupported）＋已带机器码的确定性失败（WaitNodeFailure/AiDecisionUnavailable 等）永不进 retry/on_error；parallel 区域内节点不装配（失败归 join 网关）；调试会话不包（异常断点原样重抛）。
+- **evaluation**：runner 执行副本把 tool_call 降级为 continue（遍历全图比对决策），决策类节点异常仍穿透为 case 级 error。
+- **前端链路首次打通**：属性面板 onError=jump_to 显示 errorTarget 下拉；graphSerializer 显式 camelCase↔snake_case 互转（此前 camelCase 直发被 pydantic 静默丢弃，面板配置从未到达运行期）。
+- **用例**：U1324–U1331（tests/test_node_on_error.py 14 例）；既有「FAILED 也 completed」断言按契约 D-7 改判为显式 continue。
+- **门**：后端 **2596/173/0**、前端 vitest **972/2**、oxlint 0/0、tsc 0、build 过。零新依赖／零迁移／无 ADR。dev，未 push。
+
 ### 〔前端〕UX 走查与微改进（2026-10-10）
 
 - **全流程 UX 走查**（登录→Dashboard→各功能页→编辑器→运行→错误校验，浏览器实测）：缺陷级硬伤基本没有（loading/空态/错误校验分层/引导文案均到位）；检出并闭合 5 项。

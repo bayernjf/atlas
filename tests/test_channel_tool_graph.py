@@ -87,8 +87,10 @@ def _tool_graph(params: str):
             "nodes": [
                 {"id": "trigger-1", "type": "trigger", "name": "t",
                  "config": {"triggerType": "manual"}},
+                # 打包 AJ（docs/121 §5 D-7）：本套件断言失败产出形状（旧语义），显式 continue
                 {"id": "tool-1", "type": "tool_call", "name": "渠道退款",
-                 "config": {"tool": TOOL, "params": params}},
+                 "config": {"tool": TOOL, "params": params},
+                 "retry": {"on_error": "continue"}},
             ],
             "edges": [{"id": "e1", "source": "trigger-1", "target": "tool-1"}],
         }

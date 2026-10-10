@@ -61,8 +61,9 @@ def _refund_graph() -> dict:
              "config": {"triggerType": "webhook", "webhookUrl": "/hooks/refund"}},
             {"id": "ai_decision-1", "type": "ai_decision", "name": "决策",
              "config": {"promptTemplate": "{{trigger-1.context.payload.reason}}"}},
+            # 打包 AJ（docs/121 §5 D-7）：沿用「FAILED 也 completed」旧语义，显式 continue
             {"id": "tool_call-1", "type": "tool_call", "name": "处理",
-             "config": {"tool": "shop/process_refund"}},
+             "config": {"tool": "shop/process_refund"}, "retry": {"on_error": "continue"}},
         ],
         "edges": [
             {"id": "e1", "source": "trigger-1", "target": "ai_decision-1"},

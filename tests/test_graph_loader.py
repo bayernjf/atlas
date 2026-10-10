@@ -41,9 +41,11 @@ def _sample_graph():
                 {"id": "ai_decision-1", "type": "ai_decision", "name": "决策",
                  "config": {"promptTemplate": "公司 {{global.company_name}} 限额 {{global.approval_limit}} 缺失 {{trigger-1.context.payload.missing}}",
                             "confidenceThreshold": 0.6, "model": "demo"}},
+                # 打包 AJ（docs/121 §5 D-7）：断言「FAILED 产出不抛异常」旧语义，显式 continue
                 {"id": "tool_call-1", "type": "tool_call", "name": "工具",
                  "config": {"tool": "ghost-adapter/click",
-                            "params": "依据 {{ai_decision-1.decision}} 执行"}},
+                            "params": "依据 {{ai_decision-1.decision}} 执行"},
+                 "retry": {"on_error": "continue"}},
             ],
             "edges": [
                 {"id": "e1", "source": "trigger-1", "target": "ai_decision-1"},
@@ -1167,7 +1169,11 @@ def test_subgraph_child_runtime_error_fails_safe_but_parent_completes():
     # fail-safe：父 run 仍 completed，唯一后继照常执行
     assert result["status"] == "completed"
     assert "tool-after" in result["outputs"]
-    assert any("graph-boom failed: boom" in line for line in result["trace"])
+    # 打包 AJ（docs/121 §5 D-7）：子图内 stop 穿透后 trace 夹带 NODE_EXECUTION_FAILED 机器码，
+    # 原始错误串仍在尾部
+    assert any(
+        "graph-boom failed:" in line and "boom" in line for line in result["trace"]
+    )
 
 
 def test_subgraph_inside_loop_body_runs_each_iteration():

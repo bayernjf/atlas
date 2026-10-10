@@ -49,3 +49,7 @@
 ## 自定义控件扩展契约落码收口＝D29 解锁路径第 1 步
 
 ✅ **自定义控件扩展契约落码收口＝D29 解锁路径第 1 步（docs/118；2026-10-10，同日契约通过/落码/收口）**：`registerWidget` 升级为正式契约并落地——名称规则（禁内置九件冲突、`<domain>-<semantic>`、同名覆盖）＋组件签名静态校验；`WidgetName` 拓宽为「内置九件∪已登记业务控件名」（`BUSINESS_WIDGETS` 常量表、nodeRegistry 注册与声明同源）、`resolveWidget` 去断言、未登记名按类型默认走；运行期降级 json＋`console.warn`（get() throw 保留）；契约测试 17 例。门：前端 vitest 932/2（+17）、oxlint/tsc/build 过、守护门 8 passed。零新依赖/零迁移/无 ADR。第 2/3 步（异构数组、RolloutModal 迁移）仍缓做，D29 不解除。
+
+## 部署 gate 配置面迁 forms＝D29 解锁路径第 3 步第一片
+
+✅ **部署 gate 配置面迁 forms＝D29 解锁路径第 3 步第一片落码收口（docs/115；2026-10-10，同日落码/收口）**：部署配置面作为第四实体接入 forms 的第一片实际落地（docs/118 契约后的第一个消费方）——`types.ts` 业务控件名分组节点组∪部署组、`isWidgetName` 同步识别；`buildGateSchema()`（标量×3 走内置 number/switch、metrics 数组 `x-widget: deploy-gate-metrics`）＋`GateMetricsWidget`（固定三行 GATE_METRIC_SPECS 可空阈值编辑）＋`buildDeployRegistry()`（独立实例）；`release.ts` 提炼 `upsertGateMetric`（`setGateMetric` 改委托）；RolloutModal gate 区删手写 InputNumber×2＋Switch＋Table 改挂 FormRenderer，后端 GateConfig 形状不变；两处 UI 微差照实（观察窗无「分钟」后缀、新增「门控指标」label）。门：前端 vitest 943/2（+11）、oxlint/tsc/build 过、守护门 8 passed、冒烟 gate 区全量渲染确认。零新依赖/零迁移/无 ADR。第 2 步异构数组与规则区第二片仍缓做，D29 不解除。

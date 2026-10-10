@@ -34,8 +34,9 @@ def _simple_graph(tool: str = "op-x"):
             "nodes": [
                 {"id": "trigger-1", "type": "trigger", "name": "t",
                  "config": {"triggerType": "manual"}},
+                # 打包 AJ（docs/121 §5 D-7）：FAILED 产出仍放行（旧语义）以观察 span error 标记
                 {"id": "tool-1", "type": "tool_call", "name": "工具",
-                 "config": {"tool": tool}},
+                 "config": {"tool": tool}, "retry": {"on_error": "continue"}},
             ],
             "edges": [{"id": "e1", "source": "trigger-1", "target": "tool-1"}],
         }

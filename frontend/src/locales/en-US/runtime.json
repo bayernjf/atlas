@@ -23,6 +23,7 @@
   "LLM_DECISION_UNAVAILABLE": "No LLM decision provider is configured in production; the AI decision node aborted this run instead of silently falling back to rules",
   "LOOP_ITEMS_TOO_LARGE": "The iterated array exceeds the maximum length",
   "LOOP_MAX_ITERATIONS": "Reached the maximum number of iterations; exiting the loop",
+  "NODE_EXECUTION_FAILED": "Node {{nodeId}} failed (on_error=stop); the run was aborted",
   "OPENAPI_BODY_MISSING_SCHEMA": "The request body is missing a JSON schema",
   "OPENAPI_BODY_NOT_JSON": "Only application/json request bodies are supported",
   "OPENAPI_CREDENTIAL_BASIC_INCOMPLETE": "Basic auth needs a non-empty username and password: {{name}}",

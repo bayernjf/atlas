@@ -23,6 +23,7 @@
   "LLM_DECISION_UNAVAILABLE": "生产环境未配置 LLM 决策器，AI 决策节点中止了本次运行（不再静默降级为规则兜底）",
   "LOOP_ITEMS_TOO_LARGE": "遍历数组长度超过上限",
   "LOOP_MAX_ITERATIONS": "已达最大循环次数，强制退出循环",
+  "NODE_EXECUTION_FAILED": "节点 {{nodeId}} 执行失败（on_error=stop），本次运行已终止",
   "OPENAPI_BODY_MISSING_SCHEMA": "请求体缺少 JSON schema",
   "OPENAPI_BODY_NOT_JSON": "请求体仅支持 application/json",
   "OPENAPI_CREDENTIAL_BASIC_INCOMPLETE": "Basic 鉴权需同时提供非空用户名与密码：{{name}}",

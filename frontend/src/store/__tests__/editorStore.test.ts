@@ -4,6 +4,9 @@ import type { SerializedGraph } from '../../lib/graphSerializer'
 import { defaultConfig, defaultRetry } from '../../lib/nodeCatalog'
 import { INITIAL_DIRTY } from '../../lib/validation/dirty'
 
+// 打包 AJ（docs/121）：SerializedGraph 的 retry 是 snake_case（与后端 RetryConfig 对齐）
+const serializedRetry = { max_retries: 0, backoff: '1s', timeout: 30, on_error: 'stop' as const }
+
 function stubNode(id: string): EditorNode {
   return {
     id,
@@ -303,13 +306,13 @@ describe('editorStore W9-W10 run status and draft loading', () => {
           id: 'trigger-1', type: 'trigger', name: '触发', description: '',
           position: { x: 1, y: 2 },
           config: { triggerType: 'webhook', webhookUrl: '/hooks/refund' },
-          retry: defaultRetry(),
+          retry: serializedRetry,
         },
         {
           id: 'tool_call-1', type: 'tool_call', name: '退款', description: '',
           position: { x: 3, y: 4 },
           config: { tool: 'shop/process_refund' },
-          retry: defaultRetry(),
+          retry: serializedRetry,
         },
       ],
       edges: [{ id: 'e1', source: 'trigger-1', target: 'tool_call-1' }],
@@ -361,7 +364,7 @@ describe('editorStore session breakpoints (04 §5.12)', () => {
           id: 'trigger-1', type: 'trigger', name: '触发', description: '',
           position: { x: 0, y: 0 },
           config: { triggerType: 'manual' },
-          retry: defaultRetry(),
+          retry: serializedRetry,
         },
       ],
       edges: [],
@@ -462,8 +465,8 @@ describe('editorStore 校验脏标记（M4 批 1 ⑤）', () => {
       version: 1,
       variables: [],
       nodes: [
-        { id: 'trigger-1', type: 'trigger', name: 'a', description: '', position: { x: 0, y: 0 }, config: { triggerType: 'manual' }, retry: defaultRetry() },
-        { id: 'tool_call-1', type: 'tool_call', name: 'b', description: '', position: { x: 0, y: 0 }, config: { tool: 'x' }, retry: defaultRetry() },
+        { id: 'trigger-1', type: 'trigger', name: 'a', description: '', position: { x: 0, y: 0 }, config: { triggerType: 'manual' }, retry: serializedRetry },
+        { id: 'tool_call-1', type: 'tool_call', name: 'b', description: '', position: { x: 0, y: 0 }, config: { tool: 'x' }, retry: serializedRetry },
       ],
       edges: [],
     })
@@ -634,7 +637,7 @@ describe('loadGraph persisted breakpoints (docs/60 §5)', () => {
           description: '',
           position: { x: 0, y: 0 },
           config: defaultConfig('trigger'),
-          retry: defaultRetry(),
+          retry: serializedRetry,
         },
       ],
       edges: [],

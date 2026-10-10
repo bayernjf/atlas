@@ -299,9 +299,11 @@ def _message_graph(tool: str) -> dict:
         "nodes": [
             {"id": "trigger-1", "type": "trigger", "name": "t",
              "config": {"triggerType": "webhook", "webhookUrl": "/hooks/refund"}},
+            # 打包 AJ（docs/121 §5 D-7）：灰度门按「FAILED 也 completed」旧语义计数，显式 continue
             {"id": "msg-1", "type": "tool_call", "name": "通知",
              "config": {"tool": tool, "params": json.dumps(
-                 {"channel": "email", "to": ["ops@example.com"], "subject": "s", "body": "ok"})}},
+                 {"channel": "email", "to": ["ops@example.com"], "subject": "s", "body": "ok"})},
+             "retry": {"on_error": "continue"}},
         ],
         "edges": [{"id": "e1", "source": "trigger-1", "target": "msg-1"}],
     }

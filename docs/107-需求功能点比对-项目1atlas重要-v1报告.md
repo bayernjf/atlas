@@ -41,7 +41,7 @@
 | 4.3 自然语言生成流程（简单场景） | llm/nl_generate.py | ✅ |
 | 4.3 基础执行引擎（LangGraph） | graph/loader.py + engine | ✅ |
 | 4.3 运行日志与单步调试 | debug/（断点/step/continue/条件断点/快照） | ✅ |
-| 5.2 节点 Schema（id/type/config/inputs/outputs/retry/timeout/on_error/breakpoint） | graph/dsl.py 契约 | ✅ |
+| 5.2 节点 Schema（id/type/config/inputs/outputs/retry/timeout/on_error/breakpoint） | graph/dsl.py 契约 | ✅（〔2026-10-10 打包 AJ〕on_error/max_retries 从纸面声明转真执行，docs/121） |
 | 5.3 节点类型清单（trigger/ai_decision/tool_call/condition） | 全部存在 | ✅ |
 | 5.4 适配器 Schema（auth_type/capabilities/input/output schema/permission/is_idempotent） | connections/ + harness/registry | ✅ |
 | 5.5 变量系统（全局/会话/节点/秘密/环境 + {{路径}}） | variables.ts + graph/interpolation.py + secrets 信封 | ✅ |
@@ -75,7 +75,7 @@
 - **知识组件**（§7）：FAQ/SOP/产品手册/业务规则/历史案例向量库、文档导入向量化、知识更新——**已取回 MVP（2026-10-09 打包 AA/D60 落码收口，docs/108；知识库/RAG MVP）**：`memory_items.kind` 扩展 `knowledge`（迁移 046）＋`meta.category` 白名单 faq/sop/manual/rule/case＋`POST /api/knowledge/import` 纯文本分段向量化＋`memory/recall` kind/category 过滤＋前端记忆页「记忆/知识」双标签。**仍缓做（D60 不解除）**：多格式文档解析（PDF/Word/网页）、跨运营体知识共享、知识更新审核流、RAG 重排/多路召回、商业 embedding、知识市场/版本化、记忆/知识拆表
 - 三个节点类型（§3.1）：意图识别、信息抽取、内容生成——**已落码收口（2026-10-09 打包 AB/D61，docs/109）**：`SUPPORTED_NODE_TYPES` 加三类＋`llm/structured.py` 三客户端（classify_intent/extract_fields/generate_content，走 model_config per-tenant、无模型显式 FAILED）＋前端 nodeCatalog 三节点入册＋属性面板 forms 内核（intents/fields/template schema）。**仍缓做（D61 不解除）**：意图多轮澄清、槽位训练、few-shot 自动学习、置信度挂起转人工联动、NL 适配器生成
 - 移动端/桌面端/IoT 适配器（D1）；NL 生成适配器配置（LLM 生成适配器定义）；开发者 SDK
-- 状态机子图、全局异常处理器、自愈机制（诊断子图）
+- 状态机子图、全局异常处理器、自愈机制（诊断子图）（〔2026-10-10 打包 AJ〕局部异常（节点级 on_error）已落码，docs/121；全局侧登记 docs/14 D63）
 - 技能库/版本管理/推荐（技能 v1 只有基础封装）
 - 记忆配置 UI（memory_config 策略表单、记忆浏览器）——D35 余部
 - 复杂协同拓扑/冲突仲裁/协同调试
