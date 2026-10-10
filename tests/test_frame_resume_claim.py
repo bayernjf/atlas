@@ -365,9 +365,13 @@ def test_superseded_in_subgraph_passthrough_clause_exists():
         for clause in re.findall(r"except \(([^)]*)\):", source)
     ]
     control_flow = [members for members in clauses if "RunSuperseded" in members]
-    assert len(control_flow) == 2, (
-        "节点执行器与子图 fail-safe 两处都要豁免，"
+    assert len(control_flow) >= 2, (
+        "节点执行器与子图 fail-safe 两处都要豁免（打包 AL 起 run_graph 收口与 "
+        "_wrap_retry passthrough 为正当增员），"
         f"实得 {len(control_flow)} 处控制流豁免点：{control_flow}"
+    )
+    assert all("RunSuperseded" in members for members in control_flow), (
+        "每个控制流豁免点都必须含 RunSuperseded，否则认领信号会被降级成普通失败"
     )
     assert any("SubgraphSuspendUnsupported" in members for members in control_flow), (
         "打包 ZK：子图挂起在持久化档的显式拒绝必须穿透子图 fail-safe，否则成「子图 failed、"
