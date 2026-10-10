@@ -55,6 +55,23 @@ _REMEMBER_INPUT_SCHEMA = {
             "additionalProperties": {"type": "string"},
             "description": "附加信息（可选）",
         },
+        # 打包 AK（docs/122 D-4）：缺省 overwrite＝与"同 scope 同内容不堆叠"的旧语义兼容。
+        "update_policy": {
+            "type": "string",
+            "enum": ["overwrite", "version", "ask"],
+            "default": "overwrite",
+            "description": (
+                "命中既有条目时怎么办：overwrite 原地更新（id/created_at 不变）、"
+                "version 新建一条并把 meta.version 递增、ask 不写库只返回冲突交调用方决定"
+            ),
+        },
+        "dedup_keys": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "去重键＝scope 的键名（如 [\"object_id\"]）；缺省空＝按同 scope＋同内容去重"
+            ),
+        },
     },
 }
 
@@ -70,6 +87,11 @@ _REMEMBER_OUTPUT_SCHEMA = {
         "source": {"type": "string"},
         "metadata": {"type": "object", "additionalProperties": {"type": "string"}},
         "created_at": {"type": "string"},
+        # update_policy=ask 且命中时返回的是 {conflict, existing_id, existing} 三键形状
+        # （不写库），required 那三项此时不存在——调用方先看 conflict 再取条目字段。
+        "conflict": {"type": "boolean"},
+        "existing_id": {"type": "string"},
+        "existing": {"type": "object"},
     },
 }
 
@@ -92,6 +114,20 @@ _RECALL_INPUT_SCHEMA = {
         },
         "top_k": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
         "min_score": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.0},
+        # 打包 AK（docs/122 D-5）：缺省不传＝纯 cosine，与接入前逐字一致。
+        "decay": {
+            "type": "object",
+            "properties": {
+                "enabled": {"type": "boolean", "default": False},
+                "half_life_days": {
+                    "type": "integer", "minimum": 1, "maximum": 3650, "default": 30,
+                },
+            },
+            "description": (
+                "时间衰减：score' = score × 0.5^(age_days/half_life_days)，按衰减后的分数重排。"
+                "不传或 enabled=false 时排序与接入前逐字一致"
+            ),
+        },
     },
 }
 
@@ -180,6 +216,8 @@ class MemoryHarnessAdapter(HarnessAdapter):
                     confidence=confidence,
                     source="tool",
                     metadata=params.get("metadata"),
+                    update_policy=params.get("update_policy"),
+                    dedup_keys=params.get("dedup_keys"),
                 )
                 return ActionResult.success(item)
             if request.capability_name == "recall":
@@ -196,6 +234,7 @@ class MemoryHarnessAdapter(HarnessAdapter):
                     scope=params.get("scope"),
                     top_k=top_k,
                     min_score=min_score,
+                    decay=params.get("decay"),
                 )
                 return ActionResult.success({"results": results})
         except MemoryValidationError as exc:

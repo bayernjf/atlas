@@ -2090,13 +2090,9 @@ def _state_memory_write(repo: Any, object_ref: str, state: str, node_id: str) ->
             f"state_machine 节点 {node_id} 配置了 store=memory 但当前运行未装配记忆存储"
         )
     scope = {"object_id": object_ref}
-    # 进程内 MemoryStore.update 无 scope 删除通道；用 list+delete 清旧同对象条目。
-    try:
-        for item in repo.list(kind="fact", limit=200):
-            if item.get("scope", {}).get("object_id") == object_ref:
-                repo.delete(item["id"])
-    except Exception:  # noqa: BLE001 清旧失败不阻断写新（幂等覆盖语义）
-        pass
+    # 打包 AK（docs/122 D-4）：去重交给存储层的 update_policy，不再"扫 200 条＋删＋插"。
+    # 手搓那套有两个静默面：limit=200 之外的旧条目会留下（同一对象两条状态并存），
+    # 而清旧失败被 except 吞掉后写新照走。overwrite 命中即原地更新、created_at 不变，两档同构。
     repo.remember(
         kind="fact",
         content=f"对象 {object_ref} 当前状态：{state}",
@@ -2104,6 +2100,8 @@ def _state_memory_write(repo: Any, object_ref: str, state: str, node_id: str) ->
         confidence=1.0,
         source="run",
         metadata={"state": state, "object_ref": object_ref},
+        update_policy="overwrite",
+        dedup_keys=["object_id"],
     )
 
 

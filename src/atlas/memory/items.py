@@ -12,7 +12,17 @@ from datetime import datetime, timezone
 from typing import Any
 
 from atlas.memory.embeddings import EmbeddingProvider, cosine_similarity, get_embedding_provider
-from atlas.memory.models import MemoryItem, validate_recall_params, validate_remember_params
+from atlas.memory.models import (
+    MemoryItem,
+    decay_multiplier,
+    dedup_match,
+    max_version,
+    validate_decay,
+    validate_dedup_keys,
+    validate_recall_params,
+    validate_remember_params,
+    validate_update_policy,
+)
 
 # 对外字段（不含 embedding），顺序即列表/响应字段顺序。
 _PUBLIC_FIELDS = (
@@ -59,6 +69,8 @@ class MemoryStore:
         confidence: float = 1.0,
         source: str = "tool",
         metadata: dict[str, str] | None = None,
+        update_policy: str = "overwrite",
+        dedup_keys: list[str] | None = None,
     ) -> dict[str, Any]:
         params = validate_remember_params(
             kind=kind,
@@ -68,8 +80,47 @@ class MemoryStore:
             source=source,
             metadata=metadata,
         )
+        policy = validate_update_policy(update_policy)
+        keys = validate_dedup_keys(dedup_keys)
         vector = self._provider.embed([params["content"]])[0]
         with self._lock:
+            matched = [
+                record
+                for record in self._items
+                if dedup_match(
+                    record["scope"],
+                    record["content"],
+                    kind=record["kind"],
+                    match_kind=params["kind"],
+                    scope=params["scope"],
+                    content=params["content"],
+                    dedup_keys=keys,
+                )
+            ]
+            if matched:
+                if policy == "ask":
+                    # 不静默：把冲突交回调用方决定（v1 不挂审批，docs/122 D-4）。
+                    latest = matched[-1]
+                    return {
+                        "conflict": True,
+                        "existing_id": latest["id"],
+                        "existing": public_memory(latest),
+                    }
+                if policy == "overwrite":
+                    target = matched[-1]
+                    target.update(
+                        content=params["content"],
+                        confidence=params["confidence"],
+                        metadata=params["metadata"],
+                        source=params["source"],
+                        embedding=vector,
+                    )
+                    # created_at 与 id 不变＝"这条事实被更新了"，不是"又记了一遍"。
+                    return public_memory(target)
+                params["metadata"] = {
+                    **params["metadata"],
+                    "version": str(max_version(matched) + 1),
+                }
             self._counter += 1
             item = MemoryItem(
                 id=f"mem-{self._counter}",
@@ -95,10 +146,13 @@ class MemoryStore:
         scope: dict[str, str] | None = None,
         top_k: int = 5,
         min_score: float = 0.0,
+        decay: dict[str, Any] | None = None,
+        now_override: datetime | None = None,
     ) -> list[dict[str, Any]]:
         params = validate_recall_params(
             query=query, kind=kind, category=category, scope=scope, top_k=top_k, min_score=min_score
         )
+        decay_rule = validate_decay(decay)
         query_vector = self._provider.embed([params["query"]])[0]
         with self._lock:
             candidates = list(self._items)
@@ -119,6 +173,15 @@ class MemoryStore:
             scored.append((score, record))
         scored.sort(key=lambda pair: pair[0], reverse=True)
         results: list[dict[str, Any]] = []
+        if decay_rule is not None:
+            # 衰减只对**过了 min_score 的候选集**做，且在这里统一重排（两档同一公式同一处）。
+            half_life = decay_rule["half_life_days"]
+            now = now_override or datetime.now(timezone.utc)
+            scored = [
+                (score * decay_multiplier(record.get("created_at"), now, half_life), record)
+                for score, record in scored
+            ]
+            scored.sort(key=lambda pair: pair[0], reverse=True)
         for score, record in scored[: params["top_k"]]:
             public = public_memory(record)
             public["score"] = round(score, 6)

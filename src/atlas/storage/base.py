@@ -28,6 +28,8 @@ from atlas.recording.cases import RecordingCase, RecordStep
 
 if TYPE_CHECKING:
     # 仅类型标注用；运行时避免 import iam（iam.__init__ → deps → registry → storage 会成环）
+    from datetime import datetime
+
     from atlas.iam.principals import Principal
     from atlas.connections.models import Connection
 
@@ -239,7 +241,9 @@ class MemoryRepository(Protocol):
         confidence: float = 1.0,
         source: str = "tool",
         metadata: dict[str, str] | None = None,
-    ) -> dict[str, Any]: ...
+        update_policy: str = "overwrite",  # 打包 AK docs/122 D-4：overwrite | version | ask
+        dedup_keys: list[str] | None = None,  # 去重键＝scope 的键名；空＝按 scope+内容去重
+    ) -> dict[str, Any]: ...  # ask 命中时返回 {conflict, existing_id, existing}（不写库）
 
     def recall(
         self,
@@ -249,6 +253,8 @@ class MemoryRepository(Protocol):
         scope: dict[str, str] | None = None,  # 子集匹配：item.scope 须包含其全部键值
         top_k: int = 5,
         min_score: float = 0.0,
+        decay: dict[str, Any] | None = None,  # 打包 AK docs/122 D-5：{enabled, half_life_days}
+        now_override: datetime | None = None,  # 注入时钟，保证回放确定
     ) -> list[dict[str, Any]]: ...  # 每项 = MemoryItem dict + "score"，按 score 降序
 
     def list(self, *, kind: str | None = None, limit: int = 50) -> list[dict[str, Any]]: ...
