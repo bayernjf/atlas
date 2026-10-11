@@ -356,3 +356,93 @@ def test_u1364b_state_machine_unknown_or_deep_path_rejected():
         assert "不存在该路径" in message, body
         assert "state-1" in message, body
         assert body in message, body
+
+
+# --- docs/14 D66 收口（打包 AP）：三类放行根＝loader 真产出 ----------------------
+
+_D66_REFERABLE = {
+    "cond-1": (
+        "mode", "branch", "target", "evaluation", "llm_errors",
+        "expression_errors", "expressionErrorCodes", "expressionErrorParams",
+    ),
+    "loop-1": (
+        "mode", "index", "iterations", "items", "item", "results", "target", "exitReason",
+        "expression_errors", "expressionErrorCodes", "expressionErrorParams",
+    ),
+    "wait-1": (
+        "mode", "waitType", "durationMode", "durationExpression", "durationSeconds",
+        "plannedDurationSeconds", "jitterSeconds", "absoluteTime", "eventKey", "eventKeys",
+        "eventWaitMode", "matchedEventKey", "matchedEventKeys", "matchedPayloads",
+        "receivedKeys", "signaled", "payload", "waitedSeconds", "resolvedBy", "token",
+    ),
+}
+
+
+def _d66_body(node_id: str, path: str) -> str:
+    return '{"channel":"sms","to":"ops","subject":"s","body":"{{%s.%s}}"}' % (node_id, path)
+
+
+def _d66_graph(node_id: str, path: str, *, loop_mode: str = "while") -> dict:
+    """三类各一张最小图：引用方是被引节点的下游（可见性由拓扑保证）。"""
+    if node_id == "cond-1":
+        return _chain(
+            _trigger(),
+            {"id": "cond-1", "type": "condition", "name": "分流",
+             "config": {"conditionMode": "rule",
+                        "branches": [{"label": "big",
+                                      "expression": "{{trigger-1.context.payload.amount}} > 1",
+                                      "target": "tool-1"}],
+                        "defaultTarget": "tool-else"}},
+            _tool("tool-1", "message/send", _d66_body(node_id, path)),
+            _tool("tool-else", "message/send"),
+            edges=[{"id": "e0", "source": "trigger-1", "target": "cond-1"},
+                   {"id": "e1", "source": "cond-1", "target": "tool-1"},
+                   {"id": "e2", "source": "cond-1", "target": "tool-else"}],
+        )
+    if node_id == "wait-1":
+        return _chain(
+            _trigger(),
+            {"id": "wait-1", "type": "wait", "name": "等待",
+             "config": {"waitType": "duration", "durationSeconds": 1}},
+            _tool("tool-1", "message/send", _d66_body(node_id, path)),
+        )
+    return _loop_graph("{{loop-1.index}} < 3", _d66_body(node_id, path))
+
+
+def test_d66_condition_loop_wait_output_roots_are_referrable():
+    """放行根＝loader 真产出（各 mode 并集）；改前引用 {{loop-1.exitReason}} 会被编译期拒。"""
+    for node_id, paths in _D66_REFERABLE.items():
+        for path in paths:
+            compile_graph(parse_graph(_d66_graph(node_id, path)), registry=build_demo_registry())
+
+
+def test_d66_unknown_or_deep_path_still_rejected():
+    """变宽的是"真产出"，不是放开任意深度：错名与深层路径照拒。"""
+    for body in ("{{cond-1.bogus}}", "{{cond-1.evaluation.x}}", "{{loop-1.bogus}}",
+                 "{{loop-1.index.x}}", "{{wait-1.bogus}}", "{{wait-1.payload.x}}",
+                 # while 档没有 item 产出 ⇒ item 深层不放行（foreach 专用门，见下条）
+                 "{{loop-1.item.id}}"):
+        node_id = body[2:].split(".")[0]
+        message = _compile_error(_d66_graph(node_id, body[2:-2].split(".", 1)[1]))
+        assert "不存在该路径" in message, body
+        assert node_id in message, body
+        assert body in message, body
+
+
+def test_d66_foreach_item_deep_path_allowed():
+    """foreach 的 item 是不透明元素：深层放行（while 档拒，见上条）——两条互为反向门。"""
+    raw = _chain(
+        _trigger(),
+        {"id": "loop-1", "type": "loop", "name": "遍历",
+         "config": {"mode": "foreach", "itemsExpression": "{{trigger-1.context.payload.items}}",
+                    "maxIterations": 5, "bodyTarget": "tool-body", "exitTarget": "tool-exit"}},
+        _tool("tool-body", "message/send", '{"channel":"sms","to":"ops","subject":"s",'
+              '"body":"{{loop-1.item.id}}"}'),
+        {"id": "tool-exit", "type": "tool_call", "name": "退出",
+         "config": {"tool": "message/send", "params": "{}"}},
+        edges=[{"id": "e0", "source": "trigger-1", "target": "loop-1"},
+               {"id": "e1", "source": "loop-1", "target": "tool-body"},
+               {"id": "e2", "source": "loop-1", "target": "tool-exit"},
+               {"id": "e3", "source": "tool-body", "target": "loop-1"}],
+    )
+    compile_graph(parse_graph(raw), registry=build_demo_registry())
