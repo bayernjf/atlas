@@ -893,11 +893,13 @@ class MemoryRepository(Protocol):
 #     input  {query: string*, kind?: enum, scope?:{str:str}, top_k?: int 1-20=5, min_score?: number 0-1=0,
 #             decay?: {enabled: bool=false, half_life_days: int 1-3650=30}}                # 打包 AK
 #     output {results: [{id, kind, content, score, confidence, scope, created_at}]}  # 无命中 results=[]
-#   能力 memory/auto_extract（action=memory_auto_extract，permission=write，幂等）打包 AK docs/122 D-2
+#   能力 memory/auto_extract（action=memory_auto_extract，permission=write，**非幂等**〔2026-10-11 订正，docs/122 §6.1〕）打包 AK docs/122 D-2
 #     input  {text: string 1-4000*, min_confidence?: number 0-1=0.85, scope?:{str:str}}
 #     output {extracted, facts[], preferences[], dropped_below_threshold, min_confidence, skipped, reason?}
 #            # skipped="llm_unavailable"（根本没接模型）≠ skipped=""＋extracted=0（确实没提炼到）
-#            # 落库 source="auto_extract"、走缺省 overwrite ⇒ 同文本重跑不堆条目（幂等的承重判据）
+#            # 〔原写"同文本重跑不堆条目＝幂等承重判据"，真机已证伪〕落库确实走缺省 overwrite，
+#            # 但去重判据是"同 scope 同内容**精确**匹配"，而真模型两次措辞不会一致：实测同段文本
+#            # 重跑 3 条→6 条 ⇒ is_idempotent=False。语义近似去重缓做＝docs/14 D65。
 #   schema 守 harness Capability keyword 白名单（无 x- 扩展）；observe() 返空 Observation。
 #   装配照 message 两段式：全局注册仅供发现，_runtime_registry 按租户克隆注入 services.memory_store。
 #   AK 已知限制：auto_extract 的模型解析只到 env（LITELLM_MODEL），**租户 BYOK 不生效**——
