@@ -254,6 +254,36 @@ class MemoryStore:
                     return True
         return False
 
+    def prune_expired(self, cutoff_iso: str) -> int:
+        """删除 created_at 早于截止时刻的条目，返回删除条数（docs/14 D35 保留期裁剪）。
+
+        与 PG 档 ``PgBackend.prune_expired`` 的 memory_items 分支同语义，供两档对拍与
+        进程内测试；进程内档不挂启动清扫（重启即清空，见 storage/retention.py）。
+        无法解析的 created_at 按"保留"处理（与 decay 的 fail-safe 同向，不因格式事故丢记忆）。
+        mem-N 计数器不回退，避免删除后 id 复用。
+        """
+        cutoff = datetime.fromisoformat(cutoff_iso)
+        if cutoff.tzinfo is None:
+            cutoff = cutoff.replace(tzinfo=timezone.utc)
+        removed = 0
+        with self._lock:
+            survivors: list[dict[str, Any]] = []
+            for record in self._items:
+                born_raw = record.get("created_at")
+                try:
+                    born = datetime.fromisoformat(str(born_raw))
+                except ValueError:
+                    survivors.append(record)
+                    continue
+                if born.tzinfo is None:
+                    born = born.replace(tzinfo=timezone.utc)
+                if born < cutoff:
+                    removed += 1
+                else:
+                    survivors.append(record)
+            self._items = survivors
+        return removed
+
     def clear(self) -> None:
         """reset 用（RESET_RESETTABLE，与 graph 同）。"""
         with self._lock:

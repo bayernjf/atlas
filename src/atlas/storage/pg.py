@@ -117,6 +117,13 @@ class PgBackend:
                 "DELETE FROM message_deliveries "
                 "WHERE sent_at < CAST(:cutoff AS timestamptz)"
             ),
+            # 长期记忆保留期裁剪（docs/14 D35 安全切片）：created_at 为 TEXT ISO 列，
+            # 须 ::timestamptz 转换再比较。cutoff 为 None（缺省，未显式配置）时整表跳过——
+            # 长期记忆缺省永不过期，也不跟随全局 ATLAS_RETENTION_DAYS（见 retention.py）。
+            "memory_items": (
+                "DELETE FROM memory_items "
+                "WHERE created_at::timestamptz < CAST(:cutoff AS timestamptz)"
+            ),
         }
         deleted: dict[str, int] = {}
         with self._engine.begin() as conn:

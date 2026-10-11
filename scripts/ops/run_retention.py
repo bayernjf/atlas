@@ -33,7 +33,11 @@ def main() -> int:
         return 0
     if args.dry_run:
         for table, cutoff in sorted(cutoffs.items()):
-            print(f"dry-run: DELETE from {table} where < {cutoff}")
+            if cutoff is None:
+                # 长期记忆缺省不过期（未设 ATLAS_RETENTION_MEMORY_DAYS）
+                print(f"dry-run: retain {table} (no retention configured)")
+            else:
+                print(f"dry-run: DELETE from {table} where < {cutoff}")
         print("dry-run: no rows deleted")
         return 0
     from atlas.storage.pg import get_pg_backend
