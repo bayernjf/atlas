@@ -2001,6 +2001,29 @@ class PgMemoryStore:
         )
         return [self._row_to_public(row) for row in conn.execute(text(sql), args).all()]
 
+    def _similar_matches(
+        self, conn, params: dict[str, Any], vector: list[float], threshold: float
+    ) -> list[dict[str, Any]]:
+        """语义近似去重命中（docs/14 D65）：口径与 PgMemoryStore.recall 严格一致——
+        同租户、同 kind、``scope @>`` 子集、pgvector 余弦相似度 ``1 - (embedding <=> q)``
+        ≥阈值，旧→新。仅在精确去重无命中时由 remember 调用。
+        """
+        similarity = "(1.0 - (embedding <=> CAST(:q AS vector(256))))"
+        sql = (
+            f"SELECT {self._PUBLIC_COLS} FROM memory_items "
+            f"WHERE tenant_id = :tenant_id AND kind = :kind "
+            f"AND scope @> CAST(:scope AS jsonb) AND {similarity} >= :threshold "
+            f"ORDER BY created_at ASC"
+        )
+        args = {
+            "tenant_id": self._tenant_id,
+            "kind": params["kind"],
+            "scope": json.dumps(params["scope"], ensure_ascii=False),
+            "q": self._vector_literal(vector),
+            "threshold": threshold,
+        }
+        return [self._row_to_public(row) for row in conn.execute(text(sql), args).all()]
+
     def remember(
         self,
         *,
@@ -2012,9 +2035,11 @@ class PgMemoryStore:
         metadata: dict[str, str] | None = None,
         update_policy: str = "overwrite",
         dedup_keys: list[str] | None = None,
+        dedup_similarity: float | None = None,
     ) -> dict[str, Any]:
         from atlas.memory.models import (
             validate_dedup_keys,
+            validate_dedup_similarity,
             validate_remember_params,
             validate_update_policy,
         )
@@ -2025,9 +2050,12 @@ class PgMemoryStore:
         )
         policy = validate_update_policy(update_policy)
         keys = validate_dedup_keys(dedup_keys)
+        similarity = validate_dedup_similarity(dedup_similarity)
         vector = self._provider.embed([params["content"]])[0]
         with self._engine.begin() as conn:
             matched = self._dedup_matches(conn, params, keys)
+            if not matched and similarity is not None:
+                matched = self._similar_matches(conn, params, vector, similarity)
             if matched:
                 if policy == "ask":
                     latest = matched[-1]

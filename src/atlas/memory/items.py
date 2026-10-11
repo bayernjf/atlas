@@ -19,6 +19,7 @@ from atlas.memory.models import (
     max_version,
     validate_decay,
     validate_dedup_keys,
+    validate_dedup_similarity,
     validate_recall_params,
     validate_remember_params,
     validate_update_policy,
@@ -71,6 +72,7 @@ class MemoryStore:
         metadata: dict[str, str] | None = None,
         update_policy: str = "overwrite",
         dedup_keys: list[str] | None = None,
+        dedup_similarity: float | None = None,
     ) -> dict[str, Any]:
         params = validate_remember_params(
             kind=kind,
@@ -82,6 +84,7 @@ class MemoryStore:
         )
         policy = validate_update_policy(update_policy)
         keys = validate_dedup_keys(dedup_keys)
+        similarity = validate_dedup_similarity(dedup_similarity)
         vector = self._provider.embed([params["content"]])[0]
         with self._lock:
             matched = [
@@ -97,6 +100,17 @@ class MemoryStore:
                     dedup_keys=keys,
                 )
             ]
+            # 语义近似去重（docs/14 D65，缺省 similarity=None 关闭＝接入前行为逐字不变）：
+            # 仅在精确去重无命中时补一次，口径与 recall 严格一致（同 kind＋scope 子集＋余弦
+            # ≥阈值），保证调用方先 recall 看到的近似集合与这里判重的集合是同一批。
+            if not matched and similarity is not None:
+                matched = [
+                    record
+                    for record in self._items
+                    if record["kind"] == params["kind"]
+                    and scope_contains(record["scope"], params["scope"])
+                    and cosine_similarity(vector, record["embedding"]) >= similarity
+                ]
             if matched:
                 if policy == "ask":
                     # 不静默：把冲突交回调用方决定（v1 不挂审批，docs/122 D-4）。
