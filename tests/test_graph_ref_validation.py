@@ -310,3 +310,49 @@ def test_ai_decision_memory_injected_deep_or_unknown_key_rejected():
     for body in ("{{ai-1.memory_injected.count.x}}", "{{ai-1.memory_injected.nope}}"):
         message = _compile_error(_chain(_trigger(), _ai("ai-1", "x"), _sms(body)))
         assert "memory_injected" in message, body
+
+
+# ---- 打包 AN②（闭合 D64）：state_machine 的引用面 ---------------------------
+
+
+def _state(node_id: str = "state-1") -> dict:
+    return {
+        "id": node_id,
+        "type": "state_machine",
+        "name": node_id,
+        "config": {
+            "objectRef": "order-1",
+            "event": "pay",
+            "states": ["new", "paid"],
+            "initial": "new",
+            "store": "run_globals",
+            "transitions": [{"event": "pay", "from": "new", "to": "paid"}],
+        },
+    }
+
+
+def test_u1364_state_machine_output_roots_are_referrable():
+    """八个根键逐字取自 loader 产出；此前该 kind 无白名单条目＝任何路径都不校验。"""
+    for path in ("mode", "objectRef", "from", "to", "event", "state", "states", "action"):
+        raw = _chain(
+            _trigger(),
+            _state(),
+            _tool("tool-1", "message/send",
+                  '{"channel":"sms","to":"ops","subject":"s","body":"{{state-1.%s}}"}' % path),
+        )
+        compile_graph(parse_graph(raw), registry=build_demo_registry())
+
+
+def test_u1364b_state_machine_unknown_or_deep_path_rejected():
+    """错名与深层路径都要拒（深层拒＝action/states 是动态形状，不放开任意深度）。"""
+    for body in ("{{state-1.bogus}}", "{{state-1.objectRef.x}}", "{{state-1.action.status}}"):
+        message = _compile_error(_chain(
+            _trigger(),
+            _state(),
+            _tool("tool-1", "message/send",
+                  '{"channel":"sms","to":"ops","subject":"s","body":"%s"}' % body),
+        ))
+        # 逐条点名：谁的路径、哪条路径、以什么话术拒（缺任一条说明断言在空转）
+        assert "不存在该路径" in message, body
+        assert "state-1" in message, body
+        assert body in message, body

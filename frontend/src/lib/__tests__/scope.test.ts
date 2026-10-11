@@ -609,3 +609,25 @@ describe('D30/B2 subgraph.outputs 内部节点展开（注入索引校验，缺�
     ).toEqual([])
   })
 })
+
+describe('打包 AN② state_machine 引用面（闭合 docs/14 D64）', () => {
+  const nodes = [
+    node('trigger-1', 'trigger'),
+    node('state-1', 'state_machine'),
+    node('ai-1', 'ai_decision'),
+  ]
+  const edges = [edge('trigger-1', 'state-1'), edge('state-1', 'ai-1')]
+
+  it('八个产出根键放行（逐字取自后端 loader），错名与深层路径拒绝', () => {
+    const scope = buildScopeIndex(nodes, edges, [])
+    const validate = (template: string) =>
+      scope.validateRefsAt('ai-1', 'ai_decision', { promptTemplate: template })
+    // 这八条就是后端 _STATIC_OUTPUT_KEYS['state_machine'] 的全部根键；少一条＝两侧漂移
+    for (const key of ['mode', 'objectRef', 'from', 'to', 'event', 'state', 'states', 'action']) {
+      expect(validate(`{{state-1.${key}}}`), key).toEqual([])
+    }
+    // 修复前这两条也返回 []（scope.ts 无 state_machine 条目＝完全不校验），故它们是真守护
+    expect(validate('{{state-1.bogus}}')[0]?.code).toBe('REF_PATH_NOT_FOUND')
+    expect(validate('{{state-1.objectRef.x}}')[0]?.code).toBe('REF_PATH_NOT_FOUND')
+  })
+})

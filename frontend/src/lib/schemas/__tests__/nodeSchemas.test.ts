@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { defaultConfig, NODE_KINDS, type NodeKind } from '../../nodeCatalog'
 import { schemaRegistry } from '../index'
 import { validateSchemaFields } from '../../validation/l1'
+import { STATIC_OUTPUT_KEYS } from '../../scope'
 
 // 与 lib/scope.ts STATIC_OUTPUT_KEYS + trigger/tool_call 特例逐字段对齐（04 §6.5，U35④）。
 const EXPECTED_OUTPUT_KEYS: Record<string, string[] | Record<string, string[]>> = {
@@ -14,11 +15,10 @@ const EXPECTED_OUTPUT_KEYS: Record<string, string[] | Record<string, string[]>> 
   wait: ['mode', 'waitType', 'durationMode', 'durationExpression', 'durationSeconds', 'plannedDurationSeconds', 'jitterSeconds', 'absoluteTime', 'eventKey', 'eventKeys', 'eventWaitMode', 'matchedEventKey', 'matchedEventKeys', 'matchedPayloads', 'receivedKeys', 'signaled', 'payload', 'waitedSeconds', 'resolvedBy', 'token'],
   subgraph: ['status', 'outputs'],
   human_approval: ['decision', 'target', 'summary', 'approver', 'resolvedBy', 'comment', 'card'],
-  // 打包 AL 落地时只加了 state_machine.schema.ts、没登记这条，参数化用例于是掉进
-  // "非数组＝trigger 的 context 嵌套"分支而恒红。这里按 schema 已发布的形状钉住；
-  // 它与后端真实产出（mode/objectRef/from/to/event/state/states/action）不一致＝另一件事，
-  // 已登 docs/14 D60，别把这一行读成"两边已对齐"。
-  state_machine: ['object_ref', 'from_state', 'to_state', 'event'],
+  // 打包 AN②（闭合 docs/14 D64）：这行原先钉的是 schema **当时声明**的四个键，与后端产出
+  // 不一致（注释里写"D60"是当时的笔误，登记号实为 D64）。现在两边同指后端 loader 的真实
+  // 产出，且 lib/scope.ts 也补了 state_machine 条目 ⇒ 这一行从"钉住现状"变成"对齐证明"。
+  state_machine: ['mode', 'objectRef', 'from', 'to', 'event', 'state', 'states', 'action'],
   intent_recognition: ['result', 'prompt_rendered'],
   info_extraction: ['result', 'prompt_rendered'],
   content_generation: ['result', 'prompt_rendered'],
@@ -44,6 +44,39 @@ describe('built-in node schemas (U35)', () => {
       expect(contextKeys.sort()).toEqual(expected.context.sort())
     }
   })
+
+  // 打包 AN②：这张投影表与上面的 x-outputSchema 长期各写一遍、没人对拍，D64 就是这么来的
+  // （state_machine 声明四个后端根本不产出的键，而 scope.ts 连条目都没有 ⇒ 引用不校验、
+  // 补全给空值）。本条守护把两边钉成同一组根键。
+  //
+  // 排除项各有理由，不是"先让门绿"：
+  // · trigger 引用走 context 嵌套特例、tool_call 走工具 outputSchema 动态路径（U35④ 既有设计）；
+  // · condition/loop/wait 是**本批量出的新漂移**，已登记 docs/14 **D66**：三类的
+  //   x-outputSchema 声明的是后端产出面的超集（如 condition 的 expressionErrorCodes、
+  //   wait 的 20 个键），而两侧校验表都只放行一小撮根键 ⇒ 补全给得出、编译期 REF_STATIC_PATH_NOT_FOUND
+  //   拒，与 D64 同族但要先定权威（docs/03 节点输出契约谁说了算），不在 AN② 范围。
+  const SCOPE_PARITY_EXEMPT: Partial<Record<NodeKind, string>> = {
+    trigger: 'context 嵌套特例（U35④）',
+    tool_call: '工具 outputSchema 动态路径（U35④）',
+    condition: 'D66：声明为后端校验表的超集',
+    loop: 'D66：同上，且 foreach 有专用分支',
+    wait: 'D66：同上（schema 20 键 vs 校验表 3 键）',
+  }
+  const PARITY_KINDS = [...NODE_KINDS].filter((kind) => !(kind in SCOPE_PARITY_EXEMPT))
+  it('每类节点都在对拍覆盖内，排除项必须带理由且仍是五类（防"用排除法把门做绿"）', () => {
+    expect([...NODE_KINDS].length - PARITY_KINDS.length).toBe(5)
+    expect(Object.values(SCOPE_PARITY_EXEMPT).every(Boolean)).toBe(true)
+  })
+  it.each(PARITY_KINDS)(
+    'scope.ts 的可见根键与 %s 的 x-outputSchema 逐字段一致',
+    (kind) => {
+      const declared = Object.keys(
+        (schemaRegistry.get(kind)['x-outputSchema'] as { properties?: object }).properties ?? {},
+      ).sort()
+      const visible = [...(STATIC_OUTPUT_KEYS[kind] ?? [])].sort()
+      expect(visible, `lib/scope.ts 缺 ${kind} 条目＝引用期完全不校验`).toEqual(declared)
+    },
+  )
 
   it('parallel x-outputSchema omits the dynamic result key and subgraph exposes only roots', () => {
     const parallel = schemaRegistry.get('parallel')['x-outputSchema'].properties ?? {}
