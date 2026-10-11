@@ -1964,7 +1964,7 @@ def _validate_node_config(node: NodeDSL) -> list[Issue]:
 _REF_RE = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
 
 _STATIC_OUTPUT_KEYS: dict[str, tuple[str, ...]] = {
-    "ai_decision": ("decision", "prompt_rendered"),
+    "ai_decision": ("decision", "prompt_rendered", "memory_injected"),
     "condition": ("branch", "target"),
     "loop": ("index", "iterations"),
     "parallel": ("status", "branches", "joinStrategy", "joinTarget"),
@@ -2311,6 +2311,14 @@ def _validate_template_refs(
                         path_ok = len(rest) == 0 or (
                             len(rest) == 1
                             and rest[0] in ("action", "reason", "confidence", "source")
+                        )
+                    elif root == "memory_injected":
+                        # 打包 AK㊳：注入元数据形状固定 {query, topK, minScore, ids?, count, status}，
+                        # 放行同样一层——运营要能把"这单参考了几条记忆"发到客服手里，
+                        # 只能在图里引用它；只准看运行记录＝能力落了一半。
+                        path_ok = len(rest) == 0 or (
+                            len(rest) == 1
+                            and rest[0] in ("query", "topK", "minScore", "ids", "count", "status")
                         )
                     else:
                         path_ok = root == "prompt_rendered" and not rest
