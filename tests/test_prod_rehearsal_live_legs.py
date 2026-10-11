@@ -98,6 +98,14 @@ def test_u1156_notify_leg_names_only_the_missing_credential():
     needs_recipient = verdict(rh.plan_live_legs(["notify"], SMTP_OK), "notify")
     assert needs_recipient.verdict == "blocked" and "--notify-to" in needs_recipient.reason
 
+    # SMTP 凭据齐＋显式 --notify-to：notify 执行段（leg_notify）已落地，规划期放行真投递。
+    # 打扰真人仍必须显式点名收件人，缺 --notify-to 恒 blocked（见上一条），授权门未削弱。
+    authorised = verdict(
+        rh.plan_live_legs(["notify"], SMTP_OK, notify_to="ops@example.com"), "notify"
+    )
+    assert authorised.verdict == "run"
+    assert "投递" in authorised.reason
+
 
 def test_u1156_only_legs_with_an_executor_can_ever_run():
     plans = rh.plan_live_legs(["llm", "shopify", "refund", "notify"],
