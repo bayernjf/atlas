@@ -411,6 +411,10 @@ type VariableInsertProps = ConfigProps & {
 
 function DecisionConfig({ config, update, variablePaths, onInsert }: VariableInsertProps) {
   const { t } = useTranslation('editor')
+  const injection = config.memoryInjection ?? {}
+  // 每次只并一个字段：memoryInjection 是可选对象，缺省不存在＝关闭（docs/122 D-3）
+  const patch = (part: NonNullable<typeof injection>) =>
+    update({ memoryInjection: { ...injection, ...part } })
   return (
     <>
       <Field label={t('decision.promptTemplateLabel')}>
@@ -442,6 +446,41 @@ function DecisionConfig({ config, update, variablePaths, onInsert }: VariableIns
           onChange={(value) => update({ confidenceThreshold: value ?? 0.6 })}
         />
       </Field>
+      <Field label={t('decision.memoryLabel')}>
+        <Switch
+          checked={!!injection.enabled}
+          onChange={(checked) => patch({ enabled: checked })}
+        />
+      </Field>
+      {injection.enabled && (
+        <>
+          <Field label={t('decision.memoryQueryLabel')}>
+            <Input.TextArea
+              rows={2}
+              value={injection.query ?? ''}
+              placeholder={t('decision.memoryQueryPlaceholder')}
+              onChange={(event) => patch({ query: event.target.value })}
+            />
+          </Field>
+          <Field label={t('decision.memoryTopKLabel')}>
+            <InputNumber
+              min={1}
+              max={20}
+              value={injection.topK ?? 5}
+              onChange={(value) => patch({ topK: value ?? 5 })}
+            />
+          </Field>
+          <Field label={t('decision.memoryMinScoreLabel')}>
+            <InputNumber
+              min={0}
+              max={1}
+              step={0.05}
+              value={injection.minScore ?? 0}
+              onChange={(value) => patch({ minScore: value ?? 0 })}
+            />
+          </Field>
+        </>
+      )}
     </>
   )
 }

@@ -275,7 +275,12 @@
     "insertVariable": "插入变量引用",
     "insertPlaceholder": "选择后追加到模板",
     "modelLabel": "模型（空 = 系统默认）",
-    "confidenceLabel": "置信度阈值（06 §6.2 默认 0.6）"
+    "confidenceLabel": "置信度阈值（06 §6.2 默认 0.6）",
+    "memoryLabel": "决策时注入相关记忆",
+    "memoryQueryLabel": "记忆检索词（留空 = 用渲染后的提示词）",
+    "memoryQueryPlaceholder": "例如：退款原因、客户明确说过的偏好",
+    "memoryTopKLabel": "注入条数（1-20，默认 5）",
+    "memoryMinScoreLabel": "最低相似度（0-1，默认 0）"
   },
   "debugConsole": {
     "title": "调试控制台",

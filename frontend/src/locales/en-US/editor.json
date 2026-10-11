@@ -275,7 +275,12 @@
     "insertVariable": "Insert variable reference",
     "insertPlaceholder": "Appended to the template after selection",
     "modelLabel": "Model (empty = system default)",
-    "confidenceLabel": "Confidence threshold (06 §6.2 default 0.6)"
+    "confidenceLabel": "Confidence threshold (06 §6.2 default 0.6)",
+    "memoryLabel": "Inject related memories into the decision",
+    "memoryQueryLabel": "Memory query (empty = use the rendered prompt)",
+    "memoryQueryPlaceholder": "e.g. the refund reason, a preference the customer stated",
+    "memoryTopKLabel": "Memories to inject (1-20, default 5)",
+    "memoryMinScoreLabel": "Minimum similarity (0-1, default 0)"
   },
   "debugConsole": {
     "title": "Debug console",

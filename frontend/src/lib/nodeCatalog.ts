@@ -83,6 +83,14 @@ export type NodeConfig = {
   // ai_decision / condition（ZP）共用：非空时覆盖默认模型，仅本次调用生效
   model?: string
   confidenceThreshold?: number
+  // ai_decision 记忆注入（打包 AK docs/122 D-3）：缺省不存在＝关闭，节点行为逐字不变
+  memoryInjection?: {
+    enabled?: boolean
+    query?: string
+    topK?: number
+    minScore?: number
+    scope?: Record<string, string>
+  }
   // tool_call
   tool?: string
   params?: string
