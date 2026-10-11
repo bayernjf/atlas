@@ -77,9 +77,14 @@ def test_u1156_money_and_humans_need_explicit_authorisation():
     authorised = verdict(
         rh.plan_live_legs(["refund"], LLM_OK, allow_refund=True, shopify_order_id="1234"), "refund"
     )
-    assert authorised.verdict == "blocked"
-    # 授权齐了也不能假装跑过：没有执行段就是没有
-    assert "执行段未实现" in authorised.reason
+    # 两道显式授权（--allow-refund ＋ --shopify-order）齐了，且退款执行段（leg_refund）已落地，
+    # 规划期才放行真动款——这一步就是 U1156「动款需要显式授权」的落点；缺任一旗仍 blocked（见上两条）。
+    # 注：本断言在打包 AY 立项时写的是 `blocked`＋「执行段未实现」，那时 refund 还没有执行段；
+    # PR #147 落地 leg_refund 后，断言随实现同步为 `run`，与 test_u1156_only_legs_with_an_executor_can_ever_run
+    # 对 EXECUTABLE_LEGS 的期待一致（不擅自削弱授权门）。
+    assert authorised.verdict == "run"
+    # 放行后 reason 即动款判据本身（这一步动款），确认规划期放行的是真退款而非别的外发腿
+    assert "动款" in authorised.reason
 
 
 def test_u1156_notify_leg_names_only_the_missing_credential():
