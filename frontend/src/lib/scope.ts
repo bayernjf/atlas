@@ -77,7 +77,12 @@ export function extractTemplateRefs(text: string): TemplateRef[] {
   return refs
 }
 
-const STATIC_OUTPUT_KEYS: Record<string, string[]> = {
+/**
+ * 各节点类型「可被 {{...}} 引用的输出根键」——变量的可见集，同时也是引用期的存在性判据。
+ * 导出只为让守护用例能把这张表与 `schemas/nodes/*.x-outputSchema` 对拍（打包 AN②）：
+ * 两者各写一遍、没有交叉检查，正是 D64（state_machine 声明与后端产出漂移）的成因。
+ */
+export const STATIC_OUTPUT_KEYS: Record<string, string[]> = {
   ai_decision: ['decision', 'prompt_rendered', 'memory_injected'],
   condition: ['branch', 'mode', 'target'],
   loop: ['index', 'iterations'],
@@ -85,6 +90,14 @@ const STATIC_OUTPUT_KEYS: Record<string, string[]> = {
   wait: ['mode', 'waitType', 'durationSeconds'],
   subgraph: ['status', 'outputs'],
   human_approval: ['decision', 'target', 'summary', 'approver', 'resolvedBy', 'comment', 'card'],
+  // 打包 AN②（闭合 D64）：键集合逐字取自后端 loader 的 state_machine 产出（camelCase）。
+  // 加进这张表才意味着"引用会被校验"——此前该 kind 无条目，任何路径都放行。
+  state_machine: ['mode', 'objectRef', 'from', 'to', 'event', 'state', 'states', 'action'],
+  // 同族漂移：这三类后端 `_STATIC_OUTPUT_KEYS` 早就有、编译期会拒错路径，前端却一直无条目
+  // ⇒ 画布不报错、运行才红。一并补上（打包 AN②）。
+  intent_recognition: ['result', 'prompt_rendered'],
+  info_extraction: ['result', 'prompt_rendered'],
+  content_generation: ['result', 'prompt_rendered'],
 }
 
 /** ai_decision.decision 固定结构允许的一层子键（M8 审批卡引用 decision.reason）。 */

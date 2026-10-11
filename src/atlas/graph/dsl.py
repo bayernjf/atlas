@@ -1975,6 +1975,12 @@ _STATIC_OUTPUT_KEYS: dict[str, tuple[str, ...]] = {
     "intent_recognition": ("result", "prompt_rendered"),
     "info_extraction": ("result", "prompt_rendered"),
     "content_generation": ("result", "prompt_rendered"),
+    # 打包 AN②（闭合 D64）：此前表里没有 state_machine，引用它的路径**一条都不校验**——
+    # 编译期全放行、运行期解析成空。这八条键逐字取自 loader 的产出（camelCase 与
+    # docs/123 §2.3 的 config／SSE 帧命名同族），深层路径仍拒（action 是工具产出、形状动态）。
+    "state_machine": (
+        "mode", "objectRef", "from", "to", "event", "state", "states", "action",
+    ),
 }
 
 _TRIGGER_CONTEXT_KEYS = ("triggerType", "cron", "webhookUrl", "payload")
