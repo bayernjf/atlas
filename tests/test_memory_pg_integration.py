@@ -349,3 +349,34 @@ def test_u1341_pg_decay_off_is_the_pre_batch_query_path(ak_store):
     assert ak_store.recall("客户偏好极速退款", top_k=2, decay=None) == baseline
     assert ak_store.recall("客户偏好极速退款", top_k=2,
                            decay={"enabled": False, "half_life_days": 7}) == baseline
+
+
+# ---- docs/14 D65 安全切片：dedup_similarity 语义近似去重的两档对拍（缺省关） ----
+
+
+def test_u1342_pg_similarity_dedup_matches_in_process_tier(ak_store):
+    """同 scope 近义改写按阈值 overwrite 合并（id 不变、不翻倍）；不同 scope 绝不互相吃掉。"""
+    from atlas.memory.items import MemoryStore
+
+    pg = ak_store
+    mem = MemoryStore()
+    for store in (pg, mem):
+        first = store.remember(kind="fact", content="订单 o-1 已退款", scope={"order_id": "o-1"})
+        second = store.remember(
+            kind="fact", content="订单 o-1 已退款 88 元",
+            scope={"order_id": "o-1"}, dedup_similarity=0.85,
+        )
+        assert second["id"] == first["id"], "近似命中走 overwrite，同一条被更新而非新增"
+        assert len(store.list()) == 1
+        # 缺省关：不传阈值时，哪怕文本高度近似也不做语义合并（接入前行为）
+        store.clear()
+        store.remember(kind="fact", content="订单 o-1 已退款", scope={"order_id": "o-1"})
+        store.remember(kind="fact", content="订单 o-1 已退款 88 元", scope={"order_id": "o-1"})
+        assert len(store.list()) == 2
+        store.clear()
+        # scope 隔离：换了 order_id，即便措辞高度近似也不得合并
+        store.remember(kind="fact", content="订单 o-1 已退款", scope={"order_id": "o-1"})
+        store.remember(kind="fact", content="订单 o-2 已退款", scope={"order_id": "o-2"},
+                       dedup_similarity=0.85)
+        assert len(store.list()) == 2
+        store.clear()
