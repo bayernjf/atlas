@@ -904,6 +904,13 @@ class MemoryRepository(Protocol):
 #   装配照 message 两段式：全局注册仅供发现，_runtime_registry 按租户克隆注入 services.memory_store。
 #   AK 已知限制：auto_extract 的模型解析只到 env（LITELLM_MODEL），**租户 BYOK 不生效**——
 #   ActionRequest 不带 tenant，harness 全链路没有租户上下文可取（要改是 harness 级契约，另批）。
+#   〔2026-10-11 打包 AN① 已闭合，并订正上面那句的高估〕限制的真实成因只是**装配时没把租户
+#   身份带给适配器**：执行期注册表本来就按租户克隆（本文件上面的 _runtime_registry 两段式），
+#   所以修法是 TenantServices 增 tenant_id 字段 ＋ 克隆时注入 ＋ 适配器透传给 extract_memories，
+#   零契约变更、零迁移。现在解析优先级与其余四消费点一致（BYOK > 内置 > env，docs/93 §1），
+#   产出新增 model 字段报出"实际用了哪个模型"（不报就等于让人猜软件能知道的事实）。
+#   守护：U1357–U1363（tests/test_memory_auto_extract_byok.py），其中 U1358 是装配层接线本身——
+#   摘掉 tenant_id 透传只有它红，故它是这条线的唯一哨兵。
 ```
 
 ## 5. 后端服务 API（依据 08 7.2 /api/main.py FastAPI 入口）

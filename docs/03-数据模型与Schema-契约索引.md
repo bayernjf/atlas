@@ -1242,7 +1242,8 @@ output: {results: [{id, kind, content, score: number, confidence, scope, created
 # 能力 memory/auto_extract（action=memory_auto_extract，permission=write，**非幂等**）打包 AK docs/122 D-2
 input:  {text: string 1-4000（必填，支持 {{变量}}）, min_confidence?: number 0-1=0.85, scope?: {string:string}}
 output: {extracted: int, facts: [{id,content,confidence}], preferences: [...],
-         dropped_below_threshold: int, min_confidence: number, skipped: string, reason?: string}
+         dropped_below_threshold: int, min_confidence: number, skipped: string, reason?: string,
+         model: string}   # model＝实际解析到的模型（BYOK>内置>env；打包 AN①），没接模型时为 ""
         # skipped="llm_unavailable"＝根本没接模型；skipped="" 且 extracted=0＝这次确实没提炼到。
         # 两者必须是不同答案——静默把前者写成后者就是伪造下游行为（docs/63 静默降级族）。
 ```
