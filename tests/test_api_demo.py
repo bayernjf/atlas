@@ -253,16 +253,23 @@ def test_live_stream_human_approval_decision_unblocks_run():
     def decide_when_pending() -> None:
         try:
             with TestClient(app, headers=DEFAULT_AUTH_HEADER) as decider:
+                # docs/14 D67（2026-10-11 定性：**测试面**不是产品面）：窗口原来写死
+                # 100×0.02s＝2s，高负载全量轮里 run 走到审批节点本身就要好几秒 ⇒ 把"起得慢"
+                # 读成"队列里没有这条"。窗口必须**宽于节点 timeoutSeconds（本图 10s）**，
+                # 否则这种失败会再次伪装成产品回归。另：不能拿 SSE 审批帧当 ready signal
+                # ——TestClient 的 ASGI 传输把整条流缓冲到响应结束才给客户端（实测帧在
+                # 节点超时之后才到），真 uvicorn 进程里同一条链帧 0.15s 到、队列 0.16s 可见。
+                deadline = time.monotonic() + 12
                 token = None
-                for _ in range(100):
+                while time.monotonic() < deadline:
                     items = decider.get("/api/approvals").json()["items"]
                     if items:
                         token = items[0]["token"]
                         break
                     time.sleep(0.02)
                 assert token is not None, (
-                    "2s 内审批队列里始终没出现这条（症状见 docs/14 D67：机制未定，"
-                    "两条候选解释都已被实测否证）"
+                    "12s 内审批队列里始终没出现这条（docs/14 D67：真进程实测队列与帧同步可见，"
+                    "此处若空＝run 根本没走到审批节点，不是队列问题）"
                 )
                 response = decider.post(
                     f"/api/approvals/{token}/decision",
@@ -294,7 +301,7 @@ def test_live_stream_human_approval_decision_unblocks_run():
             if "outputs" in payload:
                 result_body = payload
 
-    decider_thread.join(timeout=10)
+    decider_thread.join(timeout=25)
     if thread_errors:
         raise thread_errors[0]
     assert saw_approval_start is True
