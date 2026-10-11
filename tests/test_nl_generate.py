@@ -27,6 +27,29 @@ def test_unknown_intent_without_llm_raises(monkeypatch):
         generate_graph("帮我管管日历日程")
 
 
+def test_prod_without_llm_refund_intent_refuses_silent_template(monkeypatch):
+    """docs/73 W1-1.1/W5-5.4 同族：prod 无模型不得静默返回写死模板（fail-closed）。"""
+    monkeypatch.delenv("LITELLM_MODEL", raising=False)
+    monkeypatch.setattr(
+        "atlas.llm.nl_generate.demo_surface_enabled", lambda: False
+    )
+    with pytest.raises(ValueError) as exc:
+        generate_graph("帮我做一个电商退款自动审批流程")
+    assert "生产环境未配置 LLM" in str(exc.value)
+
+
+def test_prod_without_llm_arbitrary_intent_also_refuses(monkeypatch):
+    """prod 无模型：任意意图（非退款关键词）同样显式报错，不落入任何兜底。"""
+    monkeypatch.delenv("LITELLM_MODEL", raising=False)
+    monkeypatch.setattr(
+        "atlas.llm.nl_generate.demo_surface_enabled", lambda: False
+    )
+    with pytest.raises(ValueError) as exc:
+        generate_graph("帮我管管日历日程")
+    assert "生产环境未配置 LLM" in str(exc.value)
+
+
+
 def test_llm_prompt_advertises_condition_kind_and_config(monkeypatch):
     import litellm
 
