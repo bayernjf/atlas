@@ -4,9 +4,10 @@
 按 input_schema 自动生成）：
 - ``remember``（write，非幂等）：写 fact/preference/knowledge（knowledge 带 meta.category 子类）；
 - ``recall``（read，幂等）：语义检索，无命中返空结果（成功，不报错）；
-- ``auto_extract``（write，幂等，打包 AK docs/122 D-2）：LLM 从文本里提炼事实/偏好并按
+- ``auto_extract``（write，**非幂等**，打包 AK docs/122 D-2）：LLM 从文本里提炼事实/偏好并按
   置信度门槛落库；没接模型时返回 `skipped="llm_unavailable"` 而不是让 run 失败——
   记忆是增强项，但"没接线"必须被说出来而不是伪装成"没提取到"。
+  非幂等的原因：去重按内容精确匹配，而模型两次措辞不会完全一致（真机实测见 docs/122 §6）。
 
 repo 缺省（全局发现注册实例）时执行期不可用；执行期由 ``_runtime_registry`` 注入
 当前租户的 MemoryRepository（照 message 两段式，docs/26 §5.1）。
@@ -248,7 +249,9 @@ class MemoryHarnessAdapter(HarnessAdapter):
                 output_schema=_AUTO_EXTRACT_OUTPUT_SCHEMA,
                 permission=Permission.WRITE,
                 timeout=30.0,
-                is_idempotent=True,
+                # 真机验证（2026-10-11，docs/122 §6）：同一段文本重跑两次，模型两次措辞不同
+                # → 精确内容去重不命中 → 记忆从 3 条变 6 条。"重跑幂等"是假承诺，故显式标非幂等。
+                is_idempotent=False,
             ),
         ]
 
@@ -314,8 +317,9 @@ class MemoryHarnessAdapter(HarnessAdapter):
     def _auto_extract(self, params: dict[str, Any]) -> ActionResult:
         """LLM 提炼 → 置信度门槛 → 落库（docs/122 D-2）。
 
-        落库走缺省 `overwrite`（同 scope 同内容不堆叠），所以"对同一段对话重跑一次"
-        是幂等的——这也是该能力声明 `is_idempotent=True` 的依据，不是随手写的标签。
+        落库走缺省 `overwrite`，去重按**同 scope 同内容精确匹配**：模型两次给出的措辞只要
+        差一个字就会新增一条，所以"对同一段对话重跑一次"**不保证条数不变**（2026-10-11 真机
+        实测 3 条 → 6 条）。语义近似去重缓做，触发条件见 docs/14 D65。
         """
         text = str(params.get("text") or "").strip()
         if not text:
