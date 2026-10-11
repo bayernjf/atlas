@@ -20,7 +20,8 @@
   },
   "tabs": {
     "nodes": "Nodes",
-    "variables": "Variables"
+    "variables": "Variables",
+    "graphSettings": "Graph"
   },
   "nodePanel": {
     "title": "Node panel (drag onto the canvas)"
@@ -229,7 +230,10 @@
     "noActiveRunMaybeEnded": "There is no in-flight run to cancel (it may have already ended)",
     "stopRequested": "⏹ Emergency stop requested for {{runId}} (takes effect at the next node boundary)",
     "stopFailed": "✗ Emergency stop failed: {{message}}",
-    "unknownError": "Unknown error"
+    "unknownError": "Unknown error",
+    "stateChanged": "⚙ {{node}} state changed: {{objectRef}} {{from}} --{{event}}--> {{to}}",
+    "healing": "🛠 {{node}} healing attempt #{{attempt}}: verdict={{verdict}}, continue={{continue}}",
+    "globalError": "⚠ {{node}} graph-level error: {{code}} ({{detail}})"
   },
   "error": {
     "compileRunFailed": "Compile/run failed",
@@ -271,7 +275,12 @@
     "insertVariable": "Insert variable reference",
     "insertPlaceholder": "Appended to the template after selection",
     "modelLabel": "Model (empty = system default)",
-    "confidenceLabel": "Confidence threshold (06 §6.2 default 0.6)"
+    "confidenceLabel": "Confidence threshold (06 §6.2 default 0.6)",
+    "memoryLabel": "Inject related memories into the decision",
+    "memoryQueryLabel": "Memory query (empty = use the rendered prompt)",
+    "memoryQueryPlaceholder": "e.g. the refund reason, a preference the customer stated",
+    "memoryTopKLabel": "Memories to inject (1-20, default 5)",
+    "memoryMinScoreLabel": "Minimum similarity (0-1, default 0)"
   },
   "debugConsole": {
     "title": "Debug console",
@@ -454,7 +463,8 @@
     "wait": "Wait settings (suspends, then continues along the single outgoing edge, 04 §5.5)",
     "intent_recognition": "Intent recognition",
     "info_extraction": "Info extraction",
-    "content_generation": "Content generation"
+    "content_generation": "Content generation",
+    "state_machine": "State machine settings (move object by event; store=memory persists across runs, docs/123 §2.3)"
   },
   "nodeCatalog": {
     "trigger": {
@@ -504,6 +514,10 @@
     "content_generation": {
       "label": "Content generation",
       "description": "LLM generates content from a template and style (template required)"
+    },
+    "state_machine": {
+      "label": "State machine",
+      "description": "Move a business object across states by event, persists across runs (store=memory)"
     }
   },
   "tool": {
@@ -576,5 +590,22 @@
     "pathExpr": "{{...}} expression",
     "insertableVar": "Variables such as {{node output.field}} can be inserted",
     "insertVar": "Insert variable reference"
+  },
+  "graphSettings": {
+    "globalErrorTitle": "Graph-level error handling (globalErrorHandler)",
+    "strategyPlaceholder": "Uncaught-error strategy (empty = keep fail-fast)",
+    "strategyMark": "mark_only: mark then fail",
+    "strategyRoute": "route_to_subgraph: diagnose subgraph decides",
+    "strategyEscalate": "escalate_to_human: human approval loop (P-1=C)",
+    "errorSubgraphPlaceholder": "Select diagnose / error subgraph node",
+    "noSubgraph": "No subgraph node on canvas - add one or type a saved graph id",
+    "escalationChannel": "Approval channel (e.g. email / im)",
+    "escalationRecipients": "Approval recipients (comma separated)",
+    "selfHealingTitle": "Self-healing (selfHealing)",
+    "triggerOnPlaceholder": "Trigger error codes (comma separated, e.g. NODE_EXECUTION_FAILED)",
+    "diagnoseSubgraphPlaceholder": "Select diagnose subgraph node",
+    "maxAttempts": "Max attempts",
+    "continueWhenPlaceholder": "Continue condition (truthy = healed)",
+    "emptyHint": "No graph-level handling configured - runtime errors keep current fail-fast semantics"
   }
 }

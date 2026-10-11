@@ -35,8 +35,33 @@ export function kindColor(kind: MemoryKind): string {
   return MEMORY_KIND_COLORS[kind] ?? 'default'
 }
 
-/** 余弦相似度 0–1 → 百分比整数。 */
-export function formatScore(score: number): string {
+/**
+ * 来源四态（打包 AK docs/122 D-2 加 auto_extract）：记忆页必须看得出"这条是谁写进来的"，
+ * 否则自动提炼出的结论会伪装成人工确认过的事实。未知来源原样显示，不静默归类。
+ */
+export const MEMORY_SOURCE_LABELS: Record<string, string> = {
+  tool: 'source.tool',
+  manual: 'source.manual',
+  run: 'source.run',
+  auto_extract: 'source.autoExtract',
+}
+
+export const MEMORY_SOURCE_COLORS: Record<string, string> = {
+  tool: 'geekblue',
+  manual: 'green',
+  run: 'gold',
+  auto_extract: 'orange',
+}
+
+export function sourceLabel(source: string): string {
+  return MEMORY_SOURCE_LABELS[source] ?? source
+}
+
+export function sourceColor(source: string): string {
+  return MEMORY_SOURCE_COLORS[source] ?? 'default'
+}
+
+/** 余弦相似度 0–1 → 百分比整数。 */export function formatScore(score: number): string {
   const clamped = Math.max(0, Math.min(1, score))
   return `${Math.round(clamped * 100)}%`
 }

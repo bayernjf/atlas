@@ -268,3 +268,83 @@ def generate_content(
         return {"text": template, "prompt_rendered": prompt_rendered}
     text = content.strip()
     return {"text": text, "prompt_rendered": prompt_rendered}
+
+
+def _resolve_model(tenant_id: str | None, model: str | None, *, caller: str) -> tuple[str, str | None, str | None]:
+    """模型解析（三节点与 auto_extract 共用）：租户 BYOK > 内置 > env；都没有就显式抛错。
+
+    抛错而不是返回空：调用方要么是把错折算成节点 FAILED（三节点），要么是折算成产出里的
+    `skipped`（记忆工具），两条路都**要求"根本没接模型"这件事被说出来**——静默空结果会伪造
+    下游行为（docs/109 §2.2、docs/63 静默降级族）。
+    """
+    resolved = _resolve_llm_config(tenant_id)
+    if resolved is None:
+        env_model = os.getenv("LITELLM_MODEL", "").strip()
+        if not env_model:
+            raise LLMStructuredUnavailable(
+                caller,
+                "未配置 LLM 模型；请配置 LITELLM_MODEL 与 OPENAI_API_KEY / OPENAI_BASE_URL，"
+                "或给租户配 BYOK 模型。",
+            )
+        model_name, api_key, base_url = env_model, None, None
+    else:
+        model_name, api_key, base_url = resolved
+    return ((model or "").strip() or model_name), api_key, base_url
+
+
+def extract_memories(
+    *,
+    text: str,
+    tenant_id: str | None = None,
+    model: str | None = None,
+    caller: str = "memory_auto_extract",
+) -> dict[str, Any]:
+    """从一段文本里提取可长期保留的事实与偏好（docs/122 D-2）。
+
+    返回 `{"facts": [{content, confidence}], "preferences": [...]}`；置信度由模型给，
+    **阈值门槛在调用方**（memory 工具），这样阈值是可配参数而不是埋在 LLM 层里的常数。
+    模型不可用抛 :class:`LLMStructuredUnavailable`；这次调用失败或返回坏 JSON 则返回空集合
+    并记 warning（与 extract_fields 同族：形状问题不炸运行）。
+    """
+    model_name, api_key, base_url = _resolve_model(tenant_id, model, caller=caller)
+    prompt = (
+        "从下面文本中提取值得长期保留的信息，只输出 JSON：\n"
+        '{"facts": [{"content": "客观事实", "confidence": 0.0-1.0}], '
+        '"preferences": [{"content": "主体明确表达的偏好", "confidence": 0.0-1.0}]}\n'
+        "要求：只提取文本里明确存在的信息，不得推测或补全；每条不超过 200 字；"
+        "没有可提取项就返回空数组。\n"
+        f"文本：{text}"
+    )
+    try:
+        content = _call_llm(prompt, model=model_name, api_key=api_key, base_url=base_url)
+    except Exception as exc:  # noqa: BLE001 单次调用失败按"这次没提取到"，不炸运行
+        logger.warning("extract_memories: LLM 调用失败（model=%s）按空结果处理：%s", model_name, exc)
+        return {"facts": [], "preferences": [], "model": model_name}
+    payload = _parse_json(content)
+    if payload is None:
+        logger.warning("extract_memories: 模型返回不是 JSON，按空结果处理（model=%s）", model_name)
+        return {"facts": [], "preferences": [], "model": model_name}
+    return {
+        "facts": _memory_candidates(payload.get("facts")),
+        "preferences": _memory_candidates(payload.get("preferences")),
+        "model": model_name,
+    }
+
+
+def _memory_candidates(raw: Any) -> list[dict[str, Any]]:
+    """归一化一组候选：丢空内容、把置信度折进 0-1（缺省按 0 处理＝宁缺不滥）。"""
+    if not isinstance(raw, list):
+        return []
+    candidates: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        content = str(item.get("content") or "").strip()
+        if not content:
+            continue
+        try:
+            confidence = float(item.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        candidates.append({"content": content[:2000], "confidence": max(0.0, min(1.0, confidence))})
+    return candidates

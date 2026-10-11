@@ -10,12 +10,17 @@ working 由 run outputs/globals 承担，summary/case 缓做 docs/14 D35。
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ConfigDict
 
 MemoryKind = Literal["fact", "preference", "knowledge"]
-MemorySource = Literal["tool", "manual", "run"]
+# 来源四态（打包 AK 加 auto_extract）：tool 图内显式写入 / manual 人在界面上写 /
+# run 运行期状态快照（state_machine，docs/123）/ auto_extract LLM 从内容里提炼（docs/122 D-2）。
+# run 与 auto_extract 的分工：前者是"系统知道现在是什么状态"，后者是"从一段文本里读出来的结论"，
+# 混用会让 recall 与衰减策略跨来源误伤（例如提炼出的偏好被状态快照覆盖）。
+MemorySource = Literal["tool", "manual", "run", "auto_extract"]
 
 # 知识子类（docs/108 §2.1，照编辑后台组件设计 §7.2 存储方式）：FAQ / SOP / 产品手册 / 业务规则 / 历史案例。
 # 只作用于 kind=knowledge 条目的 meta.category；其余 kind 忽略该键。
@@ -112,8 +117,8 @@ def validate_remember_params(
     confidence_value = float(confidence)
     if not 0.0 <= confidence_value <= 1.0:
         raise MemoryValidationError("confidence 必须在 0-1 之间")
-    if source not in ("tool", "manual", "run"):
-        raise MemoryValidationError("source 必须是 tool/manual/run")
+    if source not in ("tool", "manual", "run", "auto_extract"):
+        raise MemoryValidationError("source 必须是 tool/manual/run/auto_extract")
     metadata_value = validate_category(_validate_metadata(metadata), kind=kind)
     return {
         "kind": kind,
@@ -128,6 +133,106 @@ def validate_remember_params(
 # docs/28 §5.1（批 4 ⑩，D35 部分取回）：手动新建/编辑允许的白名单字段。
 # id/created_at/tenant/embedding 不可改；source 对手动写入强制 "manual"。
 REMEMBER_EDITABLE_FIELDS = ("kind", "content", "scope", "confidence", "metadata")
+
+
+# --- 打包 AK（docs/122 D-4/D-5）：写入策略与召回衰减 -------------------------
+
+UPDATE_POLICIES = ("overwrite", "version", "ask")
+DEDUP_KEYS_MAX = 8
+DECAY_HALF_LIFE_DEFAULT_DAYS = 30
+DECAY_HALF_LIFE_MIN_DAYS = 1
+DECAY_HALF_LIFE_MAX_DAYS = 3650
+
+
+def validate_update_policy(policy: Any) -> str:
+    """缺省 `overwrite`＝与"同 id 白名单覆盖"的旧语义兼容（docs/122 D-1）。"""
+    if policy is None:
+        return "overwrite"
+    if policy not in UPDATE_POLICIES:
+        raise MemoryValidationError(f"update_policy 必须是 {'/'.join(UPDATE_POLICIES)} 之一")
+    return str(policy)
+
+
+def validate_dedup_keys(keys: Any) -> list[str]:
+    """去重键＝**scope 的键名**（如 `["object_id"]`）；空数组＝按内容本身去重。"""
+    if keys is None:
+        return []
+    if not isinstance(keys, list) or not all(
+        isinstance(key, str) and key.strip() for key in keys
+    ):
+        raise MemoryValidationError("dedup_keys 必须是非空字符串组成的数组")
+    if len(keys) > DEDUP_KEYS_MAX:
+        raise MemoryValidationError(f"dedup_keys 最多 {DEDUP_KEYS_MAX} 个")
+    return [key.strip() for key in keys]
+
+
+def validate_decay(decay: Any) -> dict[str, Any] | None:
+    """归一化召回衰减：`None` 或 `enabled` 非真都返回 None＝不衰减（排序与接入前逐字一致）。"""
+    if decay is None:
+        return None
+    if not isinstance(decay, dict):
+        raise MemoryValidationError("decay 必须是 {enabled, half_life_days} 对象")
+    if not decay.get("enabled"):
+        return None
+    half_life = decay.get("half_life_days", DECAY_HALF_LIFE_DEFAULT_DAYS)
+    if (
+        isinstance(half_life, bool)
+        or not isinstance(half_life, int)
+        or not DECAY_HALF_LIFE_MIN_DAYS <= half_life <= DECAY_HALF_LIFE_MAX_DAYS
+    ):
+        raise MemoryValidationError(
+            f"decay.half_life_days 必须是 {DECAY_HALF_LIFE_MIN_DAYS}"
+            f"-{DECAY_HALF_LIFE_MAX_DAYS} 的整数"
+        )
+    return {"enabled": True, "half_life_days": half_life}
+
+
+def dedup_match(item_scope: dict[str, str], item_content: str, *, kind: str,
+                match_kind: str, scope: dict[str, str], content: str,
+                dedup_keys: list[str]) -> bool:
+    """命中判据（两档共用同一份，防"两份真相"）：
+
+    - 给了 `dedup_keys`：同 kind ＋ 这些 scope 键在两行里取值相同（任一缺键视为不命中）；
+    - 没给：同 kind ＋ **同 scope** ＋ 内容完全相同（纯重复抑制）。
+      scope 必须一起比，否则"对象 A 已退过款"会把"对象 B 已退过款"覆盖掉。
+    """
+    if kind != match_kind:
+        return False
+    if not dedup_keys:
+        return item_content == content and item_scope == scope
+    return all(
+        key in scope and key in item_scope and item_scope[key] == scope[key]
+        for key in dedup_keys
+    )
+
+
+def max_version(records: list[dict[str, Any]]) -> int:
+    """同去重组内已有的最大 version；没有版本号的条目算 v1（docs/122 D-4）。"""
+    highest = 1
+    for record in records:
+        raw = (record.get("metadata") or {}).get("version")
+        try:
+            highest = max(highest, int(raw))
+        except (TypeError, ValueError):
+            continue
+    return highest
+
+
+def decay_multiplier(created_at: Any, now: datetime, half_life_days: int) -> float:
+    """`0.5 ** (age_days / half_life)`；时间戳解析不了就按 1.0（不衰减）而不是丢条目。
+
+    缺了 created_at 的行也不该因为一次格式化事故从检索里蒸发。
+    """
+    if not isinstance(created_at, str) or not created_at.strip():
+        return 1.0
+    try:
+        born = datetime.fromisoformat(created_at)
+    except ValueError:
+        return 1.0
+    if born.tzinfo is None:
+        born = born.replace(tzinfo=timezone.utc)
+    age_days = max(0.0, (now - born).total_seconds() / 86400.0)
+    return 0.5 ** (age_days / half_life_days)
 
 
 def merge_manual_update(

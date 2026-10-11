@@ -78,7 +78,7 @@ export function extractTemplateRefs(text: string): TemplateRef[] {
 }
 
 const STATIC_OUTPUT_KEYS: Record<string, string[]> = {
-  ai_decision: ['decision', 'prompt_rendered'],
+  ai_decision: ['decision', 'prompt_rendered', 'memory_injected'],
   condition: ['branch', 'mode', 'target'],
   loop: ['index', 'iterations'],
   parallel: ['status', 'branches', 'joinStrategy', 'joinTarget'],
@@ -89,6 +89,12 @@ const STATIC_OUTPUT_KEYS: Record<string, string[]> = {
 
 /** ai_decision.decision 固定结构允许的一层子键（M8 审批卡引用 decision.reason）。 */
 const AI_DECISION_KEYS = ['action', 'reason', 'confidence', 'source']
+
+/**
+ * ai_decision.memory_injected 允许的一层子键（打包 AK㊳，与后端 dsl.py 同构）。
+ * ids 只在召回到条目时出现；count/status 恒在——"没查到"与"没接线"要能被下游分辨。
+ */
+const AI_MEMORY_INJECTED_KEYS = ['query', 'topK', 'minScore', 'ids', 'count', 'status']
 
 /**
  * M8 卡片只读字段 bindings 索引：卡片 id → 该卡 FieldsSection 各 binding 的 ``{{路径}}`` 串。
@@ -603,6 +609,11 @@ export function buildScopeIndex(
             pathOk =
               rest.length === 0 ||
               (rest.length === 1 && AI_DECISION_KEYS.includes(rest[0]))
+          } else if (root === 'memory_injected') {
+            // 打包 AK㊳：注入元数据同样只放行一层（与后端 dsl.py 的白名单同构）。
+            pathOk =
+              rest.length === 0 ||
+              (rest.length === 1 && AI_MEMORY_INJECTED_KEYS.includes(rest[0]))
           } else if (root === 'prompt_rendered') {
             pathOk = rest.length === 0
           }

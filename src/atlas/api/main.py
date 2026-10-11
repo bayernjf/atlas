@@ -348,6 +348,7 @@ def _resume_run(engine, services: TenantServices, frame: dict) -> None:
             resume=frame,
             tenant_id=frame["tenant_id"],
             secret_provider=_secret_provider,
+            memory_repo=services.memory_store,
         )
         if run_id:
             services.run_store.finish(
@@ -1285,6 +1286,7 @@ def _background_run_worker(
             graph_version=version,
             tenant_id=tenant_id,
             secret_provider=_secret_provider,
+            memory_repo=services.memory_store,
         )
         run_store.finish(
             run_id=run_id, status="completed",
@@ -2866,6 +2868,7 @@ def create_shadow_run(
             shadow=True,
             tenant_id=principal.tenant_id,
             secret_provider=_secret_provider,
+            memory_repo=services.memory_store,
         )
     except Exception as exc:  # 影子异常也沉淀记录，绝不影响生产链路
         status = "error"
@@ -2947,6 +2950,7 @@ def create_shadow_run_stream(
                     shadow=True,
                     tenant_id=tenant_id,
                     secret_provider=_secret_provider,
+                    memory_repo=services.memory_store,
                 )
             except Exception as exc:  # 影子异常沉淀 error 记录，不影响生产链路
                 status = "error"
@@ -4202,6 +4206,7 @@ def replay_recording(
             condition_classifier=condition_script,
             tenant_id=principal.tenant_id,
             secret_provider=_secret_provider,
+            memory_repo=services.memory_store,
         )
         replay_steps = take_steps()
         tools_by_node = {
@@ -4466,6 +4471,7 @@ def run_saved_graph(
             _block_subgraph_suspend=(STORAGE_BACKEND == "pg"),
             tenant_id=principal.tenant_id,
             secret_provider=_secret_provider,
+            memory_repo=services.memory_store,
         )
     except RunSuperseded as exc:
         # docs/62 §2 D-4：输家停止驱动——不写 run 终态、不记监控、不进门控评估，
@@ -4648,6 +4654,7 @@ def run_saved_graph_stream(
                     _block_subgraph_suspend=(STORAGE_BACKEND == "pg"),
                     tenant_id=principal.tenant_id,
                     secret_provider=_secret_provider,
+                    memory_repo=services.memory_store,
                 )
                 if monitored:
                     run_store.finish(

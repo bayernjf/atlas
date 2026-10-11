@@ -11,11 +11,18 @@
   "col": {
     "content": "Content",
     "kind": "Kind",
+    "source": "Source",
     "confidence": "Confidence",
     "scope": "Scope",
     "createdAt": "Created at",
     "actions": "Actions",
     "score": "Similarity"
+  },
+  "source": {
+    "tool": "By tool",
+    "manual": "By operator",
+    "run": "Run state",
+    "autoExtract": "Auto-extracted"
   },
   "kind": {
     "fact": "Fact",

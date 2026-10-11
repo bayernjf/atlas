@@ -3,6 +3,49 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔修缺口＋诚实声明〕打包 AK 真机验证：记忆注入上了界面、注入结果能被下游引用、"重跑幂等"被证伪后撤销（docs/122 §6.1／docs/14 D65，2026-10-11）
+
+- **为什么单记一笔**：落码批只有单测与集成，这次把四切片跑上**真进程＋真模型＋真浏览器**，一次抓到三处"代码绿了但产品没通"。这类缺口单测结构上看不见——它不是回归，是**可达面缺失**。
+- **① 记忆注入此前运营根本开不了**：`PropertyPanel` 的 AI 决策面板是手写四字段（提示词／插变量／模型／置信度阈值），`memoryInjection` 一个控件都没有，面板也没有 JSON 逃生口——后端能力齐、测试全绿，产品面上等于不存在。现在面板有开关，拨开联动 query／topK／minScore 三字段（两档文案，进 `EDITOR_B_KEYS` 守护）。真浏览器实测：面板拨的 `topK=3` 一路存进图、跑进真模型，运行记录里 `memory_injected.count=3`、渲染 prompt 末尾有【相关记忆】。
+- **② 注入结果以前只能"看"，不能在图里"用"**：运行期 L2 引用白名单只放行 `decision`/`prompt_rendered`，下游节点引用 `memory_injected` 直接 `REF_AI_PATH_NOT_FOUND`——"这单参考了几条记忆"说不给客服。现前后端同构放行其根与一层子键，实测下游短信正文渲染成「本单参考了 1 条记忆」。
+- **③ 一条被真依赖当场证伪的承诺**：`auto_extract` 声明 `is_idempotent=True`，判据是"缺省 overwrite ⇒ 同文本重跑不堆条目"。假 litellm 每次返回同一串字，所以这条绿**证明不了任何东西**；真模型两次措辞不会一致，实测同段文本重跑 **3 条 → 6 条**。处置是把话改诚实（`is_idempotent=False`、docs/03·12·26 的"幂等"字样全部订正、新增特征测试钉住漂移），**没有**顺手做语义近似去重——阈值选错的代价是静默吃掉一条真实偏好，比多存一条难查得多，已登记 **D65** 带复开条件。
+- **方法账（我自己的两次假绿，写下来防复发）**：首版探针按 `outputs[*].output` 取节点产出（真形状是 `outputs` 以 node_id 为键），空跑让三条**反向对照**集体"通过"；又把发现面猜成 `/api/tools`、健康探针猜成 `/healthz`（实为 `/api/adapters`、`/api/ready`）。补了"输出非空"前置断言之后，这些绿才算数。另学到两条既有契约（不是缺陷）：按 `event` 运行要先有 stable 发布版（publish 只产版本），以及 L2 引用只在运行期复查——保存返回 200 不代表引用合法。
+- **门（修复后实跑）**：后端 **2671 passed／179 skipped／0 failed**（270.20s；＝落码批 2668 ＋ 本批 3 例）、memory PG 集成 **13 passed／0 failed**、前端 vitest **980 passed／2 skipped**（新断言并进既有用例故条数不变）＋ oxlint 0/0 ＋ build 过。零迁移、零新依赖、零新错误码。
+
+### 〔产品＋能力〕打包 AK＝D35 记忆机制四切片落地：决策节点自己带记忆、记忆有来源、写入有策略、检索会衰减（docs/122 §6／docs/13 U1332–U1344，2026-10-10 立项与落码同日）
+
+- **为什么这批值得单独记**：这是 D35 里**客户看得见**的那部分。以前图要用长期记忆，运营必须自己拖一个 `memory/recall` 工具、再把结果用 `{{路径}}` 接进提示词——等于把检索管道摊给非技术用户看。现在 `ai_decision` 有一个可选的「记忆注入」开关，打开就自动把召回段拼进**真正发给模型的那份 prompt**。
+- **缺省关闭不是"应该没影响"，是被断言的**：关闭时发给模型的 prompt、`prompt_rendered`、节点产出键集合三件事逐字不变，且假记忆库**一次都没被调用**（只断言"结果没变"会漏掉"其实查了但没用上"这种浪费与污染）。黄金用例、回放、影子比对因此零回归。
+- **三种"没拿到记忆"从此是三个答案**（本批真正的改判，来自落码前复核）：`status="unavailable"`（这个租户根本没装记忆档）、`"error"`（存储故障）、`"ok"`＋`count=0`（确实没查到）。立项原文写的是"没 LLM 就静默返回空"，而 `llm/structured.py` 的既定政策是"没模型必须显式失败，静默空结果＝伪造下游行为"——两边都对一半，取第三条路：**不打断主流程，但把原因说出来**。同理 `memory/auto_extract` 用 `skipped="llm_unavailable"` 与"接了模型但没提炼到"分开，**本批零新运行时错误码**（撤销原计划的 `MEMORY_EXTRACT_FAILED`：一个永不发射的码会混进 U1149 的可译集合，制造假覆盖）。
+- **写入策略与衰减**：`remember(update_policy=overwrite|version|ask, dedup_keys=[...])`——overwrite 原地更新且 **id/created_at 不变**（"这条被更新了"≠"又记了一遍"），version 新建并递增 `meta.version`，ask 只返回冲突不静默替运营做决定；命中判据两档共用 `dedup_match` **一份实现**（两份实现就是"什么算同一条事实"的第二份真相）。`recall(decay={enabled, half_life_days}, now_override)` 按 `score×0.5^(age/半衰期)` 重排，注入时钟保证回放确定；PG 档不能"先 SQL LIMIT 再衰减"（会把很旧但相关的条目挡在窗口外），改为先取有界候选集再重排，真正的解 ANN 仍在 D35。
+- **来源可见**：记忆列表加「来源」徽标（工具写入／人工录入／运行状态／自动提炼），四态在 `MemorySource` 与前端标签表之间做集合对拍。理由很直白：**自动提炼出的结论不能长得像人工确认过的**。
+- **顺手收编 AL 的手搓去重**：`_state_memory_write` 原来靠"扫 `list(kind=fact, limit=200)`＋按 scope 删＋写新"避免堆叠，有两个静默面（200 条之外的旧条目会留下＝同一对象两条状态并存；清旧失败被 `except` 吞掉照样写新），现在直接交给 `update_policy="overwrite"`——顺带给 U1337 一个真实现场做正控。模型解析也从三处重复收成一个 `_resolve_model`。
+- **一条已知限制（写进 docs/12，不藏在脚注）**：`auto_extract` 只解析 env 模型，**租户 BYOK 不生效**——`ActionRequest` 不带租户，harness 全链路没有可取的租户上下文，补它是 harness 级契约变更，另批做。
+- **门（实跑）**：后端全量 **2668 passed／179 skipped／0 failed**（178.96s，exit 0；**对账**＝AK 复核基线 2613/173 ＋ 本批常跑 55 例 ＋ 本批被 skip 的 PG 例 6 ＝ 2668／179 ✓ 逐枚对上）、PG 集成一次性 pgvector **111 passed／1 skipped／0 failed**（18.20s，端口 5445——本机 5432 被别的项目占着，不动它）、前端 vitest **980 passed／2 skipped**（71 文件）＋ oxlint **0/0** ＋ `pnpm build` 过。新增 61 例后端（55 常跑＋6 集成）＋2 例前端。零迁移、零新依赖、无新 ADR；**D35 整体不解除**（保留期裁剪、商业 embedding、summary/case、PII、策略表单、跨运营体共享、ANN 仍缓做）。
+
+### 打包 AK：D35 记忆机制四切片立项（2026-10-10，docs-only）
+
+- **auto_extract**：LLM 结构化提取＋置信度阈值 0.85＋`source=auto_extract`，新图工具 `memory/auto_extract`（显式可观测可回放）；无 LLM 配置 fail-closed 空结果、不阻塞图。1 新错误码 `MEMORY_EXTRACT_FAILED`。
+- **ai_decision 注入开关**：节点可选 `memoryInjection`（enabled/query/topK/minScore，缺省关闭＝现状逐字不变）；开启时节点构造 LLM 请求前经注入的 MemoryRepository 检索并追加【相关记忆】段。
+- **update_policy**：`remember` 可选 overwrite（缺省，兼容现状）/version（metadata.version 递增）/ask（返 `{conflict, existing_id}`，不引审批），配 dedup_keys，两档同构。
+- **recall decay**：可选半衰期加权（`score' = score·0.5^(age/half)`，`now_override` 确定，缺省关闭）。
+- **验收**：U1332–U1344 预留（docs/13 打包 AK 小节）。零新端点／无 ADR。**D35 整体不解除**。形状权威 docs/122。
+
+### 打包 AL：D63 全局异常/自愈/状态机立项（2026-10-10，docs-only）
+
+- **全局异常处理器**：`globalErrorHandler`（onUncaughtError＝mark_only/route_to_subgraph/escalate_to_human，捕获所有未被节点级 on_error 捕获的异常；自身异常 mark_only 兜底）。
+- **自愈机制**：`selfHealing`（triggerOn/diagnoseSubgraphId/maxAttempts/continueWhen，复用 jump_to 路由骨架；与 D56 安全重放不同族）。
+- **状态机子图**：新节点类型 `state_machine`（states/transitions 事件驱动、编译期校验、SSE state_changed 帧）。
+- **待用户拍板**：P-1 降级策略形态三选一（建议 escalate_to_human）；P-2 对象状态存哪（建议 memory 档）。4 新错误码。验收 U1345–U1356 预留。
+- **D63 不解除**（落码后才可取回）。形状权威 docs/123。
+
+### 打包 AL 落码收口（2026-10-09）
+
+- **拍板**：P-1＝C（escalate_to_human 复用审批/通知闭环）；P-2＝B（store=memory 跨 run 持续）。
+- **后端**：`loader.py` 图级 `_apply_global_error_handler`（三形态）＋`_wrap_self_healing`（诊断子图 verdict 裁决）＋`_execute_state_machine`（事件驱动迁移、memory 持久化、SSE state_changed）；`dsl.py` 顶层字段与三编译期校验；`api/main.py` 7 处 run_graph 补 memory_repo。新运行期异常 `StateTransitionRejected`。
+- **前端**：state_machine 节点目录＋schema＋图设置面板（globalErrorHandler/selfHealing）＋序列化 snake_case 透传 roundtrip＋4 错误码 i18n zh/en＋SSE 三新帧（state_changed/healing/global_error）日志。
+- **验收**：U1345–U1354 后端 17 用例；U1355 前端（serializer 13 用例含 AL roundtrip）；U1356 三道门——后端 pytest **2610 passed/173 skipped/0 failed**，前端 build（tsc+vite）/vitest/oxlint（0/0）全过。**D63 解除**。
+- **遗留**：pg_table 档运行期未接线、审批持久化中断（docs/14 D20/D21 族）。
 
 ### 打包 AJ：节点级 on_error 真执行（2026-10-10）
 

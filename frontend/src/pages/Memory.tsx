@@ -38,6 +38,8 @@ import {
   formatScore,
   kindColor,
   kindLabel,
+  sourceColor,
+  sourceLabel,
   type MemoryDraft,
 } from '../lib/memory'
 import { useTranslation } from '../locales'
@@ -208,6 +210,14 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
       key: 'kind',
       width: 90,
       render: (kind: MemoryKind) => <Tag color={kindColor(kind)}>{t(kindLabel(kind))}</Tag>,
+    },
+    {
+      // 打包 AK（docs/122 U1343）：来源徽标——自动提炼的条目不能看起来像人工确认过的。
+      title: t('col.source'),
+      dataIndex: 'source',
+      key: 'source',
+      width: 100,
+      render: (source: string) => <Tag color={sourceColor(source)}>{t(sourceLabel(source))}</Tag>,
     },
     {
       title: t('col.confidence'),

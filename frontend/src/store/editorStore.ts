@@ -89,6 +89,21 @@ type EditorState = {
   toggleBreakpointException: (nodeId: string) => void
   clearBreakpoints: () => void
   setNlWarnings: (warnings: string[]) => void
+  /** 打包 AL（docs/123 §2.1/§2.2）：图级 globalErrorHandler / selfHealing（camelCase 编辑器形态）。 */
+  graphSettings: {
+    globalErrorHandler?: {
+      onUncaughtError?: 'mark_only' | 'route_to_subgraph' | 'escalate_to_human'
+      errorSubgraphId?: string
+      escalation?: { channel?: string; recipients?: string[] }
+    }
+    selfHealing?: {
+      triggerOn?: string[]
+      diagnoseSubgraphId?: string
+      maxAttempts?: number
+      continueWhen?: string
+    }
+  }
+  updateGraphSettings: (patch: Partial<EditorState['graphSettings']>) => void
 }
 
 export function nextId(kind: NodeKind, existing: EditorNode[]): string {
@@ -181,6 +196,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   breakpoints: {},
   nlWarnings: [],
   dirty: INITIAL_DIRTY,
+  graphSettings: {},
+
+  updateGraphSettings: (patch) =>
+    set((state) => ({ graphSettings: { ...state.graphSettings, ...patch } })),
 
   clearDirty: (ranges) =>
     set((state) => ({ dirty: ranges ? markConsumed(state.dirty, ranges) : markClean(state.dirty) })),
@@ -420,7 +439,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   loadGraph: (graph) => {
-    const { nodes, edges, variables, debugSettings } = deserializeGraph(graph)
+    const { nodes, edges, variables, debugSettings, graphSettings } = deserializeGraph(graph)
     const loadedNodes = nodes as EditorNode[]
     // docs/60 §5.1：随图还原持久化断点；节点已不存在的孤儿断点丢弃。
     const nodeIds = new Set(loadedNodes.map((node) => node.id))
@@ -440,6 +459,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       variables,
       selectedNodeId: null,
       breakpoints: restoredBreakpoints,
+      graphSettings: graphSettings ?? {},
       // 换图即失效：NL 参数警告只对刚生成/加载的那张草稿有意义
       nlWarnings: [],
       logs: [`已加载 NL 生成草稿：${loadedNodes.length} 个节点`],

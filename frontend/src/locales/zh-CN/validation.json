@@ -189,6 +189,8 @@
     "LOOP_STRANDED_NODE": "节点 {{owner}}：循环体节点 {{member}} 没有任何路径回到循环节点，将被困在无限循环中",
     "LOOP_TRIGGER_IN_BODY": "节点 {{owner}}：循环体内不能包含触发器节点：{{member}}",
     "LOOP_PARALLEL_IN_BODY": "节点 {{owner}}：v1 循环体内不能包含并行节点：{{member}}（汇聚网关按单次放行设计，循环内多轮扇出会静默死锁）",
+    "NODE_AI_MEMORY_INJECTION_INVALID": "节点 {{owner}}：记忆注入配置必须是一个对象",
+    "NODE_AI_MEMORY_INJECTION_PARAM_INVALID": "节点 {{owner}}：记忆注入的 {{field}} 必须是 {{expect}}",
     "NODE_AI_PROMPT_REQUIRED": "节点 {{owner}}：AI 决策必须填写提示词模板",
     "NODE_ERROR_TARGET_INVALID": "节点 {{owner}}：error_target 非法：{{errorTarget}}（不能指向自身、不存在的节点或条件/循环/审批/并行节点）",
     "NODE_ERROR_TARGET_REQUIRED": "节点 {{owner}}：配置了 jump_to 但未指定 error_target",
@@ -290,6 +292,10 @@
     "VAR_SOURCE_REF_EMPTY": "Variable {{name}} declares a restricted source but the reference name is empty",
     "VAR_SOURCE_REF_INVALID": "Variable {{name}} has an invalid env reference name: {{ref}}",
     "VAR_SOURCE_SCOPE_MISMATCH": "Variable {{name}} declares a restricted source but its scope is not global",
-    "APPROVER_REF_UNRESOLVED": "审批人（approver）引用的变量未定义：{{ref}}"
+    "APPROVER_REF_UNRESOLVED": "审批人（approver）引用的变量未定义：{{ref}}",
+    "GLOBAL_ERROR_HANDLER_INVALID": "图级异常处理配置无效：{{message}}",
+    "SELF_HEALING_INVALID": "自愈配置无效：{{message}}",
+    "STATE_MACHINE_INVALID": "状态机节点 {{owner}} 配置无效：{{message}}",
+    "STATE_TRANSITION_REJECTED": "状态机节点 {{owner}} 非法迁移：{{from}} --{{event}}--> 无匹配转换（对象 {{objectRef}}）"
   }
 }

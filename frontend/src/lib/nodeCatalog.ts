@@ -29,7 +29,7 @@ export {
 } from './validation/l1'
 export type { ApprovalTimeoutAction, WaitTimeoutPolicy } from './validation/l1'
 
-export const NODE_KINDS = ['trigger', 'ai_decision', 'tool_call', 'condition', 'loop', 'parallel', 'wait', 'subgraph', 'human_approval', 'intent_recognition', 'info_extraction', 'content_generation'] as const
+export const NODE_KINDS = ['trigger', 'ai_decision', 'tool_call', 'condition', 'loop', 'parallel', 'wait', 'subgraph', 'human_approval', 'intent_recognition', 'info_extraction', 'content_generation', 'state_machine'] as const
 export type NodeKind = (typeof NODE_KINDS)[number]
 
 export const PARALLEL_JOIN_STRATEGIES = ['all_success', 'all_completed', 'any_success'] as const
@@ -83,6 +83,14 @@ export type NodeConfig = {
   // ai_decision / condition（ZP）共用：非空时覆盖默认模型，仅本次调用生效
   model?: string
   confidenceThreshold?: number
+  // ai_decision 记忆注入（打包 AK docs/122 D-3）：缺省不存在＝关闭，节点行为逐字不变
+  memoryInjection?: {
+    enabled?: boolean
+    query?: string
+    topK?: number
+    minScore?: number
+    scope?: Record<string, string>
+  }
   // tool_call
   tool?: string
   params?: string
@@ -135,6 +143,21 @@ export type NodeConfig = {
   template?: string
   style?: string
   maxLength?: number
+  // 打包 AL（docs/123 §2.3）：业务对象状态机（store=memory 跨 run 持续）
+  objectRef?: string
+  event?: string
+  states?: string[]
+  initial?: string
+  store?: 'memory' | 'run_globals'
+  transitions?: StateTransition[]
+}
+
+export type StateTransition = {
+  event: string
+  from: string
+  to: string
+  /** 可选动作：adapter/tool 形态，随迁移执行 */
+  action?: string
 }
 
 export type EditorNodeData = {
@@ -178,6 +201,11 @@ export const NODE_CATALOG: Record<NodeKind, { label: string; description: string
     label: '内容生成',
     description: 'LLM 按模板与风格生成内容（需填写模板）',
     color: token('color-node-ai'),
+  },
+  state_machine: {
+    label: '状态机',
+    description: '业务对象按事件迁移状态，跨 run 持续（store=memory）',
+    color: token('color-node-state-machine'),
   },
 }
 
@@ -226,6 +254,15 @@ export function defaultConfig(kind: NodeKind): NodeConfig {
         onTimeout: 'reject',
         approvedTarget: '',
         rejectedTarget: '',
+      }
+    case 'state_machine':
+      return {
+        objectRef: '',
+        event: '',
+        states: ['pending', 'active', 'closed'],
+        initial: 'pending',
+        store: 'memory',
+        transitions: [{ event: '', from: '', to: '', action: '' }],
       }
   }
 }

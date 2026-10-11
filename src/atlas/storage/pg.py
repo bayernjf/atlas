@@ -1932,6 +1932,12 @@ class PgRunsStore:
             )
 
 
+# 衰减检索的候选扫描上界（每租户）。衰减只会把名次往下压，所以必须先拿到完整候选集
+# 再重排；SQL 里先 LIMIT 再衰减会让"很旧但本来排第 21 位"的条目没机会参与。
+# 真正的解法是 ANN 索引（docs/14 D35 的 ANN 行），这里先取一个明确的上界而不是静默截断。
+_MEMORY_DECAY_SCAN_LIMIT = 1000
+
+
 class PgMemoryStore:
     """长期记忆 PG/pgvector 实现（M11，docs/26 §4.3）。
 
@@ -1970,6 +1976,31 @@ class PgMemoryStore:
         "id, kind, content, scope, confidence, source, meta, created_at"
     )
 
+    def _dedup_matches(self, conn, params: dict[str, Any], keys: list[str]) -> list[dict[str, Any]]:
+        """同去重组内的既有条目（旧→新）。判据与进程内档共用 `memory.models.dedup_match`：
+        给了 dedup_keys 就按那几个 scope 键相等，没给就要求 scope 全等＋内容相等。
+        """
+        if keys and any(key not in params["scope"] for key in keys):
+            return []
+        where = ["tenant_id = :tenant_id", "kind = :kind"]
+        args: dict[str, Any] = {"tenant_id": self._tenant_id, "kind": params["kind"]}
+        if keys:
+            filter_scope = {key: params["scope"][key] for key in keys}
+            where.append("scope @> CAST(:filter AS jsonb)")
+        else:
+            # 没给去重键＝纯重复抑制：scope 必须全等，否则对象 A 会把对象 B 的同文事实覆盖掉。
+            where.append("scope = CAST(:filter AS jsonb)")
+            where.append("content = :content")
+            filter_scope = params["scope"]
+            args["content"] = params["content"]
+        args["filter"] = json.dumps(filter_scope, ensure_ascii=False)
+        sql = (
+            f"SELECT {self._PUBLIC_COLS} FROM memory_items WHERE "
+            + " AND ".join(where)
+            + " ORDER BY created_at ASC"
+        )
+        return [self._row_to_public(row) for row in conn.execute(text(sql), args).all()]
+
     def remember(
         self,
         *,
@@ -1979,15 +2010,65 @@ class PgMemoryStore:
         confidence: float = 1.0,
         source: str = "tool",
         metadata: dict[str, str] | None = None,
+        update_policy: str = "overwrite",
+        dedup_keys: list[str] | None = None,
     ) -> dict[str, Any]:
-        from atlas.memory.models import validate_remember_params
+        from atlas.memory.models import (
+            validate_dedup_keys,
+            validate_remember_params,
+            validate_update_policy,
+        )
 
         params = validate_remember_params(
             kind=kind, content=content, scope=scope, confidence=confidence,
             source=source, metadata=metadata,
         )
+        policy = validate_update_policy(update_policy)
+        keys = validate_dedup_keys(dedup_keys)
         vector = self._provider.embed([params["content"]])[0]
         with self._engine.begin() as conn:
+            matched = self._dedup_matches(conn, params, keys)
+            if matched:
+                if policy == "ask":
+                    latest = matched[-1]
+                    return {
+                        "conflict": True,
+                        "existing_id": latest["id"],
+                        "existing": latest,
+                    }
+                if policy == "overwrite":
+                    target = matched[-1]
+                    conn.execute(
+                        text(
+                            "UPDATE memory_items SET content = :content, confidence = :confidence, "
+                            "source = :source, meta = CAST(:meta AS jsonb), "
+                            "embedding = CAST(:embedding AS vector(256)) "
+                            "WHERE id = :id AND tenant_id = :tenant_id"
+                        ),
+                        {
+                            "content": params["content"],
+                            "confidence": params["confidence"],
+                            "source": params["source"],
+                            "meta": json.dumps(params["metadata"], ensure_ascii=False),
+                            "embedding": self._vector_literal(vector),
+                            "id": target["id"],
+                            "tenant_id": self._tenant_id,
+                        },
+                    )
+                    # id 与 created_at 不变：这是"同一条事实被更新"，不是"又记了一遍"。
+                    return {
+                        **target,
+                        "content": params["content"],
+                        "confidence": params["confidence"],
+                        "source": params["source"],
+                        "metadata": params["metadata"],
+                    }
+                from atlas.memory.models import max_version
+
+                params["metadata"] = {
+                    **params["metadata"],
+                    "version": str(max_version(matched) + 1),
+                }
             memory_id = _next_id(conn, "mem")
             created_at = _now_iso()
             conn.execute(
@@ -2029,12 +2110,19 @@ class PgMemoryStore:
         scope: dict[str, str] | None = None,
         top_k: int = 5,
         min_score: float = 0.0,
+        decay: dict[str, Any] | None = None,
+        now_override: datetime | None = None,
     ) -> list[dict[str, Any]]:
-        from atlas.memory.models import validate_recall_params
+        from atlas.memory.models import (
+            decay_multiplier,
+            validate_decay,
+            validate_recall_params,
+        )
 
         params = validate_recall_params(
             query=query, kind=kind, category=category, scope=scope, top_k=top_k, min_score=min_score
         )
+        decay_rule = validate_decay(decay)
         query_vector = self._provider.embed([params["query"]])[0]
         clauses = ["tenant_id = :tenant_id", "scope @> CAST(:scope AS jsonb)"]
         args: dict[str, Any] = {
@@ -2051,18 +2139,39 @@ class PgMemoryStore:
             clauses.append("meta ->> 'category' = :category")
             args["category"] = params["category"]
         where = " AND ".join(clauses)
-        sql = (
-            f"SELECT {self._PUBLIC_COLS}, 1.0 - (embedding <=> CAST(:q AS vector(256))) AS score "
-            f"FROM memory_items WHERE {where} "
-            "AND (1.0 - (embedding <=> CAST(:q AS vector(256)))) >= :min_score "
-            "ORDER BY embedding <=> CAST(:q AS vector(256)) LIMIT :top_k"
-        )
+        similarity = "(1.0 - (embedding <=> CAST(:q AS vector(256))))"
+        if decay_rule is None:
+            sql = (
+                f"SELECT {self._PUBLIC_COLS}, {similarity} AS score "
+                f"FROM memory_items WHERE {where} "
+                f"AND {similarity} >= :min_score "
+                f"ORDER BY embedding <=> CAST(:q AS vector(256)) LIMIT :top_k"
+            )
+        else:
+            # 衰减只会把名次往下压，所以必须先看完整候选集再重排——在 SQL 里 LIMIT 之后再衰减
+            # 会让"很旧但原本排第 21 位"的条目根本没机会参与。扫描上限是每租户条数上限，
+            # 真正的解法是 ANN（docs/14 D35 的 ANN 行），这里先取一个明确的上界。
+            args["scan"] = _MEMORY_DECAY_SCAN_LIMIT
+            sql = (
+                f"SELECT {self._PUBLIC_COLS}, {similarity} AS score "
+                f"FROM memory_items WHERE {where} "
+                f"AND {similarity} >= :min_score "
+                f"ORDER BY embedding <=> CAST(:q AS vector(256)) LIMIT :scan"
+            )
         with self._engine.connect() as conn:
             rows = conn.execute(text(sql), args).all()
         results: list[dict[str, Any]] = []
-        for row in rows:
+        pairs: list[tuple[float, Any]] = [(float(row[8]), row) for row in rows]
+        if decay_rule is not None:
+            now = now_override or datetime.now(timezone.utc)
+            half_life = decay_rule["half_life_days"]
+            pairs = [
+                (score * decay_multiplier(row[7], now, half_life), row) for score, row in pairs
+            ]
+            pairs.sort(key=lambda pair: pair[0], reverse=True)
+        for score, row in pairs[: params["top_k"]]:
             public = self._row_to_public(row)
-            public["score"] = round(float(row[8]), 6)
+            public["score"] = round(score, 6)
             results.append(public)
         return results
 

@@ -11,6 +11,9 @@ import {
   MEMORY_KIND_COLORS,
   MEMORY_KIND_LABELS,
   parseStringMapText,
+  sourceColor,
+  sourceLabel,
+  MEMORY_SOURCE_LABELS,
 } from '../memory'
 
 describe('M11 memory 纯函数（U98）', () => {
@@ -132,5 +135,25 @@ describe('AA knowledge 标签与分类（docs/108，U1267 纯函数腿）', () =
 
   it('知识子类白名单与后端同构（faq/sop/manual/rule/case）', () => {
     expect(KNOWLEDGE_CATEGORIES).toEqual(['faq', 'sop', 'manual', 'rule', 'case'])
+  })
+})
+
+
+describe('AK 记忆来源徽标（docs/122 U1343）', () => {
+  it('四态来源各有标签与颜色，未知来源原样显示不静默归类', () => {
+    expect(sourceLabel('tool')).toBe('source.tool')
+    expect(sourceLabel('manual')).toBe('source.manual')
+    expect(sourceLabel('run')).toBe('source.run')
+    expect(sourceLabel('auto_extract')).toBe('source.autoExtract')
+    expect(sourceColor('auto_extract')).toBe('orange')
+    // 未知值不能显示成"工具写入"——那等于给一条来路不明的记忆盖上人工确认的章。
+    expect(sourceLabel('mystery')).toBe('mystery')
+    expect(sourceColor('mystery')).toBe('default')
+  })
+
+  it('来源白名单与后端 MemorySource 同集合（防两档漂移）', () => {
+    expect(Object.keys(MEMORY_SOURCE_LABELS).sort()).toEqual(
+      ['auto_extract', 'manual', 'run', 'tool'],
+    )
   })
 })

@@ -253,3 +253,99 @@ def test_aa_u1265_pg_and_inmemory_parity_for_knowledge(pg_store):
     rules = pg_store.recall("退款", kind="knowledge", category="rule", top_k=3)
     assert all(h["metadata"].get("category") == "rule" for h in rules)
     pg_store.clear()
+
+
+# --------------------------------------------------------------------------- #
+# 打包 AK（docs/122 D-4/D-5）：update_policy 与 decay 的两档对拍
+# 判据与进程内档（tests/test_memory_update_policy_decay.py）逐条同名，防"两档语义漂移"。
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture()
+def ak_store(pg_store):
+    """每条用例从空库开始，并固定 created_at 序列（衰减判据要可确定复现）。"""
+    pg_store.clear()
+    stamps = iter(
+        [
+            "2026-10-10T12:00:00+00:00",
+            "2026-10-11T12:00:00+00:00",
+            "2026-10-12T12:00:00+00:00",
+            "2026-10-13T12:00:00+00:00",
+        ]
+    )
+    import atlas.storage.pg as pg_module
+
+    original = pg_module._now_iso
+    pg_module._now_iso = lambda: next(stamps)
+    try:
+        yield pg_store
+    finally:
+        pg_module._now_iso = original
+        pg_store.clear()
+
+
+def _ak_remember(store, content, scope, **kwargs):
+    return store.remember(kind="fact", content=content, scope=scope, **kwargs)
+
+
+def test_u1337_pg_overwrite_matches_the_in_process_semantics(ak_store):
+    first = _ak_remember(ak_store, "对象 A 当前状态：待审核", {"object_id": "A"})
+    second = _ak_remember(
+        ak_store, "对象 A 当前状态：已退款", {"object_id": "A"},
+        update_policy="overwrite", dedup_keys=["object_id"],
+    )
+    assert second["id"] == first["id"] and second["created_at"] == first["created_at"]
+    assert second["content"] == "对象 A 当前状态：已退款"
+    assert len(ak_store.list()) == 1
+    # embedding 必须跟着内容重算，否则"更新了行、检索还是旧的"＝静默失效
+    hits = ak_store.recall("已退款", top_k=3)
+    assert [hit["content"] for hit in hits] == ["对象 A 当前状态：已退款"]
+
+
+def test_u1337b_pg_dedup_requires_the_same_scope(ak_store):
+    """正控：没给去重键时，同内容不同 scope 不能被合并。"""
+    _ak_remember(ak_store, "已退过款", {"object_id": "A"})
+    _ak_remember(ak_store, "已退过款", {"object_id": "B"})
+    assert len(ak_store.list()) == 2
+
+
+def test_u1338_pg_version_increments_per_group(ak_store):
+    _ak_remember(ak_store, "规则 v1", {"object_id": "R"}, update_policy="version",
+                 dedup_keys=["object_id"])
+    second = _ak_remember(ak_store, "规则 v2", {"object_id": "R"}, update_policy="version",
+                          dedup_keys=["object_id"])
+    third = _ak_remember(ak_store, "规则 v3", {"object_id": "R"}, update_policy="version",
+                         dedup_keys=["object_id"])
+    assert (second["metadata"]["version"], third["metadata"]["version"]) == ("2", "3")
+    assert len(ak_store.list()) == 3
+
+
+def test_u1339_pg_ask_reports_conflict_without_writing(ak_store):
+    existing = _ak_remember(ak_store, "旧结论", {"object_id": "A"})
+    answer = _ak_remember(ak_store, "新结论", {"object_id": "A"},
+                          update_policy="ask", dedup_keys=["object_id"])
+    assert answer["conflict"] is True and answer["existing_id"] == existing["id"]
+    assert len(ak_store.list()) == 1
+
+
+def test_u1340_pg_decay_reorders_the_same_way_as_the_in_process_tier(ak_store):
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime(2026, 10, 10, 12, 0, 0, tzinfo=timezone.utc)
+    _ak_remember(ak_store, "客户偏好极速退款", {"object_id": "old"})
+    _ak_remember(ak_store, "客户偏好极速退款", {"object_id": "new"})
+    plain = ak_store.recall("客户偏好极速退款", top_k=2)
+    assert [item["scope"]["object_id"] for item in plain] == ["old", "new"]
+    decayed = ak_store.recall("客户偏好极速退款", top_k=2,
+                              decay={"enabled": True, "half_life_days": 30},
+                              now_override=now + timedelta(days=3))
+    assert [item["scope"]["object_id"] for item in decayed] == ["new", "old"]
+
+
+def test_u1341_pg_decay_off_is_the_pre_batch_query_path(ak_store):
+    _ak_remember(ak_store, "客户偏好极速退款", {"object_id": "old"})
+    _ak_remember(ak_store, "客户偏好极速退款", {"object_id": "new"})
+    baseline = ak_store.recall("客户偏好极速退款", top_k=2)
+    assert ak_store.recall("客户偏好极速退款", top_k=2, decay=None) == baseline
+    assert ak_store.recall("客户偏好极速退款", top_k=2,
+                           decay={"enabled": False, "half_life_days": 7}) == baseline

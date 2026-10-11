@@ -44,6 +44,9 @@ export type SerializedGraph = {
   edges: Array<{ id: string; source: string; target: string }>
   /** docs/60 §5.1：可选顶层；仅当存在至少一个启用断点时输出。 */
   debugSettings?: { breakpoints: PersistedBreakpoint[] }
+  /** 打包 AL（docs/123 §2.1/§2.2）：图级全局异常降级与自愈（snake_case，后端 pydantic）。 */
+  global_error_handler?: Record<string, unknown>
+  self_healing?: Record<string, unknown>
 }
 
 /**
@@ -109,6 +112,21 @@ export function serializeGraph(
   edges: Edge[],
   variables: GraphVariable[],
   breakpoints?: Record<string, BreakpointLike>,
+  graphSettings?: {
+    /** 打包 AL（docs/123 §2.1，P-1=C）：图级全局异常降级（camelCase 编辑器形态）。 */
+    globalErrorHandler?: {
+      onUncaughtError?: 'mark_only' | 'route_to_subgraph' | 'escalate_to_human'
+      errorSubgraphId?: string
+      escalation?: { channel?: string; recipients?: string[] }
+    }
+    /** docs/123 §2.2：selfHealing 自愈（camelCase 编辑器形态）。 */
+    selfHealing?: {
+      triggerOn?: string[]
+      diagnoseSubgraphId?: string
+      maxAttempts?: number
+      continueWhen?: string
+    }
+  },
 ): SerializedGraph {
   const graph: SerializedGraph = {
     version: 1,
@@ -123,6 +141,23 @@ export function serializeGraph(
       retry: serializeRetry(node.data.retry),
     })),
     edges: edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target })),
+  }
+  // 打包 AL：图级配置显式 snake_case 互转（camelCase→snake_case，pydantic 静默丢未知键坑）
+  if (graphSettings?.globalErrorHandler) {
+    const h = graphSettings.globalErrorHandler
+    graph.global_error_handler = {
+      on_uncaught_error: h.onUncaughtError ?? 'mark_only',
+    }
+    if (h.errorSubgraphId) graph.global_error_handler.error_subgraph_id = h.errorSubgraphId
+    if (h.escalation) graph.global_error_handler.escalation = h.escalation
+  }
+  if (graphSettings?.selfHealing) {
+    const s = graphSettings.selfHealing
+    graph.self_healing = {}
+    if (s.triggerOn) graph.self_healing.trigger_on = s.triggerOn
+    if (s.diagnoseSubgraphId) graph.self_healing.diagnose_subgraph_id = s.diagnoseSubgraphId
+    if (s.maxAttempts !== undefined) graph.self_healing.max_attempts = s.maxAttempts
+    if (s.continueWhen !== undefined) graph.self_healing.continue_when = s.continueWhen
   }
   const persisted = Object.entries(breakpoints ?? {}).map(([nodeId, breakpoint]) =>
     toPersistedBreakpoint(nodeId, breakpoint),
@@ -143,10 +178,56 @@ export function deserializeGraph(graph: SerializedGraph): {
   edges: Edge[]
   variables: GraphVariable[]
   debugSettings?: { breakpoints: PersistedBreakpoint[] }
+  /** 打包 AL：图级 globalErrorHandler/selfHealing（snake_case→camelCase 编辑器形态）。 */
+  graphSettings?: {
+    globalErrorHandler?: {
+      onUncaughtError?: 'mark_only' | 'route_to_subgraph' | 'escalate_to_human'
+      errorSubgraphId?: string
+      escalation?: { channel?: string; recipients?: string[] }
+    }
+    selfHealing?: {
+      triggerOn?: string[]
+      diagnoseSubgraphId?: string
+      maxAttempts?: number
+      continueWhen?: string
+    }
+  }
 } {
   // 模板 instantiate/NL 草稿等来源的图可能缺 position（GraphDSL 默认值不落库）。
   // 兜底按序生成瀑布位置，避免画布节点 position=undefined 导致序列化崩溃（ZX 冒烟暴露）。
   const DEFAULT_NODE_GAP = 80
+  const gh = graph.global_error_handler
+  const sh = graph.self_healing
+  const graphSettings: NonNullable<
+    ReturnType<typeof deserializeGraph>
+  >['graphSettings'] = {}
+  if (gh && typeof gh === 'object') {
+    const handler: NonNullable<typeof graphSettings.globalErrorHandler> = {}
+    const anyGh = gh as Record<string, unknown>
+    if (typeof anyGh.on_uncaught_error === 'string') {
+      handler.onUncaughtError = anyGh.on_uncaught_error as
+        | 'mark_only'
+        | 'route_to_subgraph'
+        | 'escalate_to_human'
+    }
+    if (typeof anyGh.error_subgraph_id === 'string') handler.errorSubgraphId = anyGh.error_subgraph_id
+    if (anyGh.escalation && typeof anyGh.escalation === 'object') {
+      const esc = anyGh.escalation as Record<string, unknown>
+      handler.escalation = {}
+      if (typeof esc.channel === 'string') handler.escalation.channel = esc.channel
+      if (Array.isArray(esc.recipients)) handler.escalation.recipients = esc.recipients as string[]
+    }
+    graphSettings.globalErrorHandler = handler
+  }
+  if (sh && typeof sh === 'object') {
+    const healing: NonNullable<typeof graphSettings.selfHealing> = {}
+    const anySh = sh as Record<string, unknown>
+    if (Array.isArray(anySh.trigger_on)) healing.triggerOn = anySh.trigger_on as string[]
+    if (typeof anySh.diagnose_subgraph_id === 'string') healing.diagnoseSubgraphId = anySh.diagnose_subgraph_id
+    if (typeof anySh.max_attempts === 'number') healing.maxAttempts = anySh.max_attempts
+    if (typeof anySh.continue_when === 'string') healing.continueWhen = anySh.continue_when
+    graphSettings.selfHealing = healing
+  }
   return {
     nodes: graph.nodes.map((node, index) => ({
       id: node.id,
@@ -167,5 +248,6 @@ export function deserializeGraph(graph: SerializedGraph): {
     })),
     variables: graph.variables,
     debugSettings: graph.debugSettings,
+    graphSettings,
   }
 }

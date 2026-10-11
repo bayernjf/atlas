@@ -38,6 +38,8 @@ SUPPORTED_NODE_TYPES = (
     "intent_recognition",
     "info_extraction",
     "content_generation",
+    # 打包 AL（docs/123 §2.3）：业务对象状态机子图节点（P-2 已拍板 memory 档）
+    "state_machine",
 )
 
 MAX_LOOP_ITERATIONS = 100
@@ -156,6 +158,10 @@ class GraphDSL(BaseModel):
     variables: list[GraphVariable] = Field(default_factory=list)
     nodes: list[NodeDSL]
     edges: list[EdgeDSL] = Field(default_factory=list)
+    # 打包 AL（docs/123 §2.1/§2.2）：运营体/图级统一降级与自愈配置。
+    # 纯超集：缺省 None＝整体不启用（现状 fail-fast）；落码形状见 docs/123。
+    globalErrorHandler: dict[str, Any] | None = None
+    selfHealing: dict[str, Any] | None = None
 
 
 class _Issues:
@@ -185,7 +191,9 @@ class _Issues:
 
     def extend(self, issues: list[Issue]) -> None:
         for message, location, code, prm in issues:
-            if location is not None:
+            # location 仅接受 _loc 的 dict 形态；图级错误（字符串路径说明或 None）
+            # 不产生 422 侧车条目（04 §6.5：图级错误无条目）。
+            if isinstance(location, dict) and location:
                 self.locations.append({"index": len(self.messages), **location})
             self.messages.append(message)
             self.codes.append(code)
@@ -388,6 +396,14 @@ def validate_graph_report(
 
     for node in graph.nodes:
         issues.extend(_validate_retry_config(node, node_ids, node_types))
+
+    # 打包 AL（docs/123 §2.1-2.3）：图级 globalErrorHandler / selfHealing 顶层配置、
+    # state_machine 节点配置编译期校验（缺省 None 不触发，保持现状逐字兼容）。
+    issues.extend(_validate_global_error_handler(graph, node_ids))
+    issues.extend(_validate_self_healing(graph, node_ids, node_types))
+    for node in graph.nodes:
+        if node.type == "state_machine":
+            issues.extend(_validate_state_machine_config(node))
 
     for message, code, prm in _validate_illegal_cycles(graph, loop_backedges):
         issues.add(message, code=code, params=prm)
@@ -1234,6 +1250,258 @@ def _validate_retry_config(
     return issues
 
 
+#: 打包 AL（docs/123 §2.1）：onUncaughtError 三形态枚举。
+GLOBAL_ERROR_STRATEGIES = ("mark_only", "route_to_subgraph", "escalate_to_human")
+
+
+def _validate_global_error_handler(
+    graph: GraphDSL, node_ids: set[str]
+) -> list[Issue]:
+    """globalErrorHandler 顶层配置编译期校验（docs/123 §2.1/§4）。
+
+    缺省 None 不触发（现状 fail-fast）；配置了则按契约校验三字段。
+    """
+    issues: list[Issue] = []
+    handler = graph.globalErrorHandler
+    if handler is None:
+        return issues
+    if not isinstance(handler, dict):
+        issues.append((
+            "globalErrorHandler 必须是对象",
+            None,
+            "GLOBAL_ERROR_HANDLER_INVALID",
+            {"owner": "graph"},
+        ))
+        return issues
+
+    def add(message: str, pointer: str | None, *, code: str, params: dict[str, Any] | None = None) -> None:
+        issues.append((message, pointer, code, {"owner": "graph", **(params or {})}))
+
+    strategy = handler.get("onUncaughtError")
+    if not isinstance(strategy, str) or strategy not in GLOBAL_ERROR_STRATEGIES:
+        add(
+            f"globalErrorHandler.onUncaughtError 必须是 "
+            f"{' / '.join(GLOBAL_ERROR_STRATEGIES)} 之一",
+            "/globalErrorHandler/onUncaughtError",
+            code="GLOBAL_ERROR_HANDLER_INVALID",
+            params={"onUncaughtError": strategy},
+        )
+        strategy = None
+    error_subgraph = handler.get("errorSubgraphId")
+    if strategy == "route_to_subgraph":
+        if not isinstance(error_subgraph, str) or not error_subgraph.strip():
+            add(
+                "globalErrorHandler=route_to_subgraph 时必须指定 errorSubgraphId",
+                "/globalErrorHandler/errorSubgraphId",
+                code="GLOBAL_ERROR_HANDLER_INVALID",
+                params={},
+            )
+        elif error_subgraph not in node_ids:
+            add(
+                f"globalErrorHandler.errorSubgraphId 引用了不存在的节点：{error_subgraph}",
+                "/globalErrorHandler/errorSubgraphId",
+                code="GLOBAL_ERROR_HANDLER_INVALID",
+                params={"errorSubgraphId": error_subgraph},
+            )
+    escalation = handler.get("escalation")
+    if strategy == "escalate_to_human" and escalation is not None:
+        if not isinstance(escalation, dict):
+            add(
+                "globalErrorHandler.escalation 必须是对象",
+                "/globalErrorHandler/escalation",
+                code="GLOBAL_ERROR_HANDLER_INVALID",
+                params={},
+            )
+        else:
+            channel = escalation.get("channel")
+            if not isinstance(channel, str) or channel not in ("email", "approval"):
+                add(
+                    "globalErrorHandler.escalation.channel 必须是 email 或 approval",
+                    "/globalErrorHandler/escalation/channel",
+                    code="GLOBAL_ERROR_HANDLER_INVALID",
+                    params={"channel": channel},
+                )
+            recipients = escalation.get("recipients")
+            if recipients is not None and (
+                not isinstance(recipients, list)
+                or not all(isinstance(r, str) and r.strip() for r in recipients)
+            ):
+                add(
+                    "globalErrorHandler.escalation.recipients 必须是非空字符串数组",
+                    "/globalErrorHandler/escalation/recipients",
+                    code="GLOBAL_ERROR_HANDLER_INVALID",
+                    params={},
+                )
+    return issues
+
+
+def _validate_self_healing(
+    graph: GraphDSL, node_ids: set[str], node_types: dict[str, str]
+) -> list[Issue]:
+    """selfHealing 顶层配置编译期校验（docs/123 §2.2/§4）。
+
+    triggerOn 枚举白名单、diagnoseSubgraphId 存在且不指向自身、maxAttempts 1-3、
+    continueWhen 非空表达式。缺省 None 不触发。
+    """
+    issues: list[Issue] = []
+    healing = graph.selfHealing
+    if healing is None:
+        return issues
+    if not isinstance(healing, dict):
+        issues.append((
+            "selfHealing 必须是对象",
+            None,
+            "SELF_HEALING_INVALID",
+            {"owner": "graph"},
+        ))
+        return issues
+
+    def add(message: str, pointer: str | None, *, code: str, params: dict[str, Any] | None = None) -> None:
+        issues.append((message, pointer, code, {"owner": "graph", **(params or {})}))
+
+    triggers = healing.get("triggerOn")
+    allowed = ("node_failed", "subgraph_failed")
+    if triggers is not None:
+        if not isinstance(triggers, list) or not triggers or not all(
+            isinstance(t, str) and t in allowed for t in triggers
+        ):
+            add(
+                f"selfHealing.triggerOn 必须是 {' / '.join(allowed)} 的非空数组",
+                "/selfHealing/triggerOn",
+                code="SELF_HEALING_INVALID",
+                params={"triggerOn": triggers},
+            )
+    diagnose = healing.get("diagnoseSubgraphId")
+    if not isinstance(diagnose, str) or not diagnose.strip():
+        add(
+            "selfHealing 必须指定 diagnoseSubgraphId",
+            "/selfHealing/diagnoseSubgraphId",
+            code="SELF_HEALING_INVALID",
+            params={},
+        )
+    elif diagnose not in node_ids:
+        add(
+            f"selfHealing.diagnoseSubgraphId 引用了不存在的节点：{diagnose}",
+            "/selfHealing/diagnoseSubgraphId",
+            code="SELF_HEALING_INVALID",
+            params={"diagnoseSubgraphId": diagnose},
+        )
+    else:
+        diagnose_type = node_types.get(diagnose)
+        if diagnose_type != "subgraph":
+            add(
+                f"selfHealing.diagnoseSubgraphId 必须是 subgraph 类型节点，"
+                f"实际为 {diagnose_type}",
+                "/selfHealing/diagnoseSubgraphId",
+                code="SELF_HEALING_INVALID",
+                params={"diagnoseSubgraphId": diagnose},
+            )
+    max_attempts = healing.get("maxAttempts")
+    if max_attempts is not None and (
+        not isinstance(max_attempts, int)
+        or isinstance(max_attempts, bool)
+        or not 1 <= max_attempts <= 3
+    ):
+        add(
+            "selfHealing.maxAttempts 必须是 1-3 的整数",
+            "/selfHealing/maxAttempts",
+            code="SELF_HEALING_INVALID",
+            params={"maxAttempts": max_attempts},
+        )
+    continue_when = healing.get("continueWhen")
+    if continue_when is not None and (
+        not isinstance(continue_when, str) or not continue_when.strip()
+    ):
+        add(
+            "selfHealing.continueWhen 必须是非空表达式字符串",
+            "/selfHealing/continueWhen",
+            code="SELF_HEALING_INVALID",
+            params={},
+        )
+    return issues
+
+
+#: 打包 AL（docs/123 §2.3）：state_machine 合法 store 枚举（P-2 拍板 memory 为主，其余留扩展）。
+STATE_MACHINE_STORES = ("run_globals", "memory", "pg_table")
+
+
+def _validate_state_machine_config(node: NodeDSL) -> list[Issue]:
+    """state_machine 节点配置编译期校验（docs/123 §2.3/§4）。
+
+    states 非空、initial 合法、transition from/to 引用存在、事件名唯一、
+    `*` 通配仅 to 端；store 枚举白名单。非法→STATE_MACHINE_INVALID。
+    """
+    issues: list[Issue] = []
+    prefix = f"状态机节点 {node.id}"
+    config = node.config
+
+    def add(message: str, pointer: str | None, *, code: str, params: dict[str, Any] | None = None) -> None:
+        issues.append((message, _loc(node.id, pointer), code, {"owner": node.id, **(params or {})}))
+
+    states = config.get("states")
+    if not isinstance(states, list) or not states or not all(
+        isinstance(s, str) and s.strip() for s in states
+    ):
+        add(f"{prefix} 至少需要一个非空状态（states）", "/states",
+            code="STATE_MACHINE_INVALID")
+        states = []
+    initial = config.get("initial")
+    if not isinstance(initial, str) or not initial.strip():
+        add(f"{prefix} 必须指定初始状态（initial）", "/initial",
+            code="STATE_MACHINE_INVALID")
+    elif states and initial not in states:
+        add(f"{prefix} 的初始状态 {initial} 不在 states 列表中", "/initial",
+            code="STATE_MACHINE_INVALID", params={"state": initial})
+    transitions = config.get("transitions")
+    if not isinstance(transitions, list):
+        transitions = []
+        add(f"{prefix} 的 transitions 必须是数组", "/transitions",
+            code="STATE_MACHINE_INVALID")
+    event_names: set[str] = set()
+    for i, transition in enumerate(transitions):
+        if not isinstance(transition, dict):
+            add(f"{prefix} 第 {i + 1} 条 transition 必须是对象", "/transitions",
+                code="STATE_MACHINE_INVALID")
+            continue
+        event = transition.get("event")
+        if not isinstance(event, str) or not event.strip():
+            add(f"{prefix} 第 {i + 1} 条 transition 缺少事件名（event）", "/transitions",
+                code="STATE_MACHINE_INVALID")
+        elif event in event_names:
+            add(f"{prefix} 事件名重复：{event}", "/transitions",
+                code="STATE_MACHINE_INVALID", params={"event": event})
+        else:
+            event_names.add(event)
+        from_state = transition.get("from")
+        if not isinstance(from_state, str) or not from_state.strip():
+            add(f"{prefix} 第 {i + 1} 条 transition 缺少 from 状态", "/transitions",
+                code="STATE_MACHINE_INVALID")
+        elif from_state == "*":
+            add(f"{prefix} 事件 {event!r} 的 from 不允许使用通配符 *", "/transitions",
+                code="STATE_MACHINE_INVALID", params={"event": event})
+        elif states and from_state not in states:
+            add(f"{prefix} 事件 {event!r} 的 from 状态 {from_state} 不存在", "/transitions",
+                code="STATE_MACHINE_INVALID", params={"event": event, "state": from_state})
+        to_state = transition.get("to")
+        if not isinstance(to_state, str) or not to_state.strip():
+            add(f"{prefix} 第 {i + 1} 条 transition 缺少 to 状态", "/transitions",
+                code="STATE_MACHINE_INVALID")
+        elif to_state != "*" and states and to_state not in states:
+            add(f"{prefix} 事件 {event!r} 的 to 状态 {to_state} 不存在", "/transitions",
+                code="STATE_MACHINE_INVALID", params={"event": event, "state": to_state})
+    store = config.get("store")
+    if store is not None and (
+        not isinstance(store, str) or store not in STATE_MACHINE_STORES
+    ):
+        add(
+            f"{prefix} 的 store 必须是 {' / '.join(STATE_MACHINE_STORES)} 之一",
+            "/store",
+            code="STATE_MACHINE_INVALID",
+            params={"store": store},
+        )
+    return issues
+
+
 def _validate_subgraph_config(
     node: NodeDSL, node_ids: set[str], outgoing: dict[str, set[str]]
 ) -> list[Issue]:
@@ -1563,6 +1831,38 @@ def _validate_reachability(
     ]
 
 
+# 打包 AK（docs/122 D-3）：ai_decision 可选记忆注入的形状。
+# 一条诊断模板配 (field, expect) 参数，而不是每个字段一条码——`expect` 取的是语言中立的
+# 技术词（boolean/integer/string/object/"0-1"），两档目录都能直译，不会把中文塞进参数里。
+_MEMORY_INJECTION_RULES: tuple[tuple[str, str], ...] = (
+    ("enabled", "boolean"),
+    ("query", "string"),
+    ("topK", "1-20"),
+    ("minScore", "0-1"),
+    ("scope", "object"),
+)
+
+
+def _memory_injection_value_ok(field: str, value: Any) -> bool:
+    if field == "enabled":
+        return isinstance(value, bool)
+    if field == "query":
+        return isinstance(value, str)
+    if field == "topK":
+        return isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 20
+    if field == "minScore":
+        return (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and 0.0 <= float(value) <= 1.0
+        )
+    if field == "scope":
+        return isinstance(value, dict) and all(
+            isinstance(key, str) and isinstance(item, str) for key, item in value.items()
+        )
+    return True
+
+
 def _validate_node_config(node: NodeDSL) -> list[Issue]:
     config = node.config
 
@@ -1598,6 +1898,26 @@ def _validate_node_config(node: NodeDSL) -> list[Issue]:
     elif node.type == "ai_decision":
         if not (config.get("promptTemplate") or "").strip():
             return [add("AI 决策必须填写提示词模板", "/promptTemplate", "NODE_AI_PROMPT_REQUIRED")]
+        # 打包 AK（docs/122 D-3）：记忆注入是可选对象，缺省＝不注入（运行路径与接入前逐字一致）。
+        injection = config.get("memoryInjection")
+        if injection is not None:
+            if not isinstance(injection, dict):
+                return [add("memoryInjection 必须是一个对象", "/memoryInjection",
+                            "NODE_AI_MEMORY_INJECTION_INVALID")]
+            problems: list[Issue] = []
+            for field, expect in _MEMORY_INJECTION_RULES:
+                value = injection.get(field)
+                if value is None:
+                    continue  # 缺省即默认值（enabled 缺省＝不注入），不要求显式写全
+                if not _memory_injection_value_ok(field, value):
+                    problems.append(add(
+                        f"memoryInjection.{field} 必须是 {expect}",
+                        f"/memoryInjection/{field}",
+                        "NODE_AI_MEMORY_INJECTION_PARAM_INVALID",
+                        {"field": field, "expect": expect},
+                    ))
+            if problems:
+                return problems
     elif node.type == "intent_recognition":
         intents = config.get("intents")
         if not isinstance(intents, list) or not intents:
@@ -1644,7 +1964,7 @@ def _validate_node_config(node: NodeDSL) -> list[Issue]:
 _REF_RE = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
 
 _STATIC_OUTPUT_KEYS: dict[str, tuple[str, ...]] = {
-    "ai_decision": ("decision", "prompt_rendered"),
+    "ai_decision": ("decision", "prompt_rendered", "memory_injected"),
     "condition": ("branch", "target"),
     "loop": ("index", "iterations"),
     "parallel": ("status", "branches", "joinStrategy", "joinTarget"),
@@ -1991,6 +2311,14 @@ def _validate_template_refs(
                         path_ok = len(rest) == 0 or (
                             len(rest) == 1
                             and rest[0] in ("action", "reason", "confidence", "source")
+                        )
+                    elif root == "memory_injected":
+                        # 打包 AK㊳：注入元数据形状固定 {query, topK, minScore, ids?, count, status}，
+                        # 放行同样一层——运营要能把"这单参考了几条记忆"发到客服手里，
+                        # 只能在图里引用它；只准看运行记录＝能力落了一半。
+                        path_ok = len(rest) == 0 or (
+                            len(rest) == 1
+                            and rest[0] in ("query", "topK", "minScore", "ids", "count", "status")
                         )
                     else:
                         path_ok = root == "prompt_rendered" and not rest
