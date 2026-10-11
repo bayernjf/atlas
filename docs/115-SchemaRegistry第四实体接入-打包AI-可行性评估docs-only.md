@@ -101,3 +101,32 @@ type GateConfig = {
 - 本件为纯文档评估，**无新增用例、无代码改动、无迁移、无依赖变更**。
 - 关联：D29 形状脉络见 docs/105（ZW）、docs/106（ZX）、docs/103（ZT）；MCP 加面（D49）的 docs-only 预备契约另见 docs/117；D21/D32 版本钉版整体评估见 docs/116。
 - **2026-10-10 追加（部署 gate 片落码收口）**：docs/115 §5 解锁路径第 3 步第一片「gate 标量与指标表迁 forms」已落码收口（`95041d4`＋`ee928ac`＋本 docs 收口原子；前端 vitest 943/2、oxlint 0/0、tsc 0、build 过、冒烟通过），部署配置面自 node/tool/card 之后成为第四实体接入 forms 的**第一片实际落地**；第 2 步异构数组已落码收口（docs/119）；**第 3 步第二片（RolloutModal 规则区迁移）2026-10-10 落码收口（docs/120 §8，`197e02e`→`179bd3f`→`b29f1cf`→docs 收口）**：规则区三行手写迁 forms 判别异构数组（三分支判别键 to）＋`normalizeRolloutRules` 段唯一/固定序/bucket 注入 field-op＋FormRenderer `disabled` prop＋判别键切换交互（docs/119 §4 交付项：ArrayView 判别数组行头段切换 Select、`oneOfBranchDefault` 目标分支默认对象、行内 const 判别键隐藏）；前端 vitest 972/2、守护门 8 passed、真实浏览器冒烟段切换全链路通过。**D29 解锁路径第 3 步两片全部闭环**，SchemaRegistry 六类实体通用化等 D29 整体仍缓做。
+
+## 8. 2026-10-12 复核：解锁三步全闭环后，「六类实体通用化」仍触发未到（docs-only，不落码）
+
+解锁路径三步（docs/118 自定义控件、docs/119 oneOf/discriminator 异构数组、docs/120 规则区迁移）既已全部落码收口，forms 内核表达力（嵌套 object/array、hiddenWhen 条件显隐、自定义业务控件、判别异构数组、disabled）已齐备。本次据**当前代码现状**（非沿用 10-09 结论）重新评估 D29 总目标「SchemaRegistry 六类实体（节点/工具/技能/记忆/部署/卡片）多来源通用化」是否到了该做统一抽象的时点。
+
+**六类实体 forms 接入矩阵（2026-10-12 实测）：**
+
+| 实体 | forms 来源 | 现状实证 |
+|---|---|---|
+| 节点 node | ✅ M1 | `lib/schemas/nodes/*`（含 ai_decision 的 `memoryInjection` 节点级开关） |
+| 工具 tool | ✅ M3 | `lib/forms/toolSchemas.ts`（取自 /api/adapters；memory/auto_extract 的 dedup/decay 等走工具参数） |
+| 卡片 card | ✅ M8 | FormRenderer `kind:"card"` |
+| 部署 deploy | ✅ AI/118-120 | `lib/forms/deployRegistry.ts`＋`deployWidgets.tsx`（gate 面＋规则区两片全迁） |
+| （额外）模板 template | ✅ ZW/ZX | `lib/forms/templateParamSchema.ts`（模板参数表单，D29 原六类之外的第五个真实来源） |
+| **技能 skill** | ❌ | 后端 `src/atlas/skills/skill.py` 的 `Skill` 仅进程内声明字段（id/name/description/capabilities/required_permissions），无运营者可编辑参数面；`frontend/src/components` 全量 grep `skill` **零配置 UI 命中** |
+| **记忆 memory（运营体级策略）** | ❌ | 记忆能力当前从三处配置，**无运营体级统一策略表单**：注入是节点级开关（node 来源）、decay/dedup_similarity 是工具调用参数、保留期是后端 env（`ATLAS_RETENTION_MEMORY_DAYS`）；前端 grep `memory_config/memoryConfig/dedup_similarity/decay` 无运营体级配置面 |
+
+**结论：通用化触发仍未到，维持缓做，本次不落码。**
+
+- 五个真实来源（node/tool/card/deploy/template）已各自通过桥接纯函数 + 独立注册表（`defaultRegistry`／`buildDeployRegistry()`）工作，FormRenderer 按 source 解析，**当前没有第六、第七个真实实体在等待一个统一来源协议**——此刻抽 `SourceRegistry` 统一抽象是没有消费者的框架（YAGNI），违背「每个概念必须可执行」。
+- 技能仍是进程内沙盘声明（D31 未解除）、记忆的运营体级策略表单未立项，二者都不构成 forms 来源需求。
+
+**可证伪重开判据（满足其一即立项做统一 SourceRegistry，并据此重评本件）：**
+
+1. **运营体级记忆策略表单立项**：要在一个 UI 统一配 recall decay 半衰期／dedup_similarity 阈值／保留期／auto_extract 开关与置信阈值（现散落在节点开关、工具参数、后端 env），记忆由此成为第六类 forms 来源；
+2. **技能/Bot 脱离进程内沙盘、其参数需要运营者在 UI 编辑**（技能成为 forms 来源）；
+3. **出现第三个需要独立注册表 + 自定义业务控件的领域**（当前 node/deploy 两个 Registry；第三个出现时注册表/控件分组的重复维护成本才真实显现）。
+
+**触发即做的最小形状（预告，不落码）**：抽 `SourceRegistry`（source id → `{ metaSchema, uiSchema, widgetScope }` 协议），把现有五个桥接收敛为注册项、FormRenderer 统一按 source 解析；纯重构、渲染与校验行为零变化，由各来源既有 vitest 守绿，不引新依赖、不新增 ADR。在此之前维持「来一个实体、写一个薄桥接」的现状（ZW/AI 已验证此路径成本很低）。

@@ -205,9 +205,12 @@ edges:                       # {id, source, target}，端点必须存在且禁�
   x-widget: string               # 自定义控件名；M1 仅声明，M3 WidgetRegistry 消费
   x-ref: {kinds?: [string]}      # 值须为图内节点 id 且种类匹配（缺省/"*" 任意）；用于 target 类字段
   x-outputSchema: object         # 节点 outputs 形状声明；M1 须与 lib/scope.ts 投影逐字段一致
-  # 〔2026-10-11 D66 裁决〕三者冲突时**权威是后端 loader 的真实产出**（各 mode 并集），
-  # 本声明与 lib/scope.ts、graph/dsl.py::_STATIC_OUTPUT_KEYS 三处都从它派生；
-  # 逐字段对拍由 frontend/src/lib/schemas/__tests__/nodeSchemas.test.ts 钉住。
+  # 〔2026-10-11 D66 裁决〕三者冲突时**权威是后端 loader 的真实产出**（各 mode 并集）。
+  # 〔2026-10-12 D66 后端单源〕权威表落为 src/atlas/graph/node_outputs.py（STATIC_NODE_OUTPUTS
+  # ＋project_static_outputs() 只读投影），graph/dsl.py::_STATIC_OUTPUT_KEYS 改为 static_output_keys()
+  # 派生（不再手抄）；前端 lib/scope.ts 仍手抄，由后端 tests/test_node_output_contract.py 解析 TS 与
+  # 后端投影逐字对拍，x-outputSchema↔scope.ts 另由前端 nodeSchemas.test.ts 对拍（两重锁）。
+  # 跨端 codegen（前端两份收口到后端生成的 TS 产物）余部待拍板，见 docs/14 D66 行注记。
 # metaSchema.ts：TS 类型 + schema 形状自检；index.ts：最小 SchemaRegistry get(kind, version)（M1 仅内置节点单一来源）
 ```
 > 边界：`x-*` 仅前端节点 schema，后端 Capability schema 拒绝 `x-*`（U32）；M1 零 UI 变化、零新依赖、不引 AJV（ADR T16 已于 2026-09-16 收口为手写最小子集，M2 已立项把 M1 解释器扶正迁入 `lib/validation/l1.ts`——见下 `diagnostic` 契约，M3 重开判据见 10 §4）、不做表单生成；schema 为 nodeCatalog 手写规则的声明式投影，M1 期手写校验保留并双跑等价比对（U36；M2 扶正后双跑脚手架与已覆盖手写规则下线，covered:false 跨字段规则保留）。工具/技能等五类实体入册缓做 D29。
@@ -1243,10 +1246,13 @@ input:  {query: string（必填，支持 {{变量}}）, kind?: enum[fact,prefere
          decay?: {enabled: bool=false, half_life_days: int 1-3650=30}}                   # 打包 AK
 output: {results: [{id, kind, content, score: number, confidence, scope, created_at}]}  # 无命中 results=[]
 # 能力 memory/auto_extract（action=memory_auto_extract，permission=write，**非幂等**）打包 AK docs/122 D-2
-input:  {text: string 1-4000（必填，支持 {{变量}}）, min_confidence?: number 0-1=0.85, scope?: {string:string}}
+input:  {text: string 1-4000（必填，支持 {{变量}}）, min_confidence?: number 0-1=0.85, scope?: {string:string},
+         update_policy?: enum[overwrite,version,ask]=overwrite,
+         dedup_similarity?: number|null=null}   # null=关（仅精确去重，现状）；(0,1]=语义近似去重阈值，bool/0/区间外 422（D65 缺省关切片，docs/122 §6.2）
 output: {extracted: int, facts: [{id,content,confidence}], preferences: [...],
          dropped_below_threshold: int, min_confidence: number, skipped: string, reason?: string,
-         model: string}   # model＝实际解析到的模型（BYOK>内置>env；打包 AN①），没接模型时为 ""
+         model: string,   # model＝实际解析到的模型（BYOK>内置>env；打包 AN①），没接模型时为 ""
+         merged_from?: [{id,score}], conflicts?: [...]}   # 仅 dedup_similarity 开启时出现：语义命中并合并的来源（可审计）/ask 冲突（不写库）；关闭时产出形状逐字不变
         # skipped="llm_unavailable"＝根本没接模型；skipped="" 且 extracted=0＝这次确实没提炼到。
         # 两者必须是不同答案——静默把前者写成后者就是伪造下游行为（docs/63 静默降级族）。
 ```
@@ -1255,6 +1261,8 @@ output: {extracted: int, facts: [{id,content,confidence}], preferences: [...],
 > **打包 AK 取回三件（2026-10-10，docs/122；D35 整体不解除）**：① `update_policy`＋`dedup_keys`（命中判据两档共用 `memory/models.dedup_match` 一份实现；缺省 overwrite＝旧语义兼容；AL 的状态机手搓去重已收编到它）；② `decay`（`score×0.5^(age/half_life)`，注入时钟 `now_override` 保回放确定；PG 档衰减路径先取有界候选集再重排，因为"SQL 里先 LIMIT 再衰减"会把很旧但相关的条目挡在窗口外，ANN 仍缓做＝D35）；③ `memory/auto_extract` 工具（LLM 结构化提取走 `llm/structured.extract_memories`，门槛是参数不是常数）。**决策节点的隐式注入**同批取回，形状见上方 `ai_decision` 的 `memoryInjection`（缺省关闭＝执行路径逐字不变）。**仍缓做（D35）**：working/summary/case 层、PII 脱敏、商业 embedding、记忆策略表单与跨运营体共享。
 >
 > **〔2026-10-11 真机验证订正，docs/122 §6.1〕两处契约变更**：① `memory/auto_extract` 的 `is_idempotent` 由 True 改 **False**——去重判据是"同 scope 同内容**精确**匹配"，而真模型两次措辞不会一致（实测同段文本重跑 3 条→6 条），所以"重跑幂等"是假承诺；`remember` 的幂等语义不变（内容相同才覆盖）。语义近似去重缓做＝docs/14 **D65**。② `ai_decision` 输出的**可引用路径**扩到 `memory_injected` 根及其一层子键 `query/topK/minScore/ids/count/status`（`dsl.py` 运行期 L2 复查与 `frontend/lib/scope.ts` 同构放行）——此前只放行 `decision`/`prompt_rendered`，注入结果只能看运行记录、下游节点引用即 `REF_AI_PATH_NOT_FOUND`。另：`memoryInjection` 自本日起在属性面板可配（Switch＋query/topK/minScore 三字段两档文案；`scope` 仍只能写图 JSON）。
+>
+> **〔2026-10-12 D65 缺省关切片＋D35 保留期切片，docs/122 §6.2、docs/14〕**：① `memory/auto_extract` 与两档 `remember()` 增可选 `dedup_similarity`（见上方 input/output 契约）——语义匹配口径与 recall 严格一致（同 kind＋scope 子集＋余弦≥阈值，PG 走 pgvector `<=>`），命中复用既有 update_policy 三态、零新增处置分支，仅开启时产出多 `merged_from`/`conflicts`；D65 整体（默认开启/阈值调参/常态跑批）仍缓做。② 长期记忆**保留期裁剪**：新增独立 env `ATLAS_RETENTION_MEMORY_DAYS`（正整数；缺省/非法＝**不过期**，不跟随全局 `ATLAS_RETENTION_DAYS`，宁保留不误删），纳入 K-2 retention 钩子（memory_items.created_at 为 TEXT，比较须 `::timestamptz`）。③ 节点静态输出根键后端单源化，见上方 metaSchema 注记。
 
 
 ### `channel_binding` — 字段概览（真实渠道适配批，docs/38；2026-09-22 docs-only 立项、ADR T28；落码承载 `src/atlas/channels/`；docs/39/ADR T29 增 webhook_subscriptions、迁移 016）
