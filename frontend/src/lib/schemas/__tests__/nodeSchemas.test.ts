@@ -9,7 +9,11 @@ const EXPECTED_OUTPUT_KEYS: Record<string, string[] | Record<string, string[]>> 
   trigger: { context: ['triggerType', 'cron', 'timezone', 'webhookUrl', 'payload'] },
   tool_call: ['result'],
   ai_decision: ['decision', 'prompt_rendered', 'memory_injected'],
-  condition: ['branch', 'mode', 'target', 'expression_errors', 'expressionErrorCodes', 'expressionErrorParams'],
+  // 打包 AP（docs/14 D66 闭合）：补上 loader 真产出、声明里却漏掉的 evaluation/llm_errors。
+  condition: [
+    'mode', 'branch', 'target', 'evaluation', 'llm_errors',
+    'expression_errors', 'expressionErrorCodes', 'expressionErrorParams',
+  ],
   loop: ['mode', 'index', 'iterations', 'items', 'item', 'results', 'target', 'exitReason', 'expression_errors', 'expressionErrorCodes', 'expressionErrorParams'],
   parallel: ['status', 'branches', 'joinStrategy', 'joinTarget'],
   wait: ['mode', 'waitType', 'durationMode', 'durationExpression', 'durationSeconds', 'plannedDurationSeconds', 'jitterSeconds', 'absoluteTime', 'eventKey', 'eventKeys', 'eventWaitMode', 'matchedEventKey', 'matchedEventKeys', 'matchedPayloads', 'receivedKeys', 'signaled', 'payload', 'waitedSeconds', 'resolvedBy', 'token'],
@@ -50,21 +54,16 @@ describe('built-in node schemas (U35)', () => {
   // 补全给空值）。本条守护把两边钉成同一组根键。
   //
   // 排除项各有理由，不是"先让门绿"：
-  // · trigger 引用走 context 嵌套特例、tool_call 走工具 outputSchema 动态路径（U35④ 既有设计）；
-  // · condition/loop/wait 是**本批量出的新漂移**，已登记 docs/14 **D66**：三类的
-  //   x-outputSchema 声明的是后端产出面的超集（如 condition 的 expressionErrorCodes、
-  //   wait 的 20 个键），而两侧校验表都只放行一小撮根键 ⇒ 补全给得出、编译期 REF_STATIC_PATH_NOT_FOUND
-  //   拒，与 D64 同族但要先定权威（docs/03 节点输出契约谁说了算），不在 AN② 范围。
+  // · trigger 引用走 context 嵌套特例、tool_call 走工具 outputSchema 动态路径（U35④ 既有设计）。
+  // 打包 AP（docs/14 D66 闭合）：condition/loop/wait 三条排除项已取消——裁决为「后端 loader
+  // 真实产出即权威」，三类声明与 scope.ts 放行根已逐键对齐，纳入对拍后从此不再能漂移。
   const SCOPE_PARITY_EXEMPT: Partial<Record<NodeKind, string>> = {
     trigger: 'context 嵌套特例（U35④）',
     tool_call: '工具 outputSchema 动态路径（U35④）',
-    condition: 'D66：声明为后端校验表的超集',
-    loop: 'D66：同上，且 foreach 有专用分支',
-    wait: 'D66：同上（schema 20 键 vs 校验表 3 键）',
   }
   const PARITY_KINDS = [...NODE_KINDS].filter((kind) => !(kind in SCOPE_PARITY_EXEMPT))
-  it('每类节点都在对拍覆盖内，排除项必须带理由且仍是五类（防"用排除法把门做绿"）', () => {
-    expect([...NODE_KINDS].length - PARITY_KINDS.length).toBe(5)
+  it('每类节点都在对拍覆盖内，排除项必须带理由且仍是两类（防"用排除法把门做绿"）', () => {
+    expect([...NODE_KINDS].length - PARITY_KINDS.length).toBe(2)
     expect(Object.values(SCOPE_PARITY_EXEMPT).every(Boolean)).toBe(true)
   })
   it.each(PARITY_KINDS)(
