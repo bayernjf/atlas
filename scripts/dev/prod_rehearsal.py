@@ -132,9 +132,9 @@ CREDENTIAL_KEYS = (
     "ATLAS_SMTP_FROM", "ATLAS_SMTP_USE_TLS",
 )
 
-#: 已落执行段的腿。notify 仍 BLOCKED（打扰真人，要显式 --notify-to 授权）；
-#: 任何"动款/打扰真人"的腿都必须显式授权，而不是沉默跑过或假装跑过。
-EXECUTABLE_LEGS = ("llm", "shopify", "refund")
+#: 已落执行段的腿。四条腿里 refund（动款）与 notify（打扰真人）除凭据齐备外，
+#: 还要显式授权旗（--allow-refund＋--shopify-order / --notify-to），规划期不放行沉默跑过。
+EXECUTABLE_LEGS = ("llm", "shopify", "refund", "notify")
 
 
 @dataclass(frozen=True)
@@ -183,7 +183,8 @@ def plan_live_legs(requested, source_env, *, allow_refund=False,
             if not notify_to:
                 plans.append(LegPlan(name, "blocked", "给真人发信要 --notify-to｜判据＝" + criterion))
             else:
-                plans.append(LegPlan(name, "blocked", "本批执行段未实现｜判据＝" + criterion))
+                # 前置齐、执行段存在（leg_notify）：可以按判据真投到指定收件人了。
+                plans.append(LegPlan(name, "run", criterion))
             continue
         if name not in EXECUTABLE_LEGS:
             plans.append(LegPlan(name, "blocked", "本批执行段未实现｜判据＝" + criterion))
@@ -356,6 +357,68 @@ def leg_refund(port: int, token: str, order_id: str) -> None:
     ok("refundId" in refund and refund.get("refundId") is not None,
        f"真 Shopify 退款已生效（refundId={refund.get('refundId')}｜status={refund.get('status')}）")
     say("     ", f"外发结论：{json.dumps(refund, ensure_ascii=False)[:200]}")
+
+
+def leg_notify(port: int, token: str, recipient: str) -> None:
+    """1.3 的真投递腿：一条通知经 prod 配置的 SMTP 真正投递到指定收件人。
+
+    与 leg_refund 同构但走的是 **harness 适配器** `message/send`（prod 在册适配器恰为
+    {http, memory, message}，无需任何 channel binding）：channel=email 且容器注入了
+    SmtpSender（ATLAS_SMTP_HOST 经 compose 透传，打包 AZ／U1157）时真发信，工具产出
+    `delivered="smtp"`；没注入 sender 时服务**不报错**、只落进程内记录（`in_process`），
+    所以判据不能只看工具 SUCCESS，必须断言 delivered=="smtp"——那才是「非 dev mock 的真投递」，
+    缺透传/缺 sender 会在这条断言上当场变红，不会假绿。只在 `--notify-to <真人地址>` 显式
+    点名时才跑（规划期的门在 plan_live_legs），因为这一步真的打扰一个真人收件箱。
+    """
+    params = json.dumps(
+        {"channel": "email", "to": recipient,
+         "subject": "Atlas prod 演练通知（leg_notify）",
+         "body": "本邮件由 prod_rehearsal.py 的 notify 腿经 prod 配置的 SMTP 真实投递，"
+                 "用于 docs/73 1.3 判据：一条通知真正到达指定收件人（非 dev mock）。"},
+        ensure_ascii=False,
+    )
+    graph = {
+        "version": 1,
+        "variables": [],
+        "nodes": [
+            {"id": "trigger-1", "type": "trigger", "name": "t",
+             "config": {"triggerType": "manual"}},
+            {"id": "tool-1", "type": "tool_call", "name": "真发邮件",
+             "config": {"tool": "message/send", "params": params},
+             "retry": {"on_error": "continue"}},
+        ],
+        "edges": [{"id": "e1", "source": "trigger-1", "target": "tool-1"}],
+    }
+    gid = api(port, "post", "/api/graphs", token=token, json_body=graph).json()["id"]
+    pub = api(port, "post", f"/api/graphs/{gid}/publish", token=token, json_body={})
+    ok(pub.status_code == 200, f"发布通知图：releaseVersion={pub.json().get('releaseVersion')}")
+    run = api(port, "post", f"/api/graphs/{gid}/run", token=token,
+              json_body={"releaseVersion": pub.json().get("releaseVersion"), "inputs": {}})
+    detail = json.dumps(run.json().get("detail", {}), ensure_ascii=False)
+    ok(run.status_code == 200, f"通知图运行返回 {run.status_code}：{detail[:160]}")
+    body = run.json()
+    status = str(body.get("status"))
+    if status not in ("completed", "failed", "interrupted"):
+        run_id = body.get("id")
+        terminal = None
+        for _ in range(40):
+            rows = api(port, "get", "/api/monitoring/runs", token=token).json().get("items", [])
+            mine = [r for r in rows if r.get("id") == run_id or r.get("runId") == run_id]
+            if mine and str(mine[0].get("status")) not in ("running", None):
+                terminal = mine[0]
+                break
+            time.sleep(1.5)
+        ok(terminal is not None, f"通知图到达终态：{terminal and terminal.get('status')}")
+        body = terminal or body
+    out = (body.get("outputs") or {}).get("tool-1") or {}
+    ok(out.get("action_status") == "SUCCESS",
+       f"message/send 工具 SUCCESS（实际＝{json.dumps(out, ensure_ascii=False)[:240]}）")
+    result = out.get("result") or {}
+    ok(result.get("delivered") == "smtp",
+       f"通知经 SMTP 真实投递（delivered＝{result.get('delivered')}；"
+       f"in_process 表示容器没注入 SmtpSender＝透传/配置缺口，不算 1.3 达成）")
+    say("     ", f"外发结论：delivered={result.get('delivered')} to={result.get('to')} "
+                f"id={result.get('id')}")
 
 
 def main() -> int:
@@ -660,6 +723,8 @@ def main() -> int:
                 leg_shopify(port, live_token)
             if "refund" in runnable:
                 leg_refund(port, live_token, args.shopify_order)
+            if "notify" in runnable:
+                leg_notify(port, live_token, args.notify_to)
         elif requested:
             note("点名的外发腿全部前置不足＝本次没有发出任何真外发请求")
 
