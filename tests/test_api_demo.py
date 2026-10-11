@@ -245,21 +245,32 @@ def test_live_stream_human_approval_decision_unblocks_run():
 
     graph_id = client.post("/api/graphs", json=_human_approval_graph()).json()["id"]
 
+    # 线程内的 assert 不会自己传到主线程（threading 只把它打到 stderr），于是"队列里查不到
+    # 这条审批"会伪装成末行的 `assert 'rejected' == 'approved'`——2026-10-11 高负载全量轮
+    # 就是这样把一条测试竞态读成了产品回归。异常一律收集回主线程重放，让失败说真话。
+    thread_errors: list[BaseException] = []
+
     def decide_when_pending() -> None:
-        with TestClient(app, headers=DEFAULT_AUTH_HEADER) as decider:
-            token = None
-            for _ in range(100):
-                items = decider.get("/api/approvals").json()["items"]
-                if items:
-                    token = items[0]["token"]
-                    break
-                time.sleep(0.02)
-            assert token is not None
-            response = decider.post(
-                f"/api/approvals/{token}/decision",
-                json={"decision": "approved", "comment": "同意"},
-            )
-            assert response.status_code == 200
+        try:
+            with TestClient(app, headers=DEFAULT_AUTH_HEADER) as decider:
+                token = None
+                for _ in range(100):
+                    items = decider.get("/api/approvals").json()["items"]
+                    if items:
+                        token = items[0]["token"]
+                        break
+                    time.sleep(0.02)
+                assert token is not None, (
+                    "2s 内审批队列里始终没出现这条（症状见 docs/14 D67：机制未定，"
+                    "两条候选解释都已被实测否证）"
+                )
+                response = decider.post(
+                    f"/api/approvals/{token}/decision",
+                    json={"decision": "approved", "comment": "同意"},
+                )
+                assert response.status_code == 200
+        except BaseException as exc:  # noqa: BLE001 线程内失败必须能被主线程看见
+            thread_errors.append(exc)
 
     decider_thread = threading.Thread(target=decide_when_pending)
     decider_thread.start()
@@ -283,7 +294,9 @@ def test_live_stream_human_approval_decision_unblocks_run():
             if "outputs" in payload:
                 result_body = payload
 
-    decider_thread.join(timeout=5)
+    decider_thread.join(timeout=10)
+    if thread_errors:
+        raise thread_errors[0]
     assert saw_approval_start is True
     assert result_body["outputs"]["human-1"]["decision"] == "approved"
     assert result_body["outputs"]["human-1"]["resolvedBy"] == "human"
