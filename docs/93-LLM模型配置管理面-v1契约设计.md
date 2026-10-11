@@ -13,7 +13,7 @@
 - **四个 LLM 消费点全部直读全局 env**：
   - `src/atlas/llm/decision.py:162` `get_decision_client()`：`os.getenv("LITELLM_MODEL")` 非空→`LiteLLMDecisionClient(model)`，否则 `RuleBasedDecisionClient()`（docs/64 J-2a：prod 档 fail-closed 门在 loader 侧，判据是**客户端类型**）。
   - `src/atlas/llm/condition_classifier.py:140` `get_condition_classifier()`：同构，`OfflineConditionClassifier()` 兜底（docs/73 5.4：prod 档 `LLM_CLASSIFIER_UNAVAILABLE` 门判据是分类器类型）。
-  - `src/atlas/llm/nl_generate.py:33` `generate_graph()`：有模型走 `_generate_with_llm`，否则规则兜底（仅退款/售后）。
+  - `src/atlas/llm/nl_generate.py` `generate_graph()`：有模型走 `_generate_with_llm`，否则**prod 档未配置 LLM 时显式报错（fail-closed，与 `ai_decision`/`condition(llm)` 同姿势，2026-10-12 收口）；dev/demo 保留退款/售后规则模板兜底**（docs/73 同族 W1-1.1/W5-5.4）。
   - `src/atlas/reflection/adapter.py:125` `get_summarizer()`：同构，`NullSummarizer()` 兜底。
 - **litellm 直连路径读的是 `OPENAI_API_KEY`/`OPENAI_BASE_URL`**（docs/73 §0 演练实证；`security/bootstrap.py:132` `_HYDRATED_ENV_KEYS = ("OPENAI_API_KEY",)` 已支持 `_FILE` 补水）。
 - **节点级 `model` 覆盖已存在**：`condition_classifier.py:76-77`（ZP 批）、`decision.py` 同构——节点配置 `model` 非空则覆盖构造期默认，仅本次调用生效。**管理面要解决的是"构造期默认"从哪来**。

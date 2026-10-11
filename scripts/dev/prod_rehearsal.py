@@ -132,8 +132,9 @@ CREDENTIAL_KEYS = (
     "ATLAS_SMTP_FROM", "ATLAS_SMTP_USE_TLS",
 )
 
-#: 本批落了执行段的腿。其余一律 BLOCKED 并写明"执行段未实现"，而不是假装跑过。
-EXECUTABLE_LEGS = ("llm", "shopify")
+#: 已落执行段的腿。notify 仍 BLOCKED（打扰真人，要显式 --notify-to 授权）；
+#: 任何"动款/打扰真人"的腿都必须显式授权，而不是沉默跑过或假装跑过。
+EXECUTABLE_LEGS = ("llm", "shopify", "refund")
 
 
 @dataclass(frozen=True)
@@ -175,7 +176,8 @@ def plan_live_legs(requested, source_env, *, allow_refund=False,
             elif not shopify_order_id:
                 plans.append(LegPlan(name, "blocked", "还缺 --shopify-order 指向测试订单｜判据＝" + criterion))
             else:
-                plans.append(LegPlan(name, "blocked", "本批执行段未实现（先落 llm／shopify 两条）｜判据＝" + criterion))
+                # 前置齐、执行段存在（leg_refund）：可以按判据真动款了。
+                plans.append(LegPlan(name, "run", criterion))
             continue
         if name == "notify":
             if not notify_to:
@@ -285,6 +287,75 @@ def leg_shopify(port: int, token: str) -> None:
     ok(body.get("ok") is True,
        f"真店连通返回 ok=true（实际＝{json.dumps(body, ensure_ascii=False)[:200]}）——"
        f"docs/67 那层『真适配器＋假 HTTP』在这里换成真 2xx")
+
+
+def leg_refund(port: int, token: str, order_id: str) -> None:
+    """1.2 的动款腿：带测试订单的真退款打到真 Shopify 并返回 2xx。
+
+    与 leg_shopify 的只读探针不同，这一步**真的动款**——所以只在
+    `--allow-refund --shopify-order <id>` 同时点名时才跑（规划期的门在 plan_live_legs）。
+    图里只用一张 trigger → tool_call(channel:shopify:{binding}/create_refund)，不走
+    ai_decision / 审批，避免把"退款真成功"和"决策/审批"混判——1.2 的判据只盯退款外发。
+
+    退款形状＝`full_refund=true`：把测试订单全部条目退货（restock）+ 0.01 元交易，
+    **请务必用专为此建的极小测试订单**；任何失败（令牌未授权／订单不存在／金额不符）
+    都会让工具产出 FAILED 并被下面两条 `ok` 当场抓出来，不会假绿。
+    """
+    listed = api(port, "get", "/api/channels", token=token).json()
+    items = listed.get("items", listed if isinstance(listed, list) else [])
+    shop = [c for c in items if str(c.get("provider", "")).lower().startswith("shopify")]
+    if not shop:
+        note("refund 腿 SKIP：prod 库里没有任何 shopify binding——先在真实/沙箱店建连接并绑定，"
+             "才能动款（docs/73 1.2 硬依赖：真实/沙箱店铺）")
+        return
+    binding_id = shop[0].get("id") or shop[0].get("bindingId")
+    tool = f"channel:shopify:{binding_id}/create_refund"
+    params = json.dumps(
+        {"order_id": order_id, "amount": 0.01, "reason": "演练-受控退款", "full_refund": True},
+        ensure_ascii=False,
+    )
+    graph = {
+        "version": 1,
+        "variables": [],
+        "nodes": [
+            {"id": "trigger-1", "type": "trigger", "name": "t",
+             "config": {"triggerType": "manual"}},
+            {"id": "tool-1", "type": "tool_call", "name": "渠道退款",
+             "config": {"tool": tool, "params": params},
+             "retry": {"on_error": "continue"}},
+        ],
+        "edges": [{"id": "e1", "source": "trigger-1", "target": "tool-1"}],
+    }
+    gid = api(port, "post", "/api/graphs", token=token, json_body=graph).json()["id"]
+    pub = api(port, "post", f"/api/graphs/{gid}/publish", token=token, json_body={})
+    ok(pub.status_code == 200, f"发布退款图：releaseVersion={pub.json().get('releaseVersion')}")
+    run = api(port, "post", f"/api/graphs/{gid}/run", token=token,
+              json_body={"releaseVersion": pub.json().get("releaseVersion"), "inputs": {}})
+    detail = json.dumps(run.json().get("detail", {}), ensure_ascii=False)
+    ok(run.status_code == 200, f"退款图运行返回 {run.status_code}：{detail[:160]}")
+    body = run.json()
+    status = str(body.get("status"))
+    if status not in ("completed", "failed", "interrupted"):
+        # 罕见：同步接口返回 running，轮询到终态（与第 5b 段同款）
+        run_id = body.get("id")
+        terminal = None
+        for _ in range(40):
+            rows = api(port, "get", "/api/monitoring/runs", token=token).json().get("items", [])
+            mine = [r for r in rows if r.get("id") == run_id or r.get("runId") == run_id]
+            if mine and str(mine[0].get("status")) not in ("running", None):
+                terminal = mine[0]
+                break
+            time.sleep(1.5)
+        ok(terminal is not None, f"退款图到达终态：{terminal and terminal.get('status')}")
+        body = terminal or body
+    out = (body.get("outputs") or {}).get("tool-1") or {}
+    ok(out.get("action_status") == "SUCCESS",
+       f"Shopify 退款工具 SUCCESS（实际＝{json.dumps(out, ensure_ascii=False)[:240]}）——"
+       f"docs/67 那层『真适配器＋假 HTTP』在 1.2 换成真 2xx")
+    refund = out.get("result") or {}
+    ok("refundId" in refund and refund.get("refundId") is not None,
+       f"真 Shopify 退款已生效（refundId={refund.get('refundId')}｜status={refund.get('status')}）")
+    say("     ", f"外发结论：{json.dumps(refund, ensure_ascii=False)[:200]}")
 
 
 def main() -> int:
@@ -587,6 +658,8 @@ def main() -> int:
                 leg_llm(port, live_token, gid, pub.json().get("releaseVersion"))
             if "shopify" in runnable:
                 leg_shopify(port, live_token)
+            if "refund" in runnable:
+                leg_refund(port, live_token, args.shopify_order)
         elif requested:
             note("点名的外发腿全部前置不足＝本次没有发出任何真外发请求")
 
