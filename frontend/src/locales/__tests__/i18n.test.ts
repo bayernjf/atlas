@@ -239,6 +239,12 @@ const EDITOR_B_KEYS = [
   'decision.insertPlaceholder',
   'decision.modelLabel',
   'decision.confidenceLabel',
+  // 打包 AK㊱：记忆注入进了属性面板，五段文案两档都要在
+  'decision.memoryLabel',
+  'decision.memoryQueryLabel',
+  'decision.memoryQueryPlaceholder',
+  'decision.memoryTopKLabel',
+  'decision.memoryMinScoreLabel',
   'debugConsole.title',
 ]
 
