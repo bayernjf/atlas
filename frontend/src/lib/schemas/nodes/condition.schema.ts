@@ -52,6 +52,10 @@ export const conditionSchema: NodeConfigSchema = {
       mode: {},
       branch: {},
       target: {},
+      // 打包 AP（docs/14 D66 闭合）：这两个键 loader 一直在产出（rule/llm 两档都出
+      // evaluation，llm 档还出 llm_errors），声明里却漏了 ⇒ 与校验表同为超集/子集漂移。
+      evaluation: { type: 'array' },
+      llm_errors: { type: 'array' },
       // 打包 BI（docs/14 D54 闭合）：与 loop.schema.ts 同款三数组（按下标对齐）。
       expression_errors: { type: 'array' },
       expressionErrorCodes: { type: 'array' },
