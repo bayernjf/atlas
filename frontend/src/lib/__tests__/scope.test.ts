@@ -348,8 +348,16 @@ describe('M8 ai_decision decision 白名单与审批卡 bindings L2', () => {
     expect(validate('{{ai-1.decision.source}}')).toEqual([])
     expect(validate('{{ai-1.prompt_rendered}}')).toEqual([])
 
+    // 打包 AK㊳：注入元数据同样放行一层（与后端 dsl.py 白名单同构）
+    expect(validate('{{ai-1.memory_injected}}')).toEqual([])
+    expect(validate('{{ai-1.memory_injected.count}}')).toEqual([])
+    expect(validate('{{ai-1.memory_injected.status}}')).toEqual([])
+    expect(validate('{{ai-1.memory_injected.ids}}')).toEqual([])
+
     expect(validate('{{ai-1.decision.bogus}}')[0]?.code).toBe('REF_PATH_NOT_FOUND')
     expect(validate('{{ai-1.decision.reason.detail}}')[0]?.code).toBe('REF_PATH_NOT_FOUND')
+    expect(validate('{{ai-1.memory_injected.count.x}}')[0]?.code).toBe('REF_PATH_NOT_FOUND')
+    expect(validate('{{ai-1.memory_injected.bogus}}')[0]?.code).toBe('REF_PATH_NOT_FOUND')
     expect(validate('{{ai-1.prompt_rendered.x}}')[0]?.code).toBe('REF_PATH_NOT_FOUND')
     expect(validate('{{ai-1.bogus}}')[0]?.code).toBe('REF_PATH_NOT_FOUND')
   })

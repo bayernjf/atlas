@@ -285,3 +285,28 @@ def test_loop_self_index_reference_is_not_a_data_cycle():
     # 合法基线：条件只引用自身 index、体内引用 loop.index，不构成数据环。
     raw = _loop_graph("{{loop-1.index}} < 3", '{"idx":"{{loop-1.index}}"}')
     compile_graph(parse_graph(raw), registry=build_demo_registry())
+
+
+# ---- 打包 AK㊳：ai_decision.memory_injected 的下游可达面 ---------------------
+
+
+def _sms(body: str) -> dict:
+    return _tool("tool-1", "message/send",
+                 '{"channel":"sms","to":"ops","subject":"AK","body":"' + body + '"}')
+
+
+def test_ai_decision_memory_injected_referrable_one_level_deep():
+    """注入元数据必须能在图里被引用：只能看运行记录＝运营没法把"参考了几条记忆"说给客服。"""
+    raw = _chain(
+        _trigger(),
+        _ai("ai-1", "x"),
+        _sms("{{ai-1.memory_injected}} {{ai-1.memory_injected.count}} "
+             "{{ai-1.memory_injected.status}} {{ai-1.memory_injected.ids}}"),
+    )
+    compile_graph(parse_graph(raw), registry=build_demo_registry())
+
+
+def test_ai_decision_memory_injected_deep_or_unknown_key_rejected():
+    for body in ("{{ai-1.memory_injected.count.x}}", "{{ai-1.memory_injected.nope}}"):
+        message = _compile_error(_chain(_trigger(), _ai("ai-1", "x"), _sms(body)))
+        assert "memory_injected" in message, body
