@@ -129,7 +129,7 @@ def test_u1332_only_candidates_above_the_threshold_are_written(adapter, repo, mo
 
 
 def test_u1332b_rerunning_the_same_text_does_not_stack(adapter, repo, monkeypatch):
-    """幂等声明的承重判据：缺省 overwrite 语义让重跑不产生第二条。"""
+    """去重的承重判据是**内容精确相同**：模型两次给出一模一样的文本时，重跑不产生第二条。"""
     monkeypatch.setattr(
         "atlas.memory.adapter.extract_memories",
         lambda **kwargs: {"facts": [{"content": "订单 o-1 已退款", "confidence": 0.95}],
@@ -139,6 +139,22 @@ def test_u1332b_rerunning_the_same_text_does_not_stack(adapter, repo, monkeypatc
     second = _run(adapter, {"text": "同一段"})
     assert second.status == ActionStatus.SUCCESS
     assert len(repo.list()) == 1
+
+
+def test_u1332c_wording_drift_across_runs_stacks_and_that_is_declared(adapter, repo, monkeypatch):
+    """真机抓到的行为（2026-10-11 docs/122 §6）：模型两次措辞不同 ⇒ 精确去重不命中 ⇒ 条数增加。
+
+    这条不是"期望它堆叠"，而是把**已经发生的事实**钉成测试：正因为如此，能力声明必须是
+    `is_idempotent=False`（见 U84），文档也不得再写"重跑幂等"。语义近似去重缓做（D65）。
+    """
+    answers = iter([
+        {"facts": [{"content": "客户李女士是老顾客", "confidence": 0.95}], "preferences": []},
+        {"facts": [{"content": "李女士为老顾客，家中有两个孩子", "confidence": 0.95}], "preferences": []},
+    ])
+    monkeypatch.setattr("atlas.memory.adapter.extract_memories", lambda **kwargs: next(answers))
+    _run(adapter, {"text": "同一段对话"})
+    _run(adapter, {"text": "同一段对话"})
+    assert len(repo.list()) == 2, "措辞漂移就是会新增——所以幂等声明必须是 False"
 
 
 def test_u1333_no_model_is_reported_not_disguised_as_an_empty_extraction(adapter, repo, monkeypatch):

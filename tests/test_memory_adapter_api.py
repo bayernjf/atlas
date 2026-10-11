@@ -49,7 +49,7 @@ def _adapter(repo=None, granted=None) -> MemoryHarnessAdapter:
 
 
 def test_u84_discovers_three_capabilities_with_allowed_schema():
-    """打包 AK 加第三能力 auto_extract（docs/122 D-2）：写权限、幂等、schema 过白名单。"""
+    """打包 AK 加第三能力 auto_extract（docs/122 D-2）：写权限、schema 过白名单、幂等如实声明。"""
     adapter = _adapter()
     caps = {c.name: c for c in adapter.list_capabilities()}
     assert set(caps) == {"remember", "recall", "auto_extract"}
@@ -57,9 +57,10 @@ def test_u84_discovers_three_capabilities_with_allowed_schema():
     assert caps["remember"].is_idempotent is False
     assert caps["recall"].permission == Permission.READ
     assert caps["recall"].is_idempotent is True
-    # 幂等声明有承重判据：落库走缺省 overwrite，同一段文本重跑不堆条目（见 auto_extract 测试）
+    # 2026-10-11 真机验证把"重跑幂等"证伪了：模型两次措辞不同 ⇒ 精确去重不命中 ⇒ 条数增加
+    # （承重判据见 tests/test_memory_auto_extract.py::test_u1332c），所以这里必须是 False。
     assert caps["auto_extract"].permission == Permission.WRITE
-    assert caps["auto_extract"].is_idempotent is True
+    assert caps["auto_extract"].is_idempotent is False
     # Capability 构造期已按白名单校验 schema（未抛 ValueError 即过）
     assert "kind" in caps["remember"].input_schema["properties"]
     assert caps["recall"].output_schema["properties"]["results"]["type"] == "array"
