@@ -182,3 +182,33 @@ def test_prune_unknown_and_none_ignored(backend) -> None:
     deleted = backend.prune_expired({"no_such_table": _now_iso(1), "audit_events": None})
     assert "no_such_table" not in deleted
     assert "audit_events" not in deleted
+
+
+def test_prune_memory_items_is_off_by_default_and_prunes_when_given(backend) -> None:
+    """docs/14 D35：memory_items cutoff=None（缺省）整表不动；显式 cutoff 才删旧留新。"""
+    engine = backend.engine
+    store = backend.memory_store("rt")
+    store.remember(kind="fact", content="保留期测试-新", scope={"k": "v"})
+    store.remember(kind="fact", content="保留期测试-旧", scope={"k": "v"})
+    with engine.begin() as conn:
+        conn.execute(
+            text("UPDATE memory_items SET created_at = :c "
+                 "WHERE tenant_id = 'rt' AND content LIKE '%旧'"),
+            {"c": _now_iso(200)},
+        )
+    # 缺省不过期：None 被跳过，一条不删
+    assert "memory_items" not in backend.prune_expired({"memory_items": None})
+    with engine.connect() as conn:
+        assert conn.execute(
+            text("SELECT count(*) FROM memory_items WHERE tenant_id = 'rt'")
+        ).scalar() == 2
+    # 显式 90 天 cutoff：删 200 天前那条，留新的
+    deleted = backend.prune_expired({"memory_items": _now_iso(90)})
+    assert deleted["memory_items"] == 1
+    with engine.connect() as conn:
+        left = conn.execute(
+            text("SELECT content FROM memory_items WHERE tenant_id = 'rt'")
+        ).scalars().all()
+    assert left == ["保留期测试-新"]
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM memory_items WHERE tenant_id = 'rt'"))

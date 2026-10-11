@@ -8,9 +8,12 @@ from __future__ import annotations
 import sys
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from atlas.iam import registry
 from atlas.storage.retention import (
     DEFAULT_DAYS,
+    MEMORY_TABLE,
     assemble_cutoffs,
     run_retention_once,
 )
@@ -20,15 +23,44 @@ from scripts.ops.run_retention import main as retention_cli_main
 # ---------- env 组装 ----------
 
 def test_assemble_cutoffs_defaults(monkeypatch) -> None:
-    for env in ("ATLAS_RETENTION_DAYS", *[f"ATLAS_RETENTION_{t.upper()}_DAYS" for t in DEFAULT_DAYS]):
+    for env in (
+        "ATLAS_RETENTION_DAYS",
+        "ATLAS_RETENTION_MEMORY_DAYS",
+        *[f"ATLAS_RETENTION_{t.upper()}_DAYS" for t in DEFAULT_DAYS],
+    ):
         monkeypatch.delenv(env, raising=False)
     cutoffs = assemble_cutoffs()
     now = datetime.now(timezone.utc)
-    assert set(cutoffs) == set(DEFAULT_DAYS)
+    assert set(cutoffs) == set(DEFAULT_DAYS) | {MEMORY_TABLE}
+    # 长期记忆缺省不过期（D35 安全切片）
+    assert cutoffs[MEMORY_TABLE] is None
     for table, days in DEFAULT_DAYS.items():
         cutoff = datetime.fromisoformat(cutoffs[table])
         expected = now - timedelta(days=days)
         assert abs((cutoff - expected).total_seconds()) < 60
+
+
+def test_memory_retention_is_none_even_when_global_retention_is_set(monkeypatch) -> None:
+    """长期记忆不跟随全局 ATLAS_RETENTION_DAYS：运维设的全局回收不能静默删掉长期记忆。"""
+    monkeypatch.delenv("ATLAS_RETENTION_MEMORY_DAYS", raising=False)
+    monkeypatch.setenv("ATLAS_RETENTION_DAYS", "3")
+    assert assemble_cutoffs()[MEMORY_TABLE] is None
+
+
+def test_memory_retention_is_enabled_only_by_its_own_env(monkeypatch) -> None:
+    monkeypatch.setenv("ATLAS_RETENTION_MEMORY_DAYS", "30")
+    cutoff_raw = assemble_cutoffs()[MEMORY_TABLE]
+    assert cutoff_raw is not None
+    cutoff = datetime.fromisoformat(cutoff_raw)
+    expected = datetime.now(timezone.utc) - timedelta(days=30)
+    assert abs((cutoff - expected).total_seconds()) < 60
+
+
+@pytest.mark.parametrize("bad", ["not-a-number", "0", "-5"])
+def test_memory_retention_invalid_value_fails_safe_to_none(monkeypatch, bad) -> None:
+    """非法/非正取值 fail-safe 到不过期（宁保留不误删长期记忆）。"""
+    monkeypatch.setenv("ATLAS_RETENTION_MEMORY_DAYS", bad)
+    assert assemble_cutoffs()[MEMORY_TABLE] is None
 
 
 def test_assemble_cutoffs_env_override(monkeypatch) -> None:
@@ -72,4 +104,5 @@ def test_cli_dry_run(monkeypatch, capsys) -> None:
     assert retention_cli_main() == 0
     out = capsys.readouterr().out
     assert "dry-run: DELETE from audit_events" in out
+    assert "dry-run: retain memory_items (no retention configured)" in out
     assert "dry-run: no rows deleted" in out
