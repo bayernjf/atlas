@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 from typing import Any
 
+from atlas.security.bootstrap import demo_surface_enabled
 from atlas.template.graphs import refund_template_graph
 
 _REFUND_KEYWORDS = ("退款", "退货", "售后")
@@ -37,6 +38,17 @@ def generate_graph(prompt: str, tenant_id: str | None = None) -> dict[str, Any]:
         generated = _generate_with_llm(prompt, model, api_key=api_key, base_url=base_url)
         if generated is not None:
             return generated
+    # docs/73 W1-1.1 / W5-5.4 同族：prod 档未配置 LLM 时，NL 生成不许静默降级到写死的
+    # 退款模板（那等于假装调了 LLM 出图），与 ai_decision / condition(llm) 在 prod 无模型时
+    # 显式报错保持同一 fail-closed 姿势。dev/demo 仍保留离线模板兜底。
+    # （注：若 prod 配了模型但 LLM 调用失败返回 None，仍会落入下方规则兜底——那属运行期
+    #  瞬断而非「未接线」，loader 侧 ai_decision 同档位下也由 litellm 异常自然上浮，不在此门内。）
+    if not model and not demo_surface_enabled():
+        raise ValueError(
+            "生产环境未配置 LLM（LITELLM_MODEL 或租户默认模型），自然语言生成拒绝静默降级到"
+            "规则模板；请配置 LITELLM_MODEL 与 OPENAI_API_KEY / OPENAI_BASE_URL，或显式设置 "
+            "ATLAS_ENABLE_DEMO_MOCK=1 以在演示实例上启用模拟生成。"
+        )
     if any(keyword in prompt for keyword in _REFUND_KEYWORDS):
         return refund_template_graph()
     raise ValueError("未能识别流程意图（规则兜底仅支持退款/售后场景；配置 LITELLM_MODEL 可支持任意描述）")
