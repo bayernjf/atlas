@@ -97,6 +97,9 @@ class TenantServices:
     reflection_store: ReflectionStore | PgReflectionStore  # 反思候选与收尾报告（docs/88 打包 ZH／docs/94 打包 ZU：内存 ring 100 / PG reflection_*）
     model_config: object  # LLM 模型配置（docs/93 打包 Y；内存/PG 两档 store，reset 不清）
     evaluation_store: object  # AI 评估 Harness v1（docs/110 打包 AC；内存/PG 两档，reset 同清）
+    # 这份服务包属于哪个租户。其余字段都是"按租户装配出来的实例"，只有这一条是**身份本身**：
+    # 适配器需要按租户解析 BYOK 模型时，不能再靠调用点把 tenant_id 一路透传（打包 AN）。
+    tenant_id: str
 
 
 class TenantRegistry:
@@ -177,6 +180,7 @@ class TenantRegistry:
                 reflection_store=PgReflectionStore(backend.engine, tenant_id),
                 model_config=get_model_config_store(),
                 evaluation_store=PgEvaluationStore(backend.engine, tenant_id),
+                tenant_id=tenant_id,
             )
             TenantRegistry._wire_alert_notifier(services)
             return services
@@ -210,6 +214,7 @@ class TenantRegistry:
             reflection_store=ReflectionStore(),
             model_config=get_model_config_store(),
             evaluation_store=EvaluationStore(),
+            tenant_id=tenant_id,
         )
         TenantRegistry._wire_alert_notifier(services)
         return services

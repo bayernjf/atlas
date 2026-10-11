@@ -40,13 +40,21 @@ export const stateMachineSchema: NodeConfigSchema = {
     },
   },
   required: ['objectRef', 'event', 'states', 'initial', 'store', 'transitions'],
+  // 打包 AN②（闭合 D64）：键集合逐字取自后端 `graph/loader.py` 的 state_machine 产出
+  // （`{mode, objectRef, from, to, event, state, states, action}`，camelCase 与 docs/123
+  // §2.3 的 config 与 `state_changed` SSE 帧同族）。原先声明的是 `{object_ref, from_state,
+  // to_state, event}` 四个运行期永远解析不到的路径——画布变量补全会照着它给出空值。
   'x-outputSchema': {
     type: 'object',
     properties: {
-      object_ref: {},
-      from_state: {},
-      to_state: {},
+      mode: {},
+      objectRef: {},
+      from: {},
+      to: {},
       event: {},
+      state: {},
+      states: {},
+      action: {},
     },
   },
 }

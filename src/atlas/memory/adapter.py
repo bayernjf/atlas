@@ -180,6 +180,9 @@ _AUTO_EXTRACT_OUTPUT_SCHEMA = {
         # 前者 skipped=llm_unavailable，后者 skipped 为空而 extracted=0。
         "skipped": {"type": "string"},
         "reason": {"type": "string"},
+        # 实际用了哪个模型（BYOK／内置／env 兜底后的那一个）。不带这一条，租户配好
+        # BYOK 后无从知道提炼到底走了谁的 key——软件能报的事实不该让人猜（打包 AN）。
+        "model": {"type": "string"},
     },
 }
 
@@ -212,9 +215,12 @@ class MemoryHarnessAdapter(HarnessAdapter):
     adapter_id = "memory"
     adapter_type = "memory"
 
-    def __init__(self, repo: Any | None = None, **kwargs) -> None:
+    def __init__(self, repo: Any | None = None, tenant_id: str | None = None, **kwargs) -> None:
         super().__init__(**kwargs)
         self.repo = repo
+        # 只有 auto_extract 需要它（要按租户解析 BYOK 模型）；remember/recall 的租户分区
+        # 已经在 repo 实例本身里。None＝发现期全局实例，或无租户上下文，落 env 兜底。
+        self.tenant_id = tenant_id
 
     def list_capabilities(self) -> list[Capability]:
         return [
@@ -336,12 +342,13 @@ class MemoryHarnessAdapter(HarnessAdapter):
         threshold = float(raw_threshold)
         scope = params.get("scope") if isinstance(params.get("scope"), dict) else None
         try:
-            extracted = extract_memories(text=text)
+            extracted = extract_memories(text=text, tenant_id=self.tenant_id)
         except LLMStructuredUnavailable as exc:
             # 不炸 run（记忆是增强项），但把原因写进产出——"没接线"不等于"没提取到"。
             return ActionResult.success({
                 "extracted": 0, "facts": [], "preferences": [], "dropped_below_threshold": 0,
                 "min_confidence": threshold, "skipped": "llm_unavailable", "reason": str(exc),
+                "model": "",
             })
         kept: dict[str, list[dict[str, Any]]] = {"fact": [], "preference": []}
         dropped = 0
@@ -373,5 +380,6 @@ class MemoryHarnessAdapter(HarnessAdapter):
             "preferences": kept["preference"],
             "dropped_below_threshold": dropped,
             "min_confidence": threshold,
+            "model": str(extracted.get("model") or ""),
             "skipped": "",
         })

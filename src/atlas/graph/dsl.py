@@ -1965,16 +1965,38 @@ _REF_RE = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
 
 _STATIC_OUTPUT_KEYS: dict[str, tuple[str, ...]] = {
     "ai_decision": ("decision", "prompt_rendered", "memory_injected"),
-    "condition": ("branch", "target"),
-    "loop": ("index", "iterations"),
+    # 打包 AP（闭合 docs/14 D66）：以下三类此前只放行一小撮根键，而 loader 真产出更多
+    # ⇒ 运营引用真实存在的路径（如 {{loop-1.exitReason}}）被编译期 REF_STATIC_PATH_NOT_FOUND
+    # 拒。**裁决＝后端 loader 的真实产出为权威**（与 AN② 处理 state_machine 同口径）：
+    # 键集合是各 mode 产出的**并集**，两侧（本表／前端 scope.ts）与 x-outputSchema 声明
+    # 三处对齐。wait 的 timeoutSeconds/onTimeout 是 config 键、不是产出，本轮移除。
+    "condition": (
+        "mode", "branch", "target", "evaluation", "llm_errors",
+        "expression_errors", "expressionErrorCodes", "expressionErrorParams",
+    ),
+    "loop": (
+        "mode", "index", "iterations", "items", "item", "results", "target", "exitReason",
+        "expression_errors", "expressionErrorCodes", "expressionErrorParams",
+    ),
     "parallel": ("status", "branches", "joinStrategy", "joinTarget"),
-    "wait": ("mode", "waitType", "durationSeconds", "eventKey", "timeoutSeconds", "onTimeout"),
+    "wait": (
+        "mode", "waitType", "durationMode", "durationExpression", "durationSeconds",
+        "plannedDurationSeconds", "jitterSeconds", "absoluteTime", "eventKey", "eventKeys",
+        "eventWaitMode", "matchedEventKey", "matchedEventKeys", "matchedPayloads",
+        "receivedKeys", "signaled", "payload", "waitedSeconds", "resolvedBy", "token",
+    ),
     "subgraph": ("status", "outputs"),
     "human_approval": ("decision", "target", "summary", "approver", "resolvedBy", "comment", "card"),
     # docs/109 打包 AB：三节点输出形状（与 ai_decision 同族）
     "intent_recognition": ("result", "prompt_rendered"),
     "info_extraction": ("result", "prompt_rendered"),
     "content_generation": ("result", "prompt_rendered"),
+    # 打包 AN②（闭合 D64）：此前表里没有 state_machine，引用它的路径**一条都不校验**——
+    # 编译期全放行、运行期解析成空。这八条键逐字取自 loader 的产出（camelCase 与
+    # docs/123 §2.3 的 config／SSE 帧命名同族），深层路径仍拒（action 是工具产出、形状动态）。
+    "state_machine": (
+        "mode", "objectRef", "from", "to", "event", "state", "states", "action",
+    ),
 }
 
 _TRIGGER_CONTEXT_KEYS = ("triggerType", "cron", "webhookUrl", "payload")
@@ -2333,19 +2355,17 @@ def _validate_template_refs(
 
                 static_keys = _STATIC_OUTPUT_KEYS.get(ref_type)
                 if static_keys is not None:
-                    foreach = False
-                    if ref_type == "loop":
-                        ref_loop = next((candidate for candidate in graph.nodes if candidate.id == head), None)
-                        if ref_loop is not None and ref_loop.config.get("mode") == "foreach":
-                            foreach = True
-                            static_keys = (
-                                "mode", "items", "index", "iterations", "item",
-                                "results", "target", "exitReason", "expression_errors",
-                            )
                     root, *rest = tail
                     # foreach item 为不透明元素：其下字段按 docs/45:63 与 04 §5.3 放行，
                     # 运行期按实际对象解析，缺失 fail-soft；results/items 深层仍拒。
-                    item_deep = foreach and root == "item" and rest
+                    # （D66 收口前这份键集合是 foreach 专用分支，现并入上表统一；mode 判定
+                    # 只留下来管 item 深层——while 档根本没有 item 产出，不能放行。）
+                    item_deep = False
+                    if ref_type == "loop" and root == "item" and rest:
+                        ref_loop = next((candidate for candidate in graph.nodes if candidate.id == head), None)
+                        item_deep = (
+                            ref_loop is not None and ref_loop.config.get("mode") == "foreach"
+                        )
                     if root not in static_keys or (rest and not item_deep):
                         add(
                             f"{prefix} 节点 {head} 的输出中不存在该路径（REF_PATH_NOT_FOUND）：{display}",

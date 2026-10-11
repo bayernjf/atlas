@@ -205,6 +205,9 @@ edges:                       # {id, source, target}，端点必须存在且禁�
   x-widget: string               # 自定义控件名；M1 仅声明，M3 WidgetRegistry 消费
   x-ref: {kinds?: [string]}      # 值须为图内节点 id 且种类匹配（缺省/"*" 任意）；用于 target 类字段
   x-outputSchema: object         # 节点 outputs 形状声明；M1 须与 lib/scope.ts 投影逐字段一致
+  # 〔2026-10-11 D66 裁决〕三者冲突时**权威是后端 loader 的真实产出**（各 mode 并集），
+  # 本声明与 lib/scope.ts、graph/dsl.py::_STATIC_OUTPUT_KEYS 三处都从它派生；
+  # 逐字段对拍由 frontend/src/lib/schemas/__tests__/nodeSchemas.test.ts 钉住。
 # metaSchema.ts：TS 类型 + schema 形状自检；index.ts：最小 SchemaRegistry get(kind, version)（M1 仅内置节点单一来源）
 ```
 > 边界：`x-*` 仅前端节点 schema，后端 Capability schema 拒绝 `x-*`（U32）；M1 零 UI 变化、零新依赖、不引 AJV（ADR T16 已于 2026-09-16 收口为手写最小子集，M2 已立项把 M1 解释器扶正迁入 `lib/validation/l1.ts`——见下 `diagnostic` 契约，M3 重开判据见 10 §4）、不做表单生成；schema 为 nodeCatalog 手写规则的声明式投影，M1 期手写校验保留并双跑等价比对（U36；M2 扶正后双跑脚手架与已覆盖手写规则下线，covered:false 跨字段规则保留）。工具/技能等五类实体入册缓做 D29。
@@ -1242,7 +1245,8 @@ output: {results: [{id, kind, content, score: number, confidence, scope, created
 # 能力 memory/auto_extract（action=memory_auto_extract，permission=write，**非幂等**）打包 AK docs/122 D-2
 input:  {text: string 1-4000（必填，支持 {{变量}}）, min_confidence?: number 0-1=0.85, scope?: {string:string}}
 output: {extracted: int, facts: [{id,content,confidence}], preferences: [...],
-         dropped_below_threshold: int, min_confidence: number, skipped: string, reason?: string}
+         dropped_below_threshold: int, min_confidence: number, skipped: string, reason?: string,
+         model: string}   # model＝实际解析到的模型（BYOK>内置>env；打包 AN①），没接模型时为 ""
         # skipped="llm_unavailable"＝根本没接模型；skipped="" 且 extracted=0＝这次确实没提炼到。
         # 两者必须是不同答案——静默把前者写成后者就是伪造下游行为（docs/63 静默降级族）。
 ```

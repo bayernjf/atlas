@@ -108,7 +108,11 @@ def build_runtime_registry(
             )
         if item["id"] == "memory":
             adapter = MemoryHarnessAdapter(
-                repo=services.memory_store, granted_permissions=FULL_PERMISSIONS
+                repo=services.memory_store,
+                granted_permissions=FULL_PERMISSIONS,
+                # auto_extract 要按租户解析 BYOK 模型（docs/93 优先级：BYOK>内置>env）；
+                # 存储本身已按租户分区，只有"用哪个模型"这件事还需要租户身份。
+                tenant_id=services.tenant_id,
             )
         registry.register(adapter)
     for view in services.channel_registry.list():
