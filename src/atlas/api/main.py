@@ -421,6 +421,9 @@ async def lifespan(_app: FastAPI):
     start_scheduler()
     yield
     stop_scheduler()
+    # 审查发现 #10：内置 demo 为 mkdtemp 临时文件库，关闭时连池带目录一起释放。
+    if _db_client is not None:
+        _db_client.close()
 
 
 # docs/65 K-D：统一日志 formatter（UTC 时间戳/级别/logger/request_id）；幂等。

@@ -1,11 +1,16 @@
 """数据适配器（通用 SQL）单元测试（13 文档 U26/I12-I13）。
 
-全部经注入的 SQLite 单连接内存库（StaticPool）执行，零外部依赖。
+全部经注入的 SQLite 临时文件库（WAL＋QueuePool，U1387 后替代原 :memory:/StaticPool）
+执行，零外部依赖。
 """
 
 from __future__ import annotations
 
+import os
+import threading
+
 import pytest
+from sqlalchemy import text
 
 from atlas.database.adapter import DatabaseHarnessAdapter
 from atlas.database.service import (
@@ -13,6 +18,7 @@ from atlas.database.service import (
     DatabaseAdapterError,
     DatabaseClient,
     demo_engine,
+    dispose_demo_engine,
 )
 from atlas.harness.base import ActionRequest, ActionStatus, Permission
 
@@ -379,3 +385,78 @@ def test_adapter_query_write_sql_folds_not_read_only():
     )
     assert result.status is ActionStatus.FAILED
     assert result.error.code == "DB_SQL_NOT_READ_ONLY"
+
+
+# --- U1387：demo SQLite 临时文件库 + WAL + 多连接（项目级审查发现 #10，docs/125 §2.3）---
+
+
+def test_u1387_demo_engine_is_temp_file_with_wal_pragma():
+    engine = demo_engine()
+    db_path = engine.url.database
+    try:
+        # 不再是 :memory:：文件落在 atlas-demo-db-* 临时目录内。
+        assert db_path and db_path != ":memory:"
+        assert os.path.basename(os.path.dirname(db_path)).startswith("atlas-demo-db-")
+        assert os.path.exists(db_path)
+        with engine.connect() as conn:
+            assert conn.execute(text("PRAGMA journal_mode")).scalar().lower() == "wal"
+        tmp_dir = os.path.dirname(db_path)
+    finally:
+        dispose_demo_engine(engine)
+    assert not os.path.exists(tmp_dir)  # 临时目录随 dispose 释放
+
+
+def test_u1387_demo_engines_are_independent_and_reseed_is_local():
+    client_a = DatabaseClient(demo_engine(), demo=True)
+    client_b = DatabaseClient(demo_engine(), demo=True)
+    try:
+        client_a.execute(
+            "INSERT INTO orders (order_id, reason, amount, status) "
+            "VALUES (:o, :r, :a, :s)",
+            {"o": "99999", "r": "仅在 A 库", "a": 1, "s": "x"},
+        )
+        assert client_a.query("SELECT COUNT(*) AS n FROM orders")["rows"][0]["n"] == 3
+        # B 是另一份独立文件库：看不到 A 的写入。
+        assert client_b.query("SELECT COUNT(*) AS n FROM orders")["rows"][0]["n"] == 2
+        client_b.reseed_demo()
+        assert client_b.query("SELECT COUNT(*) AS n FROM orders")["rows"][0]["n"] == 2
+        assert client_a.query("SELECT COUNT(*) AS n FROM orders")["rows"][0]["n"] == 3
+    finally:
+        client_a.close()
+        client_b.close()
+
+
+def test_u1387_concurrent_writers_across_threads_no_locked_error():
+    client = make_client()
+    thread_count, per_thread_writes = 8, 5
+    errors: list[Exception] = []
+    barrier = threading.Barrier(thread_count)
+
+    def worker(tid: int) -> None:
+        try:
+            barrier.wait()
+            # 两波：第一波把连接灌满连接池，第二波跨线程复用池内连接
+            # （check_same_thread=False 的必要性在此被实际压到）。
+            for wave in range(2):
+                for j in range(per_thread_writes):
+                    client.execute(
+                        "INSERT INTO orders (order_id, reason, amount, status) "
+                        "VALUES (:o, :r, :a, :s)",
+                        {"o": f"t{tid}-w{wave}-{j}", "r": "并发", "a": 1, "s": "ok"},
+                    )
+                client.query("SELECT COUNT(*) AS n FROM orders")
+        except Exception as exc:  # noqa: BLE001 - 线程内异常回传主线程断言
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(thread_count)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=60)
+    try:
+        assert errors == []
+        assert all(not t.is_alive() for t in threads)
+        total = client.query("SELECT COUNT(*) AS n FROM orders")["rows"][0]["n"]
+        assert total == 2 + thread_count * per_thread_writes * 2
+    finally:
+        client.close()
