@@ -1298,6 +1298,10 @@ export async function updateRecording(
  *
  * 传 debug 时为调试运行（04 §5.12）：收到 paused 帧回调后由调用方经
  * resumeDebug 放行；action=stop 收尾为 stopped 帧并抛 DebugRunStoppedError。
+ *
+ * signal（项目级审查发现 #6，docs/125 §3.4）：只管前端连接生命周期——abort 时
+ * 断开 SSE，fetch/read 抛出的 AbortError 原样上抛由调用方按分代守门吞掉；
+ * 断连不通知后端取消运行（docs/24 §3，取消语义走专门端点）。不传＝行为不变。
  */
 export async function streamRun(
   id: string,
@@ -1305,6 +1309,7 @@ export async function streamRun(
   onEvent: (event: RunEvent) => void,
   debug?: DebugRequest,
   opts?: RunOptions,
+  signal?: AbortSignal,
 ): Promise<RunResult> {
   const headers = new Headers({ 'Content-Type': 'application/json' })
   const token = getToken()
@@ -1313,6 +1318,7 @@ export async function streamRun(
     method: 'POST',
     headers,
     body: runBody(inputs, debug, opts),
+    signal,
   })
   if (!response.ok || !response.body) {
     const body = await response.json().catch(() => null)
@@ -2247,6 +2253,7 @@ export async function streamShadowRun(
   graphId: string,
   body: { inputs?: Record<string, unknown>; human_outcome?: HumanOutcome },
   onEvent: (event: RunEvent) => void,
+  signal?: AbortSignal,
 ): Promise<ShadowRun> {
   const headers = new Headers({ 'Content-Type': 'application/json' })
   const token = getToken()
@@ -2255,6 +2262,7 @@ export async function streamShadowRun(
     method: 'POST',
     headers,
     body: JSON.stringify(body),
+    signal,
   })
   if (!response.ok || !response.body) {
     const errBody = await response.json().catch(() => null)

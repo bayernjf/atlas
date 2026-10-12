@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   Alert,
   Button,
@@ -30,6 +30,7 @@ import {
   parseShadowInputs,
 } from '../../lib/shadow'
 import { useTranslation } from '../../locales'
+import { RunGeneration } from '../../lib/runGeneration'
 
 const { Text, Paragraph } = Typography
 const { TextArea } = Input
@@ -62,6 +63,17 @@ export function ShadowRunModal({ open, graphId, onClose }: Props) {
   // 流式实时进度：顶层节点 id → 进行中/完成（子图内事件带 subgraphPath，不进顶层列表）。
   const [progress, setProgress] = useState<Record<string, 'running' | 'done'>>({})
 
+  // 项目级审查发现 #6（docs/125 §3.4，U1382）：影子流同样分代守门。重提/关闭即作废旧流，
+  // 迟到帧（含终帧）与 reject 一律不得写回；abort 只管前端连接，不通知后端取消。
+  // 惰性 useState 持有每组件一个的稳定实例（ref 渲染期惰性初始化会触发 react(refs) 门）。
+  const [runs] = useState(() => new RunGeneration())
+  useEffect(() => () => runs.abort(), [runs])
+
+  const handleClose = () => {
+    runs.abort()
+    onClose()
+  }
+
   // 关闭动画结束后重置（事件回调，非 effect；首次挂载即初始值），保证每次打开是干净表单。
   const resetForm = () => {
     setInputsText('')
@@ -88,6 +100,7 @@ export function ShadowRunModal({ open, graphId, onClose }: Props) {
     setFormError(null)
     setProgress({})
     setSubmitting(true)
+    const { generation, signal } = runs.next()
     try {
       const body: { inputs?: Record<string, unknown>; human_outcome?: { action: string; note?: string } } = {
         inputs: parsed.value,
@@ -96,8 +109,12 @@ export function ShadowRunModal({ open, graphId, onClose }: Props) {
         body.human_outcome = { action: humanAction }
         if (humanNote.trim()) body.human_outcome.note = humanNote.trim()
       }
-      setRun(
-        await streamShadowRun(graphId, body, (event) => {
+      const result = await streamShadowRun(
+        graphId,
+        body,
+        (event) => {
+          // U1382：旧流迟到帧直接丢弃。
+          if (!runs.isCurrent(generation)) return
           // 只收顶层节点（子图内事件带 subgraphPath），实时刷新进行中/完成。
           if ((event as { subgraphPath?: unknown }).subgraphPath) return
           if (event.type === 'node_start') {
@@ -105,12 +122,19 @@ export function ShadowRunModal({ open, graphId, onClose }: Props) {
           } else if (event.type === 'node_end') {
             setProgress((p) => ({ ...p, [event.node_id]: 'done' }))
           }
-        }),
+        },
+        signal,
       )
+      // U1382：旧流终帧后的结果不得写回。
+      if (!runs.isCurrent(generation)) return
+      setRun(result)
     } catch (error) {
+      // U1382：旧流被取代/abort 后的 reject 静默，不弹业务错误。
+      if (!runs.isCurrent(generation)) return
+      if (error instanceof DOMException && error.name === 'AbortError') return
       setFormError(error instanceof Error ? error.message : String(error))
     } finally {
-      setSubmitting(false)
+      if (runs.isCurrent(generation)) setSubmitting(false)
     }
   }
 
@@ -184,12 +208,12 @@ export function ShadowRunModal({ open, graphId, onClose }: Props) {
     <Modal
       title={t('shadow.modal.title')}
       open={open}
-      onCancel={onClose}
+      onCancel={handleClose}
       afterClose={resetForm}
       width={960}
       footer={
         <Space>
-          <Button onClick={onClose}>{t('common:button.cancel')}</Button>
+          <Button onClick={handleClose}>{t('common:button.cancel')}</Button>
           <Button type="primary" loading={submitting} onClick={submit} disabled={!graphId}>
             {t('shadow.modal.submit')}
           </Button>

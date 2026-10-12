@@ -900,3 +900,97 @@ describe('structured API errors (U1384)', () => {
     expect(apiError.message).toBe('服务内部错误')
   })
 })
+
+// 项目级审查发现 #6（docs/125 §3.4，U1382）：流式调用透传 AbortSignal；在飞连接被
+// abort 时以 AbortError 拒绝（由组件侧 RunGeneration 分代守门静默），不吞不改。
+describe('stream abort signals (U1382)', () => {
+  function abortError(): DOMException {
+    return new DOMException('The operation was aborted.', 'AbortError')
+  }
+
+  function sseChunk(event: string, payload: Record<string, unknown>) {
+    return `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`
+  }
+
+  // 模拟真实 fetch 对 signal 的响应：流在飞期间 abort 时，挂起的 reader.read() 抛 AbortError。
+  function abortableStreamResponse(signal: AbortSignal, body: string) {
+    return {
+      ok: true,
+      body: new ReadableStream({
+        start(controller) {
+          if (signal.aborted) {
+            controller.error(abortError())
+            return
+          }
+          controller.enqueue(new TextEncoder().encode(body))
+          signal.addEventListener('abort', () => controller.error(abortError()))
+        },
+      }),
+    } as Response
+  }
+
+  it('streamRun forwards the given signal to fetch init untouched', async () => {
+    const controller = new AbortController()
+    vi.stubGlobal('fetch', vi.fn(async () => sseResponse([resultFrame])))
+    await streamRun('graph-1', {}, () => undefined, undefined, undefined, controller.signal)
+    const init = vi.mocked(fetch).mock.calls[0][1] as RequestInit
+    expect(init.signal).toBe(controller.signal)
+  })
+
+  it('streamShadowRun forwards the given signal to fetch init untouched', async () => {
+    const controller = new AbortController()
+    const shadowResult = {
+      id: 'sr-1',
+      graph_id: 'graph-1',
+      status: 'completed',
+      decisions: [],
+      tool_intents: [],
+      auto_action: null,
+      comparison: { match: null },
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          ({
+            ok: true,
+            body: new ReadableStream({
+              start(controller2) {
+                controller2.enqueue(new TextEncoder().encode(sseChunk('result', shadowResult)))
+                controller2.close()
+              },
+            }),
+          }) as Response,
+      ),
+    )
+    await streamShadowRun('graph-1', {}, () => undefined, controller.signal)
+    const init = vi.mocked(fetch).mock.calls[0][1] as RequestInit
+    expect(init.signal).toBe(controller.signal)
+  })
+
+  it('rejects an in-flight streamRun with AbortError once aborted, delivered frames stay', async () => {
+    const controller = new AbortController()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => abortableStreamResponse(controller.signal, sseChunk('paused', pausedFrame))),
+    )
+    const events: RunEvent[] = []
+    const promise = streamRun(
+      'graph-1',
+      {},
+      (event) => events.push(event),
+      undefined,
+      undefined,
+      controller.signal,
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    controller.abort()
+    const caught = await promise.then(
+      () => null,
+      (error: unknown) => error,
+    )
+    expect(caught).toBeInstanceOf(DOMException)
+    expect((caught as DOMException).name).toBe('AbortError')
+    expect(events.map((event) => event.type)).toEqual(['paused'])
+  })
+})
