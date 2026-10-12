@@ -3,6 +3,13 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔docs-only 立项〕打包 AR：项目级审查 14 项修复（2026-10-13，docs/125）
+
+- **决策**：2026-10-13 全仓项目级只读审查（基点 dev 4977840）的 14 条发现经两轮在当前 HEAD 复核 14/14 成立，用户「A」批准全部修复。四簇＝① SSE 健壮性（#1 worker 终帧兜底＋生成器心跳/超时、#2 端点 async 化解 anyio 默认 40 worker 线程占用、#4 两处无界 queue.Queue 改有界桥接）；② 安全脱敏（#3 dingtalk/feishu 加签 secret 的 GET/PUT 投影 `***`＋尾 4、PUT 占位不覆盖原密钥、出向加签仍用明文）；③ 数据并发（#5 openapi imports 迁 048 UNIQUE 部分索引＋IntegrityError 折同形 409、#8 RunStore 一把锁＋终态有界 N=200、#9 embed 移出锁、#10 demo SQLite 改 mkdtemp 临时文件库 WAL/QueuePool、#11 publish 捕唯一冲突重试 3 次、#12 _safe_record 补 logger.exception）；④ 门与环境（#13 CI 加装 Chromium 跑实 4 浏览器用例、#14 /api/demo/reset 补 prod gate，既有约 25 处测试零改动）。跨端 #6 streamRun AbortController＋runId 分代、#7 三处裸中文 detail 改结构化错误码前端读 error.code（i18n 零新增键）。
+- **四项选型裁决**：#2 取方案 a——同步 `def` SSE 端点改 async，worker 线程经 daemon 线程＋`call_soon_threadsafe` 向 asyncio 队列投帧，端点 `wait_for` 取帧并按间隔发 `: keepalive` 心跳（拟记 **ADR T36**，落码原子登记 docs/10 §4 并三处同步 docs/02、docs/09）；#4 取方案 a——有界桥接 deque 容量 1024，满则丢最旧中间帧并计数告警，终帧走独立槽保证必达且恰好一次，严格沿用 docs/24 §3、docs/80 §3.5「断连不是取消」；#10 取方案 a——demo 引擎从 `:memory:`＋StaticPool 单连接改为 `tempfile.mkdtemp()` 临时文件库（WAL、QueuePool、随进程/测试清理释放）；#13 取方案 a——CI `backend-integration` job 加装 `playwright install --with-deps chromium`，4 个双层 skip 浏览器用例实跑，失败可见不回退静默 skip，不新增缓做号、不重开已闭合的 D67。
+- **v1 边界**：零新依赖；1 条迁移 048（DROP 023 的非唯一部分索引、库内去重保留最小 seq、建 UNIQUE 部分索引，二跑幂等）；2 个新错误码 `AUTH_OLD_PASSWORD_INVALID`、`MESSAGE_TEMPLATE_NAME_CONFLICT`（登记 docs/03）；secret 只做读投影脱敏、不做 at-rest 加密；#7 不含 422 同密码与模板 404；#11 不取 advisory lock；#14 要求默认 profile 既有约 25 处 reset 测试零改动。
+- **本批纯文档、零代码门**：docs/125（形状权威，U1373–U1392 预留）、docs/08 打包 AR 立项块、docs/13 号段、docs/00 地图、docs/14 注记十（14 条均缺陷修复、不新增 D 号）、handoff。零新依赖、零迁移落库、零新端点。落码另批：十六原子计划见 docs/125 §6，六条重开判据见 §8。
+
 ### [fix(test)] 修正 H4 遗留的影子存储 PG 档过期断言（2026-10-12，docs/61 勘误）
 
 - AQ 批的临时 pgvector 容器全栈 PG 复验首次跑到 `ATLAS_STORAGE_BACKEND=pg` 组合，抓出一条自 2026-09-25 H4（docs/61，`2bb6d3c6`）起就与实现矛盾、但被 skipif 挡住从未执行的旧断言：`test_shadow_mode.py::test_pg_tenant_services_shadow_store_inprocess` 仍断言 PG 档 `shadow_store` 是进程内 `ShadowStore`（旧契约「影子存储不 PG 化」），而 H4 已把 registry PG 档装配改为 `PgShadowStore`（迁移 028、联合类型、`test_shadow_pg.py` 两档对拍）。
