@@ -3,6 +3,14 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔落码收口〕打包 AQ：D66 跨端 codegen 落地，节点输出根键前端不再手抄（docs/124，ADR T35，2026-10-12）
+
+- **三份手抄表的历史到此收口**：节点静态输出根键现在只有一个事实源——后端 `src/atlas/graph/node_outputs.py`。新生成器 `scripts/dev/gen_node_outputs_ts.py`（stdlib、确定性渲染，唯一输入 `project_static_outputs()`）构建期产出 `frontend/src/lib/schemas/generated/nodeOutputs.ts` 并**提交入仓**（DO NOT EDIT），`lib/scope.ts` 删掉 30 行手抄表改为 import＋re-export，消费点零改。三原子 `cee64e3`/`c1aa9b5`/`b7206d1`。
+- **漂移在结构上不可能（而不是事后变红）**：后端测试按路径 import 生成器的同一个 `render()`，逐字节比入仓产物——改单源忘重跑、或手改生成物，门都红（反向门实测：产物尾加 `// tamper` 即 FAILED，还原则绿）。跨端对拍源从 scope.ts 切到生成物；前端 nodeSchemas 的 x-outputSchema 对拍也改吃生成物，trigger/tool_call 两特例保留本地表。
+- **一处实测修正**：纯 `export { X } from '...'` 不会把名字带进文件内作用域，scope.ts 内部 5 处引用被 tsc 抓出 5×TS2304；最终形态是顶部常规 import 加一行同名 re-export，对外 import 面不变。
+- **v1 没做的**：不生成完整 x-outputSchema（后端单源只有键名、没有 type/description，硬生成等于编造契约）；深层子键白名单（`AI_DECISION_KEYS` 等）不 codegen；不加运行时契约端点、不让前端 build 依赖 Python（ADR T35 否 b/c，重开判据 docs/124 §8）。
+- **门（实跑）**：后端全量 **2703 passed／181 skipped**；首跑 4 failed 全是沙箱 DNS 拦截（`example.com` 无法解析：test_api_demo http_request ×2、test_template_package_zm import_url ×2），提权复跑 **4 passed**，本批零产品代码改动；分域 node_output_contract 5＋graph_ref_validation 20 共 25 passed。前端 vitest **993 passed／2 skipped**（与基线一致）、oxlint **0/0**、tsc **0**、`pnpm build` 过，前端三门全程未调 Python。零新依赖、零迁移、零新端点/错误码。**docs/14 D66 闭合**。
+
 ### 〔docs-only 立项〕打包 AQ：D66 跨端 codegen 选 ADR T35 方案 a（2026-10-12，docs/124）
 
 - **决策**：节点静态输出根键的前端 TS 表改为「后端单源投影 → 构建期生成 TS → 产物提交入仓 → 后端测试守产物最新」（ADR T35，方案 a）。新脚本 `scripts/dev/gen_node_outputs_ts.py`（stdlib、确定性渲染，唯一输入 `graph/node_outputs.project_static_outputs()`）生成 `frontend/src/lib/schemas/generated/nodeOutputs.ts`，`lib/scope.ts` 删手抄表改 re-export；后端守护把「忘重新生成 / 手改产物」逐字节变红。

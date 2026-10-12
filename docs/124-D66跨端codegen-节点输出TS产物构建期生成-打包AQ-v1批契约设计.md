@@ -1,8 +1,16 @@
 # 打包 AQ：D66 跨端 codegen — 节点静态输出 TS 产物构建期生成（v1 批契约设计）
 
 > 号段：U1367–U1372（docs/13 预留）｜承接 docs/14 D66 余部「跨端 codegen 生成前端 TS」｜2026-10-12 docs-only 立项
-> 状态：⬜ **已立项待落码**；选型裁决＝ADR T35（docs/10 §4，方案 a：构建期生成 TS 提交入仓＋后端守产物最新）
-> 形状权威＝本文。落码另立批，按 §6 原子序执行。
+> 状态：✅ **已落码收口（2026-10-12，三原子 `cee64e3`/`c1aa9b5`/`b7206d1`，U1367–U1372 转正式见 docs/13）**；选型裁决＝ADR T35（docs/10 §4，方案 a：构建期生成 TS 提交入仓＋后端守产物最新）
+> 形状权威＝本文。落码与本文的偏差见 §9 收口注记。
+
+## 9. 收口注记（2026-10-12）
+
+- 原子序按 §6 执行：`cee64e3` chore 生成器 → `c1aa9b5` feat 生成物入仓＋scope re-export → `b7206d1` test 新鲜度守护＋两重对拍源切换（docs 收口随第四原子）。
+- **一处实现修正**：§3.2 原文写 scope.ts「改 re-export（导出名与消费点零改）」，实测纯 `export ... from` 不会把名字带进文件内作用域，scope.ts 内部 5 处引用被 tsc 判 5×TS2304；最终形态＝顶部常规 `import { STATIC_OUTPUT_KEYS } from './schemas/generated/nodeOutputs'` 加一行同名 `export`，对外 import 面与文件内消费点都零改。
+- **U1371 对拍源切换的细节**：`nodeSchemas.test.ts` 原 `EXPECTED_OUTPUT_KEYS` 同时承担「普通节点根键」与 trigger/tool_call 两特例（trigger 是 context 嵌套五键、tool_call 是动态 outputSchema）。生成物只有 11 类普通节点，故特例表改名 `SPECIAL_CASE_OUTPUT_KEYS` 保留，普通节点改对拍生成物，并加「kind 既不在特例也不在生成物即 fail」断言；排除项恰好 2 类的元用例不动（剩下的就是这两类）。
+- **门（实跑）**：后端全量 2703 passed／181 skipped，首跑 4 failed 全为沙箱 DNS 拦截（example.com 解析失败，提权复跑 4 passed，本批零产品代码改动）；分域 node_output_contract 5＋graph_ref_validation 20 共 25 passed。前端 vitest 993／2（与基线一致）、oxlint 0/0、tsc 0、build 过；前端三门全程未调 Python。反向门实测：生成物尾加 `// tamper` ⇒ 新鲜度守护红，还原即绿。
+- 深层子键白名单、完整 x-outputSchema 生成、方案 b/c 仍按 §4/§8 缓做；D66 随本批闭合（codegen 余部落地，剩余重开判据在 §8）。
 
 ## 1. 背景与问题
 
