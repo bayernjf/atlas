@@ -208,9 +208,17 @@ edges:                       # {id, source, target}，端点必须存在且禁�
   # 〔2026-10-11 D66 裁决〕三者冲突时**权威是后端 loader 的真实产出**（各 mode 并集）。
   # 〔2026-10-12 D66 后端单源〕权威表落为 src/atlas/graph/node_outputs.py（STATIC_NODE_OUTPUTS
   # ＋project_static_outputs() 只读投影），graph/dsl.py::_STATIC_OUTPUT_KEYS 改为 static_output_keys()
-  # 派生（不再手抄）；前端 lib/scope.ts 仍手抄，由后端 tests/test_node_output_contract.py 解析 TS 与
-  # 后端投影逐字对拍，x-outputSchema↔scope.ts 另由前端 nodeSchemas.test.ts 对拍（两重锁）。
-  # 跨端 codegen（前端两份收口到后端生成的 TS 产物）余部待拍板，见 docs/14 D66 行注记。
+  # 派生（不再手抄）。
+  # 〔2026-10-12 打包 AQ（ADR T35 方案 a，docs/124）〕前端表不再手抄，事实流：
+  #   node_outputs.project_static_outputs()
+  #     → scripts/dev/gen_node_outputs_ts.py（stdlib、确定性 render，唯一输入）
+  #     → frontend/src/lib/schemas/generated/nodeOutputs.ts（入仓、DO NOT EDIT）
+  #     → lib/scope.ts 顶部 import＋同名 re-export（导出名/消费点零改）。
+  # **改根键的机械步骤**：改 node_outputs.py → 跑 `.venv/bin/python scripts/dev/gen_node_outputs_ts.py`
+  # → 提交生成物。tests/test_node_output_contract.py import 生成器同一 render() 逐字节守产物新鲜度
+  # （忘重跑/手改产物均红），跨端对拍源与前端 nodeSchemas.test.ts 的 11 类普通节点对拍均切生成物；
+  # trigger/tool_call 两特例仍在本地 SPECIAL_CASE_OUTPUT_KEYS。v1 不生成完整 x-outputSchema
+  # （单源只有键名、无 type/description），方案 b/c 已否决，重开判据见 docs/124 §8。
 # metaSchema.ts：TS 类型 + schema 形状自检；index.ts：最小 SchemaRegistry get(kind, version)（M1 仅内置节点单一来源）
 ```
 > 边界：`x-*` 仅前端节点 schema，后端 Capability schema 拒绝 `x-*`（U32）；M1 零 UI 变化、零新依赖、不引 AJV（ADR T16 已于 2026-09-16 收口为手写最小子集，M2 已立项把 M1 解释器扶正迁入 `lib/validation/l1.ts`——见下 `diagnostic` 契约，M3 重开判据见 10 §4）、不做表单生成；schema 为 nodeCatalog 手写规则的声明式投影，M1 期手写校验保留并双跑等价比对（U36；M2 扶正后双跑脚手架与已覆盖手写规则下线，covered:false 跨字段规则保留）。工具/技能等五类实体入册缓做 D29。
