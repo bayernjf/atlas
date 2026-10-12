@@ -166,6 +166,23 @@ def validate_dedup_keys(keys: Any) -> list[str]:
     return [key.strip() for key in keys]
 
 
+def validate_dedup_similarity(value: Any) -> float | None:
+    """归一化语义近似去重阈值（docs/14 D65 安全切片）。
+
+    ``None``＝关闭，落库只走精确去重（接入前行为，逐字不变）；开启时须为 ``(0, 1]`` 的数
+    （bool 不算数，0 会把任意两条判为重复，一并拒绝）。阈值选错会静默吃掉真实偏好，
+    因此默认必须关、由调用方显式给阈值并在产出里留可审计痕迹。
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise MemoryValidationError("dedup_similarity 必须是 0-1 的数")
+    number = float(value)
+    if not 0.0 < number <= 1.0:
+        raise MemoryValidationError("dedup_similarity 必须在 (0, 1] 区间内")
+    return number
+
+
 def validate_decay(decay: Any) -> dict[str, Any] | None:
     """归一化召回衰减：`None` 或 `enabled` 非真都返回 None＝不衰减（排序与接入前逐字一致）。"""
     if decay is None:

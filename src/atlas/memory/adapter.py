@@ -28,7 +28,11 @@ from atlas.harness.base import (
     StructuredError,
 )
 from atlas.llm.structured import LLMStructuredUnavailable, extract_memories
-from atlas.memory.models import MemoryValidationError
+from atlas.memory.models import (
+    MemoryValidationError,
+    validate_dedup_similarity,
+    validate_update_policy,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +168,23 @@ _AUTO_EXTRACT_INPUT_SCHEMA = {
             "additionalProperties": {"type": "string"},
             "description": "提炼出的条目挂到哪个业务作用域，如 {user_id}；缺省不挂",
         },
+        # 语义近似去重（docs/14 D65 安全切片）：缺省不传＝关，落库只做同 scope 同内容精确
+        # 匹配（同段文本重跑可能翻倍，这是已知行为，见 is_idempotent=False）。显式给 (0,1]
+        # 阈值后，候选先在本租户同 kind/scope 内语义召回，余弦≥阈值视为同一条，按
+        # update_policy 处置，并在产出里登记合并/冲突明细（可审计）。阈值选错会静默吃掉
+        # 真实偏好，故默认必须关。
+        "dedup_similarity": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 1,
+            "description": "可选语义近似去重阈值 (0,1]；缺省关闭＝仅精确去重",
+        },
+        "update_policy": {
+            "type": "string",
+            "enum": ["overwrite", "version", "ask"],
+            "default": "overwrite",
+            "description": "命中近似既有条时的处置：overwrite 更新最近一条／version 留新版本／ask 返回冲突不写；仅 dedup_similarity 开启时生效",
+        },
     },
 }
 
@@ -176,6 +197,9 @@ _AUTO_EXTRACT_OUTPUT_SCHEMA = {
         "preferences": {"type": "array"},
         "dropped_below_threshold": {"type": "integer"},
         "min_confidence": {"type": "number"},
+        # 仅 dedup_similarity 开启时出现：回显阈值，以及 ask 策略下未落库的冲突候选。
+        "dedup_similarity": {"type": "number"},
+        "conflicts": {"type": "array"},
         # "没接模型"与"这次没提取到"必须是两个答案（docs/122 复核块第 2 条）：
         # 前者 skipped=llm_unavailable，后者 skipped 为空而 extracted=0。
         "skipped": {"type": "string"},
@@ -323,9 +347,11 @@ class MemoryHarnessAdapter(HarnessAdapter):
     def _auto_extract(self, params: dict[str, Any]) -> ActionResult:
         """LLM 提炼 → 置信度门槛 → 落库（docs/122 D-2）。
 
-        落库走缺省 `overwrite`，去重按**同 scope 同内容精确匹配**：模型两次给出的措辞只要
+        缺省落库走 `overwrite`，去重按**同 scope 同内容精确匹配**：模型两次给出的措辞只要
         差一个字就会新增一条，所以"对同一段对话重跑一次"**不保证条数不变**（2026-10-11 真机
-        实测 3 条 → 6 条）。语义近似去重缓做，触发条件见 docs/14 D65。
+        实测 3 条 → 6 条）。语义近似去重已取回**缺省关的安全切片**（docs/14 D65）：显式传
+        `dedup_similarity` (0,1] 才按余弦阈值合并并在产出里留 merged_from/conflicts 审计痕迹，
+        不传时行为与这里描述的精确去重逐字一致；D65 整体仍缓做（复开条件见 docs/14）。
         """
         text = str(params.get("text") or "").strip()
         if not text:
@@ -341,6 +367,13 @@ class MemoryHarnessAdapter(HarnessAdapter):
             )
         threshold = float(raw_threshold)
         scope = params.get("scope") if isinstance(params.get("scope"), dict) else None
+        # 语义近似去重（docs/14 D65）：两值缺省都为"关／overwrite"，不传 dedup_similarity 时
+        # 下面整条落库路径与产出形状与接入前逐字一致（test_u1332c 钉住的 3→6 漂移不变）。
+        try:
+            similarity = validate_dedup_similarity(params.get("dedup_similarity"))
+            policy = validate_update_policy(params.get("update_policy"))
+        except MemoryValidationError as exc:
+            return ActionResult.failed(StructuredError("MEMORY_INVALID_INPUT", str(exc)))
         try:
             extracted = extract_memories(text=text, tenant_id=self.tenant_id)
         except LLMStructuredUnavailable as exc:
@@ -351,6 +384,7 @@ class MemoryHarnessAdapter(HarnessAdapter):
                 "model": "",
             })
         kept: dict[str, list[dict[str, Any]]] = {"fact": [], "preference": []}
+        conflicts: list[dict[str, Any]] = []
         dropped = 0
         for kind, candidates in (
             ("fact", extracted.get("facts") or []),
@@ -360,21 +394,49 @@ class MemoryHarnessAdapter(HarnessAdapter):
                 if float(candidate["confidence"]) < threshold:
                     dropped += 1
                     continue
+                # 开启近似去重时先按同一阈值/同一 scope 口径语义召回，作为"会与哪几条合并"
+                # 的可审计凭据；remember 内部用完全相同的口径判重，两边不会各说各话。
+                near: list[dict[str, Any]] = []
+                if similarity is not None:
+                    near = self.repo.recall(
+                        candidate["content"],
+                        kind=kind,
+                        scope=scope,
+                        top_k=20,
+                        min_score=similarity,
+                    )
                 saved = self.repo.remember(
                     kind=kind,
                     content=candidate["content"],
                     scope=scope,
                     confidence=candidate["confidence"],
                     source="auto_extract",
+                    update_policy=policy if similarity is not None else "overwrite",
+                    dedup_similarity=similarity,
                 )
-                kept[kind].append({
+                if saved.get("conflict") is True:
+                    # ask：不写库，把冲突交回，登记到 conflicts 便于调用方/审计看到"拦下了什么"。
+                    conflicts.append({
+                        "kind": kind,
+                        "content": candidate["content"],
+                        "confidence": candidate["confidence"],
+                        "existing_id": saved.get("existing_id"),
+                    })
+                    continue
+                entry = {
                     "id": saved.get("id"),
                     "content": saved.get("content"),
                     "confidence": candidate["confidence"],
-                })
+                }
+                if near:
+                    entry["merged_from"] = [
+                        {"id": neighbour.get("id"), "score": neighbour.get("score")}
+                        for neighbour in near
+                    ]
+                kept[kind].append(entry)
         if dropped:
             logger.info("auto_extract 丢弃 %d 条低于门槛 %.2f 的候选", dropped, threshold)
-        return ActionResult.success({
+        result: dict[str, Any] = {
             "extracted": len(kept["fact"]) + len(kept["preference"]),
             "facts": kept["fact"],
             "preferences": kept["preference"],
@@ -382,4 +444,9 @@ class MemoryHarnessAdapter(HarnessAdapter):
             "min_confidence": threshold,
             "model": str(extracted.get("model") or ""),
             "skipped": "",
-        })
+        }
+        # 只有显式开启时才多出这两个键，关闭时产出与接入前逐字一致（不污染既有契约/快照）。
+        if similarity is not None:
+            result["dedup_similarity"] = similarity
+            result["conflicts"] = conflicts
+        return ActionResult.success(result)

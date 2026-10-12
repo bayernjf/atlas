@@ -11,6 +11,7 @@ ATLAS_STORAGE_BACKEND=pg 装配切换。
 
 from __future__ import annotations
 
+import itertools
 import os
 from pathlib import Path
 
@@ -265,7 +266,10 @@ def test_aa_u1265_pg_and_inmemory_parity_for_knowledge(pg_store):
 def ak_store(pg_store):
     """每条用例从空库开始，并固定 created_at 序列（衰减判据要可确定复现）。"""
     pg_store.clear()
-    stamps = iter(
+    # cycle 而非有限 iter：各用例 remember 次数不一（如 test_u1342 同租户内 6 次调用），
+    # 有限序列会在第 5 次 next() 抛 StopIteration；cycle 在前 4 次仍给出原确定性时间戳，
+    # 超出后循环复用，既不破坏 ≤4 次用例的既定期望，也不再耗尽。
+    stamps = itertools.cycle(
         [
             "2026-10-10T12:00:00+00:00",
             "2026-10-11T12:00:00+00:00",
@@ -349,3 +353,34 @@ def test_u1341_pg_decay_off_is_the_pre_batch_query_path(ak_store):
     assert ak_store.recall("客户偏好极速退款", top_k=2, decay=None) == baseline
     assert ak_store.recall("客户偏好极速退款", top_k=2,
                            decay={"enabled": False, "half_life_days": 7}) == baseline
+
+
+# ---- docs/14 D65 安全切片：dedup_similarity 语义近似去重的两档对拍（缺省关） ----
+
+
+def test_u1342_pg_similarity_dedup_matches_in_process_tier(ak_store):
+    """同 scope 近义改写按阈值 overwrite 合并（id 不变、不翻倍）；不同 scope 绝不互相吃掉。"""
+    from atlas.memory.items import MemoryStore
+
+    pg = ak_store
+    mem = MemoryStore()
+    for store in (pg, mem):
+        first = store.remember(kind="fact", content="订单 o-1 已退款", scope={"order_id": "o-1"})
+        second = store.remember(
+            kind="fact", content="订单 o-1 已退款 88 元",
+            scope={"order_id": "o-1"}, dedup_similarity=0.85,
+        )
+        assert second["id"] == first["id"], "近似命中走 overwrite，同一条被更新而非新增"
+        assert len(store.list()) == 1
+        # 缺省关：不传阈值时，哪怕文本高度近似也不做语义合并（接入前行为）
+        store.clear()
+        store.remember(kind="fact", content="订单 o-1 已退款", scope={"order_id": "o-1"})
+        store.remember(kind="fact", content="订单 o-1 已退款 88 元", scope={"order_id": "o-1"})
+        assert len(store.list()) == 2
+        store.clear()
+        # scope 隔离：换了 order_id，即便措辞高度近似也不得合并
+        store.remember(kind="fact", content="订单 o-1 已退款", scope={"order_id": "o-1"})
+        store.remember(kind="fact", content="订单 o-2 已退款", scope={"order_id": "o-2"},
+                       dedup_similarity=0.85)
+        assert len(store.list()) == 2
+        store.clear()

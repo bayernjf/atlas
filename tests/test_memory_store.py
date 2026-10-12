@@ -222,3 +222,44 @@ def test_clear_resets_items_and_counter(store):
     assert store.list() == []
     item = store.remember(kind="fact", content="重置后记忆")
     assert item["id"] == "mem-1"
+
+
+# ---- docs/14 D35 保留期裁剪安全切片：进程内档 prune_expired（与 PG 档对拍） ----
+
+
+def test_prune_expired_removes_only_items_older_than_cutoff(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    import atlas.memory.items as items_mod
+
+    store = MemoryStore()
+    monkeypatch.setattr(
+        items_mod, "_utc_now", lambda: datetime(2020, 1, 1, tzinfo=timezone.utc).isoformat()
+    )
+    store.remember(kind="fact", content="很旧的记忆")
+    monkeypatch.undo()
+    store.remember(kind="fact", content="刚写入的记忆")
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    removed = store.prune_expired(cutoff)
+    assert removed == 1
+    assert [item["content"] for item in store.list()] == ["刚写入的记忆"]
+    # 计数器不回退：删除后新增不得复用旧 mem-N（id 单调）
+    new_item = store.remember(kind="fact", content="第三条")
+    assert new_item["id"] == "mem-3"
+
+
+def test_prune_expired_with_future_cutoff_removes_all(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    import atlas.memory.items as items_mod
+
+    monkeypatch.setattr(
+        items_mod, "_utc_now", lambda: datetime(2020, 1, 1, tzinfo=timezone.utc).isoformat()
+    )
+    store = MemoryStore()
+    store.remember(kind="fact", content="旧记忆一")
+    store.remember(kind="preference", content="旧记忆二")
+    monkeypatch.undo()
+    future = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+    assert store.prune_expired(future) == 2
+    assert store.list() == []

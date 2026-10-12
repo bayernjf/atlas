@@ -221,6 +221,90 @@ def test_backend_source_set_matches_the_frontend_badge():
     assert set(get_args(MemorySource)) == {"tool", "manual", "run", "auto_extract"}
 
 
+# --------------------------------------------------------------------------- #
+# 语义近似去重（docs/14 D65 安全切片）：缺省关；开启后可合并、可审计、可拦冲突
+# --------------------------------------------------------------------------- #
+
+
+def _paraphrase_answers():
+    return iter([
+        {"facts": [{"content": "订单 o-1 已退款", "confidence": 0.95}], "preferences": []},
+        {"facts": [{"content": "订单 o-1 已退款 88 元", "confidence": 0.95}], "preferences": []},
+    ])
+
+
+def test_u1332d_default_off_keeps_the_exact_only_contract(adapter, repo, monkeypatch):
+    """缺省不传 dedup_similarity：产出不带新键，语义近似也不合并（接入前行为逐字不变）。"""
+    answers = _paraphrase_answers()
+    monkeypatch.setattr("atlas.memory.adapter.extract_memories", lambda **kw: next(answers))
+    first = _run(adapter, {"text": "t"})
+    _run(adapter, {"text": "t"})
+    assert "dedup_similarity" not in first.output and "conflicts" not in first.output
+    assert len(repo.list()) == 2, "两句 cosine≈0.90 但缺省关＝仍翻倍（test_u1332c 同源行为）"
+
+
+def test_u1332e_overwrite_merges_paraphrase_and_audits_the_target(adapter, repo, monkeypatch):
+    answers = _paraphrase_answers()
+    monkeypatch.setattr("atlas.memory.adapter.extract_memories", lambda **kw: next(answers))
+    _run(adapter, {"text": "t", "dedup_similarity": 0.85})
+    second = _run(adapter, {"text": "t", "dedup_similarity": 0.85})
+    listed = repo.list()
+    assert len(listed) == 1, "近义改写按阈值合并，条数不翻倍"
+    assert listed[0]["content"] == "订单 o-1 已退款 88 元", "overwrite 更新同一条（id/created_at 不变）"
+    fact = second.output["facts"][0]
+    assert fact["merged_from"] and fact["merged_from"][0]["id"] == listed[0]["id"]
+    assert fact["merged_from"][0]["score"] >= 0.85
+    assert second.output["dedup_similarity"] == 0.85 and second.output["conflicts"] == []
+
+
+def test_u1332f_threshold_does_not_eat_a_genuinely_different_preference(adapter, repo, monkeypatch):
+    """docs/14 的反例必须守住：极速退款 vs 极速发货（cosine≈0.76）在 0.85 下不得被吃掉一条。"""
+    monkeypatch.setattr(
+        "atlas.memory.adapter.extract_memories",
+        lambda **kw: {"facts": [], "preferences": [
+            {"content": "客户偏好极速退款", "confidence": 0.95},
+            {"content": "客户偏好极速发货", "confidence": 0.95},
+        ]},
+    )
+    out = _run(adapter, {"text": "t", "dedup_similarity": 0.85}).output
+    assert len(repo.list()) == 2, "阈值选错静默吃掉真实偏好，正是 D65 缺省关的原因"
+    assert all("merged_from" not in item for item in out["preferences"])
+
+
+def test_u1332g_ask_policy_reports_conflict_and_does_not_write(adapter, repo, monkeypatch):
+    answers = _paraphrase_answers()
+    monkeypatch.setattr("atlas.memory.adapter.extract_memories", lambda **kw: next(answers))
+    _run(adapter, {"text": "t", "dedup_similarity": 0.85, "update_policy": "ask"})
+    second = _run(adapter, {"text": "t", "dedup_similarity": 0.85, "update_policy": "ask"})
+    assert len(repo.list()) == 1, "ask 把决定权交回，不静默覆盖"
+    assert len(second.output["conflicts"]) == 1
+    assert second.output["conflicts"][0]["existing_id"] == repo.list()[0]["id"]
+    assert second.output["extracted"] == 0
+
+
+def test_u1332h_version_policy_keeps_a_new_version_and_audits_source(adapter, repo, monkeypatch):
+    answers = _paraphrase_answers()
+    monkeypatch.setattr("atlas.memory.adapter.extract_memories", lambda **kw: next(answers))
+    _run(adapter, {"text": "t", "dedup_similarity": 0.85, "update_policy": "version"})
+    second = _run(adapter, {"text": "t", "dedup_similarity": 0.85, "update_policy": "version"})
+    listed = repo.list()
+    assert len(listed) == 2, "version 不覆盖，近似命中也留一条新版本"
+    newest = max(listed, key=lambda item: item["created_at"])
+    assert newest["metadata"].get("version") == "2"
+    assert second.output["facts"][0]["merged_from"], "即便留新版本，也要登记它从哪条近似记忆长出来"
+
+
+@pytest.mark.parametrize("bad", [0, 1.5, -0.2, True, "high"])
+def test_u1332i_invalid_similarity_is_rejected(adapter, repo, monkeypatch, bad):
+    monkeypatch.setattr(
+        "atlas.memory.adapter.extract_memories",
+        lambda **kw: {"facts": [{"content": "x", "confidence": 0.99}], "preferences": []},
+    )
+    result = _run(adapter, {"text": "x", "dedup_similarity": bad})
+    assert result.status == ActionStatus.FAILED
+    assert result.error.code == "MEMORY_INVALID_INPUT"
+
+
 def test_store_failure_is_reported_as_storage_error_not_a_silent_zero(monkeypatch):
     class _Broken:
         def remember(self, **kwargs):

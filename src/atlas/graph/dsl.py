@@ -17,6 +17,7 @@ from atlas.cards.catalog import get_card
 from atlas.graph.conditions import ConditionEvalError
 from atlas.graph.conditions import parse as parse_condition
 from atlas.graph.conditions import validate_expression
+from atlas.graph.node_outputs import static_output_keys
 from atlas.scheduling.cron import CronExpressionError, validate_cron
 
 IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
@@ -1963,41 +1964,12 @@ def _validate_node_config(node: NodeDSL) -> list[Issue]:
 
 _REF_RE = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
 
-_STATIC_OUTPUT_KEYS: dict[str, tuple[str, ...]] = {
-    "ai_decision": ("decision", "prompt_rendered", "memory_injected"),
-    # 打包 AP（闭合 docs/14 D66）：以下三类此前只放行一小撮根键，而 loader 真产出更多
-    # ⇒ 运营引用真实存在的路径（如 {{loop-1.exitReason}}）被编译期 REF_STATIC_PATH_NOT_FOUND
-    # 拒。**裁决＝后端 loader 的真实产出为权威**（与 AN② 处理 state_machine 同口径）：
-    # 键集合是各 mode 产出的**并集**，两侧（本表／前端 scope.ts）与 x-outputSchema 声明
-    # 三处对齐。wait 的 timeoutSeconds/onTimeout 是 config 键、不是产出，本轮移除。
-    "condition": (
-        "mode", "branch", "target", "evaluation", "llm_errors",
-        "expression_errors", "expressionErrorCodes", "expressionErrorParams",
-    ),
-    "loop": (
-        "mode", "index", "iterations", "items", "item", "results", "target", "exitReason",
-        "expression_errors", "expressionErrorCodes", "expressionErrorParams",
-    ),
-    "parallel": ("status", "branches", "joinStrategy", "joinTarget"),
-    "wait": (
-        "mode", "waitType", "durationMode", "durationExpression", "durationSeconds",
-        "plannedDurationSeconds", "jitterSeconds", "absoluteTime", "eventKey", "eventKeys",
-        "eventWaitMode", "matchedEventKey", "matchedEventKeys", "matchedPayloads",
-        "receivedKeys", "signaled", "payload", "waitedSeconds", "resolvedBy", "token",
-    ),
-    "subgraph": ("status", "outputs"),
-    "human_approval": ("decision", "target", "summary", "approver", "resolvedBy", "comment", "card"),
-    # docs/109 打包 AB：三节点输出形状（与 ai_decision 同族）
-    "intent_recognition": ("result", "prompt_rendered"),
-    "info_extraction": ("result", "prompt_rendered"),
-    "content_generation": ("result", "prompt_rendered"),
-    # 打包 AN②（闭合 D64）：此前表里没有 state_machine，引用它的路径**一条都不校验**——
-    # 编译期全放行、运行期解析成空。这八条键逐字取自 loader 的产出（camelCase 与
-    # docs/123 §2.3 的 config／SSE 帧命名同族），深层路径仍拒（action 是工具产出、形状动态）。
-    "state_machine": (
-        "mode", "objectRef", "from", "to", "event", "state", "states", "action",
-    ),
-}
+# 节点静态输出根键的唯一权威在 graph/node_outputs.py（docs/14 D66 后端单源）；这里只派生
+# L2 编译期复查用的查询表，不再自抄字面量。键集合＝loader 各执行 mode 真实产出的**并集**，
+# 与前端 lib/scope.ts 的 STATIC_OUTPUT_KEYS、各节点 x-outputSchema 由跨端对拍测试锁一致
+#（见 tests/test_node_output_contract.py；wait 的 timeoutSeconds/onTimeout 是 config 键、
+# 不是产出，已在权威表排除）。
+_STATIC_OUTPUT_KEYS: dict[str, tuple[str, ...]] = static_output_keys()
 
 _TRIGGER_CONTEXT_KEYS = ("triggerType", "cron", "webhookUrl", "payload")
 

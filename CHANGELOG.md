@@ -3,6 +3,17 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔五个缺省安全切片＋一处部署补漏〕2026-10-12：真 SMTP 通知执行段、记忆语义去重、记忆保留期、节点输出后端单源、D29 复核（docs/14 D29/D35/D65/D66／docs/73 1.3／docs/115 §8／docs/122 §6.2）
+
+- **这批只取回"缺省关、缺省不过期、不改默认行为"的安全切片**，外部凭据（真 LLM 入 vault、真 Shopify、真 SMTP、真机整链）一项都没硬挑——那些不是代码能闭环的。
+- **① 1.3 真消息投递的"执行段"补齐**（`80e47ed0`/`90d58c5c`）：`prod_rehearsal.py` 的 notify 腿此前规划层会判 blocked、理由是"执行段未实现"。现在无 `--notify-to` 仍 blocked（打扰真人必须显式给收件人），给了收件人且 SMTP 凭据齐才 run；`leg_notify()` 真跑 trigger→`message/send`，终态同时断言工具 `action_status=="SUCCESS"` **和** `delivered=="smtp"`——后者防止 dev 的 in_process 假投递把腿跑绿。1.3 判据仍 ⬜，只差真 SMTP 凭据＋对出厂镜像实跑一次。
+- **② D65 语义近似去重（缺省关）**（`a7402992`/`deaf7594`）：`auto_extract` 与两档 `remember()` 增可选 `dedup_similarity`，不传＝只做精确去重、产出形状逐字不变；传 (0,1] 阈值才在精确去重无命中后补一次语义召回，命中后**直接复用既有 overwrite/version/ask 策略、不新造合并逻辑**，且仅在开启时多产出 `merged_from`（合并了哪几条、相似度多少，可审计）与 `conflicts`。匹配口径与 recall 严格一致（同 kind＋scope 子集＋余弦≥阈值，PG 走 pgvector `<=>`）。确定性 embedder 下「极速退款 vs 极速发货」余弦 0.7647<0.85 不会被吃掉——这正是 D65 当初不敢默认开的原因。**D65 整体不解除**（默认开启/阈值调参等真实重复堆叠反馈）。
+- **③ D35 记忆保留期裁剪（缺省不过期）**（`42c32bbf`/`262b9722`）：memory_items 纳入 K-2 retention 钩子，但与 7 张运维表刻意不同——**缺省不过期、不跟随全局 `ATLAS_RETENTION_DAYS`**，只有独立显式 `ATLAS_RETENTION_MEMORY_DAYS`（正整数）才裁剪，空值/非法值 fail-safe 到"不过期"（宁保留不误删长期记忆）。
+- **④ D66 节点输出根键后端单源**（`84c4aa1d`/`951516ab`）：D66 裁决后三处表虽改齐，但后端 `dsl.py` 仍手抄一份根键字面量。现新增 `graph/node_outputs.py` 作为后端唯一权威（`STATIC_NODE_OUTPUTS`＋只读投影），`dsl.py` 改为从它派生（L2 复查行为零变化），并新增一个**跨端对拍**测试：后端测试直接解析前端 `scope.ts` 文本、断言节点集合与根键集合与后端投影逐字一致；加上前端原有的 scope↔x-outputSchema 对拍，三份真相被两重测试锁死。**跨端 codegen（前端两份也由后端生成）涉及前端构建约定选型，留待拍板，未静默落码**。
+- **⑤ D29 六类实体通用化复核（docs-only，不落码）**（docs/115 §8）：解锁三步（自定义控件/异构数组/部署迁移）既已全闭环，重新据当前代码核实——node/tool/card/deploy 外加 template 五个真实来源都已接 forms，而**技能仍只有进程内声明字段、前端零配置 UI，运营体级记忆策略表单也未立项**，此刻抽统一 SourceRegistry 是没有消费者的框架（YAGNI）。给了三条可证伪重开判据与"触发即做"的最小形状，D29 整体维持缓做。
+- **一处部署补漏（全量门抓到）**（`e6680bfc`）：③ 的新 env 被代码读取却漏了 docker-compose 透传，U1158 env-surface parity 门在全量跑时点名；已照其余 `ATLAS_RETENTION_*` 同形补透传（缺省空＝不过期）。
+- **门（实跑）**：后端全量首跑 **2704 passed／181 skipped／2 failed**，其中 1 失败即上面的 compose 透传（已修、复跑 parity 全绿），另 1 条 `test_api_demo` 流式审批用例为已知 TestClient SSE 缓冲时序 flaky（docs/08 D67 同族），单跑与整文件低负载复跑均通过、与本批改动无关；修复后相关两文件复跑 **63 passed**。前端 vitest **993 passed／2 skipped**、oxlint **0/0**、tsc 0、`pnpm build` 过。分域门：记忆 132、retention+memory store 31、node_output+ref_validation 24、graph 域 595、rehearsal live-legs 9。
+
 ### 〔补漏＋立守护〕打包 AN：记忆提炼认租户 BYOK、状态机输出契约对齐、并给"三张节点输出表"立了对拍（docs/14 D64/D66／docs/122 §6.1，2026-10-11）
 
 - **AN① 关掉了一条我自己写高的"限制"**。AK 落码时在 docs/12 写下"auto_extract 的租户 BYOK 不生效，要改是 **harness 级契约变更**，另批做"。这次复查装配路径发现结论是错的：执行期注册表 `build_runtime_registry` **本来就按租户克隆**（那正是 message/memory 两段式装配的设计），缺的只是没把已有的租户身份递给适配器。于是修法是三行——`TenantServices` 增 `tenant_id` 字段、克隆 memory 适配器时注入、`_auto_extract` 透传给 `extract_memories`——**零契约变更、零迁移**，解析优先级立刻与其余四个模型消费点对齐（BYOK > 内置 > env）。
