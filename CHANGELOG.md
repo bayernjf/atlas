@@ -7,7 +7,13 @@
 
 - AQ 批的临时 pgvector 容器全栈 PG 复验首次跑到 `ATLAS_STORAGE_BACKEND=pg` 组合，抓出一条自 2026-09-25 H4（docs/61，`2bb6d3c6`）起就与实现矛盾、但被 skipif 挡住从未执行的旧断言：`test_shadow_mode.py::test_pg_tenant_services_shadow_store_inprocess` 仍断言 PG 档 `shadow_store` 是进程内 `ShadowStore`（旧契约「影子存储不 PG 化」），而 H4 已把 registry PG 档装配改为 `PgShadowStore`（迁移 028、联合类型、`test_shadow_pg.py` 两档对拍）。
 - **改测试不改产品**：断言改为 `isinstance(..., PgShadowStore)` 并更名 `test_pg_tenant_services_wire_pg_shadow_store`，文件头 docstring 与分节注释同步；本条只守「registry PG 档装配接线」，两档投影一致仍由 `test_shadow_pg.py` 对拍。
-- 门：临时 pgvector:pg16 容器（5433）单文件全栈 PG 档 **24 passed**、目标用例＋`test_shadow_pg.py` **11 passed**。另记录一条既有基建缺口（不修）：`-m integration` 多文件共享 PG 库时密码轮换类用例会污染 autouse 登录 fixture（login 401→`KeyError: 'token'`），单文件跑不复现，CI 默认 PG 门不含该组合。
+- 门：临时 pgvector:pg16 容器（5433）单文件全栈 PG 档 **24 passed**、目标用例＋`test_shadow_pg.py` **11 passed**。
+
+### [fix(test)] 修掉全栈 PG 集成门的跨文件清库污染（2026-10-12，同日定位并修）
+
+- 上一条记录的「`-m integration` 多文件共享 PG 库时 login 401→`KeyError: 'token'`」初判为口令污染，**逐进程＋同进程两轮二分后归因更正**：逐文件独立进程跑 admin123 始终能登录；同进程叠加最小复现是 `test_retention_pg_integration.py`＋`test_shadow_mode.py`。真因是前者的 module 级 `_cleanup()` 动态枚举 `pg_tables` 并**无差别 DELETE 全部用户表**，把 app seed 进 `iam_users` 的共享账号（admin-a 等）删了，后续文件的 autouse 登录 fixture 随之 401。内存后端 seed 在内存 store、不读库，所以默认门和 CI 默认 PG 门（不带 `ATLAS_STORAGE_BACKEND=pg`）一直不红。
+- **修法照 `test_storage_pg_integration.py` 的安全先例**：`_cleanup()` 只删本模块测试租户 `rt` 的七张表行（`WHERE tenant_id='rt'`），不再清空全库；retention 自身的全局 DELETE 语义和按 `rt` 计数的断言不变。
+- 门：干净临时 pgvector:pg16 库全栈 PG 全量 **114 passed／0 failed**（修复前 113 passed＋1 setup error；最小对从「7 passed＋1 error」转 **8 passed**）；默认门 retention 7 skipped、shadow 23 passed/1 skipped 不变。
 
 ### 〔落码收口〕打包 AQ：D66 跨端 codegen 落地，节点输出根键前端不再手抄（docs/124，ADR T35，2026-10-12）
 
