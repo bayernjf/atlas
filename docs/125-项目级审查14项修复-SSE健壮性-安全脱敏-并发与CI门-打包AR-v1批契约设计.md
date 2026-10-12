@@ -120,7 +120,7 @@
 - 新迁移 `db/migrations/048_openapi_imports_hash_unique.sql`（幂等，仿既有迁移可重复执行）：
   1. 存量去重：对每个 `(tenant_id, content_hash)` 中 `deleted_at IS NULL` 的多行，**保留 seq 最小行**，其余置 `deleted_at`（UTC ISO 文本，与软删列现状同族；不 DELETE，保住历史/审计语义）；content_hash='' 的存量行（023 前老数据默认值）不参与——只去重非空指纹。
   2. `DROP INDEX IF EXISTS idx_openapi_imports_hash;`
-  3. `CREATE UNIQUE INDEX IF NOT EXISTS idx_openapi_imports_hash ON openapi_imports (tenant_id, content_hash) WHERE deleted_at IS NULL;`
+  3. `CREATE UNIQUE INDEX IF NOT EXISTS idx_openapi_imports_hash ON openapi_imports (tenant_id, content_hash) WHERE deleted_at IS NULL AND content_hash <> '';`（落码校正：谓词必须排除 `''`——若库内存在多个 023 前 `''` 老行，不带该条件唯一索引直接创建失败；023 后新指纹恒为 sha256 hex，不受影响。）
   4. 幂等写法：去重用 CTE＋ROW_NUMBER，可重复执行（二跑零行受影响）。
 - `PgImportStore.add`：保留 SELECT 预检（给出既有的友好 409 形状），另捕获 INSERT 上的 `IntegrityError` → rollback 后折同形 409 `OPENAPI_SPEC_ALREADY_IMPORTED`（code/message/params 与预检路径一致）；`restore` 同补（restore 的唯一冲突＝恢复一个与现存未删行同指纹的规格）。
 - 内存档 store 若有同构去重路径，落码时核对行为一致性（内存档线程模型不同，不强行加竞态测试）。
