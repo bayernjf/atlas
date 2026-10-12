@@ -7,7 +7,8 @@
 - 纯函数/存储（``recording/shadow.py``）：意图提取、auto_action 推断、对比三态、ring/reset；
 - REST（``/api/.../shadow-runs``）：发起/列表/详情/补录对比、零生产观测污染、权限矩阵、404/422。
 
-PG 档（U269）仅验证进程内 ShadowStore 在 PG TenantServices 下同形（影子存储不 PG 化）。
+PG 档（U269）验证 TenantServices 在 ATLAS_STORAGE_BACKEND=pg 下装配的是
+PgShadowStore（H4/docs/61：影子运行已 PG 化）；两档投影逐键一致由 test_shadow_pg.py 对拍。
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from atlas.graph.loader import build_demo_registry, run_graph
 from atlas.harness.base import Permission
 from atlas.iam.deps import tenant_registry
 from atlas.llm.decision import RuleBasedDecisionClient
+from atlas.recording.pg_shadow import PgShadowStore
 from atlas.recording.shadow import (
     HumanOutcome,
     ShadowStore,
@@ -671,7 +673,7 @@ def test_demo_reset_clears_shadow_runs():
     assert services.shadow_store.list() == []
 
 
-# ---------- U269 PG 档：进程内 ShadowStore 同形（影子存储不 PG 化） ----------
+# ---------- U269 PG 档：registry 装配 PgShadowStore（H4 影子运行 PG 化，docs/61 §5） ----------
 
 
 @pytest.mark.integration
@@ -681,10 +683,10 @@ def test_demo_reset_clears_shadow_runs():
     reason="set ATLAS_RUN_INTEGRATION=1, DATABASE_URL and ATLAS_STORAGE_BACKEND=pg "
     "to run full-stack PG integration",
 )
-def test_pg_tenant_services_shadow_store_inprocess():
+def test_pg_tenant_services_wire_pg_shadow_store():
     assert os.environ.get("ATLAS_STORAGE_BACKEND", "memory") == "pg"
     services = tenant_registry.get("t1")
-    assert isinstance(services.shadow_store, ShadowStore)
+    assert isinstance(services.shadow_store, PgShadowStore)
     saved = services.shadow_store.add(
         graph_id="g-pg", trace_id="tr-pg", decisions=[],
         tool_intents=[_intent("shop/execute_refund", True, {})],
