@@ -3,6 +3,33 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### [fix(test)] 修正 H4 遗留的影子存储 PG 档过期断言（2026-10-12，docs/61 勘误）
+
+- AQ 批的临时 pgvector 容器全栈 PG 复验首次跑到 `ATLAS_STORAGE_BACKEND=pg` 组合，抓出一条自 2026-09-25 H4（docs/61，`2bb6d3c6`）起就与实现矛盾、但被 skipif 挡住从未执行的旧断言：`test_shadow_mode.py::test_pg_tenant_services_shadow_store_inprocess` 仍断言 PG 档 `shadow_store` 是进程内 `ShadowStore`（旧契约「影子存储不 PG 化」），而 H4 已把 registry PG 档装配改为 `PgShadowStore`（迁移 028、联合类型、`test_shadow_pg.py` 两档对拍）。
+- **改测试不改产品**：断言改为 `isinstance(..., PgShadowStore)` 并更名 `test_pg_tenant_services_wire_pg_shadow_store`，文件头 docstring 与分节注释同步；本条只守「registry PG 档装配接线」，两档投影一致仍由 `test_shadow_pg.py` 对拍。
+- 门：临时 pgvector:pg16 容器（5433）单文件全栈 PG 档 **24 passed**、目标用例＋`test_shadow_pg.py` **11 passed**。
+
+### [fix(test)] 修掉全栈 PG 集成门的跨文件清库污染（2026-10-12，同日定位并修）
+
+- 上一条记录的「`-m integration` 多文件共享 PG 库时 login 401→`KeyError: 'token'`」初判为口令污染，**逐进程＋同进程两轮二分后归因更正**：逐文件独立进程跑 admin123 始终能登录；同进程叠加最小复现是 `test_retention_pg_integration.py`＋`test_shadow_mode.py`。真因是前者的 module 级 `_cleanup()` 动态枚举 `pg_tables` 并**无差别 DELETE 全部用户表**，把 app seed 进 `iam_users` 的共享账号（admin-a 等）删了，后续文件的 autouse 登录 fixture 随之 401。内存后端 seed 在内存 store、不读库，所以默认门和 CI 默认 PG 门（不带 `ATLAS_STORAGE_BACKEND=pg`）一直不红。
+- **修法照 `test_storage_pg_integration.py` 的安全先例**：`_cleanup()` 只删本模块测试租户 `rt` 的七张表行（`WHERE tenant_id='rt'`），不再清空全库；retention 自身的全局 DELETE 语义和按 `rt` 计数的断言不变。
+- 门：干净临时 pgvector:pg16 库全栈 PG 全量 **114 passed／0 failed**（修复前 113 passed＋1 setup error；最小对从「7 passed＋1 error」转 **8 passed**）；默认门 retention 7 skipped、shadow 23 passed/1 skipped 不变。
+
+### 〔落码收口〕打包 AQ：D66 跨端 codegen 落地，节点输出根键前端不再手抄（docs/124，ADR T35，2026-10-12）
+
+- **三份手抄表的历史到此收口**：节点静态输出根键现在只有一个事实源——后端 `src/atlas/graph/node_outputs.py`。新生成器 `scripts/dev/gen_node_outputs_ts.py`（stdlib、确定性渲染，唯一输入 `project_static_outputs()`）构建期产出 `frontend/src/lib/schemas/generated/nodeOutputs.ts` 并**提交入仓**（DO NOT EDIT），`lib/scope.ts` 删掉 30 行手抄表改为 import＋re-export，消费点零改。三原子 `cee64e3`/`c1aa9b5`/`b7206d1`。
+- **漂移在结构上不可能（而不是事后变红）**：后端测试按路径 import 生成器的同一个 `render()`，逐字节比入仓产物——改单源忘重跑、或手改生成物，门都红（反向门实测：产物尾加 `// tamper` 即 FAILED，还原则绿）。跨端对拍源从 scope.ts 切到生成物；前端 nodeSchemas 的 x-outputSchema 对拍也改吃生成物，trigger/tool_call 两特例保留本地表。
+- **一处实测修正**：纯 `export { X } from '...'` 不会把名字带进文件内作用域，scope.ts 内部 5 处引用被 tsc 抓出 5×TS2304；最终形态是顶部常规 import 加一行同名 re-export，对外 import 面不变。
+- **v1 没做的**：不生成完整 x-outputSchema（后端单源只有键名、没有 type/description，硬生成等于编造契约）；深层子键白名单（`AI_DECISION_KEYS` 等）不 codegen；不加运行时契约端点、不让前端 build 依赖 Python（ADR T35 否 b/c，重开判据 docs/124 §8）。
+- **门（实跑）**：后端全量 **2703 passed／181 skipped**；首跑 4 failed 全是沙箱 DNS 拦截（`example.com` 无法解析：test_api_demo http_request ×2、test_template_package_zm import_url ×2），提权复跑 **4 passed**，本批零产品代码改动；分域 node_output_contract 5＋graph_ref_validation 20 共 25 passed。前端 vitest **993 passed／2 skipped**（与基线一致）、oxlint **0/0**、tsc **0**、`pnpm build` 过，前端三门全程未调 Python。零新依赖、零迁移、零新端点/错误码。**docs/14 D66 闭合**。
+
+### 〔docs-only 立项〕打包 AQ：D66 跨端 codegen 选 ADR T35 方案 a（2026-10-12，docs/124）
+
+- **决策**：节点静态输出根键的前端 TS 表改为「后端单源投影 → 构建期生成 TS → 产物提交入仓 → 后端测试守产物最新」（ADR T35，方案 a）。新脚本 `scripts/dev/gen_node_outputs_ts.py`（stdlib、确定性渲染，唯一输入 `graph/node_outputs.project_static_outputs()`）生成 `frontend/src/lib/schemas/generated/nodeOutputs.ts`，`lib/scope.ts` 删手抄表改 re-export；后端守护把「忘重新生成 / 手改产物」逐字节变红。
+- **否决 b**：前端 `pnpm build`/vitest/CI 与纯前端开发机不引入 Python 依赖（993 例前端测试必须零 Python 可跑）。**否决 c**：不加运行时契约端点、不加鉴权面、不把编译期事实变成运行时可用性问题。b/c 的重开判据写进 docs/124 §8。
+- **v1 边界**：不生成完整 x-outputSchema——后端单源只有键名、没有 type/description 元信息，硬生成等于编造契约；只把 nodeSchemas 既有对拍的数据源从手抄表切到生成物，schema 的元信息仍人工维护。深层子键白名单（`AI_DECISION_KEYS` 等）不在本批。
+- **本批纯文档、零代码门**：docs/124（形状权威，U1367–U1372 预留）、docs/10 §4 T35、docs/02 选型总览、docs/09 树位＋待定项 17、docs/08 打包 AQ 立项块、docs/00 地图、docs/13 号段、docs/14 D66 注记、handoff。零新依赖、零迁移、零新端点/错误码。落码另批。
+
 ### 〔五个缺省安全切片＋一处部署补漏〕2026-10-12：真 SMTP 通知执行段、记忆语义去重、记忆保留期、节点输出后端单源、D29 复核（docs/14 D29/D35/D65/D66／docs/73 1.3／docs/115 §8／docs/122 §6.2）
 
 - **这批只取回"缺省关、缺省不过期、不改默认行为"的安全切片**，外部凭据（真 LLM 入 vault、真 Shopify、真 SMTP、真机整链）一项都没硬挑——那些不是代码能闭环的。

@@ -2,30 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { defaultConfig, NODE_KINDS, type NodeKind } from '../../nodeCatalog'
 import { schemaRegistry } from '../index'
 import { validateSchemaFields } from '../../validation/l1'
-import { STATIC_OUTPUT_KEYS } from '../../scope'
+// 打包 AQ（docs/124，ADR T35）起，普通节点的根键表由后端 graph/node_outputs.py 投影构建期
+// 生成到 schemas/generated/nodeOutputs.ts（提交入仓、后端守新鲜度），本测试直接对拍生成物，
+// 不再经手抄表。trigger/tool_call 不进生成物（前者 context 嵌套、后者动态 outputSchema），
+// 作为特例保留本地期望（U35④）。
+import { STATIC_OUTPUT_KEYS } from '../generated/nodeOutputs'
 
-// 与 lib/scope.ts STATIC_OUTPUT_KEYS + trigger/tool_call 特例逐字段对齐（04 §6.5，U35④）。
-const EXPECTED_OUTPUT_KEYS: Record<string, string[] | Record<string, string[]>> = {
+const SPECIAL_CASE_OUTPUT_KEYS: Record<string, string[] | Record<string, string[]>> = {
   trigger: { context: ['triggerType', 'cron', 'timezone', 'webhookUrl', 'payload'] },
   tool_call: ['result'],
-  ai_decision: ['decision', 'prompt_rendered', 'memory_injected'],
-  // 打包 AP（docs/14 D66 闭合）：补上 loader 真产出、声明里却漏掉的 evaluation/llm_errors。
-  condition: [
-    'mode', 'branch', 'target', 'evaluation', 'llm_errors',
-    'expression_errors', 'expressionErrorCodes', 'expressionErrorParams',
-  ],
-  loop: ['mode', 'index', 'iterations', 'items', 'item', 'results', 'target', 'exitReason', 'expression_errors', 'expressionErrorCodes', 'expressionErrorParams'],
-  parallel: ['status', 'branches', 'joinStrategy', 'joinTarget'],
-  wait: ['mode', 'waitType', 'durationMode', 'durationExpression', 'durationSeconds', 'plannedDurationSeconds', 'jitterSeconds', 'absoluteTime', 'eventKey', 'eventKeys', 'eventWaitMode', 'matchedEventKey', 'matchedEventKeys', 'matchedPayloads', 'receivedKeys', 'signaled', 'payload', 'waitedSeconds', 'resolvedBy', 'token'],
-  subgraph: ['status', 'outputs'],
-  human_approval: ['decision', 'target', 'summary', 'approver', 'resolvedBy', 'comment', 'card'],
-  // 打包 AN②（闭合 docs/14 D64）：这行原先钉的是 schema **当时声明**的四个键，与后端产出
-  // 不一致（注释里写"D60"是当时的笔误，登记号实为 D64）。现在两边同指后端 loader 的真实
-  // 产出，且 lib/scope.ts 也补了 state_machine 条目 ⇒ 这一行从"钉住现状"变成"对齐证明"。
-  state_machine: ['mode', 'objectRef', 'from', 'to', 'event', 'state', 'states', 'action'],
-  intent_recognition: ['result', 'prompt_rendered'],
-  info_extraction: ['result', 'prompt_rendered'],
-  content_generation: ['result', 'prompt_rendered'],
 }
 
 describe('built-in node schemas (U35)', () => {
@@ -37,9 +22,11 @@ describe('built-in node schemas (U35)', () => {
     expect(schemaRegistry.registeredKinds().sort()).toEqual([...NODE_KINDS].sort())
   })
 
-  it.each([...NODE_KINDS])('x-outputSchema of %s matches the scope.ts projection field-by-field', (kind) => {
+  it.each([...NODE_KINDS])('x-outputSchema of %s matches the generated node-output projection field-by-field', (kind) => {
     const output = schemaRegistry.get(kind)['x-outputSchema']
-    const expected = EXPECTED_OUTPUT_KEYS[kind]
+    const special = SPECIAL_CASE_OUTPUT_KEYS[kind]
+    const expected: string[] | Record<string, string[]> = special ?? STATIC_OUTPUT_KEYS[kind]
+    expect(expected, `${kind} 既无特例声明也不在生成物根键表中`).toBeTruthy()
     if (Array.isArray(expected)) {
       expect(Object.keys(output.properties ?? {}).sort()).toEqual([...expected].sort())
     } else {
@@ -49,9 +36,11 @@ describe('built-in node schemas (U35)', () => {
     }
   })
 
-  // 打包 AN②：这张投影表与上面的 x-outputSchema 长期各写一遍、没人对拍，D64 就是这么来的
+  // 打包 AN②：投影表与 x-outputSchema 长期各写一遍、没人对拍，D64 就是这么来的
   // （state_machine 声明四个后端根本不产出的键，而 scope.ts 连条目都没有 ⇒ 引用不校验、
-  // 补全给空值）。本条守护把两边钉成同一组根键。
+  // 补全给空值）。打包 AQ（docs/124）起投影表是后端单源生成的 nodeOutputs.ts，
+  // scope.ts 仅 re-export；本条守护钉的是「生成物 ↔ x-outputSchema」，再加后端新鲜度门
+  // （tests/test_node_output_contract.py），三份事实只可能在忘重跑时漂移、且必红。
   //
   // 排除项各有理由，不是"先让门绿"：
   // · trigger 引用走 context 嵌套特例、tool_call 走工具 outputSchema 动态路径（U35④ 既有设计）。
@@ -67,13 +56,13 @@ describe('built-in node schemas (U35)', () => {
     expect(Object.values(SCOPE_PARITY_EXEMPT).every(Boolean)).toBe(true)
   })
   it.each(PARITY_KINDS)(
-    'scope.ts 的可见根键与 %s 的 x-outputSchema 逐字段一致',
+    '生成物可见根键与 %s 的 x-outputSchema 逐字段一致',
     (kind) => {
       const declared = Object.keys(
         (schemaRegistry.get(kind)['x-outputSchema'] as { properties?: object }).properties ?? {},
       ).sort()
       const visible = [...(STATIC_OUTPUT_KEYS[kind] ?? [])].sort()
-      expect(visible, `lib/scope.ts 缺 ${kind} 条目＝引用期完全不校验`).toEqual(declared)
+      expect(visible, `生成物缺 ${kind} 条目＝引用期完全不校验`).toEqual(declared)
     },
   )
 

@@ -30,14 +30,28 @@ def _run_migration(engine) -> None:
     apply_pending(engine)
 
 
+RETENTION_TENANT = "rt"
+
+
 def _cleanup(engine) -> None:
-    """清空全部用户表（动态枚举，防表名漂移）。"""
+    """只清本模块测试租户 'rt' 的行。
+
+    历史实现动态枚举 pg_tables 并无差别 DELETE 全部表，在单进程全量 PG 集成跑序里
+    会把 app seed 进 iam_users 的共享账号（admin-a 等）一并删掉，导致后续文件的
+    autouse 登录 fixture 401→KeyError('token')（内存后端因 seed 在内存 store 不
+    受影响，故默认门不红）。retention 的 DELETE 是全局运维动作、断言按 rt 计数，
+    清场只需删自己写入的 rt 行（iam_sessions 为全局表，按 tenant_id 列清）。
+    """
+    tables = (
+        "audit_events", "runs", "interruptions", "openapi_imports",
+        "message_deliveries", "iam_sessions", "memory_items",
+    )
     with engine.begin() as conn:
-        rows = conn.execute(
-            text("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
-        ).all()
-        for (table,) in rows:
-            conn.execute(text(f'DELETE FROM "{table}"'))
+        for table in tables:
+            conn.execute(
+                text(f"DELETE FROM {table} WHERE tenant_id = :t"),
+                {"t": RETENTION_TENANT},
+            )
 
 
 @pytest.fixture(scope="module")
