@@ -23,6 +23,8 @@
 >
 > **未解除缓做、余部不变**：D12 i18next/navigator 探测/复数、D13 元数据多语言、D20 pending 挂起 PG 化之外的多实例决策竞态·评论流·动态审批人、D11 SIEM·保留归档·`resource_id` 维度·给 GET 补记审计、D26 影子自动旁路·SSE·报表趋势·跨租户共享、D22 YAML/oauth2。
 
+> **〔2026-10-12 勘误〕H4 漏同步的第 4 处旧契约断言已修**：H4（`2bb6d3c6` 装配＋`3eac4af` 新增 `test_shadow_pg.py`）把影子存储 PG 化时，漏改 `tests/test_shadow_mode.py` 里 U269 的一条旧断言——`test_pg_tenant_services_shadow_store_inprocess` 仍 `assert isinstance(services.shadow_store, ShadowStore)`（注释「影子存储不 PG 化」），与 registry PG 档注入 `PgShadowStore` 直接矛盾。该用例被 skipif（需 `ATLAS_STORAGE_BACKEND=pg`）挡住，常规门与 CI 默认档从不收集，故自 2026-09-25 起一直未暴露；2026-10-12 临时 pgvector 容器全栈 PG 复验（AQ 批）首次跑到该组合即红。**改测试、不改产品**（产品与 docs/61 §5 契约一致）：断言改 `isinstance(..., PgShadowStore)`，用例更名 `test_pg_tenant_services_wire_pg_shadow_store`（原 inprocess 名已名不副实），文件头 docstring 与分节注释同步；两档投影逐键一致仍由 `test_shadow_pg.py` 对拍，本条只守「registry 在 PG 档真的装配了 PgShadowStore」这条接线。门：单文件全栈 PG 档 **24 passed**、目标用例＋`test_shadow_pg.py` **11 passed**。**另记一条既有测试基建缺口（不在本次修复范围）**：`-m integration` 多文件共享同一 PG 库时，文件级 autouse `_admin_session` 会因密码轮换类集成测试改了 admin-a 口令而在 setup 阶段 login 401→`KeyError: 'token'`（全栈 PG 跑序污染）；单文件跑不复现。CI 默认 PG 门不带 `ATLAS_STORAGE_BACKEND=pg`，不跑该组合。
+
 > 立项时间：2026-09-25。AI 承接「打包 1–5 先做，出一份 docs-only 契约立项」授权。docs-only 契约先行，落码按本文 §9 原子序。
 
 > 部分取回 docs/14 的 D11 / D20 / D26 余部，并收口 docs/20 M2 的 `locations` 侧车契约遗留；**全部进程内/单库可闭环、零外部资源、零新依赖（不引 PyYAML/定时器/OTel/SIEM 客户端），新增迁移 027/028，不新增 ADR，不解除任何缓做条目**。

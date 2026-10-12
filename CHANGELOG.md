@@ -3,6 +3,12 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### [fix(test)] 修正 H4 遗留的影子存储 PG 档过期断言（2026-10-12，docs/61 勘误）
+
+- AQ 批的临时 pgvector 容器全栈 PG 复验首次跑到 `ATLAS_STORAGE_BACKEND=pg` 组合，抓出一条自 2026-09-25 H4（docs/61，`2bb6d3c6`）起就与实现矛盾、但被 skipif 挡住从未执行的旧断言：`test_shadow_mode.py::test_pg_tenant_services_shadow_store_inprocess` 仍断言 PG 档 `shadow_store` 是进程内 `ShadowStore`（旧契约「影子存储不 PG 化」），而 H4 已把 registry PG 档装配改为 `PgShadowStore`（迁移 028、联合类型、`test_shadow_pg.py` 两档对拍）。
+- **改测试不改产品**：断言改为 `isinstance(..., PgShadowStore)` 并更名 `test_pg_tenant_services_wire_pg_shadow_store`，文件头 docstring 与分节注释同步；本条只守「registry PG 档装配接线」，两档投影一致仍由 `test_shadow_pg.py` 对拍。
+- 门：临时 pgvector:pg16 容器（5433）单文件全栈 PG 档 **24 passed**、目标用例＋`test_shadow_pg.py` **11 passed**。另记录一条既有基建缺口（不修）：`-m integration` 多文件共享 PG 库时密码轮换类用例会污染 autouse 登录 fixture（login 401→`KeyError: 'token'`），单文件跑不复现，CI 默认 PG 门不含该组合。
+
 ### 〔落码收口〕打包 AQ：D66 跨端 codegen 落地，节点输出根键前端不再手抄（docs/124，ADR T35，2026-10-12）
 
 - **三份手抄表的历史到此收口**：节点静态输出根键现在只有一个事实源——后端 `src/atlas/graph/node_outputs.py`。新生成器 `scripts/dev/gen_node_outputs_ts.py`（stdlib、确定性渲染，唯一输入 `project_static_outputs()`）构建期产出 `frontend/src/lib/schemas/generated/nodeOutputs.ts` 并**提交入仓**（DO NOT EDIT），`lib/scope.ts` 删掉 30 行手抄表改为 import＋re-export，消费点零改。三原子 `cee64e3`/`c1aa9b5`/`b7206d1`。
