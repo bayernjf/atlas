@@ -34,6 +34,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from atlas.api.sse import SSEBridge, SSE_HEARTBEAT_SECONDS
 from atlas.cards import (
     CardRenderError,
     get_card,
@@ -228,6 +229,14 @@ def _safe_run_error(exc: Exception) -> str:
     if runtime_error_meta(exc)["errorCode"] == "RUNTIME_UNEXPECTED":
         return "运行时发生未预期错误"
     return str(exc)
+
+
+def _unexpected_stream_error() -> dict[str, Any]:
+    """SSE worker 暴毙（未沉淀终帧）时生成器合成的安全 error 终帧（docs/125 §3.1）。
+
+    固定 code/文案，不带任何内部异常串；细节由 worker 侧 logger.exception 落日志。
+    """
+    return {"message": "运行时发生未预期错误", "code": "RUNTIME_UNEXPECTED", "params": {}}
 
 
 def _token_ref(token: Any) -> str:
@@ -2888,7 +2897,7 @@ def create_shadow_run(
 
 
 @app.post("/api/graphs/{graph_id}/shadow-runs/stream")
-def create_shadow_run_stream(
+async def create_shadow_run_stream(
     graph_id: str,
     payload: dict[str, Any] | None = None,
     principal: Principal = Depends(require("operate")),
@@ -2897,7 +2906,9 @@ def create_shadow_run_stream(
 
     影子纪律与沉淀形状同同步版 /shadow-runs：READ 透传/写短路、预置审批与 wait 秒过、
     独立 broker/tracer、不写 run_store/RunRecord、不触发告警灰度、不产 tool_metric；
-    异常也沉淀 status=error 记录（HTTP 不报错），统一在终帧表达，不设 event:error。
+    业务异常也沉淀 status=error 记录（HTTP 不报错），统一在 result 终帧表达，不设
+    event:error。边界（docs/125 §3.1）：worker 暴毙或连沉淀都失败（未发生沉淀）时，
+    生成器合成 event:error 安全终帧，不伪造 ShadowRun、不挂死连接。
     """
     services = services_for(principal)
     graph = _load_graph_or_404(services, graph_id, None)
@@ -2918,17 +2929,18 @@ def create_shadow_run_stream(
     shadow_store = services.shadow_store
     tenant_id = principal.tenant_id
     graph_resolver = _tenant_graph_resolver(services)
+    loop = asyncio.get_running_loop()
 
-    def event_stream():
-        events: queue.Queue[dict[str, Any] | None] = queue.Queue()
+    async def event_stream():
+        bridge = SSEBridge(loop)
         top_events: list[tuple[str, dict[str, Any]]] = []
 
         def shadow_emit(event: dict[str, Any]) -> None:
-            events.put(event)
             if event.get("type") == "node_end" and not event.get("subgraphPath"):
                 output = event.get("output")
                 if isinstance(output, dict):
                     top_events.append((event["node_id"], output))
+            bridge.offer_threadsafe(event)
 
         tracer = Tracer(graph_id=graph_id)
         shadow_broker = ApprovalBroker()
@@ -2952,38 +2964,81 @@ def create_shadow_run_stream(
                     secret_provider=_secret_provider,
                     memory_repo=services.memory_store,
                 )
-            except Exception as exc:  # 影子异常沉淀 error 记录，不影响生产链路
+            except Exception as exc:  # 影子业务异常沉淀 error 记录，不影响生产链路
                 status = "error"
                 error = f"{type(exc).__name__}: {exc}"
-            decisions, intents = extract_shadow_events(
-                top_events, node_index, tool_permissions
-            )
-            record = shadow_store.add(
-                graph_id=graph_id,
-                trace_id=tracer.trace_id,
-                decisions=decisions,
-                tool_intents=intents,
-                inputs=raw_inputs or None,
-                status=status,
-                error=error,
-                human_outcome=outcome,
-            )
-            events.put({"__result__": record})
+            try:
+                decisions, intents = extract_shadow_events(
+                    top_events, node_index, tool_permissions
+                )
+                record = shadow_store.add(
+                    graph_id=graph_id,
+                    trace_id=tracer.trace_id,
+                    decisions=decisions,
+                    tool_intents=intents,
+                    inputs=raw_inputs or None,
+                    status=status,
+                    error=error,
+                    human_outcome=outcome,
+                )
+            except Exception:
+                # 收尾（extract/沉淀）本身暴毙：无法给 result，只走基础设施 error 通道。
+                logger.exception(
+                    "shadow run stream finalization failed (graph=%s trace=%s)",
+                    graph_id,
+                    tracer.trace_id,
+                )
+                bridge.offer_threadsafe({"__error__": _unexpected_stream_error()})
+                return
+            bridge.offer_threadsafe({"__result__": record})
 
         thread = threading.Thread(target=worker, daemon=True)
         thread.start()
-        while True:
-            event = events.get()
-            if event is None:
-                continue
-            if "__result__" in event:
-                yield (
-                    "event: result\ndata: "
-                    + json.dumps(event["__result__"], ensure_ascii=False)
-                    + "\n\n"
-                )
-                break
-            yield f"event: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(
+                        bridge.get(), SSE_HEARTBEAT_SECONDS
+                    )
+                except asyncio.TimeoutError:
+                    # worker 暴毙且无积压帧：合成 error 终帧，不让连接永久悬挂（#1）。
+                    if not thread.is_alive() and not bridge.has_pending:
+                        logger.error(
+                            "shadow run stream worker died without terminal frame "
+                            "(graph=%s trace=%s)",
+                            graph_id,
+                            tracer.trace_id,
+                        )
+                        yield (
+                            "event: error\ndata: "
+                            + json.dumps(
+                                {"detail": _unexpected_stream_error()},
+                                ensure_ascii=False,
+                            )
+                            + "\n\n"
+                        )
+                        break
+                    yield ": keepalive\n\n"
+                    continue
+                if "__result__" in event:
+                    yield (
+                        "event: result\ndata: "
+                        + json.dumps(event["__result__"], ensure_ascii=False)
+                        + "\n\n"
+                    )
+                    break
+                if "__error__" in event:
+                    yield (
+                        "event: error\ndata: "
+                        + json.dumps({"detail": event["__error__"]}, ensure_ascii=False)
+                        + "\n\n"
+                    )
+                    break
+                yield f"event: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+        finally:
+            # 断连不是取消（docs/24 §3）：close 后 worker 的 offer 是廉价 no-op，
+            # run_graph 不中断；生成器退出即释放，不占工作线程（#2/#4）。
+            bridge.close()
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 

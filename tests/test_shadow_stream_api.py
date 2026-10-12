@@ -147,6 +147,32 @@ def test_shadow_stream_records_error_when_run_graph_raises(monkeypatch):
     assert len(items) == 1 and items[0]["status"] == "error"
 
 
+# ---------- U1373 worker 收尾暴毙（沉淀失败）：error 终帧必达、不挂死、不伪造记录 ----------
+
+
+def test_shadow_stream_emits_error_terminal_when_finalization_raises(monkeypatch):
+    graph_id = _create_refund_graph()
+
+    def _boom(self, *args, **kwargs):  # 模拟 shadow_store.add 暴毙
+        raise RuntimeError("shadow store down")
+
+    monkeypatch.setattr("atlas.recording.shadow.ShadowStore.add", _boom)
+    response = client.post(
+        f"/api/graphs/{graph_id}/shadow-runs/stream", json={"inputs": {}}
+    )
+    assert response.status_code == 200  # 无终帧时这里会挂到超时失败
+    frames = _parse_sse(response.text)
+    names = [name for name, _ in frames]
+    assert names.count("error") == 1 and "result" not in names
+    detail = frames[-1][1]["detail"]
+    assert detail["code"] == "RUNTIME_UNEXPECTED"
+    assert detail["message"] == "运行时发生未预期错误"
+    assert "shadow store down" not in response.text  # 内部串不出体
+
+    # 沉淀确实失败：store 无记录，未伪造 ShadowRun
+    assert client.get("/api/shadow-runs").json()["items"] == []
+
+
 # ---------- U1320 鉴权：未登录 401、viewer 403、未知图 404 ----------
 
 
