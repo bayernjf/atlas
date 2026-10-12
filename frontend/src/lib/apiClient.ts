@@ -22,6 +22,8 @@ const AUTH_ERROR_KEYS: Record<string, string> = {
   AUTH_UNAUTHENTICATED: 'error.auth.unauthenticated',
   AUTH_FORBIDDEN: 'error.auth.forbidden',
   AUTH_NOT_FOUND: 'error.auth.notFound',
+  // 项目级审查发现 #7（docs/125 §3.5）：改密旧口令错的 400。
+  AUTH_OLD_PASSWORD_INVALID: 'error.auth.oldPasswordWrong',
   // 打包 AV（docs/95）：首登未改密的 403。文案与后端常量必须逐字同值，
   // 由 tests/test_password_rotation_gate.py::test_u1146_code_string_is_shared_not_forked 机检。
   AUTH_PASSWORD_CHANGE_REQUIRED: 'error.auth.passwordChangeRequired',

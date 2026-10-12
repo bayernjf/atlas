@@ -248,7 +248,10 @@ def test_change_password_keeps_current_session_and_revokes_others() -> None:
         json={"oldPassword": "not-the-password", "newPassword": "Changedpass-3"},
     )
     assert wrong_old.status_code == 400
-    assert wrong_old.json()["detail"] == "原密码错误"
+    assert wrong_old.json()["detail"] == {
+        "code": "AUTH_OLD_PASSWORD_INVALID",
+        "message": "原密码错误",
+    }
 
     weak_new = anon.post(
         "/api/auth/change-password",

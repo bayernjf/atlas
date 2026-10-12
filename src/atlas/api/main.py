@@ -2273,7 +2273,11 @@ def change_password(
     """
     account = user_store.get(principal.tenant_id, principal.username)
     if account is None or not verify_password(raw.oldPassword, account.password_hash):
-        raise HTTPException(status_code=400, detail="原密码错误")
+        # 结构化 detail（docs/125 §3.5，项目级审查发现 #7）：前端按 code 分支，不匹配中文文案。
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "AUTH_OLD_PASSWORD_INVALID", "message": "原密码错误"},
+        )
     _validate_password_or_422(raw.newPassword)
     if raw.newPassword == raw.oldPassword:
         raise HTTPException(status_code=422, detail="新密码不能与原密码相同")
@@ -3900,8 +3904,14 @@ def create_message_template(
     try:
         template = services_for(principal).message_template_store.add(**payload)
     except MessageTemplateNameConflict:
+        # 结构化 detail（docs/125 §3.5，项目级审查发现 #7）：补齐 docstring 已承诺的契约。
         raise HTTPException(
-            status_code=409, detail=f"消息模板名称已存在：{payload['name']}"
+            status_code=409,
+            detail={
+                "code": "MESSAGE_TEMPLATE_NAME_CONFLICT",
+                "message": f"消息模板名称已存在：{payload['name']}",
+                "params": {"name": payload["name"]},
+            },
         ) from None
     return template.model_dump()
 
@@ -3919,8 +3929,14 @@ def update_message_template(
             template_id, **payload
         )
     except MessageTemplateNameConflict:
+        # 结构化 detail（docs/125 §3.5，项目级审查发现 #7）：与 create 同形。
         raise HTTPException(
-            status_code=409, detail=f"消息模板名称已存在：{payload['name']}"
+            status_code=409,
+            detail={
+                "code": "MESSAGE_TEMPLATE_NAME_CONFLICT",
+                "message": f"消息模板名称已存在：{payload['name']}",
+                "params": {"name": payload["name"]},
+            },
         ) from None
     if updated is None:
         raise HTTPException(status_code=404, detail=f"消息模板不存在：{template_id}")
