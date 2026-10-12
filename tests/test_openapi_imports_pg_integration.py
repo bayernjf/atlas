@@ -48,6 +48,7 @@ def setup():
     _run_migration(engine, "018_openapi_imports.sql")
     _run_migration(engine, "019_openapi_auth_columns.sql")
     _run_migration(engine, "023_openapi_imports_dedupe_softdelete.sql")
+    _run_migration(engine, "048_openapi_imports_hash_unique.sql")
     yield engine, PgImportStore
     with engine.begin() as conn:
         conn.execute(text("DELETE FROM openapi_imports WHERE tenant_id LIKE 'oipit%'"))

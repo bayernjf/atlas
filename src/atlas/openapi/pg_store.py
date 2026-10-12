@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import Engine, text
+from sqlalchemy.exc import IntegrityError
 
 from .models import ParsedSpec
 from .store import (
@@ -25,7 +26,7 @@ class PgImportStore:
 
     与 ImportStore 同方法形状；id 用全局 storage_id_seq（openapi-N），
     seq 存数字部分供同租户排序；行内 tenant_id 过滤；demo reset 不清本表。
-    去重/软删以 content_hash 与 deleted_at 列实现（部分索引见迁移 023）。
+    去重/软删以 content_hash 与 deleted_at 列实现（唯一部分索引见迁移 048）。
     """
 
     def __init__(self, engine: Engine, tenant_id: str) -> None:
@@ -77,78 +78,100 @@ class PgImportStore:
         fingerprint = spec.content_fingerprint()
         moment = now or datetime.now(timezone.utc)
         envelope_map = envelopes or {}
-        with self._engine.begin() as db:
-            duplicate = db.execute(
-                text(
-                    "SELECT id, title FROM openapi_imports "
-                    "WHERE tenant_id = :t AND deleted_at IS NULL AND content_hash = :h "
-                    "LIMIT 1"
-                ),
-                {"t": self._tenant_id, "h": fingerprint},
-            ).first()
+        try:
+            with self._engine.begin() as db:
+                duplicate = db.execute(
+                    text(
+                        "SELECT id, title FROM openapi_imports "
+                        "WHERE tenant_id = :t AND deleted_at IS NULL AND content_hash = :h "
+                        "LIMIT 1"
+                    ),
+                    {"t": self._tenant_id, "h": fingerprint},
+                ).first()
+                if duplicate is not None:
+                    raise ImportStoreError(
+                        "OPENAPI_SPEC_ALREADY_IMPORTED",
+                        f"该 API 规格已导入（{duplicate[0]}：{duplicate[1]}）",
+                        status_code=409,
+                        existing_spec_id=duplicate[0],
+                    )
+                count = int(
+                    db.execute(
+                        text(
+                            "SELECT COUNT(*) FROM openapi_imports "
+                            "WHERE tenant_id = :t AND deleted_at IS NULL"
+                        ),
+                        {"t": self._tenant_id},
+                    ).scalar_one()
+                )
+                if count >= MAX_SPECS_PER_TENANT:
+                    raise ImportStoreError(
+                        "OPENAPI_TENANT_SPECS_LIMIT",
+                        f"每租户最多导入 {MAX_SPECS_PER_TENANT} 份 API 规格",
+                        params={"max": MAX_SPECS_PER_TENANT},
+                    )
+                seq = int(db.execute(text("SELECT nextval('storage_id_seq')")).scalar_one())
+                spec_id = f"openapi-{seq}"
+                imported = ImportedSpec(
+                    spec_id=spec_id,
+                    title=spec.title,
+                    base_url=spec.base_url,
+                    created_at=moment.isoformat(),
+                    operations=operations,
+                    security_schemes=spec.security_schemes,
+                    credential_envelopes=envelope_map,
+                    content_hash=fingerprint,
+                )
+                db.execute(
+                    text(
+                        "INSERT INTO openapi_imports (id, tenant_id, seq, title, base_url, "
+                        "created_at, operations, security_schemes, credential_envelopes, "
+                        "content_hash, deleted_at) "
+                        "VALUES (:id, :tenant_id, :seq, :title, :base_url, :created_at, "
+                        ":operations, :security_schemes, :credential_envelopes, :content_hash, NULL)"
+                    ),
+                    {
+                        "id": spec_id,
+                        "tenant_id": self._tenant_id,
+                        "seq": seq,
+                        "title": spec.title,
+                        "base_url": spec.base_url,
+                        "created_at": moment,
+                        "operations": json.dumps(
+                            [op.model_dump() for op in operations], ensure_ascii=False
+                        ),
+                        "security_schemes": json.dumps(
+                            {
+                                name: scheme.model_dump()
+                                for name, scheme in spec.security_schemes.items()
+                            },
+                            ensure_ascii=False,
+                        ),
+                        "credential_envelopes": json.dumps(envelope_map, ensure_ascii=False),
+                        "content_hash": fingerprint,
+                    },
+                )
+        except IntegrityError as exc:
+            # docs/125 §3.3（项目级审查发现 #5）：SELECT 预检与 INSERT 之间存在 TOCTOU
+            # 窗口，并发同形导入会撞迁移 048 的唯一部分索引。begin() 退出已回滚，
+            # 换新连接重查，折成与预检路径同形的 409；查不到则不是同形冲突，原样抛。
+            with self._engine.connect() as db:
+                duplicate = db.execute(
+                    text(
+                        "SELECT id, title FROM openapi_imports "
+                        "WHERE tenant_id = :t AND deleted_at IS NULL AND content_hash = :h "
+                        "LIMIT 1"
+                    ),
+                    {"t": self._tenant_id, "h": fingerprint},
+                ).first()
             if duplicate is not None:
                 raise ImportStoreError(
                     "OPENAPI_SPEC_ALREADY_IMPORTED",
                     f"该 API 规格已导入（{duplicate[0]}：{duplicate[1]}）",
                     status_code=409,
                     existing_spec_id=duplicate[0],
-                )
-            count = int(
-                db.execute(
-                    text(
-                        "SELECT COUNT(*) FROM openapi_imports "
-                        "WHERE tenant_id = :t AND deleted_at IS NULL"
-                    ),
-                    {"t": self._tenant_id},
-                ).scalar_one()
-            )
-            if count >= MAX_SPECS_PER_TENANT:
-                raise ImportStoreError(
-                    "OPENAPI_TENANT_SPECS_LIMIT",
-                    f"每租户最多导入 {MAX_SPECS_PER_TENANT} 份 API 规格",
-                    params={"max": MAX_SPECS_PER_TENANT},
-                )
-            seq = int(db.execute(text("SELECT nextval('storage_id_seq')")).scalar_one())
-            spec_id = f"openapi-{seq}"
-            imported = ImportedSpec(
-                spec_id=spec_id,
-                title=spec.title,
-                base_url=spec.base_url,
-                created_at=moment.isoformat(),
-                operations=operations,
-                security_schemes=spec.security_schemes,
-                credential_envelopes=envelope_map,
-                content_hash=fingerprint,
-            )
-            db.execute(
-                text(
-                    "INSERT INTO openapi_imports (id, tenant_id, seq, title, base_url, "
-                    "created_at, operations, security_schemes, credential_envelopes, "
-                    "content_hash, deleted_at) "
-                    "VALUES (:id, :tenant_id, :seq, :title, :base_url, :created_at, "
-                    ":operations, :security_schemes, :credential_envelopes, :content_hash, NULL)"
-                ),
-                {
-                    "id": spec_id,
-                    "tenant_id": self._tenant_id,
-                    "seq": seq,
-                    "title": spec.title,
-                    "base_url": spec.base_url,
-                    "created_at": moment,
-                    "operations": json.dumps(
-                        [op.model_dump() for op in operations], ensure_ascii=False
-                    ),
-                    "security_schemes": json.dumps(
-                        {
-                            name: scheme.model_dump()
-                            for name, scheme in spec.security_schemes.items()
-                        },
-                        ensure_ascii=False,
-                    ),
-                    "credential_envelopes": json.dumps(envelope_map, ensure_ascii=False),
-                    "content_hash": fingerprint,
-                },
-            )
+                ) from exc
+            raise
         return imported
 
     def list(self, *, include_deleted: bool = False) -> list[ImportedSpec]:
@@ -222,35 +245,55 @@ class PgImportStore:
         self, spec_id: str
     ) -> tuple[bool, str | None, str | None]:
         """恢复软删规格，返回 (ok, code, existing_spec_id)，语义同 ImportStore.restore。"""
-        with self._engine.begin() as db:
-            row = db.execute(
-                text(
-                    f"SELECT {_COLS} FROM openapi_imports "
-                    "WHERE tenant_id = :t AND id = :id"
-                ),
-                {"t": self._tenant_id, "id": spec_id},
-            ).first()
-            if row is None or row[10] is None:
-                return False, None, None
-            target = self._row_to_spec(row)
-            clash = db.execute(
-                text(
-                    "SELECT id FROM openapi_imports "
-                    "WHERE tenant_id = :t AND deleted_at IS NULL "
-                    "AND content_hash = :h AND id != :id LIMIT 1"
-                ),
-                {"t": self._tenant_id, "h": target.content_hash, "id": spec_id},
-            ).first()
+        try:
+            with self._engine.begin() as db:
+                row = db.execute(
+                    text(
+                        f"SELECT {_COLS} FROM openapi_imports "
+                        "WHERE tenant_id = :t AND id = :id"
+                    ),
+                    {"t": self._tenant_id, "id": spec_id},
+                ).first()
+                if row is None or row[10] is None:
+                    return False, None, None
+                target = self._row_to_spec(row)
+                clash = db.execute(
+                    text(
+                        "SELECT id FROM openapi_imports "
+                        "WHERE tenant_id = :t AND deleted_at IS NULL "
+                        "AND content_hash = :h AND id != :id LIMIT 1"
+                    ),
+                    {"t": self._tenant_id, "h": target.content_hash, "id": spec_id},
+                ).first()
+                if clash is not None:
+                    return False, "OPENAPI_RESTORE_CLASH", clash[0]
+                db.execute(
+                    text(
+                        "UPDATE openapi_imports SET deleted_at = NULL "
+                        "WHERE tenant_id = :t AND id = :id"
+                    ),
+                    {"t": self._tenant_id, "id": spec_id},
+                )
+                return True, None, None
+        except IntegrityError as exc:
+            # docs/125 §3.3（项目级审查发现 #5）：预检与 UPDATE 之间存在 TOCTOU 窗口，
+            # 另一个同指纹规格恰好先恢复会撞迁移 048 的唯一部分索引。事务已回滚，
+            # 换新连接重查现存未删同指纹行，折成与预检路径同形的 OPENAPI_RESTORE_CLASH。
+            with self._engine.connect() as db:
+                clash = db.execute(
+                    text(
+                        "SELECT id FROM openapi_imports "
+                        "WHERE tenant_id = :t AND deleted_at IS NULL AND id != :id "
+                        "AND content_hash = ("
+                        "SELECT content_hash FROM openapi_imports "
+                        "WHERE tenant_id = :t AND id = :id"
+                        ") LIMIT 1"
+                    ),
+                    {"t": self._tenant_id, "id": spec_id},
+                ).first()
             if clash is not None:
                 return False, "OPENAPI_RESTORE_CLASH", clash[0]
-            db.execute(
-                text(
-                    "UPDATE openapi_imports SET deleted_at = NULL "
-                    "WHERE tenant_id = :t AND id = :id"
-                ),
-                {"t": self._tenant_id, "id": spec_id},
-            )
-            return True, None, None
+            raise
 
     def put_credentials(
         self, spec_id: str, envelopes: dict[str, str]
