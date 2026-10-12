@@ -219,19 +219,18 @@ class MemoryStore:
 
         合并后整体过 validate_remember_params；content 变化重算 embedding，
         id/created_at 不变。与 PG 档共享 memory.models.merge_manual_update。
+
+        项目级审查发现 #9（docs/125 §3.6，U1386）：embedding 是潜在外部 IO，不得持锁。
+        短锁合并取快照 → 锁外 embed → 短锁二次确认快照未被并发改写后写入；冲突则基于
+        最新快照整体重试一轮，仍冲突抛 StorageError（乐观并发，绝不写入与 content 不
+        对应的过期向量）。content 未变时无外部 IO，仍在锁内一次写完（既有短路语义）。
         """
         from atlas.memory.models import merge_manual_update
+        from atlas.storage.base import StorageError
 
-        with self._lock:
-            target = next(
-                (item for item in self._items if item["id"] == memory_id), None
-            )
-            if target is None:
-                return None
-            params, content_changed = merge_manual_update(public_memory(target), fields)
-            vector = target["embedding"]
-            if content_changed:
-                vector = self._provider.embed([params["content"]])[0]
+        def _write_locked(
+            target: dict[str, Any], params: dict[str, Any], vector: list[float]
+        ) -> dict[str, Any]:
             target.update(
                 {
                     "kind": params["kind"],
@@ -244,6 +243,34 @@ class MemoryStore:
                 }
             )
             return public_memory(dict(target))
+
+        for _attempt in range(2):
+            with self._lock:
+                target = next(
+                    (item for item in self._items if item["id"] == memory_id), None
+                )
+                if target is None:
+                    return None
+                params, content_changed = merge_manual_update(public_memory(target), fields)
+                if not content_changed:
+                    return _write_locked(target, params, target["embedding"])
+                baseline = public_memory(target)
+
+            # 锁外计算 embedding（provider 可能走网络；审查发现 #9）。
+            vector = self._provider.embed([params["content"]])[0]
+
+            with self._lock:
+                target = next(
+                    (item for item in self._items if item["id"] == memory_id), None
+                )
+                if target is None:
+                    return None  # 锁外等待期间被删：本次编辑放弃，与「不存在」同形。
+                if public_memory(target) == baseline:
+                    return _write_locked(target, params, vector)
+                # 期间被并发改写：本轮 vector 对应旧基线，丢弃后基于最新快照重试。
+        raise StorageError(
+            f"memory item {memory_id} changed concurrently while embedding; retry the update"
+        )
 
     def delete(self, memory_id: str) -> bool:
         """按 id 删除；不存在返回 False（实例天然只含本租户）。"""

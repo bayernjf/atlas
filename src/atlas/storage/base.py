@@ -39,7 +39,8 @@ RESET_PERSISTENT = "persistent"  # recording/feedback（测试资产，reset 不
 
 
 class StorageError(Exception):
-    """存储层统一错误。M5a 进程内实现不抛；M5b PG 实现据此归一。"""
+    """存储层统一错误。PG 实现据此归一；进程内实现仅在极端乐观并发冲突时抛
+    （MemoryStore.update 锁外 embed 期间记录被连续改写，docs/125 §3.6，U1386）。"""
 
 
 @runtime_checkable
