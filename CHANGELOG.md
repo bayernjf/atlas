@@ -3,6 +3,13 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔docs-only 立项〕打包 AQ：D66 跨端 codegen 选 ADR T35 方案 a（2026-10-12，docs/124）
+
+- **决策**：节点静态输出根键的前端 TS 表改为「后端单源投影 → 构建期生成 TS → 产物提交入仓 → 后端测试守产物最新」（ADR T35，方案 a）。新脚本 `scripts/dev/gen_node_outputs_ts.py`（stdlib、确定性渲染，唯一输入 `graph/node_outputs.project_static_outputs()`）生成 `frontend/src/lib/schemas/generated/nodeOutputs.ts`，`lib/scope.ts` 删手抄表改 re-export；后端守护把「忘重新生成 / 手改产物」逐字节变红。
+- **否决 b**：前端 `pnpm build`/vitest/CI 与纯前端开发机不引入 Python 依赖（993 例前端测试必须零 Python 可跑）。**否决 c**：不加运行时契约端点、不加鉴权面、不把编译期事实变成运行时可用性问题。b/c 的重开判据写进 docs/124 §8。
+- **v1 边界**：不生成完整 x-outputSchema——后端单源只有键名、没有 type/description 元信息，硬生成等于编造契约；只把 nodeSchemas 既有对拍的数据源从手抄表切到生成物，schema 的元信息仍人工维护。深层子键白名单（`AI_DECISION_KEYS` 等）不在本批。
+- **本批纯文档、零代码门**：docs/124（形状权威，U1367–U1372 预留）、docs/10 §4 T35、docs/02 选型总览、docs/09 树位＋待定项 17、docs/08 打包 AQ 立项块、docs/00 地图、docs/13 号段、docs/14 D66 注记、handoff。零新依赖、零迁移、零新端点/错误码。落码另批。
+
 ### 〔五个缺省安全切片＋一处部署补漏〕2026-10-12：真 SMTP 通知执行段、记忆语义去重、记忆保留期、节点输出后端单源、D29 复核（docs/14 D29/D35/D65/D66／docs/73 1.3／docs/115 §8／docs/122 §6.2）
 
 - **这批只取回"缺省关、缺省不过期、不改默认行为"的安全切片**，外部凭据（真 LLM 入 vault、真 Shopify、真 SMTP、真机整链）一项都没硬挑——那些不是代码能闭环的。
