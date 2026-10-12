@@ -25,6 +25,7 @@ from atlas.storage.memory import (
     GraphStore,
     MonitoringStore,
     RecordingStore,
+    RunStore,
 )
 from atlas.iam.sessions import SessionStore
 
@@ -74,6 +75,84 @@ def test_feedback_store_behaviour_unchanged():
     assert item["contact"] == "a@b.c"
     assert "created_at" in item
     assert store.list() == [item]
+
+
+# --- U1385：RunStore 加锁 + 终态记录有界（项目级审查发现 #8，docs/125 §3.6）------
+
+
+def test_u1385_terminal_runs_keep_only_latest_n(monkeypatch):
+    monkeypatch.setattr(RunStore, "_TERMINAL_RUN_LIMIT", 3)
+    store = RunStore()
+    for i in range(1, 6):
+        rid = f"run-{i}"
+        store.begin(run_id=rid, graph_id="graph-1", mode="run")
+        store.finish(run_id=rid, status="completed")
+
+    # 最旧的两个终态记录已淘汰，最新三个保留，list 仍为最新优先。
+    assert store.get("run-1") is None
+    assert store.get("run-2") is None
+    assert [item["runId"] for item in store.list(limit=10)] == [
+        "run-5", "run-4", "run-3",
+    ]
+    with store._lock:  # 内部结构同样有界且一致
+        assert len(store._runs) == len(store._order) == 3
+
+
+def test_u1385_running_and_suspended_runs_are_never_evicted(monkeypatch):
+    monkeypatch.setattr(RunStore, "_TERMINAL_RUN_LIMIT", 3)
+    store = RunStore()
+    # 两个 running + 两个 suspended，均要等终帧，任何时候都不得被裁。
+    active = ["run-a", "run-b", "run-c", "run-d"]
+    for index, rid in enumerate(active):
+        store.begin(run_id=rid, graph_id="graph-1", mode="run")
+        if index >= 2:
+            store.suspend(
+                run_id=rid, node_id="node-1", kind="approval",
+                resume_token=f"token-{rid}", deadline_at=None,
+            )
+    for i in range(10):
+        rid = f"term-{i}"
+        store.begin(run_id=rid, graph_id="graph-1", mode="run")
+        store.finish(run_id=rid, status="completed")
+
+    for rid in active:
+        assert store.get(rid) is not None
+    terminal = store.list(status="completed", limit=100)
+    assert [item["runId"] for item in terminal] == [
+        f"term-{i}" for i in range(9, 6, -1)
+    ]
+    assert len(store.list(limit=100)) == 7  # 4 个非终态 + 最新 3 个终态
+
+
+def test_u1385_concurrent_begin_finish_list_has_no_race():
+    import threading
+
+    store = RunStore()
+    errors: list[Exception] = []
+
+    def worker(prefix: str) -> None:
+        try:
+            for i in range(100):
+                rid = f"{prefix}-{i}"
+                store.begin(run_id=rid, graph_id="graph-1", mode="run")
+                store.get(rid)
+                store.list(limit=10)
+                store.finish(run_id=rid, status="completed" if i % 2 else "failed")
+                store.list(status="completed", limit=10)
+        except Exception as exc:  # noqa: BLE001 - 并发冒烟：任何异常都算竞态
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(f"t{n}",)) for n in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    with store._lock:
+        assert len(store._runs) == len(store._order)
+        assert set(store._runs) == set(store._order)
+        assert len(store._runs) <= RunStore._TERMINAL_RUN_LIMIT
 
 
 # --- U1133：monitoring_alerts 的写语句必须逐条带租户条件（docs/89 §15 A-2）------
