@@ -5645,9 +5645,18 @@ def monitoring_update_rules(
     return rules.model_dump()
 
 
+def _mask_alert_secret(secret: str) -> str:
+    """HTTP 投影脱敏：加签 secret 回 ``***``＋明文尾 4 位；空串回空串（docs/125 §3.2，#3）。
+
+    只作用于出体投影——模型/存储/出向加签发送仍用明文原值。
+    """
+    return f"***{secret[-4:]}" if secret else ""
+
+
 def _alert_channel_payload(monitoring: Any) -> dict[str, Any]:
     channel = monitoring.get_alert_channel().model_dump()
     delivery = monitoring.get_alert_channel_delivery().model_dump()
+    channel["secret"] = _mask_alert_secret(channel.get("secret", ""))
     channel["lastDelivery"] = delivery if delivery["lastNotifiedAt"] else None
     return channel
 
@@ -5664,8 +5673,18 @@ def monitoring_get_alert_channel(
 def monitoring_update_alert_channel(
     raw: dict[str, Any], principal: Principal = Depends(require("administer"))
 ) -> dict[str, Any]:
-    """整体替换本租户告警通知配置；校验失败聚合为中文 422（admin only，docs/52）。"""
+    """整体替换本租户告警通知配置；校验失败聚合为中文 422（admin only，docs/52）。
+
+    secret 出体已脱敏（``***``＋尾 4）：前端未改密钥直接保存会把脱敏占位原样提交，
+    落库前归一化为库内现存明文（与当前 GET 投影逐字相等才认，不做 startswith 宽匹配，
+    避免误伤真以此开头的新密钥）；空串仍是清空（docs/125 §3.2，#3）。
+    """
     monitoring = services_for(principal).monitoring
+    submitted_secret = raw.get("secret")
+    if isinstance(submitted_secret, str):
+        current_secret = monitoring.get_alert_channel().secret
+        if submitted_secret == _mask_alert_secret(current_secret):
+            raw = {**raw, "secret": current_secret}
     try:
         monitoring.update_alert_channel(raw)
     except ValueError as exc:
