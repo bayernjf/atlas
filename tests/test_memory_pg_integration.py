@@ -11,6 +11,7 @@ ATLAS_STORAGE_BACKEND=pg 装配切换。
 
 from __future__ import annotations
 
+import itertools
 import os
 from pathlib import Path
 
@@ -265,7 +266,10 @@ def test_aa_u1265_pg_and_inmemory_parity_for_knowledge(pg_store):
 def ak_store(pg_store):
     """每条用例从空库开始，并固定 created_at 序列（衰减判据要可确定复现）。"""
     pg_store.clear()
-    stamps = iter(
+    # cycle 而非有限 iter：各用例 remember 次数不一（如 test_u1342 同租户内 6 次调用），
+    # 有限序列会在第 5 次 next() 抛 StopIteration；cycle 在前 4 次仍给出原确定性时间戳，
+    # 超出后循环复用，既不破坏 ≤4 次用例的既定期望，也不再耗尽。
+    stamps = itertools.cycle(
         [
             "2026-10-10T12:00:00+00:00",
             "2026-10-11T12:00:00+00:00",
