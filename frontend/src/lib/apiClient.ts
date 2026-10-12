@@ -23,7 +23,8 @@ const AUTH_ERROR_KEYS: Record<string, string> = {
   AUTH_FORBIDDEN: 'error.auth.forbidden',
   AUTH_NOT_FOUND: 'error.auth.notFound',
   // 项目级审查发现 #7（docs/125 §3.5）：改密旧口令错的 400。
-  AUTH_OLD_PASSWORD_INVALID: 'error.auth.oldPasswordWrong',
+  // 文案唯一定义在 users.error.oldPasswordWrong（UserBadge 改密表单同源）。
+  AUTH_OLD_PASSWORD_INVALID: 'users.error.oldPasswordWrong',
   // 打包 AV（docs/95）：首登未改密的 403。文案与后端常量必须逐字同值，
   // 由 tests/test_password_rotation_gate.py::test_u1146_code_string_is_shared_not_forked 机检。
   AUTH_PASSWORD_CHANGE_REQUIRED: 'error.auth.passwordChangeRequired',
@@ -151,6 +152,23 @@ export class CompileValidationError extends Error {
   }
 }
 
+/**
+ * 普通 API 错误（非 422 编译诊断）。后端结构化 detail 为 {code,message,params?} 时
+ * （docs/17 §2.4、docs/125 §3.5）携带 code/params，调用方按 code 分支而非匹配中文文案；
+ * detail 为裸字符串或缺失时 code 为 undefined，消费方回退 message，行为零破坏。
+ */
+export class ApiError extends Error {
+  readonly code?: string
+  readonly params?: Record<string, unknown>
+
+  constructor(message: string, code?: string, params?: Record<string, unknown>) {
+    super(message)
+    this.name = 'ApiError'
+    this.code = code
+    this.params = params
+  }
+}
+
 function requestError(body: unknown, status: number): Error {
   const payload = body as {
     detail?: unknown
@@ -166,7 +184,16 @@ function requestError(body: unknown, status: number): Error {
       buildCompileIssues(detail, payload?.codes, payload?.params, payload?.locations),
     )
   }
-  return new Error(message)
+  if (detail !== null && typeof detail === 'object') {
+    const rec = detail as { code?: unknown; params?: unknown }
+    const code = typeof rec.code === 'string' && rec.code ? rec.code : undefined
+    const params =
+      rec.params !== null && typeof rec.params === 'object'
+        ? (rec.params as Record<string, unknown>)
+        : undefined
+    return new ApiError(message, code, params)
+  }
+  return new ApiError(message)
 }
 
 /** 把 FastAPI 的 detail（字符串 / 422 数组 / {code,message} 对象）解析为当前语言的错误文案。 */

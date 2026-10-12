@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  ApiError,
+  changePassword,
   broadcastWaitEvent,
   listTasks,
   resolveInterruption,
@@ -817,5 +819,84 @@ describe('streamShadowRun framing (docs/114, package AH)', () => {
       })),
     )
     await expect(streamShadowRun('g', {}, () => undefined)).rejects.toBeInstanceOf(Error)
+  })
+})
+
+// 项目级审查发现 #7（docs/125 §3.5，U1384）：结构化 detail 抛出 ApiError 携带 code/params，
+// 消费方按 code 分支；非结构化 detail 回退 message，零破坏。
+describe('structured API errors (U1384)', () => {
+  function jsonErrorResponse(status: number, body: unknown) {
+    return {
+      ok: false,
+      status,
+      json: async () => body,
+    } as Response
+  }
+
+  it('rejects createMessageTemplate conflict with ApiError carrying code, params and localized message', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonErrorResponse(409, {
+          detail: {
+            code: 'MESSAGE_TEMPLATE_NAME_CONFLICT',
+            message: '消息模板名称已存在：审批提醒',
+            params: { name: '审批提醒' },
+          },
+        }),
+      ),
+    )
+    const caught = await createMessageTemplate({
+      name: '审批提醒',
+      kind: 'approval',
+      subject: 's',
+      body: 'b',
+      variables: [],
+    }).then(
+      () => null,
+      (error: unknown) => error,
+    )
+    expect(caught).toBeInstanceOf(ApiError)
+    const apiError = caught as ApiError
+    expect(apiError.code).toBe('MESSAGE_TEMPLATE_NAME_CONFLICT')
+    expect(apiError.params).toEqual({ name: '审批提醒' })
+    expect(apiError.message).toBe('消息模板名称已存在：审批提醒')
+  })
+
+  it('maps AUTH_OLD_PASSWORD_INVALID to the users.error.oldPasswordWrong catalog entry', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonErrorResponse(400, {
+          detail: { code: 'AUTH_OLD_PASSWORD_INVALID', message: '原密码错误' },
+        }),
+      ),
+    )
+    const caught = await changePassword('wrong', 'newPass123').then(
+      () => null,
+      (error: unknown) => error,
+    )
+    expect(caught).toBeInstanceOf(ApiError)
+    const apiError = caught as ApiError
+    expect(apiError.code).toBe('AUTH_OLD_PASSWORD_INVALID')
+    // 钉死 i18n 路径：AUTH_ERROR_KEYS 的值必须命中 users.error.oldPasswordWrong，
+    // 错误路径（如 error.auth.oldPasswordWrong）会让 i18next 回退为键串本身。
+    expect(apiError.message).toBe('原密码错误')
+    expect(apiError.message).not.toBe('users.error.oldPasswordWrong')
+  })
+
+  it('falls back to the raw string message when detail is a plain string', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonErrorResponse(500, { detail: '服务内部错误' })),
+    )
+    const caught = await listMessageTemplates().then(
+      () => null,
+      (error: unknown) => error,
+    )
+    expect(caught).toBeInstanceOf(ApiError)
+    const apiError = caught as ApiError
+    expect(apiError.code).toBeUndefined()
+    expect(apiError.message).toBe('服务内部错误')
   })
 })

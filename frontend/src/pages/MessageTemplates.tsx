@@ -16,6 +16,7 @@ import {
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import {
+  ApiError,
   createMessageTemplate,
   deleteMessageTemplate,
   listMessageTemplates,
@@ -150,14 +151,12 @@ export function MessageTemplates({ principal, onBack }: MessageTemplatesPageProp
       setEditor(null)
       await load()
     } catch (error) {
-      const detail =
-        typeof error === 'object' && error !== null && 'detail' in error
-          ? String((error as { detail: unknown }).detail)
-          : ''
-      if (detail.includes('已存在')) {
+      // 项目级审查发现 #7（docs/125 §3.5）：按结构化 code 判重名，不匹配中文文案。
+      if (error instanceof ApiError && error.code === 'MESSAGE_TEMPLATE_NAME_CONFLICT') {
         message.error(t('nameConflict'))
       } else {
-        message.error(`${t('saveFailed')}${detail ? `：${detail}` : ''}`)
+        const detail = error instanceof Error ? error.message : ''
+        message.error(detail ? `${t('saveFailed')}：${detail}` : t('saveFailed'))
       }
     } finally {
       setSaving(false)

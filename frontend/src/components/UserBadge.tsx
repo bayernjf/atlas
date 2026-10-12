@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Button, Dropdown, Form, Input, Modal, Space, Tag, Typography, message } from 'antd'
 import { type Principal } from '../lib/auth'
 import { SUPPORTED_LOCALES, useTranslation, type Locale } from '../locales'
-import { changePassword } from '../lib/apiClient'
+import { ApiError, changePassword } from '../lib/apiClient'
 import { validateChangePassword } from '../lib/users'
 
 /** 语言在菜单中显示各自原名，不随当前语言翻译（docs/57 §4）。 */
@@ -50,11 +50,11 @@ export function UserBadge({ principal, onLogout }: UserBadgeProps) {
       setChangeOpen(false)
       message.success(t('users.message.passwordChanged'))
     } catch (exc) {
-      const detail = exc instanceof Error ? exc.message : t('users.error.changeFailed')
-      if (detail === '原密码错误') {
+      // 项目级审查发现 #7（docs/125 §3.5）：按结构化 code 分支，不匹配中文文案。
+      if (exc instanceof ApiError && exc.code === 'AUTH_OLD_PASSWORD_INVALID') {
         form.setFields([{ name: 'oldPassword', errors: [t('users.error.oldPasswordWrong')] }])
       } else {
-        message.error(detail)
+        message.error(exc instanceof Error ? exc.message : t('users.error.changeFailed'))
       }
     }
   }
