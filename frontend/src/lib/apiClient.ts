@@ -1293,6 +1293,122 @@ export async function updateRecording(
 }
 
 /**
+ * 打包 AT（docs/128）：试教成图与操作指引。
+ *
+ * plan 是**只读**候选表，promote 返回草稿但**不落库**（AT-D4：保存走既有 POST /api/graphs，
+ * 前端不自己编图 id）。`applied` 是逐项回执，不是数量。
+ */
+export type PromoteCompile = {
+  ok: boolean
+  /** 后端中文原文，与 codes/params 并行等长（docs/61 §2.1 的四路通道同形） */
+  issues: string[]
+  codes: string[]
+  params: Record<string, unknown>[]
+  locations: Array<{ index: number; nodeId?: string; pointer?: string }>
+}
+
+export type PromoteSubstitution = {
+  id: string
+  path: string
+  nodeId: string
+  occurrence: number
+  from: string
+  to: string
+  inputKey: string
+  excerpt: string
+}
+
+export type PromoteAmbiguous = {
+  id: string
+  path: string
+  nodeId: string
+  occurrence: number
+  value: string
+  excerpt: string
+  candidates: string[]
+  reason: string
+}
+
+export type PromoteSkipped = PromoteAmbiguous & { inputKey: string | null }
+
+export type PromoteInput = { key: string; type: string }
+
+export type PromotePlan = {
+  caseId: string
+  suggestedName: string
+  graph: SerializedGraph
+  triggerId: string | null
+  inputsDeclaration: PromoteInput[]
+  substitutions: PromoteSubstitution[]
+  ambiguous: PromoteAmbiguous[]
+  skipped: PromoteSkipped[]
+  prunePreview: { keptNodeIds: string[]; droppedNodeIds: string[] }
+  compile: PromoteCompile
+}
+
+export type PromotePayload = {
+  accept: string[]
+  pruneToPath?: boolean
+  name?: string
+}
+
+export type PromoteResult = {
+  /** 不可编译时为 null（AT-D5：不产出半成品图），此时读 compile.issues */
+  graph: SerializedGraph | null
+  name: string
+  applied: PromoteSubstitution[]
+  compile: PromoteCompile
+}
+
+export type GuideBranch = {
+  when: string
+  label: string
+  next: string
+  nextOrder?: number | null
+}
+
+export type GuideStep = {
+  nodeId: string
+  title: string
+  kind: string
+  nodeType: string
+  branches: GuideBranch[]
+  next: string[]
+  nextOrders?: (number | null)[]
+  output: string
+}
+
+export type GuideDoc = {
+  lang: string
+  markdown: string
+  outline: GuideStep[]
+  inputs: PromoteInput[]
+  fromRecordedPath: boolean
+  caseId: string
+}
+
+/** docs/128 §3.1：只读候选表，一个字节都不写 */
+export async function planRecordingPromotion(id: string): Promise<PromotePlan> {
+  return request(`/api/recordings/${id}/promote/plan`, { method: 'POST' })
+}
+
+/** docs/128 §3.2：应用人勾选的替换，返回草稿（不落库） */
+export async function promoteRecording(
+  id: string,
+  payload: PromotePayload,
+): Promise<PromoteResult> {
+  return request(`/api/recordings/${id}/promote`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+/** docs/128 §3.3：只读业务操作指引（不自动进知识库） */
+export async function getRecordingGuide(id: string, lang: 'zh' | 'en' = 'zh'): Promise<GuideDoc> {
+  return request(`/api/recordings/${id}/guide?lang=${lang}`)
+}
+
+/**
  * SSE 流式运行（08 §7.3 验收 5）：节点开始/结束事件实时回调，
  * 最终 result 事件以 RunResult 结束。
  *

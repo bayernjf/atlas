@@ -152,7 +152,30 @@
     "defaultNameTime": "录制 {{time}}",
     "saved": "已保存录制用例：{{id}}（{{steps}} 个步骤）",
     "stepDiffKeys": "（差异键：{{keys}}）",
-    "editRequired": "请至少修改名称或入参之一"
+    "editRequired": "请至少修改名称或入参之一",
+    "promote": "试教成图 / 指引"
+  },
+  "promote": {
+    "title": "用「{{name}}」试教成图与指引",
+    "tabPromote": "升格为流程草稿",
+    "tabGuide": "业务操作指引",
+    "intro": "机器只提议，不替你决定：下面是它打算参数化的位置，勾选后才会生效。",
+    "proposals": "可参数化（{{count}} 处）",
+    "noProposals": "没有可安全参数化的位置（同值多键，或不在替换位）。",
+    "ambiguous": "它不敢决定（{{count}} 处）",
+    "ambiguousHint": "同一个字面量对应多个入参键，换哪个由你判断；未勾选前图不变。",
+    "skipped": "不替换（{{count}} 处）",
+    "prune": "只保留走过的路径（将剪掉 {{dropped}} 个节点）",
+    "planNotCompilable": "全部采纳后仍编译不过，草稿不会产出。",
+    "staleSelection": "勾选已失效，请关闭后重新打开候选表。",
+    "compileFailed": "草稿编译不过，未产出半成品图。",
+    "save": "存为新流程",
+    "close": "关闭",
+    "saved": "已从录制用例存为草稿流程：{{graphId}}",
+    "guideLoad": "生成操作指引",
+    "guideDownload": "下载 Markdown",
+    "guideFromPath": "依据这次实际跑过的路径整理",
+    "guideFromGraph": "依据流程结构整理（本次没有步骤产出）"
   },
   "approval": {
     "title": "人工审批请求",
