@@ -7,6 +7,7 @@ ATLAS_RUN_INTEGRATION=1 .venv/bin/pytest -m integration tests/test_storage_pg_in
 from __future__ import annotations
 
 import os
+import threading
 from pathlib import Path
 
 import pytest
@@ -77,6 +78,73 @@ def test_graph_store_roundtrip_and_versioning(backend):
     store.clear()
     assert store.get(graph_id) is None
     assert store.list_versions(graph_id) == []
+
+
+_RAW = {"version": 1, "variables": [], "nodes": [{"id": "t", "type": "trigger"}], "edges": []}
+
+
+def test_u1388_publish_concurrent_barrier_unique_versions(backend):
+    """#11（docs/125 §3.6，U1388）：同图同刻并发发布，撞主键后重试产出连续唯一版本号。"""
+    graph_id = backend.graph_store(TENANT).save(_RAW)
+
+    n_threads = 3
+    barrier = threading.Barrier(n_threads)
+    versions: list[int] = []
+    errors: list[BaseException] = []
+
+    def _publish_once() -> None:
+        store = backend.graph_store(TENANT)
+        try:
+            barrier.wait(timeout=10)
+            versions.append(store.publish(graph_id, _RAW))
+        except BaseException as exc:  # 线程内任何异常都要带回主线程断言
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_publish_once) for _ in range(n_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    assert errors == []
+    assert all(not t.is_alive() for t in threads)
+    assert sorted(versions) == [1, 2, 3]
+    assert backend.graph_store(TENANT).list_versions(graph_id) == [1, 2, 3]
+    backend.graph_store(TENANT).clear()
+
+
+def test_u1388_publish_concurrent_loop_unique_versions(backend):
+    """#11（docs/125 §3.6，U1388）：3 线程各连发 4 次，共 12 个版本恰好 1..12、无 500。"""
+    graph_id = backend.graph_store(TENANT).save(_RAW)
+
+    n_threads = 3
+    per_thread = 4
+    versions: list[int] = []
+    errors: list[BaseException] = []
+    lock = threading.Lock()
+
+    def _publish_loop() -> None:
+        store = backend.graph_store(TENANT)
+        local: list[int] = []
+        try:
+            for _ in range(per_thread):
+                local.append(store.publish(graph_id, _RAW))
+        except BaseException as exc:  # 线程内任何异常都要带回主线程断言
+            errors.append(exc)
+        with lock:
+            versions.extend(local)
+
+    threads = [threading.Thread(target=_publish_loop) for _ in range(n_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=60)
+
+    assert errors == []
+    assert all(not t.is_alive() for t in threads)
+    assert sorted(versions) == list(range(1, n_threads * per_thread + 1))
+    assert len(set(versions)) == n_threads * per_thread
+    backend.graph_store(TENANT).clear()
 
 
 def test_session_store_roundtrip(backend):

@@ -117,6 +117,127 @@ def test_u195_merge_helper_content_changed_flag_and_partial_fields():
     assert changed3 is True
 
 
+# ---- U1386：update 的 embedding 移出锁 + 二次确认（项目级审查发现 #9，docs/125 §3.6）----
+
+
+class _InstrumentedEmbedder:
+    """记录 embed 调用次数，并断言调用发生时调用方未持有 MemoryStore 的非重入锁。"""
+
+    dim = 256
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.store: MemoryStore | None = None
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        self.calls += 1
+        assert self.store is not None
+        acquired = self.store._lock.acquire(blocking=False)
+        if acquired:
+            self.store._lock.release()
+        assert acquired, "embedding 在 update 持锁期间被计算（发现 #9 回归）"
+        return [[float(len(texts[0]))] + [0.0] * 255]
+
+
+def test_u1386_embedding_is_computed_outside_update_lock():
+    embedder = _InstrumentedEmbedder()
+    store = MemoryStore(provider=embedder)
+    embedder.store = store
+    created = store.remember(kind="fact", content="原始事实内容")
+    embedder.calls = 0
+    # content 变化：恰一次锁外 embed。
+    updated = store.update(created["id"], content="改写后的事实内容")
+    assert updated is not None and updated["content"] == "改写后的事实内容"
+    assert embedder.calls == 1
+    # content 不变：零 embed，短路仍在锁内一次写完。
+    embedder.calls = 0
+    updated = store.update(created["id"], confidence=0.3)
+    assert updated is not None and updated["confidence"] == 0.3
+    assert embedder.calls == 0
+
+
+class _ConcurrentChangeEmbedder:
+    """首次 embed 时模拟另一线程抢先改了非 content 字段，迫使外层二次确认重试。"""
+
+    dim = 256
+
+    def __init__(self, store: MemoryStore, memory_id: str) -> None:
+        self.store = store
+        self.memory_id = memory_id
+        self.calls = 0
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        self.calls += 1
+        if self.calls == 1:
+            nested = self.store.update(self.memory_id, confidence=0.2)
+            assert nested is not None and nested["confidence"] == 0.2
+        return [[float(self.calls)] + [0.0] * 255]
+
+
+def test_u1386_concurrent_change_during_embed_retries_with_fresh_snapshot():
+    store = MemoryStore()
+    created = store.remember(kind="fact", content="原始事实内容", confidence=0.8)
+    embedder = _ConcurrentChangeEmbedder(store, created["id"])
+    store._provider = embedder
+    updated = store.update(created["id"], content="改写后的事实内容")
+    assert updated is not None
+    assert updated["content"] == "改写后的事实内容"
+    # 并发的 confidence 修改保留，外层编辑在重试时基于最新快照合并。
+    assert updated["confidence"] == 0.2
+    assert embedder.calls == 2
+    stored = next(item for item in store._items if item["id"] == created["id"])
+    assert stored["embedding"][0] == 2.0  # 落的是第二次（对应新 content）的向量
+
+
+class _ConcurrentDeleteEmbedder:
+    dim = 256
+
+    def __init__(self, store: MemoryStore, memory_id: str) -> None:
+        self.store = store
+        self.memory_id = memory_id
+        self.calls = 0
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        self.calls += 1
+        assert self.store.delete(self.memory_id) is True
+        return [[1.0] + [0.0] * 255]
+
+
+def test_u1386_concurrent_delete_during_embed_returns_none_without_retry_embed():
+    created_store = MemoryStore()
+    created = created_store.remember(kind="fact", content="待删除事实")
+    embedder = _ConcurrentDeleteEmbedder(created_store, created["id"])
+    created_store._provider = embedder
+    assert created_store.update(created["id"], content="删除前抢写") is None
+    assert embedder.calls == 1  # 二轮短锁即发现已删，不再 embed
+
+
+class _AlwaysConflictingEmbedder:
+    dim = 256
+
+    def __init__(self, store: MemoryStore, memory_id: str) -> None:
+        self.store = store
+        self.memory_id = memory_id
+        self.calls = 0
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        self.calls += 1
+        # 每次锁外 embed 都并发改 metadata（content 不变 → 不再入 embed，无递归）。
+        nested = self.store.update(self.memory_id, metadata={"n": str(self.calls)})
+        assert nested is not None
+        return [[float(self.calls)] + [0.0] * 255]
+
+
+def test_u1386_repeated_conflict_raises_storage_error():
+    from atlas.storage.base import StorageError
+
+    store = MemoryStore()
+    created = store.remember(kind="fact", content="高并发事实")
+    store._provider = _AlwaysConflictingEmbedder(store, created["id"])
+    with pytest.raises(StorageError):
+        store.update(created["id"], content="总是被插队的改写")
+
+
 # ---- REST POST/PUT：U196–U200 ----
 
 

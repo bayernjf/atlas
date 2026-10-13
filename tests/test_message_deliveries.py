@@ -8,6 +8,7 @@ DeliveryStore 的委托语义（旧 deque 行为不回归）。
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from atlas.message.deliveries import DELIVERY_RING_SIZE, InMemoryDeliveryStore
@@ -92,3 +93,17 @@ def test_send_succeeds_when_delivery_store_raises():
     service = MessageService(delivery_store=_BoomStore())
     record = service.send("email", "a@example.com", "hi", "body")
     assert record["delivered"] == "in_process"
+
+
+def test_u1389_delivery_store_failure_is_logged_not_swallowed(caplog):
+    """#12（docs/125 §3.6，U1389）：落库失败不再裸 except: pass，必须留异常日志。"""
+    service = MessageService(delivery_store=_BoomStore())
+    with caplog.at_level(logging.ERROR, logger="atlas.message.service"):
+        record = service.send("email", "a@example.com", "hi", "body")
+
+    assert record["delivered"] == "in_process"  # 主流程仍不阻断
+    failures = [r for r in caplog.records if "delivery record persistence failed" in r.getMessage()]
+    assert len(failures) == 1
+    assert failures[0].exc_info is not None  # logger.exception 带堆栈
+    assert isinstance(failures[0].exc_info[1], RuntimeError)
+    assert str(failures[0].exc_info[1]) == "db down"

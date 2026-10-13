@@ -530,6 +530,9 @@ def test_u1162_http_facing_new_codes_have_both_locales():
         "OPENAPI_KEYWORD_ONEOF", "OPENAPI_KEYWORD_UNSUPPORTED", "OPENAPI_REF_CYCLE",
         "OPENAPI_REF_EXTERNAL", "OPENAPI_REF_MISSING", "OPENAPI_REF_TOO_DEEP",
         "OPENAPI_SCHEMA_NOT_OBJECT", "OPENAPI_TYPE_NULL_ONLY", "OPENAPI_TYPE_UNSUPPORTED",
+        # 项目级审查发现 #7（docs/125 §3.5）：消息模板重名 create/update 端点 409
+        # 结构化出体，补 zh/en＋params {name} 后纳入。
+        "MESSAGE_TEMPLATE_NAME_CONFLICT",
     }
     missing = sorted(c for c in http_facing if c not in zh or c not in en)
     assert missing == [], f"这些 HTTP 面的新码缺 zh 或 en 文案：{missing}"

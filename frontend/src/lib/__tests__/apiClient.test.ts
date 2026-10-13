@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  ApiError,
+  changePassword,
   broadcastWaitEvent,
   listTasks,
   resolveInterruption,
@@ -817,5 +819,178 @@ describe('streamShadowRun framing (docs/114, package AH)', () => {
       })),
     )
     await expect(streamShadowRun('g', {}, () => undefined)).rejects.toBeInstanceOf(Error)
+  })
+})
+
+// 项目级审查发现 #7（docs/125 §3.5，U1384）：结构化 detail 抛出 ApiError 携带 code/params，
+// 消费方按 code 分支；非结构化 detail 回退 message，零破坏。
+describe('structured API errors (U1384)', () => {
+  function jsonErrorResponse(status: number, body: unknown) {
+    return {
+      ok: false,
+      status,
+      json: async () => body,
+    } as Response
+  }
+
+  it('rejects createMessageTemplate conflict with ApiError carrying code, params and localized message', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonErrorResponse(409, {
+          detail: {
+            code: 'MESSAGE_TEMPLATE_NAME_CONFLICT',
+            message: '消息模板名称已存在：审批提醒',
+            params: { name: '审批提醒' },
+          },
+        }),
+      ),
+    )
+    const caught = await createMessageTemplate({
+      name: '审批提醒',
+      kind: 'approval',
+      subject: 's',
+      body: 'b',
+      variables: [],
+    }).then(
+      () => null,
+      (error: unknown) => error,
+    )
+    expect(caught).toBeInstanceOf(ApiError)
+    const apiError = caught as ApiError
+    expect(apiError.code).toBe('MESSAGE_TEMPLATE_NAME_CONFLICT')
+    expect(apiError.params).toEqual({ name: '审批提醒' })
+    expect(apiError.message).toBe('消息模板名称已存在：审批提醒')
+  })
+
+  it('maps AUTH_OLD_PASSWORD_INVALID to the users.error.oldPasswordWrong catalog entry', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonErrorResponse(400, {
+          detail: { code: 'AUTH_OLD_PASSWORD_INVALID', message: '原密码错误' },
+        }),
+      ),
+    )
+    const caught = await changePassword('wrong', 'newPass123').then(
+      () => null,
+      (error: unknown) => error,
+    )
+    expect(caught).toBeInstanceOf(ApiError)
+    const apiError = caught as ApiError
+    expect(apiError.code).toBe('AUTH_OLD_PASSWORD_INVALID')
+    // 钉死 i18n 路径：AUTH_ERROR_KEYS 的值必须命中 users.error.oldPasswordWrong，
+    // 错误路径（如 error.auth.oldPasswordWrong）会让 i18next 回退为键串本身。
+    expect(apiError.message).toBe('原密码错误')
+    expect(apiError.message).not.toBe('users.error.oldPasswordWrong')
+  })
+
+  it('falls back to the raw string message when detail is a plain string', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonErrorResponse(500, { detail: '服务内部错误' })),
+    )
+    const caught = await listMessageTemplates().then(
+      () => null,
+      (error: unknown) => error,
+    )
+    expect(caught).toBeInstanceOf(ApiError)
+    const apiError = caught as ApiError
+    expect(apiError.code).toBeUndefined()
+    expect(apiError.message).toBe('服务内部错误')
+  })
+})
+
+// 项目级审查发现 #6（docs/125 §3.4，U1382）：流式调用透传 AbortSignal；在飞连接被
+// abort 时以 AbortError 拒绝（由组件侧 RunGeneration 分代守门静默），不吞不改。
+describe('stream abort signals (U1382)', () => {
+  function abortError(): DOMException {
+    return new DOMException('The operation was aborted.', 'AbortError')
+  }
+
+  function sseChunk(event: string, payload: Record<string, unknown>) {
+    return `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`
+  }
+
+  // 模拟真实 fetch 对 signal 的响应：流在飞期间 abort 时，挂起的 reader.read() 抛 AbortError。
+  function abortableStreamResponse(signal: AbortSignal, body: string) {
+    return {
+      ok: true,
+      body: new ReadableStream({
+        start(controller) {
+          if (signal.aborted) {
+            controller.error(abortError())
+            return
+          }
+          controller.enqueue(new TextEncoder().encode(body))
+          signal.addEventListener('abort', () => controller.error(abortError()))
+        },
+      }),
+    } as Response
+  }
+
+  it('streamRun forwards the given signal to fetch init untouched', async () => {
+    const controller = new AbortController()
+    vi.stubGlobal('fetch', vi.fn(async () => sseResponse([resultFrame])))
+    await streamRun('graph-1', {}, () => undefined, undefined, undefined, controller.signal)
+    const init = vi.mocked(fetch).mock.calls[0][1] as RequestInit
+    expect(init.signal).toBe(controller.signal)
+  })
+
+  it('streamShadowRun forwards the given signal to fetch init untouched', async () => {
+    const controller = new AbortController()
+    const shadowResult = {
+      id: 'sr-1',
+      graph_id: 'graph-1',
+      status: 'completed',
+      decisions: [],
+      tool_intents: [],
+      auto_action: null,
+      comparison: { match: null },
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          ({
+            ok: true,
+            body: new ReadableStream({
+              start(controller2) {
+                controller2.enqueue(new TextEncoder().encode(sseChunk('result', shadowResult)))
+                controller2.close()
+              },
+            }),
+          }) as Response,
+      ),
+    )
+    await streamShadowRun('graph-1', {}, () => undefined, controller.signal)
+    const init = vi.mocked(fetch).mock.calls[0][1] as RequestInit
+    expect(init.signal).toBe(controller.signal)
+  })
+
+  it('rejects an in-flight streamRun with AbortError once aborted, delivered frames stay', async () => {
+    const controller = new AbortController()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => abortableStreamResponse(controller.signal, sseChunk('paused', pausedFrame))),
+    )
+    const events: RunEvent[] = []
+    const promise = streamRun(
+      'graph-1',
+      {},
+      (event) => events.push(event),
+      undefined,
+      undefined,
+      controller.signal,
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    controller.abort()
+    const caught = await promise.then(
+      () => null,
+      (error: unknown) => error,
+    )
+    expect(caught).toBeInstanceOf(DOMException)
+    expect((caught as DOMException).name).toBe('AbortError')
+    expect(events.map((event) => event.type)).toEqual(['paused'])
   })
 })

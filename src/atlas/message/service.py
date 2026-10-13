@@ -11,6 +11,7 @@ markdown 富文本/@人/多 URL，标渠道名）；短信渠道仍缓做 docs/1
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from dataclasses import dataclass
@@ -20,6 +21,8 @@ from typing import Callable
 from atlas.security.egress import EgressDenied
 from .deliveries import DELIVERY_RING_SIZE, DeliveryStore, InMemoryDeliveryStore
 from .im import IM_CHANNELS, normalize_mentions
+
+logger = logging.getLogger(__name__)
 
 MAX_RECIPIENTS = 20
 MAX_SECRET_LENGTH = 200
@@ -301,11 +304,20 @@ class MessageService:
         return record
 
     def _safe_record(self, rec: DeliveryRecord) -> None:
-        """投递日志是旁路可观测数据，存储失败不得阻断消息发送主链路（docs/60 §11）。"""
+        """投递日志是旁路可观测数据，存储失败不得阻断消息发送主链路（docs/60 §11）。
+
+        审查发现 #12（docs/125 §3.6，U1389）：失败必须留可观测痕迹（异常堆栈日志），
+        不再裸 ``except: pass`` 静默吞掉。
+        """
         try:
             self._delivery_store.record(rec)
         except Exception:
-            pass
+            logger.exception(
+                "delivery record persistence failed (non-blocking): id=%s channel=%s status=%s",
+                rec.id,
+                rec.channel,
+                rec.status,
+            )
 
     @staticmethod
     def _validate_secret(channel: str, secret: object) -> str | None:

@@ -14,7 +14,10 @@ debug 会话是短命临时态、其帧落库不在 U43–U45 验收，批 1 保
 from __future__ import annotations
 
 import json
+import logging
+import random
 import threading
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
@@ -47,6 +50,8 @@ from atlas.monitoring.notify import (
 )
 from atlas.monitoring.records import RunRecord
 from atlas.recording.cases import RecordingCase, RecordStep
+
+logger = logging.getLogger(__name__)
 
 
 def _now_iso() -> str:
@@ -269,36 +274,71 @@ class PgGraphStore:
             ).all()
         return [{"id": r[0], "node_count": r[1], "updated_at": r[2]} for r in rows]
 
+    # 审查发现 #11（docs/125 §3.6，U1388）：MAX+1 与 INSERT 非原子，并发发布会撞
+    # graph_versions 主键 (graph_id, release_version)；冲突后整事务回滚、重查
+    # MAX+1 重试。不取 advisory lock（避免持锁跨外部调用与锁泄漏）。
+    _PUBLISH_MAX_ATTEMPTS = 3
+
     def publish(self, graph_id: str, raw: dict[str, Any]) -> int:
-        with self._engine.begin() as conn:
-            exists = conn.execute(
-                text("SELECT 1 FROM graphs WHERE id = :id AND tenant_id = :tenant_id"),
-                {"id": graph_id, "tenant_id": self._tenant_id},
-            ).first()
-            if exists is None:
-                raise KeyError(graph_id)
-            version = conn.execute(
-                text(
-                    "SELECT COALESCE(MAX(release_version), 0) + 1 FROM graph_versions "
-                    "WHERE graph_id = :id AND tenant_id = :tenant_id"
-                ),
-                {"id": graph_id, "tenant_id": self._tenant_id},
-            ).scalar_one()
-            conn.execute(
-                text(
-                    "INSERT INTO graph_versions "
-                    "(graph_id, release_version, tenant_id, definition, created_at) "
-                    "VALUES (:id, :v, :tenant_id, :definition, :created_at)"
-                ),
-                {
-                    "id": graph_id,
-                    "v": version,
-                    "tenant_id": self._tenant_id,
-                    "definition": json.dumps({**raw, "releaseVersion": version}, ensure_ascii=False),
-                    "created_at": _now_iso(),
-                },
-            )
-        return int(version)
+        for attempt in range(1, self._PUBLISH_MAX_ATTEMPTS + 1):
+            try:
+                with self._engine.begin() as conn:
+                    exists = conn.execute(
+                        text("SELECT 1 FROM graphs WHERE id = :id AND tenant_id = :tenant_id"),
+                        {"id": graph_id, "tenant_id": self._tenant_id},
+                    ).first()
+                    if exists is None:
+                        raise KeyError(graph_id)
+                    version = conn.execute(
+                        text(
+                            "SELECT COALESCE(MAX(release_version), 0) + 1 FROM graph_versions "
+                            "WHERE graph_id = :id AND tenant_id = :tenant_id"
+                        ),
+                        {"id": graph_id, "tenant_id": self._tenant_id},
+                    ).scalar_one()
+                    conn.execute(
+                        text(
+                            "INSERT INTO graph_versions "
+                            "(graph_id, release_version, tenant_id, definition, created_at) "
+                            "VALUES (:id, :v, :tenant_id, :definition, :created_at)"
+                        ),
+                        {
+                            "id": graph_id,
+                            "v": version,
+                            "tenant_id": self._tenant_id,
+                            "definition": json.dumps(
+                                {**raw, "releaseVersion": version}, ensure_ascii=False
+                            ),
+                            "created_at": _now_iso(),
+                        },
+                    )
+                return int(version)
+            except IntegrityError as exc:
+                # graph_versions 只有主键一个唯一约束；23505 必为 (graph_id,
+                # release_version) 并发撞号。psycopg3 暴露 sqlstate，psycopg2 暴露 pgcode。
+                pgcode = getattr(exc.orig, "sqlstate", None) or getattr(exc.orig, "pgcode", None)
+                if pgcode != "23505":
+                    raise
+                if attempt >= self._PUBLISH_MAX_ATTEMPTS:
+                    logger.exception(
+                        "publish gave up after %s attempts: graph_id=%s tenant_id=%s",
+                        attempt,
+                        graph_id,
+                        self._tenant_id,
+                    )
+                    raise
+                logger.warning(
+                    "publish version conflict on graph %s (attempt %s/%s), retrying",
+                    graph_id,
+                    attempt,
+                    self._PUBLISH_MAX_ATTEMPTS,
+                )
+                # 指数退避＋抖动：让在途并发事务先提交，使重试的 SELECT MAX 看到
+                # 最新版本，避免重试的 SELECT→INSERT 窗口再次被抢跑（5–15ms / 10–30ms）。
+                delay = 0.005 * attempt + random.random() * 0.01 * attempt
+                time.sleep(delay)
+        # 循环内必返回或抛出；不可达。
+        raise RuntimeError("unreachable publish retry state")  # pragma: no cover
 
     def list_versions(self, graph_id: str) -> list[int]:
         with self._engine.connect() as conn:

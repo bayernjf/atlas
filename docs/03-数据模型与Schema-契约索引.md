@@ -600,6 +600,13 @@ rng_seed: int           # 打包 W（docs/84；2026-09-29）：本次运行实�
 ```
 > M10 起三帧均为 **19 §2.3.4 Trace 事件超集**：只新增 traceId/spanId/parentSpanId（run_end 另加 graphVersion），现有字段与帧类型不变，前端忽略未知字段即零改动。span 三元组位于事件顶层、**不进节点 output**（录制回放 collect_steps 只取 output，天然不受随机 id/时间影响）；完整 span 树经 `tracing` 包进程内导出，不进 SSE 高频帧。子图内部 span 经 `to_tree(include_internal=False)` 折叠（见下 `trace_span`，A 包后 span 树折叠口径不变）；A 包（`e594a4b`）后子图内部 node_start/node_end 改经可选 `subgraphPath` 上 SSE（见下），与 span 折叠相互独立。
 
+> **SSE 传输契约（打包 AR，docs/125 §3.1/§2.2，ADR T36，2026-10-13 收口）**：worker 为同步 daemon 线程，端点为 async 生成器，中间经 `src/atlas/api/sse.py::SSEBridge` 进程内有界桥接（一 worker 一消费者，状态只在事件循环线程触碰，worker 经 `call_soon_threadsafe(offer_threadsafe)` 投帧）。**帧协议不新增事件类型**：
+> - **心跳**：空闲每 `SSE_HEARTBEAT_SECONDS=15` 秒下发一帧 SSE 注释 `: keepalive`（非 `event:` 帧，EventSource 自动忽略），用于反代空闲保活与 worker 存活性复检；前端帧协议无感知。
+> - **终帧哨兵**：`__result__`/`__stopped__`/`__superseded__`/`__cancelled__`/`__error__` 五类入独立 terminal 槽，满载也必达（必要时清空中间帧腾位）、恰好一次；终帧后一切 offer 忽略。
+> - **有界背压**：中间帧 deque 上限 `SSE_BRIDGE_MAXSIZE=1024`，满则丢最旧非终帧并计数，每丢 100 帧一条 warning；不阻塞 worker、不取消运行。
+> - **worker 暴毙合成终帧**：worker 线程异常死亡且未留终帧时，run 流由生成器合成 `__error__`（固定 code `RUNTIME_UNEXPECTED`、固定安全中文 message，不拼内部异常串；细节走 worker 侧 `logger.exception`），shadow 流合成 `event: error`（结构化 detail 同族，不伪造 ShadowRun）。此为基础设施错误通道——与 docs/114「影子业务异常已沉淀 status=error、HTTP 不报错、不发 event:error」的边界：沉淀未发生才走合成帧。
+> - **断连不取消**：客户端断开触发生成器 `finally → bridge.close()`，此后 worker 的 offer 为廉价 no-op（内存归零），worker 与 run_graph 继续跑完（docs/24 §3、docs/80 §3.5 决策不变）。
+
 ### `trace_span` — 字段概览（**M10 已落码收口 2026-09-18（ba9e0d2 起，08 M10 落码条）**；权威＝docs/19 §2.3.4 + 10 §4 ADR T21 + 08 M10 立项条，落码承载 `src/atlas/tracing/`）
 
 ```yaml
@@ -1291,7 +1298,7 @@ ChannelBinding = {
 
 ### `openapi_import` — 字段概览（OpenAPI 导入与工具自动生成批，docs/42；2026-09-23 落码收口；承载 `src/atlas/openapi/`）
 
-> **存储两档（docs/43，2026-09-23 落码收口）**：内存档 ImportStore 进程内 per-tenant；PG 档表 `openapi_imports`（迁移 018，(tenant_id,spec_id) PK、seq 走 storage_id_seq 排序、operations JSONB）＋PgImportStore（同形、双上限/错误码不变、reset 不清），形状不变，跨重启/多实例，发现按请求动态重建适配器、重启无需预热。**docs/56（2026-09-24，6cb1803/4049ef7，迁移 023，U581–U593）部分取回 D22**：两档 ImportedSpec 纯超集增 `content_hash:str=""`、`deleted_at:str|None=None`（PG 迁移 023 ALTER 加列＋部分索引 `idx_openapi_imports_hash ON (tenant_id,content_hash) WHERE deleted_at IS NULL`；018 建表不回填，新装按序跑迁移）；`ParsedSpec.content_fingerprint()`＝sha256 over JSON sort_keys 的 `{title,base_url,security:{键:{kind,location,param,prefix}},operations:[{method,path,name,skipped}]}`（operations 保文档序不排序）；add 命中未删同指纹 409 OPENAPI_DUPLICATE（带 existingSpecId）、名额只数未删；DELETE 改软删（置 deleted_at、list/get/credentials 排除已删、软删行禁写凭证）；新增 restore(spec_id)->(ok,code,existing_id)，内存/PG 同形。
+> **存储两档（docs/43，2026-09-23 落码收口）**：内存档 ImportStore 进程内 per-tenant；PG 档表 `openapi_imports`（迁移 018，(tenant_id,spec_id) PK、seq 走 storage_id_seq 排序、operations JSONB）＋PgImportStore（同形、双上限/错误码不变、reset 不清），形状不变，跨重启/多实例，发现按请求动态重建适配器、重启无需预热。**docs/56（2026-09-24，6cb1803/4049ef7，迁移 023，U581–U593）部分取回 D22**：两档 ImportedSpec 纯超集增 `content_hash:str=""`、`deleted_at:str|None=None`（PG 迁移 023 ALTER 加列＋部分索引 `idx_openapi_imports_hash ON (tenant_id,content_hash) WHERE deleted_at IS NULL`；018 建表不回填，新装按序跑迁移）；`ParsedSpec.content_fingerprint()`＝sha256 over JSON sort_keys 的 `{title,base_url,security:{键:{kind,location,param,prefix}},operations:[{method,path,name,skipped}]}`（operations 保文档序不排序）；add 命中未删同指纹 409 OPENAPI_DUPLICATE（带 existingSpecId）、名额只数未删；DELETE 改软删（置 deleted_at、list/get/credentials 排除已删、软删行禁写凭证）；新增 restore(spec_id)->(ok,code,existing_id)，内存/PG 同形。**docs/125 打包 AR（2026-10-13 落码，迁移 `048_openapi_imports_hash_unique.sql`＝`132c3d9`、代码＝`d3db0ae`，U1380/U1381）**：CTE 按 `(tenant_id,content_hash)` 分区保 `seq` 最小行、余置 `deleted_at`（UTC ISO 文本，软删不 DELETE，`content_hash=''` 老行不参与）；`DROP INDEX IF EXISTS idx_openapi_imports_hash` 后同名重建为 UNIQUE 部分索引，谓词 `WHERE deleted_at IS NULL AND content_hash <> ''`（必须排除 `''`——库内多个 023 前老行会让 CREATE UNIQUE INDEX 直接失败，落码校正见 docs/125 §3.3）；全脚本幂等可重入。PgImportStore add/restore 在事务内捕 `IntegrityError`、换新连接重查现存未删同指纹行，折与预检同形 409——add 码 `OPENAPI_SPEC_ALREADY_IMPORTED`、restore 码 `OPENAPI_RESTORE_CLASH`，闭 SELECT→INSERT 的 TOCTOU 双写。〔2026-10-13 打包 AR 勘误〕本段前文「add 命中未删同指纹 409 OPENAPI_DUPLICATE」为打包 BC 拆码前旧粗码，拆码后现名即上两条（test_error_code_channels.py 有机检）。
 
 ```text
 ImportedSpec = {
@@ -1358,3 +1365,11 @@ OperationDescriptor = {
 
 - **新错误码（docs/110 §一.6；契约层识别、中文 detail、不进 docs/17 文案目录，照 MESSAGE_TEMPLATE_* 惯例）**：`EVALUATION_TASK_INVALID`（422，evaluation_task 形状非法——pydantic ValidationError 折叠：test_cases 越界/metrics 枚举外/expected 未声明）、`EVALUATION_GRAPH_NOT_FOUND`（404，目标图不存在，含跨租户）、`EVALUATION_VERIFY_INVALID`（verify 表达式非法：端点校验层归 EVALUATION_TASK_INVALID，运行期非法记 case 级 error 不使整批失败，本码为语义标识不单独出 HTTP 体）。
 - **`evaluations` 表（迁移 047，打包 AC）**：PK `(tenant_id, id)`、id＝`ev-{uuid4[:12]}`、summary/cases JSONB（EvaluationRun 形状，docs/110 §2.1）；两档 store（进程内 EvaluationStore capacity 200 / PgEvaluationStore），**reset 同清**。
+
+## 错误码注记（打包 AR 落码，2026-10-13）
+
+打包 AR（docs/125，项目级审查 #7）落码转正，HTTP 错误 detail 结构化形状＝`{"code": ..., "message": ..., "params": {...}}`（无参数时省略 params）。本节即上方 A2/A3/A4 立项注记（2026-10-07）所称「落码批另立后进 docs/03 取值集合」的转正落点：
+
+- **`AUTH_OLD_PASSWORD_INVALID`**（400，无 params）：修改密码旧口令校验失败，`POST /api/auth/change-password`（`api/main.py` L2276-2280，message 中文「原密码错误」）；落码 commit `898f9ce`。前端经 `AUTH_ERROR_KEYS` 映射复用 users 命名空间既有键 `users.error.oldPasswordWrong`，**i18n 零新增键**（catalog 路径曾由 `898f9ce` 误写为 `error.auth.oldPasswordWrong`，`3d3a417` 校正，前端测试钉死）。守护：`tests/test_api_users.py`、`tests/test_error_code_channels.py`（U1162 http-facing 集合）。
+- **`MESSAGE_TEMPLATE_NAME_CONFLICT`**（409，`params.name`）：租户内消息模板重名，create/update 两个端点同码（`api/main.py` L3906-3915、L3933-3940）；落码 commit `898f9ce`。前端 `ApiError.code` 命中后走 i18n 文案（runtime.json zh/en 本批实增 1 键，96→97，支持 `{{name}}` 插值，登记见 docs/17 §2.4）。守护：`tests/test_message_templates.py`、`tests/test_error_code_channels.py` L535（U1162/U1383）。
+- 前端解析管线：`frontend/src/lib/apiClient.ts` 新增 `ApiError extends Error`（携带 `code?`/`params?`）；对象 detail 解析 code/params，数组 detail 走既有 422 CompileValidationError，裸字符串/缺失 detail 回退为无 code 的 ApiError（`3d3a417`，测试 `frontend/src/lib/__tests__/apiClient.test.ts`，U1384）。

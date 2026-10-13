@@ -38,6 +38,7 @@ import { useValidationStore } from '../store/validationStore'
 import { serializeGraph } from '../lib/graphSerializer'
 import { toSteps } from '../lib/recordings'
 import { resolveExpressionErrors } from '../lib/runtimeError'
+import { RunGeneration } from '../lib/runGeneration'
 import { isSubgraphInternal, subgraphPathPrefix, subgraphPathLabel } from '../lib/subgraphEvents'
 import { parseGlobalsDraft } from '../lib/debugOverrides'
 import {
@@ -295,6 +296,10 @@ export function Editor({
   // B 包（docs/27 §4.3）：暂停 Modal 内 globals 可编辑草稿，step/continue 浅合并写回。
   const [globalsDraft, setGlobalsDraft] = useState('')
   const [globalsError, setGlobalsError] = useState<string | null>(null)
+  // 项目级审查发现 #6（docs/125 §3.4，U1382）：运行分代守门。发起新一运行即作废旧代
+  // 并断开旧 SSE，旧运行的迟到帧/终帧/reject 一律不得写新运行状态。惰性 useState 持有
+  // 每组件一个的稳定实例（ref 渲染期惰性初始化会触发 react(refs) 门）。
+  const [runs] = useState(() => new RunGeneration())
 
   // 切换到新的暂停 token 时用最新只读快照预填草稿；编辑过程中不覆盖。
   const pausedToken = pausedFrame?.token
@@ -319,6 +324,9 @@ export function Editor({
   const graphJson = JSON.stringify(serializeGraph(nodes, edges, variables, breakpoints, graphSettings), null, 2)
 
   async function compileAndRun(shouldRecord = false, debugMode = false) {
+    // U1382：本次尝试独占当代；上一运行（含暂停中未关的 SSE）立即作废并断连，
+    // 其迟到帧/终帧/reject 全部经 isCurrent 守门丢弃，不写新运行状态。
+    const { generation, signal } = runs.next()
     const order = DEMO_ORDERS.find((item) => item.order_id === selectedOrderId)
     const inputs: RunInputs | undefined = order
       ? { order_id: order.order_id, reason: order.reason, amount: order.amount }
@@ -343,6 +351,9 @@ export function Editor({
         }
       : undefined
     setRunning(true)
+    // U1382：新一运行接管全部进行态；录制 spinner 按本次意图置位——普通运行取代旧录制
+    // 运行时由此清掉旧 spinner，旧 run 的 finally 按分代守门不再无条件清除。
+    setRecordBusy(shouldRecord)
     setRunError(null)
     setCompileResult(null)
     // 每次尝试都从零开始：上一轮的后端编译诊断不得残留（docs/61 §2.2）。
@@ -365,17 +376,23 @@ export function Editor({
       } else if (draftGraphId) {
         // 同一画布复用稳定 graph id：PUT 覆盖草稿、不新建图，录制用例与发布门禁才能匹配本图
         await saveGraphDraft(draftGraphId, serialized)
+        // U1382：等待期间已被新一运行取代，旧 run 的编译/日志/SSE 全部作废（断连不取消，
+        // 已发出的 HTTP 由后端自行收尾）。
+        if (!runs.isCurrent(generation)) return
         graphId = draftGraphId
         appendLog(t('log.draftUpdated', { graphId }))
         const compiled = await compileGraph(graphId)
+        if (!runs.isCurrent(generation)) return
         setCompileResult(compiled)
         appendLog(t('log.compileSuccess', { entrypoints: compiled.entrypoints.join(', ') }))
       } else {
         const saved = await saveGraph(serialized)
+        if (!runs.isCurrent(generation)) return
         graphId = saved.id
         setDraftGraphId(graphId)
         appendLog(t('log.graphSaved', { graphId }))
         const compiled = await compileGraph(graphId)
+        if (!runs.isCurrent(generation)) return
         setCompileResult(compiled)
         appendLog(t('log.compileSuccess', { entrypoints: compiled.entrypoints.join(', ')}))
       }
@@ -383,6 +400,8 @@ export function Editor({
         graphId,
         inputs,
         (event) => {
+        // U1382 分代守门：旧运行迟到帧（含终帧）直接丢弃。
+        if (!runs.isCurrent(generation)) return
         collected.push(event)
         if (event.type === 'paused') {
           setNodeStatus(event.node_id, 'paused')
@@ -688,7 +707,10 @@ export function Editor({
       },
         debugRequest,
         pinnedVersion !== undefined ? { releaseVersion: pinnedVersion } : undefined,
+        signal,
       )
+      // U1382：等待期间已被新一运行取代，旧运行终帧后的一切收尾（含录制落库）作废。
+      if (!runs.isCurrent(generation)) return
       const toolOutputs = Object.values(executed.outputs).filter(
         (output): output is { result?: { status?: string } } =>
           typeof output === 'object' && output !== null && 'result' in output,
@@ -717,6 +739,10 @@ export function Editor({
         setCaseName(t('recording.defaultNameTime', { time: now }))
       }
     } catch (error) {
+      // U1382：旧运行被新一运行取代后，其 reject（fetch abort 的 AbortError 或任何迟到的
+      // 业务错误）一律静默——不弹错误、不写日志、不动新运行状态。
+      if (!runs.isCurrent(generation)) return
+      if (error instanceof DOMException && error.name === 'AbortError') return
       if (error instanceof DebugRunStoppedError) {
         appendLog(t('log.stopped', { node: error.nodeId }))
       } else       if (error instanceof RunCancelledError) {
@@ -733,10 +759,13 @@ export function Editor({
         if (error instanceof CompileValidationError) setServerIssues(error.issues)
       }
     } finally {
-      setRunning(false)
-      setRecordBusy(false)
-      setResumeBusy(null)
-      setPausedFrame(null)
+      // U1382：旧运行收尾不得清掉新运行的进行态/暂停态；非当代一律不写状态。
+      if (runs.isCurrent(generation)) {
+        setRunning(false)
+        setRecordBusy(false)
+        setResumeBusy(null)
+        setPausedFrame(null)
+      }
     }
   }
 

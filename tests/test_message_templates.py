@@ -158,9 +158,14 @@ def test_api_message_template_crud_and_validation():
     body = resp.json()
     assert body["id"] == "mtpl-1"
     assert body["variables"] == ["title", "node_id", "summary", "approver"]
-    # 重名 409。
+    # 重名 409，结构化 detail（docs/125 §3.5，审查发现 #7）。
     resp = client.post("/api/message-templates", json=_sample_payload(name="审批提醒"))
     assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == {
+        "code": "MESSAGE_TEMPLATE_NAME_CONFLICT",
+        "message": "消息模板名称已存在：审批提醒",
+        "params": {"name": "审批提醒"},
+    }
     # 坏形状 422 且模板不变（未声明占位）。
     resp = client.post(
         "/api/message-templates",
@@ -192,6 +197,8 @@ def test_api_message_template_crud_and_validation():
         json=_sample_payload(name="告警提醒", subject="s", body="b", variables=[]),
     )
     assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"]["code"] == "MESSAGE_TEMPLATE_NAME_CONFLICT"
+    assert resp.json()["detail"]["params"] == {"name": "告警提醒"}
     # PUT 未知 404。
     resp = client.put(
         "/api/message-templates/mtpl-999",

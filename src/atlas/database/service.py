@@ -16,15 +16,29 @@ read_only=True，``execute`` 在触库前 fail-closed 抛 DB_WRITE_FORBIDDEN；
 
 from __future__ import annotations
 
+import atexit
 import os
+import shutil
+import tempfile
 from datetime import datetime, timezone
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.pool import StaticPool
 
 from .guard import ReadOnlyViolation, assert_read_only_sql
+
+# 进程内已创建的 demo 临时目录；dispose_demo_engine 移除单个，进程退出兜底全清。
+_DEMO_TEMP_DIRS: list[str] = []
+
+
+def _cleanup_demo_temp_dirs() -> None:
+    for tmp_dir in list(_DEMO_TEMP_DIRS):
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+    _DEMO_TEMP_DIRS.clear()
+
+
+atexit.register(_cleanup_demo_temp_dirs)
 
 ALLOWED_SCHEMES = ("postgresql+psycopg", "sqlite")
 DEFAULT_LIMIT = 500
@@ -72,15 +86,55 @@ def seed_demo_orders(engine: Engine) -> None:
 
 
 def demo_engine(seed: bool = True) -> Engine:
-    """SQLite 单连接内存库（StaticPool），供离线 demo/单测零依赖使用。"""
+    """SQLite 临时文件库（WAL＋多连接池），供离线 demo/单测零依赖使用。
+
+    项目级审查发现 #10（docs/125 §2.3，U1387）：原 ``:memory:`` ＋ StaticPool
+    单连接令 SSE worker 线程与请求线程共享同一连接/事务。现每次在 mkdtemp
+    临时目录内建独立文件库（调用一次＝全新独立库，现语义不变），默认
+    QueuePool 多连接＝真隔离，busy timeout 30s（写串行时等待而非立刻
+    ``database is locked``），connect 监听器对每条连接开 WAL/NORMAL。
+
+    ``check_same_thread=False`` 保留：QueuePool 会把同一条底层连接串行交给
+    不同线程复用，pysqlite 的线程亲和校验必须放开（池仍保证一条连接同一时刻
+    只被一个线程使用，隔离来自多连接而非单连接共享事务）。临时目录由
+    :func:`dispose_demo_engine` 释放，未显式释放时进程退出 atexit 兜底清理。
+    """
+    tmp_dir = tempfile.mkdtemp(prefix="atlas-demo-db-")
+    _DEMO_TEMP_DIRS.append(tmp_dir)
+    db_path = os.path.join(tmp_dir, "demo.db")
     engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
+        f"sqlite:///{db_path}",
+        connect_args={"check_same_thread": False, "timeout": 30},
     )
+
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_pragmas(dbapi_connection, _connection_record) -> None:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+        finally:
+            cursor.close()
+
     if seed:
         seed_demo_orders(engine)
     return engine
+
+
+def dispose_demo_engine(engine: Engine) -> None:
+    """关闭 demo engine 连接池并删除其临时目录（审查发现 #10）。
+
+    非临时文件库（外部 SQLite 路径等）只 dispose、不删目录。
+    """
+    database = engine.url.database or ""
+    engine.dispose()
+    if not database or database == ":memory:":
+        return
+    tmp_dir = os.path.dirname(os.path.abspath(database))
+    if os.path.basename(tmp_dir).startswith("atlas-demo-db-"):
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        if tmp_dir in _DEMO_TEMP_DIRS:
+            _DEMO_TEMP_DIRS.remove(tmp_dir)
 
 
 def _validate_sql(sql: object) -> str:
@@ -208,6 +262,17 @@ class DatabaseClient:
         if self.demo:
             seed_demo_orders(self.engine)
             self.last_operation = None
+
+    def close(self) -> None:
+        """释放连接池（内置 demo 库**不删**临时目录）。
+
+        close 的调用方是 FastAPI lifespan 关闭，而 ``with TestClient(app)`` 会在同一
+        进程内反复进出 lifespan（tests/test_api_demo.py 三处）：import 期单例
+        ``_db_client`` 在退出块后仍会被后续请求复用，若 close 连目录一起删，重连即
+        ``unable to open database file``。demo 库运行期只读，临时目录由 atexit 兜底
+        回收；一次性 engine 要连目录一起释放时显式调 :func:`dispose_demo_engine`。
+        """
+        self.engine.dispose()
 
     def _record(self, operation: str, sql: str, **extra: object) -> None:
         self.last_operation = {
