@@ -18,6 +18,8 @@ from typing import Any
 from atlas.security.bootstrap import demo_surface_enabled
 from atlas.template.graphs import refund_template_graph
 
+from atlas.llm.metering import complete_with_usage
+
 _REFUND_KEYWORDS = ("退款", "退货", "售后")
 
 _TYPE_CHECKS = {
@@ -140,8 +142,6 @@ def _generate_with_llm(
     api_key: str | None = None,
     base_url: str | None = None,
 ) -> dict[str, Any] | None:
-    import litellm
-
     system = (
         "你是 Atlas 流程编排助手。把用户的中文需求转成 Graph JSON（只输出 JSON，不要解释）。"
         "结构：{\"version\":1,\"variables\":[{\"name\",\"type\",\"value\",\"scope\":\"global\"}],"
@@ -211,8 +211,8 @@ def _generate_with_llm(
         kwargs["api_key"] = api_key
     if base_url:
         kwargs["base_url"] = base_url
-    response = litellm.completion(**kwargs)
-    content = response["choices"][0]["message"]["content"]
+    # docs/129 打包 AU：唯一 litellm 出口（usage 计量旁路，不影响草稿生成语义）。
+    content, _usage = complete_with_usage(kwargs, caller="nl_generate", model=model)
     match = re.search(r"\{.*\}", content, re.DOTALL)
     if not match:
         return None

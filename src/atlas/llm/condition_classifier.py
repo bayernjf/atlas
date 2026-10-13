@@ -13,6 +13,8 @@ import os
 import re
 from typing import Protocol
 
+from atlas.llm.metering import complete_with_usage
+
 DEFAULT_BRANCH = "__default__"
 
 _BRANCH_RE = re.compile(r"\{.*\}", re.DOTALL)
@@ -81,8 +83,6 @@ class LiteLLMConditionClassifier:
         model: str | None = None,
         confidence_threshold: float | None = None,
     ) -> str:
-        import litellm
-
         # ZP：节点级 model 覆盖（docs/08 打包 ZP 立项块）——非空覆盖构造期默认，仅本次调用生效。
         model_name = (model or "").strip() or self.model
         labels = [item["label"] for item in branches]
@@ -113,8 +113,10 @@ class LiteLLMConditionClassifier:
             kwargs["api_key"] = self.api_key
         if self.base_url:
             kwargs["base_url"] = self.base_url
-        response = litellm.completion(**kwargs)
-        content = response["choices"][0]["message"]["content"]
+        # docs/129 打包 AU：唯一 litellm 出口（usage 计量旁路，不影响分类语义）。
+        content, _usage = complete_with_usage(
+            kwargs, caller="condition_llm", model=model_name
+        )
         try:
             match = _BRANCH_RE.search(content)
             payload = json.loads(match.group(0) if match else content)

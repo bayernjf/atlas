@@ -21,6 +21,8 @@ import os
 import re
 from typing import Any, Protocol
 
+from atlas.llm.metering import complete_with_usage
+
 from .evidence import ReflectionEvidence
 from .tunables import TUNABLE_WHITELIST
 
@@ -79,8 +81,6 @@ class LiteLLMSummarizer:
         )
 
     def summarize(self, evidence: ReflectionEvidence) -> tuple[list[dict[str, Any]], list[str]]:
-        import litellm
-
         kwargs: dict[str, Any] = {
             "model": self.model,
             "messages": [
@@ -97,8 +97,10 @@ class LiteLLMSummarizer:
             kwargs["api_key"] = self.api_key
         if self.base_url:
             kwargs["base_url"] = self.base_url
-        response = litellm.completion(**kwargs)
-        content = response["choices"][0]["message"]["content"]
+        # docs/129 打包 AU：唯一 litellm 出口（usage 计量旁路；解析失败仍 fail-safe 回零建议）。
+        content, _usage = complete_with_usage(
+            kwargs, caller="reflection_summarize", model=self.model
+        )
         try:
             match = _JSON_RE.search(content)
             payload = json.loads(match.group(0) if match else content)

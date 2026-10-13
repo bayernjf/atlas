@@ -23,6 +23,8 @@ import re
 import sys
 from typing import Any, Protocol
 
+from atlas.llm.metering import complete_with_usage
+
 logger = logging.getLogger(__name__)
 
 AUTO_APPROVE = "approve_refund"
@@ -159,8 +161,6 @@ class LiteLLMDecisionClient:
         prompt: str = "",
         model: str | None = None,
     ) -> dict[str, Any]:
-        import litellm
-
         model_name = (model or "").strip() or self.model
         # 运营 prompt 优先（就是发给模型的内容）；为空才退回退款专用兜底文案。
         user_content = prompt.strip() or self._default_prompt(reason, amount, limit)
@@ -181,8 +181,10 @@ class LiteLLMDecisionClient:
             kwargs["api_key"] = self.api_key
         if self.base_url:
             kwargs["base_url"] = self.base_url
-        response = litellm.completion(**kwargs)
-        content = response["choices"][0]["message"]["content"]
+        # docs/129 打包 AU：唯一 litellm 出口（usage 计量旁路，不影响本方法语义）。
+        content, _usage = complete_with_usage(
+            kwargs, caller="ai_decision", model=model_name
+        )
         try:
             match = _DECISION_RE.search(content)
             payload = json.loads(match.group(0) if match else content)
