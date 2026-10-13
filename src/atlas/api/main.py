@@ -97,7 +97,9 @@ from atlas.cycles.supervisor import (
     CycleOutcome,
     cycle_config,
     run_cycle_session,
+    session_for_run,
 )
+from atlas.cycles.state import cycle_registry
 from atlas.memory.database import ping, wait_for_database
 from atlas.memory.models import KNOWLEDGE_CATEGORIES, MemoryValidationError
 from atlas.message.service import MessageSendError
@@ -1111,6 +1113,48 @@ def usage_recent(
     """最近用量明细（read 档，倒序，limit clamp 1–200）：一次调用一行。"""
     store = services_for(principal).usage_store
     return {"items": store.list_recent(limit=limit)}
+
+
+# --- 运行期自走循环（docs/130 打包 BN＝D69） ------------------------------------
+
+
+def _cycle_session_or_404(run_id: str, tenant_id: str) -> Any:
+    """由 runId 反查圈会话；跨租户/非圈 run 一律 404（不泄漏存在性，04 §5.14）。"""
+    run = tenant_registry.get(tenant_id).run_store.get(run_id)
+    if run is None or not run.get("cycleGroupId"):
+        raise HTTPException(status_code=404, detail=f"该运行不属于任何圈会话：{run_id}")
+    session = session_for_run(run_id)
+    if session is None or session.tenant_id != tenant_id:
+        # 会话已被 ring 淘汰或跨租户 ⇒ 与"不存在"同形（docs/12 跨租户 404 惯例）
+        raise HTTPException(status_code=404, detail=f"圈会话不存在或已过期：{run_id}")
+    return session
+
+
+@app.get("/api/runs/{run_id}/cycle")
+def get_run_cycle(
+    run_id: str, principal: Principal = Depends(require("read"))
+) -> dict[str, Any]:
+    """圈会话投影（read 档，只读）：圈序号/累计 token/累计墙钟/终止原因/各圈 run。
+
+    非圈运行（`cycleGroupId` 为空）或会话已被 ring 淘汰 ⇒ 404 `CYCLE_NOT_FOUND`。
+    **零新错误码**：404 走既有纯文本 detail 惯例（同 `/api/runs/{id}/trace` 的 404 族）。
+    """
+    session = _cycle_session_or_404(run_id, principal.tenant_id)
+    return session.public_view()
+
+
+@app.post("/api/runs/{run_id}/cycle/stop")
+def stop_run_cycle(
+    run_id: str, principal: Principal = Depends(require("operate"))
+) -> dict[str, Any]:
+    """停**整条**圈会话（operate；C-D8）：已终态 ⇒ 200 幂等（状态照实回，不覆写历史）。
+
+    与 `POST /api/runs/{id}/cancel` 的分工：cancel 停**这一圈**，本端点停**整条会话**
+    （此后不再开新圈；已在跑的那一圈由 cancel 收尾）。
+    """
+    session = _cycle_session_or_404(run_id, principal.tenant_id)
+    stopped = cycle_registry().stop(session.group_id) or session
+    return stopped.public_view()
 
 
 @app.post("/api/connections/{conn_id}/authorize")

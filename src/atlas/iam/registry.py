@@ -42,6 +42,7 @@ from atlas.security.bootstrap import read_storage_backend
 from atlas.llm.config import get_model_config_store
 from atlas.llm.metering import InMemoryUsageStore
 from atlas.llm.pg_store import PgUsageStore
+from atlas.cycles.state import cycle_registry
 from atlas.storage.base import (
     ApprovalRepository,
     DebugRepository,
@@ -256,4 +257,6 @@ class TenantRegistry:
         services.rule_template_store.clear()
         services.reflection_store.reset()
         services.usage_store.reset()
+        # 打包 BN（docs/130）：圈会话是进程内运行态 ⇒ 与运行数据同清。
+        cycle_registry().reset(tenant_id)
         services.evaluation_store.clear()
