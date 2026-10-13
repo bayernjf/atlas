@@ -600,6 +600,13 @@ rng_seed: int           # 打包 W（docs/84；2026-09-29）：本次运行实�
 ```
 > M10 起三帧均为 **19 §2.3.4 Trace 事件超集**：只新增 traceId/spanId/parentSpanId（run_end 另加 graphVersion），现有字段与帧类型不变，前端忽略未知字段即零改动。span 三元组位于事件顶层、**不进节点 output**（录制回放 collect_steps 只取 output，天然不受随机 id/时间影响）；完整 span 树经 `tracing` 包进程内导出，不进 SSE 高频帧。子图内部 span 经 `to_tree(include_internal=False)` 折叠（见下 `trace_span`，A 包后 span 树折叠口径不变）；A 包（`e594a4b`）后子图内部 node_start/node_end 改经可选 `subgraphPath` 上 SSE（见下），与 span 折叠相互独立。
 
+> **SSE 传输契约（打包 AR，docs/125 §3.1/§2.2，ADR T36，2026-10-13 收口）**：worker 为同步 daemon 线程，端点为 async 生成器，中间经 `src/atlas/api/sse.py::SSEBridge` 进程内有界桥接（一 worker 一消费者，状态只在事件循环线程触碰，worker 经 `call_soon_threadsafe(offer_threadsafe)` 投帧）。**帧协议不新增事件类型**：
+> - **心跳**：空闲每 `SSE_HEARTBEAT_SECONDS=15` 秒下发一帧 SSE 注释 `: keepalive`（非 `event:` 帧，EventSource 自动忽略），用于反代空闲保活与 worker 存活性复检；前端帧协议无感知。
+> - **终帧哨兵**：`__result__`/`__stopped__`/`__superseded__`/`__cancelled__`/`__error__` 五类入独立 terminal 槽，满载也必达（必要时清空中间帧腾位）、恰好一次；终帧后一切 offer 忽略。
+> - **有界背压**：中间帧 deque 上限 `SSE_BRIDGE_MAXSIZE=1024`，满则丢最旧非终帧并计数，每丢 100 帧一条 warning；不阻塞 worker、不取消运行。
+> - **worker 暴毙合成终帧**：worker 线程异常死亡且未留终帧时，run 流由生成器合成 `__error__`（固定 code `RUNTIME_UNEXPECTED`、固定安全中文 message，不拼内部异常串；细节走 worker 侧 `logger.exception`），shadow 流合成 `event: error`（结构化 detail 同族，不伪造 ShadowRun）。此为基础设施错误通道——与 docs/114「影子业务异常已沉淀 status=error、HTTP 不报错、不发 event:error」的边界：沉淀未发生才走合成帧。
+> - **断连不取消**：客户端断开触发生成器 `finally → bridge.close()`，此后 worker 的 offer 为廉价 no-op（内存归零），worker 与 run_graph 继续跑完（docs/24 §3、docs/80 §3.5 决策不变）。
+
 ### `trace_span` — 字段概览（**M10 已落码收口 2026-09-18（ba9e0d2 起，08 M10 落码条）**；权威＝docs/19 §2.3.4 + 10 §4 ADR T21 + 08 M10 立项条，落码承载 `src/atlas/tracing/`）
 
 ```yaml

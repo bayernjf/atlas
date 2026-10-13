@@ -27,6 +27,7 @@ D26 录制回放产品化已多批取回。影子方向现状（读码确认）�
    - 节点帧：`event: node_start` / `event: node_end`，`data` 为事件原样 JSON（照 run/stream 用事件自身 `type`）。
    - 终帧：`event: result`，`data` 为完整 `ShadowRun`（`model_dump`，含 `id`/`status`/`decisions`/`tool_intents`/`comparison` 等）。
    - **不设 `event: error`**：与 sync 版对齐——影子异常不 HTTP 报错，统一在终帧 record 以 `status="error"` 表达；端点装配/加载阶段的错误（图不存在 404、坏入参 422、鉴权 401/403）仍在流建立前按常规状态码返回。
+   - **边界注记（打包 AR，docs/125 §3.1，2026-10-13 收口）**：上条只覆盖**运行业务异常且已沉淀 error record** 的路径。若 worker 线程在收尾（`extract_shadow_events`/`shadow_store.add`）中暴毙、**连沉淀都没发生**且未留终帧，SSE 基础设施层会合成一个 `event: error`（结构化 detail 同族、固定安全文案，不伪造 ShadowRun）保证连接不悬挂——这不是影子业务结果帧，也不改变本条「业务异常沉淀 status=error、不设 event:error」的契约。
 3. **前端**：
    - `apiClient` 加 `streamShadowRun(graphId, body, onEvent)`：POST 流端点，按 `\n\n` 分帧解析；`node_start`/`node_end` 转发 `onEvent`；`event: result` resolve 为 `ShadowRun`；`!ok` 错误处理照 `streamRun`（401 回登录、detail 走 runtime 文案）。
    - `ShadowRunModal`：发起改走流式，提交后展示「实时进度」（节点 id ＋ 状态 Tag：进行中/完成），终帧后 `setRun` 复用现有结果渲染；human_outcome 入参不变。

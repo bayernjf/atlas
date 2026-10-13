@@ -1,8 +1,8 @@
 # 打包 AR：项目级审查 14 项修复 — SSE 健壮性 / 安全脱敏 / 并发与 CI 门（v1 批契约设计）
 
 > 号段：U1373–U1392（docs/13 预留）｜承接 2026-10-13 全仓项目级只读审查（基点 dev `4977840`，14 条发现经两轮在当前 HEAD 复核 14/14 成立）｜2026-10-13 docs-only 立项
-> 状态：⬜ 未落码。选型裁决见 §2；**#2 拟记 ADR T36**（落码原子同步 docs/10 §4 → docs/02 → docs/09，三处同步纪律不变）
-> 形状权威＝本文。落码与本文的偏差在收口注记中记录。
+> 状态：✅ **已收口（2026-10-13，U1392 全量门绿）**。16 原子全部落 dev（收口时 origin/dev＝`543a45d`，余 4 提交未 push；哈希链与门数见 §6.1）；选型裁决见 §2；#2 已记 ADR T36（docs/10 §4 → docs/02 → docs/09 三处同步，commit `4617a74`）
+> 形状权威＝本文。落码与本文的偏差在收口注记中记录（§2.3 两处实现校正、§6.1 偏差 1-5）。
 
 ## 1. 背景与问题
 
@@ -57,9 +57,9 @@
 
 - **a. 每 engine 独立临时文件库 ＋ WAL ＋ 多连接池**（采纳）
   - `tempfile.mkdtemp(prefix="atlas-demo-db-")` 下放 sqlite 文件；URL 指向该文件，**不再用 `:memory:`**。每次 `demo_engine()` 仍得全新独立库（现语义不变）。
-  - 去掉 `StaticPool` 与 `check_same_thread=False`，用 SQLAlchemy 默认 QueuePool（多连接＝真隔离）；`connect_args={"timeout": 30}`（SQLite busy_timeout 语义，写串行时等待而非立刻 `database is locked`）。
+  - 去掉 `StaticPool`，用 SQLAlchemy 默认 QueuePool（多连接＝真隔离）；`check_same_thread=False` **保留**（落码校正 `9b0a52c`：QueuePool 串行复用同一连接，池保证同一时刻独占，仍需该标志允许 worker 线程跨线程取连接）；`connect_args={"timeout": 30}`（SQLite busy_timeout 语义，写串行时等待而非立刻 `database is locked`）。
   - engine 连上后 event listener 执行 `PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;`（建表/播种走 engine 直连的现路径不变，listener 对所有连接生效）。
-  - 仍只依赖 stdlib sqlite3，「零依赖离线 demo/单测」定位不变；提供配套 dispose/清理（临时目录随 engine 生命周期清掉：应用 shutdown 与测试 fixture 各有落点，落码时按现有 fixture 形状接线）。
+  - 仍只依赖 stdlib sqlite3，「零依赖离线 demo/单测」定位不变；配套清理落码形状（`9b0a52c`＋回归修复 `be56b6c`）：`dispose_demo_engine()` 连池带临时目录一次性释放（测试 fixture/atexit 用）；`DatabaseClient.close()` **只 `engine.dispose()`、不 rmtree**——import 期单例 `_db_client` 随 TestClient 反复进出 lifespan 时须可重连，删目录会令重开拿到空目录里的已失效连接；临时目录靠 atexit 兜底与显式 `dispose_demo_engine` 回收。
 - b. 保 StaticPool 单连接＋外面套写锁（否决：单连接共享事务的无隔离本质不变，锁只会把串用藏得更深）。
 - c. demo 直接上 PostgreSQL（否决：违背零依赖内存库定位，拖垮离线 demo 与无 PG 开发机）。
 - d. `file:...?mode=memory&cache=shared` 共享缓存多连接（否决：最后一个连接关闭即删库、共享缓存自带表级锁语义差，连接生命周期脆弱）。
@@ -152,7 +152,7 @@
 
 - **#13**：`backend-integration` job 在 `Install package` 后加 `Playwright install chromium`（`playwright install --with-deps chromium`）；不新增 job、不新增依赖。
 - **#14**：`demo_reset` 入口加同族 gate——`if not _demo_mock_enabled(): raise HTTPException(404, "Not Found")`（与 5805-5808 mock 路由逐字同形）。鉴权顺序仍是先 administer 后 gate。
-  - **兼容性铁证**：约 25 处既有测试经 TestClient 调 reset（`tests/test_api_demo.py` 等），默认 profile 下 demo 面开，行为必须不变；f8 落码后全量 pytest 零改动通过即为验收。
+  - **兼容性铁证**：约 25 处既有测试经 TestClient 调 reset（`tests/test_api_demo.py` 等），默认 profile 下 demo 面开，行为必须不变；f8 落码后全量 pytest 零改动通过即为验收。✅ 已由 `dce9388` 与 U1392 两门（sqlite 2742／PG 2930）满足。
   - 与 docs/89 A-9（reset 清全局 `_MOCK_SHOPIFY_WEBHOOKS`，已文档化 by-design）是两件事，本项不碰 A-9。
 
 ## 4. 非目标（明确不做）
@@ -188,7 +188,7 @@
 文档同步（落码收口批逐份走改内容流程）：
 
 - **docs/03**：登记新错误码 `AUTH_OLD_PASSWORD_INVALID`（错误码族）；`MESSAGE_TEMPLATE_NAME_CONFLICT` 补实现一致声明；SSE 终帧协议段补「keepalive 注释帧」与暴毙 error 合成路径（若该段在 03）。
-- **docs/12**：迁移台账登记 **048**（文件名、去重与唯一索引语义、可重入）。
+- **docs/12**：~~迁移台账登记 048~~（收口校正见偏差 5：无中心迁移台账，048 契约全文已登记 docs/03（`1fe59e0`），迁移规范在根 `MIGRATION_CONVENTION.md`；docs/12 openapi 接口段仅补一行指引）。
 - **docs/17 §2.4**：结构化 detail 族加 AUTH_OLD_PASSWORD_INVALID；确认前端 i18n 零新增键（若实跑有新增按 i18n 流程登记）。
 - **docs/10 §4**：ADR **T36**（§2.1 全文）；随之 **docs/02**（架构选型总览 SSE 线程模型表述）、**docs/09**（新增 `api/sse.py` 模块行＋模块→文档映射）三处同步。
 - **docs/24 §3**：补一行「有界桥接、断连 close 后 offer no-op」是对断连不取消决策的**实现细化**，决策本身不改；**docs/80 §3.5** 同向注记。
@@ -219,9 +219,9 @@
 
 落码顺序原则：基础设施先行（原子 1），两条流随后；安全项（5/6/7）独立可回溯；并发小项彼此无耦合可串跑；docs 收口最后一个原子。
 
-### 6.1 落码进展（2026-10-13，docs-only 进展同步，非收口）
+### 6.1 落码进展与收口记录（2026-10-13 收口）
 
-落码中途的如实回填，不改变 §6 计划与 §8 重开判据。下列 16 个 commit 均在 dev、**未 push**（origin/dev 仍为 `e44361b`）；本批全量门未跑（U1392 待验），**不构成收口**。原子 1-12 已落（原子 10 拆 10a/10b 两个 commit），原子 14-15 未落；**原子 13（#12 `_safe_record` 补日志）代码已在工作树、未提交**（2026-10-13 05:11 复核：`src/atlas/message/service.py` 一文件在途、暂无随附测试，不计为已落）。
+16 原子全部落 dev。**push 状态（收口时读数）**：`origin/dev`＝`543a45d`——立项→原子 13 已在远端（对端推送、本地经 fetch 快进 remote-tracking ref，本地从未 push 本批）；未 push 4 提交＝`4ca058a`（原子 14）、`be56b6c`（全量门回归修复）、`dce9388`（原子 15）、本提交（原子 16 docs，自指不钉哈希，以 `git log -1` 为准）。下表按原子归组给完整哈希链（含 docs errata 与一处回归修复）；注意 `be56b6c` 虽属原子 11 主题，**实际 DAG 入库时点在原子 14 之后、原子 15 之前**（U1392 全量门阶段抓出），表中在原子 14 后单列一行。U1392 四门读数见本节末「收口记录」。中途的进展回填（偏差 1-3、新落三原子等小节）原样保留为过程记录。
 
 已落 commit（时序哈希链）：
 
@@ -240,8 +240,14 @@
 | 9 | `ce1023b` | fix(frontend) `RunGeneration` 分代守门＋两流可选 signal＋Editor/ShadowRunModal 全链守门（commit 另含 apiClient signal 测试 94 行） | U1382 |
 | 10a | `ea2e490` | fix(memory) RunStore 一把 `threading.Lock` 包全部读写＋终态记录有界 N=200（`_evict_terminal_locked` 只裁终态，running/suspended 保留） | U1385 |
 | 10b | `2176327` | fix(memory) embed 移出 update 锁：短锁取快照→锁外 embed→短锁乐观二次确认（冲突按新快照重试一轮，仍冲突抛 StorageError，锁外被删返 None），content 未变短路零 embed；3 文件 +160/-11 | U1386 |
-| 11 | `9b0a52c` | fix(database) demo SQLite 弃 `:memory:`＋StaticPool，改 mkdtemp 临时文件库＋默认 QueuePool 多连接隔离＋busy timeout 30s＋connect 监听器 WAL/NORMAL；`dispose_demo_engine` 连池带目录释放，`DatabaseClient.close` 委托、lifespan 关闭、atexit 兜底；3 文件 +152/-7，新增 3 用例 | U1387 |
-| 12 | `372d1d4` | fix(storage) `PgGraphStore.publish` 捕 SQLSTATE 23505：整事务回滚、重查 MAX+1 重试最多 3 次＋指数抖动退避（非 23505 即抛、不取 advisory lock）；2 文件 +137/-29，新增 2 个 PG 并发例 | U1388 |
+| 11 | `9b0a52c` | fix(database) demo SQLite 弃 `:memory:`＋StaticPool，改 mkdtemp 临时文件库＋默认 QueuePool 多连接隔离（`check_same_thread=False` 保留）＋busy timeout 30s＋connect 监听器 WAL/NORMAL；`dispose_demo_engine` 连池带目录一次性释放、atexit 兜底（close 语义的回归修复不在本提交，见原子 14 后专列 `be56b6c`） | U1387 |
+| 12 | `372d1d4` | fix(storage) `PgGraphStore.publish` 捕 SQLSTATE 23505：整事务回滚、重查 MAX+1 重试最多 3 次＋指数抖动退避（非 23505 即抛、不取 advisory lock）；2 文件 +137/-29，新增 2 个 PG 并发例（收口批 PG 门首次实跑通过） | U1388 |
+| docs errata | `1fe59e0` | docs(errata) 原子 12 落码后的进展同步：docs/03 迁移 048 契约段＋两错误码注记、docs/08 进展块、docs/13/17/handoff 随动（非收口） | — |
+| 13 | `543a45d` | fix(message) `_safe_record` 裸 `except: pass` 改模块级 `logger.exception(...)`，保留不阻断主流程语义；2 文件 +29/-2（src 1 文件 +14/-2），随附守护 `test_u1389_delivery_store_failure_is_logged_not_swallowed`（BoomStore 注入：ERROR 日志恰 1 条且主流程不阻断） | U1389 |
+| 14 | `4ca058a` | ci `backend-integration` job 加装 `playwright install --with-deps chromium`，4 个浏览器用例转实跑；零新增依赖（playwright 已在 `[dev]`） | U1390 |
+| 回归 | `be56b6c` | fix(database) **实际入库于 U1392 全量门阶段（13:05，DAG 位在原子 14 `4ca058a` 之后、原子 15 之前）**：`9b0a52c` 的 close rmtree 致 import 期单例随 TestClient 反复进出 lifespan 重连已删目录（23 例 sqlite 回归），改 `DatabaseClient.close()` 只 `engine.dispose()` 不 rmtree，目录交 atexit 与显式 `dispose_demo_engine`；守护 `test_u1387_demo_engine_close_keeps_file_reusable_for_singleton`（主题属原子 11，见偏差 4） | U1387 |
+| 15 | `dce9388` | fix(api) `POST /api/demo/reset` 函数体首行加 `_demo_mock_enabled()` fail-closed 404（与同族 mock 路由逐字同形）；鉴权顺序 administer 依赖注入期先跑（匿名 401／引导口令 403 AUTH_PASSWORD_CHANGE_REQUIRED）→ 环境门 404；2 文件 +94，3 个 U1391 正反用例（monkeypatch 打桩 `user_store.get` 避免真改密 revoke 跨文件收集期令牌） | U1391 |
+| 16 | 本提交（HEAD，自指不钉哈希） | docs：§5 契约矩阵全部收口（本提交） | U1392 |
 
 原子 8 落点（跨两个 commit）：`898f9ce` 落管线半边——`AUTH_ERROR_KEYS` 加映射、runtime.json zh/en 新键、U1162 http-facing 集合守护；`3d3a417` 落消费端半边——新增 `ApiError`（携带 code/params，裸字符串 detail 回退为无 code 的 ApiError），`UserBadge.tsx`、`MessageTemplates.tsx` 改为 `instanceof ApiError` 按 `error.code` 分支，不再匹配中文文案，并补 `frontend/src/lib/__tests__/apiClient.test.ts` 三个用例（结构化 code/params、AUTH 码映射、裸串回退）。
 
@@ -250,6 +256,8 @@
 1. **i18n 键数偏差**：立项预测「runtime.json 零新增键，以实跑为准」（§7 U1384、§5 矩阵 L192 预留）。实跑新增 **1 键** `MESSAGE_TEMPLATE_NAME_CONFLICT`（zh/en runtime.json，96→97 键，支持 `{{name}}` 插值）；`AUTH_OLD_PASSWORD_INVALID` **零新增**，经 `AUTH_ERROR_KEYS` 映射复用 users 命名空间既有键 `users.error.oldPasswordWrong`。已按 docs/17 §2.4 流程登记。
 2. **前端实现路径**：未新造错误通道，复用既有 `resolveErrorMessage` 管线（AUTH_ERROR_KEYS 映射＋runtime catalog 动态成员）。与 §6 原子 8「ApiError 携带 code＋两处消费改读 code」目标一致，区别仅在错误解析复用既有管线而非另立。
 3. **catalog 路径校正**：`898f9ce` 初版把 AUTH 码映射到 `error.auth.oldPasswordWrong`（common ns，实际无此键）；`3d3a417` 校正为文案唯一定义所在的 `users.error.oldPasswordWrong`，并由前端测试钉死该路径（错误路径会令 i18next 回退为键串本身）。
+4. **#10 close 语义校正（`be56b6c`）**：立项 §2.3 设想「临时目录随 engine 生命周期清掉：应用 shutdown 与测试 fixture 各有落点」。`9b0a52c` 初版据此让 `DatabaseClient.close()` 连池带目录 rmtree，但 import 期单例 `_db_client` 随 TestClient 反复进出 lifespan 后重连到已删目录，引发 23 例 sqlite 回归。收口校正：close 只 `engine.dispose()`；目录回收只留 atexit 兜底与显式 `dispose_demo_engine()`（测试 fixture 用）。同条校正 §2.3 原文「去掉 `check_same_thread=False`」——该标志落码保留（见 §2.3 批注）。
+5. **迁移台账落点校正**：§5 矩阵写「docs/12 迁移台账登记 048」。实证仓库**无中心迁移台账文档**（docs/12 实为 API 与模块接口清单）；迁移治理以根目录 `MIGRATION_CONVENTION.md` 为准（NNN 文件名版本权威、文件头 `--` 出处注释、幂等、`tests/test_migration_convention.py` 机检），契约登记落点为 docs/03（048 全文契约段已在 `1fe59e0` 落位）。收口不新增台账文档，docs/12 openapi 接口段补一行指引。
 
 新落三原子（2026-10-13 05:11 复核；均由用户按原子规则自行入库；原子 13 代码在工作树在途，见下「未落／在途」）：
 
@@ -262,17 +270,21 @@
 - **局部验证（非 U1392 全量门，05:00 复跑）**：`pytest tests/test_memory_manual_write.py` **13 passed**（9 既有＋4 新增 U1386）；`pytest tests/test_database_adapter.py` **46 passed**（含 3 个新增 U1387）。后端全量 pytest 未跑。
 - 前序在途的原子 10 第一半（#8 RunStore 锁与终态有界）已于 2026-10-13 04:50 入库 `ea2e490`（见上表）。
 
-未落／在途（经代码实证，截至 2026-10-13 05:11）：
+收口记录（2026-10-13，原子 13-16 全部落地）：
 
-- 原子 10（#8/#9）：**两半均已入库**——#8 `ea2e490`（U1385）、#9 `2176327`（U1386），均随转正式。
-- 原子 11（#10）：**已入库** `9b0a52c`（demo SQLite mkdtemp 临时文件库＋WAL/QueuePool/timeout＋dispose/atexit 清理，U1387 随转正式）。
-- 原子 12（#11）：**已入库 `372d1d4`**（2026-10-13 05:07:15，U1388 随转正式）——实现要点见上「新落三原子」小节：最多 3 次尝试（`_PUBLISH_MAX_ATTEMPTS=3`）、捕 `IntegrityError` 且 pgcode＝23505（psycopg3 `sqlstate`/psycopg2 `pgcode` 双驱动识别，非 23505 立即抛）、整事务回滚重查 MAX+1、指数退避＋抖动（`0.005*attempt + random*0.01*attempt` 秒）、耗尽 `logger.exception` 后 re-raise、缺图立即抛、不取 advisory lock；2 个 U1388 PG 例（barrier 并发、3×4 连发）。**PG 集成门未见实跑记录**（需 `ATLAS_RUN_INTEGRATION=1`＋`DATABASE_URL`）。
-- 原子 13（#12）：**代码在工作树、未提交、不计已落**（2026-10-13 05:11 复核，单文件 `src/atlas/message/service.py`、暂无随附测试）——`_safe_record` 已加 `import logging` 与模块级 `logger = logging.getLogger(__name__)`，docstring 注记「审查发现 #12（docs/125 §3.6，U1389）：失败必须留可观测痕迹，不再裸 ``except: pass`` 静默吞掉」，except 分支改调 `logger.exception("delivery record persistence failed (non-blocking): id=%s channel=%s status=%s", rec.id, rec.channel, rec.status)`。
-- 原子 14（#13）：`.github/workflows/ci.yml` 未装 Playwright/Chromium（仅 L60 注释提及）。
-- 原子 15（#14）：`POST /api/demo/reset`（`api/main.py` L6334-6354）函数体仍无 `_demo_mock_enabled()` 入面 gate（周边 demo 端点均有）。
-- 原子 16（§5 契约矩阵收口）：本次仅进展同步；待原子 13-15 落完、U1392 全量门绿后再收口。
+- 原子 13（#12，U1389）：**已入库 `543a45d`**——`_safe_record` 裸 except 改模块级 `logger.exception(...)`，2 文件 +29/-2（src 1 文件 +14/-2）；随附守护 `tests/test_message_deliveries.py::test_u1389_delivery_store_failure_is_logged_not_swallowed`（BoomStore 注入：ERROR 日志恰 1 条且主流程仍不阻断），非"无测试由全量门背书"。
+- 原子 14（#13，U1390）：**已入库 `4ca058a`**——`.github/workflows/ci.yml` `backend-integration` job 加装 `playwright install --with-deps chromium`，4 个浏览器用例在 CI 转实跑；本地 PG 门不含浏览器（无 chromium 环境），CI 侧实跑证据随下次流水线产生。
+- 原子 15（#14，U1391）：**已入库 `dce9388`**——prod＋面关 404、prod＋`ATLAS_ENABLE_DEMO_MOCK=1` 200、默认 dev 200 三用例；默认 profile 既有约 25 处 reset TestClient 调用零改动。测试技法：不真调 `set_password(by_owner=True)`（会 revoke admin-a 全部会话、杀掉收集期签发的跨文件 Bearer 令牌），改以 `monkeypatch.setattr(user_store, "get", ...)` 返回 `password_rotated_at` 副本，用例结束自动还原。
+- **回归修复 `be56b6c`（实际入库 2026-10-13 13:05，DAG 位在原子 14 `4ca058a`（12:43）之后、原子 15 `dce9388`（13:07）之前——U1392 全量门阶段抓出，非与 `9b0a52c`（05:00）同批）**：`9b0a52c` 让 `DatabaseClient.close()` 连池带临时目录一起 rmtree，导致 import 期单例 `_db_client` 在 TestClient 反复进出 lifespan 后重连到已删目录（23 例 sqlite 回归）；修复为 close 只 `engine.dispose()`，临时目录由 atexit 与显式 `dispose_demo_engine` 回收（详见 §2.3 校正与偏差 4）。
+- 原子 16（#docs，U1392）：本提交——§5 契约矩阵全部收口。
+- **U1392 四门读数（2026-10-13 实跑取证）**：
+  - 后端默认门 `.venv/bin/pytest -q`：**2742 passed, 189 skipped**（231.95s；唯一 warning 为 starlette/testclient anyio BlockingPortal 既有弃用告警，与本批无关）。
+  - PG 集成门（一次性容器 `pgvector/pgvector:pg16` 映射 5445，`ATLAS_RUN_INTEGRATION=1 DATABASE_URL=postgresql+psycopg://atlas:atlas@localhost:5445/atlas`）：**2930 passed, 1 skipped**（272.05s；skipped 为无本地 chromium 的浏览器例；**U1388 两个 publish 并发例首次实跑通过**，U1391 在 PG 档亦零回归），跑完容器即删。
+  - 前端 `pnpm test`（vitest）：**Test Files 71 passed/1 skipped；Tests 1003 passed/2 skipped**（27.42s）。
+  - 前端 `pnpm lint`（oxlint，211 files/116 rules）：**0 warnings/0 errors**；`pnpm build`（tsc 经 vite build）：**built in 968ms 成功**（chunk >500kB 为既有体积提示，非本批引入）。
+  - **零新增依赖**：后端无 pyproject 变更，前端无 package.json 变更；Chromium 经已在 `[dev]` 的 playwright 安装。
 
-## 7. 验收用例（U1373–U1392 预留，落码时转正式）
+## 7. 验收用例（U1373–U1392，已全部随落码转正式；终态与门数见 §6.1 收口记录）
 
 - **U1373** shadow worker 收尾异常（`shadow_store.add` 抛错注入）仍终帧可达、连接不悬挂、线程不裸死。
 - **U1374** run worker 在 except 分支内 `finish`/`record_run` 二次抛错时仍发出且只发一个 `__error__` 终帧；`unregister` 必执行。
@@ -289,11 +301,11 @@
 - **U1385** RunStore：begin/finish/list 并发无竞态；终态超 N 条内存有界（running/suspended 不被裁）。
 - **U1386** update embed 不持锁：embed 慢调用期间其他 key 的更新/读取不被阻塞；写入二次确认防并发覆盖。
 - **U1387** demo SQLite：多线程并发写 orders/重播种互不串事务、无 `database is locked` 失败；engine 间相互独立；临时目录随清理释放。
-- **U1388** publish 并发：同图多线程发布版本号连续唯一、无 500（PG 集成门实跑）。
-- **U1389** _safe_record 落库失败时 `logger.exception` 有日志且主流程不被阻断。
-- **U1390** CI `backend-integration`：4 个浏览器用例实跑非 skip（CI 日志可核验），失败可见不回退静默 skip。
-- **U1391** reset gate：prod 且 demo 面关 → 404；面开或非 prod → 现状行为；默认 profile 下既有约 25 处 reset 测试零改动通过。
-- **U1392** 全量门零回归：后端全量 pytest（含 PG 集成 ATLAS_RUN_INTEGRATION=1）、前端 vitest＋oxlint＋tsc＋build 全绿；零新增依赖。
+- **U1388** publish 并发：同图多线程发布版本号连续唯一、无 500（PG 集成门实跑）。✅ `372d1d4`；收口批 5445 PG 门首次实跑 2 例通过（2930 passed/1 skipped）。
+- **U1389** _safe_record 落库失败时 `logger.exception` 有日志且主流程不被阻断。✅ `543a45d`（BoomStore 注入守护 `test_u1389_delivery_store_failure_is_logged_not_swallowed`：ERROR 恰 1 条、主流程仍 in_process；U1392 全量门再背书）。
+- **U1390** CI `backend-integration`：4 个浏览器用例实跑非 skip（CI 日志可核验），失败可见不回退静默 skip。✅ `4ca058a`（本地无 chromium 仍 skip，CI 装 chromium 后实跑）。
+- **U1391** reset gate：prod 且 demo 面关 → 404；面开或非 prod → 现状行为；默认 profile 下既有约 25 处 reset 测试零改动通过。✅ `dce9388`（401→403 AUTH_PASSWORD_CHANGE_REQUIRED→404 鉴权顺序三正反用例）。
+- **U1392** 全量门零回归：后端全量 pytest（含 PG 集成 ATLAS_RUN_INTEGRATION=1）、前端 vitest＋oxlint＋tsc＋build 全绿；零新增依赖。✅ 四门读数见 §6.1（2742/189、PG 2930/1、前端 1003/2、oxlint 0/0、build 过）。
 
 ## 8. 重开判据
 

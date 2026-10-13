@@ -179,6 +179,8 @@ Body 两种形态（`populate_by_name`，两种字段名都收）：
 
 **要真正放掉一个卡住的审批，正确做法是给它一个决策（§3.3），不是取消运行。**
 
+> **实现注记（打包 AR，docs/125 §2.2/§3.1，ADR T36，2026-10-13 收口）**：§3.1「断连不是取消」的承诺在实现上由进程内有界桥接保证——SSE 端点已是 async 生成器（worker 仍是同步 daemon 线程，不占 anyio 工作线程等待），客户端断开只使 `SSEBridge.close()`，worker 后续投帧变 no-op、运行照跑到终态；中间帧有界（deque 1024、满丢最旧），终帧五类独立槽恰好一次。取消语义仍只属于上面的协作式 cancel 端点。
+
 ### 3.6 挂起的 run 没有 REST 续跑端点
 
 今天**没有** `POST /api/runs/{id}/resume` 这类端点。挂起帧（PG 档，migration 029 的 `resumed_at`／`resumed_by`）的续跑权只在这三条路被认领：
