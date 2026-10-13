@@ -18,6 +18,19 @@
 - **零丢失怎么证的**：不是"看着没少"，而是机器对账——取 `git show HEAD:handoff.md` 的 **875 行非空内容**，逐行断言每行都存在于新 handoff **或**归档之中，结果 **0 行缺失**；归档侧另做一次「移入行是否逐字在册」的反向核对（同样 0 缺失）。过程中自己抓到一个 bug 并修掉：Quality gate 的滚出指针原本**每个块都生成了一条**（57 条重复），已合并成一条。
 - **同时补的索引面**：docs/00 §治理规则 5 追加本次做法与"再涨过 ~300KB 就按同样方式再滚、不要手删"的口径＋文档地图新增归档行；handoff「Project documents」与 Recently shipped 底部指针各补一行；docs/00 里一处自己写错的目标链接（指向 docs/126）已改回归档文件。零代码／零迁移／零测试改动。
 
+### 〔落码收口〕打包 AT：D68 机器人试教成图＋D72 操作指引（2026-10-14，用户「那你搞」授权开工；形状权威 [docs/128](docs/128-机器人试教成图与操作指引-D68D72-打包AT-v1批契约设计.md)；用例 [docs/13](docs/13-测试用例清单.md) U1393–U1410 全转正式；[docs/14](docs/14-缓做事项登记表.md) D68/D72 ✅）
+
+- **读码改变了计划的形状**：`RecordingCase.graph` 录制时已冻结整张 Graph JSON（`recording/cases.py:52-70`），steps 只有 `{node_id,node_type,output}`、`EdgeDSL` 无条件 ⇒ D68 是**把冻结快照升格成可编辑草稿＋把写死的业务字面量参数化**（入参通道既有 `{{trigger-1.context.payload.<key>}}`），不是从动作反推图；指引的分支从节点 config 取，不从边取。
+- **六条决策落地**：AT-D1 基准＝快照；**AT-D2 两阶段 promote**（plan 只读出候选 → 人勾选后返草稿，同值多键如 299 既可能是 `amount` 也可能是阈值，机器不替人猜）；AT-D3 替换白名单仅 `tool_call.config.params` 文本位（词边界匹配，非白名单位一律 skipped）；AT-D4 promote **不落库**、保存走既有 `POST /api/graphs`；AT-D5 剪枝缺省关、剪完必试编译且不可编译不产出半成品图；AT-D6 指引＝只读产物、不自动进知识库。
+- **指引脱敏条款修正**：首稿要求"指引再脱一次"，但读码证实 run outputs 已在 `_redact_outputs` 处脱敏（`loader.py:3924/4230/4305`，docstring 明写"明文绝不落录制"），故指引的数据源本身不含明文；U1405 降为特征测试（断言上游脱敏有效＋指引不引入新明文来源）。
+- **〔2026-10-14 实测发现上游脱敏的窄残余并修复〕**：`_redact_sensitive` 原只判整串相等，插值后的长文本（如 `"body": "token=<secret>"`）会漏明文；本批补子串替换（长度≥8 才换，防短值啃坏无关文本），加两条反向门 `tests/test_variable_sources.py::test_u1199b/c`。这是 docs/99 §3 承诺与实现之间的缺口，被 AT 的测试量出。
+- **一个新运行时错误码** `RECORDING_PROMOTE_ACCEPT_UNKNOWN`（422，`params.unknown`）：accept 越表时整请求拒，不静默丢项也不部分应用。同步面：docs/03 索引行、frontend/src/locales/{zh-CN,en-US}/runtime.json（实测 96→97，两档 parity）。
+- **真机端到端**：`scripts/dev/promote_guide_probe.py` **28 PASS／0 FINDING**（录一次真运行 → plan → 勾选 → promote → 存新图 → 发布 → 用不同 order_id 跑到终态 → 取 guide 人工核对）。
+- **四道门**：后端 **2765 passed／189 skipped／0 failed**（+23 为本批新测，基线 2742/189）；前端 vitest **1010 passed／2 skipped**、oxlint **0/0**、build ✓。零新增运行时依赖；无 ADR。
+- **不触碰**：D43/D52（浏览器出向）、D26（回放）、D60 余部；D66 口径守住（recording 侧零第二份输出键表）。
+- **已知遗留**：D78 — prod 档 `/api/graphs/{id}/compile` 缺 registry 会 500（`loader.py:408-411`），影响发布门禁等所有依赖 compile 的路径；修复只需一行（传入 `_runtime_registry(services)`），但超出 AT 范围，另立 D78 登记。
+- 同步面：docs/128 §7 收口记录、docs/13 AT 段、docs/14 D68/D72 ✅＋D78 新登、docs/08 AT 收口块、handoff Active #166 ＋顶部状态、docs/00 文档地图。
+
 ### 〔docs-only 立项〕打包 AT：D68 机器人试教成图＋D72 操作指引（里程碑 A 开工，2026-10-13，docs/128）
 
 - **范围**：[docs/127](docs/127-能力迭代里程碑计划-D68D77排期-打包AT起-v1.md) 里程碑 A＝**D68＋D72 同批**；形状权威 [docs/128](docs/128-机器人试教成图与操作指引-D68D72-打包AT-v1批契约设计.md)；用例 docs/13 U1393–U1410 预留（正向 8＋反向门 10＋收口门）；docs/14 D68／D72 两行 ⬜→🟡（已立契约待落码）。
