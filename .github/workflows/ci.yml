@@ -87,9 +87,15 @@ jobs:
           cache: pip
       - name: Install package
         run: pip install -e ".[dev]"
+      - name: Install Chromium for browser integration
+        # 审查发现 #13（docs/125 §3.7，U1390）：playwright>=1.62 已是主依赖，这里只补浏览器
+        # 二进制与系统库；tests/test_web_browser_integration.py 的 4 个真实 Chromium 用例
+        # （I1 选择器点击 / I2 语义层真实坐标 / I5 缓存短路 / type+observe）随之转实跑，
+        # 不再双层 skip 恒不执行。flaky 必须修测试，不得回退静默 skip。
+        run: playwright install --with-deps chromium
       - name: Apply migrations
         run: python -m scripts.ops.apply_migrations
-      - name: Run PG integration tests
+      - name: Run PG + browser integration tests
         run: pytest
         # docs/63 S3：生产形态 PG 档必须在 CI 每 PR 实跑（含迁移与 audit seq 断言）
 
