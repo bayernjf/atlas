@@ -629,6 +629,17 @@
     "diagnoseSubgraphPlaceholder": "Select diagnose subgraph node",
     "maxAttempts": "Max attempts",
     "continueWhenPlaceholder": "Continue condition (truthy = healed)",
-    "emptyHint": "No graph-level handling configured - runtime errors keep current fail-fast semantics"
+    "emptyHint": "No graph-level handling configured - runtime errors keep current fail-fast semantics",
+    "loopTitle": "Self-running cycle (OODA)",
+    "loopHint": "When on, one trigger runs several cycles: each cycle is a real run and the previous cycle's output can be carried into the next. Any of the three ceilings stops the session. Off by default.",
+    "loopMaxIterations": "Max cycles",
+    "loopMaxWallClock": "Wall clock cap (s)",
+    "loopMaxTokens": "Token cap",
+    "loopCompleteWhenPlaceholder": "Done condition (expression; true ends the session, empty means budgets/stop only)",
+    "loopJudgeRule": "Rule (read the expression above)",
+    "loopJudgeLlm": "LLM judge (asks the model after the rule, needs a prompt)",
+    "loopJudgePromptPlaceholder": "Judge prompt (required when judgeMode=llm)",
+    "loopCarryPlaceholder": "Values carried into the next cycle (one per line: order_id = {{ai-1.decision.action}})",
+    "loopInterval": "Sleep between cycles (s)"
   }
 }

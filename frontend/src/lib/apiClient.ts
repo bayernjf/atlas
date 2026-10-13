@@ -1658,6 +1658,49 @@ export async function getRuns(graphId?: string, limit = 50): Promise<RunRecord[]
   return body.items
 }
 
+// ===================== 自走循环圈会话（docs/130 打包 BN＝D69）=====================
+
+/** 运行列表里与圈有关的两列（`GET /api/runs`，M5b 口径；**非圈运行 0 / ""**）。 */
+export type RunListItem = {
+  runId: string
+  graphId: string
+  status: string
+  startedAt: string | null
+  cycleSeq?: number
+  cycleGroupId?: string
+}
+
+/** 圈会话投影（`GET /api/runs/{run_id}/cycle`）。 */
+export type CycleSessionView = {
+  groupId: string
+  tenantId: string
+  graphId: string
+  seq: number
+  state: 'running' | 'suspended' | 'completed' | 'budget_exhausted' | 'stopped' | 'failed'
+  stopReason: string
+  tokensSpent: number
+  elapsedSeconds: number
+  maxIterations: number
+  maxWallClockSeconds: number
+  maxTokens: number
+  startedAt: string
+  runs: Array<{ runId: string; seq: number; status: string; totalTokens: number }>
+}
+
+export async function getRunsForCycles(limit = 50): Promise<RunListItem[]> {
+  const params = new URLSearchParams({ limit: String(limit) })
+  const body = await request<{ items: RunListItem[] }>(`/api/runs?${params}`)
+  return body.items
+}
+
+export async function getCycleSession(runId: string): Promise<CycleSessionView> {
+  return request(`/api/runs/${encodeURIComponent(runId)}/cycle`)
+}
+
+export async function stopCycleSession(runId: string): Promise<CycleSessionView> {
+  return request(`/api/runs/${encodeURIComponent(runId)}/cycle/stop`, { method: 'POST' })
+}
+
 // docs/33 §4：Trace span 树（递归 children）；列表 RunRecord 不含 spans，trace 端点懒加载。
 export type TraceSpanNode = {
   traceId: string

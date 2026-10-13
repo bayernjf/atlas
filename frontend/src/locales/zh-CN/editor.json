@@ -629,6 +629,17 @@
     "diagnoseSubgraphPlaceholder": "选择诊断子图节点",
     "maxAttempts": "最大尝试次数",
     "continueWhenPlaceholder": "继续条件表达式（为真则视为自愈成功）",
-    "emptyHint": "未配置图级降级/自愈——运行期异常保持现状 fail-fast 语义"
+    "emptyHint": "未配置图级降级/自愈——运行期异常保持现状 fail-fast 语义",
+    "loopTitle": "自主循环（OODA 圈）",
+    "loopHint": "开启后一次触发会连续跑多圈：每圈都是一次真实运行，上一圈的产出可按 carry 注入下一圈；三道预算闸门任一触顶即收手。默认关闭。",
+    "loopMaxIterations": "最多圈数",
+    "loopMaxWallClock": "最长墙钟(秒)",
+    "loopMaxTokens": "最多 token",
+    "loopCompleteWhenPlaceholder": "达成条件（表达式，为真即收工；留空＝只靠预算/停止）",
+    "loopJudgeRule": "规则判定（读上面的表达式）",
+    "loopJudgeLlm": "LLM 判定（规则之外再问一次模型，需填判定提示词）",
+    "loopJudgePromptPlaceholder": "判定提示词（judgeMode=llm 时必填）",
+    "loopCarryPlaceholder": "注入下一圈的键值（每行一条：order_id = {{ai-1.decision.action}}）",
+    "loopInterval": "圈间休眠(秒)"
   }
 }
