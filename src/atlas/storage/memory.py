@@ -212,6 +212,8 @@ class RunStore:
                 "finishedAt": run.get("finishedAt"), "error": run.get("error"),
                 "outputs": run.get("outputs"), "trace": run.get("trace"),
                 "suspension": suspension,
+                # 打包 BN：圈归属两列（缺省 0/''＝非圈运行，与 PG 档投影逐键对齐）
+                "cycleSeq": run.get("cycleSeq", 0), "cycleGroupId": run.get("cycleGroupId", ""),
             }
 
     def list(self, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
@@ -226,6 +228,9 @@ class RunStore:
                     "suspendedAt": item.get("suspendedAt"), "kind": item.get("kind"),
                     "nodeId": item.get("nodeId"), "deadlineAt": item.get("deadlineAt"),
                     "resumeToken": item.get("resumeToken"),
+                    # 打包 BN：圈归属两列（缺省 0/''＝非圈运行）
+                    "cycleSeq": item.get("cycleSeq", 0),
+                    "cycleGroupId": item.get("cycleGroupId", ""),
                 }
                 for item in items[:limit]
             ]
