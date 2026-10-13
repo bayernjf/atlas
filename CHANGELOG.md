@@ -3,6 +3,13 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔docs〕打包 AU 立项＝D70 LLM 用量与成本计量（2026-10-14，用户「搞你自己能推进的」授权；docs-only，零代码）
+
+- **动机**：D70 是 D69（Loop 预算闸门）／D74（智能体成本面板）／D75／D77 的**硬前置**，而数据源今天不存在——`prompt_tokens`/`usage` 在 `src/atlas/`＋`tests/` 全零命中；**六个** `litellm.completion` 调用点（decision／condition_classifier／`structured._call_llm`〔四消费方共用〕／nl_generate／reflection adapter）全部丢弃回包 usage；运行侧也没有 run→LLM 归属通道（`run_graph` 无 run_id 形参）。
+- **七条决策**（形状权威 [docs/129](docs/129-LLM用量与成本计量-D70-打包AU-v1批契约设计.md)）：AU-D1 **只计 token 不做货币计价**（单价属外部资源，伪造比没有更坏）；AU-D2 **按 docs/127 B-P1 推荐拍板＝落 PG 表 049＋内存 ring 2000**（成本账跨重启不可丢，且 C 的预算闸门要读历史）；AU-D3 六点同源 helper `llm/metering.py`（一件事一个实现）；AU-D4 **归属走 contextvar、不改六 Protocol 签名**（API run 入口／loader 节点执行处／nl_generate·反思三处设置，无上下文＝不记录）；AU-D5 失败调用也记 error 条、不记正文；AU-D6 只读两端点＋Usage.tsx；AU-D7 **D70 不翻 ✅**（计价／预算闸门／agent 归因／retention 四项余部照旧）。
+- **验收预留 U1411–U1426**：含跨租户隔离（摘 `WHERE tenant_id` 必须红）、入口上下文设置（摘设置 ⇒ 归属例立刻红）、计量旁路性（store 炸 ⇒ run 仍 completed）三条反向门＋一次真机端到端。
+- 同步面：docs/14 D70 行翻 🟡、docs/13 打包 AU 小节、docs/08 §八立项块、docs/00 地图、handoff Active #169。零迁移／零新依赖／无 ADR（落码另批，九步原子序见 docs/129 §6）。
+
 ### 〔缺陷修复〕D78：prod 档 compile 端点缺 registry 恒 500，一行注入＋反向门收口（2026-10-14）
 
 - **症状与影响面**：`POST /api/graphs/{id}/compile` 未注入 registry，prod 且未开演示面时 `_resolve_registry(None)` raise（`loader.py:408-411`）⇒ 端点恒 500。**不止编译端点本身**——发布门禁、影子运行预检等所有走 compile 的路径在 prod 全断。
