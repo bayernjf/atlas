@@ -377,11 +377,17 @@ def test_u1406_other_tenants_case_is_404():
     graph_id = _save_graph(_trial_graph())
     case_id = _create_case(graph_id)
 
-    for path in (
-        f"/api/recordings/{case_id}/promote/plan",
-        f"/api/recordings/{case_id}/guide",
-    ):
-        assert client.get(path, headers=ADMIN_B).status_code == 404, path
+    # 正面控制：同租户打得通 200，下面那两个 404 才是租户隔离在工作。少了这一行，
+    # "谁都找不到这个用例"（创建失败、路由没接）也能让两条 404 断言满意通过。
+    assert client.post(f"/api/recordings/{case_id}/promote/plan", headers=ADMIN).status_code == 200
+    # 每条路径都用它自己的方法打：GET 打 POST-only 路径在 starlette 1.6 回 404、1.8 回
+    # 405（CI 与本机的实测差值），那种 404 证明不了租户隔离，只证明路由没进处理函数。
+    cross = client.post(f"/api/recordings/{case_id}/promote/plan", headers=ADMIN_B)
+    assert cross.status_code == 404
+    # 这个 404 必须由处理函数报（"录制用例不存在：<id>"）。路由层的 404 detail 是
+    # "Not Found"，拿它当租户隔离＝把"这条路由没接"读成"隔离生效"。
+    assert case_id in str(cross.json()["detail"])
+    assert client.get(f"/api/recordings/{case_id}/guide", headers=ADMIN_B).status_code == 404
     assert (
         client.post(
             f"/api/recordings/{case_id}/promote", json={"accept": []}, headers=ADMIN_B
