@@ -140,16 +140,16 @@ def test_u1109_builtin_crud_masked_and_resolve(monkeypatch):
     store = _store_with()
     sealed = provider.encrypt("sk-secret-ABCD")
 
-    store.set_builtin(_cfg("builtin", "openai/agnes-2.5-flash", api_key_enc=sealed))
+    store.set_builtin(_cfg("builtin", "openai/agnes-3.0-flash", api_key_enc=sealed))
     view = store.get_builtin().public_view()
-    assert view["model"] == "openai/agnes-2.5-flash"
+    assert view["model"] == "openai/agnes-3.0-flash"
     assert "sk-secret-ABCD" not in str(view)
     assert view["apiKey"].endswith("ABCD") or view["apiKey"] != ""
 
     # enabled 配置命中 → 返回内置（不进 env）
     resolved = resolve_default_model(store, "tenant-a")
     assert resolved is not None
-    assert resolved.model == "openai/agnes-2.5-flash"
+    assert resolved.model == "openai/agnes-3.0-flash"
 
 
 def test_u1109_enabled_false_falls_back_to_env(monkeypatch, fresh_store):

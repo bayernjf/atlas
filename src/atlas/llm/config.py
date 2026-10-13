@@ -38,7 +38,7 @@ class ModelConfig:
     """一条 LLM 模型配置；api_key_enc 为 AES-GCM 信封，明文只活在调用点内存。"""
 
     mode: ModelMode
-    model: str  # litellm 模型名，如 openai/agnes-2.5-flash
+    model: str  # litellm 模型名，如 openai/agnes-3.0-flash
     api_key_enc: str = ""  # AES-GCM 信封（enc$v1$...）；空＝无 key
     base_url: str | None = None  # litellm base_url（如 openai 兼容网关）
     enabled: bool = True

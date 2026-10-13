@@ -40,7 +40,7 @@
 ## 2. 范围（落码批做）
 
 1. **配置模型与存储**：新增 `src/atlas/llm/config.py`＋两档 store（内存/PG）：
-   - `ModelConfig`：`mode: "builtin" | "byok"`、`model: str`（litellm 模型名，如 `openai/agnes-2.5-flash`）、`api_key_enc: str`（AES-GCM 信封，复用 docs/32 T26 的 secrets 工具，**不明文**）、`base_url: str | None`、`enabled: bool`、`updated_by`/`updated_at`。
+   - `ModelConfig`：`mode: "builtin" | "byok"`、`model: str`（litellm 模型名，如 `openai/agnes-3.0-flash`）、`api_key_enc: str`（AES-GCM 信封，复用 docs/32 T26 的 secrets 工具，**不明文**）、`base_url: str | None`、`enabled: bool`、`updated_by`/`updated_at`。
    - **内置**：全局一份（`ModelConfigStore.get_builtin()`）；**BYOK**：per-tenant 一份（`get_byok(tenant_id)`）。
    - 挂 `TenantServices.model_config`（照 `connection_service` 模式；reset 不清，PG 档持久化）。
 2. **消费点改造（4 处）**：`decision.py`/`condition_classifier.py`/`nl_generate.py`/`reflection/adapter.py` 的 `get_*()` 改为**先查配置再落 env**——优先级：显式传参 > 租户 BYOK > 内置 > env。签名保持向后兼容（无租户上下文时回退现状）。

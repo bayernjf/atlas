@@ -133,7 +133,7 @@ export const conditionUiSchema: UiSchema = {
     'branches[].description': '用自然语言描述该分支，如：客户语气强烈、明确要求投诉升级（≤300 字符）',
     'branches[].target': '目标节点（需先在画布连线）',
     defaultTarget: '选择默认目标节点',
-    model: '如：openai/agnes-2.5-flash（留空走环境默认 LITELLM_MODEL）',
+    model: '如：openai/agnes-3.0-flash（留空走环境默认 LITELLM_MODEL）',
     confidenceThreshold: '如：0.6（留空＝不启用阈值）',
   },
   rows: {
