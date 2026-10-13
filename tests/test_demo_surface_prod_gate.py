@@ -365,6 +365,95 @@ def test_u910c_platform_auth_routes_are_untouched_by_the_gate(monkeypatch):
     assert client.get("/api/schedules").status_code == 401
 
 
+# --- U1391 /api/demo/reset 环境门（docs/125 §3.7，审查发现 #14） ------------
+
+def _admin_token() -> str:
+    from atlas.iam.deps import session_store
+    from atlas.iam.principals import authenticate
+
+    principal = authenticate("admin-a", "admin123")
+    assert principal is not None
+    return session_store.issue(principal)
+
+
+def test_u1391_demo_reset_is_404_under_prod_when_surface_closed(monkeypatch):
+    """prod＋面关：reset 对登录管理员也必须 404；门始终在 administer（含 U1146 轮换门）之后。"""
+    from atlas.iam.deps import session_store, user_store
+
+    monkeypatch.setenv("ATLAS_ENV", "prod")
+    monkeypatch.delenv("ATLAS_ENABLE_DEMO_MOCK", raising=False)
+    assert _demo_mock_enabled() is False
+
+    # 1) 无凭证：administer 依赖先挡 → 401，环境门根本不跑到。
+    assert client.post("/api/demo/reset").status_code == 401, "administer 必须先于环境门"
+
+    # 2) 引导口令会话：U1146 首登改密门在 require() 依赖内、先于端点体 → 403 而非 404。
+    bootstrap = _admin_token()
+    try:
+        blocked = client.post(
+            "/api/demo/reset", headers={"Authorization": f"Bearer {bootstrap}"}
+        )
+        assert blocked.status_code == 403, blocked.text
+        assert blocked.json()["detail"]["code"] == "AUTH_PASSWORD_CHANGE_REQUIRED"
+    finally:
+        session_store.revoke(bootstrap)
+
+    # 3) 真实部署形态（本人已改密）：过了 administer 才轮到环境门 → 404，与同族 mock 路由同形。
+    # 不能真调 set_password 盖轮换位：它会 revoke admin-a 全部会话，而别的测试模块
+    # （test_api_schedules 等）在 pytest 收集期就签发了模块级 Bearer 令牌，真改密会跨文件 401。
+    # 改为打桩 user_store.get 返回带轮换位的账号副本；monkeypatch 用例结束自动还原，零全局污染。
+    real_get = user_store.get
+
+    def _rotated_get(tenant_id: str, username: str):
+        account = real_get(tenant_id, username)
+        if account is not None and username == "admin-a":
+            return account.model_copy(
+                update={"password_rotated_at": "2026-01-01T00:00:00+00:00"}
+            )
+        return account
+
+    monkeypatch.setattr(user_store, "get", _rotated_get)
+    token = _admin_token()
+    try:
+        response = client.post(
+            "/api/demo/reset", headers={"Authorization": f"Bearer {token}"}
+        )
+    finally:
+        session_store.revoke(token)
+    assert response.status_code == 404, response.text
+    assert response.json().get("detail") == "Not Found"
+
+
+def test_u1391_demo_reset_reopens_with_the_single_switch_under_prod(monkeypatch):
+    """prod＋ATLAS_ENABLE_DEMO_MOCK=1：唯一开闸方式同样放开 reset（登录管理员 200）。"""
+    from atlas.iam.deps import session_store
+
+    monkeypatch.setenv("ATLAS_ENV", "prod")
+    monkeypatch.setenv("ATLAS_ENABLE_DEMO_MOCK", "1")
+    assert _demo_mock_enabled() is True
+    token = _admin_token()
+    try:
+        response = client.post("/api/demo/reset", headers={"Authorization": f"Bearer {token}"})
+    finally:
+        session_store.revoke(token)
+    assert response.status_code == 200, response.text
+    assert response.json() == {"reset": True}
+
+
+def test_u1391_demo_reset_still_works_in_dev_for_admin():
+    """默认 dev profile：登录管理员 reset 语义零变化（既有约 25 处 TestClient 调用的锚点）。"""
+    from atlas.iam.deps import session_store
+
+    assert _demo_mock_enabled() is True
+    token = _admin_token()
+    try:
+        response = client.post("/api/demo/reset", headers={"Authorization": f"Bearer {token}"})
+    finally:
+        session_store.revoke(token)
+    assert response.status_code == 200, response.text
+    assert response.json() == {"reset": True}
+
+
 # --- U911 非 prod 零变化 ---------------------------------------------------
 
 def test_u911_dev_profile_keeps_the_trial_flow():

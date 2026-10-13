@@ -6346,6 +6346,11 @@ def demo_reset(
     admin only（04 §5.14）。反馈与录制用例为测试资产，按租户保留不在此清除
     （04 §5.11；用例图已快照进自身）。
     """
+    # 审查发现 #14（docs/125 §3.7，U1391）：reset 是核弹级租户状态操作，prod 面关时
+    # 与同族 demo mock 路由逐字同形 fail-closed 404。administer 鉴权在依赖注入期先跑
+    # （匿名先拿 401），门在其后（登录管理员在面关时拿 404，不暴露面是否存在）。
+    if not _demo_mock_enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
     tenant_registry.reset_tenant(principal.tenant_id)
     # docs/68 §1 D-4：图被清掉而注册项还在，就会对着一张不存在的图空转派发。
     schedule_store().reset_tenant(principal.tenant_id)
