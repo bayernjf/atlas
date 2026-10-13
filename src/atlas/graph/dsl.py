@@ -163,6 +163,11 @@ class GraphDSL(BaseModel):
     # 纯超集：缺省 None＝整体不启用（现状 fail-fast）；落码形状见 docs/123。
     globalErrorHandler: dict[str, Any] | None = None
     selfHealing: dict[str, Any] | None = None
+    # 打包 BN（docs/130 C-D2）：图级自走循环配置。纯超集——缺省 None＝**不启用**，
+    # 现状逐字不变（这是本批唯一的运行期行为变更，故默认关）。
+    # 形状：enabled/maxIterations/maxWallClockSeconds/maxTokens/completeWhen/
+    #       judgeMode/judgePrompt/carry/intervalSeconds；校验见 _validate_loop_config。
+    loop: dict[str, Any] | None = None
 
 
 class _Issues:
@@ -402,6 +407,8 @@ def validate_graph_report(
     # state_machine 节点配置编译期校验（缺省 None 不触发，保持现状逐字兼容）。
     issues.extend(_validate_global_error_handler(graph, node_ids))
     issues.extend(_validate_self_healing(graph, node_ids, node_types))
+    # 打包 BN（docs/130 C-D2/§3.1）：图级 loop 配置校验（缺省 None 不触发）。
+    issues.extend(_validate_graph_loop_config(graph))
     for node in graph.nodes:
         if node.type == "state_machine":
             issues.extend(_validate_state_machine_config(node))
@@ -1418,6 +1425,101 @@ def _validate_self_healing(
             "/selfHealing/continueWhen",
             code="SELF_HEALING_INVALID",
             params={},
+        )
+    return issues
+
+
+#: 打包 BN（docs/130 §3.1）：图级 loop 配置的合法区间与枚举（缺省值＝缺省即生效）。
+#: 命名带 GRAPH_ 前缀以免与既有 `_validate_loop_config`（**循环节点** config 的校验）
+#: 撞名——同名函数在本仓已经发生过一次（后者先存在，Python 静默覆盖，全量门当場红）。
+GRAPH_LOOP_JUDGE_MODES = ("rule", "llm")
+GRAPH_LOOP_MAX_ITERATIONS = (1, 50)
+GRAPH_LOOP_MAX_WALL_CLOCK = (30, 86400)
+GRAPH_LOOP_MAX_TOKENS = (1, 10_000_000)
+GRAPH_LOOP_INTERVAL_SECONDS = (1, 3600)
+
+
+def _validate_graph_loop_config(graph: GraphDSL) -> list[Issue]:
+    """图级 loop 顶层配置编译期校验（docs/130 C-D2/§3.1）。
+
+    区间三闸门、`judgeMode` 白名单＋`llm` 必带 `judgePrompt`、`carry` 键值形态、
+    `intervalSeconds` 区间，以及 **`completeWhen` 表达式在编译期过一次求值器**
+    （复用 condition 引擎的 `validate_expression`，零新语法）。缺省 None 不触发。
+    """
+    issues: list[Issue] = []
+    loop = graph.loop
+    if loop is None:
+        return issues
+    if not isinstance(loop, dict):
+        issues.append((
+            "loop 必须是对象", None, "LOOP_CONFIG_INVALID", {"owner": "graph"},
+        ))
+        return issues
+
+    def add(message: str, pointer: str | None, params: dict[str, Any] | None = None) -> None:
+        issues.append((message, pointer, "LOOP_CONFIG_INVALID", {"owner": "graph", **(params or {})}))
+
+    def _int_in(name: str, bounds: tuple[int, int]) -> None:
+        value = loop.get(name)
+        if value is None:
+            return
+        if (
+            not isinstance(value, int)
+            or isinstance(value, bool)
+            or not bounds[0] <= value <= bounds[1]
+        ):
+            add(
+                f"loop.{name} 必须是 {bounds[0]}-{bounds[1]} 的整数",
+                f"/loop/{name}",
+                {name: value},
+            )
+
+    enabled = loop.get("enabled")
+    if enabled is not None and not isinstance(enabled, bool):
+        add("loop.enabled 必须是布尔值", "/loop/enabled", {"enabled": enabled})
+
+    _int_in("maxIterations", GRAPH_LOOP_MAX_ITERATIONS)
+    _int_in("maxWallClockSeconds", GRAPH_LOOP_MAX_WALL_CLOCK)
+    _int_in("maxTokens", GRAPH_LOOP_MAX_TOKENS)
+    _int_in("intervalSeconds", GRAPH_LOOP_INTERVAL_SECONDS)
+
+    judge_mode = loop.get("judgeMode")
+    if judge_mode is not None:
+        if judge_mode not in GRAPH_LOOP_JUDGE_MODES:
+            add(
+                f"loop.judgeMode 必须是 {' / '.join(GRAPH_LOOP_JUDGE_MODES)} 之一",
+                "/loop/judgeMode",
+                {"judgeMode": judge_mode},
+            )
+        elif judge_mode == "llm":
+            prompt = loop.get("judgePrompt")
+            if not isinstance(prompt, str) or not prompt.strip():
+                add(
+                    "loop.judgeMode=\"llm\" 时必须给非空 judgePrompt",
+                    "/loop/judgePrompt",
+                    {},
+                )
+
+    complete_when = loop.get("completeWhen")
+    if complete_when is not None:
+        if not isinstance(complete_when, str):
+            add("loop.completeWhen 必须是表达式字符串", "/loop/completeWhen", {})
+        else:
+            from atlas.graph.conditions import validate_expression
+
+            for message in validate_expression(complete_when):
+                add(f"loop.completeWhen 非法：{message}", "/loop/completeWhen", {})
+
+    carry = loop.get("carry")
+    if carry is not None and (
+        not isinstance(carry, dict)
+        or not all(isinstance(k, str) and k.strip() for k in carry)
+        or not all(isinstance(v, str) for v in carry.values())
+    ):
+        add(
+            "loop.carry 必须是「非空键 → 字符串值」的对象（值走既有 {{路径}} 插值）",
+            "/loop/carry",
+            {},
         )
     return issues
 
