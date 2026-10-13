@@ -35,7 +35,9 @@ logger = logging.getLogger(__name__)
 #: 超出覆盖最旧，不静默扩容——成本账的权威档是 PG，内存档只是 Demo/无 PG 形态）。
 USAGE_RING_SIZE = 2000
 
-#: 八个调用点身份（docs/129 §3.3 表；新增调用点必须在此登记，禁裸字符串）。
+#: 九个调用点身份（docs/129 §3.3 表；新增调用点必须在此登记，禁裸字符串）。
+#: `cycle_judge`＝打包 BN（docs/130 C-D4）的圈终止判定二段，**不复用** content_generation
+#: ——混用会把圈判定成本记到别的面，按 caller 归因就废了。
 CallerKind = Literal[
     "ai_decision",
     "condition_llm",
@@ -45,6 +47,7 @@ CallerKind = Literal[
     "memory_auto_extract",
     "nl_generate",
     "reflection_summarize",
+    "cycle_judge",
 ]
 
 UsageStatus = Literal["ok", "error"]

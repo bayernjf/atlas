@@ -365,6 +365,8 @@ def test_single_litellm_exit_point_guard():
     """AU-D3 机检：src 内 litellm.completion 调用点恰好一处（metering.py）。
 
     新增调用点必须经 `complete_with_usage`，否则用量账会静默缺一块。
+    打包 BN 起 metering.py 有增删（第九个 caller 身份 cycle_judge），故按文件断言、
+    不钉行号——钉行号会让任何上游改动都变成"守护红了"的噪音。
     """
     from pathlib import Path
 
@@ -373,4 +375,5 @@ def test_single_litellm_exit_point_guard():
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if "litellm.completion(" in line and not line.strip().startswith("#"):
                 hits.append(f"{path}:{lineno}")
-    assert hits == ["src/atlas/llm/metering.py:334"], hits
+    assert len(hits) == 1, hits
+    assert hits[0].startswith("src/atlas/llm/metering.py:"), hits

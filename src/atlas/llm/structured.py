@@ -90,6 +90,39 @@ def _call_llm(
     return content
 
 
+def call_structured_json(
+    prompt: str,
+    *,
+    model: str,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    caller: str,
+    max_tokens: int = 800,
+    temperature: float = 0,
+) -> str:
+    """**通用**结构化 JSON 出口（打包 BN 的圈终止判定用它，docs/130 C-D4）。
+
+    与四消费方共用 `_call_llm` 这一个 litellm 出口（AU-D3 单点纪律）——所以圈判定的
+    成本也自动进 AU 的账，caller 记 `cycle_judge`。
+    """
+    return _call_llm(
+        prompt,
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        caller=caller,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+
+
+def resolve_model_for_structured(
+    tenant_id: str | None, model: str | None, *, caller: str
+) -> tuple[str, str | None, str | None]:
+    """`_resolve_model` 的公开出口（跨包调用不碰私有名；语义逐字相同）。"""
+    return _resolve_model(tenant_id, model, caller=caller)
+
+
 def _parse_json(content: str) -> dict[str, Any] | None:
     try:
         match = _JSON_RE.search(content)
