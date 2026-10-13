@@ -124,17 +124,28 @@ def tokens_for_runs(services: Any, run_ids: list[str]) -> int:
 
 
 def render_carry(carry: dict[str, str], context: dict[str, Any]) -> dict[str, Any]:
-    """把 carry 声明的 `{{路径}}` 对本圈 context 求值（复用既有插值器，零新语法）。"""
+    """把 carry 声明的 `{{路径}}` 对本圈 context 求值（复用既有插值器，零新语法）。
+
+    **解析不出来的键直接不带**（而不是把 `{{no.such.path}}` 这种字面占位符塞给下一圈）：
+    下游节点拿到字面占位符会以为那是数据——那是"伪造事实"，比少一个键坏得多。
+    """
     if not carry:
         return {}
-    from atlas.graph.loader import interpolate
+    from atlas.graph.interpolation import render_mapping_value
 
     rendered: dict[str, Any] = {}
     for key, template in carry.items():
         try:
-            rendered[key] = interpolate(str(template), context)
+            value = render_mapping_value(str(template), context)
         except Exception as exc:  # noqa: BLE001 - 单键坏不拖垮整圈
             logger.warning("cycle carry 键 %s 插值失败（本圈不带该键）：%s", key, exc)
+            continue
+        if isinstance(value, str) and "{{" in value and "}}" in value:
+            logger.warning(
+                "cycle carry 键 %s 的路径在本圈取不到值（%s），本圈不带该键", key, value
+            )
+            continue
+        rendered[key] = value
     return rendered
 
 
@@ -210,7 +221,9 @@ def run_cycle_session(
             reg.finish(session.group_id, state="failed", stop_reason=f"run_{outcome.status}")
             break
         # ③ 规则优先的终止判定（C-D4）
-        if _judge_complete(config, outcome, tenant_id=tenant_id, graph_id=graph_id):
+        if _judge_complete(
+            config, outcome, services=services, tenant_id=tenant_id, graph_id=graph_id
+        ):
             reg.finish(session.group_id, state="completed", stop_reason="complete_when")
             break
         # ④ 三道预算闸门（C-D3）——按**已完成的圈数**（= step.seq）判
@@ -220,10 +233,16 @@ def run_cycle_session(
             logger.info("cycle 会话预算触顶：group=%s 闸门=%s 已完成 %s 圈",
                         session.group_id, gate, step.seq)
             break
-        # ⑤ 发下一圈的号 + carry 注入（C-D7：缺省无 carry ＝ 原样起跑）
+        # ⑤ 人叫停**整条圈**（C-D8 的 stop 端点）⇒ 不开下一圈。
+        # 这条检查必须在开新圈之前：少了它，"停整条圈"只停得下一圈，人点了还在跑。
+        if session.is_stopped():
+            logger.info("cycle 会话已被叫停，不再开新圈：group=%s 已完成 %s 圈",
+                        session.group_id, step.seq)
+            break
+        # ⑥ 发下一圈的号 + carry 注入（C-D7：缺省无 carry ＝ 原样起跑）
         session.seq = step.seq + 1
         current_inputs = next_cycle_inputs(config, current_inputs, outcome)
-        # ⑥ 圈间间隔（可选；缺省 0＝不休眠）
+        # ⑦ 圈间间隔（可选；缺省 0＝不休眠）
         interval = int(config["intervalSeconds"])
         if interval > 0:
             sleep(float(interval))
@@ -236,23 +255,38 @@ def run_cycle_session(
 
 
 def _judge_complete(
-    config: dict[str, Any], outcome: CycleOutcome, *, tenant_id: str, graph_id: str
+    config: dict[str, Any], outcome: CycleOutcome, *,
+    services: Any, tenant_id: str, graph_id: str,
 ) -> bool:
-    """终止判定：规则优先（`completeWhen`），LLM 仅在显式开启时作二段（C-D4）。"""
+    """终止判定：规则优先（`completeWhen`），LLM 仅在显式开启时作二段（C-D4）。
+
+    **判定那一次 LLM 调用也要计量**：判定发生在 `run_graph` 返回**之后**，此时运行入口
+    设在 run 体内的 usage 上下文已经退出——所以这里自己补一段上下文（挂本圈 run_id），
+    否则圈判定的成本会从 AU 的账上漏掉（那正是打包 AU 建立按 caller 归因的意义所在）。
+    """
+    from atlas.llm.metering import usage_context
+
     expression = str(config.get("completeWhen") or "")
     context = {"global": outcome.variables or {}, **(outcome.outputs or {})}
-    if expression.strip():
-        if evaluate_complete_when(expression, context):
-            return True
-        # 规则说"还没成"时，若运营显式开了 LLM 二段，再问一次模型（成本进 AU 的账）。
-        if config.get("judgeMode") == "llm" and str(config.get("judgePrompt") or "").strip():
+    llm_enabled = (
+        config.get("judgeMode") == "llm" and str(config.get("judgePrompt") or "").strip()
+    )
+
+    def _llm_second_stage() -> bool:
+        store = getattr(services, "usage_store", None)
+        with usage_context(
+            tenant_id, run_id=outcome.run_id, graph_id=graph_id, store=store
+        ):
             return llm_judge(
                 str(config["judgePrompt"]), context, tenant_id=tenant_id, model=None
             )
-        return False
-    if config.get("judgeMode") == "llm" and str(config.get("judgePrompt") or "").strip():
-        return llm_judge(str(config["judgePrompt"]), context, tenant_id=tenant_id, model=None)
-    return False
+
+    if expression.strip():
+        if evaluate_complete_when(expression, context):
+            return True
+        # 规则说"还没成"时，若运营显式开了 LLM 二段，再问一次模型。
+        return _llm_second_stage() if llm_enabled else False
+    return _llm_second_stage() if llm_enabled else False
 
 
 def next_cycle_inputs(
