@@ -30,6 +30,7 @@ import { ApprovalCardGate } from '../components/approval/CardRenderer'
 import { ReleaseModal } from '../components/release/ReleaseModal'
 import { RolloutModal } from '../components/release/RolloutModal'
 import { ShadowRunModal } from '../components/shadow/ShadowRunModal'
+import { PromoteGuideModal } from '../components/promote/PromoteGuideModal'
 import { roleCan, type Principal } from '../lib/auth'
 import { useTranslation } from '../locales'
 import { useEditorStore } from '../store/editorStore'
@@ -290,6 +291,9 @@ export function Editor({
   const [editInputsText, setEditInputsText] = useState('')
   const [editError, setEditError] = useState<string | null>(null)
   const [savingEdit, setSavingEdit] = useState(false)
+  // 打包 AT（docs/128）：用例 → 试教成图 / 操作指引。存成新流程后直接进画布，
+  // 因为 promote 不落库（AT-D4），画布是这份草稿唯一的去处。
+  const [promoteCase, setPromoteCase] = useState<{ id: string; name: string } | null>(null)
   const [pausedFrame, setPausedFrame] = useState<PausedFrame | null>(null)
   const [resumeBusy, setResumeBusy] = useState<DebugAction | null>(null)
   const [varFilter, setVarFilter] = useState('')
@@ -1111,6 +1115,19 @@ export function Editor({
     }
   }
 
+  async function openPromotedDraft(graphId: string) {
+    try {
+      const graph = await getGraph(graphId)
+      loadGraph(graph)
+      setDraftGraphId(graphId)
+      setPublishedRef(null)
+      setRunTarget('draft')
+      appendLog(t('promote.saved', { graphId }))
+    } catch (error) {
+      appendLog(error instanceof Error ? error.message : String(error))
+    }
+  }
+
   async function toggleWizard(rec: RecordingSummary) {
     setRecordingError(null)
     if (wizardOpenId === rec.id) {
@@ -1719,6 +1736,12 @@ export function Editor({
                     </Button>
                     <Button
                       type="link"
+                      onClick={() => setPromoteCase({ id: rec.id, name: rec.name })}
+                    >
+                      {t('recording.promote')}
+                    </Button>
+                    <Button
+                      type="link"
                       loading={loadingEditId === rec.id}
                       onClick={() =>
                         editingId === rec.id ? cancelEdit() : openEdit(rec)
@@ -2198,6 +2221,14 @@ export function Editor({
           </Space>
         </Card>
       )}
+      <PromoteGuideModal
+        key={promoteCase?.id ?? 'closed'}
+        open={promoteCase !== null}
+        caseId={promoteCase?.id ?? null}
+        caseName={promoteCase?.name ?? ''}
+        onClose={() => setPromoteCase(null)}
+        onSaved={openPromotedDraft}
+      />
       <ReleaseModal
         open={releaseOpen}
         graphId={releaseGraphId}

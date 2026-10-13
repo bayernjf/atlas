@@ -94,5 +94,6 @@
   "SECRET_UNAVAILABLE": "Secret {{name}} is unavailable (missing or cannot be decrypted)",
   "APPROVAL_NOT_ASSIGNED": "该审批仅限指定审批人处理",
   "LLM_STRUCTURED_UNAVAILABLE": "LLM 结构化节点暂不可用：未配置可用模型（LITELLM_MODEL/OPENAI_API_KEY）或供应商不可达，节点已失败",
-  "MESSAGE_TEMPLATE_NAME_CONFLICT": "消息模板名称已存在：{{name}}"
+  "MESSAGE_TEMPLATE_NAME_CONFLICT": "消息模板名称已存在：{{name}}",
+  "RECORDING_PROMOTE_ACCEPT_UNKNOWN": "勾选的替换候选不在本次提议里：{{unknown}}；整个请求已拒绝，图未改动"
 }

@@ -141,9 +141,14 @@ from atlas.monitoring.rule_user_store import RuleTemplateNameConflict
 from atlas.monitoring.alerts import validate_rules
 from atlas.monitoring.reports import aggregate_runs
 from atlas.recording import (
+    PromoteRequest,
+    PromoteRequestError,
     RecordingCreateRequest,
     RecordingUpdateRequest,
     ReplayRequest,
+    apply_promotion,
+    plan_promotion,
+    render_guide,
     build_condition_script,
     build_tool_mocks,
     clock_anchor,
@@ -4175,6 +4180,93 @@ def list_recordings(
             for case in services_for(principal).recording_store.list()
         ]
     }
+
+
+def _promote_compile(
+    services: TenantServices, graph: dict[str, Any], *, graph_id: str
+) -> dict[str, Any]:
+    """对草稿试编译：只回报，不写库（docs/128 AT-D4／AT-D5）。"""
+    try:
+        compile_graph(
+            parse_graph(graph),
+            graph_id=graph_id,
+            graph_resolver=_tenant_graph_resolver(services),
+            registry=_runtime_registry(services),
+        )
+    except GraphValidationError as exc:
+        return {
+            "ok": False,
+            "issues": list(exc.errors),
+            "codes": list(exc.codes),
+            "params": list(exc.params),
+            "locations": list(exc.locations),
+        }
+    return {"ok": True, "issues": [], "codes": [], "params": [], "locations": []}
+
+
+@app.post("/api/recordings/{case_id}/promote/plan")
+def plan_recording_promotion(
+    case_id: str, principal: Principal = Depends(require("operate"))
+) -> dict[str, Any]:
+    """试教成图的第一阶段（docs/128 §3.1）：只读地提议替换，一个字节都不写。"""
+    services = services_for(principal)
+    case = services.recording_store.get(case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail=f"录制用例不存在：{case_id}")
+    plan = plan_promotion(case)
+    probe = apply_promotion(
+        case, accept=[item["id"] for item in plan["substitutions"]]
+    )["graph"]
+    plan["compile"] = _promote_compile(
+        services, probe, graph_id=case.graph_id or "recording-draft"
+    )
+    return plan
+
+
+@app.post("/api/recordings/{case_id}/promote")
+def promote_recording(
+    case_id: str,
+    request: PromoteRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """试教成图的第二阶段（docs/128 §3.2）：应用人勾选的替换，返回草稿；**不落库**。"""
+    services = services_for(principal)
+    case = services.recording_store.get(case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail=f"录制用例不存在：{case_id}")
+    try:
+        result = apply_promotion(
+            case, accept=request.accept, prune_to_path=request.pruneToPath
+        )
+    except PromoteRequestError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "RECORDING_PROMOTE_ACCEPT_UNKNOWN",
+                "message": str(exc),
+                "params": {"unknown": exc.unknown},
+            },
+        ) from None
+    name = request.name or f"{case.name}（来自用例 {case.id}）"
+    compile = _promote_compile(
+        services, result["graph"], graph_id=case.graph_id or "recording-draft"
+    )
+    if not compile["ok"]:
+        return {"graph": None, "name": name, "applied": result["applied"], "compile": compile}
+    return {"graph": result["graph"], "name": name, "applied": result["applied"], "compile": compile}
+
+
+@app.get("/api/recordings/{case_id}/guide")
+def recording_guide(
+    case_id: str, lang: str = "zh", principal: Principal = Depends(require("read"))
+) -> dict[str, Any]:
+    """业务操作指引（docs/128 §3.3）：只读产物，不落库、不自动进知识库（AT-D6）。"""
+    services = services_for(principal)
+    case = services.recording_store.get(case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail=f"录制用例不存在：{case_id}")
+    return render_guide(case, lang)
+
 
 
 @app.get("/api/recordings/{case_id}")

@@ -152,7 +152,30 @@
     "defaultNameTime": "Recording {{time}}",
     "saved": "Recorded case saved: {{id}} ({{steps}} steps)",
     "stepDiffKeys": " (diff keys: {{keys}})",
-    "editRequired": "Please change at least the name or the inputs"
+    "editRequired": "Please change at least the name or the inputs",
+    "promote": "Promote / guide"
+  },
+  "promote": {
+    "title": "Promote case {{name}} to a draft flow",
+    "tabPromote": "Promote to draft",
+    "tabGuide": "Operation guide",
+    "intro": "The machine only proposes — nothing is applied until you tick it. These are the spots it would parameterize.",
+    "proposals": "Can parameterize ({{count}})",
+    "noProposals": "Nothing can be parameterized safely (ambiguous value, or not a replaceable position).",
+    "ambiguous": "It will not guess ({{count}})",
+    "ambiguousHint": "One literal matches several input keys — you decide which. Unticked means unchanged.",
+    "skipped": "Not replaced ({{count}})",
+    "prune": "Keep only the walked path (will drop {{dropped}} nodes)",
+    "planNotCompilable": "Adopting everything still fails to compile, so no draft is produced.",
+    "staleSelection": "Your selection is stale. Close and reopen the candidate table.",
+    "compileFailed": "The draft does not compile; no half-made graph was produced.",
+    "save": "Save as new flow",
+    "close": "Close",
+    "saved": "Draft flow saved from recording case: {{graphId}}",
+    "guideLoad": "Build operation guide",
+    "guideDownload": "Download Markdown",
+    "guideFromPath": "Written from the path this case actually ran",
+    "guideFromGraph": "Written from the flow structure (no step output recorded)"
   },
   "approval": {
     "title": "Human approval request",
