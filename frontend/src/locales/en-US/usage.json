@@ -1,0 +1,55 @@
+{
+  "title": "LLM usage",
+  "header": {
+    "back": "Back",
+    "refresh": "Refresh"
+  },
+  "notice": {
+    "title": "Usage metering (tokens only, no pricing)",
+    "description": "Records actual token usage and latency for every call made by AI decision, semantic branching, the three structured nodes, memory auto extraction, natural language generation and reflection summarization. This page counts tokens and calls only, never money - unit prices depend on your supplier contract and the platform will not invent them. Failed calls (timeouts, supplier errors) are stored as zero-token rows, because the time spent is itself a cost signal."
+  },
+  "summary": {
+    "title": "Usage summary",
+    "groupBy": "Group by",
+    "groupCaller": "By caller",
+    "groupModel": "By model",
+    "groupDay": "By day",
+    "key": "Group",
+    "calls": "Calls",
+    "promptTokens": "Prompt tokens",
+    "completionTokens": "Completion tokens",
+    "totalTokens": "Total tokens",
+    "errors": "Errors",
+    "empty": "No usage recorded yet (no model configured, or no process has called one)."
+  },
+  "recent": {
+    "title": "Recent calls",
+    "ts": "Time",
+    "caller": "Caller",
+    "model": "Model",
+    "totalTokens": "Total tokens",
+    "latency": "Latency (ms)",
+    "status": "Status",
+    "nodeId": "Node",
+    "runId": "Run",
+    "empty": "No call details yet.",
+    "hint": "Node and run are only present for in-graph calls; endpoint-level calls (natural language generation, reflection summarization) leave them empty."
+  },
+  "caller": {
+    "ai_decision": "AI decision",
+    "condition_llm": "Semantic branch",
+    "intent_recognition": "Intent recognition",
+    "info_extraction": "Info extraction",
+    "content_generation": "Content generation",
+    "memory_auto_extract": "Memory auto extract",
+    "nl_generate": "NL generate",
+    "reflection_summarize": "Reflection summary"
+  },
+  "status": {
+    "ok": "OK",
+    "error": "Failed"
+  },
+  "error": {
+    "load": "Failed to load usage data"
+  }
+}

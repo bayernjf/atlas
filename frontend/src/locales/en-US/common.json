@@ -37,7 +37,8 @@
     "waits": "Waits & Tasks",
     "schedules": "Scheduled triggers",
     "models": "Model configuration",
-    "templates": "Message templates"
+    "templates": "Message templates",
+    "usage": "LLM usage"
   },
   "button": {
     "confirm": "OK",

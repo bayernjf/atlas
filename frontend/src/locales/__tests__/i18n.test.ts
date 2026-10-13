@@ -23,6 +23,7 @@ import zhRuntime from '../zh-CN/runtime.json'
 import zhSchedules from '../zh-CN/schedules.json'
 import zhValidation from '../zh-CN/validation.json'
 import zhWaits from '../zh-CN/waits.json'
+import zhUsage from '../zh-CN/usage.json'
 import enApprovals from '../en-US/approvals.json'
 import enAudit from '../en-US/audit.json'
 import enChannels from '../en-US/channels.json'
@@ -39,6 +40,7 @@ import enRuntime from '../en-US/runtime.json'
 import enSchedules from '../en-US/schedules.json'
 import enValidation from '../en-US/validation.json'
 import enWaits from '../en-US/waits.json'
+import enUsage from '../en-US/usage.json'
 import { NODE_CATALOG } from '../../lib/nodeCatalog'
 
 /** Login.tsx / UserBadge.tsx 实际接线的全部 key（M12 样板范围）。 */
@@ -1096,6 +1098,8 @@ const PARITY_PAIRS: Array<{ ns: string; zh: unknown; en: unknown }> = [
   { ns: 'waits', zh: zhWaits, en: enWaits },
   // 打包 ZS（docs/92 §3）：反思进化页目录，同上守护。
   { ns: 'reflection', zh: zhReflection, en: enReflection },
+  // 打包 AU（docs/129 §7）：用量页目录——同样不能是"没人核对的 namespace"。
+  { ns: 'usage', zh: zhUsage, en: enUsage },
 ]
 
 describe('zh-CN / en-US catalog parity (docs/57 §5)', () => {

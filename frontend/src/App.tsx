@@ -15,6 +15,7 @@ import { Waits } from './pages/Waits'
 import { Schedules } from './pages/Schedules'
 import { Reflection } from './pages/Reflection'
 import { Models } from './pages/Models'
+import { Usage } from './pages/Usage'
 import { MessageTemplates } from './pages/MessageTemplates'
 import { logout as logoutApi } from './lib/apiClient'
 import { ForcePasswordChange } from './components/ForcePasswordChange'
@@ -29,7 +30,7 @@ import { extractEmailToken } from './lib/approvals'
 import { antdTheme } from './theme/tokens'
 import { useAntdLocale } from './locales/antdLocale'
 
-type Page = 'dashboard' | 'editor' | 'monitoring' | 'memory' | 'connections' | 'users' | 'approvals' | 'audit' | 'openapi' | 'waits' | 'schedules' | 'reflection' | 'models' | 'templates'
+type Page = 'dashboard' | 'editor' | 'monitoring' | 'memory' | 'connections' | 'users' | 'approvals' | 'audit' | 'openapi' | 'waits' | 'schedules' | 'reflection' | 'models' | 'usage' | 'templates'
 
 function App() {
   const antdLocale = useAntdLocale()
@@ -125,6 +126,7 @@ function App() {
           onOpenSchedules={() => setPage('schedules')}
           onOpenReflection={() => setPage('reflection')}
           onOpenModels={() => setPage('models')}
+          onOpenUsage={() => setPage('usage')}
           onOpenTemplates={() => setPage('templates')}
         />
       ) : page === 'approvals' ? (
@@ -180,6 +182,8 @@ function App() {
         <OpenApiImports principal={principal} onLogout={handleLogout} onBack={() => setPage('dashboard')} />
       ) : page === 'models' && roleCan(principal.role, 'read') ? (
         <Models principal={principal} onLogout={handleLogout} onBack={() => setPage('dashboard')} />
+      ) : page === 'usage' && roleCan(principal.role, 'read') ? (
+        <Usage principal={principal} onLogout={handleLogout} onBack={() => setPage('dashboard')} />
       ) : page === 'templates' ? (
         <MessageTemplates principal={principal} onBack={() => setPage('dashboard')} />
       ) : (
