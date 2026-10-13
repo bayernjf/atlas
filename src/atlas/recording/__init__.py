@@ -35,6 +35,19 @@ from .replay import (
     seed_anchor,
 )
 from .snapshots import collect_subgraph_snapshots, inline_first_resolver
+from .guide import LABEL_KEYS as GUIDE_LABEL_KEYS
+from .guide import labels_for as guide_labels_for
+from .guide import render_guide
+from .promote import (
+    PromoteRequest,
+    PromoteRequestError,
+    apply_promotion,
+    find_candidates,
+    plan_promotion,
+    payload_reference,
+    scalar_form,
+    trigger_node_id,
+)
 
 __all__ = [
     "RecordStep",
@@ -72,4 +85,15 @@ __all__ = [
     "seed_anchor",
     "collect_subgraph_snapshots",
     "inline_first_resolver",
+    "GUIDE_LABEL_KEYS",
+    "guide_labels_for",
+    "render_guide",
+    "PromoteRequest",
+    "PromoteRequestError",
+    "apply_promotion",
+    "find_candidates",
+    "plan_promotion",
+    "payload_reference",
+    "scalar_form",
+    "trigger_node_id",
 ]
