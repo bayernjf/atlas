@@ -197,3 +197,24 @@ def test_u1199_redact_outputs_uses_sensitive_table(monkeypatch):
     out = _redact_outputs(state)
     assert out["node_1"]["result"]["msg"] == "<redacted:env:ATLAS_A3_TEST>"
     assert out["node_1"]["result"]["ok"] is True
+
+
+def test_u1199b_interpolated_plaintext_is_masked(monkeypatch):
+    """插值长文本内含明文（打包 AT U1405 量出的窄残余）：整串相等判据漏，子串判据补。"""
+    monkeypatch.setenv("ATLAS_A3_TEST", "sk-live-9f3a-unique")
+    graph = parse_graph(_sourced_graph(source="env", ref="ATLAS_A3_TEST"))
+    state = initial_state(graph)
+    state["outputs"] = {"node_1": {"result": {"body": "order=7 token=sk-live-9f3a-unique sent"}}}
+    body = _redact_outputs(state)["node_1"]["result"]["body"]
+    assert "sk-live-9f3a-unique" not in body
+    assert body == "order=7 token=<redacted:env:ATLAS_A3_TEST> sent"
+
+
+def test_u1199c_substring_channel_has_a_length_floor():
+    """子串通道的边界钉死：短明文只走整串相等，不做子串替换（否则无关文本被啃成占位串）。"""
+    short = {"4821": "<redacted:secret:pin>"}
+    assert redact_sensitive("4821", short) == "<redacted:secret:pin>"
+    assert redact_sensitive("order 4821 ok", short) == "order 4821 ok"
+    # 够长才进子串通道；两条明文都在闸门内时先长后短，长明文不被短明文截断成换不掉的残片
+    two = {"abcdefgh": "<redacted:secret:short>", "abcdefghijkl": "<redacted:secret:long>"}
+    assert redact_sensitive("v=abcdefghijkl", two) == "v=<redacted:secret:long>"
