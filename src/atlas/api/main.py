@@ -1066,6 +1066,48 @@ def put_byok_model(
     return _masked_view(store.set_byok(principal.tenant_id, cfg))
 
 
+# --- LLM 用量与成本计量（docs/129 打包 AU＝D70） -------------------------------
+
+_USAGE_GROUP_BY = ("caller", "model", "day")
+
+
+@app.get("/api/usage/summary")
+def usage_summary(
+    principal: Principal = Depends(require("read")),
+    since: str | None = None,
+    until: str | None = None,
+    group_by: str = "caller",
+) -> dict[str, Any]:
+    """用量聚合（read 档，只读本租户）：按 caller/model/day 分组的 token 与调用次数。
+
+    **只报 token，不做货币计价**（AU-D1：单价属外部资源，伪造比没有更坏）。
+    group_by 非法值 ⇒ 422（照 `_audit_cursor` 先例：查询参数校验不新增错误码，
+    本批承诺零新错误码）。
+    """
+    if group_by not in _USAGE_GROUP_BY:
+        raise HTTPException(
+            status_code=422,
+            detail=[f"group_by 必须是 {'/'.join(_USAGE_GROUP_BY)} 之一，收到：{group_by}"],
+        )
+    store = services_for(principal).usage_store
+    return {
+        "groupBy": group_by,
+        "since": since,
+        "until": until,
+        "items": store.summarize(since=since, until=until, group_by=group_by),
+    }
+
+
+@app.get("/api/usage/recent")
+def usage_recent(
+    principal: Principal = Depends(require("read")),
+    limit: int = 50,
+) -> dict[str, Any]:
+    """最近用量明细（read 档，倒序，limit clamp 1–200）：一次调用一行。"""
+    store = services_for(principal).usage_store
+    return {"items": store.list_recent(limit=limit)}
+
+
 @app.post("/api/connections/{conn_id}/authorize")
 def authorize_connection(conn_id: str, principal: Principal = Depends(require("operate"))) -> dict[str, Any]:
     """返回授权 URL 与 state（前端 window.open 打开，state 10 分钟有效，仅防 CSRF）。"""
