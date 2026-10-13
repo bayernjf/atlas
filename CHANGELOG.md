@@ -3,6 +3,45 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔docs〕README 重写为「产品／启动／架构」三块（2026-10-13）
+
+- **动机**：README 原 20,186 字符里绝大部分是「当前阶段」的逐批立项/收口流水（docs/27–100 勘误套勘误），这类内容按分工属于 handoff 与 docs/08，放在入口文档既过期得快、又让人读不到产品是什么。现按用户口径收敛为三节：**一、产品**（定位＋Harness/Graph/Loop＋当前可达产品面表＋旗舰场景＋边界）／**二、启动**（Docker 一键、本地双进程从零、prod 档位三密钥、三条运行期须知）／**三、架构概览**（分层图＋要点）。文内只留一句指向 `docs/00`、`docs/09`、`docs/13`，原「文档导航／技术栈／路线图／给 AI 协作者的说明／License」五节删除（许可改写入「边界」一行）。
+- **数字都改成实测**：13 类节点（`graph/dsl.py:28-44`）、5 内置模板、48 条迁移、`api/main.py` 170 个路由装饰器、17 个前端页、36 个后端包；**门读数一律不写死**，指向 handoff（原「最近一次门结果以 handoff 为准」这条纪律保留）。
+- **顺手修掉一处与代码相反的老断言**：README 技术栈节原写 `web-playwright`「不注册进运行期适配器注册表」——实际是**注册、但只在演示面注册**（`harness/runtime.py:77-78`，prod 未开 `ATLAS_ENABLE_DEMO_MOCK` 不注册，docs/89 §14 N-1）。新 README 按真实形状写并给出原因（出向闸门挡不住 3xx 跳转，docs/14 D52）。
+- 其他核实项：compose 三个 profile（默认只起 db＋atlas，`edge`＝Caddy 需先改 `deploy/Caddyfile` 域名，`observability`＝Prometheus/Grafana）、种子账号四套（`iam/principals.py:50-58`）、`ATLAS_MASTER_KEY` 解码后须**恰 32 字节**（`security/secrets.py:36,84-86`）、`_REQUIRED_PROD_SECRETS` 两把＋引导口令（`security/bootstrap.py:34-38`）、`schedule_fires` 槽位 `ON CONFLICT DO NOTHING`（`scheduling/pg_store.py:185`）、A2A 面为 `/.well-known/agent-card.json`＋`POST /api/a2a/tasks`（`a2a/router.py`）、`--workers 1` 由入口脚本 fail-closed（`Dockerfile:30-34`）。README 内链接 0 断链（机器校验）。零代码改动。
+
+### 〔chore(docs)〕handoff 大归档：三块历史整块滚出，主文件 480,047 → 约 14.2 万字符（2026-10-13）
+
+- **动因**：主 `handoff.md` 涨到 480,047 字符（≈798KB），AGENTS.md 第一条就是「接手先读 handoff.md」——文件大到读不动，这条规则事实上已不可执行。按 [docs/00](docs/00-文档索引与治理.md) §治理规则 5（2026-09-18 建立的 agent-world 惯例）做**首次大归档**，一次性滚出三块历史至 [docs/handoff-archive-2026-10-13.md](docs/handoff-archive-2026-10-13.md)：§一 顶部更新流水 **2026-10-11 及更早（129 行）**、§二 **Active work #1–#160 完成项详情（139 条）**、§三 **Quality gate 2026-09-24 → 2026-10-09 门读数（57 块）**。
+- **主文件留什么**：每条完成项压成**一行结论＋commit hash**（66 条在归档原文里带 hash，已回填 45 条到行内），末尾指向归档 §二按原编号定位；活跃项（📝/🟡/🔴/⚠️/🔎/🏁/📋 与 #161–#165）**详情不动**；Quality gate 保留 2026-10-10 起的 13 块，顶部与 Recently shipped 各留一条滚出指针。
+- **编号不重排**：`Active #N`（N≤160）的交叉引用在 docs/04/08/13/14/73/89 与归档里继续按原号定位（同 2026-09-18 惯例的处理方式）。
+- **零丢失怎么证的**：不是"看着没少"，而是机器对账——取 `git show HEAD:handoff.md` 的 **875 行非空内容**，逐行断言每行都存在于新 handoff **或**归档之中，结果 **0 行缺失**；归档侧另做一次「移入行是否逐字在册」的反向核对（同样 0 缺失）。过程中自己抓到一个 bug 并修掉：Quality gate 的滚出指针原本**每个块都生成了一条**（57 条重复），已合并成一条。
+- **同时补的索引面**：docs/00 §治理规则 5 追加本次做法与"再涨过 ~300KB 就按同样方式再滚、不要手删"的口径＋文档地图新增归档行；handoff「Project documents」与 Recently shipped 底部指针各补一行；docs/00 里一处自己写错的目标链接（指向 docs/126）已改回归档文件。零代码／零迁移／零测试改动。
+
+### 〔docs-only 立项〕打包 AT：D68 机器人试教成图＋D72 操作指引（里程碑 A 开工，2026-10-13，docs/128）
+
+- **范围**：[docs/127](docs/127-能力迭代里程碑计划-D68D77排期-打包AT起-v1.md) 里程碑 A＝**D68＋D72 同批**；形状权威 [docs/128](docs/128-机器人试教成图与操作指引-D68D72-打包AT-v1批契约设计.md)；用例 docs/13 U1393–U1410 预留（正向 8＋反向门 10＋收口门）；docs/14 D68／D72 两行 ⬜→🟡（已立契约待落码）。
+- **读码改变了计划的形状（本批最重要的一条）**：`RecordingCase.graph` 在录制时**已冻结整张 Graph JSON 快照**（`recording/cases.py:52-70`），而 `RecordStep` 只有 `{node_id,node_type,output}`、`EdgeDSL` 只有 `{id,source,target}` 不带条件 ⇒ ① D68 不是"从动作序列反推图"，而是**把冻结快照升格成可编辑草稿＋把写死的业务字面量参数化**（入参通道既有：`{{trigger-1.context.payload.<key>}}`，`graph/loader.py:8,518`、`template/graphs.py` 实证）；② 指引的分支必须从**节点 config** 渲染、不能从边渲染。据此把 D68/D72 的落地含义全部重写。
+- **六条决策**：**AT-D1** 基准＝快照；**AT-D2 两阶段 promote**＝`plan`（只读，出候选/歧义/跳过三表）→ `promote`（人勾选后返草稿），理由＝同一字面量既可能是入参也可能是阈值（299 同值多键），机器不许替人猜——与本项目 human-in-loop 范式一致；**AT-D3** 替换位置白名单＝`tool_call.config.parameters` 标量，`human_approval.approver`／condition 阈值／`retry.timeout` 同值一律 `skipped`（换了就是改流程语义）；**AT-D4** promote **不落库**、保存走既有 `POST /api/graphs`（自写库＝第二套图创建路径，撞 docs/62 一致性纪律）；**AT-D5** 剪枝缺省关闭、剪完必须试编译且不可编译不产出半成品图；**AT-D6** 指引＝只读产物端点，不落库、不自动进知识库（导入由运营走既有 `/api/knowledge/import`）。
+- **安全硬条款**：`steps[].output` 可能带 env/secret 展开值 ⇒ 指引渲染必须复用 loader 那份同源脱敏（打包 AE 抽出的 `_sensitive_redaction_mapping`／`_redact_outputs`，docs/111），**recording 侧禁写第二份脱敏表／第二份输出键表**（后者是 D66 刚收口的三类真相漂移）。反向门 U1405：播种 secret 使 output 带展开值，断言 markdown 与 outline 均不含明文。
+- **原两项待拍板被契约吸收、里程碑 A 现无待拍板项**：A-P1（反导口径）由 AT-D1 消解（前提变了），A-P2（指引形态）由 AT-D6 定为 markdown＋`outline` 只读产物；docs/127 §0/§1/§8 同步标注。
+- **零新迁移／零新依赖／零新运行时错误码／无 ADR**（不新增码的理由沿用打包 AK 撤销 `MEMORY_EXTRACT_FAILED` 的判据：永不发射的码会混进 U1149 可译集合造出假覆盖；落码时码名必须从 `runtime.json`＋docs/03 实表选既有）；不触碰 D43／D52（浏览器出向）、D26（回放）、D60 余部；A/B 档判定不变。同步面：docs/128（新）、docs/13 AT 段、docs/14 两行、docs/127、docs/126、docs/08、docs/00、handoff、CHANGELOG。
+
+### 〔docs-only 排期〕打包 AT–BQ：D68–D77 拆成六个可闭环里程碑（2026-10-13，docs/127）
+
+- **任务分解权威** [docs/127](docs/127-能力迭代里程碑计划-D68D77排期-打包AT起-v1.md)：承接 docs/126 待办池，把十条 D 项排成 **A 教一遍就能跑（D68＋D72＝打包 AT）→ B 算得清账（D70＝打包 AU）→ C 真的在循环（D69＝打包 BN）→ D 外面进得来·分身管得住（D73＋D74＝打包 BO）→ E 进化自动生效且能回滚（D75＝打包 BP）→ F 挂进客户页面（D76＋D71＝打包 BQ）**。每批给 **Done-when 判据＋原子序＋待拍板项＋风险点名＋不触碰的边界**；顺序按**可推进性（依赖与风险）**排而非价值排序（A 零依赖且直接对上来源侧 Demo #2；B 是小批但解锁 C/D/E 的成本口径；E 风险最高排最后）。
+- **预留号（均已实测不冲突）**：契约 docs/128–133、迁移 049–054（现最大 `db/migrations/048_openapi_imports_hash_unique.sql`）、用例 U1393 起（现最大 U1392）；批次名续用规则 Z\*→A\*→B\*（已用到 AS，AT／AU／BN 起空闲）。
+- **12 项待拍板**：A 2（反导口径／指引形态）／B 1（是否落 PG 新表）／**C 4（预算单位、reflect 判定者、loop 内能否审批挂起、是否写 interruption 帧——必须在动 loader 前有答案）**／D 2（会话映射落点、是否做摘要）／E 1（哪些候选类别可自动生效）／F 2（嵌入是否成第七类实体、造的适配器默认权限档）。C-P4 推荐**不写帧**，理由沿用打包 R 的 D44：写帧会让 `recover_pending` 把圈级挂起误当审批续跑、产生第二个 token。
+- **同日自纠**：docs/126 §3 首稿把 **D57／D59 误列为待补**，实为均已闭合（D57＝docs/101 批、内置模板含 `human_approval` 真挂起 U1213–U1217；D59＝打包 BM 缺陷批、`/api/health` 回 `demo_surface` 能力位＋DemoResetButton）——`docs/08:502` 当日早已撤回过同一条误列，本次又抄回来，属「把已完成的事写成缺口」。已就地加勘误块，🟡 计数 7→6。
+- **零代码／零迁移／零新依赖／无 ADR**；**不取回任何既有 D 号、不改 A/B 档判定**（A 档可演示 ✅／B 档生产 MVP ❌；外部凭据 1.1/1.2/1.3/4.1 状态不变）。同步面：docs/127（新）、docs/126 §5 指针、docs/14 注记十一补排期条、docs/08 §八 排期块、docs/00 文档地图、handoff Active work #164 与文档索引、CHANGELOG。
+
+### 〔docs-only 立项〕打包 AS：能力对齐台账 docs/126 立档＋新登 D68–D77 十条缓做项（2026-10-13）
+
+- **功能来源**：2026-10-13 一次产品面试的功能口径（＝docs/107 已比对过的那套材料：产品概念／技术方案／编辑后台组件设计／递归自动化引擎设计 ＋ Harloops、Agent Team、8 类 Agent 三张竞品图）被当作 **Atlas 迭代的需求源**逐条实核，产出持续维护的对齐台账 [docs/126](docs/126-能力对齐清单与迭代待办池-面试材料功能来源-v1.md)（五级口径 ✅17／🟡6／⚡2／⬜10／⛔外部线；**待办池每条必须指向一个 D 号，台账本身不定义功能形状**）。docs/107 保持一次性报告性质、不再随代码更新。
+- **新登十条缓做项（docs/14 注记十一）**：D68 机器人试教产物升格（录制现落为回归用例，进不了发布/灰度/审批链）、D69 Loop 接进运行期（`engine/` OODA 零生产引用）、D70 LLM 用量与成本计量（`prompt_tokens`/`usage` 全仓零命中）、D71 缺工具时自己造工具（Code 模块最小切片＝造适配器，**不是**改 Atlas 自身代码）、D72 业务操作指引生成、D73 入站会话触发（`message/webhook.py:15` 自写「v1 不做入站消费」；真供应商仍留 D24）、D74 智能体团队面（八智能体的产品形态，依赖 D69/D70）、D75 进化候选门控自动生效、D76 网页/IM/SDK 入口（docs/107 长期无 D 号项落点）、D77 A/B 实验（灰度的另一半）。
+- **一期顺位与纪律**：D68→D72→D70→D69→D73→D74→D75→D76→D71→D77（docs/126 §5）；**一次只吃 1-2 条、先 docs-only 契约再落码**；🟡/⛔ 的余部不许当已完成写进文档，不许为外部凭据预先铺代码。**明确不进 Atlas 四类**（docs/126 §6）：4DGS 空间智能、PB 替代 ERP/MES/WMS 本体、递归自动化引擎 Meta Layer 五模块、NATS(D5)／Go 网关(D6)／RLHF(D2)／移动端 Appium(D1)。
+- **判定与状态**：零代码／零迁移／零新依赖／无 ADR；**不取回任何既有 D 号**，A/B 档判定不变（docs/72→74→77：A 档可演示 ✅／B 档生产 MVP ❌，外部凭据 4 项 1.1/1.2/1.3/4.1 状态不变，仍只有用户能给）。同步面：docs/126（新）、docs/14 注记十一＋十行、docs/08 候选池立项块、docs/00 文档地图补行、handoff 顶部与 Active work #163、CHANGELOG。
+
 ### 〔落码收口〕打包 AR：项目级审查 14 项修复全部落地，U1392 四门全绿（docs/125，ADR T36，2026-10-13）
 
 - **十六原子全部落 dev**（收口时 `origin/dev`＝`543a45d`：立项→原子 13 已在远端，对端更新经 fetch 快进；`4ca058a`/`be56b6c`/`dce9388`/原子 16 docs 共 4 提交未 push），14 条发现两轮复核 14/14 成立后逐条修复：① SSE 健壮性——worker 终帧兜底、SSE 端点 async 化（daemon 线程＋`call_soon_threadsafe` 投帧＋端点 `wait_for`＋`: keepalive` 心跳，ADR T36）、两处无界 `queue.Queue` 改有界桥接 deque 1024＋终帧独立槽（断连只 close 不取消 run）；② 安全脱敏——dingtalk/feishu 加签 secret 的 GET/PUT 投影 `***`＋尾 4、PUT 占位逐字相等不覆盖；③ 数据并发——openapi imports 迁 048 UNIQUE 部分索引＋捕 IntegrityError 折同形 409、RunStore 一把锁＋终态有界 N=200、embed 移出锁、demo SQLite 由 `:memory:`＋StaticPool 改 mkdtemp 临时文件库 WAL/QueuePool、publish MAX+1 改捕唯一冲突重试 3 次、`_safe_record` 补 `logger.exception`；④ 门与环境——CI `backend-integration` 加装 `playwright install --with-deps chromium`、`/api/demo/reset` 补与同族 demo 路由逐字同形的 prod 404 gate（administer 鉴权在依赖注入期先跑：匿名 401／未改密 403 `AUTH_PASSWORD_CHANGE_REQUIRED`／面关 404，唯一重开 `ATLAS_ENABLE_DEMO_MOCK=1`）。跨端：streamRun AbortController＋runId 分代防迟到帧；三处裸中文 detail 改结构化错误码前端读 `error.code`（i18n 实增 1 键 `MESSAGE_TEMPLATE_NAME_CONFLICT`，runtime.json 96→97；`AUTH_OLD_PASSWORD_INVALID` 复用既有 `users.error.oldPasswordWrong`）。
