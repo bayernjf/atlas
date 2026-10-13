@@ -45,7 +45,9 @@ export function Usage({ principal, onLogout, onBack }: UsageProps) {
   const [groupBy, setGroupBy] = useState<GroupBy>('caller')
   const [summary, setSummary] = useState<UsageSummaryItem[]>([])
   const [recent, setRecent] = useState<UsageRecordView[]>([])
-  const [loading, setLoading] = useState(true)
+  // 初值 false：首帧渲染表头（空表），refresh() 随即置 true 出骨架。
+  // 与 Models 页不同——本页的分组切换与表头是产品可见面，首帧骨架会把它们藏掉。
+  const [loading, setLoading] = useState(false)
   const [listError, setListError] = useState('')
 
   const refresh = useCallback(async () => {
