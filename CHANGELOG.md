@@ -3,6 +3,19 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔落码收口〕打包 AU：D70 LLM 用量与成本计量（2026-10-14，用户「好的，你继续落码」；形状权威 [docs/129](docs/129-LLM用量与成本计量-D70-打包AU-v1批契约设计.md) §7.1；U1411–U1426 全转正式）
+
+- **那个零命中今天没了**：`src/atlas/llm/metering.py` 成为全仓**唯一**调 `litellm.completion` 的地方（八个调用点身份各自记 token/耗时/成败），并由 `test_single_litellm_exit_point_guard` 机检"恰好一处"——绕过 helper 即用量账静默缺块。
+- **归属走 contextvar，不改六个 Protocol 签名**：同步/流式/后台/续跑四个运行入口设 tenant·run·graph，loader 每节点执行处盖 node_id，NL 生成端点与两处反思触发只挂 tenant；后台线程在本线程内显式 set（tracing 同款纪律，不依赖跨线程继承）；无上下文＝不记录（loader 直跑与单测不计）。
+- **只计 token，不做货币计价**（AU-D1：供应商单价属外部资源，伪造比没有更坏）；失败调用记零 token 的 error 条后**原样抛出**，调用方 fail-safe 语义不变；不记 prompt/response 正文，记录无密钥字段。
+- **存储两档**：迁移 049 `llm_usage`＋`PgUsageStore`（无 ring，账不丢；内存档 ring 2000），方法签名与内存档一比一；reset 同清（运行数据，与 model_config 的"不清"区分）；不挂 `ATLAS_RETENTION_DAYS`（余部）。
+- **两个只读端点＋一页**：`GET /api/usage/summary?since&until&group_by=caller|model|day`、`GET /api/usage/recent?limit`（read 档），前端 `Usage.tsx`（两张聚合表＋明细表）；`group_by` 非法走 422 纯文本 detail，**全批零新错误码**。
+- **四条落码偏差照实登记**（docs/129 §7.1）：node_id 统一每节点包（记忆自动提取工具挂在 tool_call 节点上）／422 用纯文本 detail 守零新错误码／回放不设上下文（回归流量不是生产成本）／前端首帧不先出骨架（否则藏掉分组切换与表头）。
+- **三条反向门各自植缺陷实跑转红**：摘入口 `usage_context` ⇒ U1414 红；删 `_safe_record` 的 try/except ⇒ U1425 红（store 炸会把 run 打成 500）；摘 PG 的 `WHERE tenant_id` ⇒ U1423 红。
+- **门（实跑）**：后端默认 **2799 passed／193 skipped／0 failed**（267.99s）；PG 档全量（一次性 pgvector:pg16，对齐 CI backend-integration）**2991 passed／1 skipped／0 failed**（258.85s，容器用完即删）；前端 vitest **1015／2 skipped**、oxlint **0/0**、build ✓。
+- **真机端到端** `scripts/dev/usage_probe.py`：结构性腿 6 PASS（规则兜底**零调用零账**）；真模型腿 `--live` **17 PASS／0 FAIL**——**ai_decision 实测 1 次调用／prompt 153／completion 43／合计 196 token**、端点级 nl_generate 也计、归属三项逐字正确、三档聚合与明细逐档对账相等、reset 后账清空；缺凭据退出码 3 并点名缺哪个变量。
+- **D70 仍 🟡 不翻 ✅**：货币计价／Loop 预算闸门（里程碑 C/BN）／agent 归因（D74）／retention 接入四项余部照旧。
+
 ### 〔docs〕打包 AU 立项＝D70 LLM 用量与成本计量（2026-10-14，用户「搞你自己能推进的」授权；docs-only，零代码）
 
 - **动机**：D70 是 D69（Loop 预算闸门）／D74（智能体成本面板）／D75／D77 的**硬前置**，而数据源今天不存在——`prompt_tokens`/`usage` 在 `src/atlas/`＋`tests/` 全零命中；**六个** `litellm.completion` 调用点（decision／condition_classifier／`structured._call_llm`〔四消费方共用〕／nl_generate／reflection adapter）全部丢弃回包 usage；运行侧也没有 run→LLM 归属通道（`run_graph` 无 run_id 形参）。

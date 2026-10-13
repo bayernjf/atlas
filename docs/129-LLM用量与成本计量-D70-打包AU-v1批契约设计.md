@@ -117,3 +117,40 @@ D70 行翻 🟡（计价/预算闸门/agent 归因/retention 四项余部照旧�
 | 日期 | 动作 | 说明 |
 |---|---|---|
 | 2026-10-14 | 立本文（docs-only 立项） | 基线实核四条（§1）：usage 全零命中、六个 litellm.completion 丢 usage、run→LLM 无归属通道、存储先例已齐。七条决策 AU-D1…D7，其中 **AU-D2 按 docs/127 B-P1 推荐拍板（落 PG 表＋内存 ring 2000）**；验收预留 U1411–U1426；零新错误码/零新依赖/无 ADR。同步：docs/14 D70 行翻 🟡、docs/08 §八立项块、docs/00 地图、handoff、CHANGELOG |
+| 2026-10-14 | **落码收口（九原子全落 dev）** | 见下方 §7.1 |
+
+### 7.1 落码收口注记（2026-10-14）
+
+**九原子哈希链（时序）**：`33fd43c` feat(llm) metering 模块＋单测 → `93b9724` feat(llm) 迁移 049＋PgUsageStore＋registry 装配 → `b062eec` refactor(llm) 六个调用点改走 helper → `c86a75f` feat(api) 三类入口设上下文 → `d6a3aba` feat(api) REST 两端点 → `d7640bb` feat(frontend) Usage 页＋usage 命名空间入奇偶守护 → `474f6b1` test(usage) U1411–U1425＋PG 集成 → `b064000` test(frontend) U1421 SSR＋首帧表头可见 → `37c8bd7` test(usage) 真机探针。
+
+**四条落码偏差（照实登记）**：
+
+1. **AU-D4② 的落点比契约写的更宽**：契约原文是"LLM 类节点（ai_decision／condition llm／三结构化节点）执行处包 `node_id`"，落码改为**每节点执行处统一包 `usage_node(node.id)`**（`_make_executor.execute` 的 `with` 串）。理由＝记忆自动提取工具（`memory/auto_extract`）也是 LLM 调用，它挂在 **tool_call** 节点上，按窄口径写就得再加一处特例；统一包一层是它的严格超集，且与 tracing 的"每节点一个 span"同构。node_id 只在被 LLM 调用时消费，对其他节点无副作用。
+2. **`group_by` 非法值走 422 纯文本 detail，不给结构化 code**：契约 §3.4 承诺零新错误码，故照既有 `_audit_cursor` 的查询参数校验风格（`detail=[中文文案]`），不新增 `USAGE_GROUP_BY_INVALID`。
+3. **回放（recording replay）不设用量上下文**：契约未列，属有意排除——回放是回归流量不是生产成本，记进账里会污染成本口径。与 docs/33"debug/回放不记运行指标"同族纪律。
+4. **前端首帧不先出骨架**：`loading` 初值取 `false`（Models 页取 `true`），否则 antd Card 的骨架会把分组切换与表头整段藏掉，而这两样是产品可见面；副作用是首帧会闪一帧空表（数据到达即替换）。
+
+**三条反向门各自植缺陷实跑转红（不是"写完就信"）**：
+
+- **U1424**（归属来自入口）：把同步 `/run` 的 `usage_context` 摘成 `if True:` ⇒ `test_u1414_run_attribution_reaches_the_record` 当场红。
+- **U1425**（计量旁路）：把 `_safe_record` 的 `try/except` 删掉 ⇒ `test_u1425_store_failure_never_breaks_a_run` 当场红（store 抛异常会把 run 打成 500）。
+- **U1423**（跨租户）：把 `PgUsageStore.list_recent` 的 `WHERE tenant_id = :t` 换成 `WHERE 1 = 1` ⇒ PG 集成例当场红（B 租户读到 A 的行）。
+
+另加一条**单点守护**：`test_single_litellm_exit_point_guard` 机检 `src/atlas` 内 `litellm.completion(` 调用点**恰好一处**（`llm/metering.py`）——新增调用点若绕过 helper，用量账会静默缺一块，AU-D3 的"一件事一个实现"由此变成可执行断言。
+
+**四道门（实跑逐字）**：
+
+| 门 | 读数 |
+|---|---|
+| 后端默认 `.venv/bin/pytest -q` | **2799 passed／193 skipped／0 failed**（267.99s；基线 2765／189，净增 34＝D78 两例＋AU 32；skipped +4＝新增 PG 集成例无库时 skip） |
+| PG 档全量（一次性 pgvector:pg16 @5445，`ATLAS_RUN_INTEGRATION=1`，对齐 CI backend-integration） | **2991 passed／1 skipped／0 failed**（258.85s；迁移 049 已 apply，`schema_migrations` 计 49，`llm_usage` 表与 `(tenant_id, ts)` 索引实测存在；跑完容器即删） |
+| 前端 vitest | **73 文件 1015 passed／2 skipped**（基线 72 文件 1010／2，净增 5＝U1421 SSR 用例） |
+| 前端 oxlint ＋ build | **0 warnings／0 errors**（216 files）、**built in 876ms**（tsc 经 vite） |
+
+**真机端到端（U1426，`scripts/dev/usage_probe.py`）**：
+
+- **结构性腿（无凭据）6 PASS／0 FAIL**：两端点在、鉴权在（匿名 401 由单测守）、无模型时走规则兜底**且不产生任何用量行**（零调用零账）。
+- **真模型腿（`--live`，凭据取自仓库 `.env` 白名单键，不打印值）17 PASS／0 FAIL**：真决策 `source="llm:openai/…"`；**`ai_decision` 实测 1 次调用／prompt 153／completion 43／合计 196 token**（非零＝不是静默记 0）；端点级 `nl_generate` 也计一笔且 runId 为空；归属 graphId／nodeId／runId 三项逐字正确；记录**无密钥字段**；三档 group_by 合计与明细**逐档对账相等**；非法 group_by 422；`/api/demo/reset` 后账清空。
+- 缺凭据时 `--live` 退出码 **3** 并点名缺哪个变量（不伪装成通过）。
+
+**未做/边界（照实）**：D70 仍 **🟡 不翻 ✅**——货币计价（AU-D1）、Loop 预算闸门（里程碑 C/BN）、agent 归因（D74）、`ATLAS_RETENTION_DAYS` 接入四项余部照旧；`PgUsageStore` 的 `list_recent` 同秒多行排序无 tiebreak 列（`ts DESC` 足够，明细表不做分页）。
