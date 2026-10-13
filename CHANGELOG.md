@@ -3,6 +3,14 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔缺陷修复〕D78：prod 档 compile 端点缺 registry 恒 500，一行注入＋反向门收口（2026-10-14）
+
+- **症状与影响面**：`POST /api/graphs/{id}/compile` 未注入 registry，prod 且未开演示面时 `_resolve_registry(None)` raise（`loader.py:408-411`）⇒ 端点恒 500。**不止编译端点本身**——发布门禁、影子运行预检等所有走 compile 的路径在 prod 全断。
+- **修法＝方案 (a)**：compile 端点与 run 端点同构传 `_runtime_registry(services)`（`main.py:4424`）。**方案 (b)（无 registry 时退化为只查图结构）被否**：那等于重开「prod 静默跳过工具名校验」的口子，与 docs/77 R2 同族。
+- **反向门**：直调 `compile_graph(registry=None)` 在 prod 仍 raise——loader 的拒绝一字未动；可失败性实测：摘掉端点注入 ⇒ 正向例当场转红。
+- **两例回归**（`tests/test_api_graphs.py::test_d78_*`）：prod＋演示面关闭 ⇒ compile 200（prod 档需过打包 AV 首登改密门，打桩 `user_store.get` 返已轮换账号副本，同 U1391 打法）；loader 门保持 raise。
+- 同步面：docs/14 D78 行翻 ✅、docs/13 AT 段附记、handoff。零迁移／零新端点／零新错误码／零新依赖。
+
 ### 〔缺陷修复〕打包 AT 的 U1406 是假绿：PR #152 的 CI 红已修并推（2026-10-14，`bd2f522`；根因面新登 docs/14 **D79**）
 
 - **症状**：AT 收口推上 `dev` 后，CI 的两个后端 job（内存档＋PG 档）一起红在 `tests/test_recording_promote.py::test_u1406_other_tenants_case_is_404`——而本机此前两次全量门都是 **2765 passed／189 skipped／0 failed**。这就是"本机绿、CI 红"，不是什么环境抖动。
@@ -37,7 +45,7 @@
 - **真机端到端**：`scripts/dev/promote_guide_probe.py` **28 PASS／0 FINDING**（录一次真运行 → plan → 勾选 → promote → 存新图 → 发布 → 用不同 order_id 跑到终态 → 取 guide 人工核对）。
 - **四道门**：后端 **2765 passed／189 skipped／0 failed**（+23 为本批新测，基线 2742/189）；前端 vitest **1010 passed／2 skipped**、oxlint **0/0**、build ✓。零新增运行时依赖；无 ADR。
 - **不触碰**：D43/D52（浏览器出向）、D26（回放）、D60 余部；D66 口径守住（recording 侧零第二份输出键表）。
-- **已知遗留**：D78 — prod 档 `/api/graphs/{id}/compile` 缺 registry 会 500（`loader.py:408-411`），影响发布门禁等所有依赖 compile 的路径；修复只需一行（传入 `_runtime_registry(services)`），但超出 AT 范围，另立 D78 登记。
+- **已知遗留**：~~D78 — prod 档 `/api/graphs/{id}/compile` 缺 registry 会 500（`loader.py:408-411`），影响发布门禁等所有依赖 compile 的路径；修复只需一行（传入 `_runtime_registry(services)`），但超出 AT 范围，另立 D78 登记。~~ **〔2026-10-14 当日已修，见 Unreleased 顶部 D78 条〕**
 - 同步面：docs/128 §7 收口记录、docs/13 AT 段、docs/14 D68/D72 ✅＋D78 新登、docs/08 AT 收口块、handoff Active #166 ＋顶部状态、docs/00 文档地图。
 
 ### 〔docs-only 立项〕打包 AT：D68 机器人试教成图＋D72 操作指引（里程碑 A 开工，2026-10-13，docs/128）
