@@ -53,6 +53,7 @@ from atlas.llm.condition_classifier import (
     OfflineConditionClassifier,
     get_condition_classifier,
 )
+from atlas.llm.metering import usage_node
 from atlas.llm.structured import (
     LLMStructuredUnavailable,
     classify_intent,
@@ -575,7 +576,7 @@ def _make_executor(
         else:
             span_cm = nullcontext()
 
-        with span_cm as node_span:
+        with usage_node(node.id), span_cm as node_span:
             start_event: dict[str, Any] = {
                 "type": "node_start",
                 "node_id": node.id,

@@ -91,6 +91,7 @@ from atlas.iam.principals import Principal, Role, can
 from atlas.iam.registry import STORAGE_BACKEND, TenantServices
 from atlas.llm.config import ModelConfig
 from atlas.llm.decision import get_decision_client, warm_litellm
+from atlas.llm.metering import usage_context
 from atlas.llm.nl_generate import generate_graph, validate_param_fills
 from atlas.memory.database import ping, wait_for_database
 from atlas.memory.models import KNOWLEDGE_CATEGORIES, MemoryValidationError
@@ -348,21 +349,27 @@ def _resume_run(engine, services: TenantServices, frame: dict) -> None:
     run_id = frame.get("run_id", "")
     try:
         resume_graph = GraphDSL.model_validate(frame["graph_snapshot"])
-        result = run_graph(
-            resume_graph,
-            inputs=frame["resume_state"].get("inputs", {}),
-            registry=_runtime_registry(services),
-            approval_broker=services.approval_broker,
-            event_wait_broker=services.event_wait_broker,
+        with usage_context(
+            frame["tenant_id"],
+            run_id=run_id,
             graph_id=frame["resume_state"].get("graph_id", ""),
-            graph_resolver=_tenant_graph_resolver(services),
-            frame_sink=make_frame_sink(engine, frame["tenant_id"], run_id),
-            resume_claim=make_resume_claim(engine),
-            resume=frame,
-            tenant_id=frame["tenant_id"],
-            secret_provider=_secret_provider,
-            memory_repo=services.memory_store,
-        )
+            store=services.usage_store,
+        ):
+            result = run_graph(
+                resume_graph,
+                inputs=frame["resume_state"].get("inputs", {}),
+                registry=_runtime_registry(services),
+                approval_broker=services.approval_broker,
+                event_wait_broker=services.event_wait_broker,
+                graph_id=frame["resume_state"].get("graph_id", ""),
+                graph_resolver=_tenant_graph_resolver(services),
+                frame_sink=make_frame_sink(engine, frame["tenant_id"], run_id),
+                resume_claim=make_resume_claim(engine),
+                resume=frame,
+                tenant_id=frame["tenant_id"],
+                secret_provider=_secret_provider,
+                memory_repo=services.memory_store,
+            )
         if run_id:
             services.run_store.finish(
                 run_id=run_id, status="completed",
@@ -1290,22 +1297,25 @@ def _background_run_worker(
             )
             return
         graph = parse_graph(raw)
-        result = run_graph(
-            graph,
-            inputs={"event": event.model_dump()},
-            registry=_runtime_registry(services),
-            approval_broker=services.approval_broker,
-            event_wait_broker=services.event_wait_broker,
-            graph_id=graph_id,
-            graph_resolver=_tenant_graph_resolver(services),
-            frame_sink=_frame_sink_for(tenant_id, run_store, run_id),
-            resume_claim=_resume_claim_for(),
-            _block_subgraph_suspend=(STORAGE_BACKEND == "pg"),
-            graph_version=version,
-            tenant_id=tenant_id,
-            secret_provider=_secret_provider,
-            memory_repo=services.memory_store,
-        )
+        with usage_context(
+            tenant_id, run_id=run_id, graph_id=graph_id, store=services.usage_store
+        ):
+            result = run_graph(
+                graph,
+                inputs={"event": event.model_dump()},
+                registry=_runtime_registry(services),
+                approval_broker=services.approval_broker,
+                event_wait_broker=services.event_wait_broker,
+                graph_id=graph_id,
+                graph_resolver=_tenant_graph_resolver(services),
+                frame_sink=_frame_sink_for(tenant_id, run_store, run_id),
+                resume_claim=_resume_claim_for(),
+                _block_subgraph_suspend=(STORAGE_BACKEND == "pg"),
+                graph_version=version,
+                tenant_id=tenant_id,
+                secret_provider=_secret_provider,
+                memory_repo=services.memory_store,
+            )
         run_store.finish(
             run_id=run_id, status="completed",
             outputs=result["outputs"], trace=result["trace"],
@@ -1422,10 +1432,13 @@ def _schedule_dispatch(record: ScheduleRecord, slot: datetime) -> None:
     services = tenant_registry.get(record.tenant_id)
     key = slot_key(slot)
     if record.action == "reflect":
-        report = run_reflection_pass(
-            services, services.reflection_store,
-            tenant_id=record.tenant_id, graph_id=record.graph_id, base_version=record.version,
-        )
+        # docs/129 打包 AU：反思摘要器的 LLM 调用也计用量（caller=reflection_summarize）。
+        with usage_context(record.tenant_id, store=services.usage_store):
+            report = run_reflection_pass(
+                services, services.reflection_store,
+                tenant_id=record.tenant_id, graph_id=record.graph_id,
+                base_version=record.version,
+            )
         schedule_store().note_fired(
             record.tenant_id, record.graph_id, record.schedule_id, slot
         )
@@ -1708,10 +1721,13 @@ def run_schedule_now(
     sid = record.schedule_id
     now = datetime.now(timezone.utc)
     if record.action == "reflect":
-        report = run_reflection_pass(
-            services, services.reflection_store,
-            tenant_id=principal.tenant_id, graph_id=graph_id, base_version=record.version,
-        )
+        # docs/129 打包 AU：与调度派发同口径——反思摘要器的 LLM 调用计用量。
+        with usage_context(principal.tenant_id, store=services.usage_store):
+            report = run_reflection_pass(
+                services, services.reflection_store,
+                tenant_id=principal.tenant_id, graph_id=graph_id,
+                base_version=record.version,
+            )
         # 同 run-now 的口径：记"最近一次真实执行"，不是槽位认领（不占槽）。
         store.note_fired(principal.tenant_id, graph_id, sid, now)
         _record_audit(services, principal, http_request, "schedule.run_now", 200)
@@ -4625,28 +4641,34 @@ def run_saved_graph(
     cancellation_broker = services.cancellation_broker
     cancel_event = cancellation_broker.register(run_id)
     try:
-        result = run_graph(
-            graph,
-            inputs=body.get("inputs"),
-            registry=_runtime_registry(services),
-            approval_broker=services.approval_broker,
-            event_wait_broker=services.event_wait_broker,
-            approval_notifier=EmailApprovalNotifier(
-                services.message_service, _PUBLIC_URL, principal.tenant_id
-            ),
+        with usage_context(
+            principal.tenant_id,
+            run_id=run_id,
             graph_id=graph_id,
-            graph_resolver=_tenant_graph_resolver(services),
-            emit=_metric_collect,
-            frame_sink=frame_sink,
-            resume_claim=_resume_claim_for(),
-            tracer=tracer,
-            graph_version=tracer.graph_version,
-            is_cancelled=cancel_event.is_set,
-            _block_subgraph_suspend=(STORAGE_BACKEND == "pg"),
-            tenant_id=principal.tenant_id,
-            secret_provider=_secret_provider,
-            memory_repo=services.memory_store,
-        )
+            store=services.usage_store,
+        ):
+            result = run_graph(
+                graph,
+                inputs=body.get("inputs"),
+                registry=_runtime_registry(services),
+                approval_broker=services.approval_broker,
+                event_wait_broker=services.event_wait_broker,
+                approval_notifier=EmailApprovalNotifier(
+                    services.message_service, _PUBLIC_URL, principal.tenant_id
+                ),
+                graph_id=graph_id,
+                graph_resolver=_tenant_graph_resolver(services),
+                emit=_metric_collect,
+                frame_sink=frame_sink,
+                resume_claim=_resume_claim_for(),
+                tracer=tracer,
+                graph_version=tracer.graph_version,
+                is_cancelled=cancel_event.is_set,
+                _block_subgraph_suspend=(STORAGE_BACKEND == "pg"),
+                tenant_id=principal.tenant_id,
+                secret_provider=_secret_provider,
+                memory_repo=services.memory_store,
+            )
     except RunSuperseded as exc:
         # docs/62 §2 D-4：输家停止驱动——不写 run 终态、不记监控、不进门控评估，
         # 帧与终态都归赢家；本进程如实返回"仍在挂起"的形状（刻意不新增 run 状态/错误码）。
@@ -4886,27 +4908,35 @@ async def run_saved_graph_stream(
             # 各异常分支只决定终帧种类；收尾经 _finalize_run 整体保护，任何路径恰好一帧。
             terminal: dict[str, Any]
             try:
-                result = run_graph(
-                    graph,
-                    inputs=inputs,
-                    registry=registry,
-                    approval_broker=approval_broker,
-                    event_wait_broker=services.event_wait_broker,
-                    approval_notifier=approval_notifier,
+                # docs/129 打包 AU：worker 线程内显式设 usage 上下文（contextvars
+                # 不跨线程继承，tracing 同款纪律；无此设置 ⇒ 流式运行的 LLM 调用不计）。
+                with usage_context(
+                    principal.tenant_id,
+                    run_id=run_id,
                     graph_id=graph_id,
-                    emit=recording_emit if monitored else emit,
-                    graph_resolver=graph_resolver,
-                    debug_controller=debug_controller,
-                    frame_sink=frame_sink,
-                    resume_claim=_resume_claim_for(),
-                    tracer=tracer,
-                    graph_version=tracer.graph_version if tracer is not None else None,
-                    is_cancelled=cancel_event.is_set,
-                    _block_subgraph_suspend=(STORAGE_BACKEND == "pg"),
-                    tenant_id=principal.tenant_id,
-                    secret_provider=_secret_provider,
-                    memory_repo=services.memory_store,
-                )
+                    store=services.usage_store,
+                ):
+                    result = run_graph(
+                        graph,
+                        inputs=inputs,
+                        registry=registry,
+                        approval_broker=approval_broker,
+                        event_wait_broker=services.event_wait_broker,
+                        approval_notifier=approval_notifier,
+                        graph_id=graph_id,
+                        emit=recording_emit if monitored else emit,
+                        graph_resolver=graph_resolver,
+                        debug_controller=debug_controller,
+                        frame_sink=frame_sink,
+                        resume_claim=_resume_claim_for(),
+                        tracer=tracer,
+                        graph_version=tracer.graph_version if tracer is not None else None,
+                        is_cancelled=cancel_event.is_set,
+                        _block_subgraph_suspend=(STORAGE_BACKEND == "pg"),
+                        tenant_id=principal.tenant_id,
+                        secret_provider=_secret_provider,
+                        memory_repo=services.memory_store,
+                    )
             except RunSuperseded as exc:
                 # docs/62 §2 D-4：输家零终态写——不 finish、不 record_run、不清帧，
                 # 只发让位帧让前端停手（赢家的流会继续出结果）。
@@ -6018,8 +6048,11 @@ def rotate_on_call(principal: Principal = Depends(require("administer"))) -> dic
 def nl_generate(
     request: NLGenerateRequest, principal: Principal = Depends(require("operate"))
 ) -> dict[str, Any]:
+    services = services_for(principal)
     try:
-        graph = generate_graph(request.prompt, tenant_id=principal.tenant_id)
+        # docs/129 打包 AU：端点级调用（无 run/graph/node，只挂 tenant）。
+        with usage_context(principal.tenant_id, store=services.usage_store):
+            graph = generate_graph(request.prompt, tenant_id=principal.tenant_id)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     warnings = validate_param_fills(graph, tool_input_schemas(_demo_registry))
