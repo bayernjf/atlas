@@ -3,6 +3,15 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔docs〕打包 BN 立项＝D69 运行期自走循环（2026-10-14，用户「你自己可以搞吗」＝四道闸门由 AI 直接拍；docs-only，零代码）
+
+- **动机**：docs/01 把 Loop 列为三基元之一，而运行期是"一次触发＝一次图执行"，靠调度器/Webhook 制造"看起来在循环"。`engine/` 的 OODA 循环**零生产引用**（只有 `tests/test_engine_loop.py`、`tests/test_reflection.py`、`scripts/benchmark.py`），且被 docs/88 §3 P-2(a) 冻结。
+- **两条关键实核**：① `engine/nodes.py` 五个节点全是确定性占位（产出 `observation@N` 这类字符串，`decide_node` 只比 `step >= max_steps`）⇒ **不复活它**，落点改为新增 `cycles/` supervisor，**一圈＝一次真实 `run_graph`**（继承审批/子图/断点/录制/监控全语义），`engine/` 一行不改；② 打包 AU 刚落地的账**可按 run_id 求和** ⇒ C-P1 的 token 预算闸门有数据源。
+- **四道闸门全部拍板**：C-P1 **三闸门全设**（迭代 1-50 缺省 10／墙钟 30-86400 缺省 1800／token 缺省 200000）；C-P2 **规则优先、LLM 可选二段**（`completeWhen` 表达式为主，`judgeMode="llm"` 须显式开启且成本进 AU 的账）——**本文照实记为对先前口头建议"模型判"的修正**：每圈问一次模型既烧钱又让终止判定不可回放；C-P3 圈内可挂起但**圈层不等待**（交还既有帧机制，续跑后再问是否开下一圈）；C-P4 **不写圈帧**（沿打包 R 的 D44：恢复扫描器会把圈级记录误当审批续跑、产生第二个 token）。
+- **风险姿态**：启用面＝`GraphDSL.loop` 顶层配置，**缺省 `None`＝不启用＝现状逐字不变**；这是 docs/127 六个里程碑里**唯一改运行期行为**的批次，故四闸门先拍后动。
+- 迁移 **050＝runs 两列**（`cycle_seq`／`cycle_group_id`，docs/127 预留）＋索引；用例 U1427–U1442 含四条反向门；零新错误码／零新依赖／无 ADR；**不解锁多副本**、不碰 D36/D44/T22、不动 reflection L2 的人工采纳。
+
+### 〔落码收口〕打包 AU：D70 LLM 用量与成本计量（2026-10-14，用户「好的，你继续落码」；形状权威 [docs/129](docs/129-LLM用量与成本计量-D70-打包AU-v1批契约设计.md) §7.1；U1411–U1426 全转正式）
 ### 〔落码收口〕打包 AU：D70 LLM 用量与成本计量（2026-10-14，用户「好的，你继续落码」；形状权威 [docs/129](docs/129-LLM用量与成本计量-D70-打包AU-v1批契约设计.md) §7.1；U1411–U1426 全转正式）
 
 - **那个零命中今天没了**：`src/atlas/llm/metering.py` 成为全仓**唯一**调 `litellm.completion` 的地方（八个调用点身份各自记 token/耗时/成败），并由 `test_single_litellm_exit_point_guard` 机检"恰好一处"——绕过 helper 即用量账静默缺块。
