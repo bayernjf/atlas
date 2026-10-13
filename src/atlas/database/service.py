@@ -264,11 +264,15 @@ class DatabaseClient:
             self.last_operation = None
 
     def close(self) -> None:
-        """释放连接；内置 demo 临时文件库连带删除临时目录（审查发现 #10）。"""
-        if self.demo:
-            dispose_demo_engine(self.engine)
-        else:
-            self.engine.dispose()
+        """释放连接池（内置 demo 库**不删**临时目录）。
+
+        close 的调用方是 FastAPI lifespan 关闭，而 ``with TestClient(app)`` 会在同一
+        进程内反复进出 lifespan（tests/test_api_demo.py 三处）：import 期单例
+        ``_db_client`` 在退出块后仍会被后续请求复用，若 close 连目录一起删，重连即
+        ``unable to open database file``。demo 库运行期只读，临时目录由 atexit 兜底
+        回收；一次性 engine 要连目录一起释放时显式调 :func:`dispose_demo_engine`。
+        """
+        self.engine.dispose()
 
     def _record(self, operation: str, sql: str, **extra: object) -> None:
         self.last_operation = {

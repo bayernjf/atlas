@@ -421,7 +421,9 @@ async def lifespan(_app: FastAPI):
     start_scheduler()
     yield
     stop_scheduler()
-    # 审查发现 #10：内置 demo 为 mkdtemp 临时文件库，关闭时连池带目录一起释放。
+    # 审查发现 #10：内置 demo 为 mkdtemp 临时文件库，关闭时只释放连接池；
+    # 临时目录由 database.service 的 atexit 兜底回收（close 不删目录——
+    # with TestClient(app) 反复进出 lifespan 时 import 期单例 _db_client 仍会被复用）。
     if _db_client is not None:
         _db_client.close()
 

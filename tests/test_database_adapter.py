@@ -406,6 +406,28 @@ def test_u1387_demo_engine_is_temp_file_with_wal_pragma():
     assert not os.path.exists(tmp_dir)  # 临时目录随 dispose 释放
 
 
+def test_u1387_demo_engine_close_keeps_file_reusable_for_singleton():
+    """close() 只放连接池、不删目录：lifespan 反复进出后单例 client 必须仍可查询/reseed。
+
+    回归：with TestClient(app) 退出会跑 lifespan 关闭，旧实现 close 即 rmtree，
+    import 期单例 _db_client 后续重连报 sqlite "unable to open database file"
+    （test_api_demo 三处 with-block 后 23 个用例连环失败）。
+    """
+    client = make_client()
+    tmp_dir = os.path.dirname(client.engine.url.database)
+    try:
+        assert client.query("SELECT COUNT(*) AS n FROM orders")["rows"][0]["n"] == 2
+        client.close()  # 模拟 lifespan 关闭：目录必须还在
+        assert os.path.exists(tmp_dir)
+        # 模拟下一次 app 启动后单例被复用：重连成功、文件库数据仍在。
+        assert client.query("SELECT COUNT(*) AS n FROM orders")["rows"][0]["n"] == 2
+        client.reseed_demo()
+        assert client.query("SELECT COUNT(*) AS n FROM orders")["rows"][0]["n"] == 2
+    finally:
+        dispose_demo_engine(client.engine)
+    assert not os.path.exists(tmp_dir)  # 显式 dispose 仍连目录一起释放
+
+
 def test_u1387_demo_engines_are_independent_and_reseed_is_local():
     client_a = DatabaseClient(demo_engine(), demo=True)
     client_b = DatabaseClient(demo_engine(), demo=True)
