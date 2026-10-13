@@ -4421,7 +4421,14 @@ def compile_saved_graph(
 ) -> CompileResponse:
     services = services_for(principal)
     graph = _load_graph_or_404(services, graph_id, (payload or {}).get("releaseVersion"))
-    compile_graph(graph, graph_id=graph_id, graph_resolver=_tenant_graph_resolver(services))
+    # D78：compile 端点与 run 端点同构注入 registry——prod 且演示面关闭时
+    # `_resolve_registry(None)` 会 raise（loader.py:409-412），缺注入即 500。
+    compile_graph(
+        graph,
+        graph_id=graph_id,
+        graph_resolver=_tenant_graph_resolver(services),
+        registry=_runtime_registry(services),
+    )
 
     incoming = {edge.target for edge in graph.edges}
     outgoing = {edge.source for edge in graph.edges}

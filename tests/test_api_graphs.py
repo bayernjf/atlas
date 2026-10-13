@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from atlas.api.main import app
+from atlas.graph.dsl import parse_graph
+from atlas.graph.loader import compile_graph
 from atlas.security.bootstrap import demo_surface_enabled
 
 client = TestClient(app)
@@ -79,3 +82,52 @@ def test_save_invalid_graph_returns_422_with_error_list():
     assert isinstance(detail, list)
     assert any("提示词" in error for error in detail)
     assert any("ghost" in error for error in detail)
+
+
+# --- D78：compile 端点 prod 档缺 registry 500（打包 AT 落码时发现） -----------------
+
+
+def test_d78_compile_endpoint_injects_runtime_registry_in_prod(monkeypatch):
+    """prod 且演示面关闭：compile 端点注入本租户 registry ⇒ 200（修前 500）。
+
+    `_resolve_registry(None)` 在 prod 拒演示兜底（loader.py:409-412），compile 端点
+    与 run 端点同构注入即可，不削弱 loader 的 prod 拒绝本身（见反向门）。
+
+    prod 档还需过首登强制改密门（打包 AV）：打桩 `user_store.get` 返回带轮换位的
+    admin-a 副本——真改密会 revoke 跨测试模块收集期签发的会话令牌（同
+    test_demo_surface_prod_gate.py U1391 的既定打法）。"""
+    from atlas.iam import deps as iam_deps
+
+    monkeypatch.setenv("ATLAS_ENV", "prod")
+    monkeypatch.delenv("ATLAS_ENABLE_DEMO_MOCK", raising=False)
+    real_get = iam_deps.user_store.get
+
+    def _rotated_get(tenant_id: str, username: str):
+        account = real_get(tenant_id, username)
+        if account is not None and username == "admin-a":
+            return account.model_copy(
+                update={"password_rotated_at": "2026-01-01T00:00:00+00:00"}
+            )
+        return account
+
+    monkeypatch.setattr(iam_deps.user_store, "get", _rotated_get)
+    saved = client.post("/api/graphs", json=_sample_graph())
+    assert saved.status_code == 200
+    graph_id = saved.json()["id"]
+    compiled = client.post(f"/api/graphs/{graph_id}/compile")
+    assert compiled.status_code == 200
+    body = compiled.json()
+    assert [node["id"] for node in body["nodes"]] == [
+        "trigger-1", "ai_decision-1", "tool_call-1"
+    ]
+    assert body["entrypoints"] == ["trigger-1"]
+
+
+def test_d78_compile_graph_without_registry_still_fails_closed_in_prod(monkeypatch):
+    """反向门：D78 只补端点注入，`_resolve_registry` 的 prod 拒绝一字不动。
+
+    若本文件的正例靠"关掉 loader 的门"变绿，这条必须红。"""
+    monkeypatch.setenv("ATLAS_ENV", "prod")
+    monkeypatch.delenv("ATLAS_ENABLE_DEMO_MOCK", raising=False)
+    with pytest.raises(RuntimeError):
+        compile_graph(parse_graph(_sample_graph()), graph_id="d78-guard")
