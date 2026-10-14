@@ -229,7 +229,7 @@ class PgInboundStore:
                     "channel, conversation_id, status, reasons, payload, duplicates, "
                     "created_at, updated_at) VALUES (:t, :id, :binding, :channel, "
                     ":conv, 'received', '[]'::jsonb, NULL, 0, :now, :now) "
-                    "ON CONFLICT (tenant_id, message_id) "
+                    "ON CONFLICT (tenant_id, channel, message_id) "
                     "DO UPDATE SET duplicates = inbound_deliveries.duplicates + 1, "
                     "updated_at = :now"
                 ),
