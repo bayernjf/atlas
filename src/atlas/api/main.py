@@ -1347,6 +1347,24 @@ def _webhook_trigger(
     )
 
 
+def _inbound_trigger(
+    graph_id: str, version: int, event: TriggerEvent, tenant: str,
+    agent_id: str, run_id: str | None,
+) -> None:
+    """入站会话触发（打包 BO，docs/131 D73）：承担「调度派发方」职责——submit 前
+    按预置 run_id 先 begin（与调度器同款"tick 内即可见 running"语义，见
+    `_background_run_worker` docstring），mode 记 `message_inbound`（U1445）。"""
+    services = tenant_registry.get(tenant)
+    if run_id is not None:
+        services.run_store.begin(
+            run_id=run_id, graph_id=graph_id, mode="message_inbound", agent_id=agent_id
+        )
+    _BACKGROUND_WORKER_POOL.submit(
+        _background_run_worker, services, tenant, graph_id, version, event, agent_id,
+        mode="message_inbound", run_id=run_id,
+    )
+
+
 def _webhook_audit(action: str, tenant: str, metadata: dict) -> None:
     services = tenant_registry.get(tenant)
     # AuditStore 无 metadata 列：关键事实编码进 path（不含 body/密钥）。
@@ -1485,7 +1503,7 @@ def _background_run_worker(
             # 只有第一圈沿用派发方预置的 run_id（tick 内可见 running）
             run_id=run_id if step.seq == 1 else None,
             cycle_seq=step.seq, cycle_group_id=step.group_id,
-            inputs=step.inputs,
+            inputs=step.inputs, agent_id=agent_id,
         )
 
     run_cycle_session(
@@ -2112,6 +2130,83 @@ def put_webhook_subscriptions(
     return {"items": items}
 
 
+# --- 入站会话映射（打包 BO，docs/131 D-D3；挂 binding，与 webhooks 同范式） ----------
+
+class InboundMappingsRequest(BaseModel):
+    mappings: list[dict[str, Any]]
+
+
+@app.get("/api/channels/{binding_id}/inbound-mappings")
+def get_inbound_mappings(
+    binding_id: str, principal: Principal = Depends(require("read"))
+) -> dict[str, Any]:
+    try:
+        items = services_for(principal).channel_registry.inbound_mappings(binding_id)
+    except ChannelError as exc:
+        raise _channel_http_error(exc)
+    return {"items": items}
+
+
+@app.put("/api/channels/{binding_id}/inbound-mappings")
+def put_inbound_mappings(
+    binding_id: str,
+    body: InboundMappingsRequest,
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, Any]:
+    services = services_for(principal)
+    try:
+        services.channel_registry._require(binding_id)
+    except ChannelError as exc:
+        raise _channel_http_error(exc)
+
+    mappings = body.mappings
+    errors: list[str] = []
+    if not isinstance(mappings, list):
+        errors.append("映射必须是数组")
+    elif len(mappings) > MAX_WEBHOOK_SUBSCRIPTIONS:
+        errors.append(f"映射数量不能超过 {MAX_WEBHOOK_SUBSCRIPTIONS} 条")
+    normalized: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, item in enumerate(mappings if isinstance(mappings, list) else []):
+        prefix = f"第 {index + 1} 条映射"
+        if not isinstance(item, dict):
+            errors.append(f"{prefix}格式非法")
+            continue
+        conversation_id = item.get("conversationId")
+        graph_id = item.get("graphId")
+        agent_id = item.get("agentId")
+        enabled = item.get("enabled", True)
+        if not isinstance(conversation_id, str) or not conversation_id.strip():
+            errors.append(f"{prefix}：缺少 conversationId")
+        if not isinstance(graph_id, str) or not graph_id.strip():
+            errors.append(f"{prefix}：缺少 graphId")
+        elif services.graph_store.get(graph_id.strip()) is None:
+            errors.append(f"{prefix}：映射的图不存在：{graph_id}")
+        if agent_id is not None:
+            if not isinstance(agent_id, str) or not agent_id.strip():
+                errors.append(f"{prefix}：agentId 必须是非空字符串")
+            elif services.agents_store.get(principal.tenant_id, agent_id.strip()) is None:
+                errors.append(f"{prefix}：映射的 agent 不存在：{agent_id}")
+        if not isinstance(enabled, bool):
+            errors.append(f"{prefix}：enabled 必须是布尔值")
+        if isinstance(conversation_id, str) and conversation_id.strip():
+            key = conversation_id.strip()
+            if key in seen:
+                errors.append(f"{prefix}：同一会话的映射重复：{key}")
+            seen.add(key)
+        normalized.append({
+            "conversation_id": conversation_id.strip() if isinstance(conversation_id, str) else conversation_id,
+            "graph_id": graph_id.strip() if isinstance(graph_id, str) else graph_id,
+            "agent_id": agent_id.strip() if isinstance(agent_id, str) else None,
+            "enabled": enabled,
+        })
+    if errors:
+        raise HTTPException(status_code=422, detail=errors)
+
+    items = services.channel_registry.set_inbound_mappings(binding_id, normalized)
+    return {"items": items}
+
+
 @app.get("/api/channels/webhooks/dead-letters")
 def list_webhook_dead_letters(
     topic: str | None = None,
@@ -2167,11 +2262,25 @@ def webhook_delivery_metrics(
 
 # --- 入站消息接收（打包 BO，docs/131 D73） --------------------------------
 
+def _inbound_audit(action: str, tenant: str, metadata: dict) -> None:
+    services = tenant_registry.get(tenant)
+    # 与 _webhook_audit 同纪律：AuditStore 无 metadata 列，关键事实编码进 path。
+    path = (
+        f"inbound binding={metadata.get('bindingId')} "
+        f"id={metadata.get('messageId')} conv={metadata.get('conversationId')}"
+    )
+    services.audit_store.record(
+        tenant_id=tenant, actor="channel-inbound", action=action,
+        status_code=200, path=path, ip="",
+    )
+
+
 _inbound_receiver = InboundReceiver(
     resolver=_webhook_resolve,
-    trigger=_webhook_trigger,
+    trigger=_inbound_trigger,
     store_provider=lambda tid: tenant_registry.get(tid).inbound_deliveries,
     session_store=lambda tid: tenant_registry.get(tid).inbound_sessions,
+    auditor=_inbound_audit,
 )
 
 
@@ -2335,7 +2444,19 @@ def get_agent_runs(
     if agent is None:
         raise HTTPException(status_code=404, detail="agent 不存在")
     runs = [r for r in services.run_store.list(limit=1000) if r.get("agentId") == agent_id]
-    return {"agent": agent.to_record(), "items": runs}
+    # token 汇总走 AU 的账（docs/129 usage_store；按 runId 归属过滤，不新发明计量）。
+    run_ids = {r["runId"] for r in runs}
+    usage = [
+        u for u in services.usage_store.list_recent(limit=2000)
+        if u.get("runId") in run_ids
+    ]
+    token_summary = {
+        "calls": len(usage),
+        "promptTokens": sum(u.get("promptTokens", 0) for u in usage),
+        "completionTokens": sum(u.get("completionTokens", 0) for u in usage),
+        "totalTokens": sum(u.get("totalTokens", 0) for u in usage),
+    }
+    return {"agent": agent.to_record(), "items": runs, "tokenSummary": token_summary}
 
 
 # --- Shopify 店铺侧 webhook 注册（docs/41） --------------------------------

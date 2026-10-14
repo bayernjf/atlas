@@ -23,8 +23,9 @@ from atlas.routing.models import TriggerEvent
 logger = logging.getLogger(__name__)
 
 Resolver = Callable[[str, str, TriggerEvent], int | None]
-# (graph_id, version, event, tenant, agent_id) —— 复用 _webhook_trigger 同形（agent_id 缺省 ''）。
-TriggerFn = Callable[[str, int, TriggerEvent, str, str], None]
+# (graph_id, version, event, tenant, agent_id, run_id) —— 复用 _webhook_trigger 同形
+# （agent_id／run_id 缺省 ''／None；run_id 由 receiver 生成并透传 ⇒ 响应的 runId 即真实 run）。
+TriggerFn = Callable[[str, int, TriggerEvent, str, str, str | None], None]
 
 
 class InboundEnvelope(BaseModel):
@@ -70,21 +71,24 @@ class InboundReceiver:
         resolver: Resolver | None = None,
         trigger: TriggerFn | None = None,
         store_provider: Callable[[str], Any] | None = None,
-        session_store: InMemoryInboundSessionStore | None = None,
+        session_store: Callable[[str], Any] | Any | None = None,
         auditor: Callable[[str, str, dict], None] | None = None,
     ) -> None:
         self._resolve = resolver
         self._trigger = trigger
         self._store_provider = store_provider
+        # session_store 与 store_provider 同纪律：per-tenant 装配 ⇒ 传 provider；
+        # 也接受直挂实例（单测/单租户形态）。
         self._session_store = session_store
         self._audit = auditor
 
     def receive(
-        self, tenant_id: str, binding_id: str, binding: ChannelBinding, envelope: InboundEnvelope
+        self, tenant_id: str, binding_id: str, binding: ChannelBinding, envelope: InboundEnvelope,
+        *, _skip_dedup: bool = False,
     ) -> dict[str, Any]:
         store = self._store_for(tenant_id)
-        # D-D2 去重（幂等，重复消息不二次起 run）
-        if store is not None:
+        # D-D2 去重（幂等，重复消息不二次起 run）；死信重放走 _skip_dedup 绕开（仿 webhook replay）。
+        if store is not None and not _skip_dedup:
             try:
                 if store.note_duplicate_if_seen(tenant_id, envelope.message_id):
                     return {"duplicate": True}
@@ -118,11 +122,14 @@ class InboundReceiver:
 
         graph_id = str(mapping["graph_id"])
         agent_id = mapping.get("agent_id") or ""
+        # TriggerEvent.channel 是 Literal[api/webhook/im/embed]：入站消息归 "im" 语义槽，
+        # 原始渠道名（fake/wecom/…）放 payload["channel"] 供下游节点用。
         event = TriggerEvent(
-            channel=envelope.channel,
+            channel="im",
             payload={
                 "conversationId": envelope.conversation_id,
                 "messageId": envelope.message_id,
+                "channel": envelope.channel,
                 "data": envelope.data,
             },
         )
@@ -138,7 +145,7 @@ class InboundReceiver:
         run_id = uuid.uuid4().hex
         try:
             if self._trigger is not None:
-                self._trigger(graph_id, version, event, tenant_id, agent_id)
+                self._trigger(graph_id, version, event, tenant_id, agent_id, run_id)
         except Exception:
             logger.warning("inbound 触发图运行失败 graph=%s", graph_id, exc_info=True)
             if store is not None:
@@ -151,8 +158,9 @@ class InboundReceiver:
         if store is not None:
             self._record_received(store, tenant_id, binding_id, envelope)
         # D-D7 回写会话（假供应商落进程内记录；run outputs 由会话视图聚合 runs 取）
-        if self._session_store is not None:
-            self._session_store.append(
+        session_store = self._session_store_for(tenant_id)
+        if session_store is not None:
+            session_store.append(
                 tenant_id,
                 {
                     "role": "user",
@@ -181,7 +189,7 @@ class InboundReceiver:
             channel=dead.get("channel", ""),
             data=dead.get("data") or {},
         )
-        result = self.receive(tenant_id, binding_id, binding, envelope)
+        result = self.receive(tenant_id, binding_id, binding, envelope, _skip_dedup=True)
         received = result.get("received", False)
         try:
             store.resolve_replay(
@@ -244,3 +252,15 @@ class InboundReceiver:
         except Exception:
             logger.warning("inbound 投递存储解析失败", exc_info=True)
             return None
+
+    def _session_store_for(self, tenant_id: str) -> Any:
+        store = self._session_store
+        if store is None:
+            return None
+        if callable(store) and not hasattr(store, "append"):
+            try:
+                return store(tenant_id)
+            except Exception:
+                logger.warning("inbound 会话存储解析失败", exc_info=True)
+                return None
+        return store
