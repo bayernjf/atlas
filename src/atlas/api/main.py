@@ -122,6 +122,8 @@ from atlas.channels.webhooks import (
     build_envelope,
     verify_shopify_hmac,
 )
+from atlas.channels.inbound import InboundReceiver, InboundEnvelope
+from atlas.iam.agents_store import Agent
 from atlas.a2a.router import router as a2a_router  # docs/90 ADR T32 (Zeus A2A execution-agent face)
 from atlas.connections.service import ConnectionServiceError
 from atlas.observability.health import check_ready
@@ -1336,10 +1338,30 @@ def _webhook_resolve(graph_id: str, tenant: str, event: TriggerEvent) -> int | N
     return version
 
 
-def _webhook_trigger(graph_id: str, version: int, event: TriggerEvent, tenant: str) -> None:
+def _webhook_trigger(
+    graph_id: str, version: int, event: TriggerEvent, tenant: str, agent_id: str = ""
+) -> None:
     services = tenant_registry.get(tenant)
     _BACKGROUND_WORKER_POOL.submit(
-        _background_run_worker, services, tenant, graph_id, version, event
+        _background_run_worker, services, tenant, graph_id, version, event, agent_id
+    )
+
+
+def _inbound_trigger(
+    graph_id: str, version: int, event: TriggerEvent, tenant: str,
+    agent_id: str, run_id: str | None,
+) -> None:
+    """入站会话触发（打包 BO，docs/131 D73）：承担「调度派发方」职责——submit 前
+    按预置 run_id 先 begin（与调度器同款"tick 内即可见 running"语义，见
+    `_background_run_worker` docstring），mode 记 `message_inbound`（U1445）。"""
+    services = tenant_registry.get(tenant)
+    if run_id is not None:
+        services.run_store.begin(
+            run_id=run_id, graph_id=graph_id, mode="message_inbound", agent_id=agent_id
+        )
+    _BACKGROUND_WORKER_POOL.submit(
+        _background_run_worker, services, tenant, graph_id, version, event, agent_id,
+        mode="message_inbound", run_id=run_id,
     )
 
 
@@ -1368,6 +1390,7 @@ def _background_run_cycle(
     services: TenantServices, tenant_id: str, graph_id: str, version: int,
     event: TriggerEvent, *, mode: str, run_id: str | None,
     cycle_seq: int = 0, cycle_group_id: str = "", inputs: dict[str, Any] | None = None,
+    agent_id: str = "",
 ) -> CycleOutcome:
     """后台跑**一圈**（= 一次真实运行）；返回 `CycleOutcome` 供圈层判定。
 
@@ -1381,6 +1404,7 @@ def _background_run_cycle(
         run_store.begin(
             run_id=own_run_id, graph_id=graph_id, mode=mode,
             cycle_seq=cycle_seq, cycle_group_id=cycle_group_id,
+            agent_id=agent_id,
         )
     try:
         raw = services.graph_store.get(graph_id, version)
@@ -1434,7 +1458,7 @@ def _background_run_cycle(
 def _background_run_worker(
     services: TenantServices, tenant_id: str,
     graph_id: str, version: int, event: TriggerEvent,
-    *, mode: str = "webhook", run_id: str | None = None,
+    agent_id: str = "", *, mode: str = "webhook", run_id: str | None = None,
 ) -> None:
     """后台运行钉版图：run 记录独立于 HTTP 请求；失败落 failed，不回传触发方。
 
@@ -1468,7 +1492,7 @@ def _background_run_worker(
     if cycle_config(graph) is None:
         _background_run_cycle(
             services, tenant_id, graph_id, version, event,
-            mode=mode, run_id=run_id,
+            mode=mode, run_id=run_id, agent_id=agent_id,
         )
         return
 
@@ -1479,7 +1503,7 @@ def _background_run_worker(
             # 只有第一圈沿用派发方预置的 run_id（tick 内可见 running）
             run_id=run_id if step.seq == 1 else None,
             cycle_seq=step.seq, cycle_group_id=step.group_id,
-            inputs=step.inputs,
+            inputs=step.inputs, agent_id=agent_id,
         )
 
     run_cycle_session(
@@ -2106,6 +2130,83 @@ def put_webhook_subscriptions(
     return {"items": items}
 
 
+# --- 入站会话映射（打包 BO，docs/131 D-D3；挂 binding，与 webhooks 同范式） ----------
+
+class InboundMappingsRequest(BaseModel):
+    mappings: list[dict[str, Any]]
+
+
+@app.get("/api/channels/{binding_id}/inbound-mappings")
+def get_inbound_mappings(
+    binding_id: str, principal: Principal = Depends(require("read"))
+) -> dict[str, Any]:
+    try:
+        items = services_for(principal).channel_registry.inbound_mappings(binding_id)
+    except ChannelError as exc:
+        raise _channel_http_error(exc)
+    return {"items": items}
+
+
+@app.put("/api/channels/{binding_id}/inbound-mappings")
+def put_inbound_mappings(
+    binding_id: str,
+    body: InboundMappingsRequest,
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, Any]:
+    services = services_for(principal)
+    try:
+        services.channel_registry._require(binding_id)
+    except ChannelError as exc:
+        raise _channel_http_error(exc)
+
+    mappings = body.mappings
+    errors: list[str] = []
+    if not isinstance(mappings, list):
+        errors.append("映射必须是数组")
+    elif len(mappings) > MAX_WEBHOOK_SUBSCRIPTIONS:
+        errors.append(f"映射数量不能超过 {MAX_WEBHOOK_SUBSCRIPTIONS} 条")
+    normalized: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, item in enumerate(mappings if isinstance(mappings, list) else []):
+        prefix = f"第 {index + 1} 条映射"
+        if not isinstance(item, dict):
+            errors.append(f"{prefix}格式非法")
+            continue
+        conversation_id = item.get("conversationId")
+        graph_id = item.get("graphId")
+        agent_id = item.get("agentId")
+        enabled = item.get("enabled", True)
+        if not isinstance(conversation_id, str) or not conversation_id.strip():
+            errors.append(f"{prefix}：缺少 conversationId")
+        if not isinstance(graph_id, str) or not graph_id.strip():
+            errors.append(f"{prefix}：缺少 graphId")
+        elif services.graph_store.get(graph_id.strip()) is None:
+            errors.append(f"{prefix}：映射的图不存在：{graph_id}")
+        if agent_id is not None:
+            if not isinstance(agent_id, str) or not agent_id.strip():
+                errors.append(f"{prefix}：agentId 必须是非空字符串")
+            elif services.agents_store.get(principal.tenant_id, agent_id.strip()) is None:
+                errors.append(f"{prefix}：映射的 agent 不存在：{agent_id}")
+        if not isinstance(enabled, bool):
+            errors.append(f"{prefix}：enabled 必须是布尔值")
+        if isinstance(conversation_id, str) and conversation_id.strip():
+            key = conversation_id.strip()
+            if key in seen:
+                errors.append(f"{prefix}：同一会话的映射重复：{key}")
+            seen.add(key)
+        normalized.append({
+            "conversation_id": conversation_id.strip() if isinstance(conversation_id, str) else conversation_id,
+            "graph_id": graph_id.strip() if isinstance(graph_id, str) else graph_id,
+            "agent_id": agent_id.strip() if isinstance(agent_id, str) else None,
+            "enabled": enabled,
+        })
+    if errors:
+        raise HTTPException(status_code=422, detail=errors)
+
+    items = services.channel_registry.set_inbound_mappings(binding_id, normalized)
+    return {"items": items}
+
+
 @app.get("/api/channels/webhooks/dead-letters")
 def list_webhook_dead_letters(
     topic: str | None = None,
@@ -2157,6 +2258,205 @@ def webhook_delivery_metrics(
 ) -> dict[str, Any]:
     store = services_for(principal).webhook_deliveries
     return store.metrics(principal.tenant_id)
+
+
+# --- 入站消息接收（打包 BO，docs/131 D73） --------------------------------
+
+def _inbound_audit(action: str, tenant: str, metadata: dict) -> None:
+    services = tenant_registry.get(tenant)
+    # 与 _webhook_audit 同纪律：AuditStore 无 metadata 列，关键事实编码进 path。
+    path = (
+        f"inbound binding={metadata.get('bindingId')} "
+        f"id={metadata.get('messageId')} conv={metadata.get('conversationId')}"
+    )
+    services.audit_store.record(
+        tenant_id=tenant, actor="channel-inbound", action=action,
+        status_code=200, path=path, ip="",
+    )
+
+
+_inbound_receiver = InboundReceiver(
+    resolver=_webhook_resolve,
+    trigger=_inbound_trigger,
+    store_provider=lambda tid: tenant_registry.get(tid).inbound_deliveries,
+    session_store=lambda tid: tenant_registry.get(tid).inbound_sessions,
+    auditor=_inbound_audit,
+)
+
+
+@app.post("/api/channels/inbound/{binding_id}")
+async def inbound_ingress(binding_id: str, http_request: Request) -> dict[str, Any]:
+    """通用入站接收（公开，可插拔验签；D-D1）。
+
+    验签：binding.config.inbound_secret 配置则 HMAC 验签（header X-Inbound-Signature），
+    否则 passthrough（假供应商；真供应商 verify 留 ⛔ docs/73 1.3）。
+    响应：{received, runId?, agentId?} / {duplicate} / {deadLetter, messageId?}。
+    """
+    located = await asyncio.to_thread(_locate_binding, binding_id)
+    if located is None:
+        raise HTTPException(status_code=404, detail="渠道绑定不存在")
+    tenant_id, binding, services = located
+    raw = await http_request.body()
+    if len(raw) > MAX_WEBHOOK_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="入站请求体超过 1MB 上限")
+    secret = (binding.config or {}).get("inbound_secret")
+    if secret:
+        signature = http_request.headers.get("X-Inbound-Signature")
+        if not verify_shopify_hmac(raw, signature, secret):
+            raise HTTPException(status_code=401, detail="入站签名校验失败")
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise HTTPException(status_code=400, detail="入站请求体不是合法 JSON 对象")
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="入站请求体必须是 JSON 对象")
+    message_id = data.get("messageId") or data.get("message_id")
+    conversation_id = data.get("conversationId") or data.get("conversation_id")
+    channel = data.get("channel") or "fake"
+    payload = data.get("data", data)
+    if not message_id or not conversation_id:
+        raise HTTPException(status_code=400, detail="入站消息缺少 messageId / conversationId")
+    envelope = InboundEnvelope(
+        message_id=message_id, conversation_id=conversation_id, channel=channel, data=payload
+    )
+    return _inbound_receiver.receive(tenant_id, binding_id, binding, envelope)
+
+
+@app.get("/api/channels/inbound/dead-letters")
+def list_inbound_dead_letters(
+    channel: str | None = None,
+    bindingId: str | None = None,
+    limit: int = 100,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    store = services_for(principal).inbound_deliveries
+    items = store.list_dead(
+        principal.tenant_id, channel=channel, binding_id=bindingId, limit=limit
+    )
+    return {"items": items}
+
+
+@app.post("/api/channels/inbound/dead-letters/{message_id}/replay")
+def replay_inbound_dead_letter(
+    message_id: str, principal: Principal = Depends(require("operate"))
+) -> dict[str, Any]:
+    services = services_for(principal)
+    dead = services.inbound_deliveries.get_dead(principal.tenant_id, message_id)
+    if dead is None:
+        raise HTTPException(status_code=404, detail="死信投递不存在或已处理")
+    binding_obj = services.channel_registry._store.get(dead["bindingId"])
+    if binding_obj is None:
+        raise HTTPException(status_code=404, detail="死信所属的渠道绑定不存在")
+    result = _inbound_receiver.replay(
+        principal.tenant_id, dead["bindingId"], binding_obj, message_id
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="死信投递不存在或已处理")
+    return result
+
+
+@app.delete("/api/channels/inbound/dead-letters/{message_id}")
+def delete_inbound_dead_letter(
+    message_id: str, principal: Principal = Depends(require("administer"))
+) -> dict[str, Any]:
+    deleted = services_for(principal).inbound_deliveries.delete(principal.tenant_id, message_id)
+    return {"deleted": deleted}
+
+
+@app.get("/api/channels/inbound/metrics")
+def inbound_delivery_metrics(
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    return services_for(principal).inbound_deliveries.metrics(principal.tenant_id)
+
+
+@app.get("/api/channels/inbound/sessions/{conversation_id}")
+def get_inbound_session(
+    conversation_id: str, principal: Principal = Depends(require("read"))
+) -> dict[str, Any]:
+    items = services_for(principal).inbound_sessions.list(principal.tenant_id, conversation_id)
+    return {"conversationId": conversation_id, "items": items}
+
+
+# --- 可管理 agent（打包 BO，docs/131 D74） ---------------------------------
+
+@app.get("/api/agents")
+def list_agents(principal: Principal = Depends(require("read"))) -> dict[str, Any]:
+    items = [a.to_record() for a in services_for(principal).agents_store.list(principal.tenant_id)]
+    return {"items": items}
+
+
+@app.post("/api/agents")
+def create_agent(
+    body: dict[str, Any], principal: Principal = Depends(require("administer"))
+) -> dict[str, Any]:
+    name = body.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise HTTPException(status_code=422, detail="agent name 必填")
+    agent_id = body.get("id") or uuid.uuid4().hex
+    agent = Agent(
+        id=agent_id, tenant_id=principal.tenant_id, name=name.strip(),
+        enabled=bool(body.get("enabled", True)),
+        skills=body.get("skills") or [], adapter_ids=body.get("adapter_ids") or [],
+        coordinator=body.get("coordinator"),
+    )
+    services_for(principal).agents_store.put(agent)
+    return agent.to_record()
+
+
+@app.put("/api/agents/{agent_id}")
+def update_agent(
+    agent_id: str, body: dict[str, Any],
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    services = services_for(principal)
+    agent = services.agents_store.get(principal.tenant_id, agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="agent 不存在")
+    if "name" in body and isinstance(body["name"], str):
+        agent.name = body["name"].strip()
+    if "enabled" in body:
+        agent.enabled = bool(body["enabled"])
+    if "skills" in body:
+        agent.skills = body.get("skills") or []
+    if "adapter_ids" in body:
+        agent.adapter_ids = body.get("adapter_ids") or []
+    if "coordinator" in body:
+        agent.coordinator = body.get("coordinator")
+    services.agents_store.put(agent)
+    return agent.to_record()
+
+
+@app.delete("/api/agents/{agent_id}")
+def delete_agent(
+    agent_id: str, principal: Principal = Depends(require("administer"))
+) -> dict[str, Any]:
+    deleted = services_for(principal).agents_store.delete(principal.tenant_id, agent_id)
+    return {"deleted": deleted}
+
+
+@app.get("/api/agents/{agent_id}/runs")
+def get_agent_runs(
+    agent_id: str, principal: Principal = Depends(require("read"))
+) -> dict[str, Any]:
+    services = services_for(principal)
+    agent = services.agents_store.get(principal.tenant_id, agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="agent 不存在")
+    runs = [r for r in services.run_store.list(limit=1000) if r.get("agentId") == agent_id]
+    # token 汇总走 AU 的账（docs/129 usage_store；按 runId 归属过滤，不新发明计量）。
+    run_ids = {r["runId"] for r in runs}
+    usage = [
+        u for u in services.usage_store.list_recent(limit=2000)
+        if u.get("runId") in run_ids
+    ]
+    token_summary = {
+        "calls": len(usage),
+        "promptTokens": sum(u.get("promptTokens", 0) for u in usage),
+        "completionTokens": sum(u.get("completionTokens", 0) for u in usage),
+        "totalTokens": sum(u.get("totalTokens", 0) for u in usage),
+    }
+    return {"agent": agent.to_record(), "items": runs, "tokenSummary": token_summary}
 
 
 # --- Shopify 店铺侧 webhook 注册（docs/41） --------------------------------

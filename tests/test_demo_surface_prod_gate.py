@@ -31,6 +31,10 @@ PUBLIC_BY_DESIGN: dict[str, str] = {
     "GET /api/ready": "就绪探针（真打 SELECT 1），只回 ok/fail",
     "GET /metrics": "K-C：prod 未配 token→404，配了须 Bearer",
     "POST /api/channels/hooks/shopify/{binding_id}": "公开入站，先 HMAC-SHA256 验签再解析 body",
+    "POST /api/channels/inbound/{binding_id}": (
+        "公开入站（打包 BO，D-D1）：binding 配 inbound_secret 则先 HMAC 验签"
+        "（X-Inbound-Signature）再解析 body，未配则假供应商 passthrough（docs/73 1.3 ⛔）"
+    ),
     "GET /connections/callback": "OAuth 回调，state 不可预测且一次性",
     "POST /api/auth/login": "登录入口本身（有速率门）",
     "GET /api/approvals/email-view": "邮件深链，签名 capability token＋短时效",

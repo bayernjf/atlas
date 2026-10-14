@@ -153,9 +153,11 @@ class RunRepository(Protocol):
     def begin(
         self, *, run_id: str, graph_id: str, mode: str,
         cycle_seq: int = 0, cycle_group_id: str = "",
+        agent_id: str = "",
     ) -> None:
         """`cycle_seq`／`cycle_group_id`＝打包 BN（docs/130 §3.3）圈归属两列；
-        **缺省 0/''＝非圈运行**，故既有调用点不传即逐字等价现状。"""
+        `agent_id`＝打包 BO（docs/131 §3.3）agent 维度（D74）；
+        **缺省 0/''／''＝非圈运行／非 agent 运行**，故既有调用点不传即逐字等价现状。"""
     def suspend(
         self,
         *,

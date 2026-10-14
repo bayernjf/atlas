@@ -1998,6 +1998,10 @@ def _validate_node_config(node: NodeDSL) -> list[Issue]:
                     )]
         if trigger_type == "webhook" and not config.get("webhookUrl"):
             return [add("Webhook 触发必须填写 URL", "/webhookUrl", "NODE_TRIGGER_WEBHOOK_URL_REQUIRED")]
+        # 打包 BO（docs/131 D-D4）：message_inbound 入站触发，无额外必填项；
+        # inputs 由入站消息注入（event + conversationId），编译期仅占位确认合法。
+        if trigger_type == "message_inbound":
+            pass
     elif node.type == "ai_decision":
         if not (config.get("promptTemplate") or "").strip():
             return [add("AI 决策必须填写提示词模板", "/promptTemplate", "NODE_AI_PROMPT_REQUIRED")]

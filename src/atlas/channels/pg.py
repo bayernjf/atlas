@@ -24,7 +24,7 @@ def _now_iso() -> str:
 class PgChannelStore:
     _COLS = (
         "id, tenant_id, provider, connection_id, config, status, "
-        "last_error, created_by, created_at, updated_at, webhook_subscriptions"
+        "last_error, created_by, created_at, updated_at, webhook_subscriptions, inbound_mappings"
     )
 
     def __init__(self, engine: Engine, tenant_id: str):
@@ -54,6 +54,7 @@ class PgChannelStore:
             created_at=row[8],
             updated_at=row[9],
             webhook_subscriptions=PgChannelStore._jsonb(row[10], []),
+            inbound_mappings=PgChannelStore._jsonb(row[11], []),
         )
 
     def create(self, binding: ChannelBinding) -> ChannelBinding:
@@ -67,10 +68,10 @@ class PgChannelStore:
                 text(
                     "INSERT INTO channel_bindings (id, tenant_id, provider, connection_id, "
                     "config, status, last_error, created_by, created_at, updated_at, "
-                    "webhook_subscriptions) VALUES "
+                    "webhook_subscriptions, inbound_mappings) VALUES "
                     "(:id, :tenant_id, :provider, :connection_id, CAST(:config AS jsonb), "
                     ":status, :last_error, :created_by, :created_at, :updated_at, "
-                    "CAST(:subs AS jsonb))"
+                    "CAST(:subs AS jsonb), CAST(:mappings AS jsonb))"
                 ),
                 {
                     "id": binding.id,
@@ -84,6 +85,7 @@ class PgChannelStore:
                     "created_at": binding.created_at,
                     "updated_at": binding.updated_at,
                     "subs": json.dumps(binding.webhook_subscriptions, ensure_ascii=False),
+                    "mappings": json.dumps(binding.inbound_mappings, ensure_ascii=False),
                 },
             )
         return binding
@@ -111,7 +113,8 @@ class PgChannelStore:
                     "UPDATE channel_bindings SET provider = :provider, "
                     "connection_id = :connection_id, config = CAST(:config AS jsonb), "
                     "status = :status, last_error = :last_error, updated_at = :updated_at, "
-                    "webhook_subscriptions = CAST(:subs AS jsonb) "
+                    "webhook_subscriptions = CAST(:subs AS jsonb), "
+                    "inbound_mappings = CAST(:mappings AS jsonb) "
                     "WHERE tenant_id = :t AND id = :id"
                 ),
                 {
@@ -122,6 +125,7 @@ class PgChannelStore:
                     "last_error": binding.last_error,
                     "updated_at": binding.updated_at,
                     "subs": json.dumps(binding.webhook_subscriptions, ensure_ascii=False),
+                    "mappings": json.dumps(binding.inbound_mappings, ensure_ascii=False),
                     "t": self._tenant_id,
                     "id": binding.id,
                 },

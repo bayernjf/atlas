@@ -18,13 +18,14 @@ type DashboardProps = {
   onOpenOpenApi: () => void
   onOpenWaits: () => void
   onOpenSchedules: () => void
+  onOpenAgents: () => void
   onOpenReflection: () => void
   onOpenModels: () => void
   onOpenUsage: () => void
   onOpenTemplates: () => void
 }
 
-export function Dashboard({ principal, onLogout, onOpenEditor, onOpenMonitoring, onOpenMemory, onOpenConnections, onOpenUsers, onOpenApprovals, onOpenAudit, onOpenOpenApi, onOpenWaits, onOpenSchedules, onOpenReflection, onOpenModels, onOpenUsage, onOpenTemplates }: DashboardProps) {
+export function Dashboard({ principal, onLogout, onOpenEditor, onOpenMonitoring, onOpenMemory, onOpenConnections, onOpenUsers, onOpenApprovals, onOpenAudit, onOpenOpenApi, onOpenWaits, onOpenSchedules, onOpenAgents, onOpenReflection, onOpenModels, onOpenUsage, onOpenTemplates }: DashboardProps) {
   // 页面专属文案走 dashboard namespace；品牌名/主导航是跨页通用文案，显式取 common: 前缀。
   const { t } = useTranslation('dashboard')
   return (
@@ -49,6 +50,7 @@ export function Dashboard({ principal, onLogout, onOpenEditor, onOpenMonitoring,
               )}
               <Button onClick={onOpenMemory}>{t('common:nav.memory')}</Button>
               <Button onClick={onOpenSchedules}>{t('common:nav.schedules')}</Button>
+              <Button onClick={onOpenAgents}>{t('common:nav.agents')}</Button>
               <Button onClick={onOpenReflection}>{t('reflection:menu.reflection')}</Button>
               <Button onClick={onOpenModels}>{t('common:nav.models')}</Button>
               <Button onClick={onOpenUsage}>{t('common:nav.usage')}</Button>

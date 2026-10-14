@@ -82,5 +82,29 @@
     "error": {
       "CHANNEL_UPSTREAM_UNAUTHORIZED": "店铺访问令牌已失效，请在连接管理中重新授权"
     }
+  },
+  "inbound": {
+    "button": "入站映射",
+    "modal": { "title": "入站会话映射" },
+    "hint": "会话 ↔ 图映射：命中的入站消息触发目标图（可挂 agent），未命中或触发失败的进死信队列。至多 10 条。",
+    "subsTitle": "会话 → 图映射",
+    "conversationPlaceholder": "会话 ID（如 conv-001）",
+    "graphPlaceholder": "选择要触发的图",
+    "agentPlaceholder": "挂 agent（可选）",
+    "enabled": "启用",
+    "disabled": "停用",
+    "add": "新增映射",
+    "session": "会话",
+    "message": { "saved": "入站映射已保存" },
+    "error": {
+      "load": "映射加载失败",
+      "save": "映射保存失败"
+    },
+    "sessionView": {
+      "title": "会话记录",
+      "empty": "该会话暂无消息记录（假供应商落进程内记录，重启即清）",
+      "roleUser": "用户",
+      "loadError": "会话记录加载失败"
+    }
   }
 }

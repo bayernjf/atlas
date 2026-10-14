@@ -113,7 +113,9 @@ class ChannelRegistry:
             tenant_id=self._tenant_id,
             provider=provider,
             connection_id=connection_id,
-            config={"shop": shop, "apiVersion": api_version},
+            # 打包 BO（docs/131 D-D1）：保留 shop/apiVersion 之外的自定义键
+            # （如 `inbound_secret` 预共享验签密钥），否则入站 verify 钩子无 API 可配。
+            config={**cfg, "shop": shop, "apiVersion": api_version},
             created_by=created_by,
         )
         self._store.create(binding)
@@ -163,6 +165,18 @@ class ChannelRegistry:
         binding.webhook_subscriptions = subs
         self._store.save(binding)
         return binding.view()["webhookSubscriptions"]
+
+    def inbound_mappings(self, binding_id: str) -> list[dict[str, Any]]:
+        return self._require(binding_id).view()["inboundMappings"]
+
+    def set_inbound_mappings(
+        self, binding_id: str, mappings: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """打包 BO（docs/131 D-D3）：会话↔图映射整组替换（与 set_subscriptions 同范式）。"""
+        binding = self._require(binding_id)
+        binding.inbound_mappings = mappings
+        self._store.save(binding)
+        return binding.view()["inboundMappings"]
 
     @staticmethod
     def _hook_address(binding_id: str) -> str:

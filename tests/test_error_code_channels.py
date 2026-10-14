@@ -207,8 +207,12 @@ DEAD_LETTER_REASON = {
     # `reasons:[{graphId, code}]`，UI 在死信列表里以机器码呈现，docs/39）。
     # 它是**已入库的历史记录**、不是当次请求的错误：同一码对不同 graphId 成立，
     # 逐条译文要连 graphId 一起排；按 docs/57 §2.5 属"业务数据不译"。
+    # 打包 BO（docs/131）：`channels/inbound.py` 的 inbound_deliveries 复用同范式
+    # （NO_MAPPING 入站无映射命中死信、REPLAY_FAILED 重放失败记录），同口径不译。
     "MISSING_GRAPH_ID",
+    "NO_MAPPING",
     "NO_PUBLISHED_VERSION",
+    "REPLAY_FAILED",
     "RESOLVE_FAILED",
     "TRIGGER_FAILED",
 }

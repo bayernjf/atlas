@@ -3,6 +3,21 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔feat〕打包 BO 落码收口＝D73 入站会话＋D74 智能体团队面（2026-10-14，用户「继续按推荐搞」授权；十步原子序 docs/131 §6 全落）
+
+- **D73 入站协议面**：`channels/inbound.py` InboundReceiver（可插拔 verify→幂等去重→会话映射→起 run→回写会话视图）；两档 `inbound_deliveries` store（与 webhook deliveries 同范式分表）；dsl 触发器 `message_inbound`；`ChannelBinding.inbound_mappings`＋view 投影＋两档加载/保存；端点 `POST /api/channels/inbound/{binding_id}`（配 `inbound_secret` 则 HMAC 验签 401，未配 passthrough）＋DLQ（list/replay/delete）＋metrics＋会话视图；映射管理 `GET/PUT /api/channels/{id}/inbound-mappings`（422 聚合校验）。
+- **D74 agent 维度**：迁移 052 `runs.agent_id`（索引＋begin 可选形参＋列表投影 `agentId`）；新表 `agents`＋两档 store（`iam/agents_store.py`）；`/api/agents` CRUD＋`GET /api/agents/{id}/runs`（token 汇总走 AU 的 llm_usage 账按 runId 过滤）；前端 Agents 页＋Dashboard/App 入口＋agents 命名空间 i18n 两语；ChannelBindingsCard「入站映射」面板＋会话视图 Modal。
+- **落码偏差（docs/131 §7.1 照实）**：会话视图/映射管理两端点是契约 §3.4 补全；`TriggerEvent.channel` 归 `im` 槽；入站专属 `_inbound_trigger` 预 begin（响应 runId 即真实 run，mode=`message_inbound`）；第一圈 cycleSeq=0 为 BN 预 begin 占位语义；`bind` 保留 config 自定义键（`inbound_secret` 可配）。**顺带修既有漏线**：`_run_once` 闭包补传 `agent_id`（循环圈丢 agent 维度）。
+- **门**：U1443–U1454 全绿（`tests/test_bo_inbound_agents.py` 14 例）；反向门 U1451/U1452 植缺陷实跑转红；回归面 channels/runs/webhook 31＋dsl/storage/迁移 149＋cycles/usage 103＋i18n 9 全绿；前端 build ✓；全量读数见 docs/131 §7.2。零新错误码／零新依赖／无 ADR／迁移 051（agent 归因＋入站投递）＋052（agents 表）。真渠道供应商半边仍 ⛔（docs/73 1.3）。
+
+### 〔docs〕打包 BO 立项＝D73 入站会话＋D74 智能体团队面（2026-10-14，用户「推进 BO 立项」授权；docs-only，零代码）
+
+- **动机**：D73 入站消费协议面缺失（`message/webhook.py:15` 自写不做入站消费），自动化客服进不来；D74 智能体团队面缺失——`skills/Bot` 底层件已有但 run/节点无 agent 身份维度，无法按智能体归因运行与成本。前置 C（BN，D69）与 B（AU，D70）均 ✅。
+- **复用面成熟**：`channels/deliveries.py` 去重/DLQ 范式与 `shopify_webhook_ingress` 后台线程起 run 范式已就位 ⇒ BO 复用不重造；`runs` 表已被 BN 加过 `cycle_seq`/`cycle_group_id` 扩展位 ⇒ 加 `agent_id` 同形扩展。
+- **八条决策 D-D1…D-D8**：入站端点 `POST /api/channels/inbound/{binding_id}`（公开签名校验、可插拔 verify）／去重死信复用 deliveries 范式（新增 `inbound_deliveries` 同形 store）／会话↔图映射**挂渠道 binding**（D-P1，不做独立实体）／触发器 `message_inbound` 同族扩展／多轮上下文**不做摘要**只透传 `conversationId`（D-P2，留 D35）／agent 维度＝`runs` 加 `agent_id`（迁移 051）＋`/api/agents` CRUD＋`Agents.tsx`／输出回原会话本批假供应商落进程内记录／零新错误码零新依赖无 ADR。
+- **边界**：真钉钉/企微/飞书 ⛔（docs/73 1.3），本批只用假供应商；D24 不解除。
+- 迁移 **051＋052**（docs/127 预留）；用例 U1443–U1454 含两条反向门；**下一批候选**：BP（D75）→ BQ（D76＋D71）。
+
 ### 〔docs〕打包 BN 立项＝D69 运行期自走循环（2026-10-14，用户「你自己可以搞吗」＝四道闸门由 AI 直接拍；docs-only，零代码）
 
 - **动机**：docs/01 把 Loop 列为三基元之一，而运行期是"一次触发＝一次图执行"，靠调度器/Webhook 制造"看起来在循环"。`engine/` 的 OODA 循环**零生产引用**（只有 `tests/test_engine_loop.py`、`tests/test_reflection.py`、`scripts/benchmark.py`），且被 docs/88 §3 P-2(a) 冻结。

@@ -1,0 +1,54 @@
+{
+  "page": {
+    "title": "智能体团队",
+    "description": "可管理 agent（打包 BO）：列表、启停、执行日记与 token 汇总。运行数据不落 agent 实体，按 runs.agent_id 聚合；token 走 LLM 用量账。",
+    "refresh": "刷新",
+    "empty": "还没有 agent，点右上角新建一个",
+    "loadError": "agent 列表加载失败"
+  },
+  "table": {
+    "name": "名称",
+    "id": "ID",
+    "enabled": "启用",
+    "createdAt": "创建时间",
+    "actions": "操作"
+  },
+  "actions": {
+    "create": "新建 agent",
+    "diary": "执行日记",
+    "enabled": "已启用",
+    "disabled": "已停用",
+    "toggleFailed": "启停失败",
+    "created": "agent 已创建",
+    "deleted": "agent 已删除"
+  },
+  "createModal": {
+    "title": "新建 agent",
+    "name": "名称",
+    "namePlaceholder": "例如：客服分身",
+    "nameRequired": "请填写名称"
+  },
+  "deleteConfirm": {
+    "title": "删除 agent？",
+    "description": "仅删除配置；历史运行记录仍保留在运行列表中。"
+  },
+  "diary": {
+    "title": "执行日记",
+    "empty": "该 agent 还没有运行记录",
+    "loadError": "执行日记加载失败",
+    "tokens": "Token 汇总（走 LLM 用量账）",
+    "calls": "调用",
+    "prompt": "输入",
+    "completion": "输出",
+    "total": "合计",
+    "tokensUnit": "次",
+    "colRunId": "Run ID",
+    "colGraph": "图",
+    "colStatus": "状态",
+    "colStarted": "开始时间"
+  },
+  "error": {
+    "create": "创建失败",
+    "delete": "删除失败"
+  }
+}

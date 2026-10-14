@@ -84,5 +84,29 @@
     "error": {
       "CHANNEL_UPSTREAM_UNAUTHORIZED": "The shop access token has expired; please re-authorize in Connections"
     }
+  },
+  "inbound": {
+    "button": "Inbound",
+    "modal": { "title": "Inbound Conversation Mappings" },
+    "hint": "Conversation ↔ graph mappings: a hit inbound message triggers the target graph (optionally with an agent); misses or trigger failures go to the dead-letter queue. Up to 10 entries.",
+    "subsTitle": "Conversation → graph mappings",
+    "conversationPlaceholder": "Conversation ID (e.g. conv-001)",
+    "graphPlaceholder": "Select the graph to trigger",
+    "agentPlaceholder": "Attach an agent (optional)",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "add": "Add mapping",
+    "session": "Session",
+    "message": { "saved": "Inbound mappings saved" },
+    "error": {
+      "load": "Failed to load mappings",
+      "save": "Failed to save mappings"
+    },
+    "sessionView": {
+      "title": "Session Messages",
+      "empty": "No messages for this conversation yet (fake provider keeps in-process records, cleared on restart)",
+      "roleUser": "User",
+      "loadError": "Failed to load session messages"
+    }
   }
 }
