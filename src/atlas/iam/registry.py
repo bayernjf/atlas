@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from atlas.channels.registry import build_channel_registry
 from atlas.channels.deliveries import InMemoryDeliveryStore
@@ -37,6 +37,8 @@ from atlas.recording import ReportStore, ShadowStore
 from atlas.recording.pg_reports import PgReportStore
 from atlas.recording.pg_shadow import PgShadowStore
 from atlas.reflection import ReflectionStore
+from atlas.reflection.autoapply import AutoApplyStore
+from atlas.reflection.pg_autoapply import PgAutoApplyStore
 from atlas.reflection.pg_store import PgReflectionStore
 from atlas.routing import PgRoutingStore, RoutingStore
 from atlas.template.user_store import UserTemplateStore
@@ -104,12 +106,16 @@ class TenantServices:
     message_template_store: object  # 消息通知模板（docs/98 打包 A2；内存/PG 两档，reset 同清）
     rule_template_store: object  # 用户自建告警规则模板（docs/102 打包 ZS；内存/PG 两档，reset 同清）
     reflection_store: ReflectionStore | PgReflectionStore  # 反思候选与收尾报告（docs/88 打包 ZH／docs/94 打包 ZU：内存 ring 100 / PG reflection_*）
+    autoapply_store: AutoApplyStore | PgAutoApplyStore  # 进化候选门控自动生效记录（打包 BP docs/132：内存 ring 100 / PG autoapply_runs 迁移 053）
     model_config: object  # LLM 模型配置（docs/93 打包 Y；内存/PG 两档 store，reset 不清）
     usage_store: object  # LLM 用量计量（docs/129 打包 AU＝D70；内存 ring 2000 / PG llm_usage，reset 同清）
     evaluation_store: object  # AI 评估 Harness v1（docs/110 打包 AC；内存/PG 两档，reset 同清）
     # 这份服务包属于哪个租户。其余字段都是"按租户装配出来的实例"，只有这一条是**身份本身**：
     # 适配器需要按租户解析 BYOK 模型时，不能再靠调用点把 tenant_id 一路透传（打包 AN）。
     tenant_id: str
+    # 进化自动生效的类别开关（打包 BP docs/132 BP-D1）：租户级设置，缺省空集＝fail-closed
+    # （未显式开启的类别一律不自动）；v1 进程内字段，跨重启持久化随真实需求。
+    autoapply_enabled_scopes: set[str] = field(default_factory=set)
 
 
 class TenantRegistry:
@@ -191,6 +197,7 @@ class TenantRegistry:
                 message_template_store=PgMessageTemplateStore(backend.engine, tenant_id),
                 rule_template_store=PgUserRuleTemplateStore(backend.engine, tenant_id),
                 reflection_store=PgReflectionStore(backend.engine, tenant_id),
+                autoapply_store=PgAutoApplyStore(backend.engine, tenant_id),
                 model_config=get_model_config_store(),
                 usage_store=PgUsageStore(backend.engine, tenant_id),
                 evaluation_store=PgEvaluationStore(backend.engine, tenant_id),
@@ -229,6 +236,7 @@ class TenantRegistry:
             message_template_store=MessageTemplateStore(),
             rule_template_store=UserRuleTemplateStore(),
             reflection_store=ReflectionStore(),
+            autoapply_store=AutoApplyStore(),
             model_config=get_model_config_store(),
             usage_store=InMemoryUsageStore(),
             evaluation_store=EvaluationStore(),
@@ -268,6 +276,7 @@ class TenantRegistry:
         services.message_template_store.clear()
         services.rule_template_store.clear()
         services.reflection_store.reset()
+        services.autoapply_store.reset()
         services.usage_store.reset()
         # 打包 BN（docs/130）：圈会话是进程内运行态 ⇒ 与运行数据同清。
         cycle_registry().reset(tenant_id)
