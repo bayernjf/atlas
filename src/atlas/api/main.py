@@ -122,6 +122,7 @@ from atlas.channels.webhooks import (
     build_envelope,
     verify_shopify_hmac,
 )
+from atlas.channels.inbound import InboundReceiver, InboundEnvelope
 from atlas.a2a.router import router as a2a_router  # docs/90 ADR T32 (Zeus A2A execution-agent face)
 from atlas.connections.service import ConnectionServiceError
 from atlas.observability.health import check_ready
@@ -1336,10 +1337,12 @@ def _webhook_resolve(graph_id: str, tenant: str, event: TriggerEvent) -> int | N
     return version
 
 
-def _webhook_trigger(graph_id: str, version: int, event: TriggerEvent, tenant: str) -> None:
+def _webhook_trigger(
+    graph_id: str, version: int, event: TriggerEvent, tenant: str, agent_id: str = ""
+) -> None:
     services = tenant_registry.get(tenant)
     _BACKGROUND_WORKER_POOL.submit(
-        _background_run_worker, services, tenant, graph_id, version, event
+        _background_run_worker, services, tenant, graph_id, version, event, agent_id
     )
 
 
@@ -1368,6 +1371,7 @@ def _background_run_cycle(
     services: TenantServices, tenant_id: str, graph_id: str, version: int,
     event: TriggerEvent, *, mode: str, run_id: str | None,
     cycle_seq: int = 0, cycle_group_id: str = "", inputs: dict[str, Any] | None = None,
+    agent_id: str = "",
 ) -> CycleOutcome:
     """后台跑**一圈**（= 一次真实运行）；返回 `CycleOutcome` 供圈层判定。
 
@@ -1381,6 +1385,7 @@ def _background_run_cycle(
         run_store.begin(
             run_id=own_run_id, graph_id=graph_id, mode=mode,
             cycle_seq=cycle_seq, cycle_group_id=cycle_group_id,
+            agent_id=agent_id,
         )
     try:
         raw = services.graph_store.get(graph_id, version)
@@ -1434,7 +1439,7 @@ def _background_run_cycle(
 def _background_run_worker(
     services: TenantServices, tenant_id: str,
     graph_id: str, version: int, event: TriggerEvent,
-    *, mode: str = "webhook", run_id: str | None = None,
+    agent_id: str = "", *, mode: str = "webhook", run_id: str | None = None,
 ) -> None:
     """后台运行钉版图：run 记录独立于 HTTP 请求；失败落 failed，不回传触发方。
 
@@ -1468,7 +1473,7 @@ def _background_run_worker(
     if cycle_config(graph) is None:
         _background_run_cycle(
             services, tenant_id, graph_id, version, event,
-            mode=mode, run_id=run_id,
+            mode=mode, run_id=run_id, agent_id=agent_id,
         )
         return
 
@@ -2157,6 +2162,110 @@ def webhook_delivery_metrics(
 ) -> dict[str, Any]:
     store = services_for(principal).webhook_deliveries
     return store.metrics(principal.tenant_id)
+
+
+# --- 入站消息接收（打包 BO，docs/131 D73） --------------------------------
+
+_inbound_receiver = InboundReceiver(
+    resolver=_webhook_resolve,
+    trigger=_webhook_trigger,
+    store_provider=lambda tid: tenant_registry.get(tid).inbound_deliveries,
+    session_store=lambda tid: tenant_registry.get(tid).inbound_sessions,
+)
+
+
+@app.post("/api/channels/inbound/{binding_id}")
+async def inbound_ingress(binding_id: str, http_request: Request) -> dict[str, Any]:
+    """通用入站接收（公开，可插拔验签；D-D1）。
+
+    验签：binding.config.inbound_secret 配置则 HMAC 验签（header X-Inbound-Signature），
+    否则 passthrough（假供应商；真供应商 verify 留 ⛔ docs/73 1.3）。
+    响应：{received, runId?, agentId?} / {duplicate} / {deadLetter, messageId?}。
+    """
+    located = await asyncio.to_thread(_locate_binding, binding_id)
+    if located is None:
+        raise HTTPException(status_code=404, detail="渠道绑定不存在")
+    tenant_id, binding, services = located
+    raw = await http_request.body()
+    if len(raw) > MAX_WEBHOOK_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="入站请求体超过 1MB 上限")
+    secret = (binding.config or {}).get("inbound_secret")
+    if secret:
+        signature = http_request.headers.get("X-Inbound-Signature")
+        if not verify_shopify_hmac(raw, signature, secret):
+            raise HTTPException(status_code=401, detail="入站签名校验失败")
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise HTTPException(status_code=400, detail="入站请求体不是合法 JSON 对象")
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="入站请求体必须是 JSON 对象")
+    message_id = data.get("messageId") or data.get("message_id")
+    conversation_id = data.get("conversationId") or data.get("conversation_id")
+    channel = data.get("channel") or "fake"
+    payload = data.get("data", data)
+    if not message_id or not conversation_id:
+        raise HTTPException(status_code=400, detail="入站消息缺少 messageId / conversationId")
+    envelope = InboundEnvelope(
+        message_id=message_id, conversation_id=conversation_id, channel=channel, data=payload
+    )
+    return _inbound_receiver.receive(tenant_id, binding_id, binding, envelope)
+
+
+@app.get("/api/channels/inbound/dead-letters")
+def list_inbound_dead_letters(
+    channel: str | None = None,
+    bindingId: str | None = None,
+    limit: int = 100,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    store = services_for(principal).inbound_deliveries
+    items = store.list_dead(
+        principal.tenant_id, channel=channel, binding_id=bindingId, limit=limit
+    )
+    return {"items": items}
+
+
+@app.post("/api/channels/inbound/dead-letters/{message_id}/replay")
+def replay_inbound_dead_letter(
+    message_id: str, principal: Principal = Depends(require("operate"))
+) -> dict[str, Any]:
+    services = services_for(principal)
+    dead = services.inbound_deliveries.get_dead(principal.tenant_id, message_id)
+    if dead is None:
+        raise HTTPException(status_code=404, detail="死信投递不存在或已处理")
+    binding_obj = services.channel_registry._store.get(dead["bindingId"])
+    if binding_obj is None:
+        raise HTTPException(status_code=404, detail="死信所属的渠道绑定不存在")
+    result = _inbound_receiver.replay(
+        principal.tenant_id, dead["bindingId"], binding_obj, message_id
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="死信投递不存在或已处理")
+    return result
+
+
+@app.delete("/api/channels/inbound/dead-letters/{message_id}")
+def delete_inbound_dead_letter(
+    message_id: str, principal: Principal = Depends(require("administer"))
+) -> dict[str, Any]:
+    deleted = services_for(principal).inbound_deliveries.delete(principal.tenant_id, message_id)
+    return {"deleted": deleted}
+
+
+@app.get("/api/channels/inbound/metrics")
+def inbound_delivery_metrics(
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    return services_for(principal).inbound_deliveries.metrics(principal.tenant_id)
+
+
+@app.get("/api/channels/inbound/sessions/{conversation_id}")
+def get_inbound_session(
+    conversation_id: str, principal: Principal = Depends(require("read"))
+) -> dict[str, Any]:
+    items = services_for(principal).inbound_sessions.list(principal.tenant_id, conversation_id)
+    return {"conversationId": conversation_id, "items": items}
 
 
 # --- Shopify 店铺侧 webhook 注册（docs/41） --------------------------------

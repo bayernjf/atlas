@@ -125,6 +125,9 @@ class ChannelBinding:
     updated_at: str | None = None
     # docs/39：[{topic, graph_id, enabled}]（snake_case；REST 投影 camelCase）
     webhook_subscriptions: list[dict[str, Any]] = field(default_factory=list)
+    # 打包 BO（docs/131 D-D3）：入站会话映射（挂 binding，不做独立实体）。
+    # [{conversation_id, graph_id, agent_id?, enabled}]（snake_case；REST 投影 camelCase）。
+    inbound_mappings: list[dict[str, Any]] = field(default_factory=list)
 
     def view(self) -> dict[str, Any]:
         return {
@@ -142,6 +145,13 @@ class ChannelBinding:
                  "graphId": sub.get("graph_id"),
                  "enabled": sub.get("enabled", True)}
                 for sub in self.webhook_subscriptions
+            ],
+            "inboundMappings": [
+                {"conversationId": m.get("conversation_id"),
+                 "graphId": m.get("graph_id"),
+                 "agentId": m.get("agent_id"),
+                 "enabled": m.get("enabled", True)}
+                for m in self.inbound_mappings
             ],
         }
 

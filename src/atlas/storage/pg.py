@@ -1870,21 +1870,24 @@ class PgRunsStore:
     def begin(
         self, *, run_id: str, graph_id: str, mode: str,
         cycle_seq: int = 0, cycle_group_id: str = "",
+        agent_id: str = "",
     ) -> None:
         # 打包 BN（docs/130 §3.3）：两形参缺省 0/''＝"非圈运行"，与迁移 050 的列缺省一致，
         # 因此**不传时逐字等价现状**（打包 BN C-D2：启用面缺省关闭）。
+        # 打包 BO（docs/131 §3.3）：agent_id 缺省 ''＝"非 agent 运行"。
         with self._engine.begin() as conn:
             conn.execute(
                 text(
                     "INSERT INTO runs (id, tenant_id, graph_id, status, started_at, "
-                    "cycle_seq, cycle_group_id) "
+                    "cycle_seq, cycle_group_id, agent_id) "
                     "VALUES (:id, :tenant_id, :graph_id, 'running', :now, "
-                    ":cycle_seq, :cycle_group_id)"
+                    ":cycle_seq, :cycle_group_id, :agent_id)"
                 ),
                 {
                     "id": run_id, "tenant_id": self._tenant_id, "graph_id": graph_id,
                     "now": _now_iso(), "cycle_seq": int(cycle_seq),
                     "cycle_group_id": cycle_group_id or "",
+                    "agent_id": agent_id or "",
                 },
             )
 
@@ -1941,7 +1944,7 @@ class PgRunsStore:
                 text(
                     "SELECT id, graph_id, status, started_at, suspended_at, finished_at, error, "
                     "kind, node_id, deadline_at, resume_token, outputs, trace, "
-                    "cycle_seq, cycle_group_id FROM runs "
+                    "cycle_seq, cycle_group_id, agent_id FROM runs "
                     "WHERE id = :id AND tenant_id = :tenant_id"
                 ),
                 {"id": run_id, "tenant_id": self._tenant_id},
@@ -1957,6 +1960,7 @@ class PgRunsStore:
             "outputs": row[11], "trace": row[12], "suspension": suspension,
             # 打包 BN：圈归属两列（0/''＝非圈运行，缺省语义不变）
             "cycleSeq": row[13], "cycleGroupId": row[14] or "",
+            "agentId": row[15] or "",
         }
 
     def list(self, status: str | None = None, limit: int = 50) -> list[dict]:
@@ -1985,6 +1989,7 @@ class PgRunsStore:
                 "deadlineAt": r[7], "resumeToken": r[8],
                 # 打包 BN：圈归属两列（0/''＝非圈运行，缺省语义不变）
                 "cycleSeq": r[9], "cycleGroupId": r[10] or "",
+                "agentId": r[11] or "",
             }
             for r in rows
         ]

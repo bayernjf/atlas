@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from atlas.channels.registry import build_channel_registry
 from atlas.channels.deliveries import InMemoryDeliveryStore
 from atlas.channels.pg_deliveries import PgDeliveryStore
+from atlas.channels.inbound_deliveries import InMemoryInboundStore, PgInboundStore
+from atlas.channels.inbound import InMemoryInboundSessionStore
 from atlas.connections.service import build_connection_service
 from atlas.connections.store import ConnectionStore
 from atlas.evaluation.pg_store import PgEvaluationStore
@@ -93,6 +95,8 @@ class TenantServices:
     connection_service: object  # T4 OAuth2 连接（docs/35 §4；业务服务，内存/PG 两档 store，reset 不清）
     channel_registry: object  # 真实渠道绑定（docs/38；ADR T28，reset 不清）
     webhook_deliveries: object  # 入站投递去重/死信（docs/40；内存/PG 两档，reset 不清）
+    inbound_deliveries: object  # 入站消息投递去重/死信（打包 BO docs/131；内存/PG 两档，reset 不清）
+    inbound_sessions: object  # 入站会话回写记录（打包 BO docs/131；进程内，reset 不清）
     openapi_imports: ImportStore | PgImportStore  # OpenAPI 导入规格（docs/42/43；内存/PG 两档，reset 不清）
     user_templates: object  # 用户自建模板（docs/85 打包 X；内存/PG 两档，reset 同清）
     message_template_store: object  # 消息通知模板（docs/98 打包 A2；内存/PG 两档，reset 同清）
@@ -177,6 +181,8 @@ class TenantRegistry:
                     store=backend.channel_store(tenant_id),
                 ),
                 webhook_deliveries=PgDeliveryStore(backend.engine, tenant_id),
+                inbound_deliveries=PgInboundStore(backend.engine, tenant_id),
+                inbound_sessions=InMemoryInboundSessionStore(),
                 openapi_imports=PgImportStore(backend.engine, tenant_id),
                 user_templates=PgUserTemplateStore(backend.engine, tenant_id),
                 message_template_store=PgMessageTemplateStore(backend.engine, tenant_id),
@@ -212,6 +218,8 @@ class TenantRegistry:
                 connection_service, tenant_id=tenant_id
             ),
             webhook_deliveries=InMemoryDeliveryStore(),
+            inbound_deliveries=InMemoryInboundStore(),
+            inbound_sessions=InMemoryInboundSessionStore(),
             openapi_imports=ImportStore(),
             user_templates=UserTemplateStore(),
             message_template_store=MessageTemplateStore(),
