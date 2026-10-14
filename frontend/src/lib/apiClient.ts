@@ -667,6 +667,76 @@ export async function putReflectionDecision(
   )
 }
 
+// --- 打包 BP（docs/132 D75）：进化候选门控自动生效 ----------------------------------------
+
+export type AutoApplyStage = {
+  stage: string
+  at: string
+  ok: boolean
+  note: string
+}
+
+export type AutoApplyRun = {
+  run_id: string
+  candidate_id: string
+  graph_id: string
+  base_version: number
+  enabled_scopes: string[]
+  patch: { diff: Array<Record<string, unknown>> } | null
+  shadow: Record<string, unknown> | null
+  gate: Record<string, unknown> | null
+  publish_version: number | null
+  rollout_status: string | null
+  status: 'pending' | 'completed' | 'aborted' | 'failed'
+  reason: string | null
+  stages: AutoApplyStage[]
+  created_at: string
+  updated_at: string
+}
+
+export type AutoApplyConfig = {
+  enabledScopes: string[]
+  availableScopes: string[]
+  structureAuto: boolean
+}
+
+/** 候选自动生效（docs/132 BP-D2/D4）：patch→影子→黄金回放→发布→canary，返回每圈证据 run。 */
+export async function startCandidateAutoapply(
+  candidateId: string,
+  enabledScopes?: string[],
+): Promise<AutoApplyRun> {
+  return request<AutoApplyRun>(
+    `/api/reflection/candidates/${encodeURIComponent(candidateId)}/autoapply`,
+    {
+      method: 'POST',
+      body: JSON.stringify(enabledScopes ? { enabledScopes } : {}),
+    },
+  )
+}
+
+/** 中止自动生效（docs/132 BP-D5）：canary 态＝手动回滚；pending 取消；终态幂等。 */
+export async function abortAutoapplyRun(runId: string): Promise<AutoApplyRun> {
+  return request<AutoApplyRun>(
+    `/api/reflection/autoapply/${encodeURIComponent(runId)}/abort`,
+    { method: 'POST' },
+  )
+}
+
+/** 本租户自动生效记录（倒序摘要；?graph_id=&limit=）。 */
+export async function listAutoapplyRuns(graphId?: string): Promise<AutoApplyRun[]> {
+  const params = new URLSearchParams()
+  if (graphId) params.set('graph_id', graphId)
+  const body = await request<{ items: AutoApplyRun[] }>(
+    `/api/reflection/autoapply?${params.toString()}`,
+  )
+  return body.items
+}
+
+/** 类别开关投影（docs/132 §3.4）：已开启类别／可自动类别／结构类恒不自动。 */
+export async function getAutoapplyConfig(): Promise<AutoApplyConfig> {
+  return request<AutoApplyConfig>('/api/reflection/autoapply/config')
+}
+
 /** 覆盖已存图的 latest 草稿（M9：同一 graph 迭代多版本，不新建 id；已发布版本不可变） */
 export async function saveGraphDraft(
   graphId: string,
