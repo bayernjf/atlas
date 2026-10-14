@@ -3,6 +3,23 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔feat〕打包 BP 落码收口＝D75 进化候选门控自动生效（2026-10-14，用户「那你推进」授权；原子序 docs/132 §4 落至六步，用例＋门为第七八步）
+
+- **patch 层**（`reflection/patch.py` 新增）：`patch_candidate(changes, latest_draft, base_version, graph_snapshot)` → `PatchOutcome{ok, new_draft, diff, reason}`；只认 `graph_variable`（改 `variables[].value` 按 name 命中）＋`node_config`（改 `nodes[].config.confidenceThreshold` 按 node_id 定位，缺 node_id/节点找不到/非 ai_decision 照实不猜）；monitor_rule/gate_config 行 `skipped=True` 计入 diff（BP-D1，不静默吞不阻断）。
+- **推进链**（`reflection/autoapply.py` 新增）：`run_autoapply`（候选存在＋`decision_status` 空＋类别开关 ⊆ enabled_scopes fail-closed → patch → **影子必跑**（独立 broker/tracer、空 inputs 预置审批/等待秒过、写短路）→ **黄金回放**（`run_release_gate`，blocked 中止留证、total=0 skipped 不阻塞）→ **patch 落地写回 latest**（`update_draft`，失败路径不触碰草稿）→ **自动 publish**（gate=true 语义）→ **自动 start canary**（版本不足记录"已发布未进灰度"留证不报错）→ `completed`；每阶段 `_record_stage` 落证据）；`abort_autoapply`（pending 取消；canary 态＝手动 rollback；终态幂等）。
+- **每圈证据**：`AutoApplyRun`（run_id `aa-N`、candidate_id、graph_id、base_version、enabled_scopes、patch/shadow/gate、publish_version、rollout_status、status、reason、stages）——内存 ring 100（`AutoApplyStore`）＋迁移 053 `autoapply_runs` 表＋`PgAutoApplyStore`（两档签名一比一、reset 清租户）。
+- **装配与端点**：`registry.py` `TenantServices.autoapply_store`（两档）＋`autoapply_enabled_scopes`（租户级类别开关，缺省空集 fail-closed）＋reset 清档；`main.py` 五端点（`POST .../candidates/{id}/autoapply` 201/幂等 409/无效类别 422、`POST .../autoapply/{run_id}/abort`、`GET .../autoapply`、`GET .../autoapply/config`、`GET .../autoapply/{run_id}`）。
+- **前端**：Reflection.tsx 候选详情加「自动生效」按钮（未处理候选可用）＋自动生效记录表（run_id/status/publish/rollout/reason/stages/中止按钮）；lib 白名单（U1124 机检）扩四函数；i18n 两语。
+- **落码偏差（docs/132 §3 已同步）**：① BP-D3 dirty 判据＝内容比较（latest 草稿 ≠ base_version 发布快照、排除 `releaseVersion`；快照缺失 fail-closed 中止）——`raw["version"]` 是 GraphDSL schema 版本恒 1，原"version 比较"会让 dirty 防护形同虚设（实核发现，落码时修）；② BP-D4 补「patch 落地写回 latest」再 publish——否则自动 publish 发布的是未 patch 的旧草稿（U1462 抓出）。
+- **门**：用例 **23 全绿**（`tests/test_reflection_autoapply.py` 17＝U1455–U1470＋U1457b；PG 集成 6＝U1471–U1476）；三条反向门植缺陷实跑转红（①摘 fail-closed ⇒ U1461 红；②摘 dirty ⇒ U1469 红；③摘 gate blocked ⇒ U1464 红）；后端默认 **2901 passed／193 skipped**（212.91s，净增 17）；PG 档全量（一次性 pgvector:pg16 @5445，迁移 053 apply，跑完容器即删）**3093 passed／1 skipped**（227.05s，含本批 PG 集成实跑）；前端 vitest **1022/2**、oxlint **0/0**、build ✓。零新错误码／零新依赖／无 ADR／迁移 053。
+
+### 〔docs〕打包 BP 立项＝D75 进化候选门控自动生效（2026-10-14，用户「那你推进」授权；docs-only，零代码）
+
+- **动机**：反思候选只到「呈现＋人工采纳」（`PUT decision` 只登记 adopted/dismissed 标记、守 T22），没有门控自动生效通道——「自进化」要真跑起来时，候选只能人手工改图；灰度状态机/门控自动回滚/黄金回放门禁/影子运行/发布全齐备但起点全手动（`promote` 仅手动、release-gate/shadow-runs 只人工调用）⇒ 缺「候选→自动生效」的后半程。
+- **形状**（docs/132 为权威）：`reflection/patch.py`（`patch_candidate`，Graph diff 形状，dirty 草稿中止不覆盖人工改动）＋`reflection/autoapply.py`（`AutoApplyRun` 每圈证据：内存 ring 100＋迁移 053 `autoapply_runs` 表）＋五端点（autoapply/abort/列表/详情/config）。推进链＝patch→影子必跑→黄金回放（blocked 中止留证）→自动 publish（gate=true）→自动 start canary（版本不足记录留证）→门控自动回滚（复用既有 `evaluate_after_run`，零改动）。
+- **决策**：**E-P1 按推荐口径拍板＝BP-D1** 自动生效类别按 scope 分开关、v1 只开图内参数类（graph_variable＋node_config）、monitor_rule/gate_config 本批不自动（apply 目标不在图草稿闭环内、影响防御面）、结构类（增删节点/改边/promptTemplate）恒不自动、开关缺省全关（fail-closed）；BP-D2 入口＝候选上 `POST .../autoapply`（幂等 409）；BP-D5 人可中止（abort，canary 态＝手动 rollback）；BP-D7 零新依赖/零新错误码/无 ADR、不自动 promote、D77 只做判胜口径半边（记录沉淀 candidate vs stable 对照）。
+- **验收**：U1455–U1470（含七条反向门）预留于 docs/13；docs/14 D75 行翻 🟡；落码另批。
+
 ### 〔feat〕打包 BO 落码收口＝D73 入站会话＋D74 智能体团队面（2026-10-14，用户「继续按推荐搞」授权；十步原子序 docs/131 §6 全落）
 
 - **D73 入站协议面**：`channels/inbound.py` InboundReceiver（可插拔 verify→幂等去重→会话映射→起 run→回写会话视图）；两档 `inbound_deliveries` store（与 webhook deliveries 同范式分表）；dsl 触发器 `message_inbound`；`ChannelBinding.inbound_mappings`＋view 投影＋两档加载/保存；端点 `POST /api/channels/inbound/{binding_id}`（配 `inbound_secret` 则 HMAC 验签 401，未配 passthrough）＋DLQ（list/replay/delete）＋metrics＋会话视图；映射管理 `GET/PUT /api/channels/{id}/inbound-mappings`（422 聚合校验）。
