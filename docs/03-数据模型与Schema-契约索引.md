@@ -840,6 +840,14 @@ tool_calls:                  # docs/28 §4.1 ⑧（D28 批3，2026-09-20，a318d
     error_code: string?      # result.code，无结构化 code（如未注册适配器）为 null
 # 仅两个真实运行入口（同步 /run、流式 /run/stream）采集无 subgraphPath 的顶层工具；mock 命中、子图内、debug/回放/门禁不采集
 spans: object?             # docs/33 §4 ⑤（2026-09-21，4579843）：tracer.to_tree() 根 span dict（kind="run"，DFS 含 node/tool 子 span）；纯超集缺省 null；PG 迁移 012 加 monitoring_runs.spans JSONB；列表端点剔除、GET /api/monitoring/runs/{id}/trace 懒加载
+# 打包 BN（docs/130，2026-10-14 落码，迁移 050）：runs 存储表补两列（圈归属）
+#   cycle_seq       INTEGER NOT NULL DEFAULT 0   # 该 run 是第几圈（0＝非圈运行）
+#   cycle_group_id  TEXT    NOT NULL DEFAULT ''   # 圈会话 id（''＝非圈运行）
+# 索引 (tenant_id, cycle_group_id)；RunStore/PgRunStore 的 begin(...) 增可选
+#   cycle_seq=0 / cycle_group_id="" 形参（缺省逐字等价现状，存量行无需回填）；
+# GET /api/runs 列表投影补两字段（read 面加列，零破坏）。圈会话活体状态只在进程内
+# （沿 docs/62 单副本语义），重启即结束圈、不自动续跑（与 D44 同款取舍）。
+# 端点见 12 的 /api/runs/{id}/cycle 两条。
 # GET /api/monitoring/metrics
 total: integer
 healthy: integer                 # completed 且无失败节点

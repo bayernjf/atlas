@@ -11,6 +11,16 @@
 - **风险姿态**：启用面＝`GraphDSL.loop` 顶层配置，**缺省 `None`＝不启用＝现状逐字不变**；这是 docs/127 六个里程碑里**唯一改运行期行为**的批次，故四闸门先拍后动。
 - 迁移 **050＝runs 两列**（`cycle_seq`／`cycle_group_id`，docs/127 预留）＋索引；用例 U1427–U1442 含四条反向门；零新错误码／零新依赖／无 ADR；**不解锁多副本**、不碰 D36/D44/T22、不动 reflection L2 的人工采纳。
 
+### 〔落码收口〕打包 BN：D69 运行期自走循环（2026-10-14；形状权威 [docs/130](docs/130-运行期自走循环-D69-打包BN-v1批契约设计.md) §7.1/§7.2；U1427–U1442 全转正式）
+
+- **十步原子序 §6 全落**：`cycles/{state,judge,supervisor}.py`＋迁移 050 `runs` 两列（`cycle_seq`/`cycle_group_id`）＋`GraphDSL.loop` 编译期校验（含 `completeWhen` 表达式预解析）＋同步 `/run` 与后台 worker 两入口驱动＋REST 两端点（`GET /api/runs/{id}/cycle`、`POST /api/runs/{id}/cycle/stop`）＋前端图设置面板/圈徽标/i18n。
+- **偏差照实记**：原子序 ⑥「`_resume_run` 出口接续」改为流式 `/run/stream` 与续跑 `_resume_run` **不参与圈**（只跑第一圈＋`loopSkipped`，边界见 §3.2 C-D10）；`runs` 两列命名 `cycle_seq`/`cycle_group_id`（非 D69 草案 `loopId`/`iteration`）；token 预算走 `usage_store.list_recent(limit=200)` 明细扫描（超 200 行低估、方向更早触顶）。
+- **落码抓修两真缺陷**（逆向门同类）：supervisor 循环缺"整条圈已被叫停"检查（U1440）／token 记账把累计当增量且 `session.seq` 不推进（U1428/37）／圈判定那次 LLM 调用漏记 AU 账（U1430，已在 `_judge_complete` 自补 `usage_context`）。
+- **四条逆向门 U1437–U1440 各自植缺陷转红**：摘迭代数闸门／`completeWhen` 恒真／carry 写错键路径／摘 stopped 检查。
+- **门（实跑）**：后端默认 **2870 passed／193 skipped／0 failed**；前端 vitest **1022／2 skipped**、oxlint **0/0**、build ✓。
+- **真机端到端** `scripts/dev/cycle_probe.py`：规则腿 **12 PASS／0 FAIL**（判定恒假时靠 `maxIterations` 收手、圈累计 token 与 `llm_usage` 汇总对账相等、停整条圈已终态幂等）；`--live` 腿因本地无 `LITELLM_MODEL`/`OPENAI_API_KEY` **BLOCKED**（退出码 3 点名缺哪个变量，不许拿规则腿冒充）。
+- **D69 翻 ✅**（docs/14 行）：运行期自走循环已落地、缺省关闭、四闸门全设；文档与形态不一致已消除。
+
 ### 〔落码收口〕打包 AU：D70 LLM 用量与成本计量（2026-10-14，用户「好的，你继续落码」；形状权威 [docs/129](docs/129-LLM用量与成本计量-D70-打包AU-v1批契约设计.md) §7.1；U1411–U1426 全转正式）
 ### 〔落码收口〕打包 AU：D70 LLM 用量与成本计量（2026-10-14，用户「好的，你继续落码」；形状权威 [docs/129](docs/129-LLM用量与成本计量-D70-打包AU-v1批契约设计.md) §7.1；U1411–U1426 全转正式）
 
