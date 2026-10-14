@@ -1967,7 +1967,7 @@ class PgRunsStore:
         if status:
             sql = (
                 "SELECT id, graph_id, status, started_at, suspended_at, kind, node_id, "
-                "deadline_at, resume_token, cycle_seq, cycle_group_id FROM runs "
+                "deadline_at, resume_token, cycle_seq, cycle_group_id, agent_id FROM runs "
                 "WHERE tenant_id = :tenant_id "
                 "AND status = :status ORDER BY started_at DESC LIMIT :limit"
             )
@@ -1975,7 +1975,7 @@ class PgRunsStore:
         else:
             sql = (
                 "SELECT id, graph_id, status, started_at, suspended_at, kind, node_id, "
-                "deadline_at, resume_token, cycle_seq, cycle_group_id FROM runs "
+                "deadline_at, resume_token, cycle_seq, cycle_group_id, agent_id FROM runs "
                 "WHERE tenant_id = :tenant_id "
                 "ORDER BY started_at DESC LIMIT :limit"
             )

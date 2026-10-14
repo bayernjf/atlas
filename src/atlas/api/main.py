@@ -123,6 +123,7 @@ from atlas.channels.webhooks import (
     verify_shopify_hmac,
 )
 from atlas.channels.inbound import InboundReceiver, InboundEnvelope
+from atlas.iam.agents_store import Agent
 from atlas.a2a.router import router as a2a_router  # docs/90 ADR T32 (Zeus A2A execution-agent face)
 from atlas.connections.service import ConnectionServiceError
 from atlas.observability.health import check_ready
@@ -2266,6 +2267,75 @@ def get_inbound_session(
 ) -> dict[str, Any]:
     items = services_for(principal).inbound_sessions.list(principal.tenant_id, conversation_id)
     return {"conversationId": conversation_id, "items": items}
+
+
+# --- 可管理 agent（打包 BO，docs/131 D74） ---------------------------------
+
+@app.get("/api/agents")
+def list_agents(principal: Principal = Depends(require("read"))) -> dict[str, Any]:
+    items = [a.to_record() for a in services_for(principal).agents_store.list(principal.tenant_id)]
+    return {"items": items}
+
+
+@app.post("/api/agents")
+def create_agent(
+    body: dict[str, Any], principal: Principal = Depends(require("administer"))
+) -> dict[str, Any]:
+    name = body.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise HTTPException(status_code=422, detail="agent name 必填")
+    agent_id = body.get("id") or uuid.uuid4().hex
+    agent = Agent(
+        id=agent_id, tenant_id=principal.tenant_id, name=name.strip(),
+        enabled=bool(body.get("enabled", True)),
+        skills=body.get("skills") or [], adapter_ids=body.get("adapter_ids") or [],
+        coordinator=body.get("coordinator"),
+    )
+    services_for(principal).agents_store.put(agent)
+    return agent.to_record()
+
+
+@app.put("/api/agents/{agent_id}")
+def update_agent(
+    agent_id: str, body: dict[str, Any],
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    services = services_for(principal)
+    agent = services.agents_store.get(principal.tenant_id, agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="agent 不存在")
+    if "name" in body and isinstance(body["name"], str):
+        agent.name = body["name"].strip()
+    if "enabled" in body:
+        agent.enabled = bool(body["enabled"])
+    if "skills" in body:
+        agent.skills = body.get("skills") or []
+    if "adapter_ids" in body:
+        agent.adapter_ids = body.get("adapter_ids") or []
+    if "coordinator" in body:
+        agent.coordinator = body.get("coordinator")
+    services.agents_store.put(agent)
+    return agent.to_record()
+
+
+@app.delete("/api/agents/{agent_id}")
+def delete_agent(
+    agent_id: str, principal: Principal = Depends(require("administer"))
+) -> dict[str, Any]:
+    deleted = services_for(principal).agents_store.delete(principal.tenant_id, agent_id)
+    return {"deleted": deleted}
+
+
+@app.get("/api/agents/{agent_id}/runs")
+def get_agent_runs(
+    agent_id: str, principal: Principal = Depends(require("read"))
+) -> dict[str, Any]:
+    services = services_for(principal)
+    agent = services.agents_store.get(principal.tenant_id, agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="agent 不存在")
+    runs = [r for r in services.run_store.list(limit=1000) if r.get("agentId") == agent_id]
+    return {"agent": agent.to_record(), "items": runs}
 
 
 # --- Shopify 店铺侧 webhook 注册（docs/41） --------------------------------
