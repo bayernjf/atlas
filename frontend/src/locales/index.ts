@@ -14,6 +14,7 @@
 import { useCallback, useSyncExternalStore } from 'react'
 
 import enCommon from './en-US/common.json'
+import enAgents from './en-US/agents.json'
 import enApprovals from './en-US/approvals.json'
 import enAudit from './en-US/audit.json'
 import enChannels from './en-US/channels.json'
@@ -33,6 +34,7 @@ import enModels from './en-US/models.json'
 import enTemplates from './en-US/templates.json'
 import enUsage from './en-US/usage.json'
 import zhCommon from './zh-CN/common.json'
+import zhAgents from './zh-CN/agents.json'
 import zhApprovals from './zh-CN/approvals.json'
 import zhAudit from './zh-CN/audit.json'
 import zhChannels from './zh-CN/channels.json'
@@ -53,7 +55,7 @@ import zhTemplates from './zh-CN/templates.json'
 import zhUsage from './zh-CN/usage.json'
 
 export type Locale = 'zh-CN' | 'en-US'
-export type Namespace = 'common' | 'approvals' | 'audit' | 'editor' | 'dashboard' | 'demo' | 'monitoring' | 'memory' | 'connections' | 'channels' | 'openapi' | 'runtime' | 'schedules' | 'validation' | 'waits' | 'reflection' | 'models' | 'templates' | 'usage'
+export type Namespace = 'common' | 'agents' | 'approvals' | 'audit' | 'editor' | 'dashboard' | 'demo' | 'monitoring' | 'memory' | 'connections' | 'channels' | 'openapi' | 'runtime' | 'schedules' | 'validation' | 'waits' | 'reflection' | 'models' | 'templates' | 'usage'
 
 type Dict = Record<string, unknown>
 export type TranslateOptions = {
@@ -63,11 +65,12 @@ export type TranslateOptions = {
   lng?: Locale
 } & Record<string, unknown>
 
-const NAMESPACES: Namespace[] = ['common', 'approvals', 'audit', 'editor', 'dashboard', 'demo', 'monitoring', 'memory', 'connections', 'channels', 'openapi', 'runtime', 'schedules', 'validation', 'waits', 'reflection', 'models', 'usage']
+const NAMESPACES: Namespace[] = ['common', 'agents', 'approvals', 'audit', 'editor', 'dashboard', 'demo', 'monitoring', 'memory', 'connections', 'channels', 'openapi', 'runtime', 'schedules', 'validation', 'waits', 'reflection', 'models', 'usage']
 
 const resources: Record<Locale, Record<Namespace, Dict>> = {
   'zh-CN': {
     common: zhCommon as Dict,
+    agents: zhAgents as Dict,
     approvals: zhApprovals as Dict,
     audit: zhAudit as Dict,
     channels: zhChannels as Dict,
@@ -89,6 +92,7 @@ const resources: Record<Locale, Record<Namespace, Dict>> = {
   },
   'en-US': {
     common: enCommon as Dict,
+    agents: enAgents as Dict,
     approvals: enApprovals as Dict,
     audit: enAudit as Dict,
     channels: enChannels as Dict,

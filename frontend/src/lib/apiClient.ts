@@ -2578,6 +2578,13 @@ export async function testConnection(id: string): Promise<ConnectionTestResult> 
   return request(`/api/connections/${id}/test`, { method: 'POST' })
 }
 
+export type InboundMapping = {
+  conversationId: string
+  graphId: string
+  agentId?: string | null
+  enabled: boolean
+}
+
 export type ChannelBindingView = {
   id: string
   provider: string
@@ -2587,6 +2594,8 @@ export type ChannelBindingView = {
   lastError: string | null
   createdBy: string | null
   createdAt: string | null
+  // 打包 BO（docs/131 D-D3）：入站会话↔图映射（挂 binding，不做独立实体）。
+  inboundMappings?: InboundMapping[]
 }
 
 export type ChannelBindingInput = {
@@ -2642,6 +2651,106 @@ export async function putWebhookSubscriptions(
     { method: 'PUT', body: JSON.stringify({ subscriptions }) },
   )
   return body.items
+}
+
+// --- 打包 BO（docs/131 D73＋D74）：入站会话映射＋会话视图＋可管理 agent ----------
+
+export async function getInboundMappings(id: string): Promise<InboundMapping[]> {
+  const body = await request<{ items: InboundMapping[] }>(
+    `/api/channels/${id}/inbound-mappings`,
+  )
+  return body.items
+}
+
+export async function putInboundMappings(
+  id: string,
+  mappings: InboundMapping[],
+): Promise<InboundMapping[]> {
+  const body = await request<{ items: InboundMapping[] }>(
+    `/api/channels/${id}/inbound-mappings`,
+    { method: 'PUT', body: JSON.stringify({ mappings }) },
+  )
+  return body.items
+}
+
+export type InboundSessionMessage = {
+  role: string
+  conversation_id: string
+  messageId: string
+  runId: string | null
+  data: Record<string, unknown>
+  createdAt: string
+}
+
+export async function getInboundSession(
+  conversationId: string,
+): Promise<InboundSessionMessage[]> {
+  const body = await request<{ items: InboundSessionMessage[] }>(
+    `/api/channels/inbound/sessions/${encodeURIComponent(conversationId)}`,
+  )
+  return body.items
+}
+
+export type AgentView = {
+  id: string
+  name: string
+  enabled: boolean
+  skills: string[]
+  adapterIds: string[]
+  coordinator: Record<string, unknown> | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type AgentInput = {
+  name?: string
+  enabled?: boolean
+  skills?: string[]
+  adapterIds?: string[]
+  coordinator?: Record<string, unknown>
+}
+
+export async function listAgents(): Promise<AgentView[]> {
+  const body = await request<{ items: AgentView[] }>('/api/agents')
+  return body.items
+}
+
+export async function createAgent(input: AgentInput): Promise<AgentView> {
+  return request('/api/agents', { method: 'POST', body: JSON.stringify(input) })
+}
+
+export async function updateAgent(id: string, input: AgentInput): Promise<AgentView> {
+  return request(`/api/agents/${id}`, { method: 'PUT', body: JSON.stringify(input) })
+}
+
+export async function deleteAgent(id: string): Promise<{ deleted: boolean }> {
+  return request(`/api/agents/${id}`, { method: 'DELETE' })
+}
+
+export type AgentRunItem = {
+  runId: string
+  graphId: string
+  status: string
+  startedAt: string
+  endedAt?: string | null
+  cycleSeq: number
+  cycleGroupId: string
+  agentId: string
+}
+
+export type AgentRunsView = {
+  agent: AgentView
+  items: AgentRunItem[]
+  tokenSummary: {
+    calls: number
+    promptTokens: number
+    completionTokens: number
+    totalTokens: number
+  }
+}
+
+export async function getAgentRuns(id: string): Promise<AgentRunsView> {
+  return request(`/api/agents/${id}/runs`)
 }
 
 export type WebhookDeadLetter = {

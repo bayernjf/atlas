@@ -13,6 +13,7 @@ import { OpenApiImports } from './pages/OpenApiImports'
 import { EmailApproval } from './pages/EmailApproval'
 import { Waits } from './pages/Waits'
 import { Schedules } from './pages/Schedules'
+import { Agents } from './pages/Agents'
 import { Reflection } from './pages/Reflection'
 import { Models } from './pages/Models'
 import { Usage } from './pages/Usage'
@@ -30,7 +31,7 @@ import { extractEmailToken } from './lib/approvals'
 import { antdTheme } from './theme/tokens'
 import { useAntdLocale } from './locales/antdLocale'
 
-type Page = 'dashboard' | 'editor' | 'monitoring' | 'memory' | 'connections' | 'users' | 'approvals' | 'audit' | 'openapi' | 'waits' | 'schedules' | 'reflection' | 'models' | 'usage' | 'templates'
+type Page = 'dashboard' | 'editor' | 'monitoring' | 'memory' | 'connections' | 'users' | 'approvals' | 'audit' | 'openapi' | 'waits' | 'schedules' | 'agents' | 'reflection' | 'models' | 'usage' | 'templates'
 
 function App() {
   const antdLocale = useAntdLocale()
@@ -124,6 +125,7 @@ function App() {
           onOpenOpenApi={() => setPage('openapi')}
           onOpenWaits={() => setPage('waits')}
           onOpenSchedules={() => setPage('schedules')}
+          onOpenAgents={() => setPage('agents')}
           onOpenReflection={() => setPage('reflection')}
           onOpenModels={() => setPage('models')}
           onOpenUsage={() => setPage('usage')}
@@ -162,6 +164,13 @@ function App() {
       ) : page === 'schedules' ? (
         // 列表是 read 面（viewer 也要能看见下次触发与跳过数），写操作在页内按角色禁用。
         <Schedules
+          principal={principal}
+          onLogout={handleLogout}
+          onBack={() => setPage('dashboard')}
+        />
+      ) : page === 'agents' ? (
+        // 与 schedules 同款纪律：列表 read 面可见，写操作页内按角色禁用（docs/131 D74）。
+        <Agents
           principal={principal}
           onLogout={handleLogout}
           onBack={() => setPage('dashboard')}

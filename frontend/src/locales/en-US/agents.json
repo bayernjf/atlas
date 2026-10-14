@@ -1,0 +1,54 @@
+{
+  "page": {
+    "title": "Agent Team",
+    "description": "Manageable agents (bundle BO): list, enable/disable, run diary and token summary. Runtime data is not stored on the agent entity; it is aggregated by runs.agent_id, and tokens come from the LLM usage ledger.",
+    "refresh": "Refresh",
+    "empty": "No agents yet. Create one from the top-right button.",
+    "loadError": "Failed to load agents"
+  },
+  "table": {
+    "name": "Name",
+    "id": "ID",
+    "enabled": "Enabled",
+    "createdAt": "Created",
+    "actions": "Actions"
+  },
+  "actions": {
+    "create": "New agent",
+    "diary": "Run diary",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "toggleFailed": "Failed to toggle",
+    "created": "Agent created",
+    "deleted": "Agent deleted"
+  },
+  "createModal": {
+    "title": "New Agent",
+    "name": "Name",
+    "namePlaceholder": "e.g. Support Twin",
+    "nameRequired": "Please enter a name"
+  },
+  "deleteConfirm": {
+    "title": "Delete agent?",
+    "description": "Only the configuration is removed; historical runs remain in the run list."
+  },
+  "diary": {
+    "title": "Run Diary",
+    "empty": "No runs for this agent yet",
+    "loadError": "Failed to load run diary",
+    "tokens": "Token summary (from the LLM usage ledger)",
+    "calls": "Calls",
+    "prompt": "Prompt",
+    "completion": "Completion",
+    "total": "Total",
+    "tokensUnit": "calls",
+    "colRunId": "Run ID",
+    "colGraph": "Graph",
+    "colStatus": "Status",
+    "colStarted": "Started"
+  },
+  "error": {
+    "create": "Failed to create",
+    "delete": "Failed to delete"
+  }
+}

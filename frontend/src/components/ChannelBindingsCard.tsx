@@ -27,6 +27,7 @@ import {
 import { roleCan, type Principal } from '../lib/auth'
 import { useTranslation } from '../locales'
 import { WebhookSubscriptionsModal } from './WebhookSubscriptionsModal'
+import { InboundMappingsModal } from './InboundMappingsModal'
 
 type ChannelBindingsCardProps = {
   principal: Principal
@@ -63,6 +64,8 @@ export function ChannelBindingsCard({ principal, connections }: ChannelBindingsC
 
   const [graphs, setGraphs] = useState<SavedGraphSummary[]>([])
   const [webhookBinding, setWebhookBinding] = useState<ChannelBindingView | null>(null)
+  // 打包 BO（docs/131 D-D3）：入站会话映射配置弹窗的目标 binding。
+  const [inboundBindingId, setInboundBindingId] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -197,6 +200,11 @@ export function ChannelBindingsCard({ principal, connections }: ChannelBindingsC
             </Button>
           )}
           {canAdmin && (
+            <Button size="small" onClick={() => setInboundBindingId(record.id)}>
+              {t('inbound.button')}
+            </Button>
+          )}
+          {canAdmin && (
             <Popconfirm
               title={t('deleteConfirm.title')}
               description={t('deleteConfirm.description')}
@@ -305,6 +313,12 @@ export function ChannelBindingsCard({ principal, connections }: ChannelBindingsC
           onClose={() => setWebhookBinding(null)}
         />
       )}
+
+      <InboundMappingsModal
+        key={inboundBindingId ?? 'closed'}
+        bindingId={inboundBindingId}
+        onClose={() => setInboundBindingId(null)}
+      />
     </>
   )
 }
