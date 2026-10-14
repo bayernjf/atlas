@@ -150,7 +150,12 @@ class RunRepository(Protocol):
     M5b 新增：`/api/runs` 查询与 SSE 断线重连据此工作；跨租户/不存在返回 None 对齐 404。
     """
 
-    def begin(self, *, run_id: str, graph_id: str, mode: str) -> None: ...
+    def begin(
+        self, *, run_id: str, graph_id: str, mode: str,
+        cycle_seq: int = 0, cycle_group_id: str = "",
+    ) -> None:
+        """`cycle_seq`／`cycle_group_id`＝打包 BN（docs/130 §3.3）圈归属两列；
+        **缺省 0/''＝非圈运行**，故既有调用点不传即逐字等价现状。"""
     def suspend(
         self,
         *,

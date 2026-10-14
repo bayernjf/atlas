@@ -16,6 +16,8 @@ import os
 import re
 from typing import Any
 
+from atlas.llm.metering import complete_with_usage
+
 logger = logging.getLogger(__name__)
 
 _JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
@@ -59,11 +61,15 @@ def _call_llm(
     model: str,
     api_key: str | None,
     base_url: str | None,
+    caller: str,
     max_tokens: int = 800,
     temperature: float = 0,
 ) -> str:
-    import litellm
+    """三节点与 auto_extract 共用的唯一 LLM 出口（docs/129 打包 AU：usage 计量旁路）。
 
+    `caller` 由四个消费方各自传入（intent_recognition/info_extraction/
+    content_generation/memory_auto_extract）——共用出口不共用身份。
+    """
     kwargs: dict[str, Any] = {
         "model": model,
         "messages": [
@@ -80,8 +86,41 @@ def _call_llm(
         kwargs["api_key"] = api_key
     if base_url:
         kwargs["base_url"] = base_url
-    response = litellm.completion(**kwargs)
-    return response["choices"][0]["message"]["content"]
+    content, _usage = complete_with_usage(kwargs, caller=caller, model=model)
+    return content
+
+
+def call_structured_json(
+    prompt: str,
+    *,
+    model: str,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    caller: str,
+    max_tokens: int = 800,
+    temperature: float = 0,
+) -> str:
+    """**通用**结构化 JSON 出口（打包 BN 的圈终止判定用它，docs/130 C-D4）。
+
+    与四消费方共用 `_call_llm` 这一个 litellm 出口（AU-D3 单点纪律）——所以圈判定的
+    成本也自动进 AU 的账，caller 记 `cycle_judge`。
+    """
+    return _call_llm(
+        prompt,
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        caller=caller,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+
+
+def resolve_model_for_structured(
+    tenant_id: str | None, model: str | None, *, caller: str
+) -> tuple[str, str | None, str | None]:
+    """`_resolve_model` 的公开出口（跨包调用不碰私有名；语义逐字相同）。"""
+    return _resolve_model(tenant_id, model, caller=caller)
 
 
 def _parse_json(content: str) -> dict[str, Any] | None:
@@ -138,7 +177,10 @@ def classify_intent(
         f"{examples_text}\n文本：{text}"
     )
     try:
-        content = _call_llm(prompt, model=model_name, api_key=api_key, base_url=base_url)
+        content = _call_llm(
+            prompt, model=model_name, api_key=api_key, base_url=base_url,
+            caller="intent_recognition",
+        )
     except Exception as exc:  # noqa: BLE001 - 调用异常统一按解析失败兜底
         logger.warning("classify_intent: LLM 调用失败（model=%s）兜底：%s", model_name, exc)
         return {"intent": None, "confidence": 0.0, "slots": {}}
@@ -198,7 +240,10 @@ def extract_fields(
         f"\n字段清单：\n{chr(10).join(field_lines) or '（无）'}\n文本：{text}"
     )
     try:
-        content = _call_llm(prompt, model=model_name, api_key=api_key, base_url=base_url)
+        content = _call_llm(
+            prompt, model=model_name, api_key=api_key, base_url=base_url,
+            caller="info_extraction",
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning("extract_fields: LLM 调用失败（model=%s）兜底：%s", model_name, exc)
         return {"fields": {}, "missing": [str(f.get("name")) for f in (fields or [])]}
@@ -260,6 +305,7 @@ def generate_content(
             model=model_name,
             api_key=api_key,
             base_url=base_url,
+            caller="content_generation",
             max_tokens=max(64, min(max_length, 4000)),
             temperature=0.7,
         )
@@ -316,7 +362,10 @@ def extract_memories(
         f"文本：{text}"
     )
     try:
-        content = _call_llm(prompt, model=model_name, api_key=api_key, base_url=base_url)
+        content = _call_llm(
+            prompt, model=model_name, api_key=api_key, base_url=base_url,
+            caller="memory_auto_extract",
+        )
     except Exception as exc:  # noqa: BLE001 单次调用失败按"这次没提取到"，不炸运行
         logger.warning("extract_memories: LLM 调用失败（model=%s）按空结果处理：%s", model_name, exc)
         return {"facts": [], "preferences": [], "model": model_name}

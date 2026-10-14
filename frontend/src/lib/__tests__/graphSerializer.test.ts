@@ -162,6 +162,8 @@ describe('serializeGraph graphSettings (docs/123, 打包 AL)', () => {
     const graph = serializeGraph(nodes, edges, variables)
     expect(graph.global_error_handler).toBeUndefined()
     expect(graph.self_healing).toBeUndefined()
+    // 打包 BN：没配过圈 ⇒ 顶层不出现 loop（后端 None ＝ 不启用，现状零变化）
+    expect(graph.loop).toBeUndefined()
   })
 
   it('serializes camelCase editor settings into snake_case backend shape', () => {
@@ -182,5 +184,60 @@ describe('serializeGraph graphSettings (docs/123, 打包 AL)', () => {
     const graph = serializeGraph(nodes, edges, variables, undefined, settings)
     const { graphSettings } = deserializeGraph(graph)
     expect(graphSettings).toEqual(settings)
+  })
+})
+
+// 打包 BN（docs/130 §3.1）：图级自主循环 loop 的序列化 roundtrip。
+// 与打包 AL 的差异：loop 的键名本身就是后端契约的 camelCase（不转 snake_case），
+// 但仍逐字段显式写出——pydantic 对未知键静默丢弃，漏一个字段就"面板配了不生效"。
+describe('serializeGraph loop settings (docs/130, 打包 BN)', () => {
+  const loopSettings = {
+    loop: {
+      enabled: true,
+      maxIterations: 5,
+      maxWallClockSeconds: 600,
+      maxTokens: 50000,
+      completeWhen: "{{tool-1.result.status}} == 'SUCCESS'",
+      judgeMode: 'llm' as const,
+      judgePrompt: '目标达成了吗？',
+      carry: { order_id: '{{ai-1.decision.action}}' },
+      intervalSeconds: 30,
+    },
+  }
+
+  it('writes every configured field to the top-level loop', () => {
+    const graph = serializeGraph(nodes, edges, variables, undefined, loopSettings)
+    expect(graph.loop).toEqual({
+      enabled: true,
+      maxIterations: 5,
+      maxWallClockSeconds: 600,
+      maxTokens: 50_000,
+      completeWhen: "{{tool-1.result.status}} == 'SUCCESS'",
+      judgeMode: 'llm',
+      judgePrompt: '目标达成了吗？',
+      carry: { order_id: '{{ai-1.decision.action}}' },
+      intervalSeconds: 30,
+    })
+  })
+
+  it('keeps partial configs partial (no invented defaults)', () => {
+    const graph = serializeGraph(nodes, edges, variables, undefined, {
+      loop: { enabled: false },
+    })
+    expect(graph.loop).toEqual({ enabled: false })
+  })
+
+  it('round-trips loop settings through deserializeGraph', () => {
+    const graph = serializeGraph(nodes, edges, variables, undefined, loopSettings)
+    const { graphSettings } = deserializeGraph(graph)
+    expect(graphSettings?.loop).toEqual(loopSettings.loop)
+  })
+
+  it('drops non-string carry values instead of passing junk to pydantic', () => {
+    const { graphSettings } = deserializeGraph({
+      ...serializeGraph(nodes, edges, variables),
+      loop: { carry: { good: '{{a}}', bad: 42 as unknown as string } },
+    })
+    expect(graphSettings?.loop?.carry).toEqual({ good: '{{a}}' })
   })
 })

@@ -296,6 +296,7 @@
     "GLOBAL_ERROR_HANDLER_INVALID": "Invalid graph-level error handler config: {{message}}",
     "SELF_HEALING_INVALID": "Invalid self-healing config: {{message}}",
     "STATE_MACHINE_INVALID": "State machine node {{owner}} invalid config: {{message}}",
-    "STATE_TRANSITION_REJECTED": "State machine node {{owner}} rejected transition: {{from}} --{{event}}--> no matching transition (object {{objectRef}})"
+    "STATE_TRANSITION_REJECTED": "State machine node {{owner}} rejected transition: {{from}} --{{event}}--> no matching transition (object {{objectRef}})",
+    "LOOP_CONFIG_INVALID": "Invalid graph-level cycle config: {{message}}"
   }
 }

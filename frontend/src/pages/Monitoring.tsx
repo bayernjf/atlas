@@ -38,6 +38,7 @@ import { roleCan, type Principal } from '../lib/auth'
 import { UserBadge } from '../components/UserBadge'
 import { ShadowRunsCard } from '../components/shadow/ShadowRunsCard'
 import { TraceWaterfall } from '../components/monitoring/TraceWaterfall'
+import { CycleSessionsCard } from '../components/monitoring/CycleSessionsCard'
 import { OnCallBar } from '../components/monitoring/OnCallBar'
 import { WebhookReliabilityCard } from '../components/monitoring/WebhookReliabilityCard'
 import { AlertChannelCard } from '../components/monitoring/AlertChannelCard'
@@ -676,6 +677,8 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
             />
           </Card>
           <ShadowRunsCard canOperate={canOperate} />
+          {/* 打包 BN（docs/130）：圈会话卡——自走循环的运行都归在一条会话里 */}
+          <CycleSessionsCard canOperate={canOperate} />
           <WebhookReliabilityCard canOperate={canOperate} canAdmin={canAdmin} />
         </Space>
       </Content>

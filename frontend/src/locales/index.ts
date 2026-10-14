@@ -31,6 +31,7 @@ import enValidation from './en-US/validation.json'
 import enWaits from './en-US/waits.json'
 import enModels from './en-US/models.json'
 import enTemplates from './en-US/templates.json'
+import enUsage from './en-US/usage.json'
 import zhCommon from './zh-CN/common.json'
 import zhApprovals from './zh-CN/approvals.json'
 import zhAudit from './zh-CN/audit.json'
@@ -49,9 +50,10 @@ import zhValidation from './zh-CN/validation.json'
 import zhWaits from './zh-CN/waits.json'
 import zhModels from './zh-CN/models.json'
 import zhTemplates from './zh-CN/templates.json'
+import zhUsage from './zh-CN/usage.json'
 
 export type Locale = 'zh-CN' | 'en-US'
-export type Namespace = 'common' | 'approvals' | 'audit' | 'editor' | 'dashboard' | 'demo' | 'monitoring' | 'memory' | 'connections' | 'channels' | 'openapi' | 'runtime' | 'schedules' | 'validation' | 'waits' | 'reflection' | 'models' | 'templates'
+export type Namespace = 'common' | 'approvals' | 'audit' | 'editor' | 'dashboard' | 'demo' | 'monitoring' | 'memory' | 'connections' | 'channels' | 'openapi' | 'runtime' | 'schedules' | 'validation' | 'waits' | 'reflection' | 'models' | 'templates' | 'usage'
 
 type Dict = Record<string, unknown>
 export type TranslateOptions = {
@@ -61,7 +63,7 @@ export type TranslateOptions = {
   lng?: Locale
 } & Record<string, unknown>
 
-const NAMESPACES: Namespace[] = ['common', 'approvals', 'audit', 'editor', 'dashboard', 'demo', 'monitoring', 'memory', 'connections', 'channels', 'openapi', 'runtime', 'schedules', 'validation', 'waits', 'reflection', 'models']
+const NAMESPACES: Namespace[] = ['common', 'approvals', 'audit', 'editor', 'dashboard', 'demo', 'monitoring', 'memory', 'connections', 'channels', 'openapi', 'runtime', 'schedules', 'validation', 'waits', 'reflection', 'models', 'usage']
 
 const resources: Record<Locale, Record<Namespace, Dict>> = {
   'zh-CN': {
@@ -83,6 +85,7 @@ const resources: Record<Locale, Record<Namespace, Dict>> = {
     waits: zhWaits as Dict,
     models: zhModels as Dict,
     templates: zhTemplates as Dict,
+    usage: zhUsage as Dict,
   },
   'en-US': {
     common: enCommon as Dict,
@@ -103,6 +106,7 @@ const resources: Record<Locale, Record<Namespace, Dict>> = {
     waits: enWaits as Dict,
     models: enModels as Dict,
     templates: enTemplates as Dict,
+    usage: enUsage as Dict,
   },
 }
 

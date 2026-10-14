@@ -296,6 +296,7 @@
     "GLOBAL_ERROR_HANDLER_INVALID": "图级异常处理配置无效：{{message}}",
     "SELF_HEALING_INVALID": "自愈配置无效：{{message}}",
     "STATE_MACHINE_INVALID": "状态机节点 {{owner}} 配置无效：{{message}}",
-    "STATE_TRANSITION_REJECTED": "状态机节点 {{owner}} 非法迁移：{{from}} --{{event}}--> 无匹配转换（对象 {{objectRef}}）"
+    "STATE_TRANSITION_REJECTED": "状态机节点 {{owner}} 非法迁移：{{from}} --{{event}}--> 无匹配转换（对象 {{objectRef}}）",
+    "LOOP_CONFIG_INVALID": "图级自主循环配置无效：{{message}}"
   }
 }

@@ -3,6 +3,53 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔docs〕打包 BN 立项＝D69 运行期自走循环（2026-10-14，用户「你自己可以搞吗」＝四道闸门由 AI 直接拍；docs-only，零代码）
+
+- **动机**：docs/01 把 Loop 列为三基元之一，而运行期是"一次触发＝一次图执行"，靠调度器/Webhook 制造"看起来在循环"。`engine/` 的 OODA 循环**零生产引用**（只有 `tests/test_engine_loop.py`、`tests/test_reflection.py`、`scripts/benchmark.py`），且被 docs/88 §3 P-2(a) 冻结。
+- **两条关键实核**：① `engine/nodes.py` 五个节点全是确定性占位（产出 `observation@N` 这类字符串，`decide_node` 只比 `step >= max_steps`）⇒ **不复活它**，落点改为新增 `cycles/` supervisor，**一圈＝一次真实 `run_graph`**（继承审批/子图/断点/录制/监控全语义），`engine/` 一行不改；② 打包 AU 刚落地的账**可按 run_id 求和** ⇒ C-P1 的 token 预算闸门有数据源。
+- **四道闸门全部拍板**：C-P1 **三闸门全设**（迭代 1-50 缺省 10／墙钟 30-86400 缺省 1800／token 缺省 200000）；C-P2 **规则优先、LLM 可选二段**（`completeWhen` 表达式为主，`judgeMode="llm"` 须显式开启且成本进 AU 的账）——**本文照实记为对先前口头建议"模型判"的修正**：每圈问一次模型既烧钱又让终止判定不可回放；C-P3 圈内可挂起但**圈层不等待**（交还既有帧机制，续跑后再问是否开下一圈）；C-P4 **不写圈帧**（沿打包 R 的 D44：恢复扫描器会把圈级记录误当审批续跑、产生第二个 token）。
+- **风险姿态**：启用面＝`GraphDSL.loop` 顶层配置，**缺省 `None`＝不启用＝现状逐字不变**；这是 docs/127 六个里程碑里**唯一改运行期行为**的批次，故四闸门先拍后动。
+- 迁移 **050＝runs 两列**（`cycle_seq`／`cycle_group_id`，docs/127 预留）＋索引；用例 U1427–U1442 含四条反向门；零新错误码／零新依赖／无 ADR；**不解锁多副本**、不碰 D36/D44/T22、不动 reflection L2 的人工采纳。
+
+### 〔落码收口〕打包 BN：D69 运行期自走循环（2026-10-14；形状权威 [docs/130](docs/130-运行期自走循环-D69-打包BN-v1批契约设计.md) §7.1/§7.2；U1427–U1442 全转正式）
+
+- **十步原子序 §6 全落**：`cycles/{state,judge,supervisor}.py`＋迁移 050 `runs` 两列（`cycle_seq`/`cycle_group_id`）＋`GraphDSL.loop` 编译期校验（含 `completeWhen` 表达式预解析）＋同步 `/run` 与后台 worker 两入口驱动＋REST 两端点（`GET /api/runs/{id}/cycle`、`POST /api/runs/{id}/cycle/stop`）＋前端图设置面板/圈徽标/i18n。
+- **偏差照实记**：原子序 ⑥「`_resume_run` 出口接续」改为流式 `/run/stream` 与续跑 `_resume_run` **不参与圈**（只跑第一圈＋`loopSkipped`，边界见 §3.2 C-D10）；`runs` 两列命名 `cycle_seq`/`cycle_group_id`（非 D69 草案 `loopId`/`iteration`）；token 预算走 `usage_store.list_recent(limit=200)` 明细扫描（超 200 行低估、方向更早触顶）。
+- **落码抓修两真缺陷**（逆向门同类）：supervisor 循环缺"整条圈已被叫停"检查（U1440）／token 记账把累计当增量且 `session.seq` 不推进（U1428/37）／圈判定那次 LLM 调用漏记 AU 账（U1430，已在 `_judge_complete` 自补 `usage_context`）。
+- **四条逆向门 U1437–U1440 各自植缺陷转红**：摘迭代数闸门／`completeWhen` 恒真／carry 写错键路径／摘 stopped 检查。
+- **门（实跑）**：后端默认 **2870 passed／193 skipped／0 failed**；前端 vitest **1022／2 skipped**、oxlint **0/0**、build ✓。
+- **真机端到端** `scripts/dev/cycle_probe.py`：规则腿 **12 PASS／0 FAIL**（判定恒假时靠 `maxIterations` 收手、圈累计 token 与 `llm_usage` 汇总对账相等、停整条圈已终态幂等）；`--live` 腿因本地无 `LITELLM_MODEL`/`OPENAI_API_KEY` **BLOCKED**（退出码 3 点名缺哪个变量，不许拿规则腿冒充）。
+- **D69 翻 ✅**（docs/14 行）：运行期自走循环已落地、缺省关闭、四闸门全设；文档与形态不一致已消除。
+
+### 〔落码收口〕打包 AU：D70 LLM 用量与成本计量（2026-10-14，用户「好的，你继续落码」；形状权威 [docs/129](docs/129-LLM用量与成本计量-D70-打包AU-v1批契约设计.md) §7.1；U1411–U1426 全转正式）
+### 〔落码收口〕打包 AU：D70 LLM 用量与成本计量（2026-10-14，用户「好的，你继续落码」；形状权威 [docs/129](docs/129-LLM用量与成本计量-D70-打包AU-v1批契约设计.md) §7.1；U1411–U1426 全转正式）
+
+- **那个零命中今天没了**：`src/atlas/llm/metering.py` 成为全仓**唯一**调 `litellm.completion` 的地方（八个调用点身份各自记 token/耗时/成败），并由 `test_single_litellm_exit_point_guard` 机检"恰好一处"——绕过 helper 即用量账静默缺块。
+- **归属走 contextvar，不改六个 Protocol 签名**：同步/流式/后台/续跑四个运行入口设 tenant·run·graph，loader 每节点执行处盖 node_id，NL 生成端点与两处反思触发只挂 tenant；后台线程在本线程内显式 set（tracing 同款纪律，不依赖跨线程继承）；无上下文＝不记录（loader 直跑与单测不计）。
+- **只计 token，不做货币计价**（AU-D1：供应商单价属外部资源，伪造比没有更坏）；失败调用记零 token 的 error 条后**原样抛出**，调用方 fail-safe 语义不变；不记 prompt/response 正文，记录无密钥字段。
+- **存储两档**：迁移 049 `llm_usage`＋`PgUsageStore`（无 ring，账不丢；内存档 ring 2000），方法签名与内存档一比一；reset 同清（运行数据，与 model_config 的"不清"区分）；不挂 `ATLAS_RETENTION_DAYS`（余部）。
+- **两个只读端点＋一页**：`GET /api/usage/summary?since&until&group_by=caller|model|day`、`GET /api/usage/recent?limit`（read 档），前端 `Usage.tsx`（两张聚合表＋明细表）；`group_by` 非法走 422 纯文本 detail，**全批零新错误码**。
+- **四条落码偏差照实登记**（docs/129 §7.1）：node_id 统一每节点包（记忆自动提取工具挂在 tool_call 节点上）／422 用纯文本 detail 守零新错误码／回放不设上下文（回归流量不是生产成本）／前端首帧不先出骨架（否则藏掉分组切换与表头）。
+- **三条反向门各自植缺陷实跑转红**：摘入口 `usage_context` ⇒ U1414 红；删 `_safe_record` 的 try/except ⇒ U1425 红（store 炸会把 run 打成 500）；摘 PG 的 `WHERE tenant_id` ⇒ U1423 红。
+- **门（实跑）**：后端默认 **2799 passed／193 skipped／0 failed**（267.99s）；PG 档全量（一次性 pgvector:pg16，对齐 CI backend-integration）**2991 passed／1 skipped／0 failed**（258.85s，容器用完即删）；前端 vitest **1015／2 skipped**、oxlint **0/0**、build ✓。
+- **真机端到端** `scripts/dev/usage_probe.py`：结构性腿 6 PASS（规则兜底**零调用零账**）；真模型腿 `--live` **17 PASS／0 FAIL**——**ai_decision 实测 1 次调用／prompt 153／completion 43／合计 196 token**、端点级 nl_generate 也计、归属三项逐字正确、三档聚合与明细逐档对账相等、reset 后账清空；缺凭据退出码 3 并点名缺哪个变量。
+- **D70 仍 🟡 不翻 ✅**：货币计价／Loop 预算闸门（里程碑 C/BN）／agent 归因（D74）／retention 接入四项余部照旧。
+
+### 〔docs〕打包 AU 立项＝D70 LLM 用量与成本计量（2026-10-14，用户「搞你自己能推进的」授权；docs-only，零代码）
+
+- **动机**：D70 是 D69（Loop 预算闸门）／D74（智能体成本面板）／D75／D77 的**硬前置**，而数据源今天不存在——`prompt_tokens`/`usage` 在 `src/atlas/`＋`tests/` 全零命中；**六个** `litellm.completion` 调用点（decision／condition_classifier／`structured._call_llm`〔四消费方共用〕／nl_generate／reflection adapter）全部丢弃回包 usage；运行侧也没有 run→LLM 归属通道（`run_graph` 无 run_id 形参）。
+- **七条决策**（形状权威 [docs/129](docs/129-LLM用量与成本计量-D70-打包AU-v1批契约设计.md)）：AU-D1 **只计 token 不做货币计价**（单价属外部资源，伪造比没有更坏）；AU-D2 **按 docs/127 B-P1 推荐拍板＝落 PG 表 049＋内存 ring 2000**（成本账跨重启不可丢，且 C 的预算闸门要读历史）；AU-D3 六点同源 helper `llm/metering.py`（一件事一个实现）；AU-D4 **归属走 contextvar、不改六 Protocol 签名**（API run 入口／loader 节点执行处／nl_generate·反思三处设置，无上下文＝不记录）；AU-D5 失败调用也记 error 条、不记正文；AU-D6 只读两端点＋Usage.tsx；AU-D7 **D70 不翻 ✅**（计价／预算闸门／agent 归因／retention 四项余部照旧）。
+- **验收预留 U1411–U1426**：含跨租户隔离（摘 `WHERE tenant_id` 必须红）、入口上下文设置（摘设置 ⇒ 归属例立刻红）、计量旁路性（store 炸 ⇒ run 仍 completed）三条反向门＋一次真机端到端。
+- 同步面：docs/14 D70 行翻 🟡、docs/13 打包 AU 小节、docs/08 §八立项块、docs/00 地图、handoff Active #169。零迁移／零新依赖／无 ADR（落码另批，九步原子序见 docs/129 §6）。
+
+### 〔缺陷修复〕D78：prod 档 compile 端点缺 registry 恒 500，一行注入＋反向门收口（2026-10-14）
+
+- **症状与影响面**：`POST /api/graphs/{id}/compile` 未注入 registry，prod 且未开演示面时 `_resolve_registry(None)` raise（`loader.py:408-411`）⇒ 端点恒 500。**不止编译端点本身**——发布门禁、影子运行预检等所有走 compile 的路径在 prod 全断。
+- **修法＝方案 (a)**：compile 端点与 run 端点同构传 `_runtime_registry(services)`（`main.py:4424`）。**方案 (b)（无 registry 时退化为只查图结构）被否**：那等于重开「prod 静默跳过工具名校验」的口子，与 docs/77 R2 同族。
+- **反向门**：直调 `compile_graph(registry=None)` 在 prod 仍 raise——loader 的拒绝一字未动；可失败性实测：摘掉端点注入 ⇒ 正向例当场转红。
+- **两例回归**（`tests/test_api_graphs.py::test_d78_*`）：prod＋演示面关闭 ⇒ compile 200（prod 档需过打包 AV 首登改密门，打桩 `user_store.get` 返已轮换账号副本，同 U1391 打法）；loader 门保持 raise。
+- 同步面：docs/14 D78 行翻 ✅、docs/13 AT 段附记、handoff。零迁移／零新端点／零新错误码／零新依赖。
+
 ### 〔缺陷修复〕打包 AT 的 U1406 是假绿：PR #152 的 CI 红已修并推（2026-10-14，`bd2f522`；根因面新登 docs/14 **D79**）
 
 - **症状**：AT 收口推上 `dev` 后，CI 的两个后端 job（内存档＋PG 档）一起红在 `tests/test_recording_promote.py::test_u1406_other_tenants_case_is_404`——而本机此前两次全量门都是 **2765 passed／189 skipped／0 failed**。这就是"本机绿、CI 红"，不是什么环境抖动。
@@ -37,7 +84,7 @@
 - **真机端到端**：`scripts/dev/promote_guide_probe.py` **28 PASS／0 FINDING**（录一次真运行 → plan → 勾选 → promote → 存新图 → 发布 → 用不同 order_id 跑到终态 → 取 guide 人工核对）。
 - **四道门**：后端 **2765 passed／189 skipped／0 failed**（+23 为本批新测，基线 2742/189）；前端 vitest **1010 passed／2 skipped**、oxlint **0/0**、build ✓。零新增运行时依赖；无 ADR。
 - **不触碰**：D43/D52（浏览器出向）、D26（回放）、D60 余部；D66 口径守住（recording 侧零第二份输出键表）。
-- **已知遗留**：D78 — prod 档 `/api/graphs/{id}/compile` 缺 registry 会 500（`loader.py:408-411`），影响发布门禁等所有依赖 compile 的路径；修复只需一行（传入 `_runtime_registry(services)`），但超出 AT 范围，另立 D78 登记。
+- **已知遗留**：~~D78 — prod 档 `/api/graphs/{id}/compile` 缺 registry 会 500（`loader.py:408-411`），影响发布门禁等所有依赖 compile 的路径；修复只需一行（传入 `_runtime_registry(services)`），但超出 AT 范围，另立 D78 登记。~~ **〔2026-10-14 当日已修，见 Unreleased 顶部 D78 条〕**
 - 同步面：docs/128 §7 收口记录、docs/13 AT 段、docs/14 D68/D72 ✅＋D78 新登、docs/08 AT 收口块、handoff Active #166 ＋顶部状态、docs/00 文档地图。
 
 ### 〔docs-only 立项〕打包 AT：D68 机器人试教成图＋D72 操作指引（里程碑 A 开工，2026-10-13，docs/128）

@@ -6,8 +6,13 @@
     "unresolvedBadge": "Open alerts"
   },
   "runReport": {
-    "card": { "title": "Run Report" },
-    "group": { "day": "By day", "version": "By version" },
+    "card": {
+      "title": "Run Report"
+    },
+    "group": {
+      "day": "By day",
+      "version": "By version"
+    },
     "days": "Last {{value}} days",
     "col": {
       "key": "Group",
@@ -20,7 +25,10 @@
       "p50": "P50 (ms)",
       "p95": "P95 (ms)"
     },
-    "export": { "csv": "Export CSV", "json": "Export JSON" }
+    "export": {
+      "csv": "Export CSV",
+      "json": "Export JSON"
+    }
   },
   "col": {
     "rule": "Rule",
@@ -410,5 +418,39 @@
     "deliveryFailed": "Failed",
     "never": "No delivery yet",
     "readOnlyHint": "Read-only for your role; administrators can edit"
+  },
+  "cycle": {
+    "title": "Self-running cycle sessions",
+    "hint": "When one trigger runs several cycles, every run belongs to one session: here you can see which cycle it reached, why it stopped, how many tokens it spent, and stop the whole session. Session state lives in the process, so a restart ends the session without resuming it.",
+    "refresh": "Refresh",
+    "empty": "No cycle session right now (no graph has the cycle enabled, or the session ended on restart).",
+    "expand": "Details",
+    "collapse": "Hide",
+    "stop": "Stop session",
+    "col": {
+      "graph": "Graph",
+      "seq": "Cycles",
+      "state": "State",
+      "tokens": "Tokens",
+      "actions": "Actions"
+    },
+    "seqTag": "Cycle {{n}}",
+    "state": {
+      "running": "Running",
+      "suspended": "Suspended",
+      "completed": "Done",
+      "budget_exhausted": "Budget reached",
+      "stopped": "Stopped",
+      "failed": "Failed"
+    },
+    "detail": {
+      "cycles": "{{done}} of {{max}} cycles done",
+      "wallClock": "{{used}}s of {{max}}s wall clock",
+      "tokens": "{{used}} of {{max}} tokens"
+    },
+    "error": {
+      "load": "Failed to load cycle sessions",
+      "stop": "Failed to stop the session"
+    }
   }
 }

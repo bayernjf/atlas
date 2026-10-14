@@ -1658,6 +1658,49 @@ export async function getRuns(graphId?: string, limit = 50): Promise<RunRecord[]
   return body.items
 }
 
+// ===================== 自走循环圈会话（docs/130 打包 BN＝D69）=====================
+
+/** 运行列表里与圈有关的两列（`GET /api/runs`，M5b 口径；**非圈运行 0 / ""**）。 */
+export type RunListItem = {
+  runId: string
+  graphId: string
+  status: string
+  startedAt: string | null
+  cycleSeq?: number
+  cycleGroupId?: string
+}
+
+/** 圈会话投影（`GET /api/runs/{run_id}/cycle`）。 */
+export type CycleSessionView = {
+  groupId: string
+  tenantId: string
+  graphId: string
+  seq: number
+  state: 'running' | 'suspended' | 'completed' | 'budget_exhausted' | 'stopped' | 'failed'
+  stopReason: string
+  tokensSpent: number
+  elapsedSeconds: number
+  maxIterations: number
+  maxWallClockSeconds: number
+  maxTokens: number
+  startedAt: string
+  runs: Array<{ runId: string; seq: number; status: string; totalTokens: number }>
+}
+
+export async function getRunsForCycles(limit = 50): Promise<RunListItem[]> {
+  const params = new URLSearchParams({ limit: String(limit) })
+  const body = await request<{ items: RunListItem[] }>(`/api/runs?${params}`)
+  return body.items
+}
+
+export async function getCycleSession(runId: string): Promise<CycleSessionView> {
+  return request(`/api/runs/${encodeURIComponent(runId)}/cycle`)
+}
+
+export async function stopCycleSession(runId: string): Promise<CycleSessionView> {
+  return request(`/api/runs/${encodeURIComponent(runId)}/cycle/stop`, { method: 'POST' })
+}
+
 // docs/33 §4：Trace span 树（递归 children）；列表 RunRecord 不含 spans，trace 端点懒加载。
 export type TraceSpanNode = {
   traceId: string
@@ -3022,4 +3065,58 @@ export async function getByokModel(): Promise<ModelConfigView | { configured: fa
 
 export async function putByokModel(input: ModelConfigInput): Promise<ModelConfigView> {
   return request('/api/models/byok', { method: 'PUT', body: JSON.stringify(input) })
+}
+
+// ===================== LLM 用量计量（docs/129 打包 AU＝D70）=====================
+
+/** 一次 LLM 调用的计量记录（后端 public_view 投影）。只报 token，**不含货币计价**。 */
+export type UsageRecordView = {
+  tenantId: string
+  ts: string
+  caller: string
+  model: string
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  latencyMs: number
+  status: 'ok' | 'error'
+  nodeId: string
+  graphId: string
+  runId: string
+}
+
+/** 聚合桶（按 caller/model/day 分组；key 即分组值）。 */
+export type UsageSummaryItem = {
+  key: string
+  calls: number
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  errors: number
+}
+
+export type UsageSummary = {
+  groupBy: string
+  since: string | null
+  until: string | null
+  items: UsageSummaryItem[]
+}
+
+export type UsageSummaryParams = {
+  since?: string
+  until?: string
+  groupBy?: 'caller' | 'model' | 'day'
+}
+
+export async function getUsageSummary(params: UsageSummaryParams = {}): Promise<UsageSummary> {
+  const query = new URLSearchParams({ group_by: params.groupBy ?? 'caller' })
+  if (params.since) query.set('since', params.since)
+  if (params.until) query.set('until', params.until)
+  return request(`/api/usage/summary?${query.toString()}`)
+}
+
+export async function getUsageRecent(limit = 50): Promise<UsageRecordView[]> {
+  const query = new URLSearchParams({ limit: String(limit) })
+  const body = await request<{ items: UsageRecordView[] }>(`/api/usage/recent?${query.toString()}`)
+  return body.items
 }

@@ -6,8 +6,13 @@
     "unresolvedBadge": "未关闭告警"
   },
   "runReport": {
-    "card": { "title": "运行报表" },
-    "group": { "day": "按天", "version": "按版本" },
+    "card": {
+      "title": "运行报表"
+    },
+    "group": {
+      "day": "按天",
+      "version": "按版本"
+    },
     "days": "最近 {{value}} 天",
     "col": {
       "key": "分组",
@@ -20,7 +25,10 @@
       "p50": "P50(ms)",
       "p95": "P95(ms)"
     },
-    "export": { "csv": "导出 CSV", "json": "导出 JSON" }
+    "export": {
+      "csv": "导出 CSV",
+      "json": "导出 JSON"
+    }
   },
   "col": {
     "rule": "规则",
@@ -410,5 +418,39 @@
     "deliveryFailed": "失败",
     "never": "尚未投递",
     "readOnlyHint": "当前角色仅可查看，管理员可编辑"
+  },
+  "cycle": {
+    "title": "自走循环会话",
+    "hint": "一次触发连续跑多圈时，每次运行都归在一条圈会话里：这里能看它跑到第几圈、为什么收手、累计花了多少 token，并可停掉整条会话（圈活体状态在进程内，重启后会话消失且不自动续跑）。",
+    "refresh": "刷新",
+    "empty": "当前没有圈会话（没有图开启自主循环，或服务重启后会话已结束）。",
+    "expand": "查看",
+    "collapse": "收起",
+    "stop": "停整条圈",
+    "col": {
+      "graph": "图",
+      "seq": "圈数",
+      "state": "状态",
+      "tokens": "累计 token",
+      "actions": "操作"
+    },
+    "seqTag": "第 {{n}} 圈",
+    "state": {
+      "running": "进行中",
+      "suspended": "挂起让位",
+      "completed": "达成收工",
+      "budget_exhausted": "预算触顶",
+      "stopped": "已叫停",
+      "failed": "失败"
+    },
+    "detail": {
+      "cycles": "已完成 {{done}} 圈（上限 {{max}}）",
+      "wallClock": "墙钟 {{used}} 秒（上限 {{max}}）",
+      "tokens": "token {{used}}（上限 {{max}}）"
+    },
+    "error": {
+      "load": "圈会话加载失败",
+      "stop": "停整条圈失败"
+    }
   }
 }

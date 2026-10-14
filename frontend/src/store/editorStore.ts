@@ -102,6 +102,18 @@ type EditorState = {
       maxAttempts?: number
       continueWhen?: string
     }
+    /** 打包 BN（docs/130 §3.1）：图级自主循环（camelCase 编辑器形态＝后端契约同名）。 */
+    loop?: {
+      enabled?: boolean
+      maxIterations?: number
+      maxWallClockSeconds?: number
+      maxTokens?: number
+      completeWhen?: string
+      judgeMode?: 'rule' | 'llm'
+      judgePrompt?: string
+      carry?: Record<string, string>
+      intervalSeconds?: number
+    }
   }
   updateGraphSettings: (patch: Partial<EditorState['graphSettings']>) => void
 }

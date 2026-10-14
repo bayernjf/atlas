@@ -91,7 +91,15 @@ from atlas.iam.principals import Principal, Role, can
 from atlas.iam.registry import STORAGE_BACKEND, TenantServices
 from atlas.llm.config import ModelConfig
 from atlas.llm.decision import get_decision_client, warm_litellm
+from atlas.llm.metering import usage_context
 from atlas.llm.nl_generate import generate_graph, validate_param_fills
+from atlas.cycles.supervisor import (
+    CycleOutcome,
+    cycle_config,
+    run_cycle_session,
+    session_for_run,
+)
+from atlas.cycles.state import cycle_registry
 from atlas.memory.database import ping, wait_for_database
 from atlas.memory.models import KNOWLEDGE_CATEGORIES, MemoryValidationError
 from atlas.message.service import MessageSendError
@@ -348,21 +356,27 @@ def _resume_run(engine, services: TenantServices, frame: dict) -> None:
     run_id = frame.get("run_id", "")
     try:
         resume_graph = GraphDSL.model_validate(frame["graph_snapshot"])
-        result = run_graph(
-            resume_graph,
-            inputs=frame["resume_state"].get("inputs", {}),
-            registry=_runtime_registry(services),
-            approval_broker=services.approval_broker,
-            event_wait_broker=services.event_wait_broker,
+        with usage_context(
+            frame["tenant_id"],
+            run_id=run_id,
             graph_id=frame["resume_state"].get("graph_id", ""),
-            graph_resolver=_tenant_graph_resolver(services),
-            frame_sink=make_frame_sink(engine, frame["tenant_id"], run_id),
-            resume_claim=make_resume_claim(engine),
-            resume=frame,
-            tenant_id=frame["tenant_id"],
-            secret_provider=_secret_provider,
-            memory_repo=services.memory_store,
-        )
+            store=services.usage_store,
+        ):
+            result = run_graph(
+                resume_graph,
+                inputs=frame["resume_state"].get("inputs", {}),
+                registry=_runtime_registry(services),
+                approval_broker=services.approval_broker,
+                event_wait_broker=services.event_wait_broker,
+                graph_id=frame["resume_state"].get("graph_id", ""),
+                graph_resolver=_tenant_graph_resolver(services),
+                frame_sink=make_frame_sink(engine, frame["tenant_id"], run_id),
+                resume_claim=make_resume_claim(engine),
+                resume=frame,
+                tenant_id=frame["tenant_id"],
+                secret_provider=_secret_provider,
+                memory_repo=services.memory_store,
+            )
         if run_id:
             services.run_store.finish(
                 run_id=run_id, status="completed",
@@ -1059,6 +1073,90 @@ def put_byok_model(
     return _masked_view(store.set_byok(principal.tenant_id, cfg))
 
 
+# --- LLM 用量与成本计量（docs/129 打包 AU＝D70） -------------------------------
+
+_USAGE_GROUP_BY = ("caller", "model", "day")
+
+
+@app.get("/api/usage/summary")
+def usage_summary(
+    principal: Principal = Depends(require("read")),
+    since: str | None = None,
+    until: str | None = None,
+    group_by: str = "caller",
+) -> dict[str, Any]:
+    """用量聚合（read 档，只读本租户）：按 caller/model/day 分组的 token 与调用次数。
+
+    **只报 token，不做货币计价**（AU-D1：单价属外部资源，伪造比没有更坏）。
+    group_by 非法值 ⇒ 422（照 `_audit_cursor` 先例：查询参数校验不新增错误码，
+    本批承诺零新错误码）。
+    """
+    if group_by not in _USAGE_GROUP_BY:
+        raise HTTPException(
+            status_code=422,
+            detail=[f"group_by 必须是 {'/'.join(_USAGE_GROUP_BY)} 之一，收到：{group_by}"],
+        )
+    store = services_for(principal).usage_store
+    return {
+        "groupBy": group_by,
+        "since": since,
+        "until": until,
+        "items": store.summarize(since=since, until=until, group_by=group_by),
+    }
+
+
+@app.get("/api/usage/recent")
+def usage_recent(
+    principal: Principal = Depends(require("read")),
+    limit: int = 50,
+) -> dict[str, Any]:
+    """最近用量明细（read 档，倒序，limit clamp 1–200）：一次调用一行。"""
+    store = services_for(principal).usage_store
+    return {"items": store.list_recent(limit=limit)}
+
+
+# --- 运行期自走循环（docs/130 打包 BN＝D69） ------------------------------------
+
+
+def _cycle_session_or_404(run_id: str, tenant_id: str) -> Any:
+    """由 runId 反查圈会话；跨租户/非圈 run 一律 404（不泄漏存在性，04 §5.14）。"""
+    run = tenant_registry.get(tenant_id).run_store.get(run_id)
+    if run is None or not run.get("cycleGroupId"):
+        raise HTTPException(status_code=404, detail=f"该运行不属于任何圈会话：{run_id}")
+    session = session_for_run(run_id)
+    if session is None or session.tenant_id != tenant_id:
+        # 会话已被 ring 淘汰或跨租户 ⇒ 与"不存在"同形（docs/12 跨租户 404 惯例）
+        raise HTTPException(status_code=404, detail=f"圈会话不存在或已过期：{run_id}")
+    return session
+
+
+@app.get("/api/runs/{run_id}/cycle")
+def get_run_cycle(
+    run_id: str, principal: Principal = Depends(require("read"))
+) -> dict[str, Any]:
+    """圈会话投影（read 档，只读）：圈序号/累计 token/累计墙钟/终止原因/各圈 run。
+
+    非圈运行（`cycleGroupId` 为空）或会话已被 ring 淘汰 ⇒ 404 `CYCLE_NOT_FOUND`。
+    **零新错误码**：404 走既有纯文本 detail 惯例（同 `/api/runs/{id}/trace` 的 404 族）。
+    """
+    session = _cycle_session_or_404(run_id, principal.tenant_id)
+    return session.public_view()
+
+
+@app.post("/api/runs/{run_id}/cycle/stop")
+def stop_run_cycle(
+    run_id: str, principal: Principal = Depends(require("operate"))
+) -> dict[str, Any]:
+    """停**整条**圈会话（operate；C-D8）：已终态 ⇒ 200 幂等（状态照实回，不覆写历史）。
+
+    与 `POST /api/runs/{id}/cancel` 的分工：cancel 停**这一圈**，本端点停**整条会话**
+    （此后不再开新圈；已在跑的那一圈由 cancel 收尾）。
+    """
+    session = _cycle_session_or_404(run_id, principal.tenant_id)
+    stopped = cycle_registry().stop(session.group_id) or session
+    return stopped.public_view()
+
+
 @app.post("/api/connections/{conn_id}/authorize")
 def authorize_connection(conn_id: str, principal: Principal = Depends(require("operate"))) -> dict[str, Any]:
     """返回授权 URL 与 state（前端 window.open 打开，state 10 分钟有效，仅防 CSRF）。"""
@@ -1266,6 +1364,73 @@ _webhook_deliverer = WebhookDeliverer(
 )
 
 
+def _background_run_cycle(
+    services: TenantServices, tenant_id: str, graph_id: str, version: int,
+    event: TriggerEvent, *, mode: str, run_id: str | None,
+    cycle_seq: int = 0, cycle_group_id: str = "", inputs: dict[str, Any] | None = None,
+) -> CycleOutcome:
+    """后台跑**一圈**（= 一次真实运行）；返回 `CycleOutcome` 供圈层判定。
+
+    与同步入口同构的分工：圈层只管"跑几次"，一圈内部的 begin/finish/让位/失败记账
+    语义逐字保持（docs/130 C-D1）。`cycle_seq`／`cycle_group_id` 缺省 0/''＝非圈运行。
+    """
+    run_store = services.run_store
+    own_run_id = run_id
+    if own_run_id is None:
+        own_run_id = uuid.uuid4().hex
+        run_store.begin(
+            run_id=own_run_id, graph_id=graph_id, mode=mode,
+            cycle_seq=cycle_seq, cycle_group_id=cycle_group_id,
+        )
+    try:
+        raw = services.graph_store.get(graph_id, version)
+        if raw is None:
+            run_store.finish(
+                run_id=own_run_id, status="failed",
+                error=f"已发布版本不存在：{graph_id}@{version}",
+            )
+            return CycleOutcome(run_id=own_run_id, status="failed", stop_run=True)
+        graph = parse_graph(raw)
+        with usage_context(
+            tenant_id, run_id=own_run_id, graph_id=graph_id, store=services.usage_store
+        ):
+            result = run_graph(
+                graph,
+                inputs=inputs if inputs is not None else {"event": event.model_dump()},
+                registry=_runtime_registry(services),
+                approval_broker=services.approval_broker,
+                event_wait_broker=services.event_wait_broker,
+                graph_id=graph_id,
+                graph_resolver=_tenant_graph_resolver(services),
+                frame_sink=_frame_sink_for(tenant_id, run_store, own_run_id),
+                resume_claim=_resume_claim_for(),
+                _block_subgraph_suspend=(STORAGE_BACKEND == "pg"),
+                graph_version=version,
+                tenant_id=tenant_id,
+                secret_provider=_secret_provider,
+                memory_repo=services.memory_store,
+            )
+        run_store.finish(
+            run_id=own_run_id, status="completed",
+            outputs=result["outputs"], trace=result["trace"],
+        )
+        return CycleOutcome(
+            run_id=own_run_id, status="completed", outputs=result.get("outputs", {})
+        )
+    except RunSuperseded as exc:
+        # docs/62 §2 D-4：后台运行同样受认领门约束——输家不落 failed
+        # （否则把赢家的执行记录成失败），只让位并留日志。
+        logger.info("后台运行让位 graph=%s@%s：%s", graph_id, version, exc)
+        return CycleOutcome(run_id=own_run_id, status="suspended", stop_run=True)
+    except Exception as exc:
+        logger.error("%s 触发图运行失败 graph=%s@%s", mode, graph_id, version, exc_info=True)
+        run_store.finish(
+            run_id=own_run_id, status="failed",
+            error=_safe_run_error(exc),
+        )
+        return CycleOutcome(run_id=own_run_id, status="failed", stop_run=True)
+
+
 def _background_run_worker(
     services: TenantServices, tenant_id: str,
     graph_id: str, version: int, event: TriggerEvent,
@@ -1276,50 +1441,53 @@ def _background_run_worker(
     webhook 与定时触发共用这条路径（docs/68 §1 D-3：派发按发布号钉版，绝不回落草稿）。
     `run_id` 由调度派发方预先 begin 后传入——它必须在 tick 内就让 run 变成 running，
     否则下一轮 tick 的"同图还在跑"判定会漏看这条刚提交的运行。
+
+    **圈启用面**（docs/130 C-D10）：图级 `loop` 配置存在 ⇒ 本 worker 按圈会话驱动；
+    预置的 `run_id` 只用于**第一圈**（保持"tick 内即可见 running"的既有语义），
+    后续圈由圈层发新 run_id。缺省配置走原路径逐字不变。
     """
-    run_store = services.run_store
-    if run_id is None:
-        run_id = uuid.uuid4().hex
-        run_store.begin(run_id=run_id, graph_id=graph_id, mode=mode)
-    try:
-        raw = services.graph_store.get(graph_id, version)
-        if raw is None:
-            run_store.finish(
+    raw = services.graph_store.get(graph_id, version)
+    if raw is None:
+        # 图不存在：预置 run 要落 failed（与既有语义同）；无预置 run 则无事可做。
+        if run_id is not None:
+            services.run_store.finish(
                 run_id=run_id, status="failed",
                 error=f"已发布版本不存在：{graph_id}@{version}",
             )
-            return
+        return
+    try:
         graph = parse_graph(raw)
-        result = run_graph(
-            graph,
-            inputs={"event": event.model_dump()},
-            registry=_runtime_registry(services),
-            approval_broker=services.approval_broker,
-            event_wait_broker=services.event_wait_broker,
-            graph_id=graph_id,
-            graph_resolver=_tenant_graph_resolver(services),
-            frame_sink=_frame_sink_for(tenant_id, run_store, run_id),
-            resume_claim=_resume_claim_for(),
-            _block_subgraph_suspend=(STORAGE_BACKEND == "pg"),
-            graph_version=version,
-            tenant_id=tenant_id,
-            secret_provider=_secret_provider,
-            memory_repo=services.memory_store,
-        )
-        run_store.finish(
-            run_id=run_id, status="completed",
-            outputs=result["outputs"], trace=result["trace"],
-        )
-    except RunSuperseded as exc:
-        # docs/62 §2 D-4：后台运行同样受认领门约束——输家不落 failed
-        # （否则把赢家的执行记录成失败），只让位并留日志。
-        logger.info("后台运行让位 graph=%s@%s：%s", graph_id, version, exc)
     except Exception as exc:
-        logger.error("%s 触发图运行失败 graph=%s@%s", mode, graph_id, version, exc_info=True)
-        run_store.finish(
-            run_id=run_id, status="failed",
-            error=_safe_run_error(exc),
+        if run_id is not None:
+            services.run_store.finish(
+                run_id=run_id, status="failed", error=_safe_run_error(exc)
+            )
+        logger.error("%s 图解析失败 graph=%s@%s：%s", mode, graph_id, version, exc)
+        return
+
+    if cycle_config(graph) is None:
+        _background_run_cycle(
+            services, tenant_id, graph_id, version, event,
+            mode=mode, run_id=run_id,
         )
+        return
+
+    def _run_once(step) -> CycleOutcome:
+        return _background_run_cycle(
+            services, tenant_id, graph_id, version, event,
+            mode=mode,
+            # 只有第一圈沿用派发方预置的 run_id（tick 内可见 running）
+            run_id=run_id if step.seq == 1 else None,
+            cycle_seq=step.seq, cycle_group_id=step.group_id,
+            inputs=step.inputs,
+        )
+
+    run_cycle_session(
+        services, graph,
+        tenant_id=tenant_id, graph_id=graph_id,
+        inputs={"event": event.model_dump()},
+        run_once=_run_once,
+    )
 
 
 # --- 定时触发调度器（docs/68，打包 N／ADR T30） ---------------------------
@@ -1422,10 +1590,13 @@ def _schedule_dispatch(record: ScheduleRecord, slot: datetime) -> None:
     services = tenant_registry.get(record.tenant_id)
     key = slot_key(slot)
     if record.action == "reflect":
-        report = run_reflection_pass(
-            services, services.reflection_store,
-            tenant_id=record.tenant_id, graph_id=record.graph_id, base_version=record.version,
-        )
+        # docs/129 打包 AU：反思摘要器的 LLM 调用也计用量（caller=reflection_summarize）。
+        with usage_context(record.tenant_id, store=services.usage_store):
+            report = run_reflection_pass(
+                services, services.reflection_store,
+                tenant_id=record.tenant_id, graph_id=record.graph_id,
+                base_version=record.version,
+            )
         schedule_store().note_fired(
             record.tenant_id, record.graph_id, record.schedule_id, slot
         )
@@ -1708,10 +1879,13 @@ def run_schedule_now(
     sid = record.schedule_id
     now = datetime.now(timezone.utc)
     if record.action == "reflect":
-        report = run_reflection_pass(
-            services, services.reflection_store,
-            tenant_id=principal.tenant_id, graph_id=graph_id, base_version=record.version,
-        )
+        # docs/129 打包 AU：与调度派发同口径——反思摘要器的 LLM 调用计用量。
+        with usage_context(principal.tenant_id, store=services.usage_store):
+            report = run_reflection_pass(
+                services, services.reflection_store,
+                tenant_id=principal.tenant_id, graph_id=graph_id,
+                base_version=record.version,
+            )
         # 同 run-now 的口径：记"最近一次真实执行"，不是槽位认领（不占槽）。
         store.note_fired(principal.tenant_id, graph_id, sid, now)
         _record_audit(services, principal, http_request, "schedule.run_now", 200)
@@ -4421,7 +4595,14 @@ def compile_saved_graph(
 ) -> CompileResponse:
     services = services_for(principal)
     graph = _load_graph_or_404(services, graph_id, (payload or {}).get("releaseVersion"))
-    compile_graph(graph, graph_id=graph_id, graph_resolver=_tenant_graph_resolver(services))
+    # D78：compile 端点与 run 端点同构注入 registry——prod 且演示面关闭时
+    # `_resolve_registry(None)` 会 raise（loader.py:409-412），缺注入即 500。
+    compile_graph(
+        graph,
+        graph_id=graph_id,
+        graph_resolver=_tenant_graph_resolver(services),
+        registry=_runtime_registry(services),
+    )
 
     incoming = {edge.target for edge in graph.edges}
     outgoing = {edge.source for edge in graph.edges}
@@ -4589,6 +4770,11 @@ def run_saved_graph(
     payload: dict[str, Any] | None = None,
     principal: Principal = Depends(require("operate")),
 ) -> RunGraphResponse:
+    """同步跑一次图（v1 也承载自走循环，见 `_run_sync_cycle` 与 docs/130 C-D10）。
+
+    **圈启用面**：图级 `loop` 配置存在且 `enabled!==false` ⇒ 本入口按圈会话驱动
+    （每圈一次真实运行、各自 run_id，返回**最后一圈**的结果）；缺省配置走原路径逐字不变。
+    """
     services = services_for(principal)
     body = payload or {}
     release_version, resolved_version = _resolve_event_version(services, principal, graph_id, body)
@@ -4596,6 +4782,80 @@ def run_saved_graph(
     event_payload = (body.get("event") or {}).get("payload") or {}
     if body.get("debug") is not None:
         raise HTTPException(status_code=422, detail="单步调试仅支持流式运行 /run/stream")
+
+    payloads: dict[str, dict[str, Any]] = {}
+
+    def _run_once(step) -> Any:
+        outcome, response = _run_sync_cycle(
+            services,
+            principal,
+            graph,
+            graph_id=graph_id,
+            release_version=release_version,
+            resolved_version=resolved_version,
+            event_payload=event_payload,
+            inputs=step.inputs,
+            cycle_seq=step.seq if step.group_id else 0,
+            cycle_group_id=step.group_id,
+            payloads=payloads,
+        )
+        return outcome
+
+    if cycle_config(graph) is None:
+        # 现状路径：不建会话、不发圈号（打包 BN C-D2 的零行为变化承诺）
+        outcome, response = _run_sync_cycle(
+            services,
+            principal,
+            graph,
+            graph_id=graph_id,
+            release_version=release_version,
+            resolved_version=resolved_version,
+            event_payload=event_payload,
+            inputs=body.get("inputs"),
+            cycle_seq=0,
+            cycle_group_id="",
+            payloads=payloads,
+        )
+        return response if response is not None else RunGraphResponse(
+            id=graph_id, **payloads[outcome.run_id]
+        )
+
+    session = run_cycle_session(
+        services,
+        graph,
+        tenant_id=principal.tenant_id,
+        graph_id=graph_id,
+        inputs=dict(body.get("inputs") or {}),
+        run_once=_run_once,
+    )
+    # `runs` 是 public_view 投影（每项是 dict），取最后一圈的 runId 去拿原始 run 结果
+    last_run_id = session["runs"][-1]["runId"]
+    return RunGraphResponse(id=graph_id, **payloads[last_run_id])
+
+
+def _run_sync_cycle(
+    services: TenantServices,
+    principal: Principal,
+    graph: Any,
+    *,
+    graph_id: str,
+    release_version: int | None,
+    resolved_version: int | None,
+    event_payload: dict[str, Any],
+    inputs: dict[str, Any] | None,
+    cycle_seq: int,
+    cycle_group_id: str,
+    payloads: dict[str, dict[str, Any]],
+) -> tuple[Any, RunGraphResponse | None]:
+    """跑**一圈**（= 一次真实运行），返回 `(CycleOutcome, 非 None 的 HTTP 响应 | None)`。
+
+    本函数是同步入口的**全部**既有语义（cancel 句柄、superseded 让位、异常记账与
+    灰度评估、监控埋点、frame_sink、usage 上下文）逐字搬运——圈能力只加在"调用几次"
+    这一层，不改任何一圈内部的语义（docs/130 C-D1：一圈＝一次真实运行）。
+
+    `cycle_seq`／`cycle_group_id` 缺省 0/''＝非圈运行（与迁移 050 的列缺省同义）。
+    `payloads` 由调用方持有，用于把每圈的原始 run 结果带给 HTTP 层（返回最后一圈）。
+    """
     graph_view = {"nodes": [{"id": node.id, "type": node.type} for node in graph.nodes]}
     started_at = datetime.now(timezone.utc).isoformat()
     started = time.monotonic()
@@ -4604,7 +4864,10 @@ def run_saved_graph(
     tracer = Tracer(
         graph_id=graph_id, graph_version=_graph_version(graph_id, release_version)
     )
-    services.run_store.begin(run_id=run_id, graph_id=graph_id, mode="sync")
+    services.run_store.begin(
+        run_id=run_id, graph_id=graph_id, mode="sync",
+        cycle_seq=cycle_seq, cycle_group_id=cycle_group_id,
+    )
     frame_sink = _frame_sink_for(principal.tenant_id, services.run_store, run_id)
     # docs/28 §4.1 ⑧：同步入口无 SSE，构造同形收集 emit（只收顶层 tool_metric，其余忽略）。
     tool_calls: list[dict[str, Any]] = []
@@ -4618,37 +4881,46 @@ def run_saved_graph(
     cancellation_broker = services.cancellation_broker
     cancel_event = cancellation_broker.register(run_id)
     try:
-        result = run_graph(
-            graph,
-            inputs=body.get("inputs"),
-            registry=_runtime_registry(services),
-            approval_broker=services.approval_broker,
-            event_wait_broker=services.event_wait_broker,
-            approval_notifier=EmailApprovalNotifier(
-                services.message_service, _PUBLIC_URL, principal.tenant_id
-            ),
+        with usage_context(
+            principal.tenant_id,
+            run_id=run_id,
             graph_id=graph_id,
-            graph_resolver=_tenant_graph_resolver(services),
-            emit=_metric_collect,
-            frame_sink=frame_sink,
-            resume_claim=_resume_claim_for(),
-            tracer=tracer,
-            graph_version=tracer.graph_version,
-            is_cancelled=cancel_event.is_set,
-            _block_subgraph_suspend=(STORAGE_BACKEND == "pg"),
-            tenant_id=principal.tenant_id,
-            secret_provider=_secret_provider,
-            memory_repo=services.memory_store,
-        )
+            store=services.usage_store,
+        ):
+            result = run_graph(
+                graph,
+                inputs=inputs,
+                registry=_runtime_registry(services),
+                approval_broker=services.approval_broker,
+                event_wait_broker=services.event_wait_broker,
+                approval_notifier=EmailApprovalNotifier(
+                    services.message_service, _PUBLIC_URL, principal.tenant_id
+                ),
+                graph_id=graph_id,
+                graph_resolver=_tenant_graph_resolver(services),
+                emit=_metric_collect,
+                frame_sink=frame_sink,
+                resume_claim=_resume_claim_for(),
+                tracer=tracer,
+                graph_version=tracer.graph_version,
+                is_cancelled=cancel_event.is_set,
+                _block_subgraph_suspend=(STORAGE_BACKEND == "pg"),
+                tenant_id=principal.tenant_id,
+                secret_provider=_secret_provider,
+                memory_repo=services.memory_store,
+            )
     except RunSuperseded as exc:
         # docs/62 §2 D-4：输家停止驱动——不写 run 终态、不记监控、不进门控评估，
         # 帧与终态都归赢家；本进程如实返回"仍在挂起"的形状（刻意不新增 run 状态/错误码）。
         logger.info("同步运行让位：%s", exc)
-        return RunGraphResponse(
-            id=graph_id,
-            status="suspended",
-            outputs={},
-            trace=[f"{exc.node_id}: superseded by another process"],
+        return (
+            CycleOutcome(run_id=run_id, status="suspended", stop_run=True),
+            RunGraphResponse(
+                id=graph_id,
+                status="suspended",
+                outputs={},
+                trace=[f"{exc.node_id}: superseded by another process"],
+            ),
         )
     except RunCancelled as exc:
         # 打包 O：同步入口的协作式急停与流式同形——用户主动 ⇒ 记 cancelled 且
@@ -4667,11 +4939,14 @@ def run_saved_graph(
             tool_calls=tool_calls,
             spans=tracer.to_tree(),
         )
-        return RunGraphResponse(
-            id=graph_id,
-            status="cancelled",
-            outputs={},
-            trace=[f"{exc.node_id}: cancelled by user"],
+        return (
+            CycleOutcome(run_id=run_id, status="cancelled", stop_run=True),
+            RunGraphResponse(
+                id=graph_id,
+                status="cancelled",
+                outputs={},
+                trace=[f"{exc.node_id}: cancelled by user"],
+            ),
         )
     except Exception as exc:
         services.run_store.finish(
@@ -4714,7 +4989,13 @@ def run_saved_graph(
         spans=result["traceTree"],
     )
     evaluate_after_run(services, record)  # M9：灰度门控越阈自动回滚
-    return RunGraphResponse(id=graph_id, **result)
+    payloads[run_id] = result
+    return CycleOutcome(
+        run_id=run_id,
+        status="completed",
+        outputs=result.get("outputs", {}),
+        variables={},
+    ), None
 
 
 @app.post("/api/graphs/{graph_id}/run/stream")
@@ -4879,27 +5160,35 @@ async def run_saved_graph_stream(
             # 各异常分支只决定终帧种类；收尾经 _finalize_run 整体保护，任何路径恰好一帧。
             terminal: dict[str, Any]
             try:
-                result = run_graph(
-                    graph,
-                    inputs=inputs,
-                    registry=registry,
-                    approval_broker=approval_broker,
-                    event_wait_broker=services.event_wait_broker,
-                    approval_notifier=approval_notifier,
+                # docs/129 打包 AU：worker 线程内显式设 usage 上下文（contextvars
+                # 不跨线程继承，tracing 同款纪律；无此设置 ⇒ 流式运行的 LLM 调用不计）。
+                with usage_context(
+                    principal.tenant_id,
+                    run_id=run_id,
                     graph_id=graph_id,
-                    emit=recording_emit if monitored else emit,
-                    graph_resolver=graph_resolver,
-                    debug_controller=debug_controller,
-                    frame_sink=frame_sink,
-                    resume_claim=_resume_claim_for(),
-                    tracer=tracer,
-                    graph_version=tracer.graph_version if tracer is not None else None,
-                    is_cancelled=cancel_event.is_set,
-                    _block_subgraph_suspend=(STORAGE_BACKEND == "pg"),
-                    tenant_id=principal.tenant_id,
-                    secret_provider=_secret_provider,
-                    memory_repo=services.memory_store,
-                )
+                    store=services.usage_store,
+                ):
+                    result = run_graph(
+                        graph,
+                        inputs=inputs,
+                        registry=registry,
+                        approval_broker=approval_broker,
+                        event_wait_broker=services.event_wait_broker,
+                        approval_notifier=approval_notifier,
+                        graph_id=graph_id,
+                        emit=recording_emit if monitored else emit,
+                        graph_resolver=graph_resolver,
+                        debug_controller=debug_controller,
+                        frame_sink=frame_sink,
+                        resume_claim=_resume_claim_for(),
+                        tracer=tracer,
+                        graph_version=tracer.graph_version if tracer is not None else None,
+                        is_cancelled=cancel_event.is_set,
+                        _block_subgraph_suspend=(STORAGE_BACKEND == "pg"),
+                        tenant_id=principal.tenant_id,
+                        secret_provider=_secret_provider,
+                        memory_repo=services.memory_store,
+                    )
             except RunSuperseded as exc:
                 # docs/62 §2 D-4：输家零终态写——不 finish、不 record_run、不清帧，
                 # 只发让位帧让前端停手（赢家的流会继续出结果）。
@@ -6011,8 +6300,11 @@ def rotate_on_call(principal: Principal = Depends(require("administer"))) -> dic
 def nl_generate(
     request: NLGenerateRequest, principal: Principal = Depends(require("operate"))
 ) -> dict[str, Any]:
+    services = services_for(principal)
     try:
-        graph = generate_graph(request.prompt, tenant_id=principal.tenant_id)
+        # docs/129 打包 AU：端点级调用（无 run/graph/node，只挂 tenant）。
+        with usage_context(principal.tenant_id, store=services.usage_store):
+            graph = generate_graph(request.prompt, tenant_id=principal.tenant_id)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     warnings = validate_param_fills(graph, tool_input_schemas(_demo_registry))

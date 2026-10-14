@@ -47,6 +47,12 @@ export type SerializedGraph = {
   /** 打包 AL（docs/123 §2.1/§2.2）：图级全局异常降级与自愈（snake_case，后端 pydantic）。 */
   global_error_handler?: Record<string, unknown>
   self_healing?: Record<string, unknown>
+  /**
+   * 打包 BN（docs/130 §3.1）：图级自走循环配置。
+   * **注意：字段名本身是 camelCase 的 `loop`，其子键也是 camelCase**（与打包 AL 的
+   * snake_case 不同）——仍逐字段显式写出，理由同上（pydantic 静默丢未知键）。
+   */
+  loop?: Record<string, unknown>
 }
 
 /**
@@ -126,6 +132,18 @@ export function serializeGraph(
       maxAttempts?: number
       continueWhen?: string
     }
+    /** 打包 BN（docs/130 §3.1）：图级自主循环（camelCase 编辑器形态＝后端契约同名）。 */
+    loop?: {
+      enabled?: boolean
+      maxIterations?: number
+      maxWallClockSeconds?: number
+      maxTokens?: number
+      completeWhen?: string
+      judgeMode?: 'rule' | 'llm'
+      judgePrompt?: string
+      carry?: Record<string, string>
+      intervalSeconds?: number
+    }
   },
 ): SerializedGraph {
   const graph: SerializedGraph = {
@@ -159,6 +177,20 @@ export function serializeGraph(
     if (s.maxAttempts !== undefined) graph.self_healing.max_attempts = s.maxAttempts
     if (s.continueWhen !== undefined) graph.self_healing.continue_when = s.continueWhen
   }
+  // 打包 BN：图级自主循环（`loop` 的键名本身即后端契约的 camelCase，仍逐字段显式写）
+  if (graphSettings?.loop) {
+    const l = graphSettings.loop
+    graph.loop = {}
+    if (l.enabled !== undefined) graph.loop.enabled = l.enabled
+    if (l.maxIterations !== undefined) graph.loop.maxIterations = l.maxIterations
+    if (l.maxWallClockSeconds !== undefined) graph.loop.maxWallClockSeconds = l.maxWallClockSeconds
+    if (l.maxTokens !== undefined) graph.loop.maxTokens = l.maxTokens
+    if (l.completeWhen !== undefined) graph.loop.completeWhen = l.completeWhen
+    if (l.judgeMode !== undefined) graph.loop.judgeMode = l.judgeMode
+    if (l.judgePrompt !== undefined) graph.loop.judgePrompt = l.judgePrompt
+    if (l.carry !== undefined) graph.loop.carry = l.carry
+    if (l.intervalSeconds !== undefined) graph.loop.intervalSeconds = l.intervalSeconds
+  }
   const persisted = Object.entries(breakpoints ?? {}).map(([nodeId, breakpoint]) =>
     toPersistedBreakpoint(nodeId, breakpoint),
   )
@@ -190,6 +222,18 @@ export function deserializeGraph(graph: SerializedGraph): {
       diagnoseSubgraphId?: string
       maxAttempts?: number
       continueWhen?: string
+    }
+    /** 打包 BN（docs/130 §3.1）：图级自主循环（键名即后端契约 camelCase）。 */
+    loop?: {
+      enabled?: boolean
+      maxIterations?: number
+      maxWallClockSeconds?: number
+      maxTokens?: number
+      completeWhen?: string
+      judgeMode?: 'rule' | 'llm'
+      judgePrompt?: string
+      carry?: Record<string, string>
+      intervalSeconds?: number
     }
   }
 } {
@@ -227,6 +271,28 @@ export function deserializeGraph(graph: SerializedGraph): {
     if (typeof anySh.max_attempts === 'number') healing.maxAttempts = anySh.max_attempts
     if (typeof anySh.continue_when === 'string') healing.continueWhen = anySh.continue_when
     graphSettings.selfHealing = healing
+  }
+  // 打包 BN：图级自主循环（键名与后端契约同名，逐字段校验后读回）
+  const lp = graph.loop
+  if (lp && typeof lp === 'object') {
+    const loop: NonNullable<typeof graphSettings.loop> = {}
+    const anyLp = lp as Record<string, unknown>
+    if (typeof anyLp.enabled === 'boolean') loop.enabled = anyLp.enabled
+    if (typeof anyLp.maxIterations === 'number') loop.maxIterations = anyLp.maxIterations
+    if (typeof anyLp.maxWallClockSeconds === 'number') loop.maxWallClockSeconds = anyLp.maxWallClockSeconds
+    if (typeof anyLp.maxTokens === 'number') loop.maxTokens = anyLp.maxTokens
+    if (typeof anyLp.completeWhen === 'string') loop.completeWhen = anyLp.completeWhen
+    if (anyLp.judgeMode === 'rule' || anyLp.judgeMode === 'llm') loop.judgeMode = anyLp.judgeMode
+    if (typeof anyLp.judgePrompt === 'string') loop.judgePrompt = anyLp.judgePrompt
+    if (anyLp.carry && typeof anyLp.carry === 'object' && !Array.isArray(anyLp.carry)) {
+      const carry: Record<string, string> = {}
+      for (const [key, value] of Object.entries(anyLp.carry as Record<string, unknown>)) {
+        if (typeof value === 'string') carry[key] = value
+      }
+      loop.carry = carry
+    }
+    if (typeof anyLp.intervalSeconds === 'number') loop.intervalSeconds = anyLp.intervalSeconds
+    graphSettings.loop = loop
   }
   return {
     nodes: graph.nodes.map((node, index) => ({

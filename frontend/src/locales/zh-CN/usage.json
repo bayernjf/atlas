@@ -1,0 +1,55 @@
+{
+  "title": "LLM 用量",
+  "header": {
+    "back": "返回",
+    "refresh": "刷新"
+  },
+  "notice": {
+    "title": "用量计量（只报 token，不报价）",
+    "description": "记录 AI 决策、语义分支、结构化三节点、记忆自动提取、自然语言生成与反思摘要每次调用的实际 token 用量与耗时。本页只统计 token 与调用次数，不做货币计价——各供应商单价需按你的合同口径折算，平台不臆造价格。失败调用（超时/供应商错误）也会记一条零 token 记录，因为耗时本身也是成本信号。"
+  },
+  "summary": {
+    "title": "用量聚合",
+    "groupBy": "分组",
+    "groupCaller": "按调用点",
+    "groupModel": "按模型",
+    "groupDay": "按日期",
+    "key": "分组",
+    "calls": "调用次数",
+    "promptTokens": "提示 token",
+    "completionTokens": "完成 token",
+    "totalTokens": "合计 token",
+    "errors": "失败",
+    "empty": "当前没有用量记录（未配置模型，或还没有跑过调用模型的过程）。"
+  },
+  "recent": {
+    "title": "最近调用",
+    "ts": "时间",
+    "caller": "调用点",
+    "model": "模型",
+    "totalTokens": "合计 token",
+    "latency": "耗时(ms)",
+    "status": "状态",
+    "nodeId": "节点",
+    "runId": "运行",
+    "empty": "暂无调用明细。",
+    "hint": "节点与运行仅在图内调用时才有值；端点级调用（自然语言生成、反思摘要）为空。"
+  },
+  "caller": {
+    "ai_decision": "AI 决策",
+    "condition_llm": "语义分支",
+    "intent_recognition": "意图识别",
+    "info_extraction": "信息抽取",
+    "content_generation": "内容生成",
+    "memory_auto_extract": "记忆自动提取",
+    "nl_generate": "自然语言生成",
+    "reflection_summarize": "反思摘要"
+  },
+  "status": {
+    "ok": "成功",
+    "error": "失败"
+  },
+  "error": {
+    "load": "用量数据加载失败"
+  }
+}

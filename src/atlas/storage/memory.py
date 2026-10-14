@@ -149,11 +149,17 @@ class RunStore:
         for run_id in stale:
             self._runs.pop(run_id, None)
 
-    def begin(self, *, run_id: str, graph_id: str, mode: str) -> None:
+    def begin(
+        self, *, run_id: str, graph_id: str, mode: str,
+        cycle_seq: int = 0, cycle_group_id: str = "",
+    ) -> None:
+        # 打包 BN（docs/130 §3.3）：两形参缺省 0/''＝"非圈运行"，与 PG 档／迁移 050 的
+        # 列缺省一致 ⇒ 不传时逐字等价现状（启用面缺省关闭，C-D2）。
         with self._lock:
             self._runs[run_id] = {
                 "runId": run_id, "graphId": graph_id, "status": "running",
                 "startedAt": self._now(),
+                "cycleSeq": int(cycle_seq), "cycleGroupId": cycle_group_id or "",
             }
             self._order.append(run_id)
             self._evict_terminal_locked()
@@ -206,6 +212,8 @@ class RunStore:
                 "finishedAt": run.get("finishedAt"), "error": run.get("error"),
                 "outputs": run.get("outputs"), "trace": run.get("trace"),
                 "suspension": suspension,
+                # 打包 BN：圈归属两列（缺省 0/''＝非圈运行，与 PG 档投影逐键对齐）
+                "cycleSeq": run.get("cycleSeq", 0), "cycleGroupId": run.get("cycleGroupId", ""),
             }
 
     def list(self, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
@@ -220,6 +228,9 @@ class RunStore:
                     "suspendedAt": item.get("suspendedAt"), "kind": item.get("kind"),
                     "nodeId": item.get("nodeId"), "deadlineAt": item.get("deadlineAt"),
                     "resumeToken": item.get("resumeToken"),
+                    # 打包 BN：圈归属两列（缺省 0/''＝非圈运行）
+                    "cycleSeq": item.get("cycleSeq", 0),
+                    "cycleGroupId": item.get("cycleGroupId", ""),
                 }
                 for item in items[:limit]
             ]

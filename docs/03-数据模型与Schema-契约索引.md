@@ -840,6 +840,14 @@ tool_calls:                  # docs/28 §4.1 ⑧（D28 批3，2026-09-20，a318d
     error_code: string?      # result.code，无结构化 code（如未注册适配器）为 null
 # 仅两个真实运行入口（同步 /run、流式 /run/stream）采集无 subgraphPath 的顶层工具；mock 命中、子图内、debug/回放/门禁不采集
 spans: object?             # docs/33 §4 ⑤（2026-09-21，4579843）：tracer.to_tree() 根 span dict（kind="run"，DFS 含 node/tool 子 span）；纯超集缺省 null；PG 迁移 012 加 monitoring_runs.spans JSONB；列表端点剔除、GET /api/monitoring/runs/{id}/trace 懒加载
+# 打包 BN（docs/130，2026-10-14 落码，迁移 050）：runs 存储表补两列（圈归属）
+#   cycle_seq       INTEGER NOT NULL DEFAULT 0   # 该 run 是第几圈（0＝非圈运行）
+#   cycle_group_id  TEXT    NOT NULL DEFAULT ''   # 圈会话 id（''＝非圈运行）
+# 索引 (tenant_id, cycle_group_id)；RunStore/PgRunStore 的 begin(...) 增可选
+#   cycle_seq=0 / cycle_group_id="" 形参（缺省逐字等价现状，存量行无需回填）；
+# GET /api/runs 列表投影补两字段（read 面加列，零破坏）。圈会话活体状态只在进程内
+# （沿 docs/62 单副本语义），重启即结束圈、不自动续跑（与 D44 同款取舍）。
+# 端点见 12 的 /api/runs/{id}/cycle 两条。
 # GET /api/monitoring/metrics
 total: integer
 healthy: integer                 # completed 且无失败节点
@@ -1348,6 +1356,30 @@ OperationDescriptor = {
 - 消费点优先级（docs/93 §1 语义约束 3）：节点显式 model > 租户 BYOK > 内置 > env（LITELLM_MODEL 兜底）；无租户上下文（loader 直跑/测试）回退 env，行为与现状一致。
 - 挂 `TenantServices.model_config`（照 connection_service 模式；reset 不清，PG 档持久化）。
 - REST：`GET /api/models`（read）、`PUT /api/models/builtin`（administer）、`GET/PUT /api/models/byok`（read/operate；docs/93 §1 语义约束 2：operator 可配自己的 key）；响应 api_key 一律脱敏（`***`＋明文尾 4 位，`_masked_view`）。
+
+
+# llm_usage 表（LLM 用量与成本计量；docs/129 打包 AU＝D70，迁移 049，2026-10-14 落码）
+
+权威形状：docs/129 §3.1；实现 `src/atlas/llm/metering.py`（记录＋contextvar 归属＋内存 ring 2000）与 `src/atlas/llm/pg_store.py`（PG 实现，方法签名与内存档一比一）。
+
+| 列 | 类型 | 说明 |
+|---|---|---|
+| `tenant_id` | TEXT NOT NULL | 行内租户过滤（非 RLS，照 reflection_* 先例）；跨租户读由反向门 U1423 守 |
+| `ts` | TEXT NOT NULL | UTC ISO-8601；时间窗按字典序比较（TEXT 同族，docs/61 H3 先例） |
+| `caller` | TEXT NOT NULL | 八个调用点身份：`ai_decision`／`condition_llm`／`intent_recognition`／`info_extraction`／`content_generation`／`memory_auto_extract`／`nl_generate`／`reflection_summarize` |
+| `node_id`／`graph_id`／`run_id` | TEXT NOT NULL DEFAULT '' | 归属三件（运行入口＋loader 节点执行处设置）；端点级调用（NL 生成、反思摘要）为空串 |
+| `model` | TEXT NOT NULL | **实际发出的**模型名（含节点 `model` 覆盖后的） |
+| `prompt_tokens`／`completion_tokens`／`total_tokens` | INTEGER NOT NULL DEFAULT 0 | 供应商不回 usage 时全 0＋warning（**不丢记录**，调用发生是事实）；total 缺失时取 prompt+completion |
+| `latency_ms` | DOUBLE PRECISION NOT NULL DEFAULT 0 | 单次调用墙钟耗时 |
+| `status` | TEXT NOT NULL | `ok`／`error`（异常路径零 token 记 error 条后**原样抛出**，调用方 fail-safe 语义不变） |
+
+- 索引 `(tenant_id, ts)`（`idx_llm_usage_tenant_ts`）供时间窗聚合；迁移幂等（`CREATE TABLE/INDEX IF NOT EXISTS`）。
+- **零错误码**：计量全程旁路（store 写炸只 warning）；`group_by` 非法值走既有查询参数 422 纯文本 detail（照 `_audit_cursor` 先例），不新增 code。
+- 不记 prompt/response 正文；记录形状无密钥字段（U1413 机检投影键集合）。
+- 挂 `TenantServices.usage_store`（内存 ring 2000 / PG `llm_usage`），**reset 同清**（运行数据，与 `model_config` 的"不清"区分）。
+- **PG 档不设 ring**（账不丢；内存档才有界）；**不挂 `ATLAS_RETENTION_DAYS`**（docs/129 AU-D7 余部）。
+- REST：`GET /api/usage/summary?since&until&group_by=caller|model|day`（read）、`GET /api/usage/recent?limit`（read，clamp 1–200，倒序）；前端 `Usage.tsx` 一页（两张聚合表＋明细表）。
+- **AU-D3 单点纪律**：全仓 `litellm.completion(` 调用点恰好一处（`llm/metering.py::complete_with_usage`），由 `test_single_litellm_exit_point_guard` 机检——绕过 helper 即用量账静默缺块。
 
 
 ## 错误码与变量来源注记（打包 A2/A3/A4 立项，2026-10-07）

@@ -40,6 +40,9 @@ from atlas.template.user_store import UserTemplateStore
 from atlas.monitoring.rule_user_store import UserRuleTemplateStore
 from atlas.security.bootstrap import read_storage_backend
 from atlas.llm.config import get_model_config_store
+from atlas.llm.metering import InMemoryUsageStore
+from atlas.llm.pg_store import PgUsageStore
+from atlas.cycles.state import cycle_registry
 from atlas.storage.base import (
     ApprovalRepository,
     DebugRepository,
@@ -96,6 +99,7 @@ class TenantServices:
     rule_template_store: object  # 用户自建告警规则模板（docs/102 打包 ZS；内存/PG 两档，reset 同清）
     reflection_store: ReflectionStore | PgReflectionStore  # 反思候选与收尾报告（docs/88 打包 ZH／docs/94 打包 ZU：内存 ring 100 / PG reflection_*）
     model_config: object  # LLM 模型配置（docs/93 打包 Y；内存/PG 两档 store，reset 不清）
+    usage_store: object  # LLM 用量计量（docs/129 打包 AU＝D70；内存 ring 2000 / PG llm_usage，reset 同清）
     evaluation_store: object  # AI 评估 Harness v1（docs/110 打包 AC；内存/PG 两档，reset 同清）
     # 这份服务包属于哪个租户。其余字段都是"按租户装配出来的实例"，只有这一条是**身份本身**：
     # 适配器需要按租户解析 BYOK 模型时，不能再靠调用点把 tenant_id 一路透传（打包 AN）。
@@ -179,6 +183,7 @@ class TenantRegistry:
                 rule_template_store=PgUserRuleTemplateStore(backend.engine, tenant_id),
                 reflection_store=PgReflectionStore(backend.engine, tenant_id),
                 model_config=get_model_config_store(),
+                usage_store=PgUsageStore(backend.engine, tenant_id),
                 evaluation_store=PgEvaluationStore(backend.engine, tenant_id),
                 tenant_id=tenant_id,
             )
@@ -213,6 +218,7 @@ class TenantRegistry:
             rule_template_store=UserRuleTemplateStore(),
             reflection_store=ReflectionStore(),
             model_config=get_model_config_store(),
+            usage_store=InMemoryUsageStore(),
             evaluation_store=EvaluationStore(),
             tenant_id=tenant_id,
         )
@@ -231,7 +237,7 @@ class TenantRegistry:
         )
 
     def reset_tenant(self, tenant_id: str) -> None:
-        """本租户运行时数据重置：图/消息/审批/调试/监控/运行状态/灰度路由/批量回放报告/长期记忆/反思报告清空，规则回默认；
+        """本租户运行时数据重置：图/消息/审批/调试/监控/运行状态/灰度路由/批量回放报告/长期记忆/反思报告/LLM 用量账清空，规则回默认；
         录制用例与反馈沿用「reset 不清除」语义保留；监控运行计数器不重置。"""
         services = self.get(tenant_id)
         services.graph_store.clear()
@@ -250,4 +256,7 @@ class TenantRegistry:
         services.message_template_store.clear()
         services.rule_template_store.clear()
         services.reflection_store.reset()
+        services.usage_store.reset()
+        # 打包 BN（docs/130）：圈会话是进程内运行态 ⇒ 与运行数据同清。
+        cycle_registry().reset(tenant_id)
         services.evaluation_store.clear()
