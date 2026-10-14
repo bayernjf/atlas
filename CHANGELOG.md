@@ -3,6 +3,14 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔docs〕打包 BO 立项＝D73 入站会话＋D74 智能体团队面（2026-10-14，用户「推进 BO 立项」授权；docs-only，零代码）
+
+- **动机**：D73 入站消费协议面缺失（`message/webhook.py:15` 自写不做入站消费），自动化客服进不来；D74 智能体团队面缺失——`skills/Bot` 底层件已有但 run/节点无 agent 身份维度，无法按智能体归因运行与成本。前置 C（BN，D69）与 B（AU，D70）均 ✅。
+- **复用面成熟**：`channels/deliveries.py` 去重/DLQ 范式与 `shopify_webhook_ingress` 后台线程起 run 范式已就位 ⇒ BO 复用不重造；`runs` 表已被 BN 加过 `cycle_seq`/`cycle_group_id` 扩展位 ⇒ 加 `agent_id` 同形扩展。
+- **八条决策 D-D1…D-D8**：入站端点 `POST /api/channels/inbound/{binding_id}`（公开签名校验、可插拔 verify）／去重死信复用 deliveries 范式（新增 `inbound_deliveries` 同形 store）／会话↔图映射**挂渠道 binding**（D-P1，不做独立实体）／触发器 `message_inbound` 同族扩展／多轮上下文**不做摘要**只透传 `conversationId`（D-P2，留 D35）／agent 维度＝`runs` 加 `agent_id`（迁移 052）＋`/api/agents` CRUD＋`Agents.tsx`／输出回原会话本批假供应商落进程内记录／零新错误码零新依赖无 ADR。
+- **边界**：真钉钉/企微/飞书 ⛔（docs/73 1.3），本批只用假供应商；D24 不解除。
+- 迁移 **052**（docs/127 预留）；用例 U1443–U1454 含两条反向门；**下一批候选**：BP（D75）→ BQ（D76＋D71）。
+
 ### 〔docs〕打包 BN 立项＝D69 运行期自走循环（2026-10-14，用户「你自己可以搞吗」＝四道闸门由 AI 直接拍；docs-only，零代码）
 
 - **动机**：docs/01 把 Loop 列为三基元之一，而运行期是"一次触发＝一次图执行"，靠调度器/Webhook 制造"看起来在循环"。`engine/` 的 OODA 循环**零生产引用**（只有 `tests/test_engine_loop.py`、`tests/test_reflection.py`、`scripts/benchmark.py`），且被 docs/88 §3 P-2(a) 冻结。
