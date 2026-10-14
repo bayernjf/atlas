@@ -848,6 +848,19 @@ spans: object?             # docs/33 §4 ⑤（2026-09-21，4579843）：tracer.
 # GET /api/runs 列表投影补两字段（read 面加列，零破坏）。圈会话活体状态只在进程内
 # （沿 docs/62 单副本语义），重启即结束圈、不自动续跑（与 D44 同款取舍）。
 # 端点见 12 的 /api/runs/{id}/cycle 两条。
+# 打包 BO（docs/131，2026-10-14 落码，迁移 051）：runs 存储表补一列（agent 维度）
+#   agent_id        TEXT    NOT NULL DEFAULT ''   # 归属 agent（''＝非 agent 运行）
+# 索引 (tenant_id, agent_id)；RunStore/PgRunStore 的 begin(...) 增可选 agent_id=""
+#   形参（缺省逐字等价现状，存量行无需回填）；GET /api/runs 列表投影补 agentId
+#   （read 面加列，零破坏）；GET /api/agents/{id}/runs 按 agentId 过滤（token 汇总
+#   走 AU 的 llm_usage 账、按 runId 归属过滤，不新发明计量）。
+# channel_bindings 表补一列 inbound_mappings JSONB DEFAULT '[]'（D-D3 会话↔图映射，
+#   挂 binding 不做独立实体；[{conversation_id, graph_id, agent_id?, enabled}]）。
+# 新表 inbound_deliveries（PK (tenant_id, channel, message_id)；状态机
+#   received→failed→dead→received；与 webhook_deliveries 同范式分表，两档实现）。
+# 新表 agents（PK (tenant_id, id)；{name, enabled, skills, adapter_ids,
+#   coordinator?, created_at, updated_at}；D-D6 Bot 升格实体，运行数据不落表）。
+# 端点见 12 的 /api/channels/inbound/* 与 /api/agents/* 两段。
 # GET /api/monitoring/metrics
 total: integer
 healthy: integer                 # completed 且无失败节点

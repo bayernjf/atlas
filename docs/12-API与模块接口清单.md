@@ -1088,7 +1088,20 @@ class MemoryRepository(Protocol):
 | GET | /api/channels/webhooks/metrics | 【**read**】`{byTopic:{topic:{received,dead,duplicates}}, totals}` 全量实时聚合 | webhook_delivery |
 | GET | /api/channels/{binding_id}/remote-webhooks | 【**read**】`{items:[{remoteId,topic,address}],error?:string}`；渠道令牌失效 200 空 items＋error；未知绑定 404 | shopify_remote_webhook |
 | POST | /api/channels/{binding_id}/remote-webhooks | 【**operate**】body `{topic}`；201 `{remoteId,topic,address}`；409 已注册、422 topic 非法/非 https、404 绑定；写审计 | shopify_remote_webhook |
-| DELETE | /api/channels/{binding_id}/remote-webhooks/{topic} | 【**operate**】200 `{deleted:bool}` 幂等（未注册 false）；404 绑定；写审计 | shopify_remote_webhook
+| DELETE | /api/channels/{binding_id}/remote-webhooks/{topic} | 【**operate**】200 `{deleted:bool}` 幂等（未注册 false）；404 绑定；写审计 | shopify_remote_webhook |
+| POST | /api/channels/inbound/{binding_id} | 【**公开**】入站消息接收（打包 BO，docs/131 D73）：可插拔 verify（配 `inbound_secret` 则 HMAC-SHA256/base64 于 `X-Inbound-Signature` 头，401 失败；未配 passthrough）；200 `{received,runId?,agentId?,duplicate?,deadLetter?}`；未命中映射/触发失败进死信；幂等键 (tenant, channel, messageId) | channel_inbound |
+| GET | /api/channels/{binding_id}/inbound-mappings | 【**read**】会话↔图映射列表投影 `{items:[{conversationId,graphId,agentId?,enabled}]}`；未知绑定 404 | channel_inbound |
+| PUT | /api/channels/{binding_id}/inbound-mappings | 【**administer**】全量替换映射：conversationId 必填且唯一、graphId 存在、agentId 存在性校验、enabled bool、≤10；坏形状聚合中文 422；写审计（复用 CHANNEL_NOT_BOUND） | channel_inbound |
+| GET | /api/channels/inbound/dead-letters | 【**read**】入站死信列表 `{items:[{messageId,channel,bindingId,conversationId,status,reasons,createdAt,...}]}` | channel_inbound |
+| POST | /api/channels/inbound/dead-letters/{message_id}/replay | 【**operate**】以存储原文绕过去重重放；200 `{messageId,status,runId?}`（received/dead）；非 dead/不存在 → 404；写审计 | channel_inbound |
+| DELETE | /api/channels/inbound/dead-letters/{message_id} | 【**administer**】删除投递行；200 `{deleted:true}`；不存在 404 | channel_inbound |
+| GET | /api/channels/inbound/metrics | 【**read**】`{totals:{received,failed,dead,duplicates,byChannel}}` 全量实时聚合 | channel_inbound |
+| GET | /api/channels/inbound/sessions/{conversation_id} | 【**read**】假供应商会话视图 `{items:[{role,conversation_id,messageId,runId,data,createdAt}]}`（进程内，重启即清；契约 §3.4 补全，记 docs/131 §7.1） | channel_inbound |
+| GET | /api/agents | 【**read**】`{items:[{id,name,enabled,skills,adapterIds,coordinator,createdAt,updatedAt}]}` | agent |
+| POST | /api/agents | 【**administer**】body `{name,...}`；201 形状 `{id,name,enabled,...}`；缺 name 422 | agent |
+| PUT | /api/agents/{id} | 【**operate**】启停/改名/改配置；不存在 404 | agent |
+| DELETE | /api/agents/{id} | 【**administer**】200 `{deleted:true}`；仅删配置，历史 run 保留 | agent |
+| GET | /api/agents/{id}/runs | 【**read**】`{agent, items:[runs 投影（带 agentId/cycle 列）], tokenSummary:{calls,promptTokens,completionTokens,totalTokens}}`；token 走 AU 的 llm_usage 账按 runId 过滤；不存在 404 | agent |
 
 > **〔2026-10-06 打包 BJ 订正〕上表 `/api/connections/**` 与 `/api/channels/**`（含公开入站 `hooks/shopify/**`）的 4xx `detail` 形状已由「中文字符串」改为结构化对象 `{code, message[, params]}`——与 openapi 面同形。此前三个折叠点（`_conn_http_error`／`_channel_http_error`／入站直捕）写 `detail=str(exc)`，结构化异常上的 `code` 进不了响应体、前端无法按码本地化。改后 8 条单答案码（`CHANNEL_ALREADY_BOUND`／`CHANNEL_ALREADY_REGISTERED`／`CONNECTION_NOT_FOUND`／`OAUTH_NO_REFRESH_TOKEN`／`OAUTH_STATE_INVALID`／`OAUTH_TOKEN_FAILED`／`OAUTH_REFRESH_FAILED`＋入站 `WEBHOOK_MALFORMED`）补 zh/en；4 条一码多话粗码（`CHANNEL_NOT_BOUND`／`CHANNEL_UNAUTHORIZED`／`CHANNEL_UPSTREAM_FAILED`／`CHANNEL_INVALID_RESPONSE`）code 出体但仍随 docs/14 **D55** 留桶、拆码＝打包 BK。HTTP 状态码不变。 |
 >
