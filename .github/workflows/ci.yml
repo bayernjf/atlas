@@ -49,14 +49,15 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v10
         with:
-          python-version: "3.11"
-          cache: pip
+          enable-cache: true
       - name: Install package
-        run: pip install -e ".[dev]"
+        # D79：后端依赖以 uv.lock 为唯一事实源，一律按锁装（docs/14 D79、docs/10 §2）。
+        # 禁止回到 pip 抽最新——PR #152 本机/CI 双解漂移（starlette 1.6/1.8，404→405）的根治。
+        run: uv sync --locked --extra dev
       - name: Run unit tests
-        run: pytest
+        run: uv run pytest
         # integration-marked tests (PostgreSQL/Chromium/shop platform) opt in via ATLAS_RUN_INTEGRATION and skip by default
 
   backend-integration:
@@ -81,22 +82,22 @@ jobs:
       DATABASE_URL: postgresql+psycopg://atlas:atlas@localhost:5432/atlas
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v10
         with:
-          python-version: "3.11"
-          cache: pip
+          enable-cache: true
       - name: Install package
-        run: pip install -e ".[dev]"
+        # D79：同 backend job，按 uv.lock 装，与单测 job 同一环境
+        run: uv sync --locked --extra dev
       - name: Install Chromium for browser integration
         # 审查发现 #13（docs/125 §3.7，U1390）：playwright>=1.62 已是主依赖，这里只补浏览器
         # 二进制与系统库；tests/test_web_browser_integration.py 的 4 个真实 Chromium 用例
         # （I1 选择器点击 / I2 语义层真实坐标 / I5 缓存短路 / type+observe）随之转实跑，
         # 不再双层 skip 恒不执行。flaky 必须修测试，不得回退静默 skip。
-        run: playwright install --with-deps chromium
+        run: uv run playwright install --with-deps chromium
       - name: Apply migrations
-        run: python -m scripts.ops.apply_migrations
+        run: uv run python -m scripts.ops.apply_migrations
       - name: Run PG + browser integration tests
-        run: pytest
+        run: uv run pytest
         # docs/63 S3：生产形态 PG 档必须在 CI 每 PR 实跑（含迁移与 audit seq 断言）
 
   frontend:

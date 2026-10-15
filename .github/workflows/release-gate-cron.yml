@@ -26,17 +26,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v10
         with:
-          python-version: "3.11"
-          cache: pip
+          enable-cache: true
 
       - name: Install package
-        run: pip install -e ".[dev]"
+        # D79：按 uv.lock 装（uv sync --locked），禁止 pip 抽最新
+        run: uv sync --locked --extra dev
 
       - name: Start API server and wait until ready
         run: |
-          nohup python -m uvicorn atlas.api.main:app --host 127.0.0.1 --port 8000 \
+          nohup uv run python -m uvicorn atlas.api.main:app --host 127.0.0.1 --port 8000 \
             > /tmp/uvicorn.log 2>&1 &
           for attempt in $(seq 1 30); do
             # `|| true`：GitHub 的 step 默认以 `bash -e` 运行，uvicorn 冷启动尚未监听时
@@ -58,7 +58,7 @@ jobs:
           exit 1
 
       - name: Run D26 release-gate replay smoke
-        run: python scripts/dev/d26_smoke.py
+        run: uv run python scripts/dev/d26_smoke.py
 
       - name: Upload server log on failure
         if: failure()
