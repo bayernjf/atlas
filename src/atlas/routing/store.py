@@ -41,6 +41,30 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _resolve_start_versions(
+    versions: list[int], *, stable: int | None, candidate: int | None
+) -> tuple[int, int]:
+    """start 的两版选取（内存/PG 两档共用，BR-D2）。
+
+    显式 `stable=`/`candidate=`：须同传或同不传、不相等、均在该图发布版本列表内；
+    同不传＝缺省路径，取最新两发布版（versions 升序，不足 2 个 409）——行为逐字不变。
+    """
+    if (stable is None) != (candidate is None):
+        raise RolloutError("stable 与 candidate 须同时指定或同时省略")
+    if stable is None and candidate is None:
+        if len(versions) < 2:
+            raise RolloutError("发布版本不足 2 个：canary 需要 stable 与 candidate 两个发布版")
+        return versions[-2], versions[-1]
+    assert stable is not None and candidate is not None  # 同传分支
+    if stable == candidate:
+        raise RolloutError(f"stable 与 candidate 不可为同一版本（v{stable}）")
+    if stable not in versions:
+        raise RolloutError(f"stable 版本 v{stable} 不在该图发布版本列表内")
+    if candidate not in versions:
+        raise RolloutError(f"candidate 版本 v{candidate} 不在该图发布版本列表内")
+    return stable, candidate
+
+
 def _empty_traffic() -> dict[str, Any]:
     return {"stable": 0, "candidate": 0, "segments": {key: 0 for key in _SEGMENT_KEYS}}
 
@@ -87,18 +111,25 @@ class RoutingStore:
 
     # ---------- 状态机 ----------
 
-    def start(self, graph_id: str, versions: list[int]) -> RolloutState:
-        """idle→canary：stable/candidate 取最新两个发布版（versions 升序）。"""
+    def start(
+        self,
+        graph_id: str,
+        versions: list[int],
+        *,
+        stable: int | None = None,
+        candidate: int | None = None,
+    ) -> RolloutState:
+        """idle→canary：stable/candidate 缺省取最新两个发布版（versions 升序）；
+        BR-D2 可显式指定两版（A/B 实验对照；校验见 `_resolve_start_versions`）。"""
         with self._lock:
             state = self._require(graph_id)
             if state.config is None:
                 raise RolloutError("尚未配置灰度规则，无法启动 canary（先 PUT rollout 配置）")
             if state.status != "idle":
                 raise RolloutError(f"当前状态 {state.status} 不可启动 canary（仅 idle 可启动）")
-            if len(versions) < 2:
-                raise RolloutError("发布版本不足 2 个：canary 需要 stable 与 candidate 两个发布版")
-            state.stable = versions[-2]
-            state.candidate = versions[-1]
+            state.stable, state.candidate = _resolve_start_versions(
+                versions, stable=stable, candidate=candidate
+            )
             state.status = "canary"
             state.started_at = _now_iso()
             state.rolled_back_at = None

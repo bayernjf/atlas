@@ -667,6 +667,76 @@ export async function putReflectionDecision(
   )
 }
 
+// --- 打包 BP（docs/132 D75）：进化候选门控自动生效 ----------------------------------------
+
+export type AutoApplyStage = {
+  stage: string
+  at: string
+  ok: boolean
+  note: string
+}
+
+export type AutoApplyRun = {
+  run_id: string
+  candidate_id: string
+  graph_id: string
+  base_version: number
+  enabled_scopes: string[]
+  patch: { diff: Array<Record<string, unknown>> } | null
+  shadow: Record<string, unknown> | null
+  gate: Record<string, unknown> | null
+  publish_version: number | null
+  rollout_status: string | null
+  status: 'pending' | 'completed' | 'aborted' | 'failed'
+  reason: string | null
+  stages: AutoApplyStage[]
+  created_at: string
+  updated_at: string
+}
+
+export type AutoApplyConfig = {
+  enabledScopes: string[]
+  availableScopes: string[]
+  structureAuto: boolean
+}
+
+/** 候选自动生效（docs/132 BP-D2/D4）：patch→影子→黄金回放→发布→canary，返回每圈证据 run。 */
+export async function startCandidateAutoapply(
+  candidateId: string,
+  enabledScopes?: string[],
+): Promise<AutoApplyRun> {
+  return request<AutoApplyRun>(
+    `/api/reflection/candidates/${encodeURIComponent(candidateId)}/autoapply`,
+    {
+      method: 'POST',
+      body: JSON.stringify(enabledScopes ? { enabledScopes } : {}),
+    },
+  )
+}
+
+/** 中止自动生效（docs/132 BP-D5）：canary 态＝手动回滚；pending 取消；终态幂等。 */
+export async function abortAutoapplyRun(runId: string): Promise<AutoApplyRun> {
+  return request<AutoApplyRun>(
+    `/api/reflection/autoapply/${encodeURIComponent(runId)}/abort`,
+    { method: 'POST' },
+  )
+}
+
+/** 本租户自动生效记录（倒序摘要；?graph_id=&limit=）。 */
+export async function listAutoapplyRuns(graphId?: string): Promise<AutoApplyRun[]> {
+  const params = new URLSearchParams()
+  if (graphId) params.set('graph_id', graphId)
+  const body = await request<{ items: AutoApplyRun[] }>(
+    `/api/reflection/autoapply?${params.toString()}`,
+  )
+  return body.items
+}
+
+/** 类别开关投影（docs/132 §3.4）：已开启类别／可自动类别／结构类恒不自动。 */
+export async function getAutoapplyConfig(): Promise<AutoApplyConfig> {
+  return request<AutoApplyConfig>('/api/reflection/autoapply/config')
+}
+
 /** 覆盖已存图的 latest 草稿（M9：同一 graph 迭代多版本，不新建 id；已发布版本不可变） */
 export async function saveGraphDraft(
   graphId: string,
@@ -2256,6 +2326,97 @@ export async function rollbackRollout(graphId: string): Promise<RolloutSnapshot>
   return request(`/api/graphs/${graphId}/rollout/rollback`, { method: 'POST' })
 }
 
+// --- 打包 BR（docs/134 D77）：A/B 实验对照判定 ------------------------------------
+// 类型镜像后端 camelCase 投影（routing/experiment.py + main.py 四端点）；判定只读
+// 建议、conclude 人决（BR-D4），verdict 与 action 不一致由后端照实记录。
+
+export type ExperimentMetric =
+  | 'run_error_rate'
+  | 'manual_escalation_rate'
+  | 'refund_amount_diff_rate'
+
+export type ExperimentVerdict = {
+  status: 'collecting' | 'inconclusive' | 'significant'
+  winner: 'A' | 'B' | null
+  metric: ExperimentMetric
+  rateA: number | null
+  rateB: number | null
+  z: number | null
+  pValue: number | null
+  reason: string
+}
+
+export type Experiment = {
+  id: string
+  graphId: string
+  versionA: number
+  versionB: number
+  trafficPercent: number
+  primaryMetric: ExperimentMetric
+  minSamples: number
+  status: 'running' | 'concluded'
+  priorConfig: RolloutConfig | null
+  verdict: ExperimentVerdict | null
+  conclusionAction: 'adopt_a' | 'adopt_b' | null
+  conclusionReason: string | null
+  createdBy: string
+  createdAt: string
+  concludedAt: string | null
+}
+
+export type ExperimentArmStats = {
+  samples: number
+  businessSamples: number
+  errorCount: number
+  manualCount: number
+  diffCount: number
+  errorRate: number | null
+  manualRate: number | null
+  diffRate: number | null
+}
+
+/** GET detail 投影：verdict 恒非空（running 活算建议／concluded 取冻结）。 */
+export type ExperimentDetail = Omit<Experiment, 'verdict'> & {
+  verdict: ExperimentVerdict
+  armStats: { A: ExperimentArmStats; B: ExperimentArmStats }
+  splitActive: boolean
+  requiredSamples: number | null
+}
+
+export type ExperimentCreateBody = {
+  graphId: string
+  versionA: number
+  versionB: number
+  trafficPercent?: number
+  primaryMetric: ExperimentMetric
+  minSamples?: number
+}
+
+export async function listExperiments(graphId?: string): Promise<Experiment[]> {
+  const query = graphId ? `?graphId=${encodeURIComponent(graphId)}` : ''
+  const body = await request<{ experiments: Experiment[] }>(`/api/experiments${query}`)
+  return body.experiments
+}
+
+export async function createExperiment(body: ExperimentCreateBody): Promise<Experiment> {
+  return request('/api/experiments', { method: 'POST', body: JSON.stringify(body) })
+}
+
+export async function getExperiment(expId: string): Promise<ExperimentDetail> {
+  return request(`/api/experiments/${encodeURIComponent(expId)}`)
+}
+
+export async function concludeExperiment(
+  expId: string,
+  action: 'adopt_a' | 'adopt_b',
+  reason?: string,
+): Promise<Experiment> {
+  return request(`/api/experiments/${encodeURIComponent(expId)}/conclude`, {
+    method: 'POST',
+    body: JSON.stringify({ action, reason: reason ?? null }),
+  })
+}
+
 // --- M11 长期记忆（docs/26 §6；只读浏览 + admin 删除，写入只走图工具） --------
 
 export type MemoryKind = 'fact' | 'preference' | 'knowledge'
@@ -3227,5 +3388,121 @@ export async function getUsageSummary(params: UsageSummaryParams = {}): Promise<
 export async function getUsageRecent(limit = 50): Promise<UsageRecordView[]> {
   const query = new URLSearchParams({ limit: String(limit) })
   const body = await request<{ items: UsageRecordView[] }>(`/api/usage/recent?${query.toString()}`)
+  return body.items
+}
+
+// --- 打包 BQ（docs/133 D76+D71）：网页嵌入只读面 + NL 造工具 ---------------------------------
+
+export type EmbedConfig = {
+  graph_id: string
+  enabled: boolean
+  token_ttl_seconds: number
+  created_at: string
+  updated_at: string
+}
+
+export type EmbedReadonlyView = {
+  graphId: string
+  name: string
+  nodeCount: number
+  variables: Array<{ name: string; value: unknown }>
+  lastRun: { runId: string; status: string; startedAt: string } | null
+}
+
+export type EmbedTokenResponse = {
+  token: string
+  tokenUrl: string
+}
+
+export type AdapterCapabilityDefinition = {
+  name: string
+  description: string
+  method: string
+  path: string
+  input_schema: Record<string, unknown>
+  output_schema: Record<string, unknown>
+  permission: string
+  is_idempotent: boolean
+}
+
+export type AdapterDefinition = {
+  name: string
+  description: string
+  base_url: string
+  auth_type: 'none' | 'header' | 'query'
+  permission: string
+  capabilities: AdapterCapabilityDefinition[]
+}
+
+export type AdapterDraft = {
+  draft_id: string
+  definition: AdapterDefinition
+  decision_status: 'adopted' | 'dismissed' | null
+  reachability: { checkedAt: string; ok: boolean; reason: string } | null
+  created_at: string
+  decided_at: string | null
+  updated_at: string
+}
+
+/** 嵌入配置列表（第七类实体；docs/133 D76）。administer 只读面。 */
+export async function listEmbedConfigs(): Promise<EmbedConfig[]> {
+  const body = await request<{ items: EmbedConfig[] }>('/api/embeds/config')
+  return body.items
+}
+
+/** 开启/调整某图的只读嵌入（enabled 缺省 false＝fail-closed；ttl 1–86400 门控）。 */
+export async function putEmbedConfig(
+  input: { graph_id: string; enabled: boolean; token_ttl_seconds: number },
+): Promise<EmbedConfig> {
+  return request<EmbedConfig>('/api/embeds/config', {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  })
+}
+
+/** 签发嵌入短链（同形 HMAC；图未启用 422）。返回 token/tokenUrl。 */
+export async function createEmbedToken(graphId: string): Promise<EmbedTokenResponse> {
+  return request<EmbedTokenResponse>('/api/embeds', {
+    method: 'POST',
+    body: JSON.stringify({ graph_id: graphId }),
+  })
+}
+
+/** 公开只读嵌入面（无登录态；验签失败 404）。 */
+export async function getEmbedReadonlyView(token: string): Promise<EmbedReadonlyView> {
+  return request<EmbedReadonlyView>(`/api/embeds/${encodeURIComponent(token)}`)
+}
+
+/** NL 造工具草稿（docs/133 BQ-D5）：业务描述 → AdapterDefinition 草稿。LLM 失败 422 显式。 */
+export async function createAdapterDraft(prompt: string): Promise<AdapterDraft> {
+  return request<AdapterDraft>('/api/adapter-drafts', {
+    method: 'POST',
+    body: JSON.stringify({ prompt }),
+  })
+}
+
+/** 草稿 dry-run 连通校验（只读 GET；不改 decision 状态）。 */
+export async function dryRunAdapterDraft(draftId: string): Promise<AdapterDraft> {
+  return request<AdapterDraft>(
+    `/api/adapter-drafts/${encodeURIComponent(draftId)}/dry-run`,
+    { method: 'POST' },
+  )
+}
+
+/** 人工采纳（admin；adopted/dismissed 可改判；auth_type 非 none 须 authConfirmed）。 */
+export async function putAdapterDraftDecision(
+  draftId: string,
+  decision: 'adopted' | 'dismissed',
+  authConfirmed = false,
+): Promise<AdapterDraft> {
+  return request<AdapterDraft>(
+    `/api/adapter-drafts/${encodeURIComponent(draftId)}/decision`,
+    { method: 'PUT', body: JSON.stringify({ decision, authConfirmed }) },
+  )
+}
+
+/** 本租户适配器草稿列表（倒序）。 */
+export async function listAdapterDrafts(): Promise<AdapterDraft[]> {
+  const body = await request<{ items: AdapterDraft[] }>('/api/adapter-drafts')
   return body.items
 }

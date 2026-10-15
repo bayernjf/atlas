@@ -70,7 +70,7 @@ OPENAI_BASE_URL=...       # 后者只被 litellm 的 proxy 代码读，直连路
 ### 形态 B：本地双进程（开发）
 
 ```bash
-python3.11 -m venv .venv && .venv/bin/pip install -e ".[dev]"     # 后端环境（Python ≥3.11）
+uv sync --locked --extra dev                                         # 后端环境（D79：按 uv.lock 装；uv 安装见 https://docs.astral.sh/uv/）
 cd frontend && pnpm install && cd ..                               # 前端依赖
 
 cp .env.example .env                       # 首次：按需填 DATABASE_URL 与 LLM 三键

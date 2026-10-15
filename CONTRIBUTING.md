@@ -18,7 +18,7 @@ Thanks for helping build Atlas. This is an AI 运营体（Agent）编排平台 �
 
 ```bash
 # 后端（引擎 + Demo API）
-pip install -e ".[dev]"          # 依赖清单见 pyproject.toml（落码时生成）
+uv sync --locked --extra dev     # 依赖按 uv.lock 装（D79；意图清单源头 pyproject.toml）
 pytest                            # 单元测试（层级见 13 测试用例清单）
 uvicorn atlas.api.main:app --reload --port 8000
 

@@ -23,9 +23,12 @@ type DashboardProps = {
   onOpenModels: () => void
   onOpenUsage: () => void
   onOpenTemplates: () => void
+  onOpenEmbeds: () => void
+  onOpenAdapterDrafts: () => void
+  onOpenExperiments: () => void
 }
 
-export function Dashboard({ principal, onLogout, onOpenEditor, onOpenMonitoring, onOpenMemory, onOpenConnections, onOpenUsers, onOpenApprovals, onOpenAudit, onOpenOpenApi, onOpenWaits, onOpenSchedules, onOpenAgents, onOpenReflection, onOpenModels, onOpenUsage, onOpenTemplates }: DashboardProps) {
+export function Dashboard({ principal, onLogout, onOpenEditor, onOpenMonitoring, onOpenMemory, onOpenConnections, onOpenUsers, onOpenApprovals, onOpenAudit, onOpenOpenApi, onOpenWaits, onOpenSchedules, onOpenAgents, onOpenReflection, onOpenModels, onOpenUsage, onOpenTemplates, onOpenEmbeds, onOpenAdapterDrafts, onOpenExperiments }: DashboardProps) {
   // 页面专属文案走 dashboard namespace；品牌名/主导航是跨页通用文案，显式取 common: 前缀。
   const { t } = useTranslation('dashboard')
   return (
@@ -64,6 +67,11 @@ export function Dashboard({ principal, onLogout, onOpenEditor, onOpenMonitoring,
               {roleCan(principal.role, 'administer') && (
                 <Button onClick={onOpenUsers}>{t('common:nav.users')}</Button>
               )}
+              {roleCan(principal.role, 'administer') && (
+                <Button onClick={onOpenEmbeds}>{t('common:nav.embeds')}</Button>
+              )}
+              <Button onClick={onOpenAdapterDrafts}>{t('common:nav.adapterDrafts')}</Button>
+              <Button onClick={onOpenExperiments}>{t('common:nav.experiments')}</Button>
               {roleCan(principal.role, 'administer') && (
                 <Button onClick={onOpenAudit}>{t('common:nav.audit')}</Button>
               )}

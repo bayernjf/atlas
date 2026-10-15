@@ -22,10 +22,21 @@ import {
   type ReflectionReportItem,
   type ReflectionStatus,
 } from './apiClient'
+// 打包 BP（docs/132 D75）：进化候选门控自动生效（自动生效/中止/记录/开关投影）。
+import {
+  abortAutoapplyRun,
+  getAutoapplyConfig,
+  listAutoapplyRuns,
+  startCandidateAutoapply,
+  type AutoApplyConfig,
+  type AutoApplyRun,
+} from './apiClient'
 
 /**
  * 本模块允许从 apiClient 引入的调用面（docs/94 E-7 / U1124 机检白名单）：四只读 +
  * 唯一写 `putReflectionDecision`；加任何其他写函数进这里＝自杀式违规。
+ * 打包 BP：新增四只自动生效调用（`startCandidateAutoapply`／`abortAutoapplyRun`／
+ * `listAutoapplyRuns`／`getAutoapplyConfig`）一并列入白名单（同机检守护）。
  */
 export const API_WHITELIST = [
   'getGraph',
@@ -33,6 +44,10 @@ export const API_WHITELIST = [
   'listGraphs',
   'listReflectionReports',
   'putReflectionDecision',
+  'startCandidateAutoapply',
+  'abortAutoapplyRun',
+  'listAutoapplyRuns',
+  'getAutoapplyConfig',
 ] as const
 
 export type {
@@ -41,6 +56,16 @@ export type {
   ReflectionDecisionStatus,
   ReflectionReportItem,
   ReflectionStatus,
+  AutoApplyConfig,
+  AutoApplyRun,
+}
+
+// 打包 BP（docs/132 D75）：自动生效写面经 lib 转发（页面不直接 import apiClient，U1124 机检）。
+export {
+  abortAutoapplyRun,
+  getAutoapplyConfig,
+  listAutoapplyRuns,
+  startCandidateAutoapply,
 }
 
 /** `status` 四值 → AntD Tag 色（docs/92 E-5：仅用颜色区分处必须带文字，页面仍渲染文字标签）。 */

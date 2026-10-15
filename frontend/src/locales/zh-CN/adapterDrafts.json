@@ -1,0 +1,33 @@
+{
+  "page": {
+    "title": "NL 造工具"
+  },
+  "create": {
+    "title": "用一句话描述要接入的外部 API",
+    "placeholder": "例如：按订单状态查询 Shopify 订单（GET /orders）",
+    "submit": "生成草稿",
+    "created": "草稿已生成"
+  },
+  "list": {
+    "title": "适配器草稿",
+    "id": "草稿 ID",
+    "definition": "定义",
+    "capabilities": "能力",
+    "permission": "权限",
+    "reachability": "连通性",
+    "decision": "决策",
+    "action": "操作",
+    "dryRun": "连通校验",
+    "adopt": "采纳",
+    "dismiss": "驳回",
+    "dismissConfirm": "确认驳回该草稿？",
+    "pending": "待决策",
+    "untested": "未校验",
+    "empty": "暂无草稿"
+  },
+  "decide": {
+    "confirmTitle": "确认采纳？",
+    "confirmBody": "该适配器需要凭据（auth_type 非 none），采纳后即可在运行时被调用。请确认凭据已妥善配置。",
+    "confirmOk": "确认采纳"
+  }
+}

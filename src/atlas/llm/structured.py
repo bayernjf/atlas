@@ -397,3 +397,50 @@ def _memory_candidates(raw: Any) -> list[dict[str, Any]]:
             confidence = 0.0
         candidates.append({"content": content[:2000], "confidence": max(0.0, min(1.0, confidence))})
     return candidates
+
+
+def generate_adapter_definition(
+    *,
+    prompt: str,
+    tenant_id: str | None = None,
+    model: str | None = None,
+    caller: str = "adapter_draft",
+) -> dict[str, Any]:
+    """NL 造工具：从业务描述生成 `AdapterDefinition` 草稿（docs/133 BQ-D5，docs/107 §3.2 闭合）。
+
+    走既有 `_call_llm` 单点（AU-D3 记账自动进账）；**失败显式不静默**（与 extract_memories
+    的"形状问题不炸运行"相反：草稿必须有效才能进 dry-run/采纳，坏形状直接报错由 API 层折
+    422）——模型不可用/调用失败/坏 JSON 均抛 :class:`LLMStructuredUnavailable`。
+    返回 AdapterDefinition 的 dict 形态（shape 校验在 harness/definition.py 调用方执行）。
+    """
+    model_name, api_key, base_url = _resolve_model(tenant_id, model, caller=caller)
+    instruction = (
+        "把下面的业务描述转换成一个可执行的 HTTP API 适配器定义，只输出 JSON：\n"
+        '{"name": "适配器名（如 shopify-orders-api）", "description": "一句话说明", '
+        '"base_url": "https://...", "auth_type": "none|header|query", '
+        '"permission": "read|write|delete|financial", '
+        '"capabilities": [{"name": "能力名（如 get_orders）", "description": "说明", '
+        '"method": "GET|POST|PUT|PATCH|DELETE", "path": "/orders/{id}", '
+        '"input_schema": {"type": "object", "properties": {...}}, '
+        '"output_schema": {"type": "object", "properties": {...}}, '
+        '"permission": "read", "is_idempotent": false}]}\n'
+        "要求：capabilities 至少一条；path 以 / 开头；auth_type/permission 只能取枚举值；"
+        "不要发明 base_url——业务描述没给就保留用户给出的平台地址。\n"
+        f"业务描述：{prompt}"
+    )
+    try:
+        content = _call_llm(
+            instruction, model=model_name, api_key=api_key, base_url=base_url,
+            caller=caller, max_tokens=1200,
+        )
+    except Exception as exc:  # noqa: BLE001 单次调用失败显式报错，不静默降级
+        raise LLMStructuredUnavailable(
+            caller,
+            f"生成适配器草稿时 LLM 调用失败：{type(exc).__name__}: {exc}",
+        ) from exc
+    payload = _parse_json(content)
+    if payload is None:
+        raise LLMStructuredUnavailable(
+            caller, "生成适配器草稿时 LLM 返回的不是 JSON，拒绝静默降级"
+        )
+    return payload

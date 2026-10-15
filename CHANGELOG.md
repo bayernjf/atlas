@@ -3,6 +3,53 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔feat〕打包 BR 落码收口＝D77 A/B 实验对照判定（2026-10-15，用户「那你推进」／「那按你推进的搞」授权；docs/134 契约、U1497–U1518 落码＋两门补齐转正式）
+
+- **判定层（后端）**：`routing/experiment.py` 新增 Experiment/Verdict 模型＋两比例 z 检验（α=0.05 双侧，stdlib `math.erf`，零新依赖）；`routing/experiment_store.py`＋`routing/pg_experiment_store.py` 两档（内存 ring 100／PG 迁移 056 `experiments` 表 16 列＋`idx_experiments_tenant_graph_status`；id＝`exp-{seq}` 取全局 `storage_id_seq`，conclude 走 `SELECT ... FOR UPDATE`，priorConfig/verdict JSONB）；`routing/gate.py` `business_rates` 公开化（BR-D3）；`RoutingStore.start` 显式版本扩展 `stable=/candidate=`（内存＋PG，BR-D2）；`main.py` 实验四端点（create/list/get/conclude）；registry 两档装配＋reset。
+- **八决策（docs/134）**：BR-D1 分流复用 `CanaryRule(percent=trafficPercent)` 零新分桶代码；BR-D2 start 显式双版本；BR-D3 业务转化率公开化；BR-D4/D5 conclude 人决（adopt_a/adopt_b）走既有 promote/rollback＋priorConfig 恢复；BR-D6 同图至多一个 running 实验；BR-D7 ring 100＋PG 持久；BR-D8 零新依赖／零新错误码／无 ADR。
+- **前端**：Experiments 页（列表＋创建＋详情判定＋conclude）＋路由＋apiClient/lib（experiments.ts）＋两语 locale（experiments 新命名空间＋common nav 键）。
+- **门**：用例 18 落码全绿（`tests/test_experiments.py` 12＝U1497–U1508；`tests/test_experiments_pg_integration.py` 6＝U1513–U1518，默认档转 skip）；后端全量 **2925 passed／211 skipped／0 failed**（216.75s，基线 2913/205）；前端 vitest **1027/2**、oxlint **0/0**（229 files）、build ✓。**两门补齐（2026-10-15，用户「那按你推进的搞」授权）**：四条反向门植缺陷实跑各自转红（摘 z 检验⇒U1499／stable-candidate 交换⇒U1502／摘 priorConfig 恢复⇒U1504／摘 minSamples 门⇒U1503），复原后全绿、`git diff` 为空；PG 档全量 **3128 passed／8 skipped**（246.44s，迁移 056 apply、U1513–U1518 实跑，一次性 pgvector:pg16 @5445 跑完即删）。docs/13 转 ✅ 正式、docs/14 D77 翻 ✅、里程碑 G ✅（docs/127 A–G 七里程碑全 ✅）。
+
+### 〔chore〕D79 收口＝后端依赖锁文件 `uv.lock` 落地（2026-10-15，用户「那你推进」授权；方案 ① 按推荐拍板；docs/14 D79 翻 ✅）
+
+- **根因**：PR #152「本机绿 CI 红」——pyproject 只写范围、CI/cron 每次 `pip install -e ".[dev]"` 抽最新，本机 starlette 1.6.0 vs CI 1.8.0，「路径命中、方法不匹配」返回码 404→405。
+- **落地**：`uv.lock` 入库＋`.python-version` 钉 3.11；**四处同一锁**——本机与 CI 两 job（`ci.yml` 换 `astral-sh/setup-uv@v10`＋`uv sync --locked --extra dev`＋`uv run pytest`）、cron 上线门（`release-gate-cron.yml` 同口径，uvicorn/smoke 改 `uv run`）、Dockerfile（`COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /bin/uv`＋`uv sync --locked --no-editable --no-cache`，`UV_PYTHON_PREFERENCE=only-system`，venv PATH 前置兼容入口脚本与 CMD uvicorn）。升级流程＝改 pyproject 范围 → `uv lock` 重解析 → 提交锁。
+- **同步**：docs/10 §2 勘误（版本解析面翻转为「uv.lock 唯一事实源、pyproject 范围为意图清单」）、docs/14 D79 ✅、docs/08 缺陷批条收口注记、README/CONTRIBUTING/handoff How to run 安装命令改 uv 口径。
+- **门（实跑）**：`uv sync --locked` 重写 venv（55 卸/57 装）后后端全量 **2913 passed／205 skipped／0 failed**；前端 `tsc -b && vite build` ✓；`docker build --check` 无警告＋真实构建 ✓，镜像内 python 3.11.16／fastapi 0.143.1／starlette 1.8.0／httpx 0.28.1 与锁逐字一致。零产品代码改动／零迁移／零新运行期依赖（uv 仅工具链）／无 ADR。
+
+### 〔feat〕打包 BQ 落码收口＝D76 网页嵌入＋D71 NL 造工具（2026-10-15，用户「后续你接着推进」授权；docs/133 契约、U1477–U1496 转正式）
+
+- **嵌入面（D76）**：迁移 054 `embed_configs`（tenant_id+graph_id PK、enabled 缺省 false fail-closed、token_ttl_seconds 1–86400）；`embeds/{store,pg_store,token}.py`——EmbedStore/PgEmbedStore（upsert ON CONFLICT、两档签名一比一）＋`EmbedTokenIssuer`（**同形 HMAC**：`base64url(json).base64url(HMAC-SHA256)`，密钥链复用 `resolve_token_secret`，clock 注入，TTL＋grace 300，三态异常 Malformed/BadSignature/Expired）；`main.py` `GET/PUT /api/embeds/config`（第七类 SchemaRegistry 实体）＋`POST /api/embeds`（201，未启用 422）＋**公开只读 `GET /api/embeds/{token}`**（无 principal，验签失败统一 404，投影只含 graphId/name/nodeCount/variables/lastRun，不含密钥/决策/草稿）。
+- **造工具（D71）**：`harness/definition.py` 新增 `AdapterDefinition/AdapterCapability`（dataclass；auth_type none/header/query、permission read/write/delete/financial、method 枚举、path 必须 / 开头、capabilities 非空；schema 校验复用 `_validate_schema_subset` 白名单）；`llm/structured.py` 增 `generate_adapter_definition`（走 `_call_llm` 单点、失败显式 422 不静默）；迁移 055 `adapter_drafts`（definition JSONB、decision_status、idx tenant_status）；`harness/{drafts,pg_drafts}.py`（AdapterDraftStore/PgAdapterDraftStore：add/dry-run reachability/decision/adopted 过滤 list/reset；PG add 内部单步取号 `ad-{seq}`）；`main.py` 四端点（`POST /api/adapter-drafts` 201、`POST .../{id}/dry-run` 只读 2xx 探测、`PUT .../{id}/decision` require("administer")、`GET /api/adapter-drafts`）；`harness/generated.py` `GeneratedApiHarnessAdapter`（adapter_id=`generated:{draft_id}`，执行走 HttpApiClient）＋`runtime.py` 装配 adopted 草稿（getattr 防御）。
+- **F-P2 最小权限＋采纳即人审**：草稿 permission 缺省 read；auth_type 非 none 须 admin `authConfirmed=true` 才可 adopt（否则 422）；adopt＝admin 人审（require("administer")）。
+- **前端三件套**：Embed.tsx 公开只读页（`/embed/{token}` 无登录独立外壳，同 EmailApproval 纪律）；EmbedsConfig.tsx 配置管理面（图选择＋enabled 开关＋TTL＋签发短链，admin）；AdapterDrafts.tsx 管理面（NL prompt 建草稿＋dry-run＋admin 采纳/驳回，auth_type 非 none 采纳弹确认）；apiClient/lib（embeds.ts/adapterDrafts.ts，U1124 白名单机检 5 例）；两语 locale 新命名空间 embeds/adapterDrafts＋common nav 键；App 路由 Page 加 embeds/adapterDrafts、`/embed/{token}` 深链外壳。
+- **落码偏差（docs/133 §3 已同步）**：① 端点依赖档名 `require("admin")`→**`require("administer")`**（Capability 枚举 read/operate/administer，无 admin，初写即 KeyError）；② `_mock_llm` 须同时 mock `_resolve_model`＋`_call_llm` 两条路径（单 mock `_call_llm` 在 `_resolve_model` 抛 LLMStructuredUnavailable 之前就挂）；③ U1480 初版全是格式坏 token（payload 解析失败早于签名比较），补**篡改签名用例**（合法载荷＋错签名）后才覆盖签名校验关。
+- **门**：用例 **18 全绿**（`tests/test_embeds_and_drafts.py` 12＝U1477–U1488；PG 集成 6＝U1491–U1496，`tests/test_embeds_and_drafts_pg_integration.py`）；**四条反向门植缺陷实跑转红**（①摘 HMAC 验签 ⇒ U1480 红；②摘 fail-closed ⇒ U1478 红；③摘 runtime adopted 过滤 ⇒ U1486 红；④摘 F-P2 authConfirmed ⇒ U1487 红），恢复后全绿；后端默认全量与 PG 档全量（一次性 pgvector:pg16 @5445，迁移 054/055 apply，跑完容器即删）读数见 docs/13 BQ 段；前端 vitest **1027/2**（+5）、oxlint **0/0**、build ✓。**新错误码 1**（`GENERATED_INVALID_PARAMETER`，两语 runtime 键已补、U1149 机检过）／零新依赖／无 ADR／迁移 054＋055。**里程碑 F（最后一个）Done-when 逐条 ✅，A–F 六里程碑全 ✅**；docs/107「NL 生成适配器」旧条闭掉；D79（后端锁文件）与外部凭据 4 项仍只有用户能给。
+
+### 〔docs〕打包 BQ 立项＝D76 网页嵌入＋D71 NL 造工具（2026-10-15，用户「后续你接着推进」授权；docs-only，零代码）
+
+- **动机**：docs/127 六个里程碑的最后一个 F「挂进客户页面」——Atlas 入口只有自有画布＋审批卡片＋Webhook，客户后台里没有任何只读嵌入面（D76）；业务描述里出现平台尚无的能力时只能人工去接 OpenAPI，缺「NL 造工具→dry-run→人采纳」通道（D71，docs/107「NL 生成适配器配置」旧条闭合）。
+- **形状**（docs/133 为权威）：D76 一期只做网页嵌入——`embed_configs` 第七类 SchemaRegistry 实体（03 索引加行）＋**签名短链复用审批 HMAC 同形**（`email_token.py` 同算法/同密钥链/同失效处理，不新建鉴权形态）＋公开只读面（图元信息＋最近运行摘要，不含密钥/决策/草稿）；D71 最小切片——新 `harness/definition.py` `AdapterDefinition` 类型（代码零命中，契约概念级需新增）＋`llm/structured.py` `generate_adapter_definition`（走既有 `call_structured_json`）＋dry-run 只读连通校验（过 EgressGuard）＋admin 采纳（复用 D51 decision 形态）＋`adapter_drafts` 两档（adopted 后 `runtime.py` 动态装配，与 openapi 同款）。
+- **决策**：**F-P1 按推荐口径拍板＝嵌入配置作为 SchemaRegistry 第七类实体（是）**（真实运营者配置面、`saved-graph-select` 控件已有；docs/115 §8 的 YAGNI 结论针对抽统一注册表非单实体接入）；**F-P2 按推荐口径拍板＝造适配器默认最小权限＋采纳即人审**（草稿 permission 缺省 READ、auth_type 非 none 需 admin 确认、adopt＝admin 人审＋granted READ 最小集——照实记录 v1 的"首次运行强制人审"落地为采纳环节而非运行期插人工）；BQ-D3 dry-run 只读不落运行账；BQ-D7 不自动采纳不自动发布。
+- **验收**：U1477–U1488（含四条反向门）预留于 docs/13；迁移 054（embed_configs）＋055（adapter_drafts）；docs/14 D71/D76 两行翻 🟡；落码另批。
+
+### 〔feat〕打包 BP 落码收口＝D75 进化候选门控自动生效（2026-10-14，用户「那你推进」授权；原子序 docs/132 §4 落至六步，用例＋门为第七八步）
+
+- **patch 层**（`reflection/patch.py` 新增）：`patch_candidate(changes, latest_draft, base_version, graph_snapshot)` → `PatchOutcome{ok, new_draft, diff, reason}`；只认 `graph_variable`（改 `variables[].value` 按 name 命中）＋`node_config`（改 `nodes[].config.confidenceThreshold` 按 node_id 定位，缺 node_id/节点找不到/非 ai_decision 照实不猜）；monitor_rule/gate_config 行 `skipped=True` 计入 diff（BP-D1，不静默吞不阻断）。
+- **推进链**（`reflection/autoapply.py` 新增）：`run_autoapply`（候选存在＋`decision_status` 空＋类别开关 ⊆ enabled_scopes fail-closed → patch → **影子必跑**（独立 broker/tracer、空 inputs 预置审批/等待秒过、写短路）→ **黄金回放**（`run_release_gate`，blocked 中止留证、total=0 skipped 不阻塞）→ **patch 落地写回 latest**（`update_draft`，失败路径不触碰草稿）→ **自动 publish**（gate=true 语义）→ **自动 start canary**（版本不足记录"已发布未进灰度"留证不报错）→ `completed`；每阶段 `_record_stage` 落证据）；`abort_autoapply`（pending 取消；canary 态＝手动 rollback；终态幂等）。
+- **每圈证据**：`AutoApplyRun`（run_id `aa-N`、candidate_id、graph_id、base_version、enabled_scopes、patch/shadow/gate、publish_version、rollout_status、status、reason、stages）——内存 ring 100（`AutoApplyStore`）＋迁移 053 `autoapply_runs` 表＋`PgAutoApplyStore`（两档签名一比一、reset 清租户）。
+- **装配与端点**：`registry.py` `TenantServices.autoapply_store`（两档）＋`autoapply_enabled_scopes`（租户级类别开关，缺省空集 fail-closed）＋reset 清档；`main.py` 五端点（`POST .../candidates/{id}/autoapply` 201/幂等 409/无效类别 422、`POST .../autoapply/{run_id}/abort`、`GET .../autoapply`、`GET .../autoapply/config`、`GET .../autoapply/{run_id}`）。
+- **前端**：Reflection.tsx 候选详情加「自动生效」按钮（未处理候选可用）＋自动生效记录表（run_id/status/publish/rollout/reason/stages/中止按钮）；lib 白名单（U1124 机检）扩四函数；i18n 两语。
+- **落码偏差（docs/132 §3 已同步）**：① BP-D3 dirty 判据＝内容比较（latest 草稿 ≠ base_version 发布快照、排除 `releaseVersion`；快照缺失 fail-closed 中止）——`raw["version"]` 是 GraphDSL schema 版本恒 1，原"version 比较"会让 dirty 防护形同虚设（实核发现，落码时修）；② BP-D4 补「patch 落地写回 latest」再 publish——否则自动 publish 发布的是未 patch 的旧草稿（U1462 抓出）。
+- **门**：用例 **23 全绿**（`tests/test_reflection_autoapply.py` 17＝U1455–U1470＋U1457b；PG 集成 6＝U1471–U1476）；三条反向门植缺陷实跑转红（①摘 fail-closed ⇒ U1461 红；②摘 dirty ⇒ U1469 红；③摘 gate blocked ⇒ U1464 红）；后端默认 **2901 passed／193 skipped**（212.91s，净增 17）；PG 档全量（一次性 pgvector:pg16 @5445，迁移 053 apply，跑完容器即删）**3093 passed／1 skipped**（227.05s，含本批 PG 集成实跑）；前端 vitest **1022/2**、oxlint **0/0**、build ✓。零新错误码／零新依赖／无 ADR／迁移 053。
+
+### 〔docs〕打包 BP 立项＝D75 进化候选门控自动生效（2026-10-14，用户「那你推进」授权；docs-only，零代码）
+
+- **动机**：反思候选只到「呈现＋人工采纳」（`PUT decision` 只登记 adopted/dismissed 标记、守 T22），没有门控自动生效通道——「自进化」要真跑起来时，候选只能人手工改图；灰度状态机/门控自动回滚/黄金回放门禁/影子运行/发布全齐备但起点全手动（`promote` 仅手动、release-gate/shadow-runs 只人工调用）⇒ 缺「候选→自动生效」的后半程。
+- **形状**（docs/132 为权威）：`reflection/patch.py`（`patch_candidate`，Graph diff 形状，dirty 草稿中止不覆盖人工改动）＋`reflection/autoapply.py`（`AutoApplyRun` 每圈证据：内存 ring 100＋迁移 053 `autoapply_runs` 表）＋五端点（autoapply/abort/列表/详情/config）。推进链＝patch→影子必跑→黄金回放（blocked 中止留证）→自动 publish（gate=true）→自动 start canary（版本不足记录留证）→门控自动回滚（复用既有 `evaluate_after_run`，零改动）。
+- **决策**：**E-P1 按推荐口径拍板＝BP-D1** 自动生效类别按 scope 分开关、v1 只开图内参数类（graph_variable＋node_config）、monitor_rule/gate_config 本批不自动（apply 目标不在图草稿闭环内、影响防御面）、结构类（增删节点/改边/promptTemplate）恒不自动、开关缺省全关（fail-closed）；BP-D2 入口＝候选上 `POST .../autoapply`（幂等 409）；BP-D5 人可中止（abort，canary 态＝手动 rollback）；BP-D7 零新依赖/零新错误码/无 ADR、不自动 promote、D77 只做判胜口径半边（记录沉淀 candidate vs stable 对照）。
+- **验收**：U1455–U1470（含七条反向门）预留于 docs/13；docs/14 D75 行翻 🟡；落码另批。
+
 ### 〔feat〕打包 BO 落码收口＝D73 入站会话＋D74 智能体团队面（2026-10-14，用户「继续按推荐搞」授权；十步原子序 docs/131 §6 全落）
 
 - **D73 入站协议面**：`channels/inbound.py` InboundReceiver（可插拔 verify→幂等去重→会话映射→起 run→回写会话视图）；两档 `inbound_deliveries` store（与 webhook deliveries 同范式分表）；dsl 触发器 `message_inbound`；`ChannelBinding.inbound_mappings`＋view 投影＋两档加载/保存；端点 `POST /api/channels/inbound/{binding_id}`（配 `inbound_secret` 则 HMAC 验签 401，未配 passthrough）＋DLQ（list/replay/delete）＋metrics＋会话视图；映射管理 `GET/PUT /api/channels/{id}/inbound-mappings`（422 聚合校验）。

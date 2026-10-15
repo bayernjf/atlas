@@ -16,18 +16,22 @@ import type { ColumnsType } from 'antd/es/table'
 import { UserBadge } from '../components/UserBadge'
 import { useTranslation } from '../locales'
 import {
+  abortAutoapplyRun,
   decisionLabelKey,
   decisionTone,
   filterReportsByGraph,
   gotoTargetFor,
   isEmptyReports,
+  listAutoapplyRuns,
   loadCandidate,
   loadGraphOptions,
   loadReports,
   markDecision,
   scopeForParamKey,
+  startCandidateAutoapply,
   statusTone,
   toReportView,
+  type AutoApplyRun,
   type ReflectionCandidate,
   type ReflectionChange,
   type ReflectionDecisionStatus,
@@ -48,13 +52,16 @@ type ReflectionPageProps = {
 }
 
 /**
- * 反思进化 L2（打包 ZS docs/92；打包 ZU docs/94 增候选决策标记与节点级定位）：
- * 反思报告呈现 + 人工采纳入口（跳转引导 + 候选级处理标记）。
+ * 反思进化 L2（打包 ZS docs/92；打包 ZU docs/94 增候选决策标记与节点级定位；
+ * 打包 BP docs/132 增候选自动生效与每圈证据记录）：
+ * 反思报告呈现 + 人工采纳入口（跳转引导 + 候选级处理标记）+ 候选自动生效。
  *
  * **写调用面（U1124 机检）**：本文件不直接 import apiClient、无任何 method 字面；
- * 读经 lib/reflection.ts 只读面，唯一写动作（采纳/忽略标记）经 lib 的 `markDecision`
- * （=putReflectionDecision）。标记只记录人的处理决定，不改图、不发布、不碰路由（守 T22）；
- * 真正改图仍由人点「去修改」跳转后在编辑器走既有写端点。
+ * 读经 lib/reflection.ts 只读面；写动作经 lib 的 `markDecision`（=putReflectionDecision，
+ * 标记只记录人的处理决定，不改图、不发布、不碰路由，守 T22）与打包 BP 新增的
+ * `startCandidateAutoapply`／`abortAutoapplyRun`（自动生效推进/中止，端点在候选与
+ * run 上，publish/canary 均由后端门控推进）。真正改图仍由人点「去修改」跳转后在
+ * 编辑器走既有写端点。
  */
 export function Reflection({
   principal,
@@ -72,6 +79,12 @@ export function Reflection({
   const [candidates, setCandidates] = useState<Record<string, ReflectionCandidate>>({})
   const [loadingCandidateId, setLoadingCandidateId] = useState<string | null>(null)
   const [decidingId, setDecidingId] = useState<string | null>(null)
+  // 打包 BP（docs/132 D75）：自动生效记录按候选存（打开候选时加载），进行中/中止态。
+  const [autoapplyByCandidate, setAutoapplyByCandidate] = useState<
+    Record<string, AutoApplyRun[]>
+  >({})
+  const [autoapplyingId, setAutoapplyingId] = useState<string | null>(null)
+  const [abortingId, setAbortingId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
 
@@ -110,10 +123,59 @@ export function Reflection({
     try {
       const detail = await loadCandidate(candidateId)
       setCandidates((prev) => ({ ...prev, [candidateId]: detail }))
+      // 打包 BP：打开候选时顺带加载其自动生效记录（倒序，取本候选的行）。
+      const runs = (await listAutoapplyRuns(detail.graph_id)).filter(
+        (run) => run.candidate_id === candidateId,
+      )
+      setAutoapplyByCandidate((prev) => ({ ...prev, [candidateId]: runs }))
     } catch {
       message.error(t('loadFailed'))
     } finally {
       setLoadingCandidateId(null)
+    }
+  }
+
+  // 打包 BP（docs/132 BP-D2/D4）：候选自动生效（一鼓作气 patch→影子→门禁→发布→canary）。
+  async function autoapply(candidateId: string) {
+    if (autoapplyingId) return
+    setAutoapplyingId(candidateId)
+    try {
+      const run = await startCandidateAutoapply(candidateId)
+      setAutoapplyByCandidate((prev) => ({
+        ...prev,
+        [candidateId]: [run, ...(prev[candidateId] ?? [])],
+      }))
+      message.success(
+        run.status === 'completed'
+          ? t('autoapply.startedOk')
+          : t('autoapply.startedFail', { reason: run.reason ?? '' }),
+      )
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      // 409（幂等/已处理候选）与 404 直接提示，不刷新。
+      message.warning(detail)
+    } finally {
+      setAutoapplyingId(null)
+    }
+  }
+
+  // 打包 BP（docs/132 BP-D5）：人可随时中止；canary 态＝手动回滚。
+  async function abortRun(candidateId: string, runId: string) {
+    if (abortingId) return
+    setAbortingId(runId)
+    try {
+      const run = await abortAutoapplyRun(runId)
+      setAutoapplyByCandidate((prev) => ({
+        ...prev,
+        [candidateId]: (prev[candidateId] ?? []).map((row) =>
+          row.run_id === runId ? run : row,
+        ),
+      }))
+      message.success(t('autoapply.abortedOk'))
+    } catch (error) {
+      message.warning(error instanceof Error ? error.message : String(error))
+    } finally {
+      setAbortingId(null)
     }
   }
 
@@ -273,9 +335,106 @@ export function Reflection({
                 >
                   {t('decision.markDismissed')}
                 </Button>
+                {/* 打包 BP（docs/132 D75）：候选自动生效——仅未处理候选可用（已处理 409）。 */}
+                <Button
+                  size="small"
+                  type="primary"
+                  ghost
+                  disabled={detail.decision_status != null}
+                  loading={autoapplyingId === detail.candidate_id}
+                  onClick={() => autoapply(detail.candidate_id)}
+                >
+                  {t('autoapply.start')}
+                </Button>
               </>
             )}
           </Space>
+          {(autoapplyByCandidate[detail.candidate_id] ?? []).length > 0 && (
+            <Card
+              size="small"
+              title={t('autoapply.title')}
+              styles={{ body: { padding: 8 } }}
+            >
+              <Table<AutoApplyRun>
+                rowKey="run_id"
+                size="small"
+                pagination={false}
+                dataSource={autoapplyByCandidate[detail.candidate_id]}
+                columns={[
+                  { title: t('autoapply.runId'), dataIndex: 'run_id', width: 110 },
+                  {
+                    title: t('autoapply.status'),
+                    dataIndex: 'status',
+                    width: 120,
+                    render: (value: AutoApplyRun['status']) => (
+                      <Tag color={value === 'completed' ? 'success' : value === 'failed' ? 'error' : 'processing'}>
+                        {t(`autoapply.status.${value}`)}
+                      </Tag>
+                    ),
+                  },
+                  {
+                    title: t('autoapply.publish'),
+                    dataIndex: 'publish_version',
+                    width: 90,
+                    render: (value: number | null) =>
+                      value == null ? '—' : `v${value}`,
+                  },
+                  {
+                    title: t('autoapply.rollout'),
+                    dataIndex: 'rollout_status',
+                    width: 110,
+                    render: (value: string | null) => (value ? String(value) : '—'),
+                  },
+                  {
+                    title: t('autoapply.reason'),
+                    dataIndex: 'reason',
+                    render: (value: string | null) =>
+                      value ? (
+                        <Typography.Text type="secondary" style={{ whiteSpace: 'pre-wrap' }}>
+                          {value}
+                        </Typography.Text>
+                      ) : (
+                        '—'
+                      ),
+                  },
+                  {
+                    title: t('autoapply.stages'),
+                    dataIndex: 'stages',
+                    render: (stages: AutoApplyRun['stages']) => (
+                      <Space size={2} wrap>
+                        {stages.map((stage) => (
+                          <Tag
+                            key={`${stage.stage}-${stage.at}`}
+                            color={stage.ok ? 'default' : 'error'}
+                            style={{ fontSize: 11 }}
+                          >
+                            {stage.stage}
+                            {stage.ok ? '' : '✗'}
+                          </Tag>
+                        ))}
+                      </Space>
+                    ),
+                  },
+                  {
+                    key: 'abort',
+                    title: '',
+                    width: 70,
+                    render: (_, run) =>
+                      run.status === 'completed' && run.rollout_status === 'canary' ? (
+                        <Button
+                          size="small"
+                          danger
+                          loading={abortingId === run.run_id}
+                          onClick={() => abortRun(detail.candidate_id, run.run_id)}
+                        >
+                          {t('autoapply.abort')}
+                        </Button>
+                      ) : null,
+                  },
+                ]}
+              />
+            </Card>
+          )}
         </Space>
       ) : (
         <Button

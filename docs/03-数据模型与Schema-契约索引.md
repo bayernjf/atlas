@@ -19,6 +19,9 @@
 | `ui_schema` | 04 / §4.10 末 M4 UISchema 最小子集扩展条（**M4 批 1/批 2 2026-09-17 已落码**：groups/hiddenWhen/hideFields/文案层〔批 2 起嵌套通配键+rows/keyPlaceholders〕，控件 8→9 + target-select/saved-graph-select 两个节点业务控件）+ `frontend/src/lib/forms/{uiSchema,nodeWidgets,nodeRegistry,nodeUiSchemas,NodeConfigForm}` | ### 4.10 Schema 驱动表单渲染（M4 UISchema 扩展） |
 | `graph_diagnostics` | 04 / §6.5 末 M4 前端 L3 预判 + Problems 面板扩展条（**M4 批 2/批 3 2026-09-17 已落码**：l3.ts 同构对拍、分层调度+记忆化、ProblemsPanel 点击定位；批 3 reverseDeps 反向索引、quickFix v1 删除悬空引用、200/500 节点 BENCHMARK）+ `frontend/src/lib/validation/{l3,reverseDeps}.ts` + `components/canvas/ProblemsPanel.tsx`；后端图级规则权威仍为 `src/atlas/graph/dsl.py` | ### 6.5 拓扑作用域与 L2 模板引用校验（M4 前端 L3/Problems 扩展） |
 | `adapter_schema` | 04 / 5.4 工具/适配器注册 Schema 示例代码 | ### 5.4 工具/适配器注册 Schema 示例代码 |
+| `embed_config` | **打包 BQ 立项（2026-10-15，docs/133 §2.1/§3.1）**：网页嵌入配置＝**第七类 SchemaRegistry 实体**（docs/05 §4.3 `interaction_channels.web_widget` 具体化）；`tenant_id+graph_id` PK、enabled 缺省 false（fail-closed）、token_ttl_seconds 1–86400 | ### `embed_config` — 字段概览 |
+| `adapter_definition` | **打包 BQ 立项（2026-10-15，docs/133 §2.2）**：NL 造工具草稿（`harness/definition.py` 落码承载）；能力形状对齐 `adapter_schema.capabilities` 子形状 | ### `adapter_definition` — 字段概览 |
+| `experiment` | **打包 BR 立项（2026-10-15，docs/134 §2.1/§2.3）**：A/B 实验对照判定（D77）；分流零新代码复用 canary 分桶（`CanaryRule(percent=trafficPercent)`）；判定＝两比例 z 检验（α=0.05 双侧，stdlib `math.erf`）；迁移 056 | ### `experiment` — 字段概览 |
 | `skill_schema` | 05 / 一、技能（Skill）1.2 技能的数据结构 | ## 1.2 技能的数据结构（示例） |
 | `memory_config` | 05 / 二、记忆（Memory）2.3 记忆策略配置 Schema | ## 2.3 记忆策略配置 Schema（示例） |
 | `collaboration_message` | 05 / 三、智能体协同 3.3 协同通信协议 | ## 3.3 协同通信协议（示例） |
@@ -342,6 +345,51 @@ output_schema: object     # 同上；GET /api/adapters 投影携带两者，未�
 permission: enum[read, write, delete, financial]
 timeout: number
 is_idempotent: boolean
+```
+
+### `embed_config` — 字段概览（网页嵌入配置，**第七类 SchemaRegistry 实体**；完整定义见 05-组件设计-运营体五项核心.md §4.3 `interaction_channels.web_widget` 具体化；权威＝docs/133 §2.1/§3.1）
+
+```yaml
+tenant_id: string             # 租户分区（PK 组成 1）
+graph_id: string              # 允许只读嵌入的图（PK 组成 2）
+enabled: boolean              # 缺省 false（fail-closed）
+token_ttl_seconds: number     # 1–86400 门控；嵌入短链时效
+```
+
+### `adapter_definition` — 字段概览（NL 造工具草稿；完整定义见 docs/133 §2.2，落码承载＝`harness/definition.py`；能力形状对齐上方 `adapter_schema` 的 `capabilities` 子形状）
+
+```yaml
+name: string                  # 适配器名（如 "shopify-orders-api"）
+description: string
+base_url: string
+auth_type: enum[none, header, query]   # 缺省 none（F-P2 最小权限）
+capabilities: []              # Capability 同构（name/description/input_schema/output_schema/permission/is_idempotent）
+permission: enum[read, write, delete, financial]  # 草稿缺省 read；auth_type 非 none 需 admin 确认
+```
+
+### `experiment` — 字段概览（A/B 实验对照判定，D77；完整定义见 docs/134 §2.1 实体与生命周期、§2.3 判定纯函数；迁移 056；REST 投影为 camelCase）
+
+```yaml
+id: string                    # exp-N（seq 取 storage_id_seq）
+graph_id: string              # 实验所属图
+version_a: integer            # 对照臂（stable）
+version_b: integer            # 实验臂（candidate）
+traffic_percent: integer      # 1–99，缺省 50；分流＝既有 CanaryRule(percent=trafficPercent)，零新分桶代码
+primary_metric: enum[run_error_rate, manual_escalation_rate, refund_amount_diff_rate]  # 复用 GateMetricId 三枚举（D70 指标口径闭环）
+min_samples: integer          # 缺省 30；每臂样本下限（Fisher 精确检验因此排除、z 近似成立）
+status: enum[running, concluded]
+prior_config: object          # 实验前 RolloutConfig 快照（conclude 恢复凭据）
+verdict: object | null        # 判定结果；running 期呈 collecting/inconclusive 中间态，concluded 时冻结
+  state: enum[collecting, inconclusive, significant]
+  winner: enum[a, b]?         # 仅 significant 时存在；低率臂胜
+  z: number?
+  pValue: number?
+  judgedAt: string?           # UTC ISO-8601
+conclusion_action: enum[adopt_a, adopt_b] | null   # 人决：adopt_a→rollback（stable 接全量）／adopt_b→promote＋priorConfig 恢复
+conclusion_reason: string?
+created_by: string
+created_at: string            # UTC ISO-8601
+concluded_at: string | null
 ```
 
 ### `skill_schema` — 字段概览（完整定义见 05-组件设计-运营体五项核心.md #20，上下文章节：## 1.2 技能的数据结构（示例））

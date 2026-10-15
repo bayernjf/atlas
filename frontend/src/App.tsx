@@ -11,6 +11,10 @@ import { Approvals } from './pages/Approvals'
 import { AuditLog } from './pages/AuditLog'
 import { OpenApiImports } from './pages/OpenApiImports'
 import { EmailApproval } from './pages/EmailApproval'
+import { Embed } from './pages/Embed'
+import { EmbedsConfig } from './pages/EmbedsConfig'
+import { AdapterDrafts } from './pages/AdapterDrafts'
+import { Experiments } from './pages/Experiments'
 import { Waits } from './pages/Waits'
 import { Schedules } from './pages/Schedules'
 import { Agents } from './pages/Agents'
@@ -28,16 +32,19 @@ import {
   type Principal,
 } from './lib/auth'
 import { extractEmailToken } from './lib/approvals'
+import { extractEmbedToken } from './lib/embeds'
 import { antdTheme } from './theme/tokens'
 import { useAntdLocale } from './locales/antdLocale'
 
-type Page = 'dashboard' | 'editor' | 'monitoring' | 'memory' | 'connections' | 'users' | 'approvals' | 'audit' | 'openapi' | 'waits' | 'schedules' | 'agents' | 'reflection' | 'models' | 'usage' | 'templates'
+type Page = 'dashboard' | 'editor' | 'monitoring' | 'memory' | 'connections' | 'users' | 'approvals' | 'audit' | 'openapi' | 'waits' | 'schedules' | 'agents' | 'reflection' | 'models' | 'usage' | 'templates' | 'embeds' | 'adapterDrafts' | 'experiments'
 
 function App() {
   const antdLocale = useAntdLocale()
   const emailToken = extractEmailToken(window.location.pathname)
+  // 打包 BQ（docs/133 D76）：网页嵌入深链 /embed/{token}，同样无登录独立外壳。
+  const embedToken = extractEmbedToken(window.location.pathname)
   const [principal, setPrincipal] = useState<Principal | null>(() =>
-    emailToken ? null : getStoredPrincipal(),
+    emailToken || embedToken ? null : getStoredPrincipal(),
   )
   const [page, setPage] = useState<Page>('dashboard')
   // 打包 ZS（docs/92 E-3）：反思「去修改」跳转编辑器时待打开的图 id（App 状态导航，无 router）。
@@ -68,6 +75,15 @@ function App() {
     return (
       <ConfigProvider theme={antdTheme} locale={antdLocale}>
         <EmailApproval token={emailToken} />
+      </ConfigProvider>
+    )
+  }
+
+  // 网页嵌入深链：/embed/{token} 公开只读面（docs/133 D76），无登录态。
+  if (embedToken) {
+    return (
+      <ConfigProvider theme={antdTheme} locale={antdLocale}>
+        <Embed token={embedToken} />
       </ConfigProvider>
     )
   }
@@ -130,6 +146,9 @@ function App() {
           onOpenModels={() => setPage('models')}
           onOpenUsage={() => setPage('usage')}
           onOpenTemplates={() => setPage('templates')}
+          onOpenEmbeds={() => setPage('embeds')}
+          onOpenAdapterDrafts={() => setPage('adapterDrafts')}
+          onOpenExperiments={() => setPage('experiments')}
         />
       ) : page === 'approvals' ? (
         <Approvals
@@ -189,6 +208,14 @@ function App() {
         />
       ) : page === 'openapi' ? (
         <OpenApiImports principal={principal} onLogout={handleLogout} onBack={() => setPage('dashboard')} />
+      ) : page === 'embeds' && roleCan(principal.role, 'administer') ? (
+        <EmbedsConfig principal={principal} onLogout={handleLogout} onBack={() => setPage('dashboard')} />
+      ) : page === 'adapterDrafts' ? (
+        // 列表是 read 面（viewer 也可见草稿与决策状态）；写操作页内按角色禁用（docs/133 D71）。
+        <AdapterDrafts principal={principal} onLogout={handleLogout} onBack={() => setPage('dashboard')} />
+      ) : page === 'experiments' ? (
+        // 列表是 read 面（viewer 也可见实验与判定状态）；创建/收结在页内按角色禁用（docs/134 BR-D4）。
+        <Experiments principal={principal} onLogout={handleLogout} onBack={() => setPage('dashboard')} />
       ) : page === 'models' && roleCan(principal.role, 'read') ? (
         <Models principal={principal} onLogout={handleLogout} onBack={() => setPage('dashboard')} />
       ) : page === 'usage' && roleCan(principal.role, 'read') ? (

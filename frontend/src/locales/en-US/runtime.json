@@ -95,5 +95,6 @@
   "APPROVAL_NOT_ASSIGNED": "This approval is restricted to the assigned approver",
   "LLM_STRUCTURED_UNAVAILABLE": "LLM structured node unavailable: no usable model configured (LITELLM_MODEL/OPENAI_API_KEY) or provider unreachable; node failed",
   "MESSAGE_TEMPLATE_NAME_CONFLICT": "Message template with this name already exists: {{name}}",
-  "RECORDING_PROMOTE_ACCEPT_UNKNOWN": "Ticked substitution candidates are not part of this plan: {{unknown}}; the whole request was rejected and no graph changed"
+  "RECORDING_PROMOTE_ACCEPT_UNKNOWN": "Ticked substitution candidates are not part of this plan: {{unknown}}; the whole request was rejected and no graph changed",
+  "GENERATED_INVALID_PARAMETER": "Generated adapter is missing a path parameter: {{name}}"
 }

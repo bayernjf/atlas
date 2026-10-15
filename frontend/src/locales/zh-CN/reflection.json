@@ -50,6 +50,25 @@
     "gateConfig": "打开编辑器：发布/灰度配置",
     "disabled": "缺少图 id，无法定位"
   },
+  "autoapply": {
+    "start": "自动生效",
+    "title": "自动生效记录（每圈证据）",
+    "runId": "批次",
+    "status": {
+      "pending": "进行中",
+      "completed": "已完成",
+      "aborted": "已中止",
+      "failed": "失败"
+    },
+    "publish": "发布",
+    "rollout": "灰度",
+    "reason": "说明",
+    "stages": "阶段",
+    "abort": "中止",
+    "startedOk": "自动生效已完成（发布+进灰度）",
+    "startedFail": "自动生效未通过：{{reason}}",
+    "abortedOk": "已中止并回滚（canary 态＝手动回滚）"
+  },
   "loadFailed": "反思报告加载失败",
   "loadFailedHint": "请稍后刷新重试。"
 }

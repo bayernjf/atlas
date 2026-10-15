@@ -177,11 +177,20 @@ from atlas.recording import (
     seed_anchor,
 )
 from atlas.routing import (
+    CanaryRule,
+    Experiment,
+    ExperimentError,
+    GateConfig,
+    GateMetricId,
     RolloutConfig,
     RolloutError,
     RolloutState,
     TriggerEvent,
+    arm_stats,
     evaluate_after_run,
+    judge,
+    primary_counts,
+    required_samples,
 )
 from atlas.shop.service import DemoShopService
 from atlas.storage.frame import card_context_from_frame, remaining_seconds
@@ -220,6 +229,15 @@ from atlas.scheduling.models import (
 from atlas.scheduling.pg_store import PgScheduleStore
 from atlas.scheduling.store import InMemoryScheduleStore, ScheduleStore
 from atlas.reflection import run_pass as run_reflection_pass
+from atlas.reflection.autoapply import AUTO_SCOPES, abort_autoapply, run_autoapply
+from atlas.embeds.token import EmbedTokenError, EmbedTokenIssuer
+from atlas.harness.definition import (
+    AdapterDefinitionError,
+    definition_to_dict,
+    validate_adapter_definition,
+)
+from atlas.httpapi.service import HttpApiCallError, HttpApiClient
+from atlas.llm.structured import LLMStructuredUnavailable, generate_adapter_definition
 from atlas.template import get_template, list_templates
 from atlas.template.user_store import TemplateVersionConflict
 from atlas.web.i18n import localize_template, localize_tool_desc, resolve_locale
@@ -1991,6 +2009,354 @@ def put_reflection_decision(
         f"reflection.decide.{body.status}", 200,
     )
     return candidate if candidate is not None else {}
+
+
+# --- 打包 BP（docs/132）：进化候选门控自动生效（D75，里程碑 E） --------------------
+
+
+def _publish_hook(services: TenantServices, tenant_id: str, graph_id: str) -> int:
+    """自动生效的发布段：冻结 latest 草稿为不可变版本＋派生调度（与手动 publish 同出口）。"""
+    release_version = publish_graph_version(services.graph_store, graph_id)
+    _derive_schedule_on_publish(services, tenant_id, graph_id, release_version)
+    return release_version
+
+
+class AutoApplyRequest(BaseModel):
+    """自动生效启动请求（docs/132 BP-D2）：enabledScopes 缺省＝租户已开类别。
+
+    显式传时**并入**租户级类别开关（一次开启并执行）；仅接受图内参数类
+    （graph_variable/node_config），其余值 422（fail-closed，BP-D1）。
+    """
+
+    enabledScopes: list[str] | None = None
+
+
+@app.post("/api/reflection/candidates/{candidate_id}/autoapply", status_code=201)
+def start_candidate_autoapply(
+    http_request: Request,
+    candidate_id: str,
+    body: AutoApplyRequest | None = None,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """候选自动生效（docs/132 BP-D2/D4）：patch→影子→黄金回放→发布→canary，每步留证据。
+
+    幂等：同一候选已有自动生效记录（任意状态）→ 409（BP-D2）；候选不存在 404；
+    已处理候选（adopted/dismissed）→ 409；类别开关未开 → run 以 failed 留证（fail-closed，
+    BP-D1）。返回 AutoApplyRun（含每圈证据）。read 角色 403。
+    """
+    services = services_for(principal)
+    if candidate_id in {
+        row["candidate_id"] for row in services.autoapply_store.list(limit=200)
+    }:
+        raise HTTPException(
+            status_code=409, detail=f"候选 {candidate_id} 已执行过自动生效（幂等）"
+        )
+    enabled_scopes = (
+        set(body.enabledScopes)
+        if body is not None and body.enabledScopes is not None
+        else set(services.autoapply_enabled_scopes)
+    )
+    invalid = enabled_scopes - AUTO_SCOPES
+    if invalid:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"不支持的自动生效类别：{sorted(invalid)}（v1 仅允许 {sorted(AUTO_SCOPES)}）"
+            ),
+        )
+    services.autoapply_enabled_scopes |= enabled_scopes
+    try:
+        run = run_autoapply(
+            services,
+            tenant_id=principal.tenant_id,
+            candidate_id=candidate_id,
+            enabled_scopes=enabled_scopes,
+            registry=_runtime_registry(services),
+            graph_resolver=_tenant_graph_resolver(services),
+            publish_hook=_publish_hook,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    _record_audit(services, principal, http_request, "reflection.autoapply", 201)
+    return run
+
+
+@app.post("/api/reflection/autoapply/{run_id}/abort")
+def abort_autoapply_run(
+    http_request: Request,
+    run_id: str,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """中止自动生效（docs/132 BP-D5）：canary 态＝手动回滚；pending 取消；终态幂等。"""
+    services = services_for(principal)
+    run = abort_autoapply(services, tenant_id=principal.tenant_id, run_id=run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"自动生效记录不存在：{run_id}")
+    _record_audit(services, principal, http_request, "reflection.autoapply.abort", 200)
+    return run
+
+
+@app.get("/api/reflection/autoapply")
+def list_autoapply_runs(
+    graph_id: str | None = None,
+    limit: int = 50,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """本租户自动生效记录（倒序；docs/132 BP-D6 每圈证据列表投影，不含大字段）。"""
+    services = services_for(principal)
+    return {"items": services.autoapply_store.list(graph_id=graph_id, limit=limit)}
+
+
+@app.get("/api/reflection/autoapply/config")
+def get_autoapply_config(principal: Principal = Depends(require("read"))) -> dict[str, Any]:
+    """类别开关投影（docs/132 §3.4）：已开启类别／可自动类别／结构类恒不自动。
+
+    **必须先于 ``/autoapply/{run_id}`` 注册**（静态段不被路径参数吞掉）。
+    """
+    services = services_for(principal)
+    return {
+        "enabledScopes": sorted(services.autoapply_enabled_scopes),
+        "availableScopes": sorted(AUTO_SCOPES),
+        "structureAuto": False,
+    }
+
+
+@app.get("/api/reflection/autoapply/{run_id}")
+def get_autoapply_run(
+    run_id: str, principal: Principal = Depends(require("read"))
+) -> dict[str, Any]:
+    """单条自动生效记录详情（含 patch/shadow/gate/rollout 全证据；docs/132 §3.4）。"""
+    services = services_for(principal)
+    run = services.autoapply_store.get(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"自动生效记录不存在：{run_id}")
+    return run
+
+
+class AdapterDraftRequest(BaseModel):
+    prompt: str = Field(min_length=1)
+
+
+class AdapterDecisionRequest(BaseModel):
+    decision: Literal["adopted", "dismissed"]
+    authConfirmed: bool = False
+
+
+class EmbedConfigRequest(BaseModel):
+    graph_id: str = Field(min_length=1)
+    enabled: bool = False
+    token_ttl_seconds: int = 3600
+
+
+class EmbedTokenRequest(BaseModel):
+    graph_id: str = Field(min_length=1)
+
+
+# dry-run 连通校验用短超时（默认 30s 太久；探测失败即标记不可达）。
+_DRY_RUN_TIMEOUT_SECONDS = 8.0
+
+
+@app.post("/api/adapter-drafts", status_code=201)
+def create_adapter_draft(
+    http_request: Request,
+    request: AdapterDraftRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """NL 造工具草稿（docs/133 BQ-D5，docs/107 §3.2 闭合）：业务描述 → AdapterDefinition 草稿。
+
+    LLM 不可用/坏 JSON 显式 422（不静默降级）；草稿形状违例 422；落草稿后待 dry-run＋人工采纳。
+    """
+    services = services_for(principal)
+    try:
+        raw = generate_adapter_definition(
+            prompt=request.prompt, tenant_id=principal.tenant_id
+        )
+    except LLMStructuredUnavailable as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    try:
+        definition = validate_adapter_definition(raw)
+    except AdapterDefinitionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    draft = services.adapter_drafts.add(definition_to_dict(definition))
+    _record_audit(services, principal, http_request, "adapter_draft.create", 201)
+    return draft
+
+
+@app.post("/api/adapter-drafts/{draft_id}/dry-run")
+def dry_run_adapter_draft(
+    http_request: Request,
+    draft_id: str,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """连通校验（docs/133 BQ-D3）：对 base_url 发只读 GET，过 EgressGuard，不落运行账。
+
+    2xx 视为可达；非 2xx/传输失败/SSRF 拒绝 → reachable=false＋原因。不改 decision 状态。
+    """
+    services = services_for(principal)
+    draft = services.adapter_drafts.get(draft_id)
+    if draft is None:
+        raise HTTPException(status_code=404, detail=f"适配器草稿不存在：{draft_id}")
+    base_url = (draft.get("definition") or {}).get("base_url", "")
+    ok = False
+    reason = "base_url 为空"
+    if base_url:
+        client = HttpApiClient(base_url=base_url)
+        try:
+            result = client.request(
+                method="GET", url="/", timeout=_DRY_RUN_TIMEOUT_SECONDS, idempotent=True
+            )
+            status = int(result.get("status", 0))
+            ok = 200 <= status < 300
+            reason = "" if ok else f"HTTP {status}"
+        except HttpApiCallError as exc:
+            ok = False
+            reason = f"{exc.code}: {exc}"
+    from datetime import datetime, timezone as _tz
+
+    payload = {
+        "checkedAt": datetime.now(_tz.utc).isoformat(),
+        "ok": ok,
+        "reason": reason,
+    }
+    updated = services.adapter_drafts.set_reachability(draft_id, payload)
+    _record_audit(services, principal, http_request, "adapter_draft.dry_run", 200)
+    return updated
+
+
+@app.put("/api/adapter-drafts/{draft_id}/decision")
+def decide_adapter_draft(
+    http_request: Request,
+    draft_id: str,
+    request: AdapterDecisionRequest,
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, Any]:
+    """人工采纳（docs/133 BQ-D4，复用 D51 decision 形态）：adopted/dismissed、可改判。
+
+    **F-P2 最小权限＋采纳即人审**：只有 admin 可决策；auth_type 非 none（真实执行要凭据）
+    的草稿须 authConfirmed=true 显式确认才可采纳，否则 422。
+    """
+    services = services_for(principal)
+    draft = services.adapter_drafts.get(draft_id)
+    if draft is None:
+        raise HTTPException(status_code=404, detail=f"适配器草稿不存在：{draft_id}")
+    if (
+        request.decision == "adopted"
+        and (draft.get("definition") or {}).get("auth_type", "none") != "none"
+        and not request.authConfirmed
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="auth_type 非 none 的适配器执行需要凭据，须 admin 显式确认（authConfirmed=true）",
+        )
+    updated = services.adapter_drafts.set_decision(draft_id, request.decision)
+    _record_audit(services, principal, http_request, "adapter_draft.decide", 200)
+    return updated
+
+
+@app.get("/api/adapter-drafts")
+def list_adapter_drafts(
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """本租户适配器草稿（倒序；docs/133 §2.2 投影）。"""
+    services = services_for(principal)
+    return {"items": services.adapter_drafts.list()}
+
+
+@app.get("/api/embeds/config")
+def list_embed_configs(principal: Principal = Depends(require("administer"))) -> dict[str, Any]:
+    """嵌入配置列表（第七类 SchemaRegistry 实体；docs/133 §2.1）。
+
+    **必须先于 ``/api/embeds/{token}`` 注册**（静态段不被路径参数吞掉）。
+    """
+    services = services_for(principal)
+    return {"items": services.embed_store.list()}
+
+
+@app.put("/api/embeds/config")
+def upsert_embed_config(
+    http_request: Request,
+    request: EmbedConfigRequest,
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, Any]:
+    """开启/调整某图的只读嵌入（enabled 缺省 false＝fail-closed；ttl 1–86400 门控）。"""
+    services = services_for(principal)
+    config = services.embed_store.upsert(
+        request.graph_id,
+        enabled=request.enabled,
+        token_ttl_seconds=request.token_ttl_seconds,
+    )
+    _record_audit(services, principal, http_request, "embed.config", 200)
+    return config
+
+
+@app.post("/api/embeds", status_code=201)
+def create_embed_token(
+    http_request: Request,
+    request: EmbedTokenRequest,
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, Any]:
+    """签发嵌入短链（docs/133 BQ-D1：同形 HMAC，不新建鉴权形态）。图未启用嵌入 → 422。"""
+    services = services_for(principal)
+    config = services.embed_store.get(request.graph_id)
+    if config is None or not config["enabled"]:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Graph {request.graph_id} 未启用只读嵌入，请先通过 PUT /api/embeds/config 开启",
+        )
+    issuer = EmbedTokenIssuer()
+    token = issuer.issue(
+        principal.tenant_id, request.graph_id, ttl_seconds=config["token_ttl_seconds"]
+    )
+    _record_audit(services, principal, http_request, "embed.token", 201)
+    return {"token": token, "tokenUrl": f"{_PUBLIC_URL}/embed/{token}"}
+
+
+@app.get("/api/embeds/{token}")
+def embed_readonly_view(token: str) -> dict[str, Any]:
+    """公开只读嵌入面（docs/133 BQ-D2：无登录态、无副作用）。
+
+    验签失败统一 404（不区分 malformed/bad signature/expired，照邮件深链纪律）。
+    投影＝图元信息＋最近运行摘要；**不含** 密钥/决策/草稿键。
+    """
+    issuer = EmbedTokenIssuer()
+    try:
+        body = issuer.verify(token)
+    except EmbedTokenError as exc:
+        raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID) from exc
+    tenant_id = str(body.get("tenant", ""))
+    graph_id = str(body.get("graph", ""))
+    services = tenant_registry.peek(tenant_id)
+    if services is None:
+        raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID)
+    raw = services.graph_store.get(graph_id)
+    if raw is None:
+        raise HTTPException(status_code=404, detail=f"Graph 不存在：{graph_id}")
+    runs = [
+        r
+        for r in services.run_store.list(status=None, limit=20)
+        if r.get("graphId") == graph_id
+    ]
+    last = runs[0] if runs else None
+    return {
+        "graphId": graph_id,
+        "name": raw.get("name", ""),
+        "nodeCount": len(raw.get("nodes") or []),
+        "variables": [
+            {"name": v.get("name"), "value": v.get("value")}
+            for v in (raw.get("variables") or [])
+        ],
+        "lastRun": (
+            {
+                "runId": last.get("runId"),
+                "status": last.get("status"),
+                "startedAt": last.get("startedAt"),
+            }
+            if last is not None
+            else None
+        ),
+    }
 
 
 class CronPreviewRequest(BaseModel):
@@ -3766,6 +4132,198 @@ def rollback_rollout(
     except RolloutError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _rollout_projection(state)
+
+
+class ExperimentCreateBody(BaseModel):
+    """POST /api/experiments 请求体（docs/134 §2.4；camelCase 直进直出，GateMetric 先例）。"""
+
+    graphId: str
+    versionA: int
+    versionB: int
+    trafficPercent: int = Field(default=50, ge=1, le=99)
+    primaryMetric: GateMetricId
+    minSamples: int = Field(default=30, ge=1)
+
+
+class ExperimentConcludeBody(BaseModel):
+    """POST /api/experiments/{exp_id}/conclude 请求体；判定只读建议、conclude 人决（BR-D4）。"""
+
+    action: Literal["adopt_a", "adopt_b"]
+    reason: str | None = None
+
+
+def _experiment_body_or_422(body: Any, model: type[BaseModel], label: str) -> Any:
+    """实验端点 body → 模型；非法形状聚合为中文 422（照 _rollout_config_or_422 先例）。"""
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=422, detail=f"{label}必须是 JSON 对象")
+    try:
+        return model.model_validate(body)
+    except ValidationError as exc:
+        messages = []
+        for error in exc.errors():
+            loc = ".".join(str(part) for part in error["loc"])
+            messages.append(f"{loc}：{error['msg']}" if loc else error["msg"])
+        raise HTTPException(status_code=422, detail=f"{label}非法：" + "；".join(messages)) from exc
+
+
+def _experiment_window(services: Any, exp: Experiment) -> list[Any]:
+    """判定窗口＝实验 createdAt 起累计的该图运行（ISO 字符串同型比较；上限照 monitoring ring 200，照实记）。"""
+    runs = services.monitoring.list_runs(exp.graphId, limit=200)
+    return [run for run in runs if run.finished_at >= exp.createdAt]
+
+
+@app.post("/api/experiments")
+def create_experiment(
+    body: dict[str, Any] | None = None,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """创建即启动（docs/134 §2.4）：快照原配置→写纯 canary 实验配置→显式两版 start→落库。
+
+    graph 404；A==B／版本非该图发布版 422；rollout 非 idle 409；同图已有 running 实验 409（BR-D6）。
+    """
+    payload: ExperimentCreateBody = _experiment_body_or_422(body, ExperimentCreateBody, "实验创建请求")
+    services = services_for(principal)
+    graph_id = payload.graphId
+    if services.graph_store.get(graph_id) is None and not services.graph_store.list_versions(graph_id):
+        raise HTTPException(status_code=404, detail=f"Graph 不存在：{graph_id}")
+    if payload.versionA == payload.versionB:
+        raise HTTPException(
+            status_code=422,
+            detail=f"versionA 与 versionB 不可为同一版本（v{payload.versionA}）",
+        )
+    versions = services.graph_store.list_versions(graph_id)
+    for label, version in (("versionA", payload.versionA), ("versionB", payload.versionB)):
+        if version not in versions:
+            raise HTTPException(
+                status_code=422, detail=f"{label} 版本 v{version} 不在该图发布版本列表内"
+            )
+    snapshot = services.routing_store.snapshot(graph_id)
+    if snapshot.status != "idle":
+        raise HTTPException(
+            status_code=409,
+            detail=f"rollout 当前为 {snapshot.status} 态：实验须从 idle 开启（BR-D6）",
+        )
+    running = services.experiment_store.running_for_graph(graph_id)
+    if running is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"该图已有进行中的实验 {running.id}：同图同一时刻至多一个 running 实验（BR-D6）",
+        )
+    prior = snapshot.config
+    config = RolloutConfig(
+        rules=[CanaryRule(percent=payload.trafficPercent)],
+        gate=prior.gate if prior is not None else GateConfig(autoRollback=False),
+    )
+    services.routing_store.configure(graph_id, config)
+    try:
+        services.routing_store.start(
+            graph_id, versions, stable=payload.versionA, candidate=payload.versionB
+        )
+    except RolloutError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    exp = services.experiment_store.create(
+        graph_id=graph_id,
+        version_a=payload.versionA,
+        version_b=payload.versionB,
+        traffic_percent=payload.trafficPercent,
+        primary_metric=payload.primaryMetric,
+        min_samples=payload.minSamples,
+        prior_config=prior,
+        created_by=principal.username,
+    )
+    return exp.model_dump()
+
+
+@app.get("/api/experiments")
+def list_experiments(
+    graphId: str | None = None,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """实验列表（轻投影：不含臂统计，避免逐实验扫 ring；createdAt 倒序）。"""
+    experiments = services_for(principal).experiment_store.list(graph_id=graphId)
+    return {"experiments": [exp.model_dump() for exp in experiments]}
+
+
+@app.get("/api/experiments/{exp_id}")
+def get_experiment(
+    exp_id: str,
+    mde: float = 0.05,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """实验详情＋两臂 armStats＋verdict（running 活算建议／concluded 取冻结）＋splitActive＋requiredSamples 指导。"""
+    services = services_for(principal)
+    exp = services.experiment_store.get(exp_id)
+    if exp is None:
+        raise HTTPException(status_code=404, detail=f"实验不存在：{exp_id}")
+    window = _experiment_window(services, exp)
+    stats_a = arm_stats(window, exp.versionA)
+    stats_b = arm_stats(window, exp.versionB)
+    verdict = (
+        exp.verdict
+        if exp.status == "concluded" and exp.verdict is not None
+        else judge(exp, stats_a, stats_b)
+    )
+    snapshot = services.routing_store.snapshot(exp.graphId)
+    x_a, n_a = primary_counts(stats_a, exp.primaryMetric)
+    baseline = (x_a / n_a) if n_a else None
+    projection = exp.model_dump()
+    projection["armStats"] = {"A": stats_a.model_dump(), "B": stats_b.model_dump()}
+    projection["verdict"] = verdict.model_dump()
+    projection["splitActive"] = (
+        snapshot.status == "canary" and snapshot.candidate == exp.versionB
+    )
+    projection["requiredSamples"] = (
+        required_samples(baseline, mde) if baseline is not None else None
+    )
+    return projection
+
+
+@app.post("/api/experiments/{exp_id}/conclude")
+def conclude_experiment(
+    exp_id: str,
+    body: dict[str, Any] | None = None,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """冻结 verdict＋人决落库：adopt_b→promote／adopt_a→rollback（幂等同既有），恢复 priorConfig（BR-D4/D5）。
+
+    不存在/跨租户 404；已终态 409；rollout 侧冲突 409（未落库可重试）；人可改判，verdict 与 action 不一致照实记录。
+    """
+    payload: ExperimentConcludeBody = _experiment_body_or_422(
+        body, ExperimentConcludeBody, "实验 conclude 请求"
+    )
+    services = services_for(principal)
+    exp = services.experiment_store.get(exp_id)
+    if exp is None:
+        raise HTTPException(status_code=404, detail=f"实验不存在：{exp_id}")
+    if exp.status == "concluded":
+        raise HTTPException(status_code=409, detail=f"实验 {exp_id} 已终态，不可重复 conclude")
+    window = _experiment_window(services, exp)
+    verdict = judge(exp, arm_stats(window, exp.versionA), arm_stats(window, exp.versionB))
+    graph_id = exp.graphId
+    snapshot = services.routing_store.snapshot(graph_id)
+    try:
+        if payload.action == "adopt_b":
+            if not (snapshot.status == "full" and snapshot.candidate == exp.versionB):
+                services.routing_store.promote(graph_id)
+        else:
+            services.routing_store.rollback(
+                graph_id,
+                actor="manual",
+                reason=f"实验 conclude：{payload.action}（verdict={verdict.status}）",
+            )
+    except RolloutError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if exp.priorConfig is not None:
+        services.routing_store.configure(graph_id, exp.priorConfig)
+    try:
+        concluded = services.experiment_store.conclude(
+            exp_id, verdict=verdict, action=payload.action, reason=payload.reason
+        )
+    except ExperimentError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if concluded is None:  # pragma: no cover - 并发 reset 竞态兜底
+        raise HTTPException(status_code=404, detail=f"实验不存在：{exp_id}")
+    return concluded.model_dump()
 
 
 @app.get("/api/templates")
