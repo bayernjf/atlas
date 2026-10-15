@@ -3,6 +3,13 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔docs〕打包 BQ 立项＝D76 网页嵌入＋D71 NL 造工具（2026-10-15，用户「后续你接着推进」授权；docs-only，零代码）
+
+- **动机**：docs/127 六个里程碑的最后一个 F「挂进客户页面」——Atlas 入口只有自有画布＋审批卡片＋Webhook，客户后台里没有任何只读嵌入面（D76）；业务描述里出现平台尚无的能力时只能人工去接 OpenAPI，缺「NL 造工具→dry-run→人采纳」通道（D71，docs/107「NL 生成适配器配置」旧条闭合）。
+- **形状**（docs/133 为权威）：D76 一期只做网页嵌入——`embed_configs` 第七类 SchemaRegistry 实体（03 索引加行）＋**签名短链复用审批 HMAC 同形**（`email_token.py` 同算法/同密钥链/同失效处理，不新建鉴权形态）＋公开只读面（图元信息＋最近运行摘要，不含密钥/决策/草稿）；D71 最小切片——新 `harness/definition.py` `AdapterDefinition` 类型（代码零命中，契约概念级需新增）＋`llm/structured.py` `generate_adapter_definition`（走既有 `call_structured_json`）＋dry-run 只读连通校验（过 EgressGuard）＋admin 采纳（复用 D51 decision 形态）＋`adapter_drafts` 两档（adopted 后 `runtime.py` 动态装配，与 openapi 同款）。
+- **决策**：**F-P1 按推荐口径拍板＝嵌入配置作为 SchemaRegistry 第七类实体（是）**（真实运营者配置面、`saved-graph-select` 控件已有；docs/115 §8 的 YAGNI 结论针对抽统一注册表非单实体接入）；**F-P2 按推荐口径拍板＝造适配器默认最小权限＋采纳即人审**（草稿 permission 缺省 READ、auth_type 非 none 需 admin 确认、adopt＝admin 人审＋granted READ 最小集——照实记录 v1 的"首次运行强制人审"落地为采纳环节而非运行期插人工）；BQ-D3 dry-run 只读不落运行账；BQ-D7 不自动采纳不自动发布。
+- **验收**：U1477–U1488（含四条反向门）预留于 docs/13；迁移 054（embed_configs）＋055（adapter_drafts）；docs/14 D71/D76 两行翻 🟡；落码另批。
+
 ### 〔feat〕打包 BP 落码收口＝D75 进化候选门控自动生效（2026-10-14，用户「那你推进」授权；原子序 docs/132 §4 落至六步，用例＋门为第七八步）
 
 - **patch 层**（`reflection/patch.py` 新增）：`patch_candidate(changes, latest_draft, base_version, graph_snapshot)` → `PatchOutcome{ok, new_draft, diff, reason}`；只认 `graph_variable`（改 `variables[].value` 按 name 命中）＋`node_config`（改 `nodes[].config.confidenceThreshold` 按 node_id 定位，缺 node_id/节点找不到/非 ai_decision 照实不猜）；monitor_rule/gate_config 行 `skipped=True` 计入 diff（BP-D1，不静默吞不阻断）。
