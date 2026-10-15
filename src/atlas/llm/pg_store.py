@@ -7,8 +7,10 @@
 两点与内存档的**刻意差异**（docs/129 AU-D2）：
 - **不设 ring**：PG 是成本账的权威档，淘汰即丢账；内存档 ring 2000 只是
   Demo/无 PG 形态的有界缓冲（超出覆盖最旧）。
-- **不挂 retention**：`ATLAS_RETENTION_DAYS` 本批不接（AU-D7 余部），
-  清零只走 `/api/demo/reset`。
+- **retention 已挂**（2026-10-16 AU-D7 余部闭合）：走 docs/65 K-A 那套
+  分表 env `ATLAS_RETENTION_LLM_USAGE_DAYS`（缺省回退全局
+  `ATLAS_RETENTION_DAYS`，再回退默认 90 天，与 audit/runs 成本账对齐）；
+  立即清零仍走 `/api/demo/reset`。
 """
 
 from __future__ import annotations

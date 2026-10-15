@@ -122,6 +122,12 @@ class PgBackend:
                 "DELETE FROM message_deliveries "
                 "WHERE sent_at < CAST(:cutoff AS timestamptz)"
             ),
+            # LLM 用量成本账（docs/129 打包 AU；2026-10-16 AU-D7 余部接入 retention）：
+            # ts 为 TEXT ISO 列，须 ::timestamptz 转换再比较（防字典序坑）。
+            "llm_usage": (
+                "DELETE FROM llm_usage "
+                "WHERE ts::timestamptz < CAST(:cutoff AS timestamptz)"
+            ),
             # 长期记忆保留期裁剪（docs/14 D35 安全切片）：created_at 为 TEXT ISO 列，
             # 须 ::timestamptz 转换再比较。cutoff 为 None（缺省，未显式配置）时整表跳过——
             # 长期记忆缺省永不过期，也不跟随全局 ATLAS_RETENTION_DAYS（见 retention.py）。

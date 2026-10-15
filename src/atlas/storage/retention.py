@@ -25,6 +25,7 @@ TABLE_ENVS: dict[str, str] = {
     "graph_versions": "ATLAS_RETENTION_GRAPH_VERSIONS_DAYS",
     "openapi_imports": "ATLAS_RETENTION_OPENAPI_IMPORTS_DAYS",
     "message_deliveries": "ATLAS_RETENTION_MESSAGE_DELIVERIES_DAYS",
+    "llm_usage": "ATLAS_RETENTION_LLM_USAGE_DAYS",
 }
 
 DEFAULT_DAYS: dict[str, int] = {
@@ -35,12 +36,13 @@ DEFAULT_DAYS: dict[str, int] = {
     "graph_versions": 365,
     "openapi_imports": 365,
     "message_deliveries": 30,
+    "llm_usage": 90,
 }
 
 _GLOBAL_DAYS_ENV = "ATLAS_RETENTION_DAYS"
 _GLOBAL_DAYS_DEFAULT = 90
 
-# 长期记忆（docs/14 D35 保留期裁剪安全切片）与上面 7 张运维表刻意不同：
+# 长期记忆（docs/14 D35 保留期裁剪安全切片）与上面 8 张运维表刻意不同：
 #  - 缺省**不过期**（env 未设置 → cutoff=None，prune 整表跳过），长期记忆是产品核心价值，
 #    不能像 runs/投递日志那样到点默认清掉；
 #  - **不跟随**全局 ATLAS_RETENTION_DAYS，必须用本变量独立显式开启，否则运维为回收磁盘
@@ -87,7 +89,7 @@ def _days_for(table: str) -> int:
 def assemble_cutoffs() -> dict[str, str | None]:
     """读 env 组装 {表名: UTC ISO 截止串 | None}；每表保留期至少 1 天（env 负数按 1 计）。
 
-    7 张运维表缺省有默认保留期；长期记忆表 memory_items 缺省为 None（不过期），
+    8 张运维表缺省有默认保留期；长期记忆表 memory_items 缺省为 None（不过期），
     仅当显式设置 ATLAS_RETENTION_MEMORY_DAYS 时才给出截止串（见 _memory_cutoff）。
     """
     now = datetime.now(timezone.utc)
