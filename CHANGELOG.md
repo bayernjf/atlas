@@ -3,6 +3,11 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔feat〕D70 余部之一＝`llm_usage` 接入保留期清扫（2026-10-16，用户「那你搞」授权；docs/129 AU-D7 余部闭合）
+
+- **retention 接入**：`llm_usage` 挂 docs/65 K-A 既有钩子——分表 env `ATLAS_RETENTION_LLM_USAGE_DAYS`（缺省回退全局 `ATLAS_RETENTION_DAYS`、再回退默认 90 天，对齐 audit/runs 成本账）；PG 侧 `prune_expired` 新增 DELETE（`ts::timestamptz` 转换防字典序坑）；docker-compose 透传新 env（U1158 parity 门）；`llm/pg_store.py` docstring 同步。立即清零仍走 `/api/demo/reset` 不变。
+- **测试与门**：U1519（env 组装缺省/覆盖/跟随全局）＋U1520（CLI dry-run 打印）＋U1521（PG prune 旧删新留）；两条反向门植缺陷实跑转红（摘 TABLE_ENVS 行／摘 DELETE 语句），恢复后全绿。后端全量 **2926 passed／212 skipped／0 failed**；retention PG 集成 8 例全绿（一次性 pgvector:pg16 @5445 跑完即删）；env parity 门过。零新依赖／零新错误码／零迁移。**D70 余部只剩货币计价**（AU-D1，单价属外部资源）。
+
 ### 〔feat〕打包 BR 落码收口＝D77 A/B 实验对照判定（2026-10-15，用户「那你推进」／「那按你推进的搞」授权；docs/134 契约、U1497–U1518 落码＋两门补齐转正式）
 
 - **判定层（后端）**：`routing/experiment.py` 新增 Experiment/Verdict 模型＋两比例 z 检验（α=0.05 双侧，stdlib `math.erf`，零新依赖）；`routing/experiment_store.py`＋`routing/pg_experiment_store.py` 两档（内存 ring 100／PG 迁移 056 `experiments` 表 16 列＋`idx_experiments_tenant_graph_status`；id＝`exp-{seq}` 取全局 `storage_id_seq`，conclude 走 `SELECT ... FOR UPDATE`，priorConfig/verdict JSONB）；`routing/gate.py` `business_rates` 公开化（BR-D3）；`RoutingStore.start` 显式版本扩展 `stable=/candidate=`（内存＋PG，BR-D2）；`main.py` 实验四端点（create/list/get/conclude）；registry 两档装配＋reset。
