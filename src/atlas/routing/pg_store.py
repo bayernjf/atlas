@@ -20,7 +20,7 @@ from .router import (
     SEGMENT_UNPUBLISHED,
     resolve_version,
 )
-from .store import RolloutError, RolloutState, RoutingStore
+from .store import RolloutError, RolloutState, RoutingStore, _resolve_start_versions
 
 _COLUMNS = (
     "status", "config", "stable", "candidate", "started_at", "rolled_back_at",
@@ -55,17 +55,23 @@ class PgRoutingStore:
 
     # ---------- 状态机 ----------
 
-    def start(self, graph_id: str, versions: list[int]) -> RolloutState:
+    def start(
+        self,
+        graph_id: str,
+        versions: list[int],
+        *,
+        stable: int | None = None,
+        candidate: int | None = None,
+    ) -> RolloutState:
         with self._engine.begin() as conn:
             state = self._lock_or_insert(conn, graph_id)
             if state.config is None:
                 raise RolloutError("尚未配置灰度规则，无法启动 canary（先 PUT rollout 配置）")
             if state.status != "idle":
                 raise RolloutError(f"当前状态 {state.status} 不可启动 canary（仅 idle 可启动）")
-            if len(versions) < 2:
-                raise RolloutError("发布版本不足 2 个：canary 需要 stable 与 candidate 两个发布版")
-            state.stable = versions[-2]
-            state.candidate = versions[-1]
+            state.stable, state.candidate = _resolve_start_versions(
+                versions, stable=stable, candidate=candidate
+            )
             state.status = "canary"
             state.started_at = _now_iso()
             state.rolled_back_at = None

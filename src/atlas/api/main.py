@@ -177,11 +177,20 @@ from atlas.recording import (
     seed_anchor,
 )
 from atlas.routing import (
+    CanaryRule,
+    Experiment,
+    ExperimentError,
+    GateConfig,
+    GateMetricId,
     RolloutConfig,
     RolloutError,
     RolloutState,
     TriggerEvent,
+    arm_stats,
     evaluate_after_run,
+    judge,
+    primary_counts,
+    required_samples,
 )
 from atlas.shop.service import DemoShopService
 from atlas.storage.frame import card_context_from_frame, remaining_seconds
@@ -4123,6 +4132,198 @@ def rollback_rollout(
     except RolloutError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _rollout_projection(state)
+
+
+class ExperimentCreateBody(BaseModel):
+    """POST /api/experiments 请求体（docs/134 §2.4；camelCase 直进直出，GateMetric 先例）。"""
+
+    graphId: str
+    versionA: int
+    versionB: int
+    trafficPercent: int = Field(default=50, ge=1, le=99)
+    primaryMetric: GateMetricId
+    minSamples: int = Field(default=30, ge=1)
+
+
+class ExperimentConcludeBody(BaseModel):
+    """POST /api/experiments/{exp_id}/conclude 请求体；判定只读建议、conclude 人决（BR-D4）。"""
+
+    action: Literal["adopt_a", "adopt_b"]
+    reason: str | None = None
+
+
+def _experiment_body_or_422(body: Any, model: type[BaseModel], label: str) -> Any:
+    """实验端点 body → 模型；非法形状聚合为中文 422（照 _rollout_config_or_422 先例）。"""
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=422, detail=f"{label}必须是 JSON 对象")
+    try:
+        return model.model_validate(body)
+    except ValidationError as exc:
+        messages = []
+        for error in exc.errors():
+            loc = ".".join(str(part) for part in error["loc"])
+            messages.append(f"{loc}：{error['msg']}" if loc else error["msg"])
+        raise HTTPException(status_code=422, detail=f"{label}非法：" + "；".join(messages)) from exc
+
+
+def _experiment_window(services: Any, exp: Experiment) -> list[Any]:
+    """判定窗口＝实验 createdAt 起累计的该图运行（ISO 字符串同型比较；上限照 monitoring ring 200，照实记）。"""
+    runs = services.monitoring.list_runs(exp.graphId, limit=200)
+    return [run for run in runs if run.finished_at >= exp.createdAt]
+
+
+@app.post("/api/experiments")
+def create_experiment(
+    body: dict[str, Any] | None = None,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """创建即启动（docs/134 §2.4）：快照原配置→写纯 canary 实验配置→显式两版 start→落库。
+
+    graph 404；A==B／版本非该图发布版 422；rollout 非 idle 409；同图已有 running 实验 409（BR-D6）。
+    """
+    payload: ExperimentCreateBody = _experiment_body_or_422(body, ExperimentCreateBody, "实验创建请求")
+    services = services_for(principal)
+    graph_id = payload.graphId
+    if services.graph_store.get(graph_id) is None and not services.graph_store.list_versions(graph_id):
+        raise HTTPException(status_code=404, detail=f"Graph 不存在：{graph_id}")
+    if payload.versionA == payload.versionB:
+        raise HTTPException(
+            status_code=422,
+            detail=f"versionA 与 versionB 不可为同一版本（v{payload.versionA}）",
+        )
+    versions = services.graph_store.list_versions(graph_id)
+    for label, version in (("versionA", payload.versionA), ("versionB", payload.versionB)):
+        if version not in versions:
+            raise HTTPException(
+                status_code=422, detail=f"{label} 版本 v{version} 不在该图发布版本列表内"
+            )
+    snapshot = services.routing_store.snapshot(graph_id)
+    if snapshot.status != "idle":
+        raise HTTPException(
+            status_code=409,
+            detail=f"rollout 当前为 {snapshot.status} 态：实验须从 idle 开启（BR-D6）",
+        )
+    running = services.experiment_store.running_for_graph(graph_id)
+    if running is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"该图已有进行中的实验 {running.id}：同图同一时刻至多一个 running 实验（BR-D6）",
+        )
+    prior = snapshot.config
+    config = RolloutConfig(
+        rules=[CanaryRule(percent=payload.trafficPercent)],
+        gate=prior.gate if prior is not None else GateConfig(autoRollback=False),
+    )
+    services.routing_store.configure(graph_id, config)
+    try:
+        services.routing_store.start(
+            graph_id, versions, stable=payload.versionA, candidate=payload.versionB
+        )
+    except RolloutError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    exp = services.experiment_store.create(
+        graph_id=graph_id,
+        version_a=payload.versionA,
+        version_b=payload.versionB,
+        traffic_percent=payload.trafficPercent,
+        primary_metric=payload.primaryMetric,
+        min_samples=payload.minSamples,
+        prior_config=prior,
+        created_by=principal.username,
+    )
+    return exp.model_dump()
+
+
+@app.get("/api/experiments")
+def list_experiments(
+    graphId: str | None = None,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """实验列表（轻投影：不含臂统计，避免逐实验扫 ring；createdAt 倒序）。"""
+    experiments = services_for(principal).experiment_store.list(graph_id=graphId)
+    return {"experiments": [exp.model_dump() for exp in experiments]}
+
+
+@app.get("/api/experiments/{exp_id}")
+def get_experiment(
+    exp_id: str,
+    mde: float = 0.05,
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """实验详情＋两臂 armStats＋verdict（running 活算建议／concluded 取冻结）＋splitActive＋requiredSamples 指导。"""
+    services = services_for(principal)
+    exp = services.experiment_store.get(exp_id)
+    if exp is None:
+        raise HTTPException(status_code=404, detail=f"实验不存在：{exp_id}")
+    window = _experiment_window(services, exp)
+    stats_a = arm_stats(window, exp.versionA)
+    stats_b = arm_stats(window, exp.versionB)
+    verdict = (
+        exp.verdict
+        if exp.status == "concluded" and exp.verdict is not None
+        else judge(exp, stats_a, stats_b)
+    )
+    snapshot = services.routing_store.snapshot(exp.graphId)
+    x_a, n_a = primary_counts(stats_a, exp.primaryMetric)
+    baseline = (x_a / n_a) if n_a else None
+    projection = exp.model_dump()
+    projection["armStats"] = {"A": stats_a.model_dump(), "B": stats_b.model_dump()}
+    projection["verdict"] = verdict.model_dump()
+    projection["splitActive"] = (
+        snapshot.status == "canary" and snapshot.candidate == exp.versionB
+    )
+    projection["requiredSamples"] = (
+        required_samples(baseline, mde) if baseline is not None else None
+    )
+    return projection
+
+
+@app.post("/api/experiments/{exp_id}/conclude")
+def conclude_experiment(
+    exp_id: str,
+    body: dict[str, Any] | None = None,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """冻结 verdict＋人决落库：adopt_b→promote／adopt_a→rollback（幂等同既有），恢复 priorConfig（BR-D4/D5）。
+
+    不存在/跨租户 404；已终态 409；rollout 侧冲突 409（未落库可重试）；人可改判，verdict 与 action 不一致照实记录。
+    """
+    payload: ExperimentConcludeBody = _experiment_body_or_422(
+        body, ExperimentConcludeBody, "实验 conclude 请求"
+    )
+    services = services_for(principal)
+    exp = services.experiment_store.get(exp_id)
+    if exp is None:
+        raise HTTPException(status_code=404, detail=f"实验不存在：{exp_id}")
+    if exp.status == "concluded":
+        raise HTTPException(status_code=409, detail=f"实验 {exp_id} 已终态，不可重复 conclude")
+    window = _experiment_window(services, exp)
+    verdict = judge(exp, arm_stats(window, exp.versionA), arm_stats(window, exp.versionB))
+    graph_id = exp.graphId
+    snapshot = services.routing_store.snapshot(graph_id)
+    try:
+        if payload.action == "adopt_b":
+            if not (snapshot.status == "full" and snapshot.candidate == exp.versionB):
+                services.routing_store.promote(graph_id)
+        else:
+            services.routing_store.rollback(
+                graph_id,
+                actor="manual",
+                reason=f"实验 conclude：{payload.action}（verdict={verdict.status}）",
+            )
+    except RolloutError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if exp.priorConfig is not None:
+        services.routing_store.configure(graph_id, exp.priorConfig)
+    try:
+        concluded = services.experiment_store.conclude(
+            exp_id, verdict=verdict, action=payload.action, reason=payload.reason
+        )
+    except ExperimentError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if concluded is None:  # pragma: no cover - 并发 reset 竞态兜底
+        raise HTTPException(status_code=404, detail=f"实验不存在：{exp_id}")
+    return concluded.model_dump()
 
 
 @app.get("/api/templates")

@@ -42,7 +42,7 @@ def _metric_min_samples(metric: Any, gate: Any) -> int:
     return metric.minSamples if metric.minSamples is not None else gate.minSamples
 
 
-def _business_rates(runs: list[Any]) -> tuple[float | None, float | None, int]:
+def business_rates(runs: list[Any]) -> tuple[float | None, float | None, int]:
     """返 (manual_escalation_rate, refund_amount_diff_rate, samples)；样本 0 率为 None。"""
     business_runs = [run for run in runs if getattr(run, "business", None) is not None]
     samples = len(business_runs)
@@ -57,7 +57,7 @@ def _stable_reference(runs: list[Any], stable_version: int | None) -> str:
     """compareWith/stable 版本同期业务对照值（仅告警 message 附注，不阻断；样本不足明示）。"""
     if stable_version is None:
         return "stable 对照：无 stable 版本"
-    manual, diff, samples = _business_rates(
+    manual, diff, samples = business_rates(
         [run for run in runs if run.resolved_version == stable_version]
     )
     if samples == 0:
@@ -90,7 +90,7 @@ def evaluate_after_run(services: Any, record: Any) -> None:
         and _within_window(run.finished_at, gate.observeMinutes)
     ]
     business_window = [run for run in window if getattr(run, "business", None) is not None]
-    manual_rate, diff_rate, business_samples = _business_rates(window)
+    manual_rate, diff_rate, business_samples = business_rates(window)
 
     breaches: list[str] = []
     for metric in gate.metrics:
