@@ -1,0 +1,67 @@
+{
+  "page": {
+    "title": "A/B Experiments"
+  },
+  "create": {
+    "title": "Create experiment",
+    "graphPlaceholder": "Select a graph",
+    "versionA": "Version A",
+    "versionB": "Version B",
+    "traffic": "Traffic percent",
+    "minSamples": "Min samples",
+    "submit": "Create & start",
+    "created": "Experiment created",
+    "sameVersion": "Version A and version B must differ"
+  },
+  "list": {
+    "title": "Experiments",
+    "empty": "No experiments yet",
+    "id": "ID",
+    "graph": "Graph",
+    "versions": "Versions",
+    "traffic": "Traffic",
+    "metric": "Primary metric",
+    "status": "Status",
+    "createdAt": "Created at",
+    "action": "Action",
+    "detail": "Details"
+  },
+  "status": {
+    "running": "Running",
+    "concluded": "Concluded"
+  },
+  "metric": {
+    "run_error_rate": "Run error rate",
+    "manual_escalation_rate": "Manual escalation rate",
+    "refund_amount_diff_rate": "Refund amount diff rate"
+  },
+  "detail": {
+    "title": "Experiment details",
+    "colMetric": "Metric",
+    "splitInactive": "Split is inactive: the graph config changed; the experiment keeps accumulating data but no longer splits new traffic.",
+    "winner": "Winner {{arm}}",
+    "requiredSamples": "About {{count}} samples per arm to reach significance (MDE 5%)",
+    "requiredSamplesNone": "Cannot estimate required samples at current traffic",
+    "concludedLine": "Concluded: {{action}} · {{time}}",
+    "rows": {
+      "samples": "Total samples",
+      "businessSamples": "Business samples"
+    },
+    "verdict": {
+      "collecting": "Collecting data",
+      "inconclusive": "No significant difference",
+      "significant": "Significant difference"
+    },
+    "action": {
+      "adopt_a": "Adopt version A",
+      "adopt_b": "Adopt version B"
+    }
+  },
+  "conclude": {
+    "adoptA": "Conclude & adopt A",
+    "adoptB": "Conclude & adopt B",
+    "confirmA": "Conclude and adopt version A?",
+    "confirmB": "Conclude and adopt version B?",
+    "done": "Experiment concluded"
+  }
+}

@@ -41,7 +41,8 @@
     "templates": "消息模板",
     "usage": "LLM 用量",
     "embeds": "网页嵌入",
-    "adapterDrafts": "NL 造工具"
+    "adapterDrafts": "NL 造工具",
+    "experiments": "A/B 实验"
   },
   "button": {
     "confirm": "确定",

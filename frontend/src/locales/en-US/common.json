@@ -41,7 +41,8 @@
     "templates": "Message templates",
     "usage": "LLM usage",
     "embeds": "Web embeds",
-    "adapterDrafts": "Adapter crafting"
+    "adapterDrafts": "Adapter crafting",
+    "experiments": "A/B experiments"
   },
   "button": {
     "confirm": "OK",

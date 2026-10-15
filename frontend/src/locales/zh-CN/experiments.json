@@ -1,0 +1,67 @@
+{
+  "page": {
+    "title": "A/B 实验"
+  },
+  "create": {
+    "title": "创建实验",
+    "graphPlaceholder": "选择图",
+    "versionA": "版本 A",
+    "versionB": "版本 B",
+    "traffic": "流量占比",
+    "minSamples": "最小样本数",
+    "submit": "创建并启动",
+    "created": "实验已创建",
+    "sameVersion": "版本 A 与版本 B 不能相同"
+  },
+  "list": {
+    "title": "实验列表",
+    "empty": "暂无实验",
+    "id": "ID",
+    "graph": "图",
+    "versions": "版本",
+    "traffic": "流量",
+    "metric": "主指标",
+    "status": "状态",
+    "createdAt": "创建时间",
+    "action": "操作",
+    "detail": "详情"
+  },
+  "status": {
+    "running": "运行中",
+    "concluded": "已收结"
+  },
+  "metric": {
+    "run_error_rate": "运行错误率",
+    "manual_escalation_rate": "人工升级率",
+    "refund_amount_diff_rate": "退款金额差异率"
+  },
+  "detail": {
+    "title": "实验详情",
+    "colMetric": "指标",
+    "splitInactive": "分流已失效：画布配置已变化，实验仍在累计数据但不再分流新请求。",
+    "winner": "胜出方 {{arm}}",
+    "requiredSamples": "达显著约需每臂 {{count}} 个样本（MDE 5%）",
+    "requiredSamplesNone": "当前流量下无法估算所需样本",
+    "concludedLine": "已收结：{{action}} · {{time}}",
+    "rows": {
+      "samples": "总样本",
+      "businessSamples": "业务样本"
+    },
+    "verdict": {
+      "collecting": "数据收集中",
+      "inconclusive": "无显著差异",
+      "significant": "差异显著"
+    },
+    "action": {
+      "adopt_a": "采用版本 A",
+      "adopt_b": "采用版本 B"
+    }
+  },
+  "conclude": {
+    "adoptA": "收结采用 A",
+    "adoptB": "收结采用 B",
+    "confirmA": "确定收结并采用版本 A？",
+    "confirmB": "确定收结并采用版本 B？",
+    "done": "实验已收结"
+  }
+}

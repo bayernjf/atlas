@@ -14,6 +14,7 @@ import { EmailApproval } from './pages/EmailApproval'
 import { Embed } from './pages/Embed'
 import { EmbedsConfig } from './pages/EmbedsConfig'
 import { AdapterDrafts } from './pages/AdapterDrafts'
+import { Experiments } from './pages/Experiments'
 import { Waits } from './pages/Waits'
 import { Schedules } from './pages/Schedules'
 import { Agents } from './pages/Agents'
@@ -35,7 +36,7 @@ import { extractEmbedToken } from './lib/embeds'
 import { antdTheme } from './theme/tokens'
 import { useAntdLocale } from './locales/antdLocale'
 
-type Page = 'dashboard' | 'editor' | 'monitoring' | 'memory' | 'connections' | 'users' | 'approvals' | 'audit' | 'openapi' | 'waits' | 'schedules' | 'agents' | 'reflection' | 'models' | 'usage' | 'templates' | 'embeds' | 'adapterDrafts'
+type Page = 'dashboard' | 'editor' | 'monitoring' | 'memory' | 'connections' | 'users' | 'approvals' | 'audit' | 'openapi' | 'waits' | 'schedules' | 'agents' | 'reflection' | 'models' | 'usage' | 'templates' | 'embeds' | 'adapterDrafts' | 'experiments'
 
 function App() {
   const antdLocale = useAntdLocale()
@@ -147,6 +148,7 @@ function App() {
           onOpenTemplates={() => setPage('templates')}
           onOpenEmbeds={() => setPage('embeds')}
           onOpenAdapterDrafts={() => setPage('adapterDrafts')}
+          onOpenExperiments={() => setPage('experiments')}
         />
       ) : page === 'approvals' ? (
         <Approvals
@@ -211,6 +213,9 @@ function App() {
       ) : page === 'adapterDrafts' ? (
         // 列表是 read 面（viewer 也可见草稿与决策状态）；写操作页内按角色禁用（docs/133 D71）。
         <AdapterDrafts principal={principal} onLogout={handleLogout} onBack={() => setPage('dashboard')} />
+      ) : page === 'experiments' ? (
+        // 列表是 read 面（viewer 也可见实验与判定状态）；创建/收结在页内按角色禁用（docs/134 BR-D4）。
+        <Experiments principal={principal} onLogout={handleLogout} onBack={() => setPage('dashboard')} />
       ) : page === 'models' && roleCan(principal.role, 'read') ? (
         <Models principal={principal} onLogout={handleLogout} onBack={() => setPage('dashboard')} />
       ) : page === 'usage' && roleCan(principal.role, 'read') ? (

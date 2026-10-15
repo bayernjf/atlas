@@ -2326,6 +2326,97 @@ export async function rollbackRollout(graphId: string): Promise<RolloutSnapshot>
   return request(`/api/graphs/${graphId}/rollout/rollback`, { method: 'POST' })
 }
 
+// --- 打包 BR（docs/134 D77）：A/B 实验对照判定 ------------------------------------
+// 类型镜像后端 camelCase 投影（routing/experiment.py + main.py 四端点）；判定只读
+// 建议、conclude 人决（BR-D4），verdict 与 action 不一致由后端照实记录。
+
+export type ExperimentMetric =
+  | 'run_error_rate'
+  | 'manual_escalation_rate'
+  | 'refund_amount_diff_rate'
+
+export type ExperimentVerdict = {
+  status: 'collecting' | 'inconclusive' | 'significant'
+  winner: 'A' | 'B' | null
+  metric: ExperimentMetric
+  rateA: number | null
+  rateB: number | null
+  z: number | null
+  pValue: number | null
+  reason: string
+}
+
+export type Experiment = {
+  id: string
+  graphId: string
+  versionA: number
+  versionB: number
+  trafficPercent: number
+  primaryMetric: ExperimentMetric
+  minSamples: number
+  status: 'running' | 'concluded'
+  priorConfig: RolloutConfig | null
+  verdict: ExperimentVerdict | null
+  conclusionAction: 'adopt_a' | 'adopt_b' | null
+  conclusionReason: string | null
+  createdBy: string
+  createdAt: string
+  concludedAt: string | null
+}
+
+export type ExperimentArmStats = {
+  samples: number
+  businessSamples: number
+  errorCount: number
+  manualCount: number
+  diffCount: number
+  errorRate: number | null
+  manualRate: number | null
+  diffRate: number | null
+}
+
+/** GET detail 投影：verdict 恒非空（running 活算建议／concluded 取冻结）。 */
+export type ExperimentDetail = Omit<Experiment, 'verdict'> & {
+  verdict: ExperimentVerdict
+  armStats: { A: ExperimentArmStats; B: ExperimentArmStats }
+  splitActive: boolean
+  requiredSamples: number | null
+}
+
+export type ExperimentCreateBody = {
+  graphId: string
+  versionA: number
+  versionB: number
+  trafficPercent?: number
+  primaryMetric: ExperimentMetric
+  minSamples?: number
+}
+
+export async function listExperiments(graphId?: string): Promise<Experiment[]> {
+  const query = graphId ? `?graphId=${encodeURIComponent(graphId)}` : ''
+  const body = await request<{ experiments: Experiment[] }>(`/api/experiments${query}`)
+  return body.experiments
+}
+
+export async function createExperiment(body: ExperimentCreateBody): Promise<Experiment> {
+  return request('/api/experiments', { method: 'POST', body: JSON.stringify(body) })
+}
+
+export async function getExperiment(expId: string): Promise<ExperimentDetail> {
+  return request(`/api/experiments/${encodeURIComponent(expId)}`)
+}
+
+export async function concludeExperiment(
+  expId: string,
+  action: 'adopt_a' | 'adopt_b',
+  reason?: string,
+): Promise<Experiment> {
+  return request(`/api/experiments/${encodeURIComponent(expId)}/conclude`, {
+    method: 'POST',
+    body: JSON.stringify({ action, reason: reason ?? null }),
+  })
+}
+
 // --- M11 长期记忆（docs/26 §6；只读浏览 + admin 删除，写入只走图工具） --------
 
 export type MemoryKind = 'fact' | 'preference' | 'knowledge'
