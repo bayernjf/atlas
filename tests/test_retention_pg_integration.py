@@ -44,7 +44,7 @@ def _cleanup(engine) -> None:
     """
     tables = (
         "audit_events", "runs", "interruptions", "openapi_imports",
-        "message_deliveries", "iam_sessions", "memory_items",
+        "message_deliveries", "iam_sessions", "memory_items", "llm_usage",
     )
     with engine.begin() as conn:
         for table in tables:
@@ -159,6 +159,28 @@ def test_prune_openapi_imports_and_message_deliveries(backend) -> None:
     )
     assert deleted["openapi_imports"] == 1
     assert deleted["message_deliveries"] == 1
+
+
+def test_prune_llm_usage(backend) -> None:
+    """docs/129 AU-D7 余部（2026-10-16 闭合）：llm_usage 成本账到期淘汰（ts TEXT ISO 列）。"""
+    engine = backend.engine
+    with engine.begin() as conn:
+        for model, days in (("m-old", 200), ("m-new", 10)):  # 旧删 / 新留
+            conn.execute(
+                text(
+                    "INSERT INTO llm_usage (tenant_id, ts, caller, node_id, graph_id, run_id, "
+                    "model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status) "
+                    "VALUES ('rt', :ts, 'c', 'n', 'g', 'r', :model, 1, 1, 2, 3, 'ok')"
+                ),
+                {"ts": _now_iso(days), "model": model},
+            )
+    deleted = backend.prune_expired({"llm_usage": _now_iso(90)})
+    assert deleted["llm_usage"] == 1
+    with engine.connect() as conn:
+        remaining = conn.execute(
+            text("SELECT model FROM llm_usage WHERE tenant_id='rt'")
+        ).scalars().all()
+    assert remaining == ["m-new"]
 
 
 def test_prune_session_sweep(backend) -> None:
