@@ -1,0 +1,33 @@
+{
+  "page": {
+    "title": "Adapter crafting"
+  },
+  "create": {
+    "title": "Describe the external API to integrate",
+    "placeholder": "e.g. query Shopify orders by status (GET /orders)",
+    "submit": "Generate draft",
+    "created": "Draft created"
+  },
+  "list": {
+    "title": "Adapter drafts",
+    "id": "Draft ID",
+    "definition": "Definition",
+    "capabilities": "Capabilities",
+    "permission": "Permission",
+    "reachability": "Reachability",
+    "decision": "Decision",
+    "action": "Actions",
+    "dryRun": "Check",
+    "adopt": "Adopt",
+    "dismiss": "Dismiss",
+    "dismissConfirm": "Dismiss this draft?",
+    "pending": "Pending",
+    "untested": "Untested",
+    "empty": "No drafts yet"
+  },
+  "decide": {
+    "confirmTitle": "Adopt this draft?",
+    "confirmBody": "This adapter requires credentials (auth_type is not none) and will be callable at runtime once adopted. Make sure credentials are configured.",
+    "confirmOk": "Confirm & adopt"
+  }
+}

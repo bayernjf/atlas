@@ -39,7 +39,9 @@
     "agents": "智能体团队",
     "models": "模型配置",
     "templates": "消息模板",
-    "usage": "LLM 用量"
+    "usage": "LLM 用量",
+    "embeds": "网页嵌入",
+    "adapterDrafts": "NL 造工具"
   },
   "button": {
     "confirm": "确定",

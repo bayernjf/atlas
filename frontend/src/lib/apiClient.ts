@@ -3299,3 +3299,119 @@ export async function getUsageRecent(limit = 50): Promise<UsageRecordView[]> {
   const body = await request<{ items: UsageRecordView[] }>(`/api/usage/recent?${query.toString()}`)
   return body.items
 }
+
+// --- 打包 BQ（docs/133 D76+D71）：网页嵌入只读面 + NL 造工具 ---------------------------------
+
+export type EmbedConfig = {
+  graph_id: string
+  enabled: boolean
+  token_ttl_seconds: number
+  created_at: string
+  updated_at: string
+}
+
+export type EmbedReadonlyView = {
+  graphId: string
+  name: string
+  nodeCount: number
+  variables: Array<{ name: string; value: unknown }>
+  lastRun: { runId: string; status: string; startedAt: string } | null
+}
+
+export type EmbedTokenResponse = {
+  token: string
+  tokenUrl: string
+}
+
+export type AdapterCapabilityDefinition = {
+  name: string
+  description: string
+  method: string
+  path: string
+  input_schema: Record<string, unknown>
+  output_schema: Record<string, unknown>
+  permission: string
+  is_idempotent: boolean
+}
+
+export type AdapterDefinition = {
+  name: string
+  description: string
+  base_url: string
+  auth_type: 'none' | 'header' | 'query'
+  permission: string
+  capabilities: AdapterCapabilityDefinition[]
+}
+
+export type AdapterDraft = {
+  draft_id: string
+  definition: AdapterDefinition
+  decision_status: 'adopted' | 'dismissed' | null
+  reachability: { checkedAt: string; ok: boolean; reason: string } | null
+  created_at: string
+  decided_at: string | null
+  updated_at: string
+}
+
+/** 嵌入配置列表（第七类实体；docs/133 D76）。administer 只读面。 */
+export async function listEmbedConfigs(): Promise<EmbedConfig[]> {
+  const body = await request<{ items: EmbedConfig[] }>('/api/embeds/config')
+  return body.items
+}
+
+/** 开启/调整某图的只读嵌入（enabled 缺省 false＝fail-closed；ttl 1–86400 门控）。 */
+export async function putEmbedConfig(
+  input: { graph_id: string; enabled: boolean; token_ttl_seconds: number },
+): Promise<EmbedConfig> {
+  return request<EmbedConfig>('/api/embeds/config', {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  })
+}
+
+/** 签发嵌入短链（同形 HMAC；图未启用 422）。返回 token/tokenUrl。 */
+export async function createEmbedToken(graphId: string): Promise<EmbedTokenResponse> {
+  return request<EmbedTokenResponse>('/api/embeds', {
+    method: 'POST',
+    body: JSON.stringify({ graph_id: graphId }),
+  })
+}
+
+/** 公开只读嵌入面（无登录态；验签失败 404）。 */
+export async function getEmbedReadonlyView(token: string): Promise<EmbedReadonlyView> {
+  return request<EmbedReadonlyView>(`/api/embeds/${encodeURIComponent(token)}`)
+}
+
+/** NL 造工具草稿（docs/133 BQ-D5）：业务描述 → AdapterDefinition 草稿。LLM 失败 422 显式。 */
+export async function createAdapterDraft(prompt: string): Promise<AdapterDraft> {
+  return request<AdapterDraft>('/api/adapter-drafts', {
+    method: 'POST',
+    body: JSON.stringify({ prompt }),
+  })
+}
+
+/** 草稿 dry-run 连通校验（只读 GET；不改 decision 状态）。 */
+export async function dryRunAdapterDraft(draftId: string): Promise<AdapterDraft> {
+  return request<AdapterDraft>(
+    `/api/adapter-drafts/${encodeURIComponent(draftId)}/dry-run`,
+    { method: 'POST' },
+  )
+}
+
+/** 人工采纳（admin；adopted/dismissed 可改判；auth_type 非 none 须 authConfirmed）。 */
+export async function putAdapterDraftDecision(
+  draftId: string,
+  decision: 'adopted' | 'dismissed',
+  authConfirmed = false,
+): Promise<AdapterDraft> {
+  return request<AdapterDraft>(
+    `/api/adapter-drafts/${encodeURIComponent(draftId)}/decision`,
+    { method: 'PUT', body: JSON.stringify({ decision, authConfirmed }) },
+  )
+}
+
+/** 本租户适配器草稿列表（倒序）。 */
+export async function listAdapterDrafts(): Promise<AdapterDraft[]> {
+  const body = await request<{ items: AdapterDraft[] }>('/api/adapter-drafts')
+  return body.items
+}

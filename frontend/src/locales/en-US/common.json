@@ -39,7 +39,9 @@
     "agents": "Agent team",
     "models": "Model configuration",
     "templates": "Message templates",
-    "usage": "LLM usage"
+    "usage": "LLM usage",
+    "embeds": "Web embeds",
+    "adapterDrafts": "Adapter crafting"
   },
   "button": {
     "confirm": "OK",

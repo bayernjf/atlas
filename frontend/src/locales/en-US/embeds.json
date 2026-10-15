@@ -1,0 +1,30 @@
+{
+  "readonly": {
+    "title": "Read-only embed",
+    "invalid": "Link is invalid or expired",
+    "loading": "Loading…",
+    "graph": "Graph ID",
+    "name": "Name",
+    "nodeCount": "Nodes",
+    "lastRun": "Last run",
+    "noRun": "No run yet",
+    "variables": "Variables",
+    "noVariables": "No variables on this graph"
+  },
+  "config": {
+    "title": "Web embed configuration",
+    "hint": "After enabling read-only embed for a graph, issue a short link to embed it anywhere; disabled graphs (enabled=false) always refuse issuance.",
+    "new": "Enable a new graph",
+    "selectGraph": "Select a graph to embed",
+    "ttlUnit": "sec",
+    "enable": "Enable & save",
+    "saved": "Saved",
+    "list": "Configured embeds",
+    "graph": "Graph ID",
+    "enabled": "Enabled",
+    "ttl": "Token TTL (sec)",
+    "action": "Action",
+    "issue": "Issue link",
+    "empty": "No embeds configured yet"
+  }
+}

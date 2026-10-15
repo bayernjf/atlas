@@ -1,0 +1,30 @@
+{
+  "readonly": {
+    "title": "只读嵌入视图",
+    "invalid": "链接无效或已过期",
+    "loading": "加载中…",
+    "graph": "图 ID",
+    "name": "名称",
+    "nodeCount": "节点数",
+    "lastRun": "最近运行",
+    "noRun": "尚无运行记录",
+    "variables": "变量快照",
+    "noVariables": "该图暂无变量"
+  },
+  "config": {
+    "title": "网页嵌入配置",
+    "hint": "按图开启只读嵌入后，签发短链即可外嵌到任意页面；未启用（enabled=false）的图一律拒绝签发。",
+    "new": "新增强制启用",
+    "selectGraph": "选择要嵌入的图",
+    "ttlUnit": "秒",
+    "enable": "开启并保存",
+    "saved": "已保存",
+    "list": "已配置的嵌入",
+    "graph": "图 ID",
+    "enabled": "启用",
+    "ttl": "Token 有效期（秒）",
+    "action": "操作",
+    "issue": "签发短链",
+    "empty": "尚未配置任何嵌入"
+  }
+}
