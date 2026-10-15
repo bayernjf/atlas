@@ -71,6 +71,25 @@ def test_assemble_cutoffs_env_override(monkeypatch) -> None:
     assert datetime.fromisoformat(cutoffs["runs"]) > datetime.now(timezone.utc) - timedelta(days=6)
 
 
+def test_llm_usage_retention_default_and_override(monkeypatch) -> None:
+    """docs/129 AU-D7 余部（2026-10-16 闭合）：llm_usage 成本账挂 retention——
+    缺省 90 天（对齐 audit/runs），分表 env 可覆盖，也跟随全局 ATLAS_RETENTION_DAYS。"""
+    for env in ("ATLAS_RETENTION_DAYS", "ATLAS_RETENTION_LLM_USAGE_DAYS"):
+        monkeypatch.delenv(env, raising=False)
+    now = datetime.now(timezone.utc)
+    cutoff = datetime.fromisoformat(assemble_cutoffs()["llm_usage"])
+    assert abs((cutoff - (now - timedelta(days=90))).total_seconds()) < 60
+    # 分表 env 覆盖缺省
+    monkeypatch.setenv("ATLAS_RETENTION_LLM_USAGE_DAYS", "14")
+    cutoff = datetime.fromisoformat(assemble_cutoffs()["llm_usage"])
+    assert abs((cutoff - (now - timedelta(days=14))).total_seconds()) < 60
+    # 未设分表 env 时跟随全局
+    monkeypatch.delenv("ATLAS_RETENTION_LLM_USAGE_DAYS")
+    monkeypatch.setenv("ATLAS_RETENTION_DAYS", "30")
+    cutoff = datetime.fromisoformat(assemble_cutoffs()["llm_usage"])
+    assert abs((cutoff - (now - timedelta(days=30))).total_seconds()) < 60
+
+
 def test_assemble_cutoffs_invalid_env_falls_back(monkeypatch) -> None:
     monkeypatch.setenv("ATLAS_RETENTION_RUNS_DAYS", "not-a-number")
     monkeypatch.setenv("ATLAS_RETENTION_DAYS", "-3")  # 负数按 1 天计
@@ -104,5 +123,6 @@ def test_cli_dry_run(monkeypatch, capsys) -> None:
     assert retention_cli_main() == 0
     out = capsys.readouterr().out
     assert "dry-run: DELETE from audit_events" in out
+    assert "dry-run: DELETE from llm_usage" in out
     assert "dry-run: retain memory_items (no retention configured)" in out
     assert "dry-run: no rows deleted" in out

@@ -1438,7 +1438,7 @@ OperationDescriptor = {
 - **零错误码**：计量全程旁路（store 写炸只 warning）；`group_by` 非法值走既有查询参数 422 纯文本 detail（照 `_audit_cursor` 先例），不新增 code。
 - 不记 prompt/response 正文；记录形状无密钥字段（U1413 机检投影键集合）。
 - 挂 `TenantServices.usage_store`（内存 ring 2000 / PG `llm_usage`），**reset 同清**（运行数据，与 `model_config` 的"不清"区分）。
-- **PG 档不设 ring**（账不丢；内存档才有界）；**不挂 `ATLAS_RETENTION_DAYS`**（docs/129 AU-D7 余部）。
+- **PG 档不设 ring**（账不丢；内存档才有界）；**retention 已接入**（2026-10-16 AU-D7 余部闭合）：分表 env `ATLAS_RETENTION_LLM_USAGE_DAYS`，缺省回退全局 `ATLAS_RETENTION_DAYS`、再回退默认 90 天（对齐 audit/runs 成本账），PG prune 走 `ts::timestamptz`；立即清零仍走 `/api/demo/reset`。
 - REST：`GET /api/usage/summary?since&until&group_by=caller|model|day`（read）、`GET /api/usage/recent?limit`（read，clamp 1–200，倒序）；前端 `Usage.tsx` 一页（两张聚合表＋明细表）。
 - **AU-D3 单点纪律**：全仓 `litellm.completion(` 调用点恰好一处（`llm/metering.py::complete_with_usage`），由 `test_single_litellm_exit_point_guard` 机检——绕过 helper 即用量账静默缺块。
 
