@@ -3,6 +3,13 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔feat〕打包 BR 落码＝D77 A/B 实验对照判定（2026-10-15，用户「那你推进」授权；docs/134 契约、U1497–U1518 落码）
+
+- **判定层（后端）**：`routing/experiment.py` 新增 Experiment/Verdict 模型＋两比例 z 检验（α=0.05 双侧，stdlib `math.erf`，零新依赖）；`routing/experiment_store.py`＋`routing/pg_experiment_store.py` 两档（内存 ring 100／PG 迁移 056 `experiments` 表 16 列＋`idx_experiments_tenant_graph_status`；id＝`exp-{seq}` 取全局 `storage_id_seq`，conclude 走 `SELECT ... FOR UPDATE`，priorConfig/verdict JSONB）；`routing/gate.py` `business_rates` 公开化（BR-D3）；`RoutingStore.start` 显式版本扩展 `stable=/candidate=`（内存＋PG，BR-D2）；`main.py` 实验四端点（create/list/get/conclude）；registry 两档装配＋reset。
+- **八决策（docs/134）**：BR-D1 分流复用 `CanaryRule(percent=trafficPercent)` 零新分桶代码；BR-D2 start 显式双版本；BR-D3 业务转化率公开化；BR-D4/D5 conclude 人决（adopt_a/adopt_b）走既有 promote/rollback＋priorConfig 恢复；BR-D6 同图至多一个 running 实验；BR-D7 ring 100＋PG 持久；BR-D8 零新依赖／零新错误码／无 ADR。
+- **前端**：Experiments 页（列表＋创建＋详情判定＋conclude）＋路由＋apiClient/lib（experiments.ts）＋两语 locale（experiments 新命名空间＋common nav 键）。
+- **门**：用例 18 落码全绿（`tests/test_experiments.py` 12＝U1497–U1508；`tests/test_experiments_pg_integration.py` 6＝U1513–U1518，默认档转 skip）；后端全量 **2925 passed／211 skipped／0 failed**（216.75s，基线 2913/205）；前端 vitest **1027/2**、oxlint **0/0**（229 files）、build ✓。**仍 🟡**：四条反向门植缺陷实跑与 PG 档全量（一次性 pgvector 容器＋迁移 056 apply）待跑，两门补齐后 docs/13 转 ✅、docs/14 D77 翻 ✅。
+
 ### 〔chore〕D79 收口＝后端依赖锁文件 `uv.lock` 落地（2026-10-15，用户「那你推进」授权；方案 ① 按推荐拍板；docs/14 D79 翻 ✅）
 
 - **根因**：PR #152「本机绿 CI 红」——pyproject 只写范围、CI/cron 每次 `pip install -e ".[dev]"` 抽最新，本机 starlette 1.6.0 vs CI 1.8.0，「路径命中、方法不匹配」返回码 404→405。
