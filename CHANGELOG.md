@@ -3,6 +3,13 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔chore〕D79 收口＝后端依赖锁文件 `uv.lock` 落地（2026-10-15，用户「那你推进」授权；方案 ① 按推荐拍板；docs/14 D79 翻 ✅）
+
+- **根因**：PR #152「本机绿 CI 红」——pyproject 只写范围、CI/cron 每次 `pip install -e ".[dev]"` 抽最新，本机 starlette 1.6.0 vs CI 1.8.0，「路径命中、方法不匹配」返回码 404→405。
+- **落地**：`uv.lock` 入库＋`.python-version` 钉 3.11；**四处同一锁**——本机与 CI 两 job（`ci.yml` 换 `astral-sh/setup-uv@v10`＋`uv sync --locked --extra dev`＋`uv run pytest`）、cron 上线门（`release-gate-cron.yml` 同口径，uvicorn/smoke 改 `uv run`）、Dockerfile（`COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /bin/uv`＋`uv sync --locked --no-editable --no-cache`，`UV_PYTHON_PREFERENCE=only-system`，venv PATH 前置兼容入口脚本与 CMD uvicorn）。升级流程＝改 pyproject 范围 → `uv lock` 重解析 → 提交锁。
+- **同步**：docs/10 §2 勘误（版本解析面翻转为「uv.lock 唯一事实源、pyproject 范围为意图清单」）、docs/14 D79 ✅、docs/08 缺陷批条收口注记、README/CONTRIBUTING/handoff How to run 安装命令改 uv 口径。
+- **门（实跑）**：`uv sync --locked` 重写 venv（55 卸/57 装）后后端全量 **2913 passed／205 skipped／0 failed**；前端 `tsc -b && vite build` ✓；`docker build --check` 无警告＋真实构建 ✓，镜像内 python 3.11.16／fastapi 0.143.1／starlette 1.8.0／httpx 0.28.1 与锁逐字一致。零产品代码改动／零迁移／零新运行期依赖（uv 仅工具链）／无 ADR。
+
 ### 〔feat〕打包 BQ 落码收口＝D76 网页嵌入＋D71 NL 造工具（2026-10-15，用户「后续你接着推进」授权；docs/133 契约、U1477–U1496 转正式）
 
 - **嵌入面（D76）**：迁移 054 `embed_configs`（tenant_id+graph_id PK、enabled 缺省 false fail-closed、token_ttl_seconds 1–86400）；`embeds/{store,pg_store,token}.py`——EmbedStore/PgEmbedStore（upsert ON CONFLICT、两档签名一比一）＋`EmbedTokenIssuer`（**同形 HMAC**：`base64url(json).base64url(HMAC-SHA256)`，密钥链复用 `resolve_token_secret`，clock 注入，TTL＋grace 300，三态异常 Malformed/BadSignature/Expired）；`main.py` `GET/PUT /api/embeds/config`（第七类 SchemaRegistry 实体）＋`POST /api/embeds`（201，未启用 422）＋**公开只读 `GET /api/embeds/{token}`**（无 principal，验签失败统一 404，投影只含 graphId/name/nodeCount/variables/lastRun，不含密钥/决策/草稿）。
