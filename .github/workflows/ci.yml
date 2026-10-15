@@ -49,7 +49,8 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v10
+      # astral-sh/setup-uv 无浮动 v10 主版本 tag（只有 v10.x.y），必须钉全版本号
+      - uses: astral-sh/setup-uv@v10.3.0
         with:
           enable-cache: true
       - name: Install package
@@ -82,7 +83,7 @@ jobs:
       DATABASE_URL: postgresql+psycopg://atlas:atlas@localhost:5432/atlas
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.3.0
         with:
           enable-cache: true
       - name: Install package
