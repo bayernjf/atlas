@@ -47,6 +47,10 @@ from atlas.security.bootstrap import read_storage_backend
 from atlas.llm.config import get_model_config_store
 from atlas.llm.metering import InMemoryUsageStore
 from atlas.llm.pg_store import PgUsageStore
+from atlas.embeds.store import EmbedStore
+from atlas.embeds.pg_store import PgEmbedStore
+from atlas.harness.drafts import AdapterDraftStore
+from atlas.harness.pg_drafts import PgAdapterDraftStore
 from atlas.cycles.state import cycle_registry
 from atlas.storage.base import (
     ApprovalRepository,
@@ -107,6 +111,8 @@ class TenantServices:
     rule_template_store: object  # 用户自建告警规则模板（docs/102 打包 ZS；内存/PG 两档，reset 同清）
     reflection_store: ReflectionStore | PgReflectionStore  # 反思候选与收尾报告（docs/88 打包 ZH／docs/94 打包 ZU：内存 ring 100 / PG reflection_*）
     autoapply_store: AutoApplyStore | PgAutoApplyStore  # 进化候选门控自动生效记录（打包 BP docs/132：内存 ring 100 / PG autoapply_runs 迁移 053）
+    embed_store: EmbedStore | PgEmbedStore  # 网页嵌入配置（打包 BQ docs/133＝D76：第七类实体 / PG embed_configs 迁移 054，reset 同清）
+    adapter_drafts: AdapterDraftStore | PgAdapterDraftStore  # NL 造工具草稿（打包 BQ docs/133＝D71：内存 / PG adapter_drafts 迁移 055，reset 同清）
     model_config: object  # LLM 模型配置（docs/93 打包 Y；内存/PG 两档 store，reset 不清）
     usage_store: object  # LLM 用量计量（docs/129 打包 AU＝D70；内存 ring 2000 / PG llm_usage，reset 同清）
     evaluation_store: object  # AI 评估 Harness v1（docs/110 打包 AC；内存/PG 两档，reset 同清）
@@ -198,6 +204,8 @@ class TenantRegistry:
                 rule_template_store=PgUserRuleTemplateStore(backend.engine, tenant_id),
                 reflection_store=PgReflectionStore(backend.engine, tenant_id),
                 autoapply_store=PgAutoApplyStore(backend.engine, tenant_id),
+                embed_store=PgEmbedStore(backend.engine, tenant_id),
+                adapter_drafts=PgAdapterDraftStore(backend.engine, tenant_id),
                 model_config=get_model_config_store(),
                 usage_store=PgUsageStore(backend.engine, tenant_id),
                 evaluation_store=PgEvaluationStore(backend.engine, tenant_id),
@@ -237,6 +245,8 @@ class TenantRegistry:
             rule_template_store=UserRuleTemplateStore(),
             reflection_store=ReflectionStore(),
             autoapply_store=AutoApplyStore(),
+            embed_store=EmbedStore(),
+            adapter_drafts=AdapterDraftStore(),
             model_config=get_model_config_store(),
             usage_store=InMemoryUsageStore(),
             evaluation_store=EvaluationStore(),
@@ -277,6 +287,8 @@ class TenantRegistry:
         services.rule_template_store.clear()
         services.reflection_store.reset()
         services.autoapply_store.reset()
+        services.embed_store.reset()
+        services.adapter_drafts.reset()
         services.usage_store.reset()
         # 打包 BN（docs/130）：圈会话是进程内运行态 ⇒ 与运行数据同清。
         cycle_registry().reset(tenant_id)

@@ -221,6 +221,14 @@ from atlas.scheduling.pg_store import PgScheduleStore
 from atlas.scheduling.store import InMemoryScheduleStore, ScheduleStore
 from atlas.reflection import run_pass as run_reflection_pass
 from atlas.reflection.autoapply import AUTO_SCOPES, abort_autoapply, run_autoapply
+from atlas.embeds.token import EmbedTokenError, EmbedTokenIssuer
+from atlas.harness.definition import (
+    AdapterDefinitionError,
+    definition_to_dict,
+    validate_adapter_definition,
+)
+from atlas.httpapi.service import HttpApiCallError, HttpApiClient
+from atlas.llm.structured import LLMStructuredUnavailable, generate_adapter_definition
 from atlas.template import get_template, list_templates
 from atlas.template.user_store import TemplateVersionConflict
 from atlas.web.i18n import localize_template, localize_tool_desc, resolve_locale
@@ -2116,6 +2124,230 @@ def get_autoapply_run(
     if run is None:
         raise HTTPException(status_code=404, detail=f"自动生效记录不存在：{run_id}")
     return run
+
+
+class AdapterDraftRequest(BaseModel):
+    prompt: str = Field(min_length=1)
+
+
+class AdapterDecisionRequest(BaseModel):
+    decision: Literal["adopted", "dismissed"]
+    authConfirmed: bool = False
+
+
+class EmbedConfigRequest(BaseModel):
+    graph_id: str = Field(min_length=1)
+    enabled: bool = False
+    token_ttl_seconds: int = 3600
+
+
+class EmbedTokenRequest(BaseModel):
+    graph_id: str = Field(min_length=1)
+
+
+# dry-run 连通校验用短超时（默认 30s 太久；探测失败即标记不可达）。
+_DRY_RUN_TIMEOUT_SECONDS = 8.0
+
+
+@app.post("/api/adapter-drafts", status_code=201)
+def create_adapter_draft(
+    http_request: Request,
+    request: AdapterDraftRequest,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """NL 造工具草稿（docs/133 BQ-D5，docs/107 §3.2 闭合）：业务描述 → AdapterDefinition 草稿。
+
+    LLM 不可用/坏 JSON 显式 422（不静默降级）；草稿形状违例 422；落草稿后待 dry-run＋人工采纳。
+    """
+    services = services_for(principal)
+    try:
+        raw = generate_adapter_definition(
+            prompt=request.prompt, tenant_id=principal.tenant_id
+        )
+    except LLMStructuredUnavailable as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    try:
+        definition = validate_adapter_definition(raw)
+    except AdapterDefinitionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    draft = services.adapter_drafts.add(definition_to_dict(definition))
+    _record_audit(services, principal, http_request, "adapter_draft.create", 201)
+    return draft
+
+
+@app.post("/api/adapter-drafts/{draft_id}/dry-run")
+def dry_run_adapter_draft(
+    http_request: Request,
+    draft_id: str,
+    principal: Principal = Depends(require("operate")),
+) -> dict[str, Any]:
+    """连通校验（docs/133 BQ-D3）：对 base_url 发只读 GET，过 EgressGuard，不落运行账。
+
+    2xx 视为可达；非 2xx/传输失败/SSRF 拒绝 → reachable=false＋原因。不改 decision 状态。
+    """
+    services = services_for(principal)
+    draft = services.adapter_drafts.get(draft_id)
+    if draft is None:
+        raise HTTPException(status_code=404, detail=f"适配器草稿不存在：{draft_id}")
+    base_url = (draft.get("definition") or {}).get("base_url", "")
+    ok = False
+    reason = "base_url 为空"
+    if base_url:
+        client = HttpApiClient(base_url=base_url)
+        try:
+            result = client.request(
+                method="GET", url="/", timeout=_DRY_RUN_TIMEOUT_SECONDS, idempotent=True
+            )
+            status = int(result.get("status", 0))
+            ok = 200 <= status < 300
+            reason = "" if ok else f"HTTP {status}"
+        except HttpApiCallError as exc:
+            ok = False
+            reason = f"{exc.code}: {exc}"
+    from datetime import datetime, timezone as _tz
+
+    payload = {
+        "checkedAt": datetime.now(_tz.utc).isoformat(),
+        "ok": ok,
+        "reason": reason,
+    }
+    updated = services.adapter_drafts.set_reachability(draft_id, payload)
+    _record_audit(services, principal, http_request, "adapter_draft.dry_run", 200)
+    return updated
+
+
+@app.put("/api/adapter-drafts/{draft_id}/decision")
+def decide_adapter_draft(
+    http_request: Request,
+    draft_id: str,
+    request: AdapterDecisionRequest,
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, Any]:
+    """人工采纳（docs/133 BQ-D4，复用 D51 decision 形态）：adopted/dismissed、可改判。
+
+    **F-P2 最小权限＋采纳即人审**：只有 admin 可决策；auth_type 非 none（真实执行要凭据）
+    的草稿须 authConfirmed=true 显式确认才可采纳，否则 422。
+    """
+    services = services_for(principal)
+    draft = services.adapter_drafts.get(draft_id)
+    if draft is None:
+        raise HTTPException(status_code=404, detail=f"适配器草稿不存在：{draft_id}")
+    if (
+        request.decision == "adopted"
+        and (draft.get("definition") or {}).get("auth_type", "none") != "none"
+        and not request.authConfirmed
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="auth_type 非 none 的适配器执行需要凭据，须 admin 显式确认（authConfirmed=true）",
+        )
+    updated = services.adapter_drafts.set_decision(draft_id, request.decision)
+    _record_audit(services, principal, http_request, "adapter_draft.decide", 200)
+    return updated
+
+
+@app.get("/api/adapter-drafts")
+def list_adapter_drafts(
+    principal: Principal = Depends(require("read")),
+) -> dict[str, Any]:
+    """本租户适配器草稿（倒序；docs/133 §2.2 投影）。"""
+    services = services_for(principal)
+    return {"items": services.adapter_drafts.list()}
+
+
+@app.get("/api/embeds/config")
+def list_embed_configs(principal: Principal = Depends(require("administer"))) -> dict[str, Any]:
+    """嵌入配置列表（第七类 SchemaRegistry 实体；docs/133 §2.1）。
+
+    **必须先于 ``/api/embeds/{token}`` 注册**（静态段不被路径参数吞掉）。
+    """
+    services = services_for(principal)
+    return {"items": services.embed_store.list()}
+
+
+@app.put("/api/embeds/config")
+def upsert_embed_config(
+    http_request: Request,
+    request: EmbedConfigRequest,
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, Any]:
+    """开启/调整某图的只读嵌入（enabled 缺省 false＝fail-closed；ttl 1–86400 门控）。"""
+    services = services_for(principal)
+    config = services.embed_store.upsert(
+        request.graph_id,
+        enabled=request.enabled,
+        token_ttl_seconds=request.token_ttl_seconds,
+    )
+    _record_audit(services, principal, http_request, "embed.config", 200)
+    return config
+
+
+@app.post("/api/embeds", status_code=201)
+def create_embed_token(
+    http_request: Request,
+    request: EmbedTokenRequest,
+    principal: Principal = Depends(require("administer")),
+) -> dict[str, Any]:
+    """签发嵌入短链（docs/133 BQ-D1：同形 HMAC，不新建鉴权形态）。图未启用嵌入 → 422。"""
+    services = services_for(principal)
+    config = services.embed_store.get(request.graph_id)
+    if config is None or not config["enabled"]:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Graph {request.graph_id} 未启用只读嵌入，请先通过 PUT /api/embeds/config 开启",
+        )
+    issuer = EmbedTokenIssuer()
+    token = issuer.issue(
+        principal.tenant_id, request.graph_id, ttl_seconds=config["token_ttl_seconds"]
+    )
+    _record_audit(services, principal, http_request, "embed.token", 201)
+    return {"token": token, "tokenUrl": f"{_PUBLIC_URL}/embed/{token}"}
+
+
+@app.get("/api/embeds/{token}")
+def embed_readonly_view(token: str) -> dict[str, Any]:
+    """公开只读嵌入面（docs/133 BQ-D2：无登录态、无副作用）。
+
+    验签失败统一 404（不区分 malformed/bad signature/expired，照邮件深链纪律）。
+    投影＝图元信息＋最近运行摘要；**不含** 密钥/决策/草稿键。
+    """
+    issuer = EmbedTokenIssuer()
+    try:
+        body = issuer.verify(token)
+    except EmbedTokenError as exc:
+        raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID) from exc
+    tenant_id = str(body.get("tenant", ""))
+    graph_id = str(body.get("graph", ""))
+    services = tenant_registry.peek(tenant_id)
+    if services is None:
+        raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID)
+    raw = services.graph_store.get(graph_id)
+    if raw is None:
+        raise HTTPException(status_code=404, detail=f"Graph 不存在：{graph_id}")
+    runs = [
+        r
+        for r in services.run_store.list(status=None, limit=20)
+        if r.get("graphId") == graph_id
+    ]
+    last = runs[0] if runs else None
+    return {
+        "graphId": graph_id,
+        "name": raw.get("name", ""),
+        "nodeCount": len(raw.get("nodes") or []),
+        "variables": [
+            {"name": v.get("name"), "value": v.get("value")}
+            for v in (raw.get("variables") or [])
+        ],
+        "lastRun": (
+            {
+                "runId": last.get("runId"),
+                "status": last.get("status"),
+                "startedAt": last.get("startedAt"),
+            }
+            if last is not None
+            else None
+        ),
+    }
 
 
 class CronPreviewRequest(BaseModel):

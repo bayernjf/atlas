@@ -18,6 +18,7 @@ from atlas.httpapi.adapter import HttpApiHarnessAdapter
 from atlas.memory.adapter import MemoryHarnessAdapter
 from atlas.message.adapter import MessageHarnessAdapter
 from atlas.openapi.adapter import ImportedApiHarnessAdapter
+from atlas.harness.generated import GeneratedApiHarnessAdapter
 from atlas.shop.adapter import ShopHarnessAdapter
 from atlas.shop.service import DemoShopService
 from atlas.web.adapter import WebHarnessAdapter
@@ -127,6 +128,16 @@ def build_runtime_registry(
             ImportedApiHarnessAdapter(
                 imported,
                 secret_provider=secret_provider,
+                granted_permissions=FULL_PERMISSIONS,
+            )
+        )
+    # 打包 BQ（docs/133 D71）：NL 造工具的 adopted 草稿装配进运行时。
+    # getattr 防御：base registry（全局发现实例）以 SimpleNamespace 构造、无草稿档。
+    drafts = getattr(services, "adapter_drafts", None)
+    for draft in drafts.list(adopted=True) if drafts is not None else []:
+        registry.register(
+            GeneratedApiHarnessAdapter(
+                draft,
                 granted_permissions=FULL_PERMISSIONS,
             )
         )
