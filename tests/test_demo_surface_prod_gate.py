@@ -39,6 +39,7 @@ PUBLIC_BY_DESIGN: dict[str, str] = {
     "POST /api/auth/login": "登录入口本身（有速率门）",
     "GET /api/approvals/email-view": "邮件深链，签名 capability token＋短时效",
     "POST /api/approvals/email-decision": "邮件深链决策，签名 token＋绑收件人（J-1b）",
+    "GET /api/embeds/{token}": "网页嵌入只读面（打包 BQ D76）：同形 HMAC 签名 token＋TTL，验签失败统一 404，投影只含图元信息/变量/最近运行（docs/133 §5）",
 }
 
 # 打包 P 收口的五条 demo 模拟面：prod 档必须 404，非 prod 保持原语义。
