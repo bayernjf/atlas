@@ -521,12 +521,22 @@ def _live_server_base_url() -> str:
     thread.start()
     import httpx
 
-    for _ in range(100):
+    # 2026-10-17：就绪等待改用 uvicorn 的确定性信号 `server.started`——lifespan
+    # startup 内含 litellm 首次导入＋外网 model cost map 拉取重试，外网受限时启动
+    # 实测约 6s（本机 16:44 计时 5.88s）；原「100 次盲探测 health」的循环里
+    # Connection refused 立即返回、<1s 就耗尽预算，把「启动慢」读成「起不来」
+    # （与 D67 同族：测试面时序窗口，非产品缺陷）。started 后再探一次 health
+    # 确认 worker 立即可服务（实测 started 后 0.02s 内 200）。
+    deadline = time.monotonic() + 30
+    while not server.started and time.monotonic() < deadline:
+        time.sleep(0.05)
+    for _ in range(20):
         try:
             if httpx.get(f"http://127.0.0.1:{port}/api/health", timeout=1).status_code == 200:
                 break
         except httpx.RequestError:
             pass
+        time.sleep(0.05)
     else:
         raise RuntimeError("live uvicorn server did not become ready")
     _live_server_url = f"http://127.0.0.1:{port}"
