@@ -204,7 +204,10 @@ def _human_approval_graph() -> dict:
              "config": {
                  "summary": "订单 {{trigger-1.context.payload.order_id}} 退款审批",
                  "approver": "",
-                 "timeoutSeconds": 10,
+                 # 2026-10-17：10→60s。本图被 test_live_stream... 共享，审批挂起窗口须远宽于
+                 # "高负载下 run 走到审批节点"的抖动，否则 run 启动慢会被读成产品超时 reject。
+                 # test_run_with_preset_approval... 用预置决策不走超时，改动对其无影响。
+                 "timeoutSeconds": 60,
                  "onTimeout": "reject",
                  "approvedTarget": "tool-approve",
                  "rejectedTarget": "tool-reject",
@@ -252,23 +255,35 @@ def test_live_stream_human_approval_decision_unblocks_run():
 
     def decide_when_pending() -> None:
         try:
-            with TestClient(app, headers=DEFAULT_AUTH_HEADER) as decider:
-                # docs/14 D67（2026-10-11 定性：**测试面**不是产品面）：窗口原来写死
-                # 100×0.02s＝2s，高负载全量轮里 run 走到审批节点本身就要好几秒 ⇒ 把"起得慢"
-                # 读成"队列里没有这条"。窗口必须**宽于节点 timeoutSeconds（本图 10s）**，
-                # 否则这种失败会再次伪装成产品回归。另：不能拿 SSE 审批帧当 ready signal
-                # ——TestClient 的 ASGI 传输把整条流缓冲到响应结束才给客户端（实测帧在
-                # 节点超时之后才到），真 uvicorn 进程里同一条链帧 0.15s 到、队列 0.16s 可见。
-                deadline = time.monotonic() + 12
+            # 2026-10-17：去掉 with（避免重复触发 lifespan startup/shutdown 副作用），
+            # 与模块级 client 同款不带 lifespan。
+            decider = TestClient(app, headers=DEFAULT_AUTH_HEADER)
+            try:
+                # docs/14 D67（2026-10-11 定性：**测试面**不是产品面）+ 2026-10-17 补判：
+                # 真正的串扰源是**共享 broker 里前置测试遗留的挂起审批**（test_api_cards 的
+                # 挂起 run 30s 超时、只读不 resolve，超时前仍在 pending 列表里）——
+                # list_pending 按插入序返回，`items[0]` 会取到遗留项、把它批准而本 run 的
+                # 审批无人批 ⇒ 超时 reject 伪装成产品回归。故必须**按本 run 订单号精确匹配**，
+                # 不能取 items[0]。窗口再放大为双保险：① 轮询 deadline 12→30s（覆盖高负载下
+                # run 启动＋审批注册慢的抖动）；② 审批超时 10→60s（本图 config），批准动作
+                # 远早于超时不触发 reject；③ join 同步放宽到 90s。不能拿 SSE 审批帧当
+                # ready signal——TestClient 的 ASGI 传输把整条流缓冲到响应结束才给客户端
+                # （实测帧在节点超时之后才到），真 uvicorn 进程里同一条链帧 0.15s 到、队列
+                # 0.16s 可见。
+                deadline = time.monotonic() + 30
                 token = None
                 while time.monotonic() < deadline:
                     items = decider.get("/api/approvals").json()["items"]
-                    if items:
-                        token = items[0]["token"]
+                    mine = next(
+                        (item for item in items if item["summary"] == "订单 20002 退款审批"),
+                        None,
+                    )
+                    if mine is not None:
+                        token = mine["token"]
                         break
                     time.sleep(0.02)
                 assert token is not None, (
-                    "12s 内审批队列里始终没出现这条（docs/14 D67：真进程实测队列与帧同步可见，"
+                    "30s 内审批队列里始终没出现这条（docs/14 D67：真进程实测队列与帧同步可见，"
                     "此处若空＝run 根本没走到审批节点，不是队列问题）"
                 )
                 response = decider.post(
@@ -276,6 +291,8 @@ def test_live_stream_human_approval_decision_unblocks_run():
                     json={"decision": "approved", "comment": "同意"},
                 )
                 assert response.status_code == 200
+            finally:
+                decider.close()
         except BaseException as exc:  # noqa: BLE001 线程内失败必须能被主线程看见
             thread_errors.append(exc)
 
@@ -296,12 +313,12 @@ def test_live_stream_human_approval_decision_unblocks_run():
             payload = _json.loads(line[len("data:"):].strip())
             if "approval" in payload:
                 assert payload["approval"]["summary"] == "订单 20002 退款审批"
-                assert payload["approval"]["timeoutSeconds"] == 10
+                assert payload["approval"]["timeoutSeconds"] == 60
                 saw_approval_start = True
             if "outputs" in payload:
                 result_body = payload
 
-    decider_thread.join(timeout=25)
+    decider_thread.join(timeout=90)
     if thread_errors:
         raise thread_errors[0]
     assert saw_approval_start is True
@@ -339,7 +356,12 @@ def test_approval_decision_endpoint_404_409_422_and_reset():
         f"/api/approvals/{token}/decision", json={"decision": "approved"}
     )
     assert conflict.status_code == 409
-    assert client.get("/api/approvals").json()["items"] == []
+    pending_after = client.get("/api/approvals").json()["items"]
+    # 2026-10-17：原断言 `items == []` 是全局空断言——共享 broker 里前置测试
+    # （test_api_cards 的挂起 run 30s 超时、只读不 resolve）可能遗留挂起审批，
+    # 紧凑顺序（-k 过滤/分片）下会把顺序依赖伪装成产品回归，与 live 流式审批
+    # 测试的串扰（D67 同族）同一根因。改为只断言本测试的审批已决即不在 pending。
+    assert all(item["token"] != token for item in pending_after)
 
     client.post("/api/demo/reset")
 
