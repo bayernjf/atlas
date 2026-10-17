@@ -3,6 +3,18 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔fix〕live uvicorn 探测 flaky＝就绪等待改 `server.started` 确定性信号（2026-10-17，commit 32f4f20；D67 同族测试面时序窗口，未 push）
+
+- **根因**：`_live_server_base_url()` 的探测循环做 100 次立即 `httpx.get(/api/health)` 无退避——Connection refused 立即返回、预算可在 <1s 内耗尽，而本机 uvicorn startup 被 litellm 首次导入＋外网 model cost map 拉取重试（egress 受限）拖慢到**实测 5.88s**（`server.started` 才 True，其后 health 0.02s 内 200），把「启动慢」读成「起不来」。
+- **修法**：就绪等待改 `uvicorn.Server.started`（30s 预算，启动快时零额外开销），started 后再探 health 确认 worker 可服务。
+- **门（实跑）**：单测通过（2.92s）；`tests/test_api_demo.py` 全文件 **57 passed**（此前 56 passed＋1 环境性失败）。零产品代码改动／零新依赖。
+
+### 〔fix〕审批流式测试 flaky 根治＝共享 broker 遗留审批串扰（2026-10-17，commit a813c87；docs/14 D67 同族补判，测试面非产品面，未 push）
+
+- **根因**：`test_live_stream_human_approval_decision_unblocks_run` 在高负载全量轮仍偶发（12s 轮询窗口已放宽仍复现）——共享 `ApprovalBroker` 里前置测试（`test_api_cards` 挂起 run 30s 超时、只读不 resolve）遗留的挂起审批按插入序排在 `list_pending` 最前，决策线程 `items[0]` 批的是遗留项而本 run 审批无人批 ⇒ 超时 reject 伪装成产品回归。
+- **修法**：决策线程按本 run 订单号（summary「订单 20002 退款审批」）精确匹配，不再取 `items[0]`；轮询窗口 12→30s、测试图审批超时 10→60s（共享该图的预置决策测试不走超时、无影响）、join 25→90s；辅助 TestClient 去 with（避免重复触发 lifespan）；同族修 `test_approval_decision_endpoint_404_409_422_and_reset` 全局空断言 `items==[]` 改只断言自身 token 已决（紧凑 -k 过滤/分片下会被前置遗留审批破坏）。
+- **门（实跑）**：审批集合 `-k "approval or human_approval or approvals"` **两轮复跑全绿（170 passed）**——此前同集合两轮失败；`tests/test_api_demo.py` 全文件 **56 passed／1 环境性失败**（`test_http_request_against_mock_endpoints_end_to_end` live uvicorn 回环起不来，修改前 git stash 复跑同失败＝非本批引入）。零产品代码改动／零新依赖／零新错误码／无 ADR。
+
 ### 〔feat〕D70 余部之一＝`llm_usage` 接入保留期清扫（2026-10-16，用户「那你搞」授权；docs/129 AU-D7 余部闭合）
 
 - **retention 接入**：`llm_usage` 挂 docs/65 K-A 既有钩子——分表 env `ATLAS_RETENTION_LLM_USAGE_DAYS`（缺省回退全局 `ATLAS_RETENTION_DAYS`、再回退默认 90 天，对齐 audit/runs 成本账）；PG 侧 `prune_expired` 新增 DELETE（`ts::timestamptz` 转换防字典序坑）；docker-compose 透传新 env（U1158 parity 门）；`llm/pg_store.py` docstring 同步。立即清零仍走 `/api/demo/reset` 不变。
