@@ -48,9 +48,11 @@ def test_budget_gate_iterations():
 
 def test_budget_gate_wall_clock():
     session = _session(max_wall_clock_seconds=10)
-    # 单调钟从 started_monotonic 起算：显式给 now 避免依赖真实等待
+    # 单调钟从 started_monotonic 起算：显式给 now 避免依赖真实等待。
+    # 边界断言必须带浮点余量：`x + 10.0 - x` 在 x≈2^20（CI 机器长 uptime）时可
+    # 掉到 9.99999999988… < 10.0，精确 10.0 断言会在 CI 概率性转红（2026-10-17 PR #158 实测）。
     assert budget_exhausted(session, now_monotonic=session.started_monotonic + 9.9) == ""
-    assert budget_exhausted(session, now_monotonic=session.started_monotonic + 10.0) == (
+    assert budget_exhausted(session, now_monotonic=session.started_monotonic + 10.0 + 1e-6) == (
         GATE_WALL_CLOCK
     )
 
