@@ -3,6 +3,12 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔fix〕P1 工程健康复查＝重负载批处理端点并发护栏＋PG 档 runs 终态裁剪对账（2026-10-19，用户「那你继续」；docs/135 §6.8；未 push）
+
+- **P1-1 重负载批处理端点护栏**：`/api/evaluations`、`/api/graphs/{id}/release-gate`、`/api/reflection/candidates/{id}/autoapply` 三个同步批处理端点（内部多次 run_graph）无并发护栏，与 O-5 同族可拖垮 uvicorn 线程池。新增 `_heavy_batch_guard` 装饰器＋信号量 `_HEAVY_BATCH_MAX_CONCURRENT=8`，超限 429（中文 detail 可重试）、finally release；wraps 保留签名、依赖注入照常。
+- **P1-2 PG 档 runs 终态裁剪**：memory 档 RunStore 已有 `_TERMINAL_RUN_LIMIT=200`（AR 10a），PG 档 PgRunsStore 无对称裁剪致 runs 表终态无界增长。begin 同事务追加 DELETE：仅裁非 running/suspended 的最旧终态、保留最新 200 条（`started_at DESC, id DESC` 兜底）。
+- **门（实跑）**：内存档 test_api_runs 5＋test_api_rollout 11＋test_evaluation 18 passed／1 skipped；PG 档 storage 集成 25 passed（一次性 pgvector:pg16 @5445 实跑即删）。零新依赖／零新错误码／零迁移。docs/13 U1525–U1526 转正式。
+
 ### 〔feat〕P0 架构评估快速闭环＝O-2 runs 投影补 resolvedVersion＋O-4 rollout reset＋O-5 同步 run 并发护栏（2026-10-19，用户「那你继续」；docs/135 §6.7；迁移 057；未 push）
 
 - **O-2 runs 投影补 `resolvedVersion`**：`storage/memory.py`＋`storage/pg.py` 两档 RunStore.begin 加可选参数 `resolved_version`（缺省 None＝非入站路由运行零回归）并落 get/list 投影；迁移 `057_runs_resolved_version.sql`（幂等 ADD COLUMN）；`main.py` 同步/流式两处 begin 传参——灰度分流比例现可从 /api/runs 外部断言（docs/135 §6.5 O-2 关闭）。
