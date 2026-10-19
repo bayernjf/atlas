@@ -4134,6 +4134,23 @@ def rollback_rollout(
     return _rollout_projection(state)
 
 
+@app.post("/api/graphs/{graph_id}/rollout/reset")
+def reset_rollout(
+    graph_id: str, principal: Principal = Depends(require("operate"))
+) -> dict[str, Any]:
+    """任意非 idle 态 → idle：**保留灰度配置**，清运行字段（stable/candidate/计数/回滚痕迹）。
+
+    O-4 修复（docs/135 §6.6）：rolled_back 原为终态，回滚/实验 conclude 后该图无法再开
+    灰度/实验；reset 提供显式复位路径。幂等：idle（含从未配置）返现状 200。
+    图在本租户不存在 → 404（照 GET rollout 的校验，跨租户不泄漏存在性）。
+    """
+    services = services_for(principal)
+    if services.graph_store.get(graph_id) is None and not services.graph_store.list_versions(graph_id):
+        raise HTTPException(status_code=404, detail=f"Graph 不存在：{graph_id}")
+    state = services.routing_store.reset_graph(graph_id)
+    return _rollout_projection(state)
+
+
 class ExperimentCreateBody(BaseModel):
     """POST /api/experiments 请求体（docs/134 §2.4；camelCase 直进直出，GateMetric 先例）。"""
 
