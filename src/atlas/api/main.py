@@ -16,6 +16,7 @@ import os
 import asyncio
 import threading
 from concurrent.futures import ThreadPoolExecutor
+import functools
 import csv
 import io
 import time
@@ -481,6 +482,36 @@ assert_prod_secrets()
 assert_prod_storage_backend()
 
 app = FastAPI(title="Atlas API", version="0.0.1", lifespan=lifespan)
+
+
+# P1-复查（2026-10-19，docs/08 记录）：release-gate / evaluations / autoapply 三个
+# 同步批处理端点（内部多次 run_graph）与 O-5 同族——并发触发时长期占用 uvicorn 线程池
+# （约 40），超限拖垮含 cancel/审批/GET 在内的整个同步面。独立信号量（比 run 更保守，
+# 一个批处理内部多次 run），超限 429（可重试）。运行语义零变化：只拒绝超限请求。
+# 必须定义在所有使用它的端点（autoapply 2034 / release-gate / evaluations）之前。
+_HEAVY_BATCH_MAX_CONCURRENT = 8
+_heavy_batch_slots = threading.Semaphore(_HEAVY_BATCH_MAX_CONCURRENT)
+
+
+def _heavy_batch_guard(func: Callable[..., Any]) -> Callable[..., Any]:
+    """重负载批处理端点并发护栏：acquire(blocking=False) 失败 → 429；finally release。
+
+    functools.wraps 保留原签名，FastAPI 依赖注入（principal 等 Depends）照常解析。
+    """
+
+    @functools.wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        if not _heavy_batch_slots.acquire(blocking=False):
+            raise HTTPException(
+                status_code=429,
+                detail=f"批量处理并发已达上限 {_HEAVY_BATCH_MAX_CONCURRENT}：请稍后重试",
+            )
+        try:
+            return func(*args, **kwargs)
+        finally:
+            _heavy_batch_slots.release()
+
+    return wrapper
 
 # docs/90 ADR T32：A2A 执行 Agent 面（Zeus 协同决策平台，plan-only），卡片公开、任务 Bearer 保护。
 app.include_router(a2a_router)
@@ -2032,6 +2063,7 @@ class AutoApplyRequest(BaseModel):
 
 
 @app.post("/api/reflection/candidates/{candidate_id}/autoapply", status_code=201)
+@_heavy_batch_guard
 def start_candidate_autoapply(
     http_request: Request,
     candidate_id: str,
@@ -3561,6 +3593,7 @@ def _release_gate_for_draft(services: TenantServices, graph_id: str) -> dict[str
 
 
 @app.post("/api/graphs/{graph_id}/release-gate")
+@_heavy_batch_guard
 def run_graph_release_gate(
     graph_id: str, principal: Principal = Depends(require("operate"))
 ) -> dict[str, Any]:
@@ -7595,6 +7628,7 @@ class EvaluationRunRequest(BaseModel):
 
 
 @app.post("/api/evaluations", status_code=201)
+@_heavy_batch_guard
 def run_evaluation(
     body: EvaluationRunRequest,
     principal: Principal = Depends(require("administer")),
