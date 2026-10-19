@@ -1170,6 +1170,8 @@ attempt: number           # 尝试次数（重试幂等键不变）
 
 ```yaml
 # PUT /api/graphs/{id}/rollout（存配置不启动，非法 422 中文）；GET 投影含状态与分流计数
+# POST .../rollout/{start|promote|rollback}；POST .../rollout/reset（O-4 修复 2026-10-19：
+#   任意非 idle 态 → idle、保留 config，见 04 §5.16 ④ 与 08 记录）
 strategy: "progressive"          # v1 唯一值
 rules:                           # 求值顺序固定，v1 不做 when 表达式解析器（字符串条件落为结构化字段）
   - {to: "internal", tenants: [string]}          # 内部租户 allowlist 段
