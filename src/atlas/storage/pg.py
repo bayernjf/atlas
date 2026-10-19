@@ -1900,6 +1900,21 @@ class PgRunsStore:
                     "resolved_version": resolved_version,
                 },
             )
+            # P1-2 对账（2026-10-19，docs/08 记录）：memory 档 RunStore 有终态有界
+            # N=200（AR 10a，docs/125 §3.6），PG 档此前无对称裁剪 → runs 表终态
+            # 无界增长。每次 begin 后同事务裁剪：仅裁非 running/suspended 的最旧
+            # 终态，保留最新 200 条（排序含 id 兜底防 started_at 重复不稳定）。
+            conn.execute(
+                text(
+                    "DELETE FROM runs WHERE tenant_id = :tenant_id "
+                    "AND status NOT IN ('running', 'suspended') "
+                    "AND id NOT IN ("
+                    "  SELECT id FROM runs WHERE tenant_id = :tenant_id "
+                    "  AND status NOT IN ('running', 'suspended') "
+                    "  ORDER BY started_at DESC, id DESC LIMIT :limit)"
+                ),
+                {"tenant_id": self._tenant_id, "limit": 200},
+            )
 
     def suspend(
         self, *, run_id: str, node_id: str, kind: str,
