@@ -5639,11 +5639,37 @@ def _tool_call_from_event(event: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# O-5 第一道护栏（docs/135 §6.6，2026-10-19）：同步 run 在挂起节点（审批/事件等待）时
+# 会**阻塞 HTTP 直到审批或图配置超时**，长期占用 uvicorn 默认线程池（约 40）。
+# 并发挂起超过线程池容量 ⇒ 服务不可用且 cancel/审批/GET 全排队（实测复现）。信号量
+# 限制同时刻同步 run 数并预留余量给 cancel/审批/查询等轻请求；超限 429（可重试）。
+# 彻底解耦（专用 run 线程池）待后续立项，见 docs/135 §6.6 建议。
+_SYNC_RUN_MAX_CONCURRENT = 32
+_sync_run_slots = threading.Semaphore(_SYNC_RUN_MAX_CONCURRENT)
+
+
 @app.post("/api/graphs/{graph_id}/run", response_model=RunGraphResponse)
 def run_saved_graph(
     graph_id: str,
     payload: dict[str, Any] | None = None,
     principal: Principal = Depends(require("operate")),
+) -> RunGraphResponse:
+    """同步跑一次图（O-5 护栏：并发上限 429；逻辑在 `_run_saved_graph_impl`）。"""
+    if not _sync_run_slots.acquire(blocking=False):
+        raise HTTPException(
+            status_code=429,
+            detail=f"同步运行并发已达上限 {_SYNC_RUN_MAX_CONCURRENT}：请稍后重试或改用 /run/stream（SSE）",
+        )
+    try:
+        return _run_saved_graph_impl(graph_id, payload, principal)
+    finally:
+        _sync_run_slots.release()
+
+
+def _run_saved_graph_impl(
+    graph_id: str,
+    payload: dict[str, Any] | None,
+    principal: Principal,
 ) -> RunGraphResponse:
     """同步跑一次图（v1 也承载自走循环，见 `_run_sync_cycle` 与 docs/130 C-D10）。
 
