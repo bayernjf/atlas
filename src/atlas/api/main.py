@@ -5768,6 +5768,7 @@ def _run_sync_cycle(
     services.run_store.begin(
         run_id=run_id, graph_id=graph_id, mode="sync",
         cycle_seq=cycle_seq, cycle_group_id=cycle_group_id,
+        resolved_version=resolved_version,  # O-2：带 event 的路由版本落投影（无 event 恒 None）
     )
     frame_sink = _frame_sink_for(principal.tenant_id, services.run_store, run_id)
     # docs/28 §4.1 ⑧：同步入口无 SSE，构造同形收集 emit（只收顶层 tool_metric，其余忽略）。
@@ -6057,7 +6058,10 @@ async def run_saved_graph_stream(
 
         def worker() -> None:
             if monitored:
-                run_store.begin(run_id=run_id, graph_id=graph_id, mode="stream")
+                run_store.begin(
+                    run_id=run_id, graph_id=graph_id, mode="stream",
+                    resolved_version=resolved_version,  # O-2：带 event 的路由版本落投影
+                )
             # 各异常分支只决定终帧种类；收尾经 _finalize_run 整体保护，任何路径恰好一帧。
             terminal: dict[str, Any]
             try:
