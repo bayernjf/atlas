@@ -320,6 +320,47 @@ def test_rollout_rest_state_machine():
     assert second.status_code == 200 and second.json()["rollbackReason"] == "first"
 
 
+# O-4 修复：rolled_back 原为终态（configure 不改状态、无复位端点）→ reset 提供
+# 任意非 idle 态 → idle 的显式复位（保留 config），复位后可重新开灰度
+def test_rollout_reset_reopens_after_rolled_back():
+    graph_id = _publish_two_versions()
+    _start_canary(graph_id)
+
+    # 回滚 → rolled_back（终态）
+    rb = client.post(f"/api/graphs/{graph_id}/rollout/rollback", json={"reason": "o4"})
+    assert rb.status_code == 200 and rb.json()["status"] == "rolled_back"
+    # reset 前：start 409（rolled_back 非 idle）
+    assert client.post(f"/api/graphs/{graph_id}/rollout/start").status_code == 409
+
+    # reset → idle，且 config 保留
+    reset = client.post(f"/api/graphs/{graph_id}/rollout/reset")
+    assert reset.status_code == 200, reset.text
+    body = reset.json()
+    assert body["status"] == "idle"
+    assert body["config"] is not None and body["config"]["rules"][0]["to"] == "canary"
+    assert body["stable"] is None and body["candidate"] is None
+    assert body["rollbackReason"] is None
+    assert body["traffic"]["candidate"] == 0 and body["traffic"]["stable"] == 0
+
+    # 复位后可直接重开 canary（配置保留、start 不再 409）
+    restarted = client.post(f"/api/graphs/{graph_id}/rollout/start")
+    assert restarted.status_code == 200, restarted.text
+    assert restarted.json()["status"] == "canary" and restarted.json()["candidate"] == 2
+
+    # 幂等：idle 上再 reset 返现状 200（不报错）
+    again = client.post(f"/api/graphs/{graph_id}/rollout/reset")
+    assert again.status_code == 200 and again.json()["status"] == "idle"
+
+    # full 态同样可复位
+    _start_canary(graph_id)
+    assert client.post(f"/api/graphs/{graph_id}/rollout/promote").json()["status"] == "full"
+    full_reset = client.post(f"/api/graphs/{graph_id}/rollout/reset")
+    assert full_reset.status_code == 200 and full_reset.json()["status"] == "idle"
+
+    # 不存在的图 → 404（照 GET rollout 校验，跨租户不泄漏存在性）
+    assert client.post("/api/graphs/graph-999999/rollout/reset").status_code == 404
+
+
 # ⑤ reset 清空 rollout 配置/状态/计数
 def test_reset_clears_rollout_state():
     graph_id = _publish_two_versions()
