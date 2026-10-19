@@ -356,6 +356,12 @@ AE. ✅ **打包 AE＝condition LLM 分支置信度阈值＋上下文字段级�
 
 ## Quality gate（质量门）
 
+### 2026-10-18 main CI 红修复：墙钟预算闸门浮点边界（`ab7e2ad`）
+
+- 症状：PR #158 合并到 main 后的 push CI（run `39007711004`）Backend pytest 失败 1 例——`test_cycles_state.py::test_budget_gate_wall_clock`，`assert '' == 'maxWallClockSeconds'`；本机 dev 全量门（2926/212/0）绿、main 与 dev 代码零差异。
+- 根因：测试构造精确浮点边界 `started_monotonic + 10.0` 断言触顶；`x + 10.0 - x` 在 `x≈2^20`（CI 机器长 uptime）时可掉到 `9.99999999988… < 10.0`（实测 `1048572.919078` 时复现），`budget_exhausted` 的 `>=` 判不过 → 概率性转红。产品实现语义正确，是测试边界写死。
+- 修法：触顶断言改 `+ 10.0 + 1e-6`（余量远大于 ulp），9.9 不触顶断言余量 0.1 本就安全；附注释说明复现值。坏起点复现验证：旧写法红、新写法绿。`tests/test_cycles_state.py` 20 passed。
+
 ### 2026-10-17 两个 flaky 根治＋全量门刷新＋docs/135 首跑 E2E（Active 176–178）
 
 - 后端全量 `.venv/bin/pytest -q`：**2926 passed／212 skipped／0 failed**（253s）。
