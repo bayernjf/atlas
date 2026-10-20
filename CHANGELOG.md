@@ -3,6 +3,11 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔fix〕O-5 彻底解耦＝同步 run 迁移专用线程池（2026-10-20，用户「那你搞」；docs/135 §6.9；未 push）
+
+- 同步 `POST /api/graphs/{id}/run` 端点 async 化：run 经 `loop.run_in_executor` 提交专用线程池 `_SYNC_RUN_POOL`（32 槽，`thread_name_prefix="atlas-sync-run"`），挂起的 run（审批/事件等待）只占专用池线程，不再占用 uvicorn 默认线程池（约 40）——同步面（cancel/审批/GET）彻底与 run 挂起隔离。信号量保留 429 语义（池满快速失败，防队列无限堆积）；`_run_saved_graph_impl` 零改动。
+- 分域回归：api_runs 6（含 U1527 结构回归锁 async＋池容量）＋run_cancel＋sse_stream_resilience＋api_rollout 11＋evaluation 18 → 59 passed／1 skipped；全量门见 13。零新依赖／零新错误码／零迁移。
+
 ### 〔fix〕P1 工程健康复查＝重负载批处理端点并发护栏＋PG 档 runs 终态裁剪对账（2026-10-19，用户「那你继续」；docs/135 §6.8；未 push）
 
 - **P1-1 重负载批处理端点护栏**：`/api/evaluations`、`/api/graphs/{id}/release-gate`、`/api/reflection/candidates/{id}/autoapply` 三个同步批处理端点（内部多次 run_graph）无并发护栏，与 O-5 同族可拖垮 uvicorn 线程池。新增 `_heavy_batch_guard` 装饰器＋信号量 `_HEAVY_BATCH_MAX_CONCURRENT=8`，超限 429（中文 detail 可重试）、finally release；wraps 保留签名、依赖注入照常。

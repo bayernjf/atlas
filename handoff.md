@@ -172,6 +172,7 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 
 179. ✅ **P0 架构评估快速闭环＝O-2/O-4/O-5 三修复＋F-3 定性更正（2026-10-19，承接用户「那你继续」；docs/135 §6.4–§6.7＋docs/04 §5.16 ④＋docs/03 索引＋docs/13 U1522–U1524＋docs/08 记录；门 2929 passed／212 skipped／0 failed 344.64s；迁移 057；未 push）**（2026-10-19 收口）
 180. ✅ **P1 工程健康复查＝重负载批处理端点并发护栏＋PG 档 runs 终态裁剪对账（2026-10-19 晚，承接用户「那你继续」P0 之后推进；docs/135 §6.8＋docs/13 U1525–U1526＋docs/08 记录；分域 18+25 passed；未 push）**（2026-10-19 收口）
+181. ✅ **O-5 彻底解耦＝同步 run 迁移专用线程池（2026-10-20，承接用户「那你搞」；docs/135 §6.9＋docs/13 U1527＋docs/08 记录；端点 async＋专用池 32，挂起不再占 uvicorn 线程池；分域 59 passed；未 push）**（2026-10-20 收口）
 161. ✅ **打包 AQ＝D66 跨端 codegen 已落码收口**（2026-10-12 收口）— 详情见归档 [docs/handoff-archive-2026-10-16.md §二「Active #161」](docs/handoff-archive-2026-10-16.md)
 176. ✅ **两个 flaky 测试根治＋全量门基线刷新（2026-10-17，承接用户「那你搞」；审批串扰＝决策线程按 summary「订单 20002 退款审批」精确匹配 `a813c87`、live uvicorn 就绪改等 `server.started` `32f4f20`；门 2926 passed／212 skipped／0 failed 253s、前端 vitest 1027/2＋oxlint 0/0＋build ✓；docs 记录 `92fca34`/`a71ca7c`；未 push）**（2026-10-17 收口）
 177. ✅ **docs/135 产品功能验证清单创建并文档化＝新用户视角 22 项四部分（2026-10-17，承接用户「新用户验证产品功能的清单」→「更新到项目文档里，方便我后续让你操作浏览器做E2E」；实核 TRIAL.md＋`template/graphs.py`（内置退款模板 D57 真挂起）＋`App.tsx` Page 枚举 19 类；根目录 `PRODUCT_FUNCTION_CHECKLIST.md` 363 行 `37fe7c2` → 迁移 docs/135（每项带入口/操作/断言/E2E 级别 L1-L3＋§1 账号表与前端 19 页面入口）`0c7815f`，docs/00 地图＋handoff 索引同步，根目录清单已删防双源漂移；未 push）**（2026-10-17 收口）
