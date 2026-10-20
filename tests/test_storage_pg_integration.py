@@ -628,13 +628,15 @@ def test_event_wait_multi_key_recovery_releases_on_nonprimary(backend):
 
 def test_u1526_runs_terminal_eviction_bounds_pg(backend):
     """P1-2 对账（docs/08 记录）：PG 档 runs 终态有界 N=200，与 memory 档
-    RunStore._TERMINAL_RUN_LIMIT（AR 10a）对称；running/suspended 不参与淘汰。"""
-    from atlas.iam.deps import tenant_registry
+    RunStore._TERMINAL_RUN_LIMIT（AR 10a）对称；running/suspended 不参与淘汰。
 
+    直接经 backend.run_store（PgRunsStore）测存储实现本身，不依赖
+    ATLAS_STORAGE_BACKEND 档位（registry 缺省 memory 时全局服务是内存档，
+    不能拿它验证 PG 行为）。
+    """
     engine = backend.engine
     _cleanup(engine)
-    services = tenant_registry.get(TENANT)
-    rs = services.run_store
+    rs = backend.run_store(TENANT)
 
     # 201 条终态（顺序插入，begin 后立即 finish）→ 裁剪后仅保留最新 200 条
     for i in range(201):
