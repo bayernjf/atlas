@@ -149,3 +149,93 @@ def test_wait_timeout_fail_returns_structured_500_and_runs_list_still_serves():
     items = client.get("/api/runs").json()["items"]
     assert next(r for r in items if r["graphId"] == gid)["status"] == "failed"
     client.post("/api/demo/reset")
+
+
+def test_runs_projection_exposes_resolved_version():
+    """O-2 修复：带 event 的路由 run，/api/runs 列表与详情投影暴露 resolvedVersion（canary 钉版）；
+    无 event 的手动/草稿 run 恒 None（零回归）。"""
+    client.post("/api/demo/reset")
+    # 造两个发布版（v1/v2），再开 canary（stable=1/candidate=2）
+    graph_id = client.post("/api/graphs", json=_human_approval_graph()).json()["id"]
+    assert client.post(f"/api/graphs/{graph_id}/publish").status_code == 200
+    from atlas.iam.deps import tenant_registry
+
+    store = tenant_registry.get("t1").graph_store
+    store._graphs[graph_id] = _human_approval_graph()  # 草稿换代（仅产生新版本号）
+    assert client.post(f"/api/graphs/{graph_id}/publish").json()["releaseVersion"] == 2
+    client.put(
+        f"/api/graphs/{graph_id}/rollout",
+        json={"strategy": "progressive", "rules": [{"to": "canary", "percent": 100}]},
+    )
+    started = client.post(f"/api/graphs/{graph_id}/rollout/start")
+    assert started.status_code == 200, started.text
+    assert started.json()["status"] == "canary" and started.json()["candidate"] == 2
+
+    # 带 event → RoutingStore 解析 candidate=2，同步 run 完成后投影应暴露 2
+    resp = client.post(
+        f"/api/graphs/{graph_id}/run",
+        json={
+            "event": {"channel": "api", "payload": {"order_id": "70001", "amount": 999}},
+            "inputs": {"order_id": "70001", "approvals": {"human-1": "approved"}},
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    items = client.get("/api/runs").json()["items"]
+    run = next(r for r in items if r["graphId"] == graph_id)
+    assert run["resolvedVersion"] == 2
+    detail = client.get(f"/api/runs/{run['runId']}").json()
+    assert detail["resolvedVersion"] == 2
+
+    # 无 event 手动 run：resolvedVersion 恒 None（零回归）
+    gid2 = client.post("/api/graphs", json=_human_approval_graph()).json()["id"]
+    resp2 = client.post(
+        f"/api/graphs/{gid2}/run",
+        json={"inputs": {"order_id": "30002", "approvals": {"human-1": "approved"}}},
+    )
+    assert resp2.status_code == 200, resp2.text
+    items2 = client.get("/api/runs").json()["items"]
+    run2 = next(r for r in items2 if r["graphId"] == gid2)
+    assert run2["resolvedVersion"] is None
+    client.post("/api/demo/reset")
+
+
+def test_sync_run_concurrency_guard_429():
+    """O-5 护栏：同步 run 并发达上限（32）时 429 且不阻塞线程池；信号量释放后可恢复。"""
+    from atlas.api.main import _sync_run_slots
+
+    acquired = [_sync_run_slots.acquire(blocking=False) for _ in range(32)]
+    assert all(acquired), "测试前置：应能占满同步 run 信号量"
+    graph_id = client.post("/api/graphs", json=_human_approval_graph()).json()["id"]
+    try:
+        resp = client.post(
+            f"/api/graphs/{graph_id}/run",
+            json={"inputs": {"order_id": "30009", "approvals": {"human-1": "approved"}}},
+        )
+        assert resp.status_code == 429, resp.text
+        assert "并发已达上限" in resp.json()["detail"]
+    finally:
+        for _ in acquired:
+            _sync_run_slots.release()
+    # 释放后可正常运行（护栏不误伤常规并发）
+    resp2 = client.post(
+        f"/api/graphs/{graph_id}/run",
+        json={"inputs": {"order_id": "30009", "approvals": {"human-1": "approved"}}},
+    )
+    assert resp2.status_code == 200, resp2.text
+    client.post("/api/demo/reset")
+
+
+def test_sync_run_detached_executor_structure():
+    """O-5 彻底解耦（docs/135 §6.9）结构回归：同步 run 端点必须保持 async 协程，
+    run 在专用线程池执行（不占 uvicorn 默认线程池，挂起只占专用池线程）。
+    防止未来回退成同步 def（挂起重新占用 uvicorn 线程池导致同步面被拖垮）。"""
+    import inspect
+
+    from atlas.api.main import _SYNC_RUN_POOL, run_saved_graph
+
+    assert inspect.iscoroutinefunction(run_saved_graph), (
+        "run_saved_graph 必须是 async 协程（O-5 彻底解耦结构约束）"
+    )
+    assert _SYNC_RUN_POOL._max_workers == 32, (
+        f"专用 run 池容量应等于信号量上限 32，实际 {_SYNC_RUN_POOL._max_workers}"
+    )

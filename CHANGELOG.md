@@ -3,6 +3,24 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔fix〕O-5 彻底解耦＝同步 run 迁移专用线程池（2026-10-20，用户「那你搞」；docs/135 §6.9；未 push）
+
+- 同步 `POST /api/graphs/{id}/run` 端点 async 化：run 经 `loop.run_in_executor` 提交专用线程池 `_SYNC_RUN_POOL`（32 槽，`thread_name_prefix="atlas-sync-run"`），挂起的 run（审批/事件等待）只占专用池线程，不再占用 uvicorn 默认线程池（约 40）——同步面（cancel/审批/GET）彻底与 run 挂起隔离。信号量保留 429 语义（池满快速失败，防队列无限堆积）；`_run_saved_graph_impl` 零改动。
+- 分域回归：api_runs 6（含 U1527 结构回归锁 async＋池容量）＋run_cancel＋sse_stream_resilience＋api_rollout 11＋evaluation 18 → 59 passed／1 skipped；全量门见 13。零新依赖／零新错误码／零迁移。
+
+### 〔fix〕P1 工程健康复查＝重负载批处理端点并发护栏＋PG 档 runs 终态裁剪对账（2026-10-19，用户「那你继续」；docs/135 §6.8；未 push）
+
+- **P1-1 重负载批处理端点护栏**：`/api/evaluations`、`/api/graphs/{id}/release-gate`、`/api/reflection/candidates/{id}/autoapply` 三个同步批处理端点（内部多次 run_graph）无并发护栏，与 O-5 同族可拖垮 uvicorn 线程池。新增 `_heavy_batch_guard` 装饰器＋信号量 `_HEAVY_BATCH_MAX_CONCURRENT=8`，超限 429（中文 detail 可重试）、finally release；wraps 保留签名、依赖注入照常。
+- **P1-2 PG 档 runs 终态裁剪**：memory 档 RunStore 已有 `_TERMINAL_RUN_LIMIT=200`（AR 10a），PG 档 PgRunsStore 无对称裁剪致 runs 表终态无界增长。begin 同事务追加 DELETE：仅裁非 running/suspended 的最旧终态、保留最新 200 条（`started_at DESC, id DESC` 兜底）。
+- **门（实跑）**：内存档 test_api_runs 5＋test_api_rollout 11＋test_evaluation 18 passed／1 skipped；PG 档 storage 集成 25 passed（一次性 pgvector:pg16 @5445 实跑即删）。零新依赖／零新错误码／零迁移。docs/13 U1525–U1526 转正式。
+
+### 〔feat〕P0 架构评估快速闭环＝O-2 runs 投影补 resolvedVersion＋O-4 rollout reset＋O-5 同步 run 并发护栏（2026-10-19，用户「那你继续」；docs/135 §6.7；迁移 057；未 push）
+
+- **O-2 runs 投影补 `resolvedVersion`**：`storage/memory.py`＋`storage/pg.py` 两档 RunStore.begin 加可选参数 `resolved_version`（缺省 None＝非入站路由运行零回归）并落 get/list 投影；迁移 `057_runs_resolved_version.sql`（幂等 ADD COLUMN）；`main.py` 同步/流式两处 begin 传参——灰度分流比例现可从 /api/runs 外部断言（docs/135 §6.5 O-2 关闭）。
+- **O-4 rollout reset**：`routing/store.py`＋`routing/pg_store.py` 两档新增 `reset_graph`（任意非 idle 态 → idle、**保留 config**、清运行字段、幂等）；`POST /api/graphs/{id}/rollout/reset`（operate 权限、404 照 GET rollout 校验）；契约权威同步 docs/04 §5.16 ④ 状态机图加 reset 边＋docs/03 索引——rolled_back 终态解锁，实验 conclude（adopt）后可再开灰度/实验（docs/135 §6.6 O-4 关闭）。
+- **O-5 同步 run 并发护栏第一道**：`main.py` 模块级信号量 `_SYNC_RUN_MAX_CONCURRENT=32`，同步 run 包装器 acquire(blocking=False) 失败→429（中文 detail 提示改用 /run/stream），finally release——挂起 run 不再能打满 uvicorn 线程池拖垮服务；彻底解耦（专用 run 线程池）待后续立项。
+- **门（实跑）**：后端默认全量 **2929 passed／212 skipped／0 failed（344.64s）**；分域 test_api_runs 5 passed、test_api_rollout 11 passed。零新依赖／零新错误码／1 迁移 057。docs/13 U1522–U1524 转正式。
+
 ### 〔fix〕live uvicorn 探测 flaky＝就绪等待改 `server.started` 确定性信号（2026-10-17，commit 32f4f20；D67 同族测试面时序窗口，未 push）
 
 - **根因**：`_live_server_base_url()` 的探测循环做 100 次立即 `httpx.get(/api/health)` 无退避——Connection refused 立即返回、预算可在 <1s 内耗尽，而本机 uvicorn startup 被 litellm 首次导入＋外网 model cost map 拉取重试（egress 受限）拖慢到**实测 5.88s**（`server.started` 才 True，其后 health 0.02s 内 200），把「启动慢」读成「起不来」。

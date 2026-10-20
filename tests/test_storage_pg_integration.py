@@ -626,6 +626,66 @@ def test_event_wait_multi_key_recovery_releases_on_nonprimary(backend):
     assert broker.list_pending() == []
 
 
+def test_u1526_runs_terminal_eviction_bounds_pg(backend):
+    """P1-2 对账（docs/08 记录）：PG 档 runs 终态有界 N=200，与 memory 档
+    RunStore._TERMINAL_RUN_LIMIT（AR 10a）对称；running/suspended 不参与淘汰。
+
+    直接经 backend.run_store（PgRunsStore）测存储实现本身，不依赖
+    ATLAS_STORAGE_BACKEND 档位（registry 缺省 memory 时全局服务是内存档，
+    不能拿它验证 PG 行为）。
+    """
+    engine = backend.engine
+    _cleanup(engine)
+    rs = backend.run_store(TENANT)
+
+    # 201 条终态（顺序插入，begin 后立即 finish）→ 裁剪后仅保留最新 200 条
+    for i in range(201):
+        run_id = f"run-term-{i:04d}"
+        rs.begin(run_id=run_id, graph_id="adhoc", mode="run")
+        rs.finish(run_id=run_id, status="completed")
+    # 1 条 running + 1 条 suspended 不应被裁
+    rs.begin(run_id="run-live-1", graph_id="adhoc", mode="run")
+    rs.begin(run_id="run-live-2", graph_id="adhoc", mode="run")
+    rs.suspend(
+        run_id="run-live-2", node_id="n1", kind="approval",
+        resume_token="tok", deadline_at=None,
+    )
+
+    with engine.connect() as conn:
+        total = conn.execute(
+            text("SELECT count(*) FROM runs WHERE tenant_id = :t"), {"t": TENANT}
+        ).scalar()
+        terminal = conn.execute(
+            text("SELECT count(*) FROM runs WHERE tenant_id = :t "
+                 "AND status NOT IN ('running', 'suspended')"),
+            {"t": TENANT},
+        ).scalar()
+        nonterminal = conn.execute(
+            text("SELECT count(*) FROM runs WHERE tenant_id = :t "
+                 "AND status IN ('running', 'suspended')"),
+            {"t": TENANT},
+        ).scalar()
+        oldest_gone = conn.execute(
+            text("SELECT count(*) FROM runs WHERE tenant_id = :t AND id = 'run-term-0000'"),
+            {"t": TENANT},
+        ).scalar()
+        newest_kept = conn.execute(
+            text("SELECT count(*) FROM runs WHERE tenant_id = :t AND id = 'run-term-0200'"),
+            {"t": TENANT},
+        ).scalar()
+        live_kept = conn.execute(
+            text("SELECT count(*) FROM runs WHERE tenant_id = :t AND id IN ('run-live-1', 'run-live-2')"),
+            {"t": TENANT},
+        ).scalar()
+
+    assert terminal == 200, f"终态应裁剪至 200 条，实际 {terminal}"
+    assert nonterminal == 2, "running/suspended 不应参与淘汰"
+    assert total == 202, f"总行数应为 202（200 终态＋2 非终态），实际 {total}"
+    assert oldest_gone == 0, "最旧终态应被裁剪"
+    assert newest_kept == 1, "最新终态应保留"
+    assert live_kept == 2, "running/suspended 应保留"
+
+
 
 # --- docs/55：PG 档告警 lifecycle 三列 / recovery streak / merge·resolve 通知 / flapping 冷却 ---
 class _SpyLifecycleNotifier:

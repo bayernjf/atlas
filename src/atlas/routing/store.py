@@ -163,6 +163,26 @@ class RoutingStore:
             state.rollback_actor = actor
             return state.model_copy(deep=True)
 
+    def reset_graph(self, graph_id: str) -> RolloutState:
+        """任意非 idle 态 → idle：**保留 config**，清运行字段（stable/candidate/时间戳/计数）。
+
+        O-4 修复（docs/135 §6.6）：rolled_back 原为终态（configure 只改配置不改状态），
+        回滚/实验 conclude 后该图无法再开灰度/实验；reset 提供显式复位路径，
+        幂等：idle（含从未配置）返现状，不报错。"""
+        with self._lock:
+            state = self._states.get(graph_id)
+            if state is None or state.status == "idle":
+                return RolloutState(graph_id=graph_id) if state is None else state.model_copy(deep=True)
+            state.status = "idle"
+            state.stable = None
+            state.candidate = None
+            state.started_at = None
+            state.rolled_back_at = None
+            state.rollback_reason = None
+            state.rollback_actor = None
+            state.traffic = _empty_traffic()
+            return state.model_copy(deep=True)
+
     # ---------- 路由 ----------
 
     def resolve(

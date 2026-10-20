@@ -153,16 +153,20 @@ class RunStore:
         self, *, run_id: str, graph_id: str, mode: str,
         cycle_seq: int = 0, cycle_group_id: str = "",
         agent_id: str = "",
+        resolved_version: int | None = None,
     ) -> None:
         # 打包 BN（docs/130 §3.3）：两形参缺省 0/''＝"非圈运行"，与 PG 档／迁移 050 的
         # 列缺省一致 ⇒ 不传时逐字等价现状（启用面缺省关闭，C-D2）。
         # 打包 BO（docs/131 §3.3）：agent_id 缺省 ''＝"非 agent 运行"。
+        # 打包 O-2 修复：resolved_version 缺省 None＝"非入站路由运行"（无 event 的
+        # 手动/草稿 run 逐字不变）；带 event 经 RoutingStore 解析的版本在此落投影。
         with self._lock:
             self._runs[run_id] = {
                 "runId": run_id, "graphId": graph_id, "status": "running",
                 "startedAt": self._now(),
                 "cycleSeq": int(cycle_seq), "cycleGroupId": cycle_group_id or "",
                 "agentId": agent_id or "",
+                "resolvedVersion": resolved_version,
             }
             self._order.append(run_id)
             self._evict_terminal_locked()
@@ -218,6 +222,8 @@ class RunStore:
                 # 打包 BN：圈归属两列（缺省 0/''＝非圈运行，与 PG 档投影逐键对齐）
                 "cycleSeq": run.get("cycleSeq", 0), "cycleGroupId": run.get("cycleGroupId", ""),
                 "agentId": run.get("agentId", ""),
+                # O-2 修复：入站路由解析的发布版（无 event 恒 None，与 PG 档逐键对齐）
+                "resolvedVersion": run.get("resolvedVersion"),
             }
 
     def list(self, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
@@ -236,6 +242,8 @@ class RunStore:
                     "cycleSeq": item.get("cycleSeq", 0),
                     "cycleGroupId": item.get("cycleGroupId", ""),
                     "agentId": item.get("agentId", ""),
+                    # O-2 修复：入站路由解析的发布版（无 event 恒 None，与 PG 档逐键对齐）
+                    "resolvedVersion": item.get("resolvedVersion"),
                 }
                 for item in items[:limit]
             ]

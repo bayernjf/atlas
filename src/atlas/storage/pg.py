@@ -1877,24 +1877,43 @@ class PgRunsStore:
         self, *, run_id: str, graph_id: str, mode: str,
         cycle_seq: int = 0, cycle_group_id: str = "",
         agent_id: str = "",
+        resolved_version: int | None = None,
     ) -> None:
         # 打包 BN（docs/130 §3.3）：两形参缺省 0/''＝"非圈运行"，与迁移 050 的列缺省一致，
         # 因此**不传时逐字等价现状**（打包 BN C-D2：启用面缺省关闭）。
         # 打包 BO（docs/131 §3.3）：agent_id 缺省 ''＝"非 agent 运行"。
+        # O-2 修复：resolved_version 缺省 None＝"非入站路由运行"；带 event 经 RoutingStore
+        # 解析的版本在此落库（迁移 057 加列，缺省 NULL 与 memory 档逐键对齐）。
         with self._engine.begin() as conn:
             conn.execute(
                 text(
                     "INSERT INTO runs (id, tenant_id, graph_id, status, started_at, "
-                    "cycle_seq, cycle_group_id, agent_id) "
+                    "cycle_seq, cycle_group_id, agent_id, resolved_version) "
                     "VALUES (:id, :tenant_id, :graph_id, 'running', :now, "
-                    ":cycle_seq, :cycle_group_id, :agent_id)"
+                    ":cycle_seq, :cycle_group_id, :agent_id, :resolved_version)"
                 ),
                 {
                     "id": run_id, "tenant_id": self._tenant_id, "graph_id": graph_id,
                     "now": _now_iso(), "cycle_seq": int(cycle_seq),
                     "cycle_group_id": cycle_group_id or "",
                     "agent_id": agent_id or "",
+                    "resolved_version": resolved_version,
                 },
+            )
+            # P1-2 对账（2026-10-19，docs/08 记录）：memory 档 RunStore 有终态有界
+            # N=200（AR 10a，docs/125 §3.6），PG 档此前无对称裁剪 → runs 表终态
+            # 无界增长。每次 begin 后同事务裁剪：仅裁非 running/suspended 的最旧
+            # 终态，保留最新 200 条（排序含 id 兜底防 started_at 重复不稳定）。
+            conn.execute(
+                text(
+                    "DELETE FROM runs WHERE tenant_id = :tenant_id "
+                    "AND status NOT IN ('running', 'suspended') "
+                    "AND id NOT IN ("
+                    "  SELECT id FROM runs WHERE tenant_id = :tenant_id "
+                    "  AND status NOT IN ('running', 'suspended') "
+                    "  ORDER BY started_at DESC, id DESC LIMIT :limit)"
+                ),
+                {"tenant_id": self._tenant_id, "limit": 200},
             )
 
     def suspend(
@@ -1950,7 +1969,7 @@ class PgRunsStore:
                 text(
                     "SELECT id, graph_id, status, started_at, suspended_at, finished_at, error, "
                     "kind, node_id, deadline_at, resume_token, outputs, trace, "
-                    "cycle_seq, cycle_group_id, agent_id FROM runs "
+                    "cycle_seq, cycle_group_id, agent_id, resolved_version FROM runs "
                     "WHERE id = :id AND tenant_id = :tenant_id"
                 ),
                 {"id": run_id, "tenant_id": self._tenant_id},
@@ -1967,13 +1986,16 @@ class PgRunsStore:
             # 打包 BN：圈归属两列（0/''＝非圈运行，缺省语义不变）
             "cycleSeq": row[13], "cycleGroupId": row[14] or "",
             "agentId": row[15] or "",
+            # O-2 修复：入站路由解析的发布版（无 event 恒 NULL，与 memory 档逐键对齐）
+            "resolvedVersion": row[16],
         }
 
     def list(self, status: str | None = None, limit: int = 50) -> list[dict]:
         if status:
             sql = (
                 "SELECT id, graph_id, status, started_at, suspended_at, kind, node_id, "
-                "deadline_at, resume_token, cycle_seq, cycle_group_id, agent_id FROM runs "
+                "deadline_at, resume_token, cycle_seq, cycle_group_id, agent_id, "
+                "resolved_version FROM runs "
                 "WHERE tenant_id = :tenant_id "
                 "AND status = :status ORDER BY started_at DESC LIMIT :limit"
             )
@@ -1981,7 +2003,8 @@ class PgRunsStore:
         else:
             sql = (
                 "SELECT id, graph_id, status, started_at, suspended_at, kind, node_id, "
-                "deadline_at, resume_token, cycle_seq, cycle_group_id, agent_id FROM runs "
+                "deadline_at, resume_token, cycle_seq, cycle_group_id, agent_id, "
+                "resolved_version FROM runs "
                 "WHERE tenant_id = :tenant_id "
                 "ORDER BY started_at DESC LIMIT :limit"
             )
@@ -1996,6 +2019,8 @@ class PgRunsStore:
                 # 打包 BN：圈归属两列（0/''＝非圈运行，缺省语义不变）
                 "cycleSeq": r[9], "cycleGroupId": r[10] or "",
                 "agentId": r[11] or "",
+                # O-2 修复：入站路由解析的发布版（无 event 恒 NULL，与 memory 档逐键对齐）
+                "resolvedVersion": r[12],
             }
             for r in rows
         ]

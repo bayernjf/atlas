@@ -326,6 +326,27 @@ class TestEvaluationApi:
         )
         assert resp.status_code == 403
 
+    def test_heavy_batch_guard_429(self):
+        """U1525（P1-1，docs/08 记录）：重负载批处理并发护栏——占满 8 槽 → 429；
+        释放后可正常运行（护栏不误伤常规批处理）。"""
+        from atlas.api.main import _heavy_batch_slots
+
+        acquired = [_heavy_batch_slots.acquire(blocking=False) for _ in range(8)]
+        assert all(acquired), "测试前置：应能占满批量处理信号量"
+        gid = self._save_graph()
+        body = {"graph_id": gid, "task": {"task_id": "api-guard", "test_cases": [
+            {"name": "a", "inputs": {"order_id": "o-1", "reason": "商品破损", "amount": 100},
+             "expected": {"action": "approve_refund"}}]}}
+        try:
+            resp = client.post("/api/evaluations", json=body)
+            assert resp.status_code == 429, resp.text
+            assert "批量处理并发已达上限" in resp.json()["detail"]
+        finally:
+            for _ in acquired:
+                _heavy_batch_slots.release()
+        resp2 = client.post("/api/evaluations", json=body)
+        assert resp2.status_code == 201, resp2.text
+
 
 # --- U1284 黄金用例端到端 --------------------------------------------------------
 

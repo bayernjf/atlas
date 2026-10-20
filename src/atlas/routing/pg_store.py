@@ -112,6 +112,30 @@ class PgRoutingStore:
             self._write(conn, state)
             return state.model_copy(deep=True)
 
+    def reset_graph(self, graph_id: str) -> RolloutState:
+        """任意非 idle 态 → idle：**保留 config**，清运行字段；幂等（idle 返现状）。
+
+        O-4 修复（docs/135 §6.6）：与内存 RoutingStore.reset_graph 同构，差异仅落库。
+        """
+        with self._engine.begin() as conn:
+            state = self._lock_or_insert(conn, graph_id)
+            if state.status == "idle":
+                return state.model_copy(deep=True)
+            state.status = "idle"
+            state.stable = None
+            state.candidate = None
+            state.started_at = None
+            state.rolled_back_at = None
+            state.rollback_reason = None
+            state.rollback_actor = None
+            state.traffic = {
+                "stable": 0,
+                "candidate": 0,
+                "segments": {key: 0 for key in ("internal", "lowValueBucket", "canary", "full", "fallback")},
+            }
+            self._write(conn, state)
+            return state.model_copy(deep=True)
+
     # ---------- 路由 ----------
 
     def resolve(

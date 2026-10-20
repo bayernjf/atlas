@@ -16,6 +16,7 @@ import os
 import asyncio
 import threading
 from concurrent.futures import ThreadPoolExecutor
+import functools
 import csv
 import io
 import time
@@ -481,6 +482,36 @@ assert_prod_secrets()
 assert_prod_storage_backend()
 
 app = FastAPI(title="Atlas API", version="0.0.1", lifespan=lifespan)
+
+
+# P1-复查（2026-10-19，docs/08 记录）：release-gate / evaluations / autoapply 三个
+# 同步批处理端点（内部多次 run_graph）与 O-5 同族——并发触发时长期占用 uvicorn 线程池
+# （约 40），超限拖垮含 cancel/审批/GET 在内的整个同步面。独立信号量（比 run 更保守，
+# 一个批处理内部多次 run），超限 429（可重试）。运行语义零变化：只拒绝超限请求。
+# 必须定义在所有使用它的端点（autoapply 2034 / release-gate / evaluations）之前。
+_HEAVY_BATCH_MAX_CONCURRENT = 8
+_heavy_batch_slots = threading.Semaphore(_HEAVY_BATCH_MAX_CONCURRENT)
+
+
+def _heavy_batch_guard(func: Callable[..., Any]) -> Callable[..., Any]:
+    """重负载批处理端点并发护栏：acquire(blocking=False) 失败 → 429；finally release。
+
+    functools.wraps 保留原签名，FastAPI 依赖注入（principal 等 Depends）照常解析。
+    """
+
+    @functools.wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        if not _heavy_batch_slots.acquire(blocking=False):
+            raise HTTPException(
+                status_code=429,
+                detail=f"批量处理并发已达上限 {_HEAVY_BATCH_MAX_CONCURRENT}：请稍后重试",
+            )
+        try:
+            return func(*args, **kwargs)
+        finally:
+            _heavy_batch_slots.release()
+
+    return wrapper
 
 # docs/90 ADR T32：A2A 执行 Agent 面（Zeus 协同决策平台，plan-only），卡片公开、任务 Bearer 保护。
 app.include_router(a2a_router)
@@ -2032,6 +2063,7 @@ class AutoApplyRequest(BaseModel):
 
 
 @app.post("/api/reflection/candidates/{candidate_id}/autoapply", status_code=201)
+@_heavy_batch_guard
 def start_candidate_autoapply(
     http_request: Request,
     candidate_id: str,
@@ -3561,6 +3593,7 @@ def _release_gate_for_draft(services: TenantServices, graph_id: str) -> dict[str
 
 
 @app.post("/api/graphs/{graph_id}/release-gate")
+@_heavy_batch_guard
 def run_graph_release_gate(
     graph_id: str, principal: Principal = Depends(require("operate"))
 ) -> dict[str, Any]:
@@ -4131,6 +4164,23 @@ def rollback_rollout(
         )
     except RolloutError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _rollout_projection(state)
+
+
+@app.post("/api/graphs/{graph_id}/rollout/reset")
+def reset_rollout(
+    graph_id: str, principal: Principal = Depends(require("operate"))
+) -> dict[str, Any]:
+    """任意非 idle 态 → idle：**保留灰度配置**，清运行字段（stable/candidate/计数/回滚痕迹）。
+
+    O-4 修复（docs/135 §6.6）：rolled_back 原为终态，回滚/实验 conclude 后该图无法再开
+    灰度/实验；reset 提供显式复位路径。幂等：idle（含从未配置）返现状 200。
+    图在本租户不存在 → 404（照 GET rollout 的校验，跨租户不泄漏存在性）。
+    """
+    services = services_for(principal)
+    if services.graph_store.get(graph_id) is None and not services.graph_store.list_versions(graph_id):
+        raise HTTPException(status_code=404, detail=f"Graph 不存在：{graph_id}")
+    state = services.routing_store.reset_graph(graph_id)
     return _rollout_projection(state)
 
 
@@ -5622,11 +5672,52 @@ def _tool_call_from_event(event: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# O-5 第一道护栏（docs/135 §6.6，2026-10-19）：同步 run 在挂起节点（审批/事件等待）时
+# 会**阻塞 HTTP 直到审批或图配置超时**，长期占用 uvicorn 默认线程池（约 40）。
+# 并发挂起超过线程池容量 ⇒ 服务不可用且 cancel/审批/GET 全排队（实测复现）。信号量
+# 限制同时刻同步 run 数并预留余量给 cancel/审批/查询等轻请求；超限 429（可重试）。
+# O-5 彻底解耦（docs/135 §6.9，2026-10-20）：同步 run 不再占用 uvicorn 默认线程池
+# （约 40，P0 时挂起可拖垮整个同步面）；端点 async 化后 run 在专用池执行，挂起只占
+# 专用池线程，uvicorn 池完全留给 cancel/审批/GET 等同步端点。信号量容量即池容量，
+# 保留 429 语义：池满时新请求快速失败，避免专用池队列无限堆积。
+_SYNC_RUN_MAX_CONCURRENT = 32
+_sync_run_slots = threading.Semaphore(_SYNC_RUN_MAX_CONCURRENT)
+_SYNC_RUN_POOL = ThreadPoolExecutor(
+    max_workers=_SYNC_RUN_MAX_CONCURRENT,
+    thread_name_prefix="atlas-sync-run",
+)
+
+
 @app.post("/api/graphs/{graph_id}/run", response_model=RunGraphResponse)
-def run_saved_graph(
+async def run_saved_graph(
     graph_id: str,
     payload: dict[str, Any] | None = None,
     principal: Principal = Depends(require("operate")),
+) -> RunGraphResponse:
+    """同步跑一次图（O-5 彻底解耦：async 端点 + 专用 run 线程池，挂起不占 uvicorn
+    线程池；信号量保留 429 语义；逻辑在 `_run_saved_graph_impl`）。"""
+    if not _sync_run_slots.acquire(blocking=False):
+        raise HTTPException(
+            status_code=429,
+            detail=f"同步运行并发已达上限 {_SYNC_RUN_MAX_CONCURRENT}：请稍后重试或改用 /run/stream（SSE）",
+        )
+    try:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            _SYNC_RUN_POOL,
+            _run_saved_graph_impl,
+            graph_id,
+            payload,
+            principal,
+        )
+    finally:
+        _sync_run_slots.release()
+
+
+def _run_saved_graph_impl(
+    graph_id: str,
+    payload: dict[str, Any] | None,
+    principal: Principal,
 ) -> RunGraphResponse:
     """同步跑一次图（v1 也承载自走循环，见 `_run_sync_cycle` 与 docs/130 C-D10）。
 
@@ -5725,6 +5816,7 @@ def _run_sync_cycle(
     services.run_store.begin(
         run_id=run_id, graph_id=graph_id, mode="sync",
         cycle_seq=cycle_seq, cycle_group_id=cycle_group_id,
+        resolved_version=resolved_version,  # O-2：带 event 的路由版本落投影（无 event 恒 None）
     )
     frame_sink = _frame_sink_for(principal.tenant_id, services.run_store, run_id)
     # docs/28 §4.1 ⑧：同步入口无 SSE，构造同形收集 emit（只收顶层 tool_metric，其余忽略）。
@@ -6014,7 +6106,10 @@ async def run_saved_graph_stream(
 
         def worker() -> None:
             if monitored:
-                run_store.begin(run_id=run_id, graph_id=graph_id, mode="stream")
+                run_store.begin(
+                    run_id=run_id, graph_id=graph_id, mode="stream",
+                    resolved_version=resolved_version,  # O-2：带 event 的路由版本落投影
+                )
             # 各异常分支只决定终帧种类；收尾经 _finalize_run 整体保护，任何路径恰好一帧。
             terminal: dict[str, Any]
             try:
@@ -7548,6 +7643,7 @@ class EvaluationRunRequest(BaseModel):
 
 
 @app.post("/api/evaluations", status_code=201)
+@_heavy_batch_guard
 def run_evaluation(
     body: EvaluationRunRequest,
     principal: Principal = Depends(require("administer")),
