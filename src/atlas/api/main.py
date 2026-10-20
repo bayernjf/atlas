@@ -5676,25 +5676,40 @@ def _tool_call_from_event(event: dict[str, Any]) -> dict[str, Any]:
 # 会**阻塞 HTTP 直到审批或图配置超时**，长期占用 uvicorn 默认线程池（约 40）。
 # 并发挂起超过线程池容量 ⇒ 服务不可用且 cancel/审批/GET 全排队（实测复现）。信号量
 # 限制同时刻同步 run 数并预留余量给 cancel/审批/查询等轻请求；超限 429（可重试）。
-# 彻底解耦（专用 run 线程池）待后续立项，见 docs/135 §6.6 建议。
+# O-5 彻底解耦（docs/135 §6.9，2026-10-20）：同步 run 不再占用 uvicorn 默认线程池
+# （约 40，P0 时挂起可拖垮整个同步面）；端点 async 化后 run 在专用池执行，挂起只占
+# 专用池线程，uvicorn 池完全留给 cancel/审批/GET 等同步端点。信号量容量即池容量，
+# 保留 429 语义：池满时新请求快速失败，避免专用池队列无限堆积。
 _SYNC_RUN_MAX_CONCURRENT = 32
 _sync_run_slots = threading.Semaphore(_SYNC_RUN_MAX_CONCURRENT)
+_SYNC_RUN_POOL = ThreadPoolExecutor(
+    max_workers=_SYNC_RUN_MAX_CONCURRENT,
+    thread_name_prefix="atlas-sync-run",
+)
 
 
 @app.post("/api/graphs/{graph_id}/run", response_model=RunGraphResponse)
-def run_saved_graph(
+async def run_saved_graph(
     graph_id: str,
     payload: dict[str, Any] | None = None,
     principal: Principal = Depends(require("operate")),
 ) -> RunGraphResponse:
-    """同步跑一次图（O-5 护栏：并发上限 429；逻辑在 `_run_saved_graph_impl`）。"""
+    """同步跑一次图（O-5 彻底解耦：async 端点 + 专用 run 线程池，挂起不占 uvicorn
+    线程池；信号量保留 429 语义；逻辑在 `_run_saved_graph_impl`）。"""
     if not _sync_run_slots.acquire(blocking=False):
         raise HTTPException(
             status_code=429,
             detail=f"同步运行并发已达上限 {_SYNC_RUN_MAX_CONCURRENT}：请稍后重试或改用 /run/stream（SSE）",
         )
     try:
-        return _run_saved_graph_impl(graph_id, payload, principal)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            _SYNC_RUN_POOL,
+            _run_saved_graph_impl,
+            graph_id,
+            payload,
+            principal,
+        )
     finally:
         _sync_run_slots.release()
 
