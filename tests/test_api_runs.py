@@ -223,3 +223,19 @@ def test_sync_run_concurrency_guard_429():
     )
     assert resp2.status_code == 200, resp2.text
     client.post("/api/demo/reset")
+
+
+def test_sync_run_detached_executor_structure():
+    """O-5 彻底解耦（docs/135 §6.9）结构回归：同步 run 端点必须保持 async 协程，
+    run 在专用线程池执行（不占 uvicorn 默认线程池，挂起只占专用池线程）。
+    防止未来回退成同步 def（挂起重新占用 uvicorn 线程池导致同步面被拖垮）。"""
+    import inspect
+
+    from atlas.api.main import _SYNC_RUN_POOL, run_saved_graph
+
+    assert inspect.iscoroutinefunction(run_saved_graph), (
+        "run_saved_graph 必须是 async 协程（O-5 彻底解耦结构约束）"
+    )
+    assert _SYNC_RUN_POOL._max_workers == 32, (
+        f"专用 run 池容量应等于信号量上限 32，实际 {_SYNC_RUN_POOL._max_workers}"
+    )
