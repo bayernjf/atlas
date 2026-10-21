@@ -256,7 +256,8 @@
     "unknownError": "Unknown error",
     "stateChanged": "⚙ {{node}} state changed: {{objectRef}} {{from}} --{{event}}--> {{to}}",
     "healing": "🛠 {{node}} healing attempt #{{attempt}}: verdict={{verdict}}, continue={{continue}}",
-    "globalError": "⚠ {{node}} graph-level error: {{code}} ({{detail}})"
+    "globalError": "⚠ {{node}} graph-level error: {{code}} ({{detail}})",
+    "waitTimeoutSuspended": "⏸ Approval/event timed out, run kept suspended: {{node}} (awaiting manual resume)"
   },
   "error": {
     "compileRunFailed": "Compile/run failed",
