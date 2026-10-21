@@ -3,6 +3,15 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔feat〕打包 BS＝挂起超时转 suspended（onTimeout="suspend"，2026-10-22，用户「可以搞的功能现在就设计方案落码」；docs/136；未 push）
+
+- `human_approval.onTimeout` 与 `wait.onTimeout` 超集扩展新增 `"suspend"`（枚举缺省不变：human_approval 默认 reject、wait 默认 continue）：挂起节点超时后**不落决定、不 continue/fail**，run 保持 `suspended`、挂起帧保留、token 保持 pending（不调 `complete_timeout`），等待人工后续恢复。
+- 引擎：`graph/loader.py` 新增 `WaitTimeoutSuspend`（携带 node_id/token），审批/事件两处超时分支命中 suspend 即 raise，并加入节点 retry `passthrough` 及外层 fail-safe/自愈包装各穿透族（不重试、不触发自愈、不二次包装）；`graph/dsl.py` 两枚举加 `"suspend"`。
+- API：`api/main.py` 同步 `_run_sync_cycle`／续跑段／后台 worker／流式 worker 四路径各加 `except WaitTimeoutSuspend`（不 finish、不记终态、不清帧、不进 evaluate_after_run），流式发 `event: wait_timeout_suspended` 提示帧（`reason="timeout_kept_suspended"`）。
+- 前端：`apiClient.ts` 增 `WaitTimeoutSuspendedFrame`（入 `RunEvent` 联合）与 `RunWaitTimeoutSuspendedError`，流循环识别并在循环末抛错；`Editor.tsx` 加两语运行日志（zh「⏸ 审批/事件超时，运行保持挂起：{{node}}（待人工恢复）」），zh-CN/en-US `editor.json` 补键。
+- 恢复完全复用既有机制、零新端点：human_approval 经既有审批决策端点 `broker.resolve` 续跑；wait event 经既有 signal 续跑（deadline 已过仍以 signal 为准）。
+- 测试：新文件 `tests/test_wait_timeout_suspend.py` 9 用例（U1528–U1534，含 DSL 超集/穿透/同步 200 suspended/缺省兼容/自愈反向门）；两条反向门植缺陷实跑转红（摘 loader 穿透族 ⇒ 4 条红；摘同步 except ⇒ U1530 红），复原后全绿。后端全量 **2940 passed／213 skipped／0 failed**；前端 oxlint 0/0、tsc 0、vitest 全绿、build ✓。零新错误码／零新迁移／零新端点／零新依赖／无 ADR；不解锁多副本。
+
 ### 〔fix〕O-5 彻底解耦＝同步 run 迁移专用线程池（2026-10-20，用户「那你搞」；docs/135 §6.9；未 push）
 
 - 同步 `POST /api/graphs/{id}/run` 端点 async 化：run 经 `loop.run_in_executor` 提交专用线程池 `_SYNC_RUN_POOL`（32 槽，`thread_name_prefix="atlas-sync-run"`），挂起的 run（审批/事件等待）只占专用池线程，不再占用 uvicorn 默认线程池（约 40）——同步面（cancel/审批/GET）彻底与 run 挂起隔离。信号量保留 429 语义（池满快速失败，防队列无限堆积）；`_run_saved_graph_impl` 零改动。

@@ -141,7 +141,7 @@ type: object               # 节点类型专属配置；condition 节点 config 
                            #   duration static 可选 jitterSeconds: 0-300 整数（docs/54；actual=planned+randint(0,j)，仅 static/resume 不二次抖动）
                            #   event:    {waitType:"event", eventKey(≤128,静态白名单[A-Za-z0-9:_-],支持{{}}插值)
                            #              | eventKeys: 1-8 字符串数组(逐元素同 eventKey 规则、保序去重), 二者互斥二选一,
-                           #              timeoutSeconds: 1-86400 整数(或 timeoutMode=expression+timeoutExpression), onTimeout: continue|fail,
+                           #              timeoutSeconds: 1-86400 整数(或 timeoutMode=expression+timeoutExpression), onTimeout: continue|fail|suspend（docs/136 打包 BS：suspend＝超时保持挂起待人工恢复，默认 continue）,
                            #              eventWaitMode?: "any"|"all"（docs/55，默认 any=OR 竞速首决；all=AND 竞速，eventKeys 需 ≥2、全部命中才放行，loader/dsl/SSE/中断帧透传，已命中集合不跨重启）}
                            #   event 产出 {eventKey?,eventKeys?,matchedEventKey(命中键,单键也带),signaled,payload,waitedSeconds,resolvedBy:signal|timeout|input,token}
                            #              any 命中 payload 同 docs/54；all 放行另含 matchedEventKeys:[...](保序)、matchedPayloads:{键:payload}；all 超时另含 receivedKeys:[已命中子集]（docs/55）
@@ -149,7 +149,7 @@ type: object               # 节点类型专属配置；condition 节点 config 
                            #   duration static 首次进入且 jitter>0 产出另含 {plannedDurationSeconds,jitterSeconds}
                            #   唯一权威见 04 §5.5「wait 节点 config 契约」（含事件等待/动态时长/到点时刻/docs/54 上限放开·jitter·多事件竞速 v1 追加段）
                            # human_approval 节点 config 形状：
-                           #   {summary, approver?, timeoutSeconds: 10-3600 整数, onTimeout: approve|reject(默认reject),
+                           #   {summary, approver?, timeoutSeconds: 10-3600 整数, onTimeout: approve|reject|suspend（docs/136 打包 BS：suspend＝超时不自动决、保持挂起待人工恢复，默认 reject）,
                            #    approvedTarget, rejectedTarget, cardTemplateId?（M8 新增，可选内置卡片 id，不填走 summary 旧路径）,
                            #    notifyEmails?（docs/35 T2 新增，可选 string[]≤5、元素支持 {{}} 插值、编译期校验含 @、pointer /notifyEmails；挂起后 EmailApprovalNotifier fail-safe 发信，不阻断图；权威 docs/35 §2）}
                            #   唯一权威见 04 §5.6「human_approval 节点 config 契约」（含 M8 cardTemplateId 追加段）
@@ -1114,7 +1114,7 @@ created_at: string              # UTC ISO-8601
 deadline_at: string | null      # UTC 绝对时刻（审批超时/wait 到点）；恢复后按剩余时长等待，不重计
 resumed_at: timestamp | null    # 迁移 029：DB 时钟（CURRENT_TIMESTAMP）置位＝本帧已被某进程认领越过挂起点；NULL＝还没人越过。不参与 payload，不进 JSON 帧
 resumed_by: string | null       # 迁移 029：认领进程身份 "hostname:pid"，仅排障，不参与判定
-wait: object | null             # 仅 wait-event 帧（docs/53；docs/54 纯超集）：{waitType:"event", eventKey(首键), eventKeys?:[...](多事件竞速 1-8), onTimeout:"continue"|"fail", timeoutSeconds(已求值秒,1-86400)}；duration 帧不带此键
+wait: object | null             # 仅 wait-event 帧（docs/53；docs/54 纯超集；docs/136 打包 BS 超集 onTimeout 加 "suspend"）：{waitType:"event", eventKey(首键), eventKeys?:[...](多事件竞速 1-8), onTimeout:"continue"|"fail"|"suspend", timeoutSeconds(已求值秒,1-86400)}；duration 帧不带此键
 graph_snapshot: object          # 保存时图定义副本（M6 版本化未落地前随帧内嵌，防恢复错位）
 resume_state:                   # 续跑载荷（挂起点续跑，不重跑上游）
   graph_id: string              # 本次运行所属图 id（恢复时还原 run 归属；docs/53 §2 已按此形状落码）
