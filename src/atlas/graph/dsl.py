@@ -59,11 +59,11 @@ MAX_EVENT_KEYS = 8  # docs/54：event 多事件竞速（eventKeys）上限
 MAX_EVENT_KEY_LENGTH = 128
 MAX_DURATION_EXPRESSION_LENGTH = 200
 MAX_ABSOLUTE_TIME_LENGTH = 64
-WAIT_TIMEOUT_POLICIES = ("continue", "fail")
+WAIT_TIMEOUT_POLICIES = ("continue", "fail", "suspend")  # docs/136 打包 BS：suspend＝超时保持挂起待恢复
 MAX_SUBGRAPH_DEPTH = 3
 MIN_APPROVAL_TIMEOUT = 10
 MAX_APPROVAL_TIMEOUT = 3600
-APPROVAL_TIMEOUT_ACTIONS = ("approve", "reject")
+APPROVAL_TIMEOUT_ACTIONS = ("approve", "reject", "suspend")  # docs/136 打包 BS：suspend＝超时不自动决、保持挂起
 MAX_NOTIFY_EMAILS = 5  # docs/35 §2.1：单个审批节点通知邮箱上限
 
 NodeType = str

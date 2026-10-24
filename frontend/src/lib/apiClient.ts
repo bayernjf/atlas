@@ -360,6 +360,23 @@ export class RunSupersededError extends Error {
   }
 }
 
+/** docs/136 打包 BS：挂起节点超时且 onTimeout="suspend"——run 保持 suspended 未终态，
+ * 流提前结束；非请求失败，前端据此展示"超时仍挂起待决"。 */
+export type WaitTimeoutSuspendedFrame = {
+  type: 'wait_timeout_suspended'
+  node_id: string
+  reason: 'timeout_kept_suspended'
+}
+
+export class RunWaitTimeoutSuspendedError extends Error {
+  nodeId: string
+  constructor(nodeId: string) {
+    super(`审批/事件超时，运行保持挂起：${nodeId}`)
+    this.name = 'RunWaitTimeoutSuspendedError'
+    this.nodeId = nodeId
+  }
+}
+
 export type RunEvent =
   | {
       type: 'node_start'
@@ -419,6 +436,7 @@ export type RunEvent =
   | DebugLogFrame
   | CancelledFrame
   | SupersededFrame
+  | WaitTimeoutSuspendedFrame
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
@@ -1525,6 +1543,7 @@ export async function streamRun(
   let stoppedNodeId: string | null = null
   let cancelledNodeId: string | null = null
   let supersededNodeId: string | null = null
+  let waitTimeoutSuspendedNodeId: string | null = null
 
   while (true) {
     const { done, value } = await reader.read()
@@ -1557,6 +1576,11 @@ export async function streamRun(
         // 转发给 onEvent 后在循环末抛 RunSupersededError（不再误报 “SSE 流缺少最终运行结果”）。
         supersededNodeId = payload.node_id
         onEvent(payload as SupersededFrame)
+      } else if (payload.type === 'wait_timeout_suspended') {
+        // docs/136 打包 BS：挂起节点超时保持挂起——run 未终态，流提前结束；
+        // 循环末抛 RunWaitTimeoutSuspendedError（同样不误报 “SSE 流缺少最终运行结果”）。
+        waitTimeoutSuspendedNodeId = payload.node_id
+        onEvent(payload as WaitTimeoutSuspendedFrame)
       } else {
         onEvent(payload as RunEvent)
       }
@@ -1565,6 +1589,9 @@ export async function streamRun(
   if (stoppedNodeId !== null) throw new DebugRunStoppedError(stoppedNodeId)
   if (cancelledNodeId !== null) throw new RunCancelledError(cancelledNodeId)
   if (supersededNodeId !== null) throw new RunSupersededError(supersededNodeId)
+  if (waitTimeoutSuspendedNodeId !== null) {
+    throw new RunWaitTimeoutSuspendedError(waitTimeoutSuspendedNodeId)
+  }
   if (!result) throw new Error('SSE 流缺少最终运行结果')
   return result
 }

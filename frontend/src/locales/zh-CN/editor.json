@@ -256,7 +256,8 @@
     "unknownError": "未知错误",
     "stateChanged": "⚙ {{node}} 状态迁移：{{objectRef}} {{from}} --{{event}}--> {{to}}",
     "healing": "🛠 {{node}} 自愈尝试 #{{attempt}}：verdict={{verdict}}，continue={{continue}}",
-    "globalError": "⚠ {{node}} 图级异常降级：{{code}}（{{detail}}）"
+    "globalError": "⚠ {{node}} 图级异常降级：{{code}}（{{detail}}）",
+    "waitTimeoutSuspended": "⏸ 审批/事件超时，运行保持挂起：{{node}}（待人工恢复）"
   },
   "error": {
     "compileRunFailed": "编译/运行失败",

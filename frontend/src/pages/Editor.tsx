@@ -89,6 +89,7 @@ import {
   DebugRunStoppedError,
   RunCancelledError,
   RunSupersededError,
+  RunWaitTimeoutSuspendedError,
   type ApprovalRequest,
   type CompileResult,
   type DebugAction,
@@ -753,6 +754,9 @@ export function Editor({
         appendLog(t('log.cancelled', { node: error.nodeId }))
       } else if (error instanceof RunSupersededError) {
         appendLog(t('log.superseded', { node: error.nodeId }))
+      } else if (error instanceof RunWaitTimeoutSuspendedError) {
+        // docs/136 打包 BS：挂起节点超时保持挂起——run 未终态，日志提示待决即可。
+        appendLog(t('log.waitTimeoutSuspended', { node: error.nodeId }))
       } else {
         const message = error instanceof Error ? error.message : String(error)
         setRunError(message)

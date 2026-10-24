@@ -54,6 +54,7 @@ from atlas.graph.loader import (
     RunSuperseded,
     SubgraphSuspendUnsupported,
     WaitNodeFailure,
+    WaitTimeoutSuspend,
     _tool_permissions,
     compile_graph,
     run_graph,
@@ -408,6 +409,10 @@ def _resume_run(engine, services: TenantServices, frame: dict) -> None:
         # docs/62 §2 D-4：续跑输家——帧已被其它进程认领，本线程停止驱动。
         # 既不写 run 终态也不清帧（终态与清理都归赢家），否则会把赢家的执行结果覆盖掉。
         logger.info("续跑让位 %s：%s", _token_ref(frame.get("resume_token")), exc)
+    except WaitTimeoutSuspend as exc:
+        # docs/136 打包 BS：续跑中挂起节点超时且 onTimeout="suspend"——run 保持 suspended
+        # （帧保留、不写终态、不清帧），等人工后续恢复；本线程停止驱动即可。
+        logger.info("续跑保持挂起 %s：%s", _token_ref(frame.get("resume_token")), exc)
     except Exception as exc:
         logger.error("续跑 %s 失败：%s", _token_ref(frame.get("resume_token")), exc)
         if run_id:
@@ -1494,6 +1499,11 @@ def _background_run_cycle(
         # docs/62 §2 D-4：后台运行同样受认领门约束——输家不落 failed
         # （否则把赢家的执行记录成失败），只让位并留日志。
         logger.info("后台运行让位 graph=%s@%s：%s", graph_id, version, exc)
+        return CycleOutcome(run_id=own_run_id, status="suspended", stop_run=True)
+    except WaitTimeoutSuspend as exc:
+        # docs/136 打包 BS：后台运行挂起节点超时且 onTimeout="suspend"——run 保持
+        # suspended（不 finish、不清帧），等人工后续恢复。
+        logger.info("后台运行超时保持挂起 graph=%s@%s：%s", graph_id, version, exc)
         return CycleOutcome(run_id=own_run_id, status="suspended", stop_run=True)
     except Exception as exc:
         logger.error("%s 触发图运行失败 graph=%s@%s", mode, graph_id, version, exc_info=True)
@@ -5872,6 +5882,19 @@ def _run_sync_cycle(
                 trace=[f"{exc.node_id}: superseded by another process"],
             ),
         )
+    except WaitTimeoutSuspend as exc:
+        # docs/136 打包 BS：挂起节点超时且 onTimeout="suspend"——run 保持 suspended
+        # （不 finish、不记监控终态、不清帧、不进 evaluate_after_run），等人工后续恢复。
+        logger.info("同步运行超时保持挂起：%s", exc)
+        return (
+            CycleOutcome(run_id=run_id, status="suspended", stop_run=True),
+            RunGraphResponse(
+                id=graph_id,
+                status="suspended",
+                outputs={},
+                trace=[f"{exc.node_id}: wait timeout kept suspended"],
+            ),
+        )
     except RunCancelled as exc:
         # 打包 O：同步入口的协作式急停与流式同形——用户主动 ⇒ 记 cancelled 且
         # **不调 evaluate_after_run**（不算失败、不进 M9 灰度门控，与流式 :3203 逐条对齐）。
@@ -6147,6 +6170,11 @@ async def run_saved_graph_stream(
                 # 只发让位帧让前端停手（赢家的流会继续出结果）。
                 logger.info("流式运行让位：%s", exc)
                 terminal = {"__superseded__": exc.node_id}
+            except WaitTimeoutSuspend as exc:
+                # docs/136 打包 BS：挂起节点超时且 onTimeout="suspend"——run 保持 suspended
+                # （不 finish、不 record_run 终态、不清帧），发提示帧让前端展示"超时仍挂起待决"。
+                logger.info("流式运行超时保持挂起：%s", exc)
+                terminal = {"__wait_timeout_suspended__": exc.node_id}
             except DebugStopped as exc:
                 terminal = {"__stopped__": exc.node_id}
             except RunCancelled as exc:
@@ -6259,6 +6287,22 @@ async def run_saved_graph_stream(
                                 "type": "superseded",
                                 "node_id": event["__superseded__"],
                                 "reason": "resumed_by_other_process",
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n\n"
+                    )
+                    break
+                if "__wait_timeout_suspended__" in event:
+                    # docs/136 打包 BS：挂起节点超时且 onTimeout="suspend"——run 未终态
+                    # （保持 suspended 待人工恢复），流在此结束，前端据此展示"超时仍挂起"。
+                    yield (
+                        "event: wait_timeout_suspended\ndata: "
+                        + json.dumps(
+                            {
+                                "type": "wait_timeout_suspended",
+                                "node_id": event["__wait_timeout_suspended__"],
+                                "reason": "timeout_kept_suspended",
                             },
                             ensure_ascii=False,
                         )

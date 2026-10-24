@@ -146,6 +146,21 @@ class WaitNodeFailure(Exception):
         self.code = code
 
 
+class WaitTimeoutSuspend(Exception):
+    """挂起节点（human_approval/wait event）超时且 onTimeout="suspend"（docs/136 打包 BS）。
+
+    语义：超时后**不落决定、不 continue/fail**，run 保持 suspended（挂起帧保留、token 保持
+    pending），等待人工后续经既有恢复路径（审批决策 / 事件 signal）续跑。本异常走穿透族
+    （与 RunSuperseded 同形）：任何 retry/自愈包装不得吞掉或二次包装，API 三条路径
+    （同步/续跑/流式）显式捕获——不 finish、不 record_run 终态、不清帧、不发终帧。
+    """
+
+    def __init__(self, node_id: str, token: str) -> None:
+        super().__init__(f"wait timeout kept suspended at node {node_id} (token={token})")
+        self.node_id = node_id
+        self.token = token
+
+
 class AiDecisionUnavailable(Exception):
     """prod 档要执行 ai_decision 却没有可用的 LLM 决策器（docs/73 W1-1.1）。
 
@@ -1023,6 +1038,10 @@ def _make_executor(
                                     "WAIT_TIMEOUT_FAILED",
                                     f"等待事件 {event_key} 超时",
                                 )
+                            elif on_timeout == "suspend":
+                                # docs/136 打包 BS：超时保持挂起（不 continue/fail），run 维持
+                                # suspended、帧保留，事件后续 signal 经既有续跑路径恢复。
+                                raise WaitTimeoutSuspend(node.id, token)
                             else:
                                 output = {
                                     "mode": "wait",
@@ -1217,7 +1236,7 @@ def _make_executor(
                         if metric_event is not None:
                             emit(metric_event)
                     message = f"{node.id}({node.type}): executed"
-            except (RunCancelled, DebugStopped, RunSuperseded):
+            except (RunCancelled, DebugStopped, RunSuperseded, WaitTimeoutSuspend):
                 raise
             except Exception as exc:
                 # docs/28 §3.2：仅调试流且该节点配置异常断点时暂停观测；
@@ -1283,6 +1302,7 @@ def _wrap_retry(
         DebugStopped,
         RunSuperseded,
         SubgraphSuspendUnsupported,
+        WaitTimeoutSuspend,  # docs/136 打包 BS：超时保持挂起，同让位族——不重试、不二次包装
         WaitNodeFailure,
         AiDecisionUnavailable,
         ConditionClassifierUnavailable,
@@ -1448,7 +1468,7 @@ def _wrap_self_healing(
     def wrapped(state: GraphState) -> dict:
         try:
             result = executor(state)
-        except (RunCancelled, DebugStopped, RunSuperseded, SubgraphSuspendUnsupported):
+        except (RunCancelled, DebugStopped, RunSuperseded, SubgraphSuspendUnsupported, WaitTimeoutSuspend):
             raise
         except RunNodeFailed as exc:
             if not should_heal(exc.output):
@@ -1674,6 +1694,10 @@ def _await_human_approval(
 
     decision = broker.wait(token)
     if decision is None:
+        # docs/136 打包 BS：onTimeout="suspend" ⇒ 超时不自动决（不 complete_timeout），
+        # run 保持 suspended、帧保留、token 保持 pending，等人工后续经既有决策端点续跑。
+        if config.get("onTimeout", "reject") == "suspend":
+            raise WaitTimeoutSuspend(node.id, token)
         fallback = "approved" if config.get("onTimeout", "reject") == "approve" else "rejected"
         decision, resolved_by = broker.complete_timeout(token, fallback)
     else:
@@ -2209,7 +2233,7 @@ def _execute_subgraph(
                 _block_subgraph_suspend=block_subgraph_suspend,
                 secret_provider=secret_provider,
             )
-    except (RunCancelled, DebugStopped, RunSuperseded, SubgraphSuspendUnsupported):
+    except (RunCancelled, DebugStopped, RunSuperseded, SubgraphSuspendUnsupported, WaitTimeoutSuspend):
         # 取消与调试急停/异常断点 stop 均须穿透子图 fail-safe 兜底，冒泡终止整图
         # （docs/27 §4.1 修 RunCancelled；docs/28 §3.2/§3.3 补 DebugStopped）。
         # RunSuperseded 同属控制流：被这里的 fail-safe 吞掉＝输家继续执行，正是 029 要防的事故。
@@ -4196,7 +4220,7 @@ def run_graph(
             final_state = compiled.invoke(
                 state, config={"recursion_limit": _recursion_limit(tail)}
             )
-        except (RunCancelled, DebugStopped, RunSuperseded):
+        except (RunCancelled, DebugStopped, RunSuperseded, WaitTimeoutSuspend):
             # 打包 AL（docs/123 §2.1）：控制流异常穿透（U1349），RunNodeFailed 与
             # 其余意外异常进入图级统一降级。
             raise
@@ -4270,7 +4294,7 @@ def run_graph(
             initial_state(graph, inputs=inputs, secret_provider=secret_provider),
             config={"recursion_limit": _recursion_limit(graph)},
         )
-    except (RunCancelled, DebugStopped, RunSuperseded):
+    except (RunCancelled, DebugStopped, RunSuperseded, WaitTimeoutSuspend):
         # 打包 AL（docs/123 §2.1）：控制流异常穿透（U1349），不触发图级 handler；
         # RunNodeFailed（节点级 stop 显式失败）与其余意外异常均进入图级统一降级。
         raise
