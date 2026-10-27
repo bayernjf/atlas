@@ -71,6 +71,8 @@ class UsageRecord:
     node_id: str = ""
     graph_id: str = ""
     run_id: str = ""
+    assignment_id: str = ""  # hub 分配 id（asn_...）；非 hub 为空
+    billing_source: str = ""  # builtin | byok
 
     def public_view(self) -> dict:
         """REST 投影（camelCase，与前端消费点对齐；零新增脱敏面——本无敏感字段）。"""
@@ -87,6 +89,8 @@ class UsageRecord:
             "nodeId": self.node_id,
             "graphId": self.graph_id,
             "runId": self.run_id,
+            "assignmentId": self.assignment_id,
+            "billingSource": self.billing_source,
         }
 
 
@@ -255,6 +259,28 @@ def current_context() -> UsageContext | None:
     return _usage_context.get()
 
 
+# ---------- 当前解析模型的计费来源（resolve 点设置，complete 点读取） ----------
+
+_billing: ContextVar[dict[str, str] | None] = ContextVar(
+    "atlas_llm_billing", default=None
+)
+
+
+def set_resolved_billing(assignment_id: str, billing_source: str) -> None:
+    """由统一解析点（hub.resolve_runtime_model）设置当前调用的计费来源。"""
+    _billing.set(
+        {"assignment_id": assignment_id, "billing_source": billing_source}
+    )
+
+
+def current_billing() -> dict[str, str]:
+    """读取当前计费来源；未设置返回空值。"""
+    raw = _billing.get()
+    if raw is None:
+        return {"assignment_id": "", "billing_source": ""}
+    return dict(raw)
+
+
 # ---------------- 唯一 litellm.completion 封装（AU-D3） ----------------
 
 
@@ -295,8 +321,10 @@ def _safe_record(
     status: str,
     latency_ms: float,
     tokens: tuple[int, int, int],
+    billing: dict[str, str] | None = None,
 ) -> None:
     """旁路落账：store 任何异常只 warning，绝不冒泡给调用方（U1425 反向门）。"""
+    billing = billing or {"assignment_id": "", "billing_source": ""}
     try:
         ctx.store.record(
             UsageRecord(
@@ -312,6 +340,8 @@ def _safe_record(
                 node_id=ctx.node_id,
                 graph_id=ctx.graph_id,
                 run_id=ctx.run_id,
+                assignment_id=billing.get("assignment_id", ""),
+                billing_source=billing.get("billing_source", ""),
             )
         )
     except Exception:  # noqa: BLE001 - 计量是旁路，失败不许影响运行
@@ -332,6 +362,7 @@ def complete_with_usage(
     """
     import litellm
 
+    billing = current_billing()
     started = time.monotonic()
     try:
         response = litellm.completion(**kwargs)
@@ -346,6 +377,7 @@ def complete_with_usage(
                 status="error",
                 latency_ms=latency_ms,
                 tokens=(0, 0, 0),
+                billing=billing,
             )
         raise
     latency_ms = (time.monotonic() - started) * 1000
@@ -366,6 +398,18 @@ def complete_with_usage(
             status="ok",
             latency_ms=latency_ms,
             tokens=(prompt, completion, total),
+            billing=billing,
+        )
+    # hub 内置模型：后台异步回报用量（fire-and-forget；BYOK 不回报）
+    assignment_id = billing.get("assignment_id", "")
+    if assignment_id and billing.get("billing_source") != "byok":
+        _report_usage_to_hub(
+            assignment_id=assignment_id,
+            model=model,
+            feature=caller,
+            input_tokens=prompt,
+            output_tokens=completion,
+            billing_source=billing.get("billing_source", "builtin"),
         )
     return content, {
         "prompt_tokens": prompt,
@@ -373,3 +417,40 @@ def complete_with_usage(
         "total_tokens": total,
         "latency_ms": latency_ms,
     }
+
+
+def _report_usage_to_hub(
+    *,
+    assignment_id: str,
+    model: str,
+    feature: str,
+    input_tokens: int,
+    output_tokens: int,
+    billing_source: str,
+) -> None:
+    """后台线程回报 hub 用量（不阻塞调用；任何失败静默）。"""
+    from atlas.llm import hub as _hub
+
+    projection = _hub.load_projection()
+    provider = ""
+    if projection is not None:
+        provider = next(
+            (m.provider for m in projection.models if m.assignment_id == assignment_id),
+            "",
+        )
+
+    def _run() -> None:
+        try:
+            _hub.report_usage(
+                assignment_id=assignment_id,
+                model=model,
+                provider=provider,
+                feature=feature,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                billing_source=billing_source,
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("hub usage background report failed", exc_info=True)
+
+    threading.Thread(target=_run, name="atlas-hub-usage", daemon=True).start()
