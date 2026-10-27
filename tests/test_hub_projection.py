@@ -334,3 +334,77 @@ def test_refresh_start_and_stop(monkeypatch):
     assert hub._refresh_thread.is_alive()
     hub.stop_hub_refresh()
     assert hub._refresh_thread is None
+
+
+# ---------------- report_usage ----------------
+
+
+class _FakeResp:
+    def read(self):
+        return b"{}"
+
+
+def test_report_usage_posts(monkeypatch):
+    import json as _json
+
+    monkeypatch.setenv("MODEL_HUB_URL", "http://hub:8791")
+    monkeypatch.setenv("MODEL_HUB_TOKEN", "tok_x")
+    captured: dict = {}
+
+    def opener(req):
+        captured["url"] = req.full_url
+        captured["body"] = _json.loads(req.data.decode())
+        captured["headers"] = dict(req.header_items())
+        return _FakeResp()
+
+    ok = hub.report_usage(
+        assignment_id="asn_1",
+        model="ark-code-latest",
+        provider="ark",
+        feature="ai_decision",
+        input_tokens=10,
+        output_tokens=5,
+        billing_source="builtin",
+        opener=opener,
+    )
+    assert ok
+    assert captured["url"] == "http://hub:8791/pub/v1/usage"
+    assert captured["body"]["assignment_id"] == "asn_1"
+    assert captured["body"]["model"] == "ark-code-latest"
+    assert captured["body"]["billing_source"] == "builtin"
+    assert captured["body"]["project"] == "atlas"
+    # Bearer token 随请求（header_items 的 key 被 capitalize，统一小写比较）
+    auth = [v for k, v in captured["headers"].items() if k.lower() == "authorization"]
+    assert auth == ["Bearer tok_x"]
+
+
+def test_report_usage_skips_byok(monkeypatch):
+    monkeypatch.setenv("MODEL_HUB_URL", "http://hub:8791")
+    monkeypatch.setenv("MODEL_HUB_TOKEN", "tok_x")
+
+    def opener(req):
+        raise AssertionError("BYOK must not be reported")
+
+    assert not hub.report_usage(
+        assignment_id="asn_1",
+        model="m",
+        provider="ark",
+        feature="f",
+        input_tokens=1,
+        output_tokens=1,
+        billing_source="byok",
+        opener=opener,
+    )
+
+
+def test_report_usage_skips_without_assignment(monkeypatch):
+    monkeypatch.setenv("MODEL_HUB_URL", "http://hub:8791")
+    monkeypatch.setenv("MODEL_HUB_TOKEN", "tok_x")
+    assert not hub.report_usage(
+        assignment_id="",
+        model="m",
+        provider="ark",
+        feature="f",
+        input_tokens=1,
+        output_tokens=1,
+    )
