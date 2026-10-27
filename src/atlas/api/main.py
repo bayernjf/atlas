@@ -1090,15 +1090,62 @@ def _effective_model_summary(services: TenantServices, tenant_id: str) -> dict[s
             "updatedBy": "", "updatedAt": ""}
 
 
+def _hub_status() -> dict[str, Any]:
+    """hub 同步状态：configured/disabled/revision。"""
+    from atlas.llm import hub as _hub
+
+    projection = _hub.load_projection()
+    return {
+        "configured": _hub.is_hub_configured(),
+        "disabled": _hub.is_hub_disabled(),
+        "revision": projection.revision if projection is not None else None,
+    }
+
+
+def _hub_builtin_models() -> list[dict[str, Any]]:
+    """hub 投影内置模型的只读脱敏视图（api_key 不回显）。"""
+    from atlas.llm import hub as _hub
+
+    projection = _hub.load_projection()
+    if projection is None:
+        return []
+    views: list[dict[str, Any]] = []
+    for m in projection.models:
+        views.append(
+            {
+                "assignmentId": m.assignment_id,
+                "alias": m.alias,
+                "role": m.role,
+                "model": m.model,
+                "rawModel": m.raw_model,
+                "baseUrl": m.base_url,
+                "provider": m.provider,
+                "modalities": m.modalities,
+                "isDefault": m.is_default,
+            }
+        )
+    return views
+
+
 @app.get("/api/models")
 def get_models(principal: Principal = Depends(require("read"))) -> dict[str, Any]:
-    """模型配置总览（read 门可读；api_key 全脱敏）。"""
+    """模型配置总览（read 门可读；api_key 全脱敏）。
+
+    hub 配置时内置区读 hub 投影（只读）；否则保留单条内置（迁移期）。
+    """
+    from atlas.llm import hub as _hub
+
     services = services_for(principal)
     store = services.model_config
-    builtin = store.get_builtin()
     byok = store.get_byok(principal.tenant_id)
+    hub_status = _hub_status()
+    via_hub = _hub.is_hub_configured()
     return {
-        "builtin": _masked_view(builtin) if builtin else None,
+        "hub": hub_status,
+        "builtin": None if via_hub else (
+            _masked_view(store.get_builtin()) if store.get_builtin() else None
+        ),
+        "builtinModels": _hub_builtin_models() if via_hub else [],
         "byok": _masked_view(byok) if byok else None,
         "effective": _effective_model_summary(services, principal.tenant_id),
     }
@@ -1109,12 +1156,11 @@ def put_builtin_model(
     body: ModelConfigRequest,
     principal: Principal = Depends(require("administer")),
 ) -> dict[str, Any]:
-    """admin 维护内置模型（docs/93 §1：平台级单一配置，所有租户共享）。"""
-    services = services_for(principal)
-    store = services.model_config
-    existing = store.get_builtin()
-    cfg = _build_model_config("builtin", body, existing, updated_by=principal.username)
-    return _masked_view(store.set_builtin(cfg))
+    """W5-4：内置模型改由 hub 投影同步，手工写入停用（410 Gone）。"""
+    raise HTTPException(
+        status_code=410,
+        detail="内置模型已改由 model-hub 投影同步，不再支持手工写入；请在 hub 管理。",
+    )
 
 
 @app.get("/api/models/byok")
