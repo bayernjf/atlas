@@ -144,45 +144,31 @@ _summarizer_mode_logged = False
 
 
 def _resolve_llm_config(tenant_id: str | None) -> tuple[str, str | None, str | None] | None:
-    """按优先级解析构造期默认模型（docs/93 §1 语义约束 3）：租户 BYOK > 内置。
+    """按优先级解析构造期默认模型（W5-3 收口）：BYOK > 单条内置 > hub 投影 > env。"""
+    from atlas.llm.hub import resolve_runtime_model
 
-    返回 ``(model, api_key_plaintext, base_url)``；无租户上下文或未配置 → None（落 env）。
-    """
-    if tenant_id is None:
+    rt = resolve_runtime_model(tenant_id)
+    if rt is None:
         return None
-    from atlas.connections.service import get_secret_provider
-    from atlas.llm.config import get_model_config_store, resolve_default_model
-
-    cfg = resolve_default_model(get_model_config_store(), tenant_id)
-    if cfg is None:
-        return None
-    api_key = get_secret_provider().decrypt(cfg.api_key_enc) if cfg.api_key_enc else None
-    return cfg.model, api_key, cfg.base_url
+    return rt.model, rt.api_key, rt.base_url
 
 
 def get_summarizer(tenant_id: str | None = None) -> Summarizer:
     """构建摘要器；首次调用打印运行模式（不静默降级）。
 
-    docs/93 打包 Y：可选 tenant_id 解析租户 BYOK/内置模型（显式传 key/base_url）；
-    无租户上下文或未配置时回退 env（LITELLM_MODEL），行为与现状一致。
+    W5-3 收口：可选 tenant_id 解析 BYOK/单条内置/hub 投影/env；都没有落确定性降级。
     """
     global _summarizer_mode_logged
     resolved = _resolve_llm_config(tenant_id)
     if resolved is not None:
         model, api_key, base_url = resolved
         if not _summarizer_mode_logged:
-            logger.info("reflection summarizer: LiteLLM(model=%s, source=model_config)", model)
-            _summarizer_mode_logged = True
-        return LiteLLMSummarizer(model, api_key=api_key, base_url=base_url)
-    model = os.getenv("LITELLM_MODEL", "").strip()
-    if model:
-        if not _summarizer_mode_logged:
             logger.info("reflection summarizer: LiteLLM(model=%s)", model)
             _summarizer_mode_logged = True
-        return LiteLLMSummarizer(model)
+        return LiteLLMSummarizer(model, api_key=api_key, base_url=base_url)
     if not _summarizer_mode_logged:
         logger.info(
-            "reflection summarizer 运行于确定性降级模式（LITELLM_MODEL 未配置），"
+            "reflection summarizer 运行于确定性降级模式（未配置任何模型），"
             "pass 只出收尾报告、不产出候选"
         )
         _summarizer_mode_logged = True

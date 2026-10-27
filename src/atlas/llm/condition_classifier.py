@@ -182,30 +182,19 @@ class ScriptedConditionClassifier:
 def get_condition_classifier(
     tenant_id: str | None = None,
 ) -> ConditionClassifier:
-    """构建分类器；docs/93 打包 Y：可选 tenant_id 解析租户 BYOK/内置模型，
-    无租户上下文或未配置时回退 env（LITELLM_MODEL），行为与现状一致。"""
+    """构建分类器（W5-3 收口）：BYOK > 单条内置 > hub 投影 > env；都没有落离线。"""
     resolved = _resolve_llm_config(tenant_id)
     if resolved is not None:
         model, api_key, base_url = resolved
         return LiteLLMConditionClassifier(model, api_key=api_key, base_url=base_url)
-    model = os.getenv("LITELLM_MODEL", "").strip()
-    if model:
-        return LiteLLMConditionClassifier(model)
     return OfflineConditionClassifier()
 
 
 def _resolve_llm_config(tenant_id: str | None) -> tuple[str, str | None, str | None] | None:
-    """按优先级解析构造期默认模型（docs/93 §1 语义约束 3）：租户 BYOK > 内置。
+    """按优先级解析构造期默认模型：BYOK > 单条内置 > hub 投影 > env；都没有 → None。"""
+    from atlas.llm.hub import resolve_runtime_model
 
-    返回 ``(model, api_key_plaintext, base_url)``；无租户上下文或未配置 → None（落 env）。
-    """
-    if tenant_id is None:
+    rt = resolve_runtime_model(tenant_id)
+    if rt is None:
         return None
-    from atlas.connections.service import get_secret_provider
-    from atlas.llm.config import get_model_config_store, resolve_default_model
-
-    cfg = resolve_default_model(get_model_config_store(), tenant_id)
-    if cfg is None:
-        return None
-    api_key = get_secret_provider().decrypt(cfg.api_key_enc) if cfg.api_key_enc else None
-    return cfg.model, api_key, cfg.base_url
+    return rt.model, rt.api_key, rt.base_url

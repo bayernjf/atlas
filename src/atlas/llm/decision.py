@@ -211,21 +211,17 @@ _decision_mode_logged = False
 
 
 def _resolve_llm_config(tenant_id: str | None) -> tuple[str, str | None, str | None] | None:
-    """按优先级解析构造期默认模型（docs/93 §1 语义约束 3）：租户 BYOK > 内置 > env。
+    """按优先级解析构造期默认模型（W5-3 收口）：BYOK > 单条内置 > hub 投影 > env。
 
-    返回 ``(model, api_key_plaintext, base_url)``；无租户上下文或未配置 → None（调用方落 env）。
+    返回 ``(model, api_key_plaintext, base_url)``；都没有 → None（调用方落规则降级）。
     密钥信封在此解密为明文，只在返回的内存对象里存活（不落库/日志/响应）。
     """
-    if tenant_id is None:
-        return None
-    from atlas.connections.service import get_secret_provider
-    from atlas.llm.config import get_model_config_store, resolve_default_model
+    from atlas.llm.hub import resolve_runtime_model
 
-    cfg = resolve_default_model(get_model_config_store(), tenant_id)
-    if cfg is None:
+    rt = resolve_runtime_model(tenant_id)
+    if rt is None:
         return None
-    api_key = get_secret_provider().decrypt(cfg.api_key_enc) if cfg.api_key_enc else None
-    return cfg.model, api_key, cfg.base_url
+    return rt.model, rt.api_key, rt.base_url
 
 
 def get_decision_client(tenant_id: str | None = None) -> DecisionClient:
@@ -240,20 +236,13 @@ def get_decision_client(tenant_id: str | None = None) -> DecisionClient:
         model, api_key, base_url = resolved
         client: DecisionClient = LiteLLMDecisionClient(model, api_key=api_key, base_url=base_url)
         if not _decision_mode_logged:
-            logger.info("decision client: LiteLLM(model=%s, source=model_config)", model)
-            _decision_mode_logged = True
-        return client
-    model = os.getenv("LITELLM_MODEL", "").strip()
-    if model:
-        client = LiteLLMDecisionClient(model)
-        if not _decision_mode_logged:
             logger.info("decision client: LiteLLM(model=%s)", model)
             _decision_mode_logged = True
         return client
     if not _decision_mode_logged:
         logger.warning(
-            "ATLAS 运行于规则决策降级模式（LITELLM_MODEL 未配置），无 LLM 语义判断；"
-            "如需真实 LLM，请在 .env 配置 LITELLM_MODEL 与供应商 key（docs/64 J-2a）"
+            "ATLAS 运行于规则决策降级模式（未配置任何模型），无 LLM 语义判断；"
+            "如需真实 LLM，请配置 hub 投影、LITELLM_MODEL 或租户 BYOK（docs/64 J-2a）"
         )
         _decision_mode_logged = True
     return RuleBasedDecisionClient()

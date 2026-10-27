@@ -59,21 +59,16 @@ def generate_graph(prompt: str, tenant_id: str | None = None) -> dict[str, Any]:
 def _resolve_llm_config(
     tenant_id: str | None,
 ) -> tuple[str, str | None, str | None]:
-    """按优先级解析构造期默认模型（docs/93 §1 语义约束 3）：租户 BYOK > 内置 > env。
+    """按优先级解析构造期默认模型（W5-3 收口）：BYOK > 单条内置 > hub > env。
 
     返回 ``(model, api_key_plaintext, base_url)``；无任何配置时 model 为空串（调用方走规则兜底）。
     """
-    if tenant_id is not None:
-        from atlas.connections.service import get_secret_provider
-        from atlas.llm.config import get_model_config_store, resolve_default_model
+    from atlas.llm.hub import resolve_runtime_model
 
-        cfg = resolve_default_model(get_model_config_store(), tenant_id)
-        if cfg is not None:
-            api_key = (
-                get_secret_provider().decrypt(cfg.api_key_enc) if cfg.api_key_enc else None
-            )
-            return cfg.model, api_key, cfg.base_url
-    return os.getenv("LITELLM_MODEL", "").strip(), None, None
+    rt = resolve_runtime_model(tenant_id)
+    if rt is None:
+        return "", None, None
+    return rt.model, rt.api_key, rt.base_url
 
 
 def validate_param_fills(

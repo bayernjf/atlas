@@ -454,6 +454,14 @@ async def lifespan(_app: FastAPI):
     # docs/79（打包 S）D-4：先有界等待 PG 连通，再跑恢复扫描与 retention。
     _wait_for_database_ready()
     recover_pending()
+    # W5-3：配置了 hub 时启动同步一次投影（失败不致命，保留缓存/回退 env）。
+    from atlas.llm import hub as _hub
+
+    if _hub.is_hub_configured():
+        try:
+            _hub.sync_hub_projection()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("hub projection sync failed at startup: %s", exc)
     # docs/64 J-2a：启动即打印决策器运行模式（含降级警告），不再静默。
     get_decision_client()
     # 试用干跑实测（2026-10-08）：进程内首次 `import litellm` 若发生在 worker 线程，
@@ -464,7 +472,10 @@ async def lifespan(_app: FastAPI):
     run_retention_once()
     # docs/68 §2.3：调度线程在恢复扫描**之后**起——先让挂起帧归位，再派发新运行。
     start_scheduler()
+    # W5-3：后台周期刷新 hub 投影（5min 一轮）。
+    _hub.start_hub_refresh()
     yield
+    _hub.stop_hub_refresh()
     stop_scheduler()
     # 审查发现 #10：内置 demo 为 mkdtemp 临时文件库，关闭时只释放连接池；
     # 临时目录由 database.service 的 atexit 兜底回收（close 不删目录——
@@ -1066,19 +1077,17 @@ def _build_model_config(
 
 
 def _effective_model_summary(services: TenantServices, tenant_id: str) -> dict[str, Any]:
-    """当前生效摘要（docs/93 §2.3 GET /api/models）：BYOK > 内置 > env 兜底。"""
-    from atlas.llm.config import resolve_default_model
+    """当前生效摘要（W5-3 收口）：BYOK > 单条内置 > hub 投影 > env；都没有 none。"""
+    from atlas.llm.hub import resolve_runtime_model
 
-    store = services.model_config
-    cfg = resolve_default_model(store, tenant_id)
-    if cfg is not None:
-        return {"source": cfg.mode, **_masked_view(cfg)}
-    model = os.getenv("LITELLM_MODEL", "").strip()
-    if model:
-        return {"source": "env", "model": model, "apiKey": "", "baseUrl": None,
-                "enabled": True, "mode": "builtin", "updatedBy": "", "updatedAt": ""}
-    return {"source": "none", "model": "", "apiKey": "", "baseUrl": None,
-            "enabled": False, "mode": "builtin", "updatedBy": "", "updatedAt": ""}
+    rt = resolve_runtime_model(tenant_id)
+    if rt is None:
+        return {"source": "none", "model": "", "apiKey": "", "baseUrl": None,
+                "enabled": False, "mode": "builtin", "updatedBy": "", "updatedAt": ""}
+    mode = "byok" if rt.source == "byok" else "builtin"
+    return {"source": rt.source, "model": rt.model, "apiKey": "",
+            "baseUrl": rt.base_url, "enabled": True, "mode": mode,
+            "updatedBy": "", "updatedAt": ""}
 
 
 @app.get("/api/models")

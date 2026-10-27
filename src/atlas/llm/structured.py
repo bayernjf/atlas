@@ -42,17 +42,13 @@ class LLMStructuredUnavailable(Exception):
 
 
 def _resolve_llm_config(tenant_id: str | None) -> tuple[str, str | None, str | None] | None:
-    """按优先级解析模型（docs/93 §1 语义约束 3）：租户 BYOK > 内置 > env。"""
-    if tenant_id is None:
-        return None
-    from atlas.connections.service import get_secret_provider
-    from atlas.llm.config import get_model_config_store, resolve_default_model
+    """按优先级解析模型（W5-3 收口）：租户 BYOK > 单条内置 > hub 投影 > env。"""
+    from atlas.llm.hub import resolve_runtime_model
 
-    cfg = resolve_default_model(get_model_config_store(), tenant_id)
-    if cfg is None:
+    rt = resolve_runtime_model(tenant_id)
+    if rt is None:
         return None
-    api_key = get_secret_provider().decrypt(cfg.api_key_enc) if cfg.api_key_enc else None
-    return cfg.model, api_key, cfg.base_url
+    return rt.model, rt.api_key, rt.base_url
 
 
 def _call_llm(
@@ -150,16 +146,12 @@ def classify_intent(
     """
     resolved = _resolve_llm_config(tenant_id)
     if resolved is None:
-        env_model = os.getenv("LITELLM_MODEL", "").strip()
-        if not env_model:
-            raise LLMStructuredUnavailable(
-                node_id or "intent_recognition",
-                "未配置 LLM 模型，意图识别节点拒绝静默降级；请配置 LITELLM_MODEL "
-                "与 OPENAI_API_KEY / OPENAI_BASE_URL，或租户 BYOK 模型配置。",
-            )
-        model_name, api_key, base_url = env_model, None, None
-    else:
-        model_name, api_key, base_url = resolved
+        raise LLMStructuredUnavailable(
+            node_id or "intent_recognition",
+            "未配置 LLM 模型，意图识别节点拒绝静默降级；请配置 LITELLM_MODEL "
+            "与 OPENAI_API_KEY / OPENAI_BASE_URL，hub 投影，或租户 BYOK 模型配置。",
+        )
+    model_name, api_key, base_url = resolved
     model_name = (model or "").strip() or model_name
 
     intent_lines = []
@@ -216,16 +208,12 @@ def extract_fields(
     """
     resolved = _resolve_llm_config(tenant_id)
     if resolved is None:
-        env_model = os.getenv("LITELLM_MODEL", "").strip()
-        if not env_model:
-            raise LLMStructuredUnavailable(
-                node_id or "info_extraction",
-                "未配置 LLM 模型，信息抽取节点拒绝静默降级；请配置 LITELLM_MODEL "
-                "与 OPENAI_API_KEY / OPENAI_BASE_URL，或租户 BYOK 模型配置。",
-            )
-        model_name, api_key, base_url = env_model, None, None
-    else:
-        model_name, api_key, base_url = resolved
+        raise LLMStructuredUnavailable(
+            node_id or "info_extraction",
+            "未配置 LLM 模型，信息抽取节点拒绝静默降级；请配置 LITELLM_MODEL "
+            "与 OPENAI_API_KEY / OPENAI_BASE_URL，hub 投影，或租户 BYOK 模型配置。",
+        )
+    model_name, api_key, base_url = resolved
     model_name = (model or "").strip() or model_name
 
     field_lines = []
@@ -282,16 +270,12 @@ def generate_content(
     """
     resolved = _resolve_llm_config(tenant_id)
     if resolved is None:
-        env_model = os.getenv("LITELLM_MODEL", "").strip()
-        if not env_model:
-            raise LLMStructuredUnavailable(
-                node_id or "content_generation",
-                "未配置 LLM 模型，内容生成节点拒绝静默降级；请配置 LITELLM_MODEL "
-                "与 OPENAI_API_KEY / OPENAI_BASE_URL，或租户 BYOK 模型配置。",
-            )
-        model_name, api_key, base_url = env_model, None, None
-    else:
-        model_name, api_key, base_url = resolved
+        raise LLMStructuredUnavailable(
+            node_id or "content_generation",
+            "未配置 LLM 模型，内容生成节点拒绝静默降级；请配置 LITELLM_MODEL "
+            "与 OPENAI_API_KEY / OPENAI_BASE_URL，hub 投影，或租户 BYOK 模型配置。",
+        )
+    model_name, api_key, base_url = resolved
     model_name = (model or "").strip() or model_name
 
     style_text = f"\n风格：{style}" if (style or "").strip() else ""
@@ -317,24 +301,20 @@ def generate_content(
 
 
 def _resolve_model(tenant_id: str | None, model: str | None, *, caller: str) -> tuple[str, str | None, str | None]:
-    """模型解析（三节点与 auto_extract 共用）：租户 BYOK > 内置 > env；都没有就显式抛错。
+    """模型解析（三节点与 auto_extract 共用；W5-3 收口）：BYOK > 单条内置 > hub > env。
 
-    抛错而不是返回空：调用方要么是把错折算成节点 FAILED（三节点），要么是折算成产出里的
-    `skipped`（记忆工具），两条路都**要求"根本没接模型"这件事被说出来**——静默空结果会伪造
+    都没有就显式抛错：调用方要么把错折算成节点 FAILED（三节点），要么折算成产出里的
+    `skipped`（记忆工具），两条路都**要求"根本没接模型"被说出来**——静默空结果会伪造
     下游行为（docs/109 §2.2、docs/63 静默降级族）。
     """
     resolved = _resolve_llm_config(tenant_id)
     if resolved is None:
-        env_model = os.getenv("LITELLM_MODEL", "").strip()
-        if not env_model:
-            raise LLMStructuredUnavailable(
-                caller,
-                "未配置 LLM 模型；请配置 LITELLM_MODEL 与 OPENAI_API_KEY / OPENAI_BASE_URL，"
-                "或给租户配 BYOK 模型。",
-            )
-        model_name, api_key, base_url = env_model, None, None
-    else:
-        model_name, api_key, base_url = resolved
+        raise LLMStructuredUnavailable(
+            caller,
+            "未配置 LLM 模型；请配置 LITELLM_MODEL 与 OPENAI_API_KEY / OPENAI_BASE_URL，"
+            "hub 投影，或给租户配 BYOK 模型。",
+        )
+    model_name, api_key, base_url = resolved
     return ((model or "").strip() or model_name), api_key, base_url
 
 
