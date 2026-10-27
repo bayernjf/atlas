@@ -24,7 +24,9 @@ import os
 import threading
 from copy import deepcopy
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from typing import Any
+from urllib import request
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +50,7 @@ class HubModelRecord:
     base_url: str
     modalities: list[str]
     is_default: bool
+    provider: str = ""
 
 
 @dataclass
@@ -251,6 +254,36 @@ def _litellm_name(m: dict[str, Any]) -> str:
     return str(m.get("model", ""))
 
 
+_KNOWN_PROVIDERS = {
+    "api.openai.com": "openai",
+    "api.anthropic.com": "anthropic",
+    "api.deepseek.com": "deepseek",
+    "dashscope.aliyuncs.com": "qwen",
+    "open.bigmodel.cn": "zhipu",
+    "api.moonshot.cn": "moonshot",
+    "apihub.agnes-ai.com": "agnes",
+    "ark.cn-beijing.volces.com": "ark",
+}
+
+
+def provider_from_base_url(base_url: str) -> str:
+    """从 base_url 推断 provider 名（与 job-agent providerFromBaseUrl 同口径）。"""
+    from urllib.parse import urlparse
+
+    try:
+        host = urlparse(base_url).hostname or base_url
+    except ValueError:
+        host = base_url
+    host = host.lower()
+    if host in _KNOWN_PROVIDERS:
+        return _KNOWN_PROVIDERS[host]
+    bare = host.replace("www.", "")
+    parts = bare.split(".")
+    if len(parts) >= 2:
+        return parts[-2]
+    return bare.split(":")[0]
+
+
 def sync_hub_projection(client: Any = None) -> dict[str, int] | None:
     """拉取 hub 投影 → 加密 api_key → 持久化。返回 {revision, pulled}；未配置 None。"""
     hub_client = client or get_hub_client()
@@ -282,6 +315,7 @@ def sync_hub_projection(client: Any = None) -> dict[str, int] | None:
                 base_url=str(m.get("base_url", "")),
                 modalities=list(m.get("modalities", [])),
                 is_default=is_default,
+                provider=provider_from_base_url(str(m.get("base_url", ""))),
             )
         )
 
@@ -289,6 +323,66 @@ def sync_hub_projection(client: Any = None) -> dict[str, int] | None:
     projection = HubProjection(revision=int(revision), models=records)
     save_projection(projection)
     return {"revision": int(revision), "pulled": len(records)}
+
+
+#: atlas 在 hub 中的 project slug。
+HUB_PROJECT_SLUG = "atlas"
+
+
+def report_usage(
+    *,
+    assignment_id: str,
+    model: str,
+    provider: str,
+    feature: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_tokens: int = 0,
+    billing_source: str = "builtin",
+    http_status: int = 200,
+    opener: Any = None,
+) -> bool:
+    """回报一次用量到 hub POST /pub/v1/usage（fire-and-forget；失败只 warning）。
+
+    BYOK（billing_source='byok'）或无 assignment_id 时不回报。
+    """
+    settings = hub_settings()
+    if settings is None or not assignment_id or billing_source == "byok":
+        return False
+    hub_url, token, _cache_path = settings
+    body = {
+        "project": HUB_PROJECT_SLUG,
+        "feature": feature or HUB_PROJECT_SLUG,
+        "billing_source": billing_source,
+        "provider": provider,
+        "model": model,
+        "assignment_id": assignment_id,
+        "input_tokens": max(0, int(input_tokens)),
+        "output_tokens": max(0, int(output_tokens)),
+        "cache_read_tokens": max(0, int(cache_read_tokens)),
+        "http_status": int(http_status),
+        "cached": False,
+        "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    req = request.Request(
+        f"{hub_url}/pub/v1/usage",
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        if opener is not None:
+            resp = opener(req)
+        else:
+            resp = request.urlopen(req, timeout=15)
+        resp.read()
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("hub usage report failed: %s", exc)
+        return False
 
 
 # ---------------- 解析 ----------------
@@ -316,8 +410,9 @@ def resolve_runtime_model(
     1) 显式租户：BYOK > 单条内置（现有 store，迁移期）；
     2) hub 投影（多条，含信封 key）；
     3) env ``LITELLM_MODEL``（只给 model，key/base_url 由 litellm 走 env）。
-    都没有返回 None。
+    都没有返回 None。成功时把计费来源写入 metering contextvar，供用量记录与上报。
     """
+    rt: RuntimeModel | None = None
     # 1) 现有 store（BYOK / 单条 builtin）
     if tenant_id is not None:
         from atlas.llm.config import get_model_config_store, resolve_default_model
@@ -331,7 +426,7 @@ def resolve_runtime_model(
                 if cfg.api_key_enc
                 else None
             )
-            return RuntimeModel(
+            rt = RuntimeModel(
                 model=cfg.model,
                 api_key=api_key,
                 base_url=cfg.base_url,
@@ -340,27 +435,35 @@ def resolve_runtime_model(
             )
 
     # 2) hub 投影
-    hub = resolve_hub_model(modality, alias)
-    if hub is not None:
-        return RuntimeModel(
-            model=hub.model,
-            api_key=hub.api_key,
-            base_url=hub.base_url,
-            assignment_id=hub.assignment_id,
-            source="hub",
-        )
+    if rt is None:
+        hub = resolve_hub_model(modality, alias)
+        if hub is not None:
+            rt = RuntimeModel(
+                model=hub.model,
+                api_key=hub.api_key,
+                base_url=hub.base_url,
+                assignment_id=hub.assignment_id,
+                source="hub",
+            )
 
     # 3) env 兜底
-    env_model = os.getenv("LITELLM_MODEL", "").strip()
-    if env_model:
-        return RuntimeModel(
-            model=env_model,
-            api_key=None,
-            base_url=None,
-            assignment_id=None,
-            source="env",
-        )
-    return None
+    if rt is None:
+        env_model = os.getenv("LITELLM_MODEL", "").strip()
+        if env_model:
+            rt = RuntimeModel(
+                model=env_model,
+                api_key=None,
+                base_url=None,
+                assignment_id=None,
+                source="env",
+            )
+
+    if rt is not None:
+        from atlas.llm.metering import set_resolved_billing
+
+        billing_source = "byok" if rt.source == "byok" else "builtin"
+        set_resolved_billing(rt.assignment_id or "", billing_source)
+    return rt
 
 
 def resolve_hub_model(
