@@ -25,6 +25,16 @@
     "adminOnly": "仅平台管理员可编辑",
     "notConfigured": "尚未配置内置模型"
   },
+  "hub": {
+    "description": "内置模型从 model-hub 投影同步（只读），请在 hub 中管理。",
+    "notConfigured": "内置模型由 model-hub 管理，请配置 MODEL_HUB_URL 与 MODEL_HUB_TOKEN 后同步。",
+    "readonly": "只读",
+    "revision": "修订号 {{revision}}",
+    "alias": "别名",
+    "role": "角色",
+    "modalities": "模态",
+    "provider": "厂商"
+  },
   "byok": {
     "title": "我的 BYOK（本租户）",
     "description": "配置你自己的模型密钥，仅对本租户生效。优先级高于内置模型；租户管理员与运营均可编辑。",

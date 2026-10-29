@@ -70,6 +70,8 @@ class ModelConfigStore(Protocol):
 
     def set_byok(self, tenant_id: str, cfg: ModelConfig) -> ModelConfig: ...
 
+    def delete_byok(self, tenant_id: str) -> None: ...
+
 
 class InMemoryModelConfigStore:
     """进程内 dict 档；内置键 ``__builtin__``，BYOK 按真实 tenant_id 分行。"""
@@ -99,6 +101,10 @@ class InMemoryModelConfigStore:
 
     def set_byok(self, tenant_id: str, cfg: ModelConfig) -> ModelConfig:
         return self._set(tenant_id, cfg)
+
+    def delete_byok(self, tenant_id: str) -> None:
+        with self._lock:
+            self._data.pop(tenant_id, None)
 
 
 class PgModelConfigStore:
@@ -157,6 +163,15 @@ class PgModelConfigStore:
 
     def set_byok(self, tenant_id: str, cfg: ModelConfig) -> ModelConfig:
         return self._upsert(tenant_id, cfg)
+
+    def delete_byok(self, tenant_id: str) -> None:
+        from sqlalchemy import text
+
+        with self._engine.begin() as conn:
+            conn.execute(
+                text("DELETE FROM model_config WHERE tenant_id = :tenant_id"),
+                {"tenant_id": tenant_id},
+            )
 
 
 # ---------------- 进程级单例（照 connections.service.get_secret_provider 模式） ----------------

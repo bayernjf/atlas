@@ -25,6 +25,16 @@
     "adminOnly": "Editable by platform admin only",
     "notConfigured": "No built-in model configured yet"
   },
+  "hub": {
+    "description": "Built-in models are synced (read-only) from the model-hub projection; manage them in the hub.",
+    "notConfigured": "Built-in models are managed by model-hub. Configure MODEL_HUB_URL and MODEL_HUB_TOKEN to sync them.",
+    "readonly": "Read-only",
+    "revision": "Revision {{revision}}",
+    "alias": "Alias",
+    "role": "Role",
+    "modalities": "Modalities",
+    "provider": "Provider"
+  },
   "byok": {
     "title": "My BYOK (this tenant)",
     "description": "Configure your own model key, effective for this tenant only. Takes precedence over the built-in model; editable by tenant admin and operator.",

@@ -175,6 +175,7 @@ def test_u1413_byok_key_is_passed_to_litellm_but_never_recorded(monkeypatch):
     assert set(row) == {
         "tenantId", "ts", "caller", "model", "promptTokens", "completionTokens",
         "totalTokens", "latencyMs", "status", "nodeId", "graphId", "runId",
+        "assignmentId", "billingSource",
     }
 
 
