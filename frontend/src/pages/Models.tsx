@@ -10,6 +10,7 @@ import {
   Row,
   Space,
   Switch,
+  Table,
   Tag,
   Typography,
   message,
@@ -18,8 +19,8 @@ import { roleCan, type Principal } from '../lib/auth'
 import { UserBadge } from '../components/UserBadge'
 import {
   getModels,
-  putBuiltinModel,
   putByokModel,
+  type HubModelView,
   type ModelConfigView,
   type ModelOverview,
 } from '../lib/apiClient'
@@ -46,13 +47,11 @@ function MaskedKey({ apiKey }: { apiKey: string }) {
 }
 
 function ModelConfigEditor({
-  kind,
   config,
   canEdit,
   onSaved,
   t,
 }: {
-  kind: 'builtin' | 'byok'
   config: ModelConfigView | null
   canEdit: boolean
   onSaved: () => void
@@ -85,13 +84,8 @@ function ModelConfigEditor({
         ...(values.baseUrl ? { baseUrl: values.baseUrl } : {}),
         enabled: values.enabled,
       }
-      if (kind === 'builtin') {
-        await putBuiltinModel(payload)
-        message.success(t('message.builtinSaved'))
-      } else {
-        await putByokModel(payload)
-        message.success(t('message.byokSaved'))
-      }
+      await putByokModel(payload)
+      message.success(t('message.byokSaved'))
       onSaved()
     } catch {
       message.error(t('error.save'))
@@ -138,6 +132,40 @@ function ModelConfigEditor({
         </Button>
       )}
     </Form>
+  )
+}
+
+function HubBuiltinModels({
+  models,
+  t,
+}: {
+  models: HubModelView[]
+  t: (key: string, options?: Record<string, unknown>) => string
+}) {
+  const columns = [
+    { title: t('hub.alias'), dataIndex: 'alias', render: (v: string | null) => v ?? '—' },
+    { title: t('form.model'), dataIndex: 'model' },
+    {
+      title: t('hub.role'),
+      dataIndex: 'role',
+      render: (v: string, record: HubModelView) =>
+        record.isDefault ? <Tag color="blue">{v}*</Tag> : <Tag>{v}</Tag>,
+    },
+    {
+      title: t('hub.modalities'),
+      dataIndex: 'modalities',
+      render: (v: string[]) => v.join(', '),
+    },
+    { title: t('hub.provider'), dataIndex: 'provider' },
+  ]
+  return (
+    <Table
+      rowKey="assignmentId"
+      size="small"
+      pagination={false}
+      dataSource={models}
+      columns={columns}
+    />
   )
 }
 
@@ -249,23 +277,25 @@ export function Models({ principal, onLogout, onBack }: ModelsProps) {
                 }
               >
                 <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
-                  {t('builtin.description')}
+                  {overview?.hub.configured ? t('hub.description') : t('builtin.description')}
                 </Typography.Paragraph>
-                {!overview?.builtin && !loading && (
+                {overview?.hub.configured ? (
+                  <>
+                    <Space style={{ marginBottom: 12 }}>
+                      <Tag color="geekblue">
+                        {t('hub.revision', { revision: overview.hub.revision ?? '—' })}
+                      </Tag>
+                      <Tag color="blue">{t('hub.readonly')}</Tag>
+                    </Space>
+                    <HubBuiltinModels models={overview.builtinModels} t={t} />
+                  </>
+                ) : (
                   <Alert
                     type="info"
                     showIcon
-                    message={t('builtin.notConfigured')}
-                    style={{ marginBottom: 16 }}
+                    message={t('hub.notConfigured')}
                   />
                 )}
-                <ModelConfigEditor
-                  kind="builtin"
-                  config={overview?.builtin ?? null}
-                  canEdit={canAdmin}
-                  onSaved={refresh}
-                  t={t}
-                />
               </Card>
             </Col>
             <Col span={12}>
@@ -290,7 +320,6 @@ export function Models({ principal, onLogout, onBack }: ModelsProps) {
                   />
                 )}
                 <ModelConfigEditor
-                  kind="byok"
                   config={overview?.byok ?? null}
                   canEdit={canOperate}
                   onSaved={refresh}

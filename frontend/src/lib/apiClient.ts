@@ -3335,8 +3335,28 @@ export type ModelConfigView = {
   updatedAt: string
 }
 
+export type HubModelView = {
+  assignmentId: string
+  alias: string | null
+  role: string
+  model: string
+  rawModel: string
+  baseUrl: string
+  provider: string
+  modalities: string[]
+  isDefault: boolean
+}
+
+export type HubStatus = {
+  configured: boolean
+  disabled: boolean
+  revision: number | null
+}
+
 export type ModelOverview = {
+  hub: HubStatus
   builtin: ModelConfigView | null
+  builtinModels: HubModelView[]
   byok: ModelConfigView | null
   effective: ModelConfigView & { source: 'builtin' | 'byok' | 'env' | 'none' }
 }
