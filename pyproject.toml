@@ -30,13 +30,13 @@ dependencies = [
     "cryptography>=44",
     # MCP server face: stdio + read-only tools (docs/91; ADR T33=B official SDK v2)
     "mcp>=2,<3",
-    # Unified model control plane client (W5-3; local path until model-hub has a
-    # git remote + tag, then switch to git+ssh per the integration decision).
+    # Unified model control plane client (W5-3; git-tag per model-hub
+    # RELEASING.md; https form so CI can resolve the public repo without a key).
     "model-hub-client",
 ]
 
 [tool.uv.sources]
-model-hub-client = { path = "../model-hub/clients/python", editable = true }
+model-hub-client = { git = "https://github.com/bayernjf/model-hub.git", tag = "v0.1.1", subdirectory = "clients/python" }
 
 [project.optional-dependencies]
 dev = [
