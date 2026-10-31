@@ -256,7 +256,7 @@ requires-dist = [
     { name = "langgraph", specifier = ">=1.2,<2" },
     { name = "litellm", specifier = ">=1.100,<2" },
     { name = "mcp", specifier = ">=2,<3" },
-    { name = "model-hub-client", git = "https://github.com/bayernjf/model-hub.git?subdirectory=clients%2Fpython&tag=v0.1.1" },
+    { name = "model-hub-client", git = "https://github.com/bayernjf/model-hub.git?subdirectory=clients%2Fpython&tag=v0.2.0" },
     { name = "pgvector", specifier = ">=0.5" },
     { name = "playwright", specifier = ">=1.62" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3,<4" },
@@ -1625,8 +1625,8 @@ wheels = [
 
 [[package]]
 name = "model-hub-client"
-version = "0.1.1"
-source = { git = "https://github.com/bayernjf/model-hub.git?subdirectory=clients%2Fpython&tag=v0.1.1#c9d251b43d92c3516937f5bbc41ff0604d20aaa6" }
+version = "0.2.0"
+source = { git = "https://github.com/bayernjf/model-hub.git?subdirectory=clients%2Fpython&tag=v0.2.0#10caa2be3174a5fc1b95d7370ec33cf3cf1ca8b0" }
 
 [[package]]
 name = "multidict"
