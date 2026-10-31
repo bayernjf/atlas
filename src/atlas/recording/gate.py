@@ -11,6 +11,7 @@
 api/iam。``services`` 仅用于取审批 broker（预置决策秒回，同现有 replay 端点）。
 """
 
+import logging
 from typing import Any
 
 from ..graph.dsl import parse_graph
@@ -24,6 +25,8 @@ from .replay import (
     preset_wait_events,
     seed_anchor,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _replay_one(
@@ -80,7 +83,9 @@ def _replay_one(
         if rng_note:
             report["rng_seed_note"] = rng_note
         return report
-    except Exception as exc:  # 回放失败折叠为不匹配，不抛 500（对齐 replay 端点，06 §6.9）
+    except Exception:  # 回放失败折叠为不匹配，不抛 500（对齐 replay 端点，06 §6.9）
+        # 异常原文只进服务端日志（Tier0 评审 2026-10-30 H2），报告 note 固定泛化。
+        logger.exception("release gate replay failed for case %s", case.id)
         return {
             "matches": False,
             "baseline_status": case.status,
@@ -89,7 +94,7 @@ def _replay_one(
                 {
                     "node_id": step.node_id,
                     "match": False,
-                    "note": f"门禁回放执行异常：{type(exc).__name__}: {exc}",
+                    "note": "门禁回放执行异常",
                 }
                 for step in case.steps
             ],

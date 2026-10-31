@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 
 import pytest
 from fastapi.testclient import TestClient
@@ -225,3 +226,33 @@ def test_release_gate_requires_operate_permission():
     assert client.post(
         f"/api/graphs/{graph_id}/publish", json={"gate": True}
     ).status_code == 403
+
+
+def test_gate_replay_exception_note_is_generic(caplog, monkeypatch):
+    """Tier0 评审 H2（2026-10-30）：门禁回放异常原文只进服务端日志，note 固定泛化。"""
+    from types import SimpleNamespace
+
+    from atlas.recording import gate as gate_module
+    from atlas.recording.cases import RecordingCase
+
+    leak = "adapter vault-token failed: ECONNREFUSED 10.0.0.5:5432"
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError(leak)
+
+    monkeypatch.setattr(gate_module, "run_graph", _boom)
+    case = RecordingCase(
+        id="rec-1", name="门禁异常用例", graph_id="g-1", graph={}, inputs={},
+        steps=[RecordStep(node_id="trigger-1", node_type="trigger", output={})],
+        status="completed", created_at="2026-10-31T00:00:00+00:00",
+    )
+    with caplog.at_level(logging.ERROR, logger="atlas.recording.gate"):
+        report = gate_module._replay_one(
+            graph={}, case=case, services=SimpleNamespace(approval_broker=None),
+            registry=None, graph_resolver=None,
+        )
+    assert report["matches"] is False
+    assert report["replay_status"] == "failed"
+    assert all(row["note"] == "门禁回放执行异常" for row in report["steps"])
+    assert leak not in json.dumps(report, ensure_ascii=False)
+    assert leak in caplog.text  # 原文与栈进服务端日志
