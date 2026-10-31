@@ -12,6 +12,14 @@
   box-sizing: border-box;
 }
 
+/* ===== 键盘焦点可见（Tier0 UI/UX 评审 P1#7）=====
+ * 全局 :focus-visible 兜底：antd 自带控件有焦点样式，但原生控件与自定义
+ * 元素（画布节点、面板按钮等）此前没有统一兜底，键盘用户找不到焦点。 */
+:focus-visible {
+  outline: 2px solid var(--atlas-color-primary);
+  outline-offset: 2px;
+}
+
 html,
 body,
 #root {
@@ -513,7 +521,6 @@ body,
 
 .audit-time-input:focus {
   border-color: var(--atlas-color-primary-border-hover, #4096ff);
-  outline: none;
 }
 
 /* docs/61 §2.3：标记条目来自后端编译 422，而非本地实时校验 */
