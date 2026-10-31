@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 
@@ -1066,6 +1067,29 @@ def test_recording_replay_folds_missing_subgraph_reference():
     assert report["matches"] is False
     assert report["replay_status"] == "failed"
     assert report["baseline_status"] == "completed"
+
+
+def test_recording_replay_failure_note_is_generic(caplog):
+    """Tier0 评审 H2（2026-10-30）：回放异常原文只进服务端日志，报告 note 固定泛化。"""
+    client.post("/api/demo/reset")
+    parent = _subgraph_parent_graph("graph-leak-marker")
+    parent_id = client.post("/api/graphs", json=parent).json()["id"]
+    case_id = client.post("/api/recordings", json={
+        "name": "回放异常泛化用例", "graph_id": parent_id, "inputs": {"order_id": "X-1"},
+        "steps": [{"node_id": "trigger-1", "node_type": "trigger", "output": {}}],
+        "status": "completed",
+    }).json()["id"]
+    client.post("/api/demo/reset")
+    with caplog.at_level(logging.ERROR, logger="atlas.api.main"):
+        response = client.post(f"/api/recordings/{case_id}/replay")
+    assert response.status_code == 200
+    report = response.json()
+    assert report["replay_status"] == "failed"
+    assert report["steps"], "折叠报告必须带逐节点行"
+    assert all(row["note"] == "回放执行异常，未取得该节点产出" for row in report["steps"])
+    raw = json.dumps(report, ensure_ascii=False)
+    assert "graph-leak-marker" not in raw  # 异常原文（含缺失子图 id）不进响应
+    assert "recording replay failed" in caplog.text  # 原文与栈进服务端日志
 
 
 
