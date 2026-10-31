@@ -9,6 +9,7 @@
     "versionB": "Version B",
     "traffic": "Traffic percent",
     "minSamples": "Min samples",
+    "metric": "Evaluation metric",
     "submit": "Create & start",
     "created": "Experiment created",
     "sameVersion": "Version A and version B must differ"

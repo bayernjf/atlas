@@ -160,6 +160,7 @@ export function Agents({ principal, onLogout, onBack }: AgentsPageProps) {
         <Switch
           checked={value}
           disabled={!canOperate || busyRow === row.id}
+          aria-label={`${row.name} · ${t('table.enabled')}`}
           onChange={(next) => void handleToggle(row, next)}
         />
       ),

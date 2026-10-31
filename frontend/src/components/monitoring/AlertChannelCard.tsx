@@ -102,6 +102,7 @@ export function AlertChannelCard({ canAdmin }: Props) {
             <span>{t('alertChannel.enable')}</span>
             <Switch
               checked={draft.enabled}
+              aria-label={t('alertChannel.enable')}
               onChange={(enabled) => patch({ enabled })}
             />
           </Space>

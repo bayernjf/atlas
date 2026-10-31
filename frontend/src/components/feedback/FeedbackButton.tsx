@@ -69,6 +69,7 @@ export function FeedbackButton() {
             <Radio.Group
               value={type}
               onChange={(event) => setType(event.target.value as FeedbackType)}
+              aria-label={t('feedback.typeLabel')}
               options={[
                 { value: 'bug', label: t('feedback.typeBug') },
                 { value: 'suggestion', label: t('feedback.typeSuggestion') },
@@ -80,6 +81,7 @@ export function FeedbackButton() {
             <TextArea
               rows={4}
               placeholder={t('feedback.contentPlaceholder')}
+              aria-label={t('feedback.contentPlaceholder')}
               value={content}
               onChange={(event) => setContent(event.target.value)}
               maxLength={2000}
@@ -88,6 +90,7 @@ export function FeedbackButton() {
             <Input
               style={{ marginTop: 12 }}
               placeholder={t('feedback.contactPlaceholder')}
+              aria-label={t('feedback.contactPlaceholder')}
               value={contact}
               onChange={(event) => setContact(event.target.value)}
               maxLength={200}

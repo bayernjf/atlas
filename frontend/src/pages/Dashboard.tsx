@@ -31,6 +31,13 @@ type DashboardProps = {
 export function Dashboard({ principal, onLogout, onOpenEditor, onOpenMonitoring, onOpenMemory, onOpenConnections, onOpenUsers, onOpenApprovals, onOpenAudit, onOpenOpenApi, onOpenWaits, onOpenSchedules, onOpenAgents, onOpenReflection, onOpenModels, onOpenUsage, onOpenTemplates, onOpenEmbeds, onOpenAdapterDrafts, onOpenExperiments }: DashboardProps) {
   // 页面专属文案走 dashboard namespace；品牌名/主导航是跨页通用文案，显式取 common: 前缀。
   const { t } = useTranslation('dashboard')
+  // 导航卡是 div onClick（antd Card），补键盘语义：Enter/Space 激活（a11y 0→1 基础）。
+  const activate = (open: () => void) => (event: React.KeyboardEvent) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      open()
+    }
+  }
   return (
     <Layout className="page-layout">
       <Header className="page-header" style={{ justifyContent: 'space-between' }}>
@@ -78,31 +85,40 @@ export function Dashboard({ principal, onLogout, onOpenEditor, onOpenMonitoring,
             </Space>
           </Card>
           <Row gutter={16}>
-            <Col span={8}>
+            <Col xs={24} md={8}>
               <Card
                 title="Graph"
                 hoverable
                 onClick={onOpenEditor}
+                role="button"
+                tabIndex={0}
+                onKeyDown={activate(onOpenEditor)}
                 extra={<Typography.Text type="secondary">{t('demo.cards.enter')}</Typography.Text>}
               >
                 <Typography.Text>{t('demo.cards.graph')}</Typography.Text>
               </Card>
             </Col>
-            <Col span={8}>
+            <Col xs={24} md={8}>
               <Card
                 title="Loop"
                 hoverable
                 onClick={onOpenReflection}
+                role="button"
+                tabIndex={0}
+                onKeyDown={activate(onOpenReflection)}
                 extra={<Typography.Text type="secondary">{t('demo.cards.enter')}</Typography.Text>}
               >
                 <Typography.Text>{t('demo.cards.loop')}</Typography.Text>
               </Card>
             </Col>
-            <Col span={8}>
+            <Col xs={24} md={8}>
               <Card
                 title="Harness"
                 hoverable
                 onClick={onOpenOpenApi}
+                role="button"
+                tabIndex={0}
+                onKeyDown={activate(onOpenOpenApi)}
                 extra={<Typography.Text type="secondary">{t('demo.cards.enter')}</Typography.Text>}
               >
                 <Typography.Text>{t('demo.cards.harness')}</Typography.Text>

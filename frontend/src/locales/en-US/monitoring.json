@@ -10,10 +10,12 @@
       "title": "Run Report"
     },
     "group": {
+      "label": "Report grouping",
       "day": "By day",
       "version": "By version"
     },
     "days": "Last {{value}} days",
+    "daysLabel": "Report time window",
     "col": {
       "key": "Group",
       "total": "Total",
@@ -140,7 +142,9 @@
   },
   "filter": {
     "allStatus": "All statuses",
-    "allGraphs": "All graphs"
+    "allGraphs": "All graphs",
+    "status": "Alert status filter",
+    "graph": "Graph filter"
   },
   "rules": {
     "cardTitle": "Alert rules (admin only; threshold changes take effect immediately and are kept in process)",
@@ -175,6 +179,8 @@
     "title": "Custom rules (expressions, docs/28 §4.2)",
     "hint": "Available variables (referenced with double braces): status (completed / error / cancelled), durationMs (integer milliseconds), failedCount (number of failed nodes), hasError (whether there is an error); example: {{status}} == 'error' || {{hasError}}. Expressions reuse the safe condition engine (no eval); the result must be boolean, otherwise it fails safe at runtime and raises no alert.",
     "namePlaceholder": "Rule name",
+    "expressionLabel": "Rule expression",
+    "severityLabel": "Severity",
     "enabled": "Enabled",
     "nameEmpty": "Name cannot be empty",
     "add": "＋ Add custom rule"
@@ -339,6 +345,7 @@
     "durationLabel": "Silence duration",
     "durationMinutes": "{{minutes}} minutes",
     "durationCustom": "Custom...",
+    "customMinutes": "Custom minutes",
     "reasonLabel": "Reason",
     "reasonPlaceholder": "e.g. maintenance during a release window",
     "confirm": "Confirm silence",

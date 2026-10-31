@@ -123,12 +123,14 @@ function CredentialFields({
                 <Input
                   value={fields.username}
                   placeholder={t('credentials.username')}
+                  aria-label={`${schemeLabel(scheme, t)} ${t('credentials.username')}`}
                   autoComplete="username"
                   onChange={(event) => patch({ username: event.target.value })}
                 />
                 <Input.Password
                   value={fields.password}
                   placeholder={t('credentials.password')}
+                  aria-label={`${schemeLabel(scheme, t)} ${t('credentials.password')}`}
                   autoComplete="current-password"
                   onChange={(event) => patch({ password: event.target.value })}
                 />
@@ -142,6 +144,7 @@ function CredentialFields({
             <Input.Password
               value={typeof draft === 'string' ? draft : ''}
               placeholder={t('credentials.placeholder')}
+              aria-label={schemeLabel(scheme, t)}
               autoComplete="new-password"
               onChange={(event) => onChange(scheme.name, event.target.value)}
             />
@@ -453,6 +456,7 @@ export function OpenApiImports({ principal, onLogout, onBack }: OpenApiImportsPr
                         rows={10}
                         value={content}
                         placeholder={t('source.pastePlaceholder')}
+                        aria-label={t('source.pasteTab')}
                         onChange={(event) => setContent(event.target.value)}
                       />
                     ),
@@ -464,6 +468,7 @@ export function OpenApiImports({ principal, onLogout, onBack }: OpenApiImportsPr
                       <Input
                         value={url}
                         placeholder={t('source.urlPlaceholder')}
+                        aria-label={t('source.urlTab')}
                         onChange={(event) => setUrl(event.target.value)}
                       />
                     ),
@@ -529,6 +534,7 @@ export function OpenApiImports({ principal, onLogout, onBack }: OpenApiImportsPr
                   <Switch
                     size="small"
                     checked={showDeleted}
+                    aria-label={t('imports.showDeleted')}
                     onChange={setShowDeleted}
                   />
                   <Typography.Text type="secondary">

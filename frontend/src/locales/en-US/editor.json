@@ -14,6 +14,8 @@
     "draftRun": "Draft run",
     "publishedRun": "Published v{{version}}",
     "shadowRun": "Shadow run",
+    "orderSwitcher": "Demo order",
+    "runTargetSwitcher": "Run target",
     "resetDemo": "Reset demo data",
     "resetDemoConfirm": "This will clear and reset all demo data (orders, run history, template samples). Continue?",
     "resetDemoSuccess": "Demo data reset"
@@ -64,7 +66,8 @@
     "statusRunning": "Running...",
     "statusPaused": "Paused",
     "diagSep": "; ",
-    "emptyHint": "Drag nodes from the left palette to start building"
+    "emptyHint": "Drag nodes from the left palette to start building",
+    "regionLabel": "Workflow canvas"
   },
   "export": {
     "title": "Graph definition JSON (W7-W8 DSL compilation input)"
@@ -207,7 +210,9 @@
     "continue": "Continue",
     "stop": "Stop",
     "varFilterPlaceholder": "Filter variables by key",
+    "globalsEditor": "Paused frame globals (JSON)",
     "globalsHint": "Global variables globals (editable JSON; shallow-merged back on step/continue, ignored on stop)",
+    "branchLabel": "Entry type",
     "outputsHint": "Node outputs (read-only snapshot)",
     "exceptionTitle": "Exception breakpoint caught: {{type}}",
     "exceptionHint": "The exception will be re-raised as-is after step/continue (v1 cannot ignore and continue); stop ends this debug session.",
@@ -641,6 +646,7 @@
     "loopJudgeLlm": "LLM judge (asks the model after the rule, needs a prompt)",
     "loopJudgePromptPlaceholder": "Judge prompt (required when judgeMode=llm)",
     "loopCarryPlaceholder": "Values carried into the next cycle (one per line: order_id = {{ai-1.decision.action}})",
-    "loopInterval": "Sleep between cycles (s)"
+    "loopInterval": "Sleep between cycles (s)",
+    "judgeModeLabel": "Judge mode"
   }
 }

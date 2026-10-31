@@ -50,6 +50,7 @@ export function RuleConfigEditor(props: {
           <span>{t('builtinRule.runError')}</span>
           <Switch
             disabled={disabled}
+            aria-label={t('builtinRule.runError')}
             checked={rules.run_error.enabled}
             onChange={(enabled) => setRules({ ...rules, run_error: { enabled } })}
           />
@@ -58,6 +59,7 @@ export function RuleConfigEditor(props: {
           <span>{t('builtinRule.nodeFailed')}</span>
           <Switch
             disabled={disabled}
+            aria-label={t('builtinRule.nodeFailed')}
             checked={rules.node_failed.enabled}
             onChange={(enabled) => setRules({ ...rules, node_failed: { enabled } })}
           />
@@ -66,6 +68,7 @@ export function RuleConfigEditor(props: {
           <span>{t('builtinRule.consecutiveFailures')}</span>
           <Switch
             disabled={disabled}
+            aria-label={t('builtinRule.consecutiveFailures')}
             checked={rules.consecutive_failures.enabled}
             onChange={(enabled) =>
               setRules({
@@ -77,6 +80,7 @@ export function RuleConfigEditor(props: {
           <span>{t('ruleForm.threshold')}</span>
           <InputNumber
             disabled={disabled}
+            aria-label={t('builtinRule.consecutiveFailures') + ' ' + t('ruleForm.threshold')}
             min={1}
             max={200}
             value={rules.consecutive_failures.threshold}
@@ -94,6 +98,7 @@ export function RuleConfigEditor(props: {
           <span>{t('ruleForm.failureRate')}</span>
           <Switch
             disabled={disabled}
+            aria-label={t('ruleForm.failureRate')}
             checked={rules.failure_rate.enabled}
             onChange={(enabled) =>
               setRules({
@@ -105,6 +110,7 @@ export function RuleConfigEditor(props: {
           <span>{t('ruleForm.window')}</span>
           <InputNumber
             disabled={disabled}
+            aria-label={t('ruleForm.failureRate') + ' ' + t('ruleForm.window')}
             min={1}
             max={200}
             value={rules.failure_rate.window}
@@ -120,6 +126,7 @@ export function RuleConfigEditor(props: {
           <span>{t('ruleForm.minSamples')}</span>
           <InputNumber
             disabled={disabled}
+            aria-label={t('ruleForm.minSamples')}
             min={1}
             max={200}
             value={rules.failure_rate.min_samples}
@@ -134,6 +141,7 @@ export function RuleConfigEditor(props: {
           <span>{t('ruleForm.rate')}</span>
           <InputNumber
             disabled={disabled}
+            aria-label={t('ruleForm.rate')}
             min={0}
             max={1}
             step={0.05}
@@ -151,6 +159,7 @@ export function RuleConfigEditor(props: {
           <span>{t('ruleForm.escalationLabel')}</span>
           <Switch
             disabled={disabled}
+            aria-label={t('ruleForm.escalationLabel')}
             checked={rules.escalation_ack_minutes != null}
             onChange={(enabled) =>
               setRules({ ...rules, escalation_ack_minutes: enabled ? 30 : null })
@@ -160,6 +169,7 @@ export function RuleConfigEditor(props: {
             <>
               <InputNumber
                 disabled={disabled}
+                aria-label={t('ruleForm.escalationLabel')}
                 min={1}
                 max={10080}
                 value={rules.escalation_ack_minutes}
@@ -175,6 +185,7 @@ export function RuleConfigEditor(props: {
           <span>{t('ruleForm.recoveryStreakLabel')}</span>
           <InputNumber
             disabled={disabled}
+            aria-label={t('ruleForm.recoveryStreakLabel')}
             min={1}
             max={20}
             value={rules.recovery_healthy_streak ?? 1}
@@ -188,6 +199,7 @@ export function RuleConfigEditor(props: {
           <span>{t('ruleForm.cooldownLabel')}</span>
           <Switch
             disabled={disabled}
+            aria-label={t('ruleForm.cooldownLabel')}
             checked={rules.recovery_cooldown_minutes != null}
             onChange={(enabled) =>
               setRules({ ...rules, recovery_cooldown_minutes: enabled ? 30 : null })
@@ -197,6 +209,7 @@ export function RuleConfigEditor(props: {
             <>
               <InputNumber
                 disabled={disabled}
+                aria-label={t('ruleForm.cooldownLabel')}
                 min={1}
                 max={10080}
                 value={rules.recovery_cooldown_minutes}
@@ -234,6 +247,7 @@ export function RuleConfigEditor(props: {
               <Input
                 disabled={disabled}
                 placeholder={t('custom.namePlaceholder')}
+                aria-label={t('custom.namePlaceholder')}
                 value={rule.name}
                 style={{ width: 150 }}
                 status={nameEmpty ? 'error' : undefined}
@@ -242,6 +256,7 @@ export function RuleConfigEditor(props: {
               <Input
                 disabled={disabled}
                 placeholder="{{status}} == 'error' || {{hasError}}"
+                aria-label={t('custom.expressionLabel')}
                 value={rule.expression}
                 style={{ width: 340, fontFamily: 'monospace' }}
                 status={exprMessages.length > 0 ? 'error' : undefined}
@@ -250,6 +265,7 @@ export function RuleConfigEditor(props: {
               <Select
                 disabled={disabled}
                 value={rule.severity}
+                aria-label={t('custom.severityLabel')}
                 style={{ width: 100 }}
                 onChange={(severity) => updateCustom(idx, { severity })}
                 options={[
@@ -261,6 +277,7 @@ export function RuleConfigEditor(props: {
                 <span>{t('custom.enabled')}</span>
                 <Switch
                   disabled={disabled}
+                  aria-label={t('custom.enabled')}
                   checked={rule.enabled}
                   onChange={(enabled) => updateCustom(idx, { enabled })}
                 />

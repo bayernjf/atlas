@@ -483,6 +483,7 @@ export function Reflection({
                 size="small"
                 style={{ minWidth: 160 }}
                 value={graphFilter}
+                aria-label={t('filter.graph')}
                 onChange={setGraphFilter}
                 options={[
                   { value: '', label: t('filter.allGraphs') },

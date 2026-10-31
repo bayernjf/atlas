@@ -14,6 +14,8 @@
     "draftRun": "草稿运行",
     "publishedRun": "已发布 v{{version}}",
     "shadowRun": "影子运行",
+    "orderSwitcher": "演示订单",
+    "runTargetSwitcher": "运行目标",
     "resetDemo": "重置演示数据",
     "resetDemoConfirm": "将清空并重置全部演示数据（订单/运行记录/模板示例），确定继续？",
     "resetDemoSuccess": "演示数据已重置"
@@ -64,7 +66,8 @@
     "statusRunning": "运行中…",
     "statusPaused": "已暂停",
     "diagSep": "；",
-    "emptyHint": "从左侧节点面板拖入节点开始编排"
+    "emptyHint": "从左侧节点面板拖入节点开始编排",
+    "regionLabel": "流程画布"
   },
   "export": {
     "title": "Graph 定义 JSON（W7-W8 DSL 编译输入）"
@@ -207,7 +210,9 @@
     "continue": "继续",
     "stop": "停止",
     "varFilterPlaceholder": "按键过滤变量",
+    "globalsEditor": "暂停帧全局变量（JSON）",
     "globalsHint": "全局变量 globals（可编辑 JSON；下一步/继续时浅合并写回，停止忽略）",
+    "branchLabel": "条目类型",
     "outputsHint": "节点产出 outputs（只读快照）",
     "exceptionTitle": "异常断点捕获：{{type}}",
     "exceptionHint": "下一步/继续后将原样抛出该异常（v1 不支持忽略继续），停止则结束本次调试。",
@@ -641,6 +646,7 @@
     "loopJudgeLlm": "LLM 判定（规则之外再问一次模型，需填判定提示词）",
     "loopJudgePromptPlaceholder": "判定提示词（judgeMode=llm 时必填）",
     "loopCarryPlaceholder": "注入下一圈的键值（每行一条：order_id = {{ai-1.decision.action}}）",
-    "loopInterval": "圈间休眠(秒)"
+    "loopInterval": "圈间休眠(秒)",
+    "judgeModeLabel": "判定方式"
   }
 }

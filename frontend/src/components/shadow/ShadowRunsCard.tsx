@@ -141,6 +141,7 @@ export function ShadowRunsCard({ canOperate }: Props) {
               style={{ width: 150 }}
               allowClear
               placeholder={t('shadow.card.selectHuman')}
+              aria-label={t('shadow.card.selectHuman')}
               value={drafts[r.id]}
               onChange={(v) => setDrafts((prev) => ({ ...prev, [r.id]: v }))}
               options={HUMAN_ACTION_VALUES.map((v) => ({

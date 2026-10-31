@@ -126,12 +126,14 @@ export function InboundMappingsModal({ bindingId, onClose }: Props) {
               value={draft.conversationId}
               onChange={(event) => patch(index, { conversationId: event.target.value })}
               placeholder={t('inbound.conversationPlaceholder')}
+              aria-label={`${t('inbound.subsTitle')} #${index + 1} · ${t('inbound.conversationPlaceholder')}`}
               style={{ width: 220 }}
             />
             <Select
               value={draft.graphId || undefined}
               onChange={(value) => patch(index, { graphId: value })}
               placeholder={t('inbound.graphPlaceholder')}
+              aria-label={`${t('inbound.subsTitle')} #${index + 1} · ${t('inbound.graphPlaceholder')}`}
               options={graphOptions}
               style={{ width: 200 }}
               showSearch
@@ -140,6 +142,7 @@ export function InboundMappingsModal({ bindingId, onClose }: Props) {
               value={draft.agentId ?? undefined}
               onChange={(value) => patch(index, { agentId: value ?? null })}
               placeholder={t('inbound.agentPlaceholder')}
+              aria-label={`${t('inbound.subsTitle')} #${index + 1} · ${t('inbound.agentPlaceholder')}`}
               options={agentOptions}
               style={{ width: 160 }}
               allowClear
@@ -147,6 +150,7 @@ export function InboundMappingsModal({ bindingId, onClose }: Props) {
             />
             <Switch
               checked={draft.enabled}
+              aria-label={`${t('inbound.subsTitle')} #${index + 1} · ${t('inbound.enabled')}`}
               onChange={(checked) => patch(index, { enabled: checked })}
             />
             <Tag color={draft.enabled ? 'green' : 'default'}>

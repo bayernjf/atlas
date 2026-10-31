@@ -38,7 +38,8 @@
     "description": "删除后不可恢复，且不影响已结束的运行。"
   },
   "filter": {
-    "allKinds": "全部类型"
+    "allKinds": "全部类型",
+    "kind": "类型筛选"
   },
   "search": {
     "cardTitle": "语义搜索",

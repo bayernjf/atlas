@@ -96,6 +96,7 @@ export function VariablesPanel() {
         </Typography.Text>
         <Input
           placeholder={t('variables.namePlaceholder')}
+          aria-label={t('variables.namePlaceholder')}
           value={name}
           onChange={(event) => setName(event.target.value)}
         />
@@ -103,12 +104,14 @@ export function VariablesPanel() {
           <Select
             value={type}
             onChange={setType}
+            aria-label={t('variables.column.type')}
             style={{ width: 110 }}
             options={VARIABLE_TYPES.map((value) => ({ value, label: value }))}
           />
           <Select
             value={source}
             onChange={setSource}
+            aria-label={t('variables.sourceLabel')}
             style={{ width: 100 }}
             placeholder={t('variables.sourcePlaceholder')}
             options={SOURCE_OPTIONS.map((option) => ({
@@ -118,6 +121,9 @@ export function VariablesPanel() {
           />
           <Input
             placeholder={
+              source === 'secret' ? t('variables.secretValueHint') : t('variables.valuePlaceholder')
+            }
+            aria-label={
               source === 'secret' ? t('variables.secretValueHint') : t('variables.valuePlaceholder')
             }
             value={value}

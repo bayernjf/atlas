@@ -251,6 +251,7 @@ export function Experiments({ principal, onLogout, onBack }: ExperimentsProps): 
                   style={{ minWidth: 220 }}
                   value={formGraph}
                   placeholder={t('create.graphPlaceholder')}
+                  aria-label={t('create.graphPlaceholder')}
                   options={graphOptions}
                   onChange={(value) => void pickGraph(value)}
                 />
@@ -258,6 +259,7 @@ export function Experiments({ principal, onLogout, onBack }: ExperimentsProps): 
                   style={{ minWidth: 140 }}
                   value={formVersionA}
                   placeholder={t('create.versionA')}
+                  aria-label={t('create.versionA')}
                   options={versionOptions}
                   disabled={!formGraph}
                   onChange={setFormVersionA}
@@ -266,6 +268,7 @@ export function Experiments({ principal, onLogout, onBack }: ExperimentsProps): 
                   style={{ minWidth: 140 }}
                   value={formVersionB}
                   placeholder={t('create.versionB')}
+                  aria-label={t('create.versionB')}
                   options={versionOptions}
                   disabled={!formGraph}
                   onChange={setFormVersionB}
@@ -276,11 +279,13 @@ export function Experiments({ principal, onLogout, onBack }: ExperimentsProps): 
                   value={formTraffic}
                   addonAfter="%"
                   placeholder={t('create.traffic')}
+                  aria-label={t('create.traffic')}
                   onChange={(value) => setFormTraffic(value ?? 50)}
                 />
                 <Select
                   style={{ minWidth: 180 }}
                   value={formMetric}
+                  aria-label={t('create.metric')}
                   options={METRICS.map((m) => ({ value: m, label: t(`metric.${m}`) }))}
                   onChange={setFormMetric}
                 />
@@ -288,6 +293,7 @@ export function Experiments({ principal, onLogout, onBack }: ExperimentsProps): 
                   min={1}
                   value={formMinSamples}
                   placeholder={t('create.minSamples')}
+                  aria-label={t('create.minSamples')}
                   onChange={(value) => setFormMinSamples(value ?? 30)}
                 />
                 <Button

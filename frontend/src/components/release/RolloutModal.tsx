@@ -320,6 +320,7 @@ export function RolloutModal({ open, graphId, tenant, onClose }: Props) {
             <Select
               style={{ width: 130 }}
               value={channel}
+              aria-label={t('rollout.simTitle')}
               onChange={setChannel}
               options={[
                 { value: 'webhook', label: 'webhook' },
@@ -344,6 +345,7 @@ export function RolloutModal({ open, graphId, tenant, onClose }: Props) {
             rows={3}
             value={payloadText}
             onChange={(event) => setPayloadText(event.target.value)}
+            aria-label={t('rollout.simTitle')}
           />
         </div>
       </Space>

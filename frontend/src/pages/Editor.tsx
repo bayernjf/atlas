@@ -1361,6 +1361,7 @@ export function Editor({
           <Select
             value={selectedOrderId}
             onChange={setSelectedOrderId}
+            aria-label={t('header.orderSwitcher')}
             style={{ width: 300 }}
             options={DEMO_ORDERS.map((order) => ({
               value: order.order_id,
@@ -1378,6 +1379,7 @@ export function Editor({
             <>
               <Select
                 value={runTarget}
+                aria-label={t('header.runTargetSwitcher')}
                 style={{ width: 130 }}
                 onChange={(value) => setRunTarget(value as 'draft' | number)}
                 options={[
@@ -1486,6 +1488,8 @@ export function Editor({
           rows={3}
           value={nlPrompt}
           onChange={(event) => setNlPrompt(event.target.value)}
+          aria-label={t('nl.title')}
+          placeholder={t('nl.defaultPrompt')}
         />
         {nlError && <Alert type="error" showIcon title={nlError} style={{ marginTop: 12 }} />}
       </Modal>
@@ -1630,6 +1634,7 @@ export function Editor({
             value={templateImportInput}
             rows={5}
             placeholder={t('template.importPlaceholder')}
+            aria-label={t('template.importPlaceholder')}
             onChange={(event) => setTemplateImportInput(event.target.value)}
           />
         </Space>
@@ -1652,6 +1657,7 @@ export function Editor({
             value={saveTemplateName}
             maxLength={60}
             placeholder={t('template.namePlaceholder')}
+            aria-label={t('template.namePlaceholder')}
             onChange={(event) => setSaveTemplateName(event.target.value)}
           />
           <Input.TextArea
@@ -1659,6 +1665,7 @@ export function Editor({
             maxLength={200}
             rows={3}
             placeholder={t('template.descriptionPlaceholder')}
+            aria-label={t('template.descriptionPlaceholder')}
             onChange={(event) => setSaveTemplateDescription(event.target.value)}
           />
         </Space>
@@ -1679,6 +1686,7 @@ export function Editor({
               value={caseName}
               onChange={(event) => setCaseName(event.target.value)}
               placeholder={t('recording.namePlaceholder')}
+              aria-label={t('recording.namePlaceholder')}
             />
             <Space size={8} wrap>
               <Button type="primary" loading={recordBusy} onClick={recordCurrentRun}>
@@ -1787,12 +1795,14 @@ export function Editor({
                           value={editName}
                           onChange={(event) => setEditName(event.target.value)}
                           placeholder={t('recording.namePlaceholder')}
+                          aria-label={t('recording.namePlaceholder')}
                         />
                         <TextArea
                           autoSize={{ minRows: 2, maxRows: 6 }}
                           value={editInputsText}
                           onChange={(event) => setEditInputsText(event.target.value)}
                           placeholder={t('recording.inputsPlaceholder')}
+                          aria-label={t('recording.inputsPlaceholder')}
                         />
                         {editError && <Alert type="error" showIcon title={editError} />}
                         <Space size={8} wrap>
@@ -1838,6 +1848,7 @@ export function Editor({
                         }))
                       }
                       placeholder={t('recording.overridePlaceholder')}
+                      aria-label={t('recording.overridePlaceholder')}
                     />
                     <div>
                       <Button
@@ -1897,6 +1908,7 @@ export function Editor({
                                     {field.kind === 'boolean' ? (
                                       <Switch
                                         checked={field.draft.trim() === 'true'}
+                                        aria-label={field.key}
                                         onChange={(checked) =>
                                           updateWizardDraft(
                                             rec.id,
@@ -1911,6 +1923,7 @@ export function Editor({
                                         style={{ flex: 1 }}
                                         value={field.draft}
                                         status={fieldError ? 'error' : undefined}
+                                        aria-label={field.key}
                                         onChange={(event) =>
                                           updateWizardDraft(
                                             rec.id,
@@ -1929,6 +1942,7 @@ export function Editor({
                                         style={{ flex: 1 }}
                                         value={field.draft}
                                         status={fieldError ? 'error' : undefined}
+                                        aria-label={field.key}
                                         onChange={(event) =>
                                           updateWizardDraft(
                                             rec.id,
@@ -2138,6 +2152,7 @@ export function Editor({
               size="small"
               allowClear
               placeholder={t('debug.varFilterPlaceholder')}
+              aria-label={t('debug.varFilterPlaceholder')}
               value={varFilter}
               onChange={(event) => setVarFilter(event.target.value)}
             />
@@ -2150,6 +2165,7 @@ export function Editor({
                 autoSize={{ minRows: 3, maxRows: 10 }}
                 value={globalsDraft}
                 status={globalsError ? 'error' : undefined}
+                aria-label={t('debug.globalsEditor')}
                 onChange={(event) => setGlobalsDraft(event.target.value)}
               />
               {globalsError && (

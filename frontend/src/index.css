@@ -12,6 +12,14 @@
   box-sizing: border-box;
 }
 
+/* ===== 键盘焦点可见（Tier0 UI/UX 评审 P1#7）=====
+ * 全局 :focus-visible 兜底：antd 自带控件有焦点样式，但原生控件与自定义
+ * 元素（画布节点、面板按钮等）此前没有统一兜底，键盘用户找不到焦点。 */
+:focus-visible {
+  outline: 2px solid var(--atlas-color-primary);
+  outline-offset: 2px;
+}
+
 html,
 body,
 #root {
@@ -513,7 +521,6 @@ body,
 
 .audit-time-input:focus {
   border-color: var(--atlas-color-primary-border-hover, #4096ff);
-  outline: none;
 }
 
 /* docs/61 §2.3：标记条目来自后端编译 422，而非本地实时校验 */
@@ -561,4 +568,27 @@ body,
 /* OpenAPI 预览：被跳过的 operation 行灰显 */
 .openapi-row-skipped > td {
   color: rgba(0, 0, 0, 0.35);
+}
+
+/* ===== 响应式基础（Tier0 UI/UX 评审 P1#7）：≤768px 最小移动适配 =====
+ * 取舍：编辑器三栏（节点面板/画布/属性面板）是桌面编排工具，收拢 Sider 需要
+ * 受控折叠状态机，超出"补基础"范围；这里只保证页面壳（头/内容边距）、悬浮
+ * 面板（Problems/调试台）在窄屏不横向溢出，Dashboard 卡片由 xs={24} 堆叠。 */
+@media (max-width: 768px) {
+  .page-header,
+  .editor-header {
+    padding-inline: 12px;
+  }
+
+  .page-content {
+    padding: 12px;
+  }
+
+  .problems-panel {
+    width: calc(100vw - 24px);
+  }
+
+  .debug-toolbar {
+    width: calc(100vw - 24px);
+  }
 }
