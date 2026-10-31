@@ -98,6 +98,7 @@ export function RunReportCard() {
         <Space wrap>
           <Segmented
             value={groupBy}
+            aria-label={t('runReport.group.label')}
             onChange={(value) => setGroupBy(value as 'day' | 'version')}
             options={[
               { label: t('runReport.group.day'), value: 'day' },
@@ -106,6 +107,7 @@ export function RunReportCard() {
           />
           <Select
             value={days}
+            aria-label={t('runReport.daysLabel')}
             onChange={setDays}
             style={{ width: 110 }}
             options={DAY_OPTIONS.map((value) => ({

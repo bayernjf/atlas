@@ -153,7 +153,7 @@ export function WebhookSubscriptionsModal({
             {t('webhook.urlLabel')}
           </div>
           <Space.Compact style={{ width: '100%' }}>
-            <Input readOnly value={publicUrl} />
+            <Input readOnly value={publicUrl} aria-label={t('webhook.urlLabel')} />
             <Button onClick={() => void copyUrl()}>{t('webhook.copy')}</Button>
           </Space.Compact>
         </div>
@@ -165,6 +165,7 @@ export function WebhookSubscriptionsModal({
               <Space key={index} align="center">
                 <Select
                   value={sub.topic}
+                  aria-label={`${t('webhook.subsTitle')} #${index + 1}`}
                   style={{ width: 170 }}
                   options={WEBHOOK_TOPICS.map((topic) => ({
                     value: topic,
@@ -174,6 +175,7 @@ export function WebhookSubscriptionsModal({
                 />
                 <Select
                   value={sub.graphId || undefined}
+                  aria-label={t('webhook.graphPlaceholder')}
                   style={{ width: 200 }}
                   placeholder={t('webhook.graphPlaceholder')}
                   options={graphs.map((graph) => ({
@@ -184,6 +186,7 @@ export function WebhookSubscriptionsModal({
                 />
                 <Switch
                   checked={sub.enabled}
+                  aria-label={`${t('webhook.subsTitle')} #${index + 1} · ${t('webhook.enabled')}`}
                   checkedChildren={t('webhook.enabled')}
                   unCheckedChildren={t('webhook.disabled')}
                   onChange={(enabled: boolean) => patch(index, { enabled })}

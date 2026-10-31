@@ -284,6 +284,7 @@ function ArrayView({ node, ctx }: { node: FormArrayNode; ctx: ViewContext }): Re
                 style={{ width: 150, flex: 'none' }}
                 size="small"
                 value={rowDiscriminant}
+                aria-label={node.label ?? t('form.branchLabel')}
                 options={[...discriminant.branches.keys()].map((value) => ({ value, label: value }))}
                 onChange={(nextValue) => {
                   const nextRow = oneOfBranchDefault(discriminant, nextValue)
@@ -343,6 +344,7 @@ function KeyValueView({ node, ctx }: { node: FormKeyValueNode; ctx: ViewContext 
             style={{ width: '40%' }}
             value={entry.key}
             placeholder={node.keyPlaceholder ?? t('form.keyPlaceholder')}
+            aria-label={`${node.label ?? node.pointer} · ${node.keyPlaceholder ?? t('form.keyPlaceholder')}`}
             onChange={(event) => ctx.onChange(renameKeyAtPath(ctx.root, node.path, entry.key, event.target.value))}
           />
           <div style={{ flex: 1 }}>

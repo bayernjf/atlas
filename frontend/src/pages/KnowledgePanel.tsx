@@ -177,6 +177,7 @@ export function KnowledgePanel({ canOperate, canAdmin, onMutated }: KnowledgePan
               <Select<KnowledgeCategory>
                 value={importCategory}
                 onChange={setImportCategory}
+                aria-label={t('knowledge.importCategoryLabel')}
                 style={{ width: 160 }}
                 options={KNOWLEDGE_CATEGORIES.map((category) => ({
                   value: category,
@@ -189,6 +190,7 @@ export function KnowledgePanel({ canOperate, canAdmin, onMutated }: KnowledgePan
               value={importText}
               onChange={(event) => setImportText(event.target.value)}
               placeholder={t('knowledge.importTextPlaceholder')}
+              aria-label={t('knowledge.importCategoryLabel')}
               style={{ fontFamily: 'inherit' }}
             />
             {importError && <Alert type="error" showIcon message={importError} />}
@@ -206,6 +208,7 @@ export function KnowledgePanel({ canOperate, canAdmin, onMutated }: KnowledgePan
           <Select<CategoryFilter>
             value={filter}
             onChange={setFilter}
+            aria-label={t('knowledge.importCategoryLabel')}
             style={{ width: 160 }}
             options={[
               { value: 'all', label: t('category.all') },

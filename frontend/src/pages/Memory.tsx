@@ -345,6 +345,7 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
               <Select<KindFilter>
                 value={searchKind}
                 onChange={setSearchKind}
+                aria-label={t('filter.kind')}
                 style={{ width: 120 }}
                 options={[
                   { value: 'all', label: t('filter.allKinds') },
@@ -358,6 +359,7 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
             <Space.Compact style={{ width: '100%' }}>
               <Input
                 placeholder={t('search.placeholder')}
+                aria-label={t('search.placeholder')}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 onPressEnter={() => void runSearch()}
@@ -399,6 +401,7 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
                 <Select<KindFilter>
                   value={listKind}
                   onChange={handleListKindChange}
+                  aria-label={t('filter.kind')}
                   style={{ width: 120 }}
                   options={[
                     { value: 'all', label: t('filter.allKinds') },
@@ -458,6 +461,7 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
             <Select<MemoryKind>
               value={draft.kind}
               onChange={(kind) => patchDraft({ kind })}
+              aria-label={t('modal.kindLabel')}
               style={{ width: '100%', marginTop: 4 }}
               options={[
                 { value: 'fact', label: t('kind.fact') },
@@ -475,6 +479,7 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
               value={draft.content}
               onChange={(event) => patchDraft({ content: event.target.value })}
               placeholder={t('modal.contentPlaceholder')}
+              aria-label={t('modal.contentLabel')}
               style={{ marginTop: 4 }}
             />
           </div>
@@ -486,6 +491,7 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
               step={0.1}
               value={draft.confidence}
               onChange={(value) => patchDraft({ confidence: value === null ? 1 : Number(value) })}
+              aria-label={t('modal.confidenceLabel')}
               style={{ width: '100%', marginTop: 4 }}
             />
           </div>

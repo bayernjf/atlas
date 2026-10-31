@@ -17,6 +17,7 @@
     "modalTitle": "Submit trial feedback",
     "submit": "Submit feedback",
     "intro": "A problem or a suggestion, even one sentence is fine. Tell us what you were trying to do and what happened.",
+    "typeLabel": "Feedback type",
     "typeBug": "Issue / Bug",
     "typeSuggestion": "Suggestion",
     "contentPlaceholder": "e.g. after selecting 12345 and running it, the nodes on the canvas did not respond...",
@@ -138,6 +139,7 @@
     },
     "reset": {
       "title": "Reset password for {{username}}",
+      "newPassword": "New password",
       "hint": "After resetting, all of this user's sign-in sessions will be revoked; they must sign in again with the new password."
     },
     "field": {

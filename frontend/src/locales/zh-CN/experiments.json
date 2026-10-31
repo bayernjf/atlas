@@ -9,6 +9,7 @@
     "versionB": "版本 B",
     "traffic": "流量占比",
     "minSamples": "最小样本数",
+    "metric": "评估指标",
     "submit": "创建并启动",
     "created": "实验已创建",
     "sameVersion": "版本 A 与版本 B 不能相同"

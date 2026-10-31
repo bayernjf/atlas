@@ -133,6 +133,7 @@ export function Usage({ principal, onLogout, onBack }: UsageProps) {
             extra={
               <Segmented
                 value={groupBy}
+                aria-label={t('summary.groupBy')}
                 onChange={(value) => setGroupBy(value as GroupBy)}
                 options={GROUP_OPTIONS.map((option) => ({
                   value: option,

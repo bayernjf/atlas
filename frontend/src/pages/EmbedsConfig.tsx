@@ -101,6 +101,7 @@ export function EmbedsConfig({ principal, onLogout, onBack }: EmbedsConfigProps)
       render: (_, cfg) => (
         <Switch
           checked={cfg.enabled}
+          aria-label={`${cfg.graph_id} · ${t('config.enabled')}`}
           onChange={(v) => void toggle(cfg, v)}
           disabled={!roleCan(principal.role, 'administer')}
         />
@@ -140,6 +141,7 @@ export function EmbedsConfig({ principal, onLogout, onBack }: EmbedsConfigProps)
               <Select
                 style={{ minWidth: 260 }}
                 placeholder={t('config.selectGraph')}
+                aria-label={t('config.selectGraph')}
                 value={selected ?? undefined}
                 onChange={setSelected}
                 options={graphs.map((g) => ({ value: g.id, label: g.id }))}
@@ -149,6 +151,7 @@ export function EmbedsConfig({ principal, onLogout, onBack }: EmbedsConfigProps)
                 max={86400}
                 value={ttl}
                 onChange={(v) => setTtl(v ?? 3600)}
+                aria-label={t('config.ttl')}
                 addonAfter={t('config.ttlUnit')}
               />
               <Button type="primary" loading={busy} disabled={!selected} onClick={() => void save()}>

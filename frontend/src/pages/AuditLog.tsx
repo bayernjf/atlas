@@ -144,6 +144,7 @@ export function AuditLog({ principal, onLogout, onBack }: AuditLogProps): ReactE
               <Input
                 allowClear
                 placeholder={t('filter.actionPlaceholder')}
+                aria-label={t('filter.actionPlaceholder')}
                 value={actionInput}
                 style={{ width: 220 }}
                 onChange={(event) => setActionInput(event.target.value)}
@@ -152,6 +153,7 @@ export function AuditLog({ principal, onLogout, onBack }: AuditLogProps): ReactE
               <Input
                 allowClear
                 placeholder={t('filter.actorPlaceholder')}
+                aria-label={t('filter.actorPlaceholder')}
                 value={actorInput}
                 style={{ width: 150 }}
                 onChange={(event) => setActorInput(event.target.value)}
@@ -183,6 +185,7 @@ export function AuditLog({ principal, onLogout, onBack }: AuditLogProps): ReactE
               </Button>
               <Select
                 value={limit}
+                aria-label={t('filter.limit')}
                 style={{ width: 100 }}
                 onChange={setLimit}
                 options={[50, 100, 200].map((value) => ({

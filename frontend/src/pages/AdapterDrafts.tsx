@@ -187,6 +187,7 @@ export function AdapterDrafts({ principal, onLogout, onBack }: AdapterDraftsProp
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
                   placeholder={t('create.placeholder')}
+                  aria-label={t('create.placeholder')}
                   onPressEnter={() => void create()}
                 />
                 <Button type="primary" loading={busy} disabled={!prompt.trim()} onClick={() => void create()}>

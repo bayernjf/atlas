@@ -17,6 +17,7 @@
     "modalTitle": "提交试用反馈",
     "submit": "提交反馈",
     "intro": "遇到的问题或建议，一句话也行。告诉我们你当时想做什么、发生了什么。",
+    "typeLabel": "反馈类型",
     "typeBug": "问题 / Bug",
     "typeSuggestion": "建议",
     "contentPlaceholder": "例如：选了 12345 运行后，画布上的节点没有反应……",
@@ -138,6 +139,7 @@
     },
     "reset": {
       "title": "重置 {{username}} 的密码",
+      "newPassword": "新密码",
       "hint": "重置后该用户的全部登录会话将被注销，需要用新密码重新登录。"
     },
     "field": {
