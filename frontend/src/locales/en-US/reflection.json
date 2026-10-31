@@ -8,7 +8,8 @@
     "hint": "Add a reflect schedule item for a graph on the Schedules page, or click \"Run now\" for a scheduled graph."
   },
   "filter": {
-    "allGraphs": "All graphs"
+    "allGraphs": "All graphs",
+    "graph": "Graph filter"
   },
   "refresh": "Refresh",
   "status": {

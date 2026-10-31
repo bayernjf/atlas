@@ -548,6 +548,7 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
             extra={
               <Select
                 value={statusFilter}
+                aria-label={t('filter.status')}
                 style={{ width: 140 }}
                 onChange={setStatusFilter}
                 options={[
@@ -610,6 +611,7 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
             extra={
               <Select
                 value={graphFilter}
+                aria-label={t('filter.graph')}
                 style={{ width: 220 }}
                 onChange={setGraphFilter}
                 options={[

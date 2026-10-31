@@ -10,10 +10,12 @@
       "title": "运行报表"
     },
     "group": {
+      "label": "报表分组",
       "day": "按天",
       "version": "按版本"
     },
     "days": "最近 {{value}} 天",
+    "daysLabel": "报表时间窗口",
     "col": {
       "key": "分组",
       "total": "运行总数",
@@ -140,7 +142,9 @@
   },
   "filter": {
     "allStatus": "全部状态",
-    "allGraphs": "全部图"
+    "allGraphs": "全部图",
+    "status": "告警状态筛选",
+    "graph": "图筛选"
   },
   "rules": {
     "cardTitle": "告警规则（仅管理员可改，阈值调整即时生效，进程内保存）",
@@ -175,6 +179,8 @@
     "title": "自定义规则（表达式，docs/28 §4.2）",
     "hint": "可用变量（双花括号引用）：status（completed / error / cancelled）、durationMs（整数毫秒）、failedCount（失败节点数）、hasError（是否有错误）；示例：{{status}} == 'error' || {{hasError}}。表达式复用安全条件引擎（禁 eval），结果须为布尔，否则运行时 fail-safe 不告警。",
     "namePlaceholder": "规则名称",
+    "expressionLabel": "规则表达式",
+    "severityLabel": "严重级别",
     "enabled": "启用",
     "nameEmpty": "名称不能为空",
     "add": "＋ 新增自定义规则"
@@ -339,6 +345,7 @@
     "durationLabel": "静默时长",
     "durationMinutes": "{{minutes}} 分钟",
     "durationCustom": "自定义…",
+    "customMinutes": "自定义分钟数",
     "reasonLabel": "原因",
     "reasonPlaceholder": "例如：发布窗口维护",
     "confirm": "确认静默",

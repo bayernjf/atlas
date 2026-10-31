@@ -138,6 +138,7 @@ export function OnCallBar({ canAdmin, onChanged }: { canAdmin: boolean; onChange
           value={memberText}
           onChange={(event) => setMemberText(event.target.value)}
           placeholder={t('onCall.placeholder')}
+          aria-label={t('onCall.placeholder')}
         />
         <div style={{ marginTop: 12 }}>
           <div style={{ marginBottom: 4 }}>{t('onCall.intervalLabel')}</div>
@@ -146,6 +147,7 @@ export function OnCallBar({ canAdmin, onChanged }: { canAdmin: boolean; onChange
             max={365}
             value={intervalDays}
             placeholder={t('onCall.intervalLabel')}
+            aria-label={t('onCall.intervalLabel')}
             onChange={(value) => setIntervalDays(typeof value === 'number' ? value : null)}
           />
         </div>

@@ -171,6 +171,7 @@ export function Schedules({ principal, onLogout, onBack }: SchedulesPageProps) {
         <Switch
           checked={value}
           disabled={!canOperate || busyRow === rowId(row)}
+          aria-label={`${row.graphId} · ${row.scheduleId} · ${t('table.enabled')}`}
           onChange={(next) => void onToggle(row, next)}
         />
       ),

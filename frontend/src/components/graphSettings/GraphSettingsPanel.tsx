@@ -60,6 +60,7 @@ export function GraphSettingsPanel() {
         <Select
           allowClear
           placeholder={t('graphSettings.strategyPlaceholder')}
+          aria-label={t('graphSettings.strategyPlaceholder')}
           style={{ width: '100%' }}
           value={gh.onUncaughtError}
           onChange={(v) =>
@@ -80,6 +81,7 @@ export function GraphSettingsPanel() {
           <Select
             showSearch
             placeholder={t('graphSettings.errorSubgraphPlaceholder')}
+            aria-label={t('graphSettings.errorSubgraphPlaceholder')}
             style={{ width: '100%' }}
             value={gh.errorSubgraphId}
             onChange={(v) => patchGh({ errorSubgraphId: v })}
@@ -92,11 +94,13 @@ export function GraphSettingsPanel() {
           <>
             <Input
               placeholder={t('graphSettings.escalationChannel')}
+              aria-label={t('graphSettings.escalationChannel')}
               value={gh.escalation?.channel}
               onChange={(e) => patchGh({ escalation: { ...gh.escalation, channel: e.target.value } })}
             />
             <Input
               placeholder={t('graphSettings.escalationRecipients')}
+              aria-label={t('graphSettings.escalationRecipients')}
               value={gh.escalation?.recipients?.join(', ')}
               onChange={(e) =>
                 patchGh({
@@ -121,6 +125,7 @@ export function GraphSettingsPanel() {
         <Select
           mode="tags"
           placeholder={t('graphSettings.triggerOnPlaceholder')}
+          aria-label={t('graphSettings.triggerOnPlaceholder')}
           style={{ width: '100%' }}
           value={sh.triggerOn}
           onChange={(v) => patchSh({ triggerOn: v })}
@@ -133,6 +138,7 @@ export function GraphSettingsPanel() {
         <Select
           showSearch
           placeholder={t('graphSettings.diagnoseSubgraphPlaceholder')}
+          aria-label={t('graphSettings.diagnoseSubgraphPlaceholder')}
           style={{ width: '100%' }}
           value={sh.diagnoseSubgraphId}
           onChange={(v) => patchSh({ diagnoseSubgraphId: v })}
@@ -149,11 +155,13 @@ export function GraphSettingsPanel() {
             max={3}
             value={sh.maxAttempts ?? 1}
             onChange={(v) => patchSh({ maxAttempts: v ?? 1 })}
+            aria-label={t('graphSettings.maxAttempts')}
             style={{ width: 90 }}
           />
         </Space>
         <Input
           placeholder={t('graphSettings.continueWhenPlaceholder')}
+          aria-label={t('graphSettings.continueWhenPlaceholder')}
           value={sh.continueWhen}
           onChange={(e) => patchSh({ continueWhen: e.target.value })}
         />
@@ -172,6 +180,7 @@ export function GraphSettingsPanel() {
           <Typography.Text strong>{t('graphSettings.loopTitle')}</Typography.Text>
           <Switch
             size="small"
+            aria-label={t('graphSettings.loopTitle')}
             checked={lp.enabled !== false && Object.keys(lp).length > 0}
             onChange={(checked) =>
               patchLp(
@@ -196,6 +205,7 @@ export function GraphSettingsPanel() {
                 max={50}
                 value={lp.maxIterations ?? 10}
                 onChange={(v) => patchLp({ maxIterations: v ?? 10 })}
+                aria-label={t('graphSettings.loopMaxIterations')}
                 style={{ width: 90 }}
               />
             </Space>
@@ -208,6 +218,7 @@ export function GraphSettingsPanel() {
                 max={86400}
                 value={lp.maxWallClockSeconds ?? 1800}
                 onChange={(v) => patchLp({ maxWallClockSeconds: v ?? 1800 })}
+                aria-label={t('graphSettings.loopMaxWallClock')}
                 style={{ width: 110 }}
               />
             </Space>
@@ -220,17 +231,20 @@ export function GraphSettingsPanel() {
                 max={10000000}
                 value={lp.maxTokens ?? 200000}
                 onChange={(v) => patchLp({ maxTokens: v ?? 200000 })}
+                aria-label={t('graphSettings.loopMaxTokens')}
                 style={{ width: 120 }}
               />
             </Space>
             <Input
               placeholder={t('graphSettings.loopCompleteWhenPlaceholder')}
+              aria-label={t('graphSettings.loopCompleteWhenPlaceholder')}
               value={lp.completeWhen}
               onChange={(e) => patchLp({ completeWhen: e.target.value })}
             />
             <Select
               style={{ width: '100%' }}
               value={lp.judgeMode ?? 'rule'}
+              aria-label={t('graphSettings.judgeModeLabel')}
               onChange={(v) => patchLp({ judgeMode: v })}
               options={[
                 { value: 'rule', label: t('graphSettings.loopJudgeRule') },
@@ -240,6 +254,7 @@ export function GraphSettingsPanel() {
             {(lp.judgeMode ?? 'rule') === 'llm' && (
               <Input
                 placeholder={t('graphSettings.loopJudgePromptPlaceholder')}
+                aria-label={t('graphSettings.loopJudgePromptPlaceholder')}
                 value={lp.judgePrompt}
                 onChange={(e) => patchLp({ judgePrompt: e.target.value })}
               />
@@ -247,6 +262,7 @@ export function GraphSettingsPanel() {
             <Input.TextArea
               autoSize={{ minRows: 2, maxRows: 5 }}
               placeholder={t('graphSettings.loopCarryPlaceholder')}
+              aria-label={t('graphSettings.loopCarryPlaceholder')}
               value={carryText}
               onChange={(e) => patchLp({ carry: parseCarry(e.target.value) })}
             />
@@ -259,6 +275,7 @@ export function GraphSettingsPanel() {
                 max={3600}
                 value={lp.intervalSeconds ?? 0}
                 onChange={(v) => patchLp({ intervalSeconds: v ?? 0 })}
+                aria-label={t('graphSettings.loopInterval')}
                 style={{ width: 90 }}
               />
             </Space>

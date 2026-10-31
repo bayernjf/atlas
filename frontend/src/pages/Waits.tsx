@@ -384,12 +384,14 @@ export function Waits({ principal, onLogout, onBack }: WaitsPageProps) {
             <Typography.Text type="secondary">{t('broadcastHint')}</Typography.Text>
             <Input
               placeholder={t('eventKey')}
+              aria-label={t('eventKey')}
               value={broadcastKey}
               onChange={(event) => setBroadcastKey(event.target.value)}
             />
             <Input.TextArea
               rows={4}
               placeholder={t('payloadPlaceholder')}
+              aria-label={t('payloadPlaceholder')}
               value={broadcastPayload}
               onChange={(event) => setBroadcastPayload(event.target.value)}
             />
@@ -407,6 +409,7 @@ export function Waits({ principal, onLogout, onBack }: WaitsPageProps) {
           <Input.TextArea
             rows={4}
             placeholder={t('payloadPlaceholder')}
+            aria-label={t('payloadPlaceholder')}
             value={signalPayload}
             onChange={(event) => setSignalPayload(event.target.value)}
           />
@@ -431,6 +434,7 @@ export function Waits({ principal, onLogout, onBack }: WaitsPageProps) {
               rows={3}
               maxLength={500}
               placeholder={t('resolveReasonPlaceholder')}
+              aria-label={t('resolveReasonPlaceholder')}
               value={resolveReason}
               onChange={(event) => setResolveReason(event.target.value)}
             />

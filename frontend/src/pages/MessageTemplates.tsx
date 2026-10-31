@@ -263,6 +263,7 @@ export function MessageTemplates({ principal, onBack }: MessageTemplatesPageProp
                 value={kindFilter}
                 allowClear
                 placeholder={t('kindAll')}
+                aria-label={t('kind')}
                 onChange={(value: MessageTemplateKind | undefined) => setKindFilter(value)}
                 options={MESSAGE_TEMPLATE_KINDS.map((kind) => ({
                   value: kind,

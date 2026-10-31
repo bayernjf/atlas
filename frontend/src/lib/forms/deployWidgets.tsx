@@ -41,6 +41,7 @@ export const GateMetricsWidget: WidgetComponent = ({ value, onChange }) => {
                 min={0}
                 max={1}
                 step={row.step}
+                aria-label={`${t(row.label)} · ${t('rollout.gate.colThreshold')}`}
                 value={metric?.threshold ?? row.defaultThreshold}
                 onChange={(next) =>
                   next !== null &&

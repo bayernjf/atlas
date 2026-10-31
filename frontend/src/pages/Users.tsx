@@ -273,6 +273,7 @@ export function Users({ principal, onLogout, onBack }: UsersProps) {
           <Typography.Paragraph>{t('users.reset.hint')}</Typography.Paragraph>
           <Input.Password
             value={resetValue}
+            aria-label={t('users.reset.newPassword')}
             onChange={(event) => setResetValue(event.target.value)}
           />
           <Button style={{ marginTop: 8 }} onClick={() => setResetValue(generatePassword())}>

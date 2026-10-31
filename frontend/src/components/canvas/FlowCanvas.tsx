@@ -122,7 +122,13 @@ function FlowCanvasInner() {
   )
 
   return (
-    <div className="canvas-panel" onDragOver={onDragOver} onDrop={onDrop}>
+    <div
+      className="canvas-panel"
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      role="region"
+      aria-label={t('canvas.regionLabel')}
+    >
       <ReactFlow
         nodes={nodes.map((node: EditorNode) => ({ ...node, type: 'atlasNode' }))}
         nodeTypes={nodeTypes}

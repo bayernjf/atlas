@@ -226,7 +226,11 @@ export function PromoteGuideModal({
                   )}
 
                   <Space align="center">
-                    <Switch checked={prune} onChange={setPrune} />
+                    <Switch
+                      checked={prune}
+                      aria-label={t('promote.prune', { dropped })}
+                      onChange={setPrune}
+                    />
                     <Typography.Text>{t('promote.prune', { dropped })}</Typography.Text>
                   </Space>
 

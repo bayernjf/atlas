@@ -146,6 +146,7 @@ export function EmailApproval({ token }: { token: string }): ReactElement {
                     maxLength={500}
                     showCount
                     placeholder={t('email.commentPlaceholder')}
+                    aria-label={t('email.commentPlaceholder')}
                     value={comment}
                     onChange={(event) => setComment(event.target.value)}
                   />

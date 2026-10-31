@@ -88,6 +88,7 @@ export function SilencePopButton({
         <div style={{ marginBottom: 4 }}>{t('silence.durationLabel')}</div>
         <Select
           value={duration}
+          aria-label={t('silence.durationLabel')}
           style={{ width: '100%' }}
           onChange={setDuration}
           options={[
@@ -104,6 +105,7 @@ export function SilencePopButton({
           min={MIN_MINUTES}
           max={MAX_MINUTES}
           value={customMinutes}
+          aria-label={t('silence.customMinutes')}
           style={{ width: '100%' }}
           onChange={(value) => setCustomMinutes(typeof value === 'number' ? value : 60)}
         />
@@ -116,6 +118,7 @@ export function SilencePopButton({
           value={reason}
           onChange={(event) => setReason(event.target.value)}
           placeholder={t('silence.reasonPlaceholder')}
+          aria-label={t('silence.reasonLabel')}
         />
       </div>
       {error && <Alert type="error" showIcon message={error} />}
@@ -202,6 +205,7 @@ export function SilenceEditButton({
         <div style={{ marginBottom: 4 }}>{t('silence.extendLabel')}</div>
         <Select
           value={duration}
+          aria-label={t('silence.extendLabel')}
           style={{ width: '100%' }}
           onChange={setDuration}
           options={[
@@ -218,6 +222,7 @@ export function SilenceEditButton({
           min={MIN_MINUTES}
           max={MAX_MINUTES}
           value={customMinutes}
+          aria-label={t('silence.customMinutes')}
           style={{ width: '100%' }}
           onChange={(value) => setCustomMinutes(typeof value === 'number' ? value : 60)}
         />
@@ -230,6 +235,7 @@ export function SilenceEditButton({
           value={reason}
           onChange={(event) => setReason(event.target.value)}
           placeholder={t('silence.reasonPlaceholder')}
+          aria-label={t('silence.reasonLabel')}
         />
       </div>
       {error && <Alert type="error" showIcon message={error} />}

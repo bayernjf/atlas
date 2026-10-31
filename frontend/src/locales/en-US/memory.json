@@ -38,7 +38,8 @@
     "description": "Deletion cannot be undone and does not affect runs that have already finished."
   },
   "filter": {
-    "allKinds": "All kinds"
+    "allKinds": "All kinds",
+    "kind": "Kind filter"
   },
   "search": {
     "cardTitle": "Semantic search",

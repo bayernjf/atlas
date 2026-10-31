@@ -8,7 +8,8 @@
     "hint": "可在「定时调度」页为图添加 reflect 调度项，或对已配调度的图点「立即执行」。"
   },
   "filter": {
-    "allGraphs": "全部图"
+    "allGraphs": "全部图",
+    "graph": "图筛选"
   },
   "refresh": "刷新",
   "status": {
