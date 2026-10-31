@@ -78,7 +78,7 @@ export function Dashboard({ principal, onLogout, onOpenEditor, onOpenMonitoring,
             </Space>
           </Card>
           <Row gutter={16}>
-            <Col span={8}>
+            <Col xs={24} md={8}>
               <Card
                 title="Graph"
                 hoverable
@@ -88,7 +88,7 @@ export function Dashboard({ principal, onLogout, onOpenEditor, onOpenMonitoring,
                 <Typography.Text>{t('demo.cards.graph')}</Typography.Text>
               </Card>
             </Col>
-            <Col span={8}>
+            <Col xs={24} md={8}>
               <Card
                 title="Loop"
                 hoverable
@@ -98,7 +98,7 @@ export function Dashboard({ principal, onLogout, onOpenEditor, onOpenMonitoring,
                 <Typography.Text>{t('demo.cards.loop')}</Typography.Text>
               </Card>
             </Col>
-            <Col span={8}>
+            <Col xs={24} md={8}>
               <Card
                 title="Harness"
                 hoverable
