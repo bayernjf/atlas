@@ -91,12 +91,18 @@ export function ProblemsPanel() {
   }
 
   return (
-    <div className={`problems-panel ${problems.length === 0 ? 'is-clean' : ''}`}>
+    <div
+      id="atlas-problems-panel"
+      className={`problems-panel ${problems.length === 0 ? 'is-clean' : ''}`}
+      role="region"
+      aria-label={t('problems.title')}
+    >
       <button
         type="button"
         className="problems-header"
         onClick={() => setCollapsed((value) => !value)}
         aria-expanded={!collapsed}
+        aria-controls="atlas-problems-panel"
       >
         <span className="problems-title">{t('problems.title')}</span>
         <span className="problems-counts">
