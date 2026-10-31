@@ -5542,7 +5542,9 @@ def replay_recording(
         report["mocked_tools"] = mocked_tools
         report["mocked_conditions"] = mocked_conditions
         return report
-    except Exception as exc:  # 回放失败折叠为报告而非 500
+    except Exception:  # 回放失败折叠为报告而非 500
+        # 异常原文只进服务端日志（Tier0 评审 2026-10-30 H2），报告 note 固定泛化。
+        logger.exception("recording replay failed for case %s", case_id)
         return {
             "matches": False,
             "baseline_status": case.status,
@@ -5553,7 +5555,7 @@ def replay_recording(
                 {
                     "node_id": step.node_id,
                     "match": False,
-                    "note": f"回放执行异常，未取得该节点产出：{type(exc).__name__}: {exc}",
+                    "note": "回放执行异常，未取得该节点产出",
                 }
                 for step in case.steps
             ],
