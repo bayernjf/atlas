@@ -58,7 +58,7 @@ def test_stream_run_failure_emits_structured_sse_error_frame():
 
 
 def test_condition_eval_error_handler_returns_structured_500():
-    from atlas.api.main import condition_eval_failure_handler
+    from atlas.services.error_handlers import condition_eval_failure_handler
 
     exc = ConditionEvalError(
         '算术 "/" 除数不能为 0',

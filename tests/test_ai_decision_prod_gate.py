@@ -17,7 +17,7 @@ import json
 import pytest
 from fastapi.responses import JSONResponse
 
-from atlas.api.main import ai_decision_unavailable_handler
+from atlas.services.error_handlers import ai_decision_unavailable_handler
 from atlas.graph.dsl import parse_graph
 from atlas.graph.loader import (
     AiDecisionUnavailable,

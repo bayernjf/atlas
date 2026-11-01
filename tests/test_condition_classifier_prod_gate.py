@@ -22,7 +22,7 @@ import json
 import pytest
 from fastapi.responses import JSONResponse
 
-from atlas.api.main import condition_classifier_unavailable_handler
+from atlas.services.error_handlers import condition_classifier_unavailable_handler
 from atlas.graph.dsl import parse_graph
 from atlas.graph.loader import (
     ConditionClassifierUnavailable,
