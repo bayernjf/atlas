@@ -90,12 +90,17 @@ def install_request_id_middleware(app) -> None:
     @app.middleware("http")
     async def _request_id_middleware(request, call_next):
         rid = uuid.uuid4().hex[:12]
+        # Stash on request.state too: the catch-all 500 handler runs in
+        # Starlette's outermost ServerErrorMiddleware, after the contextvar is
+        # reset below, so state is the only place it can read the id from.
+        request.state.request_id = rid
         token = request_id_var.set(rid)
         try:
             response = await call_next(request)
         except Exception:
             # 异常路径：日志仍带 request_id（此时 contextvar 有效）；响应头由
-            # Starlette 外层生成、中间件拿不到，按模块 docstring 偏差处理。
+            # Starlette 外层生成、中间件拿不到，按模块 docstring 偏差处理
+            # （500 固定体内嵌 requestId 字段，见 services/error_safety.py）。
             request_logger.error(
                 "request %s %s failed", request.method, request.url.path, exc_info=True
             )

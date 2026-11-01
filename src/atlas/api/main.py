@@ -128,6 +128,13 @@ from atlas.channels.inbound import InboundReceiver, InboundEnvelope
 from atlas.iam.agents_store import Agent
 from atlas.a2a.router import router as a2a_router  # docs/90 ADR T32 (Zeus A2A execution-agent face)
 from atlas.connections.service import ConnectionServiceError
+from atlas.services.audit_query import audit_bounds as _audit_bounds, audit_cursor as _audit_cursor
+from atlas.services.error_safety import internal_error_response, safe_persisted_error
+from atlas.services.model_config_service import (
+    ModelConfigRequest,
+    build_model_config as _build_model_config,
+    masked_view as _masked_view,
+)
 from atlas.observability.health import check_ready
 from atlas.observability.logging import (
     configure_logging,
@@ -670,6 +677,14 @@ def run_node_failed_handler(_request: Request, exc: RunNodeFailed) -> JSONRespon
     )
 
 
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    # Tier0 评审 2026-10-30 H2：未捕获异常统一 500 固定文案，str(exc)/类型名/
+    # traceback/内部路径只进服务端日志；附 X-Request-Id 便于按日志定位。
+    # 业务异常由上方各专用 handler 先行匹配，语义码与中文 message 不受影响。
+    return internal_error_response(request, exc)
+
+
 @app.middleware("http")
 async def audit_write_actions(request: Request, call_next):
     """T6 审计中间件（docs/35 §6）：仅 /api/ 写方法在响应后记录元数据（actor/路由模板/
@@ -835,43 +850,6 @@ def prometheus_metrics(request: Request) -> Response:
     return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")
 
 
-def _audit_bounds(since: str | None, until: str | None) -> tuple[str | None, str | None]:
-    """校验 since/until（docs/61 §4.2）：非法 ISO 或 since>until → 422 中文聚合。
-
-    项目没有全局 RequestValidationError 中文处理器，故在端点内手工校验（照静默 PUT 先例）。
-    """
-    from datetime import timezone
-
-    from atlas.observability.audit import parse_bound
-
-    def _clean(value: str | None) -> str | None:
-        return value.strip() if value and value.strip() else None
-
-    lo, hi = _clean(since), _clean(until)
-    errors: list[str] = []
-    parsed: dict[str, Any] = {}
-    for name, label, raw in (("since", "since（起始时间）", lo), ("until", "until（截止时间）", hi)):
-        if raw is None:
-            continue
-        try:
-            parsed[name] = parse_bound(raw).astimezone(timezone.utc)
-        except ValueError:
-            errors.append(f"{label}不是合法的 ISO-8601 时间：{raw}")
-    if not errors and lo and hi and parsed["since"] > parsed["until"]:
-        errors.append(f"since 不能晚于 until（{lo} > {hi}）")
-    if errors:
-        raise HTTPException(status_code=422, detail=errors)
-    return lo, hi
-
-
-def _audit_cursor(cursor: int | None) -> int | None:
-    if cursor is None:
-        return None
-    if int(cursor) < 1:
-        raise HTTPException(status_code=422, detail=[f"cursor 必须为正整数游标，收到：{cursor}"])
-    return int(cursor)
-
-
 @app.get("/api/audit/events")
 def list_audit_events(
     principal: Principal = Depends(require("administer")),
@@ -1016,65 +994,6 @@ def delete_connection(conn_id: str, principal: Principal = Depends(require("admi
 
 
 # ================= LLM 模型配置管理（docs/93 打包 Y；内置模型＋BYOK）=================
-
-class ModelConfigRequest(BaseModel):
-    model: str | None = None
-    apiKey: str | None = None  # 明文 key，写入即 AES-GCM 加密；空/未传保留原信封
-    baseUrl: str | None = None
-    enabled: bool | None = None
-
-
-def _now_iso_utc() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _masked_view(cfg: ModelConfig) -> dict[str, Any]:
-    """HTTP 脱敏视图：api_key 回 ``***``＋**明文**尾 4 位（docs/93 §2.3）。
-
-    public_view() 只够在 store 层防御性用（信封尾 4 位无意义）；产品语义要的是
-    明文 key 尾 4 位，故在此解密一次。解密失败（密钥轮换/坏信封）只回 ***。
-    """
-    view = cfg.public_view()
-    if cfg.api_key_enc:
-        from atlas.connections.service import get_secret_provider
-
-        try:
-            plain = get_secret_provider().decrypt(cfg.api_key_enc)
-            view["apiKey"] = f"***{plain[-4:]}" if plain else ""
-        except Exception:  # 坏信封/密钥不可用：只回占位，绝不泄漏
-            view["apiKey"] = "***"
-    return view
-
-
-def _seal_api_key(api_key: str | None, existing: str | None) -> str | None:
-    """明文 key → AES-GCM 信封；None/空串保留原信封（照 connection.client_secret 语义）。"""
-    if api_key is None or not api_key.strip():
-        return existing  # 未传/空 → 不动（前端脱敏回显不会回明文）
-    from atlas.connections.service import get_secret_provider
-
-    return get_secret_provider().encrypt(api_key.strip())
-
-
-def _build_model_config(
-    mode: str, raw: ModelConfigRequest, existing: ModelConfig | None,
-    *, updated_by: str,
-) -> ModelConfig:
-    """由请求体构造 ModelConfig；api_key 写即加密，缺省字段沿用现状。"""
-    prev = existing
-    model = (raw.model or "").strip() or (prev.model if prev else "")
-    if not model:
-        raise HTTPException(status_code=422, detail="模型名不能为空")
-    api_key_enc = _seal_api_key(raw.apiKey, prev.api_key_enc if prev else None)
-    return ModelConfig(
-        mode=mode,
-        model=model,
-        api_key_enc=api_key_enc or "",
-        base_url=(raw.baseUrl or "").strip() or (prev.base_url if prev else None),
-        enabled=raw.enabled if raw.enabled is not None else (prev.enabled if prev else True),
-        updated_by=updated_by,
-        updated_at=_now_iso_utc(),
-    )
-
 
 def _effective_model_summary(services: TenantServices, tenant_id: str) -> dict[str, Any]:
     """当前生效摘要（W5-3 收口）：BYOK > 单条内置 > hub 投影 > env；都没有 none。"""
@@ -3832,7 +3751,7 @@ def create_shadow_run(
         )
     except Exception as exc:  # 影子异常也沉淀记录，绝不影响生产链路
         status = "error"
-        error = f"{type(exc).__name__}: {exc}"
+        error = safe_persisted_error(exc, context="shadow run")
 
     decisions, intents = extract_shadow_events(top_events, node_index, tool_permissions)
     return services.shadow_store.add(
@@ -3917,7 +3836,7 @@ async def create_shadow_run_stream(
                 )
             except Exception as exc:  # 影子业务异常沉淀 error 记录，不影响生产链路
                 status = "error"
-                error = f"{type(exc).__name__}: {exc}"
+                error = safe_persisted_error(exc, context="shadow run stream")
             try:
                 decisions, intents = extract_shadow_events(
                     top_events, node_index, tool_permissions
