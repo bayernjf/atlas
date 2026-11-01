@@ -141,7 +141,10 @@ def test_shadow_stream_records_error_when_run_graph_raises(monkeypatch):
     frames = _parse_sse(response.text)
     assert frames[-1][0] == "result"
     result = frames[-1][1]
-    assert result["status"] == "error" and "RuntimeError" in result["error"]
+    # Tier0 review H2: persisted/streamed error must never embed the raw
+    # exception class name or message (diagnostics stay in server logs).
+    assert result["status"] == "error" and "RuntimeError" not in result["error"]
+    assert "boom in shadow" not in result["error"]
 
     items = client.get("/api/shadow-runs").json()["items"]
     assert len(items) == 1 and items[0]["status"] == "error"
