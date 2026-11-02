@@ -142,6 +142,7 @@ from atlas.services.model_config_service import (
     build_model_config as _build_model_config,
     masked_view as _masked_view,
 )
+from atlas.services.webhook_runtime import build_webhook_callbacks
 from atlas.observability.health import check_ready
 from atlas.observability.logging import (
     configure_logging,
@@ -1208,58 +1209,8 @@ def _locate_binding(binding_id: str) -> tuple[str, ChannelBinding, TenantService
     return None
 
 
-def _webhook_resolve(graph_id: str, tenant: str, event: TriggerEvent) -> int | None:
-    services = tenant_registry.get(tenant)
-    version, _segment = services.routing_store.resolve(graph_id, tenant=tenant, event=event)
-    return version
-
-
-def _webhook_trigger(
-    graph_id: str, version: int, event: TriggerEvent, tenant: str, agent_id: str = ""
-) -> None:
-    services = tenant_registry.get(tenant)
-    _BACKGROUND_WORKER_POOL.submit(
-        _background_run_worker, services, tenant, graph_id, version, event, agent_id
-    )
-
-
-def _inbound_trigger(
-    graph_id: str, version: int, event: TriggerEvent, tenant: str,
-    agent_id: str, run_id: str | None,
-) -> None:
-    """入站会话触发（打包 BO，docs/131 D73）：承担「调度派发方」职责——submit 前
-    按预置 run_id 先 begin（与调度器同款"tick 内即可见 running"语义，见
-    `_background_run_worker` docstring），mode 记 `message_inbound`（U1445）。"""
-    services = tenant_registry.get(tenant)
-    if run_id is not None:
-        services.run_store.begin(
-            run_id=run_id, graph_id=graph_id, mode="message_inbound", agent_id=agent_id
-        )
-    _BACKGROUND_WORKER_POOL.submit(
-        _background_run_worker, services, tenant, graph_id, version, event, agent_id,
-        mode="message_inbound", run_id=run_id,
-    )
-
-
-def _webhook_audit(action: str, tenant: str, metadata: dict) -> None:
-    services = tenant_registry.get(tenant)
-    # AuditStore 无 metadata 列：关键事实编码进 path（不含 body/密钥）。
-    path = (
-        f"webhook binding={metadata.get('bindingId')} "
-        f"id={metadata.get('webhookId')} shop={metadata.get('shop')}"
-    )
-    services.audit_store.record(
-        tenant_id=tenant, actor="shopify-webhook", action=action,
-        status_code=200, path=path, ip="",
-    )
-
-
-_webhook_deliverer = WebhookDeliverer(
-    resolver=_webhook_resolve,
-    trigger=_webhook_trigger,
-    auditor=_webhook_audit,
-    store_provider=lambda tenant: tenant_registry.get(tenant).webhook_deliveries,
-)
+# webhook 四回调与 _webhook_deliverer 的装配落在 `_background_run_worker` 定义之后
+# （见下）：回调由 services.webhook_runtime 工厂生成，pool/worker 在装配期注入。
 
 
 def _background_run_cycle(
@@ -1393,6 +1344,19 @@ def _background_run_worker(
         inputs={"event": event.model_dump()},
         run_once=_run_once,
     )
+
+
+# webhook 回调装配（services.webhook_runtime 生成；worker 须已定义，故在本函数之后）。
+# WebhookDeliverer.__init__ 仅存回调引用，装配位置的模块内移动不改变运行时行为。
+_webhook_resolve, _webhook_trigger, _inbound_trigger, _webhook_audit = build_webhook_callbacks(
+    pool=_BACKGROUND_WORKER_POOL, worker=_background_run_worker
+)
+_webhook_deliverer = WebhookDeliverer(
+    resolver=_webhook_resolve,
+    trigger=_webhook_trigger,
+    auditor=_webhook_audit,
+    store_provider=lambda tenant: tenant_registry.get(tenant).webhook_deliveries,
+)
 
 
 # --- 定时触发调度器（docs/68，打包 N／ADR T30） ---------------------------
