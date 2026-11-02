@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Button, Card, Segmented, Select, Space, Table, Tag, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
+import AsyncState from '../AsyncState'
 import {
   getRunReport,
   runReportExportUrl,
@@ -127,16 +128,21 @@ export function RunReportCard() {
         </Space>
       }
     >
-      {error && <Text type="danger">{error}</Text>}
-      <Table<RunReportBucket>
-        size="small"
-        rowKey="key"
-        loading={loading}
-        pagination={false}
-        dataSource={buckets}
-        columns={columns}
-        scroll={{ x: 940 }}
-      />
+      {error && !loading ? (
+        <AsyncState error={error} onRetry={() => void refresh()} />
+      ) : buckets.length === 0 && !loading ? (
+        <AsyncState empty emptyText={t('runReport.empty')} />
+      ) : (
+        <Table<RunReportBucket>
+          size="small"
+          rowKey="key"
+          loading={loading}
+          pagination={false}
+          dataSource={buckets}
+          columns={columns}
+          scroll={{ x: 940 }}
+        />
+      )}
     </Card>
   )
 }

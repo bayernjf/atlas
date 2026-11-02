@@ -30,7 +30,8 @@
     "export": {
       "csv": "Export CSV",
       "json": "Export JSON"
-    }
+    },
+    "empty": "No run data yet."
   },
   "col": {
     "rule": "Rule",
