@@ -124,7 +124,12 @@ from atlas.iam.agents_store import Agent
 from atlas.a2a.router import router as a2a_router  # docs/90 ADR T32 (Zeus A2A execution-agent face)
 from atlas.connections.service import ConnectionServiceError
 from atlas.services.audit_query import audit_bounds as _audit_bounds, audit_cursor as _audit_cursor
-from atlas.services.error_safety import safe_persisted_error
+from atlas.services.error_safety import (
+    safe_persisted_error,
+    safe_run_error as _safe_run_error,
+    token_ref as _token_ref,
+    unexpected_stream_error as _unexpected_stream_error,
+)
 from atlas.services.error_handlers import register_exception_handlers
 from atlas.services.model_config_service import (
     ModelConfigRequest,
@@ -255,36 +260,6 @@ logger = logging.getLogger(__name__)
 # 应用对外入口（审批深链基址）：唯一读取器在 security.bootstrap（docs/89 §15 A-6，
 # 此前这里与 channels/registry、notifications 各读一遍同一 env＋同一缺省）
 _PUBLIC_URL = read_public_url()
-
-
-def _safe_run_error(exc: Exception) -> str:
-    """docs/101 D58：运行失败 message 收口（SSE error 帧与持久化 error 共用）。
-
-    未知异常（RUNTIME_UNEXPECTED）→ 安全文案，内部串（类型名/repr）只进服务端日志；
-    已知业务异常 → 保留中文业务文案（去掉类型名前缀），code/params 已另行结构化。
-    """
-    if runtime_error_meta(exc)["errorCode"] == "RUNTIME_UNEXPECTED":
-        return "运行时发生未预期错误"
-    return str(exc)
-
-
-def _unexpected_stream_error() -> dict[str, Any]:
-    """SSE worker 暴毙（未沉淀终帧）时生成器合成的安全 error 终帧（docs/125 §3.1）。
-
-    固定 code/文案，不带任何内部异常串；细节由 worker 侧 logger.exception 落日志。
-    """
-    return {"message": "运行时发生未预期错误", "code": "RUNTIME_UNEXPECTED", "params": {}}
-
-
-def _token_ref(token: Any) -> str:
-    """日志里指代一枚令牌的可读引用（docs/89 §15 A-8b）。
-
-    `resume_token`／审批 `token` 都是能直接推进状态的凭证，全文进日志＝任何读得到日志的人
-    都能代替持有人续跑或决策；而运维排障又确实需要一个能对上表行的标识，所以留 8 位前缀：
-    够定位，不够使用。
-    """
-    text = str(token or "")
-    return text[:8] + "…" if len(text) > 8 else (text or "<空令牌>")
 
 MAX_WAIT_PAYLOAD_BYTES = 4096
 MAX_WAIT_PAYLOAD_KEYS = 50
