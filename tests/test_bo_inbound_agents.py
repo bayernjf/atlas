@@ -83,11 +83,12 @@ def _login(role: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _create_binding(headers, secret: str | None = None) -> str:
+def _create_binding(headers, secret: str | None = INBOUND_SECRET) -> str:
     cid = client.post("/api/connections", json=CONN_BODY, headers=headers).json()["id"]
     config: dict = {"shop": "acme"}
     if secret is not None:
         # D-D1 可插拔 verify：预共享 secret 经 binding.config 配置（bind 保留自定义键）。
+        # P1 fail-closed 后：不配 secret 的 binding 一律 403，默认带上（要测拒绝路径再显式传 None）。
         config["inbound_secret"] = secret
     bid = client.post(
         "/api/channels",
@@ -163,7 +164,7 @@ def _put_mapping(headers, bid: str, conversation_id: str, graph_id: str,
     assert r.status_code == 200, r.text
 
 
-def _post_inbound(bid: str, body: dict, secret: str | None = None):
+def _post_inbound(bid: str, body: dict, secret: str | None = INBOUND_SECRET):
     import json as _json
 
     raw = _json.dumps(body).encode()
@@ -228,7 +229,7 @@ def test_u1444_bad_signature_returns_401():
     admin = _login("admin")
     bid = _create_binding(admin, secret=INBOUND_SECRET)
     body = _msg("m-401")
-    assert _post_inbound(bid, body).status_code == 401                     # 无签名
+    assert _post_inbound(bid, body, secret=None).status_code == 401        # 无签名
     import json as _json
 
     raw = _json.dumps(body).encode()
@@ -237,6 +238,47 @@ def test_u1444_bad_signature_returns_401():
         headers={"X-Inbound-Signature": _sign(raw, "wrong-secret")},
     )
     assert r.status_code == 401                                            # 错签名
+
+
+def test_u1444_missing_secret_is_fail_closed_403():
+    """P1 修复：binding 未配 inbound_secret ⇒ 一律 403（原 passthrough 远程触发面）。"""
+    admin = _login("admin")
+    bid = _create_binding(admin, secret=None)
+    body = _msg("m-nosec")
+    r = _post_inbound(bid, body)
+    assert r.status_code == 403
+    # 即使带合法形状消息也不受理、不起 run
+    assert not r.json().get("received")
+    # 失败审计在案
+    from atlas.iam.deps import tenant_registry
+
+    entries = tenant_registry.get("t1").audit_store.list()
+    assert any(e.get("action") == "channel.inbound_secret_missing" for e in entries)
+
+
+def test_u1444_signature_failures_are_audited_and_rate_limited():
+    """binding id 可枚举缓解：连续验签失败累计审计，超窗熔断 429。"""
+    from atlas.api.main import _inbound_failure_limiter
+
+    _inbound_failure_limiter._failures.clear()
+    admin = _login("admin")
+    bid = _create_binding(admin, secret=INBOUND_SECRET)
+    body = _msg("m-429")
+    try:
+        for _ in range(10):
+            assert _post_inbound(bid, body, secret="wrong-secret").status_code == 401
+        # 第 11 次（窗口内第 11 个失败来源请求）被熔断
+        assert _post_inbound(bid, body, secret="wrong-secret").status_code == 429
+
+        from atlas.iam.deps import tenant_registry
+
+        entries = tenant_registry.get("t1").audit_store.list()
+        # 只数本 binding 的审计（同进程其他用例也会产生签名失败记录）
+        ours = [e.get("action") for e in entries if str(bid) in str(e.get("path", ""))]
+        assert ours.count("channel.inbound_signature_failed") == 10
+        assert "channel.inbound_rate_limited" in ours
+    finally:
+        _inbound_failure_limiter._failures.clear()
 
 
 def test_u1444_duplicate_message_is_idempotent():

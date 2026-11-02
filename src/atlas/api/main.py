@@ -2411,12 +2411,42 @@ _inbound_receiver = InboundReceiver(
 )
 
 
+class _FailureWindowLimiter:
+    """验签失败限流：binding id 可枚举（ch-{seq}）的缓解——同一来源连续失败即熔断。
+
+    进程内固定窗口计数，无外部状态；只累计失败，验签成功即清零。
+    真实不可枚举 ID 是更大的改动（存量 binding id 需迁移），见 docs/73 上线缺口。
+    """
+
+    def __init__(self, max_failures: int = 10, window_seconds: float = 60.0) -> None:
+        self._max = max_failures
+        self._window = window_seconds
+        self._failures: dict[str, list[float]] = {}
+
+    def allow(self, key: str, *, now: float | None = None) -> bool:
+        now = time.time() if now is None else now
+        bucket = [t for t in self._failures.get(key, []) if now - t < self._window]
+        self._failures[key] = bucket
+        return len(bucket) < self._max
+
+    def note_failure(self, key: str, *, now: float | None = None) -> None:
+        now = time.time() if now is None else now
+        self._failures.setdefault(key, []).append(now)
+
+    def note_success(self, key: str) -> None:
+        self._failures.pop(key, None)
+
+
+_inbound_failure_limiter = _FailureWindowLimiter()
+
+
 @app.post("/api/channels/inbound/{binding_id}")
 async def inbound_ingress(binding_id: str, http_request: Request) -> dict[str, Any]:
-    """通用入站接收（公开，可插拔验签；D-D1）。
+    """通用入站接收（公开，强制验签；D-D1 + P1 fail-closed 修复）。
 
-    验签：binding.config.inbound_secret 配置则 HMAC 验签（header X-Inbound-Signature），
-    否则 passthrough（假供应商；真供应商 verify 留 ⛔ docs/73 1.3）。
+    验签：binding.config.inbound_secret 必须存在，否则 403；存在则 HMAC-SHA256
+    验签（header X-Inbound-Signature，恒定时间比对），失败 401 并限流 429。
+    重放由接收侧 messageId 幂等去重拦截（{duplicate}）。
     响应：{received, runId?, agentId?} / {duplicate} / {deadLetter, messageId?}。
     """
     located = await asyncio.to_thread(_locate_binding, binding_id)
@@ -2427,10 +2457,22 @@ async def inbound_ingress(binding_id: str, http_request: Request) -> dict[str, A
     if len(raw) > MAX_WEBHOOK_BODY_BYTES:
         raise HTTPException(status_code=413, detail="入站请求体超过 1MB 上限")
     secret = (binding.config or {}).get("inbound_secret")
-    if secret:
-        signature = http_request.headers.get("X-Inbound-Signature")
-        if not verify_shopify_hmac(raw, signature, secret):
-            raise HTTPException(status_code=401, detail="入站签名校验失败")
+    if not secret:
+        # fail-closed（P1 修复）：原"未配 secret 即 passthrough"分支是未认证远程触发面
+        # ——binding id 可枚举（ch-{seq}），命中即可以可控 payload 触发该租户已发布图。
+        # 与同仓 Shopify webhook「密钥缺失 503」、A2A prod 无 token 关闭同纪律。
+        _inbound_audit("channel.inbound_secret_missing", tenant_id, {"bindingId": binding_id})
+        raise HTTPException(status_code=403, detail="渠道绑定未配置入站验签密钥，拒绝受理")
+    client_key = http_request.client.host if http_request.client else "unknown"
+    if not _inbound_failure_limiter.allow(client_key):
+        _inbound_audit("channel.inbound_rate_limited", tenant_id, {"bindingId": binding_id})
+        raise HTTPException(status_code=429, detail="验签失败过于频繁，请稍后再试")
+    signature = http_request.headers.get("X-Inbound-Signature")
+    if not verify_shopify_hmac(raw, signature, secret):
+        _inbound_failure_limiter.note_failure(client_key)
+        _inbound_audit("channel.inbound_signature_failed", tenant_id, {"bindingId": binding_id})
+        raise HTTPException(status_code=401, detail="入站签名校验失败")
+    _inbound_failure_limiter.note_success(client_key)
     try:
         data = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
