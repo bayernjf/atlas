@@ -131,6 +131,12 @@ from atlas.services.error_safety import (
     unexpected_stream_error as _unexpected_stream_error,
 )
 from atlas.services.error_handlers import register_exception_handlers
+from atlas.services.schedule_pure import (
+    no_schedule_detail as _no_schedule_detail,
+    schedule_enabled as _schedule_enabled,
+    schedule_specs_of_published as _schedule_specs_of_published,
+    schedule_tick_seconds as _schedule_tick_seconds,
+)
 from atlas.services.model_config_service import (
     ModelConfigRequest,
     build_model_config as _build_model_config,
@@ -1391,33 +1397,9 @@ def _background_run_worker(
 
 # --- 定时触发调度器（docs/68，打包 N／ADR T30） ---------------------------
 
-MIN_SCHEDULE_TICK_SECONDS = 1
-MAX_SCHEDULE_TICK_SECONDS = 300
 # 重叠判定要扫的在途运行条数上限：超过就会漏判（后果只是同图并发一次，派发互斥仍由
 # 认领表守着），扫全表换不来什么。
 BUSY_SCAN_LIMIT = 200
-
-
-def _schedule_tick_seconds() -> int:
-    raw = os.getenv("ATLAS_SCHEDULE_TICK_SECONDS", "").strip()
-    if not raw:
-        return 30
-    try:
-        value = int(raw)
-    except ValueError:
-        logger.warning("ATLAS_SCHEDULE_TICK_SECONDS 非整数（%r），按默认 30 秒", raw)
-        return 30
-    bounded = max(MIN_SCHEDULE_TICK_SECONDS, min(MAX_SCHEDULE_TICK_SECONDS, value))
-    if bounded != value:
-        logger.warning(
-            "ATLAS_SCHEDULE_TICK_SECONDS %s 超出 %s-%s，按 %s 秒",
-            raw, MIN_SCHEDULE_TICK_SECONDS, MAX_SCHEDULE_TICK_SECONDS, bounded,
-        )
-    return bounded
-
-
-def _schedule_enabled() -> bool:
-    return os.getenv("ATLAS_SCHEDULE_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
 
 
 _schedule_store: ScheduleStore | None = None
@@ -1583,42 +1565,6 @@ def stop_scheduler(timeout_seconds: float = 2.0) -> None:
     _scheduler_thread = None
 
 
-def _schedule_specs_of_published(
-    graph_raw: dict,
-) -> list[tuple[str, str, str, int, str]]:
-    """已发布版本里**全部**定时触发节点的调度形状（打包 ZN，D41 ③；发布派生）。
-
-    返回每条 `(schedule_id, cron, timezone, catch_up_minutes, overlap_policy)`——
-    schedule_id 即该定时触发**节点 id**（随图钉版、稳定），一图挂 N 个定时节点就返回 N 条。
-    节点 id 缺失或以保留前缀 `__` 开头（撞 reflect／存量回填命名空间）时日志点名跳过：
-    静默建一条会与保留行主键冲突，阻断发布又把极端命名问题变成发布事故，二者都不取。
-    """
-    found: list[tuple[str, str, str, int, str]] = []
-    for node in graph_raw.get("nodes") or []:
-        if not isinstance(node, dict) or node.get("type") != "trigger":
-            continue
-        config = node.get("config") or {}
-        if config.get("triggerType") in ("schedule", "cron") and config.get("cron"):
-            node_id = str(node.get("id", ""))
-            if not node_id or node_id.startswith("__"):
-                logger.warning(
-                    "定时触发节点 id 缺失或撞保留命名空间，跳过该调度：%r", node_id
-                )
-                continue
-            catch_up = config.get("catchUpMinutes", 0)
-            try:
-                catch_up = max(0, int(catch_up))
-            except (TypeError, ValueError):
-                catch_up = 0
-            overlap = config.get("overlapPolicy", "skip")
-            overlap = overlap if overlap in ("skip", "allow") else "skip"
-            found.append((
-                node_id, str(config["cron"]),
-                str(config.get("timezone", "UTC")), catch_up, overlap,
-            ))
-    return found
-
-
 def _derive_schedule_on_publish(
     services: TenantServices, tenant_id: str, graph_id: str, version: int
 ) -> None:
@@ -1681,13 +1627,6 @@ class RunNowRequest(BaseModel):
     ＝该图第一条 run 调度（v1 一图一调度时即主调度，逐字等价旧的无 body 行为）。"""
 
     schedule_id: str | None = None
-
-
-def _no_schedule_detail(graph_id: str, schedule_id: str | None = None) -> str:
-    label = f"（schedule={schedule_id}）" if schedule_id else ""
-    return (
-        f"图 {graph_id} 没有定时调度{label}：只有含定时触发节点的**已发布**版本才会登记"
-    )
 
 
 def _first_run_schedule(tenant_id: str, graph_id: str) -> ScheduleRecord | None:
