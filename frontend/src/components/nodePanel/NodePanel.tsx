@@ -23,7 +23,9 @@ export function NodePanel() {
             onDragStart={(event) => onDragStart(event, kind)}
             style={{ borderLeftColor: meta.color }}
           >
-            <Tag color={meta.color} style={{ marginInlineEnd: 6 }}>
+            {/* 节点色只保留在左边框色条：AntD Tag 实底 hex（*6 色板）配白字实测
+                1.77–3.54:1，不达 WCAG AA（4.5:1）；默认灰 Tag 才达标。 */}
+            <Tag style={{ marginInlineEnd: 6 }}>
               {t(`nodeCatalog.${kind}.label`)}
             </Tag>
             <Typography.Text type="secondary">{t(`nodeCatalog.${kind}.description`)}</Typography.Text>
