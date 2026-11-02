@@ -270,7 +270,9 @@ body,
   align-items: center;
   justify-content: space-between;
   padding: 3px 8px;
-  color: var(--atlas-color-text-inverse);
+  color: var(--atlas-color-text-primary);
+  background: var(--atlas-color-bg-page);
+  border-left: 4px solid var(--atlas-color-primary);
   border-radius: 7px 7px 0 0;
   font-weight: 600;
 }
