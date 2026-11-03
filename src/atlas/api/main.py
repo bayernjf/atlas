@@ -45,7 +45,7 @@ from atlas.cards import (
 from atlas.debug import DebugController, DebugStopped
 from atlas.evaluation import EvaluationGraphNotFound, EvaluationTask, run_task
 from atlas.graph.conditions import validate_expression
-from atlas.graph.dsl import GraphDSL, GraphValidationError, parse_graph, valid_event_key
+from atlas.graph.dsl import GraphValidationError, parse_graph, valid_event_key
 from atlas.graph.diff import diff_graph, diff_summary
 from atlas.graph.loader import (
     RunSuperseded,
@@ -124,6 +124,7 @@ from atlas.iam.agents_store import Agent
 from atlas.a2a.router import router as a2a_router  # docs/90 ADR T32 (Zeus A2A execution-agent face)
 from atlas.connections.service import ConnectionServiceError
 from atlas.services.audit_query import audit_bounds as _audit_bounds, audit_cursor as _audit_cursor
+from atlas.services import run_recovery
 from atlas.services.error_safety import (
     safe_persisted_error,
     safe_run_error as _safe_run_error,
@@ -210,7 +211,6 @@ from atlas.routing import (
     required_samples,
 )
 from atlas.shop.service import DemoShopService
-from atlas.storage.frame import card_context_from_frame, remaining_seconds
 from atlas.storage.memory import ApprovalBroker, FeedbackRequest
 from atlas.storage.pg import get_pg_backend
 from atlas.storage.retention import run_retention_once
@@ -220,12 +220,8 @@ from atlas.storage.recovery import (
     RESOLVE_OK,
     RESOLVE_RUN_NOT_SUSPENDED,
     abandon_claimed_suspended_frame,
-    clear_frame,
     clear_tenant_frames,
     interruption_view,
-    load_pending_frames,
-    make_frame_sink,
-    make_resume_claim,
 )
 from atlas.scheduling.cron import CronExpressionError, next_fire_utc, validate_cron
 from atlas.scheduling.engine import (
@@ -291,136 +287,58 @@ def _wait_for_database_ready() -> None:
         logger.warning("PG 连通性等待超预算，启动继续（恢复扫描/retention 可能被跳过）：%s", exc)
 
 
+def _pg_engine():
+    """当前 PG 引擎（惰性取值，保证测试 monkeypatch STORAGE_BACKEND 后仍按当次读）。"""
+    return get_pg_backend().engine
+
+
 def recover_pending() -> None:
     """服务启动钩子：读未决挂起帧 → 逐帧重建 pending + 重启续跑线程（docs/24 §2.4）。
 
     仅 PG 后端生效（进程内后端重启即失、无帧可恢复）；失败帧隔离记日志、不阻塞其余。
     """
-    if STORAGE_BACKEND != "pg":
-        return
-    try:
-        engine = get_pg_backend().engine
-        frames = load_pending_frames(engine)
-    except Exception as exc:  # 无 DATABASE_URL / PG 未就绪时不阻断启动
-        logger.warning("中断恢复扫描跳过：%s", exc)
-        return
-    for frame in frames:
-        try:
-            _resume_from_frame(engine, frame)
-        except Exception as exc:
-            logger.warning("帧 %s 恢复失败、隔离跳过：%s", _token_ref(frame.get("resume_token")), exc)
+    run_recovery.recover_pending(
+        storage_backend=STORAGE_BACKEND,
+        pg_engine=_pg_engine,
+        resume_from_frame=_resume_from_frame,
+    )
 
 
 def _resume_from_frame(engine, frame: dict) -> None:
     """按帧重建 pending（approval 重挂 Event + 剩余 deadline），并重启续跑线程。"""
-    services = tenant_registry.get(frame["tenant_id"])
-    token = frame["resume_token"]
-    if frame.get("resumed_at") is not None:
-        # docs/62 §2 D-1 / §8.1 第②种：帧已被某进程认领（写帧后、执行完前该进程崩了），
-        # at-most-once 语义下不再为它重建 pending、不起线程——宁可这条 run 停在 suspended，
-        # 也不重复执行下游；开口收敛属 D36（人工重放/reconcile）。
-        logger.info(
-            "帧 %s 已由 %s 认领，跳过恢复（不重建 pending、不起续跑线程）",
-            token,
-            frame.get("resumed_by") or "其它进程",
-        )
-        return
-    if frame["kind"] == "approval":
-        card_template_id = frame.get("card_template_id") or None
-        services.approval_broker.restore(
-            token=token,
-            node_id=frame["node_id"],
-            graph_id=frame["resume_state"].get("graph_id", ""),
-            summary=frame.get("summary", ""),
-            approver=frame.get("approver", ""),
-            remaining_seconds=remaining_seconds(frame.get("deadline_at")),
-            card_template_id=card_template_id,
-            card_context=card_context_from_frame(frame) if card_template_id else None,
-        )
-    elif frame["kind"] == "wait" and (frame.get("wait") or {}).get("waitType") == "event":
-        wait_payload = frame["wait"]
-        # docs/54：多键竞速帧存 eventKeys；单键帧只有 eventKey（首键）。
-        # docs/55：帧存 eventWaitMode（all=AND 竞速；缺省 any 兼容旧帧）。
-        _frame_keys = wait_payload.get("eventKeys")
-        services.event_wait_broker.restore(
-            token=token,
-            event_key=wait_payload.get("eventKey"),
-            event_keys=_frame_keys
-            if isinstance(_frame_keys, list) and _frame_keys
-            else None,
-            node_id=frame["node_id"],
-            graph_id=frame["resume_state"].get("graph_id", ""),
-            timeout_seconds=remaining_seconds(frame.get("deadline_at")),
-            mode=wait_payload.get("eventWaitMode")
-            if wait_payload.get("eventWaitMode") in ("any", "all")
-            else "any",
-        )
-    _BACKGROUND_WORKER_POOL.submit(_resume_run, engine, services, frame)
+    run_recovery.resume_from_frame(
+        engine,
+        frame,
+        services_for=tenant_registry.get,
+        # 经模块全局取 _resume_run：测试 monkeypatch 掉的续跑体仍会被用到。
+        submit_resume_run=lambda eng, services, pending: _BACKGROUND_WORKER_POOL.submit(
+            _resume_run, eng, services, pending
+        ),
+    )
 
 
 def _resume_run(engine, services: TenantServices, frame: dict) -> None:
     """续跑线程：从挂起节点沿边到 END，完成后清帧并落 run 终态（决策 / wait 到点 / 再超时均覆盖）。"""
-    run_id = frame.get("run_id", "")
-    try:
-        resume_graph = GraphDSL.model_validate(frame["graph_snapshot"])
-        with usage_context(
-            frame["tenant_id"],
-            run_id=run_id,
-            graph_id=frame["resume_state"].get("graph_id", ""),
-            store=services.usage_store,
-        ):
-            result = run_graph(
-                resume_graph,
-                inputs=frame["resume_state"].get("inputs", {}),
-                registry=_runtime_registry(services),
-                approval_broker=services.approval_broker,
-                event_wait_broker=services.event_wait_broker,
-                graph_id=frame["resume_state"].get("graph_id", ""),
-                graph_resolver=_tenant_graph_resolver(services),
-                frame_sink=make_frame_sink(engine, frame["tenant_id"], run_id),
-                resume_claim=make_resume_claim(engine),
-                resume=frame,
-                tenant_id=frame["tenant_id"],
-                secret_provider=_secret_provider,
-                memory_repo=services.memory_store,
-            )
-        if run_id:
-            services.run_store.finish(
-                run_id=run_id, status="completed",
-                outputs=result["outputs"], trace=result["trace"],
-            )
-        clear_frame(engine, frame["resume_token"])
-    except RunSuperseded as exc:
-        # docs/62 §2 D-4：续跑输家——帧已被其它进程认领，本线程停止驱动。
-        # 既不写 run 终态也不清帧（终态与清理都归赢家），否则会把赢家的执行结果覆盖掉。
-        logger.info("续跑让位 %s：%s", _token_ref(frame.get("resume_token")), exc)
-    except WaitTimeoutSuspend as exc:
-        # docs/136 打包 BS：续跑中挂起节点超时且 onTimeout="suspend"——run 保持 suspended
-        # （帧保留、不写终态、不清帧），等人工后续恢复；本线程停止驱动即可。
-        logger.info("续跑保持挂起 %s：%s", _token_ref(frame.get("resume_token")), exc)
-    except Exception as exc:
-        logger.error("续跑 %s 失败：%s", _token_ref(frame.get("resume_token")), exc)
-        if run_id:
-            services.run_store.finish(
-                run_id=run_id, status="failed", error=_safe_run_error(exc)
-            )
+    run_recovery.resume_run(
+        engine,
+        services,
+        frame,
+        run_graph_fn=run_graph,
+        runtime_registry=_runtime_registry,
+        graph_resolver=_tenant_graph_resolver,
+        secret_provider=_secret_provider,
+    )
 
 
 def _frame_sink_for(tenant_id: str, run_store, run_id: str):
     """挂起回调：先落 run 状态为 suspended（所有后端），PG 后端再写 interruptions 帧。"""
-
-    def sink(frame: dict) -> None:
-        run_store.suspend(
-            run_id=run_id,
-            node_id=frame["node_id"],
-            kind=frame["kind"],
-            resume_token=frame["resume_token"],
-            deadline_at=frame.get("deadline_at"),
-        )
-        if STORAGE_BACKEND == "pg":
-            make_frame_sink(get_pg_backend().engine, tenant_id, run_id)(frame)
-
-    return sink
+    return run_recovery.frame_sink_for(
+        tenant_id,
+        run_store,
+        run_id,
+        storage_backend=STORAGE_BACKEND,
+        pg_engine=_pg_engine,
+    )
 
 
 def _resume_claim_for() -> Callable[[str], bool] | None:
@@ -429,9 +347,10 @@ def _resume_claim_for() -> Callable[[str], bool] | None:
     与 `frame_sink` 严格配对注入——凡写帧的运行必带认领门，反之亦然，否则会出现
     "有帧无人认领判定"或"无帧却被判定为已被接管"两种漂移。
     """
-    if STORAGE_BACKEND != "pg":
-        return None
-    return make_resume_claim(get_pg_backend().engine)
+    return run_recovery.resume_claim_for(
+        storage_backend=STORAGE_BACKEND,
+        pg_engine=_pg_engine,
+    )
 
 
 @asynccontextmanager
