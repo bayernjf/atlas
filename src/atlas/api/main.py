@@ -142,6 +142,7 @@ from atlas.services.model_config_service import (
     build_model_config as _build_model_config,
     masked_view as _masked_view,
 )
+from atlas.services.webhook_runtime import build_webhook_callbacks
 from atlas.observability.health import check_ready
 from atlas.observability.logging import (
     configure_logging,
@@ -573,6 +574,33 @@ _OPENAPI_SURFACE = frozenset({"/docs", "/docs/oauth2-redirect", "/redoc", "/open
 async def gate_openapi_surface(request: Request, call_next):
     if request.url.path in _OPENAPI_SURFACE and not _demo_mock_enabled():
         return JSONResponse(status_code=404, content={"detail": "Not Found"})
+    return await call_next(request)
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("%s=%r 非整数，回退默认 %d", name, raw, default)
+        return default
+    return value if value > 0 else default
+
+
+#: /api/ 写请求体全局上限（2026-11-02 评审 P2-4）：默认 2 MiB，远超 500 节点
+#: 上限图的实测 JSON 体量；端点级更严上限（webhook 1MB、模板导入 256KB）仍各自生效。
+#: 只读 Content-Length 预拒，不消费请求体；无长度头的 chunked 体由端点读取后上限兜底。
+MAX_API_BODY_BYTES = _env_int("ATLAS_MAX_BODY_BYTES", 2 * 1024 * 1024)
+
+
+@app.middleware("http")
+async def cap_api_body_bytes(request: Request, call_next):
+    if request.url.path.startswith("/api/") and request.method in ("POST", "PUT", "PATCH"):
+        raw_length = request.headers.get("content-length")
+        if raw_length is not None and raw_length.isdigit() and int(raw_length) > MAX_API_BODY_BYTES:
+            return JSONResponse(status_code=413, content={"detail": "请求体超过大小上限"})
     return await call_next(request)
 
 
@@ -1208,58 +1236,8 @@ def _locate_binding(binding_id: str) -> tuple[str, ChannelBinding, TenantService
     return None
 
 
-def _webhook_resolve(graph_id: str, tenant: str, event: TriggerEvent) -> int | None:
-    services = tenant_registry.get(tenant)
-    version, _segment = services.routing_store.resolve(graph_id, tenant=tenant, event=event)
-    return version
-
-
-def _webhook_trigger(
-    graph_id: str, version: int, event: TriggerEvent, tenant: str, agent_id: str = ""
-) -> None:
-    services = tenant_registry.get(tenant)
-    _BACKGROUND_WORKER_POOL.submit(
-        _background_run_worker, services, tenant, graph_id, version, event, agent_id
-    )
-
-
-def _inbound_trigger(
-    graph_id: str, version: int, event: TriggerEvent, tenant: str,
-    agent_id: str, run_id: str | None,
-) -> None:
-    """入站会话触发（打包 BO，docs/131 D73）：承担「调度派发方」职责——submit 前
-    按预置 run_id 先 begin（与调度器同款"tick 内即可见 running"语义，见
-    `_background_run_worker` docstring），mode 记 `message_inbound`（U1445）。"""
-    services = tenant_registry.get(tenant)
-    if run_id is not None:
-        services.run_store.begin(
-            run_id=run_id, graph_id=graph_id, mode="message_inbound", agent_id=agent_id
-        )
-    _BACKGROUND_WORKER_POOL.submit(
-        _background_run_worker, services, tenant, graph_id, version, event, agent_id,
-        mode="message_inbound", run_id=run_id,
-    )
-
-
-def _webhook_audit(action: str, tenant: str, metadata: dict) -> None:
-    services = tenant_registry.get(tenant)
-    # AuditStore 无 metadata 列：关键事实编码进 path（不含 body/密钥）。
-    path = (
-        f"webhook binding={metadata.get('bindingId')} "
-        f"id={metadata.get('webhookId')} shop={metadata.get('shop')}"
-    )
-    services.audit_store.record(
-        tenant_id=tenant, actor="shopify-webhook", action=action,
-        status_code=200, path=path, ip="",
-    )
-
-
-_webhook_deliverer = WebhookDeliverer(
-    resolver=_webhook_resolve,
-    trigger=_webhook_trigger,
-    auditor=_webhook_audit,
-    store_provider=lambda tenant: tenant_registry.get(tenant).webhook_deliveries,
-)
+# webhook 四回调与 _webhook_deliverer 的装配落在 `_background_run_worker` 定义之后
+# （见下）：回调由 services.webhook_runtime 工厂生成，pool/worker 在装配期注入。
 
 
 def _background_run_cycle(
@@ -1393,6 +1371,19 @@ def _background_run_worker(
         inputs={"event": event.model_dump()},
         run_once=_run_once,
     )
+
+
+# webhook 回调装配（services.webhook_runtime 生成；worker 须已定义，故在本函数之后）。
+# WebhookDeliverer.__init__ 仅存回调引用，装配位置的模块内移动不改变运行时行为。
+_webhook_resolve, _webhook_trigger, _inbound_trigger, _webhook_audit = build_webhook_callbacks(
+    pool=_BACKGROUND_WORKER_POOL, worker=_background_run_worker
+)
+_webhook_deliverer = WebhookDeliverer(
+    resolver=_webhook_resolve,
+    trigger=_webhook_trigger,
+    auditor=_webhook_audit,
+    store_provider=lambda tenant: tenant_registry.get(tenant).webhook_deliveries,
+)
 
 
 # --- 定时触发调度器（docs/68，打包 N／ADR T30） ---------------------------
@@ -2447,12 +2438,42 @@ _inbound_receiver = InboundReceiver(
 )
 
 
+class _FailureWindowLimiter:
+    """验签失败限流：binding id 可枚举（ch-{seq}）的缓解——同一来源连续失败即熔断。
+
+    进程内固定窗口计数，无外部状态；只累计失败，验签成功即清零。
+    真实不可枚举 ID 是更大的改动（存量 binding id 需迁移），见 docs/73 上线缺口。
+    """
+
+    def __init__(self, max_failures: int = 10, window_seconds: float = 60.0) -> None:
+        self._max = max_failures
+        self._window = window_seconds
+        self._failures: dict[str, list[float]] = {}
+
+    def allow(self, key: str, *, now: float | None = None) -> bool:
+        now = time.time() if now is None else now
+        bucket = [t for t in self._failures.get(key, []) if now - t < self._window]
+        self._failures[key] = bucket
+        return len(bucket) < self._max
+
+    def note_failure(self, key: str, *, now: float | None = None) -> None:
+        now = time.time() if now is None else now
+        self._failures.setdefault(key, []).append(now)
+
+    def note_success(self, key: str) -> None:
+        self._failures.pop(key, None)
+
+
+_inbound_failure_limiter = _FailureWindowLimiter()
+
+
 @app.post("/api/channels/inbound/{binding_id}")
 async def inbound_ingress(binding_id: str, http_request: Request) -> dict[str, Any]:
-    """通用入站接收（公开，可插拔验签；D-D1）。
+    """通用入站接收（公开，强制验签；D-D1 + P1 fail-closed 修复）。
 
-    验签：binding.config.inbound_secret 配置则 HMAC 验签（header X-Inbound-Signature），
-    否则 passthrough（假供应商；真供应商 verify 留 ⛔ docs/73 1.3）。
+    验签：binding.config.inbound_secret 必须存在，否则 403；存在则 HMAC-SHA256
+    验签（header X-Inbound-Signature，恒定时间比对），失败 401 并限流 429。
+    重放由接收侧 messageId 幂等去重拦截（{duplicate}）。
     响应：{received, runId?, agentId?} / {duplicate} / {deadLetter, messageId?}。
     """
     located = await asyncio.to_thread(_locate_binding, binding_id)
@@ -2463,10 +2484,22 @@ async def inbound_ingress(binding_id: str, http_request: Request) -> dict[str, A
     if len(raw) > MAX_WEBHOOK_BODY_BYTES:
         raise HTTPException(status_code=413, detail="入站请求体超过 1MB 上限")
     secret = (binding.config or {}).get("inbound_secret")
-    if secret:
-        signature = http_request.headers.get("X-Inbound-Signature")
-        if not verify_shopify_hmac(raw, signature, secret):
-            raise HTTPException(status_code=401, detail="入站签名校验失败")
+    if not secret:
+        # fail-closed（P1 修复）：原"未配 secret 即 passthrough"分支是未认证远程触发面
+        # ——binding id 可枚举（ch-{seq}），命中即可以可控 payload 触发该租户已发布图。
+        # 与同仓 Shopify webhook「密钥缺失 503」、A2A prod 无 token 关闭同纪律。
+        _inbound_audit("channel.inbound_secret_missing", tenant_id, {"bindingId": binding_id})
+        raise HTTPException(status_code=403, detail="渠道绑定未配置入站验签密钥，拒绝受理")
+    client_key = http_request.client.host if http_request.client else "unknown"
+    if not _inbound_failure_limiter.allow(client_key):
+        _inbound_audit("channel.inbound_rate_limited", tenant_id, {"bindingId": binding_id})
+        raise HTTPException(status_code=429, detail="验签失败过于频繁，请稍后再试")
+    signature = http_request.headers.get("X-Inbound-Signature")
+    if not verify_shopify_hmac(raw, signature, secret):
+        _inbound_failure_limiter.note_failure(client_key)
+        _inbound_audit("channel.inbound_signature_failed", tenant_id, {"bindingId": binding_id})
+        raise HTTPException(status_code=401, detail="入站签名校验失败")
+    _inbound_failure_limiter.note_success(client_key)
     try:
         data = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):

@@ -28,6 +28,8 @@ KNOWN_INFRA = {
     "LITELLM_MODEL",
     "OPENAI_API_KEY",
     "OPENAI_BASE_URL",  # litellm 直连路径读取，src 不直接出现
+    # entrypoint shell（scripts/ops/docker-entrypoint.sh）读取，不经 Python 源码扫描面。
+    "ATLAS_BEHIND_PROXY",
 }
 
 # 唯一豁免：stdio MCP server 跑在操作员宿主机（mcp/server.py），不在 compose 容器里。

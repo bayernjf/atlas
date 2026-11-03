@@ -48,6 +48,13 @@ Caddy 首次启动会自动向 Let's Encrypt 申请证书并在到期前自动�
 
 4. （生产）确认对外只暴露 80/443：把 `docker-compose.yml` 中 atlas 服务的
    `"8000:8000"` 端口映射删除或改为绑定 `127.0.0.1:8000:8000`。
+5. （edge/反代形态）设置 `ATLAS_BEHIND_PROXY=1`：entrypoint 会为 uvicorn 追加
+   `--proxy-headers`，审计日志与邮件决策日志才能记录真实客户端 IP（否则全部是
+   Caddy 的内网地址）。**只在可信反代之后开启**——直连形态开启会让调用方伪造
+   `X-Forwarded-For` 污染审计归因。
+
+其他可调项：`ATLAS_MAX_BODY_BYTES`（/api/ 写请求体上限，默认 2 MiB；图本身另有
+节点 ≤500 / 边 ≤2000 上限，超限 422 并下发精确错误码）。
 
 ## 就绪/存活探针
 

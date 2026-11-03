@@ -12,11 +12,7 @@ import {
 } from 'antd'
 import { useEffect, useState } from 'react'
 import { useEditorStore, validateNodeId } from '../../store/editorStore'
-import {
-  NODE_CATALOG,
-  ON_ERROR_STRATEGIES,
-  type NodeConfig,
-} from '../../lib/nodeCatalog'
+import { ON_ERROR_STRATEGIES, type NodeConfig } from '../../lib/nodeCatalog'
 import { useScopeIndex, useToolOutputSchemas } from '../../lib/useScope'
 import { useNodeDiagnostics } from '../../store/validationStore'
 import { validateExpression } from '../../lib/conditions'
@@ -78,7 +74,6 @@ export function PropertyPanel() {
   }
 
   const { data } = selectedNode
-  const meta = NODE_CATALOG[data.kind]
   const diagnostics = engineDiagnostics
   const config = data.config
   const variablePaths = scope.listPathsAt(selectedNode.id, toolOutputSchemas)
@@ -149,7 +144,8 @@ export function PropertyPanel() {
         <div>
           <Typography.Text type="secondary">{t('property.type')}</Typography.Text>
           <div>
-            <Tag color={meta.color}>{t(`nodeCatalog.${data.kind}.label`)}</Tag>
+            {/* 同 NodePanel：hex 实底 Tag 白字不达 AA，改默认灰 Tag。 */}
+            <Tag>{t(`nodeCatalog.${data.kind}.label`)}</Tag>
           </div>
         </div>
         <Field label={t('property.nodeName')}>

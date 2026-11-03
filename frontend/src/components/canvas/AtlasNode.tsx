@@ -38,7 +38,9 @@ export function AtlasNode({ id, data, selected }: NodeProps<EditorNode>) {
       >
         {breakpoint?.expression?.trim() ? <span className="atlas-node-breakpoint-dot" /> : null}
       </button>
-      <div className="atlas-node-header" style={{ backgroundColor: meta.color }}>
+      {/* 节点色只保留在头部左边框色条：*6 色板 hex 实底配白字实测 1.90–3.74:1，
+          不达 WCAG AA（4.5:1）；头部改中性表面色 + 主题前景色（同 20c98d2 思路）。 */}
+      <div className="atlas-node-header" style={{ borderLeftColor: meta.color }}>
         <span>{t(`nodeCatalog.${data.kind}.label`)}</span>
         {data.status === 'running' && <span className="atlas-node-status">{t('canvas.statusRunning')}</span>}
         {data.status === 'paused' && <span className="atlas-node-status">{t('canvas.statusPaused')}</span>}
