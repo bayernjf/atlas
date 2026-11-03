@@ -1549,7 +1549,7 @@ def test_i18_alert_acknowledge_resolve_404_and_409():
     client.post(f"/api/graphs/{graph_id}/run", json={"inputs": {}})
     alert_id = client.get("/api/alerts?status=open").json()["items"][0]["id"]
 
-    assert client.post(f"/api/alerts/alt-missing/acknowledge").status_code == 404
+    assert client.post("/api/alerts/alt-missing/acknowledge").status_code == 404
     acked = client.post(f"/api/alerts/{alert_id}/acknowledge")
     assert acked.status_code == 200 and acked.json()["status"] == "acknowledged"
     assert client.post(f"/api/alerts/{alert_id}/acknowledge").status_code == 409

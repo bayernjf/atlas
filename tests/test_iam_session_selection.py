@@ -11,7 +11,12 @@ import pytest
 
 from atlas.iam.deps import select_session_store
 from atlas.iam.sessions import SessionStore
-from atlas.security.bootstrap import read_storage_backend
+from atlas.security.bootstrap import (
+    DEFAULT_PUBLIC_URL,
+    public_url_is_loopback,
+    read_public_url,
+    read_storage_backend,
+)
 
 
 def test_select_memory_store_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -64,8 +69,6 @@ def test_no_bare_storage_backend_env_read_remains() -> None:
 
 
 # --- U1134：ATLAS_PUBLIC_URL 收敛到唯一读取器（docs/89 §15 A-6，与 R4 同族）-----
-
-from atlas.security.bootstrap import DEFAULT_PUBLIC_URL, public_url_is_loopback, read_public_url
 
 
 def test_u1134_read_public_url_defaults_and_strips(monkeypatch: pytest.MonkeyPatch) -> None:

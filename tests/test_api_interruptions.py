@@ -315,7 +315,6 @@ def test_u1174_abandon_memory_backend_refuses(monkeypatch) -> None:
     ],
 )
 def test_u1175_abandon_storage_codes_map_to_http(monkeypatch, code, http_code, error_code) -> None:
-    from atlas.storage import recovery as recovery_mod
 
     info = {"status": "running"} if code == "run_not_suspended" else {}
     constant = {"frame_not_found": "frame_not_found",

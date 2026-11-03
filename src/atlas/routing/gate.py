@@ -89,7 +89,6 @@ def evaluate_after_run(services: Any, record: Any) -> None:
         if run.resolved_version == snapshot.candidate
         and _within_window(run.finished_at, gate.observeMinutes)
     ]
-    business_window = [run for run in window if getattr(run, "business", None) is not None]
     manual_rate, diff_rate, business_samples = business_rates(window)
 
     breaches: list[str] = []

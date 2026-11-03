@@ -612,7 +612,6 @@ def test_g3_oncall_interval_http_docs60():
     reason="set ATLAS_RUN_INTEGRATION=1 and DATABASE_URL to run monitoring PG integration",
 )
 def test_u299_pg_silence_assignee_escalation_persisted():
-    from pathlib import Path
 
     from sqlalchemy import create_engine, text
 

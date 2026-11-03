@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import pytest
 
 from atlas.channels.adapter import ShopifyHarnessAdapter
 from atlas.channels.base import TransportResponse

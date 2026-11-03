@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -261,7 +260,6 @@ def test_demo_reset_does_not_clear_audit(_clean_audit):
 
 
 def _run_all_migrations(engine) -> None:
-    from sqlalchemy import text
 
     from atlas.storage.migrations import apply_pending
     apply_pending(engine)

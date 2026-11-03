@@ -15,7 +15,6 @@ import types
 import pytest
 
 from atlas.harness.base import ActionRequest, ActionStatus, Permission
-from atlas.llm import structured
 from atlas.llm.structured import LLMStructuredUnavailable, extract_memories
 from atlas.memory.adapter import MemoryHarnessAdapter
 from atlas.memory.items import MemoryStore

@@ -17,20 +17,16 @@ import types
 import pytest
 
 from atlas.llm.config import (
-    BUILTIN_TENANT_KEY,
     InMemoryModelConfigStore,
     ModelConfig,
     resolve_default_model,
 )
 from atlas.llm.decision import (
-    AUTO_APPROVE,
-    HUMAN_APPROVAL,
     LiteLLMDecisionClient,
     RuleBasedDecisionClient,
     get_decision_client,
 )
 from atlas.llm.condition_classifier import (
-    LiteLLMConditionClassifier,
     OfflineConditionClassifier,
     get_condition_classifier,
 )

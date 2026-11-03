@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import os
 import uuid
-from pathlib import Path
 
 import pytest
 
@@ -62,7 +61,7 @@ def _decisions() -> list[ShadowDecision]:
 
 @pytest.fixture(scope="module")
 def engine():
-    from sqlalchemy import create_engine, text
+    from sqlalchemy import create_engine
 
     eng = create_engine(os.environ["DATABASE_URL"])
     from atlas.storage.migrations import apply_pending

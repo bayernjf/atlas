@@ -79,7 +79,6 @@ def test_prune_expired_interruptions_uses_native_column() -> None:
     }
     backend.prune_expired(cutoffs, session_sweep=False)
 
-    sql_by_table = {stmt: params for stmt, params in engine.conn.executed}
     # 只断言两个表都执行到（session_sweep=False 不产生 iam_sessions）。
     executed_sql = " | ".join(engine.conn.executed and [s for s, _ in engine.conn.executed])
     assert "interruptions" in executed_sql

@@ -134,7 +134,9 @@ def convert_schema(
         if value is True:
             bound = node.get("minimum" if key == "exclusiveMinimum" else "maximum")
             if bound is None:
-                raise UnsupportedSchema(f"{key} 为布尔值但缺少边界值")
+                raise UnsupportedSchema(
+                    "OPENAPI_BOUNDARY_MISSING", f"{key} 为布尔值但缺少边界值", {"name": key}
+                )
             value = bound
         if value is not False:
             result[key] = value
@@ -142,7 +144,7 @@ def convert_schema(
     if "properties" in node:
         properties = node["properties"]
         if not isinstance(properties, dict):
-            raise UnsupportedSchema("properties 必须是对象")
+            raise UnsupportedSchema("OPENAPI_PROPERTIES_NOT_OBJECT", "properties 必须是对象")
         result["properties"] = {
             name: convert_schema(sub, components, seen=seen, depth=depth)
             for name, sub in properties.items()
@@ -151,7 +153,10 @@ def convert_schema(
     if "required" in node:
         required = node["required"]
         if not isinstance(required, list) or not all(isinstance(k, str) for k in required):
-            raise UnsupportedSchema("required 必须是字符串数组")
+            raise UnsupportedSchema(
+                "OPENAPI_REQUIRED_NOT_STRING_ARRAY", "required 必须是字符串数组"
+            )
+
         result["required"] = required
 
     if "items" in node:
@@ -179,7 +184,7 @@ def _convert_all_of(
 ) -> dict[str, Any]:
     branches = node["allOf"]
     if not isinstance(branches, list) or not branches:
-        raise UnsupportedSchema("allOf 必须是非空数组")
+        raise UnsupportedSchema("OPENAPI_ALLOF_NOT_NONEMPTY_ARRAY", "allOf 必须是非空数组")
     converted = [
         convert_schema(sub, components, seen=seen, depth=depth) for sub in branches
     ]
@@ -188,7 +193,7 @@ def _convert_all_of(
     required: list[str] = []
     for branch in converted:
         if "type" in branch and branch["type"] != "object":
-            raise UnsupportedSchema("allOf 含非对象分支")
+            raise UnsupportedSchema("OPENAPI_ALLOF_BRANCH_NOT_OBJECT", "allOf 含非对象分支")
         for key, value in branch.items():
             if key == "properties":
                 properties.update(value)
@@ -197,7 +202,11 @@ def _convert_all_of(
             elif key == "type":
                 continue
             else:
-                raise UnsupportedSchema(f"allOf 分支含未合并约束：{key}")
+                raise UnsupportedSchema(
+                    "OPENAPI_ALLOF_UNSUPPORTED_CONSTRAINT",
+                    f"allOf 分支含未合并约束：{key}",
+                    {"name": key},
+                )
     result["type"] = "object"
     if properties:
         result["properties"] = properties

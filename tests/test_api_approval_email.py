@@ -9,7 +9,6 @@ token/comment。peek 不触发租户惰性创建。
 
 from __future__ import annotations
 
-import pytest
 from fastapi.testclient import TestClient
 
 from atlas.api.main import _email_token_issuer

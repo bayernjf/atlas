@@ -12,7 +12,6 @@ import json
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
 
@@ -267,7 +266,7 @@ def test_audit_read_stays_admin_only(headers):
 
 @pytest.fixture(scope="module")
 def engine():
-    from sqlalchemy import create_engine, text
+    from sqlalchemy import create_engine
 
     eng = create_engine(DATABASE_URL)
     from atlas.storage.migrations import apply_pending

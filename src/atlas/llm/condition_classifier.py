@@ -11,7 +11,8 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Protocol
+from typing import Any, Protocol
+
 
 from atlas.llm.metering import complete_with_usage
 

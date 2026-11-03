@@ -14,7 +14,7 @@ import logging
 import threading
 import time
 from collections import deque
-from typing import Callable, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol
 
 from pydantic import BaseModel
 

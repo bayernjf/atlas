@@ -180,7 +180,7 @@ def test_u1413_byok_key_is_passed_to_litellm_but_never_recorded(monkeypatch):
 
 
 def test_u1415_error_call_records_error_row_and_fail_safe_still_holds(monkeypatch):
-    from atlas.llm.decision import HUMAN_APPROVAL, LiteLLMDecisionClient
+    from atlas.llm.decision import LiteLLMDecisionClient
     from atlas.llm.metering import usage_context
 
     _install_litellm(monkeypatch, "", exc=TimeoutError("read timeout"))

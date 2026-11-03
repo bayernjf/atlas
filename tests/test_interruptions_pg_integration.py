@@ -16,7 +16,6 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -309,7 +308,7 @@ def _bl_cleanup(engine, suffix: str) -> None:
 
 def test_u1176_abandon_marks_run_interrupted_and_deletes_frame(engine, monkeypatch) -> None:
     """claimed_suspended ⇒ run 置 interrupted、帧删除（同一真事务）。"""
-    from atlas.storage.recovery import RESOLVE_OK, abandon_claimed_suspended_frame
+    from atlas.storage.recovery import RESOLVE_OK
 
     suffix = f"ok-{uuid.uuid4().hex[:8]}"
     token, run_id = _bl_seed_t1(engine, suffix, claimed=True, run_status="suspended")
@@ -414,7 +413,11 @@ def test_u1179_concurrent_abandon_exactly_one_wins(engine) -> None:
 
     t1 = threading.Thread(target=worker)
     t2 = threading.Thread(target=worker)
-    t1.start(); t2.start(); t1.join(); t2.join()
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
     try:
         assert sorted(outcomes).count("ok") == 1, outcomes
         assert "frame_not_found" in outcomes, outcomes

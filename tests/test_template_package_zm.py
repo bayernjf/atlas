@@ -212,7 +212,6 @@ def test_import_url_requires_https():
 
 def test_import_url_egress_blocks_private_networks(monkeypatch):
     """内网/环回 URL 被 EgressGuard 拒 → 422（真 egress 逻辑，反向门）。"""
-    import src.atlas.api.main as main
 
     # 不 monkeypatch egress：真 EgressGuard 应拒 127.0.0.1（denylist 恒启用）
     response = client.post("/api/templates/import", json={"url": "https://127.0.0.1/t.json"})
@@ -222,7 +221,6 @@ def test_import_url_egress_blocks_private_networks(monkeypatch):
 
 def test_import_url_success_via_mocked_http(monkeypatch):
     """https 远程 URL 放行路径：egress 放行＋httpx 假响应 → 201 创建（正向对照）。"""
-    import httpx
     import src.atlas.api.main as main
 
     class _FakeResponse:

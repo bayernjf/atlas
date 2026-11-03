@@ -23,7 +23,6 @@ from pydantic import BaseModel, Field
 
 from .models import RolloutConfig, RolloutStatus, TriggerEvent
 from .router import (
-    SEGMENT_FALLBACK,
     SEGMENT_FULL,
     SEGMENT_STABLE,
     SEGMENT_UNPUBLISHED,

@@ -9,7 +9,6 @@ from fastapi.testclient import TestClient
 
 from atlas.api.main import app
 
-from tests.conftest import DEFAULT_AUTH_HEADER
 
 client = TestClient(app)
 

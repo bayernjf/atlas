@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from atlas.cycles.judge import (
     evaluate_complete_when,

@@ -240,10 +240,6 @@ class TestEvaluationStore:
 
     def test_save_list_clear(self):
         store = EvaluationStore()
-        task = EvaluationTask(
-            task_id="st",
-            test_cases=[TestCase(inputs={}, expected=ExpectedAction(action="approve_refund"))],
-        )
         run = EvaluationRun(
             id="ev-test-1", task_id="st", graph_id="g",
             summary=EvaluationSummary(task_success_rate=1.0, average_steps=1.0),
@@ -422,10 +418,6 @@ def test_pg_store_roundtrip_and_reset(temp_database_url):
     assert applied_versions(engine) == applied
 
     store = PgEvaluationStore(engine, "t1")
-    task = EvaluationTask(
-        task_id="pg-1",
-        test_cases=[TestCase(inputs={}, expected=ExpectedAction(action="approve_refund"))],
-    )
     run1 = EvaluationRun(
         id="ev-pg-1", task_id="pg-1", graph_id="g",
         summary=EvaluationSummary(task_success_rate=1.0, average_steps=2.0),

@@ -22,8 +22,11 @@ from atlas.openapi.store import (
     ImportStoreError,
 )
 from atlas.security.egress import EgressGuard
+from atlas.security.secrets import PlaintextSecretProvider
 
-PUBLIC_RESOLVER = lambda host: ["93.184.216.34"]
+def PUBLIC_RESOLVER(host):
+    return ["93.184.216.34"]
+
 
 SPEC = {
     "openapi": "3.0.3",
@@ -330,9 +333,8 @@ def test_observe_reports_spec_metadata():
 
 # --- security scheme credential injection（docs/44） -----------------------
 
-from atlas.security.secrets import PlaintextSecretProvider
-
 SECURE_SPEC_DOC = {
+
     "openapi": "3.0.3",
     "info": {"title": "Secured", "version": "1.0.0"},
     "servers": [{"url": "https://secured.example.com"}],
@@ -594,7 +596,6 @@ def _digest_doc():
 
 
 def test_digest_challenge_response_completes():
-    import hashlib
 
     seen = {}
     realm, nonce, username, password = "atlas", "0a4f113b", "alice", "wonderland"

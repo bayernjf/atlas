@@ -1,3 +1,5 @@
+import datetime as _dt
+
 import pytest
 
 from atlas.graph.conditions import ConditionEvalError, evaluate_expression, validate_expression
@@ -165,9 +167,9 @@ def test_top_level_must_be_boolean():
 
 
 # ---------- C（docs/27 §2）：可注入时钟 today()/now()/datetime()/hoursBetween ----------
-import datetime as _dt
 
 _FIXED = _dt.datetime(2026, 9, 19, 13, 30, tzinfo=_dt.timezone.utc)
+
 
 
 def test_today_now_use_injected_clock_and_are_stable():

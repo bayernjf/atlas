@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from atlas.api.main import app
 from atlas.harness.base import ActionRequest, ActionStatus, Permission
-from atlas.iam.deps import services_for, tenant_registry
+from atlas.iam.deps import tenant_registry
 from atlas.iam.principals import Principal, Role
 from atlas.memory.adapter import MemoryHarnessAdapter
 from atlas.memory.items import MemoryStore

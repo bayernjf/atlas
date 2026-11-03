@@ -5,7 +5,6 @@ from atlas.monitoring.notify import (
     AlertChannel,
     AlertChannelDelivery,
     AlertNotifier,
-    build_alert_body,
     build_alert_subject,
     validate_alert_channel,
 )

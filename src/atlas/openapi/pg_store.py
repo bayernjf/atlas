@@ -275,7 +275,7 @@ class PgImportStore:
                     {"t": self._tenant_id, "id": spec_id},
                 )
                 return True, None, None
-        except IntegrityError as exc:
+        except IntegrityError:
             # docs/125 §3.3（项目级审查发现 #5）：预检与 UPDATE 之间存在 TOCTOU 窗口，
             # 另一个同指纹规格恰好先恢复会撞迁移 048 的唯一部分索引。事务已回滚，
             # 换新连接重查现存未删同指纹行，折成与预检路径同形的 OPENAPI_RESTORE_CLASH。

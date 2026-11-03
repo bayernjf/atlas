@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import threading
 import time
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient

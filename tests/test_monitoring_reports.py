@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from atlas.monitoring.records import RunRecord
 from atlas.monitoring.reports import aggregate_runs, bucket_key

@@ -42,7 +42,7 @@ def test_first_non_empty_line_is_a_comment_for_new_migrations():
         match = NAME_RE.match(f.name)
         if match is None or int(match.group(1)) <= BASELINE:
             continue  # 命名不合规由第 1 条单独报，这里不重复炸
-        first = next((l for l in f.read_text(encoding="utf-8").split("\n") if l.strip()), "")
+        first = next((line for line in f.read_text(encoding="utf-8").split("\n") if line.strip()), "")
         if not first.lstrip().startswith("--"):
             offenders.append(f.name)
     assert offenders == [], f"新增迁移首个非空行必须是 -- 注释（MIGRATION_CONVENTION §3 第 2 条）：{offenders}"

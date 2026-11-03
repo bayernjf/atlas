@@ -11,17 +11,16 @@
 """
 
 
+import logging
 import threading
 from collections import deque
 from dataclasses import dataclass
-import logging
-
-logger = logging.getLogger(__name__)
-
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from sqlalchemy import Engine, text
+
+logger = logging.getLogger(__name__)
 
 HISTORY_RING_SIZE = 200
 

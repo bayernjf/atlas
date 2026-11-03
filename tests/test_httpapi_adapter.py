@@ -15,7 +15,6 @@ from atlas.harness.base import (
     ActionRequest,
     ActionStatus,
     Permission,
-    StructuredError,
 )
 from atlas.httpapi.adapter import HttpApiHarnessAdapter
 from atlas.httpapi.resilience import RetryPolicy
@@ -23,7 +22,9 @@ from atlas.httpapi.service import HttpApiCallError, HttpApiClient
 from atlas.security.egress import EgressGuard
 
 # 假 resolver：任何域名都解析到 example.com 公网 IP（不真实连接）
-PUBLIC_RESOLVER = lambda host: ["93.184.216.34"]
+def PUBLIC_RESOLVER(host):
+    return ["93.184.216.34"]
+
 
 
 def make_client(

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-import pytest
 
 from atlas.scheduling.engine import (
     ACTION_CLAIM_LOST,
@@ -91,7 +90,7 @@ def test_u880_rg_claim_is_the_authority_not_the_engine():
     broken = Recorder(claim_always_true=True)  # 植缺陷：认领恒真
     assert [o.action for o in tick(utc(5), [item], broken.claim, broken.dispatch,
                                    ledger=TickLedger())] == [ACTION_FIRED]
-    again = tick(utc(5, 30), [item], broken.claim, broken.dispatch, ledger=TickLedger())
+    tick(utc(5, 30), [item], broken.claim, broken.dispatch, ledger=TickLedger())
     assert len(broken.dispatched) == 2, "认领恒真却仍然只派发一次＝这条反向门没咬到东西"
 
 

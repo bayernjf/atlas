@@ -7,18 +7,16 @@
 
 
 import json
+import logging
 import os
 import re
-import logging
-
-logger = logging.getLogger(__name__)
-
 from typing import Any
 
+from atlas.llm.metering import complete_with_usage
 from atlas.security.bootstrap import demo_surface_enabled
 from atlas.template.graphs import refund_template_graph
 
-from atlas.llm.metering import complete_with_usage
+logger = logging.getLogger(__name__)
 
 _REFUND_KEYWORDS = ("退款", "退货", "售后")
 

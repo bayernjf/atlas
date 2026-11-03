@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import pytest
 from fastapi.testclient import TestClient
 
 from atlas.api.main import app, schedule_store
@@ -71,9 +72,6 @@ def _republish(graph_id: str, body: dict) -> int:
     published = client.post(f"/api/graphs/{graph_id}/publish", headers=ADMIN_A)
     assert published.status_code == 200, published.text
     return int(published.json()["releaseVersion"])
-
-
-import pytest
 
 
 @pytest.fixture(autouse=True)

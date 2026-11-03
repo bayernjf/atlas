@@ -15,7 +15,6 @@ from __future__ import annotations
 import os
 import threading
 import uuid
-from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, text

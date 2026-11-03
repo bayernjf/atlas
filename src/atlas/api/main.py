@@ -33,6 +33,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Res
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from sqlalchemy import text
 
 from atlas.api.sse import SSEBridge, SSE_HEARTBEAT_SECONDS
 from atlas.cards import (
@@ -64,6 +65,7 @@ from atlas.collaboration.event_waits import (
 from atlas.collaboration.notifications import EmailApprovalNotifier
 from atlas.collaboration.email_token import EmailTokenError, TokenIssuer
 from atlas.tracing import Tracer
+from atlas.harness.registry import AdapterRegistry
 from atlas.harness.runtime import (
     build_base_registry,
     build_runtime_registry,
@@ -86,7 +88,6 @@ from atlas.iam.accounts import UserExists
 from atlas.iam.passwords import validate_password, validate_username, verify_password
 from atlas.iam.principals import Principal, Role, can
 from atlas.iam.registry import STORAGE_BACKEND, TenantServices
-from atlas.llm.config import ModelConfig
 from atlas.llm.decision import get_decision_client, warm_litellm
 from atlas.llm.metering import usage_context
 from atlas.llm.nl_generate import generate_graph, validate_param_fills
@@ -213,7 +214,6 @@ from atlas.storage.recovery import (
     RESOLVE_FRAME_NOT_CLAIMED,
     RESOLVE_FRAME_NOT_FOUND,
     RESOLVE_OK,
-    RESOLVE_RUN_NOT_SUSPENDED,
     abandon_claimed_suspended_frame,
     clear_tenant_frames,
     interruption_view,
@@ -221,8 +221,6 @@ from atlas.storage.recovery import (
 from atlas.scheduling.cron import CronExpressionError, next_fire_utc, validate_cron
 from atlas.scheduling.engine import TickLedger, TickOutcome
 from atlas.scheduling.models import (
-    DEFAULT_SCHEDULE_ACTION,
-    ScheduleAction,
     ScheduleRecord,
     schedule_projection,
     slot_key,
