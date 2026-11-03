@@ -89,6 +89,9 @@ services:
       ATLAS_AUDIT_RING: ${ATLAS_AUDIT_RING:-}
       # /api/ 写请求体上限（2026-11-02 评审 P2-4），缺省空＝代码默认 2 MiB。
       ATLAS_MAX_BODY_BYTES: ${ATLAS_MAX_BODY_BYTES:-}
+      # 可信反代开关（P2-5，仅 edge 形态置 1）：由 entrypoint shell 读取并为
+      # uvicorn 追加 --proxy-headers，不经 Python 源码（U1158 登记 KNOWN_INFRA）。
+      ATLAS_BEHIND_PROXY: ${ATLAS_BEHIND_PROXY:-}
       ATLAS_RETENTION_DAYS: ${ATLAS_RETENTION_DAYS:-}
       ATLAS_RETENTION_RUNS_DAYS: ${ATLAS_RETENTION_RUNS_DAYS:-}
       ATLAS_RETENTION_AUDIT_DAYS: ${ATLAS_RETENTION_AUDIT_DAYS:-}

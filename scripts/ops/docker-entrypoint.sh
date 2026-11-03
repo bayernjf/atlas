@@ -54,6 +54,13 @@ for arg in "$@"; do
     fi
 done
 
+# 审计归因（2026-11-02 评审 P2-5）：仅在显式声明位于可信反代之后才让 uvicorn
+# 解析 X-Forwarded-For / X-Forwarded-Proto；默认关闭，直连形态不受伪造 XFF 影响。
+if [ "${ATLAS_BEHIND_PROXY:-0}" = "1" ]; then
+    echo "[entrypoint] ATLAS_BEHIND_PROXY=1：追加 --proxy-headers（仅可信反代后开启）" >&2
+    set -- "$@" --proxy-headers
+fi
+
 python -m scripts.ops.apply_migrations
 
 # docs/64 J-1c：prod 不播种种子账号（含已知默认口令），本地/演示照常。
