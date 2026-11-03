@@ -577,6 +577,33 @@ async def gate_openapi_surface(request: Request, call_next):
     return await call_next(request)
 
 
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("%s=%r 非整数，回退默认 %d", name, raw, default)
+        return default
+    return value if value > 0 else default
+
+
+#: /api/ 写请求体全局上限（2026-11-02 评审 P2-4）：默认 2 MiB，远超 500 节点
+#: 上限图的实测 JSON 体量；端点级更严上限（webhook 1MB、模板导入 256KB）仍各自生效。
+#: 只读 Content-Length 预拒，不消费请求体；无长度头的 chunked 体由端点读取后上限兜底。
+MAX_API_BODY_BYTES = _env_int("ATLAS_MAX_BODY_BYTES", 2 * 1024 * 1024)
+
+
+@app.middleware("http")
+async def cap_api_body_bytes(request: Request, call_next):
+    if request.url.path.startswith("/api/") and request.method in ("POST", "PUT", "PATCH"):
+        raw_length = request.headers.get("content-length")
+        if raw_length is not None and raw_length.isdigit() and int(raw_length) > MAX_API_BODY_BYTES:
+            return JSONResponse(status_code=413, content={"detail": "请求体超过大小上限"})
+    return await call_next(request)
+
+
 def _tenant_graph_resolver(services: TenantServices):
     """subgraph 节点 graph_resolver（04 §5.7）：在当前租户 GraphStore 内按 id 解析，缺失抛 KeyError。"""
 

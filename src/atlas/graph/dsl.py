@@ -65,6 +65,11 @@ MIN_APPROVAL_TIMEOUT = 10
 MAX_APPROVAL_TIMEOUT = 3600
 APPROVAL_TIMEOUT_ACTIONS = ("approve", "reject", "suspend")  # docs/136 打包 BS：suspend＝超时不自动决、保持挂起
 MAX_NOTIFY_EMAILS = 5  # docs/35 §2.1：单个审批节点通知邮箱上限
+#: 图规模上限（2026-11-02 评审 P2-4）：认证账号可提交超大图造成内存放大、
+#: 编译期全图扫描变慢，loader 超步上限 2*len(nodes) 随之线性放大。500 节点与
+#: frontend/bench 的基准规模对齐；2000 边约 4 倍于稠密业务图经验值。
+MAX_GRAPH_NODES = 500
+MAX_GRAPH_EDGES = 2000
 
 NodeType = str
 
@@ -256,6 +261,20 @@ def validate_graph_report(
             f"不支持的 Graph 版本：{graph.version}（当前支持 1）",
             code="GRAPH_VERSION_UNSUPPORTED",
             params={"version": graph.version},
+        )
+
+    # 规模上限先报（P2-4）：超限图不再逐节点深扫，直接随其余错误一并返回。
+    if len(graph.nodes) > MAX_GRAPH_NODES:
+        issues.add(
+            f"节点数 {len(graph.nodes)} 超过上限 {MAX_GRAPH_NODES}",
+            code="GRAPH_NODES_LIMIT_EXCEEDED",
+            params={"count": len(graph.nodes), "max": MAX_GRAPH_NODES},
+        )
+    if len(graph.edges) > MAX_GRAPH_EDGES:
+        issues.add(
+            f"连线数 {len(graph.edges)} 超过上限 {MAX_GRAPH_EDGES}",
+            code="GRAPH_EDGES_LIMIT_EXCEEDED",
+            params={"count": len(graph.edges), "max": MAX_GRAPH_EDGES},
         )
 
     if not graph.nodes:
