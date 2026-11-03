@@ -41,6 +41,8 @@ model-hub-client = { git = "https://github.com/bayernjf/model-hub.git", tag = "v
 [project.optional-dependencies]
 dev = [
     "pytest>=9.1,<10",
+    "ruff==0.14.4",
+    "mypy==1.19.1",
 ]
 
 [tool.setuptools.packages.find]
@@ -52,3 +54,205 @@ testpaths = ["tests"]
 markers = [
     "integration: requires external services (PostgreSQL/Redis); opt-in via ATLAS_RUN_INTEGRATION=1",
 ]
+
+[tool.ruff]
+# The repo had no linter before; start from ruff's default pycodestyle/pyflakes
+# subset (E4/E7/E9/F) instead of inventing a wider rule set in one step.
+target-version = "py311"
+line-length = 100
+extend-exclude = [".venv", "backups", "frontend"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src/atlas"]
+plugins = ["pydantic.mypy"]
+show_error_codes = true
+# Third-party SDKs (langgraph, litellm, mcp, psycopg, ...) ship no stubs; without
+# this every import becomes an error and the real signal drowns.
+ignore_missing_imports = true
+
+# Baseline overrides: modules below already fail specific mypy error codes.
+# Each entry disables only the codes measured in that module, so the module is
+# still checked for every other code. This is the auditable replacement for
+# blanket `# type: ignore` comments; new errors of an already-disabled code in
+# these modules are still not reported, so shrink the lists when touching them.
+# Roots: dict/JSON-shaped payloads (dict-item, index, union-attr, misc,
+# no-redef), Literal/enum narrowing from raw values (assignment), and untyped
+# third-party objects (attr-defined).
+[[tool.mypy.overrides]]
+module = [
+    "atlas.channels.shopify",
+    "atlas.cycles.supervisor",
+    "atlas.evaluation.models",
+    "atlas.harness.generated",
+    "atlas.httpapi.service",
+    "atlas.llm.condition_classifier",
+    "atlas.llm.metering",
+    "atlas.llm.nl_generate",
+    "atlas.memory.models",
+    "atlas.openapi.adapter",
+    "atlas.recording.promote",
+    "atlas.recording.replay",
+    "atlas.recording.reports",
+    "atlas.scheduling.engine",
+    "atlas.services.model_config_service",
+    "atlas.services.scheduler_runtime",
+    "atlas.tracing.tracer",
+]
+disable_error_code = ["arg-type"]
+
+[[tool.mypy.overrides]]
+module = [
+    "atlas.a2a.rpc",
+    "atlas.channels.adapter",
+    "atlas.connections.models",
+    "atlas.llm.structured",
+    "atlas.message.smtp",
+    "atlas.routing.gate",
+]
+disable_error_code = ["assignment"]
+
+[[tool.mypy.overrides]]
+module = [
+    "atlas.iam.registry",
+    "atlas.llm.config",
+    "atlas.mcp.server",
+    "atlas.monitoring.metrics",
+    "atlas.monitoring.notify",
+]
+disable_error_code = ["attr-defined"]
+
+[[tool.mypy.overrides]]
+module = [
+    "atlas.memory.adapter",
+    "atlas.recording.snapshots",
+    "atlas.reflection.evidence",
+    "atlas.storage.migrations",
+]
+disable_error_code = ["union-attr"]
+
+[[tool.mypy.overrides]]
+# `valid-type`: these classes define a method named `list`, which shadows the
+# builtin inside class-scope annotations such as `-> list[X]`.
+module = [
+    "atlas.message.pg_template_store",
+    "atlas.message.template_store",
+    "atlas.storage.base",
+    "atlas.storage.memory",
+]
+disable_error_code = ["valid-type"]
+
+[[tool.mypy.overrides]]
+module = [
+    "atlas.connections.service",
+    "atlas.coordination.sandbox",
+    "atlas.scheduling.store",
+]
+disable_error_code = ["arg-type", "assignment"]
+
+[[tool.mypy.overrides]]
+module = [
+    "atlas.channels.inbound_deliveries",
+    "atlas.channels.pg_deliveries",
+]
+disable_error_code = ["arg-type", "call-overload", "index"]
+
+[[tool.mypy.overrides]]
+# Largest API module: hand-written FastAPI handlers pass dict payloads into
+# repository protocols; call-arg/name-defined errors were fixed, not baselined.
+module = ["atlas.api.main"]
+disable_error_code = [
+    "arg-type",
+    "assignment",
+    "attr-defined",
+    "call-overload",
+    "index",
+    "return-value",
+    "union-attr",
+]
+
+[[tool.mypy.overrides]]
+# Graph loader walks arbitrary serialized graph JSON; dict-item/index/no-redef
+# come from that untyped boundary.
+module = ["atlas.graph.loader"]
+disable_error_code = [
+    "arg-type",
+    "assignment",
+    "attr-defined",
+    "dict-item",
+    "index",
+    "misc",
+    "no-redef",
+    "union-attr",
+]
+
+[[tool.mypy.overrides]]
+module = ["atlas.monitoring.records"]
+disable_error_code = ["arg-type", "assignment", "attr-defined", "misc", "return-value"]
+
+[[tool.mypy.overrides]]
+module = ["atlas.graph.dsl"]
+disable_error_code = ["arg-type", "assignment", "type-var"]
+
+[[tool.mypy.overrides]]
+module = ["atlas.storage.pg"]
+disable_error_code = ["arg-type", "assignment", "valid-type", "var-annotated"]
+
+[[tool.mypy.overrides]]
+module = ["atlas.monitoring.alerts"]
+disable_error_code = ["arg-type", "attr-defined"]
+
+[[tool.mypy.overrides]]
+module = ["atlas.debug.controller"]
+disable_error_code = ["arg-type", "index"]
+
+[[tool.mypy.overrides]]
+module = ["atlas.reflection.autoapply"]
+disable_error_code = ["arg-type", "type-var"]
+
+[[tool.mypy.overrides]]
+module = ["atlas.channels.registry"]
+disable_error_code = ["arg-type", "valid-type"]
+
+[[tool.mypy.overrides]]
+module = ["atlas.web.adapter"]
+disable_error_code = ["assignment", "attr-defined", "union-attr"]
+
+[[tool.mypy.overrides]]
+module = ["atlas.versioning.upgrades"]
+disable_error_code = ["assignment", "index", "union-attr"]
+
+[[tool.mypy.overrides]]
+module = ["atlas.graph.conditions"]
+disable_error_code = ["attr-defined", "union-attr"]
+
+[[tool.mypy.overrides]]
+module = ["atlas.database.service"]
+disable_error_code = ["call-overload"]
+
+[[tool.mypy.overrides]]
+module = ["atlas.versioning.publish"]
+disable_error_code = ["index", "union-attr"]
+
+[[tool.mypy.overrides]]
+module = ["atlas.security.secrets"]
+disable_error_code = ["misc", "return-value"]
+
+[[tool.mypy.overrides]]
+module = ["atlas.message.service"]
+disable_error_code = ["misc", "union-attr", "valid-type"]
+
+[[tool.mypy.overrides]]
+module = ["atlas.security.egress"]
+disable_error_code = ["return-value"]
+
+[[tool.mypy.overrides]]
+module = ["atlas.a2a.router"]
+disable_error_code = ["type-var"]
+
+[[tool.mypy.overrides]]
+module = ["atlas.recording.shadow"]
+disable_error_code = ["var-annotated"]
