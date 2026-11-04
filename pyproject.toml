@@ -161,9 +161,11 @@ module = [
 disable_error_code = ["arg-type", "call-overload", "index"]
 
 [[tool.mypy.overrides]]
-# Largest API module: hand-written FastAPI handlers pass dict payloads into
+# Largest API modules: hand-written FastAPI handlers pass dict payloads into
 # repository protocols; call-arg/name-defined errors were fixed, not baselined.
-module = ["atlas.api.main"]
+# P2-1 moved those handlers verbatim into atlas.api.routers.*, so the split
+# modules carry the same measured baseline as the module they came from.
+module = ["atlas.api.main", "atlas.api.routers.*"]
 disable_error_code = [
     "arg-type",
     "assignment",
