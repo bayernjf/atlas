@@ -156,7 +156,8 @@ services:
 
   # 可选可观测栈（--profile observability 才启动）；配置见 deploy/prometheus、deploy/grafana
   prometheus:
-    image: prom/prometheus:latest
+    # P3-2：钉 minor 版本，不用 latest（重拉镜像不应悄悄换主版本）。
+    image: prom/prometheus:v3.15.1
     profiles: ["observability"]
     command:
       - --config.file=/etc/prometheus/prometheus.yml
@@ -172,7 +173,8 @@ services:
     restart: unless-stopped
 
   grafana:
-    image: grafana/grafana:latest
+    # P3-2：同 prometheus，钉到具体版本。
+    image: grafana/grafana:13.3.0
     profiles: ["observability"]
     environment:
       # 生产部署必须通过 .env 覆盖 GRAFANA_ADMIN_PASSWORD（默认值仅供本地演示）
