@@ -12,7 +12,6 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
 
@@ -56,7 +55,7 @@ def _error_run(store, graph_id: str = "g1") -> None:
 
 @pytest.fixture(scope="module")
 def engine():
-    from sqlalchemy import create_engine, text
+    from sqlalchemy import create_engine
 
     eng = create_engine(os.environ["DATABASE_URL"])
     from atlas.storage.migrations import apply_pending

@@ -33,6 +33,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Res
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from sqlalchemy import text
 
 from atlas.api.sse import SSEBridge, SSE_HEARTBEAT_SECONDS
 from atlas.cards import (
@@ -45,7 +46,7 @@ from atlas.cards import (
 from atlas.debug import DebugController, DebugStopped
 from atlas.evaluation import EvaluationGraphNotFound, EvaluationTask, run_task
 from atlas.graph.conditions import validate_expression
-from atlas.graph.dsl import GraphDSL, GraphValidationError, parse_graph, valid_event_key
+from atlas.graph.dsl import GraphValidationError, parse_graph, valid_event_key
 from atlas.graph.diff import diff_graph, diff_summary
 from atlas.graph.loader import (
     RunSuperseded,
@@ -64,6 +65,7 @@ from atlas.collaboration.event_waits import (
 from atlas.collaboration.notifications import EmailApprovalNotifier
 from atlas.collaboration.email_token import EmailTokenError, TokenIssuer
 from atlas.tracing import Tracer
+from atlas.harness.registry import AdapterRegistry
 from atlas.harness.runtime import (
     build_base_registry,
     build_runtime_registry,
@@ -86,7 +88,6 @@ from atlas.iam.accounts import UserExists
 from atlas.iam.passwords import validate_password, validate_username, verify_password
 from atlas.iam.principals import Principal, Role, can
 from atlas.iam.registry import STORAGE_BACKEND, TenantServices
-from atlas.llm.config import ModelConfig
 from atlas.llm.decision import get_decision_client, warm_litellm
 from atlas.llm.metering import usage_context
 from atlas.llm.nl_generate import generate_graph, validate_param_fills
@@ -124,6 +125,7 @@ from atlas.iam.agents_store import Agent
 from atlas.a2a.router import router as a2a_router  # docs/90 ADR T32 (Zeus A2A execution-agent face)
 from atlas.connections.service import ConnectionServiceError
 from atlas.services.audit_query import audit_bounds as _audit_bounds, audit_cursor as _audit_cursor
+from atlas.services import run_recovery, scheduler_runtime
 from atlas.services.error_safety import (
     safe_persisted_error,
     safe_run_error as _safe_run_error,
@@ -131,12 +133,7 @@ from atlas.services.error_safety import (
     unexpected_stream_error as _unexpected_stream_error,
 )
 from atlas.services.error_handlers import register_exception_handlers
-from atlas.services.schedule_pure import (
-    no_schedule_detail as _no_schedule_detail,
-    schedule_enabled as _schedule_enabled,
-    schedule_specs_of_published as _schedule_specs_of_published,
-    schedule_tick_seconds as _schedule_tick_seconds,
-)
+from atlas.services.schedule_pure import no_schedule_detail as _no_schedule_detail
 from atlas.services.model_config_service import (
     ModelConfigRequest,
     build_model_config as _build_model_config,
@@ -210,7 +207,6 @@ from atlas.routing import (
     required_samples,
 )
 from atlas.shop.service import DemoShopService
-from atlas.storage.frame import card_context_from_frame, remaining_seconds
 from atlas.storage.memory import ApprovalBroker, FeedbackRequest
 from atlas.storage.pg import get_pg_backend
 from atlas.storage.retention import run_retention_once
@@ -218,33 +214,19 @@ from atlas.storage.recovery import (
     RESOLVE_FRAME_NOT_CLAIMED,
     RESOLVE_FRAME_NOT_FOUND,
     RESOLVE_OK,
-    RESOLVE_RUN_NOT_SUSPENDED,
     abandon_claimed_suspended_frame,
-    clear_frame,
     clear_tenant_frames,
     interruption_view,
-    load_pending_frames,
-    make_frame_sink,
-    make_resume_claim,
 )
 from atlas.scheduling.cron import CronExpressionError, next_fire_utc, validate_cron
-from atlas.scheduling.engine import (
-    ACTION_SKIPPED_OVERLAP,
-    TickLedger,
-    TickOutcome,
-    tick,
-)
+from atlas.scheduling.engine import TickLedger, TickOutcome
 from atlas.scheduling.models import (
-    DEFAULT_SCHEDULE_ACTION,
-    REFLECT_SCHEDULE_ID,
-    ScheduleAction,
     ScheduleRecord,
     schedule_projection,
     slot_key,
     tz_of,
 )
-from atlas.scheduling.pg_store import PgScheduleStore
-from atlas.scheduling.store import InMemoryScheduleStore, ScheduleStore
+from atlas.scheduling.store import ScheduleStore
 from atlas.reflection import run_pass as run_reflection_pass
 from atlas.reflection.autoapply import AUTO_SCOPES, abort_autoapply, run_autoapply
 from atlas.embeds.token import EmbedTokenError, EmbedTokenIssuer
@@ -291,136 +273,58 @@ def _wait_for_database_ready() -> None:
         logger.warning("PG 连通性等待超预算，启动继续（恢复扫描/retention 可能被跳过）：%s", exc)
 
 
+def _pg_engine():
+    """当前 PG 引擎（惰性取值，保证测试 monkeypatch STORAGE_BACKEND 后仍按当次读）。"""
+    return get_pg_backend().engine
+
+
 def recover_pending() -> None:
     """服务启动钩子：读未决挂起帧 → 逐帧重建 pending + 重启续跑线程（docs/24 §2.4）。
 
     仅 PG 后端生效（进程内后端重启即失、无帧可恢复）；失败帧隔离记日志、不阻塞其余。
     """
-    if STORAGE_BACKEND != "pg":
-        return
-    try:
-        engine = get_pg_backend().engine
-        frames = load_pending_frames(engine)
-    except Exception as exc:  # 无 DATABASE_URL / PG 未就绪时不阻断启动
-        logger.warning("中断恢复扫描跳过：%s", exc)
-        return
-    for frame in frames:
-        try:
-            _resume_from_frame(engine, frame)
-        except Exception as exc:
-            logger.warning("帧 %s 恢复失败、隔离跳过：%s", _token_ref(frame.get("resume_token")), exc)
+    run_recovery.recover_pending(
+        storage_backend=STORAGE_BACKEND,
+        pg_engine=_pg_engine,
+        resume_from_frame=_resume_from_frame,
+    )
 
 
 def _resume_from_frame(engine, frame: dict) -> None:
     """按帧重建 pending（approval 重挂 Event + 剩余 deadline），并重启续跑线程。"""
-    services = tenant_registry.get(frame["tenant_id"])
-    token = frame["resume_token"]
-    if frame.get("resumed_at") is not None:
-        # docs/62 §2 D-1 / §8.1 第②种：帧已被某进程认领（写帧后、执行完前该进程崩了），
-        # at-most-once 语义下不再为它重建 pending、不起线程——宁可这条 run 停在 suspended，
-        # 也不重复执行下游；开口收敛属 D36（人工重放/reconcile）。
-        logger.info(
-            "帧 %s 已由 %s 认领，跳过恢复（不重建 pending、不起续跑线程）",
-            token,
-            frame.get("resumed_by") or "其它进程",
-        )
-        return
-    if frame["kind"] == "approval":
-        card_template_id = frame.get("card_template_id") or None
-        services.approval_broker.restore(
-            token=token,
-            node_id=frame["node_id"],
-            graph_id=frame["resume_state"].get("graph_id", ""),
-            summary=frame.get("summary", ""),
-            approver=frame.get("approver", ""),
-            remaining_seconds=remaining_seconds(frame.get("deadline_at")),
-            card_template_id=card_template_id,
-            card_context=card_context_from_frame(frame) if card_template_id else None,
-        )
-    elif frame["kind"] == "wait" and (frame.get("wait") or {}).get("waitType") == "event":
-        wait_payload = frame["wait"]
-        # docs/54：多键竞速帧存 eventKeys；单键帧只有 eventKey（首键）。
-        # docs/55：帧存 eventWaitMode（all=AND 竞速；缺省 any 兼容旧帧）。
-        _frame_keys = wait_payload.get("eventKeys")
-        services.event_wait_broker.restore(
-            token=token,
-            event_key=wait_payload.get("eventKey"),
-            event_keys=_frame_keys
-            if isinstance(_frame_keys, list) and _frame_keys
-            else None,
-            node_id=frame["node_id"],
-            graph_id=frame["resume_state"].get("graph_id", ""),
-            timeout_seconds=remaining_seconds(frame.get("deadline_at")),
-            mode=wait_payload.get("eventWaitMode")
-            if wait_payload.get("eventWaitMode") in ("any", "all")
-            else "any",
-        )
-    _BACKGROUND_WORKER_POOL.submit(_resume_run, engine, services, frame)
+    run_recovery.resume_from_frame(
+        engine,
+        frame,
+        services_for=tenant_registry.get,
+        # 经模块全局取 _resume_run：测试 monkeypatch 掉的续跑体仍会被用到。
+        submit_resume_run=lambda eng, services, pending: _BACKGROUND_WORKER_POOL.submit(
+            _resume_run, eng, services, pending
+        ),
+    )
 
 
 def _resume_run(engine, services: TenantServices, frame: dict) -> None:
     """续跑线程：从挂起节点沿边到 END，完成后清帧并落 run 终态（决策 / wait 到点 / 再超时均覆盖）。"""
-    run_id = frame.get("run_id", "")
-    try:
-        resume_graph = GraphDSL.model_validate(frame["graph_snapshot"])
-        with usage_context(
-            frame["tenant_id"],
-            run_id=run_id,
-            graph_id=frame["resume_state"].get("graph_id", ""),
-            store=services.usage_store,
-        ):
-            result = run_graph(
-                resume_graph,
-                inputs=frame["resume_state"].get("inputs", {}),
-                registry=_runtime_registry(services),
-                approval_broker=services.approval_broker,
-                event_wait_broker=services.event_wait_broker,
-                graph_id=frame["resume_state"].get("graph_id", ""),
-                graph_resolver=_tenant_graph_resolver(services),
-                frame_sink=make_frame_sink(engine, frame["tenant_id"], run_id),
-                resume_claim=make_resume_claim(engine),
-                resume=frame,
-                tenant_id=frame["tenant_id"],
-                secret_provider=_secret_provider,
-                memory_repo=services.memory_store,
-            )
-        if run_id:
-            services.run_store.finish(
-                run_id=run_id, status="completed",
-                outputs=result["outputs"], trace=result["trace"],
-            )
-        clear_frame(engine, frame["resume_token"])
-    except RunSuperseded as exc:
-        # docs/62 §2 D-4：续跑输家——帧已被其它进程认领，本线程停止驱动。
-        # 既不写 run 终态也不清帧（终态与清理都归赢家），否则会把赢家的执行结果覆盖掉。
-        logger.info("续跑让位 %s：%s", _token_ref(frame.get("resume_token")), exc)
-    except WaitTimeoutSuspend as exc:
-        # docs/136 打包 BS：续跑中挂起节点超时且 onTimeout="suspend"——run 保持 suspended
-        # （帧保留、不写终态、不清帧），等人工后续恢复；本线程停止驱动即可。
-        logger.info("续跑保持挂起 %s：%s", _token_ref(frame.get("resume_token")), exc)
-    except Exception as exc:
-        logger.error("续跑 %s 失败：%s", _token_ref(frame.get("resume_token")), exc)
-        if run_id:
-            services.run_store.finish(
-                run_id=run_id, status="failed", error=_safe_run_error(exc)
-            )
+    run_recovery.resume_run(
+        engine,
+        services,
+        frame,
+        run_graph_fn=run_graph,
+        runtime_registry=_runtime_registry,
+        graph_resolver=_tenant_graph_resolver,
+        secret_provider=_secret_provider,
+    )
 
 
 def _frame_sink_for(tenant_id: str, run_store, run_id: str):
     """挂起回调：先落 run 状态为 suspended（所有后端），PG 后端再写 interruptions 帧。"""
-
-    def sink(frame: dict) -> None:
-        run_store.suspend(
-            run_id=run_id,
-            node_id=frame["node_id"],
-            kind=frame["kind"],
-            resume_token=frame["resume_token"],
-            deadline_at=frame.get("deadline_at"),
-        )
-        if STORAGE_BACKEND == "pg":
-            make_frame_sink(get_pg_backend().engine, tenant_id, run_id)(frame)
-
-    return sink
+    return run_recovery.frame_sink_for(
+        tenant_id,
+        run_store,
+        run_id,
+        storage_backend=STORAGE_BACKEND,
+        pg_engine=_pg_engine,
+    )
 
 
 def _resume_claim_for() -> Callable[[str], bool] | None:
@@ -429,9 +333,10 @@ def _resume_claim_for() -> Callable[[str], bool] | None:
     与 `frame_sink` 严格配对注入——凡写帧的运行必带认领门，反之亦然，否则会出现
     "有帧无人认领判定"或"无帧却被判定为已被接管"两种漂移。
     """
-    if STORAGE_BACKEND != "pg":
-        return None
-    return make_resume_claim(get_pg_backend().engine)
+    return run_recovery.resume_claim_for(
+        storage_backend=STORAGE_BACKEND,
+        pg_engine=_pg_engine,
+    )
 
 
 @asynccontextmanager
@@ -1388,172 +1293,72 @@ _webhook_deliverer = WebhookDeliverer(
 
 # --- 定时触发调度器（docs/68，打包 N／ADR T30） ---------------------------
 
-# 重叠判定要扫的在途运行条数上限：超过就会漏判（后果只是同图并发一次，派发互斥仍由
-# 认领表守着），扫全表换不来什么。
-BUSY_SCAN_LIMIT = 200
-
-
-_schedule_store: ScheduleStore | None = None
-_schedule_store_lock = threading.Lock()
-_scheduler_stop = threading.Event()
-_scheduler_thread: threading.Thread | None = None
-
-
 def schedule_store() -> ScheduleStore:
     """全局调度 store（惰性）：不按租户装配的理由见 `scheduling/store.py` 模块头。"""
-    global _schedule_store
-    with _schedule_store_lock:
-        if _schedule_store is None:
-            _schedule_store = (
-                PgScheduleStore(get_pg_backend().engine)
-                if STORAGE_BACKEND == "pg"
-                else InMemoryScheduleStore()
-            )
-        return _schedule_store
+    return scheduler_runtime.schedule_store(
+        storage_backend=STORAGE_BACKEND,
+        pg_engine=_pg_engine,
+    )
 
 
 def _start_pinned_run(
     services: TenantServices, tenant_id: str, graph_id: str, version: int, payload: dict
 ) -> str:
-    """按钉版起一次后台运行，返回 runId。
-
-    `begin` 在这里**同步**做完再交给线程池：调度 tick 必须立刻看得见这条 running，
-    否则同一张图会在下一轮（30 秒后）被"同图还在跑"判定放过去。
-    """
-    run_id = uuid.uuid4().hex
-    services.run_store.begin(run_id=run_id, graph_id=graph_id, mode="schedule")
-    event = TriggerEvent(channel="api", payload=payload)
-    _BACKGROUND_WORKER_POOL.submit(
-        _background_run_worker,
-        services, tenant_id, graph_id, version, event,
-        mode="schedule", run_id=run_id,
+    """按钉版起一次后台运行，返回 runId。"""
+    return scheduler_runtime.start_pinned_run(
+        services, tenant_id, graph_id, version, payload,
+        pool=_BACKGROUND_WORKER_POOL,
+        worker=_background_run_worker,
     )
-    return run_id
 
 
 def _schedule_claim(record: ScheduleRecord, slot: datetime) -> bool:
-    return schedule_store().claim(
-        record.tenant_id, record.graph_id, record.schedule_id, slot, record.action
+    return scheduler_runtime.schedule_claim(
+        record, slot,
+        storage_backend=STORAGE_BACKEND,
+        pg_engine=_pg_engine,
     )
 
 
 def _schedule_is_busy(record: ScheduleRecord) -> bool:
-    """同图是否还有 running/suspended 运行（docs/68 §1 D-6，保守按图粒度判）。
-
-    反思项**不受此限**：它是一次只读计算（读既有投影、不写图、不产运行），与在途运行
-    不争用任何东西；反过来拿"图在跑"挡住反思，会让繁忙的图永远得不到反思（docs/88 §3 P-4）。
-    """
-    if record.action == "reflect":
-        return False
-    services = tenant_registry.get(record.tenant_id)
-    for status in ("running", "suspended"):
-        for run in services.run_store.list(status=status, limit=BUSY_SCAN_LIMIT):
-            if run.get("graphId") == record.graph_id:
-                return True
-    return False
+    """同图是否还有 running/suspended 运行（docs/68 §1 D-6，保守按图粒度判）。"""
+    return scheduler_runtime.schedule_is_busy(record)
 
 
 def _schedule_dispatch(record: ScheduleRecord, slot: datetime) -> None:
-    """派发一次定时动作；跑图的事件载荷带槽位，图里可用 `{{global.event.payload.slot}}` 引用。
-
-    `reflect` 项共用调度载体，只共用**槽位与认领**：它不写 run_store、不发 TriggerEvent
-    ——反思不是"跑一次图"，把它塞进运行态会让监控里多出一批没有业务含义的 run（docs/88 §3 P-4）。
-    """
-    services = tenant_registry.get(record.tenant_id)
-    key = slot_key(slot)
-    if record.action == "reflect":
-        # docs/129 打包 AU：反思摘要器的 LLM 调用也计用量（caller=reflection_summarize）。
-        with usage_context(record.tenant_id, store=services.usage_store):
-            report = run_reflection_pass(
-                services, services.reflection_store,
-                tenant_id=record.tenant_id, graph_id=record.graph_id,
-                base_version=record.version,
-            )
-        schedule_store().note_fired(
-            record.tenant_id, record.graph_id, record.schedule_id, slot
-        )
-        services.audit_store.record(
-            tenant_id=record.tenant_id, actor="scheduler", action="schedule.fire",
-            status_code=200,
-            path=(f"action=reflect graph={record.graph_id}@{record.version} "
-                  f"slot={key} status={report.status}"),
-            ip="",
-        )
-        return
-    _start_pinned_run(
-        services, record.tenant_id, record.graph_id, record.version,
-        {"source": "schedule", "slot": key, "cron": record.cron},
-    )
-    schedule_store().note_fired(
-        record.tenant_id, record.graph_id, record.schedule_id, slot
-    )
-    services.audit_store.record(
-        tenant_id=record.tenant_id, actor="scheduler", action="schedule.fire",
-        status_code=200, path=f"graph={record.graph_id}@{record.version} slot={key}", ip="",
+    """派发一次定时动作；跑图的事件载荷带槽位，图里可用 `{{global.event.payload.slot}}` 引用。"""
+    return scheduler_runtime.schedule_dispatch(
+        record, slot,
+        storage_backend=STORAGE_BACKEND,
+        pg_engine=_pg_engine,
+        pool=_BACKGROUND_WORKER_POOL,
+        worker=_background_run_worker,
     )
 
 
 def run_schedule_tick(ledger: TickLedger | None = None) -> list[TickOutcome]:
     """跑一轮调度评估：引擎只判定，写库与跳过计数都在这里（`scheduling/engine.py` 零 IO）。"""
-    store = schedule_store()
-    outcomes = tick(
-        datetime.now(timezone.utc),
-        store.list_all(),
-        _schedule_claim,
-        _schedule_dispatch,
-        busy=_schedule_is_busy,
-        ledger=ledger,
+    return scheduler_runtime.run_schedule_tick(
+        ledger,
+        storage_backend=STORAGE_BACKEND,
+        pg_engine=_pg_engine,
+        pool=_BACKGROUND_WORKER_POOL,
+        worker=_background_run_worker,
     )
-    for outcome in outcomes:
-        if outcome.action == ACTION_SKIPPED_OVERLAP:
-            store.note_skipped(
-                outcome.tenant_id, outcome.graph_id, outcome.schedule_id, outcome.slot_utc
-            )
-    return outcomes
-
-
-def _scheduler_loop() -> None:
-    ledger = TickLedger()
-    interval = _schedule_tick_seconds()
-    while not _scheduler_stop.is_set():
-        try:
-            run_schedule_tick(ledger)
-        except Exception:  # noqa: BLE001 — 一轮调度的异常不能带走进程
-            logger.exception("调度 tick 异常，下一轮继续")
-        _scheduler_stop.wait(interval)
 
 
 def start_scheduler() -> None:
     """在 lifespan 里、`recover_pending()` 之后起线程（docs/68 §2.3 的启动顺序）。"""
-    global _scheduler_thread
-    if _scheduler_thread is not None:
-        return
-    if not _schedule_enabled():
-        logger.info("定时触发调度器已由 ATLAS_SCHEDULE_ENABLED 关闭")
-        return
-    _scheduler_stop.clear()
-    _scheduler_thread = threading.Thread(
-        target=_scheduler_loop, name="atlas-scheduler", daemon=True
-    )
-    _scheduler_thread.start()
-    logger.info(
-        "定时触发调度器已启动：每 %s 秒评估一轮（UTC 槽位、不补跑；单副本约束不变）",
-        _schedule_tick_seconds(),
+    scheduler_runtime.start_scheduler(
+        storage_backend=STORAGE_BACKEND,
+        pg_engine=_pg_engine,
+        pool=_BACKGROUND_WORKER_POOL,
+        worker=_background_run_worker,
     )
 
 
 def stop_scheduler(timeout_seconds: float = 2.0) -> None:
-    global _scheduler_thread
-    if _scheduler_thread is None:
-        return
-    _scheduler_stop.set()
-    _scheduler_thread.join(timeout=timeout_seconds)
-    if _scheduler_thread.is_alive():
-        # 宁可留着这个引用：清成 None 会让下一次 start_scheduler 再起**第二条** tick 循环。
-        # 两条循环不会双发（派发权在认领表），但会双份扫库与双份日志，排查时说不清是谁。
-        logger.warning("调度线程未在 %ss 内退出，保留引用避免起第二条", timeout_seconds)
-        return
-    _scheduler_thread = None
+    scheduler_runtime.stop_scheduler(timeout_seconds)
 
 
 def _derive_schedule_on_publish(
@@ -1566,46 +1371,11 @@ def _derive_schedule_on_publish(
     整图 pass，不随节点倍增，节奏跟第一个定时节点，overlap 固定 skip）。本次派生集合之外、
     库里本图仍存在的 schedule_id（节点被删）一律撤销——替代旧「只取第一个、其余 warning」。
     """
-    raw = services.graph_store.get(graph_id, version)
-    if raw is None:
-        return
-    specs = _schedule_specs_of_published(raw)
-    store = schedule_store()
-    if not specs:
-        store.remove(tenant_id, graph_id)
-        return
-    desired: set[str] = set()
-    for schedule_id, cron, tz_name, catch_up, overlap in specs:
-        desired.add(schedule_id)
-        store.upsert_published(
-            tenant_id=tenant_id, graph_id=graph_id, schedule_id=schedule_id,
-            version=version, cron=cron, action="run", timezone=tz_name,
-            catch_up_minutes=catch_up, overlap_policy=overlap,
-        )
-        logger.info(
-            "定时跑图调度已登记：graph=%s schedule=%s@%s（cron=%s，tz=%s，catch_up=%s，overlap=%s）",
-            graph_id, schedule_id, version, cron, tz_name, catch_up, overlap,
-        )
-    # 图级反思一条：节奏（cron/tz/catch_up）跟第一个定时节点。
-    _, cron0, tz0, catch0, _ = specs[0]
-    desired.add(REFLECT_SCHEDULE_ID)
-    store.upsert_published(
-        tenant_id=tenant_id, graph_id=graph_id, schedule_id=REFLECT_SCHEDULE_ID,
-        version=version, cron=cron0, action="reflect", timezone=tz0,
-        catch_up_minutes=catch0, overlap_policy="skip",
+    scheduler_runtime.derive_schedule_on_publish(
+        services, tenant_id, graph_id, version,
+        storage_backend=STORAGE_BACKEND,
+        pg_engine=_pg_engine,
     )
-    logger.info(
-        "定时反思调度已登记：graph=%s schedule=%s@%s（cron=%s，tz=%s）",
-        graph_id, REFLECT_SCHEDULE_ID, version, cron0, tz0,
-    )
-    # reconcile：撤销本次不再存在的调度（删掉的定时节点）。
-    existing = {
-        row.schedule_id
-        for row in store.list_tenant(tenant_id) if row.graph_id == graph_id
-    }
-    for stale in sorted(existing - desired):
-        store.remove_schedule(tenant_id, graph_id, stale)
-        logger.info("定时调度已撤销：graph=%s schedule=%s", graph_id, stale)
 
 
 class ScheduleEnabledRequest(BaseModel):
@@ -1622,10 +1392,11 @@ class RunNowRequest(BaseModel):
 
 def _first_run_schedule(tenant_id: str, graph_id: str) -> ScheduleRecord | None:
     """该图第一条 run 调度（run-now 缺省目标）；reflect 不计入。"""
-    for record in schedule_store().list_tenant(tenant_id):
-        if record.graph_id == graph_id and record.action == "run":
-            return record
-    return None
+    return scheduler_runtime.first_run_schedule(
+        tenant_id, graph_id,
+        storage_backend=STORAGE_BACKEND,
+        pg_engine=_pg_engine,
+    )
 
 
 @app.get("/api/schedules")

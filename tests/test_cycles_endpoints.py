@@ -144,12 +144,12 @@ def test_stop_cycle_marks_live_session_stopped(admin):
     registry.bind_run("r-live", session.group_id)
     assert session.state == "running"
 
-    stopped = client.post(f"/api/runs/r-live/cycle/stop", headers=admin)
+    stopped = client.post("/api/runs/r-live/cycle/stop", headers=admin)
     assert stopped.status_code == 200, stopped.text
     assert stopped.json()["state"] == "stopped"
     assert stopped.json()["stopReason"] == "cycle_stopped"
     # 幂等：再停一次仍 200 且状态不变
-    again = client.post(f"/api/runs/r-live/cycle/stop", headers=admin)
+    again = client.post("/api/runs/r-live/cycle/stop", headers=admin)
     assert again.status_code == 200 and again.json()["state"] == "stopped"
     assert services_runs is client       # 保持引用，避免误删
 

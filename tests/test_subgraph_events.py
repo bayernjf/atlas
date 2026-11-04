@@ -17,7 +17,7 @@ from atlas.collaboration.approvals import ApprovalBroker
 from atlas.collaboration.event_waits import EventWaitBroker
 from atlas.graph.dsl import parse_graph
 from atlas.graph.loader import run_graph
-from atlas.recording.replay import collect_steps, compare, preset_approvals
+from atlas.recording.replay import collect_steps, compare, preset_approvals, preset_wait_events
 
 
 def _tool(node_id, name, tool="op-after", params=None):
@@ -407,8 +407,6 @@ def test_subgraph_approval_replay_is_deterministic():
 
 
 # ---------- 打包 ZJ：子图内 event wait 的回放确定性（04 §5.11，D47；U1048/U1050） ----------
-
-from atlas.recording.replay import preset_wait_events
 
 
 def _wait_child(timeout_seconds: int = 30, on_timeout: str = "continue"):

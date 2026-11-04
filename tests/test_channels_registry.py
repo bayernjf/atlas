@@ -4,11 +4,12 @@
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
 from atlas.channels.adapter import ShopifyHarnessAdapter
-from atlas.channels.base import ChannelError, TransportResponse
+from atlas.channels.base import ChannelBinding, ChannelError, TransportResponse
 from atlas.channels.memory import ChannelStore
 from atlas.channels.registry import ChannelRegistry
 from atlas.connections.service import ConnectionServiceError
@@ -79,7 +80,7 @@ def test_r5_dev_and_demo_flag_allow_the_seam(monkeypatch) -> None:
 def test_bind_success():
     reg = make_registry()
     view = reg.bind("shopify", "conn-1", {"shop": "Acme"})
-    assert view["id"] == "ch-1"
+    assert re.fullmatch(r"ch-[0-9a-f]{32}", view["id"])
     assert view["provider"] == "shopify"
     assert view["config"] == {"shop": "acme", "apiVersion": "2025-01"}
     assert view["status"] == "connected"
@@ -273,3 +274,39 @@ def test_pack_bk_token_unavailable_belongs_to_auth_family_in_client_for():
         reg.client_for(reg._require(view["id"]))
     assert info.value.code == "CHANNEL_TOKEN_UNAVAILABLE"
     assert reg.get(view["id"])["status"] == "error"
+
+
+# --- P1-1：绑定 id 不可枚举，存量 ch-N 仍可读 -------------------------------
+
+
+def _memory_binding(binding_id: str, connection_id: str) -> ChannelBinding:
+    return ChannelBinding(
+        id=binding_id,
+        tenant_id="t1",
+        provider="shopify",
+        connection_id=connection_id,
+        config={"shop": "acme", "apiVersion": "2025-01"},
+    )
+
+
+def test_new_binding_ids_cannot_be_derived_from_a_sequence():
+    store = ChannelStore()
+    ids = []
+    for index in range(3):
+        binding = _memory_binding("", f"conn-{index}")
+        store.create(binding)
+        ids.append(binding.id)
+    assert all(re.fullmatch(r"ch-[0-9a-f]{32}", binding_id) for binding_id in ids)
+    # None of the ids is the old ordinal form, and each is distinct.
+    assert all(binding_id not in {"ch-1", "ch-2", "ch-3"} for binding_id in ids)
+    assert len(set(ids)) == 3
+
+
+def test_legacy_sequential_bindings_stay_readable():
+    store = ChannelStore()
+    legacy = _memory_binding("ch-7", "conn-legacy")
+    store.save(legacy)
+    new = _memory_binding("", "conn-new")
+    store.create(new)
+    assert store.get("ch-7") is legacy
+    assert [binding.id for binding in store.list()] == ["ch-7", new.id]

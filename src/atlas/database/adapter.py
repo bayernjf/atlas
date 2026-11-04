@@ -6,6 +6,8 @@
 """
 
 
+import logging
+
 from atlas.harness.base import (
     ActionRequest,
     ActionResult,
@@ -15,11 +17,10 @@ from atlas.harness.base import (
     Permission,
     StructuredError,
 )
-import logging
-
-logger = logging.getLogger(__name__)
 
 from .service import DEFAULT_LIMIT, MAX_LIMIT, DatabaseAdapterError, DatabaseClient
+
+logger = logging.getLogger(__name__)
 
 _QUERY_INPUT_SCHEMA = {
     "type": "object",

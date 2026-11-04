@@ -12,12 +12,11 @@ import logging
 import threading
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Callable, Protocol
+from typing import Any, Callable
 
 from pydantic import BaseModel
 
 from atlas.channels.base import ChannelBinding
-from atlas.channels.inbound_deliveries import InMemoryInboundStore
 from atlas.routing.models import TriggerEvent
 
 logger = logging.getLogger(__name__)

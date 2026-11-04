@@ -21,7 +21,9 @@ from atlas.security.secrets import (
     resolve_references,
 )
 
-PUBLIC_RESOLVER = lambda _host: ["93.184.216.34"]
+def PUBLIC_RESOLVER(_host):
+    return ["93.184.216.34"]
+
 NOOP_RETRY = RetryPolicy(sleep=lambda _: None)
 
 
@@ -48,7 +50,7 @@ def test_get_secret_missing_raises():
 
 
 def test_plain_provider_cannot_decrypt_aes_envelope():
-    aes = pytest.importorskip("cryptography")  # 仅为构造一个 AES 信封
+    pytest.importorskip("cryptography")  # 仅为构造一个 AES 信封
     key = b"0" * 32
     aes_provider = AesGcmSecretProvider(key, kid="k1")
     envelope = aes_provider.encrypt("x")

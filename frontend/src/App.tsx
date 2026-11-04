@@ -1,29 +1,6 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { ConfigProvider, App as AntdApp } from 'antd'
-import { Dashboard } from './pages/Dashboard'
-import { Editor } from './pages/Editor'
-import { Login } from './pages/Login'
-import { Monitoring } from './pages/Monitoring'
-import { Memory } from './pages/Memory'
-import { Connections } from './pages/Connections'
-import { Users } from './pages/Users'
-import { Approvals } from './pages/Approvals'
-import { AuditLog } from './pages/AuditLog'
-import { OpenApiImports } from './pages/OpenApiImports'
-import { EmailApproval } from './pages/EmailApproval'
-import { Embed } from './pages/Embed'
-import { EmbedsConfig } from './pages/EmbedsConfig'
-import { AdapterDrafts } from './pages/AdapterDrafts'
-import { Experiments } from './pages/Experiments'
-import { Waits } from './pages/Waits'
-import { Schedules } from './pages/Schedules'
-import { Agents } from './pages/Agents'
-import { Reflection } from './pages/Reflection'
-import { Models } from './pages/Models'
-import { Usage } from './pages/Usage'
-import { MessageTemplates } from './pages/MessageTemplates'
 import { logout as logoutApi } from './lib/apiClient'
-import { ForcePasswordChange } from './components/ForcePasswordChange'
 import {
   getStoredPrincipal,
   onPasswordChangeRequired,
@@ -36,7 +13,51 @@ import { extractEmbedToken } from './lib/embeds'
 import { antdTheme } from './theme/tokens'
 import { useAntdLocale } from './locales/antdLocale'
 
+// P2-3：页面按需加载。登录后只进一个页面，没必要把 20 个页面（含 xyflow、
+// 各页 antd 子树）一次塞进 entry chunk。命名导出用 .then 适配 lazy 的 default。
+const Dashboard = lazy(() => import('./pages/Dashboard').then(m => ({ default: m.Dashboard })))
+const Editor = lazy(() => import('./pages/Editor').then(m => ({ default: m.Editor })))
+const Login = lazy(() => import('./pages/Login').then(m => ({ default: m.Login })))
+const Monitoring = lazy(() => import('./pages/Monitoring').then(m => ({ default: m.Monitoring })))
+const Memory = lazy(() => import('./pages/Memory').then(m => ({ default: m.Memory })))
+const Connections = lazy(() => import('./pages/Connections').then(m => ({ default: m.Connections })))
+const Users = lazy(() => import('./pages/Users').then(m => ({ default: m.Users })))
+const Approvals = lazy(() => import('./pages/Approvals').then(m => ({ default: m.Approvals })))
+const AuditLog = lazy(() => import('./pages/AuditLog').then(m => ({ default: m.AuditLog })))
+const OpenApiImports = lazy(() => import('./pages/OpenApiImports').then(m => ({ default: m.OpenApiImports })))
+const EmailApproval = lazy(() => import('./pages/EmailApproval').then(m => ({ default: m.EmailApproval })))
+const Embed = lazy(() => import('./pages/Embed').then(m => ({ default: m.Embed })))
+const EmbedsConfig = lazy(() => import('./pages/EmbedsConfig').then(m => ({ default: m.EmbedsConfig })))
+const AdapterDrafts = lazy(() => import('./pages/AdapterDrafts').then(m => ({ default: m.AdapterDrafts })))
+const Experiments = lazy(() => import('./pages/Experiments').then(m => ({ default: m.Experiments })))
+const Waits = lazy(() => import('./pages/Waits').then(m => ({ default: m.Waits })))
+const Schedules = lazy(() => import('./pages/Schedules').then(m => ({ default: m.Schedules })))
+const Agents = lazy(() => import('./pages/Agents').then(m => ({ default: m.Agents })))
+const Reflection = lazy(() => import('./pages/Reflection').then(m => ({ default: m.Reflection })))
+const Models = lazy(() => import('./pages/Models').then(m => ({ default: m.Models })))
+const Usage = lazy(() => import('./pages/Usage').then(m => ({ default: m.Usage })))
+const MessageTemplates = lazy(() => import('./pages/MessageTemplates').then(m => ({ default: m.MessageTemplates })))
+const ForcePasswordChange = lazy(() =>
+  import('./components/ForcePasswordChange').then(m => ({ default: m.ForcePasswordChange })),
+)
+
 type Page = 'dashboard' | 'editor' | 'monitoring' | 'memory' | 'connections' | 'users' | 'approvals' | 'audit' | 'openapi' | 'waits' | 'schedules' | 'agents' | 'reflection' | 'models' | 'usage' | 'templates' | 'embeds' | 'adapterDrafts' | 'experiments'
+
+/** 页面 chunk 下载完成前的占位；每个 lazy 子树都必须挂在 Suspense 下。 */
+function PageFallback() {
+  return (
+    <div
+      style={{
+        minHeight: '100vh',
+        display: 'grid',
+        placeItems: 'center',
+        color: 'var(--atlas-color-text-secondary)',
+      }}
+    >
+      Loading…
+    </div>
+  )
+}
 
 function App() {
   const antdLocale = useAntdLocale()
@@ -74,7 +95,9 @@ function App() {
   if (emailToken) {
     return (
       <ConfigProvider theme={antdTheme} locale={antdLocale}>
-        <EmailApproval token={emailToken} />
+        <Suspense fallback={<PageFallback />}>
+          <EmailApproval token={emailToken} />
+        </Suspense>
       </ConfigProvider>
     )
   }
@@ -83,7 +106,9 @@ function App() {
   if (embedToken) {
     return (
       <ConfigProvider theme={antdTheme} locale={antdLocale}>
-        <Embed token={embedToken} />
+        <Suspense fallback={<PageFallback />}>
+          <Embed token={embedToken} />
+        </Suspense>
       </ConfigProvider>
     )
   }
@@ -98,12 +123,14 @@ function App() {
   if (!principal) {
     return (
       <ConfigProvider theme={antdTheme} locale={antdLocale}>
-        <Login
-          onLoggedIn={(loggedIn) => {
-            setPrincipal(loggedIn)
-            setPage('dashboard')
-          }}
-        />
+        <Suspense fallback={<PageFallback />}>
+          <Login
+            onLoggedIn={(loggedIn) => {
+              setPrincipal(loggedIn)
+              setPage('dashboard')
+            }}
+          />
+        </Suspense>
       </ConfigProvider>
     )
   }
@@ -115,10 +142,12 @@ function App() {
     return (
       <ConfigProvider theme={antdTheme} locale={antdLocale}>
         <div style={{ minHeight: '100vh', background: 'var(--atlas-color-bg-page)' }}>
-          <ForcePasswordChange
-            onDone={() => setMustChangePassword(false)}
-            onLoggedOut={handleLogout}
-          />
+          <Suspense fallback={<PageFallback />}>
+            <ForcePasswordChange
+              onDone={() => setMustChangePassword(false)}
+              onLoggedOut={handleLogout}
+            />
+          </Suspense>
         </div>
       </ConfigProvider>
     )
@@ -127,6 +156,7 @@ function App() {
   return (
     <ConfigProvider theme={antdTheme} locale={antdLocale}>
       <AntdApp>
+        <Suspense fallback={<PageFallback />}>
         {page === 'dashboard' ? (
         <Dashboard
           principal={principal}
@@ -231,6 +261,7 @@ function App() {
           initialNodeId={editorNodeId}
         />
       )}
+        </Suspense>
       </AntdApp>
     </ConfigProvider>
   )

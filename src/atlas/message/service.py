@@ -19,7 +19,11 @@ from datetime import datetime, timezone
 from typing import Callable
 
 from atlas.security.egress import EgressDenied
-from .deliveries import DELIVERY_RING_SIZE, DeliveryStore, InMemoryDeliveryStore
+from .deliveries import DeliveryStore, InMemoryDeliveryStore
+# docs/56 §4：投递日志 ring 与退避重试参数（ring 容量已迁至 deliveries 存储层，
+# 此 re-import 保持 ``from atlas.message.service import DELIVERY_RING_SIZE`` 兼容）
+from .deliveries import DELIVERY_RING_SIZE as DELIVERY_RING_SIZE
+
 from .im import IM_CHANNELS, normalize_mentions
 
 logger = logging.getLogger(__name__)

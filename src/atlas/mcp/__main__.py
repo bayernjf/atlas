@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import sys
 
-from atlas.mcp.server import TENANT_ENV, TenantBindingError, build_server, resolve_tenant_id
+from atlas.mcp.server import TenantBindingError, build_server, resolve_tenant_id
 
 logger = logging.getLogger("atlas.mcp")
 

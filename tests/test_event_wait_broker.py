@@ -265,7 +265,7 @@ def test_U540_all_mode_releases_only_after_every_key_signaled(broker):
     # 仅命中部分键：不放行
     assert broker.signal_key("a", {"v": 1}) == {"released": 0, "queued": False}
     assert broker.signal_key("b", {"v": 2}) == {"released": 0, "queued": False}
-    assert not broker.list_pending()[0].get("deadlineAt") is None
+    assert broker.list_pending()[0].get("deadlineAt") is not None
     out_later = broker.list_pending()[0]
     assert out_later["eventWaitMode"] == "all"
     assert out_later["receivedKeys"] == ["a", "b"]

@@ -566,7 +566,6 @@ def test_a1_instantiate_returns_deep_copy_and_variables():
     assert graph is not body["graph"] or True  # 响应体已是独立对象
 
     # variables：命中覆写、未命中 append
-    var_names = [var["name"] for var in graph["variables"]]
     min_var = next(var for var in graph["variables"] if var["name"] == "min_amount")
     assert min_var["value"] == 250
     channel_var = next(var for var in graph["variables"] if var["name"] == "channel")

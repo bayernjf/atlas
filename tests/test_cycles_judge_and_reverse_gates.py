@@ -11,7 +11,6 @@ from __future__ import annotations
 import sys
 import types
 
-import pytest
 
 from atlas.cycles.supervisor import CycleOutcome, run_cycle_session, session_for_run
 from atlas.graph.dsl import parse_graph

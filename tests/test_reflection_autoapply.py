@@ -29,7 +29,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from atlas.api.main import app
-from atlas.recording import RecordingCase, RecordStep
+from atlas.recording import RecordStep
 from atlas.reflection import Change
 from atlas.reflection.candidate import ReflectionCandidate
 from atlas.reflection.patch import patch_candidate

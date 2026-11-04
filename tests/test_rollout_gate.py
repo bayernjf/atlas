@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import copy
 import json
 from datetime import datetime, timezone
 

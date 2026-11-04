@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from atlas.api.main import app
-from atlas.iam.deps import session_store, tenant_registry
+from atlas.iam.deps import session_store
 from atlas.iam.principals import authenticate
 from atlas.llm import hub
 

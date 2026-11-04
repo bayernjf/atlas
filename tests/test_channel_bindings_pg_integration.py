@@ -76,6 +76,27 @@ def test_create_get_roundtrip(setup):
     assert loaded.created_at and loaded.updated_at
 
 
+def test_legacy_sequential_id_stays_readable(setup):
+    """P1-1：id 改成随机后，存量 ch-N 行不需要迁移，按原 id 仍可读写。"""
+    engine, Store = setup
+    store = Store(engine, "chpit-a")
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO channel_bindings (tenant_id, id, provider, connection_id, "
+                "config, status, created_at, updated_at) VALUES "
+                "('chpit-a', 'ch-424242', 'shopify', 'conn-pit-legacy', "
+                "CAST('{}' AS jsonb), 'connected', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+            )
+        )
+    loaded = store.get("ch-424242")
+    assert loaded is not None and loaded.connection_id == "conn-pit-legacy"
+    loaded.status = "error"
+    store.save(loaded)
+    assert store.get("ch-424242").status == "error"
+    assert store.delete("ch-424242") is True
+
+
 def test_list_tenant_scoped(setup):
     engine, Store = setup
     store_a = Store(engine, "chpit-a")

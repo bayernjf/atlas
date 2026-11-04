@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 import threading
 from copy import deepcopy
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from typing import Literal, Protocol
 
 from atlas.security.bootstrap import read_storage_backend

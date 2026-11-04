@@ -14,7 +14,6 @@ import sys
 
 import pytest
 from mcp import Client
-from mcp.server.mcpserver.exceptions import ToolError
 
 from atlas.iam.principals import SEED_TENANTS
 from atlas.mcp import TOOL_NAMES

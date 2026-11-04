@@ -21,7 +21,7 @@ from dataclasses import asdict
 import pytest
 from sqlalchemy import text
 
-from atlas.embeds.store import EmbedConfig, EmbedStore
+from atlas.embeds.store import EmbedStore
 from atlas.embeds.pg_store import PgEmbedStore
 from atlas.harness.definition import AdapterDefinition
 from atlas.harness.drafts import AdapterDraftStore

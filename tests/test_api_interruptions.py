@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 from atlas.api import main as api_main
 from atlas.api.main import app
 from atlas.iam.deps import session_store, tenant_registry
+from atlas.services import run_recovery
 
 client = TestClient(app)
 
@@ -148,7 +149,8 @@ def test_u919_the_read_path_writes_nothing(monkeypatch, pg_frames) -> None:
     def _forbidden(*args, **kwargs):  # noqa: ARG001
         raise AssertionError("读端点碰了写路径")
 
-    monkeypatch.setattr(api_main, "clear_frame", _forbidden)
+    # clear_frame 随第三批拆到 run_recovery；读路径仍不得碰写入口。
+    monkeypatch.setattr(run_recovery, "clear_frame", _forbidden)
     before = dict(runs.get("r-keep"))
     first = client.get("/api/interruptions", headers=VIEWER_A).json()
     second = client.get("/api/interruptions", headers=VIEWER_A).json()
@@ -313,7 +315,6 @@ def test_u1174_abandon_memory_backend_refuses(monkeypatch) -> None:
     ],
 )
 def test_u1175_abandon_storage_codes_map_to_http(monkeypatch, code, http_code, error_code) -> None:
-    from atlas.storage import recovery as recovery_mod
 
     info = {"status": "running"} if code == "run_not_suspended" else {}
     constant = {"frame_not_found": "frame_not_found",

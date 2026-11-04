@@ -20,8 +20,8 @@ from __future__ import annotations
 import email.utils
 import random
 import time
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import timezone
 from typing import Callable
 
 import httpx

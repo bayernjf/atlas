@@ -206,7 +206,7 @@ def test_success_resets_failure_count():
     clock = FakeClock()
     breaker = CircuitBreaker(fail_threshold=3, cooldown=30, now=clock.now)
     host = "h"
-    breaker.record_failure(h := host)
+    breaker.record_failure(host)
     breaker.record_failure(host)
     breaker.record_success(host)
     breaker.record_failure(host)

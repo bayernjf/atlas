@@ -130,7 +130,7 @@ class ImportedApiHarnessAdapter(HarnessAdapter):
                     )
                 try:
                     value = self._secret_provider.decrypt(envelopes[name])
-                except Exception as exc:
+                except Exception:
                     return StructuredError(
                         "SECRET_DECRYPT_ERROR", f"密钥解密失败：{name}"
                     )

@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -88,7 +90,7 @@ def test_bind_list_get_and_projection_has_no_secret():
     r = _bind(admin, cid, shop="Acme")
     assert r.status_code == 201, r.text
     view = r.json()
-    assert view["id"] == "ch-1"
+    assert re.fullmatch(r"ch-[0-9a-f]{32}", view["id"])
     assert view["config"] == {"shop": "acme", "apiVersion": "2025-01"}
 
     items = client.get("/api/channels", headers=admin).json()["items"]
@@ -96,7 +98,7 @@ def test_bind_list_get_and_projection_has_no_secret():
     row = items[0]
     assert "token" not in row and "secret" not in row
 
-    detail = client.get("/api/channels/ch-1", headers=admin)
+    detail = client.get(f"/api/channels/{view['id']}", headers=admin)
     assert detail.status_code == 200 and detail.json() == view
     assert client.get("/api/channels/ch-99", headers=admin).status_code == 404
 

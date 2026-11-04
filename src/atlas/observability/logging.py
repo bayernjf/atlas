@@ -38,7 +38,7 @@ class RequestIdFilter(logging.Filter):
 class _UtcFormatter(logging.Formatter):
     """asctime 恒为 UTC（ISO 风格），不受本机时区影响。"""
 
-    converter = time.gmtime
+    converter = staticmethod(time.gmtime)
 
     def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:
         if datefmt:

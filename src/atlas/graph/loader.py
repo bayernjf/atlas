@@ -27,7 +27,7 @@ import secrets
 import time
 import uuid
 from contextlib import nullcontext
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Annotated, Any, Callable, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -92,7 +92,9 @@ from .dsl import (
     MAX_JITTER_SECONDS,
     validate_graph_report,
 )
-from .interpolation import interpolate, render_mapping_value, resolve_path
+from .interpolation import interpolate, render_mapping_value
+# 兼容 re-export：tests/下游沿用 `from atlas.graph.loader import resolve_path`。
+from .interpolation import resolve_path as resolve_path
 
 EventCallback = Callable[[dict[str, Any]], None]
 
@@ -1477,7 +1479,7 @@ def _wrap_self_healing(
             if healed is not None:
                 return healed
             raise
-        except Exception as exc:
+        except Exception:
             # 未包进节点级 retry 的意外异常：自愈可兜，不兜则穿透。
             if not should_heal(None):
                 raise
@@ -3407,8 +3409,10 @@ def compile_graph(
         now = now.replace(tzinfo=timezone.utc)
     else:
         now = now.astimezone(timezone.utc)
-    noop_emit: EventCallback = lambda event: None
-    emit = emit or noop_emit
+    def _noop_emit(event: Any) -> None:
+        return None
+
+    emit = emit or _noop_emit
     # M10：节点 span 的父——subgraph 重入为 subgraph span（子图节点 internal），
     # 顶层为 tracer.root；tracer 为 None（debug/直接 compile）时不埋点。
     base_span: Span | None = (

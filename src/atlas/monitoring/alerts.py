@@ -9,7 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from atlas.graph.conditions import ConditionEvalError, evaluate_expression, validate_expression
+from atlas.graph.conditions import evaluate_expression, validate_expression
 
 # rule_id 放宽为 str：内置四条 + rollout_gate 用字面量，自定义规则为 "custom:{cid}"
 # （docs/28 §4.2 ⑨；PG monitoring_alerts.rule_id 本就是 TEXT）。

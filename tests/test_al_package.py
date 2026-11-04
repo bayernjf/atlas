@@ -8,8 +8,6 @@ memory 档跨 run 持续）、控制流穿透与编译期五码校验。
 
 from __future__ import annotations
 
-import threading
-import time
 
 import pytest
 
@@ -17,7 +15,6 @@ from atlas.graph.dsl import (
     GraphDSL,
     GraphValidationError,
     parse_graph,
-    validate_graph_report,
 )
 from atlas.graph.loader import (
     RunNodeFailed,
@@ -464,7 +461,7 @@ def test_u1353_state_machine_invalid_transition_rejected():
     )
     # 初始 pending，事件 advance 无匹配 → StateTransitionRejected
     with pytest.raises(StateTransitionRejected) as excinfo:
-        run_graph(_state_graph(event="advance"), registry=_registry(), memory_repo=MemoryStore())
+        run_graph(graph, registry=_registry(), memory_repo=MemoryStore())
     assert excinfo.value.code == "STATE_TRANSITION_REJECTED"
     assert excinfo.value.from_state == "pending"
     assert excinfo.value.event == "advance"

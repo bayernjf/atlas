@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from atlas.harness.base import ActionRequest, Permission
 from atlas.shop.adapter import ShopHarnessAdapter

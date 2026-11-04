@@ -154,6 +154,7 @@ class RunRepository(Protocol):
         self, *, run_id: str, graph_id: str, mode: str,
         cycle_seq: int = 0, cycle_group_id: str = "",
         agent_id: str = "",
+        resolved_version: int | None = None,
     ) -> None:
         """`cycle_seq`／`cycle_group_id`＝打包 BN（docs/130 §3.3）圈归属两列；
         `agent_id`＝打包 BO（docs/131 §3.3）agent 维度（D74）；
@@ -227,7 +228,11 @@ class MonitoringRepository(Protocol):
     def list_silences(self, active: bool | None = None) -> list[Silence]: ...
     def delete_silence(self, silence_id: str) -> bool: ...
     def get_oncall(self) -> OnCallSchedule: ...
-    def set_oncall(self, *, members: list[str], updated_by: str) -> OnCallSchedule: ...
+    def set_oncall(
+        self, *, members: list[str], updated_by: str,
+        rotation_interval_days: int | None = None,
+    ) -> OnCallSchedule: ...
+
     def rotate_oncall(self, *, updated_by: str) -> OnCallSchedule: ...
     def reset(self) -> None: ...
 
@@ -258,6 +263,7 @@ class MemoryRepository(Protocol):
         query: str,
         *,
         kind: str | None = None,
+        category: str | None = None,
         scope: dict[str, str] | None = None,  # 子集匹配：item.scope 须包含其全部键值
         top_k: int = 5,
         min_score: float = 0.0,

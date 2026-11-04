@@ -82,7 +82,6 @@ def test_nested_parent_child_links_close():
 
 def test_exception_marks_error_and_restores_current_span():
     tracer = Tracer(graph_id="g")
-    outer = tracer.root
     assert current_span() is None  # 未 attach
     with pytest.raises(RuntimeError):
         with tracer.span("node:boom", kind=KIND_NODE) as boom:
@@ -102,7 +101,7 @@ def test_exception_marks_error_and_restores_current_span():
 def test_explicit_parent_for_subgraph_reentry():
     """子图重入复用同一 tracer：subgraph span 为子图节点的父（04 §5.15）。"""
     tracer = Tracer(graph_id="parent")
-    with tracer.span("node:sub", kind=KIND_NODE) as parent_node:
+    with tracer.span("node:sub", kind=KIND_NODE):
         with tracer.span("subgraph:child-flow", kind=KIND_SUBGRAPH) as sg:
             # 子图内部节点标 internal，显式 parent=sg
             with tracer.span("node:inner", kind=KIND_NODE, parent=sg, internal=True):

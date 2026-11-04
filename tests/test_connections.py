@@ -16,13 +16,11 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from atlas.api.main import app
-from atlas.connections import oauth
 from atlas.connections.oauth import (
     OAuthStateError,
     OAuthTokenError,
@@ -489,7 +487,6 @@ def test_api_callback_page_is_public_and_side_effect_free():
 
 
 def _run_all_migrations(engine) -> None:
-    from sqlalchemy import text
 
     from atlas.storage.migrations import apply_pending
     apply_pending(engine)

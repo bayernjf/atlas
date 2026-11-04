@@ -7,7 +7,6 @@
 
 import datetime as dt
 
-import pytest
 
 from atlas.graph.dsl import parse_graph
 from atlas.graph.loader import run_graph

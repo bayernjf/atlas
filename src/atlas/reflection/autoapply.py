@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import threading
 from collections import deque
-from datetime import datetime, timezone
 from typing import Any, Callable
 
 from pydantic import BaseModel, Field
@@ -39,7 +38,7 @@ from ..recording.shadow import (
 )
 from ..tracing import Tracer
 from .candidate import Change, ReflectionCandidate, _now_iso
-from .patch import AUTO_SCOPES, PatchOutcome, patch_candidate
+from .patch import AUTO_SCOPES, patch_candidate
 from .tunables import TUNABLE_WHITELIST
 
 AUTOAPPLY_RING_SIZE = 100

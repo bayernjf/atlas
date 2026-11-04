@@ -78,9 +78,9 @@ def test_u1159_rehearsal_differs_from_prod_only_by_host_and_tls(
     # 站点块内逐行比较，忽略自签那一行与注释
     def lines_of(block: str) -> list[str]:
         return [
-            l.strip()
-            for l in block.splitlines()
-            if l.strip() and not l.strip().startswith("#") and l.strip() != "tls internal"
+            line.strip()
+            for line in block.splitlines()
+            if line.strip() and not line.strip().startswith("#") and line.strip() != "tls internal"
         ]
 
     assert lines_of(prod_body) == lines_of(reh_body), (

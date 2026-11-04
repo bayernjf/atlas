@@ -24,13 +24,13 @@ SHIPPED_ROW = re.compile(r"^(?:\d+\. )?[✅🏁📋🐛📝📌🚀]")
 def _sections() -> tuple[list[str], list[str], list[str]]:
     lines = HANDOFF.read_text(encoding="utf-8").split("\n")
     def start(prefix: str) -> int:
-        return next(i for i, l in enumerate(lines) if l.startswith(prefix))
+        return next(i for i, line in enumerate(lines) if line.startswith(prefix))
     a0, a1, r0 = start('## Active work'), start('## Recently shipped'), start('## Quality gate')
     return lines[:a0], lines[a0:a1], lines[a1:r0]
 
 
 def _item_numbers(active: list[str]) -> list[int]:
-    return [int(m.group(1)) for l in active if (m := ACTIVE_ITEM.match(l))]
+    return [int(m.group(1)) for line in active if (m := ACTIVE_ITEM.match(line))]
 
 
 def test_active_work_numbers_are_unique():
@@ -44,7 +44,7 @@ def test_every_active_work_pointer_resolves():
     head, active, _ = _sections()
     present = set(_item_numbers(active))
     dangling = sorted({int(m.group(1)) for block in (head, active)
-                       for l in block for m in POINTER.finditer(l)} - present)
+                       for line in block for m in POINTER.finditer(line)} - present)
     assert dangling == [], (
         f"引用了不存在的 Active work 条目：#{dangling}（补条目或改指针，不要留着断链）"
     )
@@ -66,7 +66,7 @@ def _is_shipped_row(line: str) -> bool:
 
 
 def _shipped_rows(shipped: list[str]) -> list[str]:
-    return [l for l in shipped if _is_shipped_row(l)]
+    return [line for line in shipped if _is_shipped_row(line)]
 
 
 def test_recently_shipped_keeps_at_most_five():
@@ -90,6 +90,6 @@ def test_recently_shipped_guard_can_actually_count_rows():
     ]
     assert len(_shipped_rows(planted)) == 4, _shipped_rows(planted)
     # 判别对照：旧写法只数到那一条编号行——那正是它一直绿的原因。
-    assert [l for l in planted if ACTIVE_ITEM.match(l) and "↪" not in l] == [
+    assert [line for line in planted if ACTIVE_ITEM.match(line) and "↪" not in line] == [
         "101. ✅ **旧编号形状也要继续算**"
     ]

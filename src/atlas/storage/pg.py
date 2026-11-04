@@ -20,7 +20,12 @@ import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from atlas.iam.accounts import UserAccount
+    from atlas.iam.principals import Principal, Role
+
 
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import IntegrityError
@@ -572,7 +577,7 @@ class PgUserStore:
         display_name: str,
         role: Role,
     ) -> "UserAccount":
-        from atlas.iam.accounts import UserAccount, UserExists
+        from atlas.iam.accounts import UserExists
         from atlas.iam.passwords import hash_password
 
         now = _now_iso()

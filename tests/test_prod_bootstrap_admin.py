@@ -24,7 +24,6 @@ from atlas.security.bootstrap import (
     PROD_BOOTSTRAP_PASSWORD_ENV,
     assert_prod_secrets,
     prod_bootstrap_password,
-    read_env_profile,
 )
 
 BOOTSTRAP = "Str0ng-Bootstrap-Pw"

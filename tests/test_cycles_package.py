@@ -145,9 +145,6 @@ def test_u1437_reverse_gate_iteration_ceiling_is_load_bearing():
 
 def test_u1428_token_gate_stops_before_iteration_gate():
     """token 闸门：预置用量把累计推过 maxTokens ⇒ 圈在迭代闸门之前收手。"""
-    services = tenant_registry.get("t1")
-    from atlas.llm.metering import UsageRecord
-
     graph_id, response = _run(loop={"maxIterations": 10, "maxTokens": 5})
     assert response.status_code == 200
     runs = _runs_of(graph_id)

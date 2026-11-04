@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from atlas.graph.dsl import GraphDSL, GraphValidationError, parse_graph
+from atlas.graph.dsl import GraphValidationError, parse_graph
 
 
 def _graph(loop=None) -> dict:

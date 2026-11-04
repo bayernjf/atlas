@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import os
 import threading
-from pathlib import Path
 
 import pytest
 from sqlalchemy import text
@@ -1041,7 +1040,6 @@ def test_u809c_reverse_control_the_null_predicate_is_what_serializes(backend):
     """
     from sqlalchemy import text
 
-    from atlas.memory.database import create_database_engine
     from atlas.storage.frame import build_frame, deadline_iso
     from atlas.storage.recovery import claim_frame_for_resume, make_frame_sink
 

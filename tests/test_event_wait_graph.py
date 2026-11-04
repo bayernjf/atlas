@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time as _time
 
 import pytest
 
@@ -10,6 +11,7 @@ from atlas.collaboration.cancellations import RunCancelled
 from atlas.collaboration.event_waits import EventWaitBroker
 from atlas.graph.dsl import parse_graph
 from atlas.graph.loader import WaitNodeFailure, run_graph
+from atlas.storage.frame import build_frame, deadline_iso, remaining_seconds
 
 
 def _event_wait_graph(**config_overrides):
@@ -188,10 +190,6 @@ def test_cancel_while_waiting_raises_runcancelled():
     assert broker.list_pending() == []
 
 # --- U401: event wait 中断帧与跨重启续跑（docs/53 §5）---
-
-import time as _time
-
-from atlas.storage.frame import build_frame, deadline_iso, remaining_seconds
 
 
 def _wait_for_event_frame(holder: list, timeout: float = 2.0) -> dict:

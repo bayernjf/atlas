@@ -207,9 +207,8 @@ def test_u277_viewer_can_read_trace():
     reason="set ATLAS_RUN_INTEGRATION=1 and DATABASE_URL to run monitoring PG integration",
 )
 def test_u278_pg_spans_roundtrip_and_list_projection():
-    from pathlib import Path
 
-    from sqlalchemy import create_engine, text
+    from sqlalchemy import create_engine
 
     from atlas.storage.pg import PgMonitoringStore
 
