@@ -2,7 +2,8 @@
 """渠道绑定 PG 存储（docs/38 §1D，ADR T28）。
 
 裸 SQL 风格对齐 storage/pg.py PgConnectionStore；config 以 JSONB 存储；
-id 用全局 storage_id_seq（ch-N）；行内 tenant_id 过滤；demo reset 不清。
+id 为不可预测的 `ch-<32 hex>`（旧 `ch-N` 存量行仍按原 id 读取，无需迁移）；
+行内 tenant_id 过滤；demo reset 不清。
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from typing import Any
 from sqlalchemy import Engine, text
 
 from atlas.channels.base import ChannelBinding
+from atlas.channels.memory import generate_binding_id
 
 
 def _now_iso() -> str:
@@ -59,8 +61,7 @@ class PgChannelStore:
 
     def create(self, binding: ChannelBinding) -> ChannelBinding:
         with self._engine.begin() as db:
-            seq = int(db.execute(text("SELECT nextval('storage_id_seq')")).scalar_one())
-            binding.id = f"ch-{seq}"
+            binding.id = generate_binding_id()
             now = _now_iso()
             binding.created_at = now
             binding.updated_at = now
