@@ -93,7 +93,9 @@ def test_u917_read_tier_no_anonymous_and_no_scoping_parameters() -> None:
     assert params == {"backend", "visibility", "items"}
     import inspect
 
-    names = set(inspect.signature(api_main.list_interruptions).parameters)
+    from atlas.api.routers.runtime import list_interruptions
+
+    names = set(inspect.signature(list_interruptions).parameters)
     assert names == {"principal"}, f"读端点多了可被操控的入参：{names - {'principal'}}"
 
 

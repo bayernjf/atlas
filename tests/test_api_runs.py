@@ -230,7 +230,8 @@ def test_sync_run_detached_executor_structure():
     防止未来回退成同步 def（挂起重新占用 uvicorn 线程池导致同步面被拖垮）。"""
     import inspect
 
-    from atlas.api.main import _SYNC_RUN_POOL, run_saved_graph
+    from atlas.api.main import _SYNC_RUN_POOL
+    from atlas.api.routers.runtime import run_saved_graph
 
     assert inspect.iscoroutinefunction(run_saved_graph), (
         "run_saved_graph 必须是 async 协程（O-5 彻底解耦结构约束）"

@@ -78,7 +78,7 @@ cp .env.example .env                       # 首次：按需填 DATABASE_URL 与
 cd frontend && pnpm dev                    # 编辑器 http://localhost:5174（/api 代理到 8000）
 ```
 
-- 用 PG 档跑集成测试时起一个本地库并应用迁移（`db/migrations/` 48 条，按序号执行或用 `scripts/ops/apply_migrations.py`）：
+- 用 PG 档跑集成测试时起一个本地库并应用迁移（`db/migrations/` 58 条，按序号执行或用 `scripts/ops/apply_migrations.py`）：
 
   ```bash
   docker run -d --name atlas-pg -e POSTGRES_USER=atlas -e POSTGRES_PASSWORD=atlas \
@@ -127,7 +127,7 @@ ATLAS_ADMIN_BOOTSTRAP_PASSWORD=<过口令策略>       # prod 只播各租户 AD
       │            versioning/ 不可变发布 · routing/ 灰度与门控 · recording/ 录制回放 · debug/ 断点
       │            monitoring/ 指标告警 · scheduling/ cron 调度 · reflection/ 反思候选 · evaluation/ 批评估
       │            collaboration/ 审批 broker · coordination/ 任务信封 · skills/ · a2a/ · mcp/ · tracing/
-      └─ 数据面   PostgreSQL + pgvector（48 条迁移，SQL 在 db/migrations/）；演示档可回退进程内与内置 SQLite
+      └─ 数据面   PostgreSQL + pgvector（58 条迁移，SQL 在 db/migrations/）；演示档可回退进程内与内置 SQLite
 ```
 
 要点：
