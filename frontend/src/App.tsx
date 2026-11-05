@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { ConfigProvider, App as AntdApp } from 'antd'
+import { ConfigProvider } from 'antd'
 import { logout as logoutApi } from './lib/apiClient'
 import {
   getStoredPrincipal,
@@ -39,6 +39,12 @@ const Usage = lazy(() => import('./pages/Usage').then(m => ({ default: m.Usage }
 const MessageTemplates = lazy(() => import('./pages/MessageTemplates').then(m => ({ default: m.MessageTemplates })))
 const ForcePasswordChange = lazy(() =>
   import('./components/ForcePasswordChange').then(m => ({ default: m.ForcePasswordChange })),
+)
+// antd App（message/notification 上下文）只在登录后的页面壳里用到，拆成独立 chunk，
+// 不随入口进入登录/邮件/嵌入分支的首屏。
+const AuthenticatedShell = lazy(() =>
+  import('./components/AuthenticatedShell').then(m => ({ default: m.AuthenticatedShell }),
+  ),
 )
 
 type Page = 'dashboard' | 'editor' | 'monitoring' | 'memory' | 'connections' | 'users' | 'approvals' | 'audit' | 'openapi' | 'waits' | 'schedules' | 'agents' | 'reflection' | 'models' | 'usage' | 'templates' | 'embeds' | 'adapterDrafts' | 'experiments'
@@ -155,7 +161,8 @@ function App() {
 
   return (
     <ConfigProvider theme={antdTheme} locale={antdLocale}>
-      <AntdApp>
+      <Suspense fallback={<PageFallback />}>
+        <AuthenticatedShell>
         <Suspense fallback={<PageFallback />}>
         {page === 'dashboard' ? (
         <Dashboard
@@ -262,7 +269,8 @@ function App() {
         />
       )}
         </Suspense>
-      </AntdApp>
+        </AuthenticatedShell>
+      </Suspense>
     </ConfigProvider>
   )
 }
