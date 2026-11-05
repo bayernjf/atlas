@@ -10,6 +10,7 @@ from atlas.llm.decision import (
     HUMAN_APPROVAL,
     LiteLLMDecisionClient,
     RuleBasedDecisionClient,
+    _is_quality_reason,
 )
 
 
@@ -146,6 +147,89 @@ def test_rule_client_accepts_and_ignores_prompt_and_model():
         reason="商品破损", amount=299, limit=500, prompt="任意运营提示词", model="any-model"
     )
     assert base == with_prompt
+
+
+# ==================== 确定性审批闸门（模型越权兜底） ====================
+
+
+def test_quality_reason_matching_normalizes_and_respects_negation():
+    """白名单匹配处理空格/全角/大小写，但否定语境不得放行。"""
+    assert _is_quality_reason("破 损（Damaged）") is True
+    assert _is_quality_reason("商品有瑕疵") is True
+    assert _is_quality_reason("无破损，只是不喜欢") is False
+    assert _is_quality_reason("非质量问题") is False
+    assert _is_quality_reason("质量问题不存在") is False
+    assert _is_quality_reason("不想要了") is False
+
+
+def test_litellm_gate_downgrades_approve_for_subjective_reason(monkeypatch):
+    """主观原因被模型判成 approve_refund → 闸门强制转人工。"""
+    _install_fake_litellm(
+        monkeypatch,
+        '{"action": "approve_refund", "reason": "退款金额99元在限额内，原因符合不想要了。", '
+        '"confidence": 0.98}',
+    )
+    decision = LiteLLMDecisionClient("gpt-test").decide_refund(
+        reason="不想要了", amount=99, limit=500
+    )
+    assert decision["action"] == HUMAN_APPROVAL
+    assert "原因非质量类" in decision["reason"]
+    assert "已强制转人工" in decision["reason"]
+    assert decision["confidence"] == 0.0
+    assert decision["source"] == "llm:gpt-test"
+
+
+def test_litellm_gate_keeps_approve_for_quality_reason(monkeypatch):
+    """质量原因且限额内：闸门不误伤，保留模型原始 confidence。"""
+    _install_fake_litellm(
+        monkeypatch,
+        '{"action": "approve_refund", "reason": "破损且限额内", "confidence": 0.9}',
+    )
+    decision = LiteLLMDecisionClient("gpt-test").decide_refund(
+        reason="商品破损", amount=100, limit=500
+    )
+    assert decision["action"] == AUTO_APPROVE
+    assert decision["confidence"] == 0.9
+
+
+def test_litellm_gate_keeps_human_for_over_limit(monkeypatch):
+    """超限额仍转人工：闸门只兜自动批准，不改模型已给出的转人工结论。"""
+    _install_fake_litellm(
+        monkeypatch,
+        '{"action": "request_human_approval", "reason": "金额超限", "confidence": 0.99}',
+    )
+    decision = LiteLLMDecisionClient("gpt-test").decide_refund(
+        reason="商品破损", amount=860, limit=500
+    )
+    assert decision["action"] == HUMAN_APPROVAL
+    assert decision["confidence"] == 0.99
+
+
+def test_litellm_gate_does_not_trust_model_self_justification(monkeypatch):
+    """模型用“破损”洗白主观原因时，闸门仍按调用方业务原因转人工。"""
+    _install_fake_litellm(
+        monkeypatch,
+        '{"action": "approve_refund", "reason": "商品破损，符合自动退款", "confidence": 0.95}',
+    )
+    decision = LiteLLMDecisionClient("gpt-test").decide_refund(
+        reason="不想要了", amount=99, limit=500
+    )
+    assert decision["action"] == HUMAN_APPROVAL
+
+
+def test_litellm_gate_falls_back_to_prompt_when_reason_missing(monkeypatch):
+    """图运行时 payload 未带结构化 reason 时，用运营模板里的业务文本判定。"""
+    _install_fake_litellm(
+        monkeypatch,
+        '{"action": "approve_refund", "reason": "ok", "confidence": 0.9}',
+    )
+    client = LiteLLMDecisionClient("gpt-test")
+    quality = client.decide_refund(reason="", amount=99, limit=500, prompt="破损")
+    subjective = client.decide_refund(reason="", amount=99, limit=500, prompt="不想要了")
+    assert quality["action"] == AUTO_APPROVE
+    assert subjective["action"] == HUMAN_APPROVAL
+
+
 # ============================ J-2a 决策模式打印 ============================
 
 
