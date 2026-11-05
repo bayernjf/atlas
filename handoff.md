@@ -1,4 +1,6 @@
 # Handoff — Atlas
+
+> **2026-11-06 补登：dev → main 已于 2026-11-05 经 PR #177 合并（后端/前端/PG 集成等检查全部 SUCCESS 后才合并）；实测 origin/main 与 origin/dev 内容完全一致（git diff 为空）。**
 > **✅ main.py 拆 service 层延续（第三批）＝运行恢复与调度运行时归位（2026-11-03，接力会话推进；`run_recovery`／`scheduler_runtime` 自 `src/atlas/api/main.py` 迁至 `src/atlas/services/run_recovery.py`／`scheduler_runtime.py`，main.py 7634→7407 行；新增 `tests/test_service_run_recovery.py`、`tests/test_service_scheduler_runtime.py`，`tests/test_api_interruptions.py` 随迁调整；门（实跑）：相关三文件 **24 passed／0 failed**；零新错误码／零新迁移／零新端点／零新依赖／无 ADR；本地提交 `0a5fa99`、`60e23ae`，已推送 dev）**
 > **✅ main.py 拆 service 层延续（第二批）＝调度纯逻辑四枚归位（2026-11-02，接力会话推进；`_schedule_tick_seconds`／`_schedule_enabled`／`_schedule_specs_of_published`／`_no_schedule_detail` 自 api/main.py 迁至 services/schedule_pure.py 为公开名，MIN/MAX_SCHEDULE_TICK_SECONDS 常量随迁，main.py 别名导入保持 6 处调用零改动、HTTP 响应形状逐字节不变；门（实跑）：后端默认全量 **2975 passed／213 skipped／0 failed**；main.py 7662→7601 行；零新错误码／零新迁移／零新端点／零新依赖／无 ADR；本地提交 b9fe578，未 push）**
 > **✅ main.py 拆 service 层延续＝错误安全纯函数三枚归位（2026-11-02，接力会话推进；`_safe_run_error`／`_unexpected_stream_error`／`_token_ref` 自 api/main.py 迁至 services/error_safety.py 为公开名 safe_run_error／unexpected_stream_error／token_ref，main.py 别名导入保持 20 处调用零改动、HTTP 响应形状逐字节不变；门（实跑）：后端默认全量 **2975 passed／213 skipped／0 failed**；main.py 7687→7662 行；零新错误码／零新迁移／零新端点／零新依赖／无 ADR；本地提交 ce3a48a，未 push）**
