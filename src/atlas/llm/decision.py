@@ -21,6 +21,7 @@ import logging
 import os
 import re
 import sys
+import unicodedata
 from typing import Any, Protocol
 
 from atlas.llm.metering import complete_with_usage
@@ -33,6 +34,38 @@ HUMAN_APPROVAL = "request_human_approval"
 _QUALITY_REASONS = ("破损", "损坏", "质量", "瑕疵", "残次", "漏发", "错发", "假货", "缺陷")
 _DEFAULT_LIMIT = 500.0
 _DECISION_RE = re.compile(r"\{.*\}", re.DOTALL)
+
+# 确定性兜底：模型偶尔会把主观原因"好心"判成自动退款（实测 99 元/不想要了 →
+# approve_refund, confidence 0.98）。审批闸门只看**调用方传入的业务原因**，不看模型
+# 自述理由，避免模型用一句"破损"把主观原因洗白。匹配前做 NFKC 归一化、大小写折叠、
+# 去掉空白与标点；再要求白名单词命中且前后没有否定词，避免"非破损/无质量问题"误放行。
+_NEGATION_PREFIXES = ("非", "无", "未", "没", "不", "别", "否", "no", "not", "non")
+_NEGATED_TAILS = ("没有问题", "没问题", "无问题", "不存在", "未发现")
+
+
+def _normalize_reason(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text or "").casefold()
+    return "".join(
+        ch for ch in normalized
+        if not ch.isspace() and unicodedata.category(ch)[0] not in ("P", "S")
+    )
+
+
+def _is_quality_reason(reason: str) -> bool:
+    """业务原因是否命中质量原因白名单（否定语境不算）。"""
+    normalized = _normalize_reason(reason)
+    for keyword in _QUALITY_REASONS:
+        start = normalized.find(keyword)
+        while start >= 0:
+            prefix = normalized[max(0, start - 3):start]
+            tail = normalized[start + len(keyword):start + len(keyword) + 6]
+            if not any(token in prefix for token in _NEGATION_PREFIXES) and not any(
+                token in tail for token in _NEGATED_TAILS
+            ):
+                return True
+            start = normalized.find(keyword, start + 1)
+    return False
+
 
 # 结构化输出系统消息（等价 docs/06 §6.2 `with_structured_output(DecisionSchema)`）：
 # 运营的 promptTemplate 只管业务指令，输出形状由这一层强制，避免模型回散文。
@@ -191,12 +224,31 @@ class LiteLLMDecisionClient:
             action = payload["action"]
             if action not in (AUTO_APPROVE, HUMAN_APPROVAL):
                 raise ValueError(f"未知动作：{action}")
-            return {
+            decision = {
                 "action": action,
                 "reason": str(payload.get("reason", "")),
                 "confidence": float(payload.get("confidence", 0.0)),
                 "source": f"llm:{model_name}",
             }
+            # 确定性审批闸门：模型判自动退款但业务原因非质量类 → 强制转人工。
+            # 结构化 reason 优先；图运行时 payload 可能只把原因写进运营模板，此时用 prompt。
+            # 不读模型自述理由，防止模型用"破损"洗白主观原因。
+            business_reason = reason if reason.strip() else (prompt or "")
+            if decision["action"] == AUTO_APPROVE and not _is_quality_reason(business_reason):
+                logger.warning(
+                    "decision: 模型越权自动批准（原因非质量类）→ 强制转人工（model=%s, reason=%s）",
+                    model_name, business_reason,
+                )
+                return {
+                    "action": HUMAN_APPROVAL,
+                    "reason": (
+                        f"原因非质量类（{business_reason or '未提供'}），已强制转人工审批；"
+                        f"模型原判 {AUTO_APPROVE}（confidence={decision['confidence']:g}）"
+                    ),
+                    "confidence": 0.0,
+                    "source": decision["source"],
+                }
+            return decision
         except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
             logger.warning("decision: LLM 输出解析失败（model=%s）fail-safe 转人工：%s", model_name, exc)
             return {
