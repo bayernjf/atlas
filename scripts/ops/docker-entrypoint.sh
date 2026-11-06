@@ -61,6 +61,10 @@ if [ "${ATLAS_BEHIND_PROXY:-0}" = "1" ]; then
     set -- "$@" --proxy-headers
 fi
 
+# 生产入口 env 预检（2026-11-06）：缺哪把密钥就在这里点名退出，不等到 uvicorn 起一半、
+# 迁移已经跑完之后才失败。dev/test 只提示不拦截（ATLAS_ENV=prod 才严格）。
+python -m scripts.ops.preflight_env
+
 python -m scripts.ops.apply_migrations
 
 # docs/64 J-1c：prod 不播种种子账号（含已知默认口令），本地/演示照常。
