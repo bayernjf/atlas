@@ -56,6 +56,30 @@ Caddy 首次启动会自动向 Let's Encrypt 申请证书并在到期前自动�
 其他可调项：`ATLAS_MAX_BODY_BYTES`（/api/ 写请求体上限，默认 2 MiB；图本身另有
 节点 ≤500 / 边 ≤2000 上限，超限 422 并下发精确错误码）。
 
+## 代码回滚锚点
+
+镜像 tag 由 `ATLAS_IMAGE_TAG` 控制（默认 `latest`，与既有部署行为一致）。
+每次升级前给当前镜像留一个带时间戳的 tag，**保留 3 个**（当前 + 2 个上一版）：
+
+```bash
+# 升级前：留档当前镜像
+docker tag atlas-demo:latest "atlas-demo:$(date -u +%Y%m%d-%H%M)"
+# 回滚：把 compose 钉到留档的 tag
+ATLAS_IMAGE_TAG=20261108-1400 docker compose up -d atlas
+```
+
+**这条路径会在什么情况下失效**
+
+- tag 只存在于本机 Docker daemon：换机、`docker image prune` 或清理本地镜像后
+  即不存在；本仓没有 registry，不能把本地 tag 当作跨机回滚方案。
+- `ATLAS_IMAGE_TAG` 默认是 `latest`，即最后一次构建的产物。不带显式 tag 的
+  `docker compose up` 不是回滚，只是重新部署最新版。
+- 需要跨机保留时先导出：`docker save atlas-demo:<tag> | gzip > atlas-<tag>.tar.gz`，
+  异地保存后在目标机 `docker load`。这仍不等价于 registry 的不可变 digest。
+
+回滚镜像只回代码；数据回滚走 `scripts/ops/restore.sh`（恢复后需自行比对行数，
+当前脚本没有内置计数校验）。
+
 ## 就绪/存活探针
 
 - compose 已给 atlas 配置 healthcheck（打 `/api/ready`）；
