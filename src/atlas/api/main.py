@@ -8,7 +8,6 @@ NL 生成草稿、适配器发现、模拟商家售后控制台。
 
 from __future__ import annotations
 
-import json
 import hmac
 import logging
 import os
@@ -31,22 +30,14 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import text
 
-from atlas.cards import (
-    CardRenderError,
-    get_card,
-    map_action_output,
-)
 from atlas.evaluation import EvaluationTask
-from atlas.graph.dsl import parse_graph, valid_event_key
+from atlas.graph.dsl import parse_graph
 from atlas.graph.loader import (
     RunSuperseded,
     WaitTimeoutSuspend,
     run_graph,
 )
-from atlas.collaboration.cancellations import RunCancelled
-from atlas.collaboration.notifications import EmailApprovalNotifier
-from atlas.collaboration.email_token import EmailTokenError, TokenIssuer
-from atlas.tracing import Tracer
+from atlas.collaboration.email_token import TokenIssuer
 from atlas.harness.registry import AdapterRegistry
 from atlas.harness.runtime import (
     build_base_registry,
@@ -71,7 +62,6 @@ from atlas.memory.database import ping, wait_for_database
 from atlas.message.template_store import (
     validate_message_template,
 )
-from atlas.monitoring import extract_business, extract_node_results
 from atlas.observability.audit import AUDITED_METHODS, LOGIN_PATH
 from atlas.channels.base import (
     ChannelBinding,
@@ -88,13 +78,19 @@ from atlas.a2a.router import router as a2a_router  # docs/90 ADR T32 (Zeus A2A e
 from atlas.api.sse import SSE_HEARTBEAT_SECONDS  # noqa: F401
 from atlas.httpapi.service import HttpApiClient  # noqa: F401
 from atlas.connections.service import ConnectionServiceError
-from atlas.services import run_recovery, scheduler_runtime
+from atlas.services import (
+    approval_decision,
+    run_orchestration,
+    run_recovery,
+    scheduler_runtime,
+)
 from atlas.services.error_safety import (
     safe_run_error as _safe_run_error,
-    token_ref as _token_ref,
 )
 from atlas.services.error_handlers import register_exception_handlers
 from atlas.services.webhook_runtime import build_webhook_callbacks
+# P2-1: one test imports _token_ref from atlas.api.main; keep the re-export.
+from atlas.services.error_safety import token_ref as _token_ref  # noqa: F401
 from atlas.observability.logging import (
     configure_logging,
     install_request_id_middleware,
@@ -142,8 +138,6 @@ logger = logging.getLogger(__name__)
 # 此前这里与 channels/registry、notifications 各读一遍同一 env＋同一缺省）
 _PUBLIC_URL = read_public_url()
 
-MAX_WAIT_PAYLOAD_BYTES = 4096
-MAX_WAIT_PAYLOAD_KEYS = 50
 # docs/36 §3：邮件深链验签单例（密钥取 ATLAS_APPROVAL_HMAC_SECRET）。
 _email_token_issuer = TokenIssuer()
 
@@ -452,14 +446,9 @@ class CompileResponse(BaseModel):
     terminals: list[str]
 
 
-class RunGraphResponse(BaseModel):
-    id: str
-    status: str
-    outputs: dict[str, Any]
-    trace: list[str]
-    # 打包 W（docs/84）：实际执行完成的运行携带种子；cancelled/suspended 早退响应为 None。
-    rng_seed: int | None = None
-
+# RunGraphResponse moved to atlas.services.run_orchestration (Tier0 review P2);
+# re-exported with the other run-orchestration aliases below.
+from atlas.services.run_orchestration import RunGraphResponse  # noqa: F401,E402
 
 class NLGenerateRequest(BaseModel):
     prompt: str
@@ -1504,246 +1493,27 @@ def _run_saved_graph_impl(
     payload: dict[str, Any] | None,
     principal: Principal,
 ) -> RunGraphResponse:
-    """同步跑一次图（v1 也承载自走循环，见 `_run_sync_cycle` 与 docs/130 C-D10）。
+    """同步跑一次图；业务语义在 atlas.services.run_orchestration（Tier0 review P2）。
 
-    **圈启用面**：图级 `loop` 配置存在且 `enabled!==false` ⇒ 本入口按圈会话驱动
-    （每圈一次真实运行、各自 run_id，返回**最后一圈**的结果）；缺省配置走原路径逐字不变。
+    薄封装：调用时读 main 模块当前全局构造依赖束，保住测试对
+    `atlas.api.main.run_graph` / `_frame_sink_for` / `_resume_claim_for` /
+    `evaluate_after_run` 的 monkeypatch 语义。
     """
-    services = services_for(principal)
-    body = payload or {}
-    release_version, resolved_version = _resolve_event_version(services, principal, graph_id, body)
-    graph = _load_graph_or_404(services, graph_id, release_version)
-    event_payload = (body.get("event") or {}).get("payload") or {}
-    if body.get("debug") is not None:
-        raise HTTPException(status_code=422, detail="单步调试仅支持流式运行 /run/stream")
-
-    payloads: dict[str, dict[str, Any]] = {}
-
-    def _run_once(step) -> Any:
-        outcome, response = _run_sync_cycle(
-            services,
-            principal,
-            graph,
-            graph_id=graph_id,
-            release_version=release_version,
-            resolved_version=resolved_version,
-            event_payload=event_payload,
-            inputs=step.inputs,
-            cycle_seq=step.seq if step.group_id else 0,
-            cycle_group_id=step.group_id,
-            payloads=payloads,
-        )
-        return outcome
-
-    if cycle_config(graph) is None:
-        # 现状路径：不建会话、不发圈号（打包 BN C-D2 的零行为变化承诺）
-        outcome, response = _run_sync_cycle(
-            services,
-            principal,
-            graph,
-            graph_id=graph_id,
-            release_version=release_version,
-            resolved_version=resolved_version,
-            event_payload=event_payload,
-            inputs=body.get("inputs"),
-            cycle_seq=0,
-            cycle_group_id="",
-            payloads=payloads,
-        )
-        return response if response is not None else RunGraphResponse(
-            id=graph_id, **payloads[outcome.run_id]
-        )
-
-    session = run_cycle_session(
-        services,
-        graph,
-        tenant_id=principal.tenant_id,
-        graph_id=graph_id,
-        inputs=dict(body.get("inputs") or {}),
-        run_once=_run_once,
+    return run_orchestration.run_saved_graph(
+        graph_id, payload, principal,
+        deps=run_orchestration.SyncRunDeps(
+            services_for=services_for,
+            run_graph=run_graph,
+            frame_sink_for=_frame_sink_for,
+            resume_claim_for=_resume_claim_for,
+            evaluate_after_run=evaluate_after_run,
+            runtime_registry_of=_runtime_registry,
+            tenant_graph_resolver_of=_tenant_graph_resolver,
+            secret_provider=_secret_provider,
+            storage_backend=STORAGE_BACKEND,
+            public_url=_PUBLIC_URL,
+        ),
     )
-    # `runs` 是 public_view 投影（每项是 dict），取最后一圈的 runId 去拿原始 run 结果
-    last_run_id = session["runs"][-1]["runId"]
-    return RunGraphResponse(id=graph_id, **payloads[last_run_id])
-
-
-def _run_sync_cycle(
-    services: TenantServices,
-    principal: Principal,
-    graph: Any,
-    *,
-    graph_id: str,
-    release_version: int | None,
-    resolved_version: int | None,
-    event_payload: dict[str, Any],
-    inputs: dict[str, Any] | None,
-    cycle_seq: int,
-    cycle_group_id: str,
-    payloads: dict[str, dict[str, Any]],
-) -> tuple[Any, RunGraphResponse | None]:
-    """跑**一圈**（= 一次真实运行），返回 `(CycleOutcome, 非 None 的 HTTP 响应 | None)`。
-
-    本函数是同步入口的**全部**既有语义（cancel 句柄、superseded 让位、异常记账与
-    灰度评估、监控埋点、frame_sink、usage 上下文）逐字搬运——圈能力只加在"调用几次"
-    这一层，不改任何一圈内部的语义（docs/130 C-D1：一圈＝一次真实运行）。
-
-    `cycle_seq`／`cycle_group_id` 缺省 0/''＝非圈运行（与迁移 050 的列缺省同义）。
-    `payloads` 由调用方持有，用于把每圈的原始 run 结果带给 HTTP 层（返回最后一圈）。
-    """
-    graph_view = {"nodes": [{"id": node.id, "type": node.type} for node in graph.nodes]}
-    started_at = datetime.now(timezone.utc).isoformat()
-    started = time.monotonic()
-    monitoring = services.monitoring
-    run_id = uuid.uuid4().hex
-    tracer = Tracer(
-        graph_id=graph_id, graph_version=_graph_version(graph_id, release_version)
-    )
-    services.run_store.begin(
-        run_id=run_id, graph_id=graph_id, mode="sync",
-        cycle_seq=cycle_seq, cycle_group_id=cycle_group_id,
-        resolved_version=resolved_version,  # O-2：带 event 的路由版本落投影（无 event 恒 None）
-    )
-    frame_sink = _frame_sink_for(principal.tenant_id, services.run_store, run_id)
-    # docs/28 §4.1 ⑧：同步入口无 SSE，构造同形收集 emit（只收顶层 tool_metric，其余忽略）。
-    tool_calls: list[dict[str, Any]] = []
-
-    def _metric_collect(event: dict[str, Any]) -> None:
-        if event.get("type") == "tool_metric" and not event.get("subgraphPath"):
-            tool_calls.append(_tool_call_from_event(event))
-
-    # 打包 O（docs/69 §1 D-1）：同步入口此前从不登记取消句柄（只有 :3115 的流式路径注册），
-    # 在途急停恒落 409「运行已结束」。与流式同构——请求线程注册，finally 注销覆盖全部出口。
-    cancellation_broker = services.cancellation_broker
-    cancel_event = cancellation_broker.register(run_id)
-    try:
-        with usage_context(
-            principal.tenant_id,
-            run_id=run_id,
-            graph_id=graph_id,
-            store=services.usage_store,
-        ):
-            result = run_graph(
-                graph,
-                inputs=inputs,
-                registry=_runtime_registry(services),
-                approval_broker=services.approval_broker,
-                event_wait_broker=services.event_wait_broker,
-                approval_notifier=EmailApprovalNotifier(
-                    services.message_service, _PUBLIC_URL, principal.tenant_id
-                ),
-                graph_id=graph_id,
-                graph_resolver=_tenant_graph_resolver(services),
-                emit=_metric_collect,
-                frame_sink=frame_sink,
-                resume_claim=_resume_claim_for(),
-                tracer=tracer,
-                graph_version=tracer.graph_version,
-                is_cancelled=cancel_event.is_set,
-                _block_subgraph_suspend=(STORAGE_BACKEND == "pg"),
-                tenant_id=principal.tenant_id,
-                secret_provider=_secret_provider,
-                memory_repo=services.memory_store,
-            )
-    except RunSuperseded as exc:
-        # docs/62 §2 D-4：输家停止驱动——不写 run 终态、不记监控、不进门控评估，
-        # 帧与终态都归赢家；本进程如实返回"仍在挂起"的形状（刻意不新增 run 状态/错误码）。
-        logger.info("同步运行让位：%s", exc)
-        return (
-            CycleOutcome(run_id=run_id, status="suspended", stop_run=True),
-            RunGraphResponse(
-                id=graph_id,
-                status="suspended",
-                outputs={},
-                trace=[f"{exc.node_id}: superseded by another process"],
-            ),
-        )
-    except WaitTimeoutSuspend as exc:
-        # docs/136 打包 BS：挂起节点超时且 onTimeout="suspend"——run 保持 suspended
-        # （不 finish、不记监控终态、不清帧、不进 evaluate_after_run），等人工后续恢复。
-        logger.info("同步运行超时保持挂起：%s", exc)
-        return (
-            CycleOutcome(run_id=run_id, status="suspended", stop_run=True),
-            RunGraphResponse(
-                id=graph_id,
-                status="suspended",
-                outputs={},
-                trace=[f"{exc.node_id}: wait timeout kept suspended"],
-            ),
-        )
-    except RunCancelled as exc:
-        # 打包 O：同步入口的协作式急停与流式同形——用户主动 ⇒ 记 cancelled 且
-        # **不调 evaluate_after_run**（不算失败、不进 M9 灰度门控，与流式 :3203 逐条对齐）。
-        # 必须排在 except Exception 之前（RunCancelled 是 Exception 子类）。
-        services.run_store.finish(run_id=run_id, status="cancelled")
-        monitoring.record_run(
-            graph_id=graph_id,
-            mode="sync",
-            status="cancelled",
-            started_at=started_at,
-            duration_ms=(time.monotonic() - started) * 1000,
-            nodes=[],
-            trace_id=tracer.trace_id,
-            resolved_version=resolved_version,
-            tool_calls=tool_calls,
-            spans=tracer.to_tree(),
-        )
-        return (
-            CycleOutcome(run_id=run_id, status="cancelled", stop_run=True),
-            RunGraphResponse(
-                id=graph_id,
-                status="cancelled",
-                outputs={},
-                trace=[f"{exc.node_id}: cancelled by user"],
-            ),
-        )
-    except Exception as exc:
-        services.run_store.finish(
-            run_id=run_id, status="failed", error=_safe_run_error(exc)
-        )
-        record = monitoring.record_run(
-            graph_id=graph_id,
-            mode="sync",
-            status="error",
-            started_at=started_at,
-            duration_ms=(time.monotonic() - started) * 1000,
-            nodes=[],
-            error=_safe_run_error(exc),
-            trace_id=tracer.trace_id,
-            resolved_version=resolved_version,
-            tool_calls=tool_calls,
-            spans=tracer.to_tree(),
-        )
-        evaluate_after_run(services, record)  # M9：异常运行同样计入 candidate 门控
-        raise
-    finally:
-        # 打包 O：句柄必须随请求退出而注销——留着会让「已结束再取消」从 409 翻成 200
-        # （tests/test_run_cancel.py::test_cancel_finished_run_returns_409 守着这条不变量）。
-        cancellation_broker.unregister(run_id)
-    services.run_store.finish(
-        run_id=run_id, status="completed",
-        outputs=result["outputs"], trace=result["trace"],
-    )
-    record = monitoring.record_run(
-        graph_id=graph_id,
-        mode="sync",
-        status="completed",
-        started_at=started_at,
-        duration_ms=(time.monotonic() - started) * 1000,
-        nodes=extract_node_results(graph_view, result["outputs"]),
-        trace_id=tracer.trace_id,
-        resolved_version=resolved_version,
-        business=extract_business(graph_view, result["outputs"], event_payload=event_payload),
-        tool_calls=tool_calls,
-        spans=result["traceTree"],
-    )
-    evaluate_after_run(services, record)  # M9：灰度门控越阈自动回滚
-    payloads[run_id] = result
-    return CycleOutcome(
-        run_id=run_id,
-        status="completed",
-        outputs=result.get("outputs", {}),
-        variables={},
-    ), None
 
 
 class ApprovalDecisionRequest(BaseModel):
@@ -1756,142 +1526,42 @@ class ApprovalDecisionRequest(BaseModel):
     model_config = {"populate_by_name": True}
 
 
-def _parse_wait_event_key(body: dict[str, Any]) -> str:
-    raw = body.get("eventKey")
-    event_key = raw.strip() if isinstance(raw, str) else ""
-    if not valid_event_key(event_key):
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "WAIT_EVENT_KEY_INVALID",
-                    "message": "eventKey 必须是 1-128 位字母、数字及 :_- 组合"},
-        )
-    return event_key
-
-
-def _parse_wait_payload(body: dict[str, Any]) -> dict[str, Any]:
-    raw = body.get("payload", {})
-    if raw is None:
-        return {}
-    if not isinstance(raw, dict):
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "WAIT_EVENT_PAYLOAD_NOT_OBJECT",
-                    "message": "payload 必须是 JSON 对象"},
-        )
-    if len(raw) > MAX_WAIT_PAYLOAD_KEYS:
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "WAIT_EVENT_PAYLOAD_TOO_MANY_KEYS",
-                    "message": f"payload 顶层键不能超过 {MAX_WAIT_PAYLOAD_KEYS} 个",
-                    "params": {"max": MAX_WAIT_PAYLOAD_KEYS}},
-        )
-    serialized = json.dumps(raw, ensure_ascii=False)
-    if len(serialized.encode("utf-8")) > MAX_WAIT_PAYLOAD_BYTES:
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "WAIT_EVENT_PAYLOAD_TOO_LARGE",
-                    "message": f"payload 序列化后不能超过 {MAX_WAIT_PAYLOAD_BYTES} 字节",
-                    "params": {"max": MAX_WAIT_PAYLOAD_BYTES}},
-        )
-    return raw
-
-
 class InterruptionResolveRequest(BaseModel):
     action: str
     reason: str = Field(default="", max_length=500)
 
 
-def _apply_approval_decision(
-    broker: Any,
-    pending: dict[str, Any],
-    token: str,
-    *,
-    decision: Literal["approved", "rejected"] | None,
-    comment: str,
-    action_id: str | None,
-    form: dict[str, Any] | None,
-    notifier: Any = None,
-    resolved_by: str = "human",
-) -> dict[str, Any]:
-    """登录态决策与邮件深链决策共用的唯一应用函数（docs/36 §3，防双路漂移）。"""
-    if pending.get("decision") is not None:
-        raise HTTPException(status_code=409, detail="该审批请求已有决策，重复提交不生效")
-
-    resolved_action: str | None = None
-    if action_id:
-        # M8：卡片动作提交，服务端按 action.output 映射 decision/comment（map_action_output 唯一权威）。
-        card_template_id = pending.get("cardTemplateId")
-        card = get_card(card_template_id) if card_template_id else None
-        if card is None:
-            raise HTTPException(status_code=422, detail="该审批请求未配置交互卡片或卡片不存在")
-        try:
-            mapped = map_action_output(card, action_id, form)
-        except CardRenderError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        decision = mapped["decision"]
-        comment = mapped.get("comment", "")
-        resolved_action = action_id
-    elif decision is None:
-        raise HTTPException(
-            status_code=422,
-            detail="请提供 decision（approved/rejected）或卡片 actionId",
-        )
-
-    if not broker.resolve(token, decision, comment=comment, action_id=resolved_action):
-        raise HTTPException(status_code=409, detail="该审批请求已有决策，重复提交不生效")
-    # docs/37 §4：决策结果邮件（旁路 fail-safe，不影响响应与决策事实）。
-    if notifier is not None:
-        recipients = broker.get_notify_recipients(token)
-        if recipients:
-            try:
-                notifier.notify_decided(
-                    graph_id=pending.get("graph_id", ""),
-                    node_id=pending.get("node_id", ""),
-                    summary=pending.get("summary", ""),
-                    decision=decision,
-                    resolved_by=resolved_by,
-                    comment=comment,
-                    recipients=recipients,
-                )
-            except Exception as exc:  # noqa: BLE001 结果通知任何异常都不改变响应
-                logger.warning("审批结果通知失败 token=%s: %s", _token_ref(token), exc)
-    result: dict[str, Any] = {"token": token, "decision": decision, "resolvedBy": "human"}
-    if resolved_action:
-        result["actionId"] = resolved_action
-    return result
-
-
-_EMAIL_LINK_INVALID = "审批链接无效或已过期"
+# Tier0 review P2: approval decision + wait-event parsing live in
+# atlas.services.approval_decision; the aliases/wrappers below keep the
+# historical main-module names importable (routers import them at module load,
+# one test calls _apply_approval_decision directly, and the email-token /
+# tenant-registry seams must stay patchable through atlas.api.main).
+from atlas.services.approval_decision import (  # noqa: F401,E402
+    EMAIL_LINK_INVALID as _EMAIL_LINK_INVALID,
+    MAX_WAIT_PAYLOAD_BYTES,
+    MAX_WAIT_PAYLOAD_KEYS,
+    apply_approval_decision as _apply_approval_decision,
+    parse_wait_event_key as _parse_wait_event_key,
+    parse_wait_payload as _parse_wait_payload,
+)
 
 
 def _resolve_email_signed(signed: str) -> tuple[Any, str, str]:
-    """验签 → peek 已装配租户；任何失败统一 404，不区分原因。"""
-    try:
-        body = _email_token_issuer.verify(signed)
-    except EmailTokenError as exc:
-        raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID) from exc
-    tenant_id = str(body.get("tenant", ""))
-    services = tenant_registry.peek(tenant_id)
-    if services is None:
-        raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID)
-    if body.get("rcpt") is None:
-        # docs/64 J-1b：无收件人绑定的旧式 token 一律失效（TTL 仅 1h+grace，不向后兼容）。
-        raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID)
-    return services, str(body.get("at", "")), tenant_id
+    """验签 → peek 已装配租户；语义在 atlas.services.approval_decision（薄封装保 patch 缝）。"""
+    return approval_decision.resolve_email_signed(
+        signed,
+        token_issuer=_email_token_issuer,
+        peek_registry=tenant_registry.peek,
+    )
 
 
 def _assert_email_token_recipient(
     signed: str, approval_token: str, broker: Any
 ) -> None:
-    """docs/64 J-1b：token 载荷 rcpt 必须属于该审批的收件人，否则 404（与验签同口径）。"""
-    try:
-        body = _email_token_issuer.verify(signed)
-    except EmailTokenError as exc:
-        raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID) from exc
-    rcpt = str(body.get("rcpt", "")).lower()
-    recipients = {r.lower() for r in broker.get_notify_recipients(approval_token)}
-    if rcpt not in recipients:
-        raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID)
+    """token 载荷 rcpt 归属校验；语义在 atlas.services.approval_decision（薄封装保 patch 缝）。"""
+    approval_decision.assert_email_token_recipient(
+        signed, approval_token, broker, token_issuer=_email_token_issuer
+    )
 
 
 class EmailDecisionRequest(BaseModel):
