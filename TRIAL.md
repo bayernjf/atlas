@@ -12,7 +12,7 @@
 
 ## 1. 启动（约 3 分钟）
 
-前置条件：电脑上装好 [Docker Desktop](https://www.docker.com/products/docker-desktop/) 并保持运行。
+前置条件：macOS 上装 [OrbStack](https://orbstack.dev/) 并保持运行（本项目 macOS 本地开发只用 OrbStack，不再使用 Docker Desktop）；Linux 上装 Docker Engine + Docker Compose 插件即可。
 
 在本项目目录执行：
 
