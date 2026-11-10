@@ -15,7 +15,6 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 import functools
 import time
-import uuid
 from itertools import count
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -31,10 +30,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import text
 
 from atlas.evaluation import EvaluationTask
-from atlas.graph.dsl import parse_graph
 from atlas.graph.loader import (
-    RunSuperseded,
-    WaitTimeoutSuspend,
     run_graph,
 )
 from atlas.collaboration.email_token import TokenIssuer
@@ -51,11 +47,8 @@ from atlas.iam.passwords import validate_password
 from atlas.iam.principals import Principal, Role
 from atlas.iam.registry import STORAGE_BACKEND, TenantServices
 from atlas.llm.decision import get_decision_client, warm_litellm
-from atlas.llm.metering import usage_context
 from atlas.cycles.supervisor import (
     CycleOutcome,
-    cycle_config,
-    run_cycle_session,
     session_for_run,
 )
 from atlas.memory.database import ping, wait_for_database
@@ -80,12 +73,10 @@ from atlas.httpapi.service import HttpApiClient  # noqa: F401
 from atlas.connections.service import ConnectionServiceError
 from atlas.services import (
     approval_decision,
+    background_run,
     run_orchestration,
     run_recovery,
     scheduler_runtime,
-)
-from atlas.services.error_safety import (
-    safe_run_error as _safe_run_error,
 )
 from atlas.services.error_handlers import register_exception_handlers
 from atlas.services.webhook_runtime import build_webhook_callbacks
@@ -663,78 +654,39 @@ def _locate_binding(binding_id: str) -> tuple[str, ChannelBinding, TenantService
 # （见下）：回调由 services.webhook_runtime 工厂生成，pool/worker 在装配期注入。
 
 
+def _background_run_deps() -> background_run.BackgroundRunDeps:
+    """读 main 当前模块全局构造依赖束（service layer batch 2）。
+
+    薄封装：调用时读 main 模块当前全局，保住测试对 `atlas.api.main.run_graph` /
+    `_frame_sink_for` / `_resume_claim_for` 的 monkeypatch 语义。
+    """
+    return background_run.BackgroundRunDeps(
+        run_graph=run_graph,
+        frame_sink_for=_frame_sink_for,
+        resume_claim_for=_resume_claim_for,
+        runtime_registry_of=_runtime_registry,
+        tenant_graph_resolver_of=_tenant_graph_resolver,
+        secret_provider=_secret_provider,
+        storage_backend=STORAGE_BACKEND,
+    )
+
+
 def _background_run_cycle(
     services: TenantServices, tenant_id: str, graph_id: str, version: int,
     event: TriggerEvent, *, mode: str, run_id: str | None,
     cycle_seq: int = 0, cycle_group_id: str = "", inputs: dict[str, Any] | None = None,
     agent_id: str = "",
 ) -> CycleOutcome:
-    """后台跑**一圈**（= 一次真实运行）；返回 `CycleOutcome` 供圈层判定。
+    """后台跑**一圈**；语义在 atlas.services.background_run.run_background_cycle。
 
-    与同步入口同构的分工：圈层只管"跑几次"，一圈内部的 begin/finish/让位/失败记账
-    语义逐字保持（docs/130 C-D1）。`cycle_seq`／`cycle_group_id` 缺省 0/''＝非圈运行。
+    薄封装：调用时读 main 模块当前全局构造依赖束，保住测试的 monkeypatch 缝
+    （service layer batch 2，与 `_run_saved_graph_impl` 同款纪律）。
     """
-    run_store = services.run_store
-    own_run_id = run_id
-    if own_run_id is None:
-        own_run_id = uuid.uuid4().hex
-        run_store.begin(
-            run_id=own_run_id, graph_id=graph_id, mode=mode,
-            cycle_seq=cycle_seq, cycle_group_id=cycle_group_id,
-            agent_id=agent_id,
-        )
-    try:
-        raw = services.graph_store.get(graph_id, version)
-        if raw is None:
-            run_store.finish(
-                run_id=own_run_id, status="failed",
-                error=f"已发布版本不存在：{graph_id}@{version}",
-            )
-            return CycleOutcome(run_id=own_run_id, status="failed", stop_run=True)
-        graph = parse_graph(raw)
-        with usage_context(
-            tenant_id, run_id=own_run_id, graph_id=graph_id, store=services.usage_store
-        ):
-            result = run_graph(
-                graph,
-                inputs=inputs if inputs is not None else {"event": event.model_dump()},
-                registry=_runtime_registry(services),
-                approval_broker=services.approval_broker,
-                event_wait_broker=services.event_wait_broker,
-                graph_id=graph_id,
-                graph_resolver=_tenant_graph_resolver(services),
-                frame_sink=_frame_sink_for(tenant_id, run_store, own_run_id),
-                resume_claim=_resume_claim_for(),
-                _block_subgraph_suspend=(STORAGE_BACKEND == "pg"),
-                graph_version=version,
-                tenant_id=tenant_id,
-                secret_provider=_secret_provider,
-                memory_repo=services.memory_store,
-            )
-        run_store.finish(
-            run_id=own_run_id, status="completed",
-            outputs=result["outputs"], trace=result["trace"],
-        )
-        return CycleOutcome(
-            run_id=own_run_id, status="completed", outputs=result.get("outputs", {})
-        )
-    except RunSuperseded as exc:
-        # docs/62 §2 D-4：后台运行同样受认领门约束——输家不落 failed
-        # （否则把赢家的执行记录成失败），只让位并留日志。
-        logger.info("后台运行让位 graph=%s@%s：%s", graph_id, version, exc)
-        return CycleOutcome(run_id=own_run_id, status="suspended", stop_run=True)
-    except WaitTimeoutSuspend as exc:
-        # docs/136 打包 BS：后台运行挂起节点超时且 onTimeout="suspend"——run 保持
-        # suspended（不 finish、不清帧），等人工后续恢复。
-        logger.info("后台运行超时保持挂起 graph=%s@%s：%s", graph_id, version, exc)
-        return CycleOutcome(run_id=own_run_id, status="suspended", stop_run=True)
-    except Exception as exc:
-        logger.error("%s 触发图运行失败 graph=%s@%s", mode, graph_id, version, exc_info=True)
-        run_store.finish(
-            run_id=own_run_id, status="failed",
-            error=_safe_run_error(exc),
-        )
-        return CycleOutcome(run_id=own_run_id, status="failed", stop_run=True)
+    return background_run.run_background_cycle(
+        services, tenant_id, graph_id, version, event,
+        mode=mode, run_id=run_id, cycle_seq=cycle_seq, cycle_group_id=cycle_group_id,
+        inputs=inputs, agent_id=agent_id, deps=_background_run_deps(),
+    )
 
 
 def _background_run_worker(
@@ -742,57 +694,14 @@ def _background_run_worker(
     graph_id: str, version: int, event: TriggerEvent,
     agent_id: str = "", *, mode: str = "webhook", run_id: str | None = None,
 ) -> None:
-    """后台运行钉版图：run 记录独立于 HTTP 请求；失败落 failed，不回传触发方。
+    """后台运行钉版图（webhook/入站/定时共用；WorkerFn 同形签名见 webhook_runtime）。
 
-    webhook 与定时触发共用这条路径（docs/68 §1 D-3：派发按发布号钉版，绝不回落草稿）。
-    `run_id` 由调度派发方预先 begin 后传入——它必须在 tick 内就让 run 变成 running，
-    否则下一轮 tick 的"同图还在跑"判定会漏看这条刚提交的运行。
-
-    **圈启用面**（docs/130 C-D10）：图级 `loop` 配置存在 ⇒ 本 worker 按圈会话驱动；
-    预置的 `run_id` 只用于**第一圈**（保持"tick 内即可见 running"的既有语义），
-    后续圈由圈层发新 run_id。缺省配置走原路径逐字不变。
+    语义在 atlas.services.background_run.run_background_worker；薄封装保 patch 缝
+    （service layer batch 2）。
     """
-    raw = services.graph_store.get(graph_id, version)
-    if raw is None:
-        # 图不存在：预置 run 要落 failed（与既有语义同）；无预置 run 则无事可做。
-        if run_id is not None:
-            services.run_store.finish(
-                run_id=run_id, status="failed",
-                error=f"已发布版本不存在：{graph_id}@{version}",
-            )
-        return
-    try:
-        graph = parse_graph(raw)
-    except Exception as exc:
-        if run_id is not None:
-            services.run_store.finish(
-                run_id=run_id, status="failed", error=_safe_run_error(exc)
-            )
-        logger.error("%s 图解析失败 graph=%s@%s：%s", mode, graph_id, version, exc)
-        return
-
-    if cycle_config(graph) is None:
-        _background_run_cycle(
-            services, tenant_id, graph_id, version, event,
-            mode=mode, run_id=run_id, agent_id=agent_id,
-        )
-        return
-
-    def _run_once(step) -> CycleOutcome:
-        return _background_run_cycle(
-            services, tenant_id, graph_id, version, event,
-            mode=mode,
-            # 只有第一圈沿用派发方预置的 run_id（tick 内可见 running）
-            run_id=run_id if step.seq == 1 else None,
-            cycle_seq=step.seq, cycle_group_id=step.group_id,
-            inputs=step.inputs, agent_id=agent_id,
-        )
-
-    run_cycle_session(
-        services, graph,
-        tenant_id=tenant_id, graph_id=graph_id,
-        inputs={"event": event.model_dump()},
-        run_once=_run_once,
+    background_run.run_background_worker(
+        services, tenant_id, graph_id, version, event, agent_id,
+        mode=mode, run_id=run_id, deps=_background_run_deps(),
     )
 
 
