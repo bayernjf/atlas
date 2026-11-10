@@ -1,0 +1,19 @@
+# Local-only overrides. Joins the shared Tier 0 network so atlas can reach
+# model-hub and be reached by the other products.
+#
+# Usage: docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+networks:
+  tier0-net:
+    external: true
+
+services:
+  atlas:
+    networks:
+      - default
+      - tier0-net
+    environment:
+      # 127.0.0.1 inside a container is the container itself; the hub is reached
+      # by its service name on the shared network. The token stays in the
+      # git-ignored .env, never in this file.
+      MODEL_HUB_URL: http://model-hub:8791
+      MODEL_HUB_TOKEN: ${MODEL_HUB_TOKEN:-}
