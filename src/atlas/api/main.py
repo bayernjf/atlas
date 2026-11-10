@@ -8,7 +8,6 @@ NL 生成草稿、适配器发现、模拟商家售后控制台。
 
 from __future__ import annotations
 
-import json
 import hmac
 import logging
 import os
@@ -31,28 +30,17 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import text
 
-from atlas.cards import (
-    CardRenderError,
-    get_card,
-    map_action_output,
-)
 from atlas.evaluation import EvaluationTask
-from atlas.graph.conditions import validate_expression
-from atlas.graph.dsl import GraphValidationError, parse_graph, valid_event_key
+from atlas.graph.dsl import parse_graph
 from atlas.graph.loader import (
     RunSuperseded,
     WaitTimeoutSuspend,
-    compile_graph,
     run_graph,
 )
-from atlas.collaboration.cancellations import RunCancelled
-from atlas.collaboration.notifications import EmailApprovalNotifier
-from atlas.collaboration.email_token import EmailTokenError, TokenIssuer
-from atlas.tracing import Tracer
+from atlas.collaboration.email_token import TokenIssuer
 from atlas.harness.registry import AdapterRegistry
 from atlas.harness.runtime import (
     build_base_registry,
-    build_runtime_registry,
     resolve_database_client,
 )
 from atlas.iam.deps import (
@@ -74,7 +62,6 @@ from atlas.memory.database import ping, wait_for_database
 from atlas.message.template_store import (
     validate_message_template,
 )
-from atlas.monitoring import extract_business, extract_node_results
 from atlas.observability.audit import AUDITED_METHODS, LOGIN_PATH
 from atlas.channels.base import (
     ChannelBinding,
@@ -91,13 +78,19 @@ from atlas.a2a.router import router as a2a_router  # docs/90 ADR T32 (Zeus A2A e
 from atlas.api.sse import SSE_HEARTBEAT_SECONDS  # noqa: F401
 from atlas.httpapi.service import HttpApiClient  # noqa: F401
 from atlas.connections.service import ConnectionServiceError
-from atlas.services import run_recovery, scheduler_runtime
+from atlas.services import (
+    approval_decision,
+    run_orchestration,
+    run_recovery,
+    scheduler_runtime,
+)
 from atlas.services.error_safety import (
     safe_run_error as _safe_run_error,
-    token_ref as _token_ref,
 )
 from atlas.services.error_handlers import register_exception_handlers
 from atlas.services.webhook_runtime import build_webhook_callbacks
+# P2-1: one test imports _token_ref from atlas.api.main; keep the re-export.
+from atlas.services.error_safety import token_ref as _token_ref  # noqa: F401
 from atlas.observability.logging import (
     configure_logging,
     install_request_id_middleware,
@@ -122,8 +115,6 @@ from atlas.recording import (
 from atlas.routing import (
     Experiment,
     GateMetricId,
-    RolloutConfig,
-    RolloutState,
     TriggerEvent,
     evaluate_after_run,
 )
@@ -147,8 +138,6 @@ logger = logging.getLogger(__name__)
 # 此前这里与 channels/registry、notifications 各读一遍同一 env＋同一缺省）
 _PUBLIC_URL = read_public_url()
 
-MAX_WAIT_PAYLOAD_BYTES = 4096
-MAX_WAIT_PAYLOAD_KEYS = 50
 # docs/36 §3：邮件深链验签单例（密钥取 ATLAS_APPROVAL_HMAC_SECRET）。
 _email_token_issuer = TokenIssuer()
 
@@ -406,19 +395,22 @@ async def cap_api_body_bytes(request: Request, call_next):
     return await call_next(request)
 
 
-def _tenant_graph_resolver(services: TenantServices):
-    """subgraph 节点 graph_resolver（04 §5.7）：在当前租户 GraphStore 内按 id 解析，缺失抛 KeyError。"""
-
-    def resolve(graph_id: str):
-        # M6 钉版：subgraph graphId 可为 `graph-7@3`（先按 pin 版本，失败回退 latest 由 get 返回 None 触发 KeyError）
-        ref_id, _, version = graph_id.partition("@")
-        release_version = int(version) if version else None
-        raw = services.graph_store.get(ref_id, release_version)
-        if raw is None:
-            raise KeyError(graph_id)
-        return parse_graph(raw)
-
-    return resolve
+# Tier0 review P2: graph release/rollout/debug helpers live in
+# atlas.services.graph_release; the aliases below keep the historical
+# main-module names callable (routers import them at module load and tests
+# patch through atlas.api.main). _runtime_registry stays a thin wrapper so the
+# process-singleton _demo_registry/_secret_provider are read at call time.
+from atlas.services import graph_release  # noqa: E402
+from atlas.services.graph_release import (  # noqa: F401,E402
+    graph_version as _graph_version,
+    load_graph_or_404 as _load_graph_or_404,
+    resolve_event_version as _resolve_event_version,
+    rollout_config_or_422 as _rollout_config_or_422,
+    rollout_projection as _rollout_projection,
+    tenant_graph_resolver as _tenant_graph_resolver,
+    tool_call_from_event as _tool_call_from_event,
+    validate_debug as _validate_debug,
+)
 
 
 def _runtime_registry(services: TenantServices) -> AdapterRegistry:
@@ -426,7 +418,9 @@ def _runtime_registry(services: TenantServices) -> AdapterRegistry:
     message 适配器替换为当前租户消息服务（04 §5.14 分区；06 §6.12）。
 
     装配本体在 atlas.harness.runtime（MCP 的 atlas_list_adapters 锚同一张表）。"""
-    return build_runtime_registry(services, _demo_registry, _secret_provider)
+    return graph_release.runtime_registry(
+        services, demo_registry=_demo_registry, secret_provider=_secret_provider
+    )
 
 
 class SaveGraphResponse(BaseModel):
@@ -452,14 +446,9 @@ class CompileResponse(BaseModel):
     terminals: list[str]
 
 
-class RunGraphResponse(BaseModel):
-    id: str
-    status: str
-    outputs: dict[str, Any]
-    trace: list[str]
-    # 打包 W（docs/84）：实际执行完成的运行携带种子；cancelled/suspended 早退响应为 None。
-    rng_seed: int | None = None
-
+# RunGraphResponse moved to atlas.services.run_orchestration (Tier0 review P2);
+# re-exported with the other run-orchestration aliases below.
+from atlas.services.run_orchestration import RunGraphResponse  # noqa: F401,E402
 
 class NLGenerateRequest(BaseModel):
     prompt: str
@@ -1367,184 +1356,19 @@ def _experiment_window(services: Any, exp: Experiment) -> list[Any]:
     return [run for run in runs if run.finished_at >= exp.createdAt]
 
 
-def _template_matches_query(template: dict[str, Any], query: str) -> bool:
-    """A1 搜索：name/description/tags/category 任一 casefold 子串命中（docs/97 E-3）。"""
-    haystacks = [
-        str(template.get("name") or ""),
-        str(template.get("description") or ""),
-        " ".join(template.get("tags") or []),
-        str(template.get("category") or ""),
-    ]
-    return any(query in (part.casefold()) for part in haystacks)
-
-
-_TEMPLATE_PARAM_TYPES = {"string", "number", "boolean", "select", "object", "array"}
-_TEMPLATE_PARAM_KEYS = {
-    "type",
-    "label",
-    "required",
-    "default",
-    "hint",
-    "options",
-    # 打包 ZX（docs/106）：结构化声明面——嵌套 object / 数组 / 条件显隐
-    "properties",
-    "items",
-    "minItems",
-    "maxItems",
-    "visibleWhen",
-}
-_TEMPLATE_PARAM_MAX_DEPTH = 4
-
-
-def _validate_param_decl(name: str, pdecl: Any, errors: list[str], depth: int = 0) -> None:
-    """打包 ZX（docs/106 §2.2）：TemplateParam 声明形状校验（含递归）。
-
-    与 A1 E-5 同构的标量四型校验逐字保留；object 递归 properties、array 递归 items、
-    visibleWhen 校验判别字段形状；深度上限 _TEMPLATE_PARAM_MAX_DEPTH 防病态嵌套。
-    """
-    if not isinstance(pdecl, dict):
-        errors.append(f"参数 {name} 的声明必须是对象")
-        return
-    unknown = set(pdecl) - _TEMPLATE_PARAM_KEYS
-    if unknown:
-        errors.append(f"参数 {name} 含未知字段：{', '.join(sorted(unknown))}")
-    ptype = pdecl.get("type", "string")
-    if ptype not in _TEMPLATE_PARAM_TYPES:
-        errors.append(
-            f"参数 {name} 的 type 必须是 string/number/boolean/select/object/array 之一"
-        )
-    label = pdecl.get("label")
-    if label is not None and not isinstance(label, str):
-        errors.append(f"参数 {name} 的 label 必须是字符串")
-    elif isinstance(label, str) and len(label) > 40:
-        errors.append(f"参数 {name} 的 label 长度须在 40 字符以内")
-    if "required" in pdecl and not isinstance(pdecl["required"], bool):
-        errors.append(f"参数 {name} 的 required 必须是布尔值")
-    if ptype == "select":
-        options = pdecl.get("options")
-        if (
-            not isinstance(options, list)
-            or not options
-            or len(options) > 20
-            or not all(isinstance(o, str) for o in options)
-        ):
-            errors.append(f"参数 {name} 的 options 必须是非空字符串列表（≤20 项）")
-    if ptype == "object":
-        properties = pdecl.get("properties")
-        if not isinstance(properties, dict):
-            errors.append(f"参数 {name} 的 properties 必须是对象")
-        elif depth + 1 > _TEMPLATE_PARAM_MAX_DEPTH:
-            errors.append(f"参数 {name} 的嵌套深度超过上限（{_TEMPLATE_PARAM_MAX_DEPTH}）")
-        else:
-            for subname, subdecl in properties.items():
-                _validate_param_decl(f"{name}.{subname}", subdecl, errors, depth + 1)
-    if ptype == "array":
-        items = pdecl.get("items")
-        if not isinstance(items, dict):
-            errors.append(f"参数 {name} 的 items 必须是对象")
-        elif depth + 1 > _TEMPLATE_PARAM_MAX_DEPTH:
-            errors.append(f"参数 {name} 的嵌套深度超过上限（{_TEMPLATE_PARAM_MAX_DEPTH}）")
-        else:
-            _validate_param_decl(f"{name}[]", items, errors, depth + 1)
-        for key in ("minItems", "maxItems"):
-            value = pdecl.get(key)
-            if value is not None and (
-                not isinstance(value, int) or isinstance(value, bool) or value < 0
-            ):
-                errors.append(f"参数 {name} 的 {key} 必须是非负整数")
-        min_items, max_items = pdecl.get("minItems"), pdecl.get("maxItems")
-        if (
-            isinstance(min_items, int)
-            and isinstance(max_items, int)
-            and min_items > max_items
-        ):
-            errors.append(f"参数 {name} 的 minItems 不能大于 maxItems")
-    visible_when = pdecl.get("visibleWhen")
-    if visible_when is not None:
-        if not isinstance(visible_when, dict) or not isinstance(
-            visible_when.get("field"), str
-        ):
-            errors.append(f"参数 {name} 的 visibleWhen 必须是 {{field, equals}} 对象")
-        elif not visible_when["field"]:
-            errors.append(f"参数 {name} 的 visibleWhen.field 不能为空")
-
-
-def validate_template_params(params: dict[str, Any]) -> list[str]:
-    """A1 参数化向导声明形状校验（docs/97 E-5）+ 打包 ZX（docs/106 §2.2）结构化递归：
-    type 枚举、label≤40、required 布尔、select 须 options 非空字符串列表 ≤20、未知键拒绝、
-    object/array 递归、visibleWhen 形状；返回中文错误列表（空＝通过）。"""
-    errors: list[str] = []
-    if not isinstance(params, dict):
-        return ["参数声明必须是对象"]
-    for pname, pdecl in params.items():
-        _validate_param_decl(pname, pdecl, errors)
-    return errors
-
-
-def _validate_param_value(pname: str, pdecl: dict[str, Any], value: Any, errors: list[str]) -> None:
-    """打包 ZX（docs/106 §2.2）：instantiate 值校验递归核心。
-
-    标量四型与 A1 E-6 逐字保留；object 须 dict 且按 properties 递归子字段、
-    array 须 list 且按 items 递归元素、minItems/maxItems 门控、visibleWhen 不参与值校验。
-    """
-    ptype = pdecl.get("type", "string")
-    if ptype == "number":
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            errors.append(f"参数 {pname} 必须是数字")
-    elif ptype == "boolean":
-        if not isinstance(value, bool):
-            errors.append(f"参数 {pname} 必须是布尔值")
-    elif ptype == "select":
-        options = pdecl.get("options") or []
-        if value not in options:
-            errors.append(f"参数 {pname} 的值不在可选范围内")
-    elif ptype == "object":
-        if not isinstance(value, dict):
-            errors.append(f"参数 {pname} 必须是对象")
-            return
-        sub_params = pdecl.get("properties") or {}
-        for sub_name, sub_decl in sub_params.items():
-            if sub_name not in value:
-                if sub_decl.get("required"):
-                    errors.append(f"参数 {pname}.{sub_name} 为必填")
-                continue
-            _validate_param_value(f"{pname}.{sub_name}", sub_decl, value[sub_name], errors)
-        for sub_name in value:
-            if sub_name not in sub_params:
-                errors.append(f"参数 {pname} 含未知子字段：{sub_name}")
-    elif ptype == "array":
-        if not isinstance(value, list):
-            errors.append(f"参数 {pname} 必须是数组")
-            return
-        items = pdecl.get("items") or {}
-        min_items = pdecl.get("minItems")
-        max_items = pdecl.get("maxItems")
-        if isinstance(min_items, int) and len(value) < min_items:
-            errors.append(f"参数 {pname} 至少需要 {min_items} 项")
-        if isinstance(max_items, int) and len(value) > max_items:
-            errors.append(f"参数 {pname} 最多允许 {max_items} 项")
-        for index, item in enumerate(value):
-            _validate_param_value(f"{pname}[{index}]", items, item, errors)
-
-
-def _validate_instantiate_values(
-    params: dict[str, Any], values: dict[str, Any]
-) -> list[str]:
-    """A1 instantiate 值校验（docs/97 E-6）+ 打包 ZX（docs/106 §2.2）递归：
-    required 缺失/类型不符/select 范围/object 子字段/array 元素/未知参数名。"""
-    errors: list[str] = []
-    for pname, pdecl in params.items():
-        present = pname in values
-        if pdecl.get("required") and not present:
-            errors.append(f"参数 {pname} 为必填")
-            continue
-        if not present:
-            continue
-        _validate_param_value(pname, pdecl, values[pname], errors)
-    for pname in values:
-        if pname not in params:
-            errors.append(f"未知参数：{pname}")
-    return errors
+# Tier0 review P2: template param validation lives in atlas.services.template_validation;
+# these aliases keep the historical main-module names importable (routers import them
+# at module load and some tests patch through atlas.api.main).
+from atlas.services.template_validation import (  # noqa: F401,E402
+    _TEMPLATE_PARAM_KEYS,
+    _TEMPLATE_PARAM_MAX_DEPTH,
+    _TEMPLATE_PARAM_TYPES,
+    template_matches_query as _template_matches_query,
+    validate_instantiate_values as _validate_instantiate_values,
+    validate_param_decl as _validate_param_decl,
+    validate_param_value as _validate_param_value,
+    validate_template_params,
+)
 
 
 class UserTemplateCreateRequest(BaseModel):
@@ -1643,171 +1467,9 @@ def _promote_compile(
     services: TenantServices, graph: dict[str, Any], *, graph_id: str
 ) -> dict[str, Any]:
     """对草稿试编译：只回报，不写库（docs/128 AT-D4／AT-D5）。"""
-    try:
-        compile_graph(
-            parse_graph(graph),
-            graph_id=graph_id,
-            graph_resolver=_tenant_graph_resolver(services),
-            registry=_runtime_registry(services),
-        )
-    except GraphValidationError as exc:
-        return {
-            "ok": False,
-            "issues": list(exc.errors),
-            "codes": list(exc.codes),
-            "params": list(exc.params),
-            "locations": list(exc.locations),
-        }
-    return {"ok": True, "issues": [], "codes": [], "params": [], "locations": []}
-
-
-def _load_graph_or_404(
-    services: TenantServices, graph_id: str, release_version: int | None = None
-):
-    raw = services.graph_store.get(graph_id, release_version)
-    if raw is None:
-        raise HTTPException(status_code=404, detail=f"Graph 不存在：{graph_id}")
-    return parse_graph(raw)
-
-
-def _graph_version(graph_id: str, release_version: int | None) -> str:
-    """M10 graphVersion 标注（与 M6 钉版形态一致，SUBSCRIPT_KEY='@'）：
-    发布版 `graphId@<releaseVersion>`（int），草稿/未发布 `graphId@draft`。"""
-    if release_version is not None:
-        return f"{graph_id}@{release_version}"
-    return f"{graph_id}@draft"
-
-
-def _resolve_event_version(
-    services: TenantServices, principal: Principal, graph_id: str, payload: dict[str, Any]
-) -> tuple[int | None, int | None]:
-    """M9 入站事件路由（03 `route_decision`）：返 (加载用 releaseVersion, RunRecord.resolved_version)。
-
-    - 无 event：旧行为（手动 releaseVersion 或草稿），resolved_version 恒 None，零回归；
-    - 带 event：经 RoutingStore 三段分桶解析钉住的发布版（tenant 取 Principal 不取 body）；
-      event 与 releaseVersion 同传 422（语义冲突）；无任何发布版可路由 409。
-    """
-    event_raw = payload.get("event")
-    if event_raw is None:
-        return payload.get("releaseVersion"), None
-    if payload.get("releaseVersion") is not None:
-        raise HTTPException(status_code=422, detail="event 与 releaseVersion 不可同时指定（入站路由与手动钉版互斥）")
-    if payload.get("debug") is not None:
-        raise HTTPException(status_code=422, detail="入站事件运行不支持单步调试（debug 仅用于草稿手动运行）")
-    if not isinstance(event_raw, dict):
-        raise HTTPException(status_code=422, detail="event 必须是对象：{channel?, payload?}")
-    try:
-        event = TriggerEvent.model_validate(event_raw)
-    except ValidationError as exc:
-        raise HTTPException(status_code=422, detail=f"event 非法：{exc.errors()[0]['msg']}") from exc
-    version, _segment = services.routing_store.resolve(
-        graph_id, tenant=principal.tenant_id, event=event
+    return graph_release.promote_compile(
+        services, graph, graph_id=graph_id, runtime_registry_of=_runtime_registry
     )
-    if version is None:
-        raise HTTPException(status_code=409, detail="图尚未发布，入站事件无版本可路由")
-    return version, version
-
-
-def _rollout_config_or_422(body: Any) -> RolloutConfig:
-    """PUT rollout body → RolloutConfig；非法形状聚合为中文 422（不泄漏 pydantic 英文堆栈）。"""
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=422, detail="rollout 配置必须是 JSON 对象")
-    try:
-        return RolloutConfig.model_validate(body)
-    except ValidationError as exc:
-        messages = []
-        for error in exc.errors():
-            loc = ".".join(str(part) for part in error["loc"])
-            messages.append(f"{loc}：{error['msg']}" if loc else error["msg"])
-        raise HTTPException(status_code=422, detail="灰度配置非法：" + "；".join(messages)) from exc
-
-
-def _rollout_projection(state: RolloutState) -> dict[str, Any]:
-    """GET rollout 投影（camelCase；config 未配置为 null）。"""
-    return {
-        "graphId": state.graph_id,
-        "status": state.status,
-        "config": state.config.model_dump() if state.config is not None else None,
-        "stable": state.stable,
-        "candidate": state.candidate,
-        "startedAt": state.started_at,
-        "rolledBackAt": state.rolled_back_at,
-        "rollbackReason": state.rollback_reason,
-        "rollbackActor": state.rollback_actor,
-        "traffic": state.traffic,
-    }
-
-
-def _validate_debug(graph, debug: Any) -> list[dict[str, Any]]:
-    """校验 /run/stream 的 debug.breakpoints，返回规范化列表；错误聚合成中文 422。"""
-    if not isinstance(debug, dict):
-        raise HTTPException(status_code=422, detail="debug 必须为对象：{breakpoints: [...]}")
-    raw_points = debug.get("breakpoints", [])
-    if not isinstance(raw_points, list):
-        raise HTTPException(status_code=422, detail="debug.breakpoints 必须为数组")
-    node_ids = {node.id for node in graph.nodes}
-    normalized: list[dict[str, Any]] = []
-    errors: list[str] = []
-    for index, point in enumerate(raw_points):
-        if not isinstance(point, dict) or not isinstance(point.get("node_id"), str):
-            errors.append(f"第 {index + 1} 个断点缺少 node_id 字符串")
-            continue
-        node_id = point["node_id"]
-        if node_id not in node_ids:
-            errors.append(f"断点节点不存在：{node_id}")
-        expression = point.get("expression")
-        if expression is not None:
-            if not isinstance(expression, str):
-                errors.append(f"断点 {node_id} 的 expression 必须为字符串")
-                continue
-            if expression.strip():
-                errors.extend(
-                    f"断点 {node_id} 表达式：{message}"
-                    for message in validate_expression(expression)
-                )
-        # B 包（docs/27 §4.2）：hitCount 正整数、logMessage 字符串（非空即日志断点）。
-        hit_count = point.get("hitCount")
-        if hit_count is not None and (
-            not isinstance(hit_count, int)
-            or isinstance(hit_count, bool)
-            or hit_count < 1
-        ):
-            errors.append(f"断点 {node_id} 的 hitCount 必须为正整数")
-        log_message = point.get("logMessage")
-        if log_message is not None and not isinstance(log_message, str):
-            errors.append(f"断点 {node_id} 的 logMessage 必须为字符串")
-        # docs/28 §3.2：onException 布尔（异常断点）；bool 是 int 子类须先判 bool。
-        on_exception = point.get("onException", False)
-        if not isinstance(on_exception, bool):
-            errors.append(f"断点 {node_id} 的 onException 必须为布尔值")
-            on_exception = False
-        normalized.append(
-            {
-                "node_id": node_id,
-                "expression": expression,
-                "hitCount": hit_count if isinstance(hit_count, int) and hit_count > 0 else None,
-                "logMessage": (
-                    log_message
-                    if isinstance(log_message, str) and log_message.strip()
-                    else None
-                ),
-                "onException": on_exception,
-            }
-        )
-    if errors:
-        raise HTTPException(status_code=422, detail="；".join(errors))
-    return normalized
-
-
-def _tool_call_from_event(event: dict[str, Any]) -> dict[str, Any]:
-    """docs/28 §4.1 ⑧：tool_metric SSE/采集事件 → RunRecord.tool_calls 载荷（dict，pydantic 转模型）。"""
-    return {
-        "node_id": event["node_id"],
-        "tool": event.get("tool", ""),
-        "duration_ms": float(event.get("duration_ms", 0.0)),
-        "action_status": event["action_status"],
-        "error_code": event.get("error_code"),
-    }
 
 
 # O-5 第一道护栏（docs/135 §6.6，2026-10-19）：同步 run 在挂起节点（审批/事件等待）时
@@ -1831,246 +1493,27 @@ def _run_saved_graph_impl(
     payload: dict[str, Any] | None,
     principal: Principal,
 ) -> RunGraphResponse:
-    """同步跑一次图（v1 也承载自走循环，见 `_run_sync_cycle` 与 docs/130 C-D10）。
+    """同步跑一次图；业务语义在 atlas.services.run_orchestration（Tier0 review P2）。
 
-    **圈启用面**：图级 `loop` 配置存在且 `enabled!==false` ⇒ 本入口按圈会话驱动
-    （每圈一次真实运行、各自 run_id，返回**最后一圈**的结果）；缺省配置走原路径逐字不变。
+    薄封装：调用时读 main 模块当前全局构造依赖束，保住测试对
+    `atlas.api.main.run_graph` / `_frame_sink_for` / `_resume_claim_for` /
+    `evaluate_after_run` 的 monkeypatch 语义。
     """
-    services = services_for(principal)
-    body = payload or {}
-    release_version, resolved_version = _resolve_event_version(services, principal, graph_id, body)
-    graph = _load_graph_or_404(services, graph_id, release_version)
-    event_payload = (body.get("event") or {}).get("payload") or {}
-    if body.get("debug") is not None:
-        raise HTTPException(status_code=422, detail="单步调试仅支持流式运行 /run/stream")
-
-    payloads: dict[str, dict[str, Any]] = {}
-
-    def _run_once(step) -> Any:
-        outcome, response = _run_sync_cycle(
-            services,
-            principal,
-            graph,
-            graph_id=graph_id,
-            release_version=release_version,
-            resolved_version=resolved_version,
-            event_payload=event_payload,
-            inputs=step.inputs,
-            cycle_seq=step.seq if step.group_id else 0,
-            cycle_group_id=step.group_id,
-            payloads=payloads,
-        )
-        return outcome
-
-    if cycle_config(graph) is None:
-        # 现状路径：不建会话、不发圈号（打包 BN C-D2 的零行为变化承诺）
-        outcome, response = _run_sync_cycle(
-            services,
-            principal,
-            graph,
-            graph_id=graph_id,
-            release_version=release_version,
-            resolved_version=resolved_version,
-            event_payload=event_payload,
-            inputs=body.get("inputs"),
-            cycle_seq=0,
-            cycle_group_id="",
-            payloads=payloads,
-        )
-        return response if response is not None else RunGraphResponse(
-            id=graph_id, **payloads[outcome.run_id]
-        )
-
-    session = run_cycle_session(
-        services,
-        graph,
-        tenant_id=principal.tenant_id,
-        graph_id=graph_id,
-        inputs=dict(body.get("inputs") or {}),
-        run_once=_run_once,
+    return run_orchestration.run_saved_graph(
+        graph_id, payload, principal,
+        deps=run_orchestration.SyncRunDeps(
+            services_for=services_for,
+            run_graph=run_graph,
+            frame_sink_for=_frame_sink_for,
+            resume_claim_for=_resume_claim_for,
+            evaluate_after_run=evaluate_after_run,
+            runtime_registry_of=_runtime_registry,
+            tenant_graph_resolver_of=_tenant_graph_resolver,
+            secret_provider=_secret_provider,
+            storage_backend=STORAGE_BACKEND,
+            public_url=_PUBLIC_URL,
+        ),
     )
-    # `runs` 是 public_view 投影（每项是 dict），取最后一圈的 runId 去拿原始 run 结果
-    last_run_id = session["runs"][-1]["runId"]
-    return RunGraphResponse(id=graph_id, **payloads[last_run_id])
-
-
-def _run_sync_cycle(
-    services: TenantServices,
-    principal: Principal,
-    graph: Any,
-    *,
-    graph_id: str,
-    release_version: int | None,
-    resolved_version: int | None,
-    event_payload: dict[str, Any],
-    inputs: dict[str, Any] | None,
-    cycle_seq: int,
-    cycle_group_id: str,
-    payloads: dict[str, dict[str, Any]],
-) -> tuple[Any, RunGraphResponse | None]:
-    """跑**一圈**（= 一次真实运行），返回 `(CycleOutcome, 非 None 的 HTTP 响应 | None)`。
-
-    本函数是同步入口的**全部**既有语义（cancel 句柄、superseded 让位、异常记账与
-    灰度评估、监控埋点、frame_sink、usage 上下文）逐字搬运——圈能力只加在"调用几次"
-    这一层，不改任何一圈内部的语义（docs/130 C-D1：一圈＝一次真实运行）。
-
-    `cycle_seq`／`cycle_group_id` 缺省 0/''＝非圈运行（与迁移 050 的列缺省同义）。
-    `payloads` 由调用方持有，用于把每圈的原始 run 结果带给 HTTP 层（返回最后一圈）。
-    """
-    graph_view = {"nodes": [{"id": node.id, "type": node.type} for node in graph.nodes]}
-    started_at = datetime.now(timezone.utc).isoformat()
-    started = time.monotonic()
-    monitoring = services.monitoring
-    run_id = uuid.uuid4().hex
-    tracer = Tracer(
-        graph_id=graph_id, graph_version=_graph_version(graph_id, release_version)
-    )
-    services.run_store.begin(
-        run_id=run_id, graph_id=graph_id, mode="sync",
-        cycle_seq=cycle_seq, cycle_group_id=cycle_group_id,
-        resolved_version=resolved_version,  # O-2：带 event 的路由版本落投影（无 event 恒 None）
-    )
-    frame_sink = _frame_sink_for(principal.tenant_id, services.run_store, run_id)
-    # docs/28 §4.1 ⑧：同步入口无 SSE，构造同形收集 emit（只收顶层 tool_metric，其余忽略）。
-    tool_calls: list[dict[str, Any]] = []
-
-    def _metric_collect(event: dict[str, Any]) -> None:
-        if event.get("type") == "tool_metric" and not event.get("subgraphPath"):
-            tool_calls.append(_tool_call_from_event(event))
-
-    # 打包 O（docs/69 §1 D-1）：同步入口此前从不登记取消句柄（只有 :3115 的流式路径注册），
-    # 在途急停恒落 409「运行已结束」。与流式同构——请求线程注册，finally 注销覆盖全部出口。
-    cancellation_broker = services.cancellation_broker
-    cancel_event = cancellation_broker.register(run_id)
-    try:
-        with usage_context(
-            principal.tenant_id,
-            run_id=run_id,
-            graph_id=graph_id,
-            store=services.usage_store,
-        ):
-            result = run_graph(
-                graph,
-                inputs=inputs,
-                registry=_runtime_registry(services),
-                approval_broker=services.approval_broker,
-                event_wait_broker=services.event_wait_broker,
-                approval_notifier=EmailApprovalNotifier(
-                    services.message_service, _PUBLIC_URL, principal.tenant_id
-                ),
-                graph_id=graph_id,
-                graph_resolver=_tenant_graph_resolver(services),
-                emit=_metric_collect,
-                frame_sink=frame_sink,
-                resume_claim=_resume_claim_for(),
-                tracer=tracer,
-                graph_version=tracer.graph_version,
-                is_cancelled=cancel_event.is_set,
-                _block_subgraph_suspend=(STORAGE_BACKEND == "pg"),
-                tenant_id=principal.tenant_id,
-                secret_provider=_secret_provider,
-                memory_repo=services.memory_store,
-            )
-    except RunSuperseded as exc:
-        # docs/62 §2 D-4：输家停止驱动——不写 run 终态、不记监控、不进门控评估，
-        # 帧与终态都归赢家；本进程如实返回"仍在挂起"的形状（刻意不新增 run 状态/错误码）。
-        logger.info("同步运行让位：%s", exc)
-        return (
-            CycleOutcome(run_id=run_id, status="suspended", stop_run=True),
-            RunGraphResponse(
-                id=graph_id,
-                status="suspended",
-                outputs={},
-                trace=[f"{exc.node_id}: superseded by another process"],
-            ),
-        )
-    except WaitTimeoutSuspend as exc:
-        # docs/136 打包 BS：挂起节点超时且 onTimeout="suspend"——run 保持 suspended
-        # （不 finish、不记监控终态、不清帧、不进 evaluate_after_run），等人工后续恢复。
-        logger.info("同步运行超时保持挂起：%s", exc)
-        return (
-            CycleOutcome(run_id=run_id, status="suspended", stop_run=True),
-            RunGraphResponse(
-                id=graph_id,
-                status="suspended",
-                outputs={},
-                trace=[f"{exc.node_id}: wait timeout kept suspended"],
-            ),
-        )
-    except RunCancelled as exc:
-        # 打包 O：同步入口的协作式急停与流式同形——用户主动 ⇒ 记 cancelled 且
-        # **不调 evaluate_after_run**（不算失败、不进 M9 灰度门控，与流式 :3203 逐条对齐）。
-        # 必须排在 except Exception 之前（RunCancelled 是 Exception 子类）。
-        services.run_store.finish(run_id=run_id, status="cancelled")
-        monitoring.record_run(
-            graph_id=graph_id,
-            mode="sync",
-            status="cancelled",
-            started_at=started_at,
-            duration_ms=(time.monotonic() - started) * 1000,
-            nodes=[],
-            trace_id=tracer.trace_id,
-            resolved_version=resolved_version,
-            tool_calls=tool_calls,
-            spans=tracer.to_tree(),
-        )
-        return (
-            CycleOutcome(run_id=run_id, status="cancelled", stop_run=True),
-            RunGraphResponse(
-                id=graph_id,
-                status="cancelled",
-                outputs={},
-                trace=[f"{exc.node_id}: cancelled by user"],
-            ),
-        )
-    except Exception as exc:
-        services.run_store.finish(
-            run_id=run_id, status="failed", error=_safe_run_error(exc)
-        )
-        record = monitoring.record_run(
-            graph_id=graph_id,
-            mode="sync",
-            status="error",
-            started_at=started_at,
-            duration_ms=(time.monotonic() - started) * 1000,
-            nodes=[],
-            error=_safe_run_error(exc),
-            trace_id=tracer.trace_id,
-            resolved_version=resolved_version,
-            tool_calls=tool_calls,
-            spans=tracer.to_tree(),
-        )
-        evaluate_after_run(services, record)  # M9：异常运行同样计入 candidate 门控
-        raise
-    finally:
-        # 打包 O：句柄必须随请求退出而注销——留着会让「已结束再取消」从 409 翻成 200
-        # （tests/test_run_cancel.py::test_cancel_finished_run_returns_409 守着这条不变量）。
-        cancellation_broker.unregister(run_id)
-    services.run_store.finish(
-        run_id=run_id, status="completed",
-        outputs=result["outputs"], trace=result["trace"],
-    )
-    record = monitoring.record_run(
-        graph_id=graph_id,
-        mode="sync",
-        status="completed",
-        started_at=started_at,
-        duration_ms=(time.monotonic() - started) * 1000,
-        nodes=extract_node_results(graph_view, result["outputs"]),
-        trace_id=tracer.trace_id,
-        resolved_version=resolved_version,
-        business=extract_business(graph_view, result["outputs"], event_payload=event_payload),
-        tool_calls=tool_calls,
-        spans=result["traceTree"],
-    )
-    evaluate_after_run(services, record)  # M9：灰度门控越阈自动回滚
-    payloads[run_id] = result
-    return CycleOutcome(
-        run_id=run_id,
-        status="completed",
-        outputs=result.get("outputs", {}),
-        variables={},
-    ), None
 
 
 class ApprovalDecisionRequest(BaseModel):
@@ -2083,142 +1526,42 @@ class ApprovalDecisionRequest(BaseModel):
     model_config = {"populate_by_name": True}
 
 
-def _parse_wait_event_key(body: dict[str, Any]) -> str:
-    raw = body.get("eventKey")
-    event_key = raw.strip() if isinstance(raw, str) else ""
-    if not valid_event_key(event_key):
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "WAIT_EVENT_KEY_INVALID",
-                    "message": "eventKey 必须是 1-128 位字母、数字及 :_- 组合"},
-        )
-    return event_key
-
-
-def _parse_wait_payload(body: dict[str, Any]) -> dict[str, Any]:
-    raw = body.get("payload", {})
-    if raw is None:
-        return {}
-    if not isinstance(raw, dict):
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "WAIT_EVENT_PAYLOAD_NOT_OBJECT",
-                    "message": "payload 必须是 JSON 对象"},
-        )
-    if len(raw) > MAX_WAIT_PAYLOAD_KEYS:
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "WAIT_EVENT_PAYLOAD_TOO_MANY_KEYS",
-                    "message": f"payload 顶层键不能超过 {MAX_WAIT_PAYLOAD_KEYS} 个",
-                    "params": {"max": MAX_WAIT_PAYLOAD_KEYS}},
-        )
-    serialized = json.dumps(raw, ensure_ascii=False)
-    if len(serialized.encode("utf-8")) > MAX_WAIT_PAYLOAD_BYTES:
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "WAIT_EVENT_PAYLOAD_TOO_LARGE",
-                    "message": f"payload 序列化后不能超过 {MAX_WAIT_PAYLOAD_BYTES} 字节",
-                    "params": {"max": MAX_WAIT_PAYLOAD_BYTES}},
-        )
-    return raw
-
-
 class InterruptionResolveRequest(BaseModel):
     action: str
     reason: str = Field(default="", max_length=500)
 
 
-def _apply_approval_decision(
-    broker: Any,
-    pending: dict[str, Any],
-    token: str,
-    *,
-    decision: Literal["approved", "rejected"] | None,
-    comment: str,
-    action_id: str | None,
-    form: dict[str, Any] | None,
-    notifier: Any = None,
-    resolved_by: str = "human",
-) -> dict[str, Any]:
-    """登录态决策与邮件深链决策共用的唯一应用函数（docs/36 §3，防双路漂移）。"""
-    if pending.get("decision") is not None:
-        raise HTTPException(status_code=409, detail="该审批请求已有决策，重复提交不生效")
-
-    resolved_action: str | None = None
-    if action_id:
-        # M8：卡片动作提交，服务端按 action.output 映射 decision/comment（map_action_output 唯一权威）。
-        card_template_id = pending.get("cardTemplateId")
-        card = get_card(card_template_id) if card_template_id else None
-        if card is None:
-            raise HTTPException(status_code=422, detail="该审批请求未配置交互卡片或卡片不存在")
-        try:
-            mapped = map_action_output(card, action_id, form)
-        except CardRenderError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        decision = mapped["decision"]
-        comment = mapped.get("comment", "")
-        resolved_action = action_id
-    elif decision is None:
-        raise HTTPException(
-            status_code=422,
-            detail="请提供 decision（approved/rejected）或卡片 actionId",
-        )
-
-    if not broker.resolve(token, decision, comment=comment, action_id=resolved_action):
-        raise HTTPException(status_code=409, detail="该审批请求已有决策，重复提交不生效")
-    # docs/37 §4：决策结果邮件（旁路 fail-safe，不影响响应与决策事实）。
-    if notifier is not None:
-        recipients = broker.get_notify_recipients(token)
-        if recipients:
-            try:
-                notifier.notify_decided(
-                    graph_id=pending.get("graph_id", ""),
-                    node_id=pending.get("node_id", ""),
-                    summary=pending.get("summary", ""),
-                    decision=decision,
-                    resolved_by=resolved_by,
-                    comment=comment,
-                    recipients=recipients,
-                )
-            except Exception as exc:  # noqa: BLE001 结果通知任何异常都不改变响应
-                logger.warning("审批结果通知失败 token=%s: %s", _token_ref(token), exc)
-    result: dict[str, Any] = {"token": token, "decision": decision, "resolvedBy": "human"}
-    if resolved_action:
-        result["actionId"] = resolved_action
-    return result
-
-
-_EMAIL_LINK_INVALID = "审批链接无效或已过期"
+# Tier0 review P2: approval decision + wait-event parsing live in
+# atlas.services.approval_decision; the aliases/wrappers below keep the
+# historical main-module names importable (routers import them at module load,
+# one test calls _apply_approval_decision directly, and the email-token /
+# tenant-registry seams must stay patchable through atlas.api.main).
+from atlas.services.approval_decision import (  # noqa: F401,E402
+    EMAIL_LINK_INVALID as _EMAIL_LINK_INVALID,
+    MAX_WAIT_PAYLOAD_BYTES,
+    MAX_WAIT_PAYLOAD_KEYS,
+    apply_approval_decision as _apply_approval_decision,
+    parse_wait_event_key as _parse_wait_event_key,
+    parse_wait_payload as _parse_wait_payload,
+)
 
 
 def _resolve_email_signed(signed: str) -> tuple[Any, str, str]:
-    """验签 → peek 已装配租户；任何失败统一 404，不区分原因。"""
-    try:
-        body = _email_token_issuer.verify(signed)
-    except EmailTokenError as exc:
-        raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID) from exc
-    tenant_id = str(body.get("tenant", ""))
-    services = tenant_registry.peek(tenant_id)
-    if services is None:
-        raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID)
-    if body.get("rcpt") is None:
-        # docs/64 J-1b：无收件人绑定的旧式 token 一律失效（TTL 仅 1h+grace，不向后兼容）。
-        raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID)
-    return services, str(body.get("at", "")), tenant_id
+    """验签 → peek 已装配租户；语义在 atlas.services.approval_decision（薄封装保 patch 缝）。"""
+    return approval_decision.resolve_email_signed(
+        signed,
+        token_issuer=_email_token_issuer,
+        peek_registry=tenant_registry.peek,
+    )
 
 
 def _assert_email_token_recipient(
     signed: str, approval_token: str, broker: Any
 ) -> None:
-    """docs/64 J-1b：token 载荷 rcpt 必须属于该审批的收件人，否则 404（与验签同口径）。"""
-    try:
-        body = _email_token_issuer.verify(signed)
-    except EmailTokenError as exc:
-        raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID) from exc
-    rcpt = str(body.get("rcpt", "")).lower()
-    recipients = {r.lower() for r in broker.get_notify_recipients(approval_token)}
-    if rcpt not in recipients:
-        raise HTTPException(status_code=404, detail=_EMAIL_LINK_INVALID)
+    """token 载荷 rcpt 归属校验；语义在 atlas.services.approval_decision（薄封装保 patch 缝）。"""
+    approval_decision.assert_email_token_recipient(
+        signed, approval_token, broker, token_issuer=_email_token_issuer
+    )
 
 
 class EmailDecisionRequest(BaseModel):
