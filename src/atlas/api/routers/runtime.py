@@ -11,26 +11,14 @@ from fastapi import APIRouter
 
 import atlas.api.main as _main
 import asyncio
-import json
-import threading
-import time
-import uuid
-from atlas.api.sse import SSEBridge
-from atlas.collaboration.cancellations import RunCancelled
 from atlas.collaboration.event_waits import WaitAlreadySignaled, WaitTokenNotFound
-from atlas.collaboration.notifications import EmailApprovalNotifier
 from atlas.cycles.state import cycle_registry
-from atlas.debug import DebugController, DebugStopped
-from atlas.graph.loader import RunSuperseded, WaitTimeoutSuspend, compile_graph, runtime_error_meta
+from atlas.graph.loader import compile_graph
 from atlas.iam.deps import require
 from atlas.iam.principals import Principal
-from atlas.llm.metering import usage_context
-from atlas.monitoring import extract_business, extract_node_results
 from atlas.routing import evaluate_after_run
-from atlas.services.error_safety import safe_run_error as _safe_run_error, unexpected_stream_error as _unexpected_stream_error
+from atlas.services import run_stream
 from atlas.storage.recovery import RESOLVE_FRAME_NOT_CLAIMED, RESOLVE_FRAME_NOT_FOUND, RESOLVE_OK, interruption_view
-from atlas.tracing import Tracer
-from datetime import datetime, timezone
 from fastapi import Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from typing import Any
@@ -56,7 +44,6 @@ from atlas.api.main import (
     _tenant_graph_resolver,
     _tool_call_from_event,
     _validate_debug,
-    logger,
 )
 
 
@@ -158,6 +145,9 @@ async def run_saved_graph_stream(
     worker（06 §6.12，无线程上下文变量）。worker 暴毙或收尾二次异常时由生成器合成
     安全 error 终帧，连接不悬挂（#1，docs/125 §3.1）；断连只关桥接、不取消 run_graph。
     """
+    # 语义在 atlas.services.run_stream（service layer batch 2）：本路由只做 HTTP
+    # 解析、debug 422 门与依赖束装配；预装配与帧生成器在 service 层。docstring
+    # 逐字保持——FastAPI 会把它编进 OpenAPI，快照哈希随之变化。
     services = _main.services_for(principal)
     body = payload or {}
     # M9：event 在请求线程解析（Principal 不进 worker），钉住的版本随闭包透传后台线程。
@@ -166,7 +156,6 @@ async def run_saved_graph_stream(
     event_payload = (body.get("event") or {}).get("payload") or {}
     inputs = body.get("inputs")
     debug = body.get("debug")
-    graph_view = {"nodes": [{"id": node.id, "type": node.type} for node in graph.nodes]}
     debug_session = None
     if debug is not None:
         breakpoints = _validate_debug(graph, debug)
@@ -177,341 +166,33 @@ async def run_saved_graph_stream(
         ):
             raise HTTPException(status_code=422, detail="事件等待不支持单步调试")
 
-    # worker 启动前固定当前租户的分区对象，避免跨租户串用
-    registry = _runtime_registry(services)
-    approval_broker = services.approval_broker
-    approval_notifier = EmailApprovalNotifier(
-        services.message_service, _PUBLIC_URL, principal.tenant_id
+    ctx = run_stream.prepare_stream_run(
+        principal,
+        services,
+        graph_id=graph_id,
+        graph=graph,
+        event_payload=event_payload,
+        inputs=inputs,
+        resolved_version=resolved_version,
+        debug_session=debug_session,
+        deps=run_stream.StreamRunDeps(
+            run_graph=_main.run_graph,
+            frame_sink_for=_main._frame_sink_for,
+            resume_claim_for=_main._resume_claim_for,
+            evaluate_after_run=evaluate_after_run,
+            runtime_registry_of=_runtime_registry,
+            tenant_graph_resolver_of=_tenant_graph_resolver,
+            tool_call_from_event=_tool_call_from_event,
+            graph_version=_graph_version,
+            secret_provider=_secret_provider,
+            storage_backend=_main.STORAGE_BACKEND,
+            public_url=_PUBLIC_URL,
+            heartbeat_seconds=_main.SSE_HEARTBEAT_SECONDS,
+        ),
     )
-    graph_resolver = _tenant_graph_resolver(services)
-    monitoring = services.monitoring
-    run_store = services.run_store
-    run_id = uuid.uuid4().hex
-    frame_sink = _main._frame_sink_for(principal.tenant_id, run_store, run_id)
-    # B 包（docs/27 §4.1）：worker 启动前登记取消事件（请求线程，确保端点可达时句柄已在）。
-    cancellation_broker = services.cancellation_broker
-    cancel_event = cancellation_broker.register(run_id)
-    # M10：真实运行（非 debug）建 tracer 并显式透传 worker（06 §6.12 后台线程不靠全局）；
-    # debug 单步会话显式传 None 不埋点（04 §5.13/§5.15，SSE 帧保持旧形状）。
-    tracer: Tracer | None = (
-        Tracer(graph_id=graph_id, graph_version=_graph_version(graph_id, release_version))
-        if debug is None
-        else None
+    return StreamingResponse(
+        run_stream.stream_saved_graph_events(ctx), media_type="text/event-stream"
     )
-    loop = asyncio.get_running_loop()
-
-    async def event_stream():
-        bridge = SSEBridge(loop)
-
-        def emit(event: dict[str, Any]) -> None:
-            bridge.offer_threadsafe(event)
-
-        debug_controller = (
-            DebugController(debug_session, emit, is_cancelled=cancel_event.is_set)
-            if debug_session is not None
-            else None
-        )
-        # debug 会话不是真实运行，全程不埋点（04 §5.13）
-        monitored = debug_controller is None
-        collected: dict[str, Any] = {}
-        tool_calls: list[dict[str, Any]] = []
-
-        def recording_emit(event: dict[str, Any]) -> None:
-            # A 包（docs/27 §10.1）：监控/运行产出只收顶层 node_end；带 subgraphPath 的
-            # 子图内部节点不进 collected（子图结果归在 subgraph 节点），但仍转发 SSE 上屏。
-            if event.get("type") == "node_end" and not event.get("subgraphPath"):
-                collected[event["node_id"]] = event.get("output")
-            # docs/28 §4.1 ⑧：另册收集顶层 tool_metric（子层已被命名空间 wrapper 白名单吞掉）。
-            elif event.get("type") == "tool_metric" and not event.get("subgraphPath"):
-                tool_calls.append(_tool_call_from_event(event))
-            emit(event)
-
-        started_at = datetime.now(timezone.utc).isoformat()
-        started = time.monotonic()
-
-        def _finalize_run(
-            kind: str,
-            *,
-            result: dict[str, Any] | None = None,
-            safe_error: str | None = None,
-        ) -> None:
-            """终态收尾收口：finish/record_run/灰度评估（docs/125 §3.1）。
-
-            仅真实运行（非 debug）有收尾；任一步抛错由 worker 捕获记日志并转安全
-            error 终帧，不让异常裸逃出 worker 线程。
-            """
-            if not monitored:
-                return
-            duration_ms = (time.monotonic() - started) * 1000
-            if kind == "completed":
-                assert result is not None
-                run_store.finish(
-                    run_id=run_id, status="completed",
-                    outputs=result["outputs"], trace=result["trace"],
-                )
-                record = monitoring.record_run(
-                    graph_id=graph_id,
-                    mode="stream",
-                    status="completed",
-                    started_at=started_at,
-                    duration_ms=duration_ms,
-                    nodes=extract_node_results(graph_view, result["outputs"]),
-                    trace_id=tracer.trace_id if tracer is not None else "",
-                    resolved_version=resolved_version,
-                    business=extract_business(
-                        graph_view, result["outputs"], event_payload=event_payload
-                    ),
-                    tool_calls=tool_calls,
-                    spans=result["traceTree"],
-                )
-                evaluate_after_run(services, record)
-            elif kind == "cancelled":
-                # 用户主动急停：不进灰度门控评估、不算失败。
-                run_store.finish(run_id=run_id, status="cancelled")
-                monitoring.record_run(
-                    graph_id=graph_id,
-                    mode="stream",
-                    status="cancelled",
-                    started_at=started_at,
-                    duration_ms=duration_ms,
-                    nodes=extract_node_results(graph_view, collected),
-                    trace_id=tracer.trace_id if tracer is not None else "",
-                    resolved_version=resolved_version,
-                    tool_calls=tool_calls,
-                    spans=tracer.to_tree() if tracer is not None else None,
-                )
-            else:  # failed
-                run_store.finish(
-                    run_id=run_id, status="failed",
-                    error=safe_error,
-                )
-                record = monitoring.record_run(
-                    graph_id=graph_id,
-                    mode="stream",
-                    status="error",
-                    started_at=started_at,
-                    duration_ms=duration_ms,
-                    nodes=extract_node_results(graph_view, collected),
-                    error=safe_error,
-                    trace_id=tracer.trace_id if tracer is not None else "",
-                    resolved_version=resolved_version,
-                    tool_calls=tool_calls,
-                    spans=tracer.to_tree() if tracer is not None else None,
-                )
-                evaluate_after_run(services, record)
-
-        def worker() -> None:
-            if monitored:
-                run_store.begin(
-                    run_id=run_id, graph_id=graph_id, mode="stream",
-                    resolved_version=resolved_version,  # O-2：带 event 的路由版本落投影
-                )
-            # 各异常分支只决定终帧种类；收尾经 _finalize_run 整体保护，任何路径恰好一帧。
-            terminal: dict[str, Any]
-            try:
-                # docs/129 打包 AU：worker 线程内显式设 usage 上下文（contextvars
-                # 不跨线程继承，tracing 同款纪律；无此设置 ⇒ 流式运行的 LLM 调用不计）。
-                with usage_context(
-                    principal.tenant_id,
-                    run_id=run_id,
-                    graph_id=graph_id,
-                    store=services.usage_store,
-                ):
-                    result = _main.run_graph(
-                        graph,
-                        inputs=inputs,
-                        registry=registry,
-                        approval_broker=approval_broker,
-                        event_wait_broker=services.event_wait_broker,
-                        approval_notifier=approval_notifier,
-                        graph_id=graph_id,
-                        emit=recording_emit if monitored else emit,
-                        graph_resolver=graph_resolver,
-                        debug_controller=debug_controller,
-                        frame_sink=frame_sink,
-                        resume_claim=_main._resume_claim_for(),
-                        tracer=tracer,
-                        graph_version=tracer.graph_version if tracer is not None else None,
-                        is_cancelled=cancel_event.is_set,
-                        _block_subgraph_suspend=(_main.STORAGE_BACKEND == "pg"),
-                        tenant_id=principal.tenant_id,
-                        secret_provider=_secret_provider,
-                        memory_repo=services.memory_store,
-                    )
-            except RunSuperseded as exc:
-                # docs/62 §2 D-4：输家零终态写——不 finish、不 record_run、不清帧，
-                # 只发让位帧让前端停手（赢家的流会继续出结果）。
-                logger.info("流式运行让位：%s", exc)
-                terminal = {"__superseded__": exc.node_id}
-            except WaitTimeoutSuspend as exc:
-                # docs/136 打包 BS：挂起节点超时且 onTimeout="suspend"——run 保持 suspended
-                # （不 finish、不 record_run 终态、不清帧），发提示帧让前端展示"超时仍挂起待决"。
-                logger.info("流式运行超时保持挂起：%s", exc)
-                terminal = {"__wait_timeout_suspended__": exc.node_id}
-            except DebugStopped as exc:
-                terminal = {"__stopped__": exc.node_id}
-            except RunCancelled as exc:
-                # 协作式急停：必须排在 except Exception 前（RunCancelled 是 Exception 子类）。
-                node_id = exc.node_id
-                try:
-                    _finalize_run("cancelled")
-                except Exception:
-                    logger.exception(
-                        "run %s cancellation finalization failed", run_id
-                    )
-                    terminal = {"__error__": _unexpected_stream_error()}
-                else:
-                    terminal = {"__cancelled__": node_id}
-            except Exception as exc:  # 运行期异常经 SSE error 帧下发，不静默吞线程
-                err_meta = runtime_error_meta(exc)
-                if err_meta["errorCode"] == "RUNTIME_UNEXPECTED":
-                    # 未知异常：细节只进服务端日志，任何面向客户的面都不带内部串（docs/101 D58）。
-                    logger.exception("run %s failed with unexpected error", run_id, exc_info=exc)
-                safe_error = _safe_run_error(exc)
-                error_payload = {
-                    "message": safe_error,
-                    "code": err_meta["errorCode"],
-                    "params": err_meta["errorParams"],
-                }
-                try:
-                    _finalize_run("failed", safe_error=safe_error)
-                except Exception:
-                    # 收尾二次异常：不再有可信 error 帧，落日志后发固定安全终帧（#1）。
-                    logger.exception("run %s failure finalization failed", run_id)
-                    terminal = {"__error__": _unexpected_stream_error()}
-                else:
-                    terminal = {"__error__": error_payload}
-            else:
-                try:
-                    _finalize_run("completed", result=result)
-                except Exception:
-                    logger.exception("run %s completion finalization failed", run_id)
-                    terminal = {"__error__": _unexpected_stream_error()}
-                else:
-                    terminal = {"__result__": result}
-            finally:
-                cancellation_broker.unregister(run_id)
-            bridge.offer_threadsafe(terminal)
-
-        thread = threading.Thread(target=worker, daemon=True)
-        thread.start()
-        try:
-            while True:
-                try:
-                    event = await asyncio.wait_for(
-                        bridge.get(), _main.SSE_HEARTBEAT_SECONDS
-                    )
-                except asyncio.TimeoutError:
-                    # worker 暴毙且无积压帧：合成 error 终帧，不让连接永久悬挂（#1）。
-                    if not thread.is_alive() and not bridge.has_pending:
-                        logger.error(
-                            "run stream worker died without terminal frame "
-                            "(run=%s graph=%s)",
-                            run_id,
-                            graph_id,
-                        )
-                        yield (
-                            "event: error\ndata: "
-                            + json.dumps(
-                                {"detail": _unexpected_stream_error()},
-                                ensure_ascii=False,
-                            )
-                            + "\n\n"
-                        )
-                        break
-                    yield ": keepalive\n\n"
-                    continue
-                if "__result__" in event:
-                    # M10：终帧为 run_end 超集（traceId/spanId/graphVersion）；完整 traceTree
-                    # 只留在进程内返回值，不进 SSE（04 §5.15）。
-                    result_payload = {
-                        key: value
-                        for key, value in event["__result__"].items()
-                        if key != "traceTree"
-                    }
-                    if tracer is not None:
-                        result_payload.setdefault("spanId", tracer.root.span_id)
-                        if tracer.graph_version is not None:
-                            result_payload.setdefault("graphVersion", tracer.graph_version)
-                    yield (
-                        "event: result\ndata: "
-                        + json.dumps(
-                            {"id": graph_id, **result_payload}, ensure_ascii=False
-                        )
-                        + "\n\n"
-                    )
-                    break
-                if "__stopped__" in event:
-                    yield (
-                        "event: stopped\ndata: "
-                        + json.dumps(
-                            {"type": "stopped", "node_id": event["__stopped__"],
-                             "reason": "user_stop"},
-                            ensure_ascii=False,
-                        )
-                        + "\n\n"
-                    )
-                    break
-                if "__superseded__" in event:
-                    yield (
-                        "event: superseded\ndata: "
-                        + json.dumps(
-                            {
-                                "type": "superseded",
-                                "node_id": event["__superseded__"],
-                                "reason": "resumed_by_other_process",
-                            },
-                            ensure_ascii=False,
-                        )
-                        + "\n\n"
-                    )
-                    break
-                if "__wait_timeout_suspended__" in event:
-                    # docs/136 打包 BS：挂起节点超时且 onTimeout="suspend"——run 未终态
-                    # （保持 suspended 待人工恢复），流在此结束，前端据此展示"超时仍挂起"。
-                    yield (
-                        "event: wait_timeout_suspended\ndata: "
-                        + json.dumps(
-                            {
-                                "type": "wait_timeout_suspended",
-                                "node_id": event["__wait_timeout_suspended__"],
-                                "reason": "timeout_kept_suspended",
-                            },
-                            ensure_ascii=False,
-                        )
-                        + "\n\n"
-                    )
-                    break
-                if "__cancelled__" in event:
-                    yield (
-                        "event: cancelled\ndata: "
-                        + json.dumps(
-                            {
-                                "type": "cancelled",
-                                "node_id": event["__cancelled__"],
-                                "reason": "user_cancel",
-                            },
-                            ensure_ascii=False,
-                        )
-                        + "\n\n"
-                    )
-                    break
-                if "__error__" in event:
-                    yield (
-                        "event: error\ndata: "
-                        + json.dumps(
-                            {"detail": event["__error__"]}, ensure_ascii=False
-                        )
-                        + "\n\n"
-                    )
-                    break
-                yield f"event: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
-        finally:
-            # 断连不是取消（docs/24 §3）：close 后 worker 的 offer 是廉价 no-op，
-            # run_graph 不中断；生成器退出即释放，不占工作线程（#2/#4）。
-            bridge.close()
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @router.get("/api/runs")
