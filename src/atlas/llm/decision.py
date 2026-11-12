@@ -204,7 +204,7 @@ class LiteLLMDecisionClient:
                 {"role": "user", "content": user_content},
             ],
             "response_format": {"type": "json_object"},
-            "temperature": 0,
+            "temperature": 1,
             # J-3c：出向 LLM 必须带超时与输出上限，防挂死/超长回包拖垮编排
             "timeout": float(os.getenv("ATLAS_LLM_TIMEOUT_SECONDS", "60")),
             "max_tokens": 512,
