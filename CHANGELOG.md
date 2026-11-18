@@ -1000,7 +1000,7 @@
 ### feat(a2a)：A2A 执行 Agent 面 v1＝Zeus 协同决策平台 W2 接入（2026-10-01 ✅ 落码收口，commits ccf6668／39155a7／255064b／3b7e405／本条为补记；形状权威 docs/90；ADR T32；零新依赖／零迁移／前端零改动）
 
 - **背景（为什么补记）**：A2A v1 的代码与文档落码当时**漏登记 CHANGELOG**（`feat(a2a)` `ccf6668`／`docs(a2a)` `39155a7`／`fix(a2a)` `255064b`／`docs(a2a)` `3b7e405` 均无本文件条目），与「文档必须与代码同事实」不符，随第二阶段收口一并补齐里程碑追溯。
-- **一句话**：Atlas 首次对外暴露 **A2A 执行面**，按 Zeus 已定型的「标准 A2A ＋一层 `x-zeus-fealty` 契约扩展」接入 Zeus 协同决策平台（W2，与 loom 同波），验证「从零按协议接入」的可复制性。**纯新增、plan-only**。
+- **一句话**：Atlas 首次对外暴露 **A2A 执行面**，按 Zeus 已定型的「标准 A2A ＋一层 `x-zeus-handshake` 契约扩展」接入 Zeus 协同决策平台（W2，与 loom 同波），验证「从零按协议接入」的可复制性。**纯新增、plan-only**。
 - **形状（docs/90 §1–§6 为唯一权威）**：只读公开 Agent Card 三端点（`GET /api/a2a/agent-card`、`/.well-known/agent-card.json`、`/.well-known/agent.json`，三者同卡）＋任务端点 `POST /api/a2a/tasks`（JSON-RPC `tasks/send`／`sendSubscribe`／`get`／`cancel`，SSE 流式帧 `submitted→working→artifact-update→completed(final)`）；两 plan-only skill（`plan-approval-flow`／`diagnose-run`）只回行动方案 artifact；Bearer 保护 `ATLAS_A2A_TASK_TOKEN`（与平台会话 `sess-` 及渠道凭证物理分离，prod 未配即 fail-closed 401，dev/test 放行打 WARNING）。
 - **plan-only 铁律**：不起 run、不改图、不调 LLM（`cost.llmTokens=0`）、不裁决人工审批；任务台账纯内存（单进程／30 分钟 TTL／500 上限，同 loom Q150）。
 - **超集而非闭墙（W2 协议承诺）**：真机守护复验（Zeus `scripts/acceptance-standard-a2a.mjs`，不认任何 `x-zeus-*`）首跑暴露真实缺口——`rpc._parse_skill_and_params` 只认 Zeus data part，纯 text 被 `-32602` 拒，即「只懂标准协议的调用方不可调用」；按 pr-helper `parseSkillAndParams` 口径加**无 data part 时取首个非空 text 首分词作 skill**的兜底（`255064b`）后复跑 **exit 0**（缺必填参数由 skill 层回合法终态 `input-required`、未知 skill `failed`，data/text 均无才 `-32602`）。

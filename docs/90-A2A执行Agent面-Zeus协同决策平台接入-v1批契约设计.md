@@ -1,8 +1,8 @@
 # A2A 执行 Agent 面（Zeus 协同决策平台 W2 接入）— v1 批契约设计
 
 > 状态：**第一阶段已实施（2026-10-01，ADR T32）**。纯新增、plan-only、零业务链改动；后端新增 13 项单测（`tests/test_a2a_execution_agent.py`，含纯标准 A2A text part 兜底两条）。同日纯标准 A2A 客户端守护真机复验通过（见 §6），并据此补了 text part 超集兜底（commit `255064b`）。**第二阶段第一批已收口（2026-10-01，docs-only，零代码／测试／迁移／依赖改动）**：§7 第 2 项按 §6 实测证据正式勾掉；第 3 项定为**明确沿用单副本内存台账**（决策与理由见 §7，决策记录 docs/08）。**仍开两项**：第 1 项生产部署同口径回归（需真实域名/TLS/网关等外部部署条件）、第 4 项机器账号体系（多租户调用方区分，属产品/契约口径、待决策）。
-> 背景：Zeus 是多 Agent 协同决策平台，已定「执行 Agent 协议 = 标准 A2A + 一层 x-zeus-fealty 契约扩展」；pr-helper 为 W1（已真机定型），loom 为 W2 首个已有 A2A 实现（Q150，2026-10-01 与 Zeus 协议级真机联调通过）。Atlas 与 loom 同波（W2），本批把**同一套已定型协议**第一次落到一个此前零 A2A 代码的产品，验证「从零按协议接入」的可复制性。
-> 上游契约事实源：zeus 仓 `docs/design-vassal-protocol.md`（协议）与 loom 仓 `docs/design-a2a-vassal.md` + `backend/app/core/a2a/`（同构参考实现）。本文只写 Atlas 侧落点，不复制协议全文。
+> 背景：Zeus 是多 Agent 协同决策平台，已定「执行 Agent 协议 = 标准 A2A + 一层 x-zeus-handshake 契约扩展」；pr-helper 为 W1（已真机定型），loom 为 W2 首个已有 A2A 实现（Q150，2026-10-01 与 Zeus 协议级真机联调通过）。Atlas 与 loom 同波（W2），本批把**同一套已定型协议**第一次落到一个此前零 A2A 代码的产品，验证「从零按协议接入」的可复制性。
+> 上游契约事实源：zeus 仓 `docs/design-executor-protocol.md`（协议）与 loom 仓 `docs/design-a2a-executor.md` + `backend/app/core/a2a/`（同构参考实现）。本文只写 Atlas 侧落点，不复制协议全文。
 
 ## 1. 范围与非目标
 
@@ -33,9 +33,9 @@
 | `capabilities.streaming` | true | sendSubscribe 走 SSE |
 | `skills[].id` | `plan-approval-flow` / `diagnose-run` | 均带 `plan-only` tag |
 | `authentication.schemes` | `["bearer"]` | |
-| `x-zeus-fealty` | 见下 | Zeus 注册闸校验 |
+| `x-zeus-handshake` | 见下 | Zeus 注册闸校验 |
 
-x-zeus-fealty 取值（全部落在 Zeus 受控词表内，否则注册被拒）：
+x-zeus-handshake 取值（全部落在 Zeus 受控词表内，否则注册被拒）：
 
 ```json
 {
@@ -84,7 +84,7 @@ x-zeus-fealty 取值（全部落在 Zeus 受控词表内，否则注册被拒）
 ## 6. 验证
 
 - 单测：`tests/test_a2a_execution_agent.py` 13 项——卡片契约（注册握手/tag/url）、rpc（completed 报告、缺参 input-required、未知 skill failed/未知方法 -32601、SSE 生命周期、get/cancel、坏 message -32602、**纯 text part 回退首分词→input-required/failed、无 data 且无 text 仍 -32602**）、HTTP（三卡片端点公开、Bearer 401/200、SSE 成帧与收尾快照）。
-- 真机协议级联调（2026-10-01）：本机 uvicorn `atlas.api.main:app`（dev，`ATLAS_PUBLIC_BASE_URL=http://127.0.0.1:8933`），Zeus 真实 `VassalRegistry.register` + `sendTaskSubscribe`/`sendTask`：注册握手五字段注册闸全过、卡片 `url` 直接解析任务端点、SSE 四帧正确拆解、`x-zeus-report`（plan，llmTokens=0）回传、缺参 input-required、非流式 send 与流式等价。**Atlas 侧业务链零改动**。
+- 真机协议级联调（2026-10-01）：本机 uvicorn `atlas.api.main:app`（dev，`ATLAS_PUBLIC_BASE_URL=http://127.0.0.1:8933`），Zeus 真实 `ExecutorRegistry.register` + `sendTaskSubscribe`/`sendTask`：注册握手五字段注册闸全过、卡片 `url` 直接解析任务端点、SSE 四帧正确拆解、`x-zeus-report`（plan，llmTokens=0）回传、缺参 input-required、非流式 send 与流式等价。**Atlas 侧业务链零改动**。
 - **纯标准 A2A 客户端守护复验（2026-10-01，Zeus `scripts/acceptance-standard-a2a.mjs`，不认任何 x-zeus-*）**：首跑暴露真实超集缺口——脚本发纯 text part，rpc 只认 data part ⇒ 回 `-32602 message needs a data part`，即「只懂标准协议的调用方不可调用」，违反超集承诺；按 §4 加 text 兜底后复跑 **exit 0**（发现 atlas 2 skill；纯 text `diagnose-run` 被受理并回合法终态 `input-required`，不抛协议错误）。
 - 复跑单测：`.venv/bin/pytest tests/test_a2a_execution_agent.py -q`；修复后全量 **2161 passed / 136 skipped / 0 failed**（372s，净增 2）。
 
