@@ -3,6 +3,12 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔refactor〕渐进 ORM 化批 1＝message_templates / llm_usage 内部 SQL 迁 SQLAlchemy ORM（2026-11-18；未 push）
+
+- 新增 `src/atlas/storage/models.py`（`MessageTemplateORM`/`LlmUsageORM`），`message/pg_template_store.py` 与 `llm/pg_store.py` 内部 SQL 改 ORM；同一 sync Engine 上叠 sessionmaker，对外构造签名与方法面不变。
+- 语义保持：`FOR UPDATE` 取 seq、JSONB 往返、`LOWER` 表达式唯一索引 IntegrityError→409、`llm_usage` 无 DB 主键的列级 select（不去重）、`assignment_id`/`billing_source` 靠 server_default 不写入；`Base.metadata` 不 `create_all`，DDL 权威仍在 `db/migrations`。
+- 门：`ruff`/`mypy` 通过；`pytest` 全量 **3075 passed / 214 skipped**。A2A 术语同步单独提交，文档口径单独提交。
+
 ### 〔feat〕打包 BS＝挂起超时转 suspended（onTimeout="suspend"，2026-10-22，用户「可以搞的功能现在就设计方案落码」；docs/136；未 push）
 
 - `human_approval.onTimeout` 与 `wait.onTimeout` 超集扩展新增 `"suspend"`（枚举缺省不变：human_approval 默认 reject、wait 默认 continue）：挂起节点超时后**不落决定、不 continue/fail**，run 保持 `suspended`、挂起帧保留、token 保持 pending（不调 `complete_timeout`），等待人工后续恢复。
