@@ -11,28 +11,34 @@
   分表 env `ATLAS_RETENTION_LLM_USAGE_DAYS`（缺省回退全局
   `ATLAS_RETENTION_DAYS`，再回退默认 90 天，与 audit/runs 成本账对齐）；
   立即清零仍走 `/api/demo/reset`。
+
+渐进 ORM 化批 1（方案 C）：内部 SQL 迁到 SQLAlchemy ORM（`storage/models.py`
+`LlmUsageORM`，同一 sync Engine 上叠 sessionmaker），对外构造签名与方法面不变。
+读取走**列级 select**（返回 Row、不经 identity map）：表无数据库主键、完全相同的
+重复行不得去重，行数/聚合语义与原生 SQL 一致。058 补列（assignment_id/
+billing_source）record 不写、靠 server_default，行为不变。
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Callable
 
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine, case, delete, desc, func, literal_column, select
+from sqlalchemy.orm import sessionmaker
+
+from atlas.storage.models import LlmUsageORM
 
 from .metering import UsageRecord
 
 logger = logging.getLogger(__name__)
 
-_COLUMNS = (
-    "tenant_id, ts, caller, node_id, graph_id, run_id, model, "
-    "prompt_tokens, completion_tokens, total_tokens, latency_ms, status"
-)
-
-_GROUP_EXPR = {
-    "caller": "caller",
-    "model": "model",
-    "day": "substr(ts, 1, 10)",
+# group_by 白名单（REST 层已校验；双保险）。ORM 化后防注入天然成立：
+# 非法 key 回退 caller，表达式是 SQLAlchemy 列对象而非字符串拼接。
+_GROUP_KEY: dict[str, Callable[[], Any]] = {
+    "caller": lambda: LlmUsageORM.caller,
+    "model": lambda: LlmUsageORM.model,
+    "day": lambda: func.substr(LlmUsageORM.ts, 1, 10),
 }
 
 
@@ -42,39 +48,50 @@ class PgUsageStore:
     def __init__(self, engine: Engine, tenant_id: str) -> None:
         self._engine = engine
         self._tenant_id = tenant_id
+        self._session_factory = sessionmaker(bind=engine)
 
     def record(self, rec: UsageRecord) -> None:
-        with self._engine.begin() as db:
-            db.execute(
-                text(
-                    f"INSERT INTO llm_usage ({_COLUMNS}) VALUES (:tenant_id, :ts, "
-                    ":caller, :node_id, :graph_id, :run_id, :model, :prompt_tokens, "
-                    ":completion_tokens, :total_tokens, :latency_ms, :status)"
-                ),
-                {
-                    "tenant_id": rec.tenant_id,
-                    "ts": rec.ts,
-                    "caller": rec.caller,
-                    "node_id": rec.node_id,
-                    "graph_id": rec.graph_id,
-                    "run_id": rec.run_id,
-                    "model": rec.model,
-                    "prompt_tokens": rec.prompt_tokens,
-                    "completion_tokens": rec.completion_tokens,
-                    "total_tokens": rec.total_tokens,
-                    "latency_ms": rec.latency_ms,
-                    "status": rec.status,
-                },
+        with self._session_factory.begin() as session:
+            session.add(
+                LlmUsageORM(
+                    tenant_id=rec.tenant_id,
+                    ts=rec.ts,
+                    caller=rec.caller,
+                    node_id=rec.node_id,
+                    graph_id=rec.graph_id,
+                    run_id=rec.run_id,
+                    model=rec.model,
+                    prompt_tokens=rec.prompt_tokens,
+                    completion_tokens=rec.completion_tokens,
+                    total_tokens=rec.total_tokens,
+                    latency_ms=rec.latency_ms,
+                    status=rec.status,
+                )
             )
 
     def list_recent(self, limit: int = 50) -> list[dict]:
         bounded = max(1, min(int(limit), 200))
-        sql = (
-            f"SELECT {_COLUMNS} FROM llm_usage WHERE tenant_id = :t "
-            "ORDER BY ts DESC LIMIT :limit"
+        stmt = (
+            select(
+                LlmUsageORM.tenant_id,
+                LlmUsageORM.ts,
+                LlmUsageORM.caller,
+                LlmUsageORM.node_id,
+                LlmUsageORM.graph_id,
+                LlmUsageORM.run_id,
+                LlmUsageORM.model,
+                LlmUsageORM.prompt_tokens,
+                LlmUsageORM.completion_tokens,
+                LlmUsageORM.total_tokens,
+                LlmUsageORM.latency_ms,
+                LlmUsageORM.status,
+            )
+            .where(LlmUsageORM.tenant_id == self._tenant_id)
+            .order_by(LlmUsageORM.ts.desc())
+            .limit(bounded)
         )
-        with self._engine.connect() as db:
-            rows = db.execute(text(sql), {"t": self._tenant_id, "limit": bounded}).all()
+        with self._session_factory() as session:
+            rows = session.execute(stmt).all()
         return [_row_view(row) for row in rows]
 
     def summarize(
@@ -84,27 +101,27 @@ class PgUsageStore:
         until: str | None = None,
         group_by: str = "caller",
     ) -> list[dict]:
-        # group_by 白名单（REST 层已校验；双保险防 SQL 注入进 GROUP BY 表达式）
-        expr = _GROUP_EXPR.get(group_by, _GROUP_EXPR["caller"])
-        clauses = ["tenant_id = :t"]
-        args: dict[str, Any] = {"t": self._tenant_id}
+        key_expr = _GROUP_KEY.get(group_by, _GROUP_KEY["caller"])()
+        # CASE 聚合：status='error' 计 1，否则 0（与原 SQL `SUM(CASE WHEN ...)` 逐字语义）。
+        errors = func.coalesce(
+            func.sum(case((LlmUsageORM.status == "error", 1), else_=0)), 0
+        ).label("errors")
+        stmt = select(
+            key_expr.label("key"),
+            func.count().label("calls"),
+            func.coalesce(func.sum(LlmUsageORM.prompt_tokens), 0).label("prompt_tokens"),
+            func.coalesce(func.sum(LlmUsageORM.completion_tokens), 0).label("completion_tokens"),
+            func.coalesce(func.sum(LlmUsageORM.total_tokens), 0).label("total_tokens"),
+            errors,
+        ).where(LlmUsageORM.tenant_id == self._tenant_id)
         if since:
-            clauses.append("ts >= :since")
-            args["since"] = since
+            stmt = stmt.where(LlmUsageORM.ts >= since)
         if until:
-            clauses.append("ts <= :until")
-            args["until"] = until
-        sql = (
-            f"SELECT {expr} AS key, COUNT(*) AS calls, "
-            "COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens, "
-            "COALESCE(SUM(completion_tokens), 0) AS completion_tokens, "
-            "COALESCE(SUM(total_tokens), 0) AS total_tokens, "
-            "COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) AS errors "
-            f"FROM llm_usage WHERE {' AND '.join(clauses)} "
-            "GROUP BY key ORDER BY total_tokens DESC"
-        )
-        with self._engine.connect() as db:
-            rows = db.execute(text(sql), args).all()
+            stmt = stmt.where(LlmUsageORM.ts <= until)
+        # GROUP BY 重复完整 key 表达式；ORDER BY 输出别名 total_tokens（原 SQL 语义）。
+        stmt = stmt.group_by(key_expr).order_by(desc(literal_column("total_tokens")))
+        with self._session_factory() as session:
+            rows = session.execute(stmt).all()
         return [
             {
                 "key": row[0],
@@ -119,11 +136,8 @@ class PgUsageStore:
 
     def reset(self) -> None:
         """/api/demo/reset 清空本租户用量账（运行计量数据，reset 同清）。"""
-        with self._engine.begin() as db:
-            db.execute(
-                text("DELETE FROM llm_usage WHERE tenant_id = :t"),
-                {"t": self._tenant_id},
-            )
+        with self._session_factory.begin() as session:
+            session.execute(delete(LlmUsageORM).where(LlmUsageORM.tenant_id == self._tenant_id))
 
 
 def _row_view(row: Any) -> dict:
