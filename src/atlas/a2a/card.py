@@ -29,7 +29,7 @@ SKILLS: list[dict] = [
     },
 ]
 
-FEALTY: dict = {
+HANDSHAKE: dict = {
     "version": "1",
     "swornTo": "zeus",
     "domain": "ops-orchestration",
@@ -57,7 +57,7 @@ def build_agent_card() -> dict:
     return {
         "name": "atlas",
         "description": (
-            "Agent orchestration platform (Harness / Graph / Loop). Vassal skills "
+            "Agent orchestration platform (Harness / Graph / Loop). Executor skills "
             "are plan-only: candidates and plans, human gates decide."
         ),
         "url": f"{base}/api/a2a/tasks",
@@ -72,5 +72,5 @@ def build_agent_card() -> dict:
         "skills": SKILLS,
         "authentication": {"schemes": ["bearer"]},
         "preferredTransport": "JSONRPC",
-        "x-zeus-fealty": FEALTY,
+        "x-zeus-handshake": HANDSHAKE,
     }

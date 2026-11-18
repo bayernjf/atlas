@@ -1,6 +1,6 @@
 """A2A 执行 Agent 面（docs/90，ADR T32；Zeus 协同决策平台 W2 接入第一阶段）。
 
-形状对齐 loom backend/tests/unit/test_a2a_vassal.py（loom 侧原文件名）：rpc 纯函数 + 卡片契约
+形状对齐 loom backend/tests/unit/test_a2a_executor.py（loom 侧原文件名）：rpc 纯函数 + 卡片契约
 + 任务端点 Bearer 闸门。plan-only，不触链/不起 run/不花 token。
 """
 
@@ -11,7 +11,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from atlas.a2a.card import FEALTY, SKILLS, build_agent_card
+from atlas.a2a.card import HANDSHAKE, SKILLS, build_agent_card
 from atlas.a2a.rpc import handle_jsonrpc, reset_for_tests
 from atlas.api.main import app
 
@@ -34,17 +34,17 @@ def _clear_tasks():
 
 # --- card ---
 
-def test_card_carries_fealty_and_plan_only_skills():
+def test_card_carries_handshake_and_plan_only_skills():
     card = build_agent_card()
     assert card["name"] == "atlas"
     assert card["preferredTransport"] == "JSONRPC"
     assert {s["id"] for s in card["skills"]} == {"plan-approval-flow", "diagnose-run"}
-    fealty = card["x-zeus-fealty"]
-    assert fealty["swornTo"] == "zeus"
-    assert fealty["version"] == FEALTY["version"] == "1"
-    assert fealty["dataRealms"] == ["enterprise"]
-    assert fealty["dataPolicy"] == "read-task-scope"
-    assert fealty["escalationPolicy"] == "auto"
+    handshake = card["x-zeus-handshake"]
+    assert handshake["swornTo"] == "zeus"
+    assert handshake["version"] == HANDSHAKE["version"] == "1"
+    assert handshake["dataRealms"] == ["enterprise"]
+    assert handshake["dataPolicy"] == "read-task-scope"
+    assert handshake["escalationPolicy"] == "auto"
     # Every advertised skill is plan-only by construction.
     assert all("plan-only" in s["tags"] for s in SKILLS)
 
@@ -154,7 +154,7 @@ def test_well_known_and_card_endpoints_are_public():
     for path in ("/.well-known/agent-card.json", "/.well-known/agent.json", "/api/a2a/agent-card"):
         r = client.get(path)
         assert r.status_code == 200
-        assert r.json()["x-zeus-fealty"]["swornTo"] == "zeus"
+        assert r.json()["x-zeus-handshake"]["swornTo"] == "zeus"
 
 
 def test_task_endpoint_requires_bearer_when_token_configured(monkeypatch):
