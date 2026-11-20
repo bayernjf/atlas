@@ -1,5 +1,14 @@
 # Handoff — Atlas
 
+## 待办登记（标准）
+
+> 本段是本产品唯一活跃待办入口；详细背景见下方原有章节。完成一项改 `[x]`，并在“最近变更 / Recently shipped”留证据。
+> 最近同步：2026-11-19
+
+- [ ] **Meta Layer 平台探索器 MVP（D1=B，4 周）** — 状态：open；阻塞：需一个真实 SaaS 测试账号；下一步：立项并做 adapter 草稿生成验证。
+- [ ] **`graph-1` 旧失败样本处理** — 状态：open；现状：500 `NODE_EXECUTION_FAILED` / `call start() before execute()`；下一步：归档旧样本或补新替代证据，避免继续当活跃失败。
+- [ ] **docs/08 §八“下一批候选（open checklist）”逐项清账** — 状态：open；取项前先看“别当待办 / 存疑待核”两段。
+
 > **2026-11-06 补登：dev → main 已于 2026-11-05 经 PR #177 合并（后端/前端/PG 集成等检查全部 SUCCESS 后才合并）；实测 origin/main 与 origin/dev 内容完全一致（git diff 为空）。**
 > **✅ main.py 拆 service 层延续（第三批）＝运行恢复与调度运行时归位（2026-11-03，接力会话推进；`run_recovery`／`scheduler_runtime` 自 `src/atlas/api/main.py` 迁至 `src/atlas/services/run_recovery.py`／`scheduler_runtime.py`，main.py 7634→7407 行；新增 `tests/test_service_run_recovery.py`、`tests/test_service_scheduler_runtime.py`，`tests/test_api_interruptions.py` 随迁调整；门（实跑）：相关三文件 **24 passed／0 failed**；零新错误码／零新迁移／零新端点／零新依赖／无 ADR；本地提交 `0a5fa99`、`60e23ae`，已推送 dev）**
 > **✅ main.py 拆 service 层延续（第二批）＝调度纯逻辑四枚归位（2026-11-02，接力会话推进；`_schedule_tick_seconds`／`_schedule_enabled`／`_schedule_specs_of_published`／`_no_schedule_detail` 自 api/main.py 迁至 services/schedule_pure.py 为公开名，MIN/MAX_SCHEDULE_TICK_SECONDS 常量随迁，main.py 别名导入保持 6 处调用零改动、HTTP 响应形状逐字节不变；门（实跑）：后端默认全量 **2975 passed／213 skipped／0 failed**；main.py 7662→7601 行；零新错误码／零新迁移／零新端点／零新依赖／无 ADR；本地提交 b9fe578，未 push）**
