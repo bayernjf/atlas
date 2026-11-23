@@ -318,6 +318,7 @@ def validate_egress_url(
 #: 只放行 127.0.0.0/8 与 ::1，不放私网/链路本地/云元数据；prod 恒关（浏览器适配器本身也不注册）。
 WEB_LOCAL_LOOPBACK_ENV = "ATLAS_WEB_ALLOW_LOOPBACK"
 MESSAGE_WEBHOOK_LOCAL_LOOPBACK_ENV = "ATLAS_MESSAGE_WEBHOOK_ALLOW_LOOPBACK"
+MESSAGE_IM_LOCAL_LOOPBACK_ENV = "ATLAS_MESSAGE_IM_ALLOW_LOOPBACK"
 
 
 def _non_prod_loopback_permit(env_name: str) -> tuple[str, ...]:
@@ -337,6 +338,11 @@ def web_local_loopback_permit() -> tuple[str, ...]:
 def message_webhook_local_loopback_permit() -> tuple[str, ...]:
     """消息 webhook 的本地接收器（127.0.0.1 一次性 listener）回环放行范围。"""
     return _non_prod_loopback_permit(MESSAGE_WEBHOOK_LOCAL_LOOPBACK_ENV)
+
+
+def message_im_local_loopback_permit() -> tuple[str, ...]:
+    """IM 群机器人本地接收器（127.0.0.1 本地假平台）的回环放行范围。"""
+    return _non_prod_loopback_permit(MESSAGE_IM_LOCAL_LOOPBACK_ENV)
 
 
 class EgressGuard:

@@ -24,7 +24,7 @@ from urllib.parse import quote, urlparse, urlunparse
 
 import httpx
 
-from atlas.security.egress import EgressGuard
+from atlas.security.egress import EgressGuard, message_im_local_loopback_permit
 
 IM_CHANNELS = ("dingtalk", "wecom", "feishu")
 IM_TIMEOUT_SECONDS = 10.0
@@ -230,7 +230,11 @@ class DefaultImSender:
         post: Callable[..., httpx.Response] | None = None,
         clock: Callable[[], float] | None = None,
     ) -> None:
-        self._guard = guard if guard is not None else EgressGuard.from_env()
+        self._guard = (
+            guard
+            if guard is not None
+            else EgressGuard.from_env(permit_cidrs=message_im_local_loopback_permit())
+        )
         self._post = post if post is not None else self._default_post
         self._clock = clock if clock is not None else time.time
 
