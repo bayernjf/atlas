@@ -3,6 +3,13 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔feat〕A-01 本地真浏览器工作流（2026-11-23；docs/138）
+
+- 新增 `ATLAS_WEB_ALLOW_LOOPBACK`：非 prod 默认放行 `127.0.0.0/8`＋`::1/128`，显式 `0` 关闭，prod 恒空；`EgressGuard.from_env(permit_cidrs=...)` 透传，仅 `web/adapter.py` 使用，HTTP/message 等消费点不变。
+- 新增 `scripts/verify_web_flow.py`：真实 Chromium 跑 Loom `127.0.0.1:3000/zh-CN/analytics` 六步（navigate/read/type/故意失败 click/重试 click/read），产出 `outputs/a01-web-flow/trace.json`＋两张截图；`ok=true`、`query_applied=true`、`egress_denials=[]`。
+- 边界：prod 仍不注册 `web-playwright`；3xx 逐跳 egress 仍 docs/14 D52；无登录态/写副作用，A-05 未做。
+- 门：`tests/test_web_adapter_egress.py`＋`tests/test_demo_surface_prod_gate.py` **45 passed**。
+
 ### 〔refactor〕渐进 ORM 化批 1＝message_templates / llm_usage 内部 SQL 迁 SQLAlchemy ORM（2026-11-18；未 push）
 
 - 新增 `src/atlas/storage/models.py`（`MessageTemplateORM`/`LlmUsageORM`），`message/pg_template_store.py` 与 `llm/pg_store.py` 内部 SQL 改 ORM；同一 sync Engine 上叠 sessionmaker，对外构造签名与方法面不变。
