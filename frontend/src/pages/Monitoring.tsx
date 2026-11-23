@@ -74,6 +74,7 @@ const EMPTY_METRICS: MetricsSummary = {
   p50: null,
   p95: null,
   per_graph: [],
+  per_bot: [],
   failed_nodes: [],
   tools: [],
   business: {
@@ -469,6 +470,29 @@ export function Monitoring({ principal, onLogout, onBack }: MonitoringProps) {
               </Card>
             </Col>
           </Row>
+
+          <Card title={t('bot.cardTitle')}>
+            <Table
+              rowKey="bot_id"
+              size="small"
+              pagination={false}
+              dataSource={metrics.per_bot ?? []}
+              locale={{ emptyText: t('empty.bot') }}
+              columns={[
+                { title: t('col.bot'), dataIndex: 'bot_id' },
+                { title: t('col.samples'), dataIndex: 'total', width: 90 },
+                { title: t('col.successRate'), dataIndex: 'success_rate', width: 110, render: rateText },
+                {
+                  title: t('col.failed'),
+                  dataIndex: 'unhealthy',
+                  width: 80,
+                  render: (value: number) => (value > 0 ? <Tag color="red">{value}</Tag> : 0),
+                },
+                { title: 'P50', dataIndex: 'p50', width: 100, render: formatDuration },
+                { title: 'P95', dataIndex: 'p95', width: 100, render: formatDuration },
+              ]}
+            />
+          </Card>
 
           <Card title={t('business.cardTitle')}>
             <Table
