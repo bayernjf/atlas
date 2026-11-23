@@ -17,8 +17,10 @@ from collections.abc import Callable
 from typing import Any
 
 from atlas.a2a.auth import CallerIdentity
+from atlas.a2a.bot_runtime import get_bot_runtime
 from atlas.a2a.run import A2ARunError, execute_graph_run
 from atlas.a2a.skills import run_plan_skill
+from atlas.iam.deps import tenant_registry
 
 TERMINAL_STATES = ("completed", "failed", "canceled")
 
@@ -37,6 +39,9 @@ _JSONRPC_ERRORS = {
     "GRAPH_NOT_FOUND": (-32012, "Graph not found"),
     "INTERACTIVE_GRAPH_UNSUPPORTED": (-32013, "Interactive graph unsupported"),
     "GRAPH_INVALID": (-32014, "Graph invalid"),
+    "AGENT_NOT_FOUND": (-32015, "Agent not found"),
+    "AGENT_DISABLED": (-32016, "Agent disabled"),
+    "AGENT_RUNTIME_UNAVAILABLE": (-32017, "Agent runtime unavailable"),
 }
 
 MAX_TASKS = 500
@@ -129,6 +134,7 @@ def _run_fingerprint(tenant_id: str, params: dict) -> str:
     body = {
         "tenant_id": tenant_id,
         "graph_id": params.get("graph_id"),
+        "agent_id": params.get("agent_id"),
         "release_version": params.get("release_version"),
         "inputs": params.get("inputs") or {},
     }
@@ -218,6 +224,10 @@ def _emit_run_artifact(
                     "tenantId": tenant_id,
                     "graphId": result.graph_id,
                     "runId": result.run_id,
+                    "taskId": task.get("id", ""),
+                    "traceId": result.trace_id,
+                    "agentId": result.agent_id,
+                    "runtimeId": result.runtime_id,
                     "status": result.status,
                     "outputs": result.outputs,
                     "trace": result.trace,
@@ -243,6 +253,8 @@ def _emit_run_artifact(
             "evidence": [
                 f"real run: mode=run (not plan-only), caller={caller_id}",
                 f"tenant-bound token: caller tenant={tenant_id}",
+                f"agent runtime: agentId={result.agent_id or '<none>'}, runtimeId={result.runtime_id or '<none>'}",
+                f"observability chain: taskId={task.get('id', '')}, agentId={result.agent_id or '<none>'}, runId={result.run_id}, traceId={result.trace_id}",
                 f"graph executed in-process: graph_id={result.graph_id}, run_id={result.run_id}",
                 f"nodes executed={len(result.trace)}; trace included in artifact data",
                 f"run_store recorded: run_id={result.run_id}",
@@ -381,6 +393,37 @@ def _execute_run_task(
             data={"callerId": caller.caller_id, "callerTenantId": caller.tenant_id, "requestedTenantId": tenant_id},
         )
 
+    agent_id = params.get("agent_id")
+    bot_runtime = None
+    if agent_id is not None:
+        if not isinstance(agent_id, str) or not agent_id.strip():
+            raise A2AProtocolError("INVALID_PARAMS", "agent_id must be a non-empty string")
+        agent_id = agent_id.strip()
+        services = tenant_registry.get(tenant_id)
+        agent = services.agents_store.get(tenant_id, agent_id)
+        if agent is None:
+            raise A2AProtocolError(
+                "AGENT_NOT_FOUND",
+                f"agent not found in tenant={tenant_id}: {agent_id}",
+                data={"agentId": agent_id},
+            )
+        if not agent.enabled:
+            raise A2AProtocolError(
+                "AGENT_DISABLED",
+                f"agent is disabled in tenant={tenant_id}: {agent_id}",
+                data={"agentId": agent_id},
+            )
+        bot_runtime = get_bot_runtime(services, agent_id)
+        if bot_runtime is None:
+            raise A2AProtocolError(
+                "AGENT_RUNTIME_UNAVAILABLE",
+                f"agent runtime unavailable in tenant={tenant_id}: {agent_id}",
+                data={"agentId": agent_id},
+            )
+        if isinstance(task.get("metadata"), dict):
+            task["metadata"].setdefault("a2a", {})["agentId"] = bot_runtime.agent_id
+            _tasks[task["id"]]["metadata"] = task["metadata"]
+
     inputs = params.get("inputs")
     if inputs is not None and not isinstance(inputs, dict):
         raise A2AProtocolError("INVALID_PARAMS", "inputs must be an object")
@@ -446,6 +489,8 @@ def _execute_run_task(
             inputs=inputs,
             release_version=release_version,
             run_id=run_id,
+            bot_runtime=bot_runtime,
+            task_id=task.get("id", ""),
         )
     except A2ARunError as exc:
         _emit_run_failure(task, params=params, tenant_id=tenant_id, graph_id=graph_id, code=exc.code, message=exc.message, detail=exc.data)
@@ -465,6 +510,7 @@ def _execute_run_task(
     if isinstance(task.get("metadata"), dict):
         a2a_meta = task["metadata"].setdefault("a2a", {})
         a2a_meta["runId"] = result.run_id
+        a2a_meta["traceId"] = result.trace_id
         _tasks[task["id"]]["metadata"] = task["metadata"]
 
     artifact = _emit_run_artifact(

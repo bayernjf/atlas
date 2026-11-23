@@ -118,8 +118,31 @@ def summarize_tools(runs: list) -> list[dict[str, Any]]:
     ]
 
 
+def summarize_bots(runs: list) -> list[dict[str, Any]]:
+    """T7：按 Bot（agent_id）聚合运行指标；非 A2A/Bot 运行（agent_id 空）不入榜。
+
+    bot_id 与 agent_id 当前一一对应（BotRuntime 的 bot_id 取自 Agent.id），
+    另带 tools 便于定位哪个 Bot 的工具失败最多。
+    """
+    buckets: "OrderedDict[str, list]" = OrderedDict()
+    for run in runs:
+        agent_id = getattr(run, "agent_id", "") or ""
+        if not agent_id:
+            continue
+        buckets.setdefault(agent_id, []).append(run)
+    return [
+        {
+            "bot_id": agent_id,
+            "agent_id": agent_id,
+            **_stats(agent_runs),
+            "tools": summarize_tools(agent_runs),
+        }
+        for agent_id, agent_runs in buckets.items()
+    ]
+
+
 def summarize(runs: list) -> dict[str, Any]:
-    """全局 + 按图分组指标 + 失败节点 Top（按 count 降序，count 同则末次时间晚者优先）。"""
+    """全局 + 按图分组指标 + 失败节点 Top + 按 Bot 指标（T7）。"""
     by_graph: OrderedDict[str, list] = OrderedDict()
     for run in runs:
         by_graph.setdefault(run.graph_id, []).append(run)
@@ -148,6 +171,7 @@ def summarize(runs: list) -> dict[str, Any]:
     return {
         **_stats(runs),
         "per_graph": per_graph,
+        "per_bot": summarize_bots(runs),
         "failed_nodes": top,
         "business": summarize_business(runs),
         "tools": summarize_tools(runs),

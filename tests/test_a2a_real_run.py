@@ -8,10 +8,12 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
+from atlas.a2a.bot_runtime import reset_for_tests as reset_bot_runtimes
 from atlas.a2a.auth import CallerIdentity, authenticate
 from atlas.a2a.rpc import handle_jsonrpc, reset_for_tests
 from atlas.a2a.run import GraphRunResult
 from atlas.api.main import app
+from atlas.iam.agents_store import Agent
 from atlas.iam.deps import tenant_registry
 
 
@@ -64,8 +66,10 @@ def _clean_a2a(monkeypatch):
     monkeypatch.delenv("ATLAS_A2A_TASK_TOKENS", raising=False)
     monkeypatch.delenv("ATLAS_A2A_TASK_TOKEN", raising=False)
     reset_for_tests()
+    reset_bot_runtimes()
     yield
     reset_for_tests()
+    reset_bot_runtimes()
 
 
 # --- auth ---
@@ -329,3 +333,80 @@ def test_http_token_map_runs_real_graph(monkeypatch):
     task = ok.json()["result"]
     assert task["status"]["state"] == "completed"
     assert task["metadata"]["a2a"]["runId"].startswith("a2a-")
+
+
+def test_agent_id_binds_task_to_bot_runtime_and_run_store():
+    tenant = f"a2a-{uuid.uuid4().hex[:8]}"
+    services = tenant_registry.get(tenant)
+    services.agents_store.put(
+        Agent(
+            id="bot.finance",
+            tenant_id=tenant,
+            name="Finance Bot",
+            adapter_ids=["database"],
+        )
+    )
+    graph_id = services.graph_store.save(_graph())
+    caller = CallerIdentity("bot-a", tenant, "token-map")
+
+    task = _send(
+        "run-graph",
+        {
+            "tenant_id": tenant,
+            "graph_id": graph_id,
+            "agent_id": "bot.finance",
+            "idempotency_key": "agent-k1",
+        },
+        caller,
+    )["result"]
+    assert task["status"]["state"] == "completed"
+    assert task["metadata"]["a2a"]["agentId"] == "bot.finance"
+    data = task["artifacts"][0]["parts"][0]["data"]
+    assert data["agentId"] == "bot.finance"
+    assert data["runtimeId"] == f"bot-runtime:{tenant}:bot.finance"
+    run = services.run_store.get(data["runId"])
+    assert run["agentId"] == "bot.finance"
+    assert "agent runtime: agentId=bot.finance" in task["artifacts"][0]["x-zeus-report"]["evidence"][2]
+
+
+def test_unknown_or_disabled_agent_is_rejected_before_run():
+    tenant = f"a2a-{uuid.uuid4().hex[:8]}"
+    services = tenant_registry.get(tenant)
+    graph_id = services.graph_store.save(_graph())
+    caller = CallerIdentity("bot-a", tenant, "token-map")
+    base = {"tenant_id": tenant, "graph_id": graph_id}
+
+    missing = _send("run-graph", {**base, "agent_id": "bot.missing"}, caller)
+    assert missing["error"]["code"] == -32015
+
+    services.agents_store.put(
+        Agent(id="bot.off", tenant_id=tenant, name="Off", enabled=False, adapter_ids=[])
+    )
+    disabled = _send("run-graph", {**base, "agent_id": "bot.off"}, caller)
+    assert disabled["error"]["code"] == -32016
+    assert services.run_store.list(limit=10) == []
+
+
+def test_bot_runtime_filters_adapters_to_agent_scope():
+    tenant = f"a2a-{uuid.uuid4().hex[:8]}"
+    services = tenant_registry.get(tenant)
+    services.agents_store.put(
+        Agent(id="bot.no-message", tenant_id=tenant, name="No Message", adapter_ids=["database"])
+    )
+    graph = _graph()
+    graph["nodes"][1]["config"] = {
+        "tool": "message/send",
+        "params": '{"channel":"email","to":["ops@example.com"],"subject":"x","body":"y"}',
+    }
+    graph_id = services.graph_store.save(graph)
+    caller = CallerIdentity("bot-a", tenant, "token-map")
+
+    task = _send(
+        "run-graph",
+        {"tenant_id": tenant, "graph_id": graph_id, "agent_id": "bot.no-message"},
+        caller,
+    )["result"]
+    assert task["status"]["state"] == "failed"
+    data = task["artifacts"][0]["parts"][0]["data"]
+    assert data["status"] == "failed"
+    assert "适配器未注册：message" in (data.get("error") or "")

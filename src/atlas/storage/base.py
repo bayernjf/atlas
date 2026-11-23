@@ -188,7 +188,7 @@ class MonitoringRepository(Protocol):
         self,
         *,
         graph_id: str,
-        mode: Literal["sync", "stream"],
+        mode: Literal["sync", "stream", "a2a"],
         status: Literal["completed", "error", "cancelled"],
         started_at: str,
         duration_ms: float,
@@ -199,8 +199,17 @@ class MonitoringRepository(Protocol):
         business=None,
         tool_calls: list | None = None,
         spans: dict | None = None,
+        task_id: str = "",
+        run_id: str = "",
+        agent_id: str = "",
+        runtime_id: str = "",
     ) -> RunRecord: ...
-    def list_runs(self, graph_id: str | None = None, limit: int = 50) -> list[RunRecord]: ...
+    def list_runs(
+        self,
+        graph_id: str | None = None,
+        limit: int = 50,
+        agent_id: str | None = None,
+    ) -> list[RunRecord]: ...
     def get_run(self, run_id: str) -> RunRecord | None: ...
     def list_alerts(self, status: str | None = None) -> list[Alert]: ...
     def get_alert(self, alert_id: str) -> Alert | None: ...

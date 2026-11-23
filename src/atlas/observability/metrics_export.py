@@ -25,6 +25,9 @@ _HEADERS: dict[str, tuple[str, str]] = {
     "atlas_runs_success_rate": ("运行成功率（0-1，窗口内无样本时无此序列）", "gauge"),
     "atlas_run_duration_ms": ("运行耗时分位数（毫秒）", "gauge"),
     "atlas_tool_calls_total": ("工具调用计数（按调用结果）", "gauge"),
+    "atlas_bot_runs_total": ("按 Bot（agent_id）的运行计数（按健康状态）", "gauge"),
+    "atlas_bot_runs_success_rate": ("按 Bot 的运行成功率（0-1，无样本时无此序列）", "gauge"),
+    "atlas_bot_run_duration_ms": ("按 Bot 的运行耗时分位数（毫秒）", "gauge"),
 }
 
 
@@ -120,5 +123,28 @@ def render_prometheus(
                  {**base, "tool": tool_name, "status": "failed"})
             emit("atlas_tool_calls_total", _num(simulated) or "0",
                  {**base, "tool": tool_name, "status": "simulated"})
+
+        # T7：每 Bot 指标（agent_id 为空的人工/入站运行不产出 bot 序列）。
+        for bot in snap.get("per_bot", []) or []:
+            bot_id = str(bot.get("bot_id") or bot.get("agent_id") or "")
+            if not bot_id:
+                continue
+            bot_base = {**base, "bot_id": bot_id}
+            bot_healthy = _num(bot.get("healthy"))
+            bot_unhealthy = _num(bot.get("unhealthy"))
+            if bot_healthy is not None:
+                emit("atlas_bot_runs_total", bot_healthy,
+                     {**bot_base, "status": "healthy"})
+            if bot_unhealthy is not None:
+                emit("atlas_bot_runs_total", bot_unhealthy,
+                     {**bot_base, "status": "unhealthy"})
+            bot_rate = _num(bot.get("success_rate"))
+            if bot_rate is not None:
+                emit("atlas_bot_runs_success_rate", bot_rate, bot_base)
+            for quantile, key in (("0.5", "p50"), ("0.95", "p95")):
+                value = _num(bot.get(key))
+                if value is not None:
+                    emit("atlas_bot_run_duration_ms", value,
+                         {**bot_base, "quantile": quantile})
 
     return "\n".join(lines) + "\n"

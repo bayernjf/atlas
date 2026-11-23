@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "variables": [],
+  "nodes": [
+    {
+      "id": "trigger-1",
+      "type": "trigger",
+      "name": "start",
+      "config": {
+        "triggerType": "webhook",
+        "webhookUrl": "/hooks/t3"
+      }
+    },
+    {
+      "id": "tool-1",
+      "type": "tool_call",
+      "name": "call",
+      "config": {
+        "tool": "logistics/check_receipt",
+        "params": "{\"order_id\": \"T3-ORDER-1\"}"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "trigger-1",
+      "target": "tool-1"
+    }
+  ]
+}

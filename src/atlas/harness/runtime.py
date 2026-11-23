@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from atlas.channels.adapter import ShopifyHarnessAdapter
@@ -19,6 +20,8 @@ from atlas.memory.adapter import MemoryHarnessAdapter
 from atlas.message.adapter import MessageHarnessAdapter
 from atlas.openapi.adapter import ImportedApiHarnessAdapter
 from atlas.harness.generated import GeneratedApiHarnessAdapter
+from atlas.logistics.adapter import LogisticsAdapter
+from atlas.logistics.http_adapter import HttpLogisticsAdapter
 from atlas.shop.adapter import ShopHarnessAdapter
 from atlas.shop.service import DemoShopService
 from atlas.web.adapter import WebHarnessAdapter
@@ -88,6 +91,15 @@ def build_base_registry(
     registry.register(MessageHarnessAdapter(granted_permissions=FULL_PERMISSIONS))
     # 全局注册表里的 memory 实例仅供适配器发现；执行期注册表替换为租户记忆存储（docs/26 §5.1）
     registry.register(MemoryHarnessAdapter(granted_permissions=FULL_PERMISSIONS))
+    # T3：物流优先接本地/内网可达 HTTP 服务；未配置时仅演示面保留进程内假适配器。
+    # 同 adapter_id 只能注册一个，避免发现面出现两个 logistics 让图选择歧义。
+    logistics_url = os.getenv("ATLAS_LOGISTICS_URL", "").strip()
+    if logistics_url:
+        registry.register(
+            HttpLogisticsAdapter(base_url=logistics_url, granted_permissions=FULL_PERMISSIONS)
+        )
+    elif demo_surface:
+        registry.register(LogisticsAdapter(granted_permissions=FULL_PERMISSIONS))
     return registry
 
 

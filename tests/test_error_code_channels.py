@@ -114,6 +114,11 @@ TOOL_OUTPUT_ONLY = {
     "HTTPAPI_HEADERS_INVALID",
     "HTTPAPI_METHOD_UNSUPPORTED",
     "HTTPAPI_TIMEOUT_INVALID",
+    # T3 物流 HTTP 适配器：只出现在 tool_call 节点产出里，不进平台 UI 错误面。
+    "LOGISTICS_HTTP_ERROR",
+    "LOGISTICS_NOT_CONFIGURED",
+    "LOGISTICS_RESPONSE_INVALID",
+    "LOGISTICS_RESPONSE_NOT_JSON",
     *TRIAGED_NODE_OUTPUT_ONLY,  # 打包 BD 五条＋打包 BG 一条，从冻结桶定性移出（见上）
     "MESSAGE_EMAIL_ADDRESS_INVALID",  # message/service.py
     "MESSAGE_FORMAT_INVALID",
@@ -223,6 +228,9 @@ DEAD_LETTER_REASON = {
 #: 按 docs/57 §2.5「节点产出／外部协议数据不译」单列豁免。U1535 钉住这组码只许
 #: 从 `src/atlas/a2a/` 发射，防止它变成藏新 UI 码的垃圾桶。
 A2A_PROTOCOL_ONLY = {
+    "AGENT_DISABLED",
+    "AGENT_NOT_FOUND",
+    "AGENT_RUNTIME_UNAVAILABLE",
     "GRAPH_INVALID",
     "GRAPH_NOT_FOUND",
     "IDEMPOTENCY_CONFLICT",
