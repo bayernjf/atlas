@@ -3,6 +3,14 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔feat〕A-08 知识库多格式导入 + 引用可追溯 + 20 文档评估（2026-11-23；docs/108 v0.2 §7）
+
+- `POST /api/knowledge/import` 追加 `content_base64 + filename` 文件路径，支持 `.md/.markdown/.txt/.docx`；Markdown 去标记、DOCX 用标准库 `zipfile`+`word/document.xml` 提段落、TXT 只收 UTF-8；PDF 未接（无解析依赖），满足 A-08「至少 pdf/docx/md 两类」。
+- 知识条目 `metadata` 追加 `source/format/doc_id/chunk_index/chunk_count`；`GET /api/memories/search` 对带 source 的 knowledge 结果追加 `citation`，fact/preference 不带；`doc_id` 为原始文件 SHA-256。
+- 前端知识页支持选文件导入（前端只做后缀/大小预检），知识列表新增「来源文件」列，语义搜索新增「引用」列；无新依赖。
+- 证据：`scripts/eval_knowledge_retrieval.py` + `outputs/a08-knowledge-rag/20-doc-eval.json`（20 文档 / 20 查询，top-1 18、top-3 20；离线确定性词法向量，top-1 未满分如实记录）。
+- 门：`tests/test_knowledge_multiformat.py` 4 例；后端全量 **3097 passed／214 skipped／1 warning**；前端 **1028 passed／2 skipped**；Ruff/oxlint/build 通过。边界：无 PDF/OCR/网页 URL、无页码/重排/商业 embedding；重复导入仍无幂等键。
+
 ### 〔feat〕A-02 A2A 真实 run + 租户绑定/幂等/冲突仲裁（2026-11-23；docs/140）
 
 - 新增 A2A `run-graph` skill：租户绑定 token 在 `tasks/send` 下真实执行非交互已保存图，写租户 `run_store`，artifact 带 `runId/graphId/outputs/trace`；交互图 `human_approval`/`wait` 启动前拒绝。
