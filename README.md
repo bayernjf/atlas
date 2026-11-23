@@ -138,7 +138,7 @@ ATLAS_ADMIN_BOOTSTRAP_PASSWORD=<过口令策略>       # prod 只播各租户 AD
 - **持久化两档同契约**。`ATLAS_STORAGE_BACKEND` 决定 memory 或 pg；挂起帧、审批历史、调度槽位、报告、影子、评估、模型配置只在 pg 档入库，内存档必须自报"看不见"而不是返回空表。
 - **调度槽位一次性认领**（`schedule_fires` 主键 `(schedule_id, slot_utc)`＋`ON CONFLICT DO NOTHING`），同分钟两进程只触发一次，这是"不补跑"的另一面。
 - **Loop 现状要读准**：`src/atlas/engine/` 的 OODA 循环目前是独立骨架（仅被测试与基准引用），生产形态＝**事件／定时驱动的图执行**；把它接进运行期是 docs/14 **D69**（排期见 docs/127 里程碑 C）。
-- **对外协议面**：MCP server 是 stdio＋**只读工具面**（写能力仅 docs-only 预备契约，docs/14 D49）；A2A 提供 Agent Card 与任务端点。
+- **对外协议面**：MCP server 是 stdio＋**只读工具面**（写能力仅 docs-only 预备契约，docs/14 D49）；A2A 提供 Agent Card、plan skill 与租户绑定的 `run-graph` 非交互图真实执行（docs/140），交互图/续跑仍走平台会话。
 
 技术选型收口于 2026-09-13（T1–T5），后续选型见 [docs/10](docs/10-技术选型决策记录.md)。模块职责与目录权威表在 [docs/09](docs/09-工程骨架与目录结构.md)；数据契约索引 [docs/03](docs/03-数据模型与Schema-契约索引.md)；接口清单 [docs/12](docs/12-API与模块接口清单.md)。
 
