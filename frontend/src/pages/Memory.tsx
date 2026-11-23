@@ -288,6 +288,22 @@ export function Memory({ principal, onLogout, onBack }: MemoryProps) {
       render: (kind: MemoryKind) => <Tag color={kindColor(kind)}>{t(kindLabel(kind))}</Tag>,
     },
     {
+      title: t('col.citation'),
+      key: 'citation',
+      width: 220,
+      render: (_: unknown, record: MemorySearchResult) =>
+        record.citation ? (
+          <Typography.Text ellipsis style={{ maxWidth: 200 }}>
+            {record.citation.source}
+            {typeof record.citation.chunk_index === 'number'
+              ? ` #${record.citation.chunk_index + 1}`
+              : ''}
+          </Typography.Text>
+        ) : (
+          <Typography.Text type="secondary">—</Typography.Text>
+        ),
+    },
+    {
       title: t('col.score'),
       dataIndex: 'score',
       key: 'score',

@@ -16,7 +16,8 @@
     "scope": "作用域",
     "createdAt": "创建时间",
     "actions": "操作",
-    "score": "相似度"
+    "score": "相似度",
+    "citation": "引用"
   },
   "source": {
     "tool": "工具写入",
@@ -82,7 +83,7 @@
   "knowledge": {
     "tab": "知识",
     "importCardTitle": "知识文档导入",
-    "importHint": "按段落自动分段向量化入库（段落优先，单段超 1200 字硬切）；最多 200 条，超出部分截断。仅支持纯文本。",
+    "importHint": "支持粘贴纯文本，或上传 .md/.markdown/.txt/.docx 文件（≤10MB）；按段落自动分段向量化入库（段落优先，单段超 1200 字硬切）；最多 200 条，超出部分截断。",
     "importCategoryLabel": "知识分类",
     "importTextPlaceholder": "粘贴知识文本，空行分段（FAQ / SOP / 产品手册 / 业务规则 / 历史案例）",
     "importButton": "导入",
@@ -94,7 +95,15 @@
     "listTitle": "知识列表",
     "listEmpty": "暂无知识条目",
     "categoryColumn": "分类",
-    "filterLabel": "分类筛选"
+    "filterLabel": "分类筛选",
+    "sourceColumn": "来源文件",
+    "importFileLabel": "上传文件（.md/.markdown/.txt/.docx，≤10MB）",
+    "importFileChoose": "选择文件",
+    "importFileClear": "清除",
+    "importFileSelected": "已选择：{name}",
+    "importTextOrFileRequired": "请输入文本或选择文件",
+    "importFileTypeError": "只支持 .md/.markdown/.txt/.docx",
+    "importFileTooLarge": "文件不能超过 10MB"
   },
   "memoryTab": "记忆"
 }

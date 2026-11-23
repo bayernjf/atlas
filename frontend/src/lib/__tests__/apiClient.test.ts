@@ -726,6 +726,21 @@ describe('AA knowledge import/search 契约（docs/108，U1267）', () => {
     })
   })
 
+  it('importKnowledge 文件导入携带 filename + content_base64', async () => {
+    const fetchMock = vi.fn(async () => new Response(
+      JSON.stringify({ imported: 1, truncated: false, items: [{ id: 'mem-2' }] }),
+      { status: 201, headers: { 'content-type': 'application/json' } },
+    ))
+    vi.stubGlobal('fetch', fetchMock)
+    const { importKnowledge } = await import('../apiClient')
+    await importKnowledge({ category: 'manual', filename: 'manual.md', content_base64: 'IyBtYW51YWw=' })
+    const [, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit]
+    const body = JSON.parse(init.body as string)
+    expect(body.filename).toBe('manual.md')
+    expect(body.content_base64).toBe('IyBtYW51YWw=')
+    expect(body).not.toHaveProperty('text')
+  })
+
   it('searchMemories 携带 category 查询参数（仅 kind=knowledge 时）', async () => {
     const fetchMock = vi.fn(async () => new Response(
       JSON.stringify({ results: [{ id: 'mem-1', score: 0.5 }] }),
