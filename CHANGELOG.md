@@ -3,6 +3,12 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔docs〕graph-1 旧失败样本归档（2026-11-23；docs/142）
+
+- 旧 `500 NODE_EXECUTION_FAILED / call start() before execute()` 定位为 `WebHarnessAdapter` 未启动时的预期 `BROWSER_NOT_STARTED` 结构化失败，节点按 `on_error=stop` 映射成 500；不是进程崩溃。
+- 旧样本没有图定义/请求体/运行 ID，仓库无生产 `graph-1` 种子，按不可复现归档；替代证据为 A-01 真实浏览器 `outputs/a01-web-flow/trace.json` `ok=true`。
+- 新增守卫测试 `tests/test_web_adapter_egress.py::test_execute_before_start_is_a_structured_browser_not_started_failure`，定向 22 passed；不改 `web/adapter.py` 行为。
+
 ### 〔feat〕A-06 真实 LLM 生成质量 + 技能 top-3 + 20 条字段级评估（2026-11-23；docs/141）
 
 - 新增 `src/atlas/skills/recommend.py`：按适配器粒度从 `AdapterRegistry` 投影技能卡，确定性子串打分返回 top-3，带 `matched/tools/priority`，同输入同注册表稳定；未登记适配器用 id 兜底。

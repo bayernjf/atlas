@@ -7,7 +7,7 @@
 
 - [x] **Meta Layer 平台探索器 MVP（D1=B，4 周）** — 状态：closed→远期/另立产品线；2026-11-23 owner 拍板（BayJF `docs/tier0/Tier0-Loom-Zeus-Atlas-按序执行待办-2026-11-23.md` §0.1 X-01）：Meta Layer 远期独立、不进 Atlas，A-03/A-04 不在 Atlas 内开工；Atlas 现阶段 P0 = A-01 + A-05 + A-02；候选「归 Atlas 并开 A-03/A-04」保留作二次选择线索。
 - [ ] **立项/两道设计题差距待办（docs/137）** — 状态：in progress；2026-11-23 立档；内容：题一 5.5/6、题二 4/6（本地自用口径）、原立项 AutoPilot/元层差距与 P0/P1/P2 待办；迭代纪律：现有功能全保留，只做追加式迭代，不删除/替换现有能力；**A-01 于 2026-11-23 本地口径完成**（证据 `outputs/a01-web-flow/`、说明 `docs/138`）；**A-05 于 2026-11-23 本地口径完成**（真实 SQLite 写 + 审批 + 本地 webhook，证据 `outputs/a05-local-side-effects/`、说明 `docs/139`）；**A-02 于 2026-11-23 本地口径完成**（A2A `run-graph` 真实 run + 多 token 租户绑定 + 幂等/单飞冲突，证据 `outputs/a02-a2a-real-run/`、说明 `docs/140`）；**A-08 于 2026-11-23 本地口径完成**（Markdown/DOCX/TXT 文件导入 + `citation` + 20 文档评估 top-1 18/top-3 20，契约 `docs/108 §7`、证据 `outputs/a08-knowledge-rag/20-doc-eval.json`，PDF/OCR 仍缓做）；**A-06 于 2026-11-23 本地口径完成**（真实 LLM 生成 + 技能 top-3 + 20 条字段级评估，最终 20/20；第一轮 17/20 失败样本独立归档，证据 `outputs/a06-nl-skills/`、说明 `docs/141`）。Atlas 现阶段 P0（A-01/A-05/A-02）全部完成；A-03/A-04 仍按 owner 拍板不在 Atlas 内开工。不要一次全开。
-- [ ] **`graph-1` 旧失败样本处理** — 状态：open；现状：500 `NODE_EXECUTION_FAILED` / `call start() before execute()`；下一步：归档旧样本或补新替代证据，避免继续当活跃失败。
+- [x] **`graph-1` 旧失败样本处理** — 状态：closed；2026-11-23 归档为旧进程内样本，非当前开放缺陷；`call start() before execute()` 是 `WebHarnessAdapter` 未启动时的预期结构化守卫，上层按 `on_error=stop` 映射成 500 `NODE_EXECUTION_FAILED`；替代证据 A-01 `outputs/a01-web-flow/trace.json`，守卫测试 `tests/test_web_adapter_egress.py` 22 passed；说明 `docs/142`。
 - [ ] **docs/08 §八“下一批候选（open checklist）”逐项清账** — 状态：open；取项前先看“别当待办 / 存疑待核”两段。
 
 > **2026-11-06 补登：dev → main 已于 2026-11-05 经 PR #177 合并（后端/前端/PG 集成等检查全部 SUCCESS 后才合并）；实测 origin/main 与 origin/dev 内容完全一致（git diff 为空）。**
