@@ -1,0 +1,4058 @@
+{
+  "generatedAt": "2026-11-23T11:47:14Z",
+  "envFile": ".env",
+  "cases": [
+    {
+      "id": "refund-basic",
+      "prompt": "客户申请退款，先查询待处理退款单；金额超过1000转人工审批，否则自动退款；最后邮件通知客户。",
+      "ok": true,
+      "generation": {
+        "mode": "llm",
+        "model": "openai/agnes-3.0-flash",
+        "attempts": 1,
+        "repaired": false,
+        "compileOk": true
+      },
+      "top3": [
+        {
+          "id": "shop",
+          "name": "售后退款",
+          "description": "退款单查询、退款/拒绝、人工审批与资金操作",
+          "score": 9.5,
+          "matched": [
+            "退款",
+            "退款单",
+            "审批"
+          ],
+          "tools": [
+            "shop/login",
+            "shop/list_pending_refunds",
+            "shop/execute_refund",
+            "shop/request_human_approval",
+            "shop/reject_refund",
+            "shop/process_refund"
+          ],
+          "priority": 60
+        },
+        {
+          "id": "message",
+          "name": "消息通知",
+          "description": "邮件、Webhook、钉钉、企微、飞书等消息投递",
+          "score": 6.0,
+          "matched": [
+            "通知",
+            "邮件"
+          ],
+          "tools": [
+            "message/send"
+          ],
+          "priority": 50
+        },
+        {
+          "id": "database",
+          "name": "数据查询",
+          "description": "只读 SQL 查询与写操作，适合统计、汇总和报表",
+          "score": 6.0,
+          "matched": [
+            "查询",
+            "金额"
+          ],
+          "tools": [
+            "database/query",
+            "database/execute"
+          ],
+          "priority": 40
+        }
+      ],
+      "tools": [
+        "shop/list_pending_refunds",
+        "shop/execute_refund",
+        "shop/execute_refund",
+        "message/send",
+        "message/send"
+      ],
+      "nodeTypes": [
+        "trigger",
+        "tool_call",
+        "condition",
+        "human_approval",
+        "tool_call",
+        "tool_call",
+        "tool_call",
+        "tool_call"
+      ],
+      "compile": {
+        "ok": true,
+        "errors": [],
+        "codes": []
+      },
+      "diffs": [
+        {
+          "field": "skills.top3",
+          "expectedAny": [
+            "shop",
+            "database"
+          ],
+          "actual": [
+            "shop",
+            "message",
+            "database"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.tools",
+          "expectedAny": [
+            "shop/list_pending_refunds",
+            "shop/process_refund",
+            "shop/execute_refund",
+            "database/query"
+          ],
+          "actual": [
+            "shop/list_pending_refunds",
+            "shop/execute_refund",
+            "shop/execute_refund",
+            "message/send",
+            "message/send"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.nodeTypes",
+          "required": [
+            "condition",
+            "human_approval"
+          ],
+          "actual": [
+            "trigger",
+            "tool_call",
+            "condition",
+            "human_approval",
+            "tool_call",
+            "tool_call",
+            "tool_call",
+            "tool_call"
+          ],
+          "missing": []
+        }
+      ],
+      "checks": {
+        "modeLlm": true,
+        "compileOk": true,
+        "skillHit": true,
+        "toolHit": true,
+        "nodeHit": true
+      }
+    },
+    {
+      "id": "refund-auto-low",
+      "prompt": "客户申请退款，金额小于200直接退款，不用人工审批。",
+      "ok": true,
+      "generation": {
+        "mode": "llm",
+        "model": "openai/agnes-3.0-flash",
+        "attempts": 1,
+        "repaired": false,
+        "compileOk": true
+      },
+      "top3": [
+        {
+          "id": "shop",
+          "name": "售后退款",
+          "description": "退款单查询、退款/拒绝、人工审批与资金操作",
+          "score": 6.0,
+          "matched": [
+            "退款",
+            "审批"
+          ],
+          "tools": [
+            "shop/login",
+            "shop/list_pending_refunds",
+            "shop/execute_refund",
+            "shop/request_human_approval",
+            "shop/reject_refund",
+            "shop/process_refund"
+          ],
+          "priority": 60
+        },
+        {
+          "id": "database",
+          "name": "数据查询",
+          "description": "只读 SQL 查询与写操作，适合统计、汇总和报表",
+          "score": 3.0,
+          "matched": [
+            "金额"
+          ],
+          "tools": [
+            "database/query",
+            "database/execute"
+          ],
+          "priority": 40
+        },
+        {
+          "id": "message",
+          "name": "消息通知",
+          "description": "邮件、Webhook、钉钉、企微、飞书等消息投递",
+          "score": 0.0,
+          "matched": [],
+          "tools": [
+            "message/send"
+          ],
+          "priority": 50
+        }
+      ],
+      "tools": [
+        "shop/execute_refund",
+        "message/send",
+        "shop/execute_refund",
+        "message/send",
+        "shop/reject_refund",
+        "message/send"
+      ],
+      "nodeTypes": [
+        "trigger",
+        "condition",
+        "tool_call",
+        "tool_call",
+        "human_approval",
+        "tool_call",
+        "tool_call",
+        "tool_call",
+        "tool_call"
+      ],
+      "compile": {
+        "ok": true,
+        "errors": [],
+        "codes": []
+      },
+      "diffs": [
+        {
+          "field": "skills.top3",
+          "expectedAny": [
+            "shop"
+          ],
+          "actual": [
+            "shop",
+            "database",
+            "message"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.tools",
+          "expectedAny": [
+            "shop/execute_refund",
+            "shop/process_refund"
+          ],
+          "actual": [
+            "shop/execute_refund",
+            "message/send",
+            "shop/execute_refund",
+            "message/send",
+            "shop/reject_refund",
+            "message/send"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.nodeTypes",
+          "required": [],
+          "actual": [
+            "trigger",
+            "condition",
+            "tool_call",
+            "tool_call",
+            "human_approval",
+            "tool_call",
+            "tool_call",
+            "tool_call",
+            "tool_call"
+          ],
+          "missing": []
+        }
+      ],
+      "checks": {
+        "modeLlm": true,
+        "compileOk": true,
+        "skillHit": true,
+        "toolHit": true,
+        "nodeHit": true
+      }
+    },
+    {
+      "id": "refund-return-approval",
+      "prompt": "退货退款必须先人工审批，审批通过后退款，拒绝则通知客户。",
+      "ok": true,
+      "generation": {
+        "mode": "llm",
+        "model": "openai/agnes-3.0-flash",
+        "attempts": 1,
+        "repaired": false,
+        "compileOk": true
+      },
+      "top3": [
+        {
+          "id": "shop",
+          "name": "售后退款",
+          "description": "退款单查询、退款/拒绝、人工审批与资金操作",
+          "score": 9.0,
+          "matched": [
+            "退款",
+            "退货",
+            "审批"
+          ],
+          "tools": [
+            "shop/login",
+            "shop/list_pending_refunds",
+            "shop/execute_refund",
+            "shop/request_human_approval",
+            "shop/reject_refund",
+            "shop/process_refund"
+          ],
+          "priority": 60
+        },
+        {
+          "id": "message",
+          "name": "消息通知",
+          "description": "邮件、Webhook、钉钉、企微、飞书等消息投递",
+          "score": 3.0,
+          "matched": [
+            "通知"
+          ],
+          "tools": [
+            "message/send"
+          ],
+          "priority": 50
+        },
+        {
+          "id": "database",
+          "name": "数据查询",
+          "description": "只读 SQL 查询与写操作，适合统计、汇总和报表",
+          "score": 0.0,
+          "matched": [],
+          "tools": [
+            "database/query",
+            "database/execute"
+          ],
+          "priority": 40
+        }
+      ],
+      "tools": [
+        "shop/execute_refund",
+        "message/send"
+      ],
+      "nodeTypes": [
+        "trigger",
+        "human_approval",
+        "tool_call",
+        "tool_call"
+      ],
+      "compile": {
+        "ok": true,
+        "errors": [],
+        "codes": []
+      },
+      "diffs": [
+        {
+          "field": "skills.top3",
+          "expectedAny": [
+            "shop",
+            "message"
+          ],
+          "actual": [
+            "shop",
+            "message",
+            "database"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.tools",
+          "expectedAny": [
+            "shop/request_human_approval",
+            "shop/execute_refund",
+            "shop/reject_refund"
+          ],
+          "actual": [
+            "shop/execute_refund",
+            "message/send"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.nodeTypes",
+          "required": [
+            "human_approval"
+          ],
+          "actual": [
+            "trigger",
+            "human_approval",
+            "tool_call",
+            "tool_call"
+          ],
+          "missing": []
+        }
+      ],
+      "checks": {
+        "modeLlm": true,
+        "compileOk": true,
+        "skillHit": true,
+        "toolHit": true,
+        "nodeHit": true
+      }
+    },
+    {
+      "id": "refund-reject",
+      "prompt": "客户退款申请不符合规则，拒绝退款并邮件说明原因。",
+      "ok": true,
+      "generation": {
+        "mode": "llm",
+        "model": "openai/agnes-3.0-flash",
+        "attempts": 1,
+        "repaired": false,
+        "compileOk": true
+      },
+      "top3": [
+        {
+          "id": "shop",
+          "name": "售后退款",
+          "description": "退款单查询、退款/拒绝、人工审批与资金操作",
+          "score": 3.0,
+          "matched": [
+            "退款"
+          ],
+          "tools": [
+            "shop/login",
+            "shop/list_pending_refunds",
+            "shop/execute_refund",
+            "shop/request_human_approval",
+            "shop/reject_refund",
+            "shop/process_refund"
+          ],
+          "priority": 60
+        },
+        {
+          "id": "message",
+          "name": "消息通知",
+          "description": "邮件、Webhook、钉钉、企微、飞书等消息投递",
+          "score": 3.0,
+          "matched": [
+            "邮件"
+          ],
+          "tools": [
+            "message/send"
+          ],
+          "priority": 50
+        },
+        {
+          "id": "database",
+          "name": "数据查询",
+          "description": "只读 SQL 查询与写操作，适合统计、汇总和报表",
+          "score": 0.0,
+          "matched": [],
+          "tools": [
+            "database/query",
+            "database/execute"
+          ],
+          "priority": 40
+        }
+      ],
+      "tools": [
+        "shop/reject_refund",
+        "message/send"
+      ],
+      "nodeTypes": [
+        "trigger",
+        "tool_call",
+        "tool_call"
+      ],
+      "compile": {
+        "ok": true,
+        "errors": [],
+        "codes": []
+      },
+      "diffs": [
+        {
+          "field": "skills.top3",
+          "expectedAny": [
+            "shop",
+            "message"
+          ],
+          "actual": [
+            "shop",
+            "message",
+            "database"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.tools",
+          "expectedAny": [
+            "shop/reject_refund",
+            "message/send"
+          ],
+          "actual": [
+            "shop/reject_refund",
+            "message/send"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.nodeTypes",
+          "required": [],
+          "actual": [
+            "trigger",
+            "tool_call",
+            "tool_call"
+          ],
+          "missing": []
+        }
+      ],
+      "checks": {
+        "modeLlm": true,
+        "compileOk": true,
+        "skillHit": true,
+        "toolHit": true,
+        "nodeHit": true
+      }
+    },
+    {
+      "id": "refund-status-query",
+      "prompt": "按订单号查询退款进度，并把结果发邮件给客户。",
+      "ok": true,
+      "generation": {
+        "mode": "llm",
+        "model": "openai/agnes-3.0-flash",
+        "attempts": 2,
+        "repaired": true,
+        "compileOk": true
+      },
+      "top3": [
+        {
+          "id": "shop",
+          "name": "售后退款",
+          "description": "退款单查询、退款/拒绝、人工审批与资金操作",
+          "score": 6.0,
+          "matched": [
+            "退款",
+            "订单"
+          ],
+          "tools": [
+            "shop/login",
+            "shop/list_pending_refunds",
+            "shop/execute_refund",
+            "shop/request_human_approval",
+            "shop/reject_refund",
+            "shop/process_refund"
+          ],
+          "priority": 60
+        },
+        {
+          "id": "message",
+          "name": "消息通知",
+          "description": "邮件、Webhook、钉钉、企微、飞书等消息投递",
+          "score": 3.0,
+          "matched": [
+            "邮件"
+          ],
+          "tools": [
+            "message/send"
+          ],
+          "priority": 50
+        },
+        {
+          "id": "database",
+          "name": "数据查询",
+          "description": "只读 SQL 查询与写操作，适合统计、汇总和报表",
+          "score": 3.0,
+          "matched": [
+            "查询"
+          ],
+          "tools": [
+            "database/query",
+            "database/execute"
+          ],
+          "priority": 40
+        }
+      ],
+      "tools": [
+        "database/query",
+        "message/send",
+        "message/send"
+      ],
+      "nodeTypes": [
+        "trigger",
+        "tool_call",
+        "condition",
+        "tool_call",
+        "tool_call"
+      ],
+      "compile": {
+        "ok": true,
+        "errors": [],
+        "codes": []
+      },
+      "diffs": [
+        {
+          "field": "skills.top3",
+          "expectedAny": [
+            "shop",
+            "database",
+            "message"
+          ],
+          "actual": [
+            "shop",
+            "message",
+            "database"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.tools",
+          "expectedAny": [
+            "shop/list_pending_refunds",
+            "database/query",
+            "message/send"
+          ],
+          "actual": [
+            "database/query",
+            "message/send",
+            "message/send"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.nodeTypes",
+          "required": [],
+          "actual": [
+            "trigger",
+            "tool_call",
+            "condition",
+            "tool_call",
+            "tool_call"
+          ],
+          "missing": []
+        }
+      ],
+      "checks": {
+        "modeLlm": true,
+        "compileOk": true,
+        "skillHit": true,
+        "toolHit": true,
+        "nodeHit": true
+      }
+    },
+    {
+      "id": "refund-daily-report",
+      "prompt": "每天统计退款金额并生成报表，发送给运营。",
+      "ok": true,
+      "generation": {
+        "mode": "llm",
+        "model": "openai/agnes-3.0-flash",
+        "attempts": 1,
+        "repaired": false,
+        "compileOk": true
+      },
+      "top3": [
+        {
+          "id": "database",
+          "name": "数据查询",
+          "description": "只读 SQL 查询与写操作，适合统计、汇总和报表",
+          "score": 9.0,
+          "matched": [
+            "统计",
+            "报表",
+            "金额"
+          ],
+          "tools": [
+            "database/query",
+            "database/execute"
+          ],
+          "priority": 40
+        },
+        {
+          "id": "shop",
+          "name": "售后退款",
+          "description": "退款单查询、退款/拒绝、人工审批与资金操作",
+          "score": 3.0,
+          "matched": [
+            "退款"
+          ],
+          "tools": [
+            "shop/login",
+            "shop/list_pending_refunds",
+            "shop/execute_refund",
+            "shop/request_human_approval",
+            "shop/reject_refund",
+            "shop/process_refund"
+          ],
+          "priority": 60
+        },
+        {
+          "id": "message",
+          "name": "消息通知",
+          "description": "邮件、Webhook、钉钉、企微、飞书等消息投递",
+          "score": 0.0,
+          "matched": [],
+          "tools": [
+            "message/send"
+          ],
+          "priority": 50
+        }
+      ],
+      "tools": [
+        "database/query",
+        "message/send",
+        "message/send"
+      ],
+      "nodeTypes": [
+        "trigger",
+        "tool_call",
+        "condition",
+        "tool_call",
+        "tool_call"
+      ],
+      "compile": {
+        "ok": true,
+        "errors": [],
+        "codes": []
+      },
+      "diffs": [
+        {
+          "field": "skills.top3",
+          "expectedAny": [
+            "database",
+            "message",
+            "shop"
+          ],
+          "actual": [
+            "database",
+            "shop",
+            "message"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.tools",
+          "expectedAny": [
+            "database/query",
+            "message/send"
+          ],
+          "actual": [
+            "database/query",
+            "message/send",
+            "message/send"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.nodeTypes",
+          "required": [],
+          "actual": [
+            "trigger",
+            "tool_call",
+            "condition",
+            "tool_call",
+            "tool_call"
+          ],
+          "missing": []
+        }
+      ],
+      "checks": {
+        "modeLlm": true,
+        "compileOk": true,
+        "skillHit": true,
+        "toolHit": true,
+        "nodeHit": true
+      }
+    },
+    {
+      "id": "refund-high-approval",
+      "prompt": "订单金额超过5000时必须人工审批，审批通过才退款。",
+      "ok": true,
+      "generation": {
+        "mode": "llm",
+        "model": "openai/agnes-3.0-flash",
+        "attempts": 1,
+        "repaired": false,
+        "compileOk": true
+      },
+      "top3": [
+        {
+          "id": "shop",
+          "name": "售后退款",
+          "description": "退款单查询、退款/拒绝、人工审批与资金操作",
+          "score": 9.0,
+          "matched": [
+            "退款",
+            "订单",
+            "审批"
+          ],
+          "tools": [
+            "shop/login",
+            "shop/list_pending_refunds",
+            "shop/execute_refund",
+            "shop/request_human_approval",
+            "shop/reject_refund",
+            "shop/process_refund"
+          ],
+          "priority": 60
+        },
+        {
+          "id": "database",
+          "name": "数据查询",
+          "description": "只读 SQL 查询与写操作，适合统计、汇总和报表",
+          "score": 3.0,
+          "matched": [
+            "金额"
+          ],
+          "tools": [
+            "database/query",
+            "database/execute"
+          ],
+          "priority": 40
+        },
+        {
+          "id": "message",
+          "name": "消息通知",
+          "description": "邮件、Webhook、钉钉、企微、飞书等消息投递",
+          "score": 0.0,
+          "matched": [],
+          "tools": [
+            "message/send"
+          ],
+          "priority": 50
+        }
+      ],
+      "tools": [
+        "database/query",
+        "shop/execute_refund",
+        "message/send",
+        "shop/execute_refund"
+      ],
+      "nodeTypes": [
+        "trigger",
+        "tool_call",
+        "condition",
+        "human_approval",
+        "tool_call",
+        "tool_call",
+        "tool_call"
+      ],
+      "compile": {
+        "ok": true,
+        "errors": [],
+        "codes": []
+      },
+      "diffs": [
+        {
+          "field": "skills.top3",
+          "expectedAny": [
+            "shop",
+            "database"
+          ],
+          "actual": [
+            "shop",
+            "database",
+            "message"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.tools",
+          "expectedAny": [
+            "shop/request_human_approval",
+            "shop/execute_refund",
+            "database/query"
+          ],
+          "actual": [
+            "database/query",
+            "shop/execute_refund",
+            "message/send",
+            "shop/execute_refund"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.nodeTypes",
+          "required": [
+            "human_approval",
+            "condition"
+          ],
+          "actual": [
+            "trigger",
+            "tool_call",
+            "condition",
+            "human_approval",
+            "tool_call",
+            "tool_call",
+            "tool_call"
+          ],
+          "missing": []
+        }
+      ],
+      "checks": {
+        "modeLlm": true,
+        "compileOk": true,
+        "skillHit": true,
+        "toolHit": true,
+        "nodeHit": true
+      }
+    },
+    {
+      "id": "refund-success-email",
+      "prompt": "退款成功后发邮件通知客户。",
+      "ok": true,
+      "generation": {
+        "mode": "llm",
+        "model": "openai/agnes-3.0-flash",
+        "attempts": 2,
+        "repaired": true,
+        "compileOk": true
+      },
+      "top3": [
+        {
+          "id": "message",
+          "name": "消息通知",
+          "description": "邮件、Webhook、钉钉、企微、飞书等消息投递",
+          "score": 6.0,
+          "matched": [
+            "通知",
+            "邮件"
+          ],
+          "tools": [
+            "message/send"
+          ],
+          "priority": 50
+        },
+        {
+          "id": "shop",
+          "name": "售后退款",
+          "description": "退款单查询、退款/拒绝、人工审批与资金操作",
+          "score": 3.0,
+          "matched": [
+            "退款"
+          ],
+          "tools": [
+            "shop/login",
+            "shop/list_pending_refunds",
+            "shop/execute_refund",
+            "shop/request_human_approval",
+            "shop/reject_refund",
+            "shop/process_refund"
+          ],
+          "priority": 60
+        },
+        {
+          "id": "database",
+          "name": "数据查询",
+          "description": "只读 SQL 查询与写操作，适合统计、汇总和报表",
+          "score": 0.0,
+          "matched": [],
+          "tools": [
+            "database/query",
+            "database/execute"
+          ],
+          "priority": 40
+        }
+      ],
+      "tools": [
+        "message/send"
+      ],
+      "nodeTypes": [
+        "trigger",
+        "tool_call"
+      ],
+      "compile": {
+        "ok": true,
+        "errors": [],
+        "codes": []
+      },
+      "diffs": [
+        {
+          "field": "skills.top3",
+          "expectedAny": [
+            "message",
+            "shop"
+          ],
+          "actual": [
+            "message",
+            "shop",
+            "database"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.tools",
+          "expectedAny": [
+            "message/send",
+            "shop/process_refund"
+          ],
+          "actual": [
+            "message/send"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.nodeTypes",
+          "required": [],
+          "actual": [
+            "trigger",
+            "tool_call"
+          ],
+          "missing": []
+        }
+      ],
+      "checks": {
+        "modeLlm": true,
+        "compileOk": true,
+        "skillHit": true,
+        "toolHit": true,
+        "nodeHit": true
+      }
+    },
+    {
+      "id": "refund-fail-dingtalk",
+      "prompt": "退款失败时用钉钉通知运营主管。",
+      "ok": true,
+      "generation": {
+        "mode": "llm",
+        "model": "openai/agnes-3.0-flash",
+        "attempts": 1,
+        "repaired": false,
+        "compileOk": true
+      },
+      "top3": [
+        {
+          "id": "message",
+          "name": "消息通知",
+          "description": "邮件、Webhook、钉钉、企微、飞书等消息投递",
+          "score": 6.0,
+          "matched": [
+            "通知",
+            "钉钉"
+          ],
+          "tools": [
+            "message/send"
+          ],
+          "priority": 50
+        },
+        {
+          "id": "shop",
+          "name": "售后退款",
+          "description": "退款单查询、退款/拒绝、人工审批与资金操作",
+          "score": 3.0,
+          "matched": [
+            "退款"
+          ],
+          "tools": [
+            "shop/login",
+            "shop/list_pending_refunds",
+            "shop/execute_refund",
+            "shop/request_human_approval",
+            "shop/reject_refund",
+            "shop/process_refund"
+          ],
+          "priority": 60
+        },
+        {
+          "id": "database",
+          "name": "数据查询",
+          "description": "只读 SQL 查询与写操作，适合统计、汇总和报表",
+          "score": 0.0,
+          "matched": [],
+          "tools": [
+            "database/query",
+            "database/execute"
+          ],
+          "priority": 40
+        }
+      ],
+      "tools": [
+        "shop/execute_refund",
+        "message/send",
+        "message/send"
+      ],
+      "nodeTypes": [
+        "trigger",
+        "tool_call",
+        "condition",
+        "tool_call",
+        "tool_call"
+      ],
+      "compile": {
+        "ok": true,
+        "errors": [],
+        "codes": []
+      },
+      "diffs": [
+        {
+          "field": "skills.top3",
+          "expectedAny": [
+            "message",
+            "shop"
+          ],
+          "actual": [
+            "message",
+            "shop",
+            "database"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.tools",
+          "expectedAny": [
+            "message/send"
+          ],
+          "actual": [
+            "shop/execute_refund",
+            "message/send",
+            "message/send"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.nodeTypes",
+          "required": [],
+          "actual": [
+            "trigger",
+            "tool_call",
+            "condition",
+            "tool_call",
+            "tool_call"
+          ],
+          "missing": []
+        }
+      ],
+      "checks": {
+        "modeLlm": true,
+        "compileOk": true,
+        "skillHit": true,
+        "toolHit": true,
+        "nodeHit": true
+      }
+    },
+    {
+      "id": "erp-stock-http",
+      "prompt": "调用 ERP 的 HTTP 接口查询库存，库存不足时通知运营。",
+      "ok": true,
+      "generation": {
+        "mode": "llm",
+        "model": "openai/agnes-3.0-flash",
+        "attempts": 1,
+        "repaired": false,
+        "compileOk": true
+      },
+      "top3": [
+        {
+          "id": "http",
+          "name": "HTTP 接口",
+          "description": "调用任意 HTTP API，适合 ERP、库存等外部系统",
+          "score": 13.5,
+          "matched": [
+            "http",
+            "接口",
+            "erp",
+            "库存"
+          ],
+          "tools": [
+            "http/request"
+          ],
+          "priority": 10
+        },
+        {
+          "id": "message",
+          "name": "消息通知",
+          "description": "邮件、Webhook、钉钉、企微、飞书等消息投递",
+          "score": 3.0,
+          "matched": [
+            "通知"
+          ],
+          "tools": [
+            "message/send"
+          ],
+          "priority": 50
+        },
+        {
+          "id": "database",
+          "name": "数据查询",
+          "description": "只读 SQL 查询与写操作，适合统计、汇总和报表",
+          "score": 3.0,
+          "matched": [
+            "查询"
+          ],
+          "tools": [
+            "database/query",
+            "database/execute"
+          ],
+          "priority": 40
+        }
+      ],
+      "tools": [
+        "http/request",
+        "message/send",
+        "message/send"
+      ],
+      "nodeTypes": [
+        "trigger",
+        "tool_call",
+        "condition",
+        "tool_call",
+        "tool_call"
+      ],
+      "compile": {
+        "ok": true,
+        "errors": [],
+        "codes": []
+      },
+      "diffs": [
+        {
+          "field": "skills.top3",
+          "expectedAny": [
+            "http",
+            "message"
+          ],
+          "actual": [
+            "http",
+            "message",
+            "database"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.tools",
+          "expectedAny": [
+            "http/request",
+            "message/send"
+          ],
+          "actual": [
+            "http/request",
+            "message/send",
+            "message/send"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.nodeTypes",
+          "required": [
+            "condition"
+          ],
+          "actual": [
+            "trigger",
+            "tool_call",
+            "condition",
+            "tool_call",
+            "tool_call"
+          ],
+          "missing": []
+        }
+      ],
+      "checks": {
+        "modeLlm": true,
+        "compileOk": true,
+        "skillHit": true,
+        "toolHit": true,
+        "nodeHit": true
+      }
+    },
+    {
+      "id": "web-login-screenshot",
+      "prompt": "打开商家后台网页，登录后截图保存。",
+      "ok": true,
+      "generation": {
+        "mode": "llm",
+        "model": "openai/agnes-3.0-flash",
+        "attempts": 1,
+        "repaired": false,
+        "compileOk": true
+      },
+      "top3": [
+        {
+          "id": "web-playwright",
+          "name": "网页操作",
+          "description": "浏览器打开页面、点击、填写与截图",
+          "score": 6.0,
+          "matched": [
+            "网页",
+            "截图"
+          ],
+          "tools": [
+            "web-playwright/navigate",
+            "web-playwright/click",
+            "web-playwright/type",
+            "web-playwright/screenshot"
+          ],
+          "priority": 30
+        },
+        {
+          "id": "shop",
+          "name": "售后退款",
+          "description": "退款单查询、退款/拒绝、人工审批与资金操作",
+          "score": 0.0,
+          "matched": [],
+          "tools": [
+            "shop/login",
+            "shop/list_pending_refunds",
+            "shop/execute_refund",
+            "shop/request_human_approval",
+            "shop/reject_refund",
+            "shop/process_refund"
+          ],
+          "priority": 60
+        },
+        {
+          "id": "message",
+          "name": "消息通知",
+          "description": "邮件、Webhook、钉钉、企微、飞书等消息投递",
+          "score": 0.0,
+          "matched": [],
+          "tools": [
+            "message/send"
+          ],
+          "priority": 50
+        }
+      ],
+      "tools": [
+        "web-playwright/navigate",
+        "web-playwright/click",
+        "web-playwright/screenshot",
+        "message/send",
+        "message/send"
+      ],
+      "nodeTypes": [
+        "trigger",
+        "tool_call",
+        "tool_call",
+        "tool_call",
+        "tool_call",
+        "tool_call",
+        "condition"
+      ],
+      "compile": {
+        "ok": true,
+        "errors": [],
+        "codes": []
+      },
+      "diffs": [
+        {
+          "field": "skills.top3",
+          "expectedAny": [
+            "web-playwright"
+          ],
+          "actual": [
+            "web-playwright",
+            "shop",
+            "message"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.tools",
+          "expectedAny": [
+            "web-playwright/navigate",
+            "web-playwright/click",
+            "web-playwright/type",
+            "web-playwright/screenshot"
+          ],
+          "actual": [
+            "web-playwright/navigate",
+            "web-playwright/click",
+            "web-playwright/screenshot",
+            "message/send",
+            "message/send"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.nodeTypes",
+          "required": [],
+          "actual": [
+            "trigger",
+            "tool_call",
+            "tool_call",
+            "tool_call",
+            "tool_call",
+            "tool_call",
+            "condition"
+          ],
+          "missing": []
+        }
+      ],
+      "checks": {
+        "modeLlm": true,
+        "compileOk": true,
+        "skillHit": true,
+        "toolHit": true,
+        "nodeHit": true
+      }
+    },
+    {
+      "id": "web-refund-form",
+      "prompt": "在网页退款表单里填写订单号和退款原因并提交。",
+      "ok": true,
+      "generation": {
+        "mode": "llm",
+        "model": "openai/agnes-3.0-flash",
+        "attempts": 1,
+        "repaired": false,
+        "compileOk": true
+      },
+      "top3": [
+        {
+          "id": "shop",
+          "name": "售后退款",
+          "description": "退款单查询、退款/拒绝、人工审批与资金操作",
+          "score": 6.0,
+          "matched": [
+            "退款",
+            "订单"
+          ],
+          "tools": [
+            "shop/login",
+            "shop/list_pending_refunds",
+            "shop/execute_refund",
+            "shop/request_human_approval",
+            "shop/reject_refund",
+            "shop/process_refund"
+          ],
+          "priority": 60
+        },
+        {
+          "id": "web-playwright",
+          "name": "网页操作",
+          "description": "浏览器打开页面、点击、填写与截图",
+          "score": 6.0,
+          "matched": [
+            "网页",
+            "填写"
+          ],
+          "tools": [
+            "web-playwright/navigate",
+            "web-playwright/click",
+            "web-playwright/type",
+            "web-playwright/screenshot"
+          ],
+          "priority": 30
+        },
+        {
+          "id": "message",
+          "name": "消息通知",
+          "description": "邮件、Webhook、钉钉、企微、飞书等消息投递",
+          "score": 0.0,
+          "matched": [],
+          "tools": [
+            "message/send"
+          ],
+          "priority": 50
+        }
+      ],
+      "tools": [
+        "web-playwright/navigate",
+        "web-playwright/type",
+        "web-playwright/type",
+        "web-playwright/click"
+      ],
+      "nodeTypes": [
+        "trigger",
+        "tool_call",
+        "tool_call",
+        "tool_call",
+        "tool_call"
+      ],
+      "compile": {
+        "ok": true,
+        "errors": [],
+        "codes": []
+      },
+      "diffs": [
+        {
+          "field": "skills.top3",
+          "expectedAny": [
+            "web-playwright"
+          ],
+          "actual": [
+            "shop",
+            "web-playwright",
+            "message"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.tools",
+          "expectedAny": [
+            "web-playwright/type",
+            "web-playwright/click"
+          ],
+          "actual": [
+            "web-playwright/navigate",
+            "web-playwright/type",
+            "web-playwright/type",
+            "web-playwright/click"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.nodeTypes",
+          "required": [],
+          "actual": [
+            "trigger",
+            "tool_call",
+            "tool_call",
+            "tool_call",
+            "tool_call"
+          ],
+          "missing": []
+        }
+      ],
+      "checks": {
+        "modeLlm": true,
+        "compileOk": true,
+        "skillHit": true,
+        "toolHit": true,
+        "nodeHit": true
+      }
+    },
+    {
+      "id": "memory-preference",
+      "prompt": "记住这位客户不要电话联系，只接受邮件。",
+      "ok": true,
+      "generation": {
+        "mode": "llm",
+        "model": "openai/agnes-3.0-flash",
+        "attempts": 1,
+        "repaired": false,
+        "compileOk": true
+      },
+      "top3": [
+        {
+          "id": "message",
+          "name": "消息通知",
+          "description": "邮件、Webhook、钉钉、企微、飞书等消息投递",
+          "score": 3.0,
+          "matched": [
+            "邮件"
+          ],
+          "tools": [
+            "message/send"
+          ],
+          "priority": 50
+        },
+        {
+          "id": "memory",
+          "name": "长期记忆",
+          "description": "记住事实/偏好并做语义检索",
+          "score": 3.0,
+          "matched": [
+            "记住"
+          ],
+          "tools": [
+            "memory/remember",
+            "memory/recall",
+            "memory/auto_extract"
+          ],
+          "priority": 20
+        },
+        {
+          "id": "shop",
+          "name": "售后退款",
+          "description": "退款单查询、退款/拒绝、人工审批与资金操作",
+          "score": 0.0,
+          "matched": [],
+          "tools": [
+            "shop/login",
+            "shop/list_pending_refunds",
+            "shop/execute_refund",
+            "shop/request_human_approval",
+            "shop/reject_refund",
+            "shop/process_refund"
+          ],
+          "priority": 60
+        }
+      ],
+      "tools": [
+        "memory/remember"
+      ],
+      "nodeTypes": [
+        "trigger",
+        "tool_call"
+      ],
+      "compile": {
+        "ok": true,
+        "errors": [],
+        "codes": []
+      },
+      "diffs": [
+        {
+          "field": "skills.top3",
+          "expectedAny": [
+            "memory"
+          ],
+          "actual": [
+            "message",
+            "memory",
+            "shop"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.tools",
+          "expectedAny": [
+            "memory/remember"
+          ],
+          "actual": [
+            "memory/remember"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.nodeTypes",
+          "required": [],
+          "actual": [
+            "trigger",
+            "tool_call"
+          ],
+          "missing": []
+        }
+      ],
+      "checks": {
+        "modeLlm": true,
+        "compileOk": true,
+        "skillHit": true,
+        "toolHit": true,
+        "nodeHit": true
+      }
+    },
+    {
+      "id": "memory-recall-channel",
+      "prompt": "检索客户历史偏好，决定这次用什么渠道通知。",
+      "ok": false,
+      "generation": {
+        "mode": "llm",
+        "model": "openai/agnes-3.0-flash",
+        "attempts": 2,
+        "repaired": true,
+        "compileOk": false,
+        "errors": [
+          "节点 notify_by_preference 节点 decide_channel 的输出中不存在该路径（REF_PATH_NOT_FOUND）：{{decide_channel.result.decision}}"
+        ]
+      },
+      "top3": [
+        {
+          "id": "memory",
+          "name": "长期记忆",
+          "description": "记住事实/偏好并做语义检索",
+          "score": 10.0,
+          "matched": [
+            "偏好",
+            "检索",
+            "客户历史"
+          ],
+          "tools": [
+            "memory/remember",
+            "memory/recall",
+            "memory/auto_extract"
+          ],
+          "priority": 20
+        },
+        {
+          "id": "message",
+          "name": "消息通知",
+          "description": "邮件、Webhook、钉钉、企微、飞书等消息投递",
+          "score": 3.0,
+          "matched": [
+            "通知"
+          ],
+          "tools": [
+            "message/send"
+          ],
+          "priority": 50
+        },
+        {
+          "id": "shop",
+          "name": "售后退款",
+          "description": "退款单查询、退款/拒绝、人工审批与资金操作",
+          "score": 0.0,
+          "matched": [],
+          "tools": [
+            "shop/login",
+            "shop/list_pending_refunds",
+            "shop/execute_refund",
+            "shop/request_human_approval",
+            "shop/reject_refund",
+            "shop/process_refund"
+          ],
+          "priority": 60
+        }
+      ],
+      "tools": [
+        "memory/recall",
+        "message/send",
+        "message/send"
+      ],
+      "nodeTypes": [
+        "trigger",
+        "tool_call",
+        "condition",
+        "ai_decision",
+        "tool_call",
+        "tool_call"
+      ],
+      "compile": {
+        "ok": false,
+        "errors": [
+          "节点 notify_by_preference 节点 decide_channel 的输出中不存在该路径（REF_PATH_NOT_FOUND）：{{decide_channel.result.decision}}"
+        ],
+        "codes": [
+          "REF_AI_PATH_NOT_FOUND"
+        ]
+      },
+      "diffs": [
+        {
+          "field": "skills.top3",
+          "expectedAny": [
+            "memory",
+            "message"
+          ],
+          "actual": [
+            "memory",
+            "message",
+            "shop"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.tools",
+          "expectedAny": [
+            "memory/recall",
+            "message/send"
+          ],
+          "actual": [
+            "memory/recall",
+            "message/send",
+            "message/send"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.nodeTypes",
+          "required": [],
+          "actual": [
+            "trigger",
+            "tool_call",
+            "condition",
+            "ai_decision",
+            "tool_call",
+            "tool_call"
+          ],
+          "missing": []
+        }
+      ],
+      "checks": {
+        "modeLlm": true,
+        "compileOk": false,
+        "skillHit": true,
+        "toolHit": true,
+        "nodeHit": true
+      },
+      "graph": {
+        "version": 1,
+        "variables": [
+          {
+            "name": "order_id",
+            "type": "string",
+            "value": "",
+            "scope": "global"
+          }
+        ],
+        "nodes": [
+          {
+            "id": "trigger_start",
+            "type": "trigger",
+            "name": "开始流程",
+            "description": "手动触发通知流程",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "config": {
+              "triggerType": "manual",
+              "cron": "",
+              "webhookUrl": ""
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          },
+          {
+            "id": "memory_recall",
+            "type": "tool_call",
+            "name": "检索客户历史偏好",
+            "description": "调用 memory/recall 获取客户偏好",
+            "position": {
+              "x": 200,
+              "y": 0
+            },
+            "config": {
+              "tool": "memory/recall",
+              "params": "{\"query\":\"customer notification preference\",\"top_k\":1}"
+            },
+            "retry": {
+              "max_retries": 1,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          },
+          {
+            "id": "check_preference",
+            "type": "condition",
+            "name": "判断是否找到偏好",
+            "description": "检查 memory/recall 是否返回结果",
+            "position": {
+              "x": 400,
+              "y": 0
+            },
+            "config": {
+              "branches": [
+                {
+                  "label": "有偏好记录",
+                  "expression": "len({{memory_recall.result.results}}) > 0 && {{memory_recall.result.results[0].kind}} == 'preference'",
+                  "target": "decide_channel"
+                }
+              ],
+              "defaultTarget": "notify_default"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          },
+          {
+            "id": "decide_channel",
+            "type": "ai_decision",
+            "name": "AI 决定通知渠道",
+            "description": "根据客户偏好内容决定通知渠道",
+            "position": {
+              "x": 600,
+              "y": -100
+            },
+            "config": {
+              "promptTemplate": "根据客户偏好内容 '{{memory_recall.result.results[0].content}}' 和订单号 '{{global.order_id}}'，决定最合适的通知渠道，输出 'email'、'sms' 或 'push' 之一。"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          },
+          {
+            "id": "notify_by_preference",
+            "type": "tool_call",
+            "name": "按偏好发送通知",
+            "description": "使用 AI 决定的渠道发送通知",
+            "position": {
+              "x": 800,
+              "y": -100
+            },
+            "config": {
+              "tool": "message/send",
+              "params": "{\"channel\":\"{{decide_channel.result.decision}}\",\"to\":[\"ops@example.com\"],\"subject\":\"订单通知 - {{global.order_id}}\",\"body\":\"您的订单 {{global.order_id}} 有新进展，详情请联系客服。\"}"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          },
+          {
+            "id": "notify_default",
+            "type": "tool_call",
+            "name": "默认渠道发送通知",
+            "description": "无偏好记录时使用默认 email 渠道",
+            "position": {
+              "x": 800,
+              "y": 100
+            },
+            "config": {
+              "tool": "message/send",
+              "params": "{\"channel\":\"email\",\"to\":[\"ops@example.com\"],\"subject\":\"订单通知 - {{global.order_id}}\",\"body\":\"您的订单 {{global.order_id}} 有新进展，详情请联系客服。\"}"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "id": "edge_1",
+            "source": "trigger_start",
+            "target": "memory_recall"
+          },
+          {
+            "id": "edge_2",
+            "source": "memory_recall",
+            "target": "check_preference"
+          },
+          {
+            "id": "edge_3",
+            "source": "check_preference",
+            "target": "decide_channel"
+          },
+          {
+            "id": "edge_4",
+            "source": "check_preference",
+            "target": "notify_default"
+          },
+          {
+            "id": "edge_5",
+            "source": "decide_channel",
+            "target": "notify_by_preference"
+          }
+        ]
+      }
+    },
+    {
+      "id": "memory-auto-extract",
+      "prompt": "从客服对话里自动提取客户偏好并保存。",
+      "ok": true,
+      "generation": {
+        "mode": "llm",
+        "model": "openai/agnes-3.0-flash",
+        "attempts": 1,
+        "repaired": false,
+        "compileOk": true
+      },
+      "top3": [
+        {
+          "id": "memory",
+          "name": "长期记忆",
+          "description": "记住事实/偏好并做语义检索",
+          "score": 3.0,
+          "matched": [
+            "偏好"
+          ],
+          "tools": [
+            "memory/remember",
+            "memory/recall",
+            "memory/auto_extract"
+          ],
+          "priority": 20
+        },
+        {
+          "id": "shop",
+          "name": "售后退款",
+          "description": "退款单查询、退款/拒绝、人工审批与资金操作",
+          "score": 0.0,
+          "matched": [],
+          "tools": [
+            "shop/login",
+            "shop/list_pending_refunds",
+            "shop/execute_refund",
+            "shop/request_human_approval",
+            "shop/reject_refund",
+            "shop/process_refund"
+          ],
+          "priority": 60
+        },
+        {
+          "id": "message",
+          "name": "消息通知",
+          "description": "邮件、Webhook、钉钉、企微、飞书等消息投递",
+          "score": 0.0,
+          "matched": [],
+          "tools": [
+            "message/send"
+          ],
+          "priority": 50
+        }
+      ],
+      "tools": [
+        "memory/auto_extract",
+        "memory/remember",
+        "message/send",
+        "memory/remember",
+        "message/send"
+      ],
+      "nodeTypes": [
+        "trigger",
+        "tool_call",
+        "tool_call",
+        "tool_call",
+        "condition",
+        "tool_call",
+        "condition",
+        "tool_call"
+      ],
+      "compile": {
+        "ok": true,
+        "errors": [],
+        "codes": []
+      },
+      "diffs": [
+        {
+          "field": "skills.top3",
+          "expectedAny": [
+            "memory"
+          ],
+          "actual": [
+            "memory",
+            "shop",
+            "message"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.tools",
+          "expectedAny": [
+            "memory/auto_extract",
+            "memory/remember"
+          ],
+          "actual": [
+            "memory/auto_extract",
+            "memory/remember",
+            "message/send",
+            "memory/remember",
+            "message/send"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.nodeTypes",
+          "required": [],
+          "actual": [
+            "trigger",
+            "tool_call",
+            "tool_call",
+            "tool_call",
+            "condition",
+            "tool_call",
+            "condition",
+            "tool_call"
+          ],
+          "missing": []
+        }
+      ],
+      "checks": {
+        "modeLlm": true,
+        "compileOk": true,
+        "skillHit": true,
+        "toolHit": true,
+        "nodeHit": true
+      }
+    },
+    {
+      "id": "batch-refund-summary",
+      "prompt": "批量查询退款单并汇总金额，超过阈值转人工。",
+      "ok": true,
+      "generation": {
+        "mode": "llm",
+        "model": "openai/agnes-3.0-flash",
+        "attempts": 2,
+        "repaired": true,
+        "compileOk": true
+      },
+      "top3": [
+        {
+          "id": "database",
+          "name": "数据查询",
+          "description": "只读 SQL 查询与写操作，适合统计、汇总和报表",
+          "score": 9.0,
+          "matched": [
+            "查询",
+            "汇总",
+            "金额"
+          ],
+          "tools": [
+            "database/query",
+            "database/execute"
+          ],
+          "priority": 40
+        },
+        {
+          "id": "shop",
+          "name": "售后退款",
+          "description": "退款单查询、退款/拒绝、人工审批与资金操作",
+          "score": 6.5,
+          "matched": [
+            "退款",
+            "退款单"
+          ],
+          "tools": [
+            "shop/login",
+            "shop/list_pending_refunds",
+            "shop/execute_refund",
+            "shop/request_human_approval",
+            "shop/reject_refund",
+            "shop/process_refund"
+          ],
+          "priority": 60
+        },
+        {
+          "id": "message",
+          "name": "消息通知",
+          "description": "邮件、Webhook、钉钉、企微、飞书等消息投递",
+          "score": 0.0,
+          "matched": [],
+          "tools": [
+            "message/send"
+          ],
+          "priority": 50
+        }
+      ],
+      "tools": [
+        "shop/list_pending_refunds",
+        "http/request",
+        "message/send",
+        "message/send",
+        "message/send"
+      ],
+      "nodeTypes": [
+        "trigger",
+        "tool_call",
+        "tool_call",
+        "condition",
+        "human_approval",
+        "tool_call",
+        "tool_call",
+        "tool_call"
+      ],
+      "compile": {
+        "ok": true,
+        "errors": [],
+        "codes": []
+      },
+      "diffs": [
+        {
+          "field": "skills.top3",
+          "expectedAny": [
+            "shop",
+            "database"
+          ],
+          "actual": [
+            "database",
+            "shop",
+            "message"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.tools",
+          "expectedAny": [
+            "database/query",
+            "shop/list_pending_refunds"
+          ],
+          "actual": [
+            "shop/list_pending_refunds",
+            "http/request",
+            "message/send",
+            "message/send",
+            "message/send"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.nodeTypes",
+          "required": [
+            "condition"
+          ],
+          "actual": [
+            "trigger",
+            "tool_call",
+            "tool_call",
+            "condition",
+            "human_approval",
+            "tool_call",
+            "tool_call",
+            "tool_call"
+          ],
+          "missing": []
+        }
+      ],
+      "checks": {
+        "modeLlm": true,
+        "compileOk": true,
+        "skillHit": true,
+        "toolHit": true,
+        "nodeHit": true
+      }
+    },
+    {
+      "id": "refund-retry",
+      "prompt": "退款失败后重试一次，再失败就通知人工。",
+      "ok": false,
+      "generation": {
+        "mode": "llm",
+        "model": "openai/agnes-3.0-flash",
+        "attempts": 2,
+        "repaired": true,
+        "compileOk": false,
+        "errors": [
+          "输出无法解析为合法 JSON"
+        ]
+      },
+      "top3": [
+        {
+          "id": "shop",
+          "name": "售后退款",
+          "description": "退款单查询、退款/拒绝、人工审批与资金操作",
+          "score": 3.0,
+          "matched": [
+            "退款"
+          ],
+          "tools": [
+            "shop/login",
+            "shop/list_pending_refunds",
+            "shop/execute_refund",
+            "shop/request_human_approval",
+            "shop/reject_refund",
+            "shop/process_refund"
+          ],
+          "priority": 60
+        },
+        {
+          "id": "message",
+          "name": "消息通知",
+          "description": "邮件、Webhook、钉钉、企微、飞书等消息投递",
+          "score": 3.0,
+          "matched": [
+            "通知"
+          ],
+          "tools": [
+            "message/send"
+          ],
+          "priority": 50
+        },
+        {
+          "id": "database",
+          "name": "数据查询",
+          "description": "只读 SQL 查询与写操作，适合统计、汇总和报表",
+          "score": 0.0,
+          "matched": [],
+          "tools": [
+            "database/query",
+            "database/execute"
+          ],
+          "priority": 40
+        }
+      ],
+      "tools": [
+        "shop/execute_refund",
+        "database/execute",
+        "message/send"
+      ],
+      "nodeTypes": [
+        "trigger",
+        "tool_call",
+        "condition",
+        "tool_call",
+        "human_approval",
+        "tool_call",
+        "condition"
+      ],
+      "compile": {
+        "ok": false,
+        "errors": [
+          "条件节点 end 分支 默认 不能指向自身; 条件节点 end 分支 默认 的目标不能与默认分支相同; 条件节点 end 默认分支不能指向自身; 条件节点 end 不允许直连结束节点，每个分支都必须有出边; 人机协作节点 refund_done 通过目标与拒绝目标不能相同; 人机协作节点 refund_done 必须恰好配置 2 条出边（当前 1 条），且不能直连结束; 检测到非法循环依赖（循环只允许经循环节点的循环体回到自身）：refund_exec → refund_result_check → refund_fail_count_inc → refund_exec"
+        ],
+        "codes": [
+          "GRAPH_PARSE_ERROR"
+        ]
+      },
+      "diffs": [
+        {
+          "field": "skills.top3",
+          "expectedAny": [
+            "shop",
+            "message"
+          ],
+          "actual": [
+            "shop",
+            "message",
+            "database"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.tools",
+          "expectedAny": [
+            "shop/execute_refund",
+            "shop/process_refund",
+            "message/send"
+          ],
+          "actual": [
+            "shop/execute_refund",
+            "database/execute",
+            "message/send"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.nodeTypes",
+          "required": [],
+          "actual": [
+            "trigger",
+            "tool_call",
+            "condition",
+            "tool_call",
+            "human_approval",
+            "tool_call",
+            "condition"
+          ],
+          "missing": []
+        }
+      ],
+      "checks": {
+        "modeLlm": true,
+        "compileOk": false,
+        "skillHit": true,
+        "toolHit": true,
+        "nodeHit": true
+      },
+      "graph": {
+        "version": 1,
+        "variables": [
+          {
+            "name": "order_id",
+            "type": "string",
+            "value": "",
+            "scope": "global"
+          },
+          {
+            "name": "refund_fail_count",
+            "type": "integer",
+            "value": 0,
+            "scope": "global"
+          }
+        ],
+        "nodes": [
+          {
+            "id": "start",
+            "type": "trigger",
+            "name": "手动触发",
+            "description": "流程入口",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "config": {
+              "triggerType": "manual"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          },
+          {
+            "id": "refund_exec",
+            "type": "tool_call",
+            "name": "执行退款",
+            "description": "调用退款工具",
+            "position": {
+              "x": 0,
+              "y": 200
+            },
+            "config": {
+              "tool": "shop/execute_refund",
+              "params": "{\"order_id\":\"{{global.order_id}}\"}"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          },
+          {
+            "id": "refund_result_check",
+            "type": "condition",
+            "name": "退款成功?",
+            "description": "判断退款是否成功",
+            "position": {
+              "x": 0,
+              "y": 400
+            },
+            "config": {
+              "branches": [
+                {
+                  "label": "退款成功",
+                  "expression": "{{refund_exec.result.status}} == \"success\"",
+                  "target": "refund_done"
+                },
+                {
+                  "label": "首次失败",
+                  "expression": "{{refund_exec.result.status}} != \"success\" && {{global.refund_fail_count}} == 0",
+                  "target": "refund_fail_count_inc"
+                }
+              ],
+              "defaultTarget": "notify_human"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          },
+          {
+            "id": "refund_fail_count_inc",
+            "type": "tool_call",
+            "name": "失败计数加一",
+            "description": "将全局变量 refund_fail_count 加 1",
+            "position": {
+              "x": -200,
+              "y": 600
+            },
+            "config": {
+              "tool": "database/execute",
+              "params": "{\"sql\":\"UPDATE global_vars SET value = value + 1 WHERE key = 'refund_fail_count'\",\"params\":{}}"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          },
+          {
+            "id": "refund_done",
+            "type": "human_approval",
+            "name": "退款完成确认",
+            "description": "人工确认退款成功",
+            "position": {
+              "x": 200,
+              "y": 600
+            },
+            "config": {
+              "summary": "订单 {{global.order_id}} 退款成功",
+              "approver": "",
+              "timeoutSeconds": 3600,
+              "onTimeout": "approve",
+              "approvedTarget": "end",
+              "rejectedTarget": "end"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          },
+          {
+            "id": "notify_human",
+            "type": "tool_call",
+            "name": "通知人工",
+            "description": "两次失败后通知人工介入",
+            "position": {
+              "x": 200,
+              "y": 800
+            },
+            "config": {
+              "tool": "message/send",
+              "params": "{\"channel\":\"email\",\"to\":[\"ops@example.com\"],\"subject\":\"退款失败需要人工处理\",\"body\":\"订单 {{global.order_id}} 退款失败两次，请人工介入。\"}"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          },
+          {
+            "id": "end",
+            "type": "condition",
+            "name": "结束",
+            "description": "流程结束",
+            "position": {
+              "x": 200,
+              "y": 1000
+            },
+            "config": {
+              "branches": [
+                {
+                  "label": "默认",
+                  "expression": "{{global.order_id}} == \"{{global.order_id}}\"",
+                  "target": "end"
+                }
+              ],
+              "defaultTarget": "end"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "id": "e1",
+            "source": "start",
+            "target": "refund_exec"
+          },
+          {
+            "id": "e2",
+            "source": "refund_exec",
+            "target": "refund_result_check"
+          },
+          {
+            "id": "e3",
+            "source": "refund_result_check",
+            "target": "refund_done"
+          },
+          {
+            "id": "e4",
+            "source": "refund_result_check",
+            "target": "refund_fail_count_inc"
+          },
+          {
+            "id": "e5",
+            "source": "refund_result_check",
+            "target": "notify_human"
+          },
+          {
+            "id": "e6",
+            "source": "refund_fail_count_inc",
+            "target": "refund_exec"
+          },
+          {
+            "id": "e7",
+            "source": "notify_human",
+            "target": "end"
+          },
+          {
+            "id": "e8",
+            "source": "refund_done",
+            "target": "end"
+          }
+        ]
+      }
+    },
+    {
+      "id": "refund-feishu-finance",
+      "prompt": "退款成功后发飞书通知财务。",
+      "ok": false,
+      "generation": {
+        "mode": "llm",
+        "model": "openai/agnes-3.0-flash",
+        "attempts": 2,
+        "repaired": true,
+        "compileOk": false,
+        "errors": [
+          "条件节点 condition_refund 分支 成功 表达式语法错误：意外字符 \"}\"（位置 48）; 条件节点 end_failure 分支 always 不能指向自身; 条件节点 end_failure 分支 always 的目标不能与默认分支相同; 条件节点 end_failure 默认分支不能指向自身; 条件节点 end_failure 不允许直连结束节点，每个分支都必须有出边"
+        ]
+      },
+      "top3": [
+        {
+          "id": "message",
+          "name": "消息通知",
+          "description": "邮件、Webhook、钉钉、企微、飞书等消息投递",
+          "score": 6.0,
+          "matched": [
+            "通知",
+            "飞书"
+          ],
+          "tools": [
+            "message/send"
+          ],
+          "priority": 50
+        },
+        {
+          "id": "shop",
+          "name": "售后退款",
+          "description": "退款单查询、退款/拒绝、人工审批与资金操作",
+          "score": 3.0,
+          "matched": [
+            "退款"
+          ],
+          "tools": [
+            "shop/login",
+            "shop/list_pending_refunds",
+            "shop/execute_refund",
+            "shop/request_human_approval",
+            "shop/reject_refund",
+            "shop/process_refund"
+          ],
+          "priority": 60
+        },
+        {
+          "id": "database",
+          "name": "数据查询",
+          "description": "只读 SQL 查询与写操作，适合统计、汇总和报表",
+          "score": 0.0,
+          "matched": [],
+          "tools": [
+            "database/query",
+            "database/execute"
+          ],
+          "priority": 40
+        }
+      ],
+      "tools": [
+        "shop/execute_refund",
+        "message/send"
+      ],
+      "nodeTypes": [
+        "trigger",
+        "tool_call",
+        "condition",
+        "tool_call",
+        "condition"
+      ],
+      "compile": {
+        "ok": false,
+        "errors": [
+          "条件节点 condition_refund 分支 成功 表达式语法错误：意外字符 \"}\"（位置 48）; 条件节点 end_failure 分支 always 不能指向自身; 条件节点 end_failure 分支 always 的目标不能与默认分支相同; 条件节点 end_failure 默认分支不能指向自身; 条件节点 end_failure 不允许直连结束节点，每个分支都必须有出边"
+        ],
+        "codes": [
+          "GRAPH_PARSE_ERROR"
+        ]
+      },
+      "diffs": [
+        {
+          "field": "skills.top3",
+          "expectedAny": [
+            "message",
+            "shop"
+          ],
+          "actual": [
+            "message",
+            "shop",
+            "database"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.tools",
+          "expectedAny": [
+            "message/send"
+          ],
+          "actual": [
+            "shop/execute_refund",
+            "message/send"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.nodeTypes",
+          "required": [],
+          "actual": [
+            "trigger",
+            "tool_call",
+            "condition",
+            "tool_call",
+            "condition"
+          ],
+          "missing": []
+        }
+      ],
+      "checks": {
+        "modeLlm": true,
+        "compileOk": false,
+        "skillHit": true,
+        "toolHit": true,
+        "nodeHit": true
+      },
+      "graph": {
+        "version": 1,
+        "variables": [
+          {
+            "name": "order_id",
+            "type": "string",
+            "value": "",
+            "scope": "global"
+          }
+        ],
+        "nodes": [
+          {
+            "id": "trigger",
+            "type": "trigger",
+            "name": "开始",
+            "description": "手动启动流程",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "config": {
+              "triggerType": "manual"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          },
+          {
+            "id": "tool_call_refund",
+            "type": "tool_call",
+            "name": "执行退款",
+            "description": "调用退款工具",
+            "position": {
+              "x": 200,
+              "y": 0
+            },
+            "config": {
+              "tool": "shop/execute_refund",
+              "params": "{\"order_id\":\"{{global.order_id}}\"}"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          },
+          {
+            "id": "condition_refund",
+            "type": "condition",
+            "name": "判断退款结果",
+            "description": "检查退款是否成功",
+            "position": {
+              "x": 400,
+              "y": 0
+            },
+            "config": {
+              "branches": [
+                {
+                  "label": "成功",
+                  "expression": "{{tool_call_refund.result.status}} == \"success\"}",
+                  "target": "notify_finance"
+                }
+              ],
+              "defaultTarget": "end_failure"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          },
+          {
+            "id": "notify_finance",
+            "type": "tool_call",
+            "name": "飞书通知财务",
+            "description": "发送飞书消息通知财务退款成功",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "config": {
+              "tool": "message/send",
+              "params": "{\"channel\":\"feishu\",\"to\":[\"finance@company.com\"],\"subject\":\"退款成功通知\",\"body\":\"订单 {{global.order_id}} 退款成功，请财务核对。\"}"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          },
+          {
+            "id": "end_failure",
+            "type": "condition",
+            "name": "退款失败结束",
+            "description": "退款失败，流程结束",
+            "position": {
+              "x": 600,
+              "y": 200
+            },
+            "config": {
+              "branches": [
+                {
+                  "label": "always",
+                  "expression": "true",
+                  "target": "end_failure"
+                }
+              ],
+              "defaultTarget": "end_failure"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "id": "e1",
+            "source": "trigger",
+            "target": "tool_call_refund"
+          },
+          {
+            "id": "e2",
+            "source": "tool_call_refund",
+            "target": "condition_refund"
+          },
+          {
+            "id": "e3",
+            "source": "condition_refund",
+            "target": "notify_finance"
+          },
+          {
+            "id": "e4",
+            "source": "condition_refund",
+            "target": "end_failure"
+          }
+        ]
+      }
+    },
+    {
+      "id": "refund-double-approval",
+      "prompt": "高额退款需要两级人工审批后再退款。",
+      "ok": true,
+      "generation": {
+        "mode": "llm",
+        "model": "openai/agnes-3.0-flash",
+        "attempts": 1,
+        "repaired": false,
+        "compileOk": true
+      },
+      "top3": [
+        {
+          "id": "shop",
+          "name": "售后退款",
+          "description": "退款单查询、退款/拒绝、人工审批与资金操作",
+          "score": 6.0,
+          "matched": [
+            "退款",
+            "审批"
+          ],
+          "tools": [
+            "shop/login",
+            "shop/list_pending_refunds",
+            "shop/execute_refund",
+            "shop/request_human_approval",
+            "shop/reject_refund",
+            "shop/process_refund"
+          ],
+          "priority": 60
+        },
+        {
+          "id": "message",
+          "name": "消息通知",
+          "description": "邮件、Webhook、钉钉、企微、飞书等消息投递",
+          "score": 0.0,
+          "matched": [],
+          "tools": [
+            "message/send"
+          ],
+          "priority": 50
+        },
+        {
+          "id": "database",
+          "name": "数据查询",
+          "description": "只读 SQL 查询与写操作，适合统计、汇总和报表",
+          "score": 0.0,
+          "matched": [],
+          "tools": [
+            "database/query",
+            "database/execute"
+          ],
+          "priority": 40
+        }
+      ],
+      "tools": [
+        "shop/execute_refund",
+        "message/send",
+        "shop/reject_refund",
+        "message/send"
+      ],
+      "nodeTypes": [
+        "trigger",
+        "condition",
+        "human_approval",
+        "human_approval",
+        "tool_call",
+        "tool_call",
+        "tool_call",
+        "tool_call"
+      ],
+      "compile": {
+        "ok": true,
+        "errors": [],
+        "codes": []
+      },
+      "diffs": [
+        {
+          "field": "skills.top3",
+          "expectedAny": [
+            "shop"
+          ],
+          "actual": [
+            "shop",
+            "message",
+            "database"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.tools",
+          "expectedAny": [
+            "shop/request_human_approval",
+            "shop/execute_refund"
+          ],
+          "actual": [
+            "shop/execute_refund",
+            "message/send",
+            "shop/reject_refund",
+            "message/send"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.nodeTypes",
+          "required": [
+            "human_approval"
+          ],
+          "actual": [
+            "trigger",
+            "condition",
+            "human_approval",
+            "human_approval",
+            "tool_call",
+            "tool_call",
+            "tool_call",
+            "tool_call"
+          ],
+          "missing": []
+        }
+      ],
+      "checks": {
+        "modeLlm": true,
+        "compileOk": true,
+        "skillHit": true,
+        "toolHit": true,
+        "nodeHit": true
+      }
+    },
+    {
+      "id": "refund-wait-then-query",
+      "prompt": "提交退款后等待10分钟再查询结果并通知客户。",
+      "ok": true,
+      "generation": {
+        "mode": "llm",
+        "model": "openai/agnes-3.0-flash",
+        "attempts": 1,
+        "repaired": false,
+        "compileOk": true
+      },
+      "top3": [
+        {
+          "id": "shop",
+          "name": "售后退款",
+          "description": "退款单查询、退款/拒绝、人工审批与资金操作",
+          "score": 3.0,
+          "matched": [
+            "退款"
+          ],
+          "tools": [
+            "shop/login",
+            "shop/list_pending_refunds",
+            "shop/execute_refund",
+            "shop/request_human_approval",
+            "shop/reject_refund",
+            "shop/process_refund"
+          ],
+          "priority": 60
+        },
+        {
+          "id": "message",
+          "name": "消息通知",
+          "description": "邮件、Webhook、钉钉、企微、飞书等消息投递",
+          "score": 3.0,
+          "matched": [
+            "通知"
+          ],
+          "tools": [
+            "message/send"
+          ],
+          "priority": 50
+        },
+        {
+          "id": "database",
+          "name": "数据查询",
+          "description": "只读 SQL 查询与写操作，适合统计、汇总和报表",
+          "score": 3.0,
+          "matched": [
+            "查询"
+          ],
+          "tools": [
+            "database/query",
+            "database/execute"
+          ],
+          "priority": 40
+        }
+      ],
+      "tools": [
+        "shop/execute_refund",
+        "message/send",
+        "message/send"
+      ],
+      "nodeTypes": [
+        "trigger",
+        "tool_call",
+        "wait",
+        "condition",
+        "tool_call",
+        "tool_call"
+      ],
+      "compile": {
+        "ok": true,
+        "errors": [],
+        "codes": []
+      },
+      "diffs": [
+        {
+          "field": "skills.top3",
+          "expectedAny": [
+            "shop",
+            "message",
+            "database"
+          ],
+          "actual": [
+            "shop",
+            "message",
+            "database"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.tools",
+          "expectedAny": [
+            "shop/list_pending_refunds",
+            "database/query",
+            "message/send"
+          ],
+          "actual": [
+            "shop/execute_refund",
+            "message/send",
+            "message/send"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.nodeTypes",
+          "required": [
+            "wait"
+          ],
+          "actual": [
+            "trigger",
+            "tool_call",
+            "wait",
+            "condition",
+            "tool_call",
+            "tool_call"
+          ],
+          "missing": []
+        }
+      ],
+      "checks": {
+        "modeLlm": true,
+        "compileOk": true,
+        "skillHit": true,
+        "toolHit": true,
+        "nodeHit": true
+      }
+    }
+  ],
+  "failures": [
+    {
+      "id": "memory-recall-channel",
+      "prompt": "检索客户历史偏好，决定这次用什么渠道通知。",
+      "ok": false,
+      "generation": {
+        "mode": "llm",
+        "model": "openai/agnes-3.0-flash",
+        "attempts": 2,
+        "repaired": true,
+        "compileOk": false,
+        "errors": [
+          "节点 notify_by_preference 节点 decide_channel 的输出中不存在该路径（REF_PATH_NOT_FOUND）：{{decide_channel.result.decision}}"
+        ]
+      },
+      "top3": [
+        {
+          "id": "memory",
+          "name": "长期记忆",
+          "description": "记住事实/偏好并做语义检索",
+          "score": 10.0,
+          "matched": [
+            "偏好",
+            "检索",
+            "客户历史"
+          ],
+          "tools": [
+            "memory/remember",
+            "memory/recall",
+            "memory/auto_extract"
+          ],
+          "priority": 20
+        },
+        {
+          "id": "message",
+          "name": "消息通知",
+          "description": "邮件、Webhook、钉钉、企微、飞书等消息投递",
+          "score": 3.0,
+          "matched": [
+            "通知"
+          ],
+          "tools": [
+            "message/send"
+          ],
+          "priority": 50
+        },
+        {
+          "id": "shop",
+          "name": "售后退款",
+          "description": "退款单查询、退款/拒绝、人工审批与资金操作",
+          "score": 0.0,
+          "matched": [],
+          "tools": [
+            "shop/login",
+            "shop/list_pending_refunds",
+            "shop/execute_refund",
+            "shop/request_human_approval",
+            "shop/reject_refund",
+            "shop/process_refund"
+          ],
+          "priority": 60
+        }
+      ],
+      "tools": [
+        "memory/recall",
+        "message/send",
+        "message/send"
+      ],
+      "nodeTypes": [
+        "trigger",
+        "tool_call",
+        "condition",
+        "ai_decision",
+        "tool_call",
+        "tool_call"
+      ],
+      "compile": {
+        "ok": false,
+        "errors": [
+          "节点 notify_by_preference 节点 decide_channel 的输出中不存在该路径（REF_PATH_NOT_FOUND）：{{decide_channel.result.decision}}"
+        ],
+        "codes": [
+          "REF_AI_PATH_NOT_FOUND"
+        ]
+      },
+      "diffs": [
+        {
+          "field": "skills.top3",
+          "expectedAny": [
+            "memory",
+            "message"
+          ],
+          "actual": [
+            "memory",
+            "message",
+            "shop"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.tools",
+          "expectedAny": [
+            "memory/recall",
+            "message/send"
+          ],
+          "actual": [
+            "memory/recall",
+            "message/send",
+            "message/send"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.nodeTypes",
+          "required": [],
+          "actual": [
+            "trigger",
+            "tool_call",
+            "condition",
+            "ai_decision",
+            "tool_call",
+            "tool_call"
+          ],
+          "missing": []
+        }
+      ],
+      "checks": {
+        "modeLlm": true,
+        "compileOk": false,
+        "skillHit": true,
+        "toolHit": true,
+        "nodeHit": true
+      },
+      "graph": {
+        "version": 1,
+        "variables": [
+          {
+            "name": "order_id",
+            "type": "string",
+            "value": "",
+            "scope": "global"
+          }
+        ],
+        "nodes": [
+          {
+            "id": "trigger_start",
+            "type": "trigger",
+            "name": "开始流程",
+            "description": "手动触发通知流程",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "config": {
+              "triggerType": "manual",
+              "cron": "",
+              "webhookUrl": ""
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          },
+          {
+            "id": "memory_recall",
+            "type": "tool_call",
+            "name": "检索客户历史偏好",
+            "description": "调用 memory/recall 获取客户偏好",
+            "position": {
+              "x": 200,
+              "y": 0
+            },
+            "config": {
+              "tool": "memory/recall",
+              "params": "{\"query\":\"customer notification preference\",\"top_k\":1}"
+            },
+            "retry": {
+              "max_retries": 1,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          },
+          {
+            "id": "check_preference",
+            "type": "condition",
+            "name": "判断是否找到偏好",
+            "description": "检查 memory/recall 是否返回结果",
+            "position": {
+              "x": 400,
+              "y": 0
+            },
+            "config": {
+              "branches": [
+                {
+                  "label": "有偏好记录",
+                  "expression": "len({{memory_recall.result.results}}) > 0 && {{memory_recall.result.results[0].kind}} == 'preference'",
+                  "target": "decide_channel"
+                }
+              ],
+              "defaultTarget": "notify_default"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          },
+          {
+            "id": "decide_channel",
+            "type": "ai_decision",
+            "name": "AI 决定通知渠道",
+            "description": "根据客户偏好内容决定通知渠道",
+            "position": {
+              "x": 600,
+              "y": -100
+            },
+            "config": {
+              "promptTemplate": "根据客户偏好内容 '{{memory_recall.result.results[0].content}}' 和订单号 '{{global.order_id}}'，决定最合适的通知渠道，输出 'email'、'sms' 或 'push' 之一。"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          },
+          {
+            "id": "notify_by_preference",
+            "type": "tool_call",
+            "name": "按偏好发送通知",
+            "description": "使用 AI 决定的渠道发送通知",
+            "position": {
+              "x": 800,
+              "y": -100
+            },
+            "config": {
+              "tool": "message/send",
+              "params": "{\"channel\":\"{{decide_channel.result.decision}}\",\"to\":[\"ops@example.com\"],\"subject\":\"订单通知 - {{global.order_id}}\",\"body\":\"您的订单 {{global.order_id}} 有新进展，详情请联系客服。\"}"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          },
+          {
+            "id": "notify_default",
+            "type": "tool_call",
+            "name": "默认渠道发送通知",
+            "description": "无偏好记录时使用默认 email 渠道",
+            "position": {
+              "x": 800,
+              "y": 100
+            },
+            "config": {
+              "tool": "message/send",
+              "params": "{\"channel\":\"email\",\"to\":[\"ops@example.com\"],\"subject\":\"订单通知 - {{global.order_id}}\",\"body\":\"您的订单 {{global.order_id}} 有新进展，详情请联系客服。\"}"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "id": "edge_1",
+            "source": "trigger_start",
+            "target": "memory_recall"
+          },
+          {
+            "id": "edge_2",
+            "source": "memory_recall",
+            "target": "check_preference"
+          },
+          {
+            "id": "edge_3",
+            "source": "check_preference",
+            "target": "decide_channel"
+          },
+          {
+            "id": "edge_4",
+            "source": "check_preference",
+            "target": "notify_default"
+          },
+          {
+            "id": "edge_5",
+            "source": "decide_channel",
+            "target": "notify_by_preference"
+          }
+        ]
+      }
+    },
+    {
+      "id": "refund-retry",
+      "prompt": "退款失败后重试一次，再失败就通知人工。",
+      "ok": false,
+      "generation": {
+        "mode": "llm",
+        "model": "openai/agnes-3.0-flash",
+        "attempts": 2,
+        "repaired": true,
+        "compileOk": false,
+        "errors": [
+          "输出无法解析为合法 JSON"
+        ]
+      },
+      "top3": [
+        {
+          "id": "shop",
+          "name": "售后退款",
+          "description": "退款单查询、退款/拒绝、人工审批与资金操作",
+          "score": 3.0,
+          "matched": [
+            "退款"
+          ],
+          "tools": [
+            "shop/login",
+            "shop/list_pending_refunds",
+            "shop/execute_refund",
+            "shop/request_human_approval",
+            "shop/reject_refund",
+            "shop/process_refund"
+          ],
+          "priority": 60
+        },
+        {
+          "id": "message",
+          "name": "消息通知",
+          "description": "邮件、Webhook、钉钉、企微、飞书等消息投递",
+          "score": 3.0,
+          "matched": [
+            "通知"
+          ],
+          "tools": [
+            "message/send"
+          ],
+          "priority": 50
+        },
+        {
+          "id": "database",
+          "name": "数据查询",
+          "description": "只读 SQL 查询与写操作，适合统计、汇总和报表",
+          "score": 0.0,
+          "matched": [],
+          "tools": [
+            "database/query",
+            "database/execute"
+          ],
+          "priority": 40
+        }
+      ],
+      "tools": [
+        "shop/execute_refund",
+        "database/execute",
+        "message/send"
+      ],
+      "nodeTypes": [
+        "trigger",
+        "tool_call",
+        "condition",
+        "tool_call",
+        "human_approval",
+        "tool_call",
+        "condition"
+      ],
+      "compile": {
+        "ok": false,
+        "errors": [
+          "条件节点 end 分支 默认 不能指向自身; 条件节点 end 分支 默认 的目标不能与默认分支相同; 条件节点 end 默认分支不能指向自身; 条件节点 end 不允许直连结束节点，每个分支都必须有出边; 人机协作节点 refund_done 通过目标与拒绝目标不能相同; 人机协作节点 refund_done 必须恰好配置 2 条出边（当前 1 条），且不能直连结束; 检测到非法循环依赖（循环只允许经循环节点的循环体回到自身）：refund_exec → refund_result_check → refund_fail_count_inc → refund_exec"
+        ],
+        "codes": [
+          "GRAPH_PARSE_ERROR"
+        ]
+      },
+      "diffs": [
+        {
+          "field": "skills.top3",
+          "expectedAny": [
+            "shop",
+            "message"
+          ],
+          "actual": [
+            "shop",
+            "message",
+            "database"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.tools",
+          "expectedAny": [
+            "shop/execute_refund",
+            "shop/process_refund",
+            "message/send"
+          ],
+          "actual": [
+            "shop/execute_refund",
+            "database/execute",
+            "message/send"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.nodeTypes",
+          "required": [],
+          "actual": [
+            "trigger",
+            "tool_call",
+            "condition",
+            "tool_call",
+            "human_approval",
+            "tool_call",
+            "condition"
+          ],
+          "missing": []
+        }
+      ],
+      "checks": {
+        "modeLlm": true,
+        "compileOk": false,
+        "skillHit": true,
+        "toolHit": true,
+        "nodeHit": true
+      },
+      "graph": {
+        "version": 1,
+        "variables": [
+          {
+            "name": "order_id",
+            "type": "string",
+            "value": "",
+            "scope": "global"
+          },
+          {
+            "name": "refund_fail_count",
+            "type": "integer",
+            "value": 0,
+            "scope": "global"
+          }
+        ],
+        "nodes": [
+          {
+            "id": "start",
+            "type": "trigger",
+            "name": "手动触发",
+            "description": "流程入口",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "config": {
+              "triggerType": "manual"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          },
+          {
+            "id": "refund_exec",
+            "type": "tool_call",
+            "name": "执行退款",
+            "description": "调用退款工具",
+            "position": {
+              "x": 0,
+              "y": 200
+            },
+            "config": {
+              "tool": "shop/execute_refund",
+              "params": "{\"order_id\":\"{{global.order_id}}\"}"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          },
+          {
+            "id": "refund_result_check",
+            "type": "condition",
+            "name": "退款成功?",
+            "description": "判断退款是否成功",
+            "position": {
+              "x": 0,
+              "y": 400
+            },
+            "config": {
+              "branches": [
+                {
+                  "label": "退款成功",
+                  "expression": "{{refund_exec.result.status}} == \"success\"",
+                  "target": "refund_done"
+                },
+                {
+                  "label": "首次失败",
+                  "expression": "{{refund_exec.result.status}} != \"success\" && {{global.refund_fail_count}} == 0",
+                  "target": "refund_fail_count_inc"
+                }
+              ],
+              "defaultTarget": "notify_human"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          },
+          {
+            "id": "refund_fail_count_inc",
+            "type": "tool_call",
+            "name": "失败计数加一",
+            "description": "将全局变量 refund_fail_count 加 1",
+            "position": {
+              "x": -200,
+              "y": 600
+            },
+            "config": {
+              "tool": "database/execute",
+              "params": "{\"sql\":\"UPDATE global_vars SET value = value + 1 WHERE key = 'refund_fail_count'\",\"params\":{}}"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          },
+          {
+            "id": "refund_done",
+            "type": "human_approval",
+            "name": "退款完成确认",
+            "description": "人工确认退款成功",
+            "position": {
+              "x": 200,
+              "y": 600
+            },
+            "config": {
+              "summary": "订单 {{global.order_id}} 退款成功",
+              "approver": "",
+              "timeoutSeconds": 3600,
+              "onTimeout": "approve",
+              "approvedTarget": "end",
+              "rejectedTarget": "end"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          },
+          {
+            "id": "notify_human",
+            "type": "tool_call",
+            "name": "通知人工",
+            "description": "两次失败后通知人工介入",
+            "position": {
+              "x": 200,
+              "y": 800
+            },
+            "config": {
+              "tool": "message/send",
+              "params": "{\"channel\":\"email\",\"to\":[\"ops@example.com\"],\"subject\":\"退款失败需要人工处理\",\"body\":\"订单 {{global.order_id}} 退款失败两次，请人工介入。\"}"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          },
+          {
+            "id": "end",
+            "type": "condition",
+            "name": "结束",
+            "description": "流程结束",
+            "position": {
+              "x": 200,
+              "y": 1000
+            },
+            "config": {
+              "branches": [
+                {
+                  "label": "默认",
+                  "expression": "{{global.order_id}} == \"{{global.order_id}}\"",
+                  "target": "end"
+                }
+              ],
+              "defaultTarget": "end"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "id": "e1",
+            "source": "start",
+            "target": "refund_exec"
+          },
+          {
+            "id": "e2",
+            "source": "refund_exec",
+            "target": "refund_result_check"
+          },
+          {
+            "id": "e3",
+            "source": "refund_result_check",
+            "target": "refund_done"
+          },
+          {
+            "id": "e4",
+            "source": "refund_result_check",
+            "target": "refund_fail_count_inc"
+          },
+          {
+            "id": "e5",
+            "source": "refund_result_check",
+            "target": "notify_human"
+          },
+          {
+            "id": "e6",
+            "source": "refund_fail_count_inc",
+            "target": "refund_exec"
+          },
+          {
+            "id": "e7",
+            "source": "notify_human",
+            "target": "end"
+          },
+          {
+            "id": "e8",
+            "source": "refund_done",
+            "target": "end"
+          }
+        ]
+      }
+    },
+    {
+      "id": "refund-feishu-finance",
+      "prompt": "退款成功后发飞书通知财务。",
+      "ok": false,
+      "generation": {
+        "mode": "llm",
+        "model": "openai/agnes-3.0-flash",
+        "attempts": 2,
+        "repaired": true,
+        "compileOk": false,
+        "errors": [
+          "条件节点 condition_refund 分支 成功 表达式语法错误：意外字符 \"}\"（位置 48）; 条件节点 end_failure 分支 always 不能指向自身; 条件节点 end_failure 分支 always 的目标不能与默认分支相同; 条件节点 end_failure 默认分支不能指向自身; 条件节点 end_failure 不允许直连结束节点，每个分支都必须有出边"
+        ]
+      },
+      "top3": [
+        {
+          "id": "message",
+          "name": "消息通知",
+          "description": "邮件、Webhook、钉钉、企微、飞书等消息投递",
+          "score": 6.0,
+          "matched": [
+            "通知",
+            "飞书"
+          ],
+          "tools": [
+            "message/send"
+          ],
+          "priority": 50
+        },
+        {
+          "id": "shop",
+          "name": "售后退款",
+          "description": "退款单查询、退款/拒绝、人工审批与资金操作",
+          "score": 3.0,
+          "matched": [
+            "退款"
+          ],
+          "tools": [
+            "shop/login",
+            "shop/list_pending_refunds",
+            "shop/execute_refund",
+            "shop/request_human_approval",
+            "shop/reject_refund",
+            "shop/process_refund"
+          ],
+          "priority": 60
+        },
+        {
+          "id": "database",
+          "name": "数据查询",
+          "description": "只读 SQL 查询与写操作，适合统计、汇总和报表",
+          "score": 0.0,
+          "matched": [],
+          "tools": [
+            "database/query",
+            "database/execute"
+          ],
+          "priority": 40
+        }
+      ],
+      "tools": [
+        "shop/execute_refund",
+        "message/send"
+      ],
+      "nodeTypes": [
+        "trigger",
+        "tool_call",
+        "condition",
+        "tool_call",
+        "condition"
+      ],
+      "compile": {
+        "ok": false,
+        "errors": [
+          "条件节点 condition_refund 分支 成功 表达式语法错误：意外字符 \"}\"（位置 48）; 条件节点 end_failure 分支 always 不能指向自身; 条件节点 end_failure 分支 always 的目标不能与默认分支相同; 条件节点 end_failure 默认分支不能指向自身; 条件节点 end_failure 不允许直连结束节点，每个分支都必须有出边"
+        ],
+        "codes": [
+          "GRAPH_PARSE_ERROR"
+        ]
+      },
+      "diffs": [
+        {
+          "field": "skills.top3",
+          "expectedAny": [
+            "message",
+            "shop"
+          ],
+          "actual": [
+            "message",
+            "shop",
+            "database"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.tools",
+          "expectedAny": [
+            "message/send"
+          ],
+          "actual": [
+            "shop/execute_refund",
+            "message/send"
+          ],
+          "hit": true,
+          "missingAny": []
+        },
+        {
+          "field": "graph.nodeTypes",
+          "required": [],
+          "actual": [
+            "trigger",
+            "tool_call",
+            "condition",
+            "tool_call",
+            "condition"
+          ],
+          "missing": []
+        }
+      ],
+      "checks": {
+        "modeLlm": true,
+        "compileOk": false,
+        "skillHit": true,
+        "toolHit": true,
+        "nodeHit": true
+      },
+      "graph": {
+        "version": 1,
+        "variables": [
+          {
+            "name": "order_id",
+            "type": "string",
+            "value": "",
+            "scope": "global"
+          }
+        ],
+        "nodes": [
+          {
+            "id": "trigger",
+            "type": "trigger",
+            "name": "开始",
+            "description": "手动启动流程",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "config": {
+              "triggerType": "manual"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          },
+          {
+            "id": "tool_call_refund",
+            "type": "tool_call",
+            "name": "执行退款",
+            "description": "调用退款工具",
+            "position": {
+              "x": 200,
+              "y": 0
+            },
+            "config": {
+              "tool": "shop/execute_refund",
+              "params": "{\"order_id\":\"{{global.order_id}}\"}"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          },
+          {
+            "id": "condition_refund",
+            "type": "condition",
+            "name": "判断退款结果",
+            "description": "检查退款是否成功",
+            "position": {
+              "x": 400,
+              "y": 0
+            },
+            "config": {
+              "branches": [
+                {
+                  "label": "成功",
+                  "expression": "{{tool_call_refund.result.status}} == \"success\"}",
+                  "target": "notify_finance"
+                }
+              ],
+              "defaultTarget": "end_failure"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          },
+          {
+            "id": "notify_finance",
+            "type": "tool_call",
+            "name": "飞书通知财务",
+            "description": "发送飞书消息通知财务退款成功",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "config": {
+              "tool": "message/send",
+              "params": "{\"channel\":\"feishu\",\"to\":[\"finance@company.com\"],\"subject\":\"退款成功通知\",\"body\":\"订单 {{global.order_id}} 退款成功，请财务核对。\"}"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          },
+          {
+            "id": "end_failure",
+            "type": "condition",
+            "name": "退款失败结束",
+            "description": "退款失败，流程结束",
+            "position": {
+              "x": 600,
+              "y": 200
+            },
+            "config": {
+              "branches": [
+                {
+                  "label": "always",
+                  "expression": "true",
+                  "target": "end_failure"
+                }
+              ],
+              "defaultTarget": "end_failure"
+            },
+            "retry": {
+              "max_retries": 0,
+              "backoff": "1s",
+              "timeout": 30,
+              "on_error": "stop"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "id": "e1",
+            "source": "trigger",
+            "target": "tool_call_refund"
+          },
+          {
+            "id": "e2",
+            "source": "tool_call_refund",
+            "target": "condition_refund"
+          },
+          {
+            "id": "e3",
+            "source": "condition_refund",
+            "target": "notify_finance"
+          },
+          {
+            "id": "e4",
+            "source": "condition_refund",
+            "target": "end_failure"
+          }
+        ]
+      }
+    }
+  ],
+  "summary": {
+    "total": 20,
+    "passed": 17,
+    "failed": 3,
+    "llmMode": 20,
+    "compileOk": 17,
+    "skillTop3Hit": 20,
+    "toolHit": 20,
+    "elapsedSeconds": 222.46,
+    "model": "openai/agnes-3.0-flash"
+  }
+}
