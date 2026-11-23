@@ -56,6 +56,7 @@ def generate_graph_with_meta(
     不得在评估里算成 AI 成功。
     """
     model, api_key, base_url = _resolve_llm_config(tenant_id)
+    output_contract = _tool_output_contract(registry) if registry is not None else None
     if model:
         attempts = 0
         last_graph: dict[str, Any] | None = None
@@ -68,6 +69,7 @@ def generate_graph_with_meta(
                 api_key=api_key,
                 base_url=base_url,
                 repair=last_report,
+                output_contract=output_contract,
             )
             if generated is None:
                 last_report = {"errors": ["输出无法解析为合法 JSON"]}
@@ -192,6 +194,35 @@ def validate_param_fills(
 
 
 
+def _compact_schema_shape(schema: Any, depth: int = 0) -> str:
+    """把 JSON Schema 压成 prompt 可读的短形状；只保留字段名/类型，不带约束。"""
+    if not isinstance(schema, dict) or depth > 3:
+        return "any"
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        parts = [
+            f"{key}:{_compact_schema_shape(value, depth + 1)}"
+            for key, value in list(properties.items())[:12]
+        ]
+        if len(properties) > 12:
+            parts.append("...")
+        return "{" + ",".join(parts) + "}"
+    if "items" in schema:
+        return "[" + _compact_schema_shape(schema["items"], depth + 1) + "]"
+    return str(schema.get("type") or "any")
+
+
+def _tool_output_contract(registry: AdapterRegistry) -> str:
+    """把注册表的工具输出字段压成 prompt 契约，避免模型猜不存在的字段。"""
+    from atlas.graph.loader import tool_output_schemas
+
+    schemas = tool_output_schemas(registry)
+    lines = ["工具输出字段契约（只能引用以下字段；未列出的字段视为不存在，引用会编译失败）："]
+    for name in sorted(schemas):
+        lines.append(f"- {name}: {_compact_schema_shape(schemas[name])}")
+    return "\n".join(lines)
+
+
 def _generate_with_llm(
     prompt: str,
     model: str,
@@ -199,6 +230,7 @@ def _generate_with_llm(
     api_key: str | None = None,
     base_url: str | None = None,
     repair: dict[str, Any] | None = None,
+    output_contract: str | None = None,
 ) -> dict[str, Any] | None:
     system = (
         "你是 Atlas 流程编排助手。把用户的中文需求转成 Graph JSON（只输出 JSON，不要解释）。"
@@ -215,6 +247,8 @@ def _generate_with_llm(
         "condition 节点的 config 为 {\"branches\":[{\"label\",\"expression\",\"target\"}],"
         "\"defaultTarget\"}：branches 按顺序短路，expression 仅支持 {{路径}} 变量引用、"
         "比较运算（> >= < <= == !=）、逻辑运算（&& || !）、括号与数字/字符串/true/false/null 字面量，"
+        "每个路径单独写 {{路径}}，不要把整段布尔表达式再包一层 {{...}} 或写成 "
+        "{{a == 1 && {{b != null}}；"
         "禁止算术与函数；每个 branch 的 target 与 defaultTarget 都必须是已存在的节点 id，"
         "且每个目标都要有对应 edge，defaultTarget 必填。"
         "loop 节点（v1 仅条件循环）的 config 为 {\"mode\":\"while\",\"continueExpression\","
@@ -231,8 +265,9 @@ def _generate_with_llm(
         "每个分支沿其内部连线最终必须能到达 joinTarget（分支末端连到 joinTarget），"
         "分支之间不得交叉连线，parallel 区域内不得再嵌套 parallel 节点。"
         "wait 节点（定时等待）的 config 为 {\"waitType\":\"duration\",\"durationSeconds\"}："
-        "waitType 仅支持 duration（事件等待不支持），durationSeconds 为 1-600 的整数秒常量；"
-        "wait 节点恰好配置一条出边，指向已存在的后继节点，不直连结束。"
+        "waitType 仅支持 duration（事件等待不支持），durationSeconds 为 1-3600 的整数秒常量；"
+        "wait 节点恰好配置一条出边，指向已存在的后继节点，不能作为图的结束节点，"
+        "也不要把 wait 命名为 end_ok 之类来收尾。"
         "subgraph 节点（引用已保存子图）的 config 为 {\"graphId\",\"inputs\":{\"入参键\":\"{{父图路径}} 或字面量\"}}："
         "graphId 为必填的已保存图 id（用户需先保存子图，不要凭空捏造 id）；inputs 可选，"
         "值用父图 {{路径}} 引用或字面量描述子图入参映射；subgraph 节点恰好配置一条出边，"
@@ -271,18 +306,32 @@ def _generate_with_llm(
         "长期记忆工具为 memory/remember（{kind, content}，kind 为 fact/preference/knowledge）、"
         "memory/recall（{query, top_k?}）、memory/auto_extract（{text}），params 为 JSON 字符串。"
         "硬性约束：nodes 中出现的 id 必须唯一；edges 的 source/target 必须都是 nodes 中真实存在的 id；"
+        "节点 type 只能是上述九类；工具调用节点 type 必须是 tool_call，工具名写在 config.tool，"
+        "不能把 message/send 等工具名直接写成节点 type；"
         "不要生成未定义的 end/start 占位节点；condition 的每个 branch target 与 defaultTarget、"
         "human_approval 的 approvedTarget/rejectedTarget、loop/parallel 的 target 都必须有对应节点和 edge。"
         "condition 的 defaultTarget 必须与每个 branch target 不同；只有一个分支时，默认分支必须指向另一个节点。"
         "所有 {{路径}} 必须用真实节点 id，不能用节点类型名替代 id：trigger 产出写作 "
-        "{{<trigger节点id>.context.payload.<key>}}（不是 {{trigger.payload...}}）；"
+        "{{<trigger节点id>.context.payload.<key>}}（不是 {{trigger.payload...}}，"
+        "也不是裸 {{context.payload...}}）；"
         "tool_call 产出统一包在 result 下，写作 {{<tool节点id>.result...}}"
         "（例如 database/query 的金额用 {{<节点id>.result.rows[0].amount}}，不要写 {{<节点id>.rows...}}）。"
         "全局变量必须写 {{global.<变量名>}}，不能写裸 {{<变量名>}}；"
         "例如 variables 里声明 customer_email，模板里只能写 {{global.customer_email}}。"
-        "流程结束节点不再连出边，禁止把末端连回 trigger 形成环；需要结束时直接用最后节点，"
-        "不要用 condition 模拟结束。退款失败/异常通知用 message/send，不要用 http/request 代替通知。"
+        "所有模板引用的 {{global.*}} 都必须在 variables 中声明；用户没给输入变量时，"
+        "要自行声明任务必需的输入变量（如 order_id、customer_email），不能只引用不声明。"
+        "数组长度用 len({{<路径>}})（如 len({{q.result.rows}})），不要写 .length；"
+        "len() 只能出现在 condition/loop 的 expression 里，不能写进 message/send 的正文或参数模板；"
+        "ai_decision 节点产出只有 {{<节点id>.decision}}（决策对象，含 action/reason/confidence 等）"
+        "与 {{<节点id>.prompt_rendered}}，不要写 {{<节点id>.result.decision}} 或 .result.channel。"
+        "流程结束节点不再连出边，禁止把末端连回 trigger 形成环；需要结束时直接把最后一个业务节点"
+        "（如 message/send、shop/execute_refund 或审批节点）作为终点，不要新增 wait/end 占位节点；"
+        "condition 的 defaultTarget 也必须是真实业务节点，不能指向 wait/end 占位节点。"
+        "只有 loop 节点的循环体才允许回到该 loop 节点，"
+        "其它 condition/tool 节点不得互相连成闭环。退款失败/异常通知用 message/send，不要用 http/request 代替通知。"
     )
+    if output_contract:
+        system += "\n" + output_contract
     if repair is not None:
         system += (
             "\n上一版草稿未通过编译校验，错误如下：\n- "
@@ -394,6 +443,74 @@ def _collapse_constant_conditions(
 
 
 _REF_PATTERN = re.compile(r"\{\{([^{}]+)\}\}")
+_CONDITION_OPERATORS = ("==", "!=", ">=", "<=", "&&", "||", ">", "<", "+", "-", "*", "/", "%")
+_REF_COMPARISON_PATTERN = re.compile(
+    r"\{\{([A-Za-z_][A-Za-z0-9_.\[\]]*)\s*(==|!=|>=|<=|>|<)\s*"
+    r"(null|true|false|[-+]?\d+(?:\.\d+)?|\"[^\"]*\"|'[^']*')\}\}"
+)
+_BARE_DOTTED_PATH_PATTERN = re.compile(
+    r"(?<![\w.{])([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+)(?![\w}])"
+)
+
+
+def _wrap_bare_dotted_paths(expr: str) -> str:
+    """把表达式里未包在 {{}} 中的 dotted 路径补成引用；已包住的不会被二次包裹。"""
+    return _BARE_DOTTED_PATH_PATTERN.sub(r"{{\1}}", expr)
+
+
+def _repair_condition_expression(value: Any) -> Any:
+    """把模型写坏的条件表达式收敛到 DSL 可解析形状。
+
+    处理无歧义形状：
+    1. `{{path}` 少一个右花括号——DSL 的路径引用必须 `{{path}}`；
+    2. `{{path != null}}` 把单段比较包进路径括号——拆成 `{{path}} != null`；
+    3. `{{a == 1 && {{b != null}}` 外层多开一个 `{{`——去掉外层，再修内层比较；
+    4. 整段 `{{a == 1 && b == 2}}` 被误包——去掉外层并补齐裸路径。
+
+    不做语义修复：路径不存在、字段名错、阈值越界仍交给 L1/L3 报错。
+    """
+    if not isinstance(value, str):
+        return value
+    expr = value.strip()
+    # 补齐单右括号：只匹配 `{{...}` 且后面不是 `}` 的路径引用。
+    expr = re.sub(r"\{\{([^{}]+?)\}(?!\})", r"{{\1}}", expr)
+    # 外层多开一个 `{{`：整串有 2 个 `{{` 但只有 1 个 `}}`，且以 `}}` 收尾。
+    if (
+        expr.startswith("{{")
+        and expr.count("{{") == 2
+        and expr.count("}}") == 1
+        and expr.endswith("}}")
+    ):
+        expr = expr[2:]
+    # 单段比较被包进路径括号：`{{path != null}}` -> `{{path}} != null`。
+    expr = _REF_COMPARISON_PATTERN.sub(r"{{\1}} \2 \3", expr)
+    # 整段被 `{{...}}` 包住且内部含运算符时，外层是误加；纯路径保持原样。
+    outer = re.fullmatch(r"\{\{([^{}]+)\}\}", expr)
+    if outer is not None:
+        inner = outer.group(1).strip()
+        if any(op in inner for op in _CONDITION_OPERATORS):
+            expr = inner
+    return _wrap_bare_dotted_paths(expr)
+
+
+def _repair_condition_expressions(nodes: list[dict[str, Any]]) -> None:
+    """就地修复 condition/loop 的表达式字段。"""
+    for node in nodes:
+        config = node.get("config")
+        if not isinstance(config, dict):
+            continue
+        if node.get("type") == "condition":
+            branches = config.get("branches")
+            if isinstance(branches, list):
+                for branch in branches:
+                    if isinstance(branch, dict):
+                        branch["expression"] = _repair_condition_expression(
+                            branch.get("expression")
+                        )
+        elif node.get("type") == "loop":
+            config["continueExpression"] = _repair_condition_expression(
+                config.get("continueExpression")
+            )
 
 
 def _qualify_global_refs(
@@ -437,6 +554,50 @@ def _qualify_global_refs(
         node["config"] = _walk(node.get("config"))
 
 
+def _qualify_context_refs(nodes: list[dict[str, Any]]) -> None:
+    """把裸 `{{context.payload.*}}` 收敛为 `{{<唯一trigger>.context.payload.*}}`。
+
+    仅当图里恰好一个 trigger 时修复；多个 trigger 无法无歧义判断，保持原样交给编译器。
+    """
+    triggers = [str(node.get("id")) for node in nodes if node.get("type") == "trigger"]
+    if len(triggers) != 1:
+        return
+
+    def _walk(value: Any) -> Any:
+        if isinstance(value, str):
+            def _replace(match: re.Match[str]) -> str:
+                path = match.group(1).strip()
+                if path.startswith("context."):
+                    return "{{" + triggers[0] + "." + path + "}}"
+                return match.group(0)
+
+            return _REF_PATTERN.sub(_replace, value)
+        if isinstance(value, dict):
+            return {key: _walk(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [_walk(item) for item in value]
+        return value
+
+    for node in nodes:
+        node["config"] = _walk(node.get("config"))
+
+
+def _normalize_tool_node_type(node: dict[str, Any], supported_types: set[str]) -> None:
+    """模型把工具名写成节点 type（如 `message/send`）时收敛为 tool_call。
+
+    只在 type 不在 DSL 支持列表且形如 `adapter/tool` 时修复；config.tool 已有值不覆盖。
+    """
+    kind = str(node.get("type") or "")
+    if kind in supported_types or "/" not in kind:
+        return
+    config = node.get("config")
+    if not isinstance(config, dict):
+        config = {}
+        node["config"] = config
+    config.setdefault("tool", kind)
+    node["type"] = "tool_call"
+
+
 _ALLOWED_ON_ERROR = {"stop", "continue", "jump_to"}
 
 
@@ -465,6 +626,9 @@ def normalize_generated_graph(graph: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(graph, dict):
         return graph
     graph["version"] = 1
+    from atlas.graph.dsl import SUPPORTED_NODE_TYPES
+
+    supported_types = set(SUPPORTED_NODE_TYPES)
     raw_nodes = graph.get("nodes")
     nodes: list[dict[str, Any]] = []
     used_ids: set[str] = set()
@@ -485,6 +649,7 @@ def normalize_generated_graph(graph: dict[str, Any]) -> dict[str, Any]:
             node["name"] = str(node.get("name") or node_id)
             if not isinstance(node.get("config"), dict):
                 node["config"] = {}
+            _normalize_tool_node_type(node, supported_types)
             _normalize_retry(node)
             if not isinstance(node.get("position"), dict):
                 node["position"] = {"x": (index % 5) * 180, "y": (index // 5) * 140}
@@ -520,7 +685,9 @@ def normalize_generated_graph(graph: dict[str, Any]) -> dict[str, Any]:
     graph["nodes"] = nodes
     graph["edges"] = edges
     node_ids = {str(node["id"]) for node in nodes}
+    _repair_condition_expressions(nodes)
     _qualify_global_refs(graph, nodes, node_ids)
+    _qualify_context_refs(nodes)
     # condition 的 defaultTarget 与 branch target 撞车时，若出边里还有另一个目标，
     # 用它修默认分支；没有第二个目标就不猜，留给 L1/L2 报错。
     outgoing: dict[str, set[str]] = {}
