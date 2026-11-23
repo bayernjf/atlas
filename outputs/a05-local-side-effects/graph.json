@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "variables": [],
+  "nodes": [
+    {
+      "id": "trigger-1",
+      "type": "trigger",
+      "name": "本地写入申请",
+      "config": {
+        "triggerType": "webhook",
+        "webhookUrl": "/hooks/a05"
+      },
+      "retry": {
+        "max_retries": 0,
+        "backoff": "1s",
+        "timeout": 30,
+        "on_error": "stop"
+      }
+    },
+    {
+      "id": "human_approval-1",
+      "type": "human_approval",
+      "name": "人工审批：本地写库",
+      "config": {
+        "summary": "A-05 本地写库：订单 {{trigger-1.context.payload.order_id}} / {{trigger-1.context.payload.amount}} 元",
+        "approver": "",
+        "timeoutSeconds": 30,
+        "onTimeout": "reject",
+        "approvedTarget": "tool-db",
+        "rejectedTarget": "tool-reject-msg"
+      },
+      "retry": {
+        "max_retries": 0,
+        "backoff": "1s",
+        "timeout": 30,
+        "on_error": "stop"
+      }
+    },
+    {
+      "id": "tool-db",
+      "type": "tool_call",
+      "name": "工具：写本地 SQLite",
+      "config": {
+        "tool": "database/execute",
+        "params": "{\"sql\": \"INSERT INTO a05_orders (order_id, amount, note, created_at) VALUES (:order_id, :amount, :note, :created_at)\", \"params\": {\"order_id\": \"{{trigger-1.context.payload.order_id}}\", \"amount\": \"{{trigger-1.context.payload.amount}}\", \"note\": \"approved-local-write\", \"created_at\": \"{{trigger-1.context.payload.created_at}}\"}}"
+      },
+      "retry": {
+        "max_retries": 0,
+        "backoff": "1s",
+        "timeout": 30,
+        "on_error": "stop"
+      }
+    },
+    {
+      "id": "tool-ok-msg",
+      "type": "tool_call",
+      "name": "工具：投递本地 webhook",
+      "config": {
+        "tool": "message/send",
+        "params": "{\"channel\": \"webhook\", \"to\": \"http://127.0.0.1:63937/a05-hook\", \"subject\": \"A-05 本地写入完成\", \"body\": \"订单 {{trigger-1.context.payload.order_id}} 已写入本地 SQLite\"}"
+      },
+      "retry": {
+        "max_retries": 0,
+        "backoff": "1s",
+        "timeout": 30,
+        "on_error": "stop"
+      }
+    },
+    {
+      "id": "tool-reject-msg",
+      "type": "tool_call",
+      "name": "工具：投递拒绝通知",
+      "config": {
+        "tool": "message/send",
+        "params": "{\"channel\": \"webhook\", \"to\": \"http://127.0.0.1:63937/a05-hook\", \"subject\": \"A-05 本地写入被拒绝\", \"body\": \"订单 {{trigger-1.context.payload.order_id}} 未写入（人工拒绝）\"}"
+      },
+      "retry": {
+        "max_retries": 0,
+        "backoff": "1s",
+        "timeout": 30,
+        "on_error": "stop"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "trigger-1",
+      "target": "human_approval-1"
+    },
+    {
+      "id": "e2",
+      "source": "human_approval-1",
+      "target": "tool-db"
+    },
+    {
+      "id": "e3",
+      "source": "human_approval-1",
+      "target": "tool-reject-msg"
+    },
+    {
+      "id": "e4",
+      "source": "tool-db",
+      "target": "tool-ok-msg"
+    }
+  ]
+}
