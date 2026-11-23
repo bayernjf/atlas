@@ -47,6 +47,10 @@ class Envelope(BaseModel):
     state: TaskState = "pending"
     result: dict[str, Any] = Field(default_factory=dict)
     attempt: int = 1
+    # T4：任务总线冲突键与优先级。同 conflictKey 的非终态任务按 priority 抢占；
+    # 空 conflictKey 保持旧行为（同 graph 单飞由 A2A 锁负责，不在这里扩大）。
+    conflictKey: str = ""
+    priority: int = 0
 
     def transition(self, target: TaskState) -> "Envelope":
         """迁移状态；非法迁移抛 ValueError（返回新实例，原信封不可变）。"""

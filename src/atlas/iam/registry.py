@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import os
 import threading
 from dataclasses import dataclass, field
 
@@ -22,6 +23,7 @@ from atlas.evaluation.store import EvaluationStore
 from atlas.collaboration.cancellations import RunCancellationBroker
 from atlas.collaboration.event_waits import EventWaitBroker
 from atlas.coordination import TaskStore
+from atlas.coordination.sqlite_store import SqliteTaskStore
 from atlas.observability.audit import AuditRepository, AuditStore
 from atlas.message.service import MessageService
 from atlas.message.deliveries import PgDeliveryStore as PgMessageDeliveryStore
@@ -153,6 +155,14 @@ class TenantRegistry:
             return list(self._tenants.keys())
 
     @staticmethod
+    def _task_store(tenant_id: str):
+        """T4：任务总线持久化开关。未配置时保留进程内 TaskStore（测试/旧行为）。"""
+        path = os.getenv("ATLAS_TASK_STORE_PATH", "").strip()
+        if path:
+            return SqliteTaskStore(path, tenant_id)
+        return TaskStore()
+
+    @staticmethod
     def _create_services(tenant_id: str) -> TenantServices:
         # M5a：八个进程内 store 统一自 storage.memory 构造（GraphStore/FeedbackStore
         # 已自 api/main.py 搬出，延迟导入环随之消除，顶层导入安全）。
@@ -188,7 +198,7 @@ class TenantRegistry:
                 event_wait_broker=EventWaitBroker(),
                 monitoring=backend.monitoring_store(tenant_id),
                 run_store=backend.run_store(tenant_id),
-                task_store=TaskStore(),
+                task_store=TenantRegistry._task_store(tenant_id),
                 routing_store=PgRoutingStore(backend.engine, tenant_id),
                 report_store=PgReportStore(backend.engine, tenant_id),
                 shadow_store=PgShadowStore(backend.engine, tenant_id),
@@ -231,7 +241,7 @@ class TenantRegistry:
             event_wait_broker=EventWaitBroker(),
             monitoring=MonitoringStore(),
             run_store=RunStore(),
-            task_store=TaskStore(),
+            task_store=TenantRegistry._task_store(tenant_id),
             routing_store=RoutingStore(),
             report_store=ReportStore(),
             shadow_store=ShadowStore(),

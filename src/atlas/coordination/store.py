@@ -12,7 +12,19 @@ import threading
 import uuid
 from typing import Any
 
-from .envelope import Envelope, TaskState
+from .envelope import Envelope, TERMINAL_STATES, TaskState
+
+
+def mark_preempted(active: Envelope, *, by_task_id: str, conflict_key: str) -> Envelope:
+    """T4 优先级抢占的单一裁决：旧非终态任务置 failed（不走状态机）。"""
+    result = {
+        **active.result,
+        "error": "TASK_PREEMPTED",
+        "policy": "priority",
+        "conflictKey": conflict_key,
+        "preemptedBy": by_task_id,
+    }
+    return active.model_copy(update={"state": "failed", "result": result})
 
 
 class TaskStore:
@@ -34,13 +46,35 @@ class TaskStore:
         payload: dict[str, Any],
         deadline_ms: int,
         parent_span_id: str = "",
+        conflict_key: str = "",
+        priority: int = 0,
     ) -> tuple[Envelope, bool]:
-        """创建 pending 信封；幂等键命中返首结果（created=False，不重复执行）。"""
+        """创建 pending 信封；幂等键命中返首结果（created=False，不重复执行）。
+
+        T4 冲突仲裁（策略 `priority`）：同 conflictKey 已有非终态任务时，
+        更高优先级的新任务抢占旧任务（旧任务置 failed/TASK_PREEMPTED）；
+        否则不创建新任务，直接返回占用中的旧信封。空 conflictKey 不参与仲裁。
+        """
+        conflict_key = (conflict_key or "").strip()
         with self._lock:
             existing = self._by_key.get(idempotency_key)
             if existing is not None:
                 return self._tasks[existing], False
             task_id = uuid.uuid4().hex
+            if conflict_key:
+                active = next(
+                    (
+                        item
+                        for item in self._tasks.values()
+                        if item.conflictKey == conflict_key and item.state not in TERMINAL_STATES
+                    ),
+                    None,
+                )
+                if active is not None:
+                    if priority > active.priority:
+                        self._preempt(active, by_task_id=task_id, conflict_key=conflict_key)
+                    else:
+                        return active, False
             envelope = Envelope(
                 taskId=task_id,
                 runId=run_id,
@@ -52,11 +86,18 @@ class TaskStore:
                 payload=payload,
                 deadlineMs=deadline_ms,
                 parentSpanId=parent_span_id,
+                conflictKey=conflict_key,
+                priority=priority,
             )
             self._tasks[task_id] = envelope
             self._by_key[idempotency_key] = task_id
             self._order.append(task_id)
             return envelope, True
+
+    def _preempt(self, active: Envelope, *, by_task_id: str, conflict_key: str) -> None:
+        self._tasks[active.taskId] = mark_preempted(
+            active, by_task_id=by_task_id, conflict_key=conflict_key
+        )
 
     def _mutate(self, task_id: str, target: TaskState, **updates: Any) -> Envelope:
         with self._lock:

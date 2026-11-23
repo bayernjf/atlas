@@ -1,0 +1,19 @@
+{
+  "low": "fc890b0de4504f2d859cc6c5fd33f73b",
+  "high": "8e16438ae37c4fa8bbf5a5166c65567e",
+  "normal": "4753e9cda32a4aed9953f39bc708f1c9",
+  "created": {
+    "low": true,
+    "high": true,
+    "normal": true
+  },
+  "lowResult": {
+    "error": "TASK_PREEMPTED",
+    "policy": "priority",
+    "conflictKey": "refund:T4-ORDER",
+    "preemptedBy": "8e16438ae37c4fa8bbf5a5166c65567e"
+  },
+  "highResult": {
+    "error": "PAYMENT_CHANNEL_REJECTED"
+  }
+}

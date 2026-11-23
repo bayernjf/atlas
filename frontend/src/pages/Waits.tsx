@@ -4,6 +4,7 @@ import {
   App,
   Button,
   Card,
+  Descriptions,
   Input,
   Layout,
   Modal,
@@ -16,6 +17,7 @@ import {
 import type { ColumnsType } from 'antd/es/table'
 import {
   broadcastWaitEvent,
+  getRun,
   listTasks,
   listInterruptions,
   resolveInterruption,
@@ -24,6 +26,7 @@ import {
   type InterruptionItem,
   type InterruptionSurface,
   type PendingWaitItem,
+  type RunDetail,
   type TaskEnvelopeItem,
 } from '../lib/apiClient'
 import { roleCan, type Principal } from '../lib/auth'
@@ -91,6 +94,9 @@ export function Waits({ principal, onLogout, onBack }: WaitsPageProps) {
   const [signalPayload, setSignalPayload] = useState('')
   const [resolveTarget, setResolveTarget] = useState<InterruptionItem | null>(null)
   const [resolveReason, setResolveReason] = useState('')
+  const [taskTarget, setTaskTarget] = useState<TaskEnvelopeItem | null>(null)
+  const [taskRun, setTaskRun] = useState<RunDetail | null>(null)
+  const [taskRunMissing, setTaskRunMissing] = useState(false)
   const [busy, setBusy] = useState(false)
 
   const refresh = useCallback(async () => {
@@ -182,6 +188,21 @@ export function Waits({ principal, onLogout, onBack }: WaitsPageProps) {
     }
   }
 
+  async function openTask(task: TaskEnvelopeItem) {
+    setTaskTarget(task)
+    setTaskRun(null)
+    setTaskRunMissing(false)
+    if (!task.runId) {
+      setTaskRunMissing(true)
+      return
+    }
+    try {
+      setTaskRun(await getRun(task.runId))
+    } catch {
+      setTaskRunMissing(true)
+    }
+  }
+
   const waitColumns: ColumnsType<PendingWaitItem> = [
     {
       title: t('eventKey'),
@@ -227,6 +248,14 @@ export function Waits({ principal, onLogout, onBack }: WaitsPageProps) {
       ),
     },
     { title: t('assignee'), dataIndex: 'assignee', width: 100 },
+    {
+      title: t('conflictKey'),
+      dataIndex: 'conflictKey',
+      width: 150,
+      ellipsis: true,
+      render: (value: string) => value || '—',
+    },
+    { title: t('priority'), dataIndex: 'priority', width: 80 },
     { title: t('runId'), dataIndex: 'runId', width: 160, ellipsis: true },
     { title: t('attempt'), dataIndex: 'attempt', width: 70 },
     {
@@ -235,6 +264,16 @@ export function Waits({ principal, onLogout, onBack }: WaitsPageProps) {
       ellipsis: true,
       render: (value: Record<string, unknown>) =>
         value && Object.keys(value).length > 0 ? JSON.stringify(value) : '—',
+    },
+    {
+      title: '',
+      key: 'taskActions',
+      width: 80,
+      render: (_, item) => (
+        <Button size="small" onClick={() => openTask(item)}>
+          {t('taskView')}
+        </Button>
+      ),
     },
   ]
 
@@ -439,6 +478,94 @@ export function Waits({ principal, onLogout, onBack }: WaitsPageProps) {
               onChange={(event) => setResolveReason(event.target.value)}
             />
           </Space>
+        </Modal>
+        <Modal
+          open={taskTarget !== null}
+          title={t('taskDetail')}
+          footer={null}
+          width={760}
+          onCancel={() => setTaskTarget(null)}
+          destroyOnClose
+        >
+          {taskTarget ? (
+            <Space orientation="vertical" style={{ width: '100%' }}>
+              <Alert
+                type="info"
+                showIcon
+                message={t('taskTraceHint')}
+              />
+              {taskTarget.state === 'failed' ? (
+                <Alert
+                  type="error"
+                  showIcon
+                  message={`${t('state')}: failed`}
+                  description={JSON.stringify(taskTarget.result)}
+                />
+              ) : null}
+              <Descriptions
+                size="small"
+                bordered
+                column={2}
+                items={[
+                  { key: 'taskId', label: 'taskId', children: taskTarget.taskId },
+                  { key: 'runId', label: t('runId'), children: taskTarget.runId || '—' },
+                  { key: 'type', label: t('type'), children: taskTarget.type },
+                  { key: 'assignee', label: t('assignee'), children: taskTarget.assignee },
+                  { key: 'state', label: t('state'), children: taskTarget.state },
+                  { key: 'attempt', label: t('attempt'), children: taskTarget.attempt },
+                  {
+                    key: 'conflictKey',
+                    label: t('conflictKey'),
+                    children: taskTarget.conflictKey || '—',
+                  },
+                  { key: 'priority', label: t('priority'), children: taskTarget.priority },
+                  { key: 'traceId', label: 'traceId', children: taskTarget.traceId || '—' },
+                  {
+                    key: 'graphVersion',
+                    label: t('graphId'),
+                    children: taskTarget.graphVersion,
+                  },
+                ]}
+              />
+              <Typography.Text strong>{t('taskPayload')}</Typography.Text>
+              <pre style={{ margin: 0, maxHeight: 180, overflow: 'auto' }}>
+                {JSON.stringify(taskTarget.payload, null, 2)}
+              </pre>
+              <Typography.Text strong>{t('taskResult')}</Typography.Text>
+              <pre style={{ margin: 0, maxHeight: 180, overflow: 'auto' }}>
+                {JSON.stringify(taskTarget.result, null, 2)}
+              </pre>
+              <Typography.Text strong>{t('taskRunStatus')}</Typography.Text>
+              {taskRunMissing ? (
+                <Alert type="warning" showIcon message={t('taskRunMissing')} />
+              ) : taskRun ? (
+                <>
+                  <Descriptions
+                    size="small"
+                    bordered
+                    column={2}
+                    items={[
+                      { key: 'status', label: t('state'), children: taskRun.status },
+                      { key: 'graph', label: t('graphId'), children: taskRun.graphId },
+                      { key: 'agent', label: 'agentId', children: taskRun.agentId || '—' },
+                      {
+                        key: 'error',
+                        label: t('taskRunError'),
+                        children: taskRun.error || '—',
+                      },
+                    ]}
+                  />
+                  {taskRun.trace?.length ? (
+                    <pre style={{ margin: 0, maxHeight: 180, overflow: 'auto' }}>
+                      {taskRun.trace.join('\n')}
+                    </pre>
+                  ) : null}
+                </>
+              ) : (
+                <Typography.Text type="secondary">{t('taskNoRun')}</Typography.Text>
+              )}
+            </Space>
+          ) : null}
         </Modal>
       </Content>
     </Layout>
