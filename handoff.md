@@ -6,7 +6,7 @@
 > 最近同步：2026-11-19
 
 - [x] **Meta Layer 平台探索器 MVP（D1=B，4 周）** — 状态：closed→远期/另立产品线；2026-11-23 owner 拍板（BayJF `docs/tier0/Tier0-Loom-Zeus-Atlas-按序执行待办-2026-11-23.md` §0.1 X-01）：Meta Layer 远期独立、不进 Atlas，A-03/A-04 不在 Atlas 内开工；Atlas 现阶段 P0 = A-01 + A-05 + A-02；候选「归 Atlas 并开 A-03/A-04」保留作二次选择线索。
-- [ ] **立项/两道设计题差距待办（docs/137）** — 状态：in progress；2026-11-23 立档；内容：题一 5.5/6、题二 4/6（本地自用口径）、原立项 AutoPilot/元层差距与 P0/P1/P2 待办；迭代纪律：现有功能全保留，只做追加式迭代，不删除/替换现有能力；**A-01 已于 2026-11-23 本地口径完成**（证据 `outputs/a01-web-flow/`、说明 `docs/138`）；下一步取 A-05（本地真实副作用/投递），紧接 A-02；不要一次全开。
+- [ ] **立项/两道设计题差距待办（docs/137）** — 状态：in progress；2026-11-23 立档；内容：题一 5.5/6、题二 4/6（本地自用口径）、原立项 AutoPilot/元层差距与 P0/P1/P2 待办；迭代纪律：现有功能全保留，只做追加式迭代，不删除/替换现有能力；**A-01 于 2026-11-23 本地口径完成**（证据 `outputs/a01-web-flow/`、说明 `docs/138`）；**A-05 于 2026-11-23 本地口径完成**（真实 SQLite 写 + 审批 + 本地 webhook，证据 `outputs/a05-local-side-effects/`、说明 `docs/139`）；下一步取 A-02；不要一次全开。
 - [ ] **`graph-1` 旧失败样本处理** — 状态：open；现状：500 `NODE_EXECUTION_FAILED` / `call start() before execute()`；下一步：归档旧样本或补新替代证据，避免继续当活跃失败。
 - [ ] **docs/08 §八“下一批候选（open checklist）”逐项清账** — 状态：open；取项前先看“别当待办 / 存疑待核”两段。
 
@@ -54,6 +54,7 @@ Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/
 * [docs/136-挂起超时转suspended-onTimeout-suspend-打包BS-v1批契约设计.md](docs/136-挂起超时转suspended-onTimeout-suspend-打包BS-v1批契约设计.md) — **打包 BS 形状权威（2026-10-22 已落码收口 ✅）**：human_approval/wait 的 onTimeout 超集加 `"suspend"`——超时不落决定、不 continue/fail，run 保持 suspended、帧保留、token 保持 pending 待人工恢复；新增 `WaitTimeoutSuspend` 穿透族，API 四路径不写终态，流式发 `wait_timeout_suspended` 帧，前端识别展示；零新错误码／零迁移／零端点／零依赖／无 ADR；验收 U1528–U1534（9 用例）。本批为 O-5 彻底解耦（docs/135 §6.9）的行为补全
 * [docs/137-立项与两道设计题差距待办-2026-11-23.md](docs/137-立项与两道设计题差距待办-2026-11-23.md) — **立项/两道设计题差距待办（2026-11-23，本地自用口径）**：题一 5.5/6、题二 4/6、原立项 AutoPilot/元层 0 完成/3 部分/4 未做；按「替代手工软件 / 多智能体 / 元层」三个目标给建议顺序；含 A-01–A-13 待办与「本地自用非目标」；**非契约、不触发立项**，判断「离原立项/两道题还差什么、下一项做什么」时先读本文
 * [docs/138-A01-本机真浏览器工作流-2026-11-23.md](docs/138-A01-本机真浏览器工作流-2026-11-23.md) — **A-01 本地真浏览器流程（2026-11-23，本地自用口径）**：dev 档默认可达 `web-playwright`；`ATLAS_WEB_ALLOW_LOOPBACK` 仅放行 `127.0.0.0/8`＋`::1`（非 prod 默认开、显式 0 关、prod 恒关）；真实 Chromium 跑通 Loom 分析页六步流程，含故意失败可见/重试、日期筛选生效、trace＋两张截图；prod 仍不注册，3xx 仍是 D52；A-02/A-03/A-05 未做
+* [docs/139-A05-本地真实副作用与审批投递-2026-11-23.md](docs/139-A05-本地真实副作用与审批投递-2026-11-23.md) — **A-05 本地真实副作用 + 审批/投递（2026-11-23，本地自用口径）**：真实 SQLite 文件写、`human_approval` 真挂起、`127.0.0.1` 一次性 webhook；拒绝路径 0 写入，通过路径审批后 1 行并送达，投递失败路径保留已写库/未送达证据并用补偿 DELETE 还原；新增 `ATLAS_MESSAGE_WEBHOOK_ALLOW_LOOPBACK`（非 prod 默认开、显式 0 关、prod 恒关）；不声称自动事务回滚
 * [docs/15-环境与分支策略.md](docs/15-环境与分支策略.md) — 环境划分（DEV/TEST/PROD）+ 分支→环境映射（main/dev/feature/*）
 * [docs/16-反馈工作流.md](docs/16-反馈工作流.md) — 用户与 AI 协作者的反馈方式（截图+标签 / computer use）
 * [docs/17-前端国际化与设计Token方案.md](docs/17-前端国际化与设计Token方案.md) — i18n（i18next 触发式引入/错误码边界）+ 设计 Token 三层模型（需求依据 04 §28；Token 已落码，i18n 触发式引入，存量零星硬编码见 17 §3.5）

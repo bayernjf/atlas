@@ -3,6 +3,13 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔feat〕A-05 本地真实副作用 + 本地审批/投递（2026-11-23；docs/139）
+
+- 新增 `ATLAS_MESSAGE_WEBHOOK_ALLOW_LOOPBACK`：仅非 prod 默认放行 `127.0.0.0/8`＋`::1/128`，显式 `0` 关闭，prod 恒空；只作用于消息 webhook，SMTP/IM/Shopify 不变。
+- 新增 `scripts/verify_local_side_effects.py`：真实 SQLite 文件写 + `human_approval` 真挂起 + `127.0.0.1` 一次性 webhook；拒绝路径 0 写入，通过路径审批后 1 行并送达，投递失败路径保留已写库/未送达证据并用补偿 DELETE 还原。
+- 证据：`outputs/a05-local-side-effects/`（`evidence.json`、`graph.json`、`a05.db`）；不声称自动事务回滚，公网 SMTP/IM/真实店铺仍未验。
+- 门：`tests/test_message_webhook.py` **32 passed**（含 3 条本地回环正反例）；后端全量 **3080 passed／214 skipped**。
+
 ### 〔feat〕A-01 本地真浏览器工作流（2026-11-23；docs/138）
 
 - 新增 `ATLAS_WEB_ALLOW_LOOPBACK`：非 prod 默认放行 `127.0.0.0/8`＋`::1/128`，显式 `0` 关闭，prod 恒空；`EgressGuard.from_env(permit_cidrs=...)` 透传，仅 `web/adapter.py` 使用，HTTP/message 等消费点不变。
