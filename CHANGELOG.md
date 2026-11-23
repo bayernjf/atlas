@@ -3,6 +3,12 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔docs〕docs/08 §八候选池清账（2026-11-23；docs/143）
+
+- 逐组复核 A/B/C/D 与 AT–BS 里程碑：本节无未立项且本地可闭环项；B/C 组已排干，AT–BS 全部收口，D 组为真实凭据/域名/客户/多实例等外部触发。
+- 不新增代码、不预铺外部凭据；关闭 handoff 对应待办，避免后续把“候选池”误读成仍有本地活可捡。
+- 边界：只清候选池，不代表 Atlas A-07、Loom L-05、Zeus Z-04/Z-06/Z-07 已完成。
+
 ### 〔docs〕graph-1 旧失败样本归档（2026-11-23；docs/142）
 
 - 旧 `500 NODE_EXECUTION_FAILED / call start() before execute()` 定位为 `WebHarnessAdapter` 未启动时的预期 `BROWSER_NOT_STARTED` 结构化失败，节点按 `on_error=stop` 映射成 500；不是进程崩溃。
