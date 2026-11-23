@@ -81,7 +81,21 @@
     "title": "自然语言生成流程草稿",
     "defaultPrompt": "帮我做一个电商退款自动审批流程",
     "submit": "生成并载入画布",
-    "paramWarning": "⚠ NL 参数提示：{{warning}}"
+    "paramWarning": "⚠ NL 参数提示：{{warning}}",
+    "modeLlm": "真实模型生成",
+    "modeTemplate": "离线模板兜底（不是 AI 生成）",
+    "templateFallbackHint": "当前没有调用成功真实模型，这张草稿来自规则模板；不要当作 AI 生成质量证据。",
+    "generationMeta": "来源：{{mode}} · 模型：{{model}} · 尝试 {{attempts}} 次{{repaired}}",
+    "modelUnset": "未配置",
+    "repaired": "（含一次修复）",
+    "compileOk": "L3 编译校验通过",
+    "compileFailed": "L3 编译校验未通过（{{count}} 个错误）",
+    "skillsTitle": "技能 top-3 推荐",
+    "skillScore": "匹配分 {{score}}",
+    "skillMatched": "命中词：{{words}}",
+    "skillNoMatched": "无命中词",
+    "loadedHint": "草稿已载入画布；确认后关闭本窗口继续编辑。",
+    "close": "关闭"
   },
   "template": {
     "title": "从模板新建",

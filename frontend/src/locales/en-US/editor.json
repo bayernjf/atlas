@@ -81,7 +81,21 @@
     "title": "Generate a flow draft from natural language",
     "defaultPrompt": "Build an automated e-commerce refund approval flow for me",
     "submit": "Generate and load onto canvas",
-    "paramWarning": "⚠ NL parameter notice: {{warning}}"
+    "paramWarning": "⚠ NL parameter notice: {{warning}}",
+    "modeLlm": "Real model generation",
+    "modeTemplate": "Offline template fallback (not AI-generated)",
+    "templateFallbackHint": "No successful real-model call; this draft came from a rule template. Do not count it as AI-generation quality evidence.",
+    "generationMeta": "Source: {{mode}} · Model: {{model}} · Attempts: {{attempts}}{{repaired}}",
+    "modelUnset": "not configured",
+    "repaired": " (one repair)",
+    "compileOk": "L3 compile check passed",
+    "compileFailed": "L3 compile check failed ({{count}} errors)",
+    "skillsTitle": "Top-3 skill recommendations",
+    "skillScore": "score {{score}}",
+    "skillMatched": "Matched: {{words}}",
+    "skillNoMatched": "no keyword matched",
+    "loadedHint": "The draft has been loaded onto the canvas; close this window to keep editing.",
+    "close": "Close"
   },
   "template": {
     "title": "New from template",

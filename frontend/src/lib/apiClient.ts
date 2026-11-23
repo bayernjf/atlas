@@ -795,7 +795,42 @@ export async function runGraph(
   return request(`/api/graphs/${id}/run`, { method: 'POST', body: runBody(inputs, undefined, opts) })
 }
 
-export async function nlGenerate(prompt: string): Promise<{ graph: SerializedGraph; paramWarnings?: string[] }> {
+export type NLSkillRecommendation = {
+  id: string
+  name: string
+  description: string
+  score: number
+  matched: string[]
+  tools: string[]
+  priority: number
+}
+
+export type NLGenerationMeta = {
+  /** llm = 真实模型产出；template = 明确标注的离线兜底，不算 AI 成功 */
+  mode: 'llm' | 'template'
+  model?: string | null
+  attempts: number
+  repaired: boolean
+  compileOk: boolean
+  errors?: string[]
+  fallbackReason?: string
+}
+
+export type NLCompileReport = {
+  ok: boolean
+  errors: string[]
+  codes: string[]
+}
+
+export type NLGenerateResult = {
+  graph: SerializedGraph
+  paramWarnings?: string[]
+  skills: NLSkillRecommendation[]
+  compile: NLCompileReport
+  generation: NLGenerationMeta
+}
+
+export async function nlGenerate(prompt: string): Promise<NLGenerateResult> {
   return request('/api/nl/generate', { method: 'POST', body: JSON.stringify({ prompt }) })
 }
 

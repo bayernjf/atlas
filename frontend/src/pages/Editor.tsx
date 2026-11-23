@@ -77,6 +77,7 @@ import {
   listTemplates,
   listVersions,
   nlGenerate,
+  type NLGenerateResult,
   replayRecording,
   touchTemplateUsage,
   updateRecording,
@@ -255,6 +256,7 @@ export function Editor({
   )
   const [runError, setRunError] = useState<string | null>(null)
   const [nlError, setNlError] = useState<string | null>(null)
+  const [nlResult, setNlResult] = useState<NLGenerateResult | null>(null)
   const [compileResult, setCompileResult] = useState<CompileResult | null>(null)
   const [runResult, setRunResult] = useState<RunResult | null>(null)
   const [pendingApprovals, setPendingApprovals] = useState<
@@ -843,14 +845,15 @@ export function Editor({
     setNlLoading(true)
     setNlError(null)
     try {
-      const { graph, paramWarnings } = await nlGenerate(nlPrompt)
+      const result = await nlGenerate(nlPrompt)
+      const { graph, paramWarnings } = result
       loadGraph(graph)
       setDraftGraphId(null)
       setPublishedRef(null)
       setRunTarget('draft')
       // loadGraph 会清空警告，故在其后写入；M3 表单化后按节点归到 params 根（04 §4.10）
       setNlWarnings(paramWarnings ?? [])
-      setNlOpen(false)
+      setNlResult(result)
       paramWarnings?.forEach((warning) =>
         appendLog(t('nl.paramWarning', { warning })),
       )
@@ -1480,18 +1483,99 @@ export function Editor({
         title={t('nl.title')}
         open={nlOpen}
         onCancel={() => setNlOpen(false)}
-        onOk={generateDraft}
+        onOk={() => (nlResult ? setNlOpen(false) : generateDraft())}
         confirmLoading={nlLoading}
-        okText={t('nl.submit')}
+        okText={nlResult ? t('nl.close') : t('nl.submit')}
+        width={720}
       >
         <TextArea
           rows={3}
           value={nlPrompt}
-          onChange={(event) => setNlPrompt(event.target.value)}
+          onChange={(event) => {
+            setNlPrompt(event.target.value)
+            setNlResult(null)
+          }}
           aria-label={t('nl.title')}
           placeholder={t('nl.defaultPrompt')}
         />
         {nlError && <Alert type="error" showIcon title={nlError} style={{ marginTop: 12 }} />}
+        {nlResult && (
+          <div style={{ marginTop: 16 }}>
+            <Alert
+              type={
+                nlResult.generation.mode === 'llm'
+                  ? nlResult.compile.ok
+                    ? 'success'
+                    : 'warning'
+                  : 'warning'
+              }
+              showIcon
+              title={
+                nlResult.generation.mode === 'llm'
+                  ? nlResult.compile.ok
+                    ? t('nl.compileOk')
+                    : t('nl.compileFailed', { count: nlResult.compile.errors.length })
+                  : t('nl.modeTemplate')
+              }
+              style={{ marginBottom: 12 }}
+            />
+            <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
+              {t('nl.generationMeta', {
+                mode:
+                  nlResult.generation.mode === 'llm' ? t('nl.modeLlm') : t('nl.modeTemplate'),
+                model: nlResult.generation.model ?? t('nl.modelUnset'),
+                attempts: nlResult.generation.attempts,
+                repaired: nlResult.generation.repaired ? t('nl.repaired') : '',
+              })}
+            </Typography.Text>
+            {nlResult.generation.mode === 'template' && (
+              <Alert
+                type="warning"
+                showIcon
+                title={t('nl.templateFallbackHint')}
+                style={{ marginBottom: 12 }}
+              />
+            )}
+            {nlResult.compile.errors.length > 0 && (
+              <Alert
+                type="warning"
+                showIcon
+                title={t('nl.compileFailed', { count: nlResult.compile.errors.length })}
+                description={nlResult.compile.errors.join('；')}
+                style={{ marginBottom: 12 }}
+              />
+            )}
+            <Typography.Text strong style={{ display: 'block', marginBottom: 8 }}>
+              {t('nl.skillsTitle')}
+            </Typography.Text>
+            <Space orientation="vertical" size={6} style={{ width: '100%' }}>
+              {nlResult.skills.map((skill) => (
+                <div key={skill.id}>
+                  <Space size={6} wrap>
+                    <Tag color={skill.score > 0 ? 'blue' : 'default'}>{skill.id}</Tag>
+                    <Typography.Text strong>{skill.name}</Typography.Text>
+                    <Typography.Text type="secondary">
+                      {t('nl.skillScore', { score: skill.score })}
+                    </Typography.Text>
+                  </Space>
+                  <Typography.Text type="secondary" style={{ display: 'block', marginTop: 2 }}>
+                    {skill.description}
+                  </Typography.Text>
+                  <Typography.Text type="secondary" style={{ display: 'block' }}>
+                    {t('nl.skillMatched', {
+                      words: skill.matched.length
+                        ? skill.matched.join('、')
+                        : t('nl.skillNoMatched'),
+                    })}
+                  </Typography.Text>
+                </div>
+              ))}
+            </Space>
+            <Typography.Text type="secondary" style={{ display: 'block', marginTop: 12 }}>
+              {t('nl.loadedHint')}
+            </Typography.Text>
+          </div>
+        )}
       </Modal>
       <Modal
         title={t('template.title')}
