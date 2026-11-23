@@ -1,0 +1,32 @@
+{
+  "cases": {
+    "dev-demo-off": {
+      "adapters": [
+        "shop",
+        "http",
+        "web-playwright",
+        "message",
+        "memory"
+      ],
+      "web_playwright": true
+    },
+    "prod-demo-off": {
+      "adapters": [
+        "http",
+        "message",
+        "memory"
+      ],
+      "web_playwright": false
+    },
+    "prod-demo-1": {
+      "adapters": [
+        "shop",
+        "http",
+        "web-playwright",
+        "message",
+        "memory"
+      ],
+      "web_playwright": true
+    }
+  }
+}

@@ -1,0 +1,143 @@
+{
+  "goal": "A-01 local web flow",
+  "target": "http://127.0.0.1:3000/zh-CN/analytics",
+  "atlas_env": "dev",
+  "started_at": "2026-11-23T02:31:03.549440+00:00",
+  "steps": [
+    {
+      "name": "navigate-loom-analytics",
+      "capability": "navigate",
+      "parameters": {
+        "url": "http://127.0.0.1:3000/zh-CN/analytics"
+      },
+      "status": "SUCCESS",
+      "error": null,
+      "output": {
+        "url": "http://127.0.0.1:3000/zh-CN/analytics"
+      },
+      "duration_ms": 77.7,
+      "at": "2026-11-23T02:31:03.900930+00:00",
+      "screenshot": "01-loaded.png",
+      "observation": {
+        "url": "http://127.0.0.1:3000/zh-CN/analytics",
+        "title": "Loom"
+      }
+    },
+    {
+      "name": "click-missing-selector-expected-failure",
+      "capability": "click",
+      "parameters": {
+        "element_desc": "不存在的按钮",
+        "selector": "#a01-missing-button"
+      },
+      "status": "FAILED",
+      "error": {
+        "code": "ELEMENT_NOT_FOUND",
+        "message": "元素未找到，三层定位均失败"
+      },
+      "output": null,
+      "duration_ms": 3057.1,
+      "at": "2026-11-23T02:31:07.007540+00:00",
+      "observation": {
+        "url": "http://127.0.0.1:3000/zh-CN/analytics",
+        "title": "Loom"
+      }
+    },
+    {
+      "name": "type-date-from",
+      "capability": "type",
+      "parameters": {
+        "selector": "input[name=date_from]",
+        "text": "2026-11-01"
+      },
+      "status": "SUCCESS",
+      "error": null,
+      "output": {
+        "selector": "input[name=date_from]",
+        "length": 10
+      },
+      "duration_ms": 12.9,
+      "at": "2026-11-23T02:31:07.021431+00:00",
+      "observation": {
+        "url": "http://127.0.0.1:3000/zh-CN/analytics",
+        "title": "Loom"
+      }
+    },
+    {
+      "name": "type-date-to",
+      "capability": "type",
+      "parameters": {
+        "selector": "input[name=date_to]",
+        "text": "2026-11-23"
+      },
+      "status": "SUCCESS",
+      "error": null,
+      "output": {
+        "selector": "input[name=date_to]",
+        "length": 10
+      },
+      "duration_ms": 2.5,
+      "at": "2026-11-23T02:31:07.024641+00:00",
+      "observation": {
+        "url": "http://127.0.0.1:3000/zh-CN/analytics",
+        "title": "Loom"
+      }
+    },
+    {
+      "name": "click-apply-retry",
+      "capability": "click",
+      "parameters": {
+        "element_desc": "应用",
+        "selector": "button[type=submit]"
+      },
+      "status": "SUCCESS",
+      "error": null,
+      "output": {
+        "layer": "selector"
+      },
+      "duration_ms": 71.7,
+      "at": "2026-11-23T02:31:07.096781+00:00",
+      "observation": {
+        "url": "http://127.0.0.1:3000/zh-CN/analytics?date_from=2026-11-01&date_to=2026-11-23",
+        "title": ""
+      }
+    },
+    {
+      "name": "final-read",
+      "capability": "screenshot",
+      "parameters": {},
+      "status": "SUCCESS",
+      "error": null,
+      "output": {
+        "bytes": 70691
+      },
+      "duration_ms": 33.9,
+      "at": "2026-11-23T02:31:08.656152+00:00",
+      "screenshot": "02-filtered.png",
+      "observation": {
+        "url": "http://127.0.0.1:3000/zh-CN/analytics?date_from=2026-11-01&date_to=2026-11-23",
+        "title": "Loom"
+      }
+    }
+  ],
+  "read_after_load": {
+    "title": "Loom",
+    "url": "http://127.0.0.1:3000/zh-CN/analytics",
+    "has_analytics_heading": true,
+    "has_effect_count": false
+  },
+  "expected_failure": {
+    "status": "FAILED",
+    "code": "ELEMENT_NOT_FOUND",
+    "visible_in_trace": true
+  },
+  "read_after_filter": {
+    "url": "http://127.0.0.1:3000/zh-CN/analytics?date_from=2026-11-01&date_to=2026-11-23",
+    "query_applied": true,
+    "effect_count_visible": true,
+    "body_excerpt": "Loom\n私域内容生产白名单平台\n工作台\n产品中心\n内容生产与发布\n模板管理\nV2\n数据分析\n社媒账号\nV2\n合规风控\n系统设置\nLoom\n数据分析\n\n汇总本租户已回流的内容效果数据（仅统计已匹配成品的记录；效果反哺与评分校准随后续版本）。\n\n开始日期\n结束日期\n应用\n重置\n效果记录数\n1\n覆盖成品数\n1\n平均阅读率\n30.0%\n基于 1 条含阅读率记录\n采集时间范围\n2026-11-23 ~ 2026-11-23\n播放量\n100\n点赞\n12\n评论\n0\n分享\n0\n咨询\n0\n转化\n0\n按成品汇总\n成品\t记录数\t播放量\t点赞\t评论\t分享\t咨询\t转化\ncd099720\t1\t100\t12\t0\t0\t0\t0"
+  },
+  "egress_denials": [],
+  "ok": true,
+  "ended_at": "2026-11-23T02:31:08.713137+00:00"
+}
