@@ -1,0 +1,114 @@
+{
+  "started_at": "2026-11-23T02:48:23.254933+00:00",
+  "target": {
+    "db": "/Users/jiangfeng/000mycodes/atlas/outputs/a05-local-side-effects/a05.db",
+    "webhook": "http://127.0.0.1:63937/a05-hook"
+  },
+  "cases": {
+    "rejected": {
+      "frame_kind": "approval",
+      "row_count_before_decision": 0,
+      "suspended_before_decision": true,
+      "row_count_after_decision": 0,
+      "suspended_after_decision": false,
+      "result": {
+        "status": "completed",
+        "run_id": null,
+        "error": null,
+        "exception": null,
+        "message": null
+      }
+    },
+    "approved": {
+      "frame_kind": "approval",
+      "row_count_before_decision": 0,
+      "suspended_before_decision": true,
+      "rows_before_decision": [],
+      "row_count_after_decision": 1,
+      "suspended_after_decision": false,
+      "rows_after_decision": [
+        {
+          "order_id": "A05-OK-001",
+          "amount": 129.5,
+          "note": "approved-local-write",
+          "created_at": "2026-11-23T02:48:23.303308+00:00"
+        }
+      ],
+      "result": {
+        "status": "completed",
+        "run_id": null,
+        "error": null,
+        "exception": null,
+        "message": null
+      },
+      "deliveries": [
+        {
+          "path": "/a05-hook",
+          "body": {
+            "id": "1220edde-fa88-4051-bca2-90e6cb815e9d",
+            "channel": "webhook",
+            "subject": "A-05 本地写入完成",
+            "body": "订单 A05-OK-001 已写入本地 SQLite",
+            "sent_at": "2026-11-23T02:48:23.319817+00:00"
+          }
+        }
+      ]
+    },
+    "delivery_failure": {
+      "row_count_after_side_effect": 2,
+      "side_effect_committed": true,
+      "delivery_received": 0,
+      "result": {
+        "status": null,
+        "run_id": null,
+        "error": null,
+        "exception": "RunNodeFailed",
+        "message": "NODE_EXECUTION_FAILED: 节点 tool-ok-msg 执行失败（on_error=stop）：webhook 群发部分失败：1/1 个目标投递失败"
+      },
+      "result_full": {
+        "exception": "RunNodeFailed",
+        "message": "NODE_EXECUTION_FAILED: 节点 tool-ok-msg 执行失败（on_error=stop）：webhook 群发部分失败：1/1 个目标投递失败"
+      },
+      "compensation": {
+        "sql": "DELETE FROM a05_orders WHERE order_id = :order_id",
+        "rowcount": 1,
+        "row_count_after_compensation": 1
+      }
+    }
+  },
+  "final": {
+    "row_count": 1,
+    "rows": [
+      {
+        "order_id": "A05-OK-001",
+        "amount": 129.5,
+        "note": "approved-local-write",
+        "created_at": "2026-11-23T02:48:23.303308+00:00"
+      }
+    ],
+    "deliveries": [
+      {
+        "path": "/a05-hook",
+        "body": {
+          "id": "e929f4c2-8a65-4c67-b50f-53dc310c28a0",
+          "channel": "webhook",
+          "subject": "A-05 本地写入被拒绝",
+          "body": "订单 A05-REJECT-001 未写入（人工拒绝）",
+          "sent_at": "2026-11-23T02:48:23.271782+00:00"
+        }
+      },
+      {
+        "path": "/a05-hook",
+        "body": {
+          "id": "1220edde-fa88-4051-bca2-90e6cb815e9d",
+          "channel": "webhook",
+          "subject": "A-05 本地写入完成",
+          "body": "订单 A05-OK-001 已写入本地 SQLite",
+          "sent_at": "2026-11-23T02:48:23.319817+00:00"
+        }
+      }
+    ]
+  },
+  "ended_at": "2026-11-23T02:48:25.380341+00:00",
+  "ok": true
+}

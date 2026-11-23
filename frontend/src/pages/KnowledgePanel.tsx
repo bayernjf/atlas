@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
 import {
   Alert,
   Button,
@@ -39,6 +39,24 @@ function categoryOf(item: MemoryItem): string {
   return item.metadata?.category ?? ''
 }
 
+const KNOWLEDGE_FILE_ACCEPT = '.md,.markdown,.txt,.docx'
+const KNOWLEDGE_FILE_MAX = 10 * 1024 * 1024
+const KNOWLEDGE_FILE_EXTENSIONS = ['.md', '.markdown', '.txt', '.docx']
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const dataUrl = String(reader.result ?? '')
+      const payload = dataUrl.split(',', 2)[1]
+      if (!payload) reject(new Error('empty file'))
+      else resolve(payload)
+    }
+    reader.onerror = () => reject(reader.error ?? new Error('read failed'))
+    reader.readAsDataURL(file)
+  })
+}
+
 export function KnowledgePanel({ canOperate, canAdmin, onMutated }: KnowledgePanelProps) {
   const { t } = useTranslation('memory')
   const [items, setItems] = useState<MemoryItem[]>([])
@@ -48,9 +66,11 @@ export function KnowledgePanel({ canOperate, canAdmin, onMutated }: KnowledgePan
 
   const [importCategory, setImportCategory] = useState<KnowledgeCategory>('faq')
   const [importText, setImportText] = useState('')
+  const [importFile, setImportFile] = useState<File | null>(null)
   const [importing, setImporting] = useState(false)
   const [importError, setImportError] = useState('')
   const [importNotice, setImportNotice] = useState('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -69,22 +89,62 @@ export function KnowledgePanel({ canOperate, canAdmin, onMutated }: KnowledgePan
     void refresh()
   }, [refresh])
 
+  const handleFileChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0] ?? null
+      setImportError('')
+      if (!file) {
+        setImportFile(null)
+        return
+      }
+      const lower = file.name.toLowerCase()
+      if (!KNOWLEDGE_FILE_EXTENSIONS.some((suffix) => lower.endsWith(suffix))) {
+        setImportFile(null)
+        setImportError(t('knowledge.importFileTypeError'))
+        event.target.value = ''
+        return
+      }
+      if (file.size > KNOWLEDGE_FILE_MAX) {
+        setImportFile(null)
+        setImportError(t('knowledge.importFileTooLarge'))
+        event.target.value = ''
+        return
+      }
+      setImportFile(file)
+    },
+    [t],
+  )
+
+  const clearSelectedFile = useCallback(() => {
+    setImportFile(null)
+    setImportError('')
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }, [])
+
   const handleImport = useCallback(async () => {
     const text = importText.trim()
-    if (!text) {
-      setImportError(t('knowledge.importTextRequired'))
+    if (!text && !importFile) {
+      setImportError(t('knowledge.importTextOrFileRequired'))
       return
     }
     setImporting(true)
     setImportError('')
     setImportNotice('')
     try {
-      const result = await importKnowledge({ category: importCategory, text })
+      let payload: Parameters<typeof importKnowledge>[0]
+      if (importFile) {
+        const content_base64 = await fileToBase64(importFile)
+        payload = { category: importCategory, filename: importFile.name, content_base64 }
+      } else {
+        payload = { category: importCategory, text }
+      }
+      const result = await importKnowledge(payload)
       setImportNotice(
         t('knowledge.importSuccess', { imported: result.imported }) +
           (result.truncated ? t('knowledge.importTruncated') : ''),
       )
       setImportText('')
+      clearSelectedFile()
       await refresh()
       onMutated()
     } catch (error) {
@@ -92,7 +152,7 @@ export function KnowledgePanel({ canOperate, canAdmin, onMutated }: KnowledgePan
     } finally {
       setImporting(false)
     }
-  }, [importCategory, importText, onMutated, refresh, t])
+  }, [clearSelectedFile, importCategory, importFile, importText, onMutated, refresh, t])
 
   const handleDelete = useCallback(
     async (id: string) => {
@@ -119,6 +179,23 @@ export function KnowledgePanel({ canOperate, canAdmin, onMutated }: KnowledgePan
       render: (_: unknown, record: MemoryItem) => {
         const category = categoryOf(record)
         return category ? <Tag color="cyan">{t(`category.${category}`)}</Tag> : <Typography.Text type="secondary">—</Typography.Text>
+      },
+    },
+    {
+      title: t('knowledge.sourceColumn'),
+      key: 'source',
+      width: 180,
+      render: (_: unknown, record: MemoryItem) => {
+        const source = record.metadata?.source
+        const chunk = record.metadata?.chunk_index
+        return source ? (
+          <Typography.Text ellipsis style={{ maxWidth: 160 }}>
+            {source}
+            {chunk !== undefined ? ` #${chunk}` : ''}
+          </Typography.Text>
+        ) : (
+          <Typography.Text type="secondary">—</Typography.Text>
+        )
       },
     },
     {
@@ -193,6 +270,33 @@ export function KnowledgePanel({ canOperate, canAdmin, onMutated }: KnowledgePan
               aria-label={t('knowledge.importCategoryLabel')}
               style={{ fontFamily: 'inherit' }}
             />
+            <Space wrap>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={KNOWLEDGE_FILE_ACCEPT}
+                onChange={handleFileChange}
+                style={{ display: 'none' }}
+                aria-label={t('knowledge.importFileLabel')}
+              />
+              <Button onClick={() => fileInputRef.current?.click()}>
+                {t('knowledge.importFileChoose')}
+              </Button>
+              {importFile ? (
+                <>
+                  <Typography.Text>
+                    {t('knowledge.importFileSelected', { name: importFile.name })}
+                  </Typography.Text>
+                  <Button size="small" onClick={clearSelectedFile}>
+                    {t('knowledge.importFileClear')}
+                  </Button>
+                </>
+              ) : (
+                <Typography.Text type="secondary">
+                  {t('knowledge.importFileLabel')}
+                </Typography.Text>
+              )}
+            </Space>
             {importError && <Alert type="error" showIcon message={importError} />}
             {importNotice && <Alert type="success" showIcon message={importNotice} />}
             <Button type="primary" loading={importing} onClick={() => void handleImport()}>

@@ -795,7 +795,42 @@ export async function runGraph(
   return request(`/api/graphs/${id}/run`, { method: 'POST', body: runBody(inputs, undefined, opts) })
 }
 
-export async function nlGenerate(prompt: string): Promise<{ graph: SerializedGraph; paramWarnings?: string[] }> {
+export type NLSkillRecommendation = {
+  id: string
+  name: string
+  description: string
+  score: number
+  matched: string[]
+  tools: string[]
+  priority: number
+}
+
+export type NLGenerationMeta = {
+  /** llm = 真实模型产出；template = 明确标注的离线兜底，不算 AI 成功 */
+  mode: 'llm' | 'template'
+  model?: string | null
+  attempts: number
+  repaired: boolean
+  compileOk: boolean
+  errors?: string[]
+  fallbackReason?: string
+}
+
+export type NLCompileReport = {
+  ok: boolean
+  errors: string[]
+  codes: string[]
+}
+
+export type NLGenerateResult = {
+  graph: SerializedGraph
+  paramWarnings?: string[]
+  skills: NLSkillRecommendation[]
+  compile: NLCompileReport
+  generation: NLGenerationMeta
+}
+
+export async function nlGenerate(prompt: string): Promise<NLGenerateResult> {
   return request('/api/nl/generate', { method: 'POST', body: JSON.stringify({ prompt }) })
 }
 
@@ -2461,7 +2496,18 @@ export type MemoryItem = {
   created_at: string
 }
 
-export type MemorySearchResult = MemoryItem & { score: number }
+export type KnowledgeCitation = {
+  source: string
+  format: string
+  doc_id: string
+  chunk_index: number | string
+  chunk_count: number | string
+}
+
+export type MemorySearchResult = MemoryItem & {
+  score: number
+  citation?: KnowledgeCitation
+}
 
 export async function listMemories(
   kind?: MemoryKind,
@@ -2512,10 +2558,12 @@ export async function updateMemory(
   return request(`/api/memories/${id}`, { method: 'PUT', body: JSON.stringify(payload) })
 }
 
-/** docs/108 打包 AA：知识库文档导入（operate；纯文本分段入库，返回条目与截断标记）。 */
+/** docs/108 打包 AA / A-08：知识库文档导入（operate；text 或 base64 文件二选一）。 */
 export type KnowledgeImportRequest = {
   category: KnowledgeCategory
-  text: string
+  text?: string
+  content_base64?: string
+  filename?: string
   scope?: Record<string, string>
 }
 

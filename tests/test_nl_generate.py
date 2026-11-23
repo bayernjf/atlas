@@ -57,7 +57,7 @@ def test_llm_prompt_advertises_condition_kind_and_config(monkeypatch):
 
     def _fake_completion(*, model, messages, temperature, **kwargs):  # noqa: ANN001
         captured["system"] = messages[0]["content"]
-        return {"choices": [{"message": {"content": "{}"}}]}
+        return {"choices": [{"message": {"content": "{\"nodes\": [], \"edges\": []}"}}]}
 
     monkeypatch.setattr(litellm, "completion", _fake_completion)
     monkeypatch.setenv("LITELLM_MODEL", "fake-model")
@@ -69,6 +69,40 @@ def test_llm_prompt_advertises_condition_kind_and_config(monkeypatch):
     assert "defaultTarget" in system
 
 
+def test_llm_prompt_advertises_shop_output_and_global_ref_rules(monkeypatch):
+    import litellm
+
+    captured: dict[str, str] = {}
+
+    def _fake_completion(*, model, messages, temperature, **kwargs):  # noqa: ANN001
+        captured["system"] = messages[0]["content"]
+        return {"choices": [{"message": {"content": "{\"nodes\": [], \"edges\": []}"}}]}
+
+    monkeypatch.setattr(litellm, "completion", _fake_completion)
+    monkeypatch.setenv("LITELLM_MODEL", "fake-model")
+
+    generate_graph("任意需求")
+    system = captured["system"]
+    assert "result.orders[0].amount" in system
+    assert "{{global.<变量名>}}" in system
+    assert "web-playwright/navigate" in system
+    assert "memory/auto_extract" in system
+    assert "{{<节点id>.decision}}" in system
+    assert "禁止用 http/request 代替 shop 退款工具" in system
+    assert "ai_decision 的 config 必须带非空 promptTemplate" in system
+    assert "禁止把末端连回 trigger 形成环" in system
+    assert "流程只能有一个 trigger 起点" in system
+    assert "schedule 必须给 5 段 cron" in system
+    assert "不要把整段布尔表达式再包一层" in system
+    assert "也不是裸 {{context.payload...}}" in system
+    assert "wait 节点恰好配置一条出边" in system
+    assert "不能作为图的结束节点" in system
+    assert "只有 loop 节点的循环体才允许回到该 loop 节点" in system
+    assert "不要新增 wait/end 占位节点" in system
+    assert "工具调用节点 type 必须是 tool_call" in system
+    assert "len() 只能出现在 condition/loop 的 expression" in system
+
+
 def test_llm_prompt_advertises_loop_kind_and_config(monkeypatch):
     import litellm
 
@@ -76,7 +110,7 @@ def test_llm_prompt_advertises_loop_kind_and_config(monkeypatch):
 
     def _fake_completion(*, model, messages, temperature, **kwargs):  # noqa: ANN001
         captured["system"] = messages[0]["content"]
-        return {"choices": [{"message": {"content": "{}"}}]}
+        return {"choices": [{"message": {"content": "{\"nodes\": [], \"edges\": []}"}}]}
 
     monkeypatch.setattr(litellm, "completion", _fake_completion)
     monkeypatch.setenv("LITELLM_MODEL", "fake-model")
@@ -99,7 +133,7 @@ def test_llm_prompt_advertises_parallel_kind_and_config(monkeypatch):
 
     def _fake_completion(*, model, messages, temperature, **kwargs):  # noqa: ANN001
         captured["system"] = messages[0]["content"]
-        return {"choices": [{"message": {"content": "{}"}}]}
+        return {"choices": [{"message": {"content": "{\"nodes\": [], \"edges\": []}"}}]}
 
     monkeypatch.setattr(litellm, "completion", _fake_completion)
     monkeypatch.setenv("LITELLM_MODEL", "fake-model")
@@ -124,7 +158,7 @@ def test_llm_prompt_advertises_wait_kind_and_config(monkeypatch):
 
     def _fake_completion(*, model, messages, temperature, **kwargs):  # noqa: ANN001
         captured["system"] = messages[0]["content"]
-        return {"choices": [{"message": {"content": "{}"}}]}
+        return {"choices": [{"message": {"content": "{\"nodes\": [], \"edges\": []}"}}]}
 
     monkeypatch.setattr(litellm, "completion", _fake_completion)
     monkeypatch.setenv("LITELLM_MODEL", "fake-model")
@@ -137,7 +171,7 @@ def test_llm_prompt_advertises_wait_kind_and_config(monkeypatch):
     assert "九类" in system
     assert "waitType" in system
     assert "durationSeconds" in system
-    assert "1-600 的整数秒" in system
+    assert "1-3600 的整数秒" in system
     assert "事件等待不支持" in system
     assert "恰好配置一条出边" in system
     assert "10-3600 的整数秒" in system
@@ -153,7 +187,7 @@ def test_llm_prompt_advertises_subgraph_kind_and_config(monkeypatch):
 
     def _fake_completion(*, model, messages, temperature, **kwargs):  # noqa: ANN001
         captured["system"] = messages[0]["content"]
-        return {"choices": [{"message": {"content": "{}"}}]}
+        return {"choices": [{"message": {"content": "{\"nodes\": [], \"edges\": []}"}}]}
 
     monkeypatch.setattr(litellm, "completion", _fake_completion)
     monkeypatch.setenv("LITELLM_MODEL", "fake-model")
@@ -176,7 +210,7 @@ def test_llm_prompt_advertises_registered_tools(monkeypatch):
 
     def _fake_completion(*, model, messages, temperature, **kwargs):  # noqa: ANN001
         captured["system"] = messages[0]["content"]
-        return {"choices": [{"message": {"content": "{}"}}]}
+        return {"choices": [{"message": {"content": "{\"nodes\": [], \"edges\": []}"}}]}
 
     monkeypatch.setattr(litellm, "completion", _fake_completion)
     monkeypatch.setenv("LITELLM_MODEL", "fake-model")
@@ -265,3 +299,433 @@ def test_param_fills_additional_properties_false():
         schemas,
     )
     assert any("未声明字段" in w and "bogus" in w for w in warnings)
+
+
+def test_normalize_drops_dangling_edge_and_dedupes_ids():
+    from atlas.llm.nl_generate import normalize_generated_graph
+
+    graph = normalize_generated_graph(
+        {
+            "nodes": [
+                {"id": "start", "type": "trigger", "name": "开始"},
+                {"id": "start", "type": "tool_call", "config": {"tool": "shop/list_pending_refunds"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "start", "target": "end"},
+                {"id": "e2", "source": "start", "target": "start-2"},
+            ],
+        }
+    )
+    assert [node["id"] for node in graph["nodes"]] == ["start", "start-2"]
+    assert [edge["target"] for edge in graph["edges"]] == ["start-2"]
+    assert graph["version"] == 1
+
+
+def test_normalize_uses_alternative_edge_for_condition_default():
+    from atlas.llm.nl_generate import normalize_generated_graph
+
+    graph = normalize_generated_graph(
+        {
+            "nodes": [
+                {"id": "c", "type": "condition", "config": {
+                    "branches": [{"label": "big", "expression": "true", "target": "a"}],
+                    "defaultTarget": "a",
+                }},
+                {"id": "a", "type": "wait", "config": {"waitType": "duration", "durationSeconds": 1}},
+                {"id": "b", "type": "wait", "config": {"waitType": "duration", "durationSeconds": 1}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "c", "target": "a"},
+                {"id": "e2", "source": "c", "target": "b"},
+            ],
+        }
+    )
+    assert graph["nodes"][0]["config"]["defaultTarget"] == "b"
+
+
+def test_normalize_drops_condition_branch_that_duplicates_default_target():
+    from atlas.llm.nl_generate import normalize_generated_graph
+
+    graph = normalize_generated_graph(
+        {
+            "nodes": [
+                {"id": "trigger_start", "type": "trigger", "config": {}},
+                {
+                    "id": "cond",
+                    "type": "condition",
+                    "config": {
+                        "branches": [
+                            {"label": "成功", "expression": "{{q.result.ok}}", "target": "ok_node"},
+                            {"label": "失败", "expression": "{{q.result.ok}} == false", "target": "fail_node"},
+                        ],
+                        "defaultTarget": "fail_node",
+                    },
+                },
+                {"id": "ok_node", "type": "wait", "config": {"waitType": "duration", "durationSeconds": 1}},
+                {"id": "fail_node", "type": "wait", "config": {"waitType": "duration", "durationSeconds": 1}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger_start", "target": "cond"},
+                {"id": "e2", "source": "cond", "target": "ok_node"},
+                {"id": "e3", "source": "cond", "target": "fail_node"},
+            ],
+        }
+    )
+    condition = next(node for node in graph["nodes"] if node["id"] == "cond")
+    assert [branch["label"] for branch in condition["config"]["branches"]] == ["成功"]
+    assert condition["config"]["defaultTarget"] == "fail_node"
+
+
+def test_tool_output_contract_exposes_real_fields():
+    from atlas.api.main import _demo_registry
+    from atlas.llm.nl_generate import _tool_output_contract
+
+    contract = _tool_output_contract(_demo_registry)
+    assert "shop/list_pending_refunds" in contract
+    assert "reason:string" in contract
+    assert "memory/recall" in contract
+    assert "results:[{id:string,kind:string,content:string" in contract
+    assert "memory/auto_extract" in contract
+    assert "extracted:integer" in contract
+    assert "shop/reject_refund" in contract
+    assert "status:string" in contract
+
+
+def test_normalize_repairs_malformed_condition_and_loop_expressions():
+    from atlas.llm.nl_generate import normalize_generated_graph
+
+    graph = normalize_generated_graph(
+        {
+            "nodes": [
+                {"id": "t", "type": "trigger", "config": {}},
+                {
+                    "id": "c",
+                    "type": "condition",
+                    "config": {
+                        "branches": [
+                            {
+                                "label": "有记录",
+                                "expression": "{{q.result.row_count} > 0",
+                                "target": "a",
+                            },
+                            {
+                                "label": "非空",
+                                "expression": "{{save.result != null}}",
+                                "target": "b",
+                            },
+                            {
+                                "label": "合法",
+                                "expression": "{{a}} == {{b}}",
+                                "target": "d",
+                            },
+                            {
+                                "label": "外层多括号",
+                                "expression": (
+                                    "{{tool_refund_progress.result.status == 200 && "
+                                    "{{tool_refund_progress.result.body.refund_status != null}}"
+                                ),
+                                "target": "f",
+                            },
+                        ],
+                        "defaultTarget": "e",
+                    },
+                },
+                {
+                    "id": "loop",
+                    "type": "loop",
+                    "config": {
+                        "mode": "while",
+                        "continueExpression": "{{counter} < {{limit}}",
+                        "maxIterations": 10,
+                        "bodyTarget": "a",
+                        "exitTarget": "b",
+                    },
+                },
+                {"id": "a", "type": "wait", "config": {"waitType": "duration", "durationSeconds": 1}},
+                {"id": "b", "type": "wait", "config": {"waitType": "duration", "durationSeconds": 1}},
+                {"id": "d", "type": "wait", "config": {"waitType": "duration", "durationSeconds": 1}},
+                {"id": "e", "type": "wait", "config": {"waitType": "duration", "durationSeconds": 1}},
+                {"id": "f", "type": "wait", "config": {"waitType": "duration", "durationSeconds": 1}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "t", "target": "c"},
+                {"id": "e2", "source": "c", "target": "a"},
+                {"id": "e3", "source": "c", "target": "b"},
+                {"id": "e6", "source": "c", "target": "d"},
+                {"id": "e7", "source": "c", "target": "e"},
+                {"id": "e8", "source": "c", "target": "f"},
+                {"id": "e4", "source": "loop", "target": "a"},
+                {"id": "e5", "source": "loop", "target": "b"},
+            ],
+        }
+    )
+    cond = next(node for node in graph["nodes"] if node["id"] == "c")
+    expressions = [branch["expression"] for branch in cond["config"]["branches"]]
+    assert expressions == [
+        "{{q.result.row_count}} > 0",
+        "{{save.result}} != null",
+        "{{a}} == {{b}}",
+        (
+            "{{tool_refund_progress.result.status}} == 200 && "
+            "{{tool_refund_progress.result.body.refund_status}} != null"
+        ),
+    ]
+    loop = next(node for node in graph["nodes"] if node["id"] == "loop")
+    assert loop["config"]["continueExpression"] == "{{counter}} < {{limit}}"
+
+
+def test_normalize_qualifies_bare_context_refs_with_single_trigger():
+    from atlas.llm.nl_generate import normalize_generated_graph
+
+    graph = normalize_generated_graph(
+        {
+            "nodes": [
+                {"id": "trig_refund", "type": "trigger", "config": {"triggerType": "manual"}},
+                {
+                    "id": "approve",
+                    "type": "human_approval",
+                    "config": {
+                        "summary": "订单 {{context.payload.order_id}}",
+                        "approver": "财务",
+                        "timeoutSeconds": 60,
+                        "onTimeout": "reject",
+                        "approvedTarget": "refund",
+                        "rejectedTarget": "notify",
+                    },
+                },
+                {
+                    "id": "refund",
+                    "type": "tool_call",
+                    "config": {
+                        "tool": "shop/execute_refund",
+                        "params": '{"order_id":"{{context.payload.order_id}}"}',
+                    },
+                },
+                {
+                    "id": "notify",
+                    "type": "tool_call",
+                    "config": {"tool": "message/send", "params": "{}"},
+                },
+            ],
+            "edges": [
+                {"id": "e1", "source": "trig_refund", "target": "approve"},
+                {"id": "e2", "source": "approve", "target": "refund"},
+                {"id": "e3", "source": "approve", "target": "notify"},
+            ],
+        }
+    )
+    approve = next(node for node in graph["nodes"] if node["id"] == "approve")
+    refund = next(node for node in graph["nodes"] if node["id"] == "refund")
+    assert approve["config"]["summary"] == "订单 {{trig_refund.context.payload.order_id}}"
+    assert refund["config"]["params"] == '{"order_id":"{{trig_refund.context.payload.order_id}}"}'
+
+
+def test_normalize_converts_tool_name_node_type_to_tool_call():
+    from atlas.llm.nl_generate import normalize_generated_graph
+
+    graph = normalize_generated_graph(
+        {
+            "nodes": [
+                {"id": "t", "type": "trigger", "config": {"triggerType": "manual"}},
+                {
+                    "id": "notify",
+                    "type": "message/send",
+                    "config": {
+                        "tool": "message/send",
+                        "params": '{"channel":"email","to":["ops@example.com"],"body":"ok"}',
+                    },
+                },
+            ],
+            "edges": [{"id": "e1", "source": "t", "target": "notify"}],
+        }
+    )
+    notify = next(node for node in graph["nodes"] if node["id"] == "notify")
+    assert notify["type"] == "tool_call"
+    assert notify["config"]["tool"] == "message/send"
+
+
+def test_normalize_collapses_constant_condition_and_drops_non_loop_self_edge():
+    from atlas.llm.nl_generate import normalize_generated_graph
+
+    graph = normalize_generated_graph(
+        {
+            "nodes": [
+                {"id": "trigger_start", "type": "trigger", "config": {"triggerType": "manual"}},
+                {"id": "recall", "type": "tool_call", "config": {"tool": "memory/recall", "params": "{}"}},
+                {"id": "decide", "type": "ai_decision", "config": {"promptTemplate": "选择渠道"}},
+                {
+                    "id": "cond",
+                    "type": "condition",
+                    "config": {
+                        "branches": [
+                            {"label": "邮件", "expression": "{{decide.result.channel}} == \"email\"", "target": "send"},
+                            {"label": "短信", "expression": "{{decide.result.channel}} == \"sms\"", "target": "send"},
+                        ],
+                        "defaultTarget": "send",
+                    },
+                },
+                {"id": "send", "type": "tool_call", "config": {"tool": "message/send", "params": "{}"}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger_start", "target": "recall"},
+                {"id": "e2", "source": "recall", "target": "decide"},
+                {"id": "e3", "source": "decide", "target": "cond"},
+                {"id": "e4", "source": "cond", "target": "send"},
+                {"id": "e5", "source": "send", "target": "send"},
+            ],
+        }
+    )
+    node_ids = {node["id"] for node in graph["nodes"]}
+    assert "cond" not in node_ids
+    assert [(edge["source"], edge["target"]) for edge in graph["edges"]] == [
+        ("trigger_start", "recall"),
+        ("recall", "decide"),
+        ("decide", "send"),
+    ]
+
+
+def test_normalize_repairs_unknown_retry_on_error_to_stop():
+    from atlas.llm.nl_generate import normalize_generated_graph
+
+    graph = normalize_generated_graph(
+        {
+            "nodes": [
+                {
+                    "id": "q",
+                    "type": "tool_call",
+                    "config": {"tool": "database/query", "params": "{}"},
+                    "retry": {"max_retries": 2, "on_error": "retry"},
+                }
+            ],
+            "edges": [],
+        }
+    )
+    assert graph["nodes"][0]["retry"]["on_error"] == "stop"
+    assert graph["nodes"][0]["retry"]["max_retries"] == 2
+
+
+def test_normalize_qualifies_declared_global_refs_without_touching_node_ids():
+    from atlas.llm.nl_generate import normalize_generated_graph
+
+    graph = normalize_generated_graph(
+        {
+            "variables": [
+                {"name": "customer_email", "type": "string", "value": "", "scope": "global"},
+                {"name": "order_id", "type": "string", "value": "", "scope": "global"},
+            ],
+            "nodes": [
+                {"id": "trigger_start", "type": "trigger", "config": {}},
+                {"id": "notify", "type": "tool_call", "config": {
+                    "tool": "message/send",
+                    "params": "{\"to\":[\"{{customer_email}}\"],\"body\":\"订单 {{order_id}} 已退款\"}",
+                }},
+                {"id": "wait_1", "type": "wait", "config": {
+                    "waitType": "duration", "durationSeconds": 1,
+                    "note": "{{customer_email}}",
+                }},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger_start", "target": "notify"},
+                {"id": "e2", "source": "notify", "target": "wait_1"},
+            ],
+        }
+    )
+    assert "{{global.customer_email}}" in graph["nodes"][1]["config"]["params"]
+    assert "{{global.order_id}}" in graph["nodes"][1]["config"]["params"]
+    assert graph["nodes"][2]["config"]["note"] == "{{global.customer_email}}"
+
+
+def test_normalize_keeps_bare_ref_when_global_name_collides_with_node_id():
+    from atlas.llm.nl_generate import normalize_generated_graph
+
+    graph = normalize_generated_graph(
+        {
+            "variables": [{"name": "customer_email", "type": "string", "value": "", "scope": "global"}],
+            "nodes": [
+                {"id": "trigger_start", "type": "trigger", "config": {}},
+                {"id": "customer_email", "type": "wait", "config": {
+                    "waitType": "duration", "durationSeconds": 1, "note": "{{customer_email}}",
+                }},
+            ],
+            "edges": [{"id": "e1", "source": "trigger_start", "target": "customer_email"}],
+        }
+    )
+    # 同名节点 id 优先，裸引用保持原样，不误判成 global 变量
+    assert graph["nodes"][1]["config"]["note"] == "{{customer_email}}"
+
+
+def test_bracket_index_path_passes_tool_output_schema():
+    from atlas.api.main import _demo_registry
+    from atlas.llm.nl_generate import validate_generated_graph
+
+    graph = {
+        "version": 1,
+        "variables": [],
+        "nodes": [
+            {"id": "t", "type": "trigger", "name": "t", "config": {}},
+            {"id": "q", "type": "tool_call", "name": "q", "config": {
+                "tool": "database/query", "params": "{\"sql\":\"select 1 as amount\"}"
+            }},
+            {"id": "c", "type": "condition", "name": "c", "config": {
+                "branches": [{"label": "big", "expression": "{{q.result.rows[0].amount}} > 1000", "target": "a"}],
+                "defaultTarget": "b",
+            }},
+            {"id": "a", "type": "tool_call", "name": "a", "config": {
+                "tool": "message/send", "params": "{\"channel\":\"email\",\"to\":[\"a@b.com\"],\"subject\":\"x\",\"body\":\"y\"}"
+            }},
+            {"id": "b", "type": "tool_call", "name": "b", "config": {
+                "tool": "message/send", "params": "{\"channel\":\"email\",\"to\":[\"a@b.com\"],\"subject\":\"x\",\"body\":\"y\"}"
+            }},
+        ],
+        "edges": [
+            {"id": "e1", "source": "t", "target": "q"},
+            {"id": "e2", "source": "q", "target": "c"},
+            {"id": "e3", "source": "c", "target": "a"},
+            {"id": "e4", "source": "c", "target": "b"},
+        ],
+    }
+    assert validate_generated_graph(graph, _demo_registry) == {
+        "ok": True, "errors": [], "codes": [],
+    }
+
+
+def test_generate_with_meta_repairs_invalid_first_draft(monkeypatch):
+    import atlas.llm.nl_generate as nl
+
+    calls: list[dict] = []
+
+    def fake_generate(prompt, model, *, api_key=None, base_url=None, repair=None, output_contract=None):
+        calls.append({"repair": repair})
+        if len(calls) == 1:
+            return {
+                "nodes": [
+                    {"id": "t", "type": "trigger", "name": "t"},
+                    {"id": "c", "type": "condition", "name": "c", "config": {
+                        "branches": [{"label": "x", "expression": "true", "target": "missing"}],
+                        "defaultTarget": "missing",
+                    }},
+                ],
+                "edges": [{"id": "e1", "source": "t", "target": "c"}],
+            }
+        from atlas.template.graphs import refund_template_graph
+
+        return refund_template_graph()
+
+    monkeypatch.setattr(nl, "_resolve_llm_config", lambda tenant_id: ("fake-model", None, None))
+    monkeypatch.setattr(nl, "_generate_with_llm", fake_generate)
+    from atlas.api.main import _demo_registry
+
+    graph, meta = nl.generate_graph_with_meta("退款", registry=_demo_registry)
+    assert len(calls) == 2
+    assert calls[1]["repair"] is not None
+    assert meta["mode"] == "llm"
+    assert meta["attempts"] == 2
+    assert meta["repaired"] is True
+    assert meta["compileOk"] is True
+    assert len(graph["nodes"]) == 7
+
+
+def test_nl_output_budget_is_not_1024():
+    import atlas.llm.nl_generate as nl
+
+    assert nl._MAX_TOKENS >= 4096

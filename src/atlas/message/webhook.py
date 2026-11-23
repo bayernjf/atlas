@@ -25,7 +25,7 @@ from typing import Any, Callable, Protocol
 
 import httpx
 
-from atlas.security.egress import EgressGuard
+from atlas.security.egress import EgressGuard, message_webhook_local_loopback_permit
 
 WEBHOOK_TIMEOUT_SECONDS = 10.0
 TIMESTAMP_HEADER = "X-Atlas-Timestamp"
@@ -65,7 +65,13 @@ class DefaultWebhookSender:
         post: Callable[..., httpx.Response] | None = None,
         clock: Callable[[], float] | None = None,
     ) -> None:
-        self._guard = guard if guard is not None else EgressGuard.from_env()
+        self._guard = (
+            guard
+            if guard is not None
+            else EgressGuard.from_env(
+                permit_cidrs=message_webhook_local_loopback_permit()
+            )
+        )
         self._post = post if post is not None else _default_post
         self._clock = clock if clock is not None else time.time
 

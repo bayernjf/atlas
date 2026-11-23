@@ -1,10 +1,11 @@
 # docs/108 · 知识库 / RAG MVP 批契约（打包 AA）
 
 > **元信息**
-> - 日期：2026-10-09
+> - 版本：v0.2（2026-11-23，A-08 追加：Markdown/DOCX 文件导入、citation、20 文档检索评估；纯文本 v1 口径保留）
+> - 日期：2026-10-09（v0.1）；2026-11-23（v0.2）
 > - 承接：docs/107 §五 A1（需求文档「编辑后台组件设计 §7 知识组件」整块缺失，比对发现无既有 D 号）
 > - 立项依据：用户「好的，按你建议」批复（docs/107 §六 第一优先）
-> - docs/14 新 D 号：**D60**（本条不解除：跨运营体共享、多格式解析、知识更新审核流、重排仍缓做）
+> - docs/14 新 D 号：**D60**（本条不解除：跨运营体共享、知识更新审核流、重排仍缓做；多格式解析中的 docx/markdown/txt 已由 A-08 追加，PDF/网页/URL 仍缓做）
 > - 形状权威：本文件；docs/14 D60 行注记；docs/13 打包 AA 小节
 > - 验收：U1259 起
 
@@ -19,7 +20,7 @@
 4. **REST**：复用 `/api/memories` 既有端点（`list(kind=)` 已支持任意 kind；`create/update` 需放行 `kind='knowledge'` + category 校验；`search` 已支持 kind）——**零新端点**（除 import）
 5. **前端**：记忆页改造为「记忆 / 知识」双标签；知识标签＝category 筛选 + 导入入口（TextArea + category 选择 + 导入按钮）+ 列表（复用 Memory 卡片形态）
 
-**非目标（D60 不解除）**：多格式文档解析（PDF/Word/网页/URL）、跨运营体知识共享、知识更新审核流、RAG 重排/多路召回、商业 embedding provider、知识市场、知识版本化、`memory` 与 `knowledge` 拆表。
+**非目标（D60 不解除）**：PDF/网页/URL 解析、跨运营体知识共享、知识更新审核流、RAG 重排/多路召回、商业 embedding provider、知识市场、知识版本化、`memory` 与 `knowledge` 拆表。**A-08 v0.2 追加**：DOCX/Markdown/TXT 文件导入与 citation 已落地，不再属于非目标。
 
 ## 二、契约形状
 
@@ -95,3 +96,67 @@ docs 立项（本文件 + docs/14 D60 行 + docs/08 立项块）
 - **PG 腿**：宿主直连三种方式均不通（5432 未映射宿主），迁移 046 与 knowledge 写读删以容器内 `docker exec atlas-db-1 psql -U atlas -d atlas` 手动验证为准。
 - **契约偏差修正**：首版空段/全空格文本导入返回 201（契约要求 422），已按契约修复为空段 422。
 - **D35 不解除**：知识产品化余部（商业 embedding 换 provider、导入幂等键、记忆/知识拆表触发条件）仍缓做。
+
+
+## 七、A-08 多格式导入与引用可追溯（2026-11-23 追加）
+
+> 承接 `docs/137` A-08（P1）：知识库只有纯文本 MVP，本地资料一多就不够用。本批不引入 PDF 依赖，按完成口径「至少 pdf/docx/md 两类」落地 **Markdown + DOCX + TXT** 三类；PDF、OCR、网页抓取、重排与商业 embedding 仍缓做。
+
+### 7.1 输入形状
+
+`POST /api/knowledge/import`（operate）在旧 `{category, text, scope?}` 之外追加文件路径，二者必须二选一：
+
+```json
+{
+  "category": "manual",
+  "filename": "manual.md",
+  "content_base64": "<base64>",
+  "scope": {"product_id": "p-1"}
+}
+```
+
+- 支持后缀：`.md` / `.markdown`（Markdown 去标记后保留正文）、`.txt`（UTF-8）、`.docx`（标准库 `zipfile` + `word/document.xml` 段落提取）。
+- 上限：文件 ≤ 10MB；DOCX 解压后的 `word/document.xml` ≤ 50MB；文件名只取 basename，不把本地路径写入元数据。
+- 拒绝：PDF（当前无解析依赖）、非 UTF-8 文本、损坏 ZIP/XML、空文档、`text` 与 `content_base64` 同时给、文件导入缺 `filename`、`text` 冒充 `.docx`；统一 422 中文。
+- 分段沿用 v1 规则：段落优先、单段 >1200 字符硬切、超 200 条截断。
+
+### 7.2 引用元数据与 citation
+
+每个知识条目在 `metadata` 追加：
+
+| 键 | 含义 |
+|---|---|
+| `source` | 文件名 basename（如 `manual.md`） |
+| `format` | `markdown` / `text` / `docx` |
+| `doc_id` | 原始文件字节的 SHA-256；重复导入同文件得到同一 id |
+| `chunk_index` | 从 0 开始的块序号 |
+| `chunk_count` | 该文件切出的总块数（含被 200 条截断前的总数） |
+
+`GET /api/memories/search` 命中 `kind=knowledge` 且带 `source` 时，结果追加：
+
+```json
+"citation": {"source": "manual.md", "format": "markdown",
+             "doc_id": "...", "chunk_index": 1, "chunk_count": 3}
+```
+
+引用是只读派生字段，不改变既有记忆条目字段；fact/preference 结果不带 `citation`。
+
+### 7.3 前端
+
+- 知识页导入卡支持「粘贴文本」或「选择文件」；前端只做后缀/大小预检，权威校验在服务端。
+- 文件以 base64 JSON 提交，避免新增 `python-multipart` 依赖；成功后清空文本与文件选择。
+- 知识列表新增「来源文件」列（`source #序号`）；记忆语义搜索新增「引用」列，显示 `citation.source #chunk_index+1`。
+
+### 7.4 20 文档检索评估
+
+- 脚本 `scripts/eval_knowledge_retrieval.py`：经真实 HTTP（TestClient）登录、导入 20 篇 Markdown，每篇一个唯一查询，记录 top-1/top-3 与每条 citation。
+- 证据 `outputs/a08-knowledge-rag/20-doc-eval.json`：**20 文档 / 20 查询，top-1 18、top-3 20**（top-1 90%、top-3 100%）。
+- 口径：使用 `LocalDeterministicEmbedder` 离线词法向量，不代表商业语义模型效果；top-1 未满分如实记录，不用调参把评估刷满。
+- 测试：`tests/test_knowledge_multiformat.py` 4 例（Markdown 去标记/元数据、DOCX 段落/citation、校验路径、20 文档 top-3）；前端 `apiClient.test.ts` 增加文件导入请求形状 1 例。
+
+### 7.5 边界
+
+- 不接 PDF/OCR/网页 URL；不引第三方解析依赖；不改数据库 schema（`metadata` 仍是字符串键值）。
+- `doc_id` 只做引用对齐，不做去重：重复导入仍会产生重复条目（v1 既有边界）。
+- 引用只回答「来自哪个文件第几块」，不提供页码/段落坐标；PDF 接入后再补页码。
+- 20 文档评估是机制回归，不是召回质量承诺；真实资料规模上来后按 D35/D60 触发换 provider 或重排。

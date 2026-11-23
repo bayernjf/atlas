@@ -3,6 +3,66 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔docs〕A-06 单次全量口径校正 + 真实浏览器验收（2026-11-23；docs/141）
+
+- 撤回“20/20 = 单次全量”的表述：旧 20/20 是 17 条第一轮通过复用 + 3 条失败项重跑。
+- 5 次单次全量真实 LLM 评估：**17/20、15/20、19/20、18/20、16/20**，合计 **85/100（85%）**；最佳 19/20，当前代码 16/20；`mode=llm` 与技能 top-3 各 5 次全为 20/20。
+- 真实浏览器 NL Modal 验收：`openai/ark-code-latest` 真实生成、L3 通过、技能 top-3（shop/message/database）、7 节点草稿载入、画布问题面板“无问题”；证据 `outputs/a06-nl-ui/20-nl-modal-real-llm.png`、`21-canvas-after-close-full.png`。
+- 前端修复 `scope.ts` 数组下标路径（`rows[0].status`），问题面板由错误转“无问题”；证据 `frontend/src/lib/__tests__/scope.test.ts` 47 passed。
+- 门：后端全量 **3121 passed / 214 skipped / 1 warning**（207.01s）；前端 **1030 passed / 2 skipped**；build/oxlint 绿；临时验收栈已清理。
+- 边界：剩余 4 条 run6 失败为模型语义错误（不可达节点、`ai_decision` 字段越界、编造输出字段、漏声明全局变量），不用猜业务的 heuristic 刷绿；L3 不等于实际运行。
+
+### 〔docs〕docs/08 §八候选池清账（2026-11-23；docs/143）
+
+- 逐组复核 A/B/C/D 与 AT–BS 里程碑：本节无未立项且本地可闭环项；B/C 组已排干，AT–BS 全部收口，D 组为真实凭据/域名/客户/多实例等外部触发。
+- 不新增代码、不预铺外部凭据；关闭 handoff 对应待办，避免后续把“候选池”误读成仍有本地活可捡。
+- 边界：只清候选池，不代表 Atlas A-07、Loom L-05、Zeus Z-04/Z-06/Z-07 已完成。
+
+### 〔docs〕graph-1 旧失败样本归档（2026-11-23；docs/142）
+
+- 旧 `500 NODE_EXECUTION_FAILED / call start() before execute()` 定位为 `WebHarnessAdapter` 未启动时的预期 `BROWSER_NOT_STARTED` 结构化失败，节点按 `on_error=stop` 映射成 500；不是进程崩溃。
+- 旧样本没有图定义/请求体/运行 ID，仓库无生产 `graph-1` 种子，按不可复现归档；替代证据为 A-01 真实浏览器 `outputs/a01-web-flow/trace.json` `ok=true`。
+- 新增守卫测试 `tests/test_web_adapter_egress.py::test_execute_before_start_is_a_structured_browser_not_started_failure`，定向 22 passed；不改 `web/adapter.py` 行为。
+
+### 〔feat〕A-06 真实 LLM 生成质量 + 技能 top-3 + 20 条字段级评估（2026-11-23；docs/141）
+
+- 新增 `src/atlas/skills/recommend.py`：按适配器粒度从 `AdapterRegistry` 投影技能卡，确定性子串打分返回 top-3，带 `matched/tools/priority`，同输入同注册表稳定；未登记适配器用 id 兜底。
+- `generate_graph_with_meta()` 真实模型最多 2 次尝试，首稿失败把错误作为 repair 提示再生成；meta 返回 `mode/model/attempts/repaired/compileOk/errors`，`mode=template` 明示离线兜底，评估只认 `mode=llm`。
+- `normalize_generated_graph()` 修 id/edge/全局引用/`retry.on_error`/condition 默认目标冲突/冗余 branch/常量 condition 折叠/非 loop 自环；prompt 补单 trigger、schedule cron、webhook URL、结束节点不得建成 trigger、末端不得连回 trigger 等硬约束。
+- `POST /api/nl/generate` 返回 `skills/compile/generation`；前端 NL Modal 展示来源、模型、尝试次数、修复状态、L3 结果、技能 top-3 命中词与工具，`mode=template` 黄色警告“不是 AI 生成”。
+- 证据：`scripts/eval_nl_skills.py` + `outputs/a06-nl-skills/20-case-eval.json`（旧合并口径 20/20：17 条复用第一轮通过 + 3 条失败项重跑；第一轮 17/20 失败样本存 `round1-*`；**该 20/20 不是单次全量，已由上方 2026-11-23 晚复核校正为 5 次 17/15/19/18/16**）。
+- 门：定向 **36 passed**；后端全量 **3116 passed／214 skipped／1 warning**；前端 **1029 passed／2 skipped**；build/oxlint/ruff/`git diff --check` 通过。边界：单模型、适配器粒度技能、L3 不等于实际运行、20 条是回归集不是质量承诺。
+
+### 〔feat〕A-08 知识库多格式导入 + 引用可追溯 + 20 文档评估（2026-11-23；docs/108 v0.2 §7）
+
+- `POST /api/knowledge/import` 追加 `content_base64 + filename` 文件路径，支持 `.md/.markdown/.txt/.docx`；Markdown 去标记、DOCX 用标准库 `zipfile`+`word/document.xml` 提段落、TXT 只收 UTF-8；PDF 未接（无解析依赖），满足 A-08「至少 pdf/docx/md 两类」。
+- 知识条目 `metadata` 追加 `source/format/doc_id/chunk_index/chunk_count`；`GET /api/memories/search` 对带 source 的 knowledge 结果追加 `citation`，fact/preference 不带；`doc_id` 为原始文件 SHA-256。
+- 前端知识页支持选文件导入（前端只做后缀/大小预检），知识列表新增「来源文件」列，语义搜索新增「引用」列；无新依赖。
+- 证据：`scripts/eval_knowledge_retrieval.py` + `outputs/a08-knowledge-rag/20-doc-eval.json`（20 文档 / 20 查询，top-1 18、top-3 20；离线确定性词法向量，top-1 未满分如实记录）。
+- 门：`tests/test_knowledge_multiformat.py` 4 例；后端全量 **3097 passed／214 skipped／1 warning**；前端 **1028 passed／2 skipped**；Ruff/oxlint/build 通过。边界：无 PDF/OCR/网页 URL、无页码/重排/商业 embedding；重复导入仍无幂等键。
+
+### 〔feat〕A-02 A2A 真实 run + 租户绑定/幂等/冲突仲裁（2026-11-23；docs/140）
+
+- 新增 A2A `run-graph` skill：租户绑定 token 在 `tasks/send` 下真实执行非交互已保存图，写租户 `run_store`，artifact 带 `runId/graphId/outputs/trace`；交互图 `human_approval`/`wait` 启动前拒绝。
+- 新增 `ATLAS_A2A_TASK_TOKENS=caller:tenant:token,...`：调用方与租户显式绑定；legacy `ATLAS_A2A_TASK_TOKEN` 收窄为 plan-only；prod 两组都未配置仍 401 fail-closed。
+- 幂等 `(tenant,idempotency_key)` 返回原 task 快照；同 key 不同请求回 `-32004`。冲突 `(tenant,graph_id)` 单飞回 `-32003`，带 `activeTaskId/activeRunId`。
+- 证据：`scripts/verify_a2a_real_run.py` + `outputs/a02-a2a-real-run/evidence.json`（3 Bot 真实 HTTP；慢图冲突；租户越权；交互图拒绝；幂等同 task/同 run）。
+- 门：A2A 专项 **25 passed**；环境面 6 passed；错误码治理 17 passed；后端全量 3093 passed／214 skipped／1 warning。边界：task 台账与 memory 档 run_store 重启即失，无多副本/OAuth2/续跑/取消信号/LLM 用量计量。
+
+### 〔feat〕A-05 本地真实副作用 + 本地审批/投递（2026-11-23；docs/139）
+
+- 新增 `ATLAS_MESSAGE_WEBHOOK_ALLOW_LOOPBACK`：仅非 prod 默认放行 `127.0.0.0/8`＋`::1/128`，显式 `0` 关闭，prod 恒空；只作用于消息 webhook，SMTP/IM/Shopify 不变。
+- 新增 `scripts/verify_local_side_effects.py`：真实 SQLite 文件写 + `human_approval` 真挂起 + `127.0.0.1` 一次性 webhook；拒绝路径 0 写入，通过路径审批后 1 行并送达，投递失败路径保留已写库/未送达证据并用补偿 DELETE 还原。
+- 证据：`outputs/a05-local-side-effects/`（`evidence.json`、`graph.json`、`a05.db`）；不声称自动事务回滚，公网 SMTP/IM/真实店铺仍未验。
+- 门：`tests/test_message_webhook.py` **32 passed**（含 3 条本地回环正反例）；后端全量 **3080 passed／214 skipped**。
+
+### 〔feat〕A-01 本地真浏览器工作流（2026-11-23；docs/138）
+
+- 新增 `ATLAS_WEB_ALLOW_LOOPBACK`：非 prod 默认放行 `127.0.0.0/8`＋`::1/128`，显式 `0` 关闭，prod 恒空；`EgressGuard.from_env(permit_cidrs=...)` 透传，仅 `web/adapter.py` 使用，HTTP/message 等消费点不变。
+- 新增 `scripts/verify_web_flow.py`：真实 Chromium 跑 Loom `127.0.0.1:3000/zh-CN/analytics` 六步（navigate/read/type/故意失败 click/重试 click/read），产出 `outputs/a01-web-flow/trace.json`＋两张截图；`ok=true`、`query_applied=true`、`egress_denials=[]`。
+- 边界：prod 仍不注册 `web-playwright`；3xx 逐跳 egress 仍 docs/14 D52；无登录态/写副作用，A-05 未做。
+- 门：`tests/test_web_adapter_egress.py`＋`tests/test_demo_surface_prod_gate.py` **45 passed**。
+
 ### 〔refactor〕渐进 ORM 化批 1＝message_templates / llm_usage 内部 SQL 迁 SQLAlchemy ORM（2026-11-18；未 push）
 
 - 新增 `src/atlas/storage/models.py`（`MessageTemplateORM`/`LlmUsageORM`），`message/pg_template_store.py` 与 `llm/pg_store.py` 内部 SQL 改 ORM；同一 sync Engine 上叠 sessionmaker，对外构造签名与方法面不变。

@@ -32,7 +32,7 @@ from atlas.harness.base import (
     Permission,
     StructuredError,
 )
-from atlas.security.egress import EgressDenied, EgressGuard
+from atlas.security.egress import EgressDenied, EgressGuard, web_local_loopback_permit
 
 from .location import ThreeLayerLocator
 
@@ -73,7 +73,13 @@ class WebHarnessAdapter(HarnessAdapter):
         )
         # 一条出向策略，不复用两份配置：浏览器与 httpx 走的是同一个"能不能出去"判断，
         # 分叉的 knob 只会让人忘记配其中一个（docs/32 的 denylist 同族）。
-        self._egress = egress if egress is not None else EgressGuard.from_env()
+        # 本地自用档（非 prod）默认放行回环，供 Loom 等本地目标应用；prod 恒空，
+        # 且 prod 本就不注册本适配器。显式 ATLAS_WEB_ALLOW_LOOPBACK=0 可关。
+        self._egress = (
+            egress
+            if egress is not None
+            else EgressGuard.from_env(permit_cidrs=web_local_loopback_permit())
+        )
         # 被 route 级闸门拦下的请求（有界，供运行输出与排障读）；静默丢弃等于没闸门。
         self.egress_denials: list[str] = []
         self._playwright = None

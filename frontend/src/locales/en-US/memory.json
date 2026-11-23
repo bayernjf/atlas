@@ -16,7 +16,8 @@
     "scope": "Scope",
     "createdAt": "Created at",
     "actions": "Actions",
-    "score": "Similarity"
+    "score": "Similarity",
+    "citation": "Citation"
   },
   "source": {
     "tool": "By tool",
@@ -82,7 +83,7 @@
   "knowledge": {
     "tab": "Knowledge",
     "importCardTitle": "Import knowledge documents",
-    "importHint": "Segments are embedded automatically by paragraph (paragraph-first; segments over 1200 chars are hard-cut); at most 200 entries, the rest is truncated. Plain text only.",
+    "importHint": "Paste plain text or upload a .md/.markdown/.txt/.docx file (≤10MB). Text is segmented by paragraph (paragraph-first; segments over 1200 chars are hard-cut); at most 200 entries, the rest is truncated.",
     "importCategoryLabel": "Knowledge category",
     "importTextPlaceholder": "Paste knowledge text, blank line separates paragraphs (FAQ / SOP / Manual / Rule / Case)",
     "importButton": "Import",
@@ -94,7 +95,15 @@
     "listTitle": "Knowledge list",
     "listEmpty": "No knowledge entries yet",
     "categoryColumn": "Category",
-    "filterLabel": "Category filter"
+    "filterLabel": "Category filter",
+    "sourceColumn": "Source file",
+    "importFileLabel": "Upload file (.md/.markdown/.txt/.docx, ≤10MB)",
+    "importFileChoose": "Choose file",
+    "importFileClear": "Clear",
+    "importFileSelected": "Selected: {name}",
+    "importTextOrFileRequired": "Enter text or choose a file",
+    "importFileTypeError": "Only .md/.markdown/.txt/.docx are supported",
+    "importFileTooLarge": "File must be 10MB or smaller"
   },
   "memoryTab": "Memory"
 }

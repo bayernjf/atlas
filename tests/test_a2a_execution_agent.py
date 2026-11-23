@@ -1,7 +1,7 @@
 """A2A 执行 Agent 面（docs/90，ADR T32；Zeus 协同决策平台 W2 接入第一阶段）。
 
 形状对齐 loom backend/tests/unit/test_a2a_executor.py（loom 侧原文件名）：rpc 纯函数 + 卡片契约
-+ 任务端点 Bearer 闸门。plan-only，不触链/不起 run/不花 token。
++ 任务端点 Bearer 闸门。A-02 起含 run-graph，真实 run 用例见 test_a2a_real_run.py。
 """
 
 from __future__ import annotations
@@ -34,19 +34,22 @@ def _clear_tasks():
 
 # --- card ---
 
-def test_card_carries_handshake_and_plan_only_skills():
+def test_card_carries_handshake_and_mixed_skills():
     card = build_agent_card()
     assert card["name"] == "atlas"
     assert card["preferredTransport"] == "JSONRPC"
-    assert {s["id"] for s in card["skills"]} == {"plan-approval-flow", "diagnose-run"}
+    # A-02 起新增 run-graph；plan 两项保持 plan-only，run-graph 明示真实执行。
+    assert {s["id"] for s in card["skills"]} == {"plan-approval-flow", "run-graph", "diagnose-run"}
     handshake = card["x-zeus-handshake"]
     assert handshake["swornTo"] == "zeus"
     assert handshake["version"] == HANDSHAKE["version"] == "1"
     assert handshake["dataRealms"] == ["enterprise"]
-    assert handshake["dataPolicy"] == "read-task-scope"
+    assert handshake["dataPolicy"] == "write-task-scope"
     assert handshake["escalationPolicy"] == "auto"
-    # Every advertised skill is plan-only by construction.
-    assert all("plan-only" in s["tags"] for s in SKILLS)
+    by_id = {s["id"]: s for s in SKILLS}
+    assert "plan-only" in by_id["plan-approval-flow"]["tags"]
+    assert "plan-only" in by_id["diagnose-run"]["tags"]
+    assert "real-run" in by_id["run-graph"]["tags"]
 
 
 def test_card_url_resolves_from_public_base_url(monkeypatch):

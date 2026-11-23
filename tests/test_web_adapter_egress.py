@@ -91,6 +91,51 @@ def test_u925_allowlist_still_restricts_and_loopback_needs_the_code_seam() -> No
     assert page2.goto_calls == ["http://127.0.0.1:8000/"], "回环集成测试的注入缝失效"
 
 
+def test_u925_local_dev_defaults_to_loopback_for_local_target_apps(monkeypatch) -> None:
+    """A-01：本地自用档默认可达本机目标应用（如 Loom localhost:3000），仅回环。"""
+    monkeypatch.setenv("ATLAS_ENV", "dev")
+    monkeypatch.delenv("ATLAS_WEB_ALLOW_LOOPBACK", raising=False)
+    adapter = WebHarnessAdapter(granted_permissions=_WRITE)
+    page = _FakePage()
+    adapter.page = page
+    assert _navigate(adapter, "http://127.0.0.1:3000/zh-CN").status is ActionStatus.SUCCESS
+    assert page.goto_calls == ["http://127.0.0.1:3000/zh-CN"]
+    # 回环放行不代表私网/元数据放行
+    assert _navigate(adapter, "http://10.0.0.5/internal").status is ActionStatus.FAILED
+
+
+def test_u925_local_loopback_can_be_disabled_and_never_applies_to_prod(monkeypatch) -> None:
+    monkeypatch.setenv("ATLAS_ENV", "dev")
+    monkeypatch.setenv("ATLAS_WEB_ALLOW_LOOPBACK", "0")
+    adapter = WebHarnessAdapter(granted_permissions=_WRITE)
+    page = _FakePage()
+    adapter.page = page
+    assert _navigate(adapter, "http://127.0.0.1:3000/").status is ActionStatus.FAILED
+
+    monkeypatch.setenv("ATLAS_ENV", "prod")
+    monkeypatch.setenv("ATLAS_WEB_ALLOW_LOOPBACK", "1")
+    prod_adapter = WebHarnessAdapter(granted_permissions=_WRITE)
+    prod_adapter.page = _FakePage()
+    assert _navigate(prod_adapter, "http://127.0.0.1:3000/").status is ActionStatus.FAILED
+
+
+def test_execute_before_start_is_a_structured_browser_not_started_failure() -> None:
+    """旧 graph-1 样本的 ``call start() before execute()`` 是预期守卫，不是进程崩溃。
+
+    未启动浏览器时 execute 必须返回结构化 FAILED，且不触碰任何页面；上层按
+    on_error=stop 映射成 NODE_EXECUTION_FAILED 才是旧样本看到的 500。
+    """
+    adapter = WebHarnessAdapter(granted_permissions=_WRITE)
+    assert adapter.page is None
+    result = adapter.execute(
+        ActionRequest(capability_name="navigate", parameters={"url": "http://8.8.8.8/"})
+    )
+    assert result.status is ActionStatus.FAILED
+    assert result.error is not None
+    assert result.error.code == "BROWSER_NOT_STARTED"
+    assert str(result.error.message) == "call start() before execute()"
+
+
 def test_u925_construction_defaults_to_the_shared_env_policy(monkeypatch) -> None:
     """缺省就是大家共用的那一条 env，不另开一份"浏览器专用白名单"。"""
     monkeypatch.setenv("ATLAS_HTTP_EGRESS_ALLOWLIST", "only.example.com")

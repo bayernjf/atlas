@@ -2156,10 +2156,24 @@ def _reverse_bfs(start: str, incoming: dict[str, set[str]]) -> set[str]:
     return seen
 
 
+def _expand_array_segments(segments: list[str]) -> list[str]:
+    """把 ``rows[0]`` 拆成 ``rows`` + ``0``，让 schema 路径校验认识数组下标。"""
+    expanded: list[str] = []
+    for segment in segments:
+        match = re.fullmatch(r"([^\[\]]+)((?:\[\d+\])+)", segment)
+        if match is None:
+            expanded.append(segment)
+            continue
+        expanded.append(match.group(1))
+        expanded.extend(re.findall(r"\[(\d+)\]", match.group(2)))
+    return expanded
+
+
 def _schema_has_path(schema: dict[str, Any] | None, segments: list[str]) -> bool:
     """output_schema 深层路径存在性；无 schema/开放对象/oneOf 无法静态判定时放行。"""
     if not schema or "oneOf" in schema:
         return True
+    segments = _expand_array_segments(segments)
     if not segments:
         return True
     head, *rest = segments

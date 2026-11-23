@@ -26,7 +26,7 @@ Atlas 是一个**可视化 Agent 工作流（运营体）编排平台**。使用
 | **AI 决策** | 运营在节点里写的 prompt 与 model 真正生效；**置信度低于阈值即挂起转人工**；LLM 语义分支；意图识别／信息抽取／内容生成三类结构化节点 |
 | **人机协同** | 审批三渠道（站内／邮件／IM 卡片）；邮件内一键决策（HMAC 签名链接，免登录）；超时默认拒绝；审批历史入库 |
 | **诚实性（本项目的取舍）** | prod 档位下没接模型就不许报绿——`ai_decision`／`condition(llm)`／裸工具名一律显式 FAILED，不静默走规则兜底；上下文字段级脱敏，env/secret 明文不出向模型供应商 |
-| **记忆与知识** | 长期记忆（fact/preference，向量召回＋自动提取＋衰减）；知识库（faq/sop/manual/rule/case 导入向量化＋按类召回） |
+| **记忆与知识** | 长期记忆（fact/preference，向量召回＋自动提取＋衰减）；知识库（faq/sop/manual/rule/case，支持纯文本与 .md/.markdown/.txt/.docx 导入、按类召回、检索结果带 source/doc_id/chunk 引用） |
 | **运维可视** | 运行列表／指标／span 链路；四内置告警规则＋静默＋升级＋值班轮换；运行报表与版本对比；离线批评估；反思候选＋人工采纳 |
 | **接入面** | 渠道 binding 与连通测试；OAuth 授权与令牌轮换；模型配置管理面（平台内置模型＋租户 BYOK）；消息模板系统；MCP server 面；A2A 执行 Agent 面；多租户 RBAC＋审计 |
 
@@ -38,7 +38,8 @@ Atlas 是一个**可视化 Agent 工作流（运营体）编排平台**。使用
 
 - **只能单副本运行**：一个进程、一台机器。多进程会让同一条挂起审批帧在各进程各自续跑一遍，下游真实副作用被执行两次。容器入口对 `workers>1` 直接拒启，compose 钉 `replicas: 1`（机制见 [docs/62](docs/62-挂起帧一次性认领-单副本硬约束护栏-v1批契约设计.md)）。
 - **真外发未验**：真 Shopify 退款、真 SMTP/IM 投递只有代码与演练腿，缺真实凭据（差距追踪见 [docs/73](docs/73-自主上线MVP缺口清单追踪.md)）。**prod 档缺三把必需密钥会拒绝启动，这是设计行为不是 bug**。
-- **真浏览器适配器只在演示面注册**：prod 不注册 `web-playwright`——出向闸门挡不住 3xx 跳转后的请求（见 [docs/89](docs/89-项目级代码审计与功能全景.md) §14、docs/14 D52）。
+- **真浏览器适配器只在演示面注册**：prod 不注册 `web-playwright`——出向闸门挡不住 3xx 跳转后的请求（见 [docs/89](docs/89-项目级代码审计与功能全景.md) §14、docs/14 D52）。**本地 dev 档默认放行回环**（仅 `127.0.0.0/8` 与 `::1`，供 Loom 等本地目标应用；`ATLAS_WEB_ALLOW_LOOPBACK=0` 可关），单条本地真站点流程证据见 [docs/138](docs/138-A01-本机真浏览器工作流-2026-11-23.md)。
+- **本地副作用/投递已有最小闭环，但不是事务**：SQLite 写 + human_approval + 127.0.0.1 webhook 已跑通（docs/139）；写库后投递失败只能补偿，自动跨适配器回滚未做。
 - **认领后崩溃的运行不自动重放**：有人工收敛出口（`POST /api/interruptions/{token}/resolve`），重放属 docs/14 D56。
 - **许可**：不开放（proprietary），仓库无 LICENSE 文件。
 
@@ -137,7 +138,7 @@ ATLAS_ADMIN_BOOTSTRAP_PASSWORD=<过口令策略>       # prod 只播各租户 AD
 - **持久化两档同契约**。`ATLAS_STORAGE_BACKEND` 决定 memory 或 pg；挂起帧、审批历史、调度槽位、报告、影子、评估、模型配置只在 pg 档入库，内存档必须自报"看不见"而不是返回空表。
 - **调度槽位一次性认领**（`schedule_fires` 主键 `(schedule_id, slot_utc)`＋`ON CONFLICT DO NOTHING`），同分钟两进程只触发一次，这是"不补跑"的另一面。
 - **Loop 现状要读准**：`src/atlas/engine/` 的 OODA 循环目前是独立骨架（仅被测试与基准引用），生产形态＝**事件／定时驱动的图执行**；把它接进运行期是 docs/14 **D69**（排期见 docs/127 里程碑 C）。
-- **对外协议面**：MCP server 是 stdio＋**只读工具面**（写能力仅 docs-only 预备契约，docs/14 D49）；A2A 提供 Agent Card 与任务端点。
+- **对外协议面**：MCP server 是 stdio＋**只读工具面**（写能力仅 docs-only 预备契约，docs/14 D49）；A2A 提供 Agent Card、plan skill 与租户绑定的 `run-graph` 非交互图真实执行（docs/140），交互图/续跑仍走平台会话。
 
 技术选型收口于 2026-09-13（T1–T5），后续选型见 [docs/10](docs/10-技术选型决策记录.md)。模块职责与目录权威表在 [docs/09](docs/09-工程骨架与目录结构.md)；数据契约索引 [docs/03](docs/03-数据模型与Schema-契约索引.md)；接口清单 [docs/12](docs/12-API与模块接口清单.md)。
 

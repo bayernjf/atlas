@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "variables": [],
+  "nodes": [
+    {
+      "id": "trigger-1",
+      "type": "trigger",
+      "name": "start",
+      "config": {
+        "triggerType": "webhook",
+        "webhookUrl": "/hooks/a2a"
+      }
+    },
+    {
+      "id": "wait-1",
+      "type": "wait",
+      "name": "pause",
+      "config": {}
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "trigger-1",
+      "target": "wait-1"
+    }
+  ]
+}

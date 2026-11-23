@@ -1,0 +1,592 @@
+{
+  "format": "A-08 knowledge retrieval eval",
+  "embedding": "LocalDeterministicEmbedder (offline)",
+  "documents": 20,
+  "queries": 20,
+  "top1_hits": 18,
+  "top3_hits": 20,
+  "top1_rate": 0.9,
+  "top3_rate": 1.0,
+  "rows": [
+    {
+      "code": "ZETA-00",
+      "query": "ZETA-00 审批双人复核",
+      "expected_doc_id": "50a87d84e60285cc0d8adf2e960b7aa0a344c88890a0230ce3aa673d29093d4e",
+      "rank": 1,
+      "top3": [
+        {
+          "source": "ZETA-00.md",
+          "format": "markdown",
+          "doc_id": "50a87d84e60285cc0d8adf2e960b7aa0a344c88890a0230ce3aa673d29093d4e",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-06.md",
+          "format": "markdown",
+          "doc_id": "dcef852ee4b173247f46145d71ec915c23669e255341c9a1ae5192d880d7d558",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-03.md",
+          "format": "markdown",
+          "doc_id": "2fa02f7c53c480e9a017ce3d1fbc6c478b63ef169fb43d7267d5c369fb6fc452",
+          "chunk_index": 1,
+          "chunk_count": 3
+        }
+      ]
+    },
+    {
+      "code": "ZETA-01",
+      "query": "ZETA-01 审批双人复核",
+      "expected_doc_id": "09cbf30bd9c533abe3f2fb4eae5d3f7970b06f6043187cb7d0b9809347ecfced",
+      "rank": 2,
+      "top3": [
+        {
+          "source": "ZETA-06.md",
+          "format": "markdown",
+          "doc_id": "dcef852ee4b173247f46145d71ec915c23669e255341c9a1ae5192d880d7d558",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-01.md",
+          "format": "markdown",
+          "doc_id": "09cbf30bd9c533abe3f2fb4eae5d3f7970b06f6043187cb7d0b9809347ecfced",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-03.md",
+          "format": "markdown",
+          "doc_id": "2fa02f7c53c480e9a017ce3d1fbc6c478b63ef169fb43d7267d5c369fb6fc452",
+          "chunk_index": 1,
+          "chunk_count": 3
+        }
+      ]
+    },
+    {
+      "code": "ZETA-02",
+      "query": "ZETA-02 审批双人复核",
+      "expected_doc_id": "4a4d87735bef224476b12d095048af1ad402f5f5452bf4c8459ffb15bc34a111",
+      "rank": 1,
+      "top3": [
+        {
+          "source": "ZETA-02.md",
+          "format": "markdown",
+          "doc_id": "4a4d87735bef224476b12d095048af1ad402f5f5452bf4c8459ffb15bc34a111",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-06.md",
+          "format": "markdown",
+          "doc_id": "dcef852ee4b173247f46145d71ec915c23669e255341c9a1ae5192d880d7d558",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-03.md",
+          "format": "markdown",
+          "doc_id": "2fa02f7c53c480e9a017ce3d1fbc6c478b63ef169fb43d7267d5c369fb6fc452",
+          "chunk_index": 1,
+          "chunk_count": 3
+        }
+      ]
+    },
+    {
+      "code": "ZETA-03",
+      "query": "ZETA-03 审批双人复核",
+      "expected_doc_id": "2fa02f7c53c480e9a017ce3d1fbc6c478b63ef169fb43d7267d5c369fb6fc452",
+      "rank": 1,
+      "top3": [
+        {
+          "source": "ZETA-03.md",
+          "format": "markdown",
+          "doc_id": "2fa02f7c53c480e9a017ce3d1fbc6c478b63ef169fb43d7267d5c369fb6fc452",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-06.md",
+          "format": "markdown",
+          "doc_id": "dcef852ee4b173247f46145d71ec915c23669e255341c9a1ae5192d880d7d558",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-04.md",
+          "format": "markdown",
+          "doc_id": "f4a4341bc1a45cfba8d448bf337bf681d95586804e932a29cd4e231a3a33de06",
+          "chunk_index": 1,
+          "chunk_count": 3
+        }
+      ]
+    },
+    {
+      "code": "ZETA-04",
+      "query": "ZETA-04 审批双人复核",
+      "expected_doc_id": "f4a4341bc1a45cfba8d448bf337bf681d95586804e932a29cd4e231a3a33de06",
+      "rank": 1,
+      "top3": [
+        {
+          "source": "ZETA-04.md",
+          "format": "markdown",
+          "doc_id": "f4a4341bc1a45cfba8d448bf337bf681d95586804e932a29cd4e231a3a33de06",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-06.md",
+          "format": "markdown",
+          "doc_id": "dcef852ee4b173247f46145d71ec915c23669e255341c9a1ae5192d880d7d558",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-03.md",
+          "format": "markdown",
+          "doc_id": "2fa02f7c53c480e9a017ce3d1fbc6c478b63ef169fb43d7267d5c369fb6fc452",
+          "chunk_index": 1,
+          "chunk_count": 3
+        }
+      ]
+    },
+    {
+      "code": "ZETA-05",
+      "query": "ZETA-05 审批双人复核",
+      "expected_doc_id": "34aac95560c3b56aaf1845a133cdfe1237bd02978a652e72a4fc991fa0e5431a",
+      "rank": 1,
+      "top3": [
+        {
+          "source": "ZETA-05.md",
+          "format": "markdown",
+          "doc_id": "34aac95560c3b56aaf1845a133cdfe1237bd02978a652e72a4fc991fa0e5431a",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-06.md",
+          "format": "markdown",
+          "doc_id": "dcef852ee4b173247f46145d71ec915c23669e255341c9a1ae5192d880d7d558",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-03.md",
+          "format": "markdown",
+          "doc_id": "2fa02f7c53c480e9a017ce3d1fbc6c478b63ef169fb43d7267d5c369fb6fc452",
+          "chunk_index": 1,
+          "chunk_count": 3
+        }
+      ]
+    },
+    {
+      "code": "ZETA-06",
+      "query": "ZETA-06 审批双人复核",
+      "expected_doc_id": "dcef852ee4b173247f46145d71ec915c23669e255341c9a1ae5192d880d7d558",
+      "rank": 1,
+      "top3": [
+        {
+          "source": "ZETA-06.md",
+          "format": "markdown",
+          "doc_id": "dcef852ee4b173247f46145d71ec915c23669e255341c9a1ae5192d880d7d558",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-03.md",
+          "format": "markdown",
+          "doc_id": "2fa02f7c53c480e9a017ce3d1fbc6c478b63ef169fb43d7267d5c369fb6fc452",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-04.md",
+          "format": "markdown",
+          "doc_id": "f4a4341bc1a45cfba8d448bf337bf681d95586804e932a29cd4e231a3a33de06",
+          "chunk_index": 1,
+          "chunk_count": 3
+        }
+      ]
+    },
+    {
+      "code": "ZETA-07",
+      "query": "ZETA-07 审批双人复核",
+      "expected_doc_id": "d28f8467f84bd0fd93d51da858d633062e35ec6a40a9fe636deaa0e6c53f308a",
+      "rank": 1,
+      "top3": [
+        {
+          "source": "ZETA-07.md",
+          "format": "markdown",
+          "doc_id": "d28f8467f84bd0fd93d51da858d633062e35ec6a40a9fe636deaa0e6c53f308a",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-06.md",
+          "format": "markdown",
+          "doc_id": "dcef852ee4b173247f46145d71ec915c23669e255341c9a1ae5192d880d7d558",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-03.md",
+          "format": "markdown",
+          "doc_id": "2fa02f7c53c480e9a017ce3d1fbc6c478b63ef169fb43d7267d5c369fb6fc452",
+          "chunk_index": 1,
+          "chunk_count": 3
+        }
+      ]
+    },
+    {
+      "code": "ZETA-08",
+      "query": "ZETA-08 审批双人复核",
+      "expected_doc_id": "c74982b4dccc296e6c743cc3a4cf6fa47efdbf2fcefb9991c3444fce1a7d0ca9",
+      "rank": 1,
+      "top3": [
+        {
+          "source": "ZETA-08.md",
+          "format": "markdown",
+          "doc_id": "c74982b4dccc296e6c743cc3a4cf6fa47efdbf2fcefb9991c3444fce1a7d0ca9",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-06.md",
+          "format": "markdown",
+          "doc_id": "dcef852ee4b173247f46145d71ec915c23669e255341c9a1ae5192d880d7d558",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-03.md",
+          "format": "markdown",
+          "doc_id": "2fa02f7c53c480e9a017ce3d1fbc6c478b63ef169fb43d7267d5c369fb6fc452",
+          "chunk_index": 1,
+          "chunk_count": 3
+        }
+      ]
+    },
+    {
+      "code": "ZETA-09",
+      "query": "ZETA-09 审批双人复核",
+      "expected_doc_id": "b87f6862830d6517f883d45fd21ef0d6fbec3f72e4429da54df4bc48385c6c8f",
+      "rank": 1,
+      "top3": [
+        {
+          "source": "ZETA-09.md",
+          "format": "markdown",
+          "doc_id": "b87f6862830d6517f883d45fd21ef0d6fbec3f72e4429da54df4bc48385c6c8f",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-06.md",
+          "format": "markdown",
+          "doc_id": "dcef852ee4b173247f46145d71ec915c23669e255341c9a1ae5192d880d7d558",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-03.md",
+          "format": "markdown",
+          "doc_id": "2fa02f7c53c480e9a017ce3d1fbc6c478b63ef169fb43d7267d5c369fb6fc452",
+          "chunk_index": 1,
+          "chunk_count": 3
+        }
+      ]
+    },
+    {
+      "code": "ZETA-10",
+      "query": "ZETA-10 审批双人复核",
+      "expected_doc_id": "7565b7c8d68c3191be3e96d87aa3f9bfe886a157facba46e408cbce6314e77a9",
+      "rank": 1,
+      "top3": [
+        {
+          "source": "ZETA-10.md",
+          "format": "markdown",
+          "doc_id": "7565b7c8d68c3191be3e96d87aa3f9bfe886a157facba46e408cbce6314e77a9",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-06.md",
+          "format": "markdown",
+          "doc_id": "dcef852ee4b173247f46145d71ec915c23669e255341c9a1ae5192d880d7d558",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-03.md",
+          "format": "markdown",
+          "doc_id": "2fa02f7c53c480e9a017ce3d1fbc6c478b63ef169fb43d7267d5c369fb6fc452",
+          "chunk_index": 1,
+          "chunk_count": 3
+        }
+      ]
+    },
+    {
+      "code": "ZETA-11",
+      "query": "ZETA-11 审批双人复核",
+      "expected_doc_id": "c209c979241700363a46ce21db19b5157e724845e31397323ae721729a02780f",
+      "rank": 2,
+      "top3": [
+        {
+          "source": "ZETA-06.md",
+          "format": "markdown",
+          "doc_id": "dcef852ee4b173247f46145d71ec915c23669e255341c9a1ae5192d880d7d558",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-11.md",
+          "format": "markdown",
+          "doc_id": "c209c979241700363a46ce21db19b5157e724845e31397323ae721729a02780f",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-03.md",
+          "format": "markdown",
+          "doc_id": "2fa02f7c53c480e9a017ce3d1fbc6c478b63ef169fb43d7267d5c369fb6fc452",
+          "chunk_index": 1,
+          "chunk_count": 3
+        }
+      ]
+    },
+    {
+      "code": "ZETA-12",
+      "query": "ZETA-12 审批双人复核",
+      "expected_doc_id": "eebb8701dffd5274b60f75b534608abbe26e5912dbdaa3eb03388c8c016ae2ba",
+      "rank": 1,
+      "top3": [
+        {
+          "source": "ZETA-12.md",
+          "format": "markdown",
+          "doc_id": "eebb8701dffd5274b60f75b534608abbe26e5912dbdaa3eb03388c8c016ae2ba",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-06.md",
+          "format": "markdown",
+          "doc_id": "dcef852ee4b173247f46145d71ec915c23669e255341c9a1ae5192d880d7d558",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-03.md",
+          "format": "markdown",
+          "doc_id": "2fa02f7c53c480e9a017ce3d1fbc6c478b63ef169fb43d7267d5c369fb6fc452",
+          "chunk_index": 1,
+          "chunk_count": 3
+        }
+      ]
+    },
+    {
+      "code": "ZETA-13",
+      "query": "ZETA-13 审批双人复核",
+      "expected_doc_id": "54185976ec0b3208bc9076cd2d6f2cdc682b1b42a3e161655e800c70ab1c76b2",
+      "rank": 1,
+      "top3": [
+        {
+          "source": "ZETA-13.md",
+          "format": "markdown",
+          "doc_id": "54185976ec0b3208bc9076cd2d6f2cdc682b1b42a3e161655e800c70ab1c76b2",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-06.md",
+          "format": "markdown",
+          "doc_id": "dcef852ee4b173247f46145d71ec915c23669e255341c9a1ae5192d880d7d558",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-03.md",
+          "format": "markdown",
+          "doc_id": "2fa02f7c53c480e9a017ce3d1fbc6c478b63ef169fb43d7267d5c369fb6fc452",
+          "chunk_index": 1,
+          "chunk_count": 3
+        }
+      ]
+    },
+    {
+      "code": "ZETA-14",
+      "query": "ZETA-14 审批双人复核",
+      "expected_doc_id": "c1c1eedd89c9c7f3f6a5accfe70ad1c5543a98b6fcc1ec1b5bc2b0581c43c171",
+      "rank": 1,
+      "top3": [
+        {
+          "source": "ZETA-14.md",
+          "format": "markdown",
+          "doc_id": "c1c1eedd89c9c7f3f6a5accfe70ad1c5543a98b6fcc1ec1b5bc2b0581c43c171",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-06.md",
+          "format": "markdown",
+          "doc_id": "dcef852ee4b173247f46145d71ec915c23669e255341c9a1ae5192d880d7d558",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-03.md",
+          "format": "markdown",
+          "doc_id": "2fa02f7c53c480e9a017ce3d1fbc6c478b63ef169fb43d7267d5c369fb6fc452",
+          "chunk_index": 1,
+          "chunk_count": 3
+        }
+      ]
+    },
+    {
+      "code": "ZETA-15",
+      "query": "ZETA-15 审批双人复核",
+      "expected_doc_id": "96e5fef88881ab02f8ce13eb5cd0953d6c073e1fabf38799d56a29acb3fa6002",
+      "rank": 1,
+      "top3": [
+        {
+          "source": "ZETA-15.md",
+          "format": "markdown",
+          "doc_id": "96e5fef88881ab02f8ce13eb5cd0953d6c073e1fabf38799d56a29acb3fa6002",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-06.md",
+          "format": "markdown",
+          "doc_id": "dcef852ee4b173247f46145d71ec915c23669e255341c9a1ae5192d880d7d558",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-03.md",
+          "format": "markdown",
+          "doc_id": "2fa02f7c53c480e9a017ce3d1fbc6c478b63ef169fb43d7267d5c369fb6fc452",
+          "chunk_index": 1,
+          "chunk_count": 3
+        }
+      ]
+    },
+    {
+      "code": "ZETA-16",
+      "query": "ZETA-16 审批双人复核",
+      "expected_doc_id": "64e0410fdbd3d2e4de8fe6bdcf2e18d5225e5e04854bf50845953ee67bbd51bf",
+      "rank": 1,
+      "top3": [
+        {
+          "source": "ZETA-16.md",
+          "format": "markdown",
+          "doc_id": "64e0410fdbd3d2e4de8fe6bdcf2e18d5225e5e04854bf50845953ee67bbd51bf",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-06.md",
+          "format": "markdown",
+          "doc_id": "dcef852ee4b173247f46145d71ec915c23669e255341c9a1ae5192d880d7d558",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-03.md",
+          "format": "markdown",
+          "doc_id": "2fa02f7c53c480e9a017ce3d1fbc6c478b63ef169fb43d7267d5c369fb6fc452",
+          "chunk_index": 1,
+          "chunk_count": 3
+        }
+      ]
+    },
+    {
+      "code": "ZETA-17",
+      "query": "ZETA-17 审批双人复核",
+      "expected_doc_id": "8c553f2b3e9dec39ca71796c921d3643e7391cceceef980ab9b825bb5acc332c",
+      "rank": 1,
+      "top3": [
+        {
+          "source": "ZETA-17.md",
+          "format": "markdown",
+          "doc_id": "8c553f2b3e9dec39ca71796c921d3643e7391cceceef980ab9b825bb5acc332c",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-06.md",
+          "format": "markdown",
+          "doc_id": "dcef852ee4b173247f46145d71ec915c23669e255341c9a1ae5192d880d7d558",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-03.md",
+          "format": "markdown",
+          "doc_id": "2fa02f7c53c480e9a017ce3d1fbc6c478b63ef169fb43d7267d5c369fb6fc452",
+          "chunk_index": 1,
+          "chunk_count": 3
+        }
+      ]
+    },
+    {
+      "code": "ZETA-18",
+      "query": "ZETA-18 审批双人复核",
+      "expected_doc_id": "7a0aba05fa1c10e5acd3efe024049ec16bec8966e1be1ee6e7fd43ab5ba2640b",
+      "rank": 1,
+      "top3": [
+        {
+          "source": "ZETA-18.md",
+          "format": "markdown",
+          "doc_id": "7a0aba05fa1c10e5acd3efe024049ec16bec8966e1be1ee6e7fd43ab5ba2640b",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-06.md",
+          "format": "markdown",
+          "doc_id": "dcef852ee4b173247f46145d71ec915c23669e255341c9a1ae5192d880d7d558",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-03.md",
+          "format": "markdown",
+          "doc_id": "2fa02f7c53c480e9a017ce3d1fbc6c478b63ef169fb43d7267d5c369fb6fc452",
+          "chunk_index": 1,
+          "chunk_count": 3
+        }
+      ]
+    },
+    {
+      "code": "ZETA-19",
+      "query": "ZETA-19 审批双人复核",
+      "expected_doc_id": "a1ff700eb65fa5fd32919156ae1b379f383f4f157f98f8be821bada0ceea0e2a",
+      "rank": 1,
+      "top3": [
+        {
+          "source": "ZETA-19.md",
+          "format": "markdown",
+          "doc_id": "a1ff700eb65fa5fd32919156ae1b379f383f4f157f98f8be821bada0ceea0e2a",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-06.md",
+          "format": "markdown",
+          "doc_id": "dcef852ee4b173247f46145d71ec915c23669e255341c9a1ae5192d880d7d558",
+          "chunk_index": 1,
+          "chunk_count": 3
+        },
+        {
+          "source": "ZETA-03.md",
+          "format": "markdown",
+          "doc_id": "2fa02f7c53c480e9a017ce3d1fbc6c478b63ef169fb43d7267d5c369fb6fc452",
+          "chunk_index": 1,
+          "chunk_count": 3
+        }
+      ]
+    }
+  ]
+}

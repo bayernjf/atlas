@@ -58,7 +58,6 @@ from atlas.harness.drafts import AdapterDraftStore
 from atlas.harness.pg_drafts import PgAdapterDraftStore
 from atlas.cycles.state import cycle_registry
 from atlas.storage.base import (
-    ApprovalRepository,
     DebugRepository,
     FeedbackRepository,
     GraphRepository,
@@ -92,7 +91,7 @@ class TenantServices:
     recording_store: RecordingRepository
     feedback_store: FeedbackRepository
     message_service: object  # MessageService 是服务非存储，不进 Repository 抽象（docs/24 §1.1）
-    approval_broker: ApprovalRepository
+    approval_broker: ApprovalBroker
     debug_broker: DebugRepository
     cancellation_broker: RunCancellationBroker  # B 包协作式急停（进程内，memory/PG 档均内存实例）
     event_wait_broker: EventWaitBroker  # wait 节点事件等待（进程内 v1，docs/47；两档均内存实例）

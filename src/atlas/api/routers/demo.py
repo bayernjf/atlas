@@ -15,7 +15,12 @@ from atlas.graph.loader import tool_input_schemas
 from atlas.iam.deps import get_principal, require, tenant_registry
 from atlas.iam.principals import Principal
 from atlas.llm.metering import usage_context
-from atlas.llm.nl_generate import generate_graph, validate_param_fills
+from atlas.llm.nl_generate import (
+    generate_graph_with_meta,
+    validate_generated_graph,
+    validate_param_fills,
+)
+from atlas.skills.recommend import recommend_skills
 from atlas.message.service import MessageSendError
 from atlas.storage.memory import FeedbackRequest
 from atlas.storage.recovery import clear_tenant_frames
@@ -46,14 +51,23 @@ def nl_generate(
     request: NLGenerateRequest, principal: Principal = Depends(require("operate"))
 ) -> dict[str, Any]:
     services = _main.services_for(principal)
+    registry = _main._runtime_registry(services)
     try:
         # docs/129 打包 AU：端点级调用（无 run/graph/node，只挂 tenant）。
         with usage_context(principal.tenant_id, store=services.usage_store):
-            graph = generate_graph(request.prompt, tenant_id=principal.tenant_id)
+            graph, generation = generate_graph_with_meta(
+                request.prompt, tenant_id=principal.tenant_id, registry=registry
+            )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    warnings = validate_param_fills(graph, tool_input_schemas(_main._demo_registry))
-    return {"graph": graph, "paramWarnings": warnings}
+    warnings = validate_param_fills(graph, tool_input_schemas(registry))
+    return {
+        "graph": graph,
+        "paramWarnings": warnings,
+        "skills": recommend_skills(request.prompt, registry),
+        "compile": validate_generated_graph(graph, registry),
+        "generation": generation,
+    }
 
 
 @router.post("/api/demo/shop/login")

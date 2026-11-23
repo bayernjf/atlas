@@ -216,7 +216,26 @@ DEAD_LETTER_REASON = {
     "RESOLVE_FAILED",
     "TRIGGER_FAILED",
 }
-EXEMPT = TOOL_OUTPUT_ONLY | COARSE_CODE | DEAD_LETTER_REASON | FROZEN_FOR_TRIAGE
+
+#: A-02（docs/140）新增的 A2A JSON-RPC 错误码：**只发给外部 A2A 调用方**
+#: （Zeus/机器人），Atlas 前端零消费、前端目录也不应有这些键。对外契约是数字码
+#: （-32602/-32003/-32004/-32010…），`message` 只是英文诊断，不参与 Atlas UI 渲染；
+#: 按 docs/57 §2.5「节点产出／外部协议数据不译」单列豁免。U1535 钉住这组码只许
+#: 从 `src/atlas/a2a/` 发射，防止它变成藏新 UI 码的垃圾桶。
+A2A_PROTOCOL_ONLY = {
+    "GRAPH_INVALID",
+    "GRAPH_NOT_FOUND",
+    "IDEMPOTENCY_CONFLICT",
+    "INTERACTIVE_GRAPH_UNSUPPORTED",
+    "INTERNAL",
+    "INVALID_PARAMS",
+    "RUN_CONFLICT",
+    "TENANT_MISMATCH",
+    "TENANT_UNBOUND",
+}
+EXEMPT = (
+    TOOL_OUTPUT_ONLY | COARSE_CODE | DEAD_LETTER_REASON | FROZEN_FOR_TRIAGE | A2A_PROTOCOL_ONLY
+)
 
 
 def emitted_codes(text: str) -> set[str]:
@@ -362,10 +381,32 @@ def test_u1151_allowlisted_codes_have_a_written_reason(locale: str) -> None:
         assert code not in runtime and code not in validation, (
             f"{locale}:{code} 已在豁免表上却又有文案——把豁免条目删掉，否则它躲过了未来的核对"
         )
-    groups = [TOOL_OUTPUT_ONLY, COARSE_CODE, DEAD_LETTER_REASON]
+    groups = [TOOL_OUTPUT_ONLY, COARSE_CODE, DEAD_LETTER_REASON, A2A_PROTOCOL_ONLY]
     assert len({c for g in groups for c in g}) == sum(len(g) for g in groups), (
-        "三组豁免不许重叠：一条码只该有一个「为什么不译」的理由"
+        "四组豁免不许重叠：一条码只该有一个「为什么不译」的理由"
     )
+
+
+def test_u1535_a2a_protocol_codes_stay_backend_only():
+    """A2A_PROTOCOL_ONLY 只收 `src/atlas/a2a/` 发射的码，且两档前端目录都不得有键。
+
+    这条不是重复 U1151：U1151 只查豁免码没有文案，本门查**发射位置**。否则将来
+    某条 UI 错误码顺手塞进这组，就会绕过 U1149 的文案门而没人发现。
+    """
+    where = structured_codes()
+    misplaced = sorted(
+        code
+        for code in A2A_PROTOCOL_ONLY
+        if not where.get(code)
+        or any(not path.startswith("src/atlas/a2a/") for path in where[code])
+    )
+    assert misplaced == [], f"这些 A2A 码要么不再发射、要么从非 a2a 模块发射：{misplaced}"
+    for locale in ("zh-CN", "en-US"):
+        runtime = json.loads((LOCALES / locale / "runtime.json").read_text(encoding="utf-8"))
+        validation = json.loads((LOCALES / locale / "validation.json").read_text(encoding="utf-8"))["dsl"]
+        assert not (A2A_PROTOCOL_ONLY & (set(runtime) | set(validation))), (
+            f"{locale}: A2A 协议码出现在前端目录；它不参与 Atlas UI，删掉或改走译码路径"
+        )
 
 
 # ---------------------------------------------------------- 打包 BC：U1160–U1164

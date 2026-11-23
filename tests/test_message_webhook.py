@@ -148,6 +148,37 @@ def test_webhook_sender_egress_invalid_url_passthrough():
     assert ei.value.code == "EGRESS_INVALID_URL"
 
 
+def test_webhook_sender_local_loopback_defaults_in_dev(monkeypatch):
+    """A-05：本地自用档默认可投递 127.0.0.1 接收器。"""
+    monkeypatch.setenv("ATLAS_ENV", "dev")
+    monkeypatch.delenv("ATLAS_MESSAGE_WEBHOOK_ALLOW_LOOPBACK", raising=False)
+    post = FakePost()
+    sender = DefaultWebhookSender(post=post)
+    sender.send("http://127.0.0.1:9010/hook", {})
+    assert post.calls[0][0] == "http://127.0.0.1:9010/hook"
+
+
+def test_webhook_sender_local_loopback_can_be_disabled_and_never_applies_to_prod(monkeypatch):
+    monkeypatch.setenv("ATLAS_ENV", "dev")
+    monkeypatch.setenv("ATLAS_MESSAGE_WEBHOOK_ALLOW_LOOPBACK", "0")
+    post = FakePost()
+    with pytest.raises(EgressDenied):
+        DefaultWebhookSender(post=post).send("http://127.0.0.1:9010/hook", {})
+    assert post.calls == []
+
+    monkeypatch.setenv("ATLAS_ENV", "prod")
+    monkeypatch.setenv("ATLAS_MESSAGE_WEBHOOK_ALLOW_LOOPBACK", "1")
+    with pytest.raises(EgressDenied):
+        DefaultWebhookSender(post=FakePost()).send("http://127.0.0.1:9010/hook", {})
+
+
+def test_webhook_sender_private_range_still_blocked_with_local_permit(monkeypatch):
+    monkeypatch.setenv("ATLAS_ENV", "dev")
+    monkeypatch.delenv("ATLAS_MESSAGE_WEBHOOK_ALLOW_LOOPBACK", raising=False)
+    with pytest.raises(EgressDenied):
+        DefaultWebhookSender(post=FakePost()).send("http://10.0.0.5/hook", {})
+
+
 def test_webhook_sender_checks_before_post():
     # 被 egress 拦截时绝不发起 POST
     post = FakePost()

@@ -36,7 +36,8 @@ _QUERY_OUTPUT_SCHEMA = {
     "type": "object",
     "properties": {
         "columns": {"type": "array", "items": {"type": "string"}},
-        "rows": {"type": "array", "items": {"type": "object"}},
+        "rows": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
+        # rows 的列名来自运行时 SQL，静态 schema 无法穷举；开放对象是事实声明。
         "row_count": {"type": "integer"},
         "truncated": {"type": "boolean"},
     },

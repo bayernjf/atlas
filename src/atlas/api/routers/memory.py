@@ -12,6 +12,14 @@ from fastapi import APIRouter
 import atlas.api.main as _main
 from atlas.iam.deps import require
 from atlas.iam.principals import Principal
+from atlas.memory.documents import (
+    DocumentParseError,
+    decode_base64_document,
+    detect_format,
+    document_digest,
+    extract_text,
+    normalize_filename,
+)
 from atlas.memory.models import KNOWLEDGE_CATEGORIES, MemoryValidationError
 from fastapi import Depends, HTTPException
 from typing import Any
@@ -105,7 +113,7 @@ def search_memories(
     results = _main.services_for(principal).memory_store.recall(
         q.strip(), kind=kind, category=category, top_k=top_k, min_score=min_score
     )
-    return {"results": results}
+    return {"results": [_with_citation(item) for item in results]}
 
 
 @router.delete("/api/memories/{memory_id}")
@@ -120,34 +128,100 @@ def delete_memory(
     return {"deleted": True}
 
 
+def _with_citation(item: dict[str, Any]) -> dict[str, Any]:
+    """知识召回附加可追溯引用（A-08）：source/doc_id/chunk_index 来自导入元数据。"""
+    meta = item.get("metadata") or {}
+    if item.get("kind") != "knowledge" or not meta.get("source"):
+        return item
+    citation: dict[str, Any] = {
+        "source": meta["source"],
+        "format": meta.get("format", ""),
+        "doc_id": meta.get("doc_id", ""),
+        "chunk_index": meta.get("chunk_index", ""),
+        "chunk_count": meta.get("chunk_count", ""),
+    }
+    for key in ("chunk_index", "chunk_count"):
+        try:
+            citation[key] = int(citation[key])
+        except (TypeError, ValueError):
+            pass
+    return {**item, "citation": citation}
+
+
+def _knowledge_text_and_meta(
+    body: KnowledgeImportRequest,
+) -> tuple[str, dict[str, str]]:
+    """把 text 或 base64 文件统一成待分段文本 + 引用元数据（A-08）。"""
+    has_text = body.text is not None
+    has_file = body.content_base64 is not None
+    if has_text == has_file:
+        raise HTTPException(status_code=422, detail="text 与 content_base64 必须二选一")
+    if has_file:
+        if not body.filename:
+            raise HTTPException(status_code=422, detail="文件导入必须提供 filename")
+        try:
+            raw, name, fmt = decode_base64_document(body.content_base64 or "", body.filename)
+            text = extract_text(raw, fmt)
+        except DocumentParseError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return text, {
+            "source": name,
+            "format": fmt,
+            "doc_id": document_digest(raw),
+        }
+    assert body.text is not None
+    if not body.filename:
+        return body.text, {}
+    try:
+        name = normalize_filename(body.filename)
+        fmt = detect_format(name)
+    except DocumentParseError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if fmt == "docx":
+        raise HTTPException(
+            status_code=422, detail="text 导入不支持 .docx；请用 content_base64 上传文件"
+        )
+    return body.text, {
+        "source": name,
+        "format": fmt,
+        "doc_id": document_digest(body.text.encode("utf-8")),
+    }
+
+
 @router.post("/api/knowledge/import", status_code=201)
 def knowledge_import(
     body: KnowledgeImportRequest,
     principal: Principal = Depends(require("operate")),
 ) -> dict[str, Any]:
-    """知识库文档导入（operate；docs/108 §2.2）：纯文本分段向量化入库。
+    """知识库文档导入（operate；docs/108 §2.2 / §7 A-08）。
 
-    返回 ``{imported, truncated, items}``；超 ``_KNOWLEDGE_IMPORT_LIMIT`` 条截断并置
-    ``truncated: true``（按 docs/108 §2.4，先序段优先）。失败 422 中文（MemoryValidationError
-    统一折叠，与 create_memory 同口径）。
+    ``text`` 或 ``content_base64`` 二选一；文件按 ``filename`` 后缀解析
+    .md/.markdown/.txt/.docx。返回 ``{imported, truncated, items}``；超
+    ``_KNOWLEDGE_IMPORT_LIMIT`` 条截断并置 ``truncated: true``。失败 422 中文。
     """
-    segments = _split_knowledge_segments(body.text)
+    text, source_meta = _knowledge_text_and_meta(body)
+    segments = _split_knowledge_segments(text)
     if not segments:
-        raise HTTPException(status_code=422, detail="text 无可导入的有效内容（全为空段）")
-    truncated = len(segments) > _KNOWLEDGE_IMPORT_LIMIT
+        raise HTTPException(status_code=422, detail="导入内容没有可用的有效段落")
+    total_segments = len(segments)
+    truncated = total_segments > _KNOWLEDGE_IMPORT_LIMIT
     if truncated:
         segments = segments[:_KNOWLEDGE_IMPORT_LIMIT]
     repo = _main.services_for(principal).memory_store
     items: list[dict[str, Any]] = []
     try:
-        for segment in segments:
+        for index, segment in enumerate(segments):
+            metadata = {"category": body.category, **source_meta}
+            if source_meta:
+                metadata["chunk_index"] = str(index)
+                metadata["chunk_count"] = str(total_segments)
             item = repo.remember(
                 kind="knowledge",
                 content=segment,
                 scope=body.scope,
                 confidence=1.0,
                 source="manual",
-                metadata={"category": body.category},
+                metadata=metadata,
             )
             items.append(item)
     except MemoryValidationError as exc:

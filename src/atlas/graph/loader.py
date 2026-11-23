@@ -3312,13 +3312,17 @@ def _guard_any_success(
     return guarded
 
 
-def _tool_output_schemas(registry: AdapterRegistry) -> dict[str, dict[str, Any]]:
+def tool_output_schemas(registry: AdapterRegistry) -> dict[str, dict[str, Any]]:
     """编译期 L2 复查用：``<adapter_id>/<tool> -> output_schema``（04 §4.9/§6.5）。"""
     table: dict[str, dict[str, Any]] = {}
     for adapter in registry.list_adapters():
         for tool in adapter["tools"]:
             table[f"{adapter['id']}/{tool['name']}"] = tool["output_schema"]
     return table
+
+
+# 既有内部调用名保持不变；对外暴露同一函数供 NL 编译反馈使用。
+_tool_output_schemas = tool_output_schemas
 
 
 def tool_input_schemas(registry: AdapterRegistry) -> dict[str, dict[str, Any]]:

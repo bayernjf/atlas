@@ -51,8 +51,13 @@ def test_adapters_lists_shop_capabilities():
 def test_nl_generate_refund_intent_returns_draft():
     response = client.post("/api/nl/generate", json={"prompt": "做一个电商退款自动审批流"})
     assert response.status_code == 200
-    graph = response.json()["graph"]
+    body = response.json()
+    graph = body["graph"]
     assert graph["version"] == 1
+    # A-06：模板兜底必须显式标注来源，不能伪装成真实模型产出
+    assert body["generation"]["mode"] == "template"
+    assert body["compile"] == {"ok": True, "errors": [], "codes": []}
+    assert body["skills"][0]["id"] == "shop"
     # docs/101 D57：refund 模板自三节点升级为「分流＋真挂起」七节点（condition/human_approval/双出口）。
     assert len(graph["nodes"]) == 7
     node_ids = {node["id"] for node in graph["nodes"]}

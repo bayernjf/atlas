@@ -38,6 +38,7 @@ import {
   listMessageTemplates,
   updateMessageTemplate,
   getHealth,
+  nlGenerate,
   resetDemo,
   type ChannelBindingView,
   type RunEvent,
@@ -726,6 +727,21 @@ describe('AA knowledge import/search 契约（docs/108，U1267）', () => {
     })
   })
 
+  it('importKnowledge 文件导入携带 filename + content_base64', async () => {
+    const fetchMock = vi.fn(async () => new Response(
+      JSON.stringify({ imported: 1, truncated: false, items: [{ id: 'mem-2' }] }),
+      { status: 201, headers: { 'content-type': 'application/json' } },
+    ))
+    vi.stubGlobal('fetch', fetchMock)
+    const { importKnowledge } = await import('../apiClient')
+    await importKnowledge({ category: 'manual', filename: 'manual.md', content_base64: 'IyBtYW51YWw=' })
+    const [, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit]
+    const body = JSON.parse(init.body as string)
+    expect(body.filename).toBe('manual.md')
+    expect(body.content_base64).toBe('IyBtYW51YWw=')
+    expect(body).not.toHaveProperty('text')
+  })
+
   it('searchMemories 携带 category 查询参数（仅 kind=knowledge 时）', async () => {
     const fetchMock = vi.fn(async () => new Response(
       JSON.stringify({ results: [{ id: 'mem-1', score: 0.5 }] }),
@@ -992,5 +1008,46 @@ describe('stream abort signals (U1382)', () => {
     expect(caught).toBeInstanceOf(DOMException)
     expect((caught as DOMException).name).toBe('AbortError')
     expect(events.map((event) => event.type)).toEqual(['paused'])
+  })
+})
+
+describe('nlGenerate A-06 audit fields', () => {
+  it('posts the prompt and exposes generation / skills / compile', async () => {
+    const payload = {
+      graph: { version: 1, variables: [], nodes: [], edges: [] },
+      paramWarnings: ['节点 q 参数提示'],
+      skills: [
+        {
+          id: 'shop',
+          name: '售后退款',
+          description: '退款单查询与资金操作',
+          score: 9.5,
+          matched: ['退款'],
+          tools: ['shop/list_pending_refunds'],
+          priority: 60,
+        },
+      ],
+      compile: { ok: true, errors: [], codes: [] },
+      generation: {
+        mode: 'llm',
+        model: 'openai/test-model',
+        attempts: 2,
+        repaired: true,
+        compileOk: true,
+      },
+    }
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => jsonResponse(payload))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await nlGenerate('客户申请退款')
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/nl/generate')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(String(init.body))).toEqual({ prompt: '客户申请退款' })
+    expect(result.generation.mode).toBe('llm')
+    expect(result.generation.repaired).toBe(true)
+    expect(result.skills[0].id).toBe('shop')
+    expect(result.compile.ok).toBe(true)
   })
 })
