@@ -3,6 +3,15 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔feat〕A-06 真实 LLM 生成质量 + 技能 top-3 + 20 条字段级评估（2026-11-23；docs/141）
+
+- 新增 `src/atlas/skills/recommend.py`：按适配器粒度从 `AdapterRegistry` 投影技能卡，确定性子串打分返回 top-3，带 `matched/tools/priority`，同输入同注册表稳定；未登记适配器用 id 兜底。
+- `generate_graph_with_meta()` 真实模型最多 2 次尝试，首稿失败把错误作为 repair 提示再生成；meta 返回 `mode/model/attempts/repaired/compileOk/errors`，`mode=template` 明示离线兜底，评估只认 `mode=llm`。
+- `normalize_generated_graph()` 修 id/edge/全局引用/`retry.on_error`/condition 默认目标冲突/冗余 branch/常量 condition 折叠/非 loop 自环；prompt 补单 trigger、schedule cron、webhook URL、结束节点不得建成 trigger、末端不得连回 trigger 等硬约束。
+- `POST /api/nl/generate` 返回 `skills/compile/generation`；前端 NL Modal 展示来源、模型、尝试次数、修复状态、L3 结果、技能 top-3 命中词与工具，`mode=template` 黄色警告“不是 AI 生成”。
+- 证据：`scripts/eval_nl_skills.py` + `outputs/a06-nl-skills/20-case-eval.json`（20/20，mode=llm 20/20、L3 20/20、技能 20/20、工具 20/20；17 条复用第一轮通过 + 3 条失败项重跑；第一轮 17/20 失败样本存 `round1-*`）。
+- 门：定向 **36 passed**；后端全量 **3116 passed／214 skipped／1 warning**；前端 **1029 passed／2 skipped**；build/oxlint/ruff/`git diff --check` 通过。边界：单模型、适配器粒度技能、L3 不等于实际运行、20 条是回归集不是质量承诺。
+
 ### 〔feat〕A-08 知识库多格式导入 + 引用可追溯 + 20 文档评估（2026-11-23；docs/108 v0.2 §7）
 
 - `POST /api/knowledge/import` 追加 `content_base64 + filename` 文件路径，支持 `.md/.markdown/.txt/.docx`；Markdown 去标记、DOCX 用标准库 `zipfile`+`word/document.xml` 提段落、TXT 只收 UTF-8；PDF 未接（无解析依赖），满足 A-08「至少 pdf/docx/md 两类」。
