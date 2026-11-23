@@ -314,6 +314,23 @@ def validate_egress_url(
     raise EgressDenied("EGRESS_DENIED", f"非法或可疑的主机字面量：{raw_host}")
 
 
+#: 本地自用档回环放行开关（docs/137 A-01）。默认开，仅非 prod 生效；显式 ``0`` 关闭。
+#: 只放行 127.0.0.0/8 与 ::1，不放私网/链路本地/云元数据；prod 恒关（浏览器适配器本身也不注册）。
+WEB_LOCAL_LOOPBACK_ENV = "ATLAS_WEB_ALLOW_LOOPBACK"
+
+
+def web_local_loopback_permit() -> tuple[str, ...]:
+    """浏览器本地目标应用（如 Loom localhost:3000）的回环放行范围。
+
+    ``ATLAS_ENV=prod`` 一律返回空：这是本地自用档的便利，不是部署档的放宽。
+    """
+    if os.getenv("ATLAS_ENV", "dev").strip().lower() == "prod":
+        return ()
+    if os.getenv(WEB_LOCAL_LOOPBACK_ENV, "1").strip() == "0":
+        return ()
+    return ("127.0.0.0/8", "::1/128")
+
+
 class EgressGuard:
     """按配置装配的出向校验器（denylist 恒启用，allowlist 可选 fail-closed）。"""
 
@@ -330,10 +347,14 @@ class EgressGuard:
         self.mode = "allowlist" if self._entries else "denylist-only"
 
     @classmethod
-    def from_env(cls, resolver: Resolver = default_resolver) -> "EgressGuard":
+    def from_env(
+        cls,
+        resolver: Resolver = default_resolver,
+        permit_cidrs: Iterable[str] = (),
+    ) -> "EgressGuard":
         raw = os.getenv("ATLAS_HTTP_EGRESS_ALLOWLIST", "")
         entries = [item.strip() for item in raw.split(",") if item.strip()]
-        return cls(entries, resolver=resolver)
+        return cls(entries, resolver=resolver, permit_cidrs=permit_cidrs)
 
     def check(self, url: str) -> ResolvedTarget:
         return validate_egress_url(
