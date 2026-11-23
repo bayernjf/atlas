@@ -21,7 +21,16 @@ const QUERY_SCHEMA: JsonSchema = {
   type: 'object',
   properties: {
     columns: { type: 'array', items: { type: 'string' } },
-    rows: { type: 'array' },
+    rows: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          order_id: { type: 'string' },
+          status: { type: 'string' },
+        },
+      },
+    },
     row_count: { type: 'integer' },
     truncated: { type: 'boolean' },
   },
@@ -228,6 +237,11 @@ describe('L2 引用诊断三码', () => {
   it('REF_PATH_NOT_FOUND：工具输出深层路径按 output_schema 判定', () => {
     expect(validate('{{tool-1.result.refunded}}')[0].code).toBe('REF_PATH_NOT_FOUND')
     expect(validate('{{query-1.result.row_count}}')).toEqual([])
+  })
+
+  it('数组下标路径按 items 展开判定：rows[0].status 合法，未知字段拒绝', () => {
+    expect(validate('{{query-1.result.rows[0].status}}')).toEqual([])
+    expect(validate('{{query-1.result.rows[0].missing}}')[0].code).toBe('REF_PATH_NOT_FOUND')
   })
 
   it('空 schema（http body）深层任意放行；status 存在', () => {
