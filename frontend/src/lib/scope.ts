@@ -288,6 +288,11 @@ export type ScopeIndex = {
   dataDependencyEdges: () => Array<{ viewer: string; provider: string; pointer: string }>
 }
 
+export function splitRefPath(path: string): string[] {
+  // `rows[0].status` → `rows` / `0` / `status`；仅拆数字下标，其它方括号保持原样。
+  return path.replace(/\[(\d+)\]/g, '.$1').split('.').filter(Boolean)
+}
+
 export function buildScopeIndex(
   nodes: ScopeNodeLike[],
   edges: ScopeEdgeLike[],
@@ -459,7 +464,7 @@ export function buildScopeIndex(
     const fields = appendCardFields(templateFields(kind, config), config, cardBindings)
     for (const field of fields) {
       for (const ref of extractTemplateRefs(field.text)) {
-        const segments = ref.path.split('.').filter(Boolean)
+        const segments = splitRefPath(ref.path)
         if (segments.length === 0) continue
         const head = segments[0]
 
@@ -646,7 +651,7 @@ export function buildScopeIndex(
         for (const leaf of extractSingleTemplateLeaves(paramsText)) {
           const ref = extractTemplateRefs(leaf.text)[0]
           if (!ref) continue
-          const refSegments = ref.path.split('.').filter(Boolean)
+          const refSegments = splitRefPath(ref.path)
           if (refSegments.length === 0 || refSegments[0] === 'global') continue
           const providerNode = nodeById.get(refSegments[0])
           if (!providerNode || providerNode.kind !== 'tool_call') continue
@@ -693,7 +698,7 @@ export function buildScopeIndex(
       const config = viewer.config ?? {}
       for (const field of templateFields(viewer.kind, config)) {
         for (const ref of extractTemplateRefs(field.text)) {
-          const segments = ref.path.split('.').filter(Boolean)
+          const segments = splitRefPath(ref.path)
           if (segments.length === 0) continue
           const head = segments[0]
           if (head === 'global') continue
