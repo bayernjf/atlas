@@ -1,0 +1,453 @@
+{
+  "generatedAt": "2026-11-23T04:02:53Z",
+  "mode": "real-http-a2a-real-run",
+  "server": "http://127.0.0.1:8942",
+  "card": {
+    "version": "0.2.0",
+    "skills": [
+      "plan-approval-flow",
+      "run-graph",
+      "diagnose-run"
+    ],
+    "dataPolicy": "write-task-scope"
+  },
+  "tokens": {
+    "bot-a": "bot-a->a2a-alpha",
+    "bot-b": "bot-b->a2a-alpha",
+    "bot-c": "bot-c->a2a-beta"
+  },
+  "graphs": {
+    "alphaFast": "graph-1",
+    "alphaSlow": "graph-2",
+    "alphaInteractive": "graph-3",
+    "betaFast": "graph-1"
+  },
+  "runs": [
+    {
+      "bot": "bot-a",
+      "tenant": "a2a-alpha",
+      "graph": "graph-1",
+      "taskStatus": "completed",
+      "taskId": "bfee3b1d-58e4-4f9b-9b63-be3685c50ed3",
+      "runId": "a2a-2f26bf48d97742cb8d1b6f0a0c31de29",
+      "runStore": {
+        "runId": "a2a-2f26bf48d97742cb8d1b6f0a0c31de29",
+        "graphId": "graph-1",
+        "status": "completed",
+        "startedAt": "2026-11-23T04:02:53.255799+00:00",
+        "suspendedAt": null,
+        "finishedAt": "2026-11-23T04:02:53.261366+00:00",
+        "error": null,
+        "outputs": {
+          "trigger-1": {
+            "context": {
+              "triggerType": "webhook",
+              "cron": "",
+              "timezone": "UTC",
+              "webhookUrl": "/hooks/a2a",
+              "payload": {}
+            }
+          },
+          "tool-1": {
+            "result": {
+              "columns": [
+                "n"
+              ],
+              "rows": [
+                {
+                  "n": 2
+                }
+              ],
+              "row_count": 1,
+              "truncated": false
+            },
+            "action_status": "SUCCESS"
+          }
+        },
+        "trace": [
+          "trigger-1(trigger): executed",
+          "tool-1(tool_call): executed"
+        ],
+        "suspension": null,
+        "cycleSeq": 0,
+        "cycleGroupId": "",
+        "agentId": "",
+        "resolvedVersion": null
+      },
+      "outputs": {
+        "trigger-1": {
+          "context": {
+            "triggerType": "webhook",
+            "cron": "",
+            "timezone": "UTC",
+            "webhookUrl": "/hooks/a2a",
+            "payload": {}
+          }
+        },
+        "tool-1": {
+          "result": {
+            "columns": [
+              "n"
+            ],
+            "rows": [
+              {
+                "n": 2
+              }
+            ],
+            "row_count": 1,
+            "truncated": false
+          },
+          "action_status": "SUCCESS"
+        }
+      },
+      "trace": [
+        "trigger-1(trigger): executed",
+        "tool-1(tool_call): executed"
+      ]
+    },
+    {
+      "bot": "bot-b",
+      "tenant": "a2a-alpha",
+      "graph": "graph-1",
+      "taskStatus": "completed",
+      "taskId": "e6614c7b-5f35-4186-88fb-817abf53d5dc",
+      "runId": "a2a-2ad8136e1ca14213970741e750496bca",
+      "runStore": {
+        "runId": "a2a-2ad8136e1ca14213970741e750496bca",
+        "graphId": "graph-1",
+        "status": "completed",
+        "startedAt": "2026-11-23T04:02:53.264764+00:00",
+        "suspendedAt": null,
+        "finishedAt": "2026-11-23T04:02:53.268540+00:00",
+        "error": null,
+        "outputs": {
+          "trigger-1": {
+            "context": {
+              "triggerType": "webhook",
+              "cron": "",
+              "timezone": "UTC",
+              "webhookUrl": "/hooks/a2a",
+              "payload": {}
+            }
+          },
+          "tool-1": {
+            "result": {
+              "columns": [
+                "n"
+              ],
+              "rows": [
+                {
+                  "n": 2
+                }
+              ],
+              "row_count": 1,
+              "truncated": false
+            },
+            "action_status": "SUCCESS"
+          }
+        },
+        "trace": [
+          "trigger-1(trigger): executed",
+          "tool-1(tool_call): executed"
+        ],
+        "suspension": null,
+        "cycleSeq": 0,
+        "cycleGroupId": "",
+        "agentId": "",
+        "resolvedVersion": null
+      },
+      "outputs": {
+        "trigger-1": {
+          "context": {
+            "triggerType": "webhook",
+            "cron": "",
+            "timezone": "UTC",
+            "webhookUrl": "/hooks/a2a",
+            "payload": {}
+          }
+        },
+        "tool-1": {
+          "result": {
+            "columns": [
+              "n"
+            ],
+            "rows": [
+              {
+                "n": 2
+              }
+            ],
+            "row_count": 1,
+            "truncated": false
+          },
+          "action_status": "SUCCESS"
+        }
+      }
+    },
+    {
+      "bot": "bot-c",
+      "tenant": "a2a-beta",
+      "graph": "graph-1",
+      "taskStatus": "completed",
+      "taskId": "3cc241d6-e37d-4be6-bfb4-812524a49991",
+      "runId": "a2a-01de6c8de9d343a09ebf9732f13563c4",
+      "runStore": {
+        "runId": "a2a-01de6c8de9d343a09ebf9732f13563c4",
+        "graphId": "graph-1",
+        "status": "completed",
+        "startedAt": "2026-11-23T04:02:53.269976+00:00",
+        "suspendedAt": null,
+        "finishedAt": "2026-11-23T04:02:53.274244+00:00",
+        "error": null,
+        "outputs": {
+          "trigger-1": {
+            "context": {
+              "triggerType": "webhook",
+              "cron": "",
+              "timezone": "UTC",
+              "webhookUrl": "/hooks/a2a",
+              "payload": {}
+            }
+          },
+          "tool-1": {
+            "result": {
+              "columns": [
+                "n"
+              ],
+              "rows": [
+                {
+                  "n": 2
+                }
+              ],
+              "row_count": 1,
+              "truncated": false
+            },
+            "action_status": "SUCCESS"
+          }
+        },
+        "trace": [
+          "trigger-1(trigger): executed",
+          "tool-1(tool_call): executed"
+        ],
+        "suspension": null,
+        "cycleSeq": 0,
+        "cycleGroupId": "",
+        "agentId": "",
+        "resolvedVersion": null
+      },
+      "outputs": {
+        "trigger-1": {
+          "context": {
+            "triggerType": "webhook",
+            "cron": "",
+            "timezone": "UTC",
+            "webhookUrl": "/hooks/a2a",
+            "payload": {}
+          }
+        },
+        "tool-1": {
+          "result": {
+            "columns": [
+              "n"
+            ],
+            "rows": [
+              {
+                "n": 2
+              }
+            ],
+            "row_count": 1,
+            "truncated": false
+          },
+          "action_status": "SUCCESS"
+        }
+      }
+    }
+  ],
+  "idempotency": {
+    "firstTaskId": "bfee3b1d-58e4-4f9b-9b63-be3685c50ed3",
+    "replayTaskId": "bfee3b1d-58e4-4f9b-9b63-be3685c50ed3",
+    "firstRunId": "a2a-2f26bf48d97742cb8d1b6f0a0c31de29",
+    "replayRunId": "a2a-2f26bf48d97742cb8d1b6f0a0c31de29",
+    "sameRun": true,
+    "runStoreRecordsForGraph": 1
+  },
+  "conflict": {
+    "activeRunWhileSecondCall": {
+      "runId": "a2a-8a3b9678ac664fbd9246329a242f659d",
+      "graphId": "graph-2",
+      "status": "running",
+      "startedAt": "2026-11-23T04:02:53.275760+00:00",
+      "suspendedAt": null,
+      "kind": null,
+      "nodeId": null,
+      "deadlineAt": null,
+      "resumeToken": null,
+      "cycleSeq": 0,
+      "cycleGroupId": "",
+      "agentId": "",
+      "resolvedVersion": null
+    },
+    "secondCallError": {
+      "code": -32003,
+      "message": "a run for tenant=a2a-alpha graph=graph-2 is already active",
+      "data": {
+        "activeTaskId": "b8d16f32-54cb-4c2e-a2b6-b6c7ebcd0874",
+        "activeRunId": "a2a-8a3b9678ac664fbd9246329a242f659d"
+      }
+    },
+    "firstCallTaskStatus": "completed",
+    "firstCallRunId": "a2a-8a3b9678ac664fbd9246329a242f659d",
+    "secondCallCreatedNoRun": true
+  },
+  "tenantIsolation": {
+    "bot": "bot-c",
+    "callerTenant": "a2a-beta",
+    "requestedTenant": "a2a-alpha",
+    "error": {
+      "code": -32011,
+      "message": "caller bot-c is bound to tenant a2a-beta, not a2a-alpha",
+      "data": {
+        "callerId": "bot-c",
+        "callerTenantId": "a2a-beta",
+        "requestedTenantId": "a2a-alpha"
+      }
+    }
+  },
+  "interactiveRejected": {
+    "taskStatus": "failed",
+    "error": {
+      "mode": "run",
+      "skill": "run-graph",
+      "params": {
+        "tenant_id": "a2a-alpha",
+        "graph_id": "graph-3",
+        "idempotency_key": "bot-a-interactive-1"
+      },
+      "tenantId": "a2a-alpha",
+      "graphId": "graph-3",
+      "status": "failed",
+      "error": "A2A v1 runs non-interactive graphs only; node 'wait-1' is 'wait'. Resolve approvals in the platform session.",
+      "errorCode": "INTERACTIVE_GRAPH_UNSUPPORTED",
+      "nodeId": "wait-1",
+      "nodeType": "wait"
+    },
+    "runStoreRecordsForGraph": 0
+  },
+  "volatileLedger": {
+    "tasksGetAfterLedgerReset": {
+      "code": -32001,
+      "message": "Task not found"
+    },
+    "runStoreAfterLedgerReset": {
+      "runId": "a2a-2f26bf48d97742cb8d1b6f0a0c31de29",
+      "graphId": "graph-1",
+      "status": "completed",
+      "startedAt": "2026-11-23T04:02:53.255799+00:00",
+      "suspendedAt": null,
+      "finishedAt": "2026-11-23T04:02:53.261366+00:00",
+      "error": null,
+      "outputs": {
+        "trigger-1": {
+          "context": {
+            "triggerType": "webhook",
+            "cron": "",
+            "timezone": "UTC",
+            "webhookUrl": "/hooks/a2a",
+            "payload": {}
+          }
+        },
+        "tool-1": {
+          "result": {
+            "columns": [
+              "n"
+            ],
+            "rows": [
+              {
+                "n": 2
+              }
+            ],
+            "row_count": 1,
+            "truncated": false
+          },
+          "action_status": "SUCCESS"
+        }
+      },
+      "trace": [
+        "trigger-1(trigger): executed",
+        "tool-1(tool_call): executed"
+      ],
+      "suspension": null,
+      "cycleSeq": 0,
+      "cycleGroupId": "",
+      "agentId": "",
+      "resolvedVersion": null
+    },
+    "note": "same-process reset only; a real process restart clears the in-memory run_store too"
+  },
+  "runStoreSnapshot": {
+    "a2a-alpha": [
+      {
+        "runId": "a2a-8a3b9678ac664fbd9246329a242f659d",
+        "graphId": "graph-2",
+        "status": "completed",
+        "startedAt": "2026-11-23T04:02:53.275760+00:00",
+        "suspendedAt": null,
+        "kind": null,
+        "nodeId": null,
+        "deadlineAt": null,
+        "resumeToken": null,
+        "cycleSeq": 0,
+        "cycleGroupId": "",
+        "agentId": "",
+        "resolvedVersion": null
+      },
+      {
+        "runId": "a2a-2ad8136e1ca14213970741e750496bca",
+        "graphId": "graph-1",
+        "status": "completed",
+        "startedAt": "2026-11-23T04:02:53.264764+00:00",
+        "suspendedAt": null,
+        "kind": null,
+        "nodeId": null,
+        "deadlineAt": null,
+        "resumeToken": null,
+        "cycleSeq": 0,
+        "cycleGroupId": "",
+        "agentId": "",
+        "resolvedVersion": null
+      },
+      {
+        "runId": "a2a-2f26bf48d97742cb8d1b6f0a0c31de29",
+        "graphId": "graph-1",
+        "status": "completed",
+        "startedAt": "2026-11-23T04:02:53.255799+00:00",
+        "suspendedAt": null,
+        "kind": null,
+        "nodeId": null,
+        "deadlineAt": null,
+        "resumeToken": null,
+        "cycleSeq": 0,
+        "cycleGroupId": "",
+        "agentId": "",
+        "resolvedVersion": null
+      }
+    ],
+    "a2a-beta": [
+      {
+        "runId": "a2a-01de6c8de9d343a09ebf9732f13563c4",
+        "graphId": "graph-1",
+        "status": "completed",
+        "startedAt": "2026-11-23T04:02:53.269976+00:00",
+        "suspendedAt": null,
+        "kind": null,
+        "nodeId": null,
+        "deadlineAt": null,
+        "resumeToken": null,
+        "cycleSeq": 0,
+        "cycleGroupId": "",
+        "agentId": "",
+        "resolvedVersion": null
+      }
+    ]
+  },
+  "ok": true
+}
