@@ -119,6 +119,23 @@ def test_u925_local_loopback_can_be_disabled_and_never_applies_to_prod(monkeypat
     assert _navigate(prod_adapter, "http://127.0.0.1:3000/").status is ActionStatus.FAILED
 
 
+def test_execute_before_start_is_a_structured_browser_not_started_failure() -> None:
+    """旧 graph-1 样本的 ``call start() before execute()`` 是预期守卫，不是进程崩溃。
+
+    未启动浏览器时 execute 必须返回结构化 FAILED，且不触碰任何页面；上层按
+    on_error=stop 映射成 NODE_EXECUTION_FAILED 才是旧样本看到的 500。
+    """
+    adapter = WebHarnessAdapter(granted_permissions=_WRITE)
+    assert adapter.page is None
+    result = adapter.execute(
+        ActionRequest(capability_name="navigate", parameters={"url": "http://8.8.8.8/"})
+    )
+    assert result.status is ActionStatus.FAILED
+    assert result.error is not None
+    assert result.error.code == "BROWSER_NOT_STARTED"
+    assert str(result.error.message) == "call start() before execute()"
+
+
 def test_u925_construction_defaults_to_the_shared_env_policy(monkeypatch) -> None:
     """缺省就是大家共用的那一条 env，不另开一份"浏览器专用白名单"。"""
     monkeypatch.setenv("ATLAS_HTTP_EGRESS_ALLOWLIST", "only.example.com")
