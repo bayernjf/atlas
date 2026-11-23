@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-CARD_VERSION = "0.1.0"
+CARD_VERSION = "0.2.0"
 
 SKILLS: list[dict] = [
     {
@@ -16,6 +16,16 @@ SKILLS: list[dict] = [
             "mutation, no run started, no LLM token spend."
         ),
         "tags": ["graph", "approval", "plan-only", "human-gate"],
+    },
+    {
+        "id": "run-graph",
+        "name": "Run a saved graph",
+        "description": (
+            "Run a saved non-interactive Atlas graph under the caller's tenant: "
+            "real in-process execution, run_store record, trace/output artifact. "
+            "Requires a tenant-bound token; human/wait graphs are rejected."
+        ),
+        "tags": ["graph", "run", "real-run", "tenant-bound"],
     },
     {
         "id": "diagnose-run",
@@ -34,16 +44,18 @@ HANDSHAKE: dict = {
     "swornTo": "zeus",
     "domain": "ops-orchestration",
     "dataRealms": ["enterprise"],
-    "dataPolicy": "read-task-scope",
+    "dataPolicy": "write-task-scope",
     "reportBack": True,
     "escalationPolicy": "auto",
     "sla": {"ackSeconds": 10},
     "notes": (
-        "Plan-mode execution agent: every skill returns an advisory plan artifact and "
-        "never starts a run, mutates a graph, spends model tokens, or resolves a "
-        "human approval. Task execution is JSON-RPC at POST /api/a2a/tasks "
-        "protected by ATLAS_A2A_TASK_TOKEN (Bearer). Task storage is in-memory "
-        "per process (single-replica constraint, docs/62)."
+        "Mixed execution agent: plan skills stay advisory; run-graph starts a real "
+        "non-interactive run under a tenant-bound token, writes a run_store record, "
+        "and returns trace/output. Human/wait graphs are rejected; approvals stay "
+        "in the platform session. Task execution is JSON-RPC at POST /api/a2a/tasks "
+        "protected by ATLAS_A2A_TASK_TOKENS=caller:tenant:token,... (Bearer); the "
+        "legacy ATLAS_A2A_TASK_TOKEN is plan-only. Task ledger is in-memory per "
+        "process (single-replica constraint, docs/62)."
     ),
 }
 
@@ -57,8 +69,9 @@ def build_agent_card() -> dict:
     return {
         "name": "atlas",
         "description": (
-            "Agent orchestration platform (Harness / Graph / Loop). Executor skills "
-            "are plan-only: candidates and plans, human gates decide."
+            "Agent orchestration platform (Harness / Graph / Loop). Plan skills "
+            "return advisory candidates; run-graph executes saved non-interactive "
+            "graphs under a tenant-bound caller."
         ),
         "url": f"{base}/api/a2a/tasks",
         "version": CARD_VERSION,
