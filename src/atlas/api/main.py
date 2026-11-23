@@ -1591,12 +1591,18 @@ class MemoryUpdateRequest(BaseModel):
 
 
 class KnowledgeImportRequest(BaseModel):
-    """知识库文档导入（docs/108 §2.2）：纯文本按段落分段入库，MVP 不做多格式解析。"""
+    """知识库文档导入（docs/108 §2.2 / §7 A-08）。
+
+    ``text`` 与 ``content_base64`` 二选一：纯文本沿用旧口径；文件导入走 base64，
+    由服务端按 ``filename`` 后缀解析 .md/.markdown/.txt/.docx。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     category: Literal["faq", "sop", "manual", "rule", "case"]
-    text: str = Field(min_length=1, max_length=200000)
+    text: str | None = Field(default=None, min_length=1, max_length=200000)
+    content_base64: str | None = Field(default=None, max_length=20_000_000)
+    filename: str | None = Field(default=None, min_length=1, max_length=255)
     scope: dict[str, str] | None = None
 
 
