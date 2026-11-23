@@ -3,7 +3,7 @@
  * 调度时序（同步/防抖/idle）在 React 薄绑定，不在纯核测试范围。
  */
 import { describe, expect, it } from 'vitest'
-import { ValidationEngine, type EngineNode } from '../engine'
+import { ValidationEngine, graphDataSignature, type EngineNode } from '../engine'
 import type { ScopeEdgeLike } from '../../scope'
 
 function node(id: string, kind: EngineNode['data']['kind'], config: Record<string, unknown> = {}): EngineNode {
@@ -187,6 +187,28 @@ describe('ValidationEngine L3（全图结构层）', () => {
 })
 
 describe('ValidationEngine 缓存维护', () => {
+  it('Worker 结果写入后签名命中，不触发同步重算', () => {
+    const engine = new ValidationEngine()
+    const nodes = [
+      node('trigger-1', 'trigger', { triggerType: 'manual' }),
+      node('tool-orphan', 'tool_call'),
+    ]
+    const edges: ScopeEdgeLike[] = []
+    const workerDiagnostics = [
+      {
+        severity: 'error' as const,
+        layer: 'graph' as const,
+        code: 'GRAPH_UNREACHABLE',
+        message: 'worker 结果',
+        loc: {},
+      },
+    ]
+    const sig = graphDataSignature(scopeNodes(nodes), edges, [])
+    engine.setGraphResult(sig, workerDiagnostics)
+    expect(engine.getGraphSignature()).toBe(sig)
+    expect(engine.runGraph(scopeNodes(nodes), edges, [])).toBe(workerDiagnostics)
+  })
+
   it('prune 清除已删节点的残留', () => {
     const engine = new ValidationEngine()
     const nodes = [
