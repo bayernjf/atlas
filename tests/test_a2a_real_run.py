@@ -210,6 +210,31 @@ def test_failed_graph_preserves_global_error_and_trace(monkeypatch):
     assert run["trace"] == ["tool-1(tool_call): failed: boom"]
 
 
+def test_runtime_suspended_graph_records_interrupted_run(monkeypatch):
+    tenant = f"a2a-{uuid.uuid4().hex[:8]}"
+    services = tenant_registry.get(tenant)
+    graph_id = services.graph_store.save(_graph())
+    caller = CallerIdentity("bot-a", tenant, "token-map")
+
+    def suspended_run(*args, **kwargs):
+        return {
+            "status": "suspended",
+            "outputs": {},
+            "trace": ["human-1(human_approval): suspended"],
+        }
+
+    monkeypatch.setattr("atlas.a2a.run.run_graph", suspended_run)
+    task = _send("run-graph", {"tenant_id": tenant, "graph_id": graph_id}, caller)["result"]
+    assert task["status"]["state"] == "input-required"
+    data = task["artifacts"][0]["parts"][0]["data"]
+    assert data["status"] == "input-required"
+    assert "no resume path" in data["error"]
+    run = services.run_store.get(data["runId"])
+    assert run["status"] == "interrupted"
+    assert run["trace"] == ["human-1(human_approval): suspended"]
+    assert run["error"] == "run suspended: A2A v1 has no resume path; resolve in the platform session"
+
+
 def test_conflict_lock_rejects_second_caller_while_run_active(monkeypatch):
     tenant = f"a2a-{uuid.uuid4().hex[:8]}"
     services = tenant_registry.get(tenant)
