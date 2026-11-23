@@ -64,7 +64,8 @@ def _assert_non_interactive(
     depth: int = 0,
     seen: tuple[str, ...] = (),
 ) -> None:
-    nodes = raw.get("nodes") if isinstance(raw.get("nodes"), list) else []
+    raw_nodes = raw.get("nodes")
+    nodes = raw_nodes if isinstance(raw_nodes, list) else []
     for node in nodes:
         if not isinstance(node, dict):
             continue
@@ -81,7 +82,8 @@ def _assert_non_interactive(
             )
         if node_type != "subgraph":
             continue
-        config = node.get("config") if isinstance(node.get("config"), dict) else {}
+        raw_config = node.get("config")
+        config = raw_config if isinstance(raw_config, dict) else {}
         child_id = config.get("graphId")
         if not isinstance(child_id, str) or not child_id:
             continue
@@ -170,9 +172,16 @@ def execute_graph_run(
         task_status = "failed"
     elif status == "suspended":
         # A2A v1 不接管挂起/续跑；子图内审批等交互节点可能在运行中才暴露。
-        services.run_store.finish(run_id=run_id, status="suspended")
-        task_status = "input-required"
+        # A2A 没有续跑路径，挂起图在此终止；台账记 interrupted，而非 finish 不接受的非终态 suspended。
         error = "run suspended: A2A v1 has no resume path; resolve in the platform session"
+        services.run_store.finish(
+            run_id=run_id,
+            status="interrupted",
+            outputs=outputs,
+            trace=trace,
+            error=error,
+        )
+        task_status = "input-required"
     else:
         message = f"unexpected run status: {status!r}"[:500]
         services.run_store.finish(run_id=run_id, status="failed", error=message)

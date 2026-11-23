@@ -205,7 +205,7 @@ def _emit_run_artifact(
     result: Any,
     caller_id: str,
 ) -> dict[str, Any]:
-    artifact = {
+    artifact: dict[str, Any] = {
         "artifactId": str(uuid.uuid4()),
         "name": f"{skill}-run",
         "parts": [
