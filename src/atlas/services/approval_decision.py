@@ -9,6 +9,7 @@ HTTP-shaped failures still raise HTTPException (route contract unchanged).
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 from typing import Any, Literal
@@ -104,7 +105,22 @@ def apply_approval_decision(
             detail="请提供 decision（approved/rejected）或卡片 actionId",
         )
 
-    if not broker.resolve(token, decision, comment=comment, action_id=resolved_action):
+    resolve_kwargs: dict[str, Any] = {
+        "comment": comment,
+        "action_id": resolved_action,
+    }
+    # 兼容老调用方/测试替身：真实 ApprovalBroker.resolve 接受 resolved_by，
+    # 但历史 broker 替身只有 comment/action_id。不要在替身上打 TypeError。
+    try:
+        resolve_params = inspect.signature(broker.resolve).parameters
+    except (TypeError, ValueError):
+        resolve_params = {}
+    accepts_resolved_by = "resolved_by" in resolve_params or any(
+        param.kind is inspect.Parameter.VAR_KEYWORD for param in resolve_params.values()
+    )
+    if accepts_resolved_by:
+        resolve_kwargs["resolved_by"] = resolved_by
+    if not broker.resolve(token, decision, **resolve_kwargs):
         raise HTTPException(status_code=409, detail="该审批请求已有决策，重复提交不生效")
     # docs/37 §4：决策结果邮件（旁路 fail-safe，不影响响应与决策事实）。
     if notifier is not None:
@@ -122,7 +138,7 @@ def apply_approval_decision(
                 )
             except Exception as exc:  # noqa: BLE001 结果通知任何异常都不改变响应
                 logger.warning("审批结果通知失败 token=%s: %s", _token_ref(token), exc)
-    result: dict[str, Any] = {"token": token, "decision": decision, "resolvedBy": "human"}
+    result: dict[str, Any] = {"token": token, "decision": decision, "resolvedBy": resolved_by}
     if resolved_action:
         result["actionId"] = resolved_action
     return result
