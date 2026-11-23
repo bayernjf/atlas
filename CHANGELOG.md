@@ -3,6 +3,15 @@
 本文件记录 Atlas 仓库的可追溯变更里程碑。详细过程与状态见 [handoff.md](handoff.md)。
 
 ## [Unreleased]
+### 〔docs〕A-06 单次全量口径校正 + 真实浏览器验收（2026-11-23；docs/141）
+
+- 撤回“20/20 = 单次全量”的表述：旧 20/20 是 17 条第一轮通过复用 + 3 条失败项重跑。
+- 5 次单次全量真实 LLM 评估：**17/20、15/20、19/20、18/20、16/20**，合计 **85/100（85%）**；最佳 19/20，当前代码 16/20；`mode=llm` 与技能 top-3 各 5 次全为 20/20。
+- 真实浏览器 NL Modal 验收：`openai/ark-code-latest` 真实生成、L3 通过、技能 top-3（shop/message/database）、7 节点草稿载入、画布问题面板“无问题”；证据 `outputs/a06-nl-ui/20-nl-modal-real-llm.png`、`21-canvas-after-close-full.png`。
+- 前端修复 `scope.ts` 数组下标路径（`rows[0].status`），问题面板由错误转“无问题”；证据 `frontend/src/lib/__tests__/scope.test.ts` 47 passed。
+- 门：后端全量 **3121 passed / 214 skipped / 1 warning**（207.01s）；前端 **1030 passed / 2 skipped**；build/oxlint 绿；临时验收栈已清理。
+- 边界：剩余 4 条 run6 失败为模型语义错误（不可达节点、`ai_decision` 字段越界、编造输出字段、漏声明全局变量），不用猜业务的 heuristic 刷绿；L3 不等于实际运行。
+
 ### 〔docs〕docs/08 §八候选池清账（2026-11-23；docs/143）
 
 - 逐组复核 A/B/C/D 与 AT–BS 里程碑：本节无未立项且本地可闭环项；B/C 组已排干，AT–BS 全部收口，D 组为真实凭据/域名/客户/多实例等外部触发。
@@ -21,7 +30,7 @@
 - `generate_graph_with_meta()` 真实模型最多 2 次尝试，首稿失败把错误作为 repair 提示再生成；meta 返回 `mode/model/attempts/repaired/compileOk/errors`，`mode=template` 明示离线兜底，评估只认 `mode=llm`。
 - `normalize_generated_graph()` 修 id/edge/全局引用/`retry.on_error`/condition 默认目标冲突/冗余 branch/常量 condition 折叠/非 loop 自环；prompt 补单 trigger、schedule cron、webhook URL、结束节点不得建成 trigger、末端不得连回 trigger 等硬约束。
 - `POST /api/nl/generate` 返回 `skills/compile/generation`；前端 NL Modal 展示来源、模型、尝试次数、修复状态、L3 结果、技能 top-3 命中词与工具，`mode=template` 黄色警告“不是 AI 生成”。
-- 证据：`scripts/eval_nl_skills.py` + `outputs/a06-nl-skills/20-case-eval.json`（20/20，mode=llm 20/20、L3 20/20、技能 20/20、工具 20/20；17 条复用第一轮通过 + 3 条失败项重跑；第一轮 17/20 失败样本存 `round1-*`）。
+- 证据：`scripts/eval_nl_skills.py` + `outputs/a06-nl-skills/20-case-eval.json`（旧合并口径 20/20：17 条复用第一轮通过 + 3 条失败项重跑；第一轮 17/20 失败样本存 `round1-*`；**该 20/20 不是单次全量，已由上方 2026-11-23 晚复核校正为 5 次 17/15/19/18/16**）。
 - 门：定向 **36 passed**；后端全量 **3116 passed／214 skipped／1 warning**；前端 **1029 passed／2 skipped**；build/oxlint/ruff/`git diff --check` 通过。边界：单模型、适配器粒度技能、L3 不等于实际运行、20 条是回归集不是质量承诺。
 
 ### 〔feat〕A-08 知识库多格式导入 + 引用可追溯 + 20 文档评估（2026-11-23；docs/108 v0.2 §7）
