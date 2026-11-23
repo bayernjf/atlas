@@ -317,18 +317,26 @@ def validate_egress_url(
 #: 本地自用档回环放行开关（docs/137 A-01）。默认开，仅非 prod 生效；显式 ``0`` 关闭。
 #: 只放行 127.0.0.0/8 与 ::1，不放私网/链路本地/云元数据；prod 恒关（浏览器适配器本身也不注册）。
 WEB_LOCAL_LOOPBACK_ENV = "ATLAS_WEB_ALLOW_LOOPBACK"
+MESSAGE_WEBHOOK_LOCAL_LOOPBACK_ENV = "ATLAS_MESSAGE_WEBHOOK_ALLOW_LOOPBACK"
+
+
+def _non_prod_loopback_permit(env_name: str) -> tuple[str, ...]:
+    """只放回环的本地自用档开关：prod 恒空，显式 0 关闭，其余默认开。"""
+    if os.getenv("ATLAS_ENV", "dev").strip().lower() == "prod":
+        return ()
+    if os.getenv(env_name, "1").strip() == "0":
+        return ()
+    return ("127.0.0.0/8", "::1/128")
 
 
 def web_local_loopback_permit() -> tuple[str, ...]:
-    """浏览器本地目标应用（如 Loom localhost:3000）的回环放行范围。
+    """浏览器本地目标应用（如 Loom localhost:3000）的回环放行范围。"""
+    return _non_prod_loopback_permit(WEB_LOCAL_LOOPBACK_ENV)
 
-    ``ATLAS_ENV=prod`` 一律返回空：这是本地自用档的便利，不是部署档的放宽。
-    """
-    if os.getenv("ATLAS_ENV", "dev").strip().lower() == "prod":
-        return ()
-    if os.getenv(WEB_LOCAL_LOOPBACK_ENV, "1").strip() == "0":
-        return ()
-    return ("127.0.0.0/8", "::1/128")
+
+def message_webhook_local_loopback_permit() -> tuple[str, ...]:
+    """消息 webhook 的本地接收器（127.0.0.1 一次性 listener）回环放行范围。"""
+    return _non_prod_loopback_permit(MESSAGE_WEBHOOK_LOCAL_LOOPBACK_ENV)
 
 
 class EgressGuard:
