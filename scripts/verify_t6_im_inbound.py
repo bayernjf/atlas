@@ -68,7 +68,7 @@ def _graph(im_url: str) -> dict:
                             "channel": "wecom",
                             "to": [im_url],
                             "subject": "T6 入站已处理",
-                            "body": "会话 {{trigger-1.context.payload.conversationId}} 消息已收到",
+                            "body": "会话 {{trigger-1.context.payload.event.payload.conversationId}} 消息已收到",
                         },
                         ensure_ascii=False,
                     ),
@@ -205,6 +205,11 @@ def main() -> int:
             "deadLetters": dead_list,
         },
         "run": run,
+        "outboundText": (
+            IM_HITS[-1].get("body", {}).get("text", {}).get("content", "")
+            if IM_HITS
+            else ""
+        ),
         "outboundImHits": IM_HITS,
         "embedsConfigStatus": embeds.status_code,
         "embedsConfig": embeds.json() if embeds.status_code == 200 else None,
@@ -216,6 +221,8 @@ def main() -> int:
         and dead.json().get("deadLetter") is True
         and any(item.get("messageId") == "msg-t6-dead" for item in dead_list.get("items", []))
         and bool(IM_HITS)
+        and "conv-t6-1" in evidence["outboundText"]
+        and "{{" not in evidence["outboundText"]
         and run is not None
         and run.get("status") == "completed"
         and embeds.status_code == 200

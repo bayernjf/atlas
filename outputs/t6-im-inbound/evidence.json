@@ -1,7 +1,7 @@
 {
   "mode": "local-im-inbound-outbound",
   "binding": {
-    "id": "ch-8201d909b3be22019bdb62aceb474df1",
+    "id": "ch-ff6e378f32b44bed42aa37785e1a7c0f",
     "provider": "shopify",
     "connectionId": "conn-t6-local",
     "config": {
@@ -11,7 +11,7 @@
     "status": "connected",
     "lastError": null,
     "createdBy": null,
-    "createdAt": "2026-11-23T17:44:05.295930+00:00",
+    "createdAt": "2026-11-24T10:15:28.029761+00:00",
     "webhookSubscriptions": [],
     "inboundMappings": [
       {
@@ -30,7 +30,7 @@
   "inbound": {
     "received": {
       "received": true,
-      "runId": "ddd1efcbad904b8ea49a6c83eb2d4214",
+      "runId": "56d2cd2666354f9f90eaf6aaf572743a",
       "agentId": ""
     },
     "duplicate": {
@@ -45,7 +45,7 @@
       "items": [
         {
           "messageId": "msg-t6-dead",
-          "bindingId": "ch-8201d909b3be22019bdb62aceb474df1",
+          "bindingId": "ch-ff6e378f32b44bed42aa37785e1a7c0f",
           "channel": "wecom",
           "conversationId": "conv-t6-unknown",
           "reasons": [
@@ -53,19 +53,19 @@
               "code": "NO_MAPPING"
             }
           ],
-          "createdAt": "2026-11-23T17:44:06.946227+00:00",
+          "createdAt": "2026-11-24T10:15:34.029418+00:00",
           "replayedAt": null
         }
       ]
     }
   },
   "run": {
-    "runId": "ddd1efcbad904b8ea49a6c83eb2d4214",
+    "runId": "56d2cd2666354f9f90eaf6aaf572743a",
     "graphId": "graph-1",
     "status": "completed",
-    "startedAt": "2026-11-23T17:44:06.937924+00:00",
+    "startedAt": "2026-11-24T10:15:34.020908+00:00",
     "suspendedAt": null,
-    "finishedAt": "2026-11-23T17:44:06.946506+00:00",
+    "finishedAt": "2026-11-24T10:15:34.028273+00:00",
     "error": null,
     "outputs": {
       "trigger-1": {
@@ -91,14 +91,14 @@
       },
       "msg-1": {
         "result": {
-          "id": "a1476c40-6bc9-4aa5-9209-c97ec8888afb",
+          "id": "60b1e8c3-bcda-4dec-b0d2-97173fff3f26",
           "channel": "wecom",
           "to": [
             "http://127.0.0.1:8960/im-hook"
           ],
           "subject": "T6 入站已处理",
-          "body": "会话 {{trigger-1.context.payload.conversationId}} 消息已收到",
-          "sent_at": "2026-11-23T17:44:06.942130+00:00",
+          "body": "会话 conv-t6-1 消息已收到",
+          "sent_at": "2026-11-24T10:15:34.024067+00:00",
           "delivered": "wecom"
         },
         "action_status": "SUCCESS"
@@ -114,13 +114,14 @@
     "agentId": "",
     "resolvedVersion": null
   },
+  "outboundText": "T6 入站已处理\n会话 conv-t6-1 消息已收到",
   "outboundImHits": [
     {
       "path": "/im-hook",
       "body": {
         "msgtype": "text",
         "text": {
-          "content": "T6 入站已处理\n会话 {{trigger-1.context.payload.conversationId}} 消息已收到",
+          "content": "T6 入站已处理\n会话 conv-t6-1 消息已收到",
           "mentioned_list": [],
           "mentioned_mobile_list": []
         }
