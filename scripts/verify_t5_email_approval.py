@@ -135,7 +135,19 @@ def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     smtp = _CaptureSMTP(("127.0.0.1", 0), None)
     smtp_port = smtp.socket.getsockname()[1]
-    threading.Thread(target=asyncore.loop, kwargs={"timeout": 0.1}, daemon=True).start()
+    smtp_stop = threading.Event()
+
+    def _smtp_loop() -> None:
+        # count=1 让每轮 poll 后回到停止位检查，避免关闭 socket 时 select 抛 EBADF。
+        while not smtp_stop.is_set():
+            asyncore.loop(timeout=0.1, count=1)
+
+    smtp_thread = threading.Thread(
+        target=_smtp_loop,
+        name="t5-smtp-loop",
+        daemon=True,
+    )
+    smtp_thread.start()
 
     os.environ.update(
         {
@@ -250,7 +262,11 @@ def main() -> int:
         json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     print(json.dumps({"ok": evidence["ok"], "smtpPort": smtp_port, "messages": len(_CaptureSMTP.messages)}, ensure_ascii=False))
+    # 先停 loop 并等线程退出，再关 socket；反过来会在 select 阻塞时跨线程 close 触发 EBADF。
+    smtp_stop.set()
+    smtp_thread.join(timeout=2)
     smtp.close()
+    asyncore.close_all()
     return 0 if evidence["ok"] else 1
 
 

@@ -1,27 +1,27 @@
 {
-  "generatedAt": "2026-11-23T18:01:19.624383+00:00",
+  "generatedAt": "2026-11-24T10:15:54.630349+00:00",
   "mode": "real-local-smtp-approval-roundtrip",
   "smtp": {
     "host": "127.0.0.1",
-    "port": 65321,
+    "port": 59884,
     "tls": false
   },
   "tenant": "t1",
   "pending": {
-    "token": "52bba5cf47b14bba9ce16a64d697320e",
+    "token": "ab001fd014d4433797ecf55fc8ddc2b6",
     "node_id": "approval-1",
     "graph_id": "adhoc",
     "summary": "T5 邮件审批：订单 T5-ORDER-1",
     "approver": "",
     "timeoutSeconds": 30,
-    "createdAt": 1795456877.744189
+    "createdAt": 1795515352.75715
   },
   "frame": {
-    "resume_token": "52bba5cf47b14bba9ce16a64d697320e",
+    "resume_token": "ab001fd014d4433797ecf55fc8ddc2b6",
     "run_id": "",
     "node_id": "approval-1",
     "kind": "approval",
-    "deadline_at": "2026-11-23T18:01:47.756360+00:00",
+    "deadline_at": "2026-11-24T10:16:22.769477+00:00",
     "graph_snapshot": {
       "version": 1,
       "variables": [],
@@ -168,7 +168,7 @@
       "approver@example.com"
     ],
     "subject": "[Atlas] 审批待处理：T5 邮件审批：订单 T5-ORDER-1",
-    "body": "有一笔人机审批正在等待处理。\n\n审批节点：approval-1（图 adhoc）\n审批说明：T5 邮件审批：订单 T5-ORDER-1\n超时时间：30 秒（超时后按图中配置自动处理）\n\n一键处理：http://127.0.0.1:8951/approvals/eyJ2IjoxLCJ0ZW5hbnQiOiJ0MSIsImF0IjoiNTJiYmE1Y2Y0N2IxNGJiYTljZTE2YTY0ZDY5NzMyMGUiLCJpYXQiOjE3OTU0NTY4NzcsImV4cCI6MTc5NTQ1NzIwNywicmNwdCI6ImFwcHJvdmVyQGV4YW1wbGUuY29tIn0.q6dObVtnU8yKa4zNJwQpHyvm3FO34qTba7_JIXh-kQY\n或前往应用：http://127.0.0.1:8951\n"
+    "body": "有一笔人机审批正在等待处理。\n\n审批节点：approval-1（图 adhoc）\n审批说明：T5 邮件审批：订单 T5-ORDER-1\n超时时间：30 秒（超时后按图中配置自动处理）\n\n一键处理：http://127.0.0.1:8951/approvals/eyJ2IjoxLCJ0ZW5hbnQiOiJ0MSIsImF0IjoiYWIwMDFmZDAxNGQ0NDMzNzk3ZWNmNTVmYzhkZGMyYjYiLCJpYXQiOjE3OTU1MTUzNTIsImV4cCI6MTc5NTUxNTY4MiwicmNwdCI6ImFwcHJvdmVyQGV4YW1wbGUuY29tIn0.l2ytSvimqGhJaWa4gE8LuanAgtnet_6Pp-pKjxBBkxg\n或前往应用：http://127.0.0.1:8951\n"
   },
   "emailView": {
     "status": "pending",
@@ -177,12 +177,12 @@
     "graphId": "adhoc",
     "approver": "",
     "timeoutSeconds": 30,
-    "createdAt": 1795456877.744189,
+    "createdAt": 1795515352.75715,
     "remainingSeconds": 28
   },
   "badTokenStatus": 404,
   "decision": {
-    "token": "52bba5cf47b14bba9ce16a64d697320e",
+    "token": "ab001fd014d4433797ecf55fc8ddc2b6",
     "decision": "approved",
     "resolvedBy": "email-link"
   },
@@ -212,7 +212,7 @@
         "mode": "human_approval",
         "decision": "approved",
         "target": "msg-approved",
-        "token": "52bba5cf47b14bba9ce16a64d697320e",
+        "token": "ab001fd014d4433797ecf55fc8ddc2b6",
         "summary": "T5 邮件审批：订单 T5-ORDER-1",
         "approver": "",
         "resolvedBy": "email-link",
@@ -220,14 +220,14 @@
       },
       "msg-approved": {
         "result": {
-          "id": "77ff560c-c787-4976-b85e-7cc07fd8cfa6",
+          "id": "3aefd23c-534f-4dac-94b7-808b4007b167",
           "channel": "email",
           "to": [
             "approver@example.com"
           ],
           "subject": "T5 审批已通过",
           "body": "订单 T5-ORDER-1 的审批已通过",
-          "sent_at": "2026-11-23T18:01:19.607739+00:00",
+          "sent_at": "2026-11-24T10:15:54.611259+00:00",
           "delivered": "smtp"
         },
         "action_status": "SUCCESS"
@@ -238,68 +238,68 @@
       "approval-1: approved (email-link) → msg-approved",
       "msg-approved(tool_call): executed"
     ],
-    "rng_seed": 3773091146659992023,
-    "traceId": "b9810a4183484326a781078a947f73db",
+    "rng_seed": 6440704380936583999,
+    "traceId": "7080478e9cfb4d8593d710dbc502e080",
     "traceTree": {
-      "traceId": "b9810a4183484326a781078a947f73db",
-      "spanId": "2d5e9e1b8aa94e0f",
+      "traceId": "7080478e9cfb4d8593d710dbc502e080",
+      "spanId": "1405c9e12fbc4279",
       "name": "run:adhoc",
       "kind": "run",
-      "startedAt": "2026-11-23T18:01:17.740325+00:00",
-      "durationMs": 1881.389,
+      "startedAt": "2026-11-24T10:15:52.752969+00:00",
+      "durationMs": 1875.095,
       "status": "ok",
       "children": [
         {
-          "traceId": "b9810a4183484326a781078a947f73db",
-          "spanId": "e46bc112b4c2442d",
+          "traceId": "7080478e9cfb4d8593d710dbc502e080",
+          "spanId": "d45e3cbe2d3945ca",
           "name": "trigger:trigger-1",
           "kind": "node",
-          "startedAt": "2026-11-23T18:01:17.744004+00:00",
+          "startedAt": "2026-11-24T10:15:52.756980+00:00",
           "durationMs": 0.006,
           "status": "ok",
-          "parentSpanId": "2d5e9e1b8aa94e0f",
+          "parentSpanId": "1405c9e12fbc4279",
           "attrs": {
             "nodeId": "trigger-1",
             "nodeType": "trigger"
           }
         },
         {
-          "traceId": "b9810a4183484326a781078a947f73db",
-          "spanId": "fd9e6607aa7d43ab",
+          "traceId": "7080478e9cfb4d8593d710dbc502e080",
+          "spanId": "6612b462710b4ab0",
           "name": "human_approval:approval-1",
           "kind": "node",
-          "startedAt": "2026-11-23T18:01:17.744171+00:00",
-          "durationMs": 1862.297,
+          "startedAt": "2026-11-24T10:15:52.757134+00:00",
+          "durationMs": 1853.686,
           "status": "ok",
-          "parentSpanId": "2d5e9e1b8aa94e0f",
+          "parentSpanId": "1405c9e12fbc4279",
           "attrs": {
             "nodeId": "approval-1",
             "nodeType": "human_approval"
           }
         },
         {
-          "traceId": "b9810a4183484326a781078a947f73db",
-          "spanId": "c24c001c33a249f7",
+          "traceId": "7080478e9cfb4d8593d710dbc502e080",
+          "spanId": "02a55c66703f4f8e",
           "name": "tool_call:msg-approved",
           "kind": "node",
-          "startedAt": "2026-11-23T18:01:19.607312+00:00",
-          "durationMs": 13.957,
+          "startedAt": "2026-11-24T10:15:54.611199+00:00",
+          "durationMs": 16.394,
           "status": "ok",
-          "parentSpanId": "2d5e9e1b8aa94e0f",
+          "parentSpanId": "1405c9e12fbc4279",
           "attrs": {
             "nodeId": "msg-approved",
             "nodeType": "tool_call"
           },
           "children": [
             {
-              "traceId": "b9810a4183484326a781078a947f73db",
-              "spanId": "399b282fa3eb476b",
+              "traceId": "7080478e9cfb4d8593d710dbc502e080",
+              "spanId": "288896e10cf34c36",
               "name": "tool:message/send",
               "kind": "tool",
-              "startedAt": "2026-11-23T18:01:19.607682+00:00",
-              "durationMs": 13.575,
+              "startedAt": "2026-11-24T10:15:54.611211+00:00",
+              "durationMs": 16.374,
               "status": "ok",
-              "parentSpanId": "c24c001c33a249f7",
+              "parentSpanId": "02a55c66703f4f8e",
               "attrs": {
                 "adapter": "message",
                 "capability": "send"
@@ -317,7 +317,7 @@
         "approver@example.com"
       ],
       "subject": "[Atlas] 审批待处理：T5 邮件审批：订单 T5-ORDER-1",
-      "body": "有一笔人机审批正在等待处理。\n\n审批节点：approval-1（图 adhoc）\n审批说明：T5 邮件审批：订单 T5-ORDER-1\n超时时间：30 秒（超时后按图中配置自动处理）\n\n一键处理：http://127.0.0.1:8951/approvals/eyJ2IjoxLCJ0ZW5hbnQiOiJ0MSIsImF0IjoiNTJiYmE1Y2Y0N2IxNGJiYTljZTE2YTY0ZDY5NzMyMGUiLCJpYXQiOjE3OTU0NTY4NzcsImV4cCI6MTc5NTQ1NzIwNywicmNwdCI6ImFwcHJvdmVyQGV4YW1wbGUuY29tIn0.q6dObVtnU8yKa4zNJwQpHyvm3FO34qTba7_JIXh-kQY\n或前往应用：http://127.0.0.1:8951\n"
+      "body": "有一笔人机审批正在等待处理。\n\n审批节点：approval-1（图 adhoc）\n审批说明：T5 邮件审批：订单 T5-ORDER-1\n超时时间：30 秒（超时后按图中配置自动处理）\n\n一键处理：http://127.0.0.1:8951/approvals/eyJ2IjoxLCJ0ZW5hbnQiOiJ0MSIsImF0IjoiYWIwMDFmZDAxNGQ0NDMzNzk3ZWNmNTVmYzhkZGMyYjYiLCJpYXQiOjE3OTU1MTUzNTIsImV4cCI6MTc5NTUxNTY4MiwicmNwdCI6ImFwcHJvdmVyQGV4YW1wbGUuY29tIn0.l2ytSvimqGhJaWa4gE8LuanAgtnet_6Pp-pKjxBBkxg\n或前往应用：http://127.0.0.1:8951\n"
     },
     {
       "from": "atlas@local.test",
