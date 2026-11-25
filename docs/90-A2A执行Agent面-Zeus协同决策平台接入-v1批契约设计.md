@@ -2,6 +2,7 @@
 
 > 状态：**第一阶段已实施（2026-10-01，ADR T32）**。纯新增、plan-only、零业务链改动；后端新增 13 项单测（`tests/test_a2a_execution_agent.py`，含纯标准 A2A text part 兜底两条）。同日纯标准 A2A 客户端守护真机复验通过（见 §6），并据此补了 text part 超集兜底（commit `255064b`）。**第二阶段第一批已收口（2026-10-01，docs-only，零代码／测试／迁移／依赖改动）**：§7 第 2 项按 §6 实测证据正式勾掉；第 3 项定为**明确沿用单副本内存台账**（决策与理由见 §7，决策记录 docs/08）。**当时仍开两项**：第 1 项生产部署同口径回归（需真实域名/TLS/网关等外部部署条件）、第 4 项机器账号体系；其中第 4 项已于 **A-02（2026-11-23）以候选 ① 多 token 标签收口**，第 1 项仍开。
 > **A-02 增补（2026-11-23，本地自用口径）**：新增 `run-graph` 真实 run、多 token 租户绑定 `ATLAS_A2A_TASK_TOKENS`、幂等与 `(tenant, graph_id)` 单飞冲突；三项 skill 中 plan 两项保持 plan-only，`run-graph` 标 `real-run`；任务台账仍单副本内存，run 记录写租户 `run_store`（memory/pg 随 `ATLAS_STORAGE_BACKEND`）。详细的完成口径、证据与边界见 [docs/140](140-A02-A2A真实run与冲突仲裁-2026-11-23.md)。item 4 以候选 ① 收口；②/③ 仍留后续。
+> **2026-11-25 增补（台账持久化）**：`ATLAS_STORAGE_BACKEND=pg` 时 A2A task ledger 改为 `PgA2ALedger`（表 `a2a_tasks`，迁移 061），`tasks/get` / `tasks/cancel` / 幂等重放跨重启可读；memory 档保持本文“单副本内存台账”行为。`_active_runs` 单飞锁与 SSE 钩子仍进程内。详见 [docs/144 §2.5](144-上线口径本地最大完成度-2026-11-25.md)。
 > 背景：Zeus 是多 Agent 协同决策平台，已定「执行 Agent 协议 = 标准 A2A + 一层 x-zeus-handshake 契约扩展」；pr-helper 为 W1（已真机定型），loom 为 W2 首个已有 A2A 实现（Q150，2026-10-01 与 Zeus 协议级真机联调通过）。Atlas 与 loom 同波（W2），本批把**同一套已定型协议**第一次落到一个此前零 A2A 代码的产品，验证「从零按协议接入」的可复制性。
 > 上游契约事实源：zeus 仓 `docs/design-executor-protocol.md`（协议）与 loom 仓 `docs/design-a2a-executor.md` + `backend/app/core/a2a/`（同构参考实现）。本文只写 Atlas 侧落点，不复制协议全文。
 
