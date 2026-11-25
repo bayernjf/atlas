@@ -11,7 +11,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from atlas.a2a.bot_runtime import BotRuntime
 from atlas.graph.dsl import parse_graph
@@ -162,7 +162,7 @@ def execute_graph_run(
         ]
     }
 
-    def _record(status: str, *, outputs: dict[str, Any], nodes: list, error: str | None, spans: dict | None) -> None:
+    def _record(status: Literal["completed", "error", "cancelled"], *, outputs: dict[str, Any], nodes: list, error: str | None, spans: dict | None) -> None:
         services.monitoring.record_run(
             graph_id=graph_id,
             mode="a2a",
