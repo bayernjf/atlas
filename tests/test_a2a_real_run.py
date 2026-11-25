@@ -285,7 +285,12 @@ def test_conflict_lock_rejects_second_caller_while_run_active(monkeypatch):
     assert holder["resp"]["result"]["status"]["state"] == "completed"
 
 
-def test_task_ledger_is_volatile_but_run_store_survives_reset():
+def test_task_ledger_is_volatile_but_run_store_survives_reset(monkeypatch):
+    # 这条用例断言的是 memory 档语义；显式隔离，避免外部 ATLAS_STORAGE_BACKEND=pg 时
+    # reset 后从 PG 回读到任务，导致用例本身失效。
+    monkeypatch.setenv("ATLAS_STORAGE_BACKEND", "memory")
+    reset_for_tests()
+
     tenant = f"a2a-{uuid.uuid4().hex[:8]}"
     services = tenant_registry.get(tenant)
     graph_id = services.graph_store.save(_graph())
@@ -299,6 +304,7 @@ def test_task_ledger_is_volatile_but_run_store_survives_reset():
     )["error"]["code"] == -32001
     # run_store 是租户服务，不会被 A2A 任务台账 reset 清掉；进程退出才失。
     assert services.run_store.get(run_id)["status"] == "completed"
+    reset_for_tests()
 
 
 # --- HTTP ---
