@@ -23,6 +23,7 @@ from atlas.evaluation.store import EvaluationStore
 from atlas.collaboration.cancellations import RunCancellationBroker
 from atlas.collaboration.event_waits import EventWaitBroker
 from atlas.coordination import TaskStore
+from atlas.coordination.pg_store import PgTaskStore
 from atlas.coordination.sqlite_store import SqliteTaskStore
 from atlas.observability.audit import AuditRepository, AuditStore
 from atlas.message.service import MessageService
@@ -156,10 +157,19 @@ class TenantRegistry:
 
     @staticmethod
     def _task_store(tenant_id: str):
-        """T4：任务总线持久化开关。未配置时保留进程内 TaskStore（测试/旧行为）。"""
+        """T4：任务总线持久化开关。
+
+        `ATLAS_TASK_STORE_PATH` 显式给 SQLite 路径时优先（本机旧行为）；否则
+        `ATLAS_STORAGE_BACKEND=pg` 走 `PgTaskStore`（跨重启/跨实例）；两者都没有
+        保持进程内 `TaskStore`（测试/旧行为）。
+        """
         path = os.getenv("ATLAS_TASK_STORE_PATH", "").strip()
         if path:
             return SqliteTaskStore(path, tenant_id)
+        if STORAGE_BACKEND == "pg":
+            from atlas.storage.pg import get_pg_backend
+
+            return PgTaskStore(get_pg_backend().engine, tenant_id)
         return TaskStore()
 
     @staticmethod

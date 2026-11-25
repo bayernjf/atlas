@@ -34,7 +34,7 @@ from atlas.connections.oauth import (
     resolve_state_secret,
     verify_state,
 )
-from atlas.security.egress import EgressDenied, EgressGuard
+from atlas.security.egress import EgressDenied, EgressGuard, local_fixture_permit
 from atlas.security.secrets import SecretProvider, build_secret_provider_from_env
 
 logger = logging.getLogger(__name__)
@@ -355,7 +355,7 @@ def get_secret_provider() -> SecretProvider:
 def get_egress_guard() -> EgressGuard:
     global _egress_guard
     if _egress_guard is None:
-        _egress_guard = EgressGuard.from_env()
+        _egress_guard = EgressGuard.from_env(permit_cidrs=local_fixture_permit())
     return _egress_guard
 
 

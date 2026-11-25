@@ -11,6 +11,13 @@ import hmac
 import os
 import re
 
+from atlas.security.password_policy import (  # noqa: F401 —— 兼容既有导入面
+    PASSWORD_MAX_LEN,
+    PASSWORD_MIN_LEN,
+    WEAK_PASSWORDS,
+    validate_password,
+)
+
 ALGORITHM = "scrypt"
 SCRYPT_N = 2 ** 14
 SCRYPT_R = 8
@@ -18,36 +25,9 @@ SCRYPT_P = 1
 DKLEN = 32
 SALT_BYTES = 16
 
-PASSWORD_MIN_LEN = 8
-PASSWORD_MAX_LEN = 128
 USERNAME_MIN_LEN = 3
 USERNAME_MAX_LEN = 64
 USERNAME_RE = re.compile(r"^[a-z0-9_.-]+$")
-
-WEAK_PASSWORDS = frozenset(
-    {
-        "admin123",
-        "password",
-        "password123",
-        "12345678",
-        "123456789",
-        "qwerty123",
-        "11111111",
-        "00000000",
-        "abc12345",
-        "iloveyou",
-        "admin@123",
-        "welcome1",
-    }
-)
-
-
-def validate_password(password: str) -> None:
-    """口令策略（docs/31 §0-6）：长度 8-128、弱口令黑名单；不达标抛 ValueError（中文）。"""
-    if not PASSWORD_MIN_LEN <= len(password) <= PASSWORD_MAX_LEN:
-        raise ValueError(f"密码长度须为 {PASSWORD_MIN_LEN}-{PASSWORD_MAX_LEN} 位")
-    if password.lower() in WEAK_PASSWORDS:
-        raise ValueError("密码过于常见，请更换更强的密码")
 
 
 def validate_username(username: str) -> None:

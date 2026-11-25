@@ -130,7 +130,7 @@ def prod_bootstrap_password() -> str | None:
     """
     if read_env_profile() != "prod":
         return None
-    from atlas.iam.passwords import validate_password  # 函数级导入，避开 iam→security 环
+    from atlas.security.password_policy import validate_password  # 纯策略，避开 IAM 包初始化
 
     raw = read_secret(PROD_BOOTSTRAP_PASSWORD_ENV).strip()
     if not raw:

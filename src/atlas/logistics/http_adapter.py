@@ -61,7 +61,7 @@ class HttpLogisticsAdapter(HarnessAdapter):
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
-        self.base_url = (base_url or os.getenv("ATLAS_LOGISTICS_URL", "")).strip().rstrip("/")
+        self.base_url = (base_url or os.getenv("ATLAS_LOGISTICS_URL") or "").strip().rstrip("/")
         self.timeout = timeout
         self._client = client
         self.last_response: dict[str, Any] | None = None

@@ -27,6 +27,7 @@ from atlas.connections.service import (
     ConnectionServiceError,
 )
 from atlas.security.bootstrap import demo_surface_enabled, read_public_url
+from atlas.security.egress import EgressGuard, local_fixture_mode, local_fixture_permit
 
 logger = logging.getLogger(__name__)
 
@@ -258,14 +259,23 @@ def build_channel_registry(
     对所有租户全关）。现在 prod 且未开 demo 面时直接拒启——与 demo 面共用同一开关。
     """
     admin_base = os.getenv("ATLAS_SHOPIFY_ADMIN_BASE_URL")
-    if admin_base and not demo_surface_enabled():
+    fixture_mode = local_fixture_mode()
+    if admin_base and not demo_surface_enabled() and not fixture_mode:
         raise RuntimeError(
             "ATLAS_ENV=prod 拒绝使用 ATLAS_SHOPIFY_ADMIN_BASE_URL：它会把渠道出向校验换成 "
             "_PassthroughEgress（SSRF 校验对所有租户全关）。该变量仅供 dev/test 冒烟；"
-            "若确要在 prod 演示请显式设 ATLAS_ENABLE_DEMO_MOCK=1（docs/77 R5）。"
+            "若确要在 prod 演示请显式设 ATLAS_ENABLE_DEMO_MOCK=1（docs/77 R5），"
+            "或只在本机演练设 ATLAS_LOCAL_FIXTURES=1（仍保留 EgressGuard，仅放行私网段）。"
         )
     if admin_base:
-        transport: ChannelTransport = HttpChannelTransport(egress=_PassthroughEgress())
+        if fixture_mode:
+            # 本地演练缝：base 指向宿主机 fixture，但仍过 EgressGuard；
+            # permit_cidrs 只在本机显式开关下放行私网，路由/协议仍由 guard 校验。
+            transport: ChannelTransport = HttpChannelTransport(
+                egress=EgressGuard.from_env(permit_cidrs=local_fixture_permit())
+            )
+        else:
+            transport = HttpChannelTransport(egress=_PassthroughEgress())
         base_url = admin_base.rstrip("/")
     else:
         from atlas.connections.service import get_egress_guard

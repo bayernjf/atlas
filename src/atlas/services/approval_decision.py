@@ -12,7 +12,7 @@ from __future__ import annotations
 import inspect
 import json
 import logging
-from typing import Any, Literal
+from typing import Any, Literal, Mapping
 
 from fastapi import HTTPException
 
@@ -112,7 +112,7 @@ def apply_approval_decision(
     # 兼容老调用方/测试替身：真实 ApprovalBroker.resolve 接受 resolved_by，
     # 但历史 broker 替身只有 comment/action_id。不要在替身上打 TypeError。
     try:
-        resolve_params = inspect.signature(broker.resolve).parameters
+        resolve_params: Mapping[str, inspect.Parameter] = inspect.signature(broker.resolve).parameters
     except (TypeError, ValueError):
         resolve_params = {}
     accepts_resolved_by = "resolved_by" in resolve_params or any(

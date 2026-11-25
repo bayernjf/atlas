@@ -319,6 +319,29 @@ def validate_egress_url(
 WEB_LOCAL_LOOPBACK_ENV = "ATLAS_WEB_ALLOW_LOOPBACK"
 MESSAGE_WEBHOOK_LOCAL_LOOPBACK_ENV = "ATLAS_MESSAGE_WEBHOOK_ALLOW_LOOPBACK"
 MESSAGE_IM_LOCAL_LOOPBACK_ENV = "ATLAS_MESSAGE_IM_ALLOW_LOOPBACK"
+LOCAL_FIXTURES_ENV = "ATLAS_LOCAL_FIXTURES"
+
+
+def local_fixture_mode() -> bool:
+    """本地全链演练的显式开关；正常 prod 不设置，仍走原有 fail-closed 路径。"""
+    return os.getenv(LOCAL_FIXTURES_ENV, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def local_fixture_permit() -> tuple[str, ...]:
+    """仅 `ATLAS_LOCAL_FIXTURES=1` 时放行私网段，供宿主机 fixture 服务（host.docker.internal）。
+
+    这不是生产能力：它只影响进程内出向校验的 `permit_cidrs`，且必须显式设置开关。
+    正常 prod 下本函数恒为空，`ATLAS_LOCAL_FIXTURES` 也不在 compose 默认值里。
+    """
+    if not local_fixture_mode():
+        return ()
+    return (
+        "127.0.0.0/8",
+        "::1/128",
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+    )
 
 
 def _non_prod_loopback_permit(env_name: str) -> tuple[str, ...]:
@@ -330,19 +353,26 @@ def _non_prod_loopback_permit(env_name: str) -> tuple[str, ...]:
     return ("127.0.0.0/8", "::1/128")
 
 
+def _local_fixture_or_non_prod(env_name: str) -> tuple[str, ...]:
+    permit = local_fixture_permit()
+    if permit:
+        return permit
+    return _non_prod_loopback_permit(env_name)
+
+
 def web_local_loopback_permit() -> tuple[str, ...]:
     """浏览器本地目标应用（如 Loom localhost:3000）的回环放行范围。"""
-    return _non_prod_loopback_permit(WEB_LOCAL_LOOPBACK_ENV)
+    return _local_fixture_or_non_prod(WEB_LOCAL_LOOPBACK_ENV)
 
 
 def message_webhook_local_loopback_permit() -> tuple[str, ...]:
     """消息 webhook 的本地接收器（127.0.0.1 一次性 listener）回环放行范围。"""
-    return _non_prod_loopback_permit(MESSAGE_WEBHOOK_LOCAL_LOOPBACK_ENV)
+    return _local_fixture_or_non_prod(MESSAGE_WEBHOOK_LOCAL_LOOPBACK_ENV)
 
 
 def message_im_local_loopback_permit() -> tuple[str, ...]:
     """IM 群机器人本地接收器（127.0.0.1 本地假平台）的回环放行范围。"""
-    return _non_prod_loopback_permit(MESSAGE_IM_LOCAL_LOOPBACK_ENV)
+    return _local_fixture_or_non_prod(MESSAGE_IM_LOCAL_LOOPBACK_ENV)
 
 
 class EgressGuard:
