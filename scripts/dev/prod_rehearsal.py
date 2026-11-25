@@ -67,6 +67,26 @@ PASSWORD = "Atlas-Rehearsal-" + uuid.uuid4().hex[:12] + "!aA"
 ADMIN = "admin-a"
 
 
+def local_fixture_host() -> str:
+    """宿主机在容器网络里的可达地址。
+
+    OrbStack 的 `host.docker.internal` 解析到 0.250.250.254，命中 EgressGuard 的
+    0.0.0.0/8 保留段；本地 fixture 的 OAuth/Shopify 腿会被拒。改取宿主机 LAN 地址
+    （192.168/16，fixture permit 明确放行），容器与宿主机浏览器都可直达。
+    """
+    for iface in ("en0", "en1"):
+        try:
+            ip = subprocess.run(
+                ["ipconfig", "getifaddr", iface],
+                capture_output=True, text=True, check=True, timeout=5,
+            ).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if ip:
+            return ip
+    return "host.docker.internal"
+
+
 def say(label: str, msg: str) -> None:
     print(f"  {label} {msg}", flush=True)
 
@@ -104,10 +124,10 @@ def rand_secret() -> str:
 
 
 def api(port: int, method: str, path: str, *, token: str | None = None,
-        json_body: dict | None = None, base: str = "http") -> httpx.Response:
+        json_body: dict | None = None, base: str = "http", timeout: float = 30.0) -> httpx.Response:
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     return httpx.request(method, f"{base}://127.0.0.1:{port}{path}",
-                         json=json_body, headers=headers, timeout=30.0)
+                         json=json_body, headers=headers, timeout=timeout)
 
 
 # ------------------------------------------------------------------- 真外发腿（docs/73 1.1–1.3）
@@ -421,6 +441,234 @@ def leg_notify(port: int, token: str, recipient: str) -> None:
                 f"id={result.get('id')}")
 
 
+# ------------------------------------------------------------------- 本机全链 fixture（4.1 本地化）
+
+def start_local_fixtures(http_port: int, smtp_port: int, state_file: Path) -> subprocess.Popen[str]:
+    """启动本机外部系统替身；只监听宿主机 loopback/私网，不进公网。"""
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.Popen(
+        [
+            sys.executable, str(ROOT / "scripts/dev/local_fixtures.py"),
+            "--http-port", str(http_port),
+            "--smtp-port", str(smtp_port),
+            "--state-file", str(state_file),
+        ],
+        cwd=str(ROOT),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    t0 = time.time()
+    while time.time() - t0 < 20:
+        try:
+            res = httpx.get(f"http://127.0.0.1:{http_port}/state", timeout=2.0)
+            if res.status_code == 200:
+                return proc
+        except httpx.HTTPError:
+            pass
+        if proc.poll() is not None:
+            out = proc.stdout.read() if proc.stdout else ""
+            raise RuntimeError(f"local_fixtures 提前退出：{out[-1500:]}")
+        time.sleep(0.25)
+    proc.terminate()
+    raise RuntimeError("local_fixtures 20s 内未就绪")
+
+
+def fixture_state(port: int) -> dict:
+    return httpx.get(f"http://127.0.0.1:{port}/state", timeout=5.0).json()
+
+
+def _run_graph_to_terminal(port: int, token: str, graph: dict, inputs: dict,
+                            *, auto_approve: bool = False) -> dict:
+    gid = api(port, "post", "/api/graphs", token=token, json_body=graph).json()["id"]
+    pub = api(port, "post", f"/api/graphs/{gid}/publish", token=token, json_body={})
+    ok(pub.status_code == 200, f"发布 local 图：releaseVersion={pub.json().get('releaseVersion')}")
+    holder: dict[str, httpx.Response] = {}
+
+    def call() -> None:
+        holder["run"] = api(
+            port, "post", f"/api/graphs/{gid}/run", token=token,
+            json_body={"releaseVersion": pub.json().get("releaseVersion"), "inputs": inputs},
+            timeout=240.0,
+        )
+
+    # 同步 /run 会阻塞到人工审批结束；auto_approve 时把请求放后台线程，主线程在挂起窗口
+    # 内用审批 token 放行（测试快，且不依赖长 timeout）。
+    thread = threading.Thread(target=call, daemon=True)
+    thread.start()
+    if auto_approve:
+        t0 = time.time()
+        while time.time() - t0 < 90:
+            pending = api(port, "get", "/api/approvals", token=token).json()
+            items = pending.get("items", pending if isinstance(pending, list) else [])
+            if items:
+                atoken = items[0]["token"]
+                decided = api(port, "post", f"/api/approvals/{atoken}/decision", token=token,
+                              json_body={"decision": "approved", "comment": "local fixture 批准"})
+                ok(decided.status_code == 200, f"local 全链审批通过（{decided.status_code}）")
+                break
+            if not thread.is_alive():
+                break
+            time.sleep(0.5)
+        else:
+            raise AssertionError("local 全链 90s 内未出现可批准的挂起审批")
+    thread.join(timeout=240)
+    if "run" not in holder:
+        raise AssertionError("local 全链 /run 在 240s 内未返回")
+    run = holder["run"]
+    body = run.json()
+    ok(run.status_code == 200, f"local 图运行返回 {run.status_code}：{json.dumps(body, ensure_ascii=False)[:220]}")
+    if str(body.get("status")) == "suspended":
+        pending = api(port, "get", "/api/approvals", token=token).json()
+        items = pending.get("items", pending if isinstance(pending, list) else [])
+        ok(bool(items), "local 全链出现挂起审批")
+        atoken = items[0]["token"]
+        decided = api(port, "post", f"/api/approvals/{atoken}/decision", token=token,
+                      json_body={"decision": "approved", "comment": "local fixture 批准"})
+        ok(decided.status_code == 200, f"local 全链审批通过（{decided.status_code}）")
+        run_id = body.get("id")
+        for _ in range(40):
+            rows = api(port, "get", "/api/monitoring/runs", token=token).json().get("items", [])
+            mine = [r for r in rows if r.get("id") == run_id or r.get("runId") == run_id]
+            if mine and str(mine[0].get("status")) not in ("running", "suspended", None):
+                return mine[0]
+            time.sleep(1.5)
+        raise AssertionError("local 全链审批后未到终态")
+    return body
+
+
+def local_fixture_chain(port: int, token: str, fixture_host: str,
+                        fixture_http: int, fixture_smtp: int) -> None:
+    """1.2/1.3/4.1 的本机最大完成度：OAuth→绑定→连通→AI→审批→退款→IM/邮件。"""
+    state0 = fixture_state(fixture_http)
+
+    print("10｜本机 fixture 全链：OAuth 换 token → 绑 Shopify → 连通 → AI 决策 → 审批 → 退款 → IM/邮件")
+    conn = api(port, "post", "/api/connections", token=token, json_body={
+        "provider": "local-fixture",
+        "displayName": "Atlas local fixture",
+        "authUrl": f"http://{fixture_host}:{fixture_http}/oauth/authorize",
+        "tokenUrl": f"http://{fixture_host}:{fixture_http}/oauth/token",
+        "clientId": "atlas-local",
+        "clientSecret": "fixture-secret",
+        "scopes": ["read", "write"],
+        "redirectUri": f"http://127.0.0.1:{port}/connections/callback",
+    })
+    ok(conn.status_code == 201, f"创建 OAuth 连接（{conn.status_code}）：{conn.text[:160]}")
+    conn_id = conn.json()["id"]
+    auth = api(port, "post", f"/api/connections/{conn_id}/authorize", token=token)
+    ok(auth.status_code == 200, f"生成授权 URL（{auth.status_code}）")
+    state = auth.json()["state"]
+    exchanged = api(port, "post", f"/api/connections/{conn_id}/exchange", token=token,
+                    json_body={"code": "fixture-code", "state": state})
+    ok(exchanged.status_code == 200, f"授权码换 token 成功（{exchanged.status_code}）")
+    ok(exchanged.json().get("status") == "connected",
+       f"连接进入 connected（实际＝{exchanged.json().get('status')}）")
+
+    binding = api(port, "post", "/api/channels", token=token, json_body={
+        "provider": "shopify",
+        "connectionId": conn_id,
+        "config": {
+            "shop": "atlas-local",
+            "apiVersion": "2025-01",
+            "inbound_secret": "fixture-inbound-secret",
+        },
+    })
+    ok(binding.status_code == 201, f"绑定 Shopify 渠道（{binding.status_code}）：{binding.text[:160]}")
+    binding_id = binding.json()["id"]
+    tested = api(port, "post", f"/api/channels/{binding_id}/test", token=token)
+    ok(tested.status_code == 200 and tested.json().get("ok") is True,
+       f"本地 Shopify Admin 连通 ok=true（{tested.text[:180]}）")
+
+    tool = f"channel:shopify:{binding_id}/create_refund"
+    graph = {
+        "version": 1,
+        "variables": [],
+        "nodes": [
+            {"id": "trigger-1", "type": "trigger", "name": "t",
+             "config": {"triggerType": "manual"}},
+            {"id": "ai_decision-1", "type": "ai_decision", "name": "AI 决策",
+             "config": {"promptTemplate": "退款原因：破损；金额：0.01 元；订单：1001"}},
+            {"id": "human-1", "type": "human_approval", "name": "人工审批",
+             "config": {"summary": "本地 fixture 退款审批", "approver": "user:admin-a",
+                        "timeoutSeconds": 120, "onTimeout": "reject",
+                        "approvedTarget": "tool-refund",
+                        "rejectedTarget": "tool-note"}},
+            {"id": "tool-refund", "type": "tool_call", "name": "本地 Shopify 退款",
+             "config": {"tool": tool,
+                        "params": json.dumps({
+                            "order_id": "1001", "amount": 0.01, "reason": "破损",
+                            "full_refund": True,
+                        }, ensure_ascii=False)},
+             "retry": {"on_error": "continue"}},
+            {"id": "tool-note", "type": "tool_call", "name": "拒绝记录",
+             "config": {"tool": "message/send",
+                        "params": json.dumps({
+                            "channel": "email", "to": "ops@atlas.local",
+                            "subject": "退款被拒", "body": "本地 fixture 审批拒绝",
+                        }, ensure_ascii=False)},
+             "retry": {"on_error": "continue"}},
+        ],
+        "edges": [
+            {"id": "e1", "source": "trigger-1", "target": "ai_decision-1"},
+            {"id": "e2", "source": "ai_decision-1", "target": "human-1"},
+            {"id": "e3", "source": "human-1", "target": "tool-refund"},
+            {"id": "e4", "source": "human-1", "target": "tool-note"},
+        ],
+    }
+    result = _run_graph_to_terminal(port, token, graph, {"order_id": "1001"},
+                                    auto_approve=True)
+    outputs = result.get("outputs") or {}
+    ai = outputs.get("ai_decision-1") or {}
+    source = str((ai.get("decision") or {}).get("source") if isinstance(ai, dict) else "")
+    ok(source.startswith("llm:"), f"AI 决策走 local OpenAI-compatible LLM（source={source}）")
+    refund_out = outputs.get("tool-refund") or {}
+    ok(refund_out.get("action_status") == "SUCCESS",
+       f"本地退款工具 SUCCESS（{json.dumps(refund_out, ensure_ascii=False)[:220]}）")
+    ok((refund_out.get("result") or {}).get("refundId") == 99001,
+       f"fixture 返回 refundId=99001（实际＝{(refund_out.get('result') or {}).get('refundId')}）")
+
+    im_graph = {
+        "version": 1,
+        "variables": [],
+        "nodes": [
+            {"id": "trigger-1", "type": "trigger", "name": "t",
+             "config": {"triggerType": "manual"}},
+            {"id": "tool-im", "type": "tool_call", "name": "本地 IM",
+             "config": {"tool": "message/send",
+                        "params": json.dumps({
+                            "channel": "feishu",
+                            "to": f"http://{fixture_host}:{fixture_http}/im/feishu",
+                            "subject": "Atlas local IM",
+                            "body": "本地全链 IM 投递",
+                        }, ensure_ascii=False)},
+             "retry": {"on_error": "continue"}},
+        ],
+        "edges": [{"id": "e1", "source": "trigger-1", "target": "tool-im"}],
+    }
+    im_result = _run_graph_to_terminal(port, token, im_graph, {})
+    im_out = (im_result.get("outputs") or {}).get("tool-im") or {}
+    ok(im_out.get("action_status") == "SUCCESS",
+       f"本地 IM 工具 SUCCESS（{json.dumps(im_out, ensure_ascii=False)[:220]}）")
+    ok((im_out.get("result") or {}).get("delivered") == "feishu",
+       f"IM 真实投递标记 delivered=feishu（实际＝{(im_out.get('result') or {}).get('delivered')}）")
+
+    leg_notify(port, token, "ops@atlas.local")
+    state = fixture_state(fixture_http)
+    ok(len(state.get("refunds", [])) >= 1,
+       f"fixture 侧确认退款请求：{state.get('refunds')}")
+    ok(len(state.get("im_messages", [])) >= 1,
+       f"fixture 侧确认 IM 请求：{state.get('im_messages')}")
+    ok(len(state.get("emails", [])) >= 1,
+       f"fixture 侧确认 SMTP 邮件：{[e.get('to') for e in state.get('emails', [])]}")
+    ok(len(state.get("oauth_tokens", [])) >= 1,
+       f"fixture 侧确认 OAuth token 请求：{state.get('oauth_tokens')}")
+    ok(len(state.get("llm_calls", [])) >= 1,
+       f"fixture 侧确认 LLM 请求：{len(state.get('llm_calls', []))} 次")
+    say("     ", f"fixture 摘要：退款={len(state.get('refunds', []))} IM={len(state.get('im_messages', []))} "
+                f"邮件={len(state.get('emails', []))} OAuth={len(state.get('oauth_tokens', []))} "
+                f"LLM={len(state.get('llm_calls', []))}（初始 {state0}）")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="prod rehearsal on the shipped artifact")
     ap.add_argument("--host-port", type=int, default=8010)
@@ -430,15 +678,37 @@ def main() -> int:
     ap.add_argument("--allow-refund", action="store_true", help="授权 refund 腿动款（还需 --shopify-order）")
     ap.add_argument("--shopify-order", default=None, help="refund 腿使用的测试订单 id")
     ap.add_argument("--notify-to", default=None, help="notify 腿的真实收件人（打扰真人，要显式给）")
+    ap.add_argument("--local-fixtures", action="store_true",
+                    help="本机全链：启动 SMTP/IM/OAuth/Shopify/LLM fixture，跑 OAuth→审批→退款→IM/邮件")
+    ap.add_argument("--image", default=IMAGE, help=f"演练镜像（默认 {IMAGE}）")
+    ap.add_argument("--skip-build", action="store_true",
+                    help="跳过 docker build，直接用已有 --image（本地快速迭代；证据要注明）")
+    ap.add_argument("--fixture-http-port", type=int, default=9099)
+    ap.add_argument("--fixture-smtp-port", type=int, default=1025)
+    ap.add_argument("--fixture-state", default=None,
+                    help="fixture 状态落盘路径；默认 outputs/local-fixtures/state-<时间>.json")
     args = ap.parse_args()
     port = args.host_port
+    fixture_proc: subprocess.Popen[str] | None = None
+    fixture_state_path = Path(args.fixture_state) if args.fixture_state else (
+        ROOT / "outputs" / "local-fixtures" / f"state-{time.strftime('%Y%m%d-%H%M%S')}.json"
+    )
 
     if shutil.which("docker") is None:
         print("docker 不可用，本演练无法进行。", file=sys.stderr)
         return 2
 
+    fixture_host = local_fixture_host()
+    if args.local_fixtures:
+        fixture_proc = start_local_fixtures(
+            args.fixture_http_port, args.fixture_smtp_port, fixture_state_path
+        )
+        note(f"本机 fixture 已起：HTTP={args.fixture_http_port} SMTP={args.fixture_smtp_port} "
+             f"host={fixture_host} state={fixture_state_path}（仅本机，不是真实外部系统）")
+
     env = {**os.environ,
            "ATLAS_ENV": "prod",
+           "ATLAS_IMAGE_TAG": args.image.rsplit(":", 1)[-1],
            "ATLAS_MASTER_KEY": fernet_key(),
            "ATLAS_APPROVAL_HMAC_SECRET": rand_secret(),
            "ATLAS_SESSION_SECRET": rand_secret(),
@@ -446,6 +716,20 @@ def main() -> int:
            "LITELLM_MODEL": "",
            "OPENAI_API_KEY": "",
            "OPENAI_BASE_URL": ""}
+    if args.local_fixtures:
+        env.update({
+            "ATLAS_LOCAL_FIXTURES": "1",
+            "ATLAS_SHOPIFY_ADMIN_BASE_URL": (
+                f"http://{fixture_host}:{args.fixture_http_port}/shopify-admin"
+            ),
+            "ATLAS_SMTP_HOST": fixture_host,
+            "ATLAS_SMTP_PORT": str(args.fixture_smtp_port),
+            "ATLAS_SMTP_FROM": "atlas@local.test",
+            "ATLAS_SMTP_USE_TLS": "false",
+            # prod preflight 拒绝 loopback 对外地址；本机演练用宿主机 LAN 地址，
+            # 容器与浏览器都可直达，仅用于生成本地深链，不冒充公网入口。
+            "ATLAS_PUBLIC_URL": f"http://{fixture_host}:{args.host_port}",
+        })
 
     override = ROOT / ".rehearsal-override.yml"
     override.write_text(
@@ -469,13 +753,18 @@ def main() -> int:
     files = ["-f", "docker-compose.yml", "-f", override.name]
 
     try:
-        print("1｜构建出厂镜像（当前 HEAD）")
+        print("1｜构建出厂镜像（当前 HEAD）" if not args.skip_build else "1｜跳过构建，使用既有镜像")
         sha = sh(["git", "rev-parse", "--short", "HEAD"]).strip()
         dirty = sh(["git", "status", "--porcelain", "--untracked-files=no"]).strip()
         t0 = time.time()
-        sh(["docker", "build", "-t", IMAGE, "."])
-        image_id = sh(["docker", "images", "--format", "{{.ID}}", IMAGE]).strip().splitlines()[0]
-        ok(bool(image_id), f"镜像已构建：{IMAGE} id={image_id}（源 HEAD `{sha}`，{time.time() - t0:.0f}s）")
+        if not args.skip_build:
+            sh(["docker", "build", "-t", args.image, "."])
+        image_id = sh(["docker", "images", "--format", "{{.ID}}", args.image]).strip().splitlines()[0]
+        ok(bool(image_id),
+           f"{'跳过构建' if args.skip_build else '镜像已构建'}：{args.image} id={image_id}"
+           f"（源 HEAD `{sha}`，{time.time() - t0:.0f}s）")
+        if args.skip_build:
+            note("--skip-build：本次验证的是既有镜像＋工作区代码，不是从头重建的出厂镜像；证据需注明")
         if dirty:
             # docker build 打的是**工作区**，不是 HEAD 的提交树。不写这一行，日志里的
             # "源 HEAD" 就会让下一次复盘把未验证的字节当成已提交的字节。
@@ -657,9 +946,19 @@ def main() -> int:
             ok(res.status_code == 404, f"GET {path} → 404（打包 P 的匿名模拟面收口）")
         # 别把"路径以 /api/demo 开头"当成"匿名模拟面"：这条是登录后本租户视图，prod 下应 401/200 而不是 404
         msgs = api(port, "get", "/api/demo/messages")
-        ok(msgs.status_code == 401, f"GET /api/demo/messages 匿名 → 401（受租户鉴权，不是 prod 该 404 的那批）")
+        ok(msgs.status_code == 401, "GET /api/demo/messages 匿名 → 401（受租户鉴权，不是 prod 该 404 的那批）")
         anon = api(port, "get", "/api/graphs")
         ok(anon.status_code == 401, f"未登录打业务端点是 401 不是 404（{anon.status_code}）")
+        # docs/65 K-C：prod 未配 ATLAS_METRICS_TOKEN 时 /metrics 必须 404（fail-closed）；
+        # 配了但无 Bearer 必须 401。这里是 prod 档的真容器，不是 dev 直连。
+        if env.get("ATLAS_METRICS_TOKEN"):
+            metrics = api(port, "get", "/metrics")
+            ok(metrics.status_code == 401,
+               f"prod 配了 metrics token，匿名拉取 /metrics → 401（实际 {metrics.status_code}）")
+        else:
+            metrics = api(port, "get", "/metrics")
+            ok(metrics.status_code == 404,
+               f"prod 未配 metrics token，/metrics → 404 fail-closed（实际 {metrics.status_code}）")
 
         print("8｜强制位对**第二个账号**同样成立（不是只认引导口令那一条路）")
         # 第 4 段证的是"出厂那个 admin 必须改密"；这一段证的是 prod 里真正常见的形状：
@@ -707,9 +1006,19 @@ def main() -> int:
         for leg in plans:
             say(f"{leg.verdict.upper():<7}", f"{leg.name}｜{leg.reason}")
         runnable = [leg.name for leg in plans if leg.verdict == "run"]
-        if runnable:
+        if runnable or args.local_fixtures:
             env_live, copied = with_live_credentials(env, os.environ)
-            note(f"重建 atlas 容器以注入凭据键：{'、'.join(copied) or '（无）'}（只报键名，值一律不打印）")
+            if args.local_fixtures:
+                # 本地全链用 OpenAI-compatible fixture 代替真厂商；仅本机，key 是假值。
+                env_live.update({
+                    "LITELLM_MODEL": "openai/gpt-4o-mini",
+                    "OPENAI_API_KEY": "fixture-key",
+                    "OPENAI_BASE_URL": (
+                        f"http://{fixture_host}:{args.fixture_http_port}/v1"
+                    ),
+                })
+            note(f"重建 atlas 容器以注入凭据键：{'、'.join(copied) or '（无）'}"
+                 f"{'＋ local fixture LLM' if args.local_fixtures else ''}（只报键名，值一律不打印）")
             compose(env_live, *files, "up", "-d", "atlas")
             waited = wait_ready(port)
             note(f"带凭据重建后 /api/ready {waited:.1f}s 到 200")
@@ -725,12 +1034,23 @@ def main() -> int:
                 leg_refund(port, live_token, args.shopify_order)
             if "notify" in runnable:
                 leg_notify(port, live_token, args.notify_to)
+            if args.local_fixtures:
+                local_fixture_chain(port, live_token, fixture_host,
+                                    args.fixture_http_port, args.fixture_smtp_port)
         elif requested:
             note("点名的外发腿全部前置不足＝本次没有发出任何真外发请求")
 
         print("\n演练全过 ✅")
         return 0
     finally:
+        if fixture_proc is not None:
+            fixture_proc.terminate()
+            try:
+                fixture_proc.wait(timeout=8)
+            except subprocess.TimeoutExpired:
+                fixture_proc.kill()
+            if fixture_state_path.exists():
+                note(f"local fixture 状态已落盘：{fixture_state_path}")
         if args.keep:
             note(f"--keep：卷与容器保留；清理命令＝docker compose -p {PROJECT} -f docker-compose.yml "
                  f"-f {override.name} down -v")
