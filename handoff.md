@@ -3,11 +3,21 @@
 ## 待办登记（标准）
 
 > 本段是本产品唯一活跃待办入口；详细背景见下方原有章节。完成一项改 `[x]`，并在“最近变更 / Recently shipped”留证据。
-> 最近同步：2026-11-24
+> 最近同步：2026-11-25
+
+<!-- tier0:todos v1 -->
+| id | title | status | priority | owner | next | evidence | updated |
+|---|---|---|---|---|---|---|---|
+<!-- /tier0:todos -->
+
+> 当前无活跃待办；A-06/A-07/A-08/A-13 已完成。A-09～A-12 仍登记在 bayjf 按序清单（仅文档登记）。
+
+### 已完成（历史）
 
 - [x] **Meta Layer 平台探索器 MVP（D1=B，4 周）** — 状态：closed→远期/另立产品线；2026-11-23 owner 拍板（BayJF `docs/tier0/Tier0-Loom-Zeus-Atlas-按序执行待办-2026-11-23.md` §0.1 X-01）：Meta Layer 远期独立、不进 Atlas，A-03/A-04 不在 Atlas 内开工；Atlas 现阶段 P0 = A-01 + A-05 + A-02；候选「归 Atlas 并开 A-03/A-04」保留作二次选择线索。
 - [x] **立项/两道设计题差距待办（docs/137）** — 状态：closed（本地自用 P0/P1 已收口；P2 见 docs/137 §6）；2026-11-23 立档；内容：题一 6/6、题二 6/6（本地自用口径，2026-11-24 T3–T7 后）、原立项 AutoPilot/元层差距与 P0/P1/P2 待办；迭代纪律：现有功能全保留，只做追加式迭代，不删除/替换现有能力；**A-01 于 2026-11-23 本地口径完成**（证据 `outputs/a01-web-flow/`、说明 `docs/138`）；**A-05 于 2026-11-23 本地口径完成**（真实 SQLite 写 + 审批 + 本地 webhook，证据 `outputs/a05-local-side-effects/`、说明 `docs/139`）；**A-02 真实 run 部分于 2026-11-23 完成**（A2A `run-graph` 真实 run + 多 token 租户绑定 + 幂等/单飞冲突，证据 `outputs/a02-a2a-real-run/`、说明 `docs/140`；T3/T4 已补独立运行时/冲突仲裁/任务总线/协同调试）；**A-08 于 2026-11-23 本地口径完成**（Markdown/DOCX/TXT 文件导入 + `citation` + 20 文档评估 top-1 18/top-3 20，契约 `docs/108 §7`、证据 `outputs/a08-knowledge-rag/20-doc-eval.json`，PDF/OCR 仍缓做）；**A-06 于 2026-11-23 功能闭环，T2 后连续 3 次单次全量 20/20**（证据 `outputs/a06-nl-skills/20-case-eval-t2-run{1,2,3}.json`、说明 `docs/141`）；**A-07/T6 于 2026-11-24 本地口径完成**（本机 IM 签名入站/去重/死信＋出站，`outputs/t6-im-inbound/`；2026-11-24 收尾：body 模板改按真实 payload `event.payload.conversationId` 插值，判据新增「含会话 ID 且无 `{{` 占位」）；**A-13/T1 于 2026-11-24 完成**（L3 图级校验移入专用 Web Worker + 同步回退，200/500 节点基准入 `BENCHMARK.md`）；**T5 于 2026-11-24 完成并收尾**（本机真实 SMTP 邮件审批出站＋签名深链回站，`resolvedBy=email-link`；脚本改可停止 asyncore loop，退出无线程异常，证据 `outputs/t5-email-approval/`）。Atlas 现阶段 P0（A-01/A-05/A-02）全部完成；A-03/A-04 仍按 owner 拍板不在 Atlas 内开工。不要一次全开。
-- [ ] **两道题收口 T0–T7（2026-11-24 起）** — 状态：done（本地自用口径）；T0 ✅ 2026-11-24（`docs/137` §0/§3 旧口径收口）；T1 ✅（L3 Worker + 同步回退，前端定向测试/lint/build 绿）；T2 ✅（连续 3 次单次全量 20/20）；T3 ✅（3 Bot 独立 `runtime_id`/`agentId`/run 记录 + 本机 HTTP 物流，`outputs/t3-bot-runtime/`）；T4 ✅（conflictKey/priority 抢占 + `SqliteTaskStore` 跨进程 + Waits 任务详情/trace，`outputs/t4-task-bus/`）；T5 ✅（本机真实 SMTP 邮件审批出站＋深链回站，`outputs/t5-email-approval/`）；T6 ✅（本机 IM 签名入站/去重/死信＋出站，embeds 200，`outputs/t6-im-inbound/`）；T7 ✅（task→bot→run→span 关联 + `per_bot`/`atlas_bot_*` + Bot 失败告警 + 幂等回放不重跑，`outputs/t7-multiagent-observability/`）。边界：独立运行时是进程内逻辑运行时；物流/邮件/IM 为本机或内网可达替身；可观测不引 OTel/Prometheus 正式栈。任务表与判据见 `docs/137 §11`。
+- [x] **两道题收口 T0–T7（2026-11-24 起）** — 状态：done（本地自用口径）；T0 ✅ 2026-11-24（`docs/137` §0/§3 旧口径收口）；T1 ✅（L3 Worker + 同步回退，前端定向测试/lint/build 绿）；T2 ✅（连续 3 次单次全量 20/20）；T3 ✅（3 Bot 独立 `runtime_id`/`agentId`/run 记录 + 本机 HTTP 物流，`outputs/t3-bot-runtime/`）；T4 ✅（conflictKey/priority 抢占 + `SqliteTaskStore` 跨进程 + Waits 任务详情/trace，`outputs/t4-task-bus/`）；T5 ✅（本机真实 SMTP 邮件审批出站＋深链回站，`outputs/t5-email-approval/`）；T6 ✅（本机 IM 签名入站/去重/死信＋出站，embeds 200，`outputs/t6-im-inbound/`）；T7 ✅（task→bot→run→span 关联 + `per_bot`/`atlas_bot_*` + Bot 失败告警 + 幂等回放不重跑，`outputs/t7-multiagent-observability/`）。边界：独立运行时是进程内逻辑运行时；物流/邮件/IM 为本机或内网可达替身；可观测不引 OTel/Prometheus 正式栈。任务表与判据见 `docs/137 §11`。
+- [x] **上线口径本地最大完成度（2026-11-25）** — 状态：本地最大完成度已收口，**B 档仍 ❌**；P0 `prod_rehearsal.py --local-fixtures` 在 prod 档真容器 exit 0（空卷首启/强制改密/审批/退款/IM/SMTP/重启/演示面 404/metrics fail-closed）；P1 Prometheus+Grafana 本地实测 target up/`atlas_up=1`/dashboard 7 面板，OTel 仍按 ADR T21 缓做；T4 `PgTaskStore`+迁移 060+5 项 PG 集成测试，A2A 台账仍进程内；备份/恢复演练 43 表一致。证据与边界见 `docs/144`，fixture 证据 `outputs/local-fixtures/state-20261125-rerun.json`；未 commit/未 push。
 - [x] **`graph-1` 旧失败样本处理** — 状态：closed；2026-11-23 归档为旧进程内样本，非当前开放缺陷；`call start() before execute()` 是 `WebHarnessAdapter` 未启动时的预期结构化守卫，上层按 `on_error=stop` 映射成 500 `NODE_EXECUTION_FAILED`；替代证据 A-01 `outputs/a01-web-flow/trace.json`，守卫测试 `tests/test_web_adapter_egress.py` 22 passed；说明 `docs/142`。
 - [x] **docs/08 §八“下一批候选（open checklist）”逐项清账** — 状态：closed；2026-11-23 复核：本节无未立项且本地可闭环项，B/C 组已排干、AT–BS 全部收口、D 组为外部触发；说明 `docs/143`。仍 open 的是外部条件项（Atlas A-07 的公网企业 IM 租户、Loom L-05、Zeus Z-04/Z-06），不是候选池漏项；A-07 的本地/内网入站已于 2026-11-24 T6 闭合。
 
@@ -19,6 +29,8 @@
 > **〔2026-10-31 handoff 归档〕** 顶部更新流水 **2026-10-13 → 2026-10-17**（23 行：D67 两 flaky 修复／D70 retention／CI uv 钉版／打包 BR／D79／打包 BQ／打包 BP／打包 BO／打包 BN／打包 AU／D78／打包 AS／打包 AR／打包 AT 及各立项行）、Active work 完成项 **#176–#178＋#76／#79／#103／#107** 详情（7 条，本文件每条压成一行结论）、Quality gate **2026-10-12 → 2026-10-17 门读数（3 块）** 整块滚出 → [docs/handoff-archive-2026-10-31.md](docs/handoff-archive-2026-10-31.md)，原文逐字、编号不改，逐行核对全部非空行零丢失（要么在本文件、要么在归档），滚出条目「Active #N」到该文件 §二 按原号定位。
 > **〔2026-10-16 handoff 归档〕** 顶部更新流水 **2026-10-12**（5 行）、Active work **#161–#175＋打包 AE＋打包 A1＋打包 BM＋尾部 #145–#150** 完成项详情（24 条）、Quality gate **2026-10-10 → 2026-10-11** 门读数（9 块）已按 [docs/00](docs/00-文档索引与治理.md) §治理规则 5 整块滚出至 [docs/handoff-archive-2026-10-16.md](docs/handoff-archive-2026-10-16.md)——**原文逐字、零删除、零改写**；主文件「Active #N」引用（N≤175）到该文件 §二按原号定位。
 > **〔2026-10-13 handoff 归档〕** 顶部更新流水 **2026-10-11 及更早**（129 行）、Active work **#1–#160** 完成项详情（139 条）、Quality gate **2026-09-24 → 2026-10-09** 门读数（57 块）已按 [docs/00](docs/00-文档索引与治理.md) §治理规则 5 整块滚出至 [docs/handoff-archive-2026-10-13.md](docs/handoff-archive-2026-10-13.md)——**原文逐字、零删除、零改写**；主文件「Active #N」引用（N≤160）到该文件 §二按原号定位。
+
+
 ## 项目概况
 
 Atlas 是 AI 运营体（Agent）编排平台：以 **Harness（能力接入）/ Graph（可执行因果图）/ Loop（OODA 主循环）** 三位一体为内核，面向企业流程自动化场景（首个目标场景：企业内部 OA 审批），目标是让非技术人员通过自然语言/拖拽定义流程，由运营体自动执行、自愈与进化。
