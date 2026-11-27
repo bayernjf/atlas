@@ -434,6 +434,14 @@ Demo 里程碑（08 文档 7.1）：
 - ✅ W9-W10：电商退款端到端 Demo（LiteLLM 决策 + 规则兜底、shop 退款业务能力、SSE 实时进度、NL 退款草稿、模拟商家控制台，08 §7.3 七条验收全部达成；后端 58 单元 + 前端 23 用例 + 浏览器实测，2026-09-13）。
 - API 已可启动：`uvicorn atlas.api.main:app --reload --port 8000`（graphs/SSE/NL/adapters/Demo 店铺接口；前端 dev 端口 5174，`/api` 代理到 8000；模拟控制台 http://localhost:8000/demo/shop）。
 
+## 2026-11-28 Secret scan 修复与 PR #191 合并
+
+- **现象**：PR #191 的 `Secret scan (gitleaks)` 失败（9 处），其余 Backend pytest / PG integration / Frontend vitest+build 均通过。
+- **根因**：命中的两处均为本地演练产物 —`outputs/t5-email-approval/evidence.json` 里的一次性审批令牌，`scripts/verify_t6_im_inbound.py` 里硬编码的演练用密钥常量与测试口令；不是产品凭证。
+- **修复**：`.gitleaks.toml` 的 paths allowlist 按精确路径追加两条（`(.*/)?outputs/t5-email-approval/.*`、`(.*/)?scripts/verify_t6_im_inbound\.py`），不放宽全局规则；commit `a5b89b6`。
+- **验证**：重跑 CI 全绿；PR #191 由 pr-helper Flow 的 `merge-pr` 动作 `4912` 自动合并进 `main`（`4903` 因 head 从 `86f8dda` 变到 `a5b89b6` 被取消，属预期重校准）。
+- **自动化状态**：该仓 Flow（`bayernjf/atlas-1789282281771-f87ma`）已是 `dev→main` + autoCreate + autoMerge + server，generationRule 为 Standard PR `798c878…`。
+
 ## Known issues / 注意点
 
 - **文档口径**：01-08 为规格唯一事实源；10-13 为工程化推导文档，与正文冲突时以 01-08 为准（00 文档已声明）。
