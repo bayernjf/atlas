@@ -28,7 +28,7 @@ cd frontend && pnpm bench    # 等价 RUN_BENCH=1 vitest run bench/validation.pe
 
 2026-09-14 首版基线覆盖：Loop 主循环吞吐、Graph 编译时延、退款端到端时延、Harness 调用开销（+ 可选 DB ping）。**暂不可测、待接入后补**：LLM 决策延迟（随真实供应商，`LITELLM_MODEL`）、Redis/pgvector 记忆读写（随 11 S1 记忆层；当前 DB 层仅有 ping 探针）、长流程内存增长（随递归自动化引擎）。**并行扇出节点（parallel）已于 2026-09-14 端到端落地**（04 §5.4），N=4 分支 fan-out/fan-in 基准场景已补入 `scripts/benchmark.py`（见 Results）。
 
-**前端编辑器校验分层基准（2026-09-17，M4 批 3 ⑫）**：脚本 `frontend/bench/validation.perf.test.ts`（vitest，零新依赖；`RUN_BENCH=1` 门控，常规 `pnpm test` 跳过）。负载为链式图 trigger→tool-1…tool-(N-1)，每个工具节点 params 模板引用直接上游输出（L2 逐节点有活干），N=200/500；每场景 warmup 10 + 采样 50 报 p50/p95。测量项：L1 全量字段校验、L2 冷启动全量（含 ScopeIndex 构建）、L2 热态单节点增量（编辑防抖稳态）、L3 冷启动/结构签名命中、`validateGraph` 全量聚合（L1+L2+L3）。目的是验证 M4 增量调度在大图层下"输入不卡顿"：稳态编辑走增量（L1 同步、L2 防抖、L3 idle），全量聚合只在换图/首挂发生一次。
+**前端编辑器校验分层基准（2026-09-17，M4 批 3 ⑫）**：脚本 `frontend/bench/validation.perf.test.ts`（vitest，零新依赖；`RUN_BENCH=1` 门控，常规 `pnpm test` 跳过）。负载为链式图 trigger→tool-1…tool-(N-1)，每个工具节点 params 模板引用直接上游输出（L2 逐节点有活干），N=200/500；每场景 warmup 10 + 采样 50 报 p50/p95。测量项：L1 全量字段校验、L2 冷启动全量（含 ScopeIndex 构建）、L2 热态单节点增量（编辑防抖稳态）、L3 冷启动/结构签名命中、L3 Worker payload `structuredClone`（主线程 postMessage 近似克隆成本）、`validateGraph` 全量聚合（L1+L2+L3）。目的是验证 M4 增量调度在大图层下"输入不卡顿"：稳态编辑走增量（L1 同步、L2 防抖、L3 Worker），全量聚合只在换图/首挂发生一次。
 
 ## Results
 
@@ -76,10 +76,14 @@ cd frontend && pnpm bench    # 等价 RUN_BENCH=1 vitest run bench/validation.pe
 | 2026-10-08 | 5b91eaf | 前端 L3 冷启动（N=500 链式） | validateL3 不可达/环 p50/p95 (ms) | 19.223 / 25.583 ms | 较 09-17（0.726）升高：L3 扩充后负载增加（见 N=200 同列注记） |
 | 2026-10-08 | 5b91eaf | 前端 L3 热态（N=500 链式） | 结构签名命中 p50/p95 (ms) | 0.348 / 0.486 ms | 编辑模板文本不触发重算 |
 | 2026-10-08 | 5b91eaf | 前端全量聚合 L1+L2+L3（N=500 链式） | validateGraph 无缓存一次 p50/p95 (ms) | 60.347 / 238.756 ms | 换图/首挂一次性；p95 受本机调度抖动影响（多次采样波动大），稳态编辑走增量不在此路径 |
+| 2026-11-24 | local T1 | 前端 L3 冷启动（N=200 链式） | validateL3 不可达/环 p50/p95 (ms) | 1.600 / 2.040 ms | T1 Worker 化：该计算现在 Worker 内；此数只作 Worker 内部成本锚点，不占主线程 |
+| 2026-11-24 | local T1 | 前端 L3 Worker payload structuredClone（N=200 链式） | 主线程 postMessage 近似克隆成本 p50/p95 (ms) | 0.218 / 0.225 ms | 主线程实际成本≈签名 JSON + 克隆；`structuredClone({nodes,edges})` 近似，非浏览器实测 |
+| 2026-11-24 | local T1 | 前端 L3 冷启动（N=500 链式） | validateL3 不可达/环 p50/p95 (ms) | 9.383 / 10.772 ms | Worker 内成本；主线程不再承担这 9–11ms |
+| 2026-11-24 | local T1 | 前端 L3 Worker payload structuredClone（N=500 链式） | 主线程 postMessage 近似克隆成本 p50/p95 (ms) | 0.428 / 0.465 ms | 500 节点仍低于一帧；Worker 不可用/报错时才回退同步 |
 数值为单机单次基线，仅作后续回归对比锚点，不代表生产容量；跨环境对比需在同一硬件/负载下重跑脚本并追加行。
 
 ## Known limits
 
 - 首版基线全部是进程内确定性路径（规则决策、模拟 shop），端到端墙钟约 2.3 ms；真实 LLM 决策与外部平台 IO 接入后预计成为主导时延，届时补测并分列"引擎开销 / 外部耗时"。
 - 尚未测量容量上限（并发数、单图节点数、记忆库规模）：当前 Demo 为单进程同步执行，并发与容量随 Phase 2 多实例部署（14 D5/D6）评估。
-- 前端校验基准为合成链式图（引用关系最密的规则形态之一）：L2 冷启动含 ScopeIndex 构建，链式图每节点反向可达 BFS 总和为 O(n²)，500 节点 p95 ≈ 48ms，但仅在换图/首挂一次性发生；稳态编辑走 L1 同步/L2 防抖/L3 idle 增量路径，500 节点单节点编辑 p95 < 10ms（低于一帧 16.7ms）。Web Worker 仍不引入——若真实编辑在目标机型实测掉帧，再按 04 §6.5 扩展条另开 ADR（阈值实证判据，非基准推测）。
+- 前端校验基准为合成链式图（引用关系最密的规则形态之一）：L2 冷启动含 ScopeIndex 构建，链式图每节点反向可达 BFS 总和为 O(n²)，500 节点 p95 ≈ 48ms，但仅在换图/首挂一次性发生；稳态编辑走 L1 同步/L2 防抖/L3 Worker 增量路径，500 节点单节点编辑 p95 < 10ms（低于一帧 16.7ms）。**2026-11-24 T1 已把 L3 移入专用 Web Worker**：主线程只付图数据签名 JSON（500 节点 L3 热态 p95≈0.20ms）与 postMessage 克隆（N=500 p95≈0.47ms）；`validateL3` 的 9–11ms 在 Worker 内执行。Worker 不可用/报错/克隆失败时回退主线程同步校验，保证可用性。

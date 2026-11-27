@@ -55,6 +55,7 @@
     "passTotal": "Passed/Total",
     "blocked": "Blocked",
     "samples": "Samples",
+    "bot": "Bot",
     "tool": "Tool (adapter/capability)",
     "calls": "Calls",
     "failed": "Failed",
@@ -138,6 +139,9 @@
   "tool": {
     "cardTitle": "Adapter calls (docs/28 §4.1, real-run instrumentation; SIMULATED is local simulation and excluded from latency percentiles)"
   },
+  "bot": {
+    "cardTitle": "Bot run metrics (T7: grouped by agent_id; manual runs excluded)"
+  },
   "alertCard": {
     "title": "Alerts"
   },
@@ -193,6 +197,7 @@
     "reports": "No batch replay reports yet",
     "business": "No runs with business results yet",
     "tools": "No tool calls yet (appear after running a graph containing tool nodes)",
+    "bot": "No Bot runs yet (appear after A2A run-graph with agent_id)",
     "alerts": "No alerts yet",
     "runs": "No runs yet"
   },

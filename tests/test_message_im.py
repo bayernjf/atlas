@@ -596,3 +596,26 @@ def test_adapter_input_schema_has_secret_and_rich_fields():
     assert mentions["additionalProperties"] is False
     assert set(mentions["properties"].keys()) == {"userIds", "mobiles", "atAll"}
     assert mentions["properties"]["userIds"]["maxItems"] == MAX_RECIPIENTS
+
+
+def test_default_im_sender_permits_loopback_only_in_non_prod(monkeypatch):
+    calls: list[str] = []
+
+    def post(url, **kwargs):
+        calls.append(url)
+        return httpx.Response(200, json={"errcode": 0, "errmsg": "ok"})
+
+    monkeypatch.setenv("ATLAS_ENV", "dev")
+    monkeypatch.delenv("ATLAS_MESSAGE_IM_ALLOW_LOOPBACK", raising=False)
+    DefaultImSender(post=post, clock=lambda: 1700000000).send(
+        "wecom", "http://127.0.0.1:9000/hook", "s", "b"
+    )
+    assert calls == ["http://127.0.0.1:9000/hook"]
+
+    monkeypatch.setenv("ATLAS_MESSAGE_IM_ALLOW_LOOPBACK", "0")
+    with pytest.raises(EgressDenied):
+        DefaultImSender(post=post).send("wecom", "http://127.0.0.1:9000/hook", "s", "b")
+
+    monkeypatch.setenv("ATLAS_ENV", "prod")
+    with pytest.raises(EgressDenied):
+        DefaultImSender(post=post).send("wecom", "http://127.0.0.1:9000/hook", "s", "b")

@@ -391,7 +391,7 @@ class GraphState(TypedDict):
 # `channel:` 前缀同走此路（docs/67 打包 M）：渠道适配器的能力入参本来就是 JSON 形状
 # （create_refund 要 order_id/amount），此前落到下方 shop 硬编码装配只拿到 note ⇒ KeyError。
 # 只有 demo 的 shop 适配器仍走按能力硬编码装配。
-GENERIC_JSON_ADAPTERS = frozenset({"http", "database", "message", "memory"})
+GENERIC_JSON_ADAPTERS = frozenset({"http", "database", "message", "memory", "logistics"})
 
 
 def build_demo_registry() -> AdapterRegistry:

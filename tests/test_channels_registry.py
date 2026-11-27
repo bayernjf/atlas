@@ -77,6 +77,21 @@ def test_r5_dev_and_demo_flag_allow_the_seam(monkeypatch) -> None:
     assert build_channel_registry(object(), tenant_id="t1") is not None
 
 
+def test_local_fixtures_allow_prod_seam_without_demo_surface(monkeypatch) -> None:
+    """本机全链演练开关：prod 不开 demo 面也能用 fixture，但仍保留 EgressGuard。"""
+    from atlas.channels.registry import build_channel_registry
+
+    monkeypatch.setenv("ATLAS_ENV", "prod")
+    monkeypatch.delenv("ATLAS_ENABLE_DEMO_MOCK", raising=False)
+    monkeypatch.setenv("ATLAS_LOCAL_FIXTURES", "1")
+    monkeypatch.setenv("ATLAS_SHOPIFY_ADMIN_BASE_URL", _SEAM_URL)
+    registry = build_channel_registry(object(), tenant_id="t1")
+    assert registry is not None
+    # 不是 _PassthroughEgress：传输仍持 guard；只靠 local_fixture_permit 放行私网。
+    transport = registry._transport
+    assert hasattr(transport, "_egress") and transport._egress is not None
+
+
 def test_bind_success():
     reg = make_registry()
     view = reg.bind("shopify", "conn-1", {"shop": "Acme"})

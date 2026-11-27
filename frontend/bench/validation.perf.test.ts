@@ -89,6 +89,10 @@ describe.skipIf(!enabled)('editor validation benchmark (RUN_BENCH=1)', () => {
           measure(`N=${n} L3 cold`, () => {
             validateL3(scopeNodes, edges)
           }),
+          measure(`N=${n} L3 worker payload structuredClone`, () => {
+            // 近似主线程 postMessage 的结构化克隆成本；真正 validateL3 已在 Worker 内。
+            structuredClone({ nodes: scopeNodes, edges })
+          }),
           (() => {
             const engine = new ValidationEngine()
             engine.runGraph(scopeNodes, edges, [])

@@ -1,0 +1,272 @@
+{
+  "generatedAt": "2026-11-23T17:53:58Z",
+  "mode": "real-http-a2a-observability",
+  "tenant": "t1",
+  "server": "http://127.0.0.1:8946",
+  "bots": [
+    {
+      "id": "bot.alpha",
+      "name": "Alpha Bot",
+      "enabled": true,
+      "skills": [
+        "observability.success"
+      ],
+      "adapter_ids": [
+        "database"
+      ],
+      "coordinator": null,
+      "createdAt": "2026-11-23T17:53:59.091228+00:00",
+      "updatedAt": "2026-11-23T17:53:59.091236+00:00",
+      "botId": "bot.alpha"
+    },
+    {
+      "id": "bot.beta",
+      "name": "Beta Bot",
+      "enabled": true,
+      "skills": [
+        "observability.success"
+      ],
+      "adapter_ids": [
+        "database"
+      ],
+      "coordinator": null,
+      "createdAt": "2026-11-23T17:53:59.091232+00:00",
+      "updatedAt": "2026-11-23T17:53:59.091238+00:00",
+      "botId": "bot.beta"
+    },
+    {
+      "id": "bot.gamma",
+      "name": "Gamma Bot",
+      "enabled": true,
+      "skills": [
+        "observability.failure"
+      ],
+      "adapter_ids": [
+        "database"
+      ],
+      "coordinator": null,
+      "createdAt": "2026-11-23T17:53:59.091234+00:00",
+      "updatedAt": "2026-11-23T17:53:59.091239+00:00",
+      "botId": "bot.gamma"
+    }
+  ],
+  "runs": [
+    {
+      "agentId": "bot.alpha",
+      "taskId": "de0af6ed-0010-4cb2-bbc7-69c4d383ada8",
+      "taskState": "completed",
+      "taskMetadata": {
+        "a2a": {
+          "callerId": "bot.alpha",
+          "tenantId": "t1",
+          "agentId": "bot.alpha",
+          "runId": "a2a-e1e80a1bec464434963918cb1d1c4136",
+          "traceId": "659e7d81c7cb4262b6da401edc10c544"
+        }
+      },
+      "artifact": {
+        "taskId": "de0af6ed-0010-4cb2-bbc7-69c4d383ada8",
+        "runId": "a2a-e1e80a1bec464434963918cb1d1c4136",
+        "traceId": "659e7d81c7cb4262b6da401edc10c544",
+        "agentId": "bot.alpha",
+        "runtimeId": "bot-runtime:t1:bot.alpha",
+        "status": "completed",
+        "error": null
+      },
+      "runStore": {
+        "agentId": "bot.alpha",
+        "status": "completed"
+      },
+      "monitoring": {
+        "id": "run-1",
+        "taskId": "de0af6ed-0010-4cb2-bbc7-69c4d383ada8",
+        "runId": "a2a-e1e80a1bec464434963918cb1d1c4136",
+        "traceId": "659e7d81c7cb4262b6da401edc10c544",
+        "agentId": "bot.alpha",
+        "runtimeId": "bot-runtime:t1:bot.alpha",
+        "status": "completed",
+        "mode": "a2a",
+        "failedNodes": [],
+        "spanRootAttrs": {
+          "taskId": "de0af6ed-0010-4cb2-bbc7-69c4d383ada8",
+          "agentId": "bot.alpha",
+          "runtimeId": "bot-runtime:t1:bot.alpha",
+          "runId": "a2a-e1e80a1bec464434963918cb1d1c4136"
+        }
+      }
+    },
+    {
+      "agentId": "bot.beta",
+      "taskId": "7b1988a6-c7ba-4c18-8ee2-285c53f8e264",
+      "taskState": "completed",
+      "taskMetadata": {
+        "a2a": {
+          "callerId": "bot.beta",
+          "tenantId": "t1",
+          "agentId": "bot.beta",
+          "runId": "a2a-90185ee666144b6cb461a3db57732e50",
+          "traceId": "976e732a11ac4af786eaf3a40da54d75"
+        }
+      },
+      "artifact": {
+        "taskId": "7b1988a6-c7ba-4c18-8ee2-285c53f8e264",
+        "runId": "a2a-90185ee666144b6cb461a3db57732e50",
+        "traceId": "976e732a11ac4af786eaf3a40da54d75",
+        "agentId": "bot.beta",
+        "runtimeId": "bot-runtime:t1:bot.beta",
+        "status": "completed",
+        "error": null
+      },
+      "runStore": {
+        "agentId": "bot.beta",
+        "status": "completed"
+      },
+      "monitoring": {
+        "id": "run-2",
+        "taskId": "7b1988a6-c7ba-4c18-8ee2-285c53f8e264",
+        "runId": "a2a-90185ee666144b6cb461a3db57732e50",
+        "traceId": "976e732a11ac4af786eaf3a40da54d75",
+        "agentId": "bot.beta",
+        "runtimeId": "bot-runtime:t1:bot.beta",
+        "status": "completed",
+        "mode": "a2a",
+        "failedNodes": [],
+        "spanRootAttrs": {
+          "taskId": "7b1988a6-c7ba-4c18-8ee2-285c53f8e264",
+          "agentId": "bot.beta",
+          "runtimeId": "bot-runtime:t1:bot.beta",
+          "runId": "a2a-90185ee666144b6cb461a3db57732e50"
+        }
+      }
+    },
+    {
+      "agentId": "bot.gamma",
+      "taskId": "74c44030-b540-45f6-a204-2f29e4607dcd",
+      "taskState": "failed",
+      "taskMetadata": {
+        "a2a": {
+          "callerId": "bot.gamma",
+          "tenantId": "t1",
+          "agentId": "bot.gamma",
+          "runId": "a2a-65bf0fd24b1243f78cb50e67cd1554b5",
+          "traceId": "f7a7d83aeae84e53a6f6fbd03e3dd9d2"
+        }
+      },
+      "artifact": {
+        "taskId": "74c44030-b540-45f6-a204-2f29e4607dcd",
+        "runId": "a2a-65bf0fd24b1243f78cb50e67cd1554b5",
+        "traceId": "f7a7d83aeae84e53a6f6fbd03e3dd9d2",
+        "agentId": "bot.gamma",
+        "runtimeId": "bot-runtime:t1:bot.gamma",
+        "status": "failed",
+        "error": "RunNodeFailed: NODE_EXECUTION_FAILED: 节点 tool-1 执行失败（on_error=stop）：适配器未注册：shop"
+      },
+      "runStore": {
+        "agentId": "bot.gamma",
+        "status": "failed"
+      },
+      "monitoring": {
+        "id": "run-3",
+        "taskId": "74c44030-b540-45f6-a204-2f29e4607dcd",
+        "runId": "a2a-65bf0fd24b1243f78cb50e67cd1554b5",
+        "traceId": "f7a7d83aeae84e53a6f6fbd03e3dd9d2",
+        "agentId": "bot.gamma",
+        "runtimeId": "bot-runtime:t1:bot.gamma",
+        "status": "error",
+        "mode": "a2a",
+        "failedNodes": [],
+        "spanRootAttrs": {
+          "taskId": "74c44030-b540-45f6-a204-2f29e4607dcd",
+          "agentId": "bot.gamma",
+          "runtimeId": "bot-runtime:t1:bot.gamma",
+          "runId": "a2a-65bf0fd24b1243f78cb50e67cd1554b5"
+        }
+      }
+    }
+  ],
+  "alerts": [
+    {
+      "id": "alt-1",
+      "ruleId": "run_error",
+      "severity": "critical",
+      "lastRunId": "run-3",
+      "count": 1,
+      "status": "open"
+    }
+  ],
+  "replay": {
+    "originalTaskId": "de0af6ed-0010-4cb2-bbc7-69c4d383ada8",
+    "replayedTaskId": "de0af6ed-0010-4cb2-bbc7-69c4d383ada8",
+    "sameTask": true,
+    "sameRunId": true,
+    "sameTraceId": true,
+    "monitoringRecords": 1
+  },
+  "metrics": {
+    "total": 3,
+    "perBot": [
+      {
+        "bot_id": "bot.alpha",
+        "agent_id": "bot.alpha",
+        "total": 1,
+        "healthy": 1,
+        "unhealthy": 0,
+        "success_rate": 1.0,
+        "p50": 5.121707916259766,
+        "p95": 5.121707916259766,
+        "tools": []
+      },
+      {
+        "bot_id": "bot.beta",
+        "agent_id": "bot.beta",
+        "total": 1,
+        "healthy": 1,
+        "unhealthy": 0,
+        "success_rate": 1.0,
+        "p50": 3.0279159545898438,
+        "p95": 3.0279159545898438,
+        "tools": []
+      },
+      {
+        "bot_id": "bot.gamma",
+        "agent_id": "bot.gamma",
+        "total": 1,
+        "healthy": 0,
+        "unhealthy": 1,
+        "success_rate": 0.0,
+        "p50": 2.807140350341797,
+        "p95": 2.807140350341797,
+        "tools": []
+      }
+    ]
+  },
+  "prometheus": {
+    "botSeriesCount": 15,
+    "sample": [
+      "atlas_bot_runs_total{tenant_id=\"t1\",bot_id=\"bot.alpha\",status=\"healthy\"} 1",
+      "atlas_bot_runs_total{tenant_id=\"t1\",bot_id=\"bot.alpha\",status=\"unhealthy\"} 0",
+      "atlas_bot_runs_success_rate{tenant_id=\"t1\",bot_id=\"bot.alpha\"} 1",
+      "atlas_bot_run_duration_ms{tenant_id=\"t1\",bot_id=\"bot.alpha\",quantile=\"0.5\"} 5.12171",
+      "atlas_bot_run_duration_ms{tenant_id=\"t1\",bot_id=\"bot.alpha\",quantile=\"0.95\"} 5.12171",
+      "atlas_bot_runs_total{tenant_id=\"t1\",bot_id=\"bot.beta\",status=\"healthy\"} 1"
+    ]
+  },
+  "api": {
+    "perBotIds": [
+      "bot.alpha",
+      "bot.beta",
+      "bot.gamma"
+    ],
+    "filteredRunCount": 1,
+    "traceTaskId": "de0af6ed-0010-4cb2-bbc7-69c4d383ada8"
+  },
+  "checks": {
+    "chain": true,
+    "perBotMetrics": true,
+    "alertLinkedToBotRun": true,
+    "replayNoRerun": true,
+    "prometheusBotSeries": true,
+    "apiFilterAndTrace": true
+  },
+  "ok": true
+}

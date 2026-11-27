@@ -729,3 +729,107 @@ def test_nl_output_budget_is_not_1024():
     import atlas.llm.nl_generate as nl
 
     assert nl._MAX_TOKENS >= 4096
+
+
+def test_normalize_declares_missing_global_refs_with_inferred_types():
+    from atlas.llm.nl_generate import normalize_generated_graph
+
+    graph = normalize_generated_graph(
+        {
+            "variables": [],
+            "nodes": [
+                {"id": "trigger_start", "type": "trigger", "config": {}},
+                {
+                    "id": "refund",
+                    "type": "tool_call",
+                    "config": {
+                        "tool": "shop/execute_refund",
+                        "params": '{"order_id":"{{global.order_id}}","amount":"{{global.threshold}}"}',
+                    },
+                },
+                {
+                    "id": "notify",
+                    "type": "tool_call",
+                    "config": {
+                        "tool": "message/send",
+                        "params": '{"to":["{{global.customer_email}}"]}',
+                    },
+                },
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger_start", "target": "refund"},
+                {"id": "e2", "source": "refund", "target": "notify"},
+            ],
+        }
+    )
+    variables = {item["name"]: item for item in graph["variables"]}
+    assert variables["order_id"]["type"] == "string"
+    assert variables["customer_email"]["type"] == "string"
+    assert variables["threshold"]["type"] == "number"
+    assert variables["threshold"]["value"] == 0
+    assert all(item["scope"] == "global" for item in variables.values())
+
+
+def test_normalize_rewrites_ai_decision_result_refs_to_fixed_outputs():
+    from atlas.llm.nl_generate import normalize_generated_graph
+
+    graph = normalize_generated_graph(
+        {
+            "nodes": [
+                {"id": "trigger_start", "type": "trigger", "config": {}},
+                {"id": "decide", "type": "ai_decision", "config": {"promptTemplate": "判断"}},
+                {
+                    "id": "notify",
+                    "type": "tool_call",
+                    "config": {
+                        "tool": "message/send",
+                        "params": '{"body":"{{decide.result.decision}} / {{decide.result.reason}}"}',
+                    },
+                },
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger_start", "target": "decide"},
+                {"id": "e2", "source": "decide", "target": "notify"},
+            ],
+        }
+    )
+    notify = next(node for node in graph["nodes"] if node["id"] == "notify")
+    assert "{{decide.decision}}" in notify["config"]["params"]
+    assert "{{decide.decision.reason}}" in notify["config"]["params"]
+
+
+def test_normalize_repairs_len_and_length_in_condition_expression():
+    from atlas.llm.nl_generate import normalize_generated_graph
+
+    graph = normalize_generated_graph(
+        {
+            "nodes": [
+                {"id": "trigger_start", "type": "trigger", "config": {}},
+                {"id": "q", "type": "tool_call", "config": {"tool": "database/query", "params": "{}"}},
+                {
+                    "id": "cond",
+                    "type": "condition",
+                    "config": {
+                        "branches": [
+                            {"label": "len-wrapped", "expression": "{{len(q.result.rows)}} > 0", "target": "a"},
+                            {"label": "length", "expression": "{{q.result.rows.length}} > 0", "target": "c"},
+                        ],
+                        "defaultTarget": "b",
+                    },
+                },
+                {"id": "a", "type": "wait", "config": {"waitType": "duration", "durationSeconds": 1}},
+                {"id": "b", "type": "wait", "config": {"waitType": "duration", "durationSeconds": 1}},
+                {"id": "c", "type": "wait", "config": {"waitType": "duration", "durationSeconds": 1}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "trigger_start", "target": "q"},
+                {"id": "e2", "source": "q", "target": "cond"},
+                {"id": "e3", "source": "cond", "target": "a"},
+                {"id": "e4", "source": "cond", "target": "c"},
+                {"id": "e5", "source": "cond", "target": "b"},
+            ],
+        }
+    )
+    cond = next(node for node in graph["nodes"] if node["id"] == "cond")
+    assert cond["config"]["branches"][0]["expression"] == "len({{q.result.rows}}) > 0"
+    assert cond["config"]["branches"][1]["expression"] == "len({{q.result.rows}}) > 0"

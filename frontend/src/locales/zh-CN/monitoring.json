@@ -55,6 +55,7 @@
     "passTotal": "通过/总数",
     "blocked": "阻塞",
     "samples": "样本",
+    "bot": "Bot",
     "tool": "工具（adapter/capability）",
     "calls": "调用数",
     "failed": "失败",
@@ -138,6 +139,9 @@
   "tool": {
     "cardTitle": "适配器调用（docs/28 §4.1，真实运行埋点；SIMULATED 为本地模拟，不纳延迟分位）"
   },
+  "bot": {
+    "cardTitle": "Bot 运行指标（T7：按 agent_id 聚合；人工运行不计入）"
+  },
   "alertCard": {
     "title": "告警"
   },
@@ -193,6 +197,7 @@
     "reports": "暂无批量回放报告",
     "business": "暂无带业务结果的运行",
     "tools": "暂无工具调用（运行含工具节点的图后出现）",
+    "bot": "暂无 Bot 运行（A2A run-graph 指定 agent_id 后出现）",
     "alerts": "暂无告警",
     "runs": "暂无运行"
   },

@@ -43,15 +43,19 @@ def monitoring_metrics(
 @router.get("/api/monitoring/runs")
 def monitoring_runs(
     graph_id: str | None = None,
+    agent_id: str | None = None,
     limit: int = 50,
     principal: Principal = Depends(require("read")),
 ) -> dict[str, list[dict[str, Any]]]:
     """最近运行（新→旧，默认 50、上限 200；04 §5.13；按租户分区）。
     注：本端点保留 RUN_RING_SIZE 手动门禁（docs/64 J-3b 的 le= 批不含此处——
-    语义上限为环形缓冲大小，且手动校验保证 detail 为可读字符串）。"""
+    语义上限为环形缓冲大小，且手动校验保证 detail 为可读字符串）。
+    T7：`agent_id` 过滤 Bot 运行，与 `/api/monitoring/metrics` 的 per_bot 同源。"""
     if limit < 1 or limit > RUN_RING_SIZE:
         raise HTTPException(status_code=422, detail=f"limit 必须是 1-{RUN_RING_SIZE} 之间的整数")
-    runs = _main.services_for(principal).monitoring.list_runs(graph_id=graph_id, limit=limit)
+    runs = _main.services_for(principal).monitoring.list_runs(
+        graph_id=graph_id, agent_id=agent_id, limit=limit
+    )
     # docs/33 §4：列表投影剔除 spans（大 payload，仅 trace 端点按需返回）。
     return {
         "items": [

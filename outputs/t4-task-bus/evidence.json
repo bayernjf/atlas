@@ -1,0 +1,95 @@
+{
+  "mode": "real-cross-process-sqlite-task-bus",
+  "db": "/Users/jiangfeng/000mycodes/atlas/outputs/t4-task-bus/tasks.sqlite3",
+  "tenant": "t1",
+  "api": "GET /api/tasks",
+  "taskCount": 3,
+  "tasks": [
+    {
+      "taskId": "4753e9cda32a4aed9953f39bc708f1c9",
+      "runId": "run-t4-normal",
+      "idempotencyKey": "t4-normal",
+      "traceId": "trace-t4-normal",
+      "graphVersion": "return-flow@1",
+      "type": "refund.verify_order",
+      "assignee": "bot.customer",
+      "payload": {
+        "order_id": "T4-NORMAL"
+      },
+      "deadlineMs": 1000,
+      "parentSpanId": "",
+      "state": "done",
+      "result": {
+        "signed": true
+      },
+      "attempt": 1,
+      "conflictKey": "",
+      "priority": 0
+    },
+    {
+      "taskId": "8e16438ae37c4fa8bbf5a5166c65567e",
+      "runId": "run-t4-high",
+      "idempotencyKey": "t4-high",
+      "traceId": "trace-t4",
+      "graphVersion": "return-flow@1",
+      "type": "refund.finance_review",
+      "assignee": "bot.finance",
+      "payload": {
+        "order_id": "T4-ORDER"
+      },
+      "deadlineMs": 1000,
+      "parentSpanId": "",
+      "state": "failed",
+      "result": {
+        "error": "PAYMENT_CHANNEL_REJECTED"
+      },
+      "attempt": 1,
+      "conflictKey": "refund:T4-ORDER",
+      "priority": 5
+    },
+    {
+      "taskId": "fc890b0de4504f2d859cc6c5fd33f73b",
+      "runId": "run-t4-low",
+      "idempotencyKey": "t4-low",
+      "traceId": "trace-t4",
+      "graphVersion": "return-flow@1",
+      "type": "refund.verify_order",
+      "assignee": "bot.customer",
+      "payload": {
+        "order_id": "T4-ORDER"
+      },
+      "deadlineMs": 1000,
+      "parentSpanId": "",
+      "state": "failed",
+      "result": {
+        "error": "TASK_PREEMPTED",
+        "policy": "priority",
+        "conflictKey": "refund:T4-ORDER",
+        "preemptedBy": "8e16438ae37c4fa8bbf5a5166c65567e"
+      },
+      "attempt": 1,
+      "conflictKey": "refund:T4-ORDER",
+      "priority": 1
+    }
+  ],
+  "seed": {
+    "low": "fc890b0de4504f2d859cc6c5fd33f73b",
+    "high": "8e16438ae37c4fa8bbf5a5166c65567e",
+    "normal": "4753e9cda32a4aed9953f39bc708f1c9",
+    "created": {
+      "low": true,
+      "high": true,
+      "normal": true
+    },
+    "lowResult": {
+      "error": "TASK_PREEMPTED",
+      "policy": "priority",
+      "conflictKey": "refund:T4-ORDER",
+      "preemptedBy": "8e16438ae37c4fa8bbf5a5166c65567e"
+    },
+    "highResult": {
+      "error": "PAYMENT_CHANNEL_REJECTED"
+    }
+  },
+  "ok": true
+}

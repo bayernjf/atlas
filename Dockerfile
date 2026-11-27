@@ -4,10 +4,12 @@ WORKDIR /app/frontend
 # registry.npmjs.org drops TLS connections at random from this network; corepack
 # fetches pnpm itself and ignores npm_config_registry, so both switches are set.
 ENV npm_config_registry=https://registry.npmmirror.com
+ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
 ENV COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
 RUN corepack enable
-COPY frontend/package.json frontend/pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+COPY frontend/package.json frontend/pnpm-lock.yaml frontend/.npmrc ./
+RUN pnpm config set registry https://registry.npmmirror.com --global \
+ && pnpm install --frozen-lockfile
 COPY frontend/ ./
 RUN pnpm build
 

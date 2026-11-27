@@ -270,3 +270,17 @@ def test_env_allowlist_carries_no_permit_power():
     with pytest.raises(EgressDenied) as exc_info:
         guard.check("http://127.0.0.1/")
     assert exc_info.value.code == "EGRESS_DENIED"
+
+
+def test_local_fixture_permit_is_explicit_and_private_only(monkeypatch):
+    """只有 ATLAS_LOCAL_FIXTURES=1 才放行私网；正常路径恒空。"""
+    from atlas.security.egress import local_fixture_permit
+
+    monkeypatch.delenv("ATLAS_LOCAL_FIXTURES", raising=False)
+    assert local_fixture_permit() == ()
+
+    monkeypatch.setenv("ATLAS_LOCAL_FIXTURES", "1")
+    permit = local_fixture_permit()
+    assert "192.168.0.0/16" in permit
+    target = validate_egress_url("http://192.168.65.254:9099/state", permit_cidrs=permit)
+    assert target.matched_ip == "192.168.65.254"

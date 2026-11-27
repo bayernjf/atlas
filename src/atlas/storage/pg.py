@@ -870,7 +870,7 @@ class PgMonitoringStore:
         self,
         *,
         graph_id: str,
-        mode: Literal["sync", "stream"],
+        mode: Literal["sync", "stream", "a2a"],
         status: Literal["completed", "error", "cancelled"],
         started_at: str,
         duration_ms: float,
@@ -881,6 +881,10 @@ class PgMonitoringStore:
         business=None,
         tool_calls: list | None = None,
         spans: dict | None = None,
+        task_id: str = "",
+        run_id: str = "",
+        agent_id: str = "",
+        runtime_id: str = "",
     ) -> RunRecord:
         from atlas.monitoring.alerts import evaluate_rules
         from atlas.monitoring.metrics import is_healthy
@@ -897,15 +901,17 @@ class PgMonitoringStore:
                 duration_ms=duration_ms, nodes=nodes, error=error,
                 trace_id=trace_id, resolved_version=resolved_version,
                 business=business, tool_calls=tool_calls or [], spans=spans,
+                task_id=task_id, run_id=run_id, agent_id=agent_id, runtime_id=runtime_id,
             )
             conn.execute(
                 text(
                     "INSERT INTO monitoring_runs "
                     "(id, tenant_id, graph_id, mode, status, started_at, finished_at, "
-                    "duration_ms, nodes, error, trace_id, resolved_version, business, tool_calls, spans) "
+                    "duration_ms, nodes, error, trace_id, resolved_version, business, tool_calls, spans, "
+                    "task_id, run_id, agent_id, runtime_id) "
                     "VALUES (:id, :tenant_id, :graph_id, :mode, :status, :started_at, "
                     ":finished_at, :duration_ms, :nodes, :error, :trace_id, :resolved_version, "
-                    ":business, :tool_calls, :spans)"
+                    ":business, :tool_calls, :spans, :task_id, :run_id, :agent_id, :runtime_id)"
                 ),
                 {
                     "id": run_id,
@@ -926,6 +932,10 @@ class PgMonitoringStore:
                         ensure_ascii=False,
                     ),
                     "spans": json.dumps(spans, ensure_ascii=False) if spans else "{}",
+                    "task_id": task_id,
+                    "run_id": run_id,
+                    "agent_id": agent_id,
+                    "runtime_id": runtime_id,
                 },
             )
             rules = self._rules_locked(conn)
@@ -1133,25 +1143,29 @@ class PgMonitoringStore:
             assignee=assignee,
         ), "new"
 
-    def list_runs(self, graph_id: str | None = None, limit: int = 50) -> list[RunRecord]:
+    def list_runs(
+        self,
+        graph_id: str | None = None,
+        limit: int = 50,
+        agent_id: str | None = None,
+    ) -> list[RunRecord]:
         with self._engine.connect() as conn:
+            clauses = ["tenant_id = :tenant_id"]
+            params: dict[str, Any] = {"tenant_id": self._tenant_id, "limit": limit}
             if graph_id:
-                rows = conn.execute(
-                    text(
-                        f"SELECT {self._RUN_LIST_COLS} FROM monitoring_runs "
-                        "WHERE tenant_id = :tenant_id AND graph_id = :graph_id "
-                        "ORDER BY finished_at DESC LIMIT :limit"
-                    ),
-                    {"tenant_id": self._tenant_id, "graph_id": graph_id, "limit": limit},
-                ).all()
-            else:
-                rows = conn.execute(
-                    text(
-                        f"SELECT {self._RUN_LIST_COLS} FROM monitoring_runs "
-                        "WHERE tenant_id = :tenant_id ORDER BY finished_at DESC LIMIT :limit"
-                    ),
-                    {"tenant_id": self._tenant_id, "limit": limit},
-                ).all()
+                clauses.append("graph_id = :graph_id")
+                params["graph_id"] = graph_id
+            if agent_id:
+                clauses.append("agent_id = :agent_id")
+                params["agent_id"] = agent_id
+            rows = conn.execute(
+                text(
+                    f"SELECT {self._RUN_LIST_COLS} FROM monitoring_runs "
+                    f"WHERE {' AND '.join(clauses)} "
+                    "ORDER BY finished_at DESC LIMIT :limit"
+                ),
+                params,
+            ).all()
         return [self._run_list_from_row(r) for r in rows]
 
     def get_run(self, run_id: str) -> RunRecord | None:
@@ -1200,6 +1214,8 @@ class PgMonitoringStore:
             finished_at=r[5], duration_ms=r[6], nodes=r[7], error=r[8],
             trace_id=r[9] or "", resolved_version=r[10], business=r[11],
             tool_calls=r[12] or [], spans=(r[13] if r[13] else None),
+            task_id=r[14] or "", run_id=r[15] or "",
+            agent_id=r[16] or "", runtime_id=r[17] or "",
         )
 
     @staticmethod
@@ -1210,16 +1226,20 @@ class PgMonitoringStore:
             finished_at=r[5], duration_ms=r[6], nodes=r[7], error=r[8],
             trace_id=r[9] or "", resolved_version=r[10], business=r[11],
             tool_calls=r[12] or [], spans=None,
+            task_id=r[13] or "", run_id=r[14] or "",
+            agent_id=r[15] or "", runtime_id=r[16] or "",
         )
 
     _RUN_LIST_COLS = (
         "id, graph_id, mode, status, started_at, finished_at, "
-        "duration_ms, nodes, error, trace_id, resolved_version, business, tool_calls"
+        "duration_ms, nodes, error, trace_id, resolved_version, business, tool_calls, "
+        "task_id, run_id, agent_id, runtime_id"
     )
 
     _RUN_COLS = (
         "id, graph_id, mode, status, started_at, finished_at, "
-        "duration_ms, nodes, error, trace_id, resolved_version, business, tool_calls, spans"
+        "duration_ms, nodes, error, trace_id, resolved_version, business, tool_calls, spans, "
+        "task_id, run_id, agent_id, runtime_id"
     )
 
     @staticmethod

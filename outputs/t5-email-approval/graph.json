@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "variables": [],
+  "nodes": [
+    {
+      "id": "trigger-1",
+      "type": "trigger",
+      "name": "start",
+      "config": {
+        "triggerType": "webhook",
+        "webhookUrl": "/hooks/t5"
+      },
+      "retry": {
+        "max_retries": 0,
+        "backoff": "1s",
+        "timeout": 30,
+        "on_error": "stop"
+      }
+    },
+    {
+      "id": "approval-1",
+      "type": "human_approval",
+      "name": "邮件审批",
+      "config": {
+        "summary": "T5 邮件审批：订单 {{trigger-1.context.payload.order_id}}",
+        "notifyEmails": [
+          "approver@example.com"
+        ],
+        "timeoutSeconds": 30,
+        "onTimeout": "reject",
+        "approvedTarget": "msg-approved",
+        "rejectedTarget": "msg-rejected"
+      },
+      "retry": {
+        "max_retries": 0,
+        "backoff": "1s",
+        "timeout": 30,
+        "on_error": "stop"
+      }
+    },
+    {
+      "id": "msg-approved",
+      "type": "tool_call",
+      "name": "通过通知",
+      "config": {
+        "tool": "message/send",
+        "params": "{\"channel\": \"email\", \"to\": [\"approver@example.com\"], \"subject\": \"T5 审批已通过\", \"body\": \"订单 {{trigger-1.context.payload.order_id}} 的审批已通过\"}"
+      },
+      "retry": {
+        "max_retries": 0,
+        "backoff": "1s",
+        "timeout": 30,
+        "on_error": "stop"
+      }
+    },
+    {
+      "id": "msg-rejected",
+      "type": "tool_call",
+      "name": "拒绝通知",
+      "config": {
+        "tool": "message/send",
+        "params": "{\"channel\": \"email\", \"to\": [\"approver@example.com\"], \"subject\": \"T5 审批被拒绝\", \"body\": \"订单 {{trigger-1.context.payload.order_id}} 的审批被拒绝\"}"
+      },
+      "retry": {
+        "max_retries": 0,
+        "backoff": "1s",
+        "timeout": 30,
+        "on_error": "stop"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "trigger-1",
+      "target": "approval-1"
+    },
+    {
+      "id": "e2",
+      "source": "approval-1",
+      "target": "msg-approved"
+    },
+    {
+      "id": "e3",
+      "source": "approval-1",
+      "target": "msg-rejected"
+    }
+  ]
+}

@@ -1,0 +1,340 @@
+{
+  "generatedAt": "2026-11-24T10:15:54.630349+00:00",
+  "mode": "real-local-smtp-approval-roundtrip",
+  "smtp": {
+    "host": "127.0.0.1",
+    "port": 59884,
+    "tls": false
+  },
+  "tenant": "t1",
+  "pending": {
+    "token": "ab001fd014d4433797ecf55fc8ddc2b6",
+    "node_id": "approval-1",
+    "graph_id": "adhoc",
+    "summary": "T5 邮件审批：订单 T5-ORDER-1",
+    "approver": "",
+    "timeoutSeconds": 30,
+    "createdAt": 1795515352.75715
+  },
+  "frame": {
+    "resume_token": "ab001fd014d4433797ecf55fc8ddc2b6",
+    "run_id": "",
+    "node_id": "approval-1",
+    "kind": "approval",
+    "deadline_at": "2026-11-24T10:16:22.769477+00:00",
+    "graph_snapshot": {
+      "version": 1,
+      "variables": [],
+      "nodes": [
+        {
+          "id": "trigger-1",
+          "type": "trigger",
+          "name": "start",
+          "description": "",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "config": {
+            "triggerType": "webhook",
+            "webhookUrl": "/hooks/t5"
+          },
+          "retry": {
+            "max_retries": 0,
+            "backoff": "1s",
+            "timeout": 30,
+            "on_error": "stop",
+            "error_target": null
+          }
+        },
+        {
+          "id": "approval-1",
+          "type": "human_approval",
+          "name": "邮件审批",
+          "description": "",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "config": {
+            "summary": "T5 邮件审批：订单 {{trigger-1.context.payload.order_id}}",
+            "notifyEmails": [
+              "approver@example.com"
+            ],
+            "timeoutSeconds": 30,
+            "onTimeout": "reject",
+            "approvedTarget": "msg-approved",
+            "rejectedTarget": "msg-rejected"
+          },
+          "retry": {
+            "max_retries": 0,
+            "backoff": "1s",
+            "timeout": 30,
+            "on_error": "stop",
+            "error_target": null
+          }
+        },
+        {
+          "id": "msg-approved",
+          "type": "tool_call",
+          "name": "通过通知",
+          "description": "",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "config": {
+            "tool": "message/send",
+            "params": "{\"channel\": \"email\", \"to\": [\"approver@example.com\"], \"subject\": \"T5 审批已通过\", \"body\": \"订单 {{trigger-1.context.payload.order_id}} 的审批已通过\"}"
+          },
+          "retry": {
+            "max_retries": 0,
+            "backoff": "1s",
+            "timeout": 30,
+            "on_error": "stop",
+            "error_target": null
+          }
+        },
+        {
+          "id": "msg-rejected",
+          "type": "tool_call",
+          "name": "拒绝通知",
+          "description": "",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "config": {
+            "tool": "message/send",
+            "params": "{\"channel\": \"email\", \"to\": [\"approver@example.com\"], \"subject\": \"T5 审批被拒绝\", \"body\": \"订单 {{trigger-1.context.payload.order_id}} 的审批被拒绝\"}"
+          },
+          "retry": {
+            "max_retries": 0,
+            "backoff": "1s",
+            "timeout": 30,
+            "on_error": "stop",
+            "error_target": null
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "e1",
+          "source": "trigger-1",
+          "target": "approval-1"
+        },
+        {
+          "id": "e2",
+          "source": "approval-1",
+          "target": "msg-approved"
+        },
+        {
+          "id": "e3",
+          "source": "approval-1",
+          "target": "msg-rejected"
+        }
+      ],
+      "globalErrorHandler": null,
+      "selfHealing": null,
+      "loop": null
+    },
+    "resume_state": {
+      "graph_id": "adhoc",
+      "inputs": {
+        "order_id": "T5-ORDER-1"
+      },
+      "outputs": {
+        "trigger-1": {
+          "context": {
+            "triggerType": "webhook",
+            "cron": "",
+            "timezone": "UTC",
+            "webhookUrl": "/hooks/t5",
+            "payload": {
+              "order_id": "T5-ORDER-1"
+            }
+          }
+        }
+      }
+    },
+    "summary": "T5 邮件审批：订单 T5-ORDER-1",
+    "approver": "",
+    "card_template_id": "",
+    "wait": null
+  },
+  "outboundEmail": {
+    "from": "atlas@local.test",
+    "to": [
+      "approver@example.com"
+    ],
+    "subject": "[Atlas] 审批待处理：T5 邮件审批：订单 T5-ORDER-1",
+    "body": "有一笔人机审批正在等待处理。\n\n审批节点：approval-1（图 adhoc）\n审批说明：T5 邮件审批：订单 T5-ORDER-1\n超时时间：30 秒（超时后按图中配置自动处理）\n\n一键处理：http://127.0.0.1:8951/approvals/eyJ2IjoxLCJ0ZW5hbnQiOiJ0MSIsImF0IjoiYWIwMDFmZDAxNGQ0NDMzNzk3ZWNmNTVmYzhkZGMyYjYiLCJpYXQiOjE3OTU1MTUzNTIsImV4cCI6MTc5NTUxNTY4MiwicmNwdCI6ImFwcHJvdmVyQGV4YW1wbGUuY29tIn0.l2ytSvimqGhJaWa4gE8LuanAgtnet_6Pp-pKjxBBkxg\n或前往应用：http://127.0.0.1:8951\n"
+  },
+  "emailView": {
+    "status": "pending",
+    "summary": "T5 邮件审批：订单 T5-ORDER-1",
+    "nodeId": "approval-1",
+    "graphId": "adhoc",
+    "approver": "",
+    "timeoutSeconds": 30,
+    "createdAt": 1795515352.75715,
+    "remainingSeconds": 28
+  },
+  "badTokenStatus": 404,
+  "decision": {
+    "token": "ab001fd014d4433797ecf55fc8ddc2b6",
+    "decision": "approved",
+    "resolvedBy": "email-link"
+  },
+  "decisionEmail": {
+    "from": "atlas@local.test",
+    "to": [
+      "approver@example.com"
+    ],
+    "subject": "[Atlas] 审批已处理：T5 邮件审批：订单 T5-ORDER-1",
+    "body": "有一笔人机审批已完成处理。\n\n审批节点：approval-1（图 adhoc）\n审批说明：T5 邮件审批：订单 T5-ORDER-1\n处理结果：同意\n处理来源：邮件链接处理\n处理备注：T5 SMTP 深链\n\n前往应用查看：http://127.0.0.1:8951"
+  },
+  "graphResult": {
+    "status": "completed",
+    "outputs": {
+      "trigger-1": {
+        "context": {
+          "triggerType": "webhook",
+          "cron": "",
+          "timezone": "UTC",
+          "webhookUrl": "/hooks/t5",
+          "payload": {
+            "order_id": "T5-ORDER-1"
+          }
+        }
+      },
+      "approval-1": {
+        "mode": "human_approval",
+        "decision": "approved",
+        "target": "msg-approved",
+        "token": "ab001fd014d4433797ecf55fc8ddc2b6",
+        "summary": "T5 邮件审批：订单 T5-ORDER-1",
+        "approver": "",
+        "resolvedBy": "email-link",
+        "comment": "T5 SMTP 深链"
+      },
+      "msg-approved": {
+        "result": {
+          "id": "3aefd23c-534f-4dac-94b7-808b4007b167",
+          "channel": "email",
+          "to": [
+            "approver@example.com"
+          ],
+          "subject": "T5 审批已通过",
+          "body": "订单 T5-ORDER-1 的审批已通过",
+          "sent_at": "2026-11-24T10:15:54.611259+00:00",
+          "delivered": "smtp"
+        },
+        "action_status": "SUCCESS"
+      }
+    },
+    "trace": [
+      "trigger-1(trigger): executed",
+      "approval-1: approved (email-link) → msg-approved",
+      "msg-approved(tool_call): executed"
+    ],
+    "rng_seed": 6440704380936583999,
+    "traceId": "7080478e9cfb4d8593d710dbc502e080",
+    "traceTree": {
+      "traceId": "7080478e9cfb4d8593d710dbc502e080",
+      "spanId": "1405c9e12fbc4279",
+      "name": "run:adhoc",
+      "kind": "run",
+      "startedAt": "2026-11-24T10:15:52.752969+00:00",
+      "durationMs": 1875.095,
+      "status": "ok",
+      "children": [
+        {
+          "traceId": "7080478e9cfb4d8593d710dbc502e080",
+          "spanId": "d45e3cbe2d3945ca",
+          "name": "trigger:trigger-1",
+          "kind": "node",
+          "startedAt": "2026-11-24T10:15:52.756980+00:00",
+          "durationMs": 0.006,
+          "status": "ok",
+          "parentSpanId": "1405c9e12fbc4279",
+          "attrs": {
+            "nodeId": "trigger-1",
+            "nodeType": "trigger"
+          }
+        },
+        {
+          "traceId": "7080478e9cfb4d8593d710dbc502e080",
+          "spanId": "6612b462710b4ab0",
+          "name": "human_approval:approval-1",
+          "kind": "node",
+          "startedAt": "2026-11-24T10:15:52.757134+00:00",
+          "durationMs": 1853.686,
+          "status": "ok",
+          "parentSpanId": "1405c9e12fbc4279",
+          "attrs": {
+            "nodeId": "approval-1",
+            "nodeType": "human_approval"
+          }
+        },
+        {
+          "traceId": "7080478e9cfb4d8593d710dbc502e080",
+          "spanId": "02a55c66703f4f8e",
+          "name": "tool_call:msg-approved",
+          "kind": "node",
+          "startedAt": "2026-11-24T10:15:54.611199+00:00",
+          "durationMs": 16.394,
+          "status": "ok",
+          "parentSpanId": "1405c9e12fbc4279",
+          "attrs": {
+            "nodeId": "msg-approved",
+            "nodeType": "tool_call"
+          },
+          "children": [
+            {
+              "traceId": "7080478e9cfb4d8593d710dbc502e080",
+              "spanId": "288896e10cf34c36",
+              "name": "tool:message/send",
+              "kind": "tool",
+              "startedAt": "2026-11-24T10:15:54.611211+00:00",
+              "durationMs": 16.374,
+              "status": "ok",
+              "parentSpanId": "02a55c66703f4f8e",
+              "attrs": {
+                "adapter": "message",
+                "capability": "send"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "messages": [
+    {
+      "from": "atlas@local.test",
+      "to": [
+        "approver@example.com"
+      ],
+      "subject": "[Atlas] 审批待处理：T5 邮件审批：订单 T5-ORDER-1",
+      "body": "有一笔人机审批正在等待处理。\n\n审批节点：approval-1（图 adhoc）\n审批说明：T5 邮件审批：订单 T5-ORDER-1\n超时时间：30 秒（超时后按图中配置自动处理）\n\n一键处理：http://127.0.0.1:8951/approvals/eyJ2IjoxLCJ0ZW5hbnQiOiJ0MSIsImF0IjoiYWIwMDFmZDAxNGQ0NDMzNzk3ZWNmNTVmYzhkZGMyYjYiLCJpYXQiOjE3OTU1MTUzNTIsImV4cCI6MTc5NTUxNTY4MiwicmNwdCI6ImFwcHJvdmVyQGV4YW1wbGUuY29tIn0.l2ytSvimqGhJaWa4gE8LuanAgtnet_6Pp-pKjxBBkxg\n或前往应用：http://127.0.0.1:8951\n"
+    },
+    {
+      "from": "atlas@local.test",
+      "to": [
+        "approver@example.com"
+      ],
+      "subject": "T5 审批已通过",
+      "body": "订单 T5-ORDER-1 的审批已通过"
+    },
+    {
+      "from": "atlas@local.test",
+      "to": [
+        "approver@example.com"
+      ],
+      "subject": "[Atlas] 审批已处理：T5 邮件审批：订单 T5-ORDER-1",
+      "body": "有一笔人机审批已完成处理。\n\n审批节点：approval-1（图 adhoc）\n审批说明：T5 邮件审批：订单 T5-ORDER-1\n处理结果：同意\n处理来源：邮件链接处理\n处理备注：T5 SMTP 深链\n\n前往应用查看：http://127.0.0.1:8951"
+    }
+  ],
+  "ok": true
+}

@@ -12,6 +12,11 @@ paths = [
   '''(.*/)?.*\.test\.py$''',
   '''(.*/)?.*\.sqlite$''',
   '''(.*/)?\.env\.example$''',
+  # 本地真机验证的证据快照：记录一次性的审批深链 token（已失效），
+  # 属于验证读数而非产品凭证
+  '''(.*/)?outputs/t5-email-approval/.*''',
+  # 真进程验证脚本里的固定测试常量（inbound_secret / admin 测试口令）
+  '''(.*/)?scripts/verify_t6_im_inbound\.py''',
 ]
 # 公开的口令生成字符集常量（非密钥，generic-api-key 据熵值误报）；
 # 一条匹配声明行，一条匹配该固定公开字符集值本身

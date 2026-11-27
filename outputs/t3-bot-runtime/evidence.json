@@ -1,0 +1,248 @@
+{
+  "generatedAt": "2026-11-23T17:54:57Z",
+  "mode": "real-http-a2a-bot-runtime",
+  "tenant": "t3-bots",
+  "server": "http://127.0.0.1:8944",
+  "logisticsServer": "http://127.0.0.1:8945",
+  "card": {
+    "version": "0.2.0",
+    "skills": [
+      "plan-approval-flow",
+      "run-graph",
+      "diagnose-run"
+    ]
+  },
+  "agents": [
+    {
+      "id": "bot.customer",
+      "name": "Customer Bot",
+      "enabled": true,
+      "skills": [
+        "refund.query"
+      ],
+      "adapter_ids": [
+        "shop",
+        "message"
+      ],
+      "coordinator": null,
+      "createdAt": "2026-11-23T17:54:55.960778+00:00",
+      "updatedAt": "2026-11-23T17:54:55.960787+00:00"
+    },
+    {
+      "id": "bot.finance",
+      "name": "Finance Bot",
+      "enabled": true,
+      "skills": [
+        "finance.summary"
+      ],
+      "adapter_ids": [
+        "database",
+        "message"
+      ],
+      "coordinator": null,
+      "createdAt": "2026-11-23T17:54:55.960785+00:00",
+      "updatedAt": "2026-11-23T17:54:55.960789+00:00"
+    },
+    {
+      "id": "bot.logistics",
+      "name": "Logistics Bot",
+      "enabled": true,
+      "skills": [
+        "logistics.check_receipt"
+      ],
+      "adapter_ids": [
+        "logistics"
+      ],
+      "coordinator": null,
+      "createdAt": "2026-11-23T17:54:55.960783+00:00",
+      "updatedAt": "2026-11-23T17:54:55.960788+00:00"
+    }
+  ],
+  "graphs": {
+    "bot.customer": "graph-1",
+    "bot.logistics": "graph-2",
+    "bot.finance": "graph-3"
+  },
+  "runs": [
+    {
+      "agentId": "bot.customer",
+      "taskId": "243f0b71-56f4-428d-8f2a-ad2b5bc3b4e7",
+      "taskState": "completed",
+      "taskMetadata": {
+        "a2a": {
+          "callerId": "bot.customer",
+          "tenantId": "t3-bots",
+          "agentId": "bot.customer",
+          "runId": "a2a-7eb17f9c7a6e427ca9f4814fa3d8be30",
+          "traceId": "01908f91518b42a2a65f27703011e74b"
+        }
+      },
+      "artifactAgentId": "bot.customer",
+      "runtimeId": "bot-runtime:t3-bots:bot.customer",
+      "runId": "a2a-7eb17f9c7a6e427ca9f4814fa3d8be30",
+      "graphId": "graph-1",
+      "status": "completed",
+      "error": null,
+      "outputs": {
+        "trigger-1": {
+          "context": {
+            "triggerType": "webhook",
+            "cron": "",
+            "timezone": "UTC",
+            "webhookUrl": "/hooks/t3",
+            "payload": {}
+          }
+        },
+        "tool-1": {
+          "result": {
+            "orders": [
+              {
+                "order_id": "12345",
+                "reason": "商品破损",
+                "amount": 299
+              },
+              {
+                "order_id": "12346",
+                "reason": "不想要了",
+                "amount": 5000
+              },
+              {
+                "order_id": "12347",
+                "reason": "商品有质量瑕疵",
+                "amount": 128
+              },
+              {
+                "order_id": "12348",
+                "reason": "商家错发商品",
+                "amount": 460
+              },
+              {
+                "order_id": "12349",
+                "reason": "尺寸不合适",
+                "amount": 899
+              }
+            ]
+          },
+          "action_status": "SUCCESS"
+        }
+      },
+      "runStoreAgentId": "bot.customer",
+      "runStoreStatus": "completed"
+    },
+    {
+      "agentId": "bot.logistics",
+      "taskId": "ac8f899b-ed37-4460-b6f2-60e581024ab7",
+      "taskState": "completed",
+      "taskMetadata": {
+        "a2a": {
+          "callerId": "bot.logistics",
+          "tenantId": "t3-bots",
+          "agentId": "bot.logistics",
+          "runId": "a2a-83e3f97cc2444c47854efd37e89c1867",
+          "traceId": "ae30f10836dc4fbeaf1b1838a2e29b1d"
+        }
+      },
+      "artifactAgentId": "bot.logistics",
+      "runtimeId": "bot-runtime:t3-bots:bot.logistics",
+      "runId": "a2a-83e3f97cc2444c47854efd37e89c1867",
+      "graphId": "graph-2",
+      "status": "completed",
+      "error": null,
+      "outputs": {
+        "trigger-1": {
+          "context": {
+            "triggerType": "webhook",
+            "cron": "",
+            "timezone": "UTC",
+            "webhookUrl": "/hooks/t3",
+            "payload": {}
+          }
+        },
+        "tool-1": {
+          "result": {
+            "order_id": "T3-ORDER-1",
+            "signed": false
+          },
+          "action_status": "SUCCESS"
+        }
+      },
+      "runStoreAgentId": "bot.logistics",
+      "runStoreStatus": "completed"
+    },
+    {
+      "agentId": "bot.finance",
+      "taskId": "53017b7e-f2fa-4643-b467-5962886a88dc",
+      "taskState": "completed",
+      "taskMetadata": {
+        "a2a": {
+          "callerId": "bot.finance",
+          "tenantId": "t3-bots",
+          "agentId": "bot.finance",
+          "runId": "a2a-614da7390db94fd59a41c1ae10f467cb",
+          "traceId": "ca48161596cc45d7ae503138228e21c6"
+        }
+      },
+      "artifactAgentId": "bot.finance",
+      "runtimeId": "bot-runtime:t3-bots:bot.finance",
+      "runId": "a2a-614da7390db94fd59a41c1ae10f467cb",
+      "graphId": "graph-3",
+      "status": "completed",
+      "error": null,
+      "outputs": {
+        "trigger-1": {
+          "context": {
+            "triggerType": "webhook",
+            "cron": "",
+            "timezone": "UTC",
+            "webhookUrl": "/hooks/t3",
+            "payload": {}
+          }
+        },
+        "tool-1": {
+          "result": {
+            "columns": [
+              "n"
+            ],
+            "rows": [
+              {
+                "n": 2
+              }
+            ],
+            "row_count": 1,
+            "truncated": false
+          },
+          "action_status": "SUCCESS"
+        }
+      },
+      "runStoreAgentId": "bot.finance",
+      "runStoreStatus": "completed"
+    }
+  ],
+  "logisticsAdapter": {
+    "class": "HttpLogisticsAdapter",
+    "hits": [
+      {
+        "method": "GET",
+        "path": "/receipts/T3-WARMUP",
+        "orderId": "T3-WARMUP"
+      },
+      {
+        "method": "GET",
+        "path": "/receipts/T3-ORDER-1",
+        "orderId": "T3-ORDER-1"
+      }
+    ],
+    "signed": []
+  },
+  "ok": true,
+  "distinctRuntimeIds": [
+    "bot-runtime:t3-bots:bot.customer",
+    "bot-runtime:t3-bots:bot.finance",
+    "bot-runtime:t3-bots:bot.logistics"
+  ],
+  "distinctRunIds": [
+    "a2a-614da7390db94fd59a41c1ae10f467cb",
+    "a2a-7eb17f9c7a6e427ca9f4814fa3d8be30",
+    "a2a-83e3f97cc2444c47854efd37e89c1867"
+  ]
+}

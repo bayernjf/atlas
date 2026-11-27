@@ -1688,7 +1688,7 @@ export type ToolMetricsRow = {
 export type RunRecord = {
   id: string
   graph_id: string
-  mode: 'sync' | 'stream'
+  mode: 'sync' | 'stream' | 'a2a'
   status: 'completed' | 'error' | 'cancelled'
   started_at: string
   finished_at: string
@@ -1698,6 +1698,11 @@ export type RunRecord = {
   resolved_version?: number | null
   business?: BusinessOutcome | null
   tool_calls?: ToolCallMetric[]
+  /** T7：A2A Bot 运行关联键（非 A2A 运行缺省空串/不返回）。 */
+  task_id?: string
+  run_id?: string
+  agent_id?: string
+  runtime_id?: string
 }
 
 export type MetricsStats = {
@@ -1719,6 +1724,8 @@ export type FailedNodeRow = {
 
 export type MetricsSummary = MetricsStats & {
   per_graph: Array<{ graph_id: string } & MetricsStats>
+  /** T7：按 Bot（agent_id）指标；非 A2A 人工运行为空数组。 */
+  per_bot?: Array<{ bot_id: string; agent_id: string } & MetricsStats>
   failed_nodes: FailedNodeRow[]
   business: BusinessMetricsSummary
   /** docs/28 §4.1 ⑧：适配器调用聚合（旧后端/空数据为 []）。 */
@@ -1788,6 +1795,25 @@ export async function getRuns(graphId?: string, limit = 50): Promise<RunRecord[]
   if (graphId) params.set('graph_id', graphId)
   const body = await request<{ items: RunRecord[] }>(`/api/monitoring/runs?${params}`)
   return body.items
+}
+
+/** 单运行详情（`GET /api/runs/{run_id}`，M5b 运行台账；任务详情用于协同调试）。 */
+export type RunDetail = {
+  runId: string
+  graphId: string
+  status: string
+  startedAt?: string
+  finishedAt?: string
+  error?: string | null
+  outputs?: Record<string, unknown>
+  trace?: string[]
+  agentId?: string
+  resolvedVersion?: number | null
+  [key: string]: unknown
+}
+
+export async function getRun(runId: string): Promise<RunDetail> {
+  return request(`/api/runs/${encodeURIComponent(runId)}`)
 }
 
 // ===================== 自走循环圈会话（docs/130 打包 BN＝D69）=====================
@@ -3207,6 +3233,8 @@ export type TaskEnvelopeItem = {
   state: 'pending' | 'accepted' | 'running' | 'done' | 'failed' | 'timeout'
   result: Record<string, unknown>
   attempt: number
+  conflictKey: string
+  priority: number
 }
 
 export async function listWaits(): Promise<PendingWaitItem[]> {

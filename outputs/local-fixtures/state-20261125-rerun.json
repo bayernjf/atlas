@@ -1,0 +1,78 @@
+{
+  "emails": [
+    {
+      "from": "atlas@local.test",
+      "to": [
+        "ops@example.com"
+      ],
+      "peer": "('192.168.1.104', 63342)",
+      "data": "From: atlas@local.test\nTo: ops@example.com\nSubject: =?utf-8?b?5a6h5om55bey5ouS57ud?=\nContent-Type: text/plain; charset=\"utf-8\"\nContent-Transfer-Encoding: 8bit\nMIME-Version: 1.0\n\n订单 R-2 审批未通过（rejected）。"
+    },
+    {
+      "from": "atlas@local.test",
+      "to": [
+        "ops@example.com"
+      ],
+      "peer": "('192.168.1.104', 63347)",
+      "data": "From: atlas@local.test\nTo: ops@example.com\nSubject: =?utf-8?b?5a6h5om55bey6YCa6L+H?=\nContent-Type: text/plain; charset=\"utf-8\"\nContent-Transfer-Encoding: 8bit\nMIME-Version: 1.0\n\n订单 R-3 的审批通过（approved）。"
+    },
+    {
+      "from": "atlas@local.test",
+      "to": [
+        "ops@atlas.local"
+      ],
+      "peer": "('192.168.1.104', 63808)",
+      "data": "From: atlas@local.test\nTo: ops@atlas.local\nSubject: Atlas prod =?utf-8?b?5ryU57uD6YCa55+l77yIbGVnX25vdGlmee+8iQ==?=\nContent-Type: text/plain; charset=\"utf-8\"\nContent-Transfer-Encoding: base64\nMIME-Version: 1.0\n\n5pys6YKu5Lu255SxIHByb2RfcmVoZWFyc2FsLnB5IOeahCBub3RpZnkg6IW/57uPIHByb2Qg6YWN\n572u55qEIFNNVFAg55yf5a6e5oqV6YCS77yM55So5LqOIGRvY3MvNzMgMS4zIOWIpOaNru+8muS4\ngOadoemAmuefpeecn+ato+WIsOi+vuaMh+WumuaUtuS7tuS6uu+8iOmdniBkZXYgbW9ja++8ieOA\nggo="
+    }
+  ],
+  "im_messages": [
+    {
+      "channel": "feishu",
+      "payload": {
+        "msg_type": "text",
+        "content": {
+          "text": "Atlas local IM\n本地全链 IM 投递"
+        }
+      }
+    }
+  ],
+  "refunds": [
+    {
+      "id": 99001,
+      "orderId": "1001",
+      "amount": 0.01,
+      "note": "破损",
+      "lineItems": [
+        {
+          "line_item_id": 11,
+          "quantity": 1,
+          "restock_type": 0
+        }
+      ]
+    }
+  ],
+  "webhooks": [],
+  "oauth_tokens": [
+    {
+      "grantType": "authorization_code",
+      "code": "fixture-code",
+      "clientId": "atlas-local"
+    }
+  ],
+  "llm_calls": [
+    {
+      "model": "gpt-4o-mini",
+      "messages": [
+        {
+          "role": "system",
+          "content": "你只能输出一个 JSON 对象，不要输出任何解释性文字。字段：{\"action\": \"approve_refund\" 或 \"request_human_approval\", \"reason\": \"中文简述\", \"confidence\": 0 到 1 的数字}"
+        },
+        {
+          "role": "user",
+          "content": "退款原因：破损；金额：0.01 元；订单：1001"
+        }
+      ],
+      "content": "{\"action\": \"approve_refund\", \"reason\": \"质量问题破损，金额在审批限额内\", \"confidence\": 0.98}"
+    }
+  ]
+}

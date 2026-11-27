@@ -24,6 +24,9 @@ _REFUND_KEYWORDS = ("退款", "退货", "售后")
 
 # A-06：单张图的完整 JSON 约 2.6k 字符；1024 会在长流程上截断成非法 JSON。
 _MAX_TOKENS = 4096
+# T2：解析失败/编译失败时最多生成 3 稿；第 3 稿只在前两稿都失败时发生，
+# 用于压住“第二次仍返回不可解析 JSON”的长尾，不改变一次通过的成本。
+_MAX_GENERATION_ATTEMPTS = 3
 
 _TYPE_CHECKS = {
     "string": lambda value: isinstance(value, str),
@@ -61,7 +64,7 @@ def generate_graph_with_meta(
         attempts = 0
         last_graph: dict[str, Any] | None = None
         last_report: dict[str, Any] | None = None
-        for attempt in range(2):
+        for attempt in range(_MAX_GENERATION_ATTEMPTS):
             attempts += 1
             generated = _generate_with_llm(
                 prompt,
@@ -300,6 +303,9 @@ def _generate_with_llm(
         "shop/request_human_approval、shop/process_refund；"
         "shop/list_pending_refunds 的产出为 {\"orders\":[{\"order_id\",\"amount\",...}]}，"
         "金额必须写 {{<节点id>.result.orders[0].amount}}，不要写 result.amount；"
+        "shop/list_pending_refunds 只有 order_id/reason/amount，没有 status；"
+        "要判断退款成功/失败，必须调用 shop/execute_refund 或 shop/process_refund，"
+        "再引用其 result.status（refunded/human_review）。"
         "shop/execute_refund 的产出为 {\"order_id\",\"status\"}；"
         "网页操作工具为 web-playwright/navigate（{url}）、click（{element_desc, selector?}）、"
         "type（{selector, text}）、screenshot（{}），config.params 同样是 JSON 字符串；"
@@ -322,8 +328,14 @@ def _generate_with_llm(
         "要自行声明任务必需的输入变量（如 order_id、customer_email），不能只引用不声明。"
         "数组长度用 len({{<路径>}})（如 len({{q.result.rows}})），不要写 .length；"
         "len() 只能出现在 condition/loop 的 expression 里，不能写进 message/send 的正文或参数模板；"
-        "ai_decision 节点产出只有 {{<节点id>.decision}}（决策对象，含 action/reason/confidence 等）"
+        "ai_decision 节点产出只有 {{<节点id>.decision}}（决策对象，含 action/reason/confidence/source）"
         "与 {{<节点id>.prompt_rendered}}，不要写 {{<节点id>.result.decision}} 或 .result.channel。"
+        "ai_decision 的 decision 固定字段只有 action/reason/confidence/source；"
+        "禁止写 decision.total_amount、decision.channel、decision.order_count 等业务字段；"
+        "统计/金额必须走 database/query 的 result.rows 或 shop/list_pending_refunds 的 result.orders，"
+        "不要用 ai_decision 做算术。"
+        "每个节点都必须从唯一 trigger 沿 edge 可达；不要生成孤立通知/结束节点；"
+        "用户没要求的通知不要加，加了就必须接在主链末端。"
         "流程结束节点不再连出边，禁止把末端连回 trigger 形成环；需要结束时直接把最后一个业务节点"
         "（如 message/send、shop/execute_refund 或审批节点）作为终点，不要新增 wait/end 占位节点；"
         "condition 的 defaultTarget 也必须是真实业务节点，不能指向 wait/end 占位节点。"
@@ -472,6 +484,13 @@ def _repair_condition_expression(value: Any) -> Any:
     if not isinstance(value, str):
         return value
     expr = value.strip()
+    # 模型把数组长度写成 `{{len(path)}}` 或 `{{path.length}}`：DSL 只认 `len({{path}})`。
+    expr = re.sub(r"\{\{\s*len\(([^{}]+)\)\s*\}\}", r"len({{\1}})", expr)
+    expr = re.sub(
+        r"\{\{\s*([A-Za-z_][A-Za-z0-9_.\[\]]*)\.length\s*\}\}",
+        r"len({{\1}})",
+        expr,
+    )
     # 补齐单右括号：只匹配 `{{...}` 且后面不是 `}` 的路径引用。
     expr = re.sub(r"\{\{([^{}]+?)\}(?!\})", r"{{\1}}", expr)
     # 外层多开一个 `{{`：整串有 2 个 `{{` 但只有 1 个 `}}`，且以 `}}` 收尾。
@@ -511,6 +530,97 @@ def _repair_condition_expressions(nodes: list[dict[str, Any]]) -> None:
             config["continueExpression"] = _repair_condition_expression(
                 config.get("continueExpression")
             )
+
+
+def _declare_missing_globals(graph: dict[str, Any], nodes: list[dict[str, Any]]) -> None:
+    """把模板里出现但未声明的 `{{global.<name>}}` 补成变量声明。
+
+    只补声明，不改引用路径、不猜业务分支：模型严格照 prompt 写 `global.*` 却漏了
+    `variables` 时，补一个空值变量比让整张图因 REF_GLOBAL_NOT_FOUND 失败更合理；
+    类型按常见命名后缀推断，用户/上游仍可在画布上改。
+    """
+    existing = {
+        str(item.get("name"))
+        for item in graph.get("variables") or []
+        if isinstance(item, dict) and item.get("name")
+    }
+    if not isinstance(graph.get("variables"), list):
+        graph["variables"] = []
+    names: set[str] = set()
+
+    def _walk(value: Any) -> None:
+        if isinstance(value, str):
+            for match in re.finditer(r"\{\{global\.([A-Za-z_][A-Za-z0-9_]*)(?=[.}\[])", value):
+                names.add(match.group(1))
+        elif isinstance(value, dict):
+            for item in value.values():
+                _walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                _walk(item)
+
+    for node in nodes:
+        _walk(node.get("config"))
+    for name in sorted(names - existing):
+        lowered = name.lower()
+        if lowered.endswith(
+            ("amount", "threshold", "total", "count", "quantity", "price", "limit", "score")
+        ) or lowered in {"age", "number", "num"}:
+            var_type: str = "number"
+            default: Any = 0
+        elif lowered.startswith(("is_", "has_", "enable")) or lowered.endswith("_enabled"):
+            var_type = "boolean"
+            default = False
+        else:
+            var_type = "string"
+            default = ""
+        graph["variables"].append(
+            {"name": name, "type": var_type, "value": default, "scope": "global"}
+        )
+
+
+def _repair_ai_decision_refs(nodes: list[dict[str, Any]]) -> None:
+    """把 ai_decision 的 `result.*` 误引用收敛到固定输出根。
+
+    DSL 的 ai_decision 只暴露 `decision` 与 `prompt_rendered`；模型常写成
+    `{{<id>.result.decision}}` / `{{<id>.result.channel}}`。`result.decision` 是
+    无歧义笔误，改为 `decision`；`result.<decision字段>` 只在 action/reason/
+    confidence/source 四个白名单内改写，渠道/金额等业务字段仍交给 prompt 与
+    编译校验，不在这里猜。
+    """
+    decision_fields = ("action", "reason", "confidence", "source")
+    decision_ids = [
+        str(node.get("id") or "")
+        for node in nodes
+        if node.get("type") == "ai_decision" and node.get("id")
+    ]
+    if not decision_ids:
+        return
+
+    def _walk(value: Any) -> Any:
+        if isinstance(value, str):
+            for node_id in decision_ids:
+                value = value.replace(
+                    "{{" + node_id + ".result.decision", "{{" + node_id + ".decision"
+                )
+                value = value.replace(
+                    "{{" + node_id + ".result.prompt_rendered",
+                    "{{" + node_id + ".prompt_rendered",
+                )
+                for field in decision_fields:
+                    value = value.replace(
+                        "{{" + node_id + ".result." + field,
+                        "{{" + node_id + ".decision." + field,
+                    )
+            return value
+        if isinstance(value, dict):
+            return {key: _walk(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [_walk(item) for item in value]
+        return value
+
+    for node in nodes:
+        node["config"] = _walk(node.get("config"))
 
 
 def _qualify_global_refs(
@@ -685,7 +795,9 @@ def normalize_generated_graph(graph: dict[str, Any]) -> dict[str, Any]:
     graph["nodes"] = nodes
     graph["edges"] = edges
     node_ids = {str(node["id"]) for node in nodes}
+    _repair_ai_decision_refs(nodes)
     _repair_condition_expressions(nodes)
+    _declare_missing_globals(graph, nodes)
     _qualify_global_refs(graph, nodes, node_ids)
     _qualify_context_refs(nodes)
     # condition 的 defaultTarget 与 branch target 撞车时，若出边里还有另一个目标，

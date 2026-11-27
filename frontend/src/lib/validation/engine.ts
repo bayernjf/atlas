@@ -201,6 +201,17 @@ export class ValidationEngine {
     return this.graphCache
   }
 
+  /** Worker 异步路径用：当前 L3 缓存对应的图数据签名。 */
+  getGraphSignature(): string | null {
+    return this.graphSig
+  }
+
+  /** Worker 异步路径用：写入 Worker 返回的 L3 结果，避免主线程再算一遍。 */
+  setGraphResult(sig: string, diagnostics: Diagnostic[]): void {
+    this.graphSig = sig
+    this.graphCache = diagnostics
+  }
+
   /** 单节点 L1+L2 合并（L2 尚未跑到时只含 L1，体现分层渐进）。 */
   getNodeDiagnostics(id: string): Diagnostic[] {
     return rank([...(this.l1Cache.get(id) ?? []), ...(this.l2Cache.get(id) ?? [])])

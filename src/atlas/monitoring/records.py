@@ -51,7 +51,7 @@ class ToolCallMetric(BaseModel):
 class RunRecord(BaseModel):
     id: str
     graph_id: str
-    mode: Literal["sync", "stream"]
+    mode: Literal["sync", "stream", "a2a"]
     status: Literal["completed", "error", "cancelled"]
     started_at: str
     finished_at: str
@@ -63,6 +63,12 @@ class RunRecord(BaseModel):
     business: BusinessOutcome | None = None  # M9：业务结果（退款/人工升级/金额差异）；无业务结果为 None
     tool_calls: list[ToolCallMetric] = Field(default_factory=list)  # docs/28 §4.1：顶层工具调用埋点（子图/mock/debug/回放不采）
     spans: dict | None = None  # docs/33 §4：tracer.to_tree() 根 span（trace 端点懒加载；列表 API 不返；历史/debug/回放为 None）
+    # T7 多智能体可观测：task→bot→run→span 关联键。缺省空串＝非 A2A/Bot 运行，
+    # 既有 sync/stream 运行与历史记录逐字兼容。
+    task_id: str = ""
+    run_id: str = ""
+    agent_id: str = ""
+    runtime_id: str = ""
 
 
 def _now_iso() -> str:
@@ -90,7 +96,7 @@ class MonitoringStore:
         self,
         *,
         graph_id: str,
-        mode: Literal["sync", "stream"],
+        mode: Literal["sync", "stream", "a2a"],
         status: Literal["completed", "error", "cancelled"],
         started_at: str,
         duration_ms: float,
@@ -101,6 +107,10 @@ class MonitoringStore:
         business: BusinessOutcome | None = None,
         tool_calls: list | None = None,
         spans: dict | None = None,
+        task_id: str = "",
+        run_id: str = "",
+        agent_id: str = "",
+        runtime_id: str = "",
     ) -> RunRecord:
         pending: list[tuple[Alert, AlertChannel]] = []
         with self._lock:
@@ -120,6 +130,10 @@ class MonitoringStore:
                 business=business,
                 tool_calls=tool_calls or [],
                 spans=spans,
+                task_id=task_id,
+                run_id=run_id,
+                agent_id=agent_id,
+                runtime_id=runtime_id,
             )
             self._runs.append(record)
             healthy = is_healthy(record)
@@ -280,11 +294,18 @@ class MonitoringStore:
         self._notify_outside_lock(alert, cfg)
         return alert
 
-    def list_runs(self, graph_id: str | None = None, limit: int = 50) -> list[RunRecord]:
+    def list_runs(
+        self,
+        graph_id: str | None = None,
+        limit: int = 50,
+        agent_id: str | None = None,
+    ) -> list[RunRecord]:
         with self._lock:
             runs = list(self._runs)
         if graph_id:
             runs = [run for run in runs if run.graph_id == graph_id]
+        if agent_id:
+            runs = [run for run in runs if run.agent_id == agent_id]
         return list(reversed(runs))[:limit]
 
     def get_run(self, run_id: str) -> RunRecord | None:

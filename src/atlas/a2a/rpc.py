@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import os
 import threading
 import time
 import uuid
@@ -17,8 +19,13 @@ from collections.abc import Callable
 from typing import Any
 
 from atlas.a2a.auth import CallerIdentity
+from atlas.a2a.bot_runtime import get_bot_runtime
+from atlas.a2a.ledger import PgA2ALedger
 from atlas.a2a.run import A2ARunError, execute_graph_run
 from atlas.a2a.skills import run_plan_skill
+from atlas.iam.deps import tenant_registry
+
+logger = logging.getLogger(__name__)
 
 TERMINAL_STATES = ("completed", "failed", "canceled")
 
@@ -37,6 +44,9 @@ _JSONRPC_ERRORS = {
     "GRAPH_NOT_FOUND": (-32012, "Graph not found"),
     "INTERACTIVE_GRAPH_UNSUPPORTED": (-32013, "Interactive graph unsupported"),
     "GRAPH_INVALID": (-32014, "Graph invalid"),
+    "AGENT_NOT_FOUND": (-32015, "Agent not found"),
+    "AGENT_DISABLED": (-32016, "Agent disabled"),
+    "AGENT_RUNTIME_UNAVAILABLE": (-32017, "Agent runtime unavailable"),
 }
 
 MAX_TASKS = 500
@@ -46,17 +56,123 @@ _tasks: dict[str, dict[str, Any]] = {}
 _idempotency: dict[tuple[str, str], dict[str, str]] = {}
 _active_runs: dict[tuple[str, str], str] = {}
 _lock = threading.RLock()
+_pg_ledger: PgA2ALedger | None = None
+_last_pg_prune = 0.0
 
 
-class A2AProtocolError(Exception):
-    def __init__(self, code_key: str, message: str, *, data: dict[str, Any] | None = None) -> None:
-        super().__init__(message)
-        self.code_key = code_key
-        self.message = message
-        self.data = data or {}
+def _pg_ledger_instance() -> PgA2ALedger | None:
+    """`ATLAS_STORAGE_BACKEND=pg` 时惰性装配；memory 档保持 None（零行为变化）。"""
+    global _pg_ledger
+    if _pg_ledger is not None:
+        return _pg_ledger
+    if os.getenv("ATLAS_STORAGE_BACKEND", "memory").strip().lower() != "pg":
+        return None
+    try:
+        from atlas.storage.pg import get_pg_backend
+
+        _pg_ledger = PgA2ALedger(get_pg_backend().engine)
+    except Exception:  # noqa: BLE001 - 装配失败必须显式告警，不能静默假装持久化
+        logger.exception("A2A PG 台账装配失败，本次回退进程内台账")
+        return None
+    return _pg_ledger
+
+
+def _persist_task(task: dict[str, Any]) -> None:
+    """把当前任务快照写穿到 PG；memory 档 no-op。"""
+    ledger = _pg_ledger_instance()
+    if ledger is None:
+        return
+    with _lock:
+        task_id = task.get("id")
+        canonical = _tasks.get(task_id) if isinstance(task_id, str) else None
+        if canonical is None:
+            canonical = task
+        if canonical.get("_persist") is False:
+            return
+        snapshot = _snapshot(canonical)
+        expires_at = float(canonical.get("_expires_at") or time.time() + TASK_TTL_SECONDS)
+        tenant_id = str(canonical.get("_tenant_id") or "")
+        idem_key = canonical.get("_idempotency_key")
+        fingerprint = canonical.get("_idempotency_fingerprint")
+    try:
+        ledger.put(
+            snapshot,
+            expires_at=expires_at,
+            tenant_id=tenant_id,
+            idempotency_key=idem_key if isinstance(idem_key, str) else None,
+            fingerprint=fingerprint if isinstance(fingerprint, str) else None,
+        )
+    except Exception:  # noqa: BLE001 - 任务已执行，持久化失败不能把成功响应改成失败
+        logger.exception("A2A 任务台账写入 PG 失败 task_id=%s", snapshot.get("id"))
+
+
+def _load_task(task_id: str) -> dict[str, Any] | None:
+    """先读进程内，未命中再读 PG；命中后回填进程内，供后续 cancel 等路径使用。"""
+    with _lock:
+        local = _tasks.get(task_id)
+        if local is not None:
+            return local
+    ledger = _pg_ledger_instance()
+    if ledger is None:
+        return None
+    try:
+        loaded = ledger.get(task_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("A2A 任务台账读取 PG 失败 task_id=%s", task_id)
+        return None
+    if loaded is not None:
+        with _lock:
+            _tasks.setdefault(task_id, loaded)
+            return _tasks[task_id]
+    return None
+
+
+def _delete_task(task_id: str) -> None:
+    ledger = _pg_ledger_instance()
+    if ledger is None:
+        return
+    try:
+        ledger.delete(task_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("A2A 任务台账删除 PG 行失败 task_id=%s", task_id)
+
+
+def _idem_lookup(tenant_id: str, key: str) -> dict[str, str] | None:
+    """先查进程内幂等表，未命中再查 PG 并回填。"""
+    slot = (tenant_id, key)
+    with _lock:
+        entry = _idempotency.get(slot)
+        if entry is not None:
+            return entry
+    ledger = _pg_ledger_instance()
+    if ledger is None:
+        return None
+    try:
+        found = ledger.find_by_idempotency(tenant_id, key)
+    except Exception:  # noqa: BLE001
+        logger.exception("A2A 幂等键读取 PG 失败 tenant=%s key=%s", tenant_id, key)
+        return None
+    if found is None:
+        return None
+    task, fingerprint = found
+    entry = {"task_id": task["id"], "fingerprint": fingerprint}
+    with _lock:
+        _tasks.setdefault(task["id"], task)
+        _idempotency[slot] = entry
+    return entry
+
+
+def _record_idem(task: dict[str, Any], slot: tuple[str, str], fingerprint: str) -> None:
+    with _lock:
+        _idempotency[slot] = {"task_id": task["id"], "fingerprint": fingerprint}
+        canonical = _tasks.get(task["id"], task)
+        canonical["_idempotency_key"] = slot[1]
+        canonical["_idempotency_fingerprint"] = fingerprint
+    _persist_task(task)
 
 
 def _sweep(now: float) -> None:
+    global _last_pg_prune
     expired = [tid for tid, task in _tasks.items() if task["_expires_at"] <= now]
     for tid in expired:
         _tasks.pop(tid, None)
@@ -65,6 +181,21 @@ def _sweep(now: float) -> None:
             _idempotency.pop(key, None)
     while len(_tasks) > MAX_TASKS:
         _tasks.pop(next(iter(_tasks)), None)
+    ledger = _pg_ledger_instance()
+    if ledger is not None and now - _last_pg_prune >= 60:
+        try:
+            ledger.prune(now)
+            _last_pg_prune = now
+        except Exception:  # noqa: BLE001
+            logger.exception("A2A 任务台账 PG 过期清理失败")
+
+
+class A2AProtocolError(Exception):
+    def __init__(self, code_key: str, message: str, *, data: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.code_key = code_key
+        self.message = message
+        self.data = data or {}
 
 
 def _now_iso() -> str:
@@ -129,6 +260,7 @@ def _run_fingerprint(tenant_id: str, params: dict) -> str:
     body = {
         "tenant_id": tenant_id,
         "graph_id": params.get("graph_id"),
+        "agent_id": params.get("agent_id"),
         "release_version": params.get("release_version"),
         "inputs": params.get("inputs") or {},
     }
@@ -137,7 +269,7 @@ def _run_fingerprint(tenant_id: str, params: dict) -> str:
     ).hexdigest()
 
 
-def _make_task(metadata: dict[str, Any] | None) -> dict[str, Any]:
+def _make_task(metadata: dict[str, Any] | None, *, tenant_id: str = "") -> dict[str, Any]:
     now = time.time()
     _sweep(now)
     task_id = str(uuid.uuid4())
@@ -149,7 +281,12 @@ def _make_task(metadata: dict[str, Any] | None) -> dict[str, Any]:
         "artifacts": [],
         "metadata": metadata,
     }
-    _tasks[task_id] = {**task, "_expires_at": now + TASK_TTL_SECONDS}
+    _tasks[task_id] = {
+        **task,
+        "_expires_at": now + TASK_TTL_SECONDS,
+        "_tenant_id": tenant_id,
+    }
+    _persist_task(task)
     return task
 
 
@@ -194,6 +331,7 @@ def _emit_run_failure(
     ]
     _tasks[task["id"]]["artifacts"] = task["artifacts"]
     task["status"] = {"state": "failed", "timestamp": _now_iso()}
+    _persist_task(task)
 
 
 def _emit_run_artifact(
@@ -218,6 +356,10 @@ def _emit_run_artifact(
                     "tenantId": tenant_id,
                     "graphId": result.graph_id,
                     "runId": result.run_id,
+                    "taskId": task.get("id", ""),
+                    "traceId": result.trace_id,
+                    "agentId": result.agent_id,
+                    "runtimeId": result.runtime_id,
                     "status": result.status,
                     "outputs": result.outputs,
                     "trace": result.trace,
@@ -243,6 +385,8 @@ def _emit_run_artifact(
             "evidence": [
                 f"real run: mode=run (not plan-only), caller={caller_id}",
                 f"tenant-bound token: caller tenant={tenant_id}",
+                f"agent runtime: agentId={result.agent_id or '<none>'}, runtimeId={result.runtime_id or '<none>'}",
+                f"observability chain: taskId={task.get('id', '')}, agentId={result.agent_id or '<none>'}, runId={result.run_id}, traceId={result.trace_id}",
                 f"graph executed in-process: graph_id={result.graph_id}, run_id={result.run_id}",
                 f"nodes executed={len(result.trace)}; trace included in artifact data",
                 f"run_store recorded: run_id={result.run_id}",
@@ -329,20 +473,21 @@ def _try_replay_run_task(params: dict, caller: CallerIdentity | None) -> dict[st
     fingerprint = _run_fingerprint(tenant_id, params)
     with _lock:
         _sweep(time.time())
-        entry = _idempotency.get((tenant_id, idempotency_key))
-        if entry is None:
-            return None
-        existing = _tasks.get(entry["task_id"])
-        if existing is None:
+    entry = _idem_lookup(tenant_id, idempotency_key)
+    if entry is None:
+        return None
+    existing = _tasks.get(entry["task_id"])
+    if existing is None:
+        with _lock:
             _idempotency.pop((tenant_id, idempotency_key), None)
-            return None
-        if entry["fingerprint"] != fingerprint:
-            raise A2AProtocolError(
-                "IDEMPOTENCY_CONFLICT",
-                "idempotency_key was already used for a different run request",
-                data={"taskId": entry["task_id"]},
-            )
-        return _snapshot(existing)
+        return None
+    if entry["fingerprint"] != fingerprint:
+        raise A2AProtocolError(
+            "IDEMPOTENCY_CONFLICT",
+            "idempotency_key was already used for a different run request",
+            data={"taskId": entry["task_id"]},
+        )
+    return _snapshot(existing)
 
 
 def _execute_run_task(
@@ -381,6 +526,37 @@ def _execute_run_task(
             data={"callerId": caller.caller_id, "callerTenantId": caller.tenant_id, "requestedTenantId": tenant_id},
         )
 
+    agent_id = params.get("agent_id")
+    bot_runtime = None
+    if agent_id is not None:
+        if not isinstance(agent_id, str) or not agent_id.strip():
+            raise A2AProtocolError("INVALID_PARAMS", "agent_id must be a non-empty string")
+        agent_id = agent_id.strip()
+        services: Any = tenant_registry.get(tenant_id)
+        agent = services.agents_store.get(tenant_id, agent_id)
+        if agent is None:
+            raise A2AProtocolError(
+                "AGENT_NOT_FOUND",
+                f"agent not found in tenant={tenant_id}: {agent_id}",
+                data={"agentId": agent_id},
+            )
+        if not agent.enabled:
+            raise A2AProtocolError(
+                "AGENT_DISABLED",
+                f"agent is disabled in tenant={tenant_id}: {agent_id}",
+                data={"agentId": agent_id},
+            )
+        bot_runtime = get_bot_runtime(services, agent_id)
+        if bot_runtime is None:
+            raise A2AProtocolError(
+                "AGENT_RUNTIME_UNAVAILABLE",
+                f"agent runtime unavailable in tenant={tenant_id}: {agent_id}",
+                data={"agentId": agent_id},
+            )
+        if isinstance(task.get("metadata"), dict):
+            task["metadata"].setdefault("a2a", {})["agentId"] = bot_runtime.agent_id
+            _tasks[task["id"]]["metadata"] = task["metadata"]
+
     inputs = params.get("inputs")
     if inputs is not None and not isinstance(inputs, dict):
         raise A2AProtocolError("INVALID_PARAMS", "inputs must be an object")
@@ -396,30 +572,37 @@ def _execute_run_task(
     fingerprint = _run_fingerprint(tenant_id, params)
     idem_slot = (tenant_id, idempotency_key) if isinstance(idempotency_key, str) else None
     if idem_slot is not None:
-        with _lock:
-            entry = _idempotency.get(idem_slot)
-            if entry is not None:
-                existing = _tasks.get(entry["task_id"])
-                if existing is not None:
-                    if entry["fingerprint"] != fingerprint:
-                        raise A2AProtocolError(
-                            "IDEMPOTENCY_CONFLICT",
-                            "idempotency_key was already used for a different run request",
-                            data={"taskId": entry["task_id"]},
-                        )
-                    task.update({
-                        "status": existing["status"],
-                        "artifacts": existing["artifacts"],
-                        "metadata": existing.get("metadata"),
-                    })
-                    _tasks[task["id"]] = {**existing, "id": task["id"]}
-                    return
+        entry = _idem_lookup(*idem_slot)
+        if entry is not None:
+            existing = _tasks.get(entry["task_id"])
+            if existing is not None:
+                if entry["fingerprint"] != fingerprint:
+                    raise A2AProtocolError(
+                        "IDEMPOTENCY_CONFLICT",
+                        "idempotency_key was already used for a different run request",
+                        data={"taskId": entry["task_id"]},
+                    )
+                task.update({
+                    "status": existing["status"],
+                    "artifacts": existing["artifacts"],
+                    "metadata": existing.get("metadata"),
+                })
+                # 这是“原任务”的返回副本；不落第二条行，避免幂等键出现两个 task_id。
+                _tasks[task["id"]] = {
+                    **existing,
+                    "id": task["id"],
+                    "_replay_of": existing["id"],
+                    "_persist": False,
+                }
+                return
+            with _lock:
                 _idempotency.pop(idem_slot, None)
 
     run_id = f"a2a-{uuid.uuid4().hex}"
     if isinstance(task.get("metadata"), dict):
         task["metadata"]["a2a"]["runId"] = run_id
         _tasks[task["id"]]["metadata"] = task["metadata"]
+        _persist_task(task)
 
     run_lock = (tenant_id, graph_id)
     with _lock:
@@ -435,8 +618,8 @@ def _execute_run_task(
                 },
             )
         _active_runs[run_lock] = task["id"]
-        if idem_slot is not None:
-            _idempotency[idem_slot] = {"task_id": task["id"], "fingerprint": fingerprint}
+    if idem_slot is not None:
+        _record_idem(task, idem_slot, fingerprint)
 
     result = None
     try:
@@ -446,6 +629,8 @@ def _execute_run_task(
             inputs=inputs,
             release_version=release_version,
             run_id=run_id,
+            bot_runtime=bot_runtime,
+            task_id=task.get("id", ""),
         )
     except A2ARunError as exc:
         _emit_run_failure(task, params=params, tenant_id=tenant_id, graph_id=graph_id, code=exc.code, message=exc.message, detail=exc.data)
@@ -465,6 +650,7 @@ def _execute_run_task(
     if isinstance(task.get("metadata"), dict):
         a2a_meta = task["metadata"].setdefault("a2a", {})
         a2a_meta["runId"] = result.run_id
+        a2a_meta["traceId"] = result.trace_id
         _tasks[task["id"]]["metadata"] = task["metadata"]
 
     artifact = _emit_run_artifact(
@@ -515,7 +701,10 @@ def execute_task(
         }
 
     with _lock:
-        task = _make_task(metadata)
+        task_tenant = params.get("tenant_id")
+        if not isinstance(task_tenant, str) or not task_tenant:
+            task_tenant = caller.tenant_id if caller is not None and caller.tenant_id else ""
+        task = _make_task(metadata, tenant_id=task_tenant)
 
     def emit(event: dict) -> None:
         if on_event is not None:
@@ -531,6 +720,7 @@ def execute_task(
         }
         if incoming_run_id:
             event["x-zeus"] = {"runId": incoming_run_id}
+        _persist_task(task)
         return event
 
     emit(status_event("submitted", False))
@@ -564,13 +754,16 @@ def execute_task(
             for key, entry in list(_idempotency.items()):
                 if entry["task_id"] == task["id"]:
                     _idempotency.pop(key, None)
+        _delete_task(task["id"])
         raise
 
     with _lock:
         _tasks[task["id"]]["status"] = task["status"]
         _tasks[task["id"]]["artifacts"] = task["artifacts"]
         _tasks[task["id"]]["_expires_at"] = time.time() + TASK_TTL_SECONDS
-        return _snapshot(_tasks[task["id"]])
+        snapshot = _snapshot(_tasks[task["id"]])
+    _persist_task(task)
+    return snapshot
 
 
 def handle_jsonrpc(
@@ -604,22 +797,21 @@ def handle_jsonrpc(
 
     if method == "tasks/get":
         task_id = params.get("id")
-        with _lock:
-            task = _tasks.get(task_id) if isinstance(task_id, str) else None
+        task = _load_task(task_id) if isinstance(task_id, str) else None
         if task is None:
             return {"jsonrpc": "2.0", "id": request_id, "error": _error("TASK_NOT_FOUND")}
         return {"jsonrpc": "2.0", "id": request_id, "result": _snapshot(task)}
 
     if method == "tasks/cancel":
         task_id = params.get("id")
-        with _lock:
-            task = _tasks.get(task_id) if isinstance(task_id, str) else None
+        task = _load_task(task_id) if isinstance(task_id, str) else None
         if task is None:
             return {"jsonrpc": "2.0", "id": request_id, "error": _error("TASK_NOT_FOUND")}
         if task["status"]["state"] in TERMINAL_STATES:
             return {"jsonrpc": "2.0", "id": request_id, "error": _error("TASK_NOT_CANCELABLE")}
         with _lock:
             task["status"] = {"state": "canceled", "timestamp": _now_iso()}
+        _persist_task(task)
         # A2A v1 只标记任务态，不向真实 run 发取消信号；run-graph 在提交时同步完成，
         # 不存在可取消的中间窗口。
         return {"jsonrpc": "2.0", "id": request_id, "result": _snapshot(task)}
@@ -628,7 +820,11 @@ def handle_jsonrpc(
 
 
 def reset_for_tests() -> None:
+    global _pg_ledger, _last_pg_prune
     with _lock:
         _tasks.clear()
         _idempotency.clear()
         _active_runs.clear()
+    # 测试/进程内重置只清内存台账；PG 档的行保留，模拟“进程重启、库还在”。
+    _pg_ledger = None
+    _last_pg_prune = 0.0
