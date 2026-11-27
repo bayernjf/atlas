@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import httpx
-import pytest
 
 from atlas.harness.base import ActionRequest, Permission
 from atlas.logistics.http_adapter import HttpLogisticsAdapter
