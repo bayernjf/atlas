@@ -372,6 +372,12 @@ AE. ✅ **打包 AE＝condition LLM 分支置信度阈值＋上下文字段级�
 
 ## Quality gate（质量门）
 
+### 2026-11-28 dev CI 红修复：ruff F401 未用导入（`f8eec2c`）
+
+- 症状：dev HEAD `12a2332`（2026-11-25 push）的 CI run `45662093684`「Backend pytest」job failure，但 `gh run view --log-failed` 里没有任何 pytest FAILED 行——真实失败点在 pytest 之前：`uv run ruff check src tests` 报 `tests/test_logistics_http_adapter.py:6:8 F401 'pytest' imported but unused`（该文件全文只用 `import pytest` 占位、零调用），lint 步骤退出 1，pytest 从未开跑。
+- 修复：删该未用导入（`f8eec2c fix(tests): drop unused pytest import`）；本地 `.venv/bin/ruff check src tests` 全绿、`tests/test_logistics_http_adapter.py` 4 passed。
+- 复验：run `46038205850` 四 job 全 success（Backend pytest / Backend PG integration / Secret scan (gitleaks) / Frontend vitest + build），dev CI 回绿。历史 run `45423823250`（2026-11-24）的 pytest＋gitleaks 双红不单独修——同因，且已被本 commit 覆盖。
+
 ### 2026-11-23 A-02 A2A 真实 run 收口门（A-01/A-05/A-02 P0 全完成）
 
 - `tests/test_a2a_execution_agent.py` 13 passed＋`tests/test_a2a_real_run.py` 12 passed＝A2A 专项 **25 passed**；`tests/test_env_surface_parity.py` 6 passed；`tests/test_error_code_channels.py` 17 passed（新增 U1535：A2A 协议码 `A2A_PROTOCOL_ONLY` 豁免，只许从 `src/atlas/a2a/` 发射、前端目录不得有键）。
